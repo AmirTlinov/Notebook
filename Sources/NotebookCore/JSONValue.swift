@@ -37,12 +37,15 @@ public enum JSONValue: Codable, Equatable, Sendable {
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.singleValueContainer()
+    // Ink samples are predominantly numbers. JSONDecoder distinguishes JSON
+    // numbers from booleans; do not construct a type-mismatch error per sample
+    // coordinate before taking the numeric path.
     if container.decodeNil() {
       self = .null
-    } else if let value = try? container.decode(Bool.self) {
-      self = .bool(value)
     } else if let value = try? container.decode(Double.self) {
       self = .number(value)
+    } else if let value = try? container.decode(Bool.self) {
+      self = .bool(value)
     } else if let value = try? container.decode(String.self) {
       self = .string(value)
     } else if let value = try? container.decode([JSONValue].self) {

@@ -1,5 +1,55 @@
 # Проверка Notebook
 
+## 16 сентября, 12:27 UTC — числовой путь чернил без исключения на каждом числе
+
+`JSONValue` теперь сначала пробует штатное чтение Double, затем Bool.
+JSONDecoder различает эти примитивы; прежний порядок создавал type-mismatch
+для каждой координаты, ширины и времени. Парсер, формат, валидация и значения
+не заменены. На одинаковом локальном Release-fixture 1 390 141 bytes пять
+проходов — примерно **100 → 74 мс**. Это измерение декодера, не всего приложения.
+Более быстрая экспериментальная конверсия JSONSerialization/NSNumber отвергнута:
+`0.004166666666666667` становилось `0.0041666666666666675`; точное равенство
+generic JSON и typed ink нарушалось. Она в продукт не попала.
+
+Source `e19b603304be8012218d6e11f40fa324588091b921d356750a366459c8485c1a`:
+**681 Core PASS** за 69,547 с в области без неизменённых scale-fixtures и
+**37 iPad native PASS / 0 skips/runtime warnings**. Новый тест проверяет
+Boolean/number/string/null, точные значения 4800 измерений и канонический hash.
+Первоначальный широкий Core-run остановлен после 692 завершённых проверок,
+пока готовил старую 100 000-страничную фикстуру; весь этот маршрут не назван PASS.
+Команда выбранного повтора и неизменный fingerprint —
+`.build/seven-slices-json-profile/core-scoped-command.json`, `core-source-*.json`.
+Native receipt — `.build/seven-slices-numeric-json-native/verification.json`.
+
+Verified-пара установлена in-place (`seven-slices-numeric-json-pair/build.json`,
+`seven-slices-numeric-json-install/installation.json`): Mac UUID
+`A9459EB8-F073-3D15-A553-E029DD2668DF`, iPad `C3A5A9A3-3970-3A79-8D2A-74459A8EEE0D`.
+Содержание и допуски сохранены, публичный MCP connected. Физический документ
+`document-numeric-json-1223.xcresult` **PASS, 40,154 с**; новая строка после cold
+launch видна, исходный PNG просмотрен. Request→installed **1354,173 / 449,652 /
+94,000 / 109,260 мс**, первый content-ready **159,009 мс**; это не p95.
+`pencil-numeric-json-1225.xcresult` **PASS, 17,796 с**: поиск, раскрытие обложки
+и холодное восстановление **9 реальных действий Амира**. PNG просмотрен;
+публичное чтение после повторного открытия сохранило ровно прежние 329 698 bytes,
+SHA-256 `0e8c9d63a322d205774613641edec57900dfa89d3006abad72b4d73fc7f78c4f`.
+
+Time Profiler `document-numeric-json-1222.trace`: PID 2428, 74 Activity Monitor
+samples, окно **14,436–89,537 с**, CPU delta **42,878 с**, sampled **43,377 с**,
+main **6,670 с**. Inclusive JSONValue decode **16,709 с**, история **15,442 с**,
+readSpatialInk **12,393 с**; эти стеки пересекаются. CPU p95 **225,198%**,
+footprint peak **452 085 248**, конец **373 523 992 bytes**. Один microhang
+**267,437 мс** на 19,984 с; его причина пока не локализована. Системные
+dylibs-overlap warnings сохранены. Снижение конкретной работы наблюдается,
+но окна/фон различаются, точный общий коэффициент не заявлен, память существенно
+не исправлена и ресурсного PASS нет. Разбор — `numeric-json-summary.json`.
+
+Отдельная попытка frames/GPU на предыдущем installed source `b351f60d…`:
+`document-frames-baseline-1214.xcresult` PASS, но 90-секундный xctrace
+Animation Hitches + GPU + Core Animation FPS не закончил остановку более чем
+за три минуты. SIGINT также не завершил shutdown; остановлен только этот
+процесс xctrace, неполный bundle сохранён. Это отказ измерительного маршрута,
+не показатель кадров/GPU приложения. Срез 7 и прежние открытые условия остаются.
+
 ## 16 сентября, 12:02 UTC — неизменное чтение не пересоздаёт историю
 
 Воспроизведено: при равном `CollaborationContent` повторный SQL-read менял
