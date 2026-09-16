@@ -170,6 +170,23 @@ struct DocumentStateReplicationTests {
     }
   }
 
+  @Test func addressedDeletionAuthorsTheChangedCatalogueOrderAndSurvivesReplay() throws {
+    try fixture { a, b, _, id in
+      let original = try b.loadIndex(), deletingActor = UUID()
+      _ = try b.deleteWorkspaceItem(itemID: id, actor: deletingActor)
+      let deleted = try b.loadIndex()
+      #expect(deleted.collaboration.fields["items/order"]?.stamp != original.collaboration.fields["items/order"]?.stamp)
+      for change in try b.changeJournal(after: 0) { try deliver(change, b, a, deletingActor) }
+      for store in [a, b, NotebookStore(root: a.root), NotebookStore(root: b.root)] {
+        let current = try store.loadIndex()
+        #expect(current.item(id: id) == nil)
+        #expect(try current.merging(original).item(id: id) == nil)
+        #expect(try store.hasStoredValue(documentFile(id)) == false)
+        #expect(try store.hasStoredValue(stateFile(id)) == false)
+      }
+    }
+  }
+
   @Test(arguments: ["owner", "collection", "orphan", "remove-root", "causal-version"])
   func malformedStateCannotPublishItsOtherValidBlocks(kind: String) throws {
     try fixture { a, b, actor, id in

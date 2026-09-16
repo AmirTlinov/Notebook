@@ -377,11 +377,15 @@ extension NotebookStore {
       guard let root = try storedFragments(address: "workspace.json#", descendants: false).first,
         let stamp = header.stamp.advanced(by: actor) else { throw NotebookStorageError.invalidTransaction("workspace clock") }
       try writeFragment(root.replacing(value: root.value.setting("stamp", try .encode(stamp))), database: currentSQL!)
-      let key = fieldKey(["items", itemID.uuidString.lowercased(), "exists"])
-      let address = "workspace.json#/collaboration/fields/@" + fieldKey([key])
-      let oldVersion = try storedFragments(address: address, descendants: false).first?.value.decode(ContentFieldVersion.self)
-      let version = ContentFieldVersion(stamp: stamp, human: true, previous: oldVersion)
-      try writeFragment(.init(address: address, file: "workspace.json", parent: "workspace.json#", collection: "collaboration/fields", member: key, position: 0, value: try .encode(version), collections: []), database: currentSQL!)
+      // Removing a member also changes the catalog's visible order. Both
+      // fields belong to this deletion, not the preceding author's version.
+      // Only their clocks are written; unrelated catalog bodies stay unread.
+      for key in [fieldKey(["items", itemID.uuidString.lowercased(), "exists"]), "items/order"] {
+        let address = "workspace.json#/collaboration/fields/@" + fieldKey([key])
+        let oldVersion = try storedFragments(address: address, descendants: false).first?.value.decode(ContentFieldVersion.self)
+        let version = ContentFieldVersion(stamp: stamp, human: true, previous: oldVersion)
+        try writeFragment(.init(address: address, file: "workspace.json", parent: "workspace.json#", collection: "collaboration/fields", member: key, position: 0, value: try .encode(version), collections: []), database: currentSQL!)
+      }
       try publishRecords(writes: [:], removals: item.kind == .document ? [documentFile(itemID), stateFile(itemID)] : [])
       if let presence = try? loadPresence(), presence.selectedItemID == itemID,
         let replacement = try readItemHeaders(limit: 1).first {
