@@ -37,7 +37,7 @@ Release iPad и Mac. Xcode, Swift, SDK, XcodeGen, Node и npm должны со�
 проверкой и не измениться за время сборки.
 
 Оба приложения требуют настоящую Apple Development подпись команды
-`VUNH73AYPY`, собственный bundle ID и допустимые права. iPad сохраняет
+`M94V58FCVP`, собственный bundle ID и допустимые права. iPad сохраняет
 `com.amirtlinov.notebook.preview` и собственную Keychain-группу; его профиль
 проверяется против сертификата и согласованного физического устройства.
 Mac сохраняет `com.amirtlinov.notebook.mac`, `LSUIElement`, arm64 и встроенный

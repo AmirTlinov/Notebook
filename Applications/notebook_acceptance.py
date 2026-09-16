@@ -27,7 +27,6 @@ IPAD_BUNDLE = "com.amirtlinov.notebook.acceptance"
 MAC_BUNDLE = "com.amirtlinov.notebook.mac.acceptance"
 SCRIPT_BUNDLE_SUFFIX = ".acceptance-runtime"
 UI_TEST_BUNDLE = "com.amirtlinov.notebook.acceptance.diagnostic-uitests"
-SIMULATOR_TEAM = "VUNH73AYPY"
 
 
 def run(command, *, cwd=ROOT, output=None, timeout=1800, on_exit=None):
@@ -61,12 +60,12 @@ def mac_acceptance_signer(display):
 
 
 def validate_simulator_entitlements(entitlements):
-    identifier = SIMULATOR_TEAM + "." + IPAD_BUNDLE
+    identifier = release.TEAM + "." + IPAD_BUNDLE
     release.require(entitlements.get("application-identifier") == identifier
                     and entitlements.get("keychain-access-groups") == [identifier]
                     and set(entitlements) <= {"application-identifier", "keychain-access-groups",
                                               "get-task-allow", "com.apple.developer.team-identifier"}
-                    and entitlements.get("com.apple.developer.team-identifier", SIMULATOR_TEAM) == SIMULATOR_TEAM,
+                    and entitlements.get("com.apple.developer.team-identifier", release.TEAM) == release.TEAM,
                     "Simulator должен иметь собственную подпись и ровно свою Keychain-группу.")
 
 
@@ -232,7 +231,7 @@ def build(args):
                    "ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES"]
         if platform == "ipad":
             command += ["CODE_SIGN_IDENTITY=-", "CODE_SIGN_STYLE=Manual",
-                        "CODE_SIGNING_ALLOWED=YES", "DEVELOPMENT_TEAM=" + SIMULATOR_TEAM,
+                        "CODE_SIGNING_ALLOWED=YES", "DEVELOPMENT_TEAM=" + release.TEAM,
                         "NOTEBOOK_IPAD_ENTITLEMENTS=iPad/Acceptance.entitlements"]
         else:
             command += ["CODE_SIGN_IDENTITY=Apple Development", "CODE_SIGN_STYLE=Automatic",
@@ -360,7 +359,7 @@ def ui_build(args):
             "-destination", "platform=iOS Simulator,id=" + built["simulator"]["udid"],
             "-derivedDataPath", evidence / "derived/ipad", "-parallel-testing-enabled", "NO",
             "ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES", "CODE_SIGN_IDENTITY=-", "CODE_SIGN_STYLE=Manual",
-            "CODE_SIGNING_ALLOWED=YES", "DEVELOPMENT_TEAM=" + SIMULATOR_TEAM, "build-for-testing"]
+            "CODE_SIGNING_ALLOWED=YES", "DEVELOPMENT_TEAM=" + release.TEAM, "build-for-testing"]
         write(evidence / "build-command.json", list(map(str, command)))
         run(command, output=evidence / "build.log")
         products = evidence / "derived/ipad/Build/Products"

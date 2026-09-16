@@ -97,7 +97,7 @@ class SelectionTests(unittest.TestCase):
             self.assertFalse(acceptance.supports_attached_ui_trace("ipad", scenario))
 
     def test_simulator_signature_requires_only_its_private_keychain_group(self):
-        identifier = acceptance.SIMULATOR_TEAM + "." + acceptance.IPAD_BUNDLE
+        identifier = acceptance.release.TEAM + "." + acceptance.IPAD_BUNDLE
         valid = {"application-identifier": identifier, "keychain-access-groups": [identifier]}
         acceptance.validate_simulator_entitlements(valid)
         for invalid in ({}, {**valid, "application-identifier": "production"},
@@ -144,7 +144,7 @@ class SelectionTests(unittest.TestCase):
         self.assertNotEqual(settings["NOTEBOOK_SCRIPT_BUNDLE_SUFFIX"], settings["NOTEBOOK_BUNDLE_SUFFIX"])
 
     def test_simulator_entitlements_come_from_the_executable_and_refuse_wrong_platform_or_bounds(self):
-        identifier = acceptance.SIMULATOR_TEAM + "." + acceptance.IPAD_BUNDLE
+        identifier = acceptance.release.TEAM + "." + acceptance.IPAD_BUNDLE
         entitlements = {"application-identifier": identifier, "keychain-access-groups": [identifier]}
         payload = plistlib.dumps(entitlements)
         def executable(platform=7):

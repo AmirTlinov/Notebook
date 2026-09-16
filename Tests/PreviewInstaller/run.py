@@ -238,7 +238,7 @@ class PreviewInstallerTests(unittest.TestCase):
         self.assertEqual(self.execute("--build"), 0)
         verification = next(call for call in self.cli.calls if call[0] == "/usr/bin/codesign" and "--verify" in call)
         self.assertEqual(verification[verification.index("-R") + 1],
-                         '=anchor apple generic and identifier "com.amirtlinov.notebook.preview" and certificate leaf[subject.OU] = "VUNH73AYPY"')
+                         '=anchor apple generic and identifier "com.amirtlinov.notebook.preview" and certificate leaf[subject.OU] = "M94V58FCVP"')
         self.assertTrue({"--verify", "--deep", "--strict"}.issubset(verification))
         self.assertEqual(self.cli.install_calls, [])
 
