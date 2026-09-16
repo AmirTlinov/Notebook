@@ -217,6 +217,17 @@ final class DrawingResponsivenessTests: XCTestCase {
     // never the SVG child's potentially stale accessibility rectangle.
     for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
       XCUIDevice.shared.orientation = orientation
+      var previousFrame: CGRect?
+      let rotated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        let window = app.frame, frame = svg.frame
+        defer { previousFrame = frame }
+        // XCTest returns before the native rotation animation finishes. Its
+        // intermediate AX box can have width and height exchanged by 90°.
+        return (window.width > window.height) == orientation.isLandscape
+          && abs(frame.width / max(frame.height, 1) - 400.0 / 220.0) < 0.01
+          && previousFrame == frame
+      }, object: nil)
+      XCTAssertEqual(XCTWaiter.wait(for: [rotated], timeout: 3), .completed)
       let before = svg.frame
       svg.pinch(withScale: 1.25, velocity: 0.5)
       let after = svg.frame
@@ -1829,22 +1840,19 @@ final class DrawingResponsivenessTests: XCTestCase {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures"]
     launchPortraitFixture(app)
 
     let surface = app.otherElements["page-turn-surface"]
     XCTAssertTrue(surface.waitForExistence(timeout: 5))
-    surface.swipeLeft()
-    Thread.sleep(forTimeInterval: 0.25)
-    surface.swipeLeft()
-    Thread.sleep(forTimeInterval: 0.25)
-    surface.swipeLeft()
-
-    let landed = XCTNSPredicateExpectation(
-      predicate: NSPredicate(format: "value BEGINSWITH 'Страница 4 из '"),
-      object: surface
-    )
-    wait(for: [landed], timeout: 3)
+    for page in 2...4 {
+      surface.swipeLeft()
+      // Begin the next contact after the actual native landing, not during
+      // the previous curl based on an assumed 250-ms animation duration.
+      wait(for: [XCTNSPredicateExpectation(
+        predicate: NSPredicate(format: "value BEGINSWITH %@", "Страница \(page) из "), object: surface
+      )], timeout: 3)
+    }
     XCTAssertEqual(app.state, .runningForeground)
   }
 

@@ -238,6 +238,51 @@ final class DocumentProgramOwnerTests: XCTestCase {
     }
   }
 
+  func testRetainedOverviewThumbnailCannotConsumeTheLivePageLanding() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
+      "# Current\n\n" + String(repeating: "A thumbnail cannot own the destination of physical navigation.\n\n", count: 180)
+      + "\n\n# Far")])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
+    let current = try XCTUnwrap(fixture.paper(in: 0))
+    let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
+    let target = try XCTUnwrap(source.layout?.anchorPages["far"])
+    XCTAssertGreaterThan(target, 1)
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
+    let thumbnail = DocumentWebHost(), thumbnailCoordinator = DocumentPhysicalPageCoordinator()
+    defer { thumbnailCoordinator.invalidate(); thumbnail.removeFromSuperview() }
+    thumbnail.frame = .init(x: 0, y: 700, width: 120, height: 170)
+    fixture.window.rootViewController!.view.addSubview(thumbnail)
+    thumbnailCoordinator.update(.init(document: document, state: .init(id: document.id, actor: UUID()),
+      pageIndex: target, isCurrent: false, isVisible: true, isInteractive: false, pageTurnActive: false,
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed },
+      onStateChange: { _, _ in nil }, drafts: [], onDraftChange: { _ in }, onDraftDiscard: { _ in },
+      onLinkActivation: { _ in }, snapshotPixelWidth: 256,
+      onPreparationFailure: { error in XCTFail("Thumbnail preparation: \(error)") }), in: thumbnail, resources: fixture.resources)
+    try await wait(message: { fixture.diagnostics }) { thumbnail.hasSnapshot }
+    await owner.observePendingPresentationWork()
+    let thumbnailRaster = thumbnail.snapshotEntryID
+    // Dismissed SwiftUI popovers can retain their thumbnail hosts. Demand may
+    // arrive before the physical target host: only that host may fulfil it.
+    fixture.activity.prepare(target, presentation: .live)
+    await owner.observePendingPresentationWork()
+    XCTAssertTrue(thumbnail.hasSnapshot, "A live-page request cannot replace a thumbnail with WebKit")
+    XCTAssertEqual(thumbnail.snapshotEntryID, thumbnailRaster)
+    XCTAssertTrue(fixture.paper(in: 0) === current)
+    fixture.showPages(current: 0, neighbour: target); fixture.restorePresentation(1)
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.canonicalPaper(in: 1) }
+    let incoming = try XCTUnwrap(fixture.paper(in: 1))
+    let demand = try XCTUnwrap(fixture.activity.preparationDemand)
+    fixture.activity.update(true); fixture.activity.didInstall(demand)
+    fixture.select(1); fixture.activity.prepare(nil); fixture.activity.update(false)
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.canonicalPaper(in: 1) && (incoming.navigationDelegate as? DocumentWebCoordinator)?.nativeInputIsReady(in: fixture.hosts[1]) == true
+    }
+    XCTAssertTrue(thumbnail.hasSnapshot)
+    XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
+  }
+
   func testLiveTargetSupersessionAndCloseCancelItsQueuedAdmission() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
       "# Current\n\n" + String(repeating: "An accepted target does not retire the visible page.\n\n", count: 180)

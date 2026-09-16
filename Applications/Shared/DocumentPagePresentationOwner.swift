@@ -678,7 +678,13 @@ final class DocumentPagePresentationOwner {
     // speculative pages and higher-resolution refinements of ready pictures.
     let target = preparationDemand?.pageIndex
     if let target, !entries.values.contains(where: { $0.input.pageIndex == target }) { return }
-    let candidates = entries.values.filter { target == nil || $0.input.pageIndex == target }
+    let candidates = entries.values.filter {
+      guard let target else { return true }
+      // A retained overview thumbnail is a picture consumer, not the native
+      // destination of a page request. Wait for the physical host if needed.
+      return $0.input.pageIndex == target
+        && (preparationDemand?.presentation != .live || $0.input.retainsOpenDocument)
+    }
     for candidate in candidates.sorted(by: {
       return abs($0.input.pageIndex - input.pageIndex) < abs($1.input.pageIndex - input.pageIndex)
     }) {
@@ -704,10 +710,7 @@ final class DocumentPagePresentationOwner {
         observe("passive_page_configured", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
         landingTrace = renderer.pagePreparationTrace
         measurements?.observeLanding(landingTrace, stage: .preparing)
-        let liveDemand = preparationDemand.flatMap { demand -> PageTurnActivity.PreparationDemand? in
-          guard demand.presentation == .live, demand.pageIndex == candidate.input.pageIndex else { return nil }
-          return demand
-        }
+        let liveDemand = requestsLivePaper(for: candidate) ? preparationDemand : nil
         // Only curl needs an immutable composite. A non-curl landing transfers
         // canonical paper and mounts each program at the actual handoff.
         let preparationHost = liveDemand == nil ? passiveHost : (candidate.host ?? passiveHost)
@@ -776,7 +779,8 @@ final class DocumentPagePresentationOwner {
   }
 
   private func requestsLivePaper(for entry: Entry) -> Bool {
-    preparationDemand?.presentation == .live && preparationDemand?.pageIndex == entry.input.pageIndex && source?.layout != nil
+    entry.input.retainsOpenDocument && preparationDemand?.presentation == .live
+      && preparationDemand?.pageIndex == entry.input.pageIndex && source?.layout != nil
   }
 
   private func passiveRenderer(in host: DocumentWebHost, input: DocumentPagePresentation) -> DocumentWebCoordinator {
