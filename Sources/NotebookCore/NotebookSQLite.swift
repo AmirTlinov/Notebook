@@ -201,7 +201,8 @@ extension NotebookStoredPayload: Equatable where Value: Equatable {}
 typealias NotebookStoredFragment = NotebookStoredPayload<JSONValue>
 
 struct NotebookRecordCodec {
-  static func encode(_ value: JSONValue, file: String) throws -> [NotebookStoredFragment] {
+  static func encode(_ value: JSONValue, file: String, address: String? = nil,
+    parent: String? = nil, collection: String = "", member: String = "", position: Int = 0) throws -> [NotebookStoredFragment] {
     var rows: [NotebookStoredFragment] = []
     func make(_ original: JSONValue, address: String, parent: String?, collection: String, member: String, position: Int) throws {
       var collections: [NotebookStoredCollection] = []
@@ -254,7 +255,7 @@ struct NotebookRecordCodec {
       rows.append(.init(address: address, file: file, parent: parent, collection: collection,
         member: member, position: position, value: stripped, collections: collections))
     }
-    try make(value, address: file + "#", parent: nil, collection: "", member: "", position: 0)
+    try make(value, address: address ?? file + "#", parent: parent, collection: collection, member: member, position: position)
     return rows
   }
 

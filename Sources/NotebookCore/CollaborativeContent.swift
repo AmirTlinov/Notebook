@@ -188,12 +188,13 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
 
   static func merge(local: JSONValue, incoming: JSONValue,
     localState: Self?, incomingState: Self?, localStamp: VersionStamp,
-    incomingStamp: VersionStamp) throws -> (value: JSONValue, state: Self) {
+    incomingStamp: VersionStamp, includeOrder: Bool = true) throws -> (value: JSONValue, state: Self) {
     let a = contentFields(local), b = contentFields(incoming)
     var result: [String: JSONValue] = [:]
     var metadata = Self()
-    let keys = Set(a.keys).union(b.keys).union(localState?.fields.keys ?? Dictionary<String, ContentFieldVersion>().keys)
+    var keys = Set(a.keys).union(b.keys).union(localState?.fields.keys ?? Dictionary<String, ContentFieldVersion>().keys)
       .union(incomingState?.fields.keys ?? Dictionary<String, ContentFieldVersion>().keys)
+    if !includeOrder { keys.subtract(["elements/order", "blocks/order"]) }
     for key in keys {
       // No field and no authored clock is no observation, not a counter-zero
       // deletion by the sender. A real removal carries its existence version.
@@ -229,7 +230,7 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
     let value = rebuildContent(base: base, fields: result)
     // Membership can append concurrent survivors to the chosen author's
     // sequence. That derived display order is not a new value by that author.
-    for name in ["elements", "blocks"] where value[name] != nil {
+    for name in ["elements", "blocks"] where includeOrder && value[name] != nil {
       let key = fieldKey([name, "order"])
       let displayed = JSONValue.array(value[name]!.array.compactMap(\.memberIdentity).map(JSONValue.string))
       if displayed != result[key] { metadata.fields[key] = metadata.fields[key]?.retainingValue(result[key]) }
@@ -266,7 +267,7 @@ func contentMemberOrder(preferred: [String], escapedMembers: [String]) -> [Strin
     }
 }
 
-private func contentFields(_ value: JSONValue) -> [String: JSONValue] {
+func contentFields(_ value: JSONValue) -> [String: JSONValue] {
   var result: [String: JSONValue] = [:]
   for (name, property) in value.object where !["collaboration", "stamp", "agentStamp", "contentStamp", "drawingStamp", "drawingData", "format", "id", "size", "paperSize", "placements"].contains(name) {
     if ["elements", "blocks"].contains(name) {
