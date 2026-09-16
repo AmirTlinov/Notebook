@@ -5,6 +5,11 @@ import XCTest
 @testable import Notebook
 
 final class ScenePreparationTests: XCTestCase {
+  override func setUp() async throws {
+    try await super.setUp()
+    try await WorkspaceInkFixture.waitForForegroundWindow()
+  }
+
   @MainActor
   func testOffscreenPreparationUsesTheBudgetWithoutTakingTheHumanWindow() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)

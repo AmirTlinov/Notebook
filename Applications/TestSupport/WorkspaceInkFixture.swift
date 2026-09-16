@@ -10,6 +10,20 @@ import XCTest
 /// as the scene, rather than a permissive coordinator-only geometry shortcut.
 @MainActor
 final class WorkspaceInkFixture {
+  /// Physical-device XCTest can begin before UIKit activates the app scene.
+  /// Rendering fixtures need the same foreground window as the human route.
+  static func waitForForegroundWindow() async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while ContinuousClock.now < deadline {
+      if let window = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+        .first(where: { $0.activationState == .foregroundActive })?.keyWindow, !window.isHidden {
+        return
+      }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    _ = try XCTUnwrap(nil as UIWindow?, "The physical test app did not receive a foreground window")
+  }
+
   let cohort: SceneCompositionCohort
   let presence: SessionPresence
   let registry: SpatialInkSurfaceRegistry
@@ -33,6 +47,7 @@ final class WorkspaceInkFixture {
     items: [SpatialWorkspaceItemSurface], journal: SpatialInkJournal? = nil,
     registry: SpatialInkSurfaceRegistry = .init(),
     resources: SceneRenderResources = .init(), requiresStaticRaster: Bool = false) async throws -> SceneCompositionCohort {
+    try await waitForForegroundWindow()
     let stamp = journal?.stamp ?? VersionStamp(counter: 0, actor: UUID())
     // An empty visible board still belongs to a valid nonempty workspace.
     let placements = items.isEmpty

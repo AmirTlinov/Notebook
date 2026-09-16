@@ -16,7 +16,8 @@ final class DocumentLargeSourceTests: XCTestCase {
     let coordinator: DocumentWebCoordinator
     let host: DocumentWebHost
     #if os(iOS)
-    let window: UIWindow
+    let window: UIWindow?
+    let preparation: NotebookPreparationHost?
     let previousKeyWindow: UIWindow?
     #else
     let window: NSWindow
@@ -24,7 +25,8 @@ final class DocumentLargeSourceTests: XCTestCase {
     func close() {
       coordinator.invalidate()
       #if os(iOS)
-      window.isHidden = true; window.rootViewController = nil
+      window?.isHidden = true; window?.rootViewController = nil
+      preparation?.close()
       previousKeyWindow?.makeKey()
       #else
       window.orderOut(nil); window.close()
@@ -60,12 +62,20 @@ final class DocumentLargeSourceTests: XCTestCase {
     #if os(iOS)
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previousKeyWindow = acceptsInput ? scene.windows.first { $0.isKeyWindow } : nil
-    let window: UIWindow = acceptsInput ? UIWindow(windowScene: scene) : NotebookPreparationWindow(windowScene: scene)
-    let controller = UIViewController()
-    window.frame = .init(x: 0, y: 0, width: size.width, height: size.height)
-    controller.view = host; window.rootViewController = controller; window.isHidden = false
-    host.frame = window.bounds; host.layoutIfNeeded()
-    if acceptsInput { window.makeKeyAndVisible() }
+    let window: UIWindow?, preparation: NotebookPreparationHost?
+    if acceptsInput {
+      let input = UIWindow(windowScene: scene), controller = UIViewController()
+      input.frame = .init(x: 0, y: 0, width: size.width, height: size.height)
+      controller.view = host; input.rootViewController = controller
+      input.makeKeyAndVisible(); host.frame = input.bounds
+      window = input; preparation = nil
+    } else {
+      let offscreen = try NotebookPreparationHost(windowScene: scene)
+      offscreen.resize(to: .init(width: size.width, height: size.height))
+      offscreen.view.addSubview(host); host.frame = offscreen.view.bounds
+      window = nil; preparation = offscreen
+    }
+    host.layoutIfNeeded()
     #else
     let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: size.width, height: size.height),
       styleMask: .borderless, backing: .buffered, defer: false)
@@ -74,7 +84,7 @@ final class DocumentLargeSourceTests: XCTestCase {
     coordinator.mount(in: host, physicalSize: .init(width: size.width, height: size.height),
       isInteractive: priority == .currentPage, priority: priority)
     #if os(iOS)
-    return Surface(coordinator: coordinator, host: host, window: window, previousKeyWindow: previousKeyWindow)
+    return Surface(coordinator: coordinator, host: host, window: window, preparation: preparation, previousKeyWindow: previousKeyWindow)
     #else
     return Surface(coordinator: coordinator, host: host, window: window)
     #endif
