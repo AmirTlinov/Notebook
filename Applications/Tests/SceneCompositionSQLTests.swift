@@ -38,6 +38,9 @@ final class SceneCompositionSQLTests: XCTestCase {
         camera: .init(scale: 0.5), viewport: .init(x: 834, y: 1194),
         focusedItemID: item.id, openProgress: mode == .document ? 1 : 0, selectedItemID: item.id)
       let state = try NotebookSceneState.read(store: store, presence: presence, viewport: presence.viewport)
+      XCTAssertNotNil(state.hierarchy.board(initial.rootBoardID), "Navigation retains the parent's metadata")
+      XCTAssertFalse(state.inkSurfaces.contains(.board(initial.rootBoardID)), "A metadata ancestor is not a visible ink surface")
+      XCTAssertFalse(state.ink.actions.contains { $0.spans.contains { $0.surface == .board(initial.rootBoardID) } })
       let index = WorkspaceSceneIndex(workspace: state.workspace, hierarchy: state.hierarchy, paperSizes: state.paperSizes)
       let requested = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil })
       let source = SceneCompositionSource(store: store, revision: state.header.cursor, workspaceID: state.header.workspaceID)
@@ -52,6 +55,12 @@ final class SceneCompositionSQLTests: XCTestCase {
       XCTAssertTrue(installed.plan.allowsLive(.item(item.id), in: .board(child.id)))
       XCTAssertFalse(installed.liveData.ink.actions.contains { $0.spans.contains { $0.surface == .board(initial.rootBoardID) } })
     }
+    let returned = SessionPresence(boardID: initial.rootBoardID, mode: .board,
+      camera: .init(scale: 0.5), viewport: .init(x: 834, y: 1194), selectedItemID: item.id)
+    let parent = try NotebookSceneState.read(store: store, presence: returned, viewport: returned.viewport)
+    XCTAssertTrue(parent.inkSurfaces.contains(.board(initial.rootBoardID)))
+    XCTAssertEqual(parent.ink.actions.first { $0.id == ink.actions[0].id }, ink.actions[0],
+      "Returning reads the same durable ink; excluding an invisible surface does not delete it")
   }
 
   @MainActor

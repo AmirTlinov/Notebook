@@ -204,7 +204,9 @@ struct NotebookSceneState: Sendable {
         nodes[root.id] = root
       }
       if nodes[owner] == nil, let placement = try store.readBoardItem(selected.id) { nodes[owner] = placement }
-      let boardIDs = [boardID] + nodes.keys.filter { $0 != boardID }.sorted { $0.uuidString < $1.uuidString }.prefix(6)
+      // Navigation ancestors retain metadata, not live ink. Only queried scene
+      // windows own a visible surface; a parent is read when actually shown.
+      let boardIDs = [boardID] + coverage.keys.filter { $0 != boardID }.sorted { $0.uuidString < $1.uuidString }
       var heavyIDs = selected.kind == .document ? [selected.id] : []
       let candidates = items.values.filter { $0.id != selected.id && $0.kind == .document }
         .sorted { $0.id.uuidString < $1.id.uuidString }
