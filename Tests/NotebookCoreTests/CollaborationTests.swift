@@ -230,6 +230,61 @@ func collaborationReadSnapshotReusesRepeatedSourceRevisions() throws {
   #expect(changed.results[actions[0].id]?.allSatisfy { $0.revision != revision } == true)
 }
 
+@Test("История разных досок готовит общее дерево один раз и сохраняет SQL-идентичности")
+func collaborationReadSnapshotSharesSpatialOwnerTree() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  var content = try f.store.collaborationContent()
+  let boards = (0..<12).map { _ in UUID() }
+  for (index, id) in boards.enumerated() {
+    let item = content.workspace.createBoard(title: "Board \(index)", actor: f.agent, boardID: id)
+    let created = content.hierarchy.createBoard(id, in: f.boardID, near: .zero, actor: f.agent)
+    #expect(item != nil && created)
+    for detail in 0..<8 {
+      let element = SpatialElement(id: "detail-\(detail)", surface: .board(id), kind: .web,
+        frame: .init(x: Double(detail * 20), y: 20, width: 100, height: 80), worldOrigin: .zero,
+        source: String(repeating: "Source \(index)/\(detail). ", count: 200), html: "<p>Detail</p>",
+        stamp: .init(counter: 0, actor: f.agent))
+      let inserted = content.hierarchy.upsertElement(element, in: id, expected: nil, actor: f.agent)
+      #expect(inserted)
+    }
+  }
+  try f.store.saveBoardWorkspaceBundle(index: content.workspace, board: content.hierarchy, boardID: boards[0])
+  let targets = [f.board, .init(kind: .cover, id: f.itemID, boardID: f.boardID)] + boards.flatMap {
+    [CollaborationTarget(kind: .board, id: $0), .init(kind: .cover, id: $0, boardID: f.boardID)]
+  }
+  let identities = try f.store.referenceIdentities(targets: targets)
+  let references = identities.map { CollaborationReference(target: $0.target, revision: $0.revision) }
+  let expected = Dictionary(uniqueKeysWithValues: identities.map { ($0.target, $0.revision) })
+  let actions = try boards.map { id in
+    let target = CollaborationTarget(kind: .board, id: id)
+    let action = CollaborationAction(summary: "History", expected: [], operations: [
+      .init(kind: .reorderElements, target: target), .init(kind: .removeElement, target: target, id: "removed")])
+    return try NotebookActionReadModel(CollaborationReceipt(id: action.id, action: action,
+      createdAt: Date(timeIntervalSince1970: 0), revisions: [], changes: []))
+  }
+  let misplaced = CollaborationReference(target: .init(kind: .cover, id: boards[0], boardID: boards[1]), revision: "old")
+  var samples: [Double] = []
+  for _ in 0..<10 {
+    let clock = ContinuousClock(), started = clock.now
+    let snapshot = try CollaborationReadSnapshot(content: content, actions: actions, references: references + [misplaced])
+    let elapsed = started.duration(to: clock.now).components
+    samples.append(Double(elapsed.seconds) * 1_000 + Double(elapsed.attoseconds) / 1e15)
+    let results = actions.flatMap { snapshot.results[$0.id] ?? [] }
+    #expect(results.count == boards.count * 2 && Set(results.map(\.id)).count == results.count)
+    #expect(results.allSatisfy { $0.elementID == nil && $0.revision == expected[$0.target] })
+    #expect(references.allSatisfy { snapshot.references[$0.id]?.status == .current })
+    #expect(snapshot.references[misplaced.id]?.status == .targetMissing)
+  }
+  print("history-multiple-owners-ms " + String(decoding: try JSONEncoder().encode(samples), as: UTF8.self))
+  let removed = content.hierarchy.removeElements(ids: ["detail-0"], from: boards[0], actor: f.human)
+  #expect(removed == 1)
+  let changed = try CollaborationReadSnapshot(content: content, actions: actions, references: references)
+  let affected = Set([f.board, .init(kind: .board, id: boards[0]), .init(kind: .cover, id: boards[0], boardID: f.boardID)])
+  for reference in references {
+    #expect(changed.references[reference.id]?.status == (affected.contains(reference.target) ? .changed : .current))
+  }
+}
+
 @Test("Проверка готового отпечатка не захватывает замок содержания повторно")
 func referenceProofReadDoesNotLockContent() throws {
   let f = try CollaborationFixture(); defer { f.clean() }

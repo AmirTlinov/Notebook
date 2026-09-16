@@ -627,16 +627,36 @@ extension NotebookStore {
     return referenceHash(Data(("reference-owner-v2\n" + owner + "\n").utf8) + digest)
   }
 
+  /// The prepared owner tree of a single complete cut. Target lookup keeps
+  /// cover membership validation separate from shared tree preparation.
+  struct CompleteReferenceRevisions {
+    let revisions: [String: String]
+    let parents: [String: String]
+
+    func revision(target: CollaborationTarget) throws -> String {
+      let owner = NotebookStore.referenceOwnerKey(target.kind.rawValue, target.id)
+      if target.kind == .cover, parents[owner] != target.boardID.map({ NotebookStore.referenceOwnerKey("board", $0) }) {
+        throw CollaborationError("target_missing", "Обложка принадлежит другой доске.", target: target)
+      }
+      guard let revision = revisions[owner] else {
+        throw CollaborationError("target_missing", "Физический владелец отсутствует.", target: target)
+      }
+      return revision
+    }
+  }
+
   /// Explicit complete snapshots (checkpoint/test sources) use the same Merkle
   /// algebra as SQL. A live partial scene instead supplies its bound identities.
-  static func completeReferenceRevision(target: CollaborationTarget, files: [String: JSONValue]) throws -> String {
+  static func completeReferenceRevisions(files: [String: JSONValue]) throws -> CompleteReferenceRevisions {
     guard let workspace = files["workspace.json"], let hierarchy = files["board.json"] else {
-      throw CollaborationError("target_missing", "Снимок владельца отсутствует.", target: target)
+      throw CollaborationError("target_missing", "Снимок владельца отсутствует.")
     }
+    try Task.checkCancellation()
     let items = workspace["items"]?.array ?? [], boards = hierarchy["boards"]?.array ?? []
     var fragments: [String: NotebookStoredFragment] = [:]
     var roots = Set<String>()
     for (file, value) in files where file == "workspace.json" || file == "board.json" || file == "spatial-ink.json" || file.hasPrefix("documents/") {
+      try Task.checkCancellation()
       for row in try NotebookRecordCodec.encode(value, file: file) {
         fragments[row.address] = row
         if (file == "workspace.json" && row.collection == "items") || (file == "board.json" && ["boards", "board/placements", "board/elements"].contains(row.collection))
@@ -656,13 +676,14 @@ extension NotebookStore {
     for item in items { if let id = item.memberIdentity.flatMap(UUID.init(uuidString:)) { childCounts[referenceOwnerKey("cover", id)] = 0 } }
     let rootID = hierarchy["rootBoardID"]?.string.flatMap(UUID.init(uuidString:))
     for node in boards {
+      try Task.checkCancellation()
       guard let id = node.memberIdentity.flatMap(UUID.init(uuidString:)), let board = try node["board"]?.decode(BoardDocument.self) else { continue }
       let key = referenceOwnerKey("board", id); childCounts[key] = childCounts[key] ?? 0
       for item in board.itemIDs { parents[referenceOwnerKey("cover", item)] = key }
       if id != rootID { parents[key] = referenceOwnerKey("cover", id) }
     }
     for (child, parent) in parents {
-      guard childCounts[child] != nil, childCounts[parent] != nil else { throw CollaborationError("source_incomplete", "Полный снимок не содержит владельцев связанной поверхности.", target: target) }
+      guard childCounts[child] != nil, childCounts[parent] != nil else { throw CollaborationError("source_incomplete", "Полный снимок не содержит владельцев связанной поверхности.") }
       childCounts[parent, default: 0] += 1
     }
     func xor(_ key: String, _ contribution: Data) {
@@ -671,12 +692,14 @@ extension NotebookStore {
       digests[key] = digest
     }
     for address in roots {
+      try Task.checkCancellation()
       for (key, hash) in try referenceContributions(fragment: fragments[address]!, read: { try read(address) }) where childCounts[key] != nil {
         xor(key, referenceContribution(address, hash))
       }
     }
     var ordered: [String: [(Int, String)]] = [:]
     for address in roots {
+      try Task.checkCancellation()
       guard let row = fragments[address], row.collection == "board/elements", let surface = try row.value["surface"]?.decode(SurfaceID.self),
         let id = surface.ownerID, let member = row.value["id"]?.string else { continue }
       ordered[referenceOwnerKey(surface.kind.rawValue, id), default: []].append((row.position, member))
@@ -692,6 +715,7 @@ extension NotebookStore {
     }
     var pending = childCounts.filter { $0.value == 0 }.map(\.key), revisions: [String: String] = [:]
     while let key = pending.popLast() {
+      try Task.checkCancellation()
       let hash = referenceHash(Data(("reference-owner-v2\n" + key + "\n").utf8) + (digests[key] ?? Data(repeating: 0, count: 32)))
       revisions[key] = hash
       if let parent = parents[key] {
@@ -700,10 +724,8 @@ extension NotebookStore {
         if childCounts[parent] == 0 { pending.append(parent) }
       }
     }
-    guard revisions.count == childCounts.count else { throw CollaborationError("invalid_content", "Цикл владельцев в снимке.", target: target) }
-    if target.kind == .cover, parents[referenceOwnerKey("cover", target.id)] != target.boardID.map({ referenceOwnerKey("board", $0) }) { throw CollaborationError("target_missing", "Обложка принадлежит другой доске.", target: target) }
-    guard let revision = revisions[referenceOwnerKey(target.kind.rawValue, target.id)] else { throw CollaborationError("target_missing", "Физический владелец отсутствует.", target: target) }
-    return revision
+    guard revisions.count == childCounts.count else { throw CollaborationError("invalid_content", "Цикл владельцев в снимке.") }
+    return CompleteReferenceRevisions(revisions: revisions, parents: parents)
   }
 }
 

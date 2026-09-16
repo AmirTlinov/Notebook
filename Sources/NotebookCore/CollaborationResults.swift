@@ -10,8 +10,9 @@ extension NotebookActionReadModel {
   public func resultReferences(in content: CollaborationContent) -> [CollaborationReference] {
     let paths = content.referenceFilePaths(for: resultTargets(in: content))
     guard let files = try? content.sourceFiles(including: paths) else { return [] }
+    var reader = NotebookReferenceReader(files: files)
     return resultReferences(in: content) { target, elementID in
-      try NotebookStore.referenceRevision(target: target, elementID: elementID, files: files)
+      try reader.revision(target: target, elementID: elementID)
     }
   }
 

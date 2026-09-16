@@ -3,10 +3,6 @@ import Foundation
 /// A disposable projection of receipts and their current sources. Preparation
 /// encodes each needed owner once; rendering a history row only reads its result.
 public struct CollaborationReadSnapshot: Sendable {
-  private struct Source: Hashable {
-    let target: CollaborationTarget
-    let elementID: String?
-  }
   public let results: [UUID: [CollaborationReference]]
   public let continuations: [UUID: [CollaborationContinuation]]
   public let references: [UUID: ReferenceStatus]
@@ -18,18 +14,9 @@ public struct CollaborationReadSnapshot: Sendable {
     var results: [UUID: [CollaborationReference]] = [:]
     var continuations: [UUID: [CollaborationContinuation]] = [:]
     var statuses: [UUID: ReferenceStatus] = [:]
-    // Results and context references share this immutable cut. In particular,
-    // a history of edits to one board must not rebuild its Merkle tree for
-    // every action (or again when a removed element falls back to the board).
-    // Missing sources are also final for this cut; nothing survives the init.
-    var revisions: [Source: Result<String, Error>] = [:]
+    var reader = NotebookReferenceReader(files: files)
     func revision(_ target: CollaborationTarget, _ elementID: String?) throws -> String {
-      try Task.checkCancellation()
-      let source = Source(target: target, elementID: elementID)
-      if let result = revisions[source] { return try result.get() }
-      let result = Result { try NotebookStore.referenceRevision(target: target, elementID: elementID, files: files) }
-      revisions[source] = result
-      return try result.get()
+      try reader.revision(target: target, elementID: elementID)
     }
     for action in actions {
       try Task.checkCancellation()

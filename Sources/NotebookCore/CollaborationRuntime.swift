@@ -1,6 +1,82 @@
 import CryptoKit
 import Foundation
 
+/// One immutable file cut has one reference reader. Different boards and
+/// portal covers share its complete Merkle tree, not just repeated target IDs.
+/// Nothing is retained across content changes or used as a live scene identity.
+struct NotebookReferenceReader {
+  private struct Source: Hashable {
+    let target: CollaborationTarget
+    let elementID: String?
+  }
+  private let files: [String: JSONValue]
+  private var revisions: [Source: Result<String, Error>] = [:]
+  private var spatialRevisions: Result<NotebookStore.CompleteReferenceRevisions, Error>?
+
+  init(files: [String: JSONValue]) { self.files = files }
+
+  mutating func revision(target: CollaborationTarget, elementID: String? = nil) throws -> String {
+    try Task.checkCancellation()
+    let source = Source(target: target, elementID: elementID)
+    if let result = revisions[source] { return try result.get() }
+    let result = Result { try read(target: target, elementID: elementID) }
+    revisions[source] = result
+    return try result.get()
+  }
+
+  private mutating func read(target: CollaborationTarget, elementID: String?) throws -> String {
+    let suffix = target.id.uuidString.lowercased() + ".json"
+    let content: JSONValue
+    switch target.kind {
+    case .codeFragment:
+      guard elementID == nil, let fragment = files[codeFragmentFile(target.id)] else { throw CollaborationError("target_missing", "Фрагмент кода отсутствует.", target: target) }
+      let actions = try (files["spatial-ink.json"]?["actions"]?.array ?? []).filter { action in
+        try action["spans"]?.array.contains { try $0["surface"]?.decode(SurfaceID.self) == .codeFragment(target.id) } == true
+      }.sorted { ($0["id"]?.string ?? "") < ($1["id"]?.string ?? "") }
+      content = .object(["code": fragment, "ink": .array(actions)])
+    case .page:
+      guard let page = files["pages/" + suffix] else { throw CollaborationError("target_missing", "Лист отсутствует.", target: target) }
+      if let elementID {
+        guard let element = page["elements"]?.array.first(where: { $0.memberIdentity == collaborationIdentity(elementID) }) else { throw CollaborationError("target_missing", "Элемент листа отсутствует.", target: target) }
+        content = element.setting("frame", nil)
+      } else {
+        return try NotebookStore.boundReferenceRevision(target: target, files: files)
+          ?? NotebookStore.completePageReferenceRevision(target: target, value: page)
+      }
+    case .document:
+      guard let document = files["documents/" + suffix] else { throw CollaborationError("target_missing", "Документ отсутствует.", target: target) }
+      if let elementID {
+        guard let block = document["blocks"]?.array.first(where: { $0.memberIdentity == collaborationIdentity(elementID) }) else { throw CollaborationError("target_missing", "Блок документа отсутствует.", target: target) }
+        let state = files["document-states/" + suffix]?["records"]?.array.first { $0.memberIdentity == collaborationIdentity(elementID) }
+        content = .object(["block": block, "state": state ?? .null])
+      } else { content = .object(["document": document.setting("collaboration", nil), "state": files["document-states/" + suffix] ?? .null]) }
+    case .board, .cover:
+      guard let hierarchy = files["board.json"], files["workspace.json"] != nil else { throw CollaborationError("target_missing", "Доска отсутствует.", target: target) }
+      let boardID = target.kind == .board ? target.id : target.boardID
+      guard let boardID, let node = hierarchy["boards"]?.array.first(where: { $0.memberIdentity == boardID.uuidString.lowercased() }) else { throw CollaborationError("target_missing", "Доска отсутствует.", target: target) }
+      let elements = node["board"]?["elements"]?.array.filter {
+        $0["surface"]?["ownerID"]?.string.flatMap(UUID.init(uuidString:)) == target.id
+          && $0["surface"]?["kind"]?.string == target.kind.rawValue
+      } ?? []
+      if let elementID {
+        guard let element = elements.first(where: { $0.memberIdentity == collaborationIdentity(elementID) }) else { throw CollaborationError("target_missing", "Пространственный элемент отсутствует.", target: target) }
+        content = element.setting("frame", nil).setting("worldOrigin", nil).setting("stamp", nil)
+      } else {
+        if let bound = try NotebookStore.boundReferenceRevision(target: target, files: files) { return bound }
+        guard node["board"]?["format"] == .number(Double(BoardDocument.formatVersion)) else {
+          throw CollaborationError("placement_migration_boundary", "Этот полный снимок доски относится к формату до обновления. Сохранённое указание остаётся неизменным; для новой работы выберите текущий материал.", target: target)
+        }
+        if spatialRevisions == nil {
+          spatialRevisions = Result { try NotebookStore.completeReferenceRevisions(files: files) }
+        }
+        return try spatialRevisions!.get().revision(target: target)
+      }
+    case .workspace: content = files["workspace.json"] ?? .null
+    }
+    return try collaborationHash(content)
+  }
+}
+
 public struct TargetRenderRequest: Codable, Equatable, Sendable, Identifiable {
   public let id: UUID
   public let target: CollaborationTarget
@@ -202,52 +278,8 @@ extension NotebookStore {
 
   public static func referenceRevision(target: CollaborationTarget, elementID: String? = nil,
     files: [String: JSONValue]) throws -> String {
-    let suffix = target.id.uuidString.lowercased() + ".json"
-    let content: JSONValue
-    switch target.kind {
-    case .codeFragment:
-      guard elementID == nil, let fragment = files[codeFragmentFile(target.id)] else { throw CollaborationError("target_missing", "Фрагмент кода отсутствует.", target: target) }
-      let actions = try (files["spatial-ink.json"]?["actions"]?.array ?? []).filter { action in
-        try action["spans"]?.array.contains { try $0["surface"]?.decode(SurfaceID.self) == .codeFragment(target.id) } == true
-      }.sorted { ($0["id"]?.string ?? "") < ($1["id"]?.string ?? "") }
-      content = .object(["code": fragment, "ink": .array(actions)])
-    case .page:
-      guard let page = files["pages/" + suffix] else { throw CollaborationError("target_missing", "Лист отсутствует.", target: target) }
-      if let elementID {
-        guard let element = page["elements"]?.array.first(where: { $0.memberIdentity == collaborationIdentity(elementID) }) else { throw CollaborationError("target_missing", "Элемент листа отсутствует.", target: target) }
-        content = element.setting("frame", nil)
-      } else {
-        return try boundReferenceRevision(target: target, files: files)
-          ?? completePageReferenceRevision(target: target, value: page)
-      }
-    case .document:
-      guard let document = files["documents/" + suffix] else { throw CollaborationError("target_missing", "Документ отсутствует.", target: target) }
-      if let elementID {
-        guard let block = document["blocks"]?.array.first(where: { $0.memberIdentity == collaborationIdentity(elementID) }) else { throw CollaborationError("target_missing", "Блок документа отсутствует.", target: target) }
-        let state = files["document-states/" + suffix]?["records"]?.array.first { $0.memberIdentity == collaborationIdentity(elementID) }
-        content = .object(["block": block, "state": state ?? .null])
-      } else { content = .object(["document": document.setting("collaboration", nil), "state": files["document-states/" + suffix] ?? .null]) }
-    case .board, .cover:
-      guard let hierarchy = files["board.json"], files["workspace.json"] != nil else { throw CollaborationError("target_missing", "Доска отсутствует.", target: target) }
-      let boardID = target.kind == .board ? target.id : target.boardID
-      guard let boardID, let node = hierarchy["boards"]?.array.first(where: { $0.memberIdentity == boardID.uuidString.lowercased() }) else { throw CollaborationError("target_missing", "Доска отсутствует.", target: target) }
-      let elements = node["board"]?["elements"]?.array.filter {
-        $0["surface"]?["ownerID"]?.string.flatMap(UUID.init(uuidString:)) == target.id
-          && $0["surface"]?["kind"]?.string == target.kind.rawValue
-      } ?? []
-      if let elementID {
-        guard let element = elements.first(where: { $0.memberIdentity == collaborationIdentity(elementID) }) else { throw CollaborationError("target_missing", "Пространственный элемент отсутствует.", target: target) }
-        content = element.setting("frame", nil).setting("worldOrigin", nil).setting("stamp", nil)
-      } else {
-        if let bound = try boundReferenceRevision(target: target, files: files) { return bound }
-        guard node["board"]?["format"] == .number(Double(BoardDocument.formatVersion)) else {
-          throw CollaborationError("placement_migration_boundary", "Этот полный снимок доски относится к формату до обновления. Сохранённое указание остаётся неизменным; для новой работы выберите текущий материал.", target: target)
-        }
-        return try completeReferenceRevision(target: target, files: files)
-      }
-    case .workspace: content = files["workspace.json"] ?? .null
-    }
-    return try collaborationHash(content)
+    var reader = NotebookReferenceReader(files: files)
+    return try reader.revision(target: target, elementID: elementID)
   }
 
   public func requestTargetRender(target: CollaborationTarget, expectedRevision: String,
