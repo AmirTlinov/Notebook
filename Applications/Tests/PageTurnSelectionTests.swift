@@ -198,12 +198,29 @@ final class PageTurnSelectionTests: XCTestCase {
     XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
   }
 
-  func testFinitePrewarmWindowKeepsNearestPagesWithinFourSlots() {
+  @MainActor
+  func testColdFirstPageDoesNotManufactureDistantChildrenToFillFourSlots() throws {
+    let controller = IPadPageTurnController()
+    var built = Set<Int>()
+    controller.update(ownerID: UUID(), sequenceRevision: "cold-order", pageCount: 4, selectedIndex: 0,
+      navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+      page: { index, _, ready in
+        built.insert(index); ready(true); return AnyView(Text("Page \(index)"))
+      }, onCommit: { _, _ in }, onTransitioningChange: { _ in })
+    controller.loadViewIfNeeded()
+    XCTAssertEqual(built, [0, 1], "Spare capacity is not a demand to construct two more pages")
+    XCTAssertEqual(Set(controller.cachedPageIdentities.keys), [0, 1])
+    let first = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
+    XCTAssertNotNil(controller.pageViewController(controller.pageViewController, viewControllerAfter: first),
+      "The immediately reachable sheet must still be ready for a real curl")
+  }
+
+  func testFinitePrewarmWindowRetainsExistingNearestPagesWithinFourSlots() {
     for count in 1...8 {
       for current in 0..<count {
         for direction in [-1, 1] {
           let window = PageTurnPrewarmWindow.indices(displayedIndex: current,
-            anticipatedIndex: nil, lastDirection: direction, pageCount: count)
+            anticipatedIndex: nil, lastDirection: direction, pageCount: count, existingIndices: Set(0..<count))
           XCTAssertEqual(window.count, min(count, 4))
           XCTAssertTrue(window.contains(current))
           for neighbor in [current - 1, current + 1, current + direction * 2]
@@ -215,10 +232,10 @@ final class PageTurnSelectionTests: XCTestCase {
       }
     }
     XCTAssertEqual(PageTurnPrewarmWindow.indices(displayedIndex: 2,
-      anticipatedIndex: 7, lastDirection: nil, pageCount: 10), Set([1, 2, 7, 8]),
+      anticipatedIndex: 7, lastDirection: nil, pageCount: 10, existingIndices: []), Set([1, 2, 7, 8]),
       "A distant handoff keeps the source, landing and next sheet without a fifth speculative host")
     XCTAssertEqual(PageTurnPrewarmWindow.indices(displayedIndex: 7,
-      anticipatedIndex: 2, lastDirection: nil, pageCount: 10), Set([1, 2, 6, 7]))
+      anticipatedIndex: 2, lastDirection: nil, pageCount: 10, existingIndices: []), Set([1, 2, 6, 7]))
   }
 
   @MainActor

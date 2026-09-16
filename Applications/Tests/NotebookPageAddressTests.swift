@@ -6,6 +6,54 @@ import XCTest
 
 final class NotebookPageAddressTests: XCTestCase {
   @MainActor
+  func testColdNotebookReadsCurrentPaperBeforeUnrequestedPageBodies() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: root), actor = UUID()
+    let size = NotebookAppModel.defaultPageSize
+    _ = try store.initializeWorkspace(actor: actor, pageSize: size)
+    var workspace = try store.loadIndex()
+    let itemID = workspace.selectedItemID, firstID = try XCTUnwrap(workspace.selectedPageID)
+    let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .page, camera: .init(),
+      viewport: .init(x: 834, y: 1194), focusedItemID: itemID, openProgress: 1,
+      selectedItemID: itemID, notebookPageID: firstID)
+    try store.savePresence(presence)
+    var appended: [UUID] = []
+    for index in 1..<4 {
+      let value = try XCTUnwrap(workspace.appendPage(in: itemID, actor: actor, pageSize: size))
+      var page = try XCTUnwrap(value.createdPage)
+      if index > 1 {
+        page = PageDocument(id: page.id, size: size, actor: actor, elements: [.init(id: "far-source", kind: .markdown,
+          frame: .init(x: 20, y: 20, width: 300, height: 200),
+          source: String(repeating: "Far paper.", count: 60_000), html: "<p>Far paper</p>")])
+      }
+      _ = try store.saveWorkspaceSelection(index: workspace, createdPage: page)
+      appended.append(page.id)
+    }
+    try store.savePresence(presence)
+    XCTAssertThrowsError(try store.readTransaction { store in
+      try store.currentSQL!.limitReads(.init(rows: 512, bytes: 256 * 1_024, valueBytes: 64 * 1_024,
+        reason: "whole_directory_body_negative_control"))
+      return try store.readNotebookPageWindow(itemID: itemID, pages: ([firstID] + appended).map { .page($0) })
+    }, "Reading all directory bodies, as cold startup previously did, exceeds the same budget")
+    let cold = try store.readTransaction { store in
+      try store.currentSQL!.limitReads(.init(rows: 512, bytes: 256 * 1_024, valueBytes: 64 * 1_024,
+        reason: "cold_notebook_current_paper"))
+      return try NotebookSceneState.read(store: store, presence: presence, viewport: presence.viewport)
+    }
+    XCTAssertEqual(Set(cold.pages.keys), [firstID])
+    XCTAssertEqual(cold.pagePositions.count, 4, "The directory remains independent from its page bodies")
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: size)
+    XCTAssertEqual(model.notebookPageCount(itemID), 4)
+    XCTAssertEqual(model.activePage?.id, firstID)
+    XCTAssertNil(model.notebookPage(at: 3, in: itemID))
+    await model.prepareNotebookPage(at: 3, in: itemID)
+    XCTAssertEqual(model.notebookPage(at: 3, in: itemID)?.id, appended[2])
+    XCTAssertEqual(model.notebookPage(at: 3, in: itemID)?.elements.first?.source.count, 600_000)
+  }
+
+  @MainActor
   func testCoverageRetainsThePreparedDistantUUIDInsteadOfReinterpretingItsIndex() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)

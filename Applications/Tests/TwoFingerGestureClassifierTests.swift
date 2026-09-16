@@ -10,7 +10,8 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
         displayedIndex: 2,
         anticipatedIndex: 3,
         lastDirection: nil,
-        pageCount: 8
+        pageCount: 8,
+        existingIndices: []
       ),
       Set([1, 2, 3, 4])
     )
@@ -19,7 +20,8 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
         displayedIndex: 3,
         anticipatedIndex: nil,
         lastDirection: 1,
-        pageCount: 8
+        pageCount: 8,
+        existingIndices: []
       ),
       Set([2, 3, 4, 5])
     )

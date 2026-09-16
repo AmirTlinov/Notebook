@@ -148,9 +148,14 @@ struct NotebookSceneState: Sendable {
       // document blocks, runtime state or editing drafts.
       let needsSelectedContent = loadsLiveContent && presence.focusedItemID == selected.id
         && (presence.openProgress > 0 || presence.mode == .page || presence.mode == .document)
-      if needsSelectedContent, let notebookRoot {
+      if needsSelectedContent, let notebookRoot, let pageID {
+        // Directory slots describe navigation, not a demand for every body.
+        // The native page owner admits neighbours through prepareNotebookPage;
+        // a scene refresh keeps only those already requested UUIDs current.
+        let demanded = Set(preparedPages).union([pageID])
         let window = try store.readNotebookPageWindow(itemID: selected.id,
-          pages: pagePositions.map { .page($0.pageID) }, expectedVisibleRoot: notebookRoot)
+          pages: pagePositions.filter { demanded.contains($0.pageID) }.map { .page($0.pageID) },
+          expectedVisibleRoot: notebookRoot)
         pages = Dictionary(uniqueKeysWithValues: window.pages.map { ($0.document.id, $0.document) })
       }
       var items: [UUID: WorkspaceItem] = [selected.id: selected]

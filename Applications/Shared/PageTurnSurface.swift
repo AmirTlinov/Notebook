@@ -111,7 +111,8 @@ enum PageTurnPrewarmWindow {
     displayedIndex: Int,
     anticipatedIndex: Int?,
     lastDirection: Int?,
-    pageCount: Int
+    pageCount: Int,
+    existingIndices: Set<Int>
   ) -> Set<Int> {
     guard pageCount > 0 else { return [] }
     var result = Set<Int>()
@@ -139,12 +140,12 @@ enum PageTurnPrewarmWindow {
     insert(displayedIndex - 1, pageCount: pageCount, into: &result)
     insert(displayedIndex + 1, pageCount: pageCount, into: &result)
 
-    // At a finite edge there is no forward sheet to use the remaining slot.
-    // Keep the nearest reverse sheets instead of destroying a ready page only
-    // to rebuild it on the next turn. Work is bounded independently of count.
+    // Retain existing nearby content for a quick reverse, but spare capacity
+    // is not a request to build more pages on a cold opening.
     for distance in 1..<capacity where result.count < min(capacity, pageCount) {
-      insert(displayedIndex - distance, pageCount: pageCount, into: &result)
-      insert(displayedIndex + distance, pageCount: pageCount, into: &result)
+      for index in [displayedIndex - distance, displayedIndex + distance] where existingIndices.contains(index) {
+        insert(index, pageCount: pageCount, into: &result)
+      }
     }
     return result
   }

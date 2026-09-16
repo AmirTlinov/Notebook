@@ -466,7 +466,8 @@ final class IPadPageTurnController: UIViewController,
       displayedIndex: displayedIndex,
       anticipatedIndex: target,
       lastDirection: lastTurnDirection,
-      pageCount: pageCount
+      pageCount: pageCount,
+      existingIndices: Set(controllers.keys)
     )
     // UIKit may retain a controller after its curl finishes. That identity is
     // not a reason to retain every WebKit/Metal page visited in this document.

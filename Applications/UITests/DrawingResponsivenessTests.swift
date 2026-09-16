@@ -1816,11 +1816,14 @@ final class DrawingResponsivenessTests: XCTestCase {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures"]
     launchPortraitFixture(app)
 
     let surface = app.otherElements["page-turn-surface"]
     XCTAssertTrue(surface.waitForExistence(timeout: 5))
+    let paper = app.otherElements["paper-input"].firstMatch
+    XCTAssertTrue(paper.waitForExistence(timeout: 5))
+    let inkBefore = paper.value as? String
     surface.swipeLeft()
 
     let landed = XCTNSPredicateExpectation(
@@ -1835,6 +1838,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       object: surface
     )
     wait(for: [returned], timeout: 3)
+    XCTAssertEqual(paper.value as? String, inkBefore, "Finger navigation must not become an emulated Pencil stroke")
     XCTAssertEqual(app.state, .runningForeground)
   }
 
