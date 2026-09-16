@@ -5,6 +5,7 @@
   @MainActor
   enum SimulatorDrawingFixture {
     static let launchArgument = "--notebook-drawing-responsiveness-fixture"
+    static let penPersistenceArgument = "--notebook-pen-persistence-fixture"
     static let fingerGestureArgument = "--notebook-simulator-finger-gestures"
     static let mixedInputArgument = "--notebook-simulator-mixed-input"
     static let coverArgument = "--notebook-nearby-cover-fixture"
@@ -66,7 +67,11 @@
         agentElementArgument
       )
       let fixtureName: String
-      if let materialCount {
+      // The full route reads this gesture's durable result after other UI
+      // scenarios. Their fresh default fixture must not replace that evidence.
+      if ProcessInfo.processInfo.arguments.contains(penPersistenceArgument) {
+        fixtureName = "PenPersistence"
+      } else if let materialCount {
         fixtureName = "IndependentMaterials-\(materialCount)"
       } else if ProcessInfo.processInfo.arguments.contains(mixedWebArgument) {
         fixtureName = "MixedWebCamera"

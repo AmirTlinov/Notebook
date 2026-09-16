@@ -3247,7 +3247,7 @@ final class DrawingResponsivenessTests: XCTestCase {
   func testPenCommitsOneStrokeAndKeepsThePaperResponsive() {
     continueAfterFailure = false
     let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-pen-persistence-fixture"]
     launchPortraitFixture(app)
 
     let paper = app.otherElements["paper-input"]
@@ -3286,6 +3286,17 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(
       app.buttons["drawing-tool-eraser"].waitForExistence(timeout: 2)
     )
+
+    app.terminate()
+    app.launchArguments.append("--notebook-reopen-fixture")
+    launchPortraitFixture(app)
+    let reopenedPaper = app.otherElements["paper-input"]
+    XCTAssertTrue(reopenedPaper.waitForExistence(timeout: 5))
+    XCTAssertEqual(reopenedPaper.value as? String, "81 действий пера")
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "one-pen-contact-after-cold-reopen"
+    proof.lifetime = .keepAlways
+    add(proof)
   }
 
   func testEraserKeepsDensePaperResponsive() {

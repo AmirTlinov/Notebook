@@ -284,7 +284,9 @@ done
 
 APP_CONTAINER=$(xcrun simctl get_app_container \
   "$SIMULATOR_ID" com.amirtlinov.notebook data)
-python3 - "$APP_CONTAINER/tmp/NotebookUITests/DrawingResponsiveness/notebook.sqlite" <<'PY'
+# This belongs to testPenCommitsOneStrokeAndKeepsThePaperResponsive, not to
+# whichever scenario most recently recreated the shared default fixture.
+python3 - "$APP_CONTAINER/tmp/NotebookUITests/PenPersistence/notebook.sqlite" <<'PY'
 import json
 import pathlib
 import sqlite3
