@@ -387,6 +387,40 @@ func referenceProofReadDoesNotLockContent() throws {
   #expect(result.status == .checking)
 }
 
+@Test("Проверка области читает известную квитанцию, а не страницу каталога снимков")
+func regionalReferenceProofIsAddressedBeyondTheRenderDirectoryPage() throws {
+  let f = try CollaborationFixture(); defer { f.clean() }
+  let revision = try f.store.referenceRevision(target: f.page)
+  let region = PageRect(x: 10, y: 20, width: 100, height: 80)
+  let reference = CollaborationReference(target: f.page, region: region, revision: revision)
+  let request = try f.store.requestTargetRender(target: f.page,
+    expectedRevision: f.expectation(f.page).revision, region: region)
+  try f.store.saveTargetRender(.init(request: request, status: "ready", referenceFingerprint: "same-pixels"))
+  // Replicated historical requests can precede this proof by more than one
+  // directory page. The exact proof must not depend on that page's contents.
+  var older: [String: JSONValue] = [:]
+  for index in 0..<90 {
+    let value = TargetRenderRequest(id: UUID(), target: f.page, sourceRevision: revision,
+      region: .init(x: Double(index + 200), y: 20, width: 10, height: 10), worldOrigin: nil,
+      pageIndex: 0, pageVisionRevision: nil, createdAt: request.createdAt.addingTimeInterval(-Double(index + 1)))
+    older["collaboration/render-requests/" + value.id.uuidString.lowercased() + ".json"] = try .encode(value)
+  }
+  try f.store.publishRecords(writes: older)
+  #expect(try !f.store.targetRenderRequests(target: f.page).contains { $0.id == request.id })
+  let status = try f.store.readTransaction { store in
+    try store.currentSQL!.limitReads(.init(rows: 32, bytes: 64 * 1_024, valueBytes: 16 * 1_024,
+      reason: "addressed_regional_proof"))
+    return try store.referenceStatus(reference, currentRevision: revision)
+  }
+  #expect(status.status == .current)
+  #expect(status.fingerprint == "same-pixels")
+  // A receipt left on disk is not evidence after its authoritative request
+  // disappears. Reading must not recreate it or silently admit new rendering.
+  try f.store.publishRecords(writes: [:], removals: ["collaboration/render-requests/" + request.id.uuidString.lowercased() + ".json"])
+  #expect(try f.store.referenceStatus(reference, currentRevision: revision).status == .checking)
+  #expect(try f.store.targetRenderRequests(target: f.page, limit: 128).count == 90)
+}
+
 @Test("Повтор запроса возвращает один ход, частичная правка сохраняет состояние")
 func collaborationIdempotencyAndState() throws {
   let fixture = try CollaborationFixture(); defer { fixture.clean() }

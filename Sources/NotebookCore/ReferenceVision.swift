@@ -47,22 +47,25 @@ extension NotebookStore {
     if let stored = baseline?.reference,
       stored.target != reference.target || stored.region != reference.region || stored.worldOrigin != reference.worldOrigin
         || (stored.pageIndex ?? 0) != (reference.pageIndex ?? 0) || stored.revision != reference.revision { baseline = nil }
-    let requests = try targetRenderRequests(target: reference.target).filter {
-      $0.target == reference.target && $0.region == reference.region && $0.worldOrigin == reference.worldOrigin && $0.pageIndex == (reference.pageIndex ?? 0)
-    }
-    func proof(_ revision: String) -> String? {
+    func proof(_ revision: String) throws -> String? {
       guard let id = try? TargetRenderRequest.compositeID(target: reference.target, source: revision,
         region: reference.region, worldOrigin: reference.worldOrigin, pageIndex: reference.pageIndex ?? 0),
-        let request = requests.first(where: { $0.id == id && $0.sourceRevision == revision && $0.pageVisionRevision == nil }),
+        let value = try storedValue("collaboration/render-requests/" + id.uuidString.lowercased() + ".json") else { return nil }
+      // Both proof identities are already known. A paged queue is neither the
+      // authoritative lookup nor a reason to decode unrelated render requests.
+      let request = try value.decode(TargetRenderRequest.self)
+      guard request.id == id, request.target == reference.target, request.sourceRevision == revision,
+        request.region == reference.region, request.worldOrigin == reference.worldOrigin,
+        request.pageIndex == (reference.pageIndex ?? 0), request.pageVisionRevision == nil,
         let bytes = try? Data(contentsOf: targetReceiptURL(request.id)),
         let receipt = try? JSONDecoder().decode(TargetRenderReceipt.self, from: bytes),
         receipt.request == request, receipt.status == "ready", receipt.diagnostics.isEmpty else { return nil }
       return receipt.referenceFingerprint
     }
-    if baseline == nil, let fingerprint = proof(reference.revision) {
+    if baseline == nil, let fingerprint = try proof(reference.revision) {
       baseline = .init(reference: reference, fingerprint: fingerprint)
     }
-    if let baseline, let current = proof(revision) {
+    if let baseline, let current = try proof(revision) {
       return .init(current == baseline.fingerprint ? .current : .changed, currentRevision: revision, fingerprint: current)
     }
     guard baseline != nil || revision == reference.revision else { return .init(.reviewRequired, currentRevision: revision) }
