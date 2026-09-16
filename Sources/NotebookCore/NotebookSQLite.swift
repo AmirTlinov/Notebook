@@ -186,16 +186,19 @@ struct NotebookStoredCollection: Codable, Equatable {
 
 /// One physical SQL row carries an addressed member; large values are immutable
 /// content-addressed blobs. Parent records never carry a full member-ID array.
-struct NotebookStoredFragment: Codable, Equatable {
+struct NotebookStoredPayload<Value: Codable>: Codable {
   let address: String
   let file: String
   let parent: String?
   let collection: String
   let member: String
   let position: Int
-  let value: JSONValue
+  let value: Value
   let collections: [NotebookStoredCollection]
 }
+
+extension NotebookStoredPayload: Equatable where Value: Equatable {}
+typealias NotebookStoredFragment = NotebookStoredPayload<JSONValue>
 
 struct NotebookRecordCodec {
   static func encode(_ value: JSONValue, file: String) throws -> [NotebookStoredFragment] {

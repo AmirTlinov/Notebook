@@ -112,9 +112,38 @@ extension NotebookStore {
         guard let id = surface.ownerID else { throw NotebookStorageError.invalidTransaction("surface owner") }
         addresses.formUnion(try currentSQL!.rows("SELECT address FROM ink_surfaces WHERE kind=? AND owner_id=?", [.text(surface.kind.rawValue), .text(id.uuidString.lowercased())]).compactMap { $0[0].text })
       }
-      let actions = try addresses.sorted().map { address in try NotebookRecordCodec.decode(storedFragments(address: address), root: address).decode(SpatialInkAction.self) }
+      let actions = try addresses.sorted().map { try readSpatialInkAction($0) }
       return .init(actions: actions.sorted { $0.stamp < $1.stamp }, stamp: stamp)
     }
+  }
+
+  /// The stored contact already separates its small mutable header from typed
+  /// immutable spans. Read those directly: rebuilding a JSONValue tree and
+  /// serializing every measurement again is not part of showing its ink.
+  private func readSpatialInkAction(_ address: String) throws -> SpatialInkAction {
+    let spansAddress = address + "/spans"
+    let rows = try currentSQL!.rows(
+      "SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address IN (?,?)",
+      [.text(address), .text(spansAddress)])
+    guard rows.count == 2,
+      let headerData = rows.first(where: { $0[0].text == address })?[1].blob,
+      let spansData = rows.first(where: { $0[0].text == spansAddress })?[1].blob
+    else { throw NotebookStorageError.corruptRecord(address) }
+    let decoder = JSONDecoder()
+    let header = try decoder.decode(NotebookStoredPayload<SpatialInkActionHeader>.self, from: headerData)
+    let spans = try decoder.decode(NotebookStoredPayload<[SpatialInkSpan]>.self, from: spansData)
+    guard header.address == address, header.file == "spatial-ink.json",
+      header.parent == "spatial-ink.json#", header.collection == "actions",
+      header.member == header.value.id.uuidString.lowercased(),
+      address == "spatial-ink.json#/actions/@" + header.member, header.position >= 0,
+      header.collections == [.init(path: ["spans"], kind: .value)], header.value.isValid,
+      spans.address == spansAddress, spans.file == header.file, spans.parent == address,
+      spans.collection == "spans", spans.member.isEmpty, spans.position == 0, spans.collections.isEmpty,
+      !spans.value.isEmpty, spans.value.allSatisfy(\.isValid)
+    else { throw NotebookStorageError.corruptRecord(address) }
+    let value = header.value
+    return .init(id: value.id, tool: value.tool, color: value.color, spans: spans.value,
+      stamp: value.stamp, isActive: value.isActive, stateStamp: value.stateStamp)
   }
 
   public func readWorkingSet(itemIDs: [UUID], pageIDs: [UUID], boardIDs: [UUID], surfaces: [SurfaceID]) throws -> NotebookWorkingSet {

@@ -7,6 +7,59 @@ import Testing
 struct NotebookSpatialInkCommandTests {
   private enum InjectedFailure: Error { case disk }
 
+  @Test func typedReadPreservesDenseMeasurementsAndMutableContactState() throws {
+    try fixture { store, actor, header in
+      let surface = SurfaceID.board(header.rootBoardID)
+      let samples: [SpatialInkSample] = (0..<4_096).map { index in
+        let x = Double(index) / 7, y = Double(index % 37) / 3
+        let width = 0.2 + Double(index % 13) / 7
+        let force = Double(index % 19) / 11
+        return SpatialInkSample(point: .init(x: x, y: y),
+          worldPoint: .init(tileX: -17, tileY: 29, localX: x, localY: y),
+          timeOffset: Double(index) / 240, width: width,
+          opacity: 0.75, force: force, azimuth: -0.3, altitude: 1.2)
+      }
+      let action = SpatialInkAction(tool: .pen, color: .init(red: 0.2, green: 0.4, blue: 0.6),
+        spans: [.init(surface: surface, samples: samples)], stamp: .init(counter: 1, actor: actor))
+      _ = try store.commitSpatialInk(.append(action, journalStamp: action.stamp))
+      _ = try store.commitSpatialInk(state(action, counter: 2))
+      let oldStart = ContinuousClock.now
+      let canonical = try store.loadSpatialInk()
+      let oldTime = oldStart.duration(to: .now)
+      let start = ContinuousClock.now
+      let read = try store.readSpatialInk(surfaces: [surface])
+      let duration = start.duration(to: .now)
+      #expect(read == canonical)
+      #expect(read.actions[0].spans[0].samples == samples)
+      #expect(!read.actions[0].isActive)
+      #expect(read.actions[0].stateStamp.counter == 2)
+      print("INK_READ samples=4096 generic=\(oldTime) typed=\(duration)")
+    }
+  }
+
+  @Test func typedReadRejectsInvalidMeasurementsBeforeConstructingAnAction() throws {
+    try fixture { store, actor, header in
+      let surface = SurfaceID.board(header.rootBoardID)
+      let action = SpatialInkAction(tool: .pen, spans: [span(surface)], stamp: .init(counter: 1, actor: actor))
+      _ = try store.commitSpatialInk(.append(action, journalStamp: action.stamp))
+      let address = actionAddress(action.id) + "/spans"
+      try store.commandTransaction {
+        let record = try #require(try store.storedFragments(address: address).first)
+        guard case .array(var spans) = record.value,
+          case .object(var first) = spans[0], case .array(var samples) = first["samples"],
+          case .object(var sample) = samples[0] else { throw NotebookStorageError.corruptRecord(address) }
+        sample["width"] = .number(-1); samples[0] = .object(sample)
+        first["samples"] = .array(samples); spans[0] = .object(first)
+        let data = try JSONEncoder().encode(record.replacing(value: .array(spans)))
+        let hash = try store.currentSQL!.putBlob(data)
+        try store.currentSQL!.run("UPDATE records SET hash=? WHERE address=?", [.text(hash), .text(address)])
+      }
+      #expect(throws: NotebookStorageError.corruptRecord(actionAddress(action.id))) {
+        try store.readSpatialInk(surfaces: [surface])
+      }
+    }
+  }
+
   private func fixture(_ body: (NotebookStore, UUID, NotebookWorkspaceHeader) throws -> Void) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-action-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

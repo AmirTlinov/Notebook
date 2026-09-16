@@ -186,12 +186,13 @@ actor SceneCompositionSource {
     case .values(_, _, let journal): journal
     }
   }
-  func liveData(plan: SceneCompositionPlan, presence: SessionPresence, frame: WorkspaceSceneFrame) throws -> SceneCompositionLiveData {
+  func liveData(plan: SceneCompositionPlan, presence: SessionPresence, frame: WorkspaceSceneFrame,
+    previous: (plan: SceneCompositionPlan, data: SceneCompositionLiveData)? = nil) throws -> SceneCompositionLiveData {
     guard plan.revision == revision, plan.workspaceID == workspaceID else { throw NotebookStorageError.transactionConflict }
     let itemIDs = Set(plan.liveOwners.compactMap { owner -> UUID? in
       if case .item(let id) = owner.id { return id }; return nil
     }).sorted { $0.uuidString < $1.uuidString }
-    let surfaces = plan.inkBoardIDs.sorted { $0 < $1 }.map(SurfaceID.board) + itemIDs.map(SurfaceID.cover)
+    let surfaces = plan.inkSurfaces
     guard surfaces.count <= SceneCompositionPlan.maximumLiveOwners else { throw SceneRenderError.resourceLimit }
     switch origin {
     case .sql(let store):
@@ -206,7 +207,20 @@ actor SceneCompositionSource {
         }
         let pageIDs = opensPaper && presence.selectedItemID.map(itemIDs.contains) == true
           ? (presence.notebookPageID.map { [$0] } ?? []) : []
-        let data = try store.readWorkingSet(itemIDs: documents, pageIDs: pageIDs, boardIDs: [], surfaces: surfaces)
+        // A camera transition or a smaller allocation candidate does not
+        // change measured ink. Borrow the cohort's existing value only at
+        // this exact checked SQL cut and for surfaces it fully loaded.
+        let reusedInk: SpatialInkJournal?
+        if let previous, previous.plan.workspaceID == workspaceID, previous.plan.revision == revision,
+          Set(surfaces).isSubset(of: Set(previous.plan.inkSurfaces)) {
+          let wanted = Set(surfaces)
+          reusedInk = wanted == Set(previous.plan.inkSurfaces) ? previous.data.ink
+            : .init(actions: previous.data.ink.actions.filter { $0.spans.contains { wanted.contains($0.surface) } },
+              stamp: previous.data.ink.stamp)
+        } else { reusedInk = nil }
+        let data = try store.readWorkingSet(itemIDs: documents, pageIDs: pageIDs, boardIDs: [],
+          surfaces: reusedInk == nil ? surfaces : [])
+        let ink = reusedInk ?? data.ink
         guard data.documents.count == documents.count, data.states.count == documents.count,
           data.pages.count == pageIDs.count else { throw SceneRenderError.snapshotPending("live_owner_payload") }
         var targets = Set(plan.presentations.keys.compactMap { plane -> CollaborationTarget? in
@@ -236,7 +250,7 @@ actor SceneCompositionSource {
             case .element(let id): return .element(boardID: owner.plane.boardID, id: id)
             }
           })
-        return .init(documents: data.documents, states: data.states, pages: data.pages, ink: data.ink,
+        return .init(documents: data.documents, states: data.states, pages: data.pages, ink: ink,
           referenceIdentities: basis.identities, referenceBasis: basis,
           documentPaperSizes: frame.index.documentPaperSizes.filter { itemIDs.contains($0.key) })
       }

@@ -412,6 +412,11 @@ final class SceneCompositionSQLTests: XCTestCase {
     func plan(_ source: SceneCompositionSource) async throws -> SceneCompositionPlan {
       try await .prepare(source: source, presence: presence, frame: frame, pinned: [.item(documentID)], displayScale: 2, previous: nil)
     }
+    let coverSample = SpatialInkSample(point: .zero, timeOffset: 0,
+      width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+    var initialInk = try store.loadSpatialInk()
+    _ = initialInk.append(tool: .pen, spans: [.init(surface: .cover(notebookID), samples: [coverSample])], actor: actor)
+    try store.saveSpatialInk(initialInk)
     let before = try source(), oldPlan = try await plan(before)
     let oldData = try await before.liveData(plan: oldPlan, presence: presence, frame: frame)
     XCTAssertTrue(oldData.documents.isEmpty, "A selected closed cover cannot load its document body")
@@ -429,7 +434,7 @@ final class SceneCompositionSQLTests: XCTestCase {
     XCTAssertTrue(document.replaceBlockSource(id: "body", source: "New body", actor: actor))
     XCTAssertTrue(state.commit(blockID: "body", value: .number(7), actor: actor))
     try store.saveDocument(document); try store.saveDocumentState(state)
-    var journal = try store.readSpatialInk(surfaces: [.board(header.rootBoardID)])
+    var journal = try store.loadSpatialInk()
     let sample = SpatialInkSample(point: .zero, worldPoint: .zero, timeOffset: 0,
       width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)
     _ = journal.append(tool: .pen, spans: [.init(surface: .board(header.rootBoardID), samples: [sample])], actor: actor)
@@ -443,10 +448,28 @@ final class SceneCompositionSQLTests: XCTestCase {
     XCTAssertTrue(newData.states.isEmpty)
     let opened = SessionPresence(boardID: header.rootBoardID, mode: .document, camera: presence.camera,
       viewport: presence.viewport, focusedItemID: documentID, openProgress: 1, selectedItemID: documentID)
-    let openedData = try await after.liveData(plan: newPlan, presence: opened, frame: frame)
+    let openedData = try await after.liveData(plan: newPlan, presence: opened, frame: frame,
+      previous: (newPlan, newData))
     XCTAssertEqual(openedData.documents[documentID]?.blocks.first?.source, "New body")
     XCTAssertEqual(openedData.states[documentID]?.value(for: "body"), .number(7))
     XCTAssertEqual(newData.ink.actions.count, 1)
+    XCTAssertEqual(openedData.ink, newData.ink)
+    newData.ink.actions[0].spans[0].samples.withUnsafeBufferPointer { before in
+      openedData.ink.actions[0].spans[0].samples.withUnsafeBufferPointer { after in
+        XCTAssertEqual(before.baseAddress, after.baseAddress,
+          "The same checked SQL cut keeps its actual measured samples, not a freshly decoded equal copy")
+      }
+    }
+    let expanded = SceneCompositionPlan(revision: newPlan.revision, workspaceID: newPlan.workspaceID,
+      rootBoardID: newPlan.rootBoardID, inkBoardIDs: newPlan.inkBoardIDs,
+      liveOwners: newPlan.liveOwners + [.init(plane: .board(header.rootBoardID), id: .item(notebookID),
+        position: .init(layer: .covers, zIndex: 0, key: notebookID.uuidString))],
+      protectedOwners: newPlan.protectedOwners, bands: newPlan.bands, coverage: newPlan.coverage,
+      presentations: newPlan.presentations, tiles: newPlan.tiles)
+    let expandedData = try await after.liveData(plan: expanded, presence: opened, frame: frame,
+      previous: (newPlan, newData))
+    XCTAssertEqual(expandedData.ink.actions.count, 2,
+      "The same revision does not certify ink on a newly admitted surface")
     coordinator.prepare(source: after, presence: presence, frame: frame, pinned: [.item(documentID)])
     try await waitForPublication(coordinator, revision: after.revision)
     let newCohort = try XCTUnwrap(coordinator.published)
@@ -466,7 +489,9 @@ final class SceneCompositionSQLTests: XCTestCase {
     ], actor: actor)
     try store.saveSpatialInk(journal)
     let crossSurface = try source(), crossPlan = try await plan(crossSurface)
-    let crossData = try await crossSurface.liveData(plan: crossPlan, presence: presence, frame: frame)
+    let crossData = try await crossSurface.liveData(plan: crossPlan, presence: presence, frame: frame,
+      previous: (newPlan, newData))
+    XCTAssertEqual(crossData.ink.actions.count, 2, "A new SQL revision reads the newly accepted contact")
     let crossesStatic = try await crossSurface.canCarryStaticPixels(from: newPlan, liveData: newData, to: crossPlan, liveData: crossData)
     XCTAssertFalse(crossesStatic, "A contact spanning a non-excluded physical owner invalidates its static pixels")
   }

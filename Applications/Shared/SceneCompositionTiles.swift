@@ -96,6 +96,12 @@ struct SceneCompositionPlan: Sendable {
   var nativeOwnerCount: Int {
     inkBoardIDs.count + liveOwners.filter { if case .item = $0.id { return true }; return false }.count
   }
+  var inkSurfaces: [SurfaceID] {
+    let items = Set(liveOwners.compactMap { owner -> UUID? in
+      if case .item(let id) = owner.id { return id }; return nil
+    })
+    return inkBoardIDs.sorted().map(SurfaceID.board) + items.sorted().map(SurfaceID.cover)
+  }
 
   func rank(id: WorkspaceSpatialID, in plane: SceneCompositionPlane) -> Double? {
     guard let owner = liveOwners.first(where: { $0.id == id && $0.plane == plane }) else { return nil }
@@ -794,6 +800,7 @@ final class SceneCompositionTiles {
         renderer.useSourcePresentation(plan: plan, frame: frame, displayScale: displayScale)
         let requests = try await renderer.liveRasterRequests(plan: plan, frame: frame, displayScale: displayScale)
         let previous = self?.published
+        var previousLiveData = previous.map { (plan: $0.plan, data: $0.liveData) }
         let changedSources = changedSources.union(try await renderer.sourcesOutsideCoverage(of: previous))
         let maximumAttempts = plan.reductionPotential + 1
         for attempt in 0..<maximumAttempts {
@@ -809,7 +816,9 @@ final class SceneCompositionTiles {
             var nativeInk: SpatialInkSceneLease?
           #endif
           do {
-            let liveData = try await source.liveData(plan: plan, presence: presence, frame: frame)
+            let liveData = try await source.liveData(plan: plan, presence: presence, frame: frame,
+              previous: previousLiveData)
+            previousLiveData = (plan, liveData)
             let canCarry: Bool
             if let previous {
               canCarry = try await source.canCarryStaticPixels(from: previous.plan, liveData: previous.liveData,
