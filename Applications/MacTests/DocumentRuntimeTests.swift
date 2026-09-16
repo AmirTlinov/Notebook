@@ -436,16 +436,16 @@ final class DocumentRuntimeTests: XCTestCase {
           if mode == "measured" {
             await source.discardIdlePreparation()
             try await execute("""
-      async function prepareFixtureSource(source,page=null) {
-        const renderer=window.notebookRenderer;
-        let packet=await renderer.beginSourcePreparation({key:source.key,documentID:source.documentID,
-          paper:source.paper,blockCount:source.blocks.length},page);
-        while(Number.isInteger(packet.nextBlockIndex)) {
-          const offset=packet.nextBlockIndex;
-          packet=await renderer.extendSourcePreparation(source.key,page,{offset,blocks:source.blocks.slice(offset,offset+4)});
-        }
-        return packet;
-      }
+              async function prepareFixtureSource(source,page=null) {
+                const renderer=window.notebookRenderer;
+                let packet=await renderer.beginSourcePreparation({key:source.key,documentID:source.documentID,
+                  paper:source.paper,blockCount:source.blocks.length},page);
+                while(Number.isInteger(packet.nextBlockIndex)) {
+                  const offset=packet.nextBlockIndex;
+                  packet=await renderer.extendSourcePreparation(source.key,page,{offset,blocks:source.blocks.slice(offset,offset+4)});
+                }
+                return packet;
+              }
               const fragments=notebookDocumentFragments;let measured;
               window.notebookDocumentFragments={...fragments,create:async (...args)=>{
                 const compiler=await fragments.create(...args);measured=args[0];return compiler;
