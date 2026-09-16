@@ -5,6 +5,61 @@ import XCTest
 
 final class SceneCompositionSQLTests: XCTestCase {
   @MainActor
+  func testOpeningDistantChildPublishesItsVisibleProgramsFromTheAddressedWindow() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: root), actor = UUID()
+    let initial = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let beforeWorkspace = try store.loadIndex(), beforeBoard = try store.loadBoard(items: store.loadIndex().items)
+    var workspace = beforeWorkspace, hierarchy = beforeBoard
+    let child = try XCTUnwrap(workspace.createBoard(title: "Physical acceptance", actor: actor))
+    XCTAssertTrue(hierarchy.createBoard(child.id, in: initial.rootBoardID,
+      near: .init(tileX: 4, tileY: 4, localX: 0, localY: 0), actor: actor))
+    var elements = [
+      SpatialElement(id: "physical-acceptance-heading", surface: .board(child.id), kind: .nativeText,
+        frame: .init(x: 0, y: 0, width: 1120, height: 90), worldOrigin: .zero,
+        source: "Four live programs", stamp: .init(counter: 0, actor: actor)),
+      SpatialElement(id: "physical-acceptance-notes", surface: .board(child.id), kind: .markdown,
+        frame: .init(x: 0, y: 1120, width: 1120, height: 210), worldOrigin: .zero,
+        source: "One tap executes once", stamp: .init(counter: 0, actor: actor))
+    ]
+    for (index, label) in ["A", "B", "C", "D"].enumerated() {
+      elements.append(.init(id: "physical-control-" + label, surface: .board(child.id), kind: .web,
+        frame: .init(x: Double(index % 2) * 580, y: 120 + Double(index / 2) * 340,
+          width: 540, height: 290), worldOrigin: .zero,
+        source: label, html: "<button>Increment " + label + "</button>",
+        stamp: .init(counter: 0, actor: actor)))
+    }
+    for index in 0..<2 {
+      elements.append(.init(id: "physical-svg-\(index)", surface: .board(child.id), kind: .web,
+        frame: .init(x: Double(index) * 580, y: 820, width: 540, height: 240), worldOrigin: .zero,
+        source: "Passive drawing", html: "<svg xmlns='http://www.w3.org/2000/svg'><path d='M0 0L540 240'/></svg>",
+        stamp: .init(counter: 0, actor: actor)))
+    }
+    for element in elements {
+      XCTAssertTrue(hierarchy.upsertElement(element, in: child.id, expected: nil, actor: actor))
+    }
+    _ = try store.saveWorkspaceEdits(before: beforeWorkspace, after: workspace, boardBefore: beforeBoard, boardAfter: hierarchy)
+    let presence = SessionPresence(boardID: child.id, mode: .board,
+      camera: .init(center: .init(x: 560, y: 665), scale: 0.594), viewport: .init(x: 834, y: 1194),
+      selectedItemID: beforeWorkspace.selectedItemID, notebookPageID: beforeWorkspace.selectedPageID)
+    let loaded = try NotebookSceneState.read(store: store, presence: presence, viewport: presence.viewport)
+    let index = WorkspaceSceneIndex(workspace: loaded.workspace, hierarchy: loaded.hierarchy, paperSizes: loaded.paperSizes)
+    let frame = WorkspaceSceneFrame(index: index, presence: loaded.presence, portalCamera: { loaded.hierarchy.portalCamera($0) })
+    XCTAssertTrue(frame.workset(boardID: child.id).elements.contains { $0.id == "physical-control-A" })
+    let source = SceneCompositionSource(store: store, revision: loaded.header.cursor, workspaceID: loaded.header.workspaceID)
+    let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop(); try? FileManager.default.removeItem(at: root) }
+    coordinator.prepare(source: source, presence: loaded.presence, frame: frame, pinned: [], displayScale: 2)
+    try await waitForPublication(coordinator, revision: loaded.header.cursor)
+    XCTAssertNil(coordinator.failure)
+    let shown = try XCTUnwrap(coordinator.published)
+    XCTAssertTrue(shown.frame.workset(boardID: child.id).elements.contains { $0.id == "physical-control-A" })
+    XCTAssertEqual(shown.runtimeOwners, Set(["A", "B", "C", "D"].map {
+      SceneSourceAddress(plane: .board(child.id), elementID: "physical-control-" + $0)
+    }), "Passive labels and SVGs cannot replace a visible input program with a dead snapshot")
+  }
+
+  @MainActor
   func testSQLRenderKeepsTheSameCoverPixelsAtEveryWorldCorner() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

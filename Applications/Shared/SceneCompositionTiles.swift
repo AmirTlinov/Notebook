@@ -22,6 +22,17 @@ enum SceneCompositionPlane: Hashable, Codable, Sendable {
   case cover(boardID: UUID, itemID: UUID)
   var boardID: UUID { switch self { case .board(let id), .cover(let id, _): id } }
   var coverID: UUID? { if case .cover(_, let id) = self { return id }; return nil }
+
+  /// Input demand precedes optional paint detail. The planner and the mounted
+  /// runtime use the same visibility rule; a label cannot evict a live button.
+  func demandsRuntime(source: AgentElement, origin: WorldPoint?, in presence: SessionPresence) -> Bool {
+    guard boardID == presence.boardID, presence.mode != .page, presence.mode != .document,
+      source.requiresLiveRuntime else { return false }
+    if let coverID { return coverID == presence.focusedItemID }
+    guard let origin else { return false }
+    let visible = SceneSourceCapture.visibleRect(source: source, origin: origin, presence: presence)
+    return !visible.isNull && !visible.isEmpty
+  }
 }
 
 struct SceneCompositionTileKey: Hashable, Codable, Sendable {
@@ -194,7 +205,7 @@ struct SceneCompositionPlan: Sendable {
     guard displayScale.isFinite, displayScale > 0, frame.rootBoardID == presence.boardID else { throw SceneRenderError.resourceLimit }
     // Board ink retains the current Pencil owner even when it is still empty.
     guard pinned.count < maximumLiveOwners else { throw SceneRenderError.snapshotPending("live_owner_budget") }
-    var candidates: [(plane: SceneCompositionPlane, id: WorkspaceSpatialID, pinned: Bool)] = []
+    var candidates: [(plane: SceneCompositionPlane, id: WorkspaceSpatialID, pinned: Bool, runtime: Bool)] = []
     let boardIDs = [presence.boardID] + frame.worksets.keys.filter { $0 != presence.boardID }.sorted { $0.uuidString < $1.uuidString }
     for boardID in boardIDs {
       guard let workset = frame.worksets[boardID] else { continue }
@@ -202,21 +213,27 @@ struct SceneCompositionPlan: Sendable {
         // A live portal must already own its child's physical plane. Otherwise
         // the streaming painter renders the whole portal, never a placeholder.
         guard item.item.kind != .board || frame.presences[item.id] != nil else { continue }
-        candidates.append((.board(boardID), .item(item.id), pinned.contains(.item(item.id))))
+        candidates.append((.board(boardID), .item(item.id), pinned.contains(.item(item.id)), false))
       }
-      for element in workset.elements { candidates.append((.board(boardID), .element(element.id), pinned.contains(.element(element.id)))) }
+      for element in workset.elements {
+        let plane = SceneCompositionPlane.board(boardID)
+        let runtime = plane.demandsRuntime(source: agentElementSnapshotSource(element),
+          origin: SceneSourceCapture.origin(element: element, plane: plane, frame: frame), in: presence)
+        candidates.append((plane, .element(element.id), pinned.contains(.element(element.id)), runtime))
+      }
     }
     // A pin on cover contents pins its physical carrier, then its local element.
     for (itemID, workset) in frame.covers {
       guard let boardID = frame.worksets.first(where: { $0.value.items.contains(where: { $0.id == itemID }) })?.key else { continue }
       for element in workset.elements where pinned.contains(.element(element.id)) {
-        candidates.append((.cover(boardID: boardID, itemID: itemID), .element(element.id), true))
+        candidates.append((.cover(boardID: boardID, itemID: itemID), .element(element.id), true, false))
         if let index = candidates.firstIndex(where: { $0.id == .item(itemID) }) { candidates[index].pinned = true }
       }
     }
     guard pinned.allSatisfy({ pin in candidates.contains { $0.id == pin } }) else { throw SceneRenderError.snapshotPending("pinned_owner_source") }
     candidates.sort { left, right in
       if left.pinned != right.pinned { return left.pinned }
+      if left.runtime != right.runtime { return left.runtime }
       if (left.plane.boardID == presence.boardID) != (right.plane.boardID == presence.boardID) { return left.plane.boardID == presence.boardID }
       return String(describing: left.id) < String(describing: right.id)
     }
@@ -922,7 +939,10 @@ final class SceneCompositionTiles {
           // Ask the model for the new read cut; waiting for camera movement
           // would strand an already saved edit behind the previous picture.
           onSourceInvalidated()
-        } else if !(error is CancellationError) { self?.failure = String(describing: error) }
+        } else if !(error is CancellationError) {
+          self?.failure = String(describing: error)
+          print("SCENE_COMPOSITION_FAILED board=\(presence.boardID) revision=\(source.revision) error=\(error)")
+        }
       }
     }
     inFlight[id] = task
@@ -939,18 +959,14 @@ final class SceneCompositionTiles {
   private static func runtimeOwners(requests: [SceneCompositionRenderer.LiveRasterRequest],
     plan: SceneCompositionPlan, resources: SceneRenderResources) -> Set<SceneSourceAddress> {
     #if os(iOS)
-      guard resources.profile == .interactive, let root = plan.presentations[.board(plan.rootBoardID)],
-        root.mode != .page, root.mode != .document else { return [] }
+      guard resources.profile == .interactive, let root = plan.presentations[.board(plan.rootBoardID)] else { return [] }
       let candidates = requests.filter { request in
         // Only the current board mounts input-capable source consumers.
         // Portal previews are read-only projections: assigning their sources
         // a runtime owner would suppress the static producer even though no
         // such runtime can be mounted, leaving the source pending forever.
-        guard request.source.requiresLiveRuntime, request.owner.plane.boardID == plan.rootBoardID else { return false }
-        if let coverID = request.owner.plane.coverID { return coverID == root.focusedItemID }
-        guard let view = plan.presentations[request.owner.plane], let origin = request.demand.worldOrigin else { return false }
-        let visible = SceneSourceCapture.visibleRect(source: request.source, origin: origin, presence: view)
-        return !visible.isNull && !visible.isEmpty
+        return request.owner.plane.demandsRuntime(source: request.source,
+          origin: request.demand.worldOrigin, in: root)
       }
       // Membership expresses real visibility, not an optimistic resource grant.
       // The existing allocator admits these owners and queues the remainder.
