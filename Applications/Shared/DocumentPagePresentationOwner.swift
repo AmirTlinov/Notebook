@@ -65,6 +65,9 @@ final class DocumentPagePresentationOwner {
     var activity: PageTurnActivity?
     var activityObserver: UUID?
     var preparationObserver: UUID?
+    var requiresPreparation: Bool {
+      input.retainsOpenDocument || (input.isVisible && host?.window != nil)
+    }
     private var readiness: Bool?
     private weak var readinessHandler: PageTurnReadiness?
     init(id: UUID, input: DocumentPagePresentation, host: DocumentWebHost) {
@@ -325,7 +328,7 @@ final class DocumentPagePresentationOwner {
     if let selectedID, let entry = entries[selectedID], entry.input.isCurrent { return entry }
     return entries.values.first { $0.input.isCurrent }
   }
-  private var driver: Entry? { current ?? entries.values.first { $0.input.isVisible } }
+  private var driver: Entry? { current ?? entries.values.first { $0.input.isVisible && $0.host?.window != nil } }
   private var hasOpenDocumentPresentations: Bool { openDocuments > 0 || entries.values.contains { $0.input.retainsOpenDocument } }
 
   /// Full physical presentations own the document lifetime. The selected input
@@ -375,7 +378,8 @@ final class DocumentPagePresentationOwner {
     host.onContactChange = { [weak self] active in self?.contact("paper:\(id)", active: active) }
     host.programOverlay.onContactChange = { [weak self] block, active in self?.contact(block, active: active) }
     host.onSizeChange = { [weak self] in self?.schedule() }
-    if mountedID != id {
+    host.onWindowChange = { [weak self] in self?.hostAttachmentChanged(id) }
+    if mountedID != id, entry.requiresPreparation {
       let geometry = WorkspaceItemGeometry.document(input.document.paperSize)
       host.configure(size: .init(width: geometry.width, height: geometry.height), interactive: false)
       if hasStagedPaper(for: entry) { entry.publishReadiness(true) }
@@ -385,7 +389,18 @@ final class DocumentPagePresentationOwner {
       else if let picture = picture(for: entry) { host.installSnapshot(picture.raster); entry.publishReadiness(true) }
       else { host.showLoading(); entry.publishReadiness(false) }
     }
-    source?.retainPage(input.pageIndex, hostID: id)
+    if entry.requiresPreparation { source?.retainPage(input.pageIndex, hostID: id) }
+    else {
+      // UIKit can retain a closed overview. Its native attachment, not deinit,
+      // owns thumbnail demand and pins; off-window RAF cannot hold up a reader.
+      source?.releasePage(hostID: id, in: nil)
+      host.removeFallback(); entry.publishReadiness(false)
+      if let passive, passive.webView?.window == nil {
+        work?.cancel(); work = nil; workID = nil
+        captureTail?.cancel(); captureTail = nil; captureID = nil
+        retirePassiveRenderer()
+      }
+    }
     if previousTarget != currentTarget
       || (previousToken != input.token && previousToken != nil && passive?.payload?.renderToken == previousPaperToken) {
       interruptPassiveWork()
@@ -397,6 +412,11 @@ final class DocumentPagePresentationOwner {
     }
     retirePaperAfterDocumentClose()
     trim(); schedule()
+  }
+
+  private func hostAttachmentChanged(_ id: UUID) {
+    guard let entry = entries[id], let host = entry.host else { return }
+    update(id, input: entry.input, host: host)
   }
 
   /// A requested physical page cannot wait behind a detached neighbour's
@@ -498,6 +518,7 @@ final class DocumentPagePresentationOwner {
     }
     if mountedID == id { mountedID = nil }
     entry.stopObserving(); entry.host?.onContactChange = { _ in }; entry.host?.onSizeChange = { }
+    entry.host?.onWindowChange = { }
     // SwiftUI/UIKit can retain the departed host after its coordinator ends.
     // Native installation, including its raster pins, ends at this boundary.
     // The overlay defers any accepted contact before applying the empty set.
@@ -514,7 +535,7 @@ final class DocumentPagePresentationOwner {
   }
 
   private func trim() {
-    let requestedTokens = Set(entries.values.map { $0.input.token })
+    let requestedTokens = Set(entries.values.filter(\.requiresPreparation).map { $0.input.token })
     // Page numbers survive source/state edits; their old pixels do not. The
     // installed native host owns its own fallback lease through the handoff.
     // This preparation owner only pins images a current presentation can use.
@@ -585,7 +606,7 @@ final class DocumentPagePresentationOwner {
   }
 
   private func reconcile() async throws {
-    guard let entry = driver, let host = entry.host else { return }
+    guard let entry = driver, let host = entry.host, host.window != nil else { return }
     let input = entry.input
     guard !hasTerminalFailure(for: entry) else { return }
     if paper.payload?.pageIndex != input.pageIndex, !gestureLocked {
@@ -679,6 +700,7 @@ final class DocumentPagePresentationOwner {
     let target = preparationDemand?.pageIndex
     if let target, !entries.values.contains(where: { $0.input.pageIndex == target }) { return }
     let candidates = entries.values.filter {
+      guard $0.requiresPreparation else { return false }
       guard let target else { return true }
       // A retained overview thumbnail is a picture consumer, not the native
       // destination of a page request. Wait for the physical host if needed.
@@ -692,6 +714,7 @@ final class DocumentPagePresentationOwner {
       if candidate.id == current?.id { continue }
       guard needsPicture(candidate), failures[candidate.input.token] == nil,
         !hasTerminalFailure(for: candidate) else { continue }
+      if requestsLivePaper(for: candidate), candidate.host?.window == nil { continue }
       if !requestsLivePaper(for: candidate), !programsReady(on: candidate.input.pageIndex) {
         let ids = layout.blockIDs(on: [candidate.input.pageIndex])
         if let error = ids.compactMap({ programOwner.runtimes[$0]?.failure }).first {
@@ -802,7 +825,9 @@ final class DocumentPagePresentationOwner {
       for entry in entries.values { source?.releasePage(hostID: entry.id, in: nil) }
       source = renderer.payload?.source
     }
-    for entry in entries.values { source?.retainPage(entry.input.pageIndex, hostID: entry.id) }
+    for entry in entries.values where entry.requiresPreparation {
+      source?.retainPage(entry.input.pageIndex, hostID: entry.id)
+    }
   }
 
   private func visiblePrograms() -> Set<String> {
@@ -832,11 +857,11 @@ final class DocumentPagePresentationOwner {
   }
 
   private func refreshProgramDemand() {
-    guard let input = stateOwner?.input, let layout = source?.layout,
+    guard let input = stateOwner?.input ?? entries.values.first?.input, let layout = source?.layout,
       source?.matches(input.document) == true else { return }
-    let pages = Set(entries.values.map { min($0.input.pageIndex, layout.pageCount - 1) })
+    let pages = Set(entries.values.filter(\.requiresPreparation).map { min($0.input.pageIndex, layout.pageCount - 1) })
     var densities: [String: Double] = [:]
-    for entry in entries.values {
+    for entry in entries.values where entry.requiresPreparation {
       for id in layout.blockIDs(on: [entry.input.pageIndex]) {
         densities[id] = max(densities[id] ?? 0, requiredScale(entry))
       }

@@ -1114,8 +1114,21 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private func presentEmptyContentIfReady() -> Bool {
     guard !spatialHandoffIsStopping, spatialStagingID == nil, stableRasterIsReady, stableTexture == nil,
       activeInkStroke == nil, activeEraserStroke == nil,
-      committedBatches.allSatisfy({ $0.mesh.vertices.isEmpty })
+      committedBatches.allSatisfy({ batch in
+        if batch.mesh.vertices.isEmpty { return true }
+        guard spatialDrawableScale != nil, bounds.width > 0, bounds.height > 0 else { return false }
+        let transform = batch.mesh.projection.transform(camera: spatialCamera, viewport: spatialViewport)
+        return !batch.mesh.chunks.contains {
+          $0.intersects(viewport: CGRect(origin: .zero, size: bounds.size), transform: transform)
+        }
+      })
     else { return false }
+    // Source ink elsewhere on this board is not a visible Metal allocation.
+    // Keep its mesh; a later projection prepares the same chunks normally.
+    for batch in committedBatches.indices {
+      for chunk in committedBatches[batch].buffers.indices { committedBatches[batch].buffers[chunk] = nil }
+    }
+    visibleCommittedVertexCount = 0; visibleCommittedChunkCount = 0
     isPaused = true
     if sampleCount != 1 { sampleCount = 1 }
     releaseDrawables()

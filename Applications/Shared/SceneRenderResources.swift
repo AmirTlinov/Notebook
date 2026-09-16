@@ -629,6 +629,16 @@ final class SceneRenderResources {
     return costs.map { reserveAllocation(bytes: $0, rasterCount: 1, priority: .passive, physicalOwner: nil) }
   }
 
+  /// A scene estimate consults the same owner as its later real allocations.
+  /// Disposable readers get their ordinary reclamation opportunity before a
+  /// candidate is rejected. This grants no bytes across subsequent awaits.
+  func prepareRasterAdmission(additionalBytes: Int, additionalCount: Int) -> Bool {
+    if additionalBytes == 0, additionalCount == 0 { return true }
+    guard derivedWaiters.isEmpty else { return false }
+    return makeRoom(for: additionalBytes, additionalEntry: additionalCount > 0,
+      priority: .passive, entryCount: additionalCount)
+  }
+
   func ownsRasterReservation(_ reservation: RasterReservation, pixelWidth: Int, pixelHeight: Int) -> Bool {
     guard reservation.resources === self, !reservation.isReleased,
       let allocation = reservations[reservation.id], allocation.rasterCount == 1,

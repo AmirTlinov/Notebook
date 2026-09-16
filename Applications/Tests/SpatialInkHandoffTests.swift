@@ -72,18 +72,116 @@ final class SpatialInkHandoffTests: XCTestCase {
   }
 
   func testFullPortraitRetinaBudgetReadiesNonemptyParentAndChildWithoutLoweringInkDensity() async throws {
-    let fixture = try await Fixture.make(viewport: .init(x: 834, y: 1194), displayScale: 2)
+    let fixture = try await Fixture.make(viewport: .init(x: 834, y: 1194), displayScale: 2,
+      requiresStaticRaster: true, includesCoverInk: true)
     addTeardownBlock { await fixture.close() }
     for id in [fixture.parentID, fixture.childID] {
       let canvas = try XCTUnwrap(fixture.cohort.nativeInk.owners[.board(id)]?.canvas)
       XCTAssertTrue(canvas.isStableFramePresented)
+      XCTAssertEqual(canvas.bounds.size, CGSize(width: 834, height: 1194),
+        "Portrait backing covers the current screen and portal, not a hypothetical landscape rotation")
       XCTAssertEqual(canvas.drawableSize.width / canvas.bounds.width, 2, accuracy: 0.001)
       XCTAssertEqual(canvas.drawableSize.height / canvas.bounds.height, 2, accuracy: 0.001)
     }
+    XCTAssertFalse(fixture.cohort.rasters.isEmpty, "Native ink must leave room for the visible static materials")
+    let cover = try XCTUnwrap(fixture.cohort.nativeInk.owners[.cover(fixture.childID)]?.canvas)
+    XCTAssertTrue(cover.isStableFramePresented)
+    XCTAssertGreaterThan(cover.committedVertexCount, 0)
     XCTAssertLessThanOrEqual(fixture.resources.residentBytes + fixture.resources.reservedBytes, 256 * 1024 * 1024)
     try fixture.mountActive(fixture.parentID)
     fixture.contact(tool: .eraser, from: .init(x: 8, y: 8), to: .init(x: 20, y: 12))
     XCTAssertEqual(fixture.actions.count, 1, "The first full-size post-exit contact remains admitted")
+  }
+
+  func testIncomingBoardKeepsInputAdmissionWhileTheOldMountStillDisplays() async throws {
+    try await assertIncomingInputAdmission(focusedCover: false)
+  }
+
+  func testOffscreenInkNeedsNoBackingAndReturnsAtFullDensityWhenProjectedIntoView() async throws {
+    let viewport = SpatialPoint(x: 834, y: 1194)
+    let fixture = try await Fixture.make(viewport: viewport, displayScale: 2, inkY: 100_000)
+    addTeardownBlock { await fixture.close() }
+    for id in [fixture.parentID, fixture.childID] {
+      let canvas = try XCTUnwrap(fixture.cohort.nativeInk.owners[.board(id)]?.canvas)
+      XCTAssertGreaterThan(canvas.committedVertexCount, 0, "The offscreen source is retained, not deleted")
+      XCTAssertTrue(canvas.isStableFramePresented)
+      XCTAssertEqual(canvas.spatialDrawableAccountedBytes, 0, "An empty visible projection does not need full-screen Metal tiles")
+      XCTAssertEqual(canvas.residentCommittedBufferBytes, 0)
+    }
+    let camera = SpatialCamera(center: .init(x: 0, y: 100_000), scale: 1)
+    let candidate = try await fixture.prepareResize(viewport: viewport, camera: camera, displayScale: 2)
+    try candidate.install()
+    let mount = SpatialInkPhysicalMountView(frame: fixture.canvas.bounds)
+    fixture.host.view.addSubview(mount)
+    defer { mount.unmount(); mount.removeFromSuperview() }
+    mount.update(lease: candidate, surface: .board(fixture.childID), boardID: fixture.childID, camera: camera, active: true)
+    let canvas = try XCTUnwrap(mount.inkView)
+    try await Self.waitUntil { canvas.isStableFramePresented }
+    XCTAssertGreaterThan(canvas.spatialDrawableAccountedBytes, 0)
+    XCTAssertEqual(canvas.drawableSize.width / canvas.bounds.width, 2, accuracy: 0.001)
+    XCTAssertGreaterThan(try Self.inkPixelCount(mount), 100)
+    XCTAssertGreaterThan(canvas.committedEraserVertexCount, 0)
+  }
+
+  func testIncomingFocusedCoverKeepsInputAdmissionWhileTheOldMountStillDisplays() async throws {
+    try await assertIncomingInputAdmission(focusedCover: true)
+  }
+
+  private func assertIncomingInputAdmission(focusedCover: Bool) async throws {
+    let viewport = SpatialPoint(x: 834, y: 1194)
+    let fixture = try await Fixture.make(viewport: viewport, displayScale: 2)
+    addTeardownBlock { await fixture.close() }
+    try fixture.mountActive(fixture.childID)
+    let old = fixture.cohort
+    let oldCanvas = try XCTUnwrap(fixture.canvas.inkView)
+    let passive = fixture.resources.rasterAdmission
+    let pressure = try XCTUnwrap(fixture.resources.reserveDerivedBytes(
+      passive.passiveByteLimit - passive.passiveReservedBytes - passive.pinnedBytes - 1_024 * 1_024,
+      priority: .passive))
+    defer { pressure.release() }
+    let boardID = focusedCover ? fixture.childID : UUID()
+    let actor = fixture.actor, stamp = VersionStamp(counter: 0, actor: fixture.actor)
+    let item = WorkspaceItem.notebook(title: "Incoming input", pageIDs: [UUID()])
+    let workspace = WorkspaceIndex(items: [item], selectedItemID: item.id, selectedPageID: item.pageIDs[0],
+      stamp: stamp, rootBoardID: boardID)
+    let hierarchy = BoardHierarchy(rootBoardID: boardID, boards: [.init(id: boardID,
+      board: .init(freeItems: [.init(itemID: item.id,
+        center: focusedCover ? .zero : .init(x: 100_000, y: 100_000), zIndex: 0, stamp: stamp)], stamp: stamp))], stamp: stamp)
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    var journal = fixture.journal
+    let surface: SurfaceID = focusedCover ? .cover(item.id) : .board(boardID)
+    let samples = [SpatialPoint(x: 100, y: 100), .init(x: 200, y: 100)].enumerated().map { offset, point in
+      SpatialInkSample(point: focusedCover ? point : .zero,
+        worldPoint: focusedCover ? nil : .init(x: point.x, y: point.y), timeOffset: Double(offset) / 10,
+        width: 14, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+    }
+    _ = journal.append(tool: .pen, spans: [.init(surface: surface, samples: samples)], actor: actor)
+    let presence = SessionPresence(boardID: boardID, mode: focusedCover ? .cover : .board,
+      camera: .init(), viewport: viewport, focusedItemID: focusedCover ? item.id : nil,
+      selectedItemID: item.id, notebookPageID: item.pageIDs[0])
+    let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil })
+    let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: journal)
+    fixture.tiles.prepare(source: source, presence: presence, frame: frame, pinned: [], displayScale: 2)
+    let deadline = ContinuousClock.now + .seconds(10)
+    while fixture.tiles.isPreparing, ContinuousClock.now < deadline {
+      // The old SwiftUI mount may reaffirm its role during any preparation await.
+      // It must neither demote the candidate's input nor charge retired input as
+      // new passive content before replacement has made its release possible.
+      fixture.update(tool: .pen)
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertFalse(fixture.tiles.isPreparing)
+    XCTAssertNil(fixture.tiles.failure, "\(fixture.tiles.budgetFailures)")
+    let next = try XCTUnwrap(fixture.tiles.published)
+    XCTAssertFalse(next === old)
+    XCTAssertEqual(next.plan.rootBoardID, boardID)
+    let incoming = try XCTUnwrap(next.nativeInk.owners[surface]?.canvas)
+    XCTAssertGreaterThan(incoming.committedVertexCount, 0)
+    XCTAssertEqual(incoming.drawableSize.width / incoming.bounds.width, 2, accuracy: 0.001)
+    try await Self.waitUntil { oldCanvas.isStableFramePresented }
+    XCTAssertGreaterThan(try Self.inkPixelCount(fixture.canvas), 100,
+      "Old pixels remain retained through the transition")
+    XCTAssertLessThanOrEqual(fixture.resources.residentBytes + fixture.resources.reservedBytes, fixture.resources.byteLimit)
   }
 
   func testReadyPrivateResizeDoesNotChangeInstalledBoundsOrPixelsAndCancellationReleasesItsTargets() async throws {
@@ -471,7 +569,8 @@ final class SpatialInkHandoffTests: XCTestCase {
     private var currentID: UUID
     var activeCamera: SpatialCamera { cohort.plan.presentations[.board(currentID)]!.camera }
 
-    static func make(viewport: SpatialPoint, displayScale: Double = 1, requiresStaticRaster: Bool = false) async throws -> Fixture {
+    static func make(viewport: SpatialPoint, displayScale: Double = 1, requiresStaticRaster: Bool = false,
+      includesCoverInk: Bool = false, inkY: Double = 0) async throws -> Fixture {
       let root = FileManager.default.temporaryDirectory.appendingPathComponent("ink-handoff-" + UUID().uuidString)
       let store = NotebookStore(root: root), actor = UUID()
       let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
@@ -494,8 +593,14 @@ final class SpatialInkHandoffTests: XCTestCase {
       _ = try store.saveWorkspaceEdits(before: before, after: workspace, boardBefore: oldBoard, boardAfter: hierarchy)
       var journal = SpatialInkJournal(stamp: .init(counter: 0, actor: actor))
       for surface in [SurfaceID.board(header.rootBoardID), .board(child.id)] {
-        _ = journal.append(tool: .pen, spans: [span(surface: surface, y: 0)], actor: actor)
-        _ = journal.append(tool: .eraser, spans: [span(surface: surface, y: 0, width: 20, xs: [-20, 0, 20])], actor: actor)
+        _ = journal.append(tool: .pen, spans: [span(surface: surface, y: inkY)], actor: actor)
+        _ = journal.append(tool: .eraser, spans: [span(surface: surface, y: inkY, width: 20, xs: [-20, 0, 20])], actor: actor)
+      }
+      if includesCoverInk {
+        _ = journal.append(tool: .pen, spans: [.init(surface: .cover(child.id), samples: [
+          .init(point: .init(x: 100, y: 100), timeOffset: 0, width: 14, opacity: 1, force: 1, azimuth: 0, altitude: 1),
+          .init(point: .init(x: 200, y: 100), timeOffset: 0.1, width: 14, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+        ])], actor: actor)
       }
       try store.saveSpatialInk(journal)
       let current = try store.workspaceHeader()
@@ -533,17 +638,17 @@ final class SpatialInkHandoffTests: XCTestCase {
       host.view.bringSubviewToFront(passive)
       update(tool: .pen)
     }
-    func prepareResize(viewport: SpatialPoint) async throws -> SpatialInkSceneLease {
+    func prepareResize(viewport: SpatialPoint, camera: SpatialCamera? = nil, displayScale: Double = 1) async throws -> SpatialInkSceneLease {
       let header = try store.workspaceHeader()
       let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
-      let presence = SessionPresence(boardID: currentID, mode: .board, camera: activeCamera, viewport: viewport)
+      let presence = SessionPresence(boardID: currentID, mode: .board, camera: camera ?? activeCamera, viewport: viewport)
       let requested = WorkspaceSceneFrame(index: cohort.frame.index, presence: presence, portalCamera: { _ in nil })
       let frame = try await source.compositionFrame(requested: requested, presence: presence, pinned: [])
       let plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
-        pinned: [], displayScale: 1, previous: cohort.plan)
+        pinned: [], displayScale: displayScale, previous: cohort.plan)
       let liveData = try await source.liveData(plan: plan, presence: presence, frame: frame)
       return try await registry.prepareSceneInk(plan: plan, frame: frame, liveData: liveData,
-        resources: resources, displayScale: 1)
+        resources: resources, displayScale: displayScale)
     }
     func update(tool: DrawingTool) {
       coordinator.update(view: canvas, cohort: cohort, boardID: currentID, camera: activeCamera, viewport: viewport,

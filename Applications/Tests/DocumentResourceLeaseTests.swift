@@ -8,6 +8,46 @@ import XCTest
 
 @MainActor
 final class DocumentResourceLeaseTests: XCTestCase {
+  func testReusingRetiredPaperCannotDetachTheReplacementInItsPreviousHost() async throws {
+    try await assertRetiredPaperLeavesReplacementMounted(reuse: true)
+  }
+
+  func testInvalidatingRetiredPaperCannotDetachTheReplacementInItsPreviousHost() async throws {
+    try await assertRetiredPaperLeavesReplacementMounted(reuse: false)
+  }
+
+  private func assertRetiredPaperLeavesReplacementMounted(reuse: Bool) async throws {
+    let resources = SceneRenderResources(profile: .interactive)
+    let outgoing = fixture(resources: resources, interactive: true)
+    let incoming = fixture(resources: resources, interactive: true)
+    let window = try show(outgoing.host)
+    let container = try XCTUnwrap(window.rootViewController?.view)
+    incoming.host.frame = outgoing.host.frame; container.addSubview(incoming.host)
+    defer { outgoing.coordinator.invalidate(); incoming.coordinator.invalidate(); window.isHidden = true }
+    await waitUntil(timeout: .seconds(6)) {
+      outgoing.coordinator.hasCanonicalPixels && incoming.coordinator.hasCanonicalPixels
+    }
+    let oldWeb = try XCTUnwrap(outgoing.coordinator.webView)
+    let newWeb = try XCTUnwrap(incoming.coordinator.webView)
+    let size = newWeb.bounds.size
+    // A live page landing replaces the physical host before the departed
+    // coordinator is either reused for preparation or reclaimed by its pool.
+    incoming.coordinator.mount(in: outgoing.host, physicalSize: size, isInteractive: true, priority: .currentPage)
+    XCTAssertTrue(outgoing.host.ownsSurface(newWeb))
+    XCTAssertFalse(oldWeb.isDescendant(of: outgoing.host))
+    if reuse {
+      let preparation = DocumentWebHost(); preparation.frame = incoming.host.frame
+      container.addSubview(preparation)
+      outgoing.coordinator.mount(in: preparation, physicalSize: size, isInteractive: false, priority: .neighbor)
+      XCTAssertTrue(preparation.ownsSurface(oldWeb))
+    } else { outgoing.coordinator.invalidate() }
+    XCTAssertTrue(outgoing.host.ownsSurface(newWeb), "A retiring coordinator can remove only its own physical WebKit")
+    XCTAssertTrue(newWeb.window === window, "The incoming live paper must remain in the native window")
+    XCTAssertTrue(incoming.coordinator.hasCanonicalPixels)
+    let rendered = try await newWeb.evaluateJavaScript("document.querySelector('#document').textContent.includes('A real document page')")
+    XCTAssertEqual(rendered as? Bool, true)
+  }
+
   func testLoadedPhysicalPaperDoesNotClaimAScrollButItsEditorStillScrolls() async throws {
     let resources = SceneRenderResources(profile: .interactive)
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
@@ -445,6 +485,57 @@ final class DocumentResourceLeaseTests: XCTestCase {
     XCTAssertLessThanOrEqual(peak.maximum, 2,
       "Every physical handoff retains the same document runtime and at most one reusable preparation executor")
     XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
+  }
+
+  func testDetachedOverviewHostsReleaseTheirPageDemandWithoutWaitingForDeallocation() async throws {
+    let resources = SceneRenderResources(profile: .interactive)
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
+      String(repeating: "A retained overview controller is not a visible reader.\n\n", count: 400))])
+    let state = DocumentStateJournal(id: document.id, actor: UUID())
+    let root = UIViewController()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene); window.rootViewController = root; window.makeKeyAndVisible()
+    let current = DocumentPhysicalPageCoordinator(), paper = DocumentWebHost()
+    let coordinators = (0..<4).map { _ in DocumentPhysicalPageCoordinator() }
+    let hosts = (0..<4).map { _ in DocumentWebHost() }
+    var ready: Set<Int> = [], failures: [String] = []
+    func present(_ coordinator: DocumentPhysicalPageCoordinator, host: DocumentWebHost, index: Int, thumbnail: Bool) {
+      let key = thumbnail ? index : -1
+      coordinator.update(.init(document: document, state: state, pageIndex: index,
+        isCurrent: !thumbnail, isVisible: true, isInteractive: !thumbnail, pageTurnActive: false,
+        onRenderReady: .init { if $0 { ready.insert(key) } else { ready.remove(key) } },
+        onPageLayout: { _ in }, onSourceChange: { _ in .targetMissing }, onStateChange: { _, _ in nil },
+        drafts: [], onDraftChange: { _ in }, onDraftDiscard: { _ in }, onLinkActivation: { _ in },
+        snapshotPixelWidth: thumbnail ? 256 : nil, onPreparationFailure: { failures.append(String(describing: $0)) }),
+        in: host, resources: resources)
+    }
+    defer { current.invalidate(); coordinators.forEach { $0.invalidate() }; window.isHidden = true; window.rootViewController = nil }
+    paper.frame = root.view.bounds; root.view.addSubview(paper)
+    present(current, host: paper, index: 0, thumbnail: false)
+    await waitUntil(timeout: .seconds(6), message: { "Current paper: \(failures)" }) { ready.contains(-1) }
+    for index in hosts.indices {
+      let host = hosts[index]; host.frame = .init(x: index * 140, y: 20, width: 130, height: 190)
+      root.view.addSubview(host); present(coordinators[index], host: host, index: index, thumbnail: true)
+    }
+    await waitUntil(timeout: .seconds(8), message: { "Overview: \(ready), \(failures)" }) { ready.count == 5 }
+    XCTAssertEqual(resources.rasterAdmission.pinnedCount, 4)
+    // UIKit keeps both these hosts and their coordinators alive after closing
+    // an overview. Native attachment, not deinit, ends their preparation demand.
+    hosts.forEach { $0.removeFromSuperview() }
+    current.invalidate(); ready.remove(-1); paper.removeFromSuperview()
+    await waitUntil(timeout: .seconds(3), message: { "Detached overview retained \(resources.rasterAdmission.pinnedCount) rasters, \(resources.activeWebSurfaceCount) WebKit, ready \(ready), \(failures)" }) {
+      ready.isEmpty && resources.rasterAdmission.pinnedCount == 0
+        && resources.activeWebSurfaceCount == 0 && resources.pendingWebRequestCount == 0
+    }
+    let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document)
+    XCTAssertTrue(source.retainedPageIndices.isEmpty)
+    XCTAssertEqual(source.pendingPreparationReaderCount, 0)
+    // Reattaching the same native host is a real demand again; no new SwiftUI
+    // identity or synthetic update is necessary to restore its exact page.
+    root.view.addSubview(hosts[1])
+    await waitUntil(timeout: .seconds(6), message: { "Reattached overview: \(ready), \(failures)" }) { ready == [1] }
+    XCTAssertTrue(hosts[1].hasSnapshot)
+    XCTAssertEqual(resources.rasterAdmission.pinnedCount, 1)
   }
 
   func testSixThumbnailsAndThreePhysicalPagesShareOneDocumentRuntime() async throws {

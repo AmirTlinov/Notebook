@@ -648,7 +648,7 @@ final class DocumentWebCoordinator: NSObject,
     self.host = host
     if let webView, previousHost !== host || !host.ownsSurface(webView) {
       host.install(webView, size: physicalSize)
-      if previousHost !== host { previousHost?.removeSurface() }
+      if previousHost !== host { previousHost?.removeSurface(ownedBy: webView) }
     }
     DocumentRenderRegistry.shared.mountRenderer(self, hostID: hostID)
     self.physicalSize = physicalSize
@@ -1011,7 +1011,7 @@ final class DocumentWebCoordinator: NSObject,
     webView?.stopLoading()
     webView?.configuration.userContentController.removeScriptMessageHandler(forName: "notebook")
     webView?.navigationDelegate = nil
-    host?.removeSurface()
+    if let retiringWeb { host?.removeSurface(ownedBy: retiringWeb) }
     webView = nil
     isReady = false
     frameTaskID = nil; frameTask?.cancel(); frameTask = nil
@@ -2019,6 +2019,7 @@ private enum DocumentWebViewFactory {
     private let contactObserver = DocumentContactObserver()
     var onContactChange: (Bool) -> Void = { _ in }
     var onSizeChange: () -> Void = { }
+    var onWindowChange: () -> Void = { }
     private var lastLaidOutSize = CGSize.zero
     func showFailure(_ message: String, retry: @escaping () -> Void) {
       removeLoading()
@@ -2154,6 +2155,12 @@ private enum DocumentWebViewFactory {
       return hit
     }
     func removeSurface() { viewport?.retire(); viewport?.removeFromSuperview(); viewport = nil }
+    func removeSurface(ownedBy web: WKWebView) {
+      // A page handoff can replace this host before the old coordinator is
+      // reused or reclaimed. Its historical host pointer owns no newer paper.
+      guard viewport?.webView === web else { return }
+      removeSurface()
+    }
     func ownsSurface(_ web: WKWebView) -> Bool {
       guard let viewport else { return false }
       return viewport.webView === web && web.superview === viewport
@@ -2187,6 +2194,10 @@ private enum DocumentWebViewFactory {
         lastLaidOutSize = bounds.size
         Task { @MainActor [weak self] in self?.onSizeChange() }
       }
+    }
+    override func didMoveToWindow() {
+      super.didMoveToWindow()
+      Task { @MainActor [weak self] in self?.onWindowChange() }
     }
   }
 
@@ -2286,7 +2297,14 @@ private enum DocumentWebViewFactory {
     func hasInteractiveSurface(_ web: WKWebView) -> Bool {
       inputEnabled && hasCanonicalSurface(web)
     }
-    func removeSurface() { web?.removeFromSuperview(); web = nil }
+    func removeSurface() {
+      if let web, web.superview === self { web.removeFromSuperview() }
+      web = nil
+    }
+    func removeSurface(ownedBy expected: WKWebView) {
+      guard web === expected else { return }
+      removeSurface()
+    }
   }
 
   private struct PlatformDocumentWebView: NSViewRepresentable {

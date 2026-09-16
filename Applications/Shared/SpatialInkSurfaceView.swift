@@ -35,6 +35,7 @@ final class SpatialInkSurfaceRegistry {
       init(_ owner: SpatialInkPhysicalOwner) { self.owner = owner }
     }
     private var physicalInkOwners: [SurfaceID: WeakOwner] = [:]
+    private var installedSceneSurfaces: Set<SurfaceID> = []
     private var sceneResources: SceneRenderResources?
     private var installedRootBoardID: UUID?
     private var installedFocusedCoverID: UUID?
@@ -51,7 +52,7 @@ final class SpatialInkSurfaceRegistry {
 
     @discardableResult
     func activateBoardInk(_ id: UUID, mount: UUID) -> Bool {
-      guard !sceneInkIsStopped, setSceneAllocationPriorities(rootBoardID: id,
+      guard !sceneInkIsStopped, installedSceneSurfaces.contains(.board(id)), setSceneAllocationPriorities(rootBoardID: id,
         focusedCoverID: id == installedRootBoardID ? installedFocusedCoverID : nil) else { return false }
       let changed = activeBoardInkID != id || activeBoardInkMount != mount
       activeBoardInkID = id; activeBoardInkMount = mount
@@ -67,18 +68,23 @@ final class SpatialInkSurfaceRegistry {
     /// One atomic role exchange for already allocated resources. It does not
     /// walk geometry, revoke an accepted contact or temporarily charge both
     /// boards as passive during a native parent/child transfer.
-    func installSceneAllocationPriorities(rootBoardID: UUID, focusedCoverID: UUID?) throws {
-      guard setSceneAllocationPriorities(rootBoardID: rootBoardID, focusedCoverID: focusedCoverID)
+    func installSceneAllocationPriorities(rootBoardID: UUID, focusedCoverID: UUID?, surfaces: Set<SurfaceID>) throws {
+      guard setSceneAllocationPriorities(rootBoardID: rootBoardID, focusedCoverID: focusedCoverID, surfaces: surfaces)
       else { throw SceneRenderError.resourceLimit }
+      installedSceneSurfaces = surfaces
       installedRootBoardID = rootBoardID
       installedFocusedCoverID = focusedCoverID
     }
 
-    private func setSceneAllocationPriorities(rootBoardID: UUID, focusedCoverID: UUID?) -> Bool {
+    private func setSceneAllocationPriorities(rootBoardID: UUID, focusedCoverID: UUID?, surfaces: Set<SurfaceID>? = nil) -> Bool {
       guard let sceneResources else { return physicalInkOwners.isEmpty }
       var priorities: [ScenePhysicalOwner: SceneAllocationPriority] = [:]
-      for (surface, entry) in physicalInkOwners {
-        guard let owner = entry.owner else { continue }
+      // Mounted updates govern only the installed cohort. They cannot demote
+      // an incoming input canvas during an await, or reclassify retiring input
+      // before replacement makes its release possible. Those actual bytes stay
+      // charged to their existing role until their last physical lease ends.
+      for surface in surfaces ?? installedSceneSurfaces {
+        guard let owner = physicalInkOwners[surface]?.owner else { continue }
         // An open physical paper is the next Pencil owner even between
         // contacts. Its existing backing must not consume the passive budget
         // a document needs to prepare that very paper's visible content.
@@ -124,12 +130,14 @@ final class SpatialInkSurfaceRegistry {
       let focusedCoverID = root.focusedItemID.flatMap { id in
         frame.workset(boardID: plan.rootBoardID).items.first { $0.id == id && $0.item.kind != .board }?.id
       }
-      let side = max(root.viewport.x, root.viewport.y)
-      let projected = BoardPortalProjection.renderViewport(viewport: .init(x: side, y: side))
+      // The same physical canvas covers the current screen and its portal at
+      // handoff. A different orientation is an ordinary staged layout change,
+      // not an extra screen's worth of native backing reserved by every board.
+      let projected = BoardPortalProjection.renderViewport(viewport: root.viewport)
       // The aspect calculation can round its limiting side down by one ULP
       // (834 * (512 / 834) < 512). Backing must contain the requested crop,
       // not make contact admission forgive an actually smaller native extent.
-      let boardSize = SpatialPoint(x: max(side, projected.x), y: max(side, projected.y))
+      let boardSize = SpatialPoint(x: max(root.viewport.x, projected.x), y: max(root.viewport.y, projected.y))
       var requested: [(SurfaceID, SpatialPoint, SpatialCamera)] = []
       for id in plan.inkBoardIDs.sorted() {
         guard let presence = plan.presentations[.board(id)] else { throw SceneRenderError.snapshotPending("native_ink_source") }
@@ -168,9 +176,8 @@ final class SpatialInkSurfaceRegistry {
           else {
             guard let id = surface.ownerID else { throw SceneRenderError.snapshotPending("native_ink_identity") }
             let identity: ScenePhysicalOwner = surface.kind == .board ? .boardInk(id) : .item(id)
-            let inputBoard = activeBoardInkID ?? installedRootBoardID ?? plan.rootBoardID
             let focused = focusedCoverID.map { surface == .cover($0) } ?? false
-            let priority: SceneAllocationPriority = surface == .board(inputBoard) || focused ? .input : .passive
+            let priority: SceneAllocationPriority = surface == .board(plan.rootBoardID) || focused ? .input : .passive
             guard let admission = resources.reservePhysicalOwners([identity], priority: priority) else { throw SceneRenderError.resourceLimit }
             owner = .init(surface: surface, size: size, camera: camera,
               registry: self, resources: resources, displayScale: displayScale, physical: admission)
@@ -250,6 +257,7 @@ final class SpatialInkSurfaceRegistry {
       let owners = physicalInkOwners.values.compactMap(\.owner)
       for owner in owners { await owner.stop() }
       physicalInkOwners.removeAll()
+      installedSceneSurfaces.removeAll()
       installedRootBoardID = nil; sceneResources = nil
       inkParking?.isHidden = true; inkParking?.rootViewController = nil; inkParking = nil
     }

@@ -827,9 +827,9 @@ final class SceneCompositionTiles {
               canCarry: canCarry, resources: resources, invalidatedTiles: invalidatedTiles)
             rasters = borrowed.tiles; liveRasters = borrowed.live
             phase = "raster_preflight"
-            guard borrowed.fits(borrowed.admission) else {
+            guard borrowed.prepareAdmission(resources) else {
               self?.recordBudgetFailure(phase: phase, plan: plan, attempt: attempt,
-                requestedBytes: borrowed.additionalBytes, admission: borrowed.admission)
+                requestedBytes: borrowed.additionalBytes, admission: resources.rasterAdmission)
               throw SceneRenderError.resourceLimit
             }
             #if os(iOS)
@@ -842,10 +842,9 @@ final class SceneCompositionTiles {
                 liveData: liveData, resources: resources, displayScale: displayScale)
               phase = "raster_native_preflight"
               allocation = .raster
-              let admission = resources.rasterAdmission
-              guard borrowed.fits(admission) else {
+              guard borrowed.prepareAdmission(resources) else {
                 self?.recordBudgetFailure(phase: phase, plan: plan, attempt: attempt,
-                  requestedBytes: borrowed.additionalBytes, admission: admission)
+                  requestedBytes: borrowed.additionalBytes, admission: resources.rasterAdmission)
                 throw SceneRenderError.resourceLimit
               }
             #endif
@@ -1219,11 +1218,11 @@ final class SceneCompositionTiles {
     let admission: SceneRasterAdmission
     let additionalBytes: Int
     let additionalCount: Int
-    func fits(_ admission: SceneRasterAdmission) -> Bool {
+    func prepareAdmission(_ resources: SceneRenderResources) -> Bool {
       // Old mounted fragments are already charged by their leases. Reserve
       // this replacement and its real scratch, not a speculative second copy
       // of every unrelated source in the scene.
-      admission.fits(additionalBytes: additionalBytes, additionalCount: additionalCount)
+      resources.prepareRasterAdmission(additionalBytes: additionalBytes, additionalCount: additionalCount)
     }
     func release() {
       for raster in tiles.values { raster.release() }

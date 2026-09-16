@@ -1054,6 +1054,31 @@ final class SceneCompositionTests: XCTestCase {
   }
 
   @MainActor
+  func testScenePreflightReclaimsAnOffscreenOfferBeforeRejectingTheIncomingBoard() async throws {
+    let fixture = Fixture(count: 32, side: 32, kind: .nativeText)
+    let resources = SceneRenderResources(byteLimit: 64 * 1024 * 1024, profile: .interactive)
+    let unused = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit - 1_024, priority: .passive))
+    var releases = 0
+    let offerID = UUID()
+    let owner = resources.registerReclamationOwner {
+      unused.isReleased ? [] : [.init(id: offerID, bytes: unused.byteCount, rasterCount: 0,
+        value: .neighbour, distance: 2, restorationMilliseconds: 1,
+        release: { releases += 1; unused.release(); return nil })]
+    }
+    let coordinator = SceneCompositionTiles(resources: resources)
+    defer { resources.unregisterReclamationOwner(owner); unused.release() }
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    coordinator.prepare(source: fixture.source(), presence: fixture.presence, frame: fixture.frame(), pinned: [])
+    try await waitUntil { coordinator.published != nil || coordinator.failure != nil }
+    XCTAssertEqual(releases, 1, "A preflight estimate must consult the actual resource owner, not bypass its disposable offers")
+    XCTAssertNil(coordinator.failure)
+    let incoming = try XCTUnwrap(coordinator.published)
+    XCTAssertEqual(incoming.rasters.count, incoming.plan.tiles.count)
+    XCTAssertFalse(incoming.rasters.isEmpty)
+    XCTAssertLessThanOrEqual(resources.rasterAdmission.pinnedBytes + resources.passiveReservedBytes, resources.passiveByteLimit)
+  }
+
+  @MainActor
   func testCancellationAfterTheFirstCandidateTileKeepsTheWholePreviousCohortAndLeases() async throws {
     let fixture = Fixture(count: 8, side: 32, kind: .nativeText)
     // Old complete coverage and the first unpublished candidate coexist. This

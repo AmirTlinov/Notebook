@@ -29,7 +29,8 @@ final class SpatialInkSceneLease {
       updates.allSatisfy({ $0.owner.canvas.spatialSourceGeneration == $0.generation
         && !registry.hasActiveAction(on: $0.owner.surface) && !registry.hasContact(on: $0.owner.surface)
         && ($0.frame?.isValid ?? true) }) else { throw CancellationError() }
-    try registry.installSceneAllocationPriorities(rootBoardID: rootBoardID, focusedCoverID: focusedCoverID)
+    try registry.installSceneAllocationPriorities(rootBoardID: rootBoardID, focusedCoverID: focusedCoverID,
+      surfaces: Set(owners.keys))
     // A new GPU basis and the native projection of those pixels are one
     // transaction. Camera motion itself only transforms the installed basis.
     CATransaction.begin(); CATransaction.setDisableActions(true)
