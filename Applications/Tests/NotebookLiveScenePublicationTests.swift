@@ -6,6 +6,30 @@ import XCTest
 
 @MainActor
 final class NotebookLiveScenePublicationTests: XCTestCase {
+  func testUnadmittedGraphicCannotCommitAnInvisibleMoveOrResize() async throws {
+    let fixture = try await fixture(), model = fixture.model
+    let target = CollaborationTarget(kind: .board, id: fixture.presence.boardID)
+    _ = try model.store.applyCollaborationAction(.init(summary: "New native object", expected: [
+      .init(target: target, revision: model.store.targetContentRevision(target: target))
+    ], operations: [.init(kind: .insertElement, target: target, id: "new-graphic", values: [
+      "kind": .string("graphic"), "source": .string(""), "graphic": try .encode(NotebookGraphic()),
+      "frame": try .encode(PageRect(x: 100, y: 100, width: 80, height: 80)), "worldOrigin": try .encode(WorldPoint.zero)
+    ])]), actor: UUID())
+    await model.reloadExternalChanges()?.value
+    let reference = EditableElementReference.spatial(boardID: target.id, elementID: "new-graphic")
+    XCTAssertNotNil(model.graphicElement(reference))
+    XCTAssertNil(model.presentedElement(reference, cohort: fixture.cohort))
+    let before = try model.store.targetContentRevision(target: target)
+    model.selectElement(reference)
+    XCTAssertNil(model.beginElementManipulation(reference, kind: .move))
+    XCTAssertNil(model.beginElementManipulation(reference, kind: .resize(.bottomTrailing)))
+    model.moveElementAccessibly(reference, by: .init(x: 80, y: 40))
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    XCTAssertNil(model.selectionSession.manipulation)
+    XCTAssertEqual(try model.store.targetContentRevision(target: target), before)
+    XCTAssertTrue(model.compositionTiles.published === fixture.cohort)
+  }
+
   func testAcceptedProgramStateInvalidatesAReadBeforeItsWriterCompletes() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("input-frontier-" + UUID().uuidString)
     let store = NotebookStore(root: root), actor = UUID()

@@ -4,6 +4,59 @@ import XCTest
 @testable import Notebook
 
 final class SceneCompositionSQLTests: XCTestCase {
+  func testPassiveConnectionDemotionIncludesItsMovableEndpointsAcrossPainterRuns() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let initial = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let workspace = try store.loadIndex(), before = try store.loadBoard(items: workspace.items)
+    var hierarchy = before
+    _ = hierarchy.moveItem(workspace.selectedItemID, in: initial.rootBoardID, to: .init(x: 100_000, y: 100_000), actor: actor)
+    let a = UUID().uuidString, b = "b", c = "c"
+    let nodes = [a, b, c]
+    for (index, id) in (nodes + ["ab", "bc", "ca"]).enumerated() {
+      let connection: NotebookGraphicConnection? = index < 3 ? nil : .init(
+        start: .init(point: .zero, binding: .init(elementID: nodes[index - 3].lowercased())),
+        end: .init(point: .zero, binding: .init(elementID: nodes[(index - 2) % 3].lowercased())), bend: 20)
+      let graphic = NotebookGraphic(shape: connection == nil ? .ellipse : .connector, label: id, connection: connection)
+      let element = SpatialElement(id: id, surface: .board(initial.rootBoardID), kind: .graphic,
+        frame: .init(x: Double(index % 3) * 100, y: 0, width: 60, height: 60),
+        worldOrigin: .zero, source: "", graphic: graphic, stamp: .init(counter: 0, actor: actor))
+      XCTAssertTrue(hierarchy.upsertElement(element, in: initial.rootBoardID, expected: nil, actor: actor))
+      let barrier = SpatialElement(id: "barrier-\(index)", surface: .board(initial.rootBoardID), kind: .nativeText,
+        frame: .init(x: 0, y: 0, width: 40, height: 40), worldOrigin: .init(x: 100_000, y: 100_000),
+        source: "Not adjacent", stamp: .init(counter: 0, actor: actor))
+      XCTAssertTrue(hierarchy.upsertElement(barrier, in: initial.rootBoardID, expected: nil, actor: actor))
+    }
+    _ = try store.saveBoardEdits(before: before, after: hierarchy)
+    let header = try store.workspaceHeader()
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    let presence = SessionPresence(boardID: initial.rootBoardID, mode: .board,
+      camera: .init(center: .init(x: 130, y: 30), scale: 1), viewport: .init(x: 400, y: 400))
+    let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil })
+    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
+    let plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
+      pinned: [], displayScale: 2, previous: nil)
+    let edge = try XCTUnwrap(plan.presentedOwners.first { $0.id == .element("ab") })
+    let endpoint = try XCTUnwrap(plan.presentedOwners.first { $0.id == .element(a) })
+    XCTAssertEqual(plan.vectorRuns.count, 6)
+    let reduced = try XCTUnwrap(plan.demoting(edge, presence: presence, frame: frame, displayScale: 2))
+    let demoted = Set(plan.presentedOwners).subtracting(reduced.presentedOwners)
+    XCTAssertEqual(Set(demoted.map(\.id)), [.element("ab"), .element(a), .element(b)])
+    XCTAssertLessThan(reduced.reductionPotential, plan.reductionPotential)
+    for owner in demoted {
+      let entry = try XCTUnwrap(index.paintEntry(id: owner.id, boardID: initial.rootBoardID))
+      XCTAssertEqual(reduced.bands.filter { $0.plane == owner.plane && $0.range.contains(entry) }.count, 1)
+    }
+    let pinned = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
+      pinned: [.element(a)], displayScale: 2, previous: nil)
+    XCTAssertNil(try pinned.demoting(edge, presence: presence, frame: frame, displayScale: 2),
+      "A node's pin also protects the live connection that must follow its draft")
+    let nodeOnly = try XCTUnwrap(plan.demoting(endpoint, presence: presence, frame: frame, displayScale: 2))
+    XCTAssertTrue(nodeOnly.allowsLive(.element("ab"), in: endpoint.plane),
+      "A passive endpoint need not flatten its editable connection or the entire cyclic graph")
+  }
+
   func testFragmentedNativeRunsCountOnlyPopulatedRasterBandsAndKeepManyNativePins() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

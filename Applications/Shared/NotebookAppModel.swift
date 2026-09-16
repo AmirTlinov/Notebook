@@ -2452,6 +2452,11 @@ final class NotebookAppModel {
   /// reusable element ID. No late lift can commit a superseded contact.
   func beginElementManipulation(_ reference: EditableElementReference,
     kind: NotebookElementManipulation.Kind) -> UUID? {
+    // A passive raster is selectable, but it is not a live manipulation owner.
+    // Selection requests its ordinary scene admission; do not commit an
+    // invisible drag while the installed cohort still owns baked pixels.
+    if case .spatial = reference, graphicElement(reference) != nil,
+      let cohort = compositionTiles.published, presentedElement(reference, cohort: cohort) == nil { return nil }
     guard selectionSession.element == reference, inputGate.beginFingerSequence() != nil,
       let geometry = elementGeometry(reference) else { return nil }
     let connection = graphicElement(reference)?.connection

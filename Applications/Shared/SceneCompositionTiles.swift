@@ -66,6 +66,45 @@ struct SceneCompositionVectorRun: Identifiable, Equatable, Sendable {
   let plane: SceneCompositionPlane
   var owners: [SceneCompositionLiveOwner]
   var id: SceneCompositionLiveOwner { owners[0] }
+
+  /// A passive connection cannot keep an independently movable endpoint: its
+  /// baked pixels would no longer follow the node. Demotion therefore closes
+  /// over endpoint runs, not over every connected edge in the diagram. A live
+  /// connection may still point to a passive (non-manipulable) node.
+  static func demotionClosure(of owner: SceneCompositionLiveOwner, in runs: [Self],
+    frame: WorkspaceSceneFrame, protected: Set<SceneCompositionLiveOwner>) -> Set<SceneCompositionLiveOwner>? {
+    struct Address: Hashable {
+      let plane: SceneCompositionPlane
+      let id: String
+      init(plane: SceneCompositionPlane, id: String) {
+        self.plane = plane; self.id = UUID(uuidString: id)?.uuidString.lowercased() ?? id
+      }
+    }
+    var membership: [Address: Int] = [:]
+    for (index, run) in runs.enumerated() {
+      for owner in run.owners {
+        if case .element(let id) = owner.id { membership[.init(plane: owner.plane, id: id)] = index }
+      }
+    }
+    guard case .element(let id) = owner.id,
+      let first = membership[.init(plane: owner.plane, id: id)] else { return nil }
+    var pending = [first], visited = Set<Int>(), result = Set<SceneCompositionLiveOwner>()
+    while let index = pending.popLast() {
+      guard visited.insert(index).inserted else { continue }
+      let run = runs[index]
+      guard protected.isDisjoint(with: run.owners) else { return nil }
+      result.formUnion(run.owners)
+      for owner in run.owners {
+        guard case .element(let id) = owner.id else { continue }
+        for binding in frame.index.element(id: id, boardID: owner.plane.boardID)?.graphic?.connection?.bindings ?? [] {
+          if let endpointRun = membership[.init(plane: owner.plane, id: binding.elementID)], !visited.contains(endpointRun) {
+            pending.append(endpointRun)
+          }
+        }
+      }
+    }
+    return result
+  }
 }
 
 struct SceneCompositionBand: Identifiable, Sendable {
@@ -297,8 +336,10 @@ struct SceneCompositionPlan: Sendable {
         // Fragmented native runs can require too many intervening raster
         // bands. Flatten an optional run, never lose its source or evict a
         // program merely to retain more optional vector detail.
-        if let index = vectorRuns.lastIndex(where: { protected.isDisjoint(with: $0.owners) }) {
-          vectorRuns.remove(at: index)
+        if let demoted = vectorRuns.reversed().lazy.compactMap({ run in
+          SceneCompositionVectorRun.demotionClosure(of: run.id, in: vectorRuns, frame: frame, protected: protected)
+        }).first {
+          vectorRuns.removeAll { !demoted.isDisjoint(with: $0.owners) }
         } else if let index = owners.lastIndex(where: { !protected.contains($0) }) {
           owners.remove(at: index)
         } else { throw error }
@@ -314,8 +355,8 @@ struct SceneCompositionPlan: Sendable {
     guard !protectedOwners.contains(owner) else { return nil }
     var owners = liveOwners, vectors = vectorRuns
     if let index = owners.firstIndex(of: owner) { owners.remove(at: index) }
-    else if let index = vectors.firstIndex(where: { $0.owners.contains(owner) }),
-      protectedOwners.isDisjoint(with: vectors[index].owners) { vectors.remove(at: index) }
+    else if let demoted = SceneCompositionVectorRun.demotionClosure(of: owner, in: vectors,
+      frame: frame, protected: protectedOwners) { vectors.removeAll { !demoted.isDisjoint(with: $0.owners) } }
     else { return nil }
     do {
       let result = try Self.assemble(revision: revision, workspaceID: workspaceID,
