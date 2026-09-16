@@ -222,6 +222,7 @@ final class DocumentProgramOwner {
       guard let self, let runtime else { return }
       defer {
         if jobs[block]?.id == id { jobs[block] = nil; retiringIDs.remove(block) }
+        if runtimes[block] === runtime { runtime.cancelReturnReclamation() }
         if !stopped { reconcile(); onChange() }
       }
       guard let context = self.context else { return }

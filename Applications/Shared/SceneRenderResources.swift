@@ -187,6 +187,12 @@ final class WebSurfaceLease {
     guard !releaseRequested, let resources else { return }
     resources.setIdleWebReclamation(id, reclaim: reclaim)
   }
+  /// A checkpoint may refuse retirement. Keep the real slot occupied, but
+  /// finish this attempt so another idle owner can satisfy foreground demand.
+  func cancelIdleReclamation() {
+    guard !releaseRequested else { return }
+    resources?.cancelIdleWebReclamation(id)
+  }
   /// Submitted source preparation may outlive its physical mount. Its callback
   /// returns this borrow before another WebKit may consume the same slot.
   func borrow() throws -> WebSurfaceBorrow {
@@ -359,6 +365,12 @@ final class SceneRenderResources {
       idleWebSurfaces[id] = .init(order: waiterClock, reclaim: reclaim)
       admitWaiters()
     } else { idleWebSurfaces[id] = nil }
+  }
+
+  fileprivate func cancelIdleWebReclamation(_ id: UUID) {
+    idleWebSurfaces[id] = nil
+    guard retiringIdleWebSurfaces.remove(id) != nil else { return }
+    admitWaiters()
   }
 
   /// Reading offers does not release anything. The planner addresses one

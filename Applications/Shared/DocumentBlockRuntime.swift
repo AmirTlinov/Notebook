@@ -68,6 +68,8 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     lease?.offerIdleReclamation(reclaim)
   }
 
+  func cancelReturnReclamation() { lease?.cancelIdleReclamation() }
+
   func start(priority: WebPriority) {
     guard !stopped else { return }
     if let lease { lease.updatePriority(priority); requestedPriority = priority; return }

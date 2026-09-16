@@ -903,6 +903,34 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertEqual(fixture.value("program"), .object(["count": .number(1)]))
   }
 
+  func testRefusedReturnCheckpointDoesNotBlockReclaimingAnotherIdleSurface() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
+      html: "<button>Unsaved return program</button>", javaScript: "notebook.commit({count:1})",
+      initialState: .object(["count": .number(0)]), height: 100)])
+    let resources = SceneRenderResources(maximumWebSurfaces: 3)
+    let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: resources)
+    let lifetime = owner.retainOpenDocument()
+    defer { fixture.close(); lifetime.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.web(in: 0) != nil }
+    let original = try XCTUnwrap(fixture.web(in: 0))
+    var attempted = false
+    fixture.acceptsCheckpoints = false
+    fixture.onCheckpoint = { _ in attempted = true }
+    lifetime.parkForReturn(); fixture.retirePresentation(0)
+    await owner.observePendingPresentationWork()
+    let first = try await resources.acquireWebSurface(priority: .input)
+    defer { first.release() }
+    var admitted: WebSurfaceLease?
+    let request = Task { @MainActor in admitted = try await resources.acquireWebSurface(priority: .input) }
+    defer { request.cancel(); admitted?.release() }
+    try await wait(message: { "attempted=\(attempted) " + fixture.diagnostics }) { attempted && admitted != nil }
+    XCTAssertFalse(fixture.checkpoints.contains("program"), "Rejected state is not permission to destroy the running program")
+    first.release(); admitted?.release()
+    lifetime.resume(); fixture.restorePresentation(0)
+    try await wait(message: { fixture.diagnostics }) { fixture.web(in: 0) === original && fixture.ready[0] == true }
+  }
+
   func testClosingFullPresentationRetiresPaperWhileThumbnailKeepsItsPicture() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
       "# One open document\n\nA remaining thumbnail owns its picture, not the closed document runtime.")])
@@ -1469,6 +1497,7 @@ private final class ProgramFixture {
   var checkpoints: Set<String> = []
   var checkpointValues: [String: JSONValue] = [:]
   var onCheckpoint: (String) async -> Void = { _ in }
+  var acceptsCheckpoints = true
   var preparationErrors: [String] = []
   var diagnostics: String { "ready=\(ready) errors=\(preparationErrors) web=\(resources.activeWebSurfaceCount) queued=\(resources.pendingWebRequestCount) held=\(resources.rasterAdmission.heldBytes) state=\(state.records.map { ($0.id, $0.value) })" }
   var currentToken: String { DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndices[selected]) }
@@ -1539,6 +1568,7 @@ private final class ProgramFixture {
         onStateCheckpoint: { [weak self] block, value, version in
           guard let self, document.sourceVersion(blockID: block) == version, self.value(block) == value else { return false }
           await onCheckpoint(block)
+          guard acceptsCheckpoints else { return false }
           checkpoints.insert(block); checkpointValues[block] = value; return true
         }, measurements: measurements), in: hosts[index], resources: resources)
     }
