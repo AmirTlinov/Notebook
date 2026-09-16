@@ -181,7 +181,7 @@ final class SpatialInkSurfaceRegistry {
             let identity: ScenePhysicalOwner = surface.kind == .board ? .boardInk(id) : .item(id)
             let focused = focusedCoverID.map { surface == .cover($0) } ?? false
             let priority: SceneAllocationPriority = surface == .board(plan.rootBoardID) || focused ? .input : .passive
-            guard let admission = resources.reservePhysicalOwners([identity], priority: priority) else { throw SceneRenderError.resourceLimit }
+            let admission = resources.reservePhysicalOwners([identity], priority: priority)
             owner = .init(surface: surface, size: size, camera: camera,
               registry: self, resources: resources, displayScale: displayScale, physical: admission)
             created.append(owner)

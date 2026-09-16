@@ -398,6 +398,15 @@ actor SceneCompositionSource {
   /// An unfinished cursor is unknown, never absence. At most two 32-entry
   /// pages per tile are inspected; dense sources keep the ordinary painter.
   func tilesRequiringPaint(_ tiles: [SceneCompositionTileKey]) throws -> [SceneCompositionTileKey] {
+    if case .sql(let store) = origin {
+      // All cells belong to one source cut. Nested addressed reads borrow this
+      // connection instead of reopening SQLite for each cell and painter band.
+      return try checked(store) { _ in try populatedTiles(tiles) }
+    }
+    return try populatedTiles(tiles)
+  }
+
+  private func populatedTiles(_ tiles: [SceneCompositionTileKey]) throws -> [SceneCompositionTileKey] {
     struct Probe: Hashable {
       let plane: SceneCompositionPlane
       let tile: CompositionTile

@@ -396,12 +396,12 @@ final class SpatialInkHandoffTests: XCTestCase {
     XCTAssertTrue(saved)
   }
 
-  func testActualFullOwnerAdmissionRejectsBeforeReplacingTheOldCohort() async throws {
+  func testIncomingBoardDoesNotWaitForRetainedOutgoingOwnerIdentities() async throws {
     let fixture = try await Fixture.make(viewport: .init(x: 384, y: 384))
     addTeardownBlock { await fixture.close() }
     let old = fixture.cohort, count = fixture.resources.activePhysicalOwnerCount
     let spareIDs = Set((0..<(8 - count)).map { _ in ScenePhysicalOwner.item(UUID()) })
-    let occupied = try XCTUnwrap(fixture.resources.reservePhysicalOwners(spareIDs))
+    let occupied = fixture.resources.reservePhysicalOwners(spareIDs)
     defer { occupied.release() }
     XCTAssertEqual(fixture.resources.activePhysicalOwnerCount, 8)
     let newID = UUID(), actor = fixture.actor
@@ -416,10 +416,17 @@ final class SpatialInkHandoffTests: XCTestCase {
     let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: .init(stamp: stamp))
     fixture.tiles.prepare(source: source, presence: presence, frame: frame, pinned: [])
     try await Self.waitUntil { !fixture.tiles.isPreparing }
-    XCTAssertNotNil(fixture.tiles.failure, "An actual full eight-owner boundary remains explicit until static demotion is implemented")
-    XCTAssertTrue(fixture.tiles.published === old, "Admission failure retains the complete old picture, never a nil cover")
-    XCTAssertNil(fixture.registry.canvas(for: .board(newID)))
-    XCTAssertEqual(fixture.resources.activePhysicalOwnerCount, 8)
+    XCTAssertNil(fixture.tiles.failure, "Retained identities consume no backing and cannot block a camera destination")
+    let incoming = try XCTUnwrap(fixture.tiles.published)
+    XCTAssertFalse(incoming === old)
+    XCTAssertEqual(incoming.plan.rootBoardID, newID)
+    let canvas = try XCTUnwrap(incoming.nativeInk.owners[.board(newID)]?.canvas)
+    XCTAssertTrue(canvas.isStableFramePresented)
+    XCTAssertEqual(canvas.spatialDrawableAccountedBytes, 0)
+    XCTAssertEqual(fixture.resources.activePhysicalOwnerCount, 9,
+      "The outgoing frame stays retained until its real mount releases it")
+    XCTAssertTrue(old.nativeInk.owners.values.allSatisfy { $0.canvas.isStableFramePresented })
+    XCTAssertLessThanOrEqual(fixture.resources.residentBytes + fixture.resources.reservedBytes, fixture.resources.byteLimit)
   }
 
   func testMemorylessAttachmentPreservesFourSamplePenAndEraserAndDrainsOnStop() async throws {

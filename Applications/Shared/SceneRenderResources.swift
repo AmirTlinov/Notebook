@@ -425,10 +425,10 @@ final class SceneRenderResources {
   var activePhysicalOwnerCount: Int { physicalOwners.count }
   var retainedPhysicalOwners: Set<ScenePhysicalOwner> { Set(physicalOwners.keys) }
 
-  /// Candidate and shown cohorts share IDs, not two independent eight-owner
-  /// quotas. Admission precedes construction of a new native physical canvas.
-  func reservePhysicalOwners(_ owners: Set<ScenePhysicalOwner>, priority: SceneAllocationPriority = .passive) -> ScenePhysicalOwnerLease? {
-    guard Set(physicalOwners.keys).union(owners).count <= SceneCompositionPlan.maximumLiveOwners else { return nil }
+  /// Identity retention is not an allocation. The planner bounds each workset;
+  /// old and incoming worksets must overlap until their native handoff finishes.
+  /// Actual backing is still admitted by reserveDerivedBytes before allocation.
+  func reservePhysicalOwners(_ owners: Set<ScenePhysicalOwner>, priority: SceneAllocationPriority = .passive) -> ScenePhysicalOwnerLease {
     for owner in owners {
       if physicalOwners[owner] != nil { physicalOwners[owner]?.retains += 1 }
       else { physicalOwners[owner] = .init(retains: 1, priority: priority) }

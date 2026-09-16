@@ -139,7 +139,7 @@ struct SpatialWorkspaceView: View {
 
           BoardPanView(
             isEnabled: (presence.mode == .board || presence.mode == .cover)
-              && cameraGesture == nil && !settling && !model.isPointing,
+              && cameraGesture == nil && !model.isPointing,
             itemFrames: rendered.map { item in
               let center = presence.camera.worldToScreen(
                 item.center,
@@ -170,6 +170,7 @@ struct SpatialWorkspaceView: View {
             },
             onBegan: {
               referencePageResolution.cancel()
+              interruptSettlementForInput()
               model.cancelElementManipulation()
               panStart = presenceForNewContact(presence)
             },

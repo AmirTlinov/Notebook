@@ -1,9 +1,50 @@
 import UIKit
+import SwiftUI
 import NotebookCore
 import XCTest
 @testable import Notebook
 
 final class NotebookInputTests: XCTestCase {
+  @MainActor
+  func testBoardPanInterruptsMountedSettlementWithoutWaitingForItsEnd() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("pan-settlement-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: scene)
+    let host = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
+    let board = try XCTUnwrap(model.presence?.boardID)
+    model.updatePresence(.init(boardID: board, mode: .board, camera: .init(scale: 0.3),
+      viewport: .init(x: window.bounds.width, y: window.bounds.height)), settled: true)
+    window.rootViewController = host; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    let deadline = ContinuousClock.now + .seconds(5)
+    while model.presentationPlayer.moveCamera == nil, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let move = try XCTUnwrap(model.presentationPlayer.moveCamera)
+    XCTAssertTrue(move(.init(center: .init(x: 300, y: 0), scale: 0.3), 3))
+    try await Task.sleep(for: .milliseconds(100))
+    let pan = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }
+      .first { $0.delegate is BoardPanView.Coordinator })
+    let owner = try XCTUnwrap(pan.delegate as? BoardPanView.Coordinator)
+    XCTAssertTrue(pan.isEnabled, "A spring is not a reason to discard the next finger contact")
+    host.view.layoutIfNeeded()
+    let finger = InputTouch(); finger.inputType = .direct
+    finger.point = .init(x: window.bounds.midX, y: window.bounds.midY)
+    finger.sourceView = window.hitTest(finger.point, with: nil)
+    XCTAssertTrue(owner.gestureRecognizer(pan, shouldReceive: finger))
+    let start = try XCTUnwrap(model.presence)
+    owner.receivePan(state: .began, translation: .init(x: 40, y: 0))
+    let moved = try XCTUnwrap(model.presence)
+    XCTAssertEqual(start.camera.center.delta(to: moved.camera.center).x, -40 / start.camera.scale, accuracy: 0.001)
+    try await Task.sleep(for: .milliseconds(150))
+    XCTAssertEqual(model.presence?.camera, moved.camera, "The interrupted spring cannot overwrite the finger's camera")
+    owner.receivePan(state: .ended, translation: .init(x: 40, y: 0))
+  }
+
   private func acceptedAction(_ tool: SpatialInkTool, _ color: SpatialInkColor, _ spans: [SpatialInkSpan]) -> SpatialInkAction {
     .init(tool: tool, color: color, spans: spans, stamp: .init(counter: 1, actor: UUID()))
   }

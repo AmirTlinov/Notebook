@@ -4,6 +4,41 @@ import XCTest
 @testable import Notebook
 
 final class SceneCompositionSQLTests: XCTestCase {
+  func testSQLTileBatchKeepsAddressedCoverageAndRejectsAnObsoleteCut() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let initial = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let workspace = try store.loadIndex(), original = try store.loadBoard(items: workspace.items)
+    var hierarchy = original
+    let element = SpatialElement(id: "visible", surface: .board(initial.rootBoardID), kind: .nativeText,
+      frame: .init(x: 0, y: 0, width: 32, height: 32), worldOrigin: .zero, source: "Visible",
+      stamp: .init(counter: 0, actor: actor))
+    XCTAssertTrue(hierarchy.upsertElement(element, in: initial.rootBoardID, expected: nil, actor: actor))
+    _ = try store.saveBoardEdits(before: original, after: hierarchy)
+    let header = try store.workspaceHeader()
+    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
+    let origin = try XCTUnwrap(CompositionTile(containing: .zero, level: 0))
+    let keys = try (-8..<8).flatMap { row in try (-8..<8).map { column in
+      SceneCompositionTileKey(workspaceID: header.workspaceID, revision: header.cursor,
+        plane: .board(initial.rootBoardID), tile: try XCTUnwrap(origin.offset(columns: column, rows: row)),
+        range: .whole(.elements), presentationScale: 1, viewportWidth: 834, viewportHeight: 1194,
+        focusedItemID: nil, mode: WorkspaceSemanticMode.board.rawValue)
+    } }
+    let start = ContinuousClock.now
+    let populated = try await source.tilesRequiringPaint(keys)
+    print("SQL tile batch: 256 cells, \(start.duration(to: .now))")
+    XCTAssertEqual(populated, keys.filter { $0.tile == origin })
+    var changed = hierarchy
+    XCTAssertTrue(changed.moveItem(workspace.selectedItemID, in: initial.rootBoardID,
+      to: .init(x: 1_024, y: 0), actor: actor))
+    _ = try store.saveBoardEdits(before: hierarchy, after: changed)
+    do {
+      _ = try await source.tilesRequiringPaint(keys)
+      XCTFail("A completed batch cannot certify a different durable cut")
+    } catch NotebookStorageError.transactionConflict { }
+  }
+
   @MainActor
   func testFocusedMaterialDoesNotAllocateItsInvisibleParentUnderPassivePressure() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
