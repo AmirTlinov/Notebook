@@ -1,0 +1,21 @@
+DEFINE SCHEMA
+
+    RECORD TYPE NotebookDelivery (
+        "format" INT64,
+        "body" BYTES,
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator",
+        GRANT WRITE TO "_creator"
+    );
+
+    RECORD TYPE NotebookBlob (
+        "format" INT64,
+        "hash" STRING,
+        "offset" INT64,
+        "total" INT64,
+        "digest" STRING,
+        "asset" ASSET,
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator",
+        GRANT WRITE TO "_creator"
+    );

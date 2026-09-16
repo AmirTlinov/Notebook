@@ -828,6 +828,8 @@ final class NotebookAppModel {
   private var lastSettledPresenceEnvelope: PresenceEnvelope?
   private var presenceSequenceTracker = PresenceSequenceTracker()
   private let startsNearbySync: Bool
+  var cloudStatus = NotebookCloudStatus.off
+  @ObservationIgnored private var cloudSync: NotebookCloudSync?
   @ObservationIgnored private var sync: NearbySync?
   private(set) var pairingState = NotebookPairingState.idle
   private(set) var pairedPeers: [NotebookTransportIdentity] = []
@@ -934,6 +936,7 @@ final class NotebookAppModel {
     persistence.onCommit = { [weak self] owner in
       guard self?.isStopped == false else { return }
       self?.sync?.notifyDurableChanges()
+      if let cloud = self?.cloudSync { Task { await cloud.notifyLocalChanges() } }
       switch owner {
       case .page, .document, .documentState, .board, .spatialInk, .nativeText, .elementState:
         self?.refreshCommittedHeader()
@@ -1019,19 +1022,23 @@ final class NotebookAppModel {
     guard sync == nil else { return }
     let header = try await persistence.submit { try $0.workspaceHeader() }
     let writer = persistence
+    let source = try await writer.submit { [actorID] in try $0.replicationSource(deviceID: actorID) }
     let storage = NotebookTransportStorage(
+      journalGeneration: source.generation,
       changes: { cursor, limit in try await writer.submit { try $0.changeJournal(after: cursor, limit: limit) } },
-      incomingCursor: { peer in try await writer.submit { try $0.peerCursor(peerID: peer, direction: .incoming) } },
+      incomingCursor: { peer in try await writer.submit { try $0.admitReplicationSource(peer) } },
       acknowledgePeer: { peer, cursor in try await writer.submit { try $0.acknowledgePeer(peerID: peer, through: cursor) } },
       blobSize: { hash in try await writer.submit { try $0.blobSize(hash: hash) } },
       readBlobChunk: { hash, offset, count in try await writer.submit { try $0.readBlobChunk(hash: hash, offset: offset, maxBytes: count) } },
       stageBlob: { file, hash, count in try await writer.submit { try $0.stageBlob(file: file, expectedHash: hash, byteCount: count) } },
-      missingBlobHashes: { change, limit, after in
-        try await writer.submit { try $0.missingBlobHashes(for: change, limit: limit, after: after) }
+      missingBlobHashes: { delivery, limit, after in
+        try await writer.submit {
+          try $0.deliveryNeedsContent(delivery) ? $0.missingBlobHashes(for: delivery.change, limit: limit, after: after) : []
+        }
       },
-      applyRemoteChange: { [weak self] change, peer in
+      applyRemoteChange: { [weak self] delivery in
         guard let self else { throw NotebookTransportError.disconnected }
-        return try await self.applyDurablePeerChange(change, peerID: peer)
+        return try await self.applyDurableDelivery(delivery)
       })
     #if os(iOS)
       let role = NearbySync.Role.iPadConnector
@@ -1072,6 +1079,10 @@ final class NotebookAppModel {
   /// Called only after the transport has authenticated the workspace and
   /// staged every referenced hash. Completion is the durable ACK boundary.
   func applyDurablePeerChange(_ change: NotebookDurableChange, peerID: UUID) async throws -> UInt64 {
+    try await applyDurableDelivery(.init(source: .init(deviceID: peerID, generation: peerID), change: change))
+  }
+
+  func applyDurableDelivery(_ delivery: NotebookReplicationDelivery, cloudAccount: String? = nil) async throws -> UInt64 {
     guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
     // Wait outside the writer so the accepted Pencil tail and contact release
     // can finish. Presence and transfer credits keep their independent lane.
@@ -1081,12 +1092,41 @@ final class NotebookAppModel {
     }
     guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
     try Task.checkCancellation()
-    let cursor = try await persistence.submit(publishesChanges: true) {
-      try $0.applyRemoteChange(change, peerID: peerID)
+    let cursor = try await persistence.submit(publishesChanges: true) { store in
+      if let cloudAccount {
+        return try store.applyCloudDelivery(delivery, account: cloudAccount)
+      }
+      return try store.applyDelivery(delivery)
     }
     reloadExternalChanges()
     return cursor
   }
+
+  private func prepareCloudSync() async {
+    do {
+      let writer = persistence, actor = actorID
+      let identity = try await writer.submit { store in
+        try store.prepareCloudStorage()
+        return try (store.replicationSource(deviceID: actor), store.workspaceHeader().workspaceID)
+      }
+      let cloud = NotebookCloudSync(store: store, writer: writer, source: identity.0, workspaceID: identity.1,
+        apply: { [weak self] delivery, account in
+          guard let self else { throw NotebookTransportError.disconnected }
+          _ = try await self.applyDurableDelivery(delivery, cloudAccount: account)
+        }, report: { [weak self] status in await self?.acceptCloudStatus(status) })
+      cloudSync = cloud
+      // Account/network discovery must not hold up LAN or local startup.
+      Task { await cloud.resume() }
+    } catch { cloudStatus = .init(enabled: false, message: error.localizedDescription) }
+  }
+
+  private func acceptCloudStatus(_ value: NotebookCloudStatus) { cloudStatus = value }
+  func enableCloud() async {
+    if cloudSync == nil { await prepareCloudSync() }
+    await cloudSync?.enable()
+  }
+  func disableCloud() async { await cloudSync?.disable() }
+  func syncCloudNow() async { await cloudSync?.syncNow() }
 
   func createPairingInvitation() async throws -> String {
     guard !isClosing, let sync else { throw NotebookTransportError.storageUnavailable }
@@ -1126,6 +1166,7 @@ final class NotebookAppModel {
   isolated deinit {
     if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
     sync?.stop()
+    if let cloudSync { Task { await cloudSync.stop() } }
     #if os(macOS)
       commandServer?.stop()
     #endif
@@ -1238,6 +1279,7 @@ final class NotebookAppModel {
         chat.dictation.setForeground(UIApplication.shared.applicationState == .active)
       #endif
       if startsNearbySync {
+        await prepareCloudSync()
         try await startTrustedSync()
         #if os(macOS)
           await startCodexSidecar()
@@ -4034,6 +4076,7 @@ final class NotebookAppModel {
       documentShellPreparation?.stop(); documentShellPreparation = nil
       presentationPlayer.interrupt("closing")
       if let startupTask { await startupTask.value }
+      await cloudSync?.stop()
       if let sync, !(await sync.stopAndDrainTrust()) { return false }
       sync = nil
       #if os(macOS)

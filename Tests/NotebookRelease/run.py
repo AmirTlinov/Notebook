@@ -35,10 +35,16 @@ class PairCLI(preview.FakeCLI):
         self.mac_info = {"CFBundleIdentifier": release.MAC_BUNDLE, "LSUIElement": True,
             "NotebookScriptService": "com.amirtlinov.notebook.script-service",
             "NotebookMarkupService": "com.amirtlinov.notebook.markup-service",
+            "NotebookCloudContainer": release.CLOUD_CONTAINER,
             "CFBundlePackageType": "APPL", "DTPlatformName": "macosx", "CFBundleExecutable": "Notebook",
             "CFBundleShortVersionString": self.info["CFBundleShortVersionString"],
             "CFBundleVersion": self.info["CFBundleVersion"], "LSMinimumSystemVersion": "27.0"}
-        self.mac_entitlements = {"com.apple.security.get-task-allow": True}
+        self.mac_entitlements = {"com.apple.security.get-task-allow": True, **release.cloud_entitlements(mac=True),
+            "com.apple.application-identifier": release.TEAM + "." + release.MAC_BUNDLE,
+            "com.apple.developer.team-identifier": release.TEAM}
+        self.mac_profile = {**self.profile, "Platform": ["OSX"], "ProvisionedDevices": ["00006050-0123456789ABCDEF"],
+            "Entitlements": {**release.cloud_entitlements(mac=True), "com.apple.application-identifier": release.TEAM + "." + release.MAC_BUNDLE,
+                             "com.apple.developer.team-identifier": release.TEAM}}
         self.mac_signature_team = release.TEAM
         self.mac_platform = "MACOS"
         self.mac_architectures = "arm64"
@@ -79,6 +85,7 @@ class PairCLI(preview.FakeCLI):
                 (self.mac / "Contents/MacOS").mkdir(parents=True)
                 (self.mac / "Contents/Info.plist").write_bytes(plistlib.dumps(self.mac_info))
                 (self.mac / "Contents/MacOS/Notebook").write_bytes(b"fixture Mac executable")
+                (self.mac / "Contents/embedded.provisionprofile").write_bytes(b"fixture signed Mac profile")
                 if not self.missing_xpc:
                     for name, bundle_id, resource in (
                         ("NotebookScriptService", self.mac_info["NotebookScriptService"], "notebook-sdk.js"),
@@ -118,6 +125,14 @@ class PairCLI(preview.FakeCLI):
                     (self.verification / "core.log").write_text("changed proof\n")
                 if self.mutate_ipad:
                     (self.app / "Notebook").write_bytes(b"changed iPad after signature")
+        elif label == "mac-provisioning-profile":
+            output = plistlib.dumps(self.mac_profile)
+        elif label == "mac-provisioning-device":
+            output = json.dumps({"SPHardwareDataType": [{"platform_UUID": "11111111-2222-3333-4444-555555555555",
+                "provisioning_UDID": "00006050-0123456789ABCDEF"}]}).encode()
+        elif label == "mac-signature-certificates":
+            prefix = next(arg.split("=", 1)[1] for arg in argv if str(arg).startswith("--extract-certificates="))
+            Path(prefix + "0").write_bytes(self.certificate)
         elif label == "mac-signature-verify":
             exit_code = 1 if self.fail_signature else 0
         elif label.startswith("image-compiler-"):
@@ -459,6 +474,30 @@ class ReleaseTests(unittest.TestCase):
     def test_mac_foreign_keychain_is_refused(self):
         self.cli.mac_entitlements["keychain-access-groups"] = [release.APP_ID]
         self.refused("чужую идентичность Keychain")
+
+    def test_mac_profile_without_cloud_container_is_refused(self):
+        self.cli.mac_profile["Entitlements"]["com.apple.developer.icloud-container-identifiers"] = ["iCloud.foreign"]
+        self.refused("Provisioning не разрешает")
+
+    def test_mac_cloud_signature_requires_an_explicit_app_identity(self):
+        del self.cli.mac_entitlements["com.apple.application-identifier"]
+        self.refused("чужую идентичность Keychain")
+
+    def test_mac_cloud_signature_requires_the_entitled_team(self):
+        del self.cli.mac_entitlements["com.apple.developer.team-identifier"]
+        self.refused("чужую идентичность Keychain")
+
+    def test_mac_profile_for_another_device_is_refused(self):
+        self.cli.mac_profile["ProvisionedDevices"] = ["00000000-0000-0000-0000-000000000000"]
+        self.refused("не разрешает этот компьютер")
+
+    def test_mac_hardware_uuid_cannot_replace_the_provisioning_udid(self):
+        self.cli.mac_profile["ProvisionedDevices"] = ["11111111-2222-3333-4444-555555555555"]
+        self.refused("не разрешает этот компьютер")
+
+    def test_mac_cloud_environment_mismatch_is_refused(self):
+        self.cli.mac_entitlements["com.apple.developer.icloud-container-environment"] = "Development"
+        self.refused("неизвестные права")
 
     def test_mac_unknown_entitlement_is_refused(self):
         self.cli.mac_entitlements["com.apple.security.application-groups"] = ["group.notebook"]

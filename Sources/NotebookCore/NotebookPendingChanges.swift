@@ -47,6 +47,15 @@ extension NotebookStore {
   /// One manifest and its ordered parts commit with the changed values. The
   /// largest in-memory record page is the existing 16,384-record wire part.
   func publishPendingChanges(database: NotebookSQLConnection) throws {
+    if let received = database.receivedChange {
+      guard database.pendingChangeCount > 0 else { return }
+      // Delivery/forwarding is not a fresh contribution. Preserve the original
+      // immutable manifest, while local invalidation names the merged records.
+      try database.run("INSERT INTO change_log(transaction_id,manifest_hash,byte_count) VALUES(?,?,?)", [.text(received.transactionID.uuidString.lowercased()), .text(received.manifestHash), .integer(Int64(received.byteCount))])
+      let sequence = try database.rows("SELECT last_insert_rowid()").first![0].integer!
+      try database.run("INSERT INTO change_records(sequence,address,blob_hash) SELECT ?,address,blob_hash FROM notebook_pending_changes", [.integer(sequence)])
+      return
+    }
     guard database.pendingChangeCount > 0 else { return }
     guard database.pendingChangeCount <= 8_388_608 else { throw NotebookStorageError.limitExceeded("change_manifest") }
     guard let workspaceID = try database.rows("SELECT value FROM metadata WHERE key='workspace_id'").first?[0].text.flatMap(UUID.init(uuidString:)) else {

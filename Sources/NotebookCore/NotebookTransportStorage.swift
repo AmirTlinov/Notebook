@@ -5,25 +5,28 @@ import Foundation
 /// `applyRemoteChange` returns only after content, dedupe and incoming cursor
 /// have committed together. Transport receipt never calls it speculatively.
 public struct NotebookTransportStorage: Sendable {
+  public var journalGeneration: UUID?
   public var changes: @Sendable (UInt64, Int) async throws -> [NotebookDurableChange]
-  public var incomingCursor: @Sendable (UUID) async throws -> UInt64
+  public var incomingCursor: @Sendable (NotebookReplicationSource) async throws -> UInt64
   public var acknowledgePeer: @Sendable (UUID, UInt64) async throws -> Void
   public var blobSize: @Sendable (String) async throws -> Int64
   public var readBlobChunk: @Sendable (String, Int64, Int) async throws -> Data
   public var stageBlob: @Sendable (URL, String, Int64) async throws -> Void
-  public var missingBlobHashes: @Sendable (NotebookDurableChange, Int, String?) async throws -> [String]
-  public var applyRemoteChange: @Sendable (NotebookDurableChange, UUID) async throws -> UInt64
+  public var missingBlobHashes: @Sendable (NotebookReplicationDelivery, Int, String?) async throws -> [String]
+  public var applyRemoteChange: @Sendable (NotebookReplicationDelivery) async throws -> UInt64
 
   public init(
+    journalGeneration: UUID? = nil,
     changes: @escaping @Sendable (UInt64, Int) async throws -> [NotebookDurableChange],
-    incomingCursor: @escaping @Sendable (UUID) async throws -> UInt64,
+    incomingCursor: @escaping @Sendable (NotebookReplicationSource) async throws -> UInt64,
     acknowledgePeer: @escaping @Sendable (UUID, UInt64) async throws -> Void,
     blobSize: @escaping @Sendable (String) async throws -> Int64,
     readBlobChunk: @escaping @Sendable (String, Int64, Int) async throws -> Data,
     stageBlob: @escaping @Sendable (URL, String, Int64) async throws -> Void,
-    missingBlobHashes: @escaping @Sendable (NotebookDurableChange, Int, String?) async throws -> [String],
-    applyRemoteChange: @escaping @Sendable (NotebookDurableChange, UUID) async throws -> UInt64
+    missingBlobHashes: @escaping @Sendable (NotebookReplicationDelivery, Int, String?) async throws -> [String],
+    applyRemoteChange: @escaping @Sendable (NotebookReplicationDelivery) async throws -> UInt64
   ) {
+    self.journalGeneration = journalGeneration
     self.changes = changes; self.incomingCursor = incomingCursor; self.acknowledgePeer = acknowledgePeer
     self.blobSize = blobSize; self.readBlobChunk = readBlobChunk; self.stageBlob = stageBlob
     self.missingBlobHashes = missingBlobHashes; self.applyRemoteChange = applyRemoteChange

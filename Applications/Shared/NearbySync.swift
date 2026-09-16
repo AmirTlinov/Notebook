@@ -656,7 +656,7 @@ final class NotebookTransportSession {
     assembly = try NotebookTransportBlobAssembly(stagingRoot: stagingRoot, generation: generation)
     if let credential {
       localHello = .init(identity: identity, pairingID: credential.pairingID, credential: credential.kind,
-        nonce: try NotebookTransportTLS.randomBytes(count: 32))
+        nonce: try NotebookTransportTLS.randomBytes(count: 32), journalGeneration: storage.journalGeneration)
     }
   }
 
@@ -839,7 +839,7 @@ final class NotebookTransportSession {
     if credential == nil {
       guard let resolved = try resolveCredential?(hello) else { throw NotebookTransportError.authenticationRequired }
       credential = resolved
-      localHello = .init(identity: identity, pairingID: resolved.pairingID, credential: resolved.kind, nonce: try NotebookTransportTLS.randomBytes(count: 32))
+      localHello = .init(identity: identity, pairingID: resolved.pairingID, credential: resolved.kind, nonce: try NotebookTransportTLS.randomBytes(count: 32), journalGeneration: storage.journalGeneration)
       enqueue(.hello(localHello!))
     }
     guard let credential, let localHello, hello.pairingID == credential.pairingID, hello.credential == credential.kind else {
@@ -869,7 +869,7 @@ final class NotebookTransportSession {
     readyTask = Task { [weak self] in
       guard let self else { return }
       do {
-        let cursor = try await self.storage.incomingCursor(peerIdentity.deviceID)
+        let cursor = try await self.storage.incomingCursor(.init(deviceID: peerIdentity.deviceID, generation: self.remoteHello!.journalGeneration))
         guard !self.isStopped, !Task.isCancelled else { return }
         guard cursor <= UInt64(Int64.max) else { throw NotebookTransportError.invalidSequence }
         self.lastIncomingOffer = cursor; self.sentReady = true; self.enqueue(.ready(cursor: cursor)); self.becomeReady()
@@ -889,7 +889,8 @@ final class NotebookTransportSession {
     incomingTask = Task { [weak self] in
       guard let self else { return }
       do {
-        let missing = try await self.storage.missingBlobHashes(change, 16, nil)
+        let delivery = NotebookReplicationDelivery(source: .init(deviceID: peerIdentity.deviceID, generation: self.remoteHello!.journalGeneration), change: change)
+        let missing = try await self.storage.missingBlobHashes(delivery, 16, nil)
         guard !self.isStopped, !Task.isCancelled else { return }
         guard missing.count <= 16, Set(missing).count == missing.count,
           missing.allSatisfy(NotebookTransportFraming.isSHA256) else { throw NotebookTransportError.invalidBlob }
@@ -898,11 +899,14 @@ final class NotebookTransportSession {
         } else {
           // This await is the only durable receive boundary. A frame credit
           // never advertises that history or an incoming cursor was committed.
-          let cursor = try await self.storage.applyRemoteChange(change, peerIdentity.deviceID)
+          let cursor = try await self.storage.applyRemoteChange(delivery)
           guard !self.isStopped, !Task.isCancelled else { return }
-          guard cursor == change.sequence else { throw NotebookTransportError.invalidAcknowledgement }
+          // Cloud may have covered a later prefix while this LAN offer was in
+          // flight. Acknowledge only this offered transaction, not an unoffered
+          // future sequence; the next connection reads the advanced SQL cursor.
+          guard cursor >= change.sequence, cursor <= UInt64(Int64.max) else { throw NotebookTransportError.invalidAcknowledgement }
           self.incomingChanges.removeFirst()
-          self.enqueue(.committed(transactionID: change.transactionID, cursor: cursor))
+          self.enqueue(.committed(transactionID: change.transactionID, cursor: change.sequence))
           self.onDurableChange?(change, peerIdentity)
         }
         self.incomingTask = nil

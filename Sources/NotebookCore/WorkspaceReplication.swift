@@ -23,9 +23,9 @@ extension NotebookStore {
     }
     let oldStamp = try oldRoot?.value["stamp"]?.decode(VersionStamp.self)
     let frontier = max(oldStamp ?? nextStamp, nextStamp)
-    var differsFromNewest = false, allocatedFields = false
+    var differsFromNewest = false
     try database.run("CREATE TEMP TABLE IF NOT EXISTS replication_catalog_items(id TEXT PRIMARY KEY)")
-    try database.run("CREATE TEMP TABLE IF NOT EXISTS replication_catalog_fields(key TEXT PRIMARY KEY)")
+    try database.run("CREATE TEMP TABLE IF NOT EXISTS replication_catalog_fields(key TEXT PRIMARY KEY,allocated INTEGER NOT NULL)")
     try database.run("DELETE FROM replication_catalog_items")
     try database.run("DELETE FROM replication_catalog_fields")
     func include(_ id: String) throws {
@@ -35,8 +35,8 @@ extension NotebookStore {
       try database.run("INSERT OR IGNORE INTO replication_catalog_items VALUES(?)", [.text(id)])
     }
     func put(_ key: String, _ version: ContentFieldVersion) throws {
-      allocatedFields = try incoming.publishField(file: file, parent: root, collection: fields, key: key, version: version) || allocatedFields
-      try database.run("INSERT OR IGNORE INTO replication_catalog_fields VALUES(?)", [.text(key)])
+      let allocated = try incoming.publishField(file: file, parent: root, collection: fields, key: key, version: version)
+      try database.run("INSERT INTO replication_catalog_fields VALUES(?,?) ON CONFLICT(key) DO UPDATE SET allocated=MAX(allocated,excluded.allocated)", [.text(key), .integer(allocated ? 1 : 0)])
     }
     func resolve(_ key: String, _ old: JSONValue?, _ next: JSONValue?) throws -> JSONValue? {
       guard let b = try incoming.field(parent: root, collection: fields, key: key, delivered: true) else { return old }
@@ -188,7 +188,9 @@ extension NotebookStore {
     let stamp = differsFromNewest ? frontier.advanced(by: frontier.actor) ?? frontier : frontier
     try writeFragment(nextRoot.replacing(value: nextRoot.value.setting("stamp", .encode(stamp))), database: database)
     try database.run("DELETE FROM replication_catalog_items")
+    if try !database.rows("SELECT 1 FROM replication_catalog_fields WHERE allocated=1 LIMIT 1").isEmpty {
+      try incoming.validateFieldCount(parent: root, collection: fields, maximum: 1_000_000)
+    }
     try database.run("DELETE FROM replication_catalog_fields")
-    if allocatedFields { try incoming.validateFieldCount(parent: root, collection: fields, maximum: 1_000_000) }
   }
 }

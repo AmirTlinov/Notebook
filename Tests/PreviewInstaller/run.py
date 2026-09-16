@@ -20,6 +20,7 @@ SCRIPT = ROOT / "Applications/install-preview.sh"
 MODULE = types.ModuleType("notebook_preview_installer")
 CODE = SCRIPT.read_text().split("<<'PY'\n", 1)[1].rsplit("\nPY\n", 1)[0]
 exec(compile(CODE, str(SCRIPT), "exec"), MODULE.__dict__)
+import notebook_release as release
 
 
 def device_result():
@@ -34,12 +35,12 @@ def app_info():
     return {"CFBundleIdentifier": MODULE.BUNDLE, "CFBundleDisplayName": MODULE.DISPLAY_NAME,
         "CFBundlePackageType": "APPL", "CFBundleSupportedPlatforms": ["iPhoneOS"], "DTPlatformName": "iphoneos",
         "DTSDKName": "iphoneos27.0", "UIDeviceFamily": [2], "MinimumOSVersion": "27.0", "CFBundleExecutable": "Notebook",
-        "CFBundleShortVersionString": "0.3.14", "CFBundleVersion": "17"}
+        "CFBundleShortVersionString": "0.3.14", "CFBundleVersion": "17", "NotebookCloudContainer": release.CLOUD_CONTAINER}
 
 
 def entitlement_values():
     return {"application-identifier": MODULE.APP_ID, "com.apple.developer.team-identifier": MODULE.TEAM,
-            "keychain-access-groups": [MODULE.APP_ID], "get-task-allow": True}
+            "keychain-access-groups": [MODULE.APP_ID], "get-task-allow": True, **release.cloud_entitlements()}
 
 
 class FakeCLI:
@@ -53,7 +54,7 @@ class FakeCLI:
         self.entitlements = entitlement_values()
         self.certificate = b"fixture Apple Development certificate"
         self.profile = {"TeamIdentifier": [MODULE.TEAM], "ApplicationIdentifierPrefix": [MODULE.TEAM],
-            "ProvisionedDevices": [MODULE.UDID], "Entitlements": {**entitlement_values(), "application-identifier": MODULE.TEAM + ".*"},
+            "ProvisionedDevices": [MODULE.UDID], "Entitlements": {**entitlement_values(), "application-identifier": MODULE.APP_ID},
             "ExpirationDate": datetime.datetime.now() + datetime.timedelta(days=10), "UUID": "fixture-profile",
             "DeveloperCertificates": [self.certificate]}
         self.canonical = {"bundleIdentifier": MODULE.CANONICAL, "name": "Notebook", "version": "0.3.14", "bundleVersion": "17",
@@ -228,7 +229,7 @@ class PreviewInstallerTests(unittest.TestCase):
         self.assertIn("CODE_SIGN_IDENTITY=Apple Development", build)
         self.assertEqual(self.cli.app, self.evidence / "derived-data/Build/Products/Release-iphoneos/Notebook.app")
         self.assertEqual(plistlib.loads((self.evidence / "preview.entitlements").read_bytes()),
-                         {"keychain-access-groups": [MODULE.APP_ID], "get-task-allow": True})
+                         {"keychain-access-groups": [MODULE.APP_ID], "get-task-allow": True, **release.cloud_entitlements()})
         receipt = json.loads((self.evidence / "receipt.json").read_text())
         self.assertEqual(receipt["plan"]["configuration"], "Release")
         self.assertEqual(receipt["plan"]["swiftOptimization"], "-O")
@@ -303,9 +304,17 @@ class PreviewInstallerTests(unittest.TestCase):
         self.cli.entitlements["keychain-access-groups"] = [MODULE.TEAM + "." + MODULE.CANONICAL]
         self.refused('собственную keychain-группу')
 
+    def test_foreign_cloud_container_is_rejected(self):
+        self.cli.entitlements["com.apple.developer.icloud-container-identifiers"] = ["iCloud.other"]
+        self.refused("точных CloudKit/Push")
+
+    def test_profile_without_cloud_authority_is_rejected(self):
+        del self.cli.profile["Entitlements"]["com.apple.developer.icloud-services"]
+        self.refused("Provisioning не разрешает")
+
     def test_unknown_or_shared_container_entitlement_is_rejected(self):
         self.cli.entitlements["com.apple.security.application-groups"] = ["group.notebook"]
-        self.refused('Shared containers')
+        self.refused('Неизвестные entitlements')
 
     def test_foreign_signature_team_is_rejected(self):
         self.cli.bad_signature_team = True

@@ -29,6 +29,30 @@ CANONICAL_MAC = Path("/Users/amir/Applications/Notebook.app")
 APP_ID = TEAM + "." + BUNDLE
 GENERATED = {"Applications/iPad/Info.plist", "Applications/Mac/Info.plist"}
 MAC_BUNDLE = "com.amirtlinov.notebook.mac"
+CLOUD_CONTAINER = "iCloud.com.amirtlinov.notebook"
+# Permanent personal content uses Production on both platforms. Native
+# acceptance builds have no container entitlement; there is no dev fallback.
+CLOUD_ENVIRONMENT = "Production"
+
+
+def cloud_entitlements(mac=False):
+    return {"com.apple.developer.icloud-container-identifiers": [CLOUD_CONTAINER],
+            "com.apple.developer.icloud-services": ["CloudKit"],
+            "com.apple.developer.icloud-container-environment": CLOUD_ENVIRONMENT,
+            "com.apple.developer.aps-environment" if mac else "aps-environment": "development"}
+
+
+def validate_cloud_rights(entitlements, profile_rights, mac=False):
+    for key, value in cloud_entitlements(mac).items():
+        require(entitlements.get(key) == value, "Сборка не имеет точных CloudKit/Push прав Notebook: " + key)
+        permitted = profile_rights.get(key)
+        if isinstance(value, list):
+            require(isinstance(permitted, list) and all(item in permitted for item in value),
+                    "Provisioning не разрешает общий CloudKit-контейнер Notebook: " + key)
+        else:
+            require(permitted == value or isinstance(permitted, list) and value in permitted,
+                    "Provisioning не разрешает выбранное CloudKit/Push окружение: " + key)
+
 TEX_RESOURCE_LOCK = Path(__file__).resolve().parents[1] / "Sources/NotebookMarkupService/TeXResources.lock.json"
 
 
@@ -172,6 +196,7 @@ def validate_bundle_info(info, device):
     require(info.get("CFBundlePackageType") == "APPL" and info.get("CFBundleSupportedPlatforms") == ["iPhoneOS"]
             and info.get("DTPlatformName") == "iphoneos" and str(info.get("DTSDKName", "")).startswith("iphoneos")
             and info.get("UIDeviceFamily") == [2], "Нужен bundle физического iPad, не Simulator/Mac/Catalyst.")
+    require(info.get("NotebookCloudContainer") == CLOUD_CONTAINER, "Info.plist не называет согласованный CloudKit-контейнер.")
     executable = info.get("CFBundleExecutable")
     require(isinstance(executable, str) and executable and Path(executable).name == executable,
             "Некорректный адрес исполняемого файла.")
@@ -204,9 +229,9 @@ def development_signer(display, bundle):
 
 def validate_signature(display, entitlements, profile):
     identity = signature_identity(display, BUNDLE)
-    allowed = {"application-identifier", "com.apple.developer.team-identifier", "keychain-access-groups", "get-task-allow"}
+    allowed = {"application-identifier", "com.apple.developer.team-identifier", "keychain-access-groups", "get-task-allow"} | set(cloud_entitlements())
     require(isinstance(entitlements, dict) and set(entitlements).issubset(allowed),
-            "Shared containers и неизвестные entitlements не входят в preview-контракт.")
+            "Неизвестные entitlements или контейнеры не входят в контракт Notebook.")
     require(entitlements.get("application-identifier") == APP_ID
             and entitlements.get("com.apple.developer.team-identifier") == TEAM
             and entitlements.get("keychain-access-groups") == [APP_ID]
@@ -215,9 +240,10 @@ def validate_signature(display, entitlements, profile):
             and UDID in profile.get("ProvisionedDevices", []) and not profile.get("ProvisionsAllDevices", False),
             "Provisioning не относится к согласованному team и физическому iPad.")
     profile_entitlements = profile.get("Entitlements", {})
-    require(profile_entitlements.get("application-identifier") in (APP_ID, TEAM + ".*")
+    require(profile_entitlements.get("application-identifier") == APP_ID
             and profile_entitlements.get("com.apple.developer.team-identifier") == TEAM
             and profile_entitlements.get("get-task-allow") is True, "Provisioning не разрешает этот development bundle.")
+    validate_cloud_rights(entitlements, profile_entitlements)
     expiry = profile.get("ExpirationDate")
     require(isinstance(expiry, datetime.datetime) and expiry.replace(tzinfo=datetime.timezone.utc) > datetime.datetime.now(datetime.timezone.utc),
             "Provisioning истёк или не имеет даты окончания.")
@@ -264,8 +290,8 @@ def copy_source(source, snapshot, before):
 
 def build_ipad(snapshot, evidence, command):
     entitlements_file = evidence / "preview.entitlements"
-    entitlements_file.write_bytes(plistlib.dumps({"keychain-access-groups": [APP_ID], "get-task-allow": True}))
-    overrides = ["PRODUCT_BUNDLE_IDENTIFIER=" + BUNDLE, "NOTEBOOK_DISPLAY_NAME=" + DISPLAY_NAME,
+    entitlements_file.write_bytes(plistlib.dumps({"keychain-access-groups": [APP_ID], "get-task-allow": True, **cloud_entitlements()}))
+    overrides = ["NOTEBOOK_CLOUD_CONTAINER=" + CLOUD_CONTAINER, "PRODUCT_BUNDLE_IDENTIFIER=" + BUNDLE, "NOTEBOOK_DISPLAY_NAME=" + DISPLAY_NAME,
                  "DEVELOPMENT_TEAM=" + TEAM, "CODE_SIGN_STYLE=Automatic", "CODE_SIGNING_ALLOWED=YES",
                  "CODE_SIGNING_REQUIRED=YES", "CODE_SIGN_IDENTITY=Apple Development",
                  "SWIFT_OPTIMIZATION_LEVEL=" + SWIFT_OPTIMIZATION, "CODE_SIGN_ENTITLEMENTS=" + str(entitlements_file)]
@@ -466,14 +492,14 @@ def restrict_test_script_services(app, source, command, signing_identity="-"):
 
 def build_mac(snapshot, evidence, command, tex_runtime, image_runtime):
     entitlements = evidence / "mac.entitlements"
-    entitlements.write_bytes(plistlib.dumps({"com.apple.security.get-task-allow": True}))
+    entitlements.write_bytes(plistlib.dumps({"com.apple.security.get-task-allow": True, **cloud_entitlements(mac=True)}))
     command("build-mac", ["/usr/bin/xcrun", "xcodebuild", "-project",
         snapshot / "Applications/Notebook.xcodeproj", "-scheme", "NotebookMac",
         "-configuration", CONFIGURATION, "-destination", "generic/platform=macOS",
         "-derivedDataPath", evidence / "derived-mac", "-allowProvisioningUpdates",
         "DEVELOPMENT_TEAM=" + TEAM,
         "CODE_SIGN_STYLE=Automatic", "CODE_SIGNING_ALLOWED=YES", "CODE_SIGNING_REQUIRED=YES",
-        "CODE_SIGN_IDENTITY=Apple Development", "NOTEBOOK_MAC_ENTITLEMENTS=" + str(entitlements),
+        "CODE_SIGN_IDENTITY=Apple Development", "NOTEBOOK_CLOUD_CONTAINER=" + CLOUD_CONTAINER, "NOTEBOOK_MAC_ENTITLEMENTS=" + str(entitlements),
         "NOTEBOOK_TEX_RUNTIME=" + str(tex_runtime), "NOTEBOOK_IMAGE_RUNTIME=" + str(image_runtime),
         "SWIFT_OPTIMIZATION_LEVEL=" + SWIFT_OPTIMIZATION, "ARCHS=arm64", "build"],
         cwd=snapshot, timeout=1800)
@@ -484,6 +510,7 @@ def inspect_mac(app, command):
     bundle = app_manifest(app)
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
     require(info.get("CFBundleIdentifier") == MAC_BUNDLE and info.get("LSUIElement") is True
+            and info.get("NotebookCloudContainer") == CLOUD_CONTAINER
             and info.get("CFBundlePackageType") == "APPL" and info.get("DTPlatformName") == "macosx",
             "Нужен безоконный macOS helper с собственной идентичностью.")
     require(all(isinstance(info.get(key), str) and info[key]
@@ -503,10 +530,42 @@ def inspect_mac(app, command):
     output = command("mac-signature-entitlements", ["/usr/bin/codesign", "--display", "--entitlements", ":-", "--xml", app], read_output=True)
     entitlements = plistlib.loads(output[0])
     allowed = {"com.apple.security.get-task-allow": True, "com.apple.application-identifier": TEAM + "." + MAC_BUNDLE,
-               "com.apple.developer.team-identifier": TEAM, "keychain-access-groups": [TEAM + "." + MAC_BUNDLE]}
+               "com.apple.developer.team-identifier": TEAM, "keychain-access-groups": [TEAM + "." + MAC_BUNDLE], **cloud_entitlements(mac=True)}
     require(isinstance(entitlements, dict) and entitlements.get("com.apple.security.get-task-allow") is True
+            and entitlements.get("com.apple.application-identifier") == TEAM + "." + MAC_BUNDLE
+            and entitlements.get("com.apple.developer.team-identifier") == TEAM
             and all(key in allowed and value == allowed[key] for key, value in entitlements.items()),
             "Mac получил неизвестные права или чужую идентичность Keychain.")
+    profile_path = app / "Contents/embedded.provisionprofile"
+    require(profile_path.is_file() and not profile_path.is_symlink(), "CloudKit helper требует embedded provisioning profile.")
+    profile = plistlib.loads(command("mac-provisioning-profile", ["/usr/bin/security", "cms", "-D", "-i", profile_path], read_output=True)[0])
+    profile_rights = profile.get("Entitlements", {})
+    require(profile.get("TeamIdentifier") == [TEAM] and profile.get("ApplicationIdentifierPrefix") == [TEAM]
+            and "OSX" in profile.get("Platform", [])
+            and profile_rights.get("com.apple.application-identifier") == TEAM + "." + MAC_BUNDLE
+            and profile_rights.get("com.apple.developer.team-identifier") == TEAM,
+            "Mac provisioning не разрешает идентичность и development-подпись helper.")
+    # Modern macOS registers the Provisioning UDID, not Hardware UUID.
+    # get-task-allow is unrestricted on macOS; verify it on the code signature
+    # above, not as a required profile claim (Apple TN3125).
+    hardware = json.loads(command("mac-provisioning-device", ["/usr/sbin/system_profiler", "-json", "SPHardwareDataType"], read_output=True)[0])
+    devices = hardware.get("SPHardwareDataType", [])
+    device = devices[0].get("provisioning_UDID") if len(devices) == 1 else None
+    require(isinstance(device, str) and device and device in profile.get("ProvisionedDevices", []) and not profile.get("ProvisionsAllDevices", False),
+            "Mac provisioning не разрешает этот компьютер.")
+    expiry = profile.get("ExpirationDate")
+    require(isinstance(expiry, datetime.datetime) and expiry.replace(tzinfo=datetime.timezone.utc) > datetime.datetime.now(datetime.timezone.utc),
+            "Mac provisioning истёк.")
+    validate_cloud_rights(entitlements, profile_rights, mac=True)
+    with tempfile.TemporaryDirectory(prefix="notebook-mac-signer-") as temporary:
+        prefix = Path(temporary) / "certificate-"
+        command("mac-signature-certificates", ["/usr/bin/codesign", "--display", "--extract-certificates=" + str(prefix), app])
+        certificate = Path(str(prefix) + "0")
+        require(certificate.is_file() and certificate.stat().st_size <= 64 * 1024
+                and certificate.read_bytes() in profile.get("DeveloperCertificates", []),
+                "Сертификат Mac не разрешён provisioning profile.")
+        signature["certificateSHA256"] = digest(certificate.read_bytes())
+    signature["profileUUID"] = profile.get("UUID")
     signature["entitlements"] = entitlements
     signature["services"] = inspect_script_services(app, info, command)
     architectures = command("mac-binary-architectures", ["/usr/bin/xcrun", "lipo", "-archs", executable], read_output=True)[0].decode().split()

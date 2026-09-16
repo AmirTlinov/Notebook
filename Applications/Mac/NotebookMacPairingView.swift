@@ -41,6 +41,8 @@ private struct NotebookMacPairingView: View {
         Text("Подключение iPad").font(.title2.weight(.semibold))
         if let model = launch.model {
           connection(model).disabled(performing)
+          Divider()
+          NotebookCloudSection(model: model)
         } else {
           Text(launch.message).textSelection(.enabled)
           if launch.failure != nil { Button("Повторить проверку", action: retry) }

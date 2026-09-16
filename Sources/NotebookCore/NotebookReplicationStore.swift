@@ -104,19 +104,28 @@ extension NotebookStore {
   /// owners merge successfully. Content, receipt, dedupe and incoming cursor
   /// commit together; retransmission never repeats a contribution.
   @discardableResult
-  public func applyRemoteChange(_ change: NotebookDurableChange, peerID: UUID) throws -> UInt64 {
+  public func applyRemoteChange(_ change: NotebookDurableChange, peerID: UUID, generation: UUID? = nil) throws -> UInt64 {
+    let admitted = try generation ?? sqlRead { try $0.rows("SELECT value FROM metadata WHERE key=?", [.text("peer_generation:" + peerID.uuidString.lowercased())]).first?[0].text.flatMap(UUID.init(uuidString:)) } ?? peerID
+    return try applyDelivery(.init(source: .init(deviceID: peerID, generation: admitted), change: change))
+  }
+
+  @discardableResult
+  public func applyDelivery(_ delivery: NotebookReplicationDelivery) throws -> UInt64 {
+    let change = delivery.change, source = delivery.source
     try commandTransaction {
-      let database = currentSQL!, peer = peerID.uuidString.lowercased(), transaction = change.transactionID.uuidString.lowercased()
-      let cursor = try peerCursor(peerID: peerID, direction: .incoming)
-      if let old = try database.rows("SELECT manifest_hash FROM received_transactions WHERE transaction_id=?", [.text(transaction)]).first?[0].text {
-        guard old == change.manifestHash else { throw NotebookStorageError.transactionConflict }
+      let database = currentSQL!, peer = source.cursorKey, transaction = change.transactionID.uuidString.lowercased()
+      guard database.receivedChange == nil, database.pendingChangeCount == 0 else { throw NotebookStorageError.invalidTransaction("one delivery owns its commit") }
+      let cursor = try incomingCursor(source: source)
+      guard change.sequence > 0, change.sequence <= UInt64(Int64.max) else { throw NotebookStorageError.invalidTransaction("incoming sequence") }
+      if try !deliveryNeedsContent(delivery) {
         if change.sequence > cursor {
-          guard change.sequence == cursor + 1 else { throw NotebookStorageError.invalidTransaction("noncontiguous incoming cursor") }
-          try database.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',?) ON CONFLICT(peer_id,direction) DO UPDATE SET sequence=excluded.sequence", [.text(peer), .integer(Int64(change.sequence))])
+          guard delivery.isSnapshot || change.sequence == cursor + 1 else { throw NotebookStorageError.invalidTransaction("noncontiguous incoming cursor") }
+          try database.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',?) ON CONFLICT(peer_id,direction) DO UPDATE SET sequence=MAX(sequence,excluded.sequence)", [.text(peer), .integer(Int64(change.sequence))])
         }
+        try coverReplicationPrefix(delivery)
         return
       }
-      guard change.sequence == cursor + 1 else { throw NotebookStorageError.invalidTransaction("noncontiguous incoming cursor") }
+      guard delivery.isSnapshot || change.sequence == cursor + 1 else { throw NotebookStorageError.invalidTransaction("noncontiguous incoming cursor") }
       let manifest = try validatedManifest(change)
       guard try missingBlobHashes(for: change, limit: 1).isEmpty else { throw NotebookStorageError.blobMissing(change.manifestHash) }
       try validateIncomingPageOrderValues(manifest.pageOrderRoots)
@@ -268,10 +277,12 @@ extension NotebookStore {
         }
       }
       try database.run("DELETE FROM replication_agent_checks")
+      try coverReplicationPrefix(delivery)
+      database.receivedChange = change
       try database.run("INSERT INTO received_transactions(transaction_id,manifest_hash,peer_id,sequence) VALUES(?,?,?,?)", [.text(transaction), .text(change.manifestHash), .text(peer), .integer(Int64(change.sequence))])
-      try database.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',?) ON CONFLICT(peer_id,direction) DO UPDATE SET sequence=excluded.sequence", [.text(peer), .integer(Int64(change.sequence))])
+      try database.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',?) ON CONFLICT(peer_id,direction) DO UPDATE SET sequence=MAX(sequence,excluded.sequence)", [.text(peer), .integer(Int64(change.sequence))])
     }
-    return try peerCursor(peerID: peerID, direction: .incoming)
+    return try incomingCursor(source: source)
   }
 
 }

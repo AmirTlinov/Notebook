@@ -47,6 +47,7 @@ struct NotebookPairingView: View {
             Button("Отменить сопряжение", role: .cancel) { perform { try await model.cancelPairing() } }
           }
         }
+        Section { NotebookCloudSection(model: model) }
         if let error { Section { Text(error).foregroundStyle(.red).accessibilityIdentifier("pairing-error") } }
         if !model.pairedPeers.isEmpty {
           Section("Доверенные устройства") {

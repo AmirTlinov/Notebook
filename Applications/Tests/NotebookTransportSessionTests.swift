@@ -213,6 +213,27 @@ final class NotebookTransportSessionTests: XCTestCase {
     XCTAssertEqual(size, 400_000, "The heavy owner reached SQL through a completed staged file")
   }
 
+  func testCloudCheckpointOvertakingAnOfferedLANChangeAcknowledgesOnlyThatOffer() async throws {
+    let committing = expectation(description: "LAN waits before its SQL admission")
+    let acknowledged = expectation(description: "Covered LAN offer receives its own ACK")
+    let pair = try NotebookTransportTestPair(withChange: true, holdCommit: true)
+    defer { pair.stop() }
+    await pair.serverStorage.setCommitObserver { committing.fulfill() }
+    await pair.clientStorage.setAcknowledgementObserver { acknowledged.fulfill() }
+    try pair.start()
+    await fulfillment(of: [committing], timeout: 10)
+    // The source's CloudKit checkpoint commits while the LAN packet is still
+    // in flight. Core has separately proved this prefix contains the action.
+    await pair.serverStorage.coverIncomingPrefix(through: 20)
+    await pair.serverStorage.releaseCommit()
+    await fulfillment(of: [acknowledged], timeout: 10)
+    let cursor = await pair.clientStorage.acknowledgedCursor
+    let applied = await pair.serverStorage.appliedCount
+    XCTAssertEqual(cursor, 1, "Never acknowledge sequence 20 with transaction 1")
+    XCTAssertEqual(applied, 0, "The checkpoint-covered action has no second effect")
+    XCTAssertTrue(pair.server?.isReady == true); XCTAssertTrue(pair.client?.isReady == true)
+  }
+
   func testDisconnectSuppressesLateCommitCallbacksAndReconnectUsesCommittedCursor() async throws {
     let committing = expectation(description: "Old generation waits inside SQL")
     let finishedCommit = expectation(description: "SQL may complete after disconnection")
@@ -381,7 +402,7 @@ private actor NotebookTransportMemoryStore {
     .init(changes: { try await self.changes(after: $0, limit: $1) }, incomingCursor: { _ in await self.cursor() },
       acknowledgePeer: { _, cursor in await self.acknowledge(cursor) }, blobSize: { try await self.size($0) },
       readBlobChunk: { try await self.read($0, offset: $1, count: $2) }, stageBlob: { try await self.stage($0, hash: $1, byteCount: $2) },
-      missingBlobHashes: { try await self.missing($0, limit: $1, after: $2) }, applyRemoteChange: { change, _ in try await self.apply(change) })
+      missingBlobHashes: { try await self.missing($0.change, limit: $1, after: $2) }, applyRemoteChange: { try await self.apply($0.change) })
   }
   private func changes(after cursor: UInt64, limit: Int) throws -> [NotebookDurableChange] {
     requestedJournalCursors.append(cursor)
@@ -413,11 +434,13 @@ private actor NotebookTransportMemoryStore {
       guard previous == change.manifestHash else { throw NotebookTransportError.invalidBlob }; return incomingCursor
     }
     if holdCommit { commitObserver?(); await withCheckedContinuation { commitContinuation = $0 } }
+    if change.sequence <= incomingCursor { return incomingCursor }
     // Deliberately ignore task cancellation here: a SQL commit that has started
     // may complete. The connection generation still cannot publish its ACK.
     transactions[change.transactionID] = change.manifestHash
     incomingCursor = change.sequence; appliedCount += 1; committedObserver?()
     return incomingCursor
   }
+  func coverIncomingPrefix(through sequence: UInt64) { incomingCursor = max(incomingCursor, sequence) }
   private static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 }

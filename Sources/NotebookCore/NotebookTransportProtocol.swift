@@ -4,8 +4,9 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // A peer must understand native graphics and reversible ink presentation.
-  public static let protocolVersion = 14
+  // Includes journal generations in the authenticated hello, plus the existing
+  // native graphics and reversible ink presentation contracts.
+  public static let protocolVersion = 16
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16
@@ -110,8 +111,10 @@ public struct NotebookTransportHello: Codable, Equatable, Sendable {
   public let pairingID: UUID
   public let credential: Credential
   public let nonce: Data
-  public init(identity: NotebookTransportIdentity, pairingID: UUID, credential: Credential, nonce: Data) {
+  public let journalGeneration: UUID
+  public init(identity: NotebookTransportIdentity, pairingID: UUID, credential: Credential, nonce: Data, journalGeneration: UUID? = nil) {
     self.identity = identity; self.pairingID = pairingID; self.credential = credential; self.nonce = nonce
+    self.journalGeneration = journalGeneration ?? identity.deviceID
   }
 }
 

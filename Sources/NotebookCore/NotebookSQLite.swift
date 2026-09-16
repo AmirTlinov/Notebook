@@ -28,6 +28,7 @@ struct NotebookSQLReadAllowance {
 final class NotebookSQLConnection {
   let handle: OpaquePointer
   let writable: Bool
+  var receivedChange: NotebookDurableChange?
   var pendingChangeCount = 0
   var pendingOwnersPrepared = false
   private var statements: [String: OpaquePointer] = [:]
@@ -675,7 +676,12 @@ extension NotebookStore {
   }
 
   public func peerCursor(peerID: UUID, direction: NotebookPeerCursorDirection) throws -> UInt64 {
-    try sqlRead { UInt64(try $0.rows("SELECT sequence FROM peer_cursors WHERE peer_id=? AND direction=?", [.text(peerID.uuidString.lowercased()), .text(direction.rawValue)]).first?.first?.integer ?? 0) }
+    try sqlRead { database in
+      let peer = peerID.uuidString.lowercased()
+      let generation = try database.rows("SELECT value FROM metadata WHERE key=?", [.text("peer_generation:" + peer)]).first?[0].text.flatMap(UUID.init(uuidString:)) ?? peerID
+      let key = direction == .incoming ? NotebookReplicationSource(deviceID: peerID, generation: generation).cursorKey : peer
+      return UInt64(try database.rows("SELECT sequence FROM peer_cursors WHERE peer_id=? AND direction=?", [.text(key), .text(direction.rawValue)]).first?[0].integer ?? 0)
+    }
   }
 
   public func acknowledgePeer(peerID: UUID, through sequence: UInt64) throws {

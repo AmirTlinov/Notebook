@@ -7650,3 +7650,106 @@ generation журнала, provisioning и CloudKit пока не реализо
 Нет измерения задержки до показа, системных CPU/GPU/кадров, десяти повторов
 на физической паре и 30 минут совместной работы. GUI-206 остаётся открытой
 до незакрытых условий, GUI-207 ведёт отдельную облачную доставку.
+
+## 17 сентября, 01:18 МСК — общий журнал и CloudKit-доставка (GUI-207)
+
+В изолированной ветке `codex/notebook-offline-sync` добавлен общий
+`NotebookReplicationDelivery`: source device + generation, immutable transaction
+и ссылка на manifest. LAN v16 и CKSyncEngine используют один Core apply и
+очередь сохранения приложения. Повтор и пересылка не создают нового transaction
+ID; снимок покрывает исходный префикс и объединяется, а не заменяет локальную
+тетрадь. Cloud SQLite staging/outbox, порции CKAsset до 1 MiB, engine tokens и
+ACK устойчивы к перезапуску. Собственные cloud records не создают вечную inbox.
+
+Cloud выключен по умолчанию; явное включение находится в существующих окнах
+устройств. Смена аккаунта не переносит тетрадь автоматически. Начальная проверка
+аккаунта не задерживает старт LAN, загрузка/сборка assets не выполняется внутри
+очереди сохранения. Полный первый снимок всё ещё является согласованным SQL cut;
+его длительность на физическом большом пространстве отдельно не измерена.
+
+Финальный повтор: **126 Core-тестов / 14 наборов** и **4 archive-transfer теста**:
+`/tmp/notebook-cloud-final-core-r3.log` (17.237 s и 0.878 s), immutable source map
+в `.build/cloud-delivery-final-commit-core-proof.json`. Включены offline
+restart, независимые и одинаковые поля, сохранение tombstones, snapshot floor,
+перестановки LAN/cloud, self-echo, частичный большой asset, отказ до commit и
+потерянный ACK после commit. Это локальная модель облачного сервера, не iCloud.
+`MCP/npm run check` и **51 MCP-тест PASS**, `/tmp/notebook-cloud-mcp-final.log`.
+Публичные CAS/undo не получили новой политики. IPC test host использует
+изолированное хранилище, установленный helper не заменялся.
+
+**41 preview guard + 70 release guard PASS**:
+`/tmp/notebook-cloud-preview-final-r2.log`,
+`/tmp/notebook-cloud-release-final-r3.log`. Подписи требуют точные CloudKit/Push
+права и Production-контейнер. На Mac profile проверяет именно Provisioning UDID,
+не Hardware UUID; unrestricted get-task-allow проверяется в подписи, без ложного
+требования к profile. CloudKit Mac-подпись обязана содержать собственные App ID
+и team entitlement, а не только ссылаться на верный embedded profile.
+Это проверки выпускного контракта с фикстурами, не
+подтверждение действительных CloudKit profiles или серверной schema.
+
+Выбранный native route `.build/cloud-delivery-native-20260917-r3/verification.json`
+прошёл **4 Mac + 35 iPad Simulator тестов**, без failures/skips/runtime warnings.
+Область: реальные CKRecord/CKAsset, cloud-off без entitlement/account, TLS,
+persistence fence, live gesture presentation и один UI stroke. Исходники после
+этого изменены финальным LAN ACK/dependency допуском, snapshot root set,
+Mac provisioning guard, physical logical-address fix и тестами; прежняя квитанция не выдаётся за проверку этих
+поздних изменений. После уведомления об обновлённом правиле основного AGENTS.md
+дальнейшие проверки iPad выполняются только физически. Первый native build
+нашёл существовавший в base неверный отступ multiline fixture; исправление
+только пробелов зафиксировано отдельно: `a659e85`.
+
+Финальный **физический iPad: 35/35 PASS**, 0 failures/skips/runtime warnings,
+`.build/cloud-delivery-physical-20260917-r5/physical-proof.json`. Проверены
+`NotebookCloudWireTests`, `NearbySyncTests`, `NotebookTransportSessionTests`,
+`NotebookPersistenceFenceTests`, `NotebookLiveGesturePresentationTests`.
+Включён TLS-сценарий: cloud checkpoint опережает LAN offer, ACK подтверждает
+именно предложенную транзакцию и не закрывает исправную сессию.
+Исходники до/после совпали с финальным Core source map.
+
+Предыдущие physical r2/r3 дали 34 PASS и один отказ открытия тестовой тетради;
+r4 уточнил `The file doesn’t exist.` до исполнения жеста. Причина —
+`standardizedFileURL` по-разному разрешал существующий `/private/var` контейнер
+и несуществующий JSON-путь SQLite. Из уже завершённого `3f30fb0` перенесены
+**только** исправление `logicalAddress` и его регрессия, без graphics/schema/wire
+изменений. Бесполезная попытка дополнительной инициализации fixture удалена.
+Существующий DEBUG drawing fixture допущен к physical test build; его поведение
+не менялось. Установлено только изолированное `.native-test`, CloudKit в нём
+выключен. Это native XCTest с mounted presentation, **не** новая физическая
+UI/Pencil или облачная приёмка рабочей пары.
+
+Повторный профиль **100 000 независимых предметов PASS**, 419.882 s с подготовкой:
+`/tmp/notebook-cloud-final-scale100k.log`, source map и команды в
+`.build/cloud-delivery-final-core-proof.json`. На тех же addressed алгоритмах:
+
+| Операция | BLOB-чтения / байты | SQLite время |
+|---|---:|---:|
+| Локальное перемещение | 24 / 7907 | 10.75 ms |
+| Приём перемещения | 28 / 9596 | 28.05 ms |
+| Локальный элемент | 25 / 10 050 | 7.94 ms |
+| Приём элемента | 46 / 21 783 | 19.64 ms |
+| Локальный заголовок | 38 / 14 001 | 15.86 ms |
+| Приём заголовка | 37 / 16 270 | 26.71 ms |
+| Повтор | 0 / 0 | 0.96 ms |
+
+Объём чтения не вырос относительно 1000 предметов. Пик всего процесса с
+построением фикстуры — 1 021 067 264 B; это не peak отдельного сохранения и не
+доказательство снижения RAM приложения. Во время подготовки другой рабочий
+процесс выполнял свою короткую Core-проверку: времена не являются изолированным
+системным performance gate. Поздняя правка LAN и Cloud snapshot/profile не
+меняла адресный алгоритм или этот fixture. Число вызовов JSONDecoder отдельно
+не измерялось; trace считает SQL BLOB, а чужие тела исключены sentinel-тестом.
+
+Попытка настоящей signed Release Mac-сборки в
+`.build/cloud-signed-mac-20260917` остановилась **до компиляции**: Xcode сообщает
+`No Accounts` и отсутствие Mac App Development profile для существующего
+`com.amirtlinov.notebook.mac` с новыми правами. Ни helper, ни рабочая пара не
+устанавливались этим запуском; обход строгой подписи не добавлен.
+
+Внешняя граница: `cktool export-schema` не имеет management token. CloudKit
+Console открыта и требует вход Apple; пароль/2FA у Амира в чат не запрашивались.
+Существование контейнера, проверка/import/deploy `.ckdb` в Production и новые
+profiles не подтверждены. Не выполнены реальный cloud-only обмен с раздельно
+выключенными устройствами, настоящая квота/смена аккаунта, десять повторов,
+30 минут совместной работы и системные кадры/CPU/GPU. Облачная доставка пока
+не включалась. Контейнеры рабочей пары, их базы, идентичности и доверие сохранены;
+чужие незавершённые графические изменения в этот worktree не включены.

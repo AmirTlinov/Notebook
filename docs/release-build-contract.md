@@ -41,7 +41,13 @@ Release iPad и Mac. Xcode, Swift, SDK, XcodeGen, Node и npm должны со�
 `com.amirtlinov.notebook.preview` и собственную Keychain-группу; его профиль
 проверяется против сертификата и согласованного физического устройства.
 Mac сохраняет `com.amirtlinov.notebook.mac`, `LSUIElement`, arm64 и встроенный
-MCP. Чужие группы Keychain, неизвестные права, Simulator Mach-O, разные версии
+MCP. Обе подписи требуют общий `iCloud.com.amirtlinov.notebook`, CloudKit и
+Production environment; Push остаётся development для Apple Development
+подписи. Mac также проверяет embedded provisioning profile, Provisioning UDID
+(не Hardware UUID),
+срок и сертификат. [Контракт облака](cloud-delivery-contract.md) описывает
+внешнее создание контейнера и публикацию schema; наличие кода не означает,
+что Apple уже выдала эти права. Чужие группы Keychain, неизвестные права, Simulator Mach-O, разные версии
 пары и изменение любого подписанного файла дают отказ.
 
 Mac содержит ровно два XPC service: `NotebookScriptService` и

@@ -55,10 +55,19 @@ extension NotebookStore {
         try database.run("DELETE FROM \(table)")
       }
       try database.run("DELETE FROM sqlite_sequence WHERE name='change_log'")
-      try database.run("DELETE FROM metadata WHERE key='placement_outgoing_floor'")
+      let sourceGeneration = try database.rows("SELECT value FROM metadata WHERE key='journal_generation'").first?[0].text.flatMap(UUID.init(uuidString:)) ?? sourcePeer
+      try database.run("DELETE FROM metadata WHERE key='placement_outgoing_floor' OR key LIKE 'peer_generation:%' OR key LIKE 'replication_snapshot:%'")
+      try database.run("INSERT INTO metadata(key,value) VALUES('journal_generation',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [.text(UUID().uuidString.lowercased())])
       if let sourcePeer {
         try database.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',?)",
-          [.text(sourcePeer.uuidString.lowercased()), .integer(Int64(sourceCursor))])
+          [.text(NotebookReplicationSource(deviceID: sourcePeer, generation: sourceGeneration ?? sourcePeer).cursorKey), .integer(Int64(sourceCursor))])
+        try database.run("INSERT INTO metadata(key,value) VALUES(?,?)", [.text("peer_generation:" + sourcePeer.uuidString.lowercased()), .text((sourceGeneration ?? sourcePeer).uuidString.lowercased())])
+        try database.run("INSERT INTO metadata(key,value) VALUES(?,?)", [.text("replication_snapshot:" + NotebookReplicationSource(deviceID: sourcePeer, generation: sourceGeneration ?? sourcePeer).cursorKey), .text(String(sourceCursor))])
+      }
+      // A prepared copy starts another journal. Its cloud transport state is
+      // local to the old journal/account and must never be inherited as enabled.
+      for table in ["cloud_control", "cloud_accounts", "cloud_exports", "cloud_outbox", "cloud_uploaded", "cloud_inbox", "cloud_chunks"] {
+        if try !database.rows("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", [.text(table)]).isEmpty { try database.run("DELETE FROM \(table)") }
       }
       if !preservingLocalState {
         for table in ["chat_jobs", "chat_panel", "chat_active_computer", "run_output", "project_runs", "run_commands", "file_drafts", "file_window", "file_version_files", "file_versions", "file_uploads", "file_commits", "file_renames"] { try database.run("DELETE FROM \(table)") }

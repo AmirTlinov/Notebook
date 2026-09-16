@@ -50,7 +50,7 @@ final class NearbySyncTests: XCTestCase {
     let storage = NotebookTransportStorage(changes: { _, _ in [] }, incomingCursor: { _ in 0 },
       acknowledgePeer: { _, _ in }, blobSize: { _ in throw NotebookTransportError.invalidBlob },
       readBlobChunk: { _, _, _ in throw NotebookTransportError.invalidBlob }, stageBlob: { _, _, _ in },
-      missingBlobHashes: { _, _, _ in [] }, applyRemoteChange: { _, _ in 0 })
+      missingBlobHashes: { _, _, _ in [] }, applyRemoteChange: { _ in 0 })
     return NearbySync(role: .iPadConnector,
       identity: .init(deviceID: UUID(), workspaceID: UUID(), displayName: "Acceptance iPad"),
       storage: storage, stagingRoot: temporaryDirectory(), trustStore: trust)
@@ -266,6 +266,10 @@ final class NearbySyncTests: XCTestCase {
     let freshSecond = NotebookTransportHello(identity: second.identity, pairingID: pairID, credential: .invitation, nonce: Data(repeating: 5, count: 32))
     XCTAssertFalse(NotebookTransportAuthentication.verifies(proof, secret: secret,
       transcript: try NotebookTransportAuthentication.transcript(first, freshSecond), sender: first.identity.deviceID))
+    let anotherJournal = NotebookTransportHello(identity: second.identity, pairingID: pairID, credential: .invitation,
+      nonce: second.nonce, journalGeneration: UUID())
+    XCTAssertFalse(NotebookTransportAuthentication.verifies(proof, secret: secret,
+      transcript: try NotebookTransportAuthentication.transcript(first, anotherJournal), sender: first.identity.deviceID))
     let wrongWorkspace = NotebookTransportHello(identity: .init(deviceID: UUID(), workspaceID: UUID(), displayName: "Other"),
       pairingID: pairID, credential: .invitation, nonce: second.nonce)
     XCTAssertThrowsError(try NotebookTransportAuthentication.transcript(first, wrongWorkspace))

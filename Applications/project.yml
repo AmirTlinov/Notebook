@@ -21,6 +21,7 @@ settings:
     NOTEBOOK_SCRIPT_BUNDLE_SUFFIX: $(NOTEBOOK_BUNDLE_SUFFIX)
     NOTEBOOK_ACCEPTANCE_ENABLED: NO
     NOTEBOOK_IPAD_ENTITLEMENTS: ""
+    NOTEBOOK_CLOUD_CONTAINER: ""
     NOTEBOOK_TEX_RUNTIME: $(SRCROOT)/../.build/notebook-tex-runtime
     NOTEBOOK_IMAGE_RUNTIME: ""
 
@@ -43,14 +44,17 @@ targets:
       properties:
         CFBundleDisplayName: $(NOTEBOOK_DISPLAY_NAME)
         NotebookAcceptanceEnabled: $(NOTEBOOK_ACCEPTANCE_ENABLED)
+        NotebookCloudContainer: $(NOTEBOOK_CLOUD_CONTAINER)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.productivity
         NSMicrophoneUsageDescription: Диктовка и голосовой разговор передают речь в Codex через вашу существующую учётную запись. В открытом Notebook обращение GPT распознаётся локально; микрофон можно выключить. До обращения звук не отправляется.
         NSSpeechRecognitionUsageDescription: Обращение к GPT распознаётся только на iPad. Окружающая речь не передаётся агенту до обращения; это не диктовка текста.
-        NSLocalNetworkUsageDescription: Notebook связывает iPad с помощником на вашем Mac без облачного сервера.
+        NSLocalNetworkUsageDescription: Notebook использует локальную сеть для быстрого обмена с вашим Mac.
         NSBonjourServices:
           - _notebook._tcp
+        UIBackgroundModes:
+          - remote-notification
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -148,13 +152,14 @@ targets:
       properties:
         CFBundleDisplayName: Notebook
         NotebookAcceptanceEnabled: $(NOTEBOOK_ACCEPTANCE_ENABLED)
+        NotebookCloudContainer: $(NOTEBOOK_CLOUD_CONTAINER)
         NotebookScriptService: com.amirtlinov.notebook.script-service$(NOTEBOOK_SCRIPT_BUNDLE_SUFFIX)
         NotebookMarkupService: com.amirtlinov.notebook.markup-service$(NOTEBOOK_SCRIPT_BUNDLE_SUFFIX)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.productivity
         LSUIElement: true
-        NSLocalNetworkUsageDescription: Notebook принимает страницы с вашего iPad без облачного сервера.
+        NSLocalNetworkUsageDescription: Notebook использует локальную сеть для быстрого обмена с вашим iPad.
         NSBonjourServices:
           - _notebook._tcp
     settings:
