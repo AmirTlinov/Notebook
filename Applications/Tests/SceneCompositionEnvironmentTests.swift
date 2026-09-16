@@ -39,7 +39,8 @@ final class SceneCompositionEnvironmentTests: XCTestCase {
   func testRetainedUIKitViewAndTraitEnvironmentDoNotOwnUnmountedPaint() async throws {
     let resources = SceneRenderResources(), registry = SpatialInkSurfaceRegistry()
     var cohort: SceneCompositionCohort? = try await WorkspaceInkFixture.prepare(boardID: UUID(),
-      camera: .init(), viewport: .init(x: 256, y: 256), items: [], registry: registry, resources: resources)
+      camera: .init(), viewport: .init(x: 256, y: 256), items: [], registry: registry, resources: resources,
+      requiresStaticRaster: true)
     weak let retired = cohort
     let reference = SceneCompositionReference(cohort)
     let native = SceneEnvironmentProbeView()

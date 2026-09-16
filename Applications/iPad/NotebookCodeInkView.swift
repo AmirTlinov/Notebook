@@ -29,6 +29,7 @@ final class NotebookCodeInkPresenter {
     gate: NotebookInputGate, review: NotebookCodeFragment? = nil) {
     self.text = text; self.notes = notes; self.file = file; self.gate = gate; self.review = review
     overlay.backgroundColor = .clear; overlay.isOpaque = false
+    overlay.paper.touchView.simulatesPencilContacts = gate.simulatesPencilContacts
     text.addSubview(overlay)
     overlay.paper.touchView.accessibilityLabel = "Пометки на коде"
     overlay.paper.touchView.accessibilityIdentifier = "notebook-code-ink"
@@ -232,10 +233,8 @@ final class NotebookCodePencilOverlay: UIView {
   override func layoutSubviews() { super.layoutSubviews(); paper.frame = bounds }
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
     guard acceptsPencil, self.point(inside: point, with: event) else { return nil }
-    var pencil = event?.allTouches?.contains { $0.type == .pencil } == true
-    #if DEBUG && targetEnvironment(simulator)
-      if ProcessInfo.processInfo.arguments.contains("--notebook-code-pencil-fixture") { pencil = true }
-    #endif
+    let pencil = paper.touchView.simulatesPencilContacts
+      || event?.allTouches?.contains(where: paper.touchView.acceptsDrawingTouch) == true
     return pencil ? paper.touchView : nil
   }
 }

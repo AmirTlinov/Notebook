@@ -566,8 +566,10 @@ import XCTest
           let start = ink.coordinate(withNormalizedOffset: .init(dx: 0.12, dy: 0.34))
           start.press(forDuration: 0.06, thenDragTo: start.withOffset(.init(dx: 55, dy: 25)))
         } else {
-          let start = ink.coordinate(withNormalizedOffset: .init(dx: 0.14, dy: 0.36))
-          start.press(forDuration: 0.01, thenDragTo: start.withOffset(.init(dx: iteration.isMultiple(of: 2) ? 30 : -30, dy: 0)))
+          // Rotation can place a live button under a fixed canvas fraction.
+          // A camera contact must start on the observed free board, not ask
+          // WebKit to reinterpret a legitimate control contact as navigation.
+          try panFreeBoard(by: .init(dx: iteration.isMultiple(of: 2) ? 30 : -30, dy: 0), recordsEvidence: false)
         }
         let enlarge = controlWebView.frame.height < controlViewport.height * 0.52
         ink.pinch(withScale: enlarge ? 1.02 : 0.8, velocity: enlarge ? 0.6 : -0.6)

@@ -34,11 +34,12 @@ enum NotebookChatResizeCorner: String, CaseIterable {
 /// Only the outer rim takes the drag; nearby header/composer buttons retain
 /// their full central hit targets. Nothing is painted over the conversation.
 struct NotebookChatCornerHitShape: Shape {
+  static let rim: CGFloat = 14
   let corner: NotebookChatResizeCorner
   func path(in rect: CGRect) -> Path {
     var path = Path()
-    path.addRect(CGRect(x: corner.leading ? rect.minX : rect.maxX - 14, y: rect.minY, width: 14, height: rect.height))
-    path.addRect(CGRect(x: rect.minX, y: corner.top ? rect.minY : rect.maxY - 14, width: rect.width, height: 14))
+    path.addRect(CGRect(x: corner.leading ? rect.minX : rect.maxX - Self.rim, y: rect.minY, width: Self.rim, height: rect.height))
+    path.addRect(CGRect(x: rect.minX, y: corner.top ? rect.minY : rect.maxY - Self.rim, width: rect.width, height: Self.rim))
     return path
   }
 }

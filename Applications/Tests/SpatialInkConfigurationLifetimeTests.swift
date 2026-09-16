@@ -35,7 +35,7 @@ final class SpatialInkConfigurationLifetimeTests: XCTestCase {
     var cohort: SceneCompositionCohort? = try await WorkspaceInkFixture.prepare(boardID: boardID,
       camera: .init(), viewport: .init(x: 512, y: 512),
       items: [.init(itemID: itemID, geometry: .notebook, center: .zero, zIndex: 0)],
-      journal: journal, registry: registry, resources: resources)
+      journal: journal, registry: registry, resources: resources, requiresStaticRaster: true)
     weak let retiredCohort = cohort
     weak let retiredLease = cohort?.nativeInk
     weak let retiredOwner = cohort?.nativeInk.owners[surface]

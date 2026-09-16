@@ -191,9 +191,16 @@ final class SceneTileConfigurationLifetimeTests: XCTestCase {
     let tiles = SceneCompositionTiles(resources: resources, surfaceRegistry: registry)
     tiles.prepare(source: source, presence: presence, frame: frame, pinned: [], displayScale: 1)
     let deadline = ContinuousClock.now + .seconds(15)
-    while tiles.published == nil, tiles.failure == nil, ContinuousClock.now < deadline {
+    func hasPreparedSquares() -> Bool {
+      guard let cohort = tiles.published else { return false }
+      return elements.allSatisfy {
+        cohort.sourceReceipts[.init(plane: .board(presence.boardID), elementID: $0.id)]?.hasCurrentPixels == true
+      }
+    }
+    while !hasPreparedSquares(), tiles.failure == nil, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(10))
     }
+    XCTAssertTrue(hasPreparedSquares(), "The pixel lifetime fixture needs its actual squares, not the independent empty first publication")
     return try XCTUnwrap(tiles.published, tiles.failure ?? "The real static source did not finish preparation")
   }
 

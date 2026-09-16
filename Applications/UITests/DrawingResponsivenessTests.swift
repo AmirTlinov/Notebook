@@ -718,7 +718,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     field.tap()
     XCTAssertTrue(waitForKeyboardLayout(app, above: dictation))
     dictation.tap()
-    let notice = app.staticTexts["notebook-dictation-status"]
+    let notice = app.staticTexts["notebook-dictation-notice"]
     XCTAssertTrue(notice.waitForExistence(timeout: 3))
     XCTAssertTrue(notice.label.contains("Подключите Mac"))
     let unavailableProof = XCTAttachment(screenshot: app.screenshot())
@@ -726,7 +726,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(field.value as? String, "Keep this draft")
     XCTAssertFalse(app.buttons["Завершить голосовой разговор"].exists)
     XCTAssertEqual(app.alerts.count, 0, "An offline dictation cannot open the microphone")
-    app.buttons["notebook-dictation-cancel"].tap()
+    app.buttons["notebook-dictation-dismiss-notice"].tap()
     voice.tap()
     let failure = app.staticTexts["notebook-chat-notice"]
     XCTAssertTrue(failure.waitForExistence(timeout: 3), "A tap must invoke the audio owner, not open another activation menu")
@@ -741,7 +741,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.buttons["notebook-chat-toggle"].tap()
     app.buttons["notebook-compact-dictation"].tap()
     XCTAssertTrue(notice.waitForExistence(timeout: 3))
-    app.buttons["notebook-dictation-cancel"].tap()
+    app.buttons["notebook-dictation-dismiss-notice"].tap()
     XCTAssertEqual(app.buttons["notebook-compact-voice"].label, "Начать голосовой разговор")
     app.buttons["notebook-compact-voice"].tap()
     let compactFailure = app.staticTexts["notebook-compact-voice-error"]
@@ -1066,18 +1066,18 @@ final class DrawingResponsivenessTests: XCTestCase {
     launchPortraitFixture(app)
     let panel = app.descendants(matching: .any).matching(identifier: "notebook-chat-panel").firstMatch
     let toggle = app.buttons["notebook-chat-toggle"]
-    XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+    XCTAssertTrue(app.buttons["notebook-companion-compose"].waitForExistence(timeout: 5))
     for landscape in [false, true] {
       XCUIDevice.shared.orientation = landscape ? .landscapeLeft : .portrait
       for expanded in [false, true] {
-        if expanded { toggle.tap() }
+        if expanded { openChat(in: app) }
         let controls = ["previous-page", "page-overview", "next-page",
           "pen-controls-toggle", "drawing-tool-eraser", "pen-settings"]
         let unobstructed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
           let window = app.frame, frame = panel.frame
           guard (window.width > window.height) == landscape,
             window.contains(frame), frame.width > (expanded ? 300 : 100),
-            frame.width <= (expanded ? window.width - 36 : 344) + 1 else { return false }
+            frame.width <= (expanded ? window.width - 36 : 352) + 1 else { return false }
           return controls.allSatisfy { id in
             let control = app.buttons[id]
             return control.exists && control.isHittable && !frame.intersects(control.frame)
@@ -1100,10 +1100,10 @@ final class DrawingResponsivenessTests: XCTestCase {
   func testCodePencilPersistsBesideNativeTextAndOwnUndoDoesNotTouchPaper() {
     continueAfterFailure = false
     let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-code-document-fixture", "--notebook-code-pencil-fixture"]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-code-document-fixture"]
     launchPortraitFixture(app)
     let paper = app.otherElements["paper-input"], frame = paper.frame, previousInk = paper.value as? String
-    app.buttons["notebook-chat-toggle"].tap(); app.buttons["notebook-file-reopen"].tap()
+    openChat(in: app); app.buttons["notebook-file-reopen"].tap()
     XCTAssertTrue(app.otherElements["notebook-code-document"].waitForExistence(timeout: 3))
     app.buttons["notebook-chat-toggle"].tap()
     let ink = app.otherElements["notebook-code-ink"]
@@ -1115,7 +1115,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, previousInk)
     let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "code-native-pencil-contact"; shot.lifetime = .keepAlways; add(shot)
     app.buttons["code-xmark"].tap()
-    app.buttons["notebook-chat-toggle"].tap(); app.buttons["notebook-file-reopen"].tap()
+    openChat(in: app); app.buttons["notebook-file-reopen"].tap()
     XCTAssertTrue(ink.waitForExistence(timeout: 3))
     let restored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1 действий пера"), object: ink)
     XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 4), .completed)
@@ -1128,10 +1128,10 @@ final class DrawingResponsivenessTests: XCTestCase {
   func testCodeNoteCanBeReboundThroughTheActualControlsWithoutChangingItsOriginalText() {
     continueAfterFailure = false
     let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-code-document-fixture", "--notebook-code-pencil-fixture"]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-code-document-fixture"]
     launchPortraitFixture(app)
     let paper = app.otherElements["paper-input"], frame = paper.frame, previousInk = paper.value as? String
-    app.buttons["notebook-chat-toggle"].tap(); app.buttons["notebook-file-reopen"].tap()
+    openChat(in: app); app.buttons["notebook-file-reopen"].tap()
     XCTAssertTrue(app.otherElements["notebook-code-document"].waitForExistence(timeout: 3))
     app.buttons["notebook-chat-toggle"].tap()
     let ink = app.otherElements["notebook-code-ink"]
@@ -1164,7 +1164,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-code-document-fixture"]
     launchPortraitFixture(app)
     let paper = app.otherElements["paper-input"], frame = paper.frame, ink = paper.value as? String
-    app.buttons["notebook-chat-toggle"].tap()
+    openChat(in: app)
     let files = app.scrollViews["notebook-project-files"], composer = app.otherElements["notebook-chat-composer"]
     XCTAssertTrue(files.waitForExistence(timeout: 3))
     XCTAssertGreaterThanOrEqual(files.frame.minX, composer.frame.maxX, "The one divider separates conversation/composer on the left from files on the right")
@@ -1185,7 +1185,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.buttons["code-xmark"].tap()
     XCTAssertFalse(text.exists)
     XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
-    app.buttons["notebook-chat-toggle"].tap(); app.buttons["notebook-file-reopen"].tap()
+    openChat(in: app); app.buttons["notebook-file-reopen"].tap()
     XCTAssertTrue(text.waitForExistence(timeout: 3))
     XCTAssertTrue((text.value as? String)?.contains("# written on iPad") == true)
   }
@@ -1197,7 +1197,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     launchPortraitFixture(app)
     XCTAssertFalse(app.buttons["pairing-settings"].exists)
     XCTAssertFalse(app.buttons["collaboration-history"].exists)
-    app.buttons["notebook-chat-toggle"].tap()
+    openChat(in: app)
     let panel = app.descendants(matching: .any).matching(identifier: "notebook-chat-panel").firstMatch
     let paper = app.otherElements["paper-input"], paperFrame = paper.frame, drawing = paper.value as? String
     let before = panel.frame
@@ -1222,7 +1222,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, drawing)
     }
     let resized = panel.frame
-    app.buttons["notebook-chat-toggle"].tap(); app.buttons["notebook-chat-toggle"].tap()
+    app.buttons["notebook-chat-toggle"].tap(); openChat(in: app)
     XCTAssertEqual(panel.frame, resized)
     XCTAssertEqual(paper.frame, paperFrame)
     XCTAssertEqual(paper.value as? String, drawing)
@@ -1240,7 +1240,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(paper.value as? String, drawing)
     app.terminate()
     launchPortraitFixture(app)
-    app.buttons["notebook-chat-toggle"].tap()
+    openChat(in: app)
     XCTAssertEqual(panel.frame, resized, "The scene restores the user's geometry after a cold launch")
   }
 
@@ -1262,11 +1262,11 @@ final class DrawingResponsivenessTests: XCTestCase {
     launchPortraitFixture(app)
     let toggle = app.buttons["notebook-chat-toggle"]
     let panel = app.descendants(matching: .any).matching(identifier: "notebook-chat-panel").firstMatch
-    XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+    XCTAssertTrue(app.buttons["notebook-companion-compose"].waitForExistence(timeout: 5))
     let offsets = [CGVector(dx: 0.5, dy: 0.5), .init(dx: 0.1, dy: 0.1), .init(dx: 0.9, dy: 0.9),
       .init(dx: 0.1, dy: 0.9), .init(dx: 0.9, dy: 0.1)]
     for (index, offset) in offsets.enumerated() {
-      toggle.tap()
+      openChat(in: app)
       if transcript && index == 0 {
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "notebook-chat-transcript")
           .firstMatch.waitForExistence(timeout: 3))
@@ -1285,7 +1285,8 @@ final class DrawingResponsivenessTests: XCTestCase {
       // A person taps the 44-point control, not a one-pixel SF Symbol stroke.
       toggle.coordinate(withNormalizedOffset: offset).tap()
       let collapsed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-        panel.frame.width <= 113 && panel.frame.height <= 49 && !create.exists
+        app.buttons["notebook-companion-compose"].exists && !toggle.exists && !create.exists
+          && panel.frame.width <= 352 && panel.frame.height <= 460
       }, object: nil)
       let result = XCTWaiter.wait(for: [collapsed], timeout: 3)
       let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
@@ -1302,14 +1303,14 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
     launchPortraitFixture(app)
     let toggle = app.buttons["notebook-chat-toggle"]
-    XCTAssertTrue(toggle.waitForExistence(timeout: 5)); toggle.tap()
+    openChat(in: app)
     let field = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
     XCTAssertTrue(field.waitForExistence(timeout: 3))
     XCTAssertFalse(app.keyboards.firstMatch.exists, "Opening chat does not steal Pencil focus")
     let paper = app.otherElements["paper-input"], before = app.otherElements["paper-input"].frame
     field.tap(); field.typeText("Keep this draft")
     XCTAssertEqual(paper.frame, before, "Only chat follows the keyboard safe area")
-    toggle.tap(); toggle.tap()
+    toggle.tap(); openChat(in: app)
     XCTAssertEqual(field.value as? String, "Keep this draft")
     field.tap()
     let keyboard = app.keyboards.firstMatch
@@ -1425,7 +1426,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let element = app.descendants(matching: .any).matching(identifier: "agent-element-shared-element").firstMatch
     XCTAssertTrue(element.waitForExistence(timeout: 8))
     let toggle = app.buttons["notebook-chat-toggle"]
-    if toggle.label == "Свернуть чат" { toggle.tap() }
+    if toggle.exists { toggle.tap() }
     element.tap()
     XCTAssertTrue(app.buttons["delete-agent-element"].waitForExistence(timeout: 4))
     XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "resize-agent-element").firstMatch.exists)
@@ -1433,7 +1434,9 @@ final class DrawingResponsivenessTests: XCTestCase {
       let corner = app.descendants(matching: .any).matching(identifier: "resize-agent-element-" + name).firstMatch
       XCTAssertTrue(corner.waitForExistence(timeout: 4)); XCTAssertTrue(corner.isHittable)
       let before = element.frame
-      let start = corner.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+      // The upper-left center overlaps the collapsed chat. Use the visible
+      // interior of each 44-point target, not that unrelated control.
+      let start = corner.coordinate(withNormalizedOffset: .init(dx: 0.75, dy: 0.75))
       start.press(forDuration: 0.05, thenDragTo: start.withOffset(.init(dx: leading ? -22 : 22, dy: top ? -18 : 18)), withVelocity: .slow, thenHoldForDuration: 0)
       let resized = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in element.frame.width > before.width + 10 && element.frame.height > before.height + 8 }, object: nil)
       let outcome = XCTWaiter.wait(for: [resized], timeout: 4)
@@ -1535,7 +1538,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(count.value as? String, "1", "Moving keeps the original pinned source")
     let proof = XCTAttachment(screenshot: app.screenshot())
     proof.name = "body-hold-moved-artifact-with-compact-context-count"; proof.lifetime = .keepAlways; add(proof)
-    app.buttons["notebook-chat-toggle"].tap()
+    openChat(in: app)
     XCTAssertTrue(count.waitForExistence(timeout: 3)); XCTAssertEqual(count.value as? String, "1")
     XCTAssertFalse(app.staticTexts["Амир указал область"].exists)
     app.buttons["notebook-chat-toggle"].tap()
@@ -2059,6 +2062,13 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.windows.containing(.button, identifier: "pen-controls-toggle").firstMatch
   }
 
+  private func openChat(in app: XCUIApplication) {
+    let compose = app.buttons["notebook-companion-compose"]
+    XCTAssertTrue(compose.waitForExistence(timeout: 3))
+    compose.tap()
+    XCTAssertTrue(app.buttons["notebook-chat-toggle"].waitForExistence(timeout: 3))
+  }
+
   private func openSharedHistory(in app: XCUIApplication) {
     let menu = app.buttons["notebook-chat-menu"]
     if !menu.exists { app.buttons["notebook-companion-compose"].tap() }
@@ -2277,38 +2287,51 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
     paper.pinch(withScale: 0.28, velocity: -2)
     XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
+    let items = app.descendants(matching: .any).matching(
+      NSPredicate(format: "identifier BEGINSWITH 'workspace-item-'")
+    )
+    let priorItems = Set(items.allElementsBoundByIndex.map(\.identifier))
     app.buttons["create-workspace-item"].tap()
     let createBoard = app.buttons["create-nested-board"]
     XCTAssertTrue(createBoard.waitForExistence(timeout: 2))
     createBoard.tap()
 
-    let portals = app.descendants(matching: .any).matching(
-      NSPredicate(format: "identifier BEGINSWITH 'workspace-item-'")
-    )
-    let portal = portals.element(boundBy: portals.count - 1)
-    XCTAssertTrue(portal.waitForExistence(timeout: 3))
-    workspaceWindow(in: app).pinch(withScale: 3, velocity: 2)
+    let created = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      !Set(items.allElementsBoundByIndex.map(\.identifier)).subtracting(priorItems).isEmpty
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [created], timeout: 3), .completed)
+    guard let identifier = Set(items.allElementsBoundByIndex.map(\.identifier)).subtracting(priorItems).first else {
+      return XCTFail("Созданный портал не опубликован")
+    }
+    let portal = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    portal.pinch(withScale: 3, velocity: 2)
     XCTAssertTrue(portal.waitForNonExistence(timeout: 4), "Вложенная сцена заменяет рамку портала")
     XCTAssertTrue(
       app.buttons["leave-nested-board"].waitForExistence(timeout: 4),
       "Щипок наружу должен продолжить окно портала во вложенную доску"
     )
 
-    workspaceWindow(in: app).pinch(withScale: 0.55, velocity: -2)
+    // Pinch a real child cover rather than the entire UIWindow: its bottom
+    // corner is the Create control, which correctly owns that finger itself.
+    app.buttons["create-workspace-item"].tap()
+    app.buttons["Тетрадь"].tap()
+    let cover = items.firstMatch
+    XCTAssertTrue(cover.waitForExistence(timeout: 3))
+    cover.pinch(withScale: 0.55, velocity: -2)
     XCTAssertTrue(
       !portal.exists && app.buttons["leave-nested-board"].exists,
       "Обычное уменьшение внутри доски не должно выводить наружу по доле отдельного жеста"
     )
-    workspaceWindow(in: app).pinch(withScale: 0.35, velocity: -2)
+    cover.pinch(withScale: 0.35, velocity: -2)
     XCTAssertTrue(
       portal.waitForExistence(timeout: 4),
       "Уменьшение за входной масштаб должно продолжить тот же вид на родительской доске"
     )
     XCTAssertLessThan(portal.frame.width, workspaceWindow(in: app).frame.width)
-    // Continue the system gesture route to the parent's overview. Exact boundary
-    // scales and release continuity are measured by the native PortalPassageTests.
-    workspaceWindow(in: app).pinch(withScale: 0.4, velocity: -2)
-    XCTAssertTrue(app.buttons["create-workspace-item"].exists)
+    // Back is also present for a focused cover on the parent. The reinstalled
+    // original portal is the owner-specific proof of leaving its child board.
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "parent-portal-after-physical-pinch"; proof.lifetime = .keepAlways; add(proof)
   }
 
   func testDoubleTapCreatesAndReopensTextOnAFocusedCover() {
@@ -3221,11 +3244,12 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
     XCTAssertEqual(paper.value as? String, "80 действий пера")
 
+    // Keep the stroke on exposed paper, below the compact chat controls.
     let start = paper.coordinate(
-      withNormalizedOffset: CGVector(dx: 0.18, dy: 0.22)
+      withNormalizedOffset: CGVector(dx: 0.25, dy: 0.45)
     )
     let end = paper.coordinate(
-      withNormalizedOffset: CGVector(dx: 0.82, dy: 0.34)
+      withNormalizedOffset: CGVector(dx: 0.82, dy: 0.57)
     )
     let dragStarted = ContinuousClock.now
     start.press(
@@ -3327,7 +3351,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     wait(for: [bothErasersLanded], timeout: 2)
   }
 
-  func testErasureIsCommittedBeforeLeavingAndReopeningTheNotebook() async throws {
+  func testErasureIsCommittedBeforeLeavingAndColdReopeningTheNotebook() async throws {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = [
@@ -3372,8 +3396,15 @@ final class DrawingResponsivenessTests: XCTestCase {
       "Суд повторного входа должен начинаться с видимых устойчивых чернил"
     )
 
-    paper.pinch(withScale: 0.28, velocity: -2)
+    // XCTest direct contacts represent Pencil in this launch. Close through
+    // the real navigation control, then use a cold finger-only launch rather
+    // than pretending the same direct contact is also a physical finger.
+    app.buttons["leave-nested-board"].tap()
     XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
+    app.terminate()
+    app.launchArguments.removeAll { $0 == "--notebook-simulator-mixed-input" }
+    app.launchArguments.append("--notebook-reopen-fixture")
+    launchPortraitFixture(app)
     let notebook = app.descendants(matching: .any)
       .matching(
         identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002"

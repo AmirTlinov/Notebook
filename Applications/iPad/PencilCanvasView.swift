@@ -407,8 +407,12 @@ final class PaperCanvasContainerView: UIView {
 
   /// Paper owns Pencil above every artifact; fingers reach the material below.
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-    guard touchView.isUserInteractionEnabled, self.point(inside: point, with: event),
-      event?.allTouches?.contains(where: touchView.acceptsDrawingTouch) == true else { return nil }
+    guard touchView.isUserInteractionEnabled, self.point(inside: point, with: event) else { return nil }
+    // XCTest's first hit test can carry an empty touch set. An explicitly
+    // admitted Simulator Pencil fixture already owns that classification.
+    // Real devices never enable it and still use the actual UITouch type.
+    guard touchView.simulatesPencilContacts
+      || event?.allTouches?.contains(where: touchView.acceptsDrawingTouch) == true else { return nil }
     return touchView
   }
 
@@ -672,19 +676,7 @@ final class PaperInputView: UIView {
   }
 
   func acceptsDrawingTouch(_ touch: UITouch) -> Bool {
-    if touch.type == .pencil { return true }
-    if simulatesPencilContacts, touch.type == .direct { return true }
-    #if DEBUG && targetEnvironment(simulator)
-      return touch.type == .direct
-        && (!ProcessInfo.processInfo.arguments.contains(
-          SimulatorDrawingFixture.fingerGestureArgument
-        )
-          || ProcessInfo.processInfo.arguments.contains(
-            SimulatorDrawingFixture.mixedInputArgument
-          ))
-    #else
-      return false
-    #endif
+    touch.type == .pencil || (simulatesPencilContacts && touch.type == .direct)
   }
 
   @discardableResult

@@ -55,6 +55,7 @@ final class ZoomOutCoverageTests: XCTestCase {
     defer { model.inputGate.endContact(source: contact) }
     let start = ContinuousClock.now
     var firstShown: Duration?
+    let address = SceneSourceAddress(plane: .board(boardID), elementID: diagram.id)
     // Keep taking real camera samples. Holding the final view without lifting
     // is not enough: coverage must make progress while samples keep arriving.
     for step in 0..<150 {
@@ -71,10 +72,11 @@ final class ZoomOutCoverageTests: XCTestCase {
       if let cohort = model.compositionTiles.published,
         cohort.plan.allowsLive(.element(diagram.id), in: .board(boardID)),
         cohort.nativeInk.owners[.cover(distant)]?.canvas.isDescendant(of: host.view) == true,
-        !rasterViews(in: host.view).isEmpty,
+        cohort.hasInstalledPixels(for: address),
         firstShown == nil { firstShown = start.duration(to: ContinuousClock.now) }
     }
-    let diagnostic = "firstShown=\(String(describing: firstShown)); active=\(model.inputIsActive); phase=\(model.presencePhase); scenePending=\(model.scenePreparationPending); preparing=\(model.compositionTiles.isPreparing); failure=\(model.compositionTiles.failure ?? "none"); refusals=\(model.compositionTiles.budgetFailures)"
+    let shown = model.compositionTiles.published
+    let diagnostic = "firstShown=\(String(describing: firstShown)); active=\(model.inputIsActive); phase=\(model.presencePhase); scenePending=\(model.scenePreparationPending); preparing=\(model.compositionTiles.isPreparing); failure=\(model.compositionTiles.failure ?? "none"); refusals=\(model.compositionTiles.budgetFailures); diagramLive=\(shown?.plan.allowsLive(.element(diagram.id), in: .board(boardID)) == true); diagramPixels=\(shown?.hasInstalledPixels(for: address) == true); coverMounted=\(shown?.nativeInk.owners[.cover(distant)]?.canvas.isDescendant(of: host.view) == true); rasterViews=\(rasterViews(in: host.view).count); receipts=\(String(describing: shown?.sourceReceipts[address])); items=\(shown?.frame.workset(boardID: boardID).items.map(\.id) ?? [])"
     let report = XCTAttachment(string: diagnostic); report.name = "Zoom-out coverage while camera remains active"; report.lifetime = .keepAlways; add(report)
     XCTAssertNotNil(firstShown, diagnostic)
     XCTAssertTrue(model.inputIsActive)

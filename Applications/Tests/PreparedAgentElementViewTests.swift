@@ -215,6 +215,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
         frame: .init(x: 0, y: 0, width: 160, height: 120), worldOrigin: .zero,
         source: "Capture debt survives a native consumer remount",
         html: "<svg width='160' height='120'><rect x='20' y='20' width='120' height='80' fill='red'/></svg>",
+        javaScript: "const paint=()=>document.querySelector('rect').setAttribute('fill',notebook.state===1?'blue':'red');paint();window.addEventListener('notebookstate',paint);",
         state: state, stamp: .init(counter: 0, actor: model.actorID))
       XCTAssertTrue(after.upsertElement(value, in: boardID,
         expected: before.board(boardID)?.elements.first(where: { $0.id == id })?.stamp, actor: model.actorID))
@@ -366,7 +367,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
         frame: .init(x: 0, y: 0, width: 160, height: 120), worldOrigin: .zero,
         source: rejects ? "Rejected source" : "Working source",
         html: "<svg width='160' height='120'><rect x='20' y='20' width='120' height='80' fill='red'/></svg>",
-        javaScript: rejects ? "window.notebook.ready(Promise.reject(new Error('Native acceptance readiness failure')));" : "",
+        javaScript: rejects ? "window.notebook.ready(Promise.reject(new Error('Native acceptance readiness failure')));" : "window.notebook.ready(Promise.resolve());",
         stamp: .init(counter: 0, actor: model.actorID))
       XCTAssertTrue(after.upsertElement(value, in: boardID,
         expected: before.board(boardID)?.elements.first(where: { $0.id == id })?.stamp, actor: model.actorID))
@@ -733,6 +734,10 @@ final class PreparedAgentElementViewTests: XCTestCase {
   @MainActor
   func testPassiveCaptureResumesAfterRealRasterAdmissionWithoutAnotherViewUpdate() async throws {
     let model = makeModel(), resources = SceneRenderResources.shared
+    try await waitUntil("Earlier mounted owners must release their asynchronous backing before measuring this pressure") {
+      resources.activeWebSurfaceCount == 0 && resources.pendingWebRequestCount == 0
+        && resources.rasterAdmission.pinnedBytes == 0 && resources.rasterAdmission.passiveReservedBytes == 0
+    }
     let source = element(id: UUID().uuidString, source: "Stationary passive page")
     let activityReference = InteractiveElementReference.page(pageID: UUID(), elementID: source.id)
     let admission = resources.rasterAdmission
@@ -776,7 +781,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
   }
 
   @MainActor
-  func testPageSVGKeepsActualScreenDensityAndCanonicalViewportWhenItBecomesPassive() async throws {
+  func testInteractivePageSVGKeepsActualScreenDensityAndCanonicalViewportWhenItBecomesPassive() async throws {
     let model = makeModel()
     let pageSize = PageSize(width: 834, height: 1194)
     await model.start(pageSize: pageSize)
@@ -788,6 +793,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
           <rect x="9970" y="0" width="60" height="30000" fill="#e52222"/>
           <rect x="0" y="14970" width="20000" height="60" fill="#e52222"/>
         </svg>
+        <button style="position:absolute;left:12px;top:12px" onclick="notebook.commit({clicked:true})">Inspect drawing</button>
         """)
     page.replaceElements([source], actor: model.actorID)
     try model.store.savePage(page)
@@ -865,7 +871,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
   }
 
   @MainActor
-  func testFourthVisiblePageProgramQueuesAndStartsWhenItsActualViewportIsRevealed() async throws {
+  func testFourVisiblePageProgramsAreReadyWithoutViewportActivation() async throws {
     let model = makeModel(), pageID = UUID()
     let elements = (0..<4).map { index in
       AgentElement(id: "program-\(index)-" + pageID.uuidString, kind: .web,
@@ -881,20 +887,18 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let host = try SurfaceHost(content: AnyView(PageProgramViewportFixture(viewport: viewport, pageID: pageID,
       elements: elements, onState: { commits[$0] = $1; return true }).environment(model)))
     defer { host.close() }
-    try await waitUntil("Visible programs automatically queue at the unchanged resource cap", timeout: .seconds(12)) {
+    try await waitUntil("All four visible programs are ready without an activation tap", timeout: .seconds(12)) {
       let views = self.webViews(in: host.controller.view)
-      return views.count == 3 && SceneRenderResources.shared.pendingWebRequestCount == 1 && views.allSatisfy { web in
-        elements.contains { (web.navigationDelegate as? AgentWebCoordinator)?.hasLiveSource($0) == true }
-      }
+      return views.count == elements.count && SceneRenderResources.shared.pendingWebRequestCount == 0
+        && elements.allSatisfy { source in
+          views.contains { ($0.navigationDelegate as? AgentWebCoordinator)?.hasLiveSource(source) == true }
+        }
     }
     let original = webViews(in: host.controller.view)
-    let identities = Set(original.map(ObjectIdentifier.init))
-    var admitted: Set<String> = []
-    for view in original {
-      let label = try await view.evaluateJavaScript("document.getElementById('control').textContent") as? String
-      if let label { admitted.insert(label) }
-    }
-    let waiting = try XCTUnwrap((0..<4).first { !admitted.contains("Ready control \($0)") })
+    let waiting = 3
+    let originalFourth = try XCTUnwrap(original.first {
+      ($0.navigationDelegate as? AgentWebCoordinator)?.hasLiveSource(elements[waiting]) == true
+    })
     let target = elements[waiting]
     viewport.region = CGRect(x: target.frame.x, y: target.frame.y, width: target.frame.width, height: target.frame.height)
     var current: WKWebView?
@@ -909,9 +913,9 @@ final class PreparedAgentElementViewTests: XCTestCase {
     }
     let web = try XCTUnwrap(current)
     try await waitUntil("The newly visible control is physically ready") { SceneSourceVisibility.isVisible(web) }
-    XCTAssertFalse(identities.contains(ObjectIdentifier(web)))
+    XCTAssertTrue(web === originalFourth, "Revealing the fourth viewport retains its already ready runtime")
     XCTAssertNil(model.interactiveElementFocus, "Visibility alone, not a hidden activating tap, starts this control")
-    XCTAssertTrue(commits.isEmpty, "Queued input is never replayed")
+    XCTAssertTrue(commits.isEmpty, "Preparation never invents input")
     // Native unit tests set the accepted contact intent; the UI test supplies
     // the trusted first gesture. Visibility and startup above needed no focus.
     model.interactiveElementFocus = .page(pageID: pageID, elementID: target.id)

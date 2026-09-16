@@ -69,7 +69,9 @@ final class InputLatencyTests: XCTestCase {
     XCTAssertNotNil(accepted, "Подготовка пера не ждёт транзакцию SQLite")
     try descriptor.release()
     await model.finishPendingPersistence()
-    let drawing = try PageInkDrawing.decode(XCTUnwrap(model.pages[page.id]).drawingData)
+    // Navigation may legitimately retire this page from the bounded window.
+    // Both accepted actions must survive in its durable owner, not in a global cache.
+    let drawing = try PageInkDrawing.decode(store.loadPage(page.id).drawingData)
     XCTAssertEqual(Set(drawing.activeActions.map(\.id)), [local.id, remote.id])
     XCTAssertEqual(try store.loadPresence(), presence)
   }

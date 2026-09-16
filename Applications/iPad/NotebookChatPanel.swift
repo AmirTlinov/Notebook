@@ -189,7 +189,9 @@ struct NotebookChatPanel: View {
         .accessibilityLabel("Свернуть чат").accessibilityIdentifier("notebook-chat-toggle")
     }
     .font(.system(size: 14, weight: .regular)).foregroundStyle(.secondary)
-    .padding(.leading, 22).padding(.trailing, 8).padding(.top, 5)
+    // The resize rim and each complete 44-point button are disjoint owners.
+    .padding(.leading, 22).padding(.trailing, NotebookChatCornerHitShape.rim)
+    .padding(.top, NotebookChatCornerHitShape.rim)
   }
 
   private func windowDrag(_ action: @escaping (CGSize, Bool) -> Void, activity: GestureState<Bool>) -> some Gesture {

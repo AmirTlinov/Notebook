@@ -65,7 +65,7 @@ final class DocumentBlockRuntimeTests: XCTestCase {
     let background = try await resources.acquireWebSurface(priority: .visible)
     defer { background.release() }
     let fixture = try RuntimeFixture(block: .interactive(id: "queued", html: "<button>Current control</button>", height: 100),
-      resources: resources, priority: .liveProgram)
+      resources: resources, priority: .neighbor)
     defer { fixture.close() }
     try await wait { resources.pendingWebRequestCount == 1 }
     XCTAssertNil(fixture.runtime.webView)

@@ -68,6 +68,14 @@ final class NotebookAgentQuestionTests: XCTestCase {
   @MainActor
   func testLatePointAndHistoryCompletionCannotReopenAReplacedChoice() async throws {
     try await fixture { model in
+      // Selection of a deleted/nonexistent element is intentionally cleared on
+      // readback. This race concerns a real later choice that still exists.
+      var page = try XCTUnwrap(model.activePage)
+      page.replaceElements([AgentElement(id: "next-artifact", kind: .web,
+        frame: .init(x: 200, y: 20, width: 100, height: 100), source: "Next choice",
+        html: "<div>Next choice</div>")], actor: model.actorID)
+      try model.store.savePage(page)
+      await model.reloadExternalChanges()?.value
       let capture = try selection(model)
       let presence = try XCTUnwrap(model.presence)
       let element = EditableElementReference.page(pageID: try XCTUnwrap(model.activePage).id, elementID: "next-artifact")
@@ -98,7 +106,8 @@ final class NotebookAgentQuestionTests: XCTestCase {
       model.selectElement(second)
       XCTAssertEqual(model.selectionSession.element, second); XCTAssertNil(model.selectionSession.manipulation)
       let question = try await point(model)
-      model.completeShow(try XCTUnwrap(question.references.first))
+      model.requestShow(try XCTUnwrap(question.references.first))
+      model.completeShow(try XCTUnwrap(model.requestedReference))
       XCTAssertNil(model.agentQuestion); XCTAssertNil(model.selectionSession.element)
       XCTAssertNotNil(model.highlightedReference)
       model.selectElement(first)

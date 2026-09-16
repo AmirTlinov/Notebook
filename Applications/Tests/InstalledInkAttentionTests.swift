@@ -357,6 +357,7 @@ final class InstalledInkAttentionTests: XCTestCase {
     let canvas = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: 512, height: 512))
     private let model: NotebookAppModel, presence: SessionPresence, window: UIWindow
     private let coordinator: SpatialInkCanvas.Coordinator
+    private let paint = UIHostingController(rootView: AnyView(EmptyView()))
     private(set) var cohort: SceneCompositionCohort
     private var physical: WorkspaceInkFixture
     private let touch = CaptureTouch(), event = UIEvent()
@@ -373,7 +374,30 @@ final class InstalledInkAttentionTests: XCTestCase {
       host.view.addSubview(canvas); window.makeKeyAndVisible()
       physical = try .init(cohort: cohort, presence: presence, canvas: canvas, parent: host,
         registry: registry, gate: model.inputGate, journal: model.spatialInk)
+      host.addChild(paint); host.view.insertSubview(paint.view, at: 0)
+      paint.view.frame = canvas.frame; paint.didMove(toParent: host)
+      installPaint()
       update(.pen)
+    }
+
+    private func installPaint() {
+      // This fixture owns the real ink/cover poses separately. Install the
+      // cohort's static bands in the same native camera planes as the scene;
+      // preparation alone is deliberately not a displayed-pixel receipt.
+      let current = cohort, presence = presence
+      paint.rootView = AnyView(ZStack {
+        ForEach([ScenePaintPosition.Layer.elements, .covers], id: \.self) { layer in
+          SceneCameraPlane(presence: presence, revision: current.paintID,
+            installation: current.installation(for: layer)) { anchor in
+            ZStack {
+              ForEach(SceneCompositionTileBandView.bands(in: current, plane: .board(presence.boardID),
+                layer: layer, presence: anchor)) { band in band.zIndex(Double(band.rank)) }
+            }
+          }
+        }
+      }.environment(model).ignoresSafeArea())
+      paint.view.setNeedsLayout(); paint.view.layoutIfNeeded()
+      XCTAssertTrue(current.isPaintInstalled)
     }
 
     func update(_ tool: DrawingTool) {
@@ -402,12 +426,13 @@ final class InstalledInkAttentionTests: XCTestCase {
       }
       let prepared = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "")
       XCTAssertEqual(prepared.plan.revision, cursor, model.compositionTiles.failure ?? "")
-      XCTAssertNotEqual(prepared.id, previous.id)
+      XCTAssertNotEqual(prepared.paintID, previous.paintID, "Undo replaces the source without requiring new physical geometry")
       physical.close()
       cohort = prepared
       physical = try .init(cohort: prepared, presence: presence, canvas: canvas,
         parent: try XCTUnwrap(window.rootViewController), registry: registry,
         gate: model.inputGate, journal: model.spatialInk)
+      installPaint()
       update(.pen)
       XCTAssertTrue(canvas.inkView === installedCanvas, "The new canonical source uses the same physical ink owner")
     }
@@ -444,7 +469,12 @@ final class InstalledInkAttentionTests: XCTestCase {
       XCTAssertEqual(model.spatialInk?.actions.count, previous + 1)
       return try XCTUnwrap(model.spatialInk?.actions.last)
     }
-    func close() { coordinator.uninstall(); physical.close(); window.isHidden = true; window.rootViewController = nil }
+    func close() {
+      coordinator.uninstall(); physical.close()
+      paint.rootView = AnyView(EmptyView()); paint.willMove(toParent: nil)
+      paint.view.removeFromSuperview(); paint.removeFromParent()
+      window.isHidden = true; window.rootViewController = nil
+    }
   }
 }
 

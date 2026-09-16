@@ -87,7 +87,8 @@ import XCTest
       camera: .init(center: .init(x: 100, y: 80), scale: 0.5), viewport: .init(x: size.width, y: size.height))
     model.updatePresence(presence, settled: true)
     host.rootView = AnyView(SpatialWorkspaceView().environment(model).ignoresSafeArea())
-    try await waitUntil { model.compositionTiles.published != nil && !model.scenePreparationPending }
+    let address = SceneSourceAddress(plane: .board(boardID), elementID: element.id)
+    try await waitUntil { model.compositionTiles.published?.hasInstalledPixels(for: address) == true }
     let recognizer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SceneSelectionRecognizer }.first)
     let finger = ArtifactTouch(window: window, kind: .direct)
     finger.point = .init(x: size.width / 2, y: size.height / 2)

@@ -89,7 +89,7 @@ final class PresenceOwnershipTests: XCTestCase {
   }
 
   @MainActor
-  func testSettledPageCannotPersistAtATransitionalScale() async throws {
+  func testSettledPageKeepsTheExplicitInspectionScale() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
 
@@ -104,15 +104,16 @@ final class PresenceOwnershipTests: XCTestCase {
       camera: SpatialCamera(center: center, scale: 0.487_891_719_906_063),
       viewport: SpatialPoint(x: 834, y: 1_194),
       focusedItemID: itemID,
-      openProgress: 1
+      openProgress: 1,
+      selectedItemID: itemID, notebookPageID: model.presence?.notebookPageID
     )
 
     model.updatePresence(broken, settled: true)
 
-    XCTAssertEqual(model.presence?.camera.scale, 1)
+    XCTAssertEqual(model.presence?.camera.scale, broken.camera.scale)
     XCTAssertEqual(model.presence?.camera.center, center)
     await model.finishPendingPersistence()
-    XCTAssertEqual(try store.loadPresence().camera.scale, 1)
+    XCTAssertEqual(try store.loadPresence().camera.scale, broken.camera.scale)
   }
 
   @MainActor
@@ -171,7 +172,7 @@ final class PresenceOwnershipTests: XCTestCase {
   }
 
   @MainActor
-  func testSettledStackedPageCentersTheSelectedNotebook() async throws {
+  func testRestoredStackedPageKeepsTheExplicitCamera() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
 
@@ -227,7 +228,8 @@ final class PresenceOwnershipTests: XCTestCase {
         camera: SpatialCamera(center: stackCenter, scale: 1),
         viewport: SpatialPoint(x: size.width, y: size.height),
         focusedItemID: upperID,
-        openProgress: 1
+        openProgress: 1,
+        selectedItemID: upperID, notebookPageID: upperPageID
       )
     )
 
@@ -235,7 +237,7 @@ final class PresenceOwnershipTests: XCTestCase {
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: size)
 
-    XCTAssertEqual(model.presence?.camera.center, expectedCenter)
+    XCTAssertEqual(model.presence?.camera.center, stackCenter, "Restoration cannot recenter an explicitly inspected page")
     XCTAssertNotEqual(expectedCenter, stackCenter)
   }
 

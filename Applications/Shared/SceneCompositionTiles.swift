@@ -740,12 +740,7 @@ final class SceneCompositionTiles {
       #endif
       return true
     } ?? false
-    #if os(iOS)
-      let containsNativeProjection = published?.nativeInk.containsProjectionWindows(presence: presence,
-        frame: frame, refinesDetails: request.refinesDetails) == true
-    #else
-      let containsNativeProjection = true
-    #endif
+    let containsNativeProjection = containsNativeProjection(for: request)
     if dirtySources.isEmpty, !needsSourceScheduling, containsNativeProjection, let plan = published?.plan,
       published?.containsSourceWindows(presence: presence, frame: frame, displayScale: displayScale) == true,
       (!request.refinesDetails || published?.requestedSources == sources),
@@ -1079,6 +1074,23 @@ final class SceneCompositionTiles {
     if !dirtySources.isEmpty { refreshSources() }
   }
 
+  private func containsNativeProjection(for request: Request) -> Bool {
+    #if os(iOS)
+      guard let published else { return false }
+      // SQL extends a child's addressed request with its immediate return
+      // boundary. The unchanged request does not contain that parent, but its
+      // completed frame does. Comparing against the truncated request made
+      // every repeated update rebuild the same parent and its native ink.
+      let reusesSource = published.requestedSources == request.frame.sourceIdentity
+        && published.plan.revision == request.source.revision
+        && published.frame.presences[request.presence.boardID]?.viewport == request.presence.viewport
+      return published.nativeInk.containsProjectionWindows(presence: request.presence,
+        frame: reusesSource ? published.frame : request.frame, refinesDetails: request.refinesDetails)
+    #else
+      return true
+    #endif
+  }
+
   private func refreshSources() {
     guard !stopped, let request = lastRequest, request.permitsPreparation() else { return }
     prepare(request)
@@ -1101,12 +1113,7 @@ final class SceneCompositionTiles {
       sourceFailures[address] = nil
       dirtySources.insert(address)
     }
-    #if os(iOS)
-      let needsNativeRefinement = published?.nativeInk.containsProjectionWindows(presence: request.presence,
-        frame: request.frame, refinesDetails: true) != true
-    #else
-      let needsNativeRefinement = false
-    #endif
+    let needsNativeRefinement = !containsNativeProjection(for: request)
     if hasQualityDebt || !dirtySources.isEmpty || needsNativeRefinement { prepare(request) }
   }
 

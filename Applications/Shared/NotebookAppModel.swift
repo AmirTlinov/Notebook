@@ -830,7 +830,15 @@ final class NotebookAppModel {
     self.acceptance = acceptance
     documentMeasurements = DocumentPresentationRecorder(enabled: acceptance != nil
       || ProcessInfo.processInfo.arguments.contains("--notebook-profile-documents"))
-    inputGate = NotebookInputGate(simulatesPencilContacts: acceptance?.simulatorContact == "pencil")
+    #if DEBUG && targetEnvironment(simulator)
+      let arguments = ProcessInfo.processInfo.arguments
+      let fixturePencil = arguments.contains(SimulatorDrawingFixture.launchArgument)
+        && (!arguments.contains(SimulatorDrawingFixture.fingerGestureArgument)
+          || arguments.contains(SimulatorDrawingFixture.mixedInputArgument))
+      inputGate = NotebookInputGate(simulatesPencilContacts: fixturePencil || acceptance?.simulatorContact == "pencil")
+    #else
+      inputGate = NotebookInputGate(simulatesPencilContacts: acceptance?.simulatorContact == "pencil")
+    #endif
     self.preparePageInk = preparePageInk
     persistence = NotebookPersistenceQueue(store: store)
     compositionTiles = SceneCompositionTiles()

@@ -179,7 +179,8 @@ struct PreparedAgentElementView: View {
       return composition.cohort?.sourceRasters.first { $0.key.plane.boardID == boardID && $0.key.elementID == id }?.value.entryID
     }()
     let demand = Demand(source: element, active: isActive, inputEnabled: inputEnabled, focused: hasFocus,
-      permitsPreparation: model.permitsBackgroundPreparation, policy: snapshotPolicy, capture: sourceDemand,
+      permitsPreparation: isActive ? model.permitsScenePreparation : model.permitsBackgroundPreparation,
+      policy: snapshotPolicy, capture: sourceDemand,
       fallbackEntryID: fallbackEntryID, runtimeFailure: runtimeFailure, retry: retry)
     ZStack {
       if let raster, !showsLiveProgram {

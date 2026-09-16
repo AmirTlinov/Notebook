@@ -381,7 +381,9 @@ final class PageTurnSelectionTests: XCTestCase {
     }
     configure(4); window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    configure(12)
+    // Adjacent pages curl; distant navigation deliberately installs directly
+    // without a second crossfade over an already prepared destination.
+    configure(5)
     XCTAssertEqual(controller.displayedIndex, 4, "This assertion samples the active external animation, before its completion")
     let frozenWindow = controller.cachedPageIdentities
     configure(17); XCTAssertEqual(controller.cachedPageIdentities, frozenWindow)

@@ -248,15 +248,6 @@ struct SpatialInkCanvas: UIViewRepresentable {
       if inputGate.simulatesPencilContacts {
         recognizer.allowedTouchTypes.append(NSNumber(value: UITouch.TouchType.direct.rawValue))
       }
-      #if DEBUG && targetEnvironment(simulator)
-        if !ProcessInfo.processInfo.arguments.contains(
-          SimulatorDrawingFixture.fingerGestureArgument
-        ) {
-          recognizer.allowedTouchTypes.append(
-            NSNumber(value: UITouch.TouchType.direct.rawValue)
-          )
-        }
-      #endif
       recognizer.cancelsTouchesInView = true
       recognizer.isEnabled = isEnabled
       recognizer.canBeginContact = { [weak self] touch in
@@ -673,16 +664,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
 
     private func accepts(_ touch: UITouch) -> Bool {
-      if touch.type == .pencil { return true }
-      if inputGate.simulatesPencilContacts, touch.type == .direct { return true }
-      #if DEBUG && targetEnvironment(simulator)
-        return touch.type == .direct
-          && !ProcessInfo.processInfo.arguments.contains(
-            SimulatorDrawingFixture.fingerGestureArgument
-          )
-      #else
-        return false
-      #endif
+      touch.type == .pencil || (inputGate.simulatesPencilContacts && touch.type == .direct)
     }
 
     private func interpolate(

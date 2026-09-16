@@ -398,65 +398,44 @@ final class WorkspaceSceneIndexTests: XCTestCase {
       SceneSourceAddress(plane: .board(boardID), elementID: $0.id)
     })
     XCTAssertEqual(workset.elements.count, 4)
-    func liveAddresses() -> Set<SceneSourceAddress> {
-      Set(elements.prefix(4).filter { element in
-        webViews(in: host.view).contains {
-          ($0.navigationDelegate as? AgentWebCoordinator)?.hasLiveSource(agentElementSnapshotSource(element)) == true
-        }
-      }.map { .init(plane: .board(boardID), elementID: $0.id) })
+    func visiblePixelsInstalled() -> Bool {
+      guard let current = model.compositionTiles.published else { return false }
+      return visibleAddresses.allSatisfy { current.hasInstalledPixels(for: $0) }
     }
-    while ContinuousClock.now < deadline {
-      let actual = liveAddresses()
-      if actual.count == 3, SceneRenderResources.shared.pendingWebRequestCount == 1,
-        let current = model.compositionTiles.published, actual.allSatisfy({ current.hasInstalledPixels(for: $0) }) { break }
+    while !visiblePixelsInstalled(), ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(30))
       XCTAssertLessThanOrEqual(SceneRenderResources.shared.activeWebSurfaceCount, 6)
     }
     let cohort = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "")
-    XCTAssertEqual(cohort.runtimeOwners, visibleAddresses, "Every visible control requests its own runtime automatically")
+    XCTAssertTrue(cohort.runtimeOwners.isEmpty, "Proven static SVGs need pixels, not persistent program runtimes")
     XCTAssertEqual(cohort.rasters.count, cohort.plan.tiles.count)
     XCTAssertLessThanOrEqual(cohort.plan.liveOwners.count + 1, 8)
-    let admitted = liveAddresses()
-    XCTAssertEqual(admitted.count, 3, "The resource owner, not a second visibility quota, bounds real runtimes")
-    XCTAssertTrue(admitted.allSatisfy { cohort.hasInstalledPixels(for: $0) })
+    XCTAssertTrue(visiblePixelsInstalled())
     XCTAssertEqual(Set(cohort.sourceReceipts.keys), visibleAddresses,
-      "The 996 offscreen programs create neither preparation demand nor native owners")
-    let queued = try XCTUnwrap(visibleAddresses.subtracting(admitted).first)
-    XCTAssertFalse(cohort.hasInstalledPixels(for: queued), "A cold queued source does not claim to be a ready control")
-    XCTAssertEqual(webViews(in: host.view).count, 3)
+      "The 996 offscreen drawings create neither preparation demand nor native owners")
+    XCTAssertTrue(webViews(in: host.view).isEmpty)
     let picture = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
       window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
     }
     let attachment = XCTAttachment(image: picture)
-    attachment.name = "Three live SVG programs and one automatically queued visible control"
+    attachment.name = "Four independently ready static SVGs without persistent WebKit"
     attachment.lifetime = .keepAlways
     add(attachment)
-    let identities = Set(webViews(in: host.view).map(ObjectIdentifier.init))
     let generation = model.sceneIndexGeneration
     for frame in 0..<24 {
       model.updatePresence(.init(boardID: boardID, mode: .board,
         camera: .init(center: .init(x: Double(frame) / 4, y: 0), scale: 0.85 + Double(frame % 5) / 25),
         viewport: presence.viewport), settled: false)
       try await Task.sleep(for: .milliseconds(20))
-      XCTAssertEqual(Set(webViews(in: host.view).map(ObjectIdentifier.init)), identities,
-        "The camera moves existing native programs without rebooting their runtime")
+      XCTAssertTrue(webViews(in: host.view).isEmpty)
+      XCTAssertTrue(visiblePixelsInstalled(), "Camera movement preserves actual installed drawing pixels")
     }
     XCTAssertEqual(model.sceneIndexGeneration, generation)
-    XCTAssertEqual(model.compositionTiles.published?.runtimeOwners, cohort.runtimeOwners)
-    let queuedElement = try XCTUnwrap(elements.first { $0.id == queued.elementID })
-    model.updatePresence(.init(boardID: boardID, mode: .board,
-      camera: .init(center: try XCTUnwrap(queuedElement.worldOrigin).offsetBy(x: 90, y: 80), scale: 3),
-      viewport: presence.viewport), settled: true)
-    let visibilityDeadline = ContinuousClock.now + .seconds(10)
-    while !liveAddresses().contains(queued), ContinuousClock.now < visibilityDeadline {
-      try await Task.sleep(for: .milliseconds(20))
-    }
-    XCTAssertTrue(liveAddresses().contains(queued), "Panning to a queued control prepares it without selecting or activating it")
     XCTAssertNil(model.interactiveElementFocus)
     model.updatePresence(presence, settled: true)
     let restoreDeadline = ContinuousClock.now + .seconds(10)
-    while liveAddresses().count != 3, ContinuousClock.now < restoreDeadline { try await Task.sleep(for: .milliseconds(20)) }
-    let restoredIdentities = Set(webViews(in: host.view).map(ObjectIdentifier.init))
+    while !visiblePixelsInstalled(), ContinuousClock.now < restoreDeadline { try await Task.sleep(for: .milliseconds(20)) }
+    XCTAssertTrue(visiblePixelsInstalled())
     model.selectElement(.spatial(boardID: boardID, elementID: elements[4].id))
     let offscreenAddress = SceneSourceAddress(plane: .board(boardID), elementID: elements[4].id)
     let pinDeadline = ContinuousClock.now + .seconds(8)
@@ -478,7 +457,7 @@ final class WorkspaceSceneIndexTests: XCTestCase {
       ContinuousClock.now < releaseDeadline {
       try await Task.sleep(for: .milliseconds(20))
     }
-    XCTAssertEqual(Set(webViews(in: host.view).map(ObjectIdentifier.init)), restoredIdentities)
+    XCTAssertTrue(webViews(in: host.view).isEmpty)
     XCTAssertNil(model.compositionTiles.published?.sourceReceipts[offscreenAddress])
     XCTAssertEqual(model.sceneWorkset(presence: try XCTUnwrap(model.presence)).elements.count, 4)
     await model.finishPendingPersistence()
