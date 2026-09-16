@@ -222,6 +222,86 @@ final class DocumentLargeSourceTests: XCTestCase {
     measurement.name = "Incremental canonical source"; measurement.lifetime = .keepAlways; add(measurement)
   }
 
+  func testFarLinkWaitsForTailAdmissionWithoutPoisoningTheShownPage() async throws {
+    try await assertTailAdmission(closesWhileWaiting: false)
+  }
+
+  func testClosingTheReaderCancelsTailAdmissionWithoutLateLinkDelivery() async throws {
+    try await assertTailAdmission(closesWhileWaiting: true)
+  }
+
+  private func assertTailAdmission(closesWhileWaiting: Bool) async throws {
+    let resources = SceneRenderResources(byteLimit: 8 * 1024 * 1024, profile: .interactive)
+    let actor = UUID()
+    var document = DocumentDocument(actor: actor, blocks: [.markdown(id: "initial", source: "Initial page")])
+    let state = DocumentStateJournal(id: document.id, actor: actor)
+    let surface = try surface(document, state, resources: resources, acceptsInput: true)
+    defer { surface.close() }
+    try await ready(surface.coordinator)
+    let web = try XCTUnwrap(surface.coordinator.webView)
+    _ = try await evaluate("""
+      const original=MathJax.typesetPromise.bind(MathJax);
+      window.tailStarted=false;
+      const gate=new Promise(resolve=>window.releaseTail=resolve);
+      MathJax.typesetPromise=async nodes=>{
+        if(nodes.some(node=>node.dataset.blockId==='distant')){window.tailStarted=true;await gate;}
+        return original(nodes);
+      };
+      return 'installed';
+      """, web: web)
+    document = DocumentDocument(id: document.id, actor: actor, blocks: [
+      .markdown(id: "visible", source: "# Useful page\n\n[Far section](#distant)\n\n" +
+        String(repeating: "A visible measured paragraph stays at its physical address.\n\n", count: 120)),
+      .markdown(id: "distant", source: "<h1 id='distant'>Distant section</h1>\n\n" +
+        String(repeating: "The distant navigation index also owns its resource admission.\n\n", count: 500))
+    ])
+    update(surface.coordinator, document, state, page: 0)
+    try await ready(surface.coordinator)
+    let source = try XCTUnwrap(surface.coordinator.payload?.source), prefix = try XCTUnwrap(source.layout)
+    XCTAssertFalse(prefix.isComplete)
+    let blocker = try XCTUnwrap(resources.reserveDerivedBytes(
+      resources.passiveByteLimit - resources.passiveReservedBytes - resources.residentBytes - 8_192, priority: .passive))
+    defer { blocker.release() }
+    var links: [DocumentLinkDestination] = []
+    surface.coordinator.onLinkActivation = { links.append($0.destination) }
+    _ = try await evaluate("document.querySelector('#document a').click();releaseTail();return 'requested';", web: web)
+    let refused = ContinuousClock.now + .seconds(3)
+    while resources.lastRasterRefusal == nil, .now < refused { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertNotNil(resources.lastRasterRefusal)
+    try await Task.sleep(for: .milliseconds(100))
+    XCTAssertTrue(links.isEmpty, "A temporary tail allocation refusal is not a missing link or source failure")
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 1, "The same source owner waits for capacity even with no page-packet waiter")
+    XCTAssertTrue(surface.coordinator.hasCanonicalPixels)
+    let refusals = resources.lastRasterRefusal?.generation
+    try await Task.sleep(for: .milliseconds(100))
+    XCTAssertEqual(resources.lastRasterRefusal?.generation, refusals, "Own cleanup must not spin remeasurement")
+    if closesWhileWaiting {
+      surface.coordinator.invalidate()
+      let drained = ContinuousClock.now + .seconds(3)
+      while resources.pendingDerivedRequestCount != 0 || resources.activeWebSurfaceCount != 0 {
+        guard .now < drained else { XCTFail("Closing the last reader did not release its admission and browser"); return }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      blocker.release()
+      try await Task.sleep(for: .milliseconds(100))
+      XCTAssertTrue(links.isEmpty, "Cancelled navigation cannot be delivered after resource release")
+      XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
+      XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+      return
+    }
+    blocker.release()
+    try await complete(source)
+    let deadline = ContinuousClock.now + .seconds(3)
+    while links.isEmpty, .now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    let far = try XCTUnwrap(prefix.anchorPages["distant"])
+    XCTAssertEqual(links, [.page(far)])
+    XCTAssertTrue(source.layout === prefix)
+    XCTAssertTrue(surface.coordinator.webView === web)
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
+    update(surface.coordinator, document, state, page: far)
+    try await ready(surface.coordinator)
+  }
+
   private func complete(_ source: DocumentSourceSnapshot) async throws {
     let deadline = ContinuousClock.now + .seconds(8)
     while source.layout?.isComplete != true, .now < deadline { try await Task.sleep(for: .milliseconds(10)) }

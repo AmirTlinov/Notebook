@@ -6,6 +6,43 @@ import XCTest
 
 @MainActor
 final class SceneTileConfigurationLifetimeTests: XCTestCase {
+  func testChangingPaintDensityReleasesTheUnchangedItemsPreviousCohort() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("paint-publication-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let boardID = try XCTUnwrap(model.workspace?.rootBoardID)
+    let presence = SessionPresence(boardID: boardID, mode: .board,
+      camera: .init(scale: 0.6), viewport: .init(x: 834, y: 1194))
+    model.updatePresence(presence, settled: true)
+    let host = UIHostingController(rootView: SpatialWorkspaceView().environment(model).environment(\.displayScale, 2).ignoresSafeArea())
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    window.frame = .init(x: 0, y: 0, width: 834, height: 1194)
+    window.rootViewController = host; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let firstDeadline = ContinuousClock.now + .seconds(5)
+    while model.compositionTiles.published?.isPaintInstalled != true || model.compositionTiles.isPreparing {
+      guard .now < firstDeadline else { XCTFail("Initial physical scene did not install"); return }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    weak let old = model.compositionTiles.published
+    let frame = try XCTUnwrap(old?.frame), revision = try XCTUnwrap(old?.plan.revision)
+    let source = SceneCompositionSource(index: frame.index, hierarchy: try XCTUnwrap(model.boardHierarchy),
+      journal: try XCTUnwrap(model.spatialInk), revision: revision)
+    // Source, item identity and camera are unchanged. Only raster density asks
+    // the real scene owner for a replacement publication.
+    model.compositionTiles.prepare(source: source, presence: presence, frame: frame, pinned: [], displayScale: 1)
+    let replacementDeadline = ContinuousClock.now + .seconds(5)
+    while model.compositionTiles.published === old || model.compositionTiles.published?.isPaintInstalled != true {
+      guard .now < replacementDeadline else { XCTFail("Replacement physical scene did not install"); return }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let retirementDeadline = ContinuousClock.now + .seconds(2)
+    while old != nil, .now < retirementDeadline { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertNil(old, "Unchanged item callbacks and cached ForEach closures cannot own an obsolete whole scene")
+    XCTAssertTrue(model.compositionTiles.published?.isPaintInstalled == true)
+  }
+
   func testShutdownRetiresCachedNativeTilesWithoutRevokingAnotherBorrower() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("tile-shutdown-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)

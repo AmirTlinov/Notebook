@@ -684,7 +684,6 @@ struct SpatialWorkspaceView: View {
             camera: anchorCamera,
             projectedScale: presence.camera.scale,
             boardID: presence.boardID,
-            contentRevision: model.collaborationReadEpoch,
             coverElements: covers[rendered.id] ?? [],
             viewport: viewport,
             isFocused: presence.focusedItemID == rendered.id,
@@ -755,7 +754,6 @@ struct SpatialWorkspaceView: View {
               )
             }
           )
-          .equatable()
           .zIndex(WorkspaceSceneProjection.presentationRank(of: rendered, in: presence, liftRank: liftRank(of: rendered.id))
             ?? cohort?.plan.rank(id: .item(rendered.id), in: .board(presence.boardID)) ?? 0)
         }
@@ -1702,7 +1700,7 @@ struct SpatialWorkspaceView: View {
 
 }
 
-private struct WorkspaceSceneItem: View, Equatable {
+private struct WorkspaceSceneItem: View {
   @Environment(NotebookAppModel.self) private var model
   let rendered: RenderedWorkspaceItem
   let document: DocumentDocument?
@@ -1716,7 +1714,6 @@ private struct WorkspaceSceneItem: View, Equatable {
   let camera: SpatialCamera
   let projectedScale: Double
   let boardID: UUID
-  let contentRevision: UInt64
   let coverElements: [SpatialElement]
   let viewport: SpatialPoint
   let isFocused: Bool
@@ -1738,22 +1735,6 @@ private struct WorkspaceSceneItem: View, Equatable {
   let onTextEditingEnded: (String) -> Void
   let onPageTurnStateChange: @MainActor @Sendable (Bool) -> Void
   let onDocumentPageLayout: (DocumentPageLayout) -> Void
-
-  nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-    lhs.rendered == rhs.rendered && lhs.contentRevision == rhs.contentRevision
-      && lhs.document?.contentStamp == rhs.document?.contentStamp
-      && lhs.documentState?.stamp == rhs.documentState?.stamp
-      && lhs.coverElements == rhs.coverElements
-      && lhs.boardID == rhs.boardID && lhs.camera == rhs.camera && lhs.viewport == rhs.viewport
-      && lhs.isFocused == rhs.isFocused && lhs.preparesCoverMotion == rhs.preparesCoverMotion
-      && lhs.preparesContent == rhs.preparesContent && lhs.openProgress == rhs.openProgress
-      && lhs.contentIsInteractive == rhs.contentIsInteractive
-      && lhs.pageNavigationIsEnabled == rhs.pageNavigationIsEnabled
-      && lhs.isSelected == rhs.isSelected && lhs.liftRank == rhs.liftRank
-      && lhs.editingTextID == rhs.editingTextID && lhs.documentPageIndex == rhs.documentPageIndex
-      && lhs.documentPageLayout == rhs.documentPageLayout
-      && (!(lhs.isSelected || lhs.rendered.item.kind == .board) || lhs.projectedScale == rhs.projectedScale)
-  }
 
   var body: some View {
     let contentIsLive = openProgress > 0.001 || contentIsInteractive

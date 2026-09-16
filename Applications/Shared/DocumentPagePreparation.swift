@@ -534,15 +534,17 @@ final class DocumentPagePreparation {
     pages = pages.filter { needed.contains($0.key) }
   }
 
+  private var hasReaders: Bool { !waiters.isEmpty || !layoutReaders.isEmpty || !demand.isEmpty }
+
   private func cancelWaiter(_ id: UUID) {
     waiters.removeValue(forKey: id)?.continuation.resume(throwing: CancellationError())
-    if waiters.isEmpty { cancelAdmissionRetry() }
+    if !hasReaders { cancelAdmissionRetry() }
     if waiters.isEmpty, demand.isEmpty { task?.cancel(); retireProducer(reason: "last_waiter_cancelled") }
   }
 
   private func start() {
     guard task == nil, admissionRetry == nil, retirement == nil,
-      !waiters.isEmpty || needsCompletion || (measured != nil && !neededPages.subtracting(pages.keys).subtracting(pageErrors.keys).isEmpty
+      !waiters.isEmpty || needsCompletion || (!neededPages.subtracting(pages.keys).subtracting(pageErrors.keys).isEmpty
         && deferredPrefetchAdmission.map { admissionImproved(since: $0) } != false),
       let web, let lease, !lease.isReleased else { return }
     let borrow: WebSurfaceBorrow
@@ -651,7 +653,10 @@ final class DocumentPagePreparation {
         measured = nil
         if !deliveredPage { layout = nil }
         charges.releaseRecovery()
-        if let deferred = error as? DocumentPreparationAdmission.Deferred, !Task.isCancelled, !waiters.isEmpty {
+        // A shown page still owns its navigation tail and retained neighbours.
+        // Resolving its first packet must not turn subsequent byte pressure
+        // into a permanent error of the immutable source.
+        if let deferred = error as? DocumentPreparationAdmission.Deferred, !Task.isCancelled, hasReaders {
           waitForReleasedCapacity(deferred)
         } else if !Task.isCancelled || !retiring { fail(error) }
       }
@@ -680,7 +685,7 @@ final class DocumentPagePreparation {
       guard let self else { return }
       do {
         let capacity = try await resources.acquirePassiveDerivedBytes(bytes)
-        guard !Task.isCancelled, admissionRetryID == identity, !waiters.isEmpty else {
+        guard !Task.isCancelled, admissionRetryID == identity, hasReaders else {
           capacity.release(); return
         }
         charges.adoptRecovery(capacity); charges.waitsForAdmission = false
