@@ -446,6 +446,7 @@ struct BoardPanView: UIViewRepresentable {
     private weak var startingCover: NotebookInteractionTouchView?
     private let inputSource = UUID()
     private var panRevision: UInt64?
+    private var panContact: ObjectIdentifier?
     private var tapRevision: UInt64?
     private var panIsActive = false
     private var panTouchdown: CGPoint?
@@ -535,6 +536,7 @@ struct BoardPanView: UIViewRepresentable {
 
     private func cancelFingerSequence(deferCallbacks: Bool = false) {
       panRevision = nil
+      panContact = nil
       tapRevision = nil
       panTouchdown = nil
       panRecognitionOffset = .zero
@@ -624,6 +626,7 @@ struct BoardPanView: UIViewRepresentable {
       if gestureRecognizer === pan {
         if !panIsActive, gestureRecognizer.numberOfTouches == 0 {
           panRevision = revision
+          panContact = ObjectIdentifier(touch)
           panTouchdown = point
           panRecognitionOffset = .zero
           startingCover = touch.view as? NotebookInteractionTouchView
@@ -641,6 +644,13 @@ struct BoardPanView: UIViewRepresentable {
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
       let revision = gestureRecognizer === pan ? panRevision : tapRevision
       guard let revision, inputGate.acceptsFingerSequence(revision) else { return false }
+      if gestureRecognizer === pan,
+        let panContact, !inputGate.permitsSingleFingerNavigation(panContact) {
+        // Selection's touchdown may arrive after shouldReceive. Resolve the
+        // refined owner now, before any camera callback or SwiftUI publication.
+        panRevision = nil
+        return false
+      }
       guard gestureRecognizer === pan, let startingCover else { return true }
       return startingCover.yieldToCameraPan()
     }

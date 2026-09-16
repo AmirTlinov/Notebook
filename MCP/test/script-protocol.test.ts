@@ -10,14 +10,14 @@ import {createServer,executionOutput} from "../src/server.js";
 import {sdkReference} from "../src/sdk-contracts.js";
 import {actionSchema,operationSchema} from "../src/actions.js";
 
-test("public SDK help covers every method, all 19 operations, nativeText and all old capabilities",async()=>{
+test("public SDK help covers every method, all 20 operations, native content and all old capabilities",async()=>{
   const source=await readFile(new URL("../../Sources/NotebookScriptWorker/Resources/notebook-sdk.js",import.meta.url),"utf8");
   const names=[...source.matchAll(/\b([A-Za-z]+):\s*(?:read\(|effect\(|topic\s*=>|key\s*=>|\(key, action\))/g)].map(x=>x[1]!);
   for(const name of [...names,"emit","emitImage"]) {
     const method=sdkReference.methods[name]!;
     assert.ok(method?.input&&method.returns&&method.example,"missing discoverable contract: "+name);
   }
-  assert.equal(sdkReference.operations.items.length,19);
+  assert.equal(sdkReference.operations.items.length,20);
   for(const {name,topic} of sdkReference.operations.items) {
     assert.equal(topic,`operation/${name}`);
     assert.ok(sdkReference.operationDetails[name]?.input,"missing operation schema: "+topic);

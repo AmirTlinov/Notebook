@@ -144,6 +144,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   private(set) var centroid = CGPoint.zero
 
   var defersHorizontalMotionToPageTurn = false
+  private var defersThisPairToPageTurn = false
   weak var inputGate: NotebookInputGate? {
     didSet {
       guard oldValue !== inputGate else { return }
@@ -216,7 +217,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     switch intent {
     case .undecided, .hold:
       let motionIntent = TwoFingerIntentArbiter.resolve(
-        defersHorizontalMotionToPageTurn: defersHorizontalMotionToPageTurn,
+        defersHorizontalMotionToPageTurn: defersThisPairToPageTurn,
         translation: translation,
         fingerDisplacements: fingerDisplacements,
         magnification: magnification,
@@ -225,7 +226,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       switch motionIntent {
       case .navigation:
         cancelHold()
-        if defersHorizontalMotionToPageTurn {
+        if defersThisPairToPageTurn {
           finishAsInvalid()
           return
         }
@@ -270,7 +271,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     updateMetrics()
     cancelHold()
     let releaseIntent = TwoFingerIntentArbiter.resolve(
-      defersHorizontalMotionToPageTurn: defersHorizontalMotionToPageTurn,
+      defersHorizontalMotionToPageTurn: defersThisPairToPageTurn,
       translation: translation,
       fingerDisplacements: fingerDisplacements,
       magnification: magnification,
@@ -294,7 +295,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       intent = .tap
       state = .recognized
     case .undecided where releaseIntent == .navigation:
-      if defersHorizontalMotionToPageTurn {
+      if defersThisPairToPageTurn {
         finishAsInvalid()
       } else {
         intent = .navigation
@@ -336,6 +337,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     centroid = .zero
     magnificationSamples.removeAll(keepingCapacity: true)
     fingerSequenceRevision = nil
+    defersThisPairToPageTurn = false
   }
 
   /// The pair gets a new camera baseline, not a new undo history. A second
@@ -352,6 +354,9 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   /// The second touchdown establishes the pair once. Intent recognition must
   /// retain subsequent measured travel, even if release is the very next sample.
   private func beginTrackingPair() {
+    let leavesObject = inputGate?.hasSceneObjectContact == true
+    defersThisPairToPageTurn = defersHorizontalMotionToPageTurn && !leavesObject
+    if leavesObject { undoIsEligible = false }
     startLocations = activeTouches.mapValues { $0.location(in: view) }
     let centroid = currentCentroid()
     startCentroid = centroid

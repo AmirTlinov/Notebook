@@ -10,8 +10,10 @@ import SwiftUI
 enum PageCompositionRenderer {
   static func elements(in page: PageDocument, region: PageRect, elementID: String?) -> [AgentElement] {
     let bounds = CGRect(x: region.x, y: region.y, width: region.width, height: region.height)
+    let graphics = page.graphicPresentation.geometryIDs
     return page.elements.filter {
       (elementID == nil || elementID == $0.id)
+        && ($0.graphic == nil || graphics.contains($0.id))
         && bounds.intersects(CGRect(x: $0.frame.x, y: $0.frame.y, width: $0.frame.width, height: $0.frame.height))
     }
   }
@@ -38,11 +40,15 @@ enum PageCompositionRenderer {
     }
     for element in elements(in: page, region: region, elementID: elementID) {
       try Task.checkCancellation()
-      let image = try await raster(element)
       // The resolver returns a borrowed entry. A frozen selection owns its
       // lease, whereas the export resolver releases its previous entry.
       let frame = CGRect(x: element.frame.x - region.x, y: element.frame.y - region.y,
         width: element.frame.width, height: element.frame.height)
+      if let graphic = element.graphic {
+        try await canvas.drawView(NotebookGraphicView(graphic: graphic), size: frame.size, in: frame)
+        continue
+      }
+      let image = try await raster(element)
       if let crop = image.source.captureRegion {
         let captured = CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height)
         let requested = CGRect(x: -frame.minX, y: -frame.minY, width: region.width, height: region.height)
@@ -64,7 +70,8 @@ enum PageCompositionRenderer {
   private static func drawInk(_ page: PageDocument, size: CGSize, frame: CGRect,
     resources: SceneRenderResources, canvas: SceneRasterCompositor) async throws {
     guard !page.drawingData.isEmpty else { return }
-    let decode = Task.detached(priority: .utility) { try PageInkDrawing.decode(page.drawingData) }
+    let suppressed = page.graphicPresentation.suppressedInkIDs
+    let decode = Task.detached(priority: .utility) { try PageInkDrawing.decode(page.drawingData).presenting(excluding: suppressed) }
     let drawing = try await withTaskCancellationHandler { try await decode.value } onCancel: { decode.cancel() }
     guard !drawing.isEmpty else { return }
     // Keep the same physical 2x mask and sampling phase as live page ink. The

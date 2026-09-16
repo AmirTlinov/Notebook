@@ -52,13 +52,15 @@ struct SceneCompositionLiveData: Sendable {
   let states: [UUID: DocumentStateJournal]
   let pages: [UUID: PageDocument]
   let ink: SpatialInkJournal
+  let suppressedInkIDs: Set<UUID>
   let referenceIdentities: [NotebookReferenceIdentity]
   let referenceBasis: NotebookReferenceBasis?
   let documentPaperSizes: [UUID: DocumentPaperSize]
   init(documents: [UUID: DocumentDocument], states: [UUID: DocumentStateJournal], pages: [UUID: PageDocument],
-    ink: SpatialInkJournal, referenceIdentities: [NotebookReferenceIdentity] = [],
+    ink: SpatialInkJournal, suppressedInkIDs: Set<UUID> = [], referenceIdentities: [NotebookReferenceIdentity] = [],
     referenceBasis: NotebookReferenceBasis? = nil, documentPaperSizes: [UUID: DocumentPaperSize] = [:]) {
     self.documents = documents; self.states = states; self.pages = pages; self.ink = ink
+    self.suppressedInkIDs = suppressedInkIDs
     self.referenceIdentities = referenceIdentities
     self.referenceBasis = referenceBasis
     self.documentPaperSizes = documentPaperSizes
@@ -182,8 +184,14 @@ actor SceneCompositionSource {
 
   func ink(_ surface: SurfaceID) throws -> SpatialInkJournal {
     switch origin {
-    case .sql(let store): try checked(store) { try $0.readSpatialInk(surfaces: [surface]) }
-    case .values(_, _, let journal): journal
+    case .sql(let store): return try checked(store) {
+      let journal = try $0.readSpatialInk(surfaces: [surface])
+      let presentation = try $0.graphicPresentation(on: surface, sourceInkIDs: Set(journal.actions.map(\.id)))
+      return journal.presenting(excluding: presentation.suppressedInkIDs)
+    }
+    case .values(_, let hierarchy, let journal):
+      let suppressed = hierarchy.boards.reduce(into: Set<UUID>()) { $0.formUnion($1.board.graphicPresentation.suppressedInkIDs) }
+      return journal.presenting(excluding: suppressed)
     }
   }
   func liveData(plan: SceneCompositionPlan, presence: SessionPresence, frame: WorkspaceSceneFrame,
@@ -250,14 +258,20 @@ actor SceneCompositionSource {
             case .element(let id): return .element(boardID: owner.plane.boardID, id: id)
             }
           })
-        return .init(documents: data.documents, states: data.states, pages: data.pages, ink: ink,
+        var suppressed = Set<UUID>()
+        for surface in surfaces {
+          let ids = Set(ink.actions.filter { $0.spans.contains { $0.surface == surface } }.map(\.id))
+          suppressed.formUnion(try store.graphicPresentation(on: surface, sourceInkIDs: ids).suppressedInkIDs)
+        }
+        return .init(documents: data.documents, states: data.states, pages: data.pages, ink: ink, suppressedInkIDs: suppressed,
           referenceIdentities: basis.identities, referenceBasis: basis,
           documentPaperSizes: frame.index.documentPaperSizes.filter { itemIDs.contains($0.key) })
       }
-    case .values(_, _, let journal):
+    case .values(_, let hierarchy, let journal):
       let wanted = Set(surfaces)
       let ink = SpatialInkJournal(actions: journal.actions.filter { $0.spans.contains { wanted.contains($0.surface) } }, stamp: journal.stamp)
       return .init(documents: [:], states: [:], pages: [:], ink: ink,
+        suppressedInkIDs: hierarchy.boards.reduce(into: Set<UUID>()) { $0.formUnion($1.board.graphicPresentation.suppressedInkIDs) },
         documentPaperSizes: frame.index.documentPaperSizes.filter { itemIDs.contains($0.key) })
     }
   }

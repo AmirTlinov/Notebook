@@ -525,8 +525,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   /// Source and geometry are installed by the same physical owner. This is a
   /// source receipt, not a GPU-presented or visible-pixels acknowledgement.
-  func installSpatialSource(_ journal: SpatialInkJournal?, on surface: SurfaceID) {
-    installedSpatialSource = journal.map { .init(surface: surface, journal: $0) }
+  func installSpatialSource(_ journal: SpatialInkJournal?, on surface: SurfaceID, suppressedInkIDs: Set<UUID> = []) {
+    installedSpatialSource = journal.map { .init(surface: surface, journal: $0, suppressedInkIDs: suppressedInkIDs) }
     spatialSourceGeneration &+= 1
   }
 
@@ -916,7 +916,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   /// Called only after every source/projection in the candidate validated in
   /// this main-actor turn. GPU work is complete; this is not an observed-frame
   /// receipt. The caller publishes its matching static cohort in the same turn.
-  func installSpatialFrame(_ frame: PreparedSpatialFrame, journal: SpatialInkJournal, surface: SurfaceID) {
+  func installSpatialFrame(_ frame: PreparedSpatialFrame, journal: SpatialInkJournal, surface: SurfaceID, suppressedInkIDs: Set<UUID> = []) {
     precondition(frame.canvas === self && frame.isValid)
     frame.installed = true
     spatialSourceGeneration &+= 1; stableContentRevision &+= 1
@@ -924,7 +924,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     stableDrawing = nil; stableTexture = nil; drawingIsPreparing = false
     installedStableRasterKey = nil; pendingStableRasterKey = nil
     committedBatches = frame.batches; discardActiveAction()
-    installedSpatialSource = .init(surface: surface, journal: journal)
+    installedSpatialSource = .init(surface: surface, journal: journal, suppressedInkIDs: suppressedInkIDs)
     let revision = stableContentRevision, generation = spatialSourceGeneration
     presentedStableContentRevision = nil
     let retiredTarget = spatialTarget

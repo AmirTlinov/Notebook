@@ -73,6 +73,7 @@ final class NotebookFrozenVisualSources {
       case .page:
         guard let page = pages[fragment.target.id] else { continue }
         for element in PageCompositionRenderer.elements(in: page, region: fragment.region, elementID: fragment.elementID) {
+          if element.kind == .graphic { continue }
           retain(.agent(element), fragmentID: fragment.id, key: element.id)
           #if os(iOS)
           if capturesLivePrograms, element.kind == .web, admits(fragment.id, element.id) {
@@ -111,7 +112,7 @@ final class NotebookFrozenVisualSources {
         let boardID = fragment.target.kind == .board ? fragment.target.id : fragment.target.boardID
         guard let id = fragment.elementID, let boardID,
           let element = hierarchy.board(boardID)?.elements.first(where: { $0.id == id }),
-          element.kind != .nativeText else { continue }
+          element.kind != .nativeText && element.kind != .graphic else { continue }
         if let installedSources {
           let plane: SceneCompositionPlane = fragment.target.kind == .cover
             ? .cover(boardID: boardID, itemID: fragment.target.id) : .board(boardID)
@@ -239,7 +240,9 @@ enum NotebookPinnedImageRenderer {
       let delta = (reference.worldOrigin ?? .zero).delta(to: element.worldOrigin ?? .zero)
       let frame = CGRect(x: delta.x + element.frame.x - region.x, y: delta.y + element.frame.y - region.y,
         width: element.frame.width, height: element.frame.height)
-      if element.kind == .nativeText {
+      if let graphic = element.graphic {
+        try await canvas.drawView(NotebookGraphicView(graphic: graphic), size: frame.size, in: frame)
+      } else if element.kind == .nativeText {
         try await canvas.drawView(SpatialTextSnapshot(element: element), size: frame.size, in: frame)
       } else {
         guard let visuals else { throw SceneRenderError.snapshotPending("historical_frame_unavailable") }

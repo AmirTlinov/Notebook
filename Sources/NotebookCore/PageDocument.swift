@@ -60,13 +60,17 @@ public struct PageRect: Codable, Equatable, Sendable {
 public enum AgentElementKind: String, Codable, Sendable {
   case markdown
   case web
+  case graphic
 }
 
 public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
-  static func causalFieldKeys(id: String) -> [String] {
-    ["exists", "id", "frame", "content", "css", "javaScript", "state"].map {
+  static func causalFieldKeys(id: String, graphic: Bool = false) -> [String] {
+    let base = ["exists", "id", "frame", "content", "css", "javaScript", "state"].map {
       fieldKey(["elements", collaborationIdentity(id), $0])
     }
+    return base + (graphic ? NotebookGraphic.causalFields.map {
+      fieldKey(["elements", collaborationIdentity(id), "graphic", $0])
+    } : [])
   }
 
   public let id: String
@@ -77,6 +81,7 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
   public let css: String
   public let javaScript: String
   public let state: JSONValue
+  public let graphic: NotebookGraphic?
 
   public init(
     id: String,
@@ -86,7 +91,8 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
     html: String,
     css: String = "",
     javaScript: String = "",
-    state: JSONValue = .object([:])
+    state: JSONValue = .object([:]),
+    graphic: NotebookGraphic? = nil
   ) {
     precondition(!id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     self.id = id
@@ -97,6 +103,7 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
     self.css = css
     self.javaScript = javaScript
     self.state = state
+    self.graphic = graphic
   }
 
   public func updating(state: JSONValue) -> Self {
@@ -108,7 +115,8 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
       html: html,
       css: css,
       javaScript: javaScript,
-      state: state
+      state: state,
+      graphic: graphic
     )
   }
 
@@ -121,7 +129,8 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
       html: html,
       css: css,
       javaScript: javaScript,
-      state: state
+      state: state,
+      graphic: graphic
     )
   }
 }
@@ -184,7 +193,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     drawingStamp = VersionStamp(counter: 0, actor: actor)
     self.elements = elements
     agentStamp = VersionStamp(counter: 0, actor: actor)
-    let keys = ["elements/order"] + elements.flatMap { AgentElement.causalFieldKeys(id: $0.id) }
+    let keys = ["elements/order"] + elements.flatMap { AgentElement.causalFieldKeys(id: $0.id, graphic: $0.graphic != nil) }
     collaboration = .init(fields: Dictionary(keys.map { ($0, ContentFieldVersion(stamp: agentStamp, human: true)) },
       uniquingKeysWith: { first, _ in first }))
     precondition(isValid)
@@ -210,6 +219,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
         !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
           && $0.frame.isContained(in: size)
           && $0.state.isValid
+          && ($0.kind == .graphic ? $0.graphic?.isValid == true : $0.graphic == nil)
       }
   }
 

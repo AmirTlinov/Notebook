@@ -146,7 +146,7 @@ enum NotebookAttentionProjection {
       // A removed live host contributes no pixels. Its old retained hash and
       // neighboring order edges are removed by the reference basis at sealing.
       guard let element = sources.hierarchy.board(address.plane.boardID)?.elements.first(where: { $0.id == address.elementID }) else { continue }
-      if element.kind != .nativeText {
+      if element.kind != .nativeText && element.kind != .graphic {
         guard cohort.hasInstalledPixels(for: address), let receipt = cohort.sourceReceipts[address], receipt.hasCurrentPixels,
           SceneRasterSource.agent(receipt.demand.source) == .agent(agentElementSnapshotSource(element)) else { return nil }
       }
@@ -303,7 +303,12 @@ enum NotebookAttentionProjection {
       if presence.focusedItemID == item.id && presence.mode == .page, let pageID = sources.selectedPageID {
         target = .init(kind:.page,id:pageID)
         if !dragged, let element = sources.pages[pageID]?.elements.last(where: {
-          CGRect(x: $0.frame.x, y: $0.frame.y, width: $0.frame.width, height: $0.frame.height)
+          if let graphic = $0.graphic {
+            return sources.pages[pageID]?.graphicPresentation.geometryIDs.contains($0.id) == true
+              && NotebookGraphicGeometry.hitTest(graphic, width: $0.frame.width, height: $0.frame.height,
+                x: region.x - $0.frame.x, y: region.y - $0.frame.y, tolerance: 8 / presence.camera.scale)
+          }
+          return CGRect(x: $0.frame.x, y: $0.frame.y, width: $0.frame.width, height: $0.frame.height)
             .contains(CGPoint(x: region.x, y: region.y))
         }) {
           elementID = element.id; region = element.frame
@@ -333,7 +338,12 @@ enum NotebookAttentionProjection {
       if !dragged, let pointOrigin = origin {
         for element in admitted.elements.reversed() where element.surface == .board(presence.boardID) {
           let delta = (element.worldOrigin ?? .zero).delta(to: pointOrigin)
-          if element.frame.contains(delta) {
+          let contains: Bool
+          if let graphic = element.graphic {
+            contains = NotebookGraphicGeometry.hitTest(graphic, width: element.frame.width, height: element.frame.height,
+              x: delta.x - element.frame.x, y: delta.y - element.frame.y, tolerance: 8 / presence.camera.scale)
+          } else { contains = element.frame.contains(delta) }
+          if contains {
             elementID = element.id
             region = .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height)
             origin = element.worldOrigin ?? .zero

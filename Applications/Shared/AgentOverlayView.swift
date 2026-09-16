@@ -13,11 +13,14 @@ struct AgentOverlayView: View {
   let inputEnabled: Bool
   let onRenderReady: (Bool) -> Void
   let onState: (String, JSONValue) -> Bool
+  var graphicPresentation = NotebookGraphicPresentation([])
   var visibleRegion: CGRect? = nil
 
   @State private var readiness = AgentOverlayReadiness()
 
-  private var visibleElements: [AgentElement] { elements.filter { captureRegion(for: $0) != nil } }
+  private var visibleElements: [AgentElement] { elements.filter {
+    ($0.graphic == nil || graphicPresentation.geometryIDs.contains($0.id)) && captureRegion(for: $0) != nil
+  } }
 
   private func captureRegion(for element: AgentElement) -> PageRect? {
     let frame = element.frame
@@ -57,6 +60,9 @@ struct AgentOverlayView: View {
         )
         let interactiveReference = InteractiveElementReference.page(pageID: pageID, elementID: element.id)
         EditableElementContainer(reference: reference, coordinateScale: 1) {
+          if let graphic = element.graphic {
+            NotebookGraphicElementView(graphic: graphic, reference: reference)
+          } else {
           PreparedAgentElementView(
             element: element,
             allowsInteraction: allowsInteraction,
@@ -72,6 +78,7 @@ struct AgentOverlayView: View {
               return onState(element.id, state)
             }
           )
+          }
         }
         .frame(
           width: element.frame.width,
@@ -126,6 +133,6 @@ struct AgentOverlayReadiness {
   }
 
   func isReady(for elements: [AgentElement]) -> Bool {
-    elements.allSatisfy { sources[$0.id] == $0 }
+    elements.allSatisfy { $0.kind == .graphic || sources[$0.id] == $0 }
   }
 }

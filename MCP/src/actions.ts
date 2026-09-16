@@ -23,8 +23,13 @@ const block = z.discriminatedUnion("kind", [
   z.object({ id: z.string().min(1).max(120), kind: z.literal("interactive"), html: source,
     css: source.optional(), javaScript: source.optional(), initialState: z.json().optional(), height: z.number().min(48).max(2048).optional() }).strict(),
 ]);
+const graphicColor = z.object({ red: z.number().min(0).max(1), green: z.number().min(0).max(1), blue: z.number().min(0).max(1) }).strict();
+const graphicStyle = z.object({ stroke: graphicColor, strokeWidth: z.number().positive().max(1_000_000), fill: graphicColor.optional() }).strict();
+const graphic = z.object({ shape: z.literal("ellipse"), style: graphicStyle, label: z.string().max(100_000),
+  representation: z.enum(["ink", "geometry"]), visible: z.boolean(), sourceInkIDs: z.array(z.uuid()).max(16) }).strict();
+const graphicEdit = graphic.omit({ sourceInkIDs: true }).partial().strict();
 const editFields = z.object({ source: source.optional(), html: source.optional(), css: source.optional(), javaScript: source.optional(),
-  frame: frame.optional(), worldOrigin: point.optional(), textStyle: textStyle.optional() }).strict();
+  graphic: graphicEdit.optional(), frame: frame.optional(), worldOrigin: point.optional(), textStyle: textStyle.optional() }).strict();
 const op = <K extends string, S extends z.ZodType>(kind: K, values: S, id: z.ZodType | null = z.string().min(1).max(120)) =>
   z.object({ kind: z.literal(kind), target: targetSchema, ...(id ? { id } : {}), values }).strict();
 export const operationSchema = z.discriminatedUnion("kind", [
@@ -37,8 +42,9 @@ export const operationSchema = z.discriminatedUnion("kind", [
     color: z.object({ red: z.number().min(0).max(1), green: z.number().min(0).max(1), blue: z.number().min(0).max(1) }).strict().optional(),
     worldOrigin: point.optional().describe("Required for board ink: points are offsets from this tiled origin. Omit on pages/covers."),
   }).strict(), z.uuid().optional()),
-  op("insertElement", z.object({ kind: z.enum(["markdown", "web", "nativeText"]), source, frame,
+  op("insertElement", z.object({ kind: z.enum(["markdown", "web", "nativeText", "graphic"]), source, frame, graphic: graphic.optional(),
     html: source.optional(), css: source.optional(), javaScript: source.optional(), state: z.json().optional(), worldOrigin: point.optional(), textStyle: textStyle.optional() }).strict()),
+  op("convertInkToElement", z.object({ kind: z.literal("graphic"), source, frame, graphic, worldOrigin: point.optional() }).strict()),
   op("updateElement", editFields),
   op("setElementState", z.object({ state: z.json() }).strict()),
   op("removeElement", z.object({}).strict().default({})),

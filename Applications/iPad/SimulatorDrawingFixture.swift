@@ -28,9 +28,13 @@
     static let passiveSVGArgument = "--notebook-passive-svg-fixture"
     static let mixedWebArgument = "--notebook-mixed-web-fixture"
     static let independentMaterialsArgument = "--notebook-independent-materials="
+    static let nativeGraphicsArgument = "--notebook-native-graphics-fixture"
+    static let nativeGraphicPageArgument = "--notebook-native-graphic-page"
 
     static func makeModel() -> NotebookAppModel {
       let fileManager = FileManager.default
+      let nativeGraphics = ProcessInfo.processInfo.arguments.contains(nativeGraphicsArgument)
+      let nativeGraphicPage = ProcessInfo.processInfo.arguments.contains(nativeGraphicPageArgument)
       let materialCount = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix(independentMaterialsArgument) })
         .flatMap { Int($0.dropFirst(independentMaterialsArgument.count)) }
       let startsAtCover = ProcessInfo.processInfo.arguments.contains(
@@ -69,7 +73,9 @@
       let fixtureName: String
       // The full route reads this gesture's durable result after other UI
       // scenarios. Their fresh default fixture must not replace that evidence.
-      if ProcessInfo.processInfo.arguments.contains(penPersistenceArgument) {
+      if nativeGraphics {
+        fixtureName = nativeGraphicPage ? "NativeGraphicPage" : "NativeGraphicBoard"
+      } else if ProcessInfo.processInfo.arguments.contains(penPersistenceArgument) {
         fixtureName = "PenPersistence"
       } else if let materialCount {
         fixtureName = "IndependentMaterials-\(materialCount)"
@@ -143,7 +149,7 @@
           id: pageID,
           size: size,
           actor: actor,
-          drawingData: try denseDrawing(size: size).dataRepresentation(),
+          drawingData: try (nativeGraphics ? PageInkDrawing() : denseDrawing(size: size)).dataRepresentation(),
           elements: (startsWithAgentElement
             ? [
               AgentElement(
@@ -474,6 +480,9 @@
         }
         try store.saveWorkspaceBundle(index: index, page: page,
           board: store.loadOrCreateBoard(workspace: index, actor: actor))
+        if nativeGraphics {
+          try installGraphics(store: store, index: index, pageID: pageID, actor: actor, onPage: nativeGraphicPage)
+        }
         if ProcessInfo.processInfo.arguments.contains(collaborationArgument) {
           _ = try store.loadOrCreateBoard(workspace:index,actor:actor)
           _ = try store.loadOrCreateSpatialInk(actor:actor)
@@ -522,6 +531,41 @@
       } catch {
         fatalError("Не удалось создать лист проверки инструментов: \(error)")
       }
+    }
+
+    private static func installGraphics(store: NotebookStore, index: WorkspaceIndex, pageID: UUID,
+      actor: UUID, onPage: Bool) throws {
+      _ = try store.loadOrCreateSpatialInk(actor: actor)
+      let target = CollaborationTarget(kind: onPage ? .page : .board, id: onPage ? pageID : index.rootBoardID)
+      let before = try store.loadOrCreateBoard(workspace: index, actor: actor)
+      if !onPage {
+        var after = before
+        _ = after.moveItem(index.selectedItemID, in: index.rootBoardID, to: .init(x: 8_000, y: 8_000), actor: actor)
+        _ = try store.saveBoardEdits(before: before, after: after)
+      }
+      var node: [String: JSONValue] = ["kind": .string("graphic"), "source": .string(""),
+        "frame": try .encode(PageRect(x: onPage ? 80 : 0, y: onPage ? 240 : 0, width: 200, height: 160)),
+        "graphic": try .encode(NotebookGraphic(label: "Узел +"))]
+      var program: [String: JSONValue] = ["kind": .string("web"), "source": .string("Live neighbour"),
+        "frame": try .encode(PageRect(x: onPage ? 420 : 0, y: onPage ? 250 : 0, width: 280, height: 220)),
+        "html": .string("<button aria-label='Graphic scene counter'>Add</button><output id='count'></output><input aria-label='Graphic scene draft' value='seed'><p id='runtime'></p>"),
+        "css": .string("body{padding:15px;background:#edf4fc}button,input{display:block;width:240px;height:44px;margin-bottom:12px}output{display:block}p{font-size:12px}"),
+        "javaScript": .string("document.querySelector('#runtime').textContent='Runtime '+Date.now()+'-'+Math.random();document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});draw()};function draw(){document.querySelector('#count').textContent='Count '+notebook.state.count}addEventListener('notebookstate',draw);draw()"),
+        "state": .object(["count": .number(0)])]
+      if !onPage {
+        node["worldOrigin"] = try .encode(WorldPoint(x: -340, y: -260))
+        program["worldOrigin"] = try .encode(WorldPoint(x: 30, y: -240))
+      }
+      _ = try store.applyCollaborationAction(.init(summary: "Native diagram with a live neighbour",
+        expected: [.init(target: target, revision: store.targetContentRevision(target: target))], operations: [
+          .init(kind: .insertElement, target: target, id: "native-circle", values: node),
+          .init(kind: .insertElement, target: target, id: "native-neighbour", values: program)
+        ]), actor: actor)
+      let viewport = SpatialPoint(x: NotebookAppModel.defaultPageSize.width, y: NotebookAppModel.defaultPageSize.height)
+      let center = onPage ? before.board(index.rootBoardID)?.focusedCenter(of: index.selectedItemID) ?? .zero : .zero
+      try store.savePresence(.init(boardID: index.rootBoardID, mode: onPage ? .page : .board,
+        camera: .init(center: center, scale: onPage ? WorkspaceItemGeometry.notebook.fitScale(viewport: viewport) : 1),
+        viewport: viewport, focusedItemID: onPage ? index.selectedItemID : nil, openProgress: onPage ? 1 : 0))
     }
 
     private static func denseDrawing(size: PageSize) -> PageInkDrawing {

@@ -12,6 +12,7 @@ final class SpatialInkSceneLease {
     let generation: UInt64
     let frame: InkCanvasView.PreparedSpatialFrame?
     let journal: SpatialInkJournal
+    var suppressedInkIDs: Set<UUID> = []
   }
   let registry: SpatialInkSurfaceRegistry
   let rootBoardID: UUID
@@ -37,7 +38,7 @@ final class SpatialInkSceneLease {
     defer { CATransaction.commit() }
     for update in updates {
       if let frame = update.frame {
-        update.owner.canvas.installSpatialFrame(frame, journal: update.journal, surface: update.owner.surface)
+        update.owner.canvas.installSpatialFrame(frame, journal: update.journal, surface: update.owner.surface, suppressedInkIDs: update.suppressedInkIDs)
         update.owner.refreshMount()
       }
     }
@@ -172,8 +173,8 @@ final class SpatialInkPhysicalOwner {
       width: viewport.x + marginX * 2, height: viewport.y + marginY * 2)
     return !backing.contains(wanted)
   }
-  func prepareNew(mesh: SpatialInkMesh, journal: SpatialInkJournal) {
-    canvas.applySpatial(mesh); canvas.installSpatialSource(journal, on: surface)
+  func prepareNew(mesh: SpatialInkMesh, journal: SpatialInkJournal, suppressedInkIDs: Set<UUID> = []) {
+    canvas.applySpatial(mesh); canvas.installSpatialSource(journal, on: surface, suppressedInkIDs: suppressedInkIDs)
     if mesh.batches.contains(where: { !$0.vertices.isEmpty }) { registry?.parkSceneCanvas(canvas) }
   }
   func stop() async {

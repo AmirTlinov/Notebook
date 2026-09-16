@@ -71,7 +71,7 @@ extension NotebookStore {
           identifier = identifier ?? Self.submissionID(id, suffix: "stroke:\(index)").uuidString.lowercased()
         }
         let key = "\(original.target.kind):\(original.target.id):\(identifier ?? "")"
-        if original.kind == .insertElement { kinds[key] = values["kind"]?.string }
+        if [.insertElement, .convertInkToElement].contains(original.kind) { kinds[key] = values["kind"]?.string }
         if original.kind == .updateElement, values["source"]?.string != nil, kinds[key] == nil {
           if original.target.kind == .page {
             kinds[key] = try loadPage(original.target.id).elements.first { $0.id == identifier }?.kind.rawValue

@@ -373,6 +373,10 @@ struct SpatialElementContent: View {
 
   var body: some View {
     switch element.kind {
+    case .graphic:
+      if let graphic = element.graphic, let sourceBoardID {
+        NotebookGraphicElementView(graphic: graphic, reference: .spatial(boardID: sourceBoardID, elementID: element.id))
+      }
     case .nativeText:
       NativeTextElementView(
         element: element,

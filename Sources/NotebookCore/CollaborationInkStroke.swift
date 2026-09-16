@@ -65,7 +65,7 @@ struct CollaborationInkStroke {
 }
 
 extension CollaborationAction {
-  var containsInk: Bool { operations.contains { $0.kind == .appendInkStroke } }
+  var containsInk: Bool { operations.contains { [.appendInkStroke, .convertInkToElement].contains($0.kind) } }
 
   /// Stroke UUIDs in the operation own undo. Never capture a whole drawing as
   /// a replaceable field: another contact can append to it before undo runs.

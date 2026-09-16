@@ -144,6 +144,7 @@ public struct PageVisionReceipt: Codable, Equatable, Sendable {
   public let format: Int
   public let pageID: UUID
   public let drawingStamp: VersionStamp
+  public let suppressedInkIDs: [UUID]?
   public let pageSize: PageSize
   public let renderScale: Double
   public let gridSpacing: Double
@@ -172,6 +173,8 @@ public struct PageVisionReceipt: Codable, Equatable, Sendable {
     format = Self.formatVersion
     pageID = page.id
     drawingStamp = page.drawingStamp
+    let suppressed = page.graphicPresentation.suppressedInkIDs.sorted()
+    suppressedInkIDs = suppressed.isEmpty ? nil : suppressed
     pageSize = page.size
     self.renderScale = renderScale
     self.gridSpacing = gridSpacing

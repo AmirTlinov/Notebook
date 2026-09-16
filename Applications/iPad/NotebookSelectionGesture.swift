@@ -68,6 +68,7 @@ struct NotebookSelectionGesture: UIViewRepresentable {
 /// Frozen callbacks bind one finger to its original owner and coordinate scale.
 /// NotebookSelectionSession owns the current target and unsaved translation.
 struct SceneSelectionLift {
+  var requiresHold = true
   let begin: () -> Void
   let change: (CGPoint) -> Void
   let end: (CGPoint) -> Void
@@ -94,6 +95,13 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
   }
   convenience init() { self.init(target: nil, action: nil) }
   override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
+    if lift?.requiresHold == false, state == .began || state == .changed,
+      let scope = view, let other = preventedGestureRecognizer.view,
+      other !== scope, other.isDescendant(of: scope) {
+      // Native content owns the contact before a system page curl can begin.
+      // The window's Pencil, contact and two-finger observers remain independent.
+      return true
+    }
     // A successful lift owns this link's whole contact, including WebKit's
     // recognizers, not just touches delivered to WKContentView. Other runtime
     // controls and the window's camera/Pencil observers are not competitors.
@@ -126,6 +134,14 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
     // must fail this observer instead, so its native link is delivered once.
     cancelsTouchesInView = nativeTapOwner != nil
     if nativeTapOwner != nil && lift == nil { cancelSelection(); return }
+    if lift?.requiresHold == false {
+      gate?.claimSceneObjectContact(ObjectIdentifier(first))
+      // Recognition is not a content mutation. Tap selection waits for lift;
+      // manipulation still waits for slop. Early ownership prevents UIKit's
+      // curl from entering an animation that would need a late cancellation.
+      state = .began
+      return
+    }
     let delay = lift == nil ? 0.35 : NotebookInteractionTouchView.liftDelay
     hold = Task { [weak self] in
       do { try await Task.sleep(for: .seconds(delay)) } catch { return }
@@ -138,6 +154,9 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
     guard let touch, touches.contains(touch), let revision, gate?.acceptsFingerSequence(revision) == true else { cancelSelection(); return }
     let end = touch.location(in: coordinateView)
+    if !held, let lift, !lift.requiresHold, hypot(end.x - start.x, end.y - start.y) >= 4 {
+      held = true; state = .changed; lift.begin()
+    }
     guard held else {
       let tolerance = lift == nil ? 8 : NotebookInteractionTouchView.movementTolerance
       if hypot(end.x - start.x, end.y - start.y) > tolerance { cancelSelection() }

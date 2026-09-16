@@ -60,6 +60,7 @@ public struct CollaborationExpectation: Codable, Equatable, Sendable {
 public struct CollaborationOperation: Codable, Equatable, Sendable {
   public enum Kind: String, Codable, Sendable {
     case appendInkStroke
+    case convertInkToElement
     case insertElement, updateElement, setElementState, removeElement, reorderElements
     case insertBlock, updateBlock, setBlockState, removeBlock, reorderBlocks, setPreamble, replaceDocument
     case createNotebook, createDocument, createBoard, renameItem, moveItem, stackItems
@@ -153,13 +154,24 @@ public struct CollaborationFieldChange: Codable, Equatable, Sendable {
   public let path: [CollaborationPathComponent]
   public let before: JSONValue?
   public let after: JSONValue?
+  public var beforeVersion: ContentFieldVersion?
   public var afterVersion: ContentFieldVersion?
+}
+
+/// The inverse is a new authored write, not a rewrite of an old causal dot.
+/// Only this receipt can attest that it deliberately restored a prior owner.
+public struct CollaborationFieldRestoration: Codable, Equatable, Sendable {
+  public let file: String
+  public let path: [CollaborationPathComponent]
+  public let writtenVersion: ContentFieldVersion
+  public let restoredVersion: ContentFieldVersion
 }
 
 public struct CollaborationUndoResult: Codable, Equatable, Sendable {
   public let restored: Int
   public let preserved: [CollaborationFieldChange]
   public let completedAt: Date
+  public var restorations: [CollaborationFieldRestoration]? = nil
 }
 
 public struct CollaborationContinuation: Codable, Equatable, Sendable {
@@ -183,6 +195,8 @@ public struct CollaborationReceipt: Codable, Equatable, Sendable, Identifiable {
   /// Identity of the original request, before generated IDs or Markdown HTML.
   /// Older receipts intentionally remain nil; their raw request cannot be inferred.
   public var requestFingerprint: String? = nil
+  /// Set only by the native command entry point, never a submitted action field.
+  public var author: SharedContextEntry.Author? = nil
 
   public var summary: String { action.summary }
 }

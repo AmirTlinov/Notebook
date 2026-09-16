@@ -170,6 +170,25 @@ extension NotebookStore {
   }
 
   func updateAddressIndexes(_ fragment: NotebookStoredFragment, database: NotebookSQLConnection) throws {
+    try noteGraphicIndexChange(fragment, database: database)
+    if (fragment.file.hasPrefix("pages/") && fragment.collection == "elements")
+      || (fragment.file == "board.json" && fragment.collection == "board/elements") {
+      try database.run("DELETE FROM graphic_sources WHERE address=?", [.text(fragment.address)])
+      if let graphic = try fragment.value["graphic"]?.decode(NotebookGraphic.self),
+        let id = fragment.value["id"]?.string {
+        let owner: String
+        if fragment.file.hasPrefix("pages/") {
+          owner = "page:" + URL(fileURLWithPath: fragment.file).deletingPathExtension().lastPathComponent
+        } else {
+          let surface = try fragment.value["surface"]!.decode(SurfaceID.self)
+          owner = surface.kind.rawValue + ":" + surface.ownerID!.uuidString.lowercased()
+        }
+        for stroke in graphic.sourceInkIDs {
+          try database.run("INSERT INTO graphic_sources(address,owner,element_id,stroke_id) VALUES(?,?,?,?)",
+            [.text(fragment.address), .text(owner), .text(id), .text(stroke.uuidString.lowercased())])
+        }
+      }
+    }
     if fragment.parent == nil, fragment.file.hasPrefix("code-fragments/") {
       let code = try fragment.value.decode(NotebookCodeFragment.self)
       try database.run("INSERT INTO code_fragment_files(address,file_id,fragment_id) VALUES(?,?,?) ON CONFLICT(address) DO UPDATE SET file_id=excluded.file_id", [.text(fragment.address), .text(code.currentFile.id), .text(code.id.uuidString.lowercased())])
@@ -204,6 +223,13 @@ extension NotebookStore {
     if fragment.collection == "board/placements" {
       try updatePlacementAddressIndexes(fragment, boardID: boardID, database: database)
     } else if fragment.collection == "board/elements" {
+      try indexSpatialElement(fragment, database: database)
+    }
+  }
+
+  func indexSpatialElement(_ fragment: NotebookStoredFragment, database: NotebookSQLConnection) throws {
+      guard let boardString = fragment.parent?.components(separatedBy: "@").last,
+        let boardID = UUID(uuidString: boardString) else { throw NotebookStorageError.corruptRecord(fragment.address) }
       try database.run("DELETE FROM spatial_entries WHERE address=?", [.text(fragment.address)])
       let element = try fragment.value.decode(SpatialElement.self)
       let id = element.surface.kind == .cover ? (element.surface.ownerID?.uuidString.lowercased() ?? "") : element.id
@@ -212,7 +238,6 @@ extension NotebookStore {
         origin: (element.worldOrigin ?? .zero).offsetBy(x: element.frame.x, y: element.frame.y),
         width: element.frame.width, height: element.frame.height, z: Double(fragment.position), database: database)
       if element.surface.kind == .cover { try database.noteOwner(.cover, fragment.address) }
-    }
   }
 
   private func insertSpatialEntry(address: String, boardID: UUID, id: String, kind: String,
@@ -365,6 +390,8 @@ extension NotebookStore {
       func include(_ candidate: String, required: Bool) throws {
         guard !selected.contains(candidate) else { return }
         let own = try storedFragments(address: candidate)
+        if let element = own.first, element.collection == "board/elements", element.value["graphic"] != nil,
+          try currentSQL!.rows("SELECT 1 FROM spatial_entries WHERE address=? LIMIT 1", [.text(candidate)]).isEmpty { return }
         let content: [NotebookStoredFragment]
         if let row = own.first, row.collection == "board/placements", let id = UUID(uuidString: row.member) {
           content = try placementFragments(itemID: id).filter { !selected.contains($0.address) }

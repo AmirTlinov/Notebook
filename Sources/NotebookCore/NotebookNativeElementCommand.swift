@@ -24,7 +24,7 @@ extension NotebookStore {
       guard try ownerItemID(ofPage: pageID) != nil else { return nil }
       let file = pageFile(pageID), root = file + "#", id = collaborationIdentity(elementID)
       let addresses = [(root, false), (root + "/elements/@" + fieldKey([id]), true)]
-        + (["elements/order"] + AgentElement.causalFieldKeys(id: id)).map {
+        + (["elements/order"] + AgentElement.causalFieldKeys(id: id, graphic: true)).map {
           (root + "/collaboration/fields/@" + fieldKey([$0]), false)
         }
       let rows = try boundedStoredFragments(addresses, maximumCount: 4096, maximumBytes: 4 * 1024 * 1024,

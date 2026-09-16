@@ -59,6 +59,7 @@ public struct NotebookActionReadModel: Codable, Equatable, Sendable, Identifiabl
   public let action: Action
   public let createdAt: Date
   public let requestFingerprint: String?
+  public let author: SharedContextEntry.Author?
   public let revisions: [CollaborationExpectation]
   public let changes: [Field]
   public let undo: Undo?
@@ -68,6 +69,7 @@ public struct NotebookActionReadModel: Codable, Equatable, Sendable, Identifiabl
     id = receipt.id; actionVersion = try receipt.deliveryVersion()
     action = try .init(summary: receipt.summary, resolvedContextID: receipt.action.resolvedContextID,
       references: receipt.action.references, operations: receipt.action.operations.map(Operation.init))
+    author = receipt.author
     createdAt = receipt.createdAt; requestFingerprint = receipt.requestFingerprint
     revisions = receipt.revisions; changes = try receipt.changes.map(Field.init)
     undo = try receipt.undo.map { try .init(restored: $0.restored, completedAt: $0.completedAt,
@@ -171,6 +173,7 @@ extension NotebookStore {
 
   func indexActionReadModel(_ receipt: CollaborationReceipt, address: String,
     database: NotebookSQLConnection) throws {
+    try indexFieldRestorations(receipt, address: address, database: database)
     let model = try NotebookActionReadModel(receipt)
     let data = try Self.storageEncoder.encode(model)
     try database.run("INSERT INTO action_read_models(address,receipt_hash,value) SELECT address,hash,? FROM records WHERE address=? ON CONFLICT(address) DO UPDATE SET receipt_hash=excluded.receipt_hash,value=excluded.value",

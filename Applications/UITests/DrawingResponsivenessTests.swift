@@ -5,6 +5,64 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testNativeGraphicDragOnBoardKeepsTheLiveNeighbourAndSurvivesReopening() {
+    nativeGraphicScenario(onPage: false)
+  }
+
+  func testNativeGraphicDragOnPageKeepsTheLiveNeighbourAndSurvivesReopening() {
+    nativeGraphicScenario(onPage: true)
+  }
+
+  private func nativeGraphicScenario(onPage: Bool) {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
+      "--notebook-native-graphics-fixture"] + (onPage ? ["--notebook-native-graphic-page"] : [])
+    launchPortraitFixture(app)
+    let node = app.images["Узел +"]
+    let neighbour = app.webViews.containing(.button, identifier: "Graphic scene counter").firstMatch
+    XCTAssertTrue(node.waitForExistence(timeout: 10)); XCTAssertTrue(neighbour.waitForExistence(timeout: 10))
+    neighbour.buttons["Graphic scene counter"].tap()
+    XCTAssertTrue(neighbour.staticTexts["Count 1"].waitForExistence(timeout: 3))
+    let runtime = neighbour.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Runtime '")).firstMatch.label
+    let field = neighbour.textFields["Graphic scene draft"]
+    field.tap(); field.typeText("7")
+    let before = node.frame, peerFrame = neighbour.frame
+    let start = node.coordinate(withNormalizedOffset: .init(dx: 0.97, dy: 0.5))
+    start.press(forDuration: 0.01, thenDragTo: start.withOffset(.init(dx: 38, dy: 26)),
+      withVelocity: .slow, thenHoldForDuration: 0)
+    XCTAssertEqual(node.frame.midX - before.midX, 38, accuracy: 6)
+    XCTAssertEqual(node.frame.midY - before.midY, 26, accuracy: 6)
+    XCTAssertEqual(neighbour.frame, peerFrame, "The first object contact is not camera input")
+    XCTAssertEqual(neighbour.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Runtime '")).firstMatch.label, runtime,
+      "The live program must retain its exact runtime, not just recreate saved state")
+    app.typeText("8")
+    XCTAssertTrue((field.value as? String)?.contains("78") == true, "The original first responder survives object movement")
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = onPage ? "native-graphic-page-moved" : "native-graphic-board-moved"
+    proof.lifetime = .keepAlways; add(proof)
+    let moved = node.frame
+    app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+    XCTAssertTrue(node.waitForExistence(timeout: 10)); XCTAssertTrue(neighbour.staticTexts["Count 1"].waitForExistence(timeout: 10))
+    XCTAssertEqual(node.frame.midX, moved.midX, accuracy: 6); XCTAssertEqual(node.frame.midY, moved.midY, accuracy: 6)
+    node.doubleTap()
+    let editor = app.descendants(matching: .any).matching(identifier: "graphic-label-editor").firstMatch
+    XCTAssertTrue(editor.waitForExistence(timeout: 3), "A completed second tap edits the native label")
+    editor.typeText("?")
+    let label = editor.value as? String ?? ""
+    XCTAssertTrue(label.contains("?"))
+    // Return remains a line break in a multiline label; leaving the object
+    // commits exactly the draft that was visible in its native editor.
+    workspaceWindow(in: app).coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.13)).tap()
+    XCTAssertTrue(editor.waitForNonExistence(timeout: 3), "Leaving the object commits its label")
+    let edited = app.images[label]
+    XCTAssertTrue(edited.waitForExistence(timeout: 3))
+    edited.tap()
+    app.buttons["delete-agent-element"].tap()
+    XCTAssertTrue(edited.waitForNonExistence(timeout: 5)); XCTAssertTrue(neighbour.staticTexts["Count 1"].exists)
+    app.terminate()
+  }
+
   func testIndependentMaterialsKeepFirstInputAndStateAfterColdReopening() {
     continueAfterFailure = false
     for count in [2, 4, 8] {

@@ -23,11 +23,21 @@ export type JSONValue =
   | JSONValue[]
   | { [key: string]: JSONValue };
 
-export type AgentElementKind = "markdown" | "web";
+export type AgentElementKind = "markdown" | "web" | "graphic";
+
+export interface NotebookGraphic {
+  shape: "ellipse";
+  style: { stroke: { red: number; green: number; blue: number }; strokeWidth: number; fill?: { red: number; green: number; blue: number } };
+  label: string;
+  representation: "ink" | "geometry";
+  visible: boolean;
+  sourceInkIDs: string[];
+}
 
 export interface AgentElement {
   id: string;
   kind: AgentElementKind;
+  graphic?: NotebookGraphic;
   frame: PageRect;
   source: string;
   html: string;
@@ -123,7 +133,7 @@ export interface SurfaceID {
   ownerID: string;
 }
 
-export type SpatialElementKind = "nativeText" | "markdown" | "web";
+export type SpatialElementKind = "nativeText" | "markdown" | "web" | "graphic";
 
 export interface NativeTextStyle {
   fontSize: number;
@@ -138,6 +148,7 @@ export interface SpatialElement {
   id: string;
   surface: SurfaceID;
   kind: SpatialElementKind;
+  graphic?: NotebookGraphic;
   frame: PageRect;
   worldOrigin?: WorldPoint;
   source: string;
@@ -295,6 +306,7 @@ export function publicPage(page: PageDocument, options: { includeSource?: boolea
     elements: page.elements.filter(element => !options.elementID || element.id === options.elementID).map((element) => ({
       id: element.id,
       kind: element.kind,
+      ...(element.graphic ? {graphic: element.graphic} : {}),
       frame: element.frame,
       sourcePreview: element.source.slice(0, 160),
       sourceCharacterCount: element.source.length,

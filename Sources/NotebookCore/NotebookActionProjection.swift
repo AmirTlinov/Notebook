@@ -18,7 +18,7 @@ struct NotebookPageElementProjection: Codable {
       && collaboration.isValid && collaboration.fields["computations"] == nil
       && collaboration.fields["elements/order"] != nil
       && elements.allSatisfy { element in
-        AgentElement.causalFieldKeys(id: element.id).allSatisfy { collaboration.fields[$0] != nil }
+        AgentElement.causalFieldKeys(id: element.id, graphic: element.graphic != nil).allSatisfy { collaboration.fields[$0] != nil }
       }
       && PageDocument.elementsAreValid(elements, in: size)
   }
@@ -49,6 +49,7 @@ extension NotebookStore {
     var stateBlockIDs: [UUID: Set<String>] = [:], sourceBlockIDs: [UUID: Set<String>] = [:]
     var sourceDocumentIDs = Set<UUID>(), fullDocumentIDs = Set<UUID>()
     var pageElementIDs: [UUID: Set<String>] = [:], fullPageIDs = Set<UUID>()
+    var pageGraphicSources: [UUID: [PageInkAction]] = [:]
     func include(_ target: CollaborationTarget) throws {
       switch target.kind {
       case .workspace: break
@@ -68,7 +69,21 @@ extension NotebookStore {
     for (index, operation) in action.operations.enumerated() {
       do {
         if operation.target.kind == .page {
-          if [.updateElement, .setElementState].contains(operation.kind) {
+          let graphicRemoval = try operation.kind == .removeElement && operation.id != nil
+            && (readPageElement(pageID: operation.target.id, elementID: operation.id!))?.graphic != nil
+          if operation.kind == .convertInkToElement {
+            let page = operation.target.id, file = pageFile(page)
+            pageElementIDs[page, default: []].formUnion(operation.id.map { [collaborationIdentity($0)] } ?? [])
+            let ids = try operation.values["graphic"]?["sourceInkIDs"]?.decode([UUID].self) ?? []
+            guard ids.count <= 16 else { throw NotebookStorageError.limitExceeded("graphic_sources") }
+            let claimants = try graphicClaimants(on: .page(page), sourceInkIDs: Set(ids))
+            pageElementIDs[page, default: []].formUnion(claimants.map { collaborationIdentity($0.candidate.id) })
+            for id in ids {
+              if let stroke = try storedMember(file: file, collection: "drawingData/actions", id: id.uuidString)?.decode(PageInkAction.self) {
+                pageGraphicSources[page, default: []].append(stroke)
+              }
+            }
+          } else if [.updateElement, .setElementState].contains(operation.kind) || graphicRemoval {
             guard let id = operation.id, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               id.utf16.count <= 120 else {
               throw CollaborationError("invalid_operation", "Изменение элемента называет допустимый ID длиной до 120 знаков UTF-16.")
@@ -101,7 +116,7 @@ extension NotebookStore {
         if operation.kind == .createDocument, let id = operation.id.flatMap(UUID.init(uuidString:)) { documentIDs.insert(id) }
         if operation.kind == .createBoard, let id = operation.id.flatMap(UUID.init(uuidString:)) { boardIDs.insert(id) }
         if operation.kind == .stackItems { itemIDs.formUnion(try operation.values["itemIDs"]?.decode([UUID].self) ?? []) }
-        if [.insertElement, .updateElement, .setElementState, .removeElement, .reorderElements].contains(operation.kind), operation.target.kind != .page {
+        if [.insertElement, .convertInkToElement, .updateElement, .setElementState, .removeElement, .reorderElements].contains(operation.kind), operation.target.kind != .page {
           let board = operation.target.kind == .board ? operation.target.id : operation.target.boardID
           if let board {
             if let id = operation.id { elementIDs[board, default: []].insert(id) }
@@ -116,6 +131,16 @@ extension NotebookStore {
         }
         if operation.kind == .appendInkStroke, operation.target.kind != .page {
           if let id = operation.id.flatMap(UUID.init(uuidString:)) { spatialActionIDs.insert(id) }
+        }
+        if operation.kind == .convertInkToElement, operation.target.kind != .page {
+          let ids = try operation.values["graphic"]?["sourceInkIDs"]?.decode([UUID].self) ?? []
+          spatialActionIDs.formUnion(ids)
+          let board = operation.target.kind == .board ? operation.target.id : operation.target.boardID
+          if let board {
+            let surface: SurfaceID = operation.target.kind == .board ? .board(board) : .cover(operation.target.id)
+            let claimants = try graphicClaimants(on: surface, sourceInkIDs: Set(ids))
+            elementIDs[board, default: []].formUnion(claimants.map { collaborationIdentity($0.candidate.id) })
+          }
         }
       } catch let error as CollaborationError {
         throw error.atOperation(index, operation)
@@ -218,7 +243,7 @@ extension NotebookStore {
       let root = pageFile(id) + "#", ids = (pageElementIDs[id] ?? []).sorted()
       return [(root, false)]
         + ids.map { (root + "/elements/@" + fieldKey([$0]), true) }
-        + (["elements/order"] + ids.flatMap(AgentElement.causalFieldKeys)).map {
+        + (["elements/order"] + ids.flatMap { AgentElement.causalFieldKeys(id: $0, graphic: true) }).map {
           (root + "/collaboration/fields/@" + fieldKey([$0]), false)
         }
     }
@@ -313,6 +338,6 @@ extension NotebookStore {
       }
     }
     files["spatial-ink.json"] = try NotebookRecordCodec.decode(inkRows, root: "spatial-ink.json#")
-    return CollaborationWorkspace(files: files, projectedPageIDs: projectedPageIDs)
+    return CollaborationWorkspace(files: files, projectedPageIDs: projectedPageIDs, pageGraphicSources: pageGraphicSources)
   }
 }

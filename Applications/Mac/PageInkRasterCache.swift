@@ -8,6 +8,7 @@ final class PageInkRasterCache {
   private struct Key: Hashable {
     let id: UUID
     let stamp: VersionStamp
+    let suppressed: Set<UUID>
     let width: Double
     let height: Double
   }
@@ -17,18 +18,18 @@ final class PageInkRasterCache {
 
   func image(for page: PageDocument) -> CGImage? {
     let key = Key(
-      id: page.id, stamp: page.drawingStamp, width: page.size.width, height: page.size.height)
+      id: page.id, stamp: page.drawingStamp, suppressed: page.graphicPresentation.suppressedInkIDs, width: page.size.width, height: page.size.height)
     return images[key]
   }
 
   func prepare(_ page: PageDocument) async {
-    let key = Key(id: page.id, stamp: page.drawingStamp, width: page.size.width, height: page.size.height)
+    let key = Key(id: page.id, stamp: page.drawingStamp, suppressed: page.graphicPresentation.suppressedInkIDs, width: page.size.width, height: page.size.height)
     guard images[key] == nil else { return }
     if let task = pending[key] { _ = await task.value; return }
     let task = Task { [weak self] in
       let image = await Task.detached(priority: .utility) { () -> CGImage? in
         guard let drawing = try? PageInkDrawing.decode(page.drawingData) else { return nil }
-        return InkRasterRenderer.shared.page(drawing, size: .init(width: page.size.width, height: page.size.height))
+        return InkRasterRenderer.shared.page(drawing.presenting(excluding: key.suppressed), size: .init(width: page.size.width, height: page.size.height))
       }.value
       guard let self else { return }
       pending[key] = nil

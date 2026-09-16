@@ -213,7 +213,8 @@ struct SpatialWorkspaceView: View {
             admitsNewContact: { [weak cohort] in cohort != nil },
             onCommit: model.appendSpatialInk,
             isEnabled: (presence.mode == .board || presence.mode == .cover)
-              && !contentGestureActive
+              && !contentGestureActive,
+            onQuickShape: { model.acceptQuickShape($0, boardID: $1, origin: $2, stroke: $3) }
 
           )
           .allowsHitTesting(false)
@@ -288,7 +289,7 @@ struct SpatialWorkspaceView: View {
           let scale = max(presence.camera.scale, 0.001)
           var contactID: UUID?
           func translation(_ delta: CGPoint) -> SpatialPoint { .init(x: delta.x / scale, y: delta.y / scale) }
-          return SceneSelectionLift(begin: {
+          return SceneSelectionLift(requiresHold: model.graphicElement(reference) == nil, begin: {
             if model.selectionSession.element != reference || model.agentQuestion == nil {
               model.publishHumanContext(capture, target: .element(reference))
             }
@@ -1808,7 +1809,7 @@ private struct WorkspaceSceneItem: View {
         navigationIsEnabled: pageNavigationIsEnabled,
         pageIsInteractive: contentIsInteractive,
         canBeginNavigation: {
-          model.inputGate.beginFingerSequence() != nil
+          model.inputGate.permitsPageNavigation
         },
         page: { index, isCurrent, readiness in
           notebookPage(

@@ -318,6 +318,13 @@ final class SceneCompositionRenderer {
 
   private func paintElement(_ element: SpatialElement, boardID: UUID, frame: CGRect, canvas: SceneRasterCompositor) async throws {
     try checkPreparation()
+    if let graphic = element.graphic {
+      if graphic.showsGeometry {
+        try await canvas.drawView(NotebookGraphicView(graphic: graphic),
+          size: .init(width: element.frame.width, height: element.frame.height), in: frame)
+      }
+      return
+    }
     if element.kind == .nativeText {
       try await canvas.drawView(SpatialTextSnapshot(element: element),
         size: .init(width: element.frame.width, height: element.frame.height), in: frame)
@@ -402,7 +409,7 @@ final class SceneCompositionRenderer {
         element.surface == (owner.plane.coverID.map(SurfaceID.cover) ?? .board(owner.plane.boardID)) else {
         throw SceneRenderError.snapshotPending("live_element_source")
       }
-      if element.kind != .nativeText {
+      if element.kind != .nativeText && element.kind != .graphic {
         guard let projection = frame.pixelScales[owner.plane.boardID] else {
           throw SceneRenderError.snapshotPending("live_element_projection")
         }

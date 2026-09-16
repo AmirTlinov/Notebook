@@ -18,6 +18,9 @@ final class NotebookInputGate {
   enum ContactKind { case finger, pencil }
   enum FingerContactOwner: Equatable {
     case scene
+    /// A native object reserves this single-finger sequence at touchdown. A
+    /// second finger may navigate, but never revives the cancelled object drag.
+    case sceneObject
     /// A browser link owns a tap, not a drag or material hold. Once native
     /// camera motion or a lift wins, UIKit cancels the original link contact.
     case webLink(ObjectIdentifier)
@@ -25,7 +28,7 @@ final class NotebookInputGate {
 
     var permitsSceneNavigation: Bool {
       switch self {
-      case .scene, .webLink: true
+      case .scene, .sceneObject, .webLink: true
       case .nativeInput: false
       }
     }
@@ -34,6 +37,23 @@ final class NotebookInputGate {
   // window contact observer retires these claims at lift/cancellation.
   private var fingerContactOwners: [ObjectIdentifier: FingerContactOwner] = [:]
   var admittedFingerContactCount: Int { fingerContactOwners.count }
+  var hasSceneObjectContact: Bool { fingerContactOwners.values.contains(.sceneObject) }
+
+  /// Selection refines a passive scene hit before movement. Native controls
+  /// cannot be claimed, and only the window contact observer retires the claim.
+  func claimSceneObjectContact(_ contact: ObjectIdentifier) {
+    guard fingerContactOwners[contact] == .scene else { return }
+    fingerContactOwners[contact] = .sceneObject
+  }
+
+  func permitsSingleFingerNavigation(_ contact: ObjectIdentifier) -> Bool {
+    guard let owner = fingerContactOwners[contact] else { return false }
+    return owner.permitsSceneNavigation && owner != .sceneObject
+  }
+
+  var permitsPageNavigation: Bool {
+    permitsNewContact && !hasActivePencil && !hasSceneObjectContact
+  }
 
   func fingerContactOwner(for contact: ObjectIdentifier,
     resolve: () -> FingerContactOwner) -> FingerContactOwner {
@@ -60,6 +80,7 @@ final class NotebookInputGate {
   private(set) var pencilGeneration: UInt64 = 0
   private var fingerCancellations: [UUID: @MainActor () -> Void] = [:]
   private var commandsAfterPencil: [NotebookInputCompletion] = []
+  private var commandsAfterIdle: [NotebookInputCompletion] = []
   private var contactSources: Set<UUID> = []
   private var settlingTask: Task<Void, Never>?
   private var activityGeneration: UInt64 = 0
@@ -127,6 +148,9 @@ final class NotebookInputGate {
         isActive = false
         settlingTask = nil
         onActivityChange?(false)
+        let commands = commandsAfterIdle
+        commandsAfterIdle = []
+        for command in commands { performAfterIdle(command) }
       }
     }
   }
@@ -167,6 +191,15 @@ final class NotebookInputGate {
       } else {
         action()
       }
+    }
+  }
+
+  /// Native commands wait for their own released contact and its publication
+  /// marker. They do not bypass the writer's human-input barrier.
+  func performAfterIdle(_ action: @escaping NotebookInputCompletion) {
+    if isActive { commandsAfterIdle.append(action); return }
+    performAfterPageInput { [self] in
+      if isActive { commandsAfterIdle.append(action) } else { action() }
     }
   }
 

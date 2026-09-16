@@ -85,10 +85,21 @@ extension NotebookStore {
 
   @discardableResult
   public func applyCollaborationAction(_ action: CollaborationAction, actor: UUID, waitForInput: TimeInterval = 0, requestFingerprint: String? = nil) throws -> CollaborationReceipt {
-    try waitingForInput(waitForInput) { try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: requestFingerprint) }
+    try waitingForInput(waitForInput) { try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: requestFingerprint, human: false) }
   }
 
-  private func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID, requestFingerprint: String?) throws -> CollaborationReceipt {
+  /// Native selection/Pencil completion uses the same executor and receipts.
+  /// It must release its contact before admission, just like any other writer.
+  @discardableResult
+  public func applyNativeGraphicAction(_ action: CollaborationAction, actor: UUID) throws -> CollaborationReceipt {
+    guard action.operations.allSatisfy({ [.insertElement, .updateElement, .removeElement,
+      .convertInkToElement, .reorderElements].contains($0.kind) }) else {
+      throw invalid("Нативная правка схемы содержит только операции элементов.")
+    }
+    return try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: nil, human: true)
+  }
+
+  private func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID, requestFingerprint: String?, human: Bool) throws -> CollaborationReceipt {
     try prepare()
     return try commandTransaction(readAllowance: .agentCommand) {
       if try hasStoredValue(actionFile(action.id)) {
@@ -119,7 +130,7 @@ extension NotebookStore {
       var inkPointCount = 0
       for (index, operation) in action.operations.enumerated() {
         do {
-          if operation.kind == .appendInkStroke {
+          if [.appendInkStroke, .convertInkToElement].contains(operation.kind) {
             inkPointCount += operation.values["points"]?.array.count ?? 0
             guard inkPointCount <= 100_000 else { throw invalid("Один ход содержит не более 100000 точек ручки.") }
             guard createdTargets.contains(operation.target) || action.expected.contains(where: {
@@ -156,12 +167,14 @@ extension NotebookStore {
           throw error.atOperation(index, operation)
         }
       }
-      try after.recordFieldChanges(from: before, human: false)
+      try after.recordFieldChanges(from: before, human: human)
       try after.validate(scope: self)
-      let changes = collaborationDiff(before.files, after.files).filter { !action.ownsInkField($0) }
+      let changes = try graphicConversionChanges(action, after: after.files,
+        changes: collaborationDiff(before.files, after.files).filter { !action.ownsInkField($0) })
       var receipt = CollaborationReceipt(id: action.id, action: action, createdAt: Date(),
         revisions: [], changes: changes)
       receipt.requestFingerprint = requestFingerprint
+      receipt.author = human ? .human : .agent
       return try commitCollaboration(before: before.files, after: after,
         receipt: receipt, revisedTargets: after.changedTargets(from: before))
     }
@@ -183,6 +196,7 @@ extension NotebookStore {
       try requireIdleInput(for: receipt.action.operations.map(\.target))
       var after = before
       var preserved: [CollaborationFieldChange] = []
+      var restoredFields: [CollaborationFieldChange] = []
       let protected = try before.protectedCreationChanges(in: receipt, scope: self)
       var restored = 0
       for operation in receipt.action.operations where operation.kind == .appendInkStroke {
@@ -214,9 +228,9 @@ extension NotebookStore {
           continue
         }
         let version = collaborationFieldVersion(file: before.files[change.file], path: change.path)
-        let stillOwned = change.afterVersion == nil || (version?.stamp == change.afterVersion?.stamp
-          && version?.human == change.afterVersion?.human)
+        let stillOwned = try fieldIsOwned(version, by: change)
         guard !protected.contains(change),
+          try !graphicConversionIsAdopted(change, receipt: receipt, files: before.files),
           stillOwned,
           collaborationComparable(current, file: change.file, path: change.path) == collaborationComparable(change.after, file: change.file, path: change.path) else {
           preserved.append(change)
@@ -238,6 +252,7 @@ extension NotebookStore {
           continue
         }
         restored += 1
+        restoredFields.append(change)
       }
       try after.restampChanges(from: before, actor: actor)
       try after.recordFieldChanges(from: before, human: true)
@@ -245,6 +260,13 @@ extension NotebookStore {
       // hand has adopted any of them; validation is the final ownership gate.
       try after.validate(scope: self)
       receipt.undo = CollaborationUndoResult(restored: restored, preserved: preserved, completedAt: Date())
+      receipt.undo?.restorations = restoredFields.compactMap { change in
+        guard let prior = change.beforeVersion,
+          let written = collaborationFieldVersion(file: after.files[change.file], path: change.path),
+          written.stamp != collaborationFieldVersion(file: before.files[change.file], path: change.path)?.stamp,
+          written.stamp != prior.stamp else { return nil }
+        return .init(file: change.file, path: change.path, writtenVersion: written, restoredVersion: prior)
+      }
       return try commitCollaboration(before: before.files, after: after,
         receipt: receipt, revisedTargets: after.changedTargets(from: before))
     }
@@ -258,13 +280,13 @@ extension NotebookStore {
     let exists = try hasStoredValue(contextFile(contextID))
     if exists, receipt.action.contextID == nil {
       guard let entry = try sharedContextEntry(contextID: contextID, entryID: receipt.id),
-        entry.author == .agent, entry.references == receipt.action.references else {
+        entry.author == (receipt.author ?? .agent), entry.references == receipt.action.references else {
         throw CollaborationError("context_id_conflict", "ID самостоятельного хода уже принадлежит другому контексту.")
       }
     }
     if !exists {
       if receipt.action.contextID != nil { throw CollaborationError("context_missing", "Контекст хода не найден.") }
-      let entry = SharedContextEntry(id: receipt.id, author: .agent, references: receipt.action.references, text: receipt.action.summary,
+      let entry = SharedContextEntry(id: receipt.id, author: receipt.author ?? .agent, references: receipt.action.references, text: receipt.action.summary,
         stamp: .init(counter: 1, actor: receipt.id), createdAt: receipt.createdAt)
       writes[contextFile(receipt.action.resolvedContextID)] = try .encode(SharedContext(id: receipt.action.resolvedContextID, entries: [entry]))
     }
@@ -344,7 +366,7 @@ extension NotebookStore {
       let known = Set(try readSharedContexts().map(\.id)).union(contexts.map(\.id))
       for receipt in actions where !known.contains(receipt.action.resolvedContextID) {
         guard receipt.action.contextID == nil else { throw CollaborationError("context_missing", "Ход должен поступить вместе со своим контекстом.") }
-        let entry = SharedContextEntry(id: receipt.id, author: .agent, references: receipt.action.references, text: receipt.action.summary, stamp: .init(counter: 1, actor: receipt.id), createdAt: receipt.createdAt)
+        let entry = SharedContextEntry(id: receipt.id, author: receipt.author ?? .agent, references: receipt.action.references, text: receipt.action.summary, stamp: .init(counter: 1, actor: receipt.id), createdAt: receipt.createdAt)
         writes[contextFile(receipt.action.resolvedContextID)] = try .encode(SharedContext(id: receipt.action.resolvedContextID, entries: [entry]))
       }
       try publishCollaboration(writes: writes, removals: removals)
@@ -396,8 +418,9 @@ private struct CollaborationCreationProtection {
 struct CollaborationWorkspace {
   var files: [String: JSONValue]
   let projectedPageIDs: Set<UUID>
-  init(files: [String: JSONValue], projectedPageIDs: Set<UUID> = []) {
-    self.files = files; self.projectedPageIDs = projectedPageIDs
+  var pageGraphicSources: [UUID: [PageInkAction]] = [:]
+  init(files: [String: JSONValue], projectedPageIDs: Set<UUID> = [], pageGraphicSources: [UUID: [PageInkAction]] = [:]) {
+    self.files = files; self.projectedPageIDs = projectedPageIDs; self.pageGraphicSources = pageGraphicSources
   }
   var ink: SpatialInkJournal { get throws { try files["spatial-ink.json"]!.decode(SpatialInkJournal.self) } }
 
@@ -452,7 +475,7 @@ struct CollaborationWorkspace {
     switch operation.kind {
     case .appendInkStroke:
       try appendInk(operation, actor: actor)
-    case .insertElement, .updateElement, .setElementState, .removeElement, .reorderElements:
+    case .insertElement, .convertInkToElement, .updateElement, .setElementState, .removeElement, .reorderElements:
       try editElements(operation, actor: actor)
     case .setBlockState:
       guard operation.target.kind == .document, let id = operation.id, let value = operation.values["state"],
@@ -574,13 +597,21 @@ struct CollaborationWorkspace {
     var elements = owner["elements"]?.array ?? []
     let index = op.id.flatMap { id in elements.firstIndex { $0["id"]?.string == id } }
     switch op.kind {
-    case .insertElement:
+    case .insertElement, .convertInkToElement:
       guard index == nil, let id = op.id, !id.isEmpty, id.count <= 120,
-        let kind = op.values["kind"]?.string, ["markdown", "web", "nativeText"].contains(kind),
+        let kind = op.values["kind"]?.string, ["markdown", "web", "nativeText", "graphic"].contains(kind),
         let frame = op.values["frame"], let source = op.values["source"] else { throw invalid("Новый элемент получает ID, вид, рамку и исходник.") }
       var value: [String: JSONValue] = ["id": .string(id), "kind": .string(kind), "frame": frame,
         "source": source, "html": op.values["html"] ?? source, "css": op.values["css"] ?? .string(""),
         "javaScript": op.values["javaScript"] ?? .string(""), "state": op.values["state"] ?? .object([:])]
+      if kind == "graphic" {
+        guard let raw = op.values["graphic"] else { throw invalid("Нужна нативная геометрия.") }
+        let graphic = try raw.decode(NotebookGraphic.self)
+        guard graphic.isValid else { throw invalid("Недопустимая геометрия.") }
+        if op.kind == .convertInkToElement { try validateGraphicSources(graphic, target: op.target, elements: elements) }
+        else if !graphic.sourceInkIDs.isEmpty { throw invalid("Исходные штрихи назначает только преобразование.") }
+        value["graphic"] = try .encode(graphic)
+      } else if op.kind == .convertInkToElement || op.values["graphic"] != nil { throw invalid("Преобразование создаёт нативный элемент.") }
       if op.target.kind != .page {
         let surface: SurfaceID = op.target.kind == .cover ? .cover(op.target.id) : .board(op.target.id)
         value["surface"] = try .encode(surface)
@@ -596,17 +627,28 @@ struct CollaborationWorkspace {
           try surface.decode(SurfaceID.self) == (op.target.kind == .cover ? .cover(op.target.id) : .board(op.target.id)) else { throw missing(op.target) }
       }
       let allowed = op.kind == .setElementState ? Set(["state"])
-        : Set(["frame", "source", "html", "css", "javaScript"]
+        : Set(["frame", "source", "html", "css", "javaScript", "graphic"]
           + (op.target.kind == .page ? [] : ["worldOrigin", "textStyle"]))
       guard !op.values.isEmpty, Set(op.values.keys).isSubset(of: allowed) else { throw invalid("Поля изменения принадлежат выбранной операции.") }
-      for (key, value) in op.values { elements[index] = elements[index].setting(key, value) }
+      for (key, value) in op.values {
+        if key == "graphic" {
+          guard var graphic = elements[index]["graphic"], !value.object.isEmpty,
+            Set(value.object.keys).isSubset(of: Set(NotebookGraphic.causalFields).subtracting(["sourceInkIDs"])) else {
+            throw invalid("Правка геометрии не меняет её исходные измерения.")
+          }
+          for (part, supplied) in value.object { graphic = graphic.setting(part, supplied) }
+          elements[index] = elements[index].setting(key, graphic)
+        } else { elements[index] = elements[index].setting(key, value) }
+      }
     case .removeElement:
       guard let index else { throw missing(op.target) }
       if op.target.kind != .page {
         let surface = try elements[index]["surface"]!.decode(SurfaceID.self)
         guard surface == (op.target.kind == .cover ? .cover(op.target.id) : .board(op.target.id)) else { throw missing(op.target) }
       }
-      elements.remove(at: index)
+      if let graphic = elements[index]["graphic"] {
+        elements[index] = elements[index].setting("graphic", graphic.setting("visible", .bool(false)))
+      } else { elements.remove(at: index) }
     case .reorderElements:
       if op.target.kind == .page {
         elements = try reordered(elements, values: op.values)
@@ -1252,6 +1294,7 @@ private func collaborationDiff(_ before: [String: JSONValue], _ after: [String: 
   }
   for file in Set(before.keys).union(after.keys).sorted() { walk(file, [], before[file], after[file]) }
   for index in result.indices {
+    result[index].beforeVersion = collaborationFieldVersion(file: before[result[index].file], path: result[index].path)
     result[index].afterVersion = collaborationFieldVersion(file: after[result[index].file], path: result[index].path)
   }
   return result
@@ -1278,6 +1321,22 @@ func collaborationFieldVersion(path: [CollaborationPathComponent],
     let placement = try read(owner + local)
     return (try? placement?.decode(WorkspacePlacement.self))?.winner.version
   }
+  guard let address = collaborationCausalFieldPath(path) else { return nil }
+  let value = try read(address)
+  return try? value?.decode(ContentFieldVersion.self)
+}
+
+/// A value patch can name frame.x / frame.y, while their single causal owner
+/// is frame. Reads and inverse provenance must use that same field identity.
+func collaborationCausalFieldPath(_ path: [CollaborationPathComponent]) -> [CollaborationPathComponent]? {
+  var owner: [CollaborationPathComponent] = [], local = path
+  if local.count >= 2, local[0] == .field("records"), case .member = local[1] {
+    return Array(local.prefix(2)) + [.field("fieldVersion")]
+  }
+  if local.count >= 3, local[0] == .field("boards"), local[2] == .field("board") {
+    owner = Array(local.prefix(3)); local = Array(local.dropFirst(3))
+  }
+  if local.count == 2, local[0] == .field("placements"), case .member = local[1] { return owner + local }
   guard let first = local.first, case .field(let collection) = first else { return nil }
   var parts = [collection]
   if local.count > 1 {
@@ -1287,10 +1346,10 @@ func collaborationFieldVersion(path: [CollaborationPathComponent],
       parts.append(collaborationIdentity(id))
       if local.count > 2, case .field(let field) = local[2] {
         parts.append(collection != "items" && ["source", "html", "kind"].contains(field) ? "content" : field)
+        if field == "graphic", local.count > 3, case .field(let part) = local[3] { parts.append(part) }
       } else { parts.append("exists") }
     case .field: return nil
     }
   }
-  let value = try read(owner + [.field("collaboration"), .field("fields"), .field(fieldKey(parts))])
-  return try? value?.decode(ContentFieldVersion.self)
+  return owner + [.field("collaboration"), .field("fields"), .field(fieldKey(parts))]
 }

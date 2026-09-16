@@ -131,6 +131,7 @@ extension NotebookAppModel {
       let actual = boardHierarchy?.ownerBoardID(of: owner), actual != boardID { return nil }
     guard let board = boardHierarchy?.board(boardID) else { return admitted }
     if let current = board.elements.first(where: { $0.id == admitted.id }) {
+      if current.graphic != nil, !board.graphicPresentation.geometryIDs.contains(current.id) { return nil }
       // The same local ID on a different physical surface is not this host.
       return current.surface == admitted.surface && current.kind == admitted.kind ? current : nil
     }

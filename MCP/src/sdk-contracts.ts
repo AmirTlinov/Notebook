@@ -56,10 +56,11 @@ const catalogue: Record<string,{input:z.ZodType;returns:string;example:string;ol
 
 const operationDescriptions:Record<z.infer<typeof operationSchema>["kind"],string>={
   appendInkStroke:"Append native pen samples to a page, board, cover or code fragment.",
-  insertElement:"Insert Markdown, a web program, or nativeText (board/cover) with a frame. Board elements require values.worldOrigin (tiled world anchor); their frame is relative to that anchor. Omit worldOrigin on cover/page elements, whose frame belongs to the surface.",
+  convertInkToElement:"Convert 1–16 existing pen strokes on the same physical owner into a native ellipse. Requires inkRevision. sourceInkIDs remain immutable; undo restores original ink. The graphic must be visible and use geometry representation.",
+  insertElement:"Insert a native graphic, Markdown, a web program, or nativeText (board/cover) with a frame. Board elements require values.worldOrigin (tiled world anchor); their frame is relative to that anchor. Omit worldOrigin on cover/page elements, whose frame belongs to the surface.",
   updateElement:"Change a named element's source, style or frame.",
   setElementState:"Replace the JSON state of a named web element.",
-  removeElement:"Remove one named element.",
+  removeElement:"Remove one named element. Native graphics retain their identity and hide reversibly; source ink is not deactivated.",
   reorderElements:"Set the order of named elements in an owner.",
   insertBlock:"Insert a Markdown, LaTeX or interactive document block; afterID places it after another block.",
   updateBlock:"Change a document block's source or height.",
@@ -168,6 +169,7 @@ for (;;) {
     relatedTopics:["operation/insertBlock","operation/createDocument","transaction"]},
   examples:{
     createDocument:createDocumentExample,
+    graphic:"insertElement: {kind:'graphic',source:'',frame:{x:20,y:20,width:100,height:100},graphic:{shape:'ellipse',style:{stroke:{red:0,green:0,blue:0},strokeWidth:2},label:'+',representation:'geometry',visible:true,sourceInkIDs:[]}}. For a board add worldOrigin. updateElement accepts a graphic patch, e.g. {graphic:{label:'?'}}; sourceInkIDs cannot be patched. convertInkToElement uses the same payload with existing sourceInkIDs and requires inkRevision.",
     nativeText:"insertElement on board: {kind:'nativeText',source:'Подпись',worldOrigin:{tileX:0,tileY:0,localX:0,localY:0},frame:{x:0,y:0,width:200,height:80},textStyle:{fontSize:24,weight:0.45,red:0.09,green:0.09,blue:0.08,alpha:1}}. For a cover omit worldOrigin and use cover-local frame coordinates. Omit textStyle to use native defaults.",
     interactive:interactiveExample
   }

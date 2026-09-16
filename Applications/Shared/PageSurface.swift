@@ -47,7 +47,7 @@ struct PageSurface: View {
             onState: { elementID, state in
               guard isVisible, isCurrent, model.activePage?.id == page.id else { return false }
               return model.commitElementState(pageID: page.id, elementID: elementID, state: state)
-            }, visibleRegion: visibleRegion
+            }, graphicPresentation: page.graphicPresentation, visibleRegion: visibleRegion
           )
           .opacity(isVisible ? 1 : 0)
           .allowsHitTesting(isVisible && isInteractive)
@@ -56,6 +56,8 @@ struct PageSurface: View {
           PencilCanvasView(
             pageID: page.id,
             drawingData: page.drawingData,
+            suppressedInkIDs: page.graphicPresentation.suppressedInkIDs,
+            onQuickShape: { model.acceptQuickShape($0, pageID: $1, stroke: $2) },
             isInputEnabled: isInteractive,
             penStyle: model.penStyle,
             eraserStyle: model.eraserStyle,

@@ -158,12 +158,15 @@ final class SpatialInkSurfaceRegistry {
           let installed = previous?.canvas.installedSpatialSource
           let generation = previous?.canvas.spatialSourceGeneration ?? 0
           let journal = liveData.ink
+          let suppressed = liveData.suppressedInkIDs.isEmpty ? Set<UUID>() : liveData.suppressedInkIDs.intersection(
+            journal.actions.filter { $0.spans.contains { $0.surface == surface } }.map(\.id))
           let worker = Task.detached(priority: .userInitiated) {
             try Task.checkCancellation()
             let source = try installed?.reconciled(with: journal)
               ?? SpatialInkJournal(actions: journal.actions.filter { $0.spans.contains { $0.surface == surface } }, stamp: journal.stamp)
             let unchanged = try installed?.referenceInk() == NotebookReferenceInk(surface: surface, actions: source.actions)
-            let mesh = unchanged ? nil : try SpatialInkMesh.prepare(surface: surface, journal: source)
+              && installed?.suppressedInkIDs == suppressed
+            let mesh = unchanged ? nil : try SpatialInkMesh.prepare(surface: surface, journal: source, suppressedInkIDs: suppressed)
             try Task.checkCancellation()
             return (source, mesh)
           }
@@ -183,7 +186,7 @@ final class SpatialInkSurfaceRegistry {
               registry: self, resources: resources, displayScale: displayScale, physical: admission)
             created.append(owner)
             physicalInkOwners[surface] = WeakOwner(owner)
-            owner.prepareNew(mesh: prepared.1 ?? .init(batches: []), journal: prepared.0)
+            owner.prepareNew(mesh: prepared.1 ?? .init(batches: []), journal: prepared.0, suppressedInkIDs: suppressed)
             let deadline = ContinuousClock.now + .seconds(5)
             while !owner.canvas.isStableFramePresented {
               try Task.checkCancellation()
@@ -201,7 +204,7 @@ final class SpatialInkSurfaceRegistry {
           }
           else { staged = nil }
           updates.append(.init(owner: owner, generation: owner.canvas.spatialSourceGeneration,
-            frame: staged, journal: prepared.0))
+            frame: staged, journal: prepared.0, suppressedInkIDs: suppressed))
         }
         try Task.checkCancellation()
         return .init(registry: self, rootBoardID: plan.rootBoardID, focusedCoverID: focusedCoverID,

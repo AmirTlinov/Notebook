@@ -24,6 +24,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
   let admitsNewContact: () -> Bool
   let onCommit: (SpatialInkTool, SpatialInkColor, [SpatialInkSpan]) -> SpatialInkAction?
   let isEnabled: Bool
+  var onQuickShape: ((NotebookQuickShapeFit, UUID, WorldPoint, SpatialInkAction) -> Void)? = nil
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
@@ -40,6 +41,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       guard let coordinator, let view else { return }
       coordinator.install(on: window, inside: view)
     }
+    context.coordinator.onQuickShape = onQuickShape
     context.coordinator.update(
       view: view, cohort: cohort,
       boardID: boardID,
@@ -62,6 +64,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
   func updateUIView(_ view: SpatialInkContainerView, context: Context) {
     view.bindCameraProjection(to: model?.nativeCameraProjection)
+    context.coordinator.onQuickShape = onQuickShape
     context.coordinator.update(
       view: view, cohort: cohort,
       boardID: boardID,
@@ -93,6 +96,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private(set) var isRetired = false
     private var surfaceRegistry: SpatialInkSurfaceRegistry
     private let inputSourceID = UUID()
+    var onQuickShape: ((NotebookQuickShapeFit, UUID, WorldPoint, SpatialInkAction) -> Void)?
+    private let quickShape = NotebookQuickShapeSession()
+    private let quickShapeLayer = CAShapeLayer()
     private var inputGate: NotebookInputGate
     private var pencilActionIsActive = false
     private weak var view: SpatialInkContainerView?
@@ -154,6 +160,19 @@ struct SpatialInkCanvas: UIViewRepresentable {
       self.surfaceRegistry = surfaceRegistry
       self.inputGate = inputGate
       self.onCommit = onCommit
+      quickShapeLayer.fillColor = UIColor.clear.cgColor
+      quickShapeLayer.actions = ["path": NSNull(), "strokeColor": NSNull(), "lineWidth": NSNull()]
+      quickShape.onPreview = { [weak self] fit in
+        guard let self else { return }
+        if let fit {
+          if quickShapeLayer.superlayer == nil { view?.layer.addSublayer(quickShapeLayer) }
+          quickShapeLayer.path = UIBezierPath(ovalIn: CGRect(x: fit.frame.x, y: fit.frame.y, width: fit.frame.width, height: fit.frame.height)).cgPath
+          let color = (actionPenStyle ?? penStyle).color.components
+          quickShapeLayer.strokeColor = UIColor(red: color.red, green: color.green, blue: color.blue, alpha: 1).cgColor
+          quickShapeLayer.lineWidth = lastActionPoint?.size.width ?? 2
+          if let currentSurface { surfaceRegistry.canvas(for: currentSurface)?.clearActiveAction() }
+        } else { quickShapeLayer.path = nil }
+      }
     }
 
     func update(
@@ -306,7 +325,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         appendSamples(touch: touch, event: event)
       case .ended(let touch, let event):
         appendSamples(touch: touch, event: event)
-        finishAction()
+        finishAction(convertsHeldShape: true)
       case .cancelled:
         finishAction()
       }
@@ -347,10 +366,23 @@ struct SpatialInkCanvas: UIViewRepresentable {
       previousTimestamp = nil
       actionStartTimestamp = touch.timestamp
       appendSamples(touch: touch, event: event)
+      if actionTool == .pen, currentSurface == boardSurface, let point = lastActionPoint?.location {
+        quickShape.begin(at: .init(x: point.x, y: point.y), screenScale: 1) { [weak self] in
+          guard let self, let geometry = actionGeometry, currentSurface == boardSurface,
+            actionSpans.allSatisfy({ $0.surface == boardSurface }) else { return [] }
+          return (actionSpans.flatMap(\.samples) + segmentSamples).compactMap { sample in
+            sample.worldPoint.map { geometry.camera.worldToScreen($0, viewport: geometry.viewport) }
+          }
+        }
+      }
     }
 
     private func appendSamples(touch: UITouch, event: UIEvent) {
       guard let actionTool else { return }
+      if quickShape.fit != nil, let view {
+        let point = touch.preciseLocation(in: view)
+        quickShape.move(to: .init(x: point.x, y: point.y)); return
+      }
       let actual = event.coalescedTouches(for: touch) ?? [touch]
       for sampleTouch in actual where accepts(sampleTouch) {
         let timestamp = max(0, sampleTouch.timestamp - actionStartTimestamp)
@@ -376,7 +408,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
         }
         lastActionPoint = point
       }
-      guard lastActionPoint != nil else { return }
+      guard let lastActionPoint else { return }
+      quickShape.move(to: .init(x: lastActionPoint.location.x, y: lastActionPoint.location.y))
 
       if actionTool == .pen,
         let activePen,
@@ -406,7 +439,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
       }
     }
 
-    private func finishAction() {
+    private func finishAction(convertsHeldShape: Bool = false) {
+      let fitted = quickShape.finish()
+      let fit = convertsHeldShape ? fitted : nil
       guard let actionTool, lastActionPoint != nil else {
         cancelAction()
         return
@@ -449,6 +484,14 @@ struct SpatialInkCanvas: UIViewRepresentable {
         return
       }
       let committed = onCommit(actionTool == .pen ? .pen : .eraser, color, spans)
+      if let fit, let geometry, let committed, let boardID = boardSurface.ownerID,
+        spans.allSatisfy({ $0.surface == .board(boardID) }) {
+        let origin = geometry.camera.screenToWorld(.init(x: fit.frame.x, y: fit.frame.y), viewport: geometry.viewport)
+        let physical = NotebookQuickShapeFit(frame: .init(x: 0, y: 0,
+          width: fit.frame.width / geometry.camera.scale, height: fit.frame.height / geometry.camera.scale), sampleCount: fit.sampleCount)
+        let callback = onQuickShape
+        Task { @MainActor in callback?(physical, boardID, origin, committed) }
+      }
       for surface in touchedSurfaces {
         surfaceRegistry.finishAction(
           on: surface,
@@ -460,6 +503,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
 
     private func cancelAction() {
+      quickShape.cancel()
       let geometry = actionGeometry
       defer {
         for lease in geometry?.leases ?? [] { lease.release() }

@@ -6,6 +6,8 @@ import UIKit
 struct PencilCanvasView: UIViewRepresentable {
   let pageID: UUID
   let drawingData: Data
+  var suppressedInkIDs: Set<UUID> = []
+  var onQuickShape: ((NotebookQuickShapeFit, UUID, PageInkAction) -> Void)? = nil
   let isInputEnabled: Bool
   let penStyle: PenStyle
   let eraserStyle: EraserStyle
@@ -31,6 +33,7 @@ struct PencilCanvasView: UIViewRepresentable {
       Task { @MainActor in onRenderReady(ready) }
     }
     paper.setInputEnabled(isInputEnabled)
+    context.coordinator.onQuickShape = onQuickShape
     context.coordinator.attach(to: paper)
     context.coordinator.setPageFinisherCurrent(isInputEnabled)
     context.coordinator.apply(
@@ -39,7 +42,7 @@ struct PencilCanvasView: UIViewRepresentable {
       tool: drawingTool,
       to: paper
     )
-    context.coordinator.apply(drawingData, pageID: pageID, to: paper)
+    context.coordinator.apply(drawingData, pageID: pageID, to: paper, suppressedIDs: suppressedInkIDs)
     return paper
   }
 
@@ -53,13 +56,14 @@ struct PencilCanvasView: UIViewRepresentable {
     context.coordinator.reserveAction = reserveAction
     context.coordinator.releaseAction = releaseAction
     context.coordinator.acceptAction = acceptAction
+    context.coordinator.onQuickShape = onQuickShape
     context.coordinator.apply(
       penStyle,
       eraserStyle: eraserStyle,
       tool: drawingTool,
       to: paper
     )
-    context.coordinator.apply(drawingData, pageID: pageID, to: paper)
+    context.coordinator.apply(drawingData, pageID: pageID, to: paper, suppressedIDs: suppressedInkIDs)
   }
 
   static func dismantleUIView(
@@ -74,6 +78,8 @@ struct PencilCanvasView: UIViewRepresentable {
   final class Coordinator: NSObject {
     var reserveAction: (UUID) -> VersionStamp?
     var releaseAction: (UUID, VersionStamp) -> Void
+    var onQuickShape: ((NotebookQuickShapeFit, UUID, PageInkAction) -> Void)?
+    private var suppressedInkIDs = Set<UUID>()
     private var actionReservation: (pageID: UUID, stamp: VersionStamp)?
     var acceptAction: (PageInkAction, UUID, VersionStamp) -> Task<PreparedPageInkChange?, Never>
 
@@ -121,7 +127,7 @@ struct PencilCanvasView: UIViewRepresentable {
       }
       paper.touchView.onDrawingMutation = { [weak self, weak paper] mutation in
         guard let self, let paper else { return }
-        commit(mutation, on: paper)
+        commit(mutation, on: paper, fit: paper.touchView.completedQuickShape)
       }
       registerPageFinisher(on: paper)
     }
@@ -130,7 +136,7 @@ struct PencilCanvasView: UIViewRepresentable {
     /// returned task observes the model's work; this sheet never serializes it.
     func commit(
       _ mutation: PageInkAction,
-      on paper: PaperCanvasContainerView
+      on paper: PaperCanvasContainerView, fit: NotebookQuickShapeFit? = nil
     ) {
       guard let reservation = actionReservation else {
         restoreModelDrawing(on: paper)
@@ -150,6 +156,7 @@ struct PencilCanvasView: UIViewRepresentable {
           paper?.touchView.acceptCommittedDrawing(accepted.drawing)
         }
         completeLocalDelivery(on: pageID, actionID: mutation.id, accepted: accepted, paper: paper)
+        if accepted != nil, let fit { onQuickShape?(fit, pageID, mutation) }
       }
     }
 
@@ -269,10 +276,13 @@ struct PencilCanvasView: UIViewRepresentable {
     func apply(
       _ data: Data,
       pageID: UUID,
-      to paper: PaperCanvasContainerView
+      to paper: PaperCanvasContainerView, suppressedIDs: Set<UUID> = []
     ) {
+      let presentationChanged = suppressedInkIDs != suppressedIDs
+      suppressedInkIDs = suppressedIDs
       let pageChanged = self.pageID != pageID
       if !pageChanged, modelDrawingData == data {
+        if presentationChanged, !paper.touchView.hasActiveAction { paper.inkView.apply(appliedDrawing.presenting(excluding: suppressedInkIDs)) }
         if decodeTask != nil { paper.setInputEnabled(false) }
         return
       }
@@ -305,7 +315,7 @@ struct PencilCanvasView: UIViewRepresentable {
         }
         unpublishedActions[pageID] = nil
         appliedDrawing = drawing
-        paper.apply(drawing)
+        paper.apply(drawing, suppressedInkIDs: suppressedInkIDs)
         paper.setInputEnabled(pageFinisherIsCurrent)
       }
     }
@@ -340,7 +350,7 @@ struct PencilCanvasView: UIViewRepresentable {
       guard let accepted else { return }
       modelDrawingData = accepted.data
       appliedDrawing = accepted.drawing
-      paper.settle(accepted.drawing)
+      paper.settle(accepted.drawing, suppressedInkIDs: suppressedInkIDs)
     }
 
     private func afterLocalDeliveries(
@@ -357,7 +367,7 @@ struct PencilCanvasView: UIViewRepresentable {
     private func restoreModelDrawing(on paper: PaperCanvasContainerView?) {
       guard let paper, let data = modelDrawingData, let pageID else { return }
       modelDrawingData = nil
-      apply(data, pageID: pageID, to: paper)
+      apply(data, pageID: pageID, to: paper, suppressedIDs: suppressedInkIDs)
     }
 
   }
@@ -448,13 +458,13 @@ final class PaperCanvasContainerView: UIView {
     admitsPencilContact = { _ in false }
   }
 
-  func apply(_ drawing: PageInkDrawing) {
-    inkView.apply(drawing)
+  func apply(_ drawing: PageInkDrawing, suppressedInkIDs: Set<UUID> = []) {
+    inkView.apply(drawing.presenting(excluding: suppressedInkIDs))
     touchView.apply(drawing)
   }
 
-  func settle(_ drawing: PageInkDrawing) {
-    inkView.settle(drawing)
+  func settle(_ drawing: PageInkDrawing, suppressedInkIDs: Set<UUID> = []) {
+    inkView.settle(drawing.presenting(excluding: suppressedInkIDs))
     touchView.acceptCommittedDrawing(drawing)
   }
 
@@ -537,6 +547,10 @@ final class PaperInputView: UIView {
   var clearActiveAction: (() -> Void)?
 
   var hasActiveAction: Bool { actionTool != nil }
+  private let quickShape = NotebookQuickShapeSession()
+  private let quickShapeLayer = CAShapeLayer()
+  private(set) var completedQuickShape: NotebookQuickShapeFit?
+
 
   override var canBecomeFirstResponder: Bool { false }
 
@@ -577,6 +591,19 @@ final class PaperInputView: UIView {
   override init(frame: CGRect) {
     super.init(frame: frame)
     isMultipleTouchEnabled = true
+    layer.addSublayer(quickShapeLayer)
+    quickShapeLayer.fillColor = UIColor.clear.cgColor
+    quickShapeLayer.actions = ["path": NSNull(), "strokeColor": NSNull(), "lineWidth": NSNull()]
+    quickShape.onPreview = { [weak self] fit in
+      guard let self else { return }
+      if let fit {
+        quickShapeLayer.path = UIBezierPath(ovalIn: CGRect(x: fit.frame.x, y: fit.frame.y, width: fit.frame.width, height: fit.frame.height)).cgPath
+        let color = (actionPenStyle ?? penStyle).color.components
+        quickShapeLayer.strokeColor = UIColor(red: color.red, green: color.green, blue: color.blue, alpha: 1).cgColor
+        quickShapeLayer.lineWidth = samples.first?.point.size.width ?? 2
+        clearActiveAction?()
+      } else { quickShapeLayer.path = nil }
+    }
     updateAccessibilityValue()
   }
 
@@ -609,6 +636,7 @@ final class PaperInputView: UIView {
   }
 
   func finishCurrentAction(completion: @escaping () -> Void) {
+    if activeTouch != nil { quickShape.cancel() }
     guard actionTool != nil else {
       completion()
       return
@@ -661,6 +689,7 @@ final class PaperInputView: UIView {
   }
 
   override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+    quickShape.cancel()
     guard let touch = drawingTouch(in: touches), touch === activeTouch else {
       return
     }
@@ -683,6 +712,7 @@ final class PaperInputView: UIView {
 
       let timestamp = samples[sampleIndex].timestamp
       let updated = makeSample(from: touch, timestamp: timestamp)
+      if samples[sampleIndex].point.location != updated.point.location { quickShape.cancel() }
       samples[sampleIndex] = reconciledSample(
         previous: samples[sampleIndex],
         updated: updated
@@ -742,12 +772,26 @@ final class PaperInputView: UIView {
     addActualSamples(for: touch, event: event)
     updatePredictions(for: touch, event: event)
     refreshAction()
+    completedQuickShape = nil
+    if actionTool == .pen, let first = samples.first?.point.location {
+      let a = convert(CGPoint.zero, to: window), b = convert(CGPoint(x: 1, y: 0), to: window)
+      quickShape.begin(at: .init(x: first.x, y: first.y), screenScale: max(0.001, hypot(b.x - a.x, b.y - a.y))) { [weak self] in
+        self?.samples.map { .init(x: $0.point.location.x, y: $0.point.location.y) } ?? []
+      }
+    }
   }
 
   private func updateAction(with touch: UITouch, event: UIEvent?) {
+    if quickShape.fit != nil {
+      let point = touch.preciseLocation(in: self)
+      quickShape.move(to: .init(x: point.x, y: point.y)); return
+    }
     addActualSamples(for: touch, event: event)
-    updatePredictions(for: touch, event: event)
-    refreshAction()
+    if let point = samples.last?.point.location { quickShape.move(to: .init(x: point.x, y: point.y)) }
+    if quickShape.fit == nil {
+      updatePredictions(for: touch, event: event)
+      refreshAction()
+    }
   }
 
   private func addActualSamples(for touch: UITouch, event: UIEvent?) {
@@ -1021,6 +1065,7 @@ final class PaperInputView: UIView {
   }
 
   private func showMeasuredActionWithoutPredictions() {
+    guard quickShape.fit == nil else { return }
     if actionTool == .eraser, let activeEraserStroke {
       presentActiveEraser?(activeEraserStroke)
     } else if let activePenStroke {
@@ -1047,7 +1092,8 @@ final class PaperInputView: UIView {
 
   private func actionMutation() -> PageInkAction? {
     guard let actionTool else { return nil }
-    let points = actionTool == .pen ? (activePenStroke?.measuredPoints ?? []) : samples.map(\.point)
+    let allPoints = actionTool == .pen ? (activePenStroke?.measuredPoints ?? []) : samples.map(\.point)
+    let points = quickShape.fit.map { Array(allPoints.prefix($0.sampleCount)) } ?? allPoints
     guard !points.isEmpty else { return nil }
     let components = (actionPenStyle ?? penStyle).color.components
     return PageInkAction(
@@ -1078,6 +1124,7 @@ final class PaperInputView: UIView {
 
   private func finishAction(with mutation: PageInkAction) {
     let completions = actionCompletions
+    let fit = quickShape.finish()
     let tool = actionTool
     if tool == .pen {
       commitActivePen?()
@@ -1085,7 +1132,9 @@ final class PaperInputView: UIView {
       commitActiveEraser?()
     }
     let reportedPencilActivity = clearAction()
+    completedQuickShape = fit
     onDrawingMutation?(mutation)
+    completedQuickShape = nil
     if reportedPencilActivity { onActionActivityChange?(false) }
     for completion in completions {
       completion()
@@ -1111,6 +1160,7 @@ final class PaperInputView: UIView {
   }
 
   private func clearAction() -> Bool {
+    quickShape.cancel()
     let reportedPencilActivity = reportsPencilActivity
     clearActiveAction?()
     activeTouch = nil

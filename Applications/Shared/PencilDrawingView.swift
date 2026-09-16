@@ -13,7 +13,7 @@ struct PencilDrawingView: View {
         Image(nsImage: NSImage(cgImage: rendered, size: .init(width: page.size.width, height: page.size.height))).resizable()
       }
     }
-    .task(id: "\(page.id)-\(page.drawingStamp.revision)") {
+    .task(id: "\(page.id)-\(page.drawingStamp.revision)-\(page.agentStamp.revision)") {
       await PageInkRasterCache.shared.prepare(page)
       guard !Task.isCancelled else { return }
       rendered = PageInkRasterCache.shared.image(for: page)

@@ -767,6 +767,8 @@ final class NotebookAppModel {
   private var peerActivities: [UUID: NotebookInputActivity] = [:]
   private var cueTask: Task<Void, Never>?
   private var pencilUndoHistory = PencilUndoHistory()
+  private var graphicCommandTask: Task<Void, Never>?
+  var graphicCommandPending: Bool { graphicCommandTask != nil }
   private var inkUndoInProgress = false
   private var reservedDrawingCounters: [UUID: UInt64] = [:]
   typealias PageInkPreparation = @Sendable (PageDocument, PageInkMutation, VersionStamp) async throws -> PreparedPageInkChange
@@ -2049,6 +2051,9 @@ final class NotebookAppModel {
     spatialInk = journal
 
     scheduleSpatialInkSave(.append(action, journalStamp: journal.stamp))
+    for surface in Set(action.spans.map(\.surface)) {
+      if let owner = surface.ownerID { pencilUndoHistory.recordAction(ownerID: owner, actionID: action.id) }
+    }
     return action
   }
 
@@ -2061,6 +2066,12 @@ final class NotebookAppModel {
     #endif
     guard inputGate.permitsNewContact, !inputGate.hasActivePencil,
       presence?.mode != .document else { return }
+    if let owner = isPageOpen ? activePage?.id : (presence?.focusedItemID ?? presence?.boardID) {
+      let restored = pencilUndoHistory.hasHistory(for: owner) ? nil : collaborationActions.first {
+        $0.author == .human && $0.undo == nil && $0.action.operations.contains { $0.target.id == owner && [.convertInkToElement, .insertElement, .updateElement, .removeElement].contains($0.kind) }
+      }?.id
+      if let command = pencilUndoHistory.lastCommand(for: owner) ?? restored { undoCollaboration(command); return }
+    }
     if isPageOpen {
       _ = acceptDrawingUndo()
       return
@@ -2074,6 +2085,7 @@ final class NotebookAppModel {
       ?? (surface != nil ? journal.undoLast(actor: actorID) : nil)
     else { return }
     spatialInk = journal
+    if let owner = surface?.ownerID { pencilUndoHistory.didRemoveContribution([action.id], for: owner) }
 
     scheduleSpatialInkSave(.state(actionID: action.id, creationStamp: action.stamp,
       isActive: action.isActive, stateStamp: action.stateStamp, journalStamp: journal.stamp))
@@ -2457,6 +2469,11 @@ final class NotebookAppModel {
   private func commitElementFrame(_ contact: NotebookElementManipulation) -> Bool {
     guard let identity = contact.identity else { return false }
     let frame = contact.frame, original = contact.original, actor = actorID
+    if graphicElement(contact.reference) != nil {
+      performGraphicOperation(.updateElement, reference: contact.reference,
+        values: ["frame": (try? .encode(PageRect(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height))) ?? .null], summary: "Переместить фигуру")
+      return true
+    }
     switch contact.reference {
     case .page(let pageID, let elementID):
       guard var page = pages[pageID], let index = page.elements.firstIndex(where: { $0.id == elementID }) else { return false }
@@ -2527,8 +2544,89 @@ final class NotebookAppModel {
     finishElementManipulation(id, translation: translation)
   }
 
+  func graphicElement(_ reference: EditableElementReference) -> NotebookGraphic? {
+    switch reference {
+    case .page(let pageID, let id): return pages[pageID]?.elements.first { $0.id == id }?.graphic
+    case .spatial(let boardID, let id): return boardHierarchy?.board(boardID)?.elements.first { $0.id == id }?.graphic
+    }
+  }
+
+  func acceptQuickShape(_ fit: NotebookQuickShapeFit, pageID: UUID, stroke: PageInkAction) {
+    let graphic = NotebookGraphic(style: .init(stroke: stroke.color, strokeWidth: stroke.samples.first?.width ?? 2), sourceInkIDs: [stroke.id])
+    guard let values = try? ["kind": JSONValue.string("graphic"), "source": .string(""),
+      "frame": .encode(fit.frame), "graphic": .encode(graphic)] else { return }
+    performGraphicOperation(.convertInkToElement, reference: .page(pageID: pageID, elementID: UUID().uuidString.lowercased()),
+      values: values, summary: "Преобразовать набросок в эллипс")
+  }
+
+  func acceptQuickShape(_ fit: NotebookQuickShapeFit, boardID: UUID, origin: WorldPoint, stroke: SpatialInkAction) {
+    let graphic = NotebookGraphic(style: .init(stroke: stroke.color, strokeWidth: stroke.spans.first?.samples.first?.width ?? 2), sourceInkIDs: [stroke.id])
+    guard let values = try? ["kind": JSONValue.string("graphic"), "source": .string(""),
+      "frame": .encode(fit.frame), "graphic": .encode(graphic), "worldOrigin": .encode(origin)] else { return }
+    performGraphicOperation(.convertInkToElement, reference: .spatial(boardID: boardID, elementID: UUID().uuidString.lowercased()),
+      values: values, summary: "Преобразовать набросок в эллипс")
+  }
+
+  func setGraphicLabel(_ text: String, reference: EditableElementReference, replacing original: String? = nil) {
+    if let original, graphicElement(reference)?.label != original {
+      showCue("Подпись уже изменена другим действием. Ваш текст: \(text)")
+      return
+    }
+    guard graphicElement(reference)?.label != text else { return }
+    performGraphicOperation(.updateElement, reference: reference,
+      values: ["graphic": .object(["label": .string(text)])], summary: "Изменить подпись фигуры")
+  }
+
+  private func performGraphicOperation(_ kind: CollaborationOperation.Kind, reference: EditableElementReference,
+    values: [String: JSONValue], summary: String) {
+    guard !graphicCommandPending else {
+      if kind != .convertInkToElement { showCue("Предыдущее изменение ещё сохраняется") }
+      return
+    }
+    let target: CollaborationTarget, id: String, expectedPage: AgentElement?, expectedSpatial: SpatialElement?
+    switch reference {
+    case .page(let pageID, let elementID):
+      target = .init(kind: .page, id: pageID); id = elementID
+      expectedPage = pages[pageID]?.elements.first { $0.id == id }; expectedSpatial = nil
+    case .spatial(let boardID, let elementID):
+      expectedSpatial = boardHierarchy?.board(boardID)?.elements.first { $0.id == elementID }; expectedPage = nil; id = elementID
+      target = expectedSpatial?.surface.kind == .cover
+        ? .init(kind: .cover, id: expectedSpatial!.surface.ownerID!, boardID: boardID) : .init(kind: .board, id: boardID)
+    }
+    let actor = actorID
+    graphicCommandTask = Task { [weak self] in
+      guard let self else { return }
+      defer { graphicCommandTask = nil }
+      await withCheckedContinuation { continuation in
+        inputGate.performAfterIdle { continuation.resume() }
+      }
+      do {
+        let receipt = try await persistence.submit(publishesChanges: true) { store in
+          if let expectedPage, try store.readPageElement(pageID: target.id, elementID: id) != expectedPage {
+            throw CollaborationError("revision_conflict", "Фигура изменилась до завершения жеста.")
+          }
+          if let expectedSpatial, try store.readSpatialElement(boardID: target.boardID ?? target.id, elementID: id) != expectedSpatial {
+            throw CollaborationError("revision_conflict", "Фигура изменилась до завершения жеста.")
+          }
+          let revision = try store.targetContentRevision(target: target)
+          let ink = kind == .convertInkToElement ? try store.inkRevision(on: target) : nil
+          return try store.applyNativeGraphicAction(.init(summary: summary,
+            references: [.init(target: target, elementID: id, revision: revision)],
+            expected: [.init(target: target, revision: revision, inkRevision: ink)],
+            operations: [.init(kind: kind, target: target, id: id, values: values)]), actor: actor)
+        }
+        pencilUndoHistory.recordCommand(ownerID: target.id, actionID: receipt.id)
+        reloadExternalChanges()
+      } catch { showCue(error.localizedDescription) }
+    }
+  }
+
   func deleteElement(_ reference: EditableElementReference) {
     guard selectionSession.element == reference else { return }
+    if graphicElement(reference) != nil {
+      performGraphicOperation(.removeElement, reference: reference, values: [:], summary: "Удалить фигуру")
+      clearSelection(); return
+    }
     clearSelection()
     switch reference {
     case .page(let pageID, let elementID): _ = removePageElement(pageID: pageID, elementID: elementID)
@@ -3489,24 +3587,27 @@ final class NotebookAppModel {
 
   func undoCollaboration(_ id: UUID) {
     guard collaborationUndoTask == nil else { return }
-    afterPageInput { [weak self] in
+    collaborationUndoTask = Task { [weak self] in
       guard let self else { return }
+      await withCheckedContinuation { continuation in
+        inputGate.performAfterIdle { continuation.resume() }
+      }
       let actor = actorID
-      collaborationUndoTask = Task { [weak self] in
-        guard let self else { return }
-        let result: Result<CollaborationReceipt, Error>
-        do {
-          result = .success(try await persistence.submit(publishesChanges: true) {
-            try $0.undoCollaborationAction(id, actor: actor, waitForInput: 0)
-          })
-        } catch { result = .failure(error) }
-        collaborationUndoTask = nil
-        switch result {
-        case .success(let receipt):
-          reloadExternalChanges()
-          showCue(receipt.undo?.preserved.isEmpty == false ? "Ход отменён. Ваши доработки сохранены" : "Ход отменён")
-        case .failure(let error): showCue(error.localizedDescription)
+      let result: Result<CollaborationReceipt, Error>
+      do {
+        result = .success(try await persistence.submit(publishesChanges: true) {
+          try $0.undoCollaborationAction(id, actor: actor, waitForInput: 0)
+        })
+      } catch { result = .failure(error) }
+      collaborationUndoTask = nil
+      switch result {
+      case .success(let receipt):
+        for owner in Set(receipt.action.operations.map { $0.target.id }) {
+          pencilUndoHistory.didUndoCommand(ownerID: owner, actionID: id)
         }
+        reloadExternalChanges()
+        showCue(receipt.undo?.preserved.isEmpty == false ? "Ход отменён. Ваши доработки сохранены" : "Ход отменён")
+      case .failure(let error): showCue(error.localizedDescription)
       }
     }
   }
@@ -3651,7 +3752,7 @@ final class NotebookAppModel {
     default: return false
     }
     return elements.allSatisfy { element in
-      if element.kind == .nativeText { return true }
+      if element.kind == .nativeText || element.kind == .graphic { return true }
       let plane: SceneCompositionPlane = reference.target.kind == .cover
         ? .cover(boardID: presence.boardID, itemID: reference.target.id) : .board(reference.target.id)
       let address = SceneSourceAddress(plane: plane, elementID: element.id)
@@ -3881,6 +3982,8 @@ final class NotebookAppModel {
       observeNavigation("wait_accepted_ink_begin", fields: trace)
       guard await finishAcceptedPageInk() else { return false }
       observeNavigation("wait_accepted_ink_end", fields: trace)
+      if let task = graphicCommandTask { await task.value }
+      if let task = collaborationUndoTask { await task.value }
       guard !Task.isCancelled, continuing() else { return false }
       if boundary == .quiescent {
         if let task = diskRefreshTask { observeNavigation("wait_disk_refresh_begin", fields: trace); await task.value; observeNavigation("wait_disk_refresh_end", fields: trace) }

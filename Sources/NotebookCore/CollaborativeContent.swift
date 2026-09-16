@@ -277,6 +277,9 @@ private func contentFields(_ value: JSONValue) -> [String: JSONValue] {
         var content: [String: JSONValue] = [:]
         for (field, val) in item.object {
           if ["source", "html", "kind"].contains(field) { content[field] = val }
+          else if field == "graphic" {
+            for (part, value) in val.object { result[fieldKey([name, id, "graphic", part])] = value }
+          }
           else { result[fieldKey([name, id, field])] = val }
         }
         if !content.isEmpty { result[fieldKey([name, id, "content"])] = .object(content) }
@@ -302,6 +305,9 @@ private func rebuildContent(base: JSONValue, fields: [String: JSONValue]) -> JSO
         for (key, val) in fields where key.hasPrefix(memberPrefix) {
           let field = String(key.dropFirst(memberPrefix.count))
           if field == "content" { for (part, value) in val.object { object[part] = value } }
+          else if field.hasPrefix("graphic/") {
+            object["graphic"] = (object["graphic"] ?? .object([:])).setting(String(field.dropFirst(8)), val)
+          }
           else if field != "exists" { object[field] = val }
         }
         return .object(object)

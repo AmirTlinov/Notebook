@@ -351,9 +351,12 @@ extension NotebookStore {
   }
 
   public static func pageVisionSourceRevision(_ page: PageDocument) throws -> String {
-    try collaborationHash(JSONValue.object(["id": .string(page.id.uuidString.lowercased()),
+    var source: [String: JSONValue] = ["id": .string(page.id.uuidString.lowercased()),
       "size": try .encode(page.size), "drawingStamp": try .encode(page.drawingStamp),
-      "ink": .string(SHA256.hash(data: page.drawingData).map { String(format: "%02x", $0) }.joined())]))
+      "ink": .string(SHA256.hash(data: page.drawingData).map { String(format: "%02x", $0) }.joined())]
+    let suppressed = page.graphicPresentation.suppressedInkIDs
+    if !suppressed.isEmpty { source["suppressedInkIDs"] = try .encode(suppressed.sorted()) }
+    return try collaborationHash(JSONValue.object(source))
   }
 
   private func enqueueRenderRequest(_ request: TargetRenderRequest) throws -> TargetRenderRequest {

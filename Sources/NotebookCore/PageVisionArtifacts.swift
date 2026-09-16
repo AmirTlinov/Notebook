@@ -15,6 +15,7 @@ extension NotebookStore {
       receipt.pageID == page.id,
       receipt.pageSize == page.size,
       receipt.drawingStamp == page.drawingStamp,
+      (receipt.suppressedInkIDs ?? []) == page.graphicPresentation.suppressedInkIDs.sorted(),
       let preview = try? Data(contentsOf: self.previewURL(page.id)),
       pageVisionHash(preview) == receipt.previewPNG_SHA256,
       let ink = try? Data(contentsOf: self.previewInkURL(page.id)),

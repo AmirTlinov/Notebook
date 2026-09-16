@@ -5,10 +5,13 @@ import NotebookCore
 /// finished contact do not walk or copy the baseline's sample arrays.
 struct SpatialInkInstalledSource: Sendable {
   let surface: SurfaceID
+  let suppressedInkIDs: Set<UUID>
   private let baseline: SpatialInkJournal
   private var finished: [SpatialInkAction] = []
 
-  init(surface: SurfaceID, journal: SpatialInkJournal) { self.surface = surface; baseline = journal }
+  init(surface: SurfaceID, journal: SpatialInkJournal, suppressedInkIDs: Set<UUID> = []) {
+    self.surface = surface; baseline = journal; self.suppressedInkIDs = suppressedInkIDs
+  }
 
   var journalRevision: String {
     finished.reduce(baseline.stamp) { max($0, max($1.stamp, $1.stateStamp)) }.revision
@@ -125,9 +128,9 @@ struct SpatialInkMesh: Sendable {
     })
   }
 
-  static func prepare(surface: SurfaceID, journal: SpatialInkJournal?) throws -> Self {
+  static func prepare(surface: SurfaceID, journal: SpatialInkJournal?, suppressedInkIDs: Set<UUID> = []) throws -> Self {
     var batches: [Batch] = []
-    for action in journal?.actions ?? [] where action.isActive {
+    for action in journal?.actions ?? [] where action.isActive && !suppressedInkIDs.contains(action.id) {
       try Task.checkCancellation()
       for span in action.spans where span.surface == surface {
         let origin = span.samples.first?.worldPoint.map {

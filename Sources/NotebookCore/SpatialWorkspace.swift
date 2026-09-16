@@ -810,6 +810,7 @@ public struct SurfaceID: Codable, Equatable, Hashable, Sendable {
 
 public enum SpatialElementKind: String, Codable, Sendable {
   case nativeText
+  case graphic
   case markdown
   case web
 }
@@ -866,6 +867,7 @@ public struct SpatialElement: Codable, Equatable, Identifiable, Sendable {
   public private(set) var javaScript: String
   public private(set) var state: JSONValue
   public private(set) var textStyle: NativeTextStyle
+  public private(set) var graphic: NotebookGraphic?
   public private(set) var stamp: VersionStamp
 
   public init(
@@ -880,6 +882,7 @@ public struct SpatialElement: Codable, Equatable, Identifiable, Sendable {
     javaScript: String = "",
     state: JSONValue = .object([:]),
     textStyle: NativeTextStyle = .standard,
+    graphic: NotebookGraphic? = nil,
     stamp: VersionStamp
   ) {
     precondition(!id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -894,6 +897,7 @@ public struct SpatialElement: Codable, Equatable, Identifiable, Sendable {
     self.javaScript = javaScript
     self.state = state
     self.textStyle = textStyle
+    self.graphic = graphic
     self.stamp = stamp
     precondition(isValid)
   }
@@ -926,6 +930,7 @@ public struct SpatialElement: Codable, Equatable, Identifiable, Sendable {
     !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       && surface.isValid && surface.kind != .page
       && frame.isValid && state.isValid && textStyle.isValid
+      && (kind == .graphic ? graphic?.isValid == true : graphic == nil)
       && (surface.kind == .board
         ? worldOrigin?.isValid == true
         : worldOrigin == nil)

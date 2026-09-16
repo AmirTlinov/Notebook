@@ -85,7 +85,9 @@ struct WorkspaceSceneIndex: Sendable {
             height: max(0, a.y, b.y) + size.height / 2 - top), zIndex: item.zIndex))
         }
       }
+      let graphicPresentation = node.board.graphicPresentation
       for (position, element) in node.board.elements.enumerated() {
+        guard element.graphic == nil || graphicPresentation.geometryIDs.contains(element.id) else { continue }
         elements[element.id] = element
         if element.surface == .board(node.id), let origin = element.worldOrigin {
           entries.append(.init(id: .element(element.id), bounds: .init(
