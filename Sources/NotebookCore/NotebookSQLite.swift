@@ -689,8 +689,11 @@ extension NotebookStore {
 
 extension NotebookStore {
   func logicalAddress(_ url: URL) -> String {
-    let prefix = root.standardizedFileURL.path + "/"
-    let path = url.standardizedFileURL.path
+    // These URLs name SQLite records, not files. Foundation's file
+    // standardization resolves /private for an existing container but not for
+    // its nonexistent JSON child, producing an absolute instead of logical key.
+    let prefix = root.path + "/"
+    let path = url.path
     return path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : path
   }
   func storedData(at url: URL) throws -> Data { try storedData(logicalAddress(url)) }

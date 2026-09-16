@@ -25,6 +25,29 @@ struct NotebookSQLiteTests {
     #expect(try FileManager.default.contentsOfDirectory(atPath: root.path) == ["workspace.json"])
   }
 
+  @Test func logicalAddressesDoNotResolveTheExistingContainerAsAFile() throws {
+    // A physical iPad container starts with /private/var. Foundation removes
+    // /private from an existing directory, but not its nonexistent JSON child:
+    // those children are record names in SQLite, never files on disk.
+    let temporaryPath = FileManager.default.temporaryDirectory.path
+    let physicalPath = temporaryPath.hasPrefix("/var/") ? "/private" + temporaryPath : temporaryPath
+    let root = URL(fileURLWithPath: physicalPath, isDirectory: true)
+      .appendingPathComponent("notebook-logical-\(UUID())", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    #expect(store.logicalAddress(store.boardURL) == "board.json")
+    let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    #expect(store.logicalAddress(store.boardURL) == "board.json")
+    let index = try store.loadIndex(), pageID = try #require(index.selectedPageID)
+    #expect(try store.loadBoard(items: index.items).rootBoardID == header.rootBoardID)
+    #expect(try store.loadPage(pageID).id == pageID)
+    let presence = SessionPresence(boardID: header.rootBoardID, mode: .board,
+      camera: .init(), viewport: .init(x: 834, y: 1194))
+    try store.savePresence(presence)
+    #expect(try NotebookStore(root: root).loadPresence() == presence)
+    #expect(!FileManager.default.fileExists(atPath: store.boardURL.path))
+  }
+
   @Test(arguments: [NotebookStorageFault.afterRecordWrites, .beforeCommit])
   func rollsBackEveryUncommittedOwnerAndItsJournal(fault: NotebookStorageFault) throws {
     try fixture { store, actor in

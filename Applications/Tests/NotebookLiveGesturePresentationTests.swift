@@ -20,6 +20,9 @@ final class NotebookLiveGesturePresentationTests: XCTestCase {
       if saved { try FileManager.default.removeItem(at: root) }
     }
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    guard case .ready = model.loadState else {
+      XCTFail("Gesture fixture failed to start: \(model.loadState)"); return
+    }
     model.moveItem(try XCTUnwrap(model.workspace?.selectedItemID), to: .init(x: 100_000, y: 100_000))
     let initialSave = await model.finishPendingPersistence(); XCTAssertTrue(initialSave)
     let boardID = try XCTUnwrap(model.workspace?.rootBoardID)

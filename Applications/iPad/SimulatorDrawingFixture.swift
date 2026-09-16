@@ -1,4 +1,4 @@
-#if DEBUG && targetEnvironment(simulator)
+#if DEBUG
   import Foundation
   import NotebookCore
 
