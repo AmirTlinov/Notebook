@@ -57,7 +57,6 @@ struct PageSurface: View {
             pageID: page.id,
             drawingData: page.drawingData,
             suppressedInkIDs: page.graphicPresentation.suppressedInkIDs,
-            onQuickShape: { model.acceptQuickShape($0, pageID: $1, stroke: $2) },
             isInputEnabled: isInteractive,
             penStyle: model.penStyle,
             eraserStyle: model.eraserStyle,
@@ -65,8 +64,8 @@ struct PageSurface: View {
             inputGate: model.inputGate,
             reserveAction: model.reserveDrawingAction,
             releaseAction: { model.releaseDrawingReservation(pageID: $0, stamp: $1) },
-            acceptAction: { action, pageID, stamp in
-              model.acceptDrawingAction(action, pageID: pageID, stamp: stamp)
+            acceptAction: { action, pageID, stamp, fit in
+              model.acceptDrawingAction(action, pageID: pageID, stamp: stamp, quickShape: fit)
             },
             onRenderReady: { ready in
               inkIsReady = ready

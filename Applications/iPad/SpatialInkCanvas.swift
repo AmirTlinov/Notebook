@@ -489,8 +489,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         let origin = geometry.camera.screenToWorld(.init(x: fit.frame.x, y: fit.frame.y), viewport: geometry.viewport)
         let physical = NotebookQuickShapeFit(frame: .init(x: 0, y: 0,
           width: fit.frame.width / geometry.camera.scale, height: fit.frame.height / geometry.camera.scale), sampleCount: fit.sampleCount)
-        let callback = onQuickShape
-        Task { @MainActor in callback?(physical, boardID, origin, committed) }
+        onQuickShape?(physical, boardID, origin, committed)
       }
       for surface in touchedSurfaces {
         surfaceRegistry.finishAction(

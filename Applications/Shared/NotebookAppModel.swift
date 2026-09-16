@@ -786,6 +786,7 @@ final class NotebookAppModel {
     let pageID: UUID
     enum Intent { case append(PageInkAction), undoLast }
     let intent: Intent
+    let quickShape: NotebookQuickShapeFit?
     var mutation: PageInkMutation?
     let stamp: VersionStamp
     var page: PageDocument
@@ -795,8 +796,9 @@ final class NotebookAppModel {
     private var delivery = Delivery.pending
     private var waiters: [CheckedContinuation<PreparedPageInkChange?, Never>] = []
 
-    init(page: PageDocument, intent: Intent, stamp: VersionStamp) {
+    init(page: PageDocument, intent: Intent, stamp: VersionStamp, quickShape: NotebookQuickShapeFit?) {
       self.pageID = page.id; self.page = page; self.intent = intent; self.stamp = stamp
+      self.quickShape = quickShape
       if case .append(let action) = intent { mutation = .append(action) }
     }
     func value() async -> PreparedPageInkChange? {
@@ -2219,16 +2221,17 @@ final class NotebookAppModel {
   func acceptDrawingAction(
     _ action: PageInkAction,
     pageID: UUID,
-    stamp: VersionStamp
+    stamp: VersionStamp,
+    quickShape: NotebookQuickShapeFit? = nil
   ) -> Task<PreparedPageInkChange?, Never> {
-    acceptInkIntent(.append(action), pageID: pageID, stamp: stamp)
+    acceptInkIntent(.append(action), pageID: pageID, stamp: stamp, quickShape: quickShape)
   }
 
   private func acceptInkIntent(_ intent: AcceptedPageInk.Intent, pageID: UUID,
-    stamp: VersionStamp) -> Task<PreparedPageInkChange?, Never> {
+    stamp: VersionStamp, quickShape: NotebookQuickShapeFit? = nil) -> Task<PreparedPageInkChange?, Never> {
     guard let page = drawingReservations.removeValue(forKey: .init(pageID: pageID, stamp: stamp)),
       !isPageBeingDeleted(pageID) else { return Task { nil } }
-    let accepted = AcceptedPageInk(page: page, intent: intent, stamp: stamp)
+    let accepted = AcceptedPageInk(page: page, intent: intent, stamp: stamp, quickShape: quickShape)
     if let tail = acceptedPageInkTail { tail.next = accepted }
     else { acceptedPageInkHead = accepted }
     acceptedPageInkTail = accepted
@@ -2266,6 +2269,9 @@ final class NotebookAppModel {
             // An exact repeated UUID is a no-op, not another human contribution.
             if change.stamp != change.baseStamp {
               pencilUndoHistory.recordAction(ownerID: accepted.pageID, actionID: action.id)
+              // Register conversion before releasing the accepted input owner.
+              // A disappearing sheet or immediate Save cannot drop this tail.
+              if let fit = accepted.quickShape { acceptQuickShape(fit, pageID: accepted.pageID, stroke: action) }
             }
           case .remove(let ids):
             pencilUndoHistory.didRemoveContribution(ids, for: accepted.pageID)

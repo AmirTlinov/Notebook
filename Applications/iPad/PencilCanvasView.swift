@@ -7,7 +7,6 @@ struct PencilCanvasView: UIViewRepresentable {
   let pageID: UUID
   let drawingData: Data
   var suppressedInkIDs: Set<UUID> = []
-  var onQuickShape: ((NotebookQuickShapeFit, UUID, PageInkAction) -> Void)? = nil
   let isInputEnabled: Bool
   let penStyle: PenStyle
   let eraserStyle: EraserStyle
@@ -15,7 +14,7 @@ struct PencilCanvasView: UIViewRepresentable {
   let inputGate: NotebookInputGate
   let reserveAction: (UUID) -> VersionStamp?
   let releaseAction: (UUID, VersionStamp) -> Void
-  let acceptAction: (PageInkAction, UUID, VersionStamp) -> Task<PreparedPageInkChange?, Never>
+  let acceptAction: (PageInkAction, UUID, VersionStamp, NotebookQuickShapeFit?) -> Task<PreparedPageInkChange?, Never>
   let onRenderReady: (Bool) -> Void
 
   func makeCoordinator() -> Coordinator {
@@ -33,7 +32,6 @@ struct PencilCanvasView: UIViewRepresentable {
       Task { @MainActor in onRenderReady(ready) }
     }
     paper.setInputEnabled(isInputEnabled)
-    context.coordinator.onQuickShape = onQuickShape
     context.coordinator.attach(to: paper)
     context.coordinator.setPageFinisherCurrent(isInputEnabled)
     context.coordinator.apply(
@@ -56,7 +54,6 @@ struct PencilCanvasView: UIViewRepresentable {
     context.coordinator.reserveAction = reserveAction
     context.coordinator.releaseAction = releaseAction
     context.coordinator.acceptAction = acceptAction
-    context.coordinator.onQuickShape = onQuickShape
     context.coordinator.apply(
       penStyle,
       eraserStyle: eraserStyle,
@@ -78,10 +75,9 @@ struct PencilCanvasView: UIViewRepresentable {
   final class Coordinator: NSObject {
     var reserveAction: (UUID) -> VersionStamp?
     var releaseAction: (UUID, VersionStamp) -> Void
-    var onQuickShape: ((NotebookQuickShapeFit, UUID, PageInkAction) -> Void)?
     private var suppressedInkIDs = Set<UUID>()
     private var actionReservation: (pageID: UUID, stamp: VersionStamp)?
-    var acceptAction: (PageInkAction, UUID, VersionStamp) -> Task<PreparedPageInkChange?, Never>
+    var acceptAction: (PageInkAction, UUID, VersionStamp, NotebookQuickShapeFit?) -> Task<PreparedPageInkChange?, Never>
 
     private let inputSourceID = UUID()
     private var inputGate: NotebookInputGate
@@ -104,7 +100,7 @@ struct PencilCanvasView: UIViewRepresentable {
       inputGate: NotebookInputGate,
       reserveAction: @escaping (UUID) -> VersionStamp?,
       releaseAction: @escaping (UUID, VersionStamp) -> Void,
-      acceptAction: @escaping (PageInkAction, UUID, VersionStamp) -> Task<PreparedPageInkChange?, Never>
+      acceptAction: @escaping (PageInkAction, UUID, VersionStamp, NotebookQuickShapeFit?) -> Task<PreparedPageInkChange?, Never>
     ) {
       self.inputGate = inputGate
       self.reserveAction = reserveAction
@@ -148,7 +144,7 @@ struct PencilCanvasView: UIViewRepresentable {
       decodeTask = nil
       pendingLocalDeliveries[pageID, default: 0] += 1
       unpublishedActions[pageID, default: []].insert(mutation.id)
-      let delivery = acceptAction(mutation, pageID, stamp)
+      let delivery = acceptAction(mutation, pageID, stamp, fit)
       Task { [self, weak paper] in
         let accepted = await delivery.value
         if pageID == self.pageID, let accepted {
@@ -156,7 +152,6 @@ struct PencilCanvasView: UIViewRepresentable {
           paper?.touchView.acceptCommittedDrawing(accepted.drawing)
         }
         completeLocalDelivery(on: pageID, actionID: mutation.id, accepted: accepted, paper: paper)
-        if accepted != nil, let fit { onQuickShape?(fit, pageID, mutation) }
       }
     }
 

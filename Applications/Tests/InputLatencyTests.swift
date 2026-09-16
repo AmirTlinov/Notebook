@@ -11,7 +11,7 @@ final class InputLatencyTests: XCTestCase {
     let stamp = VersionStamp(counter: 1, actor: UUID())
     var release: CheckedContinuation<PreparedPageInkChange?, Never>?
     let began = expectation(description: "preparation suspended")
-    let coordinator = PencilCanvasView.Coordinator(inputGate: gate, reserveAction: { _ in stamp }, releaseAction: { _, _ in }, acceptAction: { _, _, _ in
+    let coordinator = PencilCanvasView.Coordinator(inputGate: gate, reserveAction: { _ in stamp }, releaseAction: { _, _ in }, acceptAction: { _, _, _, _ in
       Task { await withCheckedContinuation { continuation in release = continuation; began.fulfill() } }
     })
     let paper = PaperCanvasContainerView()

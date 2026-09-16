@@ -237,7 +237,7 @@ final class DrawingOwnershipTests: XCTestCase {
         return VersionStamp(counter: counter, actor: actorID)
       },
       releaseAction: { _, _ in },
-      acceptAction: { action, _, stamp in
+      acceptAction: { action, _, stamp, _ in
         let change = try! page.prepareInkChange(.append(action), stamp: stamp)
         _ = page.publishInkChange(change)
         delivered.fulfill()
@@ -273,7 +273,7 @@ final class DrawingOwnershipTests: XCTestCase {
         return VersionStamp(counter: counter, actor: actorID)
       },
       releaseAction: { _, _ in },
-      acceptAction: { action, _, stamp in
+      acceptAction: { action, _, stamp, _ in
         let change = try! page.prepareInkChange(.append(action), stamp: stamp)
         _ = page.publishInkChange(change)
         finalData = change.data

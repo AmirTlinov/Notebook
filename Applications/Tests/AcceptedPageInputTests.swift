@@ -13,7 +13,7 @@ final class AcceptedPageInputTests: XCTestCase {
     var release: CheckedContinuation<PreparedPageInkChange?, Never>?
     var acceptedAction: PageInkAction?
     let coordinator = PencilCanvasView.Coordinator(inputGate: gate,
-      reserveAction: { _ in stamp }, releaseAction: { _, _ in }, acceptAction: { action, _, _ in
+      reserveAction: { _ in stamp }, releaseAction: { _, _ in }, acceptAction: { action, _, _, _ in
         acceptedAction = action
         return Task { await withCheckedContinuation { release = $0; entered.fulfill() } }
       })
@@ -48,9 +48,9 @@ final class AcceptedPageInputTests: XCTestCase {
     var action: PageInkAction?
     let coordinator = PencilCanvasView.Coordinator(inputGate: model.inputGate,
       reserveAction: model.reserveDrawingAction,
-      releaseAction: { model.releaseDrawingReservation(pageID: $0, stamp: $1) }, acceptAction: { mutation, pageID, stamp in
+      releaseAction: { model.releaseDrawingReservation(pageID: $0, stamp: $1) }, acceptAction: { mutation, pageID, stamp, fit in
         action = mutation
-        return model.acceptDrawingAction(mutation, pageID: pageID, stamp: stamp)
+        return model.acceptDrawingAction(mutation, pageID: pageID, stamp: stamp, quickShape: fit)
       })
     let paper = PaperCanvasContainerView()
     coordinator.attach(to: paper); coordinator.setPageFinisherCurrent(true)
@@ -93,9 +93,9 @@ final class AcceptedPageInputTests: XCTestCase {
     var mutation: PageInkAction?
     let coordinator = PencilCanvasView.Coordinator(inputGate: model.inputGate,
       reserveAction: model.reserveDrawingAction,
-      releaseAction: { model.releaseDrawingReservation(pageID: $0, stamp: $1) }, acceptAction: { action, pageID, stamp in
+      releaseAction: { model.releaseDrawingReservation(pageID: $0, stamp: $1) }, acceptAction: { action, pageID, stamp, fit in
         mutation = action
-        return model.acceptDrawingAction(action, pageID: pageID, stamp: stamp)
+        return model.acceptDrawingAction(action, pageID: pageID, stamp: stamp, quickShape: fit)
       })
     let paper = PaperCanvasContainerView()
     coordinator.attach(to: paper); coordinator.setPageFinisherCurrent(true)
@@ -137,9 +137,9 @@ final class AcceptedPageInputTests: XCTestCase {
     let coordinator = PencilCanvasView.Coordinator(inputGate: model.inputGate,
       reserveAction: model.reserveDrawingAction,
       releaseAction: { model.releaseDrawingReservation(pageID: $0, stamp: $1) },
-      acceptAction: { action, pageID, stamp in
+      acceptAction: { action, pageID, stamp, fit in
         mutation = action
-        return model.acceptDrawingAction(action, pageID: pageID, stamp: stamp)
+        return model.acceptDrawingAction(action, pageID: pageID, stamp: stamp, quickShape: fit)
       })
     let paper = PaperCanvasContainerView()
     coordinator.attach(to: paper); coordinator.setPageFinisherCurrent(true)
@@ -176,7 +176,7 @@ final class AcceptedPageInputTests: XCTestCase {
     let coordinator = PencilCanvasView.Coordinator(inputGate: model.inputGate,
       reserveAction: model.reserveDrawingAction,
       releaseAction: { model.releaseDrawingReservation(pageID: $0, stamp: $1) },
-      acceptAction: { model.acceptDrawingAction($0, pageID: $1, stamp: $2) })
+      acceptAction: { model.acceptDrawingAction($0, pageID: $1, stamp: $2, quickShape: $3) })
     let paper = PaperCanvasContainerView()
     coordinator.attach(to: paper); coordinator.setPageFinisherCurrent(true)
     coordinator.apply(page.drawingData, pageID: page.id, to: paper)
@@ -214,7 +214,7 @@ final class AcceptedPageInputTests: XCTestCase {
     let itemID = try XCTUnwrap(model.activeItem?.id)
     let coordinator = PencilCanvasView.Coordinator(inputGate: model.inputGate,
       reserveAction: model.reserveDrawingAction,
-      releaseAction: { model.releaseDrawingReservation(pageID: $0, stamp: $1) }, acceptAction: { model.acceptDrawingAction($0, pageID: $1, stamp: $2) })
+      releaseAction: { model.releaseDrawingReservation(pageID: $0, stamp: $1) }, acceptAction: { model.acceptDrawingAction($0, pageID: $1, stamp: $2, quickShape: $3) })
     let paper = PaperCanvasContainerView()
     coordinator.attach(to: paper); coordinator.setPageFinisherCurrent(true)
     coordinator.apply(page.drawingData, pageID: page.id, to: paper)
@@ -260,9 +260,9 @@ final class AcceptedPageInputTests: XCTestCase {
     var mutations: [PageInkAction] = []
     let coordinator = PencilCanvasView.Coordinator(inputGate: model.inputGate,
       reserveAction: model.reserveDrawingAction,
-      releaseAction: { model.releaseDrawingReservation(pageID: $0, stamp: $1) }, acceptAction: { action, pageID, stamp in
+      releaseAction: { model.releaseDrawingReservation(pageID: $0, stamp: $1) }, acceptAction: { action, pageID, stamp, fit in
         mutations.append(action)
-        return model.acceptDrawingAction(action, pageID: pageID, stamp: stamp)
+        return model.acceptDrawingAction(action, pageID: pageID, stamp: stamp, quickShape: fit)
       })
     let paper = PaperCanvasContainerView()
     coordinator.attach(to: paper); coordinator.setPageFinisherCurrent(true)
@@ -555,6 +555,32 @@ final class AcceptedPageInputTests: XCTestCase {
     XCTAssertEqual(drawing.activeActions.map(\.id), [second.id])
     XCTAssertEqual(Set(drawing.actions.map(\.id)), [first.id, second.id])
     XCTAssertEqual(model.pendingAcceptedPageInkCount, 0)
+  }
+
+  @MainActor
+  func testHeldShapeBelongsToAcceptedInkWhilePreparationAndShutdownWait() async throws {
+    let entered = expectation(description: "held shape measurement preparation")
+    let barrier = AcceptedInkPreparationBarrier(arrivals: [entered])
+    let (model, root) = await makeModel(barrier: barrier)
+    let page = try XCTUnwrap(model.activePage)
+    let action = PageInkAction(tool: .pen, samples: (0...120).map { index in
+      let angle = Double(index) / 120 * 2 * Double.pi
+      return .init(point: .init(x: 200 + 90 * cos(angle), y: 300 + 60 * sin(angle)),
+        timeOffset: Double(index) * 0.01, width: 2, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+    })
+    let fit = try XCTUnwrap(NotebookQuickShape.ellipse(action.samples.map(\.point), screenScale: 1))
+    let stamp = try XCTUnwrap(model.reserveDrawingAction(pageID: page.id))
+    let delivery = model.acceptDrawingAction(action, pageID: page.id, stamp: stamp, quickShape: fit)
+    await fulfillment(of: [entered], timeout: 2)
+    XCTAssertEqual(model.pendingAcceptedPageInkCount, 1)
+    let closing = Task { await model.shutdown() }
+    await barrier.releaseNext()
+    let saved = await closing.value; XCTAssertTrue(saved)
+    let delivered = await delivery.value; XCTAssertNotNil(delivered)
+    let reopened = try NotebookStore(root: root).loadPage(page.id)
+    XCTAssertEqual(try PageInkDrawing.decode(reopened.drawingData).actions, PageInkDrawing(actions: [action]).actions)
+    let graphic = try XCTUnwrap(reopened.elements.first?.graphic)
+    XCTAssertTrue(graphic.showsGeometry); XCTAssertEqual(graphic.sourceInkIDs, [action.id])
   }
 
   @MainActor
