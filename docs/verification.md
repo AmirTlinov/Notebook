@@ -1,5 +1,27 @@
 # Проверка Notebook
 
+## 16 сентября, 08:50 UTC — системные подтверждения iPad и первого Mac
+
+После подтверждений Амира физический runner действительно выполнил
+`testInspectInstalledWorkspace`: **1 PASS**, 0 failures/skips/runtime warnings,
+iPad Pro 11-inch (3rd generation), iOS 27.0 / 24A435. Активировано именно
+установленное `com.amirtlinov.notebook.preview`; приложение и данные не
+переустанавливались. Оригинальный снимок рабочего места просмотрен.
+Свидетельство: `.build/seven-slices-physical/confirmation-0848.xcresult`.
+Прежний timeout Enable UI Automation больше не является текущим блокером.
+
+Публичный MCP первого установленного Mac завершил запуск
+`6f9683df-8515-46cc-b043-2c594a9c0028`: `completed`, событие ready,
+`error: null`, `effects: []`. Результат сохранён в
+`.build/seven-slices-installed-pair/confirmation-0850-response.json`.
+Ожидание ScriptService до main также снято обычным системным разрешением,
+без изменения ACL, контейнера или подписи.
+
+Это допуск к физической приёмке, не её выполнение. Остались полные сценарии
+среза 7 и вход владельца в Apple Accounts Xcode для обновления истекающего
+профиля. Автоматическое управление окном Xcode отказало с ScreenCaptureKit
+-3811; владельцу передан обычный путь Settings → Apple Accounts.
+
 ## 16 сентября — полный набор и принадлежность проверки записи
 
 `.build/seven-slices-full-v4` запущен один раз на общем source
