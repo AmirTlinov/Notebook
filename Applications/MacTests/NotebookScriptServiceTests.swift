@@ -138,6 +138,32 @@ final class NotebookScriptServiceTests: XCTestCase {
     await host.shutdown()
   }
 
+  func testAddressedObservationAndPageReadCrossTheRealSandboxedSDK() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), id = UUID()
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    let pageID = try XCTUnwrap(owner.store.loadIndex().selectedPageID)
+    var page = try owner.store.loadPage(pageID)
+    let changed = page.replaceElements((0..<40).map { .init(id: "element-\($0)", kind: .markdown,
+      frame: .init(x: 10, y: 10, width: 100, height: 100), source: "source-\($0)", html: "<p>\($0)</p>") }, actor: UUID())
+    XCTAssertTrue(changed)
+    try owner.store.savePage(page)
+    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 1, code: """
+      const query={target:{kind:'page',id:args.page},elementID:'element-39'};
+      const first=await nb.observe(query);
+      const second=await nb.observe({...query,since:first.changeKeys});
+      const addressed=await nb.page({id:args.page,elementID:'element-39'});
+      return {element:first.content.element,unchanged:second.content.unchanged,
+        direct:addressed.values[0].element,visual:first.visual.status};
+      """, arguments: .object(["page": .string(pageID.uuidString)])))
+    let result = try await finish(host, id)
+    XCTAssertEqual(result.string("status"), "completed", "\(result)")
+    XCTAssertEqual(result["result"]?["element"]?["id"], .string("element-39"))
+    XCTAssertEqual(result["result"]?["element"], result["result"]?["direct"])
+    XCTAssertEqual(result["result"]?["unchanged"], .bool(true))
+    XCTAssertEqual(result["result"]?["visual"], .string("not_requested"))
+    await host.shutdown()
+  }
+
   func testTrustedMarkupCanCompleteWhileTheUserInterpreterAwaitsTransaction() async throws {
     let owner = try Owner(), host = try await coordinator(owner), id = UUID()
     defer { try? FileManager.default.removeItem(at: owner.store.root) }

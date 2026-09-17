@@ -8,7 +8,7 @@ struct NotebookScriptHelpTests {
     let index = try NotebookScriptAPI.documentation("operations")
     let operations = try #require(index["contract"]?["items"])
     guard case .array(let items) = operations else { Issue.record("Operation index must be an array"); return }
-    #expect(items.count == 19)
+    #expect(items.count == 20)
     #expect(try JSONEncoder().encode(index).count < 6 * 1024)
     for item in items {
       let name = try #require(item.string("name")), topic = try #require(item.string("topic"))

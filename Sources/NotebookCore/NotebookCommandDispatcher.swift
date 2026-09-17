@@ -69,7 +69,7 @@ public struct NotebookReadBounds: Codable, Sendable {
 public struct NotebookReadQuery: Codable, Sendable {
   public enum Kind: String, Codable, Sendable {
     case workspaceHeader, itemHeaders, itemHeader, workingSet, sceneWindow, scenePaintOrder
-    case page, document, documentState, documentBlock, boardItem, boardElement, boardContentRevision, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
+    case page, pageHeader, pageElement, documentHeader, document, documentState, documentBlock, boardItem, boardElement, boardContentRevision, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
     case attentionEvidence, contexts, contextEntries, actions, currentViewReceipt, pageVisionReceipt, targetRenderReceipt
     case renderRequests, delivery, actionSnapshots, runtime, codeFragment, codeFragments
   }
@@ -239,8 +239,8 @@ public struct NotebookCommandDispatcher: Sendable {
           + (query.itemIDs ?? []) + (query.boardIDs ?? [])
       })
       let windowPages = queries.filter { $0.kind == .notebookPages }.reduce(0) { $0 + ($1.pages?.count ?? 0) }
-      guard queries.filter({ $0.kind == .documentBlock }).count <= 4 else {
-        throw invalid("resource_limit", "Один срез читает до четырёх блоков документа по 4 МиБ каждый.")
+      guard queries.filter({ [.documentBlock, .pageElement].contains($0.kind) }).count <= 4 else {
+        throw invalid("resource_limit", "Один срез читает до четырёх адресных элементов или блоков по 4 МиБ каждый.")
       }
       guard pages.count + windowPages <= 4, heavy.count <= 8, queries.filter({ $0.kind == .attentionEvidence }).count <= 4 else { throw invalid("resource_limit", "Один срез удерживает до четырёх листов и восьми тяжёлых владельцев.") }
       return try store.readTransaction { snapshot in
@@ -302,6 +302,11 @@ public struct NotebookCommandDispatcher: Sendable {
       guard let file = query.file else { throw invalid("invalid_reference", "Нужен адрес файла на компьютере.") }
       return try .encode(store.codeFragments(file: file, after: query.after, limit: query.limit ?? 64))
     case .page: return try store.loadPage(required(query.id)).graphicReadProjection()
+    case .pageHeader: return try .encode(store.readContentHeader(target: .init(kind: .page, id: required(query.id))))
+    case .documentHeader: return try .encode(store.readContentHeader(target: .init(kind: .document, id: required(query.id))))
+    case .pageElement:
+      guard let elementID = query.elementID else { throw invalid("invalid_reference", "Нужен ID элемента листа.") }
+      return try .encode(store.readPageElementSnapshot(pageID: required(query.id), elementID: elementID))
     case .document: return try .encode(store.loadDocument(required(query.id)))
     case .documentState: return try .encode(store.loadDocumentState(required(query.id)))
     case .documentBlock:

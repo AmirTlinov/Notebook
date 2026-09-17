@@ -78,6 +78,9 @@ extension NotebookScriptCoordinator {
       try await Task.sleep(for: .milliseconds(Int(milliseconds))); return .null
     case "page":
       let id = try await selectedID(args, page: true)
+      if let element = args.string("elementID") {
+        return try await nativeRead([.object(["kind": .string("pageElement"), "id": .string(id.uuidString), "elementID": .string(element)])])
+      }
       return try await persistence { store in
         try store.readTransaction { _ in
           let page = try store.loadPage(id)
@@ -165,57 +168,6 @@ extension NotebookScriptCoordinator {
       throw CollaborationError("target_required", "Укажите точный ID владельца.")
     }
     return id
-  }
-
-  private func observe(_ args: JSONValue) async throws -> JSONValue {
-    try await persistence { store in
-      try store.readTransaction { _ in
-        let header = try store.workspaceHeader(), presence = try store.loadPresence()
-        let shared = try store.sharedContexts(contextID: args.string("contextID").flatMap(UUID.init(uuidString:)), limit: 8)
-        var keys: [String: JSONValue] = ["workspace": .string(header.stamp.revision),
-          "board": .string(try store.targetContentRevision(target: .init(kind: .board, id: presence.boardID))),
-          "spatialInk": header.spatialInkStamp.map { .string($0.revision) } ?? .null, "contexts": .string(shared.readCursor),
-          "view": try .encode(presence)]
-        var content: JSONValue = .object(["kind": .string(presence.mode.rawValue), "boardID": .string(presence.boardID.uuidString.lowercased())])
-        if let pageID = presence.notebookPageID, presence.mode == .page {
-          let page = try store.loadPage(pageID)
-          keys["page:\(pageID):content"] = .string(page.agentStamp.revision)
-          keys["page:\(pageID):ink"] = .string(page.drawingStamp.revision)
-          content = .object(["kind": .string("page"), "id": .string(pageID.uuidString.lowercased()),
-            "agentRevision": .string(page.agentStamp.revision), "drawingRevision": .string(page.drawingStamp.revision),
-            "elements": .array(page.elements.prefix(32).map { .object(["id": .string($0.id), "kind": .string($0.kind.rawValue),
-              "preview": .string(String($0.source.prefix(160)))]) }), "truncated": .bool(page.elements.count > 32)])
-        } else if let selectedID = presence.selectedItemID, presence.mode == .document {
-          let document = try store.loadDocument(selectedID), state = try store.loadDocumentState(selectedID)
-          keys["document:\(selectedID):content"] = .string(document.contentStamp.revision)
-          keys["document:\(selectedID):state"] = .string(state.stamp.revision)
-          content = .object(["kind": .string("document"), "id": .string(selectedID.uuidString.lowercased()),
-            "contentRevision": .string(document.contentStamp.revision), "stateRevision": .string(state.stamp.revision),
-            "blocks": .array(document.blocks.prefix(32).map { .object(["id": .string($0.id), "kind": .string($0.kind.rawValue),
-              "preview": .string(String($0.source.prefix(160)))]) }), "truncated": .bool(document.blocks.count > 32)])
-        }
-        let previous = args["since"]?.fields ?? [:]
-        let changes: JSONValue = .object(["changed": .array(keys.keys.sorted().filter { previous[$0] != keys[$0] }.map(JSONValue.string)),
-          "removed": .array(previous.keys.sorted().filter { keys[$0] == nil }.map(JSONValue.string))])
-        let receipt = try store.loadCurrentViewReceipt()
-        var image: JSONValue = .object(["status": .string("pending")])
-        if let receipt, receipt.workspaceStamp == header.stamp, receipt.presence == presence,
-          receipt.boardRevision == header.boardRevision, receipt.spatialInkStamp == header.spatialInkStamp {
-          var fresh = true
-          switch receipt.surface {
-          case .page(_, let revision, _): fresh = try CurrentViewPageRevision(page: store.loadPage(revision.pageID)) == revision
-          case .document(let revision, _, _):
-            fresh = try CurrentViewDocumentRevision(document: store.loadDocument(revision.documentID), state: store.loadDocumentState(revision.documentID)) == revision
-          default: break
-          }
-          if fresh { image = .object(["status": .string("ready"), "receipt": try .encode(receipt),
-            "artifact": try .encode(NotebookArtifactRequest(kind: .currentView, expectedSHA256: receipt.pngSHA256))]) }
-        }
-        return .object(["status": .string("ready"), "header": try .encode(header), "presence": try .encode(presence),
-          "contexts": try .encode(shared), "connection": try .encode(store.loadRuntimeStatus()), "content": content,
-          "cursor": .string(String(try store.currentReadCursor())), "changeKeys": .object(keys), "changes": changes, "visual": image])
-      }
-    }
   }
 
   private func attention(_ args: JSONValue) async throws -> JSONValue {

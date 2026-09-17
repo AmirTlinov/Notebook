@@ -2,8 +2,19 @@ import Foundation
 
 extension NotebookStore {
   public func readPageElement(pageID: UUID, elementID: String) throws -> AgentElement? {
-    try readTransaction { _ in
-      try storedMember(file: "pages/\(pageID.uuidString.lowercased()).json", collection: "elements", id: elementID)?.decode(AgentElement.self)
+    guard !elementID.isEmpty, elementID.utf16.count <= 120 else {
+      throw NotebookStorageError.invalidTransaction("page element address")
+    }
+    return try readTransaction { _ in
+      let address = pageFile(pageID) + "#/elements/@" + fieldKey([collaborationIdentity(elementID)])
+      let rows = try boundedStoredFragments([(address, true)], maximumCount: 4096,
+        maximumBytes: 4 * 1_024 * 1_024, budget: "page_element_read")
+      guard !rows.isEmpty else { return nil }
+      let element = try NotebookRecordCodec.decode(rows, root: address).decode(AgentElement.self)
+      guard collaborationIdentity(element.id) == collaborationIdentity(elementID) else {
+        throw NotebookStorageError.corruptRecord(address)
+      }
+      return element
     }
   }
 

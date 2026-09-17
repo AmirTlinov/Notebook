@@ -12,7 +12,7 @@
         },
         "additionalProperties": false
       },
-      "returns": "Index, or exact method input schema, result description and example. operations is a compact index of 19 variants; operation/<name> gives one exact schema. interactive explains embedded notebook.ready(promise); execution explains terminal status and output pagination.",
+      "returns": "Index, or exact method input schema, result description and example. operations is a compact index of 20 variants; operation/<name> gives one exact schema. interactive explains embedded notebook.ready(promise); execution explains terminal status and output pagination.",
       "example": "await emit(await nb.help('operation/createDocument'));"
     },
     "observe": {
@@ -21,23 +21,63 @@
         "type": "object",
         "properties": {
           "contextID": {
-            "type": "string",
-            "format": "uuid",
-            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            "$ref": "#/$defs/__schema0"
+          },
+          "target": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "page",
+                  "document"
+                ]
+              },
+              "id": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          "elementID": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "blockID": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32
+          },
+          "includeImage": {
+            "type": "boolean"
           },
           "since": {
             "type": "object",
             "propertyNames": {
-              "type": "string"
+              "$ref": "#/$defs/__schema1"
             },
             "additionalProperties": {
-              "$ref": "#/$defs/__schema0"
+              "$ref": "#/$defs/__schema2"
             }
           }
         },
         "additionalProperties": false,
         "$defs": {
           "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema1": {
+            "type": "string"
+          },
+          "__schema2": {
             "anyOf": [
               {
                 "type": "string"
@@ -54,7 +94,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema0"
+                  "$ref": "#/$defs/__schema2"
                 }
               },
               {
@@ -63,14 +103,14 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema0"
+                  "$ref": "#/$defs/__schema2"
                 }
               }
             ]
           }
         }
       },
-      "returns": "{header,presence,content,contexts,connection,cursor,changeKeys,changes,visual:{status,receipt?,artifact?}}; pass previous changeKeys as since, which works across clients without sidecar memory. Source freshness is independent from connection and iPad display.",
+      "returns": "{header,presence,content,contexts,connection,cursor,changeKeys,changes,visual:{status,receipt?,artifact?}}; pass previous changeKeys as since, which works across clients without sidecar memory. Address a page element with target+elementID, a document block with target+blockID. Preview reads at most limit (default 32) member records. Unchanged content returns unchanged:true without decoding bodies; changing scope requires a new bounded read. Images require includeImage:true. Source freshness is independent from connection and iPad display.",
       "example": "await emit(await nb.observe());",
       "old": [
         "notebook_observe"
@@ -91,6 +131,9 @@
               "sceneWindow",
               "scenePaintOrder",
               "page",
+              "pageHeader",
+              "pageElement",
+              "documentHeader",
               "document",
               "documentState",
               "documentBlock",
@@ -401,6 +444,9 @@
                   "sceneWindow",
                   "scenePaintOrder",
                   "page",
+                  "pageHeader",
+                  "pageElement",
+                  "documentHeader",
                   "document",
                   "documentState",
                   "documentBlock",
@@ -830,11 +876,14 @@
             "type": "string",
             "format": "uuid",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "elementID": {
+            "type": "string"
           }
         },
         "additionalProperties": false
       },
-      "returns": "{page:{id,size,elements,...},agentRevision,drawingRevision,cursor}; no implicit camera movement.",
+      "returns": "Full {page:{id,size,elements,...},agentRevision,drawingRevision,cursor}, or {cursor,values:[{header,element,graphicResolution?}|null]} with elementID. Header includes content/ink stamps from the same snapshot. For metadata only use read kind pageHeader; no implicit camera movement.",
       "example": "const p=await nb.page({id:args.pageID}); await emit(p);",
       "old": [
         "notebook_read_page"
