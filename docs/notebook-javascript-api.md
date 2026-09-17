@@ -53,6 +53,51 @@ SQL-снимке. `pageHeader` и `documentHeader` возвращают толь
 отдельно через `includeImage:true`; его свежесть проверяется по заголовкам,
 без полной загрузки листа/документа. Это ещё не адресная дельта журнала.
 
+### Наблюдение и дельты области
+
+`observe` и `read/readMany` с `kind: "observation"` используют один Core-читатель.
+Область задают `target`, необязательные `ids` (1–32), `fields`
+(`preview`, `content`, `state`, `geometry`) и одношаговый `expand` от явных ids
+(`incoming`, `outgoing`, `neighbors`, `container`). Обход рекурсивно не продолжается.
+На доске/обложке можно задать `bounds`; геометрическое окно ограничено 256 адресами.
+Переполнение даёт `observation_scope_full`, а не незаметно усечённый снимок:
+нужно сузить окно либо читать всю поверхность постранично без bounds.
+
+Объекты возвращаются в стабильном порядке адресов, с `change: upsert | deleted |
+outOfScope`; исчезновение из связей или геометрического окна не означает удаления.
+Геометрия соединения инвалидируется движением/удалением endpoint и изменением
+победителя общего ink claim без авторской перезаписи соединения. Неизменное
+наблюдение не декодирует тела; `presenceGeneration` имеет отдельный монотонный
+сессионный счётчик и не двигает журнал содержания.
+
+`coverage.next` — продолжение неполного чтения. `checkpoint` появляется только
+после последней страницы. Они не взаимозаменяемы. Страницы закрепляют workspace,
+полную нормализованную область/проекцию/expand и `through` журнала содержания;
+межстраничная запись вызывает `observation_cursor_stale`, истёкшая история —
+`observation_cursor_expired`. Полного обхода в качестве восстановления нет.
+Новая область с `since` получает новый ограниченный snapshot (`reset: scope_changed`).
+`next` с другой областью отвергается. Размер страницы можно менять.
+
+```js
+const scope = {target: args.target, fields: ["content", "geometry"]};
+let page = await nb.read({kind: "observation", scope, limit: 32});
+// В v1 read ещё возвращает values; единый Snapshot заменяет это в срезе v2.
+let result = page.values[0];
+while (result.coverage.next) {
+  page = await nb.read({kind: "observation", scope, next: result.coverage.next});
+  result = page.values[0];
+}
+const delta = await nb.read({kind: "observation", scope, since: result.checkpoint});
+```
+
+У `observe` прежняя оболочка v1 сохраняется до единого переключения v2:
+страницы продолжаются через `next: response.content.coverage.next`, затем
+`since: finalResponse.changeKeys`. Промежуточные `changeKeys` не являются основанием
+нового инкрементального чтения. `cursor` оболочки остаётся read-cursor,
+`content.through` — change-cursor; они намеренно разные. Изображения — только
+по `includeImage: true`. Чтение расширенных соседей не добавляет разрешённых
+владельцев в действие и не изменяет Core-проверки области записи.
+
 ## Идентичность, вывод и отмена
 
 Fingerprint запуска содержит workspace, API version, точный код и канонические

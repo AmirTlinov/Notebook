@@ -164,6 +164,39 @@ final class NotebookScriptServiceTests: XCTestCase {
     await host.shutdown()
   }
 
+  func testIncrementalGeometryCrossesTheRealSandboxedSDK() async throws {
+    let owner = try Owner(), host = try await coordinator(owner)
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    let pageID = try XCTUnwrap(owner.store.loadIndex().selectedPageID)
+    var page = try owner.store.loadPage(pageID)
+    let connection = NotebookGraphicConnection(start: .init(point: .init(x: 0, y: 0), binding: .init(elementID: "node")), end: .init(point: .init(x: 1, y: 1)))
+    var node = AgentElement(id: "node", kind: .graphic, frame: .init(x: 10, y: 10, width: 100, height: 100), source: "", html: "", graphic: .init())
+    let arrow = AgentElement(id: "arrow", kind: .graphic, frame: .init(x: 300, y: 10, width: 100, height: 100), source: "", html: "", graphic: .init(shape: .connector, connection: connection))
+    XCTAssertTrue(page.replaceElements([node, arrow], actor: UUID()))
+    try owner.store.savePage(page)
+    let initialID = UUID()
+    let query: JSONValue = .object(["target": try .encode(CollaborationTarget(kind: .page, id: pageID)),
+      "ids": .array([.string("arrow")]), "fields": .array([.string("geometry")])])
+    _ = try await host.handle(.init(op: .start, runID: initialID, apiVersion: 1, code: "return await nb.observe(args);", arguments: query))
+    let initial = try await finish(host, initialID)
+    XCTAssertEqual(initial.string("status"), "completed", "\(initial)")
+    node = node.updating(frame: .init(x: 150, y: 10, width: 100, height: 100))
+    XCTAssertTrue(page.replaceElements([node, arrow], actor: UUID()))
+    try owner.store.savePage(page)
+    var next = query.fields; next["since"] = initial["result"]?["changeKeys"]
+    let deltaID = UUID()
+    _ = try await host.handle(.init(op: .start, runID: deltaID, apiVersion: 1, code: "return await nb.observe(args);", arguments: .object(next)))
+    let delta = try await finish(host, deltaID)
+    XCTAssertEqual(delta.string("status"), "completed", "\(delta)")
+    XCTAssertEqual(delta["result"]?["content"]?["mode"], .string("delta"))
+    let objects = delta["result"]?["content"]?.array("objects") ?? []
+    XCTAssertEqual(objects.count, 1)
+    XCTAssertEqual(objects.first?["id"], .string("arrow"))
+    XCTAssertNotEqual(objects.first?["value"], initial["result"]?["content"]?.array("objects").first?["value"])
+    XCTAssertEqual(try owner.store.loadPage(pageID).elements.first { $0.id == "arrow" }, arrow)
+    await host.shutdown()
+  }
+
   func testTrustedMarkupCanCompleteWhileTheUserInterpreterAwaitsTransaction() async throws {
     let owner = try Owner(), host = try await coordinator(owner), id = UUID()
     defer { try? FileManager.default.removeItem(at: owner.store.root) }

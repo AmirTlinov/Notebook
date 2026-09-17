@@ -717,11 +717,20 @@ extension NotebookStore {
 }
 
 extension NotebookStore {
-  public func readChangedAddresses(after: UInt64, through: UInt64, limit: Int = 4096) throws -> NotebookChangedAddresses {
+  func requireChangeHistory(after: UInt64) throws {
+    let floor = UInt64(try currentSQL!.rows("SELECT value FROM metadata WHERE key='placement_outgoing_floor'").first?[0].text ?? "0") ?? 0
+    guard after >= floor else {
+      throw CollaborationError("observation_cursor_expired", "История этого курсора больше недоступна; запросите новый ограниченный снимок без since/next.")
+    }
+  }
+
+  public func readChangedAddresses(after: UInt64, through: UInt64, limit: Int = 4096, afterAddress: String? = nil) throws -> NotebookChangedAddresses {
     guard after <= through, through <= UInt64(Int64.max), (1...4096).contains(limit) else { throw NotebookStorageError.limitExceeded("changed_addresses") }
     return try readTransaction { _ in
       guard through <= (try currentChangeCursor()) else { throw NotebookStorageError.transactionConflict }
-      let rows = try currentSQL!.rows("SELECT DISTINCT address FROM change_records WHERE sequence>? AND sequence<=? ORDER BY address LIMIT ?", [.integer(Int64(after)), .integer(Int64(through)), .integer(Int64(limit + 1))])
+      try requireChangeHistory(after: after)
+      guard afterAddress == nil || afterAddress!.utf8.count <= 4096 else { throw NotebookStorageError.limitExceeded("changed_address_cursor") }
+      let rows = try currentSQL!.rows("SELECT DISTINCT address FROM change_records WHERE sequence>? AND sequence<=? AND address>? ORDER BY address LIMIT ?", [.integer(Int64(after)), .integer(Int64(through)), .text(afterAddress ?? ""), .integer(Int64(limit + 1))])
       let records = try rows.prefix(limit).compactMap { row -> NotebookChangedRecord? in
         guard let address = row[0].text else { return nil }
         func hash(at cursor: UInt64) throws -> String? {
@@ -729,7 +738,7 @@ extension NotebookStore {
         }
         return try .init(address: address, beforeHash: hash(at: after), afterHash: hash(at: through))
       }
-      return .init(records: records, hasMore: rows.count > limit)
+      return .init(records: records, hasMore: rows.count > limit, nextAddress: rows.count > limit ? records.last?.address : nil)
     }
   }
 }

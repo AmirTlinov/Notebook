@@ -185,4 +185,5 @@ public struct NotebookChangedAddresses: Codable, Sendable {
   public let records: [NotebookChangedRecord]
   public var addresses: [String] { records.map(\.address) }
   public let hasMore: Bool
+  public let nextAddress: String?
 }

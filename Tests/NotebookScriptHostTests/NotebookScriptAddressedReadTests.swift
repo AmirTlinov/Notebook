@@ -56,14 +56,16 @@ struct NotebookScriptAddressedReadTests {
     defer { try? FileManager.default.removeItem(at: owner.store.root) }
     let first = try await host.context(.init(method: "observe"))
     #expect(first["content"]?["truncated"] == .bool(true))
+    #expect(first["content"]?["checkpoint"] == nil)
+    let last = try await host.context(.init(method: "observe", arguments: .object(["next": try #require(first["content"]?["coverage"]?["next"])])))
     try owner.poison("element-0")
-    let repeated = try await host.context(.init(method: "observe", arguments: .object(["since": try #require(first["changeKeys"])])))
+    let repeated = try await host.context(.init(method: "observe", arguments: .object(["since": try #require(last["changeKeys"])])))
     #expect(repeated["content"]?["unchanged"] == .bool(true))
     #expect(repeated["changes"]?["changed"] == .array([]))
     // Changing the address is a new scope even with the same owner versions.
     let other = try await host.context(.init(method: "observe", arguments: .object([
       "target": try .encode(CollaborationTarget(kind: .page, id: owner.pageID)), "elementID": .string("element-39"),
-      "since": try #require(first["changeKeys"])])))
+      "since": try #require(last["changeKeys"])])))
     #expect(other["content"]?["element"]?["id"] == .string("element-39"))
   }
 

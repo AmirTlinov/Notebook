@@ -46,6 +46,26 @@ struct NotebookContentReadTests {
       print("Page addressed read: records=100000 attempt=\(attempt) SQL instructions=\(count.pointee) elapsed=\(start.duration(to: .now)) response_bytes=\(try JSONEncoder().encode(result).count)")
     }
     #expect(try store.currentReadCursor() == cursor)
+    let scope = NotebookObservationScope(target: .init(kind: .page, id: pageID), ids: ["element-99999"], fields: [.content])
+    let first = try store.observeContent(scope: scope)
+    try store.commandTransaction {
+      let row = try #require(try store.storedFragments(address: file + "#/elements/@element-99999", descendants: false).first)
+      try store.writeFragment(row.replacing(value: row.value.setting("source", .string("changed"))), database: store.currentSQL!)
+    }
+    count.pointee = 0
+    let start = ContinuousClock.now
+    let delta = try store.readTransaction { _ in
+      sqlite3_progress_handler(store.currentSQL!.handle, 1, { raw in
+        let count = raw!.assumingMemoryBound(to: Int.self); count.pointee += 1
+        return count.pointee > 20_000 ? 1 : 0
+      }, count)
+      defer { sqlite3_progress_handler(store.currentSQL!.handle, 0, nil, nil) }
+      return try store.observeContent(scope: scope, since: first.checkpoint)
+    }
+    #expect(delta.objects.count == 1)
+    #expect(delta.objects.first?.value?["content"]?["source"] == .string("changed"))
+    print("Observation delta among 100000: SQL instructions=\(count.pointee) elapsed=\(start.duration(to: .now)) response_bytes=\(try JSONEncoder().encode(delta).count)")
+
   }
 
   @Test func missingElementAndMissingOwnerAreNotTheSame() throws {

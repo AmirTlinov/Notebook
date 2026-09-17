@@ -70,12 +70,15 @@ public struct NotebookReadBounds: Codable, Sendable {
 
 public struct NotebookReadQuery: Codable, Sendable {
   public enum Kind: String, Codable, Sendable {
-    case workspaceHeader, itemHeaders, itemHeader, workingSet, sceneWindow, scenePaintOrder
+    case observation, workspaceHeader, itemHeaders, itemHeader, workingSet, sceneWindow, scenePaintOrder
     case page, pageHeader, pageElement, documentHeader, document, documentState, documentBlock, boardItem, boardElement, boardContentRevision, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
     case attentionEvidence, contexts, contextEntries, actions, currentViewReceipt, pageVisionReceipt, targetRenderReceipt
     case renderRequests, delivery, actionSnapshots, runtime, codeFragment, codeFragments
   }
   public var kind: Kind
+  public var scope: NotebookObservationScope?
+  public var since: String?
+  public var next: String?
   public var file: NotebookFileAddress?
   public var id: UUID?
   public var after: UUID?
@@ -304,6 +307,9 @@ public struct NotebookCommandDispatcher: Sendable {
       guard let file = query.file else { throw invalid("invalid_reference", "Нужен адрес файла на компьютере.") }
       return try .encode(store.codeFragments(file: file, after: query.after, limit: query.limit ?? 64))
     case .page: return try store.loadPage(required(query.id)).graphicReadProjection()
+    case .observation:
+      guard let scope = query.scope else { throw invalid("invalid_observation", "Нужна scope наблюдения.") }
+      return try .encode(store.observeContent(scope: scope, since: query.since, next: query.next, limit: query.limit ?? 32))
     case .pageHeader: return try .encode(store.readContentHeader(target: .init(kind: .page, id: required(query.id))))
     case .documentHeader: return try .encode(store.readContentHeader(target: .init(kind: .document, id: required(query.id))))
     case .pageElement:

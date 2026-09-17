@@ -21,195 +21,162 @@
         "type": "object",
         "properties": {
           "contextID": {
-            "$ref": "#/$defs/__schema0"
-          },
-          "target": {
-            "type": "object",
-            "properties": {
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "page",
-                  "document"
-                ]
-              },
-              "id": {
-                "$ref": "#/$defs/__schema0"
-              }
-            },
-            "required": [
-              "kind",
-              "id"
-            ],
-            "additionalProperties": false
-          },
-          "elementID": {
-            "$ref": "#/$defs/__schema1"
-          },
-          "blockID": {
-            "$ref": "#/$defs/__schema1"
-          },
-          "limit": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 32
-          },
-          "includeImage": {
-            "type": "boolean"
-          },
-          "since": {
-            "type": "object",
-            "propertyNames": {
-              "$ref": "#/$defs/__schema1"
-            },
-            "additionalProperties": {
-              "$ref": "#/$defs/__schema2"
-            }
-          }
-        },
-        "additionalProperties": false,
-        "$defs": {
-          "__schema0": {
             "type": "string",
             "format": "uuid",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
           },
-          "__schema1": {
-            "type": "string"
-          },
-          "__schema2": {
-            "anyOf": [
+          "target": {
+            "oneOf": [
               {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              },
-              {
-                "type": "array",
-                "items": {
-                  "$ref": "#/$defs/__schema2"
-                }
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "codeFragment"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "additionalProperties": false
               },
               {
                 "type": "object",
-                "propertyNames": {
-                  "type": "string"
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "page"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
                 },
-                "additionalProperties": {
-                  "$ref": "#/$defs/__schema2"
-                }
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "document"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "board"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "cover"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "boardID": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id",
+                  "boardID"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "workspace"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "description": "rootBoardID"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "additionalProperties": false
               }
             ]
-          }
-        }
-      },
-      "returns": "{header,presence,content,contexts,connection,cursor,changeKeys,changes,visual:{status,receipt?,artifact?}}; pass previous changeKeys as since, which works across clients without sidecar memory. Address a page element with target+elementID, a document block with target+blockID. Preview reads at most limit (default 32) member records. Unchanged content returns unchanged:true without decoding bodies; changing scope requires a new bounded read. Images require includeImage:true. Source freshness is independent from connection and iPad display.",
-      "example": "await emit(await nb.observe());",
-      "old": [
-        "notebook_observe"
-      ]
-    },
-    "read": {
-      "input": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "workspaceHeader",
-              "itemHeaders",
-              "itemHeader",
-              "workingSet",
-              "sceneWindow",
-              "scenePaintOrder",
-              "page",
-              "pageHeader",
-              "pageElement",
-              "documentHeader",
-              "document",
-              "documentState",
-              "documentBlock",
-              "boardItem",
-              "boardElement",
-              "boardContentRevision",
-              "ownerBoard",
-              "notebookPages",
-              "notebookDirectory",
-              "notebookPosition",
-              "spatialInk",
-              "presence",
-              "attentionEvidence",
-              "contexts",
-              "contextEntries",
-              "actions",
-              "currentViewReceipt",
-              "pageVisionReceipt",
-              "targetRenderReceipt",
-              "renderRequests",
-              "delivery",
-              "actionSnapshots",
-              "runtime",
-              "codeFragment",
-              "codeFragments"
-            ]
           },
-          "id": {
+          "elementID": {
             "$ref": "#/$defs/__schema0"
           },
-          "after": {
+          "blockID": {
             "$ref": "#/$defs/__schema0"
           },
-          "referenceID": {
-            "$ref": "#/$defs/__schema0"
-          },
-          "revision": {
-            "$ref": "#/$defs/__schema1"
-          },
-          "limit": {
-            "type": "integer",
-            "exclusiveMinimum": 0,
-            "maximum": 9007199254740991
-          },
-          "itemIDs": {
-            "maxItems": 8,
+          "ids": {
+            "minItems": 1,
+            "maxItems": 32,
             "type": "array",
             "items": {
-              "$ref": "#/$defs/__schema0"
+              "$ref": "#/$defs/__schema1"
             }
           },
-          "pageIDs": {
+          "fields": {
+            "minItems": 1,
             "maxItems": 4,
-            "type": "array",
-            "items": {
-              "$ref": "#/$defs/__schema0"
-            }
-          },
-          "boardIDs": {
-            "maxItems": 8,
-            "type": "array",
-            "items": {
-              "$ref": "#/$defs/__schema0"
-            }
-          },
-          "surfaces": {
-            "maxItems": 8,
             "type": "array",
             "items": {
               "$ref": "#/$defs/__schema2"
             }
           },
-          "pinnedIDs": {
+          "expand": {
+            "maxItems": 4,
             "type": "array",
             "items": {
-              "$ref": "#/$defs/__schema0"
+              "$ref": "#/$defs/__schema3"
             }
           },
           "bounds": {
@@ -286,8 +253,366 @@
             ],
             "additionalProperties": false
           },
-          "coverID": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32
+          },
+          "includeImage": {
+            "type": "boolean"
+          },
+          "since": {
+            "type": "object",
+            "propertyNames": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "additionalProperties": {
+              "$ref": "#/$defs/__schema4"
+            }
+          },
+          "next": {
+            "maxLength": 196608,
             "$ref": "#/$defs/__schema0"
+          }
+        },
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string"
+          },
+          "__schema1": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "$ref": "#/$defs/__schema0"
+          },
+          "__schema2": {
+            "type": "string",
+            "enum": [
+              "preview",
+              "content",
+              "state",
+              "geometry"
+            ]
+          },
+          "__schema3": {
+            "type": "string",
+            "enum": [
+              "incoming",
+              "outgoing",
+              "neighbors",
+              "container"
+            ]
+          },
+          "__schema4": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema4"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema4"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "returns": "{header,presence,presenceGeneration,content,contexts,connection,cursor,changeKeys,changes,visual}. content has objects:{target,id,change:upsert|deleted|outOfScope,value?}[], mode:snapshot|delta, coverage:{complete,next?}, checkpoint only when complete. Drain coverage.next using next (not since); then pass last changeKeys as since. Continuation pins workspace/scope/fields/expand/source commit, rejects stale/expired explicitly; changing scope with since starts a bounded snapshot. read/readMany also accept {kind:'observation',scope,since:checkpoint,next,limit}. fields selects preview/content/state/geometry; one-hop expand from 1-32 ids supports incoming/outgoing/neighbors/container through native indices and grants no mutation rights. bounds restricts a board/cover spatial window to at most 256 addresses, otherwise returns observation_scope_full (narrow bounds or page the owner without bounds). Dependent geometry is invalidated when endpoints/ink claims change. Unchanged bodies are not decoded. Presence generation is separate from content change cursor; images require includeImage:true.",
+      "example": "let r=await nb.observe({target:args.target}); while(r.content.coverage?.next) r=await nb.observe({target:args.target,next:r.content.coverage.next}); await emit(r);",
+      "old": [
+        "notebook_observe"
+      ]
+    },
+    "read": {
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "observation",
+              "workspaceHeader",
+              "itemHeaders",
+              "itemHeader",
+              "workingSet",
+              "sceneWindow",
+              "scenePaintOrder",
+              "page",
+              "pageHeader",
+              "pageElement",
+              "documentHeader",
+              "document",
+              "documentState",
+              "documentBlock",
+              "boardItem",
+              "boardElement",
+              "boardContentRevision",
+              "ownerBoard",
+              "notebookPages",
+              "notebookDirectory",
+              "notebookPosition",
+              "spatialInk",
+              "presence",
+              "attentionEvidence",
+              "contexts",
+              "contextEntries",
+              "actions",
+              "currentViewReceipt",
+              "pageVisionReceipt",
+              "targetRenderReceipt",
+              "renderRequests",
+              "delivery",
+              "actionSnapshots",
+              "runtime",
+              "codeFragment",
+              "codeFragments"
+            ]
+          },
+          "scope": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "codeFragment"
+                      },
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "page"
+                      },
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "document"
+                      },
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "board"
+                      },
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "cover"
+                      },
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "boardID": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id",
+                      "boardID"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "workspace"
+                      },
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "description": "rootBoardID"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "ids": {
+                "minItems": 1,
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "fields": {
+                "minItems": 1,
+                "maxItems": 4,
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema2"
+                }
+              },
+              "expand": {
+                "maxItems": 4,
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema3"
+                }
+              },
+              "bounds": {
+                "$ref": "#/$defs/__schema4"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "additionalProperties": false
+          },
+          "since": {
+            "maxLength": 196608,
+            "$ref": "#/$defs/__schema1"
+          },
+          "next": {
+            "maxLength": 196608,
+            "$ref": "#/$defs/__schema1"
+          },
+          "id": {
+            "$ref": "#/$defs/__schema5"
+          },
+          "after": {
+            "$ref": "#/$defs/__schema5"
+          },
+          "referenceID": {
+            "$ref": "#/$defs/__schema5"
+          },
+          "revision": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "limit": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "itemIDs": {
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema5"
+            }
+          },
+          "pageIDs": {
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema5"
+            }
+          },
+          "boardIDs": {
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema5"
+            }
+          },
+          "surfaces": {
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema6"
+            }
+          },
+          "pinnedIDs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema5"
+            }
+          },
+          "bounds": {
+            "$ref": "#/$defs/__schema4"
+          },
+          "coverID": {
+            "$ref": "#/$defs/__schema5"
           },
           "paintCursor": {
             "$ref": "#/$defs/__schema1"
@@ -301,17 +626,17 @@
             "maxItems": 4,
             "type": "array",
             "items": {
-              "$ref": "#/$defs/__schema3"
+              "$ref": "#/$defs/__schema7"
             }
           },
           "itemID": {
-            "$ref": "#/$defs/__schema0"
+            "$ref": "#/$defs/__schema5"
           },
           "visibleRoot": {
             "$ref": "#/$defs/__schema1"
           },
           "contextID": {
-            "$ref": "#/$defs/__schema0"
+            "$ref": "#/$defs/__schema5"
           },
           "elementID": {
             "$ref": "#/$defs/__schema1"
@@ -320,7 +645,7 @@
             "type": "object",
             "properties": {
               "computer": {
-                "$ref": "#/$defs/__schema0"
+                "$ref": "#/$defs/__schema5"
               },
               "project": {
                 "$ref": "#/$defs/__schema1"
@@ -348,13 +673,111 @@
         "$defs": {
           "__schema0": {
             "type": "string",
-            "format": "uuid",
-            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            "minLength": 1,
+            "maxLength": 120,
+            "$ref": "#/$defs/__schema1"
           },
           "__schema1": {
             "type": "string"
           },
           "__schema2": {
+            "type": "string",
+            "enum": [
+              "preview",
+              "content",
+              "state",
+              "geometry"
+            ]
+          },
+          "__schema3": {
+            "type": "string",
+            "enum": [
+              "incoming",
+              "outgoing",
+              "neighbors",
+              "container"
+            ]
+          },
+          "__schema4": {
+            "type": "object",
+            "properties": {
+              "anchor": {
+                "type": "object",
+                "properties": {
+                  "tileX": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "tileY": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "localX": {
+                    "type": "number",
+                    "minimum": 0,
+                    "exclusiveMaximum": 6651.968503937008
+                  },
+                  "localY": {
+                    "type": "number",
+                    "minimum": 0,
+                    "exclusiveMaximum": 6651.968503937008
+                  }
+                },
+                "required": [
+                  "tileX",
+                  "tileY",
+                  "localX",
+                  "localY"
+                ],
+                "additionalProperties": false
+              },
+              "region": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": -10000000,
+                    "maximum": 10000000
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": -10000000,
+                    "maximum": 10000000
+                  },
+                  "width": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 10000000
+                  },
+                  "height": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 10000000
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "width",
+                  "height"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "anchor",
+              "region"
+            ],
+            "additionalProperties": false
+          },
+          "__schema5": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema6": {
             "type": "object",
             "properties": {
               "kind": {
@@ -366,7 +789,7 @@
                 ]
               },
               "ownerID": {
-                "$ref": "#/$defs/__schema0"
+                "$ref": "#/$defs/__schema5"
               }
             },
             "required": [
@@ -374,7 +797,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema3": {
+          "__schema7": {
             "anyOf": [
               {
                 "type": "string"
@@ -391,7 +814,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema3"
+                  "$ref": "#/$defs/__schema7"
                 }
               },
               {
@@ -400,7 +823,7 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema3"
+                  "$ref": "#/$defs/__schema7"
                 }
               }
             ]
@@ -437,6 +860,7 @@
               "kind": {
                 "type": "string",
                 "enum": [
+                  "observation",
                   "workspaceHeader",
                   "itemHeaders",
                   "itemHeader",
@@ -474,14 +898,182 @@
                   "codeFragments"
                 ]
               },
+              "scope": {
+                "type": "object",
+                "properties": {
+                  "target": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "codeFragment"
+                          },
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "page"
+                          },
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "document"
+                          },
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "board"
+                          },
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "cover"
+                          },
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "boardID": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "id",
+                          "boardID"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "workspace"
+                          },
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                            "description": "rootBoardID"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "ids": {
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/__schema1"
+                    }
+                  },
+                  "fields": {
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/__schema3"
+                    }
+                  },
+                  "expand": {
+                    "maxItems": 4,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/__schema4"
+                    }
+                  },
+                  "bounds": {
+                    "$ref": "#/$defs/__schema5"
+                  }
+                },
+                "required": [
+                  "target"
+                ],
+                "additionalProperties": false
+              },
+              "since": {
+                "maxLength": 196608,
+                "$ref": "#/$defs/__schema2"
+              },
+              "next": {
+                "maxLength": 196608,
+                "$ref": "#/$defs/__schema2"
+              },
               "id": {
-                "$ref": "#/$defs/__schema1"
+                "$ref": "#/$defs/__schema6"
               },
               "after": {
-                "$ref": "#/$defs/__schema1"
+                "$ref": "#/$defs/__schema6"
               },
               "referenceID": {
-                "$ref": "#/$defs/__schema1"
+                "$ref": "#/$defs/__schema6"
               },
               "revision": {
                 "$ref": "#/$defs/__schema2"
@@ -495,112 +1087,41 @@
                 "maxItems": 8,
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema1"
+                  "$ref": "#/$defs/__schema6"
                 }
               },
               "pageIDs": {
                 "maxItems": 4,
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema1"
+                  "$ref": "#/$defs/__schema6"
                 }
               },
               "boardIDs": {
                 "maxItems": 8,
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema1"
+                  "$ref": "#/$defs/__schema6"
                 }
               },
               "surfaces": {
                 "maxItems": 8,
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema3"
+                  "$ref": "#/$defs/__schema7"
                 }
               },
               "pinnedIDs": {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema1"
+                  "$ref": "#/$defs/__schema6"
                 }
               },
               "bounds": {
-                "type": "object",
-                "properties": {
-                  "anchor": {
-                    "type": "object",
-                    "properties": {
-                      "tileX": {
-                        "type": "integer",
-                        "minimum": -9007199254740991,
-                        "maximum": 9007199254740991
-                      },
-                      "tileY": {
-                        "type": "integer",
-                        "minimum": -9007199254740991,
-                        "maximum": 9007199254740991
-                      },
-                      "localX": {
-                        "type": "number",
-                        "minimum": 0,
-                        "exclusiveMaximum": 6651.968503937008
-                      },
-                      "localY": {
-                        "type": "number",
-                        "minimum": 0,
-                        "exclusiveMaximum": 6651.968503937008
-                      }
-                    },
-                    "required": [
-                      "tileX",
-                      "tileY",
-                      "localX",
-                      "localY"
-                    ],
-                    "additionalProperties": false
-                  },
-                  "region": {
-                    "type": "object",
-                    "properties": {
-                      "x": {
-                        "type": "number",
-                        "minimum": -10000000,
-                        "maximum": 10000000
-                      },
-                      "y": {
-                        "type": "number",
-                        "minimum": -10000000,
-                        "maximum": 10000000
-                      },
-                      "width": {
-                        "type": "number",
-                        "exclusiveMinimum": 0,
-                        "maximum": 10000000
-                      },
-                      "height": {
-                        "type": "number",
-                        "exclusiveMinimum": 0,
-                        "maximum": 10000000
-                      }
-                    },
-                    "required": [
-                      "x",
-                      "y",
-                      "width",
-                      "height"
-                    ],
-                    "additionalProperties": false
-                  }
-                },
-                "required": [
-                  "anchor",
-                  "region"
-                ],
-                "additionalProperties": false
+                "$ref": "#/$defs/__schema5"
               },
               "coverID": {
-                "$ref": "#/$defs/__schema1"
+                "$ref": "#/$defs/__schema6"
               },
               "paintCursor": {
                 "$ref": "#/$defs/__schema2"
@@ -614,17 +1135,17 @@
                 "maxItems": 4,
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema4"
+                  "$ref": "#/$defs/__schema8"
                 }
               },
               "itemID": {
-                "$ref": "#/$defs/__schema1"
+                "$ref": "#/$defs/__schema6"
               },
               "visibleRoot": {
                 "$ref": "#/$defs/__schema2"
               },
               "contextID": {
-                "$ref": "#/$defs/__schema1"
+                "$ref": "#/$defs/__schema6"
               },
               "elementID": {
                 "$ref": "#/$defs/__schema2"
@@ -633,7 +1154,7 @@
                 "type": "object",
                 "properties": {
                   "computer": {
-                    "$ref": "#/$defs/__schema1"
+                    "$ref": "#/$defs/__schema6"
                   },
                   "project": {
                     "$ref": "#/$defs/__schema2"
@@ -661,13 +1182,111 @@
           },
           "__schema1": {
             "type": "string",
-            "format": "uuid",
-            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            "minLength": 1,
+            "maxLength": 120,
+            "$ref": "#/$defs/__schema2"
           },
           "__schema2": {
             "type": "string"
           },
           "__schema3": {
+            "type": "string",
+            "enum": [
+              "preview",
+              "content",
+              "state",
+              "geometry"
+            ]
+          },
+          "__schema4": {
+            "type": "string",
+            "enum": [
+              "incoming",
+              "outgoing",
+              "neighbors",
+              "container"
+            ]
+          },
+          "__schema5": {
+            "type": "object",
+            "properties": {
+              "anchor": {
+                "type": "object",
+                "properties": {
+                  "tileX": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "tileY": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "localX": {
+                    "type": "number",
+                    "minimum": 0,
+                    "exclusiveMaximum": 6651.968503937008
+                  },
+                  "localY": {
+                    "type": "number",
+                    "minimum": 0,
+                    "exclusiveMaximum": 6651.968503937008
+                  }
+                },
+                "required": [
+                  "tileX",
+                  "tileY",
+                  "localX",
+                  "localY"
+                ],
+                "additionalProperties": false
+              },
+              "region": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": -10000000,
+                    "maximum": 10000000
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": -10000000,
+                    "maximum": 10000000
+                  },
+                  "width": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 10000000
+                  },
+                  "height": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 10000000
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "width",
+                  "height"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "anchor",
+              "region"
+            ],
+            "additionalProperties": false
+          },
+          "__schema6": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema7": {
             "type": "object",
             "properties": {
               "kind": {
@@ -679,7 +1298,7 @@
                 ]
               },
               "ownerID": {
-                "$ref": "#/$defs/__schema1"
+                "$ref": "#/$defs/__schema6"
               }
             },
             "required": [
@@ -687,7 +1306,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema4": {
+          "__schema8": {
             "anyOf": [
               {
                 "type": "string"
@@ -704,7 +1323,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema4"
+                  "$ref": "#/$defs/__schema8"
                 }
               },
               {
@@ -713,7 +1332,7 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema4"
+                  "$ref": "#/$defs/__schema8"
                 }
               }
             ]

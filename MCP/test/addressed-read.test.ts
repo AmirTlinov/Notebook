@@ -34,3 +34,22 @@ test("native addressed read exposes the same committed versions and element with
     assert.equal(hits.coverage.next,undefined);
   } finally { await stopFixture(root); await rm(root,{recursive:true,force:true}); }
 });
+
+test("native observations page once, then return only addressed changes", async () => {
+  const root=await mkdtemp(join(tmpdir(),"notebook-observation-ipc-"));
+  try {
+    await writeFixture(root); const store=new NotebookStore(fixtureSocket(root)), target={kind:"page",id:pageID};
+    const apply=async (operations:unknown[])=>store.command({command:"apply",action:{id:randomUUID(),summary:"Delta",references:[],
+      expected:[{target,revision:revision((await store.readPage(pageID)).agentStamp)}],operations}});
+    await apply(["delta-a","delta-b"].map(id=>({kind:"insertElement",target,id,values:{kind:"markdown",source:id,frame:{x:10,y:10,width:100,height:100}}})));
+    const scope={target,ids:["delta-a","delta-b"],fields:["content"]};
+    const observe=async(extra:Record<string,unknown>={})=>(await store.command<any>({command:"read",queries:[{kind:"observation",scope,limit:1,...extra}]})).values[0];
+    const first=await observe(); assert.equal(first.checkpoint,undefined); assert.equal(first.coverage.complete,false);
+    const last=await observe({next:first.coverage.next}); assert.equal(last.coverage.complete,true);
+    await apply([{kind:"updateElement",target,id:"delta-b",values:{source:"Changed"}}]);
+    const delta=await observe({since:last.checkpoint});
+    assert.equal(delta.mode,"delta"); assert.deepEqual(delta.objects.map((x:any)=>x.id),["delta-b"]);
+    assert.equal(delta.objects[0].value.content.source,"Changed");
+    assert.equal((await observe({since:delta.checkpoint})).objects.length,0);
+  } finally { await stopFixture(root); await rm(root,{recursive:true,force:true}); }
+});

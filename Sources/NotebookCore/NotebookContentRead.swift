@@ -10,17 +10,6 @@ public struct NotebookContentHeader: Codable, Equatable, Sendable {
   public let size: PageSize?
 }
 
-public struct NotebookContentPreview: Codable, Equatable, Sendable {
-  public let id: String
-  public let kind: String
-  public let preview: String
-}
-
-public struct NotebookContentPreviewPage: Codable, Equatable, Sendable {
-  public let items: [NotebookContentPreview]
-  public let complete: Bool
-}
-
 public struct NotebookPageElementRead: Codable, Equatable, Sendable {
   public let header: NotebookContentHeader
   public let element: AgentElement
@@ -28,6 +17,12 @@ public struct NotebookPageElementRead: Codable, Equatable, Sendable {
 }
 
 extension NotebookStore {
+  public func presenceGeneration() throws -> String {
+    try readTransaction { _ in
+      try currentSQL!.rows("SELECT value FROM metadata WHERE key='presence_generation'").first?[0].text ?? "0"
+    }
+  }
+
   public func readPresenceIfAvailable() throws -> SessionPresence? {
     try readTransaction { _ in
       try hasStoredValue("last-context.json") ? loadPresence() : nil
@@ -87,25 +82,4 @@ extension NotebookStore {
     }
   }
 
-  /// Select through record_order first. The limit applies to actual reads, not
-  /// a prefix of an already decoded document. Preview never reads block state.
-  public func readContentPreviews(target: CollaborationTarget, limit: Int = 32) throws -> NotebookContentPreviewPage {
-    guard (1...32).contains(limit) else { throw NotebookStorageError.limitExceeded("content_preview_read") }
-    return try readTransaction { _ in
-      _ = try readContentHeader(target: target)
-      let file = target.kind == .page ? pageFile(target.id) : documentFile(target.id)
-      let collection = target.kind == .page ? "elements" : "blocks"
-      let addresses = try currentSQL!.rows("SELECT address FROM records WHERE parent=? AND collection=? ORDER BY position,member LIMIT ?",
-        [.text(file + "#"), .text(collection), .integer(Int64(limit + 1))]).map { $0[0].text! }
-      let rows = try boundedStoredFragments(addresses.prefix(limit).map { ($0, false) }, maximumCount: 32,
-        maximumBytes: 4 * 1_024 * 1_024, budget: "content_preview_read")
-      let items = try rows.map { row -> NotebookContentPreview in
-        guard let id = row.value["id"]?.string, let kind = row.value["kind"]?.string, let source = row.value["source"]?.string else {
-          throw NotebookStorageError.corruptRecord(row.address)
-        }
-        return .init(id: id, kind: kind, preview: String(source.prefix(160)))
-      }
-      return .init(items: items, complete: addresses.count <= limit)
-    }
-  }
 }

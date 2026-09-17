@@ -11,48 +11,64 @@ extension NotebookScriptCoordinator {
         if let supplied = args["target"] { target = try supplied.decode(CollaborationTarget.self) }
         else if presence?.mode == .page, let id = presence?.notebookPageID { target = .init(kind: .page, id: id) }
         else if presence?.mode == .document, let id = presence?.selectedItemID { target = .init(kind: .document, id: id) }
+        else if let boardID = presence?.boardID { target = .init(kind: .board, id: boardID) }
         else { target = nil }
         let elementID = args.string("elementID"), blockID = args.string("blockID")
-        guard (elementID == nil || target?.kind == .page), (blockID == nil || target?.kind == .document) else {
-          throw CollaborationError("invalid_reference", "elementID требует лист, blockID — документ.")
+        guard (elementID == nil || target?.kind == .page), (blockID == nil || target?.kind == .document),
+          args["ids"] == nil || (elementID == nil && blockID == nil) else {
+          throw CollaborationError("invalid_reference", "elementID требует лист, blockID — документ; не смешивайте их с ids.")
         }
         let requestedLimit = args.number("limit") ?? 32
         guard (1...32).contains(requestedLimit), requestedLimit.rounded() == requestedLimit else {
-          throw CollaborationError("resource_limit", "Превью ограничено 1–32 элементами.")
+          throw CollaborationError("resource_limit", "Страница наблюдения ограничена 1–32 элементами.")
         }
         var keys: [String: JSONValue] = ["workspace": .string(header.stamp.revision),
           "board": .string(try store.targetContentRevision(target: .init(kind: .board, id: presence?.boardID ?? header.rootBoardID))),
           "spatialInk": header.spatialInkStamp.map { .string($0.revision) } ?? .null, "contexts": .string(shared.readCursor),
-          "view": try .encode(presence), "scope": .object(["target": try .encode(target),
-            "elementID": elementID.map(JSONValue.string) ?? .null, "blockID": blockID.map(JSONValue.string) ?? .null,
-            "limit": .number(requestedLimit)])]
+          "presenceGeneration": .string(try store.presenceGeneration())]
         let previous = args["since"]?.fields ?? [:]
-        var content: JSONValue = presence.map { .object(["kind": .string($0.mode.rawValue), "boardID": .string($0.boardID.uuidString.lowercased())]) }
-          ?? .object(["status": .string("context_unknown")])
+        var content: JSONValue = .object(["status": .string("context_unknown")])
         if let target {
-          let metadata = try store.readContentHeader(target: target)
-          let prefix = "\(target.kind.rawValue):\(target.id)"
-          keys[prefix + ":content"] = .string(metadata.contentStamp.revision)
-          if let ink = metadata.inkStamp { keys[prefix + ":ink"] = .string(ink.revision) }
-          if let state = metadata.stateStamp { keys[prefix + ":state"] = .string(state.revision) }
-          var fields: [String: JSONValue] = ["kind": .string(target.kind.rawValue), "id": .string(target.id.uuidString.lowercased())]
-          fields[target.kind == .page ? "agentRevision" : "contentRevision"] = .string(metadata.contentStamp.revision)
-          fields["drawingRevision"] = metadata.inkStamp.map { .string($0.revision) }
-          fields["stateRevision"] = metadata.stateStamp.map { .string($0.revision) }
-          let unchanged = previous["scope"] == keys["scope"] && keys.keys.filter { $0.hasPrefix(prefix + ":") }.allSatisfy { previous[$0] == keys[$0] }
-          if unchanged { fields["unchanged"] = .bool(true) }
-          else if let elementID {
-            let element = try store.readPageElementSnapshot(pageID: target.id, elementID: elementID)
-            fields["element"] = try .encode(element?.element)
-            fields["graphicResolution"] = element?.graphicResolution
-          } else if let blockID {
-            fields["block"] = try .encode(store.readDocumentBlock(documentID: target.id, blockID: blockID))
-          } else {
-            let preview = try store.readContentPreviews(target: target, limit: Int(requestedLimit))
-            fields[target.kind == .page ? "elements" : "blocks"] = try .encode(preview.items)
-            fields["truncated"] = .bool(!preview.complete)
+          let ids = try args["ids"]?.decode([String].self) ?? (elementID ?? blockID).map { [$0] }
+          let defaults: [NotebookObservationScope.Field] = blockID != nil ? [.content, .state] : elementID != nil ? [.content, .geometry] : [.preview]
+          let scope = NotebookObservationScope(target: target, ids: ids,
+            fields: try args["fields"]?.decode([NotebookObservationScope.Field].self) ?? defaults,
+            expand: try args["expand"]?.decode([NotebookObservationScope.Relation].self) ?? [],
+            bounds: try args["bounds"]?.decode(NotebookReadBounds.self))
+          if args["since"] != nil, previous["checkpoint"] == nil {
+            throw CollaborationError("observation_incomplete", "Сначала дочитайте coverage.next; только полное наблюдение даёт checkpoint.")
           }
-          content = .object(fields)
+          let observed = try store.observeContent(scope: scope, since: args["since"]?.string("checkpoint"),
+            next: args.string("next"), limit: Int(requestedLimit))
+          keys["scope"] = try .encode(scope)
+          keys["checkpoint"] = observed.checkpoint.map(JSONValue.string)
+          var value = try JSONValue.encode(observed).fields
+          value["kind"] = .string(target.kind.rawValue); value["id"] = .string(target.id.uuidString.lowercased())
+          value["unchanged"] = .bool(observed.mode == "delta" && observed.objects.isEmpty)
+          value["truncated"] = .bool(!observed.coverage.complete)
+          if let stamp = try observed.header["contentStamp"]?.decode(VersionStamp.self) {
+            value[target.kind == .page ? "agentRevision" : "contentRevision"] = .string(stamp.revision)
+          }
+          if let stamp = try observed.header["inkStamp"]?.decode(VersionStamp.self) { value["drawingRevision"] = .string(stamp.revision) }
+          if let stamp = try observed.header["stateStamp"]?.decode(VersionStamp.self) { value["stateRevision"] = .string(stamp.revision) }
+          if let elementID {
+            let object = observed.objects.first { $0.id == elementID }
+            value["element"] = object?.value?["content"] ?? (object == nil ? nil : .null)
+            value["graphicResolution"] = object?.value?["graphicResolution"]
+          } else if let blockID {
+            if let object = observed.objects.first(where: { $0.id == blockID }), let body = object.value?["content"] {
+              var block = object.value!.fields
+              block.removeValue(forKey: "content"); block["block"] = body
+              block["documentID"] = .string(target.id.uuidString.lowercased())
+              block["contentStamp"] = observed.header["contentStamp"]; block["stateStamp"] = observed.header["stateStamp"]
+              value["block"] = .object(block)
+            }
+          } else {
+            value[target.kind == .document ? "blocks" : "elements"] = .array(observed.objects.filter { $0.change == .upsert }.map {
+              var preview = $0.value?.fields ?? [:]; preview["id"] = .string($0.id); return .object(preview)
+            })
+          }
+          content = .object(value)
         }
         let changes: JSONValue = .object(["changed": .array(keys.keys.sorted().filter { previous[$0] != keys[$0] }.map(JSONValue.string)),
           "removed": .array(previous.keys.sorted().filter { keys[$0] == nil }.map(JSONValue.string))])
@@ -77,7 +93,7 @@ extension NotebookScriptCoordinator {
         }
         return .object(["status": .string("ready"), "header": try .encode(header), "presence": try .encode(presence),
           "contexts": try .encode(shared), "connection": try .encode(store.loadRuntimeStatus()), "content": content,
-          "cursor": .string(String(try store.currentReadCursor())), "changeKeys": .object(keys), "changes": changes, "visual": image])
+          "cursor": .string(String(try store.currentReadCursor())), "presenceGeneration": .string(try store.presenceGeneration()), "changeKeys": .object(keys), "changes": changes, "visual": image])
       }
     }
   }
