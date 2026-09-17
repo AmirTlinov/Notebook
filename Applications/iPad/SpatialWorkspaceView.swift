@@ -296,8 +296,9 @@ struct SpatialWorkspaceView: View {
           pinned: compositionRequest.pinned, displayScale: displayScale, installedItemOwners: compositionRequest.itemOwners)
       }
       .onAppear {
-        model.stopNavigationPresentation = {
+        model.stopNavigationPresentation = { requestID in
           referencePageResolution.cancel()
+          guard cameraSettlement.navigationID == requestID else { return }
           interruptSettlementForInput()
           if model.presencePhase == .active, let current = model.presence {
             model.updatePresence(current, settled: true)
@@ -348,7 +349,7 @@ struct SpatialWorkspaceView: View {
         }
         await model.resolveReturnToPlace(place, viewport: model.presence?.viewport ?? viewport) { destination, completed in
           guard destination.mode == .document, let documentID = destination.focusedItemID else {
-            animateSettlement(to: destination, duration: 0.3, completion: completed)
+            animateSettlement(to: destination, duration: 0.3, navigationID: place.id, completion: completed)
             return
           }
           let targetPage = destination.documentPageIndex
@@ -359,7 +360,7 @@ struct SpatialWorkspaceView: View {
             camera: destination.camera, viewport: destination.viewport, focusedItemID: documentID,
             openProgress: destination.openProgress, documentPageIndex: actualPage,
             selectedItemID: destination.selectedItemID, notebookPageID: destination.notebookPageID)
-          animateSettlement(to: cameraDestination, duration: 0.3, completion: completed)
+          animateSettlement(to: cameraDestination, duration: 0.3, navigationID: place.id, completion: completed)
           referencePageResolution.start(requestID: place.id, documentID: documentID, isCurrent: {
             model.navigationGeneration == generation
               && (settling || model.presence?.focusedItemID == documentID)
@@ -1373,6 +1374,7 @@ struct SpatialWorkspaceView: View {
   private func interruptSettlementForInput() {
     model.presentationPlayer.interrupt()
     cameraSettlement.cancel()
+    if settling { contentGestureActive = false }
     settling = false
   }
 
@@ -1471,7 +1473,8 @@ struct SpatialWorkspaceView: View {
     switch location {
     case .board(let boardID, let center, let region):
       let scale = min(1.5,max(SpatialCamera.minimumScale,min(viewport.x/(region.width+100),viewport.y/(region.height+100))))
-      animateSettlement(to:.init(boardID:boardID,mode:.board,camera:.init(center:center,scale:scale),viewport:viewport),duration:0.3)
+      animateSettlement(to:.init(boardID:boardID,mode:.board,camera:.init(center:center,scale:scale),viewport:viewport),duration:0.3,
+        navigationID: reference.id) { model.completeShow(reference) }
     case .item(let boardID, let itemID, let center, let geometry):
       if target.kind != .page { model.selectItem(itemID) }
       var pageIndex = reference.pageIndex ?? 0
@@ -1483,7 +1486,8 @@ struct SpatialWorkspaceView: View {
       // publish it as the native page before its physical landing.
       let actualPage = model.presence?.focusedItemID == itemID ? model.presence?.documentPageIndex ?? 0 : 0
       animateSettlement(to:.init(boardID:boardID,mode:mode,camera:.init(center:center,scale:mode == .cover ? geometry.coverScale(viewport:viewport) : geometry.fitScale(viewport:viewport)),
-        viewport:viewport,focusedItemID:itemID,openProgress:mode == .cover ? 0 : 1,documentPageIndex:mode == .document ? actualPage : pageIndex),duration:0.3)
+        viewport:viewport,focusedItemID:itemID,openProgress:mode == .cover ? 0 : 1,documentPageIndex:mode == .document ? actualPage : pageIndex),duration:0.3,
+        navigationID: reference.id) { model.completeShow(reference) }
       if target.kind == .document {
         let navigationGeneration = model.navigationGeneration
         referencePageResolution.start(requestID: reference.id, documentID: itemID, isCurrent: {
@@ -1504,7 +1508,6 @@ struct SpatialWorkspaceView: View {
         })
       }
     }
-    model.completeShow(reference)
   }
 
   private func openItem(
@@ -1575,12 +1578,13 @@ struct SpatialWorkspaceView: View {
     to target: SessionPresence,
     duration: TimeInterval,
     bounce: Double = 0.08,
+    navigationID: UUID? = nil,
     completion: @escaping () -> Void = {}
   ) {
     guard let start = model.presence else { return }
     let wasSettling = settling
     settling = true
-    let accepted = cameraSettlement.start(from: start, to: target, duration: duration, bounce: bounce) { presence, settled in
+    let accepted = cameraSettlement.start(from: start, to: target, duration: duration, bounce: bounce, navigationID: navigationID) { presence, settled in
       var transaction = Transaction()
       transaction.disablesAnimations = true
       withTransaction(transaction) { model.updatePresence(presence, settled: settled) }

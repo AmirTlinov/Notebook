@@ -231,18 +231,26 @@ final class NotebookSceneFingerOwnershipTests: XCTestCase {
     XCTAssertFalse(gate.isActive); XCTAssertTrue(completed)
   }
 
-  func testWindowPencilContactStillWaitsForItsOwnMeasuredLift() async throws {
+  func testMeasuredPencilLiftHasNoSecondWindowObserverBarrier() async throws {
     let gate = NotebookInputGate(), surface = UIView(), source = UUID()
     let observer = NotebookContactObserver(gate: gate)
     let pencil = SceneFingerOwnershipTouch(target: surface, kind: .pencil)
+    XCTAssertEqual(observer.allowedTouchTypes, [NSNumber(value: UITouch.TouchType.direct.rawValue)])
     observer.touchesBegan([pencil], with: UIEvent())
+    XCTAssertFalse(gate.isActive)
+    XCTAssertEqual(gate.admittedFingerContactCount, 0, "Pencil is not a finger-routing claim")
+    let hand = SceneFingerOwnershipTouch(target: surface)
+    observer.touchesBegan([hand], with: UIEvent())
     XCTAssertTrue(gate.beginPencilAction(source: source))
+    var completed = false
+    gate.performAfterIdle { completed = true }
+    XCTAssertFalse(completed, "The measured Pencil contact still owns the barrier")
     gate.endPencilAction(source: source)
     try await Task.sleep(for: .milliseconds(30))
-    XCTAssertTrue(gate.isActive, "The window's Pencil-up has not arrived; only cancelled scene fingers are ignored")
-    observer.touchesEnded([pencil], with: UIEvent())
-    try await Task.sleep(for: .milliseconds(30))
     XCTAssertFalse(gate.isActive)
+    XCTAssertTrue(completed, "Measured ink is complete; neither observer reset nor hand-up may postpone it")
+    XCTAssertEqual(gate.admittedFingerContactCount, 1)
+    observer.touchesEnded([hand], with: UIEvent())
   }
 
   func testRestingContactTransfersWithoutRevivingItsActivity() async throws {

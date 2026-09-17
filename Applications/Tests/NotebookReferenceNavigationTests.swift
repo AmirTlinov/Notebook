@@ -4,6 +4,20 @@ import XCTest
 
 @MainActor
 final class NotebookReferenceNavigationTests: XCTestCase {
+  func testOrdinaryContactDoesNotCancelAnUnrelatedNotebookOpening() async throws {
+    let model = try await makeModel()
+    var stopped = 0
+    model.stopNavigationPresentation = { _ in stopped += 1 }
+    model.inputGate.notifyAcceptedContact()
+    XCTAssertEqual(stopped, 0, "No reference or return owns this camera; a resting hand must not stop the notebook halfway open")
+    model.requestShow(try coverReference(model))
+    let before = stopped
+    model.inputGate.notifyAcceptedContact()
+    XCTAssertNil(model.requestedReference)
+    XCTAssertEqual(stopped, before + 1, "Actual pending navigation is still interrupted by a new human contact")
+    model.stopNavigationPresentation = nil
+  }
+
   func testAcceptedContactsAreSeparateFromPoseActivityAndRepeatDuringActiveInput() {
     let gate = NotebookInputGate(), pose = UUID(), pencil = UUID()
     var contacts = 0

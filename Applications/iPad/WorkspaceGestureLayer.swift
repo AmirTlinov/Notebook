@@ -249,7 +249,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       _ gestureRecognizer: UIGestureRecognizer,
       shouldReceive touch: UITouch
     ) -> Bool {
-      guard let sceneView else { return false }
+      guard touch.type == .direct, let sceneView else { return false }
       guard inputGate.permitsSceneContact(at: touch.location(in: sceneView.window), kind: .finger),
         sceneReceives(touch, inside: sceneView) else { return false }
       let owner = NotebookSceneFingerRouting.owner(of: touch, gate: inputGate)
@@ -283,8 +283,9 @@ func sceneReceives(_ touch: UITouch, inside anchor: UIView) -> Bool {
   return false
 }
 
-/// The existing window gesture owner observes contact lifetime independently
-/// of which gesture wins. It never delays, cancels, or claims the touch.
+/// Observes finger lifetime independently of which gesture wins. The measured
+/// ink owner alone reports Pencil activity; this observer never adds a second
+/// Pencil-up barrier to the writer or to publication.
 @MainActor
 final class NotebookContactObserver: UIGestureRecognizer {
   private let source = UUID()
@@ -295,6 +296,7 @@ final class NotebookContactObserver: UIGestureRecognizer {
   init(gate: NotebookInputGate) {
     self.gate = gate
     super.init(target: nil, action: nil)
+    allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
     cancelsTouchesInView = false
     delaysTouchesBegan = false
     delaysTouchesEnded = false
@@ -338,9 +340,11 @@ final class NotebookContactObserver: UIGestureRecognizer {
   override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
   override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-    for touch in touches {
+    let fingers = touches.filter { $0.type == .direct }
+    guard !fingers.isEmpty else { return }
+    for touch in fingers {
       let owner = NotebookSceneFingerRouting.owner(of: touch, gate: gate)
-      contacts[ObjectIdentifier(touch)] = touch.type == .direct && (owner == .scene || owner == .sceneObject)
+      contacts[ObjectIdentifier(touch)] = owner == .scene || owner == .sceneObject
         ? .scene : .independent
       NotebookInteractionDiagnostics.contact(touch, phase: "began")
     }

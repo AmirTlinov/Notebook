@@ -577,7 +577,7 @@ final class NotebookAppModel {
   @ObservationIgnored private var documentPageController: (id: UUID, documentID: UUID, source: String)?
   @ObservationIgnored private var documentPageLandingRevision: UInt64 = 0
   @ObservationIgnored private var documentPageStatusRevision: UInt64 = 0
-  @ObservationIgnored var stopNavigationPresentation: (() -> Void)?
+  @ObservationIgnored var stopNavigationPresentation: ((UUID) -> Void)?
   let presentationPlayer = NotebookPresentationPlayer()
   let presentationRelay = NotebookPresentationRelay()
   var highlightedReference: CollaborationReference? { selectionSession.highlightedReference }
@@ -3532,12 +3532,13 @@ final class NotebookAppModel {
   /// or changing the current camera. Completion callbacks carry this generation.
   func cancelRequestedNavigation(reason: String = #function, source: String = #fileID, line: Int = #line) {
     observeNavigation("cancel", fields: ["reason": .string(reason), "source": .string(source), "line": .number(Double(line))])
+    let requestID = requestedReference?.id ?? requestedReturn?.id
     navigationGeneration &+= 1
     requestedReference = nil
     requestedReturn = nil
     documentPageSelection = nil; documentPageNavigationStatus = nil
     cancelDocumentOpening()
-    stopNavigationPresentation?()
+    if let requestID { stopNavigationPresentation?(requestID) }
   }
 
   func resolveReferenceLocation(_ reference: CollaborationReference,

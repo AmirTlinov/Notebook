@@ -6,6 +6,82 @@ import XCTest
 /// Exercise the installed scene's Pencil owner, not a direct fit/model call.
 /// Synthetic UIKit contacts do not substitute for physical Pencil calibration.
 @MainActor final class NotebookGraphicSceneTests: XCTestCase {
+  func testRestingHandDoesNotStrandDoubleTapOpeningBetweenBoardAndPaper() async throws {
+    try await exerciseOpening(.doubleTap)
+  }
+
+  func testCancellingQueuedReferenceDoesNotCancelTheHumanOpeningItWaitsFor() async throws {
+    try await exerciseOpening(.doubleTapWithPendingReference)
+  }
+
+  func testNewContactStillInterruptsTheCameraOwnedByItsReference() async throws {
+    try await exerciseOpening(.reference)
+  }
+
+  private enum Opening { case doubleTap, doubleTapWithPendingReference, reference }
+
+  private func exerciseOpening(_ action: Opening) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("opening-contact-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let workspace = try XCTUnwrap(model.workspace), itemID = workspace.selectedItemID
+    let viewport = SpatialPoint(x: 834, y: 1194)
+    let center = try XCTUnwrap(model.boardHierarchy?.focusedCenter(of: itemID, in: workspace.rootBoardID))
+    model.updatePresence(.init(boardID: workspace.rootBoardID, mode: .board,
+      camera: .init(center: center, scale: WorkspaceItemGeometry.notebook.coverScale(viewport: viewport)),
+      viewport: viewport), settled: true)
+    let window = try await mountNotebookScene(model)
+    let observer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? NotebookContactObserver }.first)
+    let reference = CollaborationReference(target: .init(kind: .page, id: try XCTUnwrap(workspace.selectedPageID)), revision: "test")
+    if action == .reference { model.requestShow(reference) }
+    else {
+      let tap = SceneGraphicTouch(window: window)
+      tap.kind = .direct; tap.taps = 2; tap.point = .init(x: window.bounds.midX, y: window.bounds.midY)
+      let cover = try XCTUnwrap(window.hitTest(tap.point, with: UIEvent()) as? NotebookInteractionTouchView)
+      tap.sourceView = cover
+      observer.touchesBegan([tap], with: UIEvent())
+      cover.touchesBegan([tap], with: UIEvent())
+      cover.touchesEnded([tap], with: UIEvent())
+      observer.touchesEnded([tap], with: UIEvent())
+    }
+    let started = ContinuousClock.now + .seconds(3)
+    while (model.presence?.openProgress ?? 0) == 0, ContinuousClock.now < started {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    let opening = try XCTUnwrap(model.presence)
+    XCTAssertGreaterThan(opening.openProgress, 0)
+    XCTAssertLessThan(opening.openProgress, 1, "The contact must arrive during the real camera settlement")
+    if action == .reference { XCTAssertNotNil(model.requestedReference, "The request owns its camera until landing") }
+    if action == .doubleTapWithPendingReference { model.requestShow(reference) }
+    let hand = SceneGraphicTouch(window: window)
+    hand.kind = .direct; hand.point = .init(x: window.bounds.midX + 140, y: window.bounds.midY + 170)
+    hand.sourceView = window.hitTest(hand.point, with: UIEvent())
+    observer.touchesBegan([hand], with: UIEvent())
+    defer { observer.touchesEnded([hand], with: UIEvent()) }
+    try await Task.sleep(for: .milliseconds(600))
+    XCTAssertNil(model.requestedReference)
+    if action == .reference {
+      XCTAssertEqual(model.presence?.mode, .cover)
+      XCTAssertEqual(model.presence?.openProgress, opening.openProgress)
+      XCTAssertEqual(model.presencePhase, .settled)
+      return
+    }
+    XCTAssertEqual(model.presence?.mode, .page)
+    XCTAssertEqual(model.presence?.openProgress, 1)
+    XCTAssertEqual(model.presencePhase, .settled)
+    let paper = descendants(try XCTUnwrap(window.rootViewController?.view)).compactMap { $0 as? PaperInputView }
+      .first { $0.isUserInteractionEnabled }
+    XCTAssertNotNil(paper, "An opened notebook must have one ready Pencil surface")
+    let pencil = SceneGraphicTouch(window: window), event = SceneGraphicEvent()
+    pencil.point = .init(x: window.bounds.midX, y: window.bounds.midY)
+    pencil.sourceView = window.hitTest(pencil.point, with: event)
+    let receiver = try XCTUnwrap(window.gestureRecognizers?.first { $0.name == "NotebookPaperPencil" })
+    receiver.touchesBegan([pencil], with: event)
+    XCTAssertTrue(model.inputGate.hasActivePencil)
+    receiver.touchesEnded([pencil], with: event)
+  }
+
   func testPageHoldAndImmediateShutdownKeepTheFittedObjectAndOriginalMeasurements() async throws {
     try await drawAndClose(onBoard: false)
   }
@@ -210,11 +286,17 @@ import XCTest
         .compactMap { $0 as? PaperInputView }.first { $0.isUserInteractionEnabled })
     }
     let observer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? NotebookContactObserver }.first)
-    let hand = SceneGraphicTouch(window: window)
-    hand.kind = .direct; hand.sourceView = window.rootViewController?.view
-    if restingHand { observer.touchesBegan([hand], with: UIEvent()) }
-    defer { if restingHand { observer.touchesEnded([hand], with: UIEvent()) } }
     let midpoint = CGPoint(x: window.bounds.midX, y: window.bounds.midY)
+    let hand = SceneGraphicTouch(window: window)
+    hand.kind = .direct; hand.point = .init(x: midpoint.x + 130, y: midpoint.y + 160)
+    hand.sourceView = window.hitTest(hand.point, with: UIEvent())
+    if restingHand {
+      XCTAssertNotNil(hand.sourceView)
+      XCTAssertTrue(observer.delegate?.gestureRecognizer?(observer, shouldReceive: hand) ?? true)
+      print("QUICKSHAPE_HAND hit=\(String(describing: hand.sourceView.map { type(of: $0) })) owner=\(NotebookSceneFingerRouting.owner(of: hand, gate: model.inputGate))")
+      observer.touchesBegan([hand], with: UIEvent())
+    }
+    defer { if restingHand { observer.touchesEnded([hand], with: UIEvent()) } }
     var measured: [CGPoint] = []
     for strokeIndex in 0..<(compound ? 2 : 1) {
       let touch = SceneGraphicTouch(window: window), event = SceneGraphicEvent()
@@ -311,7 +393,9 @@ import XCTest
   override var view: UIView? { sourceView }
   override var window: UIWindow? { sourceWindow }
   var kind: UITouch.TouchType = .pencil
+  var taps = 1
   override var type: UITouch.TouchType { kind }
+  override var tapCount: Int { taps }
   override var timestamp: TimeInterval { sampleTime }
   override var force: CGFloat { 1 }
   override var maximumPossibleForce: CGFloat { 1 }

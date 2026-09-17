@@ -24,14 +24,18 @@ final class SceneCameraSettlement {
   private var to: SessionPresence?
   private var publish: ((SessionPresence, Bool) -> Void)?
   private var completion: (() -> Void)?
+  /// Only this request may cancel its navigation transition. A queued request
+  /// does not own a different, already running human camera settlement.
+  private(set) var navigationID: UUID?
 
   @discardableResult
-  func start(from: SessionPresence, to: SessionPresence, duration: Double, bounce: Double,
+  func start(from: SessionPresence, to: SessionPresence, duration: Double, bounce: Double, navigationID: UUID? = nil,
     publish: @escaping (SessionPresence, Bool) -> Void, completion: @escaping () -> Void) -> Bool {
     guard from.isValid, to.isValid, duration.isFinite, bounce.isFinite else { return false }
     cancel()
     guard from.boardID == to.boardID, duration > 0 else { publish(to, true); completion(); return true }
     self.from = from; self.to = to; self.duration = duration
+    self.navigationID = navigationID
     self.publish = publish; self.completion = completion
     spring = Spring(settlingDuration: duration, dampingRatio: Spring(duration: duration, bounce: bounce).dampingRatio)
     startedAt = CACurrentMediaTime()
@@ -51,6 +55,7 @@ final class SceneCameraSettlement {
   func cancel() {
     link?.invalidate(); link = nil
     from = nil; to = nil; publish = nil; completion = nil
+    navigationID = nil
   }
 
   private func advance(at time: Double) {
