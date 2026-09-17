@@ -746,7 +746,7 @@ final class NotebookAppModel {
   let actorID: UUID
   let inputGate: NotebookInputGate
 
-  private var pageSize = defaultPageSize
+  private(set) var notebookPageSize = defaultPageSize
   private var started = false
   @ObservationIgnored private var startupTask: Task<Void, Never>?
   @ObservationIgnored private let persistence: NotebookPersistenceQueue
@@ -1219,7 +1219,7 @@ final class NotebookAppModel {
     if let startupTask { await startupTask.value; return }
     guard !started else { return }
     started = true
-    self.pageSize = pageSize
+    notebookPageSize = pageSize
     let startup = Task<Void, Never> { [weak self] in
       guard let self else { return }
       await loadInitialState(pageSize: pageSize,
@@ -1312,7 +1312,7 @@ final class NotebookAppModel {
       let order = workspace.notebookPageOrder(in: notebookID), order.root == expectedRoot, pageIndex >= 0, pageIndex <= order.count else { return nil }
     let pageID: UUID, createdPage: PageDocument?
     if pageIndex == order.count {
-      guard let selection = workspace.appendPage(in: notebookID, actor: actorID, pageSize: pageSize),
+      guard let selection = workspace.appendPage(in: notebookID, actor: actorID, pageSize: notebookPageSize),
         let page = selection.createdPage, let next = workspace.notebookPageOrder(in: notebookID) else { return nil }
       pageID = page.id; createdPage = page
       pages[page.id] = page
@@ -1347,7 +1347,7 @@ final class NotebookAppModel {
     guard let created = workspace.createNotebook(
       title: "",
       actor: actorID,
-      pageSize: pageSize
+      pageSize: notebookPageSize
     ), board.addItem(
       created.item.id,
       to: presence.boardID,

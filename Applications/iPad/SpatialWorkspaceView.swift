@@ -1897,13 +1897,6 @@ private struct WorkspaceSceneItem: View {
     return index
   }
 
-  private var notebookFallbackSize: PageSize {
-    guard let firstID = notebookItem.pageIDs.first,
-      let page = model.pages[firstID]
-    else { return NotebookAppModel.defaultPageSize }
-    return page.size
-  }
-
   private func notebookPage(
     at index: Int,
     isCurrent: Bool,
@@ -1912,13 +1905,13 @@ private struct WorkspaceSceneItem: View {
   ) -> AnyView {
     guard index >= 0, index < model.notebookPageCount(notebookItem.id) else {
       return AnyView(
-        BlankPageSurface(fallbackSize: notebookFallbackSize)
+        BlankPageSurface(fallbackSize: model.notebookPageSize)
           .onAppear { onRenderReady(index == model.notebookPageCount(notebookItem.id)) }
       )
     }
     guard let page = model.notebookPage(at: index, in: notebookItem.id) else {
       return AnyView(
-        BlankPageSurface(fallbackSize: notebookFallbackSize)
+        BlankPageSurface(fallbackSize: model.notebookPageSize)
           .overlay { ProgressView().allowsHitTesting(false) }
           .onAppear { onRenderReady(false) }
           .task { await model.prepareNotebookPage(at: index, in: notebookItem.id) }
