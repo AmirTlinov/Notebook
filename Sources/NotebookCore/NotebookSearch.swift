@@ -15,31 +15,47 @@ public struct NotebookSearchResponse: Codable, Equatable, Sendable {
   public let status = "ready"
   public let results: [NotebookSearchResult]
   public let total: Int
-  public var truncated: Bool { total > results.count }
-  private enum CodingKeys: String, CodingKey { case status, results, total, truncated }
-  public init(results: [NotebookSearchResult], total: Int) { self.results = results; self.total = total }
+  public let coverage: NotebookReadCoverage
+  public var truncated: Bool { !coverage.complete }
+  private enum CodingKeys: String, CodingKey { case status, results, total, truncated, coverage }
+  public init(results: [NotebookSearchResult], total: Int, next: String?) {
+    self.results = results; self.total = total; coverage = .init(complete: next == nil, next: next)
+  }
   public init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     results = try values.decode([NotebookSearchResult].self, forKey: .results)
     total = try values.decode(Int.self, forKey: .total)
+    coverage = try values.decode(NotebookReadCoverage.self, forKey: .coverage)
   }
   public func encode(to encoder: Encoder) throws {
     var values = encoder.container(keyedBy: CodingKeys.self)
     try values.encode(status, forKey: .status); try values.encode(results, forKey: .results)
     try values.encode(total, forKey: .total); try values.encode(truncated, forKey: .truncated)
+    try values.encode(coverage, forKey: .coverage)
   }
 }
 
 extension NotebookStore {
   /// FTS and short-substring postings belong to the same commit as their source.
   /// Only the bounded hits resolve physical owners and source versions.
-  public func search(_ query: String, limit: Int = 20) throws -> NotebookSearchResponse {
+  public func search(_ query: String, limit: Int = 20, filters: NotebookSearchFilters = .init(), next: String? = nil) throws -> NotebookSearchResponse {
     let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !query.isEmpty, query.count <= 500, query.utf8.count <= 4000, (1...100).contains(limit) else {
       throw CollaborationError("invalid_search", "Введите до 500 символов; выдача содержит от 1 до 100 совпадений.")
     }
     let folded = Self.foldedSearchText(query)
+    let filters = try filters.normalized()
     return try readTransaction { _ in
+      let workspaceID = try workspaceHeader().workspaceID, changeCursor = try currentChangeCursor()
+      let cursor = try next.map { try NotebookSearchCursor.decode($0) }
+      if let cursor {
+        guard cursor.workspaceID == workspaceID, cursor.query == folded, cursor.filters == filters else {
+          throw CollaborationError("search_cursor_mismatch", "Курсор принадлежит другому пространству, запросу или фильтрам; начните новый поиск.")
+        }
+        guard cursor.changeCursor == String(changeCursor) else {
+          throw CollaborationError("search_cursor_stale", "Поисковый срез изменился; начните новый ограниченный поиск без next.")
+        }
+      }
       let database = currentSQL!, from: String, condition: String, match: String
       if folded.count < 3 {
         from = "search_short p JOIN search_entries s ON s.rowid=p.entry_id"
@@ -48,10 +64,44 @@ extension NotebookStore {
         from = "search_fts JOIN search_entries s ON s.rowid=search_fts.rowid"
         condition = "search_fts MATCH ?"; match = "\"" + folded.replacingOccurrences(of: "\"", with: "\"\"") + "\""
       }
-      let filter = " FROM " + from + " WHERE " + condition + " AND instr(s.folded,?)>0"
-      let arguments: [NotebookSQLValue] = [.text(match), .text(folded)]
+      var filter = " FROM " + from + " WHERE " + condition + " AND instr(s.folded,?)>0"
+      var arguments: [NotebookSQLValue] = [.text(match), .text(folded)]
+      if let kinds = filters.kinds {
+        filter += " AND s.kind IN (" + Array(repeating: "?", count: kinds.count).joined(separator: ",") + ")"
+        arguments += kinds.map { .text($0.rawValue) }
+      }
+      if let target = filters.target {
+        if target.kind == .cover, try ownerBoardID(of: target.id) != target.boardID {
+          throw CollaborationError("target_missing", "Обложка больше не принадлежит указанной доске.", target: target)
+        }
+        let id = target.id.uuidString.lowercased()
+        switch target.kind {
+        case .page, .document:
+          filter += " AND s.kind=? AND s.owner_id=?"
+          arguments += [.text(target.kind.rawValue), .text(id)]
+        case .board, .cover:
+          filter += " AND ((s.kind='spatial' AND s.target_kind=? AND s.target_id=?) OR (s.kind='item' AND s.owner_id=?))"
+          arguments += [.text(target.kind.rawValue), .text(id), .text(id)]
+        default: throw CollaborationError("invalid_search", "Поиск ограничивается листом, документом, доской или обложкой.")
+        }
+      }
+      // COUNT reads the text index, never owner bodies. Keep its real cost
+      // explicit instead of returning an invented total from a caller token.
       let total = Int(try database.rows("SELECT COUNT(*)" + filter, arguments)[0][0].integer!)
-      let rows = try database.rows("SELECT s.kind,s.owner_id,s.target_kind,s.target_id,s.element_id,s.plain_text" + filter + " ORDER BY s.kind,s.address LIMIT ?", arguments + [.integer(Int64(limit))])
+      if let cursor {
+        filter += " AND (s.kind,s.address)>(?,?)"
+        arguments += [.text(cursor.kind), .text(cursor.address)]
+      }
+      // Sort bounded identities first: do not move every matching plain_text
+      // into SQLite's sorter before LIMIT. Only selected hits resolve bodies.
+      let matches = try database.rows("SELECT s.kind,s.address" + filter + " ORDER BY s.kind,s.address LIMIT ?",
+        arguments + [.integer(Int64(limit + 1))])
+      let rows = try matches.prefix(limit).map { row in
+        guard let value = try database.rows("SELECT kind,owner_id,target_kind,target_id,element_id,plain_text FROM search_entries WHERE address=?", [.text(row[1].text!)]).first else {
+          throw NotebookStorageError.corruptRecord("search result")
+        }
+        return value
+      }
       var results: [NotebookSearchResult] = []
       for row in rows {
         try Task.checkCancellation()
@@ -85,7 +135,12 @@ extension NotebookStore {
           revision: try referenceRevision(target: target, elementID: elementID), label: preview)
         results.append(.init(target: target, elementID: elementID, title: title, path: location, preview: preview, revision: revision, reference: reference))
       }
-      return .init(results: results, total: total)
+      let continuation: String?
+      if matches.count > limit, let last = matches.prefix(limit).last {
+        continuation = try NotebookSearchCursor(workspaceID: workspaceID, changeCursor: String(changeCursor),
+          query: folded, filters: filters, kind: last[0].text!, address: last[1].text!).encode()
+      } else { continuation = nil }
+      return .init(results: results, total: total, next: continuation)
     }
   }
 

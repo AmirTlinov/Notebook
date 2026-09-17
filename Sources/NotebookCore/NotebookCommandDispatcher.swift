@@ -10,6 +10,8 @@ public struct NotebookCommand: Codable, Sendable {
   }
   public var command: Kind
   public var query: String?
+  public var filters: NotebookSearchFilters?
+  public var next: String?
   public var limit: Int?
   public var action: CollaborationAction?
   public var actionID: UUID?
@@ -36,7 +38,7 @@ public struct NotebookCommand: Codable, Sendable {
   public var actionPage: NotebookActionDetailsPage?
 
   enum CodingKeys: String, CodingKey, CaseIterable {
-    case command, query, limit, action, actionID, target, elementID, reference
+    case command, query, filters, next, limit, action, actionID, target, elementID, reference
     case expectedRevision, region, worldOrigin, pageIndex, placement, contextID
     case replyTo, references, queries, expectedCursor, artifact, export, presentation, cancel, fingerprint, script, scriptContext, actionPage
   }
@@ -191,7 +193,7 @@ public struct NotebookCommandDispatcher: Sendable {
       })
     case .search:
       guard (request.query?.utf8.count ?? 0) <= 2_000 else { throw invalid("invalid_query", "Запрос поиска слишком длинный.") }
-      return try .encode(store.search(request.query ?? "", limit: boundedLimit(request.limit)))
+      return try .encode(store.search(request.query ?? "", limit: boundedLimit(request.limit), filters: request.filters ?? .init(), next: request.next))
     case .contexts: return try .encode(store.sharedContexts(contextID: request.contextID, limit: boundedLimit(request.limit)))
     case .point:
       if let id = request.actionID {

@@ -185,6 +185,32 @@ final class NotebookScriptServiceTests: XCTestCase {
     await host.shutdown()
   }
 
+  func testSearchContinuationAndAddressedHitCrossTheRealSDK() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), id = UUID()
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    let pageID = try XCTUnwrap(owner.store.loadIndex().selectedPageID)
+    var page = try owner.store.loadPage(pageID)
+    let changed = page.replaceElements((0..<13).map { .init(id: String(format: "hit-%02d", $0), kind: .markdown,
+      frame: .init(x: 10, y: 10, width: 100, height: 100), source: "needle \($0)", html: "<p>\($0)</p>") }, actor: UUID())
+    XCTAssertTrue(changed)
+    try owner.store.savePage(page)
+    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 1, code: """
+      const filters={kinds:['page'],target:{kind:'page',id:args.page}};
+      let next, hits=[], pages=0;
+      do { const result=await nb.search({query:'needle',limit:3,filters,...(next?{next}:{})});
+        hits.push(...result.results); next=result.coverage.next; pages++;
+      } while(next && pages<10);
+      const hit=await nb.page({id:args.page,elementID:hits.at(-1).elementID});
+      return {ids:hits.map(x=>x.elementID),pages,source:hit.values[0].element.source};
+      """, arguments: .object(["page": .string(pageID.uuidString)])))
+    let result = try await finish(host, id)
+    XCTAssertEqual(result.string("status"), "completed", "\(result)")
+    XCTAssertEqual(result["result"]?["pages"], .number(5))
+    XCTAssertEqual(result["result"]?["ids"], .array((0..<13).map { .string(String(format: "hit-%02d", $0)) }))
+    XCTAssertEqual(result["result"]?["source"], .string("needle 12"))
+    await host.shutdown()
+  }
+
   func testCancellationPreservesAnAlreadyAcceptedNativeCommit() async throws {
     let owner = try Owner(), host = try await coordinator(owner), id = UUID()
     owner.holdCommit = true
