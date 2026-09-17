@@ -46,6 +46,11 @@ def validate_cloud_rights(entitlements, profile_rights, mac=False):
     for key, value in cloud_entitlements(mac).items():
         require(entitlements.get(key) == value, "Сборка не имеет точных CloudKit/Push прав Notebook: " + key)
         permitted = profile_rights.get(key)
+        # Apple's automatic profiles authorize iCloud services with a scalar
+        # wildcard. This is a profile allowlist (TN3125), never an app claim;
+        # the signed service, container and environments remain pinned above.
+        if key == "com.apple.developer.icloud-services" and permitted == "*":
+            continue
         if isinstance(value, list):
             require(isinstance(permitted, list) and all(item in permitted for item in value),
                     "Provisioning не разрешает общий CloudKit-контейнер Notebook: " + key)

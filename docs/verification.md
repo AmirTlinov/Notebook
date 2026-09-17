@@ -8057,3 +8057,49 @@ Pencil. Simulator-only режим не включался, production/input gate
 каталоге. Успешной UI-квитанции и допуска рабочей пары нет. Реальный cloud-only
 обмен, смена аккаунта/квота, системные измерения, десять повторов и 30 минут
 совместной работы по-прежнему открыты; GUI-206/207 остаются In Progress.
+
+## 17 сентября, 12:43 МСК — Xcode восстановлен, CloudKit profiles проверены
+
+Амир подтвердил, что Xcode действительно был деавторизован, и восстановил
+вход. Свежая CLI-проверка видит один аккаунт; новый Mac Release build в
+`.build/cloud-signed-pair-account-restored-20260917` завершился
+**BUILD SUCCEEDED**, ошибки `No Accounts` больше нет. Apple выдала explicit
+Mac Team Provisioning Profile с нужным контейнером, Production/Development и
+development Push. Первоначальный `inspect_mac` отклонил его из-за дефекта
+нашего валидатора: `com.apple.developer.icloud-services` в реальном профиле
+равен строке `*`, а не массиву. Это allowlist профиля, не entitlement сборки
+([TN3125](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles)).
+
+Узкое исправление допускает эту форму **только** для services внутри profile.
+Подпись по-прежнему обязана содержать ровно `CloudKit`; контейнер, окружения,
+App ID/team, физическое устройство, срок, сертификат и права вложенных XPC
+не ослаблены. До исправления новая регрессия воспроизвела отказ для обеих
+платформ; после — **75 release + 41 preview PASS**. Проверяются также отказ
+расширенным правам подписи, чужому/wildcard-контейнеру, неверному окружению и
+отсутствующему разрешению сервиса.
+
+Текущие исходники:
+`ebf962416e84b75e4cd9560c355e16ae82b5c3d851d5f041de61ecb4d2f7a7ac`.
+`.build/cloud-profile-wildcard-20260917/proof.json` связывает guard-тесты и
+**полный реальный inspect_mac PASS** с этим валидатором. Mac bundle построен
+предыдущим probe из `ecd1b75a…`, а не пересобран после изменения Python guard;
+его manifest не менялся, Swift-исходники также не менялись. Проверены оба XPC,
+вложенные TeX/image executables, профиль и сертификат.
+
+Отдельный свежий physical-iPad Release build из `ebf96241…` и
+**inspect_ipad PASS**:
+`.build/cloud-signed-ipad-account-restored-20260917-r2/signing-probe.json`.
+Source maps до/после совпали. В обеих реальных подписях — ровно
+`iCloud.com.amirtlinov.notebook`, `CloudKit`, `Production`, development Push,
+прежние идентичности; iPad сохраняет собственную Keychain-группу. Первый iPad
+probe остановился до сборки по проверке занятого Xcode: диагностический скрипт
+использовал буквальный `/tmp`, тогда как штатный lock находится в
+`tempfile.gettempdir()`. Повтор использовал штатный путь; второго Xcode runner
+одновременно не запускалось.
+
+Эти probes проверяют **авторизацию, сборку и подпись**, но не создают release
+admission и не заменяют физическую UI/Pencil или cloud-only приёмку. Рабочие
+Mac/iPad приложения не устанавливались и не запускались, отправка тетради в
+iCloud не включалась. Локальные базы, идентичности и доверие сохранены.
+Сценарий раздельно выключенных устройств, квота/смена аккаунта и ранее
+указанная полная физическая приёмка остаются открытыми; GUI-207 — In Progress.

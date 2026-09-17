@@ -50,7 +50,10 @@ MCP. Обе подписи требуют общий `iCloud.com.amirtlinov.note
 Production environment; Push остаётся development для Apple Development
 подписи. Mac также проверяет embedded provisioning profile, Provisioning UDID
 (не Hardware UUID),
-срок и сертификат. [Контракт облака](cloud-delivery-contract.md) описывает
+срок и сертификат. Выданный Apple профиль может разрешать iCloud services
+строкой `*`: это allowlist профиля, а не право приложения. Подпись по-прежнему
+требует ровно `CloudKit`, а профиль — явно назначенный контейнер и разрешённые
+окружения. [Контракт облака](cloud-delivery-contract.md) описывает
 внешнее создание контейнера и публикацию schema; наличие кода не означает,
 что Apple уже выдала эти права. Чужие группы Keychain, неизвестные права, Simulator Mach-O, разные версии
 пары и изменение любого подписанного файла дают отказ.

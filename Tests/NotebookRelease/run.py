@@ -183,6 +183,64 @@ class PairCLI(preview.FakeCLI):
         return subprocess.CompletedProcess(argv, exit_code)
 
 
+class CloudRightsTests(unittest.TestCase):
+    def apple_profile(self, mac):
+        # Shape observed in Apple's automatic CloudKit provisioning profile.
+        return {**release.cloud_entitlements(mac),
+                "com.apple.developer.icloud-services": "*",
+                "com.apple.developer.icloud-container-environment": ["Production", "Development"]}
+
+    def test_apple_service_wildcard_authorizes_exact_cloudkit_signature(self):
+        for mac in (False, True):
+            with self.subTest(mac=mac):
+                release.validate_cloud_rights(release.cloud_entitlements(mac), self.apple_profile(mac), mac)
+
+    def test_explicit_service_allowlist_authorizes_exact_cloudkit_signature(self):
+        for mac in (False, True):
+            with self.subTest(mac=mac):
+                profile = self.apple_profile(mac)
+                profile["com.apple.developer.icloud-services"] = ["CloudKit", "CloudDocuments"]
+                release.validate_cloud_rights(release.cloud_entitlements(mac), profile, mac)
+
+    def test_profile_wildcard_never_expands_the_signed_app_rights(self):
+        for mac in (False, True):
+            claims = {
+                "com.apple.developer.icloud-services": ["*", ["*"], ["CloudKit", "CloudDocuments"], []],
+                "com.apple.developer.icloud-container-identifiers": [["*"], ["iCloud.foreign"]],
+                "com.apple.developer.icloud-container-environment": ["Development", "*"],
+                "com.apple.developer.aps-environment" if mac else "aps-environment": ["production", "*"],
+            }
+            for key, values in claims.items():
+                for value in values:
+                    with self.subTest(mac=mac, key=key, value=value), self.assertRaises(release.ReleaseError):
+                        signed = {**release.cloud_entitlements(mac), key: value}
+                        release.validate_cloud_rights(signed, self.apple_profile(mac), mac)
+
+    def test_service_wildcard_still_requires_explicit_container_and_environment_authority(self):
+        for mac in (False, True):
+            claims = {
+                "com.apple.developer.icloud-container-identifiers": ["*", ["*"], ["iCloud.foreign"], []],
+                "com.apple.developer.icloud-container-environment": ["Development", ["Development"], "*"],
+                "com.apple.developer.aps-environment" if mac else "aps-environment": ["production", "*"],
+            }
+            for key, values in claims.items():
+                for value in values:
+                    with self.subTest(mac=mac, key=key, value=value), self.assertRaises(release.ReleaseError):
+                        profile = {**self.apple_profile(mac), key: value}
+                        release.validate_cloud_rights(release.cloud_entitlements(mac), profile, mac)
+
+    def test_missing_or_wrong_service_authority_is_refused(self):
+        for mac in (False, True):
+            for value in (None, [], ["CloudDocuments"], "CloudKit", True):
+                with self.subTest(mac=mac, value=value), self.assertRaises(release.ReleaseError):
+                    profile = self.apple_profile(mac)
+                    if value is None:
+                        del profile["com.apple.developer.icloud-services"]
+                    else:
+                        profile["com.apple.developer.icloud-services"] = value
+                    release.validate_cloud_rights(release.cloud_entitlements(mac), profile, mac)
+
+
 class ReleaseTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="notebook-release-contract-")
