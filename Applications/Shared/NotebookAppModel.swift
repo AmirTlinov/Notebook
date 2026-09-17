@@ -778,7 +778,11 @@ final class NotebookAppModel {
   private var cueTask: Task<Void, Never>?
   private var pencilUndoHistory = PencilUndoHistory()
   private var graphicCommandTask: Task<Void, Never>?
-  var graphicCommandPending: Bool { graphicCommandTask != nil }
+  // Lift transfers its final draft to the accepted command. It is retired by
+  // a scene read at/after the durable cursor, not by lift or receipt delivery.
+  private(set) var graphicCommandPreview: NotebookElementManipulation?
+  @ObservationIgnored private var graphicCommandPreviewCursor: UInt64?
+  var graphicCommandPending: Bool { graphicCommandTask != nil || graphicCommandPreview != nil }
   private var inkUndoInProgress = false
   private var reservedDrawingCounters: [UUID: UInt64] = [:]
   typealias PageInkPreparation = @Sendable (PageDocument, PageInkMutation, VersionStamp) async throws -> PreparedPageInkChange
@@ -2452,6 +2456,7 @@ final class NotebookAppModel {
   /// reusable element ID. No late lift can commit a superseded contact.
   func beginElementManipulation(_ reference: EditableElementReference,
     kind: NotebookElementManipulation.Kind) -> UUID? {
+    if graphicElement(reference) != nil, graphicCommandPending { return nil }
     // A passive raster is selectable, but it is not a live manipulation owner.
     // Selection requests its ordinary scene admission; do not commit an
     // invisible drag while the installed cohort still owns baked pixels.
@@ -2493,9 +2498,8 @@ final class NotebookAppModel {
       if connection.start != original.start { patch["start"] = try? .encode(connection.start) }
       if connection.end != original.end { patch["end"] = try? .encode(connection.end) }
       if connection.bend != original.bend { patch["bend"] = .number(connection.bend) }
-      performGraphicOperation(.updateElement,reference:contact.reference,
-        values:["graphic":.object(["connection":.object(patch)])],summary:"Изменить связь")
-      return true
+      return performGraphicOperation(.updateElement, reference: contact.reference,
+        values: ["graphic": .object(["connection": .object(patch)])], summary: "Изменить связь", preview: contact)
     }
     return commitElementFrame(contact)
   }
@@ -2506,9 +2510,9 @@ final class NotebookAppModel {
     guard let identity = contact.identity else { return false }
     let frame = contact.frame, original = contact.original, actor = actorID
     if graphicElement(contact.reference) != nil {
-      performGraphicOperation(.updateElement, reference: contact.reference,
-        values: ["frame": (try? .encode(PageRect(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height))) ?? .null], summary: "Переместить фигуру")
-      return true
+      return performGraphicOperation(.updateElement, reference: contact.reference,
+        values: ["frame": (try? .encode(PageRect(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height))) ?? .null],
+        summary: "Переместить фигуру", preview: contact)
     }
     switch contact.reference {
     case .page(let pageID, let elementID):
@@ -2628,11 +2632,12 @@ final class NotebookAppModel {
       summary:"Изменить наконечник связи")
   }
 
+  @discardableResult
   private func performGraphicOperation(_ kind: CollaborationOperation.Kind, reference: EditableElementReference,
-    values: [String: JSONValue], summary: String) {
+    values: [String: JSONValue], summary: String, preview: NotebookElementManipulation? = nil) -> Bool {
     guard !graphicCommandPending else {
       if kind != .convertInkToElement { showCue("Предыдущее изменение ещё сохраняется") }
-      return
+      return false
     }
     let target: CollaborationTarget, id: String, expectedPage: AgentElement?, expectedSpatial: SpatialElement?
     switch reference {
@@ -2645,6 +2650,7 @@ final class NotebookAppModel {
         ? .init(kind: .cover, id: expectedSpatial!.surface.ownerID!, boardID: boardID) : .init(kind: .board, id: boardID)
     }
     let actor = actorID
+    graphicCommandPreview = preview
     graphicCommandTask = Task { [weak self] in
       guard let self else { return }
       defer { graphicCommandTask = nil }
@@ -2652,7 +2658,7 @@ final class NotebookAppModel {
         inputGate.performAfterIdle { continuation.resume() }
       }
       do {
-        let receipt = try await persistence.submit(publishesChanges: true) { store in
+        let (receipt, cursor) = try await persistence.submit(publishesChanges: true) { store in
           if let expectedPage, try store.readPageElement(pageID: target.id, elementID: id) != expectedPage {
             throw CollaborationError("revision_conflict", "Фигура изменилась до завершения жеста.")
           }
@@ -2661,15 +2667,26 @@ final class NotebookAppModel {
           }
           let revision = try store.targetContentRevision(target: target)
           let ink = kind == .convertInkToElement ? try store.inkRevision(on: target) : nil
-          return try store.applyNativeGraphicAction(.init(summary: summary,
+          let receipt = try store.applyNativeGraphicAction(.init(summary: summary,
             references: [.init(target: target, elementID: id, revision: revision)],
             expected: [.init(target: target, revision: revision, inkRevision: ink)],
             operations: [.init(kind: kind, target: target, id: id, values: values)]), actor: actor)
+          return (receipt, try store.currentChangeCursor())
         }
+        if graphicCommandPreview != nil { graphicCommandPreviewCursor = cursor }
         pencilUndoHistory.recordCommand(ownerID: target.id, actionID: receipt.id)
         reloadExternalChanges()
-      } catch { showCue(error.localizedDescription) }
+      } catch {
+        clearGraphicCommandPreview()
+        showCue(error.localizedDescription)
+      }
     }
+    return true
+  }
+
+  private func clearGraphicCommandPreview() {
+    graphicCommandPreview = nil
+    graphicCommandPreviewCursor = nil
   }
 
   func deleteElement(_ reference: EditableElementReference) {
@@ -2912,6 +2929,9 @@ final class NotebookAppModel {
         } catch {
           publicationFailure = error.localizedDescription
           persistenceFailure = error.localizedDescription
+          // A failed publication cannot masquerade as a still-pending write.
+          // Its durable command remains available to undo/reopen normally.
+          if graphicCommandPreviewCursor != nil { clearGraphicCommandPreview() }
           return
         }
       }
@@ -3869,6 +3889,9 @@ final class NotebookAppModel {
     documentEditingSessions = state.drafts
     admitDocumentReading(state.reading)
     presence = state.presence
+    if let cursor = graphicCommandPreviewCursor, state.header.cursor >= cursor {
+      clearGraphicCommandPreview()
+    }
     alignWorkspaceSelection()
     if case .page(let pageID, let elementID) = selectionSession.element,
       let page = pages[pageID], !page.elements.contains(where: { $0.id == elementID }) {

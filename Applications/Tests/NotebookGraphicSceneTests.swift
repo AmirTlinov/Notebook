@@ -97,10 +97,23 @@ import XCTest
     model.cancelElementManipulation(contact)
     XCTAssertEqual(model.graphicLayout(link),before)
     let finalContact = try XCTUnwrap(model.beginElementManipulation(node,kind:.move))
-    model.finishElementManipulation(finalContact,translation:.init(x:0,y:90))
+    XCTAssertTrue(model.finishElementManipulation(finalContact,translation:.init(x:0,y:90)))
+    XCTAssertNil(model.selectionSession.manipulation, "The lifted contact no longer owns input")
+    XCTAssertEqual(model.graphicCommandPreview?.id, finalContact)
+    XCTAssertEqual(model.graphicLayout(link), preview, "Lift cannot expose the old node or its old bound line")
+    XCTAssertEqual(try store.targetContentRevision(target:target), revision, "The accepted command has not run synchronously")
+    XCTAssertNil(model.beginElementManipulation(node,kind:.move), "A new drag cannot borrow the pre-commit source")
+    model.clearSelection()
+    model.cancelElementManipulation(finalContact)
+    let nextPencil = UUID()
+    XCTAssertTrue(model.inputGate.beginPencilAction(source:nextPencil))
+    XCTAssertEqual(model.graphicLayout(link), preview, "Selection, late cancellation and new Pencil cannot retract an accepted command")
+    model.inputGate.endPencilAction(source:nextPencil)
     let moved = await model.finishPendingPersistence(); XCTAssertTrue(moved)
     await model.reloadExternalChanges()?.value
     let actual = try XCTUnwrap(store.readGraphicResolution(target:target,elementID:id).layout)
+    XCTAssertNil(model.graphicCommandPreview, "The canonical scene has taken over the accepted draft")
+    XCTAssertEqual(model.graphicLayout(link),preview)
     XCTAssertEqual(actual,preview)
     let retained = try onBoard ? store.readSpatialElement(boardID:target.id,elementID:id)?.graphic
       : store.readPageElement(pageID:pageID,elementID:id)?.graphic
@@ -121,10 +134,15 @@ import XCTest
     await model.reloadExternalChanges()?.value
     XCTAssertEqual(model.graphicElement(link)?.connection?.end.binding?.elementID,"b")
     let bend = try XCTUnwrap(model.beginElementManipulation(link,kind:.bend))
-    model.finishElementManipulation(bend,translation:.init(x:0,y:70))
+    model.updateElementManipulation(bend,translation:.init(x:0,y:70))
+    let heldBend = try XCTUnwrap(model.graphicLayout(link))
+    XCTAssertTrue(model.finishElementManipulation(bend,translation:.init(x:0,y:70)))
+    XCTAssertEqual(model.graphicLayout(link),heldBend,"The curve and its handles do not snap back at lift")
     let bent = await model.finishPendingPersistence(); XCTAssertTrue(bent)
     await model.reloadExternalChanges()?.value
     XCTAssertGreaterThan(abs(model.graphicElement(link)?.connection?.bend ?? 0),50)
+    XCTAssertNil(model.graphicCommandPreview)
+    XCTAssertEqual(model.graphicLayout(link),heldBend)
     model.setGraphicLabel("1:2",reference:link)
     let labelled = await model.finishPendingPersistence(); XCTAssertTrue(labelled)
     await model.reloadExternalChanges()?.value

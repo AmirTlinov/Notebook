@@ -18,10 +18,17 @@ extension NotebookAppModel {
     return graph.binding(at:.init(x:contact.original.minX+p.x,y:contact.original.minY+p.y),
       origin:contact.worldOrigin ?? .zero,surface:surface,excluding:id,tolerance:18/max(0.001,presence?.camera.scale ?? 1))
   }
-  /// Canonical owners remain unchanged. Only the selected object's draft enters
-  /// this graph; its dependencies derive the same preview without SQL writes.
+  /// One geometry draft, first owned by a contact, then by its accepted command.
+  /// A later material contact or a selection change cannot erase that command.
+  var graphicPreviewManipulation: NotebookElementManipulation? {
+    if let contact = selectionSession.manipulation, graphicElement(contact.reference) != nil { return contact }
+    return graphicCommandPreview
+  }
+
+  /// Canonical owners remain unchanged. Dependencies derive the same preview
+  /// through lift and durable publication, without per-sample SQL writes.
   func graphicPreviewFrames() -> [String: PageRect] {
-    guard let contact = selectionSession.manipulation, graphicElement(contact.reference) != nil else { return [:] }
+    guard let contact = graphicPreviewManipulation, graphicElement(contact.reference) != nil else { return [:] }
     let id: String
     switch contact.reference { case .page(_, let value), .spatial(_, let value): id = value }
     let frame = contact.frame
@@ -30,7 +37,7 @@ extension NotebookAppModel {
 
   func graphicGraph(page: PageDocument, preview: Bool = true) -> NotebookGraphicGraph {
     let usesPreview: Bool
-    if case .page(let pageID, _) = selectionSession.manipulation?.reference { usesPreview = preview && pageID == page.id }
+    if case .page(let pageID, _) = graphicPreviewManipulation?.reference { usesPreview = preview && pageID == page.id }
     else { usesPreview = false }
     return page.graphicGraph(frames: usesPreview ? graphicPreviewFrames() : [:],
       connections: usesPreview ? graphicPreviewConnections() : [:])
@@ -48,7 +55,7 @@ extension NotebookAppModel {
   }
 
   func graphicPreviewConnections() -> [String: NotebookGraphicConnection] {
-    guard let contact = selectionSession.manipulation, let connection = contact.connection else { return [:] }
+    guard let contact = graphicPreviewManipulation, let connection = contact.connection else { return [:] }
     switch contact.reference { case .page(_,let id), .spatial(_,let id): return [id:connection] }
   }
 }

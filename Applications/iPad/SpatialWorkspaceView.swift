@@ -743,6 +743,7 @@ struct SpatialWorkspaceView: View {
     let selection: EditableElementReference?
     let selectionID: UUID
     let manipulation: NotebookElementManipulation?
+    let graphicCommandPreview: NotebookElementManipulation?
   }
 
   private func boardElements(_ elements: [SpatialElement], presence: SessionPresence,
@@ -750,7 +751,8 @@ struct SpatialWorkspaceView: View {
     let selection = model.selectionSession.editingElement
     let revision = ElementPlaneRevision(cohortID: cohort?.paintID, generation: model.sceneIndex?.generationID,
       focus: model.interactiveElementFocus, elements: elements,
-      selection: selection, selectionID: model.selectionSession.id, manipulation: model.selectionSession.manipulation)
+      selection: selection, selectionID: model.selectionSession.id, manipulation: model.selectionSession.manipulation,
+      graphicCommandPreview: model.graphicCommandPreview)
     return SceneCameraPlane(presence: presence, revision: revision, reanchorsOnRevision: false,
       isCameraActive: model.presencePhase == .active || cameraGesture != nil || panStart != nil || settling,
       installation: cohort?.installation(for: .elements),
@@ -873,6 +875,7 @@ struct SpatialWorkspaceView: View {
       if let id, !spatialInkSurfaces.isRetired(.cover(id)) { pins.insert(.item(id)) }
     }
     if case .spatial(let boardID, let id) = model.selectionSession.element, boardID == presence.boardID { pins.insert(.element(id)) }
+    if case .spatial(let boardID, let id) = model.graphicCommandPreview?.reference, boardID == presence.boardID { pins.insert(.element(id)) }
     if let id = editingTextID(on: presence.boardID) { pins.insert(.element(id)) }
     if case .board(let boardID, let elementID) = model.interactiveElementFocus {
       pins.insert(.element(elementID))
