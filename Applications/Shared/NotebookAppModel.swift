@@ -859,7 +859,12 @@ final class NotebookAppModel {
   @ObservationIgnored private var inputSequence: UInt64 = 0
   private(set) var inputIsActive = false
   private(set) var peerInputIsActive = false { didSet { if !peerInputIsActive { publishPreparedSceneIfPossible() } } }
-  var permitsBackgroundPreparation: Bool { !isStopped && !inputIsActive && !peerInputIsActive && presencePhase == .settled }
+  // Mounted view tasks can run before start() registers its writer. Until the
+  // initial workspace is published, a read must not bootstrap SQLite beside it.
+  // This admission also changes the history task's key when startup completes.
+  var permitsBackgroundPreparation: Bool {
+    loadState == .ready && !isStopped && !inputIsActive && !peerInputIsActive && presencePhase == .settled
+  }
 
   /// Moving the camera must not leave newly visible material waiting for lift.
   /// It can project a new immutable scene without replacing an accepted Pencil
