@@ -41,7 +41,10 @@ final class NotebookAppModel {
   static let initialPageID = UUID(
     uuidString: "7E7A0000-0000-4000-8000-000000000002"
   )!
-  static let defaultPageSize = PageSize(width: 834, height: 1_194)
+  static let defaultPageSize = PageSize(
+    width: WorkspaceItemGeometry.notebook.width,
+    height: WorkspaceItemGeometry.notebook.height
+  )
 
   private(set) var loadState: LoadState = .loading
   private(set) var workspace: WorkspaceIndex? {
@@ -1211,7 +1214,7 @@ final class NotebookAppModel {
     presence?.mode == .page && (presence?.openProgress ?? 0) >= 0.999
   }
 
-  func start(pageSize: PageSize) async {
+  func start(pageSize: PageSize, viewport: SpatialPoint? = nil) async {
     guard !isStopped else { return }
     if let startupTask { await startupTask.value; return }
     guard !started else { return }
@@ -1219,23 +1222,24 @@ final class NotebookAppModel {
     self.pageSize = pageSize
     let startup = Task<Void, Never> { [weak self] in
       guard let self else { return }
-      await loadInitialState(pageSize: pageSize)
+      await loadInitialState(pageSize: pageSize,
+        viewport: viewport ?? .init(x: pageSize.width, y: pageSize.height))
     }
     startupTask = startup
     await startup.value
     startupTask = nil
   }
 
-  private func loadInitialState(pageSize: PageSize) async {
+  private func loadInitialState(pageSize: PageSize, viewport: SpatialPoint) async {
     do {
       let actor = actorID
       let notebookID = Self.initialNotebookID, pageID = Self.initialPageID
       let stored = try await persistence.submit { store in
         try NotebookSceneState.start(store: store, actor: actor, pageSize: pageSize,
-          notebookID: notebookID, pageID: pageID)
+          notebookID: notebookID, pageID: pageID, viewport: viewport)
       }
       acceptSceneState(stored)
-      presence = settledPresence(from: stored.presence, viewport: .init(x: pageSize.width, y: pageSize.height))
+      presence = settledPresence(from: stored.presence, viewport: viewport)
       if let presence {
         let selection = presence.selectedItemID.flatMap { workspace?.item(id: $0) }
           ?? stored.workspace.selectedItem

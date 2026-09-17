@@ -3,6 +3,7 @@ import SwiftUI
 
 #if os(iOS)
 import UIKit
+import OSLog
 
 /// Installed paper owns this evidence. A cached raster, a prepared neighbour
 /// or a former mount cannot acknowledge a newly opened page.
@@ -79,6 +80,10 @@ final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
   func update(model: NotebookAppModel, page: PageDocument, isCurrent: Bool,
     isVisible: Bool, isReady: Bool, activity: PageTurnActivity?) {
     guard !retired else { return }
+    if source?.id != page.id {
+      Logger(subsystem: "com.amirtlinov.notebook", category: "PaperGeometry")
+        .notice("Mounted paper size: \(page.size.width) x \(page.size.height)")
+    }
     if self.model !== model {
       self.model?.pagePresentations.remove(self)
       self.model?.unregisterScenePresentation(self)

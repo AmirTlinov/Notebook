@@ -65,10 +65,8 @@ struct NotebookRootView: View {
       }
       .task {
           await model.start(
-            pageSize: PageSize(
-              width: geometry.size.width,
-              height: geometry.size.height
-            )
+            pageSize: NotebookAppModel.defaultPageSize,
+            viewport: .init(x: geometry.size.width, y: geometry.size.height)
           )
       }
     }

@@ -80,6 +80,7 @@ final class PagePresentationTests: XCTestCase {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("page-visibility-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: .init(width: 100, height: 100))
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first { $0.isKeyWindow }, window = UIWindow(windowScene: scene)
     let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
@@ -89,14 +90,23 @@ final class PagePresentationTests: XCTestCase {
     let view = PagePresentationNativeView(), page = PageDocument(size: .init(width: 100, height: 100), actor: UUID())
     view.frame = .init(x: -50, y: 0, width: 100, height: 100); clip.addSubview(view)
     var region: CGRect?
-    view.onVisibleRegion = { region = $0 }
+    let initialRegion = expectation(description: "First installed physical clip")
+    view.onVisibleRegion = {
+      region = $0
+      if $0 == CGRect(x: 50, y: 0, width: 50, height: 100) { initialRegion.fulfill() }
+    }
     view.update(model: model, page: page, isCurrent: true, isVisible: true, isReady: false, activity: nil)
     model.pagePresentations.cameraDidChange()
-    await Task.yield(); await Task.yield()
+    await fulfillment(of: [initialRegion], timeout: 3)
     XCTAssertEqual(region, CGRect(x: 50, y: 0, width: 50, height: 100), "Program demand is visible geometry, not whole-page readiness")
+    let movedRegion = expectation(description: "Moved physical clip")
+    view.onVisibleRegion = {
+      region = $0
+      if $0 == CGRect(x: 0, y: 0, width: 50, height: 100) { movedRegion.fulfill() }
+    }
     view.frame.origin.x = 0
     model.pagePresentations.cameraDidChange()
-    await Task.yield(); await Task.yield()
+    await fulfillment(of: [movedRegion], timeout: 3)
     XCTAssertEqual(region, CGRect(x: 0, y: 0, width: 50, height: 100))
     view.uninstall()
   }

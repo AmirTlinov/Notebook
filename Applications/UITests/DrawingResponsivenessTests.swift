@@ -1961,6 +1961,65 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(app.state, .runningForeground)
   }
 
+  func testNotebookPageGeometrySurvivesRepeatedForwardAndReverseTurns() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures"]
+    launchPortraitFixture(app)
+    let surface = app.otherElements["page-turn-surface"]
+    XCTAssertTrue(surface.waitForExistence(timeout: 5))
+    let paper = app.otherElements["paper-input"].firstMatch
+    XCTAssertTrue(paper.waitForExistence(timeout: 5))
+    let originalSurface = surface.frame, originalPaper = paper.frame
+    let originalInk = paper.value as? String
+    XCTAssertGreaterThan(originalSurface.height, originalSurface.width)
+    for turn in 0..<20 {
+      let forward = turn.isMultiple(of: 2), page = forward ? 2 : 1
+      if forward { surface.swipeLeft() } else { surface.swipeRight() }
+      wait(for: [XCTNSPredicateExpectation(
+        predicate: NSPredicate(format: "value BEGINSWITH %@", "Страница \(page) из "), object: surface
+      )], timeout: 5)
+      XCTAssertTrue(paper.waitForExistence(timeout: 5))
+      let attachment = XCTAttachment(screenshot: app.screenshot())
+      attachment.name = "page-geometry-turn-\(turn + 1)"; attachment.lifetime = .keepAlways; add(attachment)
+      XCTAssertEqual(surface.frame.width, originalSurface.width, accuracy: 1)
+      XCTAssertEqual(surface.frame.height, originalSurface.height, accuracy: 1)
+      XCTAssertEqual(paper.frame, originalPaper, "The real Pencil surface must keep its physical paper rectangle after turn \(turn + 1)")
+      if !forward { XCTAssertEqual(paper.value as? String, originalInk) }
+    }
+  }
+
+  func testNotebookPaperKeepsItsBoundsAfterRotatingAndTurningBack() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    defer { XCUIDevice.shared.orientation = .portrait }
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures"]
+    launchPortraitFixture(app)
+    let surface = app.otherElements["page-turn-surface"]
+    let paper = app.otherElements["paper-input"].firstMatch
+    XCTAssertTrue(paper.waitForExistence(timeout: 5))
+    let originalPaper = paper.frame
+    for orientation in [UIDeviceOrientation.landscapeLeft, .portrait, .landscapeRight, .portrait] {
+      XCUIDevice.shared.orientation = orientation
+      wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        (app.frame.width > app.frame.height) == orientation.isLandscape
+      }, object: nil)], timeout: 5)
+      for page in [2, 1] {
+        if page == 2 { surface.swipeLeft() } else { surface.swipeRight() }
+        wait(for: [XCTNSPredicateExpectation(
+          predicate: NSPredicate(format: "value BEGINSWITH %@", "Страница \(page) из "), object: surface
+        )], timeout: 5)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "paper-rotated-\(orientation.rawValue)-page-\(page)"
+        attachment.lifetime = .keepAlways; add(attachment)
+        XCTAssertEqual(paper.frame.width / paper.frame.height, 834.0 / 1194.0, accuracy: 0.002)
+        if orientation == .portrait { XCTAssertEqual(paper.frame, originalPaper) }
+      }
+    }
+  }
+
   func testNotebookAcceptsTheNextTurnAsSoonAsThePreviousSheetLands() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
