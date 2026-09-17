@@ -585,8 +585,10 @@ final class NotebookAppModel {
   let presentationPlayer = NotebookPresentationPlayer()
   let presentationRelay = NotebookPresentationRelay()
   var highlightedReference: CollaborationReference? { selectionSession.highlightedReference }
-  private(set) var pendingAgentHighlights = Set<UUID>()
+  static let agentHighlightDuration = 1.4
+  private(set) var agentHighlightStarts: [UUID: Date] = [:]
   private var hasReadCollaborationActions = false
+  @ObservationIgnored private var agentHighlightTask: Task<Void, Never>?
   private var referenceHighlightTask: Task<Void, Never>?
   private var collaborationUndoTask: Task<Void, Never>?
   private var collaborationReadSnapshot: CollaborationReadSnapshot?
@@ -2540,7 +2542,6 @@ final class NotebookAppModel {
     guard selectionSession.element == reference, inputGate.beginFingerSequence() != nil,
       let geometry = elementGeometry(reference) else { return nil }
     let connection = graphicElement(reference)?.connection
-    let kind: NotebookElementManipulation.Kind = kind == .move && connection?.bindings.isEmpty == false ? .bend : kind
     cancelElementManipulation()
     let contact = NotebookElementManipulation(reference: reference, kind: kind,
       frame: geometry.frame, bounds: geometry.bounds, identity: geometry.identity, worldOrigin: geometry.worldOrigin,
@@ -2553,8 +2554,9 @@ final class NotebookAppModel {
 
   func updateElementManipulation(_ id: UUID, translation: SpatialPoint) {
     guard selectionSession.manipulation?.id == id else { return }
+    let previous = manipulatedBindingTarget?.elementID
     selectionSession.manipulation?.update(translation: .init(x: translation.x, y: translation.y))
-    selectionSession.manipulation?.bindEndpoint(manipulatedEndpointBinding())
+    selectionSession.manipulation?.bindEndpoint(manipulatedEndpointBinding(retaining:previous))
   }
 
   @discardableResult
@@ -2573,8 +2575,12 @@ final class NotebookAppModel {
       if connection.start != original.start { patch["start"] = try? .encode(connection.start) }
       if connection.end != original.end { patch["end"] = try? .encode(connection.end) }
       if connection.bend != original.bend { patch["bend"] = .number(connection.bend) }
+      var values: [String:JSONValue] = ["graphic": .object(["connection": .object(patch)])]
+      if contact.frame != contact.original {
+        values["frame"] = try? .encode(PageRect(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height))
+      }
       return performGraphicOperation(.updateElement, reference: contact.reference,
-        values: ["graphic": .object(["connection": .object(patch)])], summary: "Изменить связь", preview: contact)
+        values: values, summary: "Изменить связь", preview: contact)
     }
     return commitElementFrame(contact)
   }
@@ -3750,7 +3756,28 @@ final class NotebookAppModel {
     }
   }
 
-  func finishAgentHighlight(_ actionID: UUID) { pendingAgentHighlights.remove(actionID) }
+  /// Authorship comes from the receipt, not from the fact that a transaction
+  /// appeared in the journal. Expiry belongs to the model, not a remounted view.
+  func updateAgentHighlights(_ actions: [NotebookActionReadModel]) {
+    let now = Date(), active = Set(actions.filter { $0.author == .agent && $0.undo == nil }.map(\.id))
+    agentHighlightStarts = agentHighlightStarts.filter { active.contains($0.key) && now.timeIntervalSince($0.value) < Self.agentHighlightDuration }
+    if hasReadCollaborationActions {
+      let known = Set(collaborationActions.map(\.id))
+      for id in active.subtracting(known) where agentHighlightStarts[id] == nil { agentHighlightStarts[id] = now }
+    }
+    hasReadCollaborationActions = true
+    guard agentHighlightTask == nil, !agentHighlightStarts.isEmpty else { return }
+    agentHighlightTask = Task { [weak self] in
+      defer { self?.agentHighlightTask = nil }
+      while !Task.isCancelled, let next = self?.agentHighlightStarts.values.min() {
+        let delay = max(0,next.addingTimeInterval(Self.agentHighlightDuration).timeIntervalSinceNow)
+        do { try await Task.sleep(for:.seconds(delay)) } catch { return }
+        guard let self else { return }
+        let now = Date()
+        agentHighlightStarts = agentHighlightStarts.filter { now.timeIntervalSince($0.value) < Self.agentHighlightDuration }
+      }
+    }
+  }
 
   func undoCollaboration(_ id: UUID) {
     guard collaborationUndoTask == nil else { return }
@@ -4028,12 +4055,7 @@ final class NotebookAppModel {
 
   private func acceptCollaborationMetadata(actions: [NotebookActionReadModel], contexts: SharedContextDirectory,
     delivery: [DeviceActionReceipt]) {
-    if hasReadCollaborationActions {
-      let known = Set(collaborationActions.map(\.id))
-      pendingAgentHighlights.formUnion(actions.filter { !known.contains($0.id) && $0.undo == nil }.map(\.id))
-      pendingAgentHighlights.formIntersection(actions.filter { $0.undo == nil }.map(\.id))
-    }
-    hasReadCollaborationActions = true
+    updateAgentHighlights(actions)
     if collaborationActions != actions { collaborationActions = actions }
     var prepared = contexts.contexts
     if let selected = contexts.selectedContext, !prepared.contains(where: { $0.id == selected.id }) {
@@ -4232,7 +4254,8 @@ final class NotebookAppModel {
       collaborationReadTask?.cancel()
       if let task = collaborationReadTask { _ = await task.result }
       collaborationReadTask = nil
-      pendingAgentHighlights.removeAll(); referenceHighlightTask?.cancel(); cueTask?.cancel()
+      agentHighlightTask?.cancel(); agentHighlightTask = nil; agentHighlightStarts.removeAll()
+      referenceHighlightTask?.cancel(); cueTask?.cancel()
       if let task = collaborationUndoTask { await task.value }
       await compositionTiles.stop()
       let saved = await persistence.flush()

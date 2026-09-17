@@ -1,27 +1,32 @@
 import Foundation
 import NotebookCore
 
-enum NotebookElementCorner: String, CaseIterable, Sendable {
-  case topLeading, topTrailing, bottomLeading, bottomTrailing
-  var leading: Bool { self == .topLeading || self == .bottomLeading }
-  var top: Bool { self == .topLeading || self == .topTrailing }
+enum NotebookElementResizeHandle: String, CaseIterable, Sendable {
+  case topLeading, topTrailing, bottomLeading, bottomTrailing, topCenter, bottomCenter, leadingCenter, trailingCenter
+  var leading: Bool { self == .topLeading || self == .bottomLeading || self == .leadingCenter }
+  var top: Bool { self == .topLeading || self == .topTrailing || self == .topCenter }
+  var changesWidth: Bool { self != .topCenter && self != .bottomCenter }
+  var changesHeight: Bool { self != .leadingCenter && self != .trailingCenter }
   var label: String {
     switch self {
-    case .topLeading: "верхний левый"
-    case .topTrailing: "верхний правый"
-    case .bottomLeading: "нижний левый"
-    case .bottomTrailing: "нижний правый"
+    case .topLeading: "верхний левый угол"
+    case .topTrailing: "верхний правый угол"
+    case .bottomLeading: "нижний левый угол"
+    case .bottomTrailing: "нижний правый угол"
+    case .topCenter: "верхний край"; case .bottomCenter: "нижний край"
+    case .leadingCenter: "левый край"; case .trailingCenter: "правый край"
     }
   }
   func point(in frame: CGRect) -> CGPoint {
-    .init(x: leading ? frame.minX : frame.maxX, y: top ? frame.minY : frame.maxY)
+    .init(x: changesWidth ? (leading ? frame.minX : frame.maxX) : frame.midX,
+      y: changesHeight ? (top ? frame.minY : frame.maxY) : frame.midY)
   }
 }
 
 /// One accepted contact, anchored to the physical frame it actually touched.
 /// The opposite corner never moves, even when a page edge or minimum is reached.
 struct NotebookElementManipulation: Equatable, Sendable {
-  enum Kind: Equatable, Sendable { case move, resize(NotebookElementCorner), endpoint(NotebookGraphicConnection.Terminal), bend }
+  enum Kind: Equatable, Sendable { case move, resize(NotebookElementResizeHandle), endpoint(NotebookGraphicConnection.Terminal), bend }
   let id = UUID()
   let reference: EditableElementReference
   let kind: Kind
@@ -49,18 +54,34 @@ struct NotebookElementManipulation: Equatable, Sendable {
       let x = bounds.map { min(max(original.minX + translation.x, $0.minX), $0.maxX - original.width) } ?? (original.minX + translation.x)
       let y = bounds.map { min(max(original.minY + translation.y, $0.minY), $0.maxY - original.height) } ?? (original.minY + translation.y)
       frame = .init(x: x, y: y, width: original.width, height: original.height)
+      if var value = originalConnection, !value.bindings.isEmpty, let layout = originalLayout {
+        // Dragging the body translates it, never secretly bends it. Detach
+        // from the visible terminals, not stale fallback points in the record.
+        if frame == original { connection = originalConnection; return }
+        func point(_ p: SpatialPoint) -> SpatialPoint {
+          .init(x:layout.frame.x+p.x-original.minX,y:layout.frame.y+p.y-original.minY)
+        }
+        value.start = .init(point:point(layout.start)); value.end = .init(point:point(layout.end))
+        let middleIndex = layout.curves.count/2
+        let midpoint = layout.curves[middleIndex].point(at:layout.curves.count.isMultiple(of:2) ? 0 : 0.5)
+        let dx = layout.end.x-layout.start.x, dy = layout.end.y-layout.start.y, length = max(0.001,hypot(dx,dy))
+        value.bend = (-dy*(midpoint.x-(layout.start.x+layout.end.x)/2)+dx*(midpoint.y-(layout.start.y+layout.end.y)/2))/length
+        connection = value
+      }
     case .resize(let corner):
       let minimumWidth = min(44, original.width), minimumHeight = min(44, original.height)
       let widthLimit = max(2048, original.width), heightLimit = max(2048, original.height)
       let x: CGFloat, y: CGFloat, right: CGFloat, bottom: CGFloat
-      if corner.leading {
+      if !corner.changesWidth { x = original.minX; right = original.maxX }
+      else if corner.leading {
         right = original.maxX
         x = min(original.maxX - minimumWidth, max(bounds?.minX ?? (original.maxX - widthLimit), original.minX + translation.x))
       } else {
         x = original.minX
         right = max(x + minimumWidth, min(bounds?.maxX ?? (x + widthLimit), original.maxX + translation.x))
       }
-      if corner.top {
+      if !corner.changesHeight { y = original.minY; bottom = original.maxY }
+      else if corner.top {
         bottom = original.maxY
         y = min(original.maxY - minimumHeight, max(bounds?.minY ?? (original.maxY - heightLimit), original.minY + translation.y))
       } else {

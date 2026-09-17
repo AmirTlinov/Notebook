@@ -259,6 +259,24 @@ import XCTest
     let styled = await model.finishPendingPersistence(); XCTAssertTrue(styled)
     await model.reloadExternalChanges()?.value
     XCTAssertEqual(model.graphicElement(link)?.style.dash,.dashed)
+    let beforeMove = try XCTUnwrap(model.graphicLayout(link))
+    let boundConnection = model.graphicElement(link)?.connection
+    let move = try XCTUnwrap(model.beginElementManipulation(link,kind:.move))
+    XCTAssertEqual(model.selectionSession.manipulation?.kind,.move,"Body drag cannot silently become bending")
+    model.updateElementManipulation(move,translation:.init(x:35,y:22))
+    let translated = try XCTUnwrap(model.graphicLayout(link))
+    XCTAssertEqual(translated.frame.x+translated.start.x,beforeMove.frame.x+beforeMove.start.x+35,accuracy:0.001)
+    XCTAssertEqual(translated.frame.y+translated.end.y,beforeMove.frame.y+beforeMove.end.y+22,accuracy:0.001)
+    XCTAssertTrue(model.selectionSession.manipulation?.connection?.bindings.isEmpty == true)
+    XCTAssertTrue(model.finishElementManipulation(move,translation:.init(x:35,y:22)))
+    let movedLink = await model.finishPendingPersistence(); XCTAssertTrue(movedLink)
+    await model.reloadExternalChanges()?.value
+    XCTAssertEqual(model.graphicLayout(link),translated,"Detached endpoints and frame commit together")
+    model.undoLastSurfaceAction()
+    let restoredLink = await model.finishPendingPersistence(); XCTAssertTrue(restoredLink)
+    await model.reloadExternalChanges()?.value
+    XCTAssertEqual(model.graphicElement(link)?.connection,boundConnection)
+    XCTAssertEqual(model.graphicLayout(link),beforeMove)
     let finalLayout = try XCTUnwrap(store.readGraphicResolution(target:target,elementID:id).layout)
     XCTAssertEqual(model.presence?.camera,presence.camera)
     let image = UIGraphicsImageRenderer(bounds:window.bounds).image { _ in window.drawHierarchy(in:window.bounds,afterScreenUpdates:true) }

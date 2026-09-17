@@ -271,3 +271,27 @@ func graphicPolygonGeometryContract() throws {
     #expect(!graphic.isValid)
   }
 }
+
+@Test("Привязка выбирает контур или внутренность настоящей фигуры, не только центр или box")
+func graphicBindingInteriorAndEdgeStability() throws {
+  let surface = SurfaceID.page(UUID())
+  let outer = NotebookGraphicGraph.Node(id:"outer",graphic:.init(shape:.rectangle),
+    frame:.init(x:0,y:0,width:900,height:900),surface:surface,shown:true)
+  for shape in [NotebookGraphic.Shape.ellipse,.rectangle,.triangle,.diamond] {
+    let inner = NotebookGraphicGraph.Node(id:"inner",graphic:.init(shape:shape),
+      frame:.init(x:100,y:100,width:200,height:200),surface:surface,shown:true)
+    let graph = NotebookGraphicGraph([inner,outer])
+    let binding = try #require(graph.binding(at:.init(x:220,y:210),surface:surface,tolerance:12))
+    #expect(binding.elementID == "inner"); #expect(binding.isPrecise); #expect(!binding.isExact)
+    #expect(abs(binding.normalizedAnchor.x-0.6) < 0.00001)
+    #expect(abs(binding.normalizedAnchor.y-0.55) < 0.00001)
+  }
+  let diamond = NotebookGraphicGraph.Node(id:"diamond",graphic:.init(shape:.diamond),
+    frame:.init(x:100,y:100,width:200,height:200),surface:surface,shown:true)
+  let graph = NotebookGraphicGraph([diamond])
+  #expect(graph.binding(at:.init(x:100,y:100),surface:surface,tolerance:12) == nil)
+  #expect(graph.binding(at:.init(x:316,y:200),surface:surface,tolerance:12) == nil)
+  let held = try #require(graph.binding(at:.init(x:316,y:200),surface:surface,tolerance:12,retaining:"diamond"))
+  #expect(held.isExact); #expect(held.normalizedAnchor == .init(x:1,y:0.5))
+  #expect(graph.binding(at:.init(x:321,y:200),surface:surface,tolerance:12,retaining:"diamond") == nil)
+}

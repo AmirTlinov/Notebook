@@ -77,6 +77,7 @@
         fixtureName = (nativeGraphicPage ? "NativeGraphicPage" : "NativeGraphicBoard")
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-connector") ? "Connector" : "")
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-dense") ? "Dense" : "")
+          + (ProcessInfo.processInfo.arguments.contains("--notebook-native-polygons") ? "Polygons" : "")
       } else if ProcessInfo.processInfo.arguments.contains(penPersistenceArgument) {
         fixtureName = "PenPersistence"
       } else if let materialCount {
@@ -545,9 +546,10 @@
         _ = after.moveItem(index.selectedItemID, in: index.rootBoardID, to: .init(x: 8_000, y: 8_000), actor: actor)
         _ = try store.saveBoardEdits(before: before, after: after)
       }
+      let polygons = ProcessInfo.processInfo.arguments.contains("--notebook-native-polygons")
       var node: [String: JSONValue] = ["kind": .string("graphic"), "source": .string(""),
-        "frame": try .encode(PageRect(x: onPage ? 80 : 0, y: onPage ? 240 : 0, width: 200, height: 160)),
-        "graphic": try .encode(NotebookGraphic(label: "Узел +"))]
+        "frame": try .encode(PageRect(x: onPage ? 80 : 0, y: onPage ? 240 : 0, width: polygons ? 40 : 200, height: polygons ? 32 : 160)),
+        "graphic": try .encode(polygons ? NotebookGraphic(shape:.triangle) : NotebookGraphic(label: "Узел +"))]
       var program: [String: JSONValue] = ["kind": .string("web"), "source": .string("Live neighbour"),
         "frame": try .encode(PageRect(x: onPage ? 420 : 0, y: onPage ? 250 : 0, width: 280, height: 220)),
         "html": .string("<button aria-label='Graphic scene counter'>Add</button><output id='count'></output><input aria-label='Graphic scene draft' value='seed'><p id='runtime'></p>"),
@@ -565,7 +567,7 @@
       if ProcessInfo.processInfo.arguments.contains("--notebook-native-connector") {
         var second = node
         second["frame"] = try .encode(PageRect(x:onPage ? 100 : 20,y:onPage ? 570 : 330,width:160,height:140))
-        second["graphic"] = try .encode(NotebookGraphic(label:"Узел −"))
+        second["graphic"] = try .encode(polygons ? NotebookGraphic(shape:.diamond) : NotebookGraphic(label:"Узел −"))
         var link = node
         link["frame"] = try .encode(PageRect(x:onPage ? 180 : 100,y:onPage ? 400 : 160,width:1,height:170))
         link["graphic"] = try .encode(NotebookGraphic(shape:.connector,label:"1:2",connection:.init(

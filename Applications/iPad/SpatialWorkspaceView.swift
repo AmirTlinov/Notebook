@@ -214,6 +214,7 @@ struct SpatialWorkspaceView: View {
           itemSelectionControl(presence: presence, viewport: viewport)
 
         NotebookAttentionMarks(presence:presence)
+        NotebookGraphicBindingHint(presence:presence)
         NotebookPresentationOverlay(player: model.presentationPlayer, presence: presence,
           cameraIsActive: model.presencePhase == .active)
         if let reference = model.selectionSession.editingElement,

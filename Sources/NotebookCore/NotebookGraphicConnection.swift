@@ -153,28 +153,49 @@ public struct NotebookGraphicGraph: Sendable {
   public init(_ nodes: [Node]) {
     self.nodes = Dictionary(nodes.map { (collaborationIdentity($0.id), $0) }, uniquingKeysWith: { first, _ in first })
   }
-  /// Contours do not magnetize their empty interior. Prefer the nearest small
-  /// node; an ambiguous overlapping pair remains a free endpoint.
+  /// The whole closed node is a binding target; empty bounding-box corners are
+  /// not. Prefer the innermost target and retain it at its edge during a drag.
   public func binding(at point: SpatialPoint, origin: WorldPoint = .zero, surface: SurfaceID,
-    excluding id: String? = nil, tolerance: Double) -> NotebookGraphicConnection.Binding? {
-    var candidates: [(Node, Double)] = []
+    excluding id: String? = nil, tolerance: Double, retaining retainedID: String? = nil) -> NotebookGraphicConnection.Binding? {
+    var candidates: [(node: Node, distance: Double, inside: Bool, point: SpatialPoint)] = []
     for node in nodes.values where node.shown && node.graphic.shape != .connector && node.surface == surface && node.id != id {
       let delta = origin.delta(to:node.origin), frame = node.frame
-      let x = point.x-delta.x-frame.x-frame.width/2, y = point.y-delta.y-frame.y-frame.height/2
-      let edge = NotebookGraphicGeometry.outlineDistance(node.graphic,width:frame.width,height:frame.height,
-        x:x+frame.width/2,y:y+frame.height/2), center = hypot(x,y)
-      guard edge <= tolerance || center <= tolerance else { continue }
-      candidates.append((node,min(edge,center)))
+      let p = SpatialPoint(x:point.x-delta.x-frame.x,y:point.y-delta.y-frame.y)
+      let edge = NotebookGraphicGeometry.outlineDistance(node.graphic,width:frame.width,height:frame.height,x:p.x,y:p.y)
+      let inside = NotebookGraphicGeometry.containsInterior(node.graphic,width:frame.width,height:frame.height,x:p.x,y:p.y)
+      guard inside || edge <= tolerance*(node.id == retainedID ? 1.5 : 1) else { continue }
+      candidates.append((node,edge,inside,p))
     }
-    if let nearest = candidates.map(\.1).min() { candidates.removeAll { $0.1 > nearest+tolerance/4 } }
     candidates.sort {
-      let a = $0.0.frame.width*$0.0.frame.height, b = $1.0.frame.width*$1.0.frame.height
-      return a == b ? $0.0.id < $1.0.id : a < b
+      if $0.inside != $1.inside { return $0.inside }
+      if $0.inside {
+        let a = $0.node.frame.width*$0.node.frame.height, b = $1.node.frame.width*$1.node.frame.height
+        if a != b { return a < b }
+      }
+      if ($0.node.id == retainedID) != ($1.node.id == retainedID) { return $0.node.id == retainedID }
+      if $0.distance != $1.distance { return $0.distance < $1.distance }
+      return $0.node.id < $1.node.id
     }
-    guard let first = candidates.first else { return nil }
-    if candidates.count > 1, abs(candidates[1].1-first.1) < tolerance/4,
-      candidates[1].0.frame.width*candidates[1].0.frame.height < first.0.frame.width*first.0.frame.height*1.25 { return nil }
-    return .init(elementID:first.0.id,normalizedAnchor:.init(x:0.5,y:0.5),isExact:false,isPrecise:false)
+    guard let chosen = candidates.first else { return nil }
+    let node = chosen.node, frame = node.frame
+    // Inside a node, aim through the picked point and terminate on its contour.
+    // Outside, target the contour itself so a thin edge never becomes a center jump.
+    var anchor = chosen.point
+    if !chosen.inside {
+      if let vertices = NotebookGraphicGeometry.polygon(node.graphic) {
+        anchor = zip(vertices,vertices.dropFirst()+vertices.prefix(1)).map { a,b -> SpatialPoint in
+          let x = a.x*frame.width, y = a.y*frame.height, dx = (b.x-a.x)*frame.width, dy = (b.y-a.y)*frame.height
+          let t = min(1,max(0,((chosen.point.x-x)*dx+(chosen.point.y-y)*dy)/max(0.000001,dx*dx+dy*dy)))
+          return .init(x:x+t*dx,y:y+t*dy)
+        }.min { hypot($0.x-chosen.point.x,$0.y-chosen.point.y) < hypot($1.x-chosen.point.x,$1.y-chosen.point.y) }!
+      } else if node.graphic.shape == .ellipse {
+        let x = (anchor.x-frame.width/2)/(frame.width/2), y = (anchor.y-frame.height/2)/(frame.height/2)
+        let radius = max(0.000001,hypot(x,y))
+        anchor = .init(x:frame.width/2*(1+x/radius),y:frame.height/2*(1+y/radius))
+      }
+    }
+    return .init(elementID:node.id,normalizedAnchor:.init(x:min(1,max(0,anchor.x/frame.width)),y:min(1,max(0,anchor.y/frame.height))),
+      isExact:!chosen.inside,isPrecise:true)
   }
   public func resolve(_ id: String) -> NotebookGraphicResolution {
     guard let node = nodes[collaborationIdentity(id)] else { return .pending([id]) }

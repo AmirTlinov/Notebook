@@ -1,7 +1,17 @@
 import NotebookCore
 
 extension NotebookAppModel {
-  func manipulatedEndpointBinding() -> NotebookGraphicConnection.Binding? {
+  var manipulatedBindingTarget: (reference: EditableElementReference, elementID: String)? {
+    guard let contact = selectionSession.manipulation, case .endpoint(let terminal) = contact.kind,
+      let connection = contact.connection,
+      let binding = terminal == .start ? connection.start.binding : connection.end.binding else { return nil }
+    switch contact.reference {
+    case .page(let owner,_): return (.page(pageID:owner,elementID:binding.elementID),binding.elementID)
+    case .spatial(let owner,_): return (.spatial(boardID:owner,elementID:binding.elementID),binding.elementID)
+    }
+  }
+
+  func manipulatedEndpointBinding(retaining retainedID: String? = nil) -> NotebookGraphicConnection.Binding? {
     guard let contact = selectionSession.manipulation, case .endpoint(let terminal) = contact.kind,
       let connection = contact.connection else { return nil }
     let graph: NotebookGraphicGraph, surface: SurfaceID, id: String
@@ -16,7 +26,7 @@ extension NotebookAppModel {
     }
     let p = terminal == .start ? connection.start.point : connection.end.point
     return graph.binding(at:.init(x:contact.original.minX+p.x,y:contact.original.minY+p.y),
-      origin:contact.worldOrigin ?? .zero,surface:surface,excluding:id,tolerance:18/max(0.001,presence?.camera.scale ?? 1))
+      origin:contact.worldOrigin ?? .zero,surface:surface,excluding:id,tolerance:14/max(0.001,presence?.camera.scale ?? 1),retaining:retainedID)
   }
   /// One geometry draft, first owned by a contact, then by its accepted command.
   /// A later material contact or a selection change cannot erase that command.

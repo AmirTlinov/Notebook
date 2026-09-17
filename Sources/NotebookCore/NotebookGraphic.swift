@@ -66,6 +66,19 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
 /// The same normalized outline serves native paint, hit testing and anchors.
 /// Camera / page placement belongs to the installed scene, never this geometry.
 public enum NotebookGraphicGeometry {
+  /// Interior picking is separate from painted-ink hit testing. A hollow node
+  /// can be selected or bound inside without occluding a smaller object there.
+  public static func containsInterior(_ graphic: NotebookGraphic, width: Double, height: Double,
+    x: Double, y: Double) -> Bool {
+    guard graphic.showsGeometry, width > 0, height > 0 else { return false }
+    if graphic.shape == .ellipse { return hypot((x-width/2)/(width/2),(y-height/2)/(height/2)) <= 1 }
+    guard let vertices = polygon(graphic) else { return false }
+    var inside = false
+    for (a,b) in zip(vertices,vertices.dropFirst()+vertices.prefix(1)) where (a.y*height > y) != (b.y*height > y) {
+      if x < (b.x-a.x)*width*(y-a.y*height)/((b.y-a.y)*height)+a.x*width { inside.toggle() }
+    }
+    return inside
+  }
   public static func polygon(_ graphic: NotebookGraphic) -> [SpatialPoint]? {
     switch graphic.shape {
     case .triangle: return graphic.vertices ?? [.init(x:0.5,y:0),.init(x:1,y:1),.init(x:0,y:1)]
@@ -83,13 +96,7 @@ public enum NotebookGraphicGeometry {
       abs(y - height / 2) <= 16 + tolerance { return true }
     if graphic.style.fill != nil {
       if graphic.shape == .ellipse { return radius <= 1 + tolerance / min(width, height) * 2 }
-      if let vertices = polygon(graphic) {
-        var inside = false
-        for (a,b) in zip(vertices,vertices.dropFirst()+vertices.prefix(1)) where (a.y*height > y) != (b.y*height > y) {
-          if x < (b.x-a.x)*width*(y-a.y*height)/((b.y-a.y)*height)+a.x*width { inside.toggle() }
-        }
-        if inside { return true }
-      }
+      if containsInterior(graphic,width:width,height:height,x:x,y:y) { return true }
     }
     // A contour must not steal its empty interior from enclosed nodes.
     return outlineDistance(graphic,width:width,height:height,x:x,y:y) <= tolerance + graphic.style.strokeWidth / 2

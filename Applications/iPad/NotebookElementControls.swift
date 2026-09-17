@@ -2,7 +2,25 @@ import NotebookCore
 import SwiftUI
 import UIKit
 
-/// One screen-space frame for the selected physical element. Its four corners
+/// Feedback exists only while a terminal is being dragged onto this target.
+/// It is neither a stored decoration nor a transaction/highlight animation.
+struct NotebookGraphicBindingHint: View {
+  @Environment(NotebookAppModel.self) private var model
+  let presence: SessionPresence
+  var body: some View {
+    if let target = model.manipulatedBindingTarget?.reference,
+      let graphic = model.graphicElement(target),
+      let frame = NotebookAttentionProjection.editingFrame(target,model:model,presence:presence) {
+      NotebookGraphicView(graphic:.init(shape:graphic.shape,
+        style:.init(stroke:.init(red:0.15,green:0.4,blue:0.85),strokeWidth:2),
+        vertices:graphic.vertices))
+        .frame(width:frame.width,height:frame.height).position(x:frame.midX,y:frame.midY)
+        .allowsHitTesting(false).accessibilityHidden(true)
+    }
+  }
+}
+
+/// One screen-space frame for the selected physical element. Its corners and sides
 /// retain 44-point touch targets; neither paper zoom nor a portal duplicates them.
 struct NotebookElementControls: UIViewRepresentable {
   @Environment(NotebookAppModel.self) private var model
@@ -13,7 +31,8 @@ struct NotebookElementControls: UIViewRepresentable {
 
   func makeUIView(context: Context) -> NotebookElementControlsView { .init(gate: model.inputGate) }
   func updateUIView(_ view: NotebookElementControlsView, context: Context) {
-    view.configure(selectionID: selectionID, frame: frame, layout: model.graphicElement(reference)?.connection == nil ? nil : model.graphicLayout(reference), scale:scale)
+    view.configure(selectionID: selectionID, frame: frame, layout: model.graphicElement(reference)?.connection == nil ? nil : model.graphicLayout(reference), scale:scale,
+      hasLabel: !(model.graphicElement(reference)?.label.isEmpty ?? true))
     view.beginManipulation = { kind in
       guard model.selectionSession.id == selectionID,
         let contact = model.beginElementManipulation(reference, kind: kind) else { return nil }
@@ -70,13 +89,13 @@ struct NotebookElementControls: UIViewRepresentable {
 }
 
 private enum ElementHandle: Hashable {
-  case corner(NotebookElementCorner), start, end, bend
+  case corner(NotebookElementResizeHandle), start, end, bend
   var kind: NotebookElementManipulation.Kind {
     switch self { case .corner(let value): .resize(value); case .start: .endpoint(.start); case .end: .endpoint(.end); case .bend: .bend }
   }
   var label: String {
     switch self {
-    case .corner(let value): "Изменить размер за " + value.label + " угол"
+    case .corner(let value): "Изменить размер за " + value.label
     case .start: "Начало связи"
     case .end: "Конец связи"
     case .bend: "Изгиб связи"
@@ -102,9 +121,10 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
   private let styleButton = UIButton(type: .system)
   var styleMenu: UIMenu? { didSet { styleButton.menu = styleMenu; setNeedsLayout() } }
   private var handleAccessibility: [ElementHandleAccessibility] = []
-  private var handles = NotebookElementCorner.allCases.map(ElementHandle.corner)
+  private var handles = NotebookElementResizeHandle.allCases.map(ElementHandle.corner)
   private var connectionLayout: NotebookGraphicLayout?
   private var projectionScale = 1.0
+  private var hasLabel = false
   var beginManipulation: ((NotebookElementManipulation.Kind) -> SceneSelectionLift?)?
   var deleteElement: (() -> Void)?
 
@@ -141,7 +161,7 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
         guard let self, let contact = beginManipulation?(handle.kind) else { return }
         let amount: CGFloat = increase ? 20 : -20
         if case .corner(let corner) = handle {
-          contact.end(.init(x: corner.leading ? -amount : amount, y: corner.top ? -amount : amount))
+          contact.end(.init(x: corner.changesWidth ? (corner.leading ? -amount : amount) : 0, y: corner.changesHeight ? (corner.top ? -amount : amount) : 0))
         } else { contact.end(.init(x:handle == .bend ? 0 : amount,y:amount)) }
       }
       return item
@@ -150,11 +170,11 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-  func configure(selectionID: UUID, frame: CGRect, layout: NotebookGraphicLayout? = nil, scale: Double = 1) {
+  func configure(selectionID: UUID, frame: CGRect, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false) {
     if self.selectionID != selectionID { cancel(); self.selectionID = selectionID }
-    let next: [ElementHandle] = layout == nil ? NotebookElementCorner.allCases.map(ElementHandle.corner) : [.start,.end,.bend]
+    let next: [ElementHandle] = layout == nil ? NotebookElementResizeHandle.allCases.map(ElementHandle.corner) : [.start,.end,.bend]
     if handles != next { handles = next; rebuildAccessibility() }
-    connectionLayout = layout; projectionScale = scale
+    connectionLayout = layout; projectionScale = scale; self.hasLabel = hasLabel
     frameRect = frame; setNeedsLayout(); setNeedsDisplay()
   }
   override func didMoveToWindow() {
@@ -212,22 +232,29 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
     guard let layout = connectionLayout else { return .zero }
     let point = handle == .start ? layout.start : handle == .end ? layout.end : layout.bend
     let dx = layout.end.x-layout.start.x, dy = layout.end.y-layout.start.y, length = max(0.001,hypot(dx,dy))
-    // Keep the curve's label reachable after selection. The control is a
-    // screen-space affordance, not a changed authored bend or label position.
-    return .init(x:frameRect.minX+point.x*projectionScale+(handle == .bend ? dy/length*30 : 0),
-      y:frameRect.minY+point.y*projectionScale-(handle == .bend ? dx/length*30 : 0))
+    let offset = handle == .bend && hasLabel ? 30.0 : 0
+    return .init(x:frameRect.minX+point.x*projectionScale+dy/length*offset,
+      y:frameRect.minY+point.y*projectionScale-dx/length*offset)
   }
   private func hitFrame(_ handle: ElementHandle) -> CGRect {
     let point = point(handle)
     return .init(x: point.x - 22, y: point.y - 22, width: 44, height: 44)
   }
   private func handle(at point: CGPoint) -> ElementHandle? {
-    // Very small objects can have overlapping touch targets. Nearest corner
-    // keeps all four directions reachable instead of picking the first one.
-    handles.filter { hitFrame($0).contains(point) }.min {
+    // Small objects can have overlapping touch targets. The nearest handle
+    // stays reachable instead of always picking the first one.
+    guard let handle = handles.filter({ hitFrame($0).contains(point) }).min(by: {
       let a = self.point($0), b = self.point($1)
       return hypot(a.x - point.x, a.y - point.y) < hypot(b.x - point.x, b.y - point.y)
+    }) else { return nil }
+    // An overlapping 44-point target must not consume the whole small figure.
+    // Its center competes with handles so the ordinary body-drag owner remains
+    // reachable; the visible handle and its outward touch area still resize.
+    if connectionLayout == nil, frameRect.contains(point) {
+      let position = self.point(handle)
+      if hypot(point.x-frameRect.midX,point.y-frameRect.midY) < hypot(point.x-position.x,point.y-position.y) { return nil }
     }
+    return handle
   }
   override func draw(_ rect: CGRect) {
     tintColor.withAlphaComponent(0.7).setStroke()
@@ -241,12 +268,10 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
         let circle = UIBezierPath(ovalIn:.init(x:point.x-6,y:point.y-6,width:12,height:12))
         circle.lineWidth = 2; circle.fill(); circle.stroke(); continue
       }
-      let point = corner.point(in: frameRect), length: CGFloat = min(10, frameRect.width / 3, frameRect.height / 3)
-      let path = UIBezierPath()
-      path.move(to: .init(x: point.x + (corner.leading ? length : -length), y: point.y))
-      path.addLine(to: point)
-      path.addLine(to: .init(x: point.x, y: point.y + (corner.top ? length : -length)))
-      path.lineWidth = 3; path.lineCapStyle = .round; path.lineJoinStyle = .round; path.stroke()
+      let point = corner.point(in: frameRect)
+      UIColor.systemBackground.setFill()
+      let path = UIBezierPath(roundedRect:.init(x:point.x-4,y:point.y-4,width:8,height:8),cornerRadius:1)
+      path.lineWidth = 1.5; path.fill(); path.stroke()
     }
   }
   func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {

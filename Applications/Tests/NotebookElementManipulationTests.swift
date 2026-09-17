@@ -8,7 +8,7 @@ import XCTest
     let original = CGRect(x: 100, y: 80, width: 200, height: 160)
     let reference = EditableElementReference.page(pageID: UUID(), elementID: "chart")
     let page = CGRect(x: 0, y: 0, width: 600, height: 800)
-    for corner in NotebookElementCorner.allCases {
+    for corner in NotebookElementResizeHandle.allCases {
       for delta in [CGPoint(x: 30, y: 25), .init(x: -5000, y: -5000), .init(x: 5000, y: 5000)] {
         var contact = NotebookElementManipulation(reference: reference, kind: .resize(corner), frame: original, bounds: page)
         contact.update(translation: delta)
@@ -227,11 +227,11 @@ import XCTest
     XCTAssertTrue(gate.permitsSceneContact(at: corner, kind: .pencil))
     XCTAssertTrue(gate.permitsSceneContact(at: controls.convert(.init(x: 220, y: 220), to: window), kind: .finger))
     let corners = (controls.accessibilityElements ?? []).compactMap { $0 as? UIAccessibilityElement }
-    XCTAssertEqual(corners.count, 4)
+    XCTAssertEqual(corners.count, 8)
     for corner in corners { XCTAssertEqual(corner.accessibilityFrameInContainerSpace.size, .init(width: 44, height: 44)) }
     for edgeFrame in [CGRect(x: 0, y: 0, width: 240, height: 180), controls.bounds.insetBy(dx: 2, dy: 2)] {
       controls.configure(selectionID: UUID(), frame: edgeFrame); controls.layoutIfNeeded()
-      for corner in NotebookElementCorner.allCases {
+      for corner in NotebookElementResizeHandle.allCases {
         let point = controls.convert(corner.point(in: edgeFrame), to: window)
         XCTAssertTrue(window.hitTest(point, with: nil) === controls, "A screen edge cannot hide a corner under delete")
         XCTAssertTrue(gate.permitsSceneContact(at: point, kind: .pencil))
@@ -239,6 +239,27 @@ import XCTest
     }
     controls.removeFromSuperview()
     XCTAssertTrue(gate.permitsSceneContact(at: corner, kind: .finger))
+  }
+
+  func testSmallFigureCenterKeepsBodyDragAndEveryHandleReachable() throws {
+    let gate = NotebookInputGate()
+    let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let controls = NotebookElementControlsView(gate:gate)
+    controls.frame = controller.view.bounds; controller.view.addSubview(controls)
+    for size in [CGSize(width:40,height:32),.init(width:12,height:12),.init(width:64,height:100)] {
+      let frame = CGRect(origin:.init(x:200,y:300),size:size)
+      controls.configure(selectionID:UUID(),frame:frame); controls.layoutIfNeeded()
+      let center = controls.convert(.init(x:frame.midX,y:frame.midY),to:window)
+      XCTAssertFalse(window.hitTest(center,with:nil) === controls,"The center is not a hidden resize handle")
+      XCTAssertTrue(gate.permitsSceneContact(at:center,kind:.finger))
+      for handle in NotebookElementResizeHandle.allCases {
+        let point = controls.convert(handle.point(in:frame),to:window)
+        XCTAssertTrue(window.hitTest(point,with:nil) === controls)
+        XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.finger))
+      }
+    }
   }
 
   private func fixture(_ body: (NotebookAppModel, EditableElementReference) async throws -> Void) async throws {

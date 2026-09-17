@@ -207,11 +207,12 @@ struct NotebookAttentionMarks: View {
         mark(rect, human: true)
       }
       if !model.scenePreparationPending, model.collaborationDetailsAreCurrent {
-        ForEach(model.collaborationActions.filter { model.pendingAgentHighlights.contains($0.id) && $0.undo == nil }) { action in
+        ForEach(model.collaborationActions.filter { model.agentHighlightStarts[$0.id] != nil && $0.author == .agent && $0.undo == nil }) { action in
           ForEach(model.results(for: action)) { reference in
-            if let rect = NotebookAttentionProjection.frame(reference, model: model, presence: presence),
-              rect.intersects(CGRect(x: 0, y: 0, width: presence.viewport.x, height: presence.viewport.y)) {
-              NotebookAgentPearl(rect: rect) { model.finishAgentHighlight(action.id) }.id(reference.id)
+            if let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence),
+              let start = model.agentHighlightStarts[action.id],
+              rect.intersects(CGRect(x:0,y:0,width:presence.viewport.x,height:presence.viewport.y)) {
+              NotebookAgentPearl(rect:rect,startedAt:start).id(reference.id)
             }
           }
         }
@@ -229,26 +230,23 @@ struct NotebookAttentionMarks: View {
   }
 }
 
-/// A short light on the changed material, never a modal surface or a gesture owner.
-private struct NotebookAgentPearl: View {
+/// A restrained pearl edge for a newly arrived agent edit only. Its absolute
+/// age survives scene remounts; no view callback can extend the lifetime.
+struct NotebookAgentPearl: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   let rect: CGRect
-  let finished: () -> Void
-  @State private var visible = false
+  let startedAt: Date
   var body: some View {
-    RoundedRectangle(cornerRadius: 10)
-      .strokeBorder(LinearGradient(colors: [.white, Color(red: 0.72, green: 0.85, blue: 0.93),
-        Color(red: 0.90, green: 0.78, blue: 0.89), .white], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 2.5)
-      .shadow(color: Color(red: 0.78, green: 0.82, blue: 0.94).opacity(0.65), radius: 7)
-      .opacity(visible ? 0.95 : 0)
-      .frame(width: max(12, rect.width + 8), height: max(12, rect.height + 8))
-      .position(x: rect.midX, y: rect.midY)
-      .task {
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { visible = true }
-        do { try await Task.sleep(for: .seconds(1.6)) } catch { return }
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.8)) { visible = false }
-        do { try await Task.sleep(for: .seconds(0.8)) } catch { return }
-        finished()
-      }
+    TimelineView(.animation(minimumInterval:1/30,paused:reduceMotion)) { timeline in
+      let age = max(0,timeline.date.timeIntervalSince(startedAt))
+      let opacity = age >= NotebookAppModel.agentHighlightDuration ? 0 : (reduceMotion ? 0.5 : min(1,age/0.12)*pow(1-age/NotebookAppModel.agentHighlightDuration,1.4)*0.8)
+      RoundedRectangle(cornerRadius:8)
+        .strokeBorder(LinearGradient(colors:[Color(red:0.65,green:0.81,blue:0.9),.white,
+          Color(red:0.81,green:0.76,blue:0.88)],startPoint:.topLeading,endPoint:.bottomTrailing),lineWidth:1.25)
+        .shadow(color:Color(red:0.71,green:0.8,blue:0.88).opacity(0.25),radius:2)
+        .opacity(opacity)
+        .frame(width:max(12,rect.width+6),height:max(12,rect.height+6))
+        .position(x:rect.midX,y:rect.midY)
+    }
   }
 }

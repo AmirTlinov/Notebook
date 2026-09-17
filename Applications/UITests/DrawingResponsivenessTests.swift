@@ -5,6 +5,62 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testHollowPolygonsSelectResizeAndBindOnPage() { polygonInteraction(onPage:true) }
+  func testHollowPolygonsSelectResizeAndBindOnBoard() { polygonInteraction(onPage:false) }
+
+  private func polygonInteraction(onPage: Bool) {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture",
+      "--notebook-native-connector","--notebook-native-polygons"] + (onPage ? ["--notebook-native-graphic-page"] : [])
+    launchPortraitFixture(app)
+    let triangle = app.images["Треугольник"], diamond = app.images["Ромб"], link = app.images["1:2"]
+    XCTAssertTrue(triangle.waitForExistence(timeout:10)); XCTAssertTrue(diamond.waitForExistence(timeout:10))
+    let neighbour = app.webViews.containing(.button,identifier:"Graphic scene counter").firstMatch
+    let neighbourFrame = neighbour.frame
+    func drag(_ point: XCUICoordinate, dx: CGFloat, dy: CGFloat) {
+      point.press(forDuration:0.01,thenDragTo:point.withOffset(.init(dx:dx,dy:dy)),withVelocity:.slow,thenHoldForDuration:0)
+    }
+    triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.6)).tap()
+    let right = app.descendants(matching:.any).matching(identifier:"resize-agent-element-trailingCenter").firstMatch
+    XCTAssertTrue(right.waitForExistence(timeout:5),"A hollow polygon is selected by its interior, not a narrow contour")
+    let initial = triangle.frame
+    drag(triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.6)),dx:36,dy:24)
+    XCTAssertEqual(triangle.frame.minX-initial.minX,36,accuracy:5)
+    XCTAssertEqual(triangle.frame.minY-initial.minY,24,accuracy:5)
+    let moved = triangle.frame
+    drag(right.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)),dx:48,dy:25)
+    XCTAssertEqual(triangle.frame.width-moved.width,48,accuracy:5)
+    XCTAssertEqual(triangle.frame.height,moved.height,accuracy:2,"A side handle changes only its own dimension")
+    let bottom = app.descendants(matching:.any).matching(identifier:"resize-agent-element-bottomCenter").firstMatch
+    let wide = triangle.frame
+    drag(bottom.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)),dx:23,dy:32)
+    XCTAssertEqual(triangle.frame.height-wide.height,32,accuracy:5)
+    XCTAssertEqual(triangle.frame.width,wide.width,accuracy:2)
+    let triangleFinal = triangle.frame
+    link.tap()
+    let terminal = app.descendants(matching:.any).matching(identifier:"graphic-end-handle").firstMatch
+    XCTAssertTrue(terminal.waitForExistence(timeout:5))
+    let handle = terminal.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+    handle.press(forDuration:0.01,thenDragTo:diamond.coordinate(withNormalizedOffset:.init(dx:0.58,dy:0.4)),withVelocity:.slow,thenHoldForDuration:0)
+    let bound = link.frame, originalDiamond = diamond.frame
+    drag(diamond.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.55)),dx:60,dy:35)
+    XCTAssertEqual(diamond.frame.minX-originalDiamond.minX,60,accuracy:5)
+    XCTAssertNotEqual(link.frame,bound,"Binding accepts the actual polygon interior and follows its node")
+    XCTAssertEqual(neighbour.frame,neighbourFrame,"Shape manipulation does not move the camera or the neighbour")
+    let finalLink = link.frame, finalDiamond = diamond.frame
+    let proof = XCTAttachment(screenshot:XCUIScreen.main.screenshot())
+    proof.name = "polygon-controls-\(onPage ? "page" : "board")"; proof.lifetime = .keepAlways; add(proof)
+    app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+    XCTAssertTrue(triangle.waitForExistence(timeout:10)); XCTAssertTrue(link.waitForExistence(timeout:10))
+    XCTAssertEqual(triangle.frame.minX,triangleFinal.minX,accuracy:3)
+    XCTAssertEqual(triangle.frame.size.width,triangleFinal.size.width,accuracy:3)
+    XCTAssertEqual(triangle.frame.size.height,triangleFinal.size.height,accuracy:3)
+    XCTAssertEqual(diamond.frame.minX,finalDiamond.minX,accuracy:3)
+    XCTAssertEqual(link.frame.midX,finalLink.midX,accuracy:3)
+    app.terminate()
+  }
+
   func testNativeGraphicDragOnBoardKeepsTheLiveNeighbourAndSurvivesReopening() {
     nativeGraphicScenario(onPage: false)
   }
