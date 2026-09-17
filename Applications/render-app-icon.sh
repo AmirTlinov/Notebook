@@ -10,7 +10,19 @@ mkdir -p "$OUTPUT_DIR" "$STATUS_DIR"
 render() {
   name=$1
   pixels=$2
-  rsvg-convert --background-color '#F7F5F1' --width "$pixels" --height "$pixels" "$SOURCE" \
+  # Center the painted mark (including the binding stroke), not its old SVG
+  # canvas. Leave room inside the system mask without shrinking the menu icon.
+  set -- $(LC_ALL=C awk -v pixels="$pixels" 'BEGIN {
+    scale = 0.84
+    centerX = (8.775 + 82.6) / 2
+    centerY = (8 + 83.6) / 2
+    printf "%.6f %.6f %.6f", pixels * scale,
+      pixels * (0.5 - scale * centerX / 96),
+      pixels * (0.5 - scale * centerY / 96)
+  }')
+  rsvg-convert --background-color '#F7F5F1' \
+    --width "$1" --height "$1" --page-width "$pixels" --page-height "$pixels" \
+    --left "$2" --top "$3" "$SOURCE" \
     > "$OUTPUT_DIR/$name"
 }
 
