@@ -166,7 +166,22 @@ import XCTest
     XCTAssertEqual(try NotebookStore(root:root).readGraphicResolution(target:target,elementID:id).layout,finalLayout)
   }
 
-  private func drawAndClose(onBoard: Bool, compound: Bool = false) async throws {
+  func testPageQuickShapePublicationLatency() async throws {
+    try await drawAndClose(onBoard: false, measuresPublication: true)
+  }
+  func testBoardQuickShapePublicationLatency() async throws {
+    try await drawAndClose(onBoard: true, measuresPublication: true)
+  }
+
+  func testPageQuickShapeDoesNotWaitForTheRestingHandToLift() async throws {
+    try await drawAndClose(onBoard: false, measuresPublication: true, restingHand: true)
+  }
+  func testBoardQuickShapeDoesNotWaitForTheRestingHandToLift() async throws {
+    try await drawAndClose(onBoard: true, measuresPublication: true, restingHand: true)
+  }
+
+  private func drawAndClose(onBoard: Bool, compound: Bool = false, measuresPublication: Bool = false,
+    restingHand: Bool = false) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-scene-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
@@ -194,6 +209,11 @@ import XCTest
       paper = try XCTUnwrap(descendants(try XCTUnwrap(window.rootViewController?.view))
         .compactMap { $0 as? PaperInputView }.first { $0.isUserInteractionEnabled })
     }
+    let observer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? NotebookContactObserver }.first)
+    let hand = SceneGraphicTouch(window: window)
+    hand.kind = .direct; hand.sourceView = window.rootViewController?.view
+    if restingHand { observer.touchesBegan([hand], with: UIEvent()) }
+    defer { if restingHand { observer.touchesEnded([hand], with: UIEvent()) } }
     let midpoint = CGPoint(x: window.bounds.midX, y: window.bounds.midY)
     var measured: [CGPoint] = []
     for strokeIndex in 0..<(compound ? 2 : 1) {
@@ -208,18 +228,47 @@ import XCTest
         measured.append(paper?.convert(touch.point, from: window) ?? touch.point)
         if index == 0 {
           touch.sourceView = window.hitTest(touch.point, with: event)
+          observer.touchesBegan([touch], with: event)
           receiver.touchesBegan([touch], with: event)
           XCTAssertTrue(model.inputGate.hasActivePencil)
         } else { receiver.touchesMoved([touch], with: event) }
       }
       if !compound || strokeIndex == 1 { try await Task.sleep(for:.milliseconds(650)) }
       receiver.touchesEnded([touch],with:event)
+      observer.touchesEnded([touch],with:event)
       // The canonical publication of the first stroke must not erase the
       // short-lived recognition sequence before the second contact arrives.
       if compound && strokeIndex == 0 { try await Task.sleep(for:.milliseconds(250)) }
     }
-    // No yield to a sheet callback, no extra fit call and no polling for a
-    // graphic task before the application's real persistence boundary.
+    if measuresPublication {
+      let start = ContinuousClock.now
+      var idleMS: Double?, modelMS: Double?, paintMS: Double?
+      func elapsed() -> Double {
+        let value = start.duration(to: .now).components
+        return Double(value.seconds) * 1000 + Double(value.attoseconds) / 1e15
+      }
+      while start.duration(to: .now) < .seconds(restingHand ? 3 : 12) {
+        if !model.inputGate.isActive, idleMS == nil { idleMS = elapsed() }
+        let element = onBoard
+          ? model.boardHierarchy?.board(workspace.rootBoardID)?.elements.first { $0.graphic != nil }
+              .map { ($0.id, $0.graphic) }
+          : model.pages[pageID]?.elements.first { $0.graphic != nil }.map { ($0.id, $0.graphic) }
+        if let element {
+          if modelMS == nil { modelMS = elapsed() }
+          if !onBoard || model.compositionTiles.published?.frame.index.element(id: element.0, boardID: workspace.rootBoardID) != nil {
+            paintMS = elapsed(); break
+          }
+        }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      let timing = "QUICKSHAPE_LATENCY surface=\(onBoard ? "board" : "page") restingHand=\(restingHand) idleMS=\(idleMS ?? -1) modelMS=\(modelMS ?? -1) paintMS=\(paintMS ?? -1)"
+      print(timing)
+      let evidence = XCTAttachment(string: timing); evidence.name = "quickshape-publication-latency"
+      evidence.lifetime = .keepAlways; add(evidence)
+      XCTAssertNotNil(paintMS, "The installed scene must adopt the accepted conversion without another contact")
+    }
+    if restingHand { observer.touchesEnded([hand], with: UIEvent()) }
+    // No extra fit call before the application's real persistence boundary.
     let closed = await model.shutdown(); XCTAssertTrue(closed)
     let reopened = NotebookStore(root: root)
     let graphic: NotebookGraphic, actual: CGRect, measuredSourceCount: Int
@@ -261,7 +310,8 @@ import XCTest
   init(window: UIWindow) { sourceWindow = window; super.init() }
   override var view: UIView? { sourceView }
   override var window: UIWindow? { sourceWindow }
-  override var type: UITouch.TouchType { .pencil }
+  var kind: UITouch.TouchType = .pencil
+  override var type: UITouch.TouchType { kind }
   override var timestamp: TimeInterval { sampleTime }
   override var force: CGFloat { 1 }
   override var maximumPossibleForce: CGFloat { 1 }
