@@ -36,11 +36,13 @@ public struct NotebookCommand: Codable, Sendable {
   public var script: NotebookScriptRequest?
   public var scriptContext: NotebookScriptContextRequest?
   public var actionPage: NotebookActionDetailsPage?
+  public var scriptEffect: NotebookScriptEffectAddress?
+  public var readSnapshots: Bool?
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case command, query, filters, next, limit, action, actionID, target, elementID, reference
     case expectedRevision, region, worldOrigin, pageIndex, placement, contextID
-    case replyTo, references, queries, expectedCursor, artifact, export, presentation, cancel, fingerprint, script, scriptContext, actionPage
+    case replyTo, references, queries, expectedCursor, artifact, export, presentation, cancel, fingerprint, script, scriptContext, actionPage, scriptEffect, readSnapshots
   }
 
   public init(command: Kind) { self.command = command }
@@ -174,9 +176,9 @@ public struct NotebookCommandDispatcher: Sendable {
       return try .encode(store.prepareCollaborationSubmission(required(request.actionID), fingerprint: fingerprint))
     case .commitAction:
       guard let action = request.action, let fingerprint = request.fingerprint else { throw invalid("invalid_action", "Нужен нормализованный ход с исходной идентичностью.") }
-      return try store.scriptActionOutcome(store.commitCollaborationSubmission(action, fingerprint: fingerprint, actor: store.collaborationActorID()))
+      return try store.completeScriptAction(request.scriptEffect, receipt: store.commitCollaborationSubmission(action, fingerprint: fingerprint, actor: store.collaborationActorID()), method: "transaction")
     case .undo:
-      return try store.scriptActionOutcome(store.undoCollaborationAction(required(request.actionID), actor: store.collaborationActorID(), waitForInput: 0))
+      return try store.completeScriptAction(request.scriptEffect, receipt: store.undoCollaborationAction(required(request.actionID), actor: store.collaborationActorID(), waitForInput: 0), method: "undo")
     case .action: return try .encode(store.collaborationAction(required(request.actionID)))
     case .actions: return try .encode(store.collaborationActions(afterID: nil, contextID: request.contextID, limit: boundedLimit(request.limit)))
     case .continuations: return try .encode(store.collaborationContinuations(required(request.actionID)))
@@ -184,19 +186,37 @@ public struct NotebookCommandDispatcher: Sendable {
       guard request.actionID != nil || request.actionPage?.section == nil else {
         throw invalid("action_required", "Раздел квитанции требует actionID.")
       }
+      if request.actionPage?.section != nil, request.readSnapshots == true, request.actionPage?.actionVersion == nil {
+        throw invalid("action_version_required", "Продолжение раздела требует actionVersion исходного результата.")
+      }
       let limit = min(50, try boundedLimit(request.limit))
-      let receipts = try request.actionID.map { [try store.actionReadModel($0)] }
+      if let next = request.next, let id = request.actionID, let version = request.actionPage?.actionVersion {
+        return try .encode(NotebookSnapshot(data: store.actionResultPage(id, version: version, next: next),
+          basis: store.readBasis(targets: []), cursor: String(store.currentReadCursor())))
+      }
+      let receipts = try request.actionID.map { id in [try request.actionPage?.actionVersion.map { try store.actionVersionModel(id, version: $0) } ?? store.actionReadModel(id)] }
         ?? store.actionReadModels(afterID: request.actionPage?.after, contextID: request.contextID, limit: limit)
-      return .array(try receipts.map { receipt in
+      let details = try receipts.map { receipt -> JSONValue in
         var detail = try store.actionDetails(receipt, page: request.actionPage).object
         if request.actionID == nil {
           detail["nextActionID"] = receipts.count == limit ? receipts.last.map { .string($0.id.uuidString.lowercased()) } : .null
         }
+        detail["actionVersion"] = .string(receipt.actionVersion)
         return .object(detail)
-      })
+      }
+      if request.readSnapshots == true {
+        return try .encode(NotebookSnapshot(data: request.actionID == nil ? .array(details) : details.first ?? .null,
+          basis: store.readBasis(targets: []), coverage: .init(complete: request.actionID != nil || receipts.count < limit), cursor: String(store.currentReadCursor())))
+      }
+      return .array(details)
     case .search:
       guard (request.query?.utf8.count ?? 0) <= 2_000 else { throw invalid("invalid_query", "Запрос поиска слишком длинный.") }
-      return try .encode(store.search(request.query ?? "", limit: boundedLimit(request.limit), filters: request.filters ?? .init(), next: request.next))
+      let found = try store.search(request.query ?? "", limit: boundedLimit(request.limit), filters: request.filters ?? .init(), next: request.next)
+      if request.readSnapshots == true {
+        return try .encode(NotebookSnapshot(data: .object(["results": .encode(found.results), "total": .number(Double(found.total))]),
+          basis: store.readBasis(targets: found.results.map(\.target)), coverage: found.coverage, cursor: String(store.currentReadCursor())))
+      }
+      return try .encode(found)
     case .contexts: return try .encode(store.sharedContexts(contextID: request.contextID, limit: boundedLimit(request.limit)))
     case .point:
       if let id = request.actionID {
@@ -208,7 +228,9 @@ public struct NotebookCommandDispatcher: Sendable {
     case .delivery: return try delivery(required(request.actionID))
     case .referenceStatus:
       guard let reference = request.reference else { throw invalid("invalid_reference", "Нужна рассмотренная ссылка.") }
-      return try .encode(store.referenceStatus(reference, prepareRender: false))
+      let data = try JSONValue.encode(store.referenceStatus(reference, prepareRender: false))
+      if request.readSnapshots == true { return try .encode(NotebookSnapshot(data: data, basis: store.readBasis(targets: []), cursor: String(store.currentReadCursor()))) }
+      return data
     case .referenceStatuses:
       guard let references = request.references, references.count <= 256 else {
         throw invalid("resource_limit", "Один срез проверяет до 256 ссылок.")
@@ -216,10 +238,17 @@ public struct NotebookCommandDispatcher: Sendable {
       return .array(try references.map { try .encode(store.referenceStatus($0, prepareRender: false)) })
     case .reference:
       guard let target = request.target else { throw invalid("invalid_reference", "Нужен владелец указания.") }
-      return .object(["revision": .string(try store.referenceRevision(target: target, elementID: request.elementID))])
+      let data = JSONValue.object(["target": try .encode(target), "revision": .string(try store.referenceRevision(target: target, elementID: request.elementID))])
+      if request.readSnapshots == true { return try .encode(NotebookSnapshot(data: data, basis: store.readBasis(targets: [target], includeSource: true), cursor: String(store.currentReadCursor()))) }
+      return data
     case .placement:
       guard let placement = request.placement else { throw invalid("invalid_placement", "Нужен пакет размещения.") }
-      return try .encode(store.suggestCollaborationPlacement(placement))
+      let proposal = try store.suggestCollaborationPlacement(placement)
+      if request.readSnapshots == true {
+        return try .encode(NotebookSnapshot(data: JSONValue.encode(proposal).setting("expected", nil),
+          basis: .init(workspaceID: store.workspaceHeader().workspaceID, owners: proposal.expected), cursor: String(store.currentReadCursor())))
+      }
+      return try .encode(proposal)
     case .render:
       guard let target = request.target, let revision = request.expectedRevision else {
         throw invalid("invalid_reference", "Нужны владелец и прочитанная версия.")
@@ -232,7 +261,7 @@ public struct NotebookCommandDispatcher: Sendable {
       }
       return try .encode(store.requestPageVision(pageID: target.id, expectedRevision: revision))
     case .read:
-      let queries = request.queries ?? []
+      let queries = try (request.queries ?? []).map { try store.resolveReadContinuation($0) }
       guard queries.count <= 128 else { throw invalid("resource_limit", "Один запрос читает до 128 адресованных владельцев.") }
       guard queries.filter({ $0.kind == .contexts }).count <= 1,
         queries.filter({ $0.kind == .contextEntries }).count <= 1 else {
@@ -254,6 +283,13 @@ public struct NotebookCommandDispatcher: Sendable {
           throw invalid("read_conflict", "Содержание изменилось во время чтения. Повторите законченный запрос.")
         }
         let reader = NotebookCommandDispatcher(store: snapshot)
+        if request.readSnapshots == true {
+          return .array(try queries.map { query in
+            let data = try reader.read(query)
+            return try .encode(NotebookSnapshot(data: data, basis: snapshot.queryBasis(query, data: data),
+              coverage: snapshot.queryCoverage(query, data: data), cursor: cursor))
+          })
+        }
         return .object(["cursor": .string(cursor), "values": .array(try queries.map(reader.read))])
       }
     case .artifact:

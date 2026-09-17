@@ -3048,7 +3048,7 @@ final class NotebookAppModel {
           return try await coordinator.handle(request)
         }
         if command.command == .scriptContext, let request = command.scriptContext {
-          return try await coordinator.context(request)
+          return .object(["api_version": .number(2), "value": try await coordinator.context(request)])
         }
         throw CollaborationError("invalid_script_request", "Запрос исполнения или контекста отсутствует.")
       }
@@ -3334,7 +3334,7 @@ final class NotebookAppModel {
             .object(["contextID": .string(question.contextID.uuidString),
               "entryID": .string(question.entryID.uuidString), "references": try .encode(question.references)])
           } ?? .null,
-          "meaning": .string("Read frozen attention inside notebook_execute with await nb.attention({contextID, referenceID}); use emitImage(result.artifact) when present. notebook_context gives compact current context; nb.help(topic) gives SDK and operation contracts. Shared Notebook workspace. Selection directs attention, not permissions. Use nb.reference, nb.transaction, nb.undo and nb.action for source/version checks, undoable edits and separate saved/received/shown receipts. For code notes use nb.code and the appendInkStroke operation on codeFragment. Use the returned notebook://code/UUID link, or fileLink with the required 1-based line query, in Markdown references. These links scroll only the document. A local draft is not yet the working file on Mac. Do not move the board camera.")
+          "meaning": .string("Read frozen attention inside notebook_execute with await nb.attention({contextID, referenceID}); use emitImage(result.data.artifact) when present. notebook_context gives compact current context; Reads return {data,basis,coverage,cursor}; nb.transaction(key,{base:snapshot.basis,summary,operations}) returns immutable ActionResult. Consult nb.help(topic) only when needed. Shared Notebook workspace. Selection directs attention, not permissions. Use nb.reference, nb.transaction, nb.undo and nb.action for source/version checks, undoable edits and separate saved/received/shown receipts. For code notes use nb.code and the appendInkStroke operation on codeFragment. Use notebook://code/UUID for the read fragment, or fileLink with the required 1-based line query, in Markdown references. These links scroll only the document. A local draft is not yet the working file on Mac. Do not move the board camera.")
         ])
         let text = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
         return (text, question?.contextID)

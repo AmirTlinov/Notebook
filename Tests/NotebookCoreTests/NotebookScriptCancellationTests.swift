@@ -8,7 +8,7 @@ struct NotebookScriptCancellationTests {
     let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("notebook-script-cancel-\(UUID())"))
     _ = try store.loadOrCreate(actor: UUID(), pageSize: .init(width: 834, height: 1194))
     let id = UUID()
-    _ = try store.admitScriptRun(.init(op: .start, runID: id, apiVersion: 1, code: "cancel ordering"))
+    _ = try store.admitScriptRun(.init(op: .start, runID: id, apiVersion: 2, code: "cancel ordering"))
     return (store, id)
   }
 
@@ -35,7 +35,7 @@ struct NotebookScriptCancellationTests {
     #expect(try store.requestScriptRunCancellation(id) == completed)
     #expect(completed.cancellationRequestedAt == nil)
     let queued = UUID()
-    _ = try store.admitScriptRun(.init(op: .start, runID: queued, apiVersion: 1, code: "must never execute"))
+    _ = try store.admitScriptRun(.init(op: .start, runID: queued, apiVersion: 2, code: "must never execute"))
     let cancelled = try store.requestScriptRunCancellation(queued)
     #expect(cancelled.state == .cancelled)
     #expect(try store.setScriptRunState(queued, state: .running) == cancelled)

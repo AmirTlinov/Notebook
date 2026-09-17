@@ -14,7 +14,7 @@ export type Target = z.infer<typeof targetSchema>;
 const frame = z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive() }).strict();
 
 export const referenceSchema = z.object({ id: z.uuid(), target: targetSchema, elementID: z.string().optional(), region: frame.optional(), worldOrigin: point.optional(), pageIndex: z.number().int().nonnegative().optional(), revision: z.string(), label: z.string().max(1000).default("") }).strict();
-const expectation = z.object({ target: targetSchema, revision: z.string().min(1), stateRevision:z.string().optional(), sourceRevision:z.string().optional(), inkRevision:z.string().optional().describe("For appendInkStroke: drawingRevision of a page, spatialInkRevision of a board/cover, or inkRevision returned by nb.code.") }).strict();
+export const expectationSchema = z.object({ target: targetSchema, revision: z.string().min(1), stateRevision:z.string().optional(), sourceRevision:z.string().optional(), inkRevision:z.string().optional().describe("For appendInkStroke: drawingRevision of a page, spatialInkRevision of a board/cover, or inkRevision returned by nb.code.") }).strict();
 const source = z.string().max(1_000_000);
 const textStyle = z.object({fontSize:z.number().min(8).max(240),weight:z.number().min(0).max(1),
   red:z.number().min(0).max(1),green:z.number().min(0).max(1),blue:z.number().min(0).max(1),alpha:z.number().min(0).max(1)}).strict();
@@ -34,9 +34,9 @@ const arrowhead = z.enum(["none", "arrow", "triangle", "square", "dot", "pipe", 
 const graphicConnection = z.object({start:graphicEndpoint, end:graphicEndpoint,
   bend:z.number().finite().min(-1e6).max(1e6), startArrowhead:arrowhead, endArrowhead:arrowhead,
   labelPosition:z.number().min(0).max(1)}).strict();
-const graphic = z.object({ shape: z.enum(["ellipse", "connector"]), style: graphicStyle, label: z.string().max(100_000),
+export const graphicSchema = z.object({ shape: z.enum(["ellipse", "connector"]), style: graphicStyle, label: z.string().max(100_000),
   representation: z.enum(["ink", "geometry"]), visible: z.boolean(), sourceInkIDs: z.array(z.uuid()).max(16), connection:graphicConnection.optional() }).strict();
-const graphicEdit = graphic.omit({ sourceInkIDs: true, connection: true }).partial().extend({connection:graphicConnection.partial().strict().optional()}).strict();
+const graphicEdit = graphicSchema.omit({ sourceInkIDs: true, connection: true }).partial().extend({connection:graphicConnection.partial().strict().optional()}).strict();
 const editFields = z.object({ source: source.optional(), html: source.optional(), css: source.optional(), javaScript: source.optional(),
   graphic: graphicEdit.optional(), frame: frame.optional(), worldOrigin: point.optional(), textStyle: textStyle.optional() }).strict();
 const op = <K extends string, S extends z.ZodType>(kind: K, values: S, id: z.ZodType | null = z.string().min(1).max(120)) =>
@@ -51,9 +51,9 @@ export const operationSchema = z.discriminatedUnion("kind", [
     color: z.object({ red: z.number().min(0).max(1), green: z.number().min(0).max(1), blue: z.number().min(0).max(1) }).strict().optional(),
     worldOrigin: point.optional().describe("Required for board ink: points are offsets from this tiled origin. Omit on pages/covers."),
   }).strict(), z.uuid().optional()),
-  op("insertElement", z.object({ kind: z.enum(["markdown", "web", "nativeText", "graphic"]), source, frame, graphic: graphic.optional(),
+  op("insertElement", z.object({ kind: z.enum(["markdown", "web", "nativeText", "graphic"]), source, frame, graphic: graphicSchema.optional(),
     html: source.optional(), css: source.optional(), javaScript: source.optional(), state: z.json().optional(), worldOrigin: point.optional(), textStyle: textStyle.optional() }).strict()),
-  op("convertInkToElement", z.object({ kind: z.literal("graphic"), source, frame, graphic, worldOrigin: point.optional() }).strict()),
+  op("convertInkToElement", z.object({ kind: z.literal("graphic"), source, frame, graphic: graphicSchema, worldOrigin: point.optional() }).strict()),
   op("updateElement", editFields),
   op("setElementState", z.object({ state: z.json() }).strict()),
   op("removeElement", z.object({}).strict().default({})),
@@ -76,5 +76,5 @@ export const operationSchema = z.discriminatedUnion("kind", [
   op("stackItems", z.object({ itemIDs: z.array(z.uuid()).min(2).max(5) }).strict(), null),
 ]);
 export const actionSchema = z.object({ contextID: z.uuid().optional(), additionalOwners: z.array(targetSchema).max(32).optional(), summary: z.string().min(1).max(1000),
-  references: z.array(referenceSchema).max(32).default([]), expected: z.array(expectation).min(1).max(1024),
+  references: z.array(referenceSchema).max(32).default([]), expected: z.array(expectationSchema).min(1).max(1024),
   operations: z.array(operationSchema).min(1).max(512) }).strict();

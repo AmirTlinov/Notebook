@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { actionSchema } from "../src/actions.js";
-import { publicPage, revision, type AgentElement, type SpatialElement } from "../src/domain.js";
+import { revision, type AgentElement, type SpatialElement } from "../src/domain.js";
 import { NotebookStore } from "./native-client.js";
 import { writeFixture, fixtureSocket, stopFixture, pageID, rootBoardID } from "./fixture.js";
 
@@ -31,7 +31,7 @@ test("native IPC exposes editable geometry to the agent and causally undoes edit
       frame: { x: 90, y: 90, width: 120, height: 120 }, graphic: { shape: "ellipse", label: "",
         style: { stroke: { red: 0, green: 0, blue: 0 }, strokeWidth: 2 }, representation: "geometry", visible: true, sourceInkIDs: [sourceID] } });
     const edit = await action("updateElement", "circle", { graphic: { label: "1:2" } });
-    const read = publicPage(await store.readPage(pageID)) as { elements: Array<{ id: string; graphic: { label: string } }> };
+    const read = (await store.readPage(pageID)) as { elements: Array<{ id: string; graphic: { label: string } }> };
     assert.equal(read.elements.find(x => x.id === "circle")?.graphic.label, "1:2");
     const deleted = await action("removeElement", "circle", {});
     assert.equal((await store.readPage(pageID)).elements.find(x => x.id === "circle")?.graphic?.visible, false);

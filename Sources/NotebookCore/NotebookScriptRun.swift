@@ -10,7 +10,7 @@ public struct NotebookScriptRequest: Codable, Sendable {
   public var arguments: JSONValue?
   public var afterSequence: Int?
   public var waitMilliseconds: Int?
-  public init(op: Operation, runID: UUID, apiVersion: Int? = nil, code: String? = nil,
+  public init(op: Operation, runID: UUID, apiVersion: Int? = 2, code: String? = nil,
     arguments: JSONValue? = nil, afterSequence: Int? = nil, waitMilliseconds: Int? = nil) {
     self.op = op; self.runID = runID; self.apiVersion = apiVersion; self.code = code
     self.arguments = arguments; self.afterSequence = afterSequence; self.waitMilliseconds = waitMilliseconds
@@ -19,8 +19,9 @@ public struct NotebookScriptRequest: Codable, Sendable {
 
 public struct NotebookScriptContextRequest: Codable, Sendable {
   public var method: String
+  public var apiVersion: Int?
   public var arguments: JSONValue
-  public init(method: String = "observe", arguments: JSONValue = .object([:])) { self.method = method; self.arguments = arguments }
+  public init(method: String = "observe", arguments: JSONValue = .object([:])) { self.method = method; self.arguments = arguments; self.apiVersion = 2 }
 }
 
 public struct NotebookScriptRun: Codable, Equatable, Sendable, Identifiable {
@@ -70,14 +71,14 @@ extension NotebookStore {
   }
 
   public func admitScriptRun(_ request: NotebookScriptRequest) throws -> NotebookScriptRun {
-    guard request.op == .start, request.apiVersion == 1, let code = request.code,
-      code.utf8.count <= 262_144 else { throw CollaborationError("invalid_script", "API v1 принимает JavaScript до 256 КиБ.") }
+    guard request.op == .start, request.apiVersion == 2, let code = request.code,
+      code.utf8.count <= 262_144 else { throw CollaborationError("invalid_script", "API v2 принимает JavaScript до 256 КиБ.") }
     let args = request.arguments ?? .null
     guard try JSONEncoder().encode(args).count <= 1_048_576 else { throw CollaborationError("resource_limit", "Аргументы превышают 1 МиБ.") }
     return try commandTransaction(advancesReadRevision: false) {
       let workspace = try workspaceHeader().workspaceID
-      let fingerprint = try collaborationHash(JSONValue.object(["domain": .string("notebook.script-run.v1"),
-        "workspaceID": .string(workspace.uuidString.lowercased()), "apiVersion": .number(1), "code": .string(code), "arguments": args]))
+      let fingerprint = try collaborationHash(JSONValue.object(["domain": .string("notebook.script-run.v2"),
+        "workspaceID": .string(workspace.uuidString.lowercased()), "apiVersion": .number(2), "language": .string("javascript"), "code": .string(code), "arguments": args]))
       if let previous = try scriptRun(request.runID) {
         guard previous.fingerprint == fingerprint else { throw CollaborationError("run_id_conflict", "Этот run_id уже принадлежит другой программе или аргументам.") }
         return previous
@@ -85,7 +86,7 @@ extension NotebookStore {
       let active = try unfinishedScriptRuns()
       guard active.count < 9 else { throw CollaborationError("script_queue_full", "На Mac выполняется одна программа и ожидают не более восьми.") }
       let value = NotebookScriptRun(id: request.runID, workspaceID: workspace, fingerprint: fingerprint,
-        apiVersion: 1, code: code, arguments: args, state: .queued, lastSequence: 0, outputBytes: 0, createdAt: Date())
+        apiVersion: 2, code: code, arguments: args, state: .queued, lastSequence: 0, outputBytes: 0, createdAt: Date())
       try publishRecords(writes: [scriptFile(value.id): try .encode(value)])
       try publishRecords(writes: [scriptPrefix(value.id) + "effect-index.json": .array([])])
       try publishRecords(writes: ["local/script-active.json": try .encode(active.map(\.id) + [value.id])])
@@ -201,7 +202,7 @@ extension NotebookStore {
       }
       let next = events.last?.sequence ?? after
       return .object(["status": .string(run.state.rawValue), "run_id": .string(id.uuidString.lowercased()),
-        "fingerprint": .string(run.fingerprint), "api_version": .number(Double(run.apiVersion)),
+        "fingerprint": .string(run.fingerprint), "api_version": .number(2), "run_api_version": .number(Double(run.apiVersion)),
         "events": try .encode(events), "next_seq": .number(Double(next)), "has_more": .bool(next < run.lastSequence),
         "result": run.result ?? .null, "error": run.error ?? .null,
         "effects": .array(try scriptEffectIndex(id)),

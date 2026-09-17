@@ -171,7 +171,7 @@ func connectorUndoPreservesDependencies(board: Bool) throws {
   #expect(undo.undo?.preserved.isEmpty == false)
   #expect(undo.undo?.dependencies?.count == 2)
   #expect(undo.undo?.dependencies?.allSatisfy { $0.path.last == .member("ab") } == true)
-  let details = try f.store.actionDetails(undo,page:.init(section:.undo))
+  let details = try f.store.actionDetails(NotebookActionReadModel(undo),page:.init(section:.undo))
   #expect(details["page"]?["items"]?.array.contains { $0["reason"] == .string("retained_dependency") } == true)
   #expect(try f.resolution().layout != nil)
   _ = try f.store.undoCollaborationAction(link.id,actor:f.actor)

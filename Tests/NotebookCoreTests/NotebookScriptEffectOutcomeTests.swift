@@ -17,7 +17,7 @@ struct NotebookScriptEffectOutcomeTests {
       let index = try store.loadOrCreate(actor: actor, pageSize: .init(width: 834, height: 1194)).0
       pageID = index.selectedPageID!; itemID = index.selectedItemID; boardID = index.rootBoardID
       _ = try store.loadOrCreateSpatialInk(actor: actor)
-      _ = try store.admitScriptRun(.init(op: .start, runID: run, apiVersion: 1, code: "effect proof"))
+      _ = try store.admitScriptRun(.init(op: .start, runID: run, apiVersion: 2, code: "effect proof"))
       _ = try store.setScriptRunState(run, state: .running)
     }
     func clean() { try? FileManager.default.removeItem(at: store.root) }
@@ -76,8 +76,10 @@ struct NotebookScriptEffectOutcomeTests {
     #expect(resolved.state == .saved && resolved.value == expected && resolved.error == nil)
     let undo = try f.effect("undo", key: "undo", arguments: .object(["actionID": .string(effect.id.uuidString)]))
     #expect(try f.store.scriptEffectOutcome(undo) == .notSaved)
-    let undone = try f.store.undoCollaborationAction(effect.id, actor: f.actor)
-    #expect(try f.store.scriptEffectOutcome(undo) == .saved(f.store.scriptActionOutcome(undone)))
+    var request = NotebookCommand(command: .undo); request.actionID = effect.id
+    request.scriptEffect = .init(runID: f.run, effectID: undo.id)
+    let undone = try NotebookCommandDispatcher(store: f.store).handle(request)
+    #expect(try f.store.scriptEffect(f.run, id: undo.id).value == undone)
     #expect(try f.store.reconcileScriptEffect(f.run, id: undo.id).state == .saved)
     #expect(try f.store.unfinishedScriptEffects().isEmpty)
   }

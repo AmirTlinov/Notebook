@@ -130,7 +130,7 @@ extension NotebookStore {
       var inkPointCount = 0
       for (index, operation) in action.operations.enumerated() {
         do {
-          if [.appendInkStroke, .convertInkToElement].contains(operation.kind) {
+          if operation.needsInkExpectation {
             inkPointCount += operation.values["points"]?.array.count ?? 0
             guard inkPointCount <= 100_000 else { throw invalid("Один ход содержит не более 100000 точек ручки.") }
             guard createdTargets.contains(operation.target) || action.expected.contains(where: {
@@ -149,20 +149,7 @@ extension NotebookStore {
             throw CollaborationError("revision_required", "Для состояния блока нужна stateRevision документа.", target:operation.target)
           }
           try after.apply(operation, actor: actor)
-          if let id = operation.id.flatMap(UUID.init(uuidString:)) {
-            switch operation.kind {
-            case .createBoard: createdTargets.insert(.init(kind: .board, id: id))
-            case .createDocument: createdTargets.insert(.init(kind: .document, id: id))
-            case .createNotebook:
-              if let pageID = operation.values["pageID"]?.string.flatMap(UUID.init(uuidString:)) {
-                createdTargets.insert(.init(kind: .page, id: pageID))
-              }
-            default: break
-            }
-            if [.createBoard, .createNotebook, .createDocument].contains(operation.kind) {
-              createdTargets.insert(.init(kind: .cover, id: id, boardID: operation.target.id))
-            }
-          }
+          createdTargets.formUnion(operation.createdOwners)
         } catch let error as CollaborationError {
           throw error.atOperation(index, operation)
         }
@@ -316,6 +303,7 @@ extension NotebookStore {
         inkRevision: receipt.action.containsInk ? try after.inkRevision(of: $0) : nil)
     }
     try publishCollaboration(writes: [actionFile(receipt.id): try .encode(receipt)])
+    try freezeActionResult(receipt, changed: collaborationDiff(before, after.files))
     return receipt
   }
 
@@ -467,11 +455,7 @@ struct CollaborationWorkspace {
   }
 
   func requiredExpectations(for operation: CollaborationOperation) throws -> [CollaborationTarget] {
-    var targets = [operation.target]
-    if [.createNotebook, .createDocument, .createBoard, .renameItem].contains(operation.kind) {
-      targets.append(CollaborationTarget(kind: .workspace, id: try workspace.rootBoardID))
-    }
-    return Array(Set(targets))
+    operation.requiredOwners(workspaceRootID: try workspace.rootBoardID)
   }
 
   mutating func apply(_ operation: CollaborationOperation, actor: UUID) throws {

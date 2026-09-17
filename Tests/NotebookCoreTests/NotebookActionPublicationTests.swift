@@ -72,9 +72,10 @@ struct NotebookActionPublicationTests {
     #expect(try f.store.targetRenderRequests() == requests)
     #expect(try f.store.readSpatialElement(boardID: f.target.id, elementID: "control") == human)
     #expect(try f.store.targetContentRevision(target: f.target) == version)
-    let direct = try #require(f.store.scriptActionOutcome(undone).array.first)
-    #expect(direct["publication"] == .object(["saved": .string("confirmed")]),
-      "The atomic completion does not add current device delivery claims")
+    let direct = try f.store.scriptActionOutcome(undone)
+    #expect(direct["publication"]?["saved"] == .string("confirmed"))
+    #expect(direct["publication"]?["receivedByIPad"] == .string("awaiting_device"),
+      "The immutable completion does not add current device delivery claims")
   }
 
   @Test func mutatingUndoStillRequiresActualDisplayBeyondReceiptArrival() throws {
@@ -127,7 +128,7 @@ struct NotebookActionPublicationTests {
     // Projection-only malformed/legacy boundaries; no device or source write.
     projection.undo = .init(restored: emptyRevisions ? 1 : 0, preserved: [], completedAt: Date())
     if emptyRevisions { projection.revisions = [] }
-    let result = try f.store.readTransaction { try $0.actionDetails(projection, page: nil) }
+    let result = try f.store.readTransaction { try $0.actionDetails(NotebookActionReadModel(projection), page: nil) }
     #expect(result["publication"]?["shownOnIPad"] == .string("awaiting_display"))
     #expect(result["publication"]?["shownOnIPadReason"] == nil)
   }

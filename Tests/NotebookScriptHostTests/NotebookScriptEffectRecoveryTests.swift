@@ -47,7 +47,7 @@ struct NotebookScriptEffectRecoveryTests {
     }
     func run() throws -> UUID {
       let id = UUID()
-      _ = try store.admitScriptRun(.init(op: .start, runID: id, apiVersion: 1, code: "host effect contract"))
+      _ = try store.admitScriptRun(.init(op: .start, runID: id, apiVersion: 2, code: "host effect contract"))
       _ = try store.setScriptRunState(id, state: .running)
       return id
     }
@@ -96,8 +96,9 @@ struct NotebookScriptEffectRecoveryTests {
       "items": .array([.object(["id": .string("next-note"), "size": .object(["width": .number(180), "height": .number(100)]), "direction": .string("free")])])])
     let context = try await host.context(.init(method: "place", arguments: args))
     let sdk = try await host.read(method: "place", arguments: args)
-    #expect(context == sdk)
-    #expect(context.string("status") == "snapshot_pending")
+    #expect(context["data"] == sdk["data"])
+    #expect(context["basis"] == sdk["basis"])
+    #expect(context["data"]?.string("status") == "snapshot_pending")
     #expect(owner.commands == 2)
     await host.shutdown()
   }

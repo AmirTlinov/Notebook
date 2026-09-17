@@ -126,9 +126,9 @@ final class NotebookScriptServiceTests: XCTestCase {
   func testSandboxedServiceAwaitsFiftyReadsAndHasNoAmbientCapabilities() async throws {
     let owner = try Owner(), host = try await coordinator(owner), id = UUID()
     defer { try? FileManager.default.removeItem(at: owner.store.root) }
-    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 1, code: """
+    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 2, code: """
       const values=await Promise.all(Array.from({length:50},()=>nb.read({kind:'workspaceHeader'})));
-      return {count:values.length,ids:values.map(x=>x.values[0].workspaceID),
+      return {count:values.length,ids:values.map(x=>x.data.workspaceID),
         globals:[typeof process,typeof require,typeof fetch,typeof std,typeof os,typeof SharedArrayBuffer,typeof Atomics]};
       """))
     let result = try await finish(host, id)
@@ -147,13 +147,13 @@ final class NotebookScriptServiceTests: XCTestCase {
       frame: .init(x: 10, y: 10, width: 100, height: 100), source: "source-\($0)", html: "<p>\($0)</p>") }, actor: UUID())
     XCTAssertTrue(changed)
     try owner.store.savePage(page)
-    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 1, code: """
+    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 2, code: """
       const query={target:{kind:'page',id:args.page},elementID:'element-39'};
       const first=await nb.observe(query);
-      const second=await nb.observe({...query,since:first.changeKeys});
+      const second=await nb.observe({...query,since:first.data.checkpoint});
       const addressed=await nb.page({id:args.page,elementID:'element-39'});
-      return {element:first.content.element,unchanged:second.content.unchanged,
-        direct:addressed.values[0].element,visual:first.visual.status};
+      return {element:first.data.objects[0].value.content,unchanged:second.data.objects.length===0,
+        direct:addressed.data.element,visual:first.data.visual.status};
       """, arguments: .object(["page": .string(pageID.uuidString)])))
     let result = try await finish(host, id)
     XCTAssertEqual(result.string("status"), "completed", "\(result)")
@@ -177,22 +177,22 @@ final class NotebookScriptServiceTests: XCTestCase {
     let initialID = UUID()
     let query: JSONValue = .object(["target": try .encode(CollaborationTarget(kind: .page, id: pageID)),
       "ids": .array([.string("arrow")]), "fields": .array([.string("geometry")])])
-    _ = try await host.handle(.init(op: .start, runID: initialID, apiVersion: 1, code: "return await nb.observe(args);", arguments: query))
+    _ = try await host.handle(.init(op: .start, runID: initialID, apiVersion: 2, code: "return await nb.observe(args);", arguments: query))
     let initial = try await finish(host, initialID)
     XCTAssertEqual(initial.string("status"), "completed", "\(initial)")
     node = node.updating(frame: .init(x: 150, y: 10, width: 100, height: 100))
     XCTAssertTrue(page.replaceElements([node, arrow], actor: UUID()))
     try owner.store.savePage(page)
-    var next = query.fields; next["since"] = initial["result"]?["changeKeys"]
+    var next = query.fields; next["since"] = initial["result"]?["data"]?["checkpoint"]
     let deltaID = UUID()
-    _ = try await host.handle(.init(op: .start, runID: deltaID, apiVersion: 1, code: "return await nb.observe(args);", arguments: .object(next)))
+    _ = try await host.handle(.init(op: .start, runID: deltaID, apiVersion: 2, code: "return await nb.observe(args);", arguments: .object(next)))
     let delta = try await finish(host, deltaID)
     XCTAssertEqual(delta.string("status"), "completed", "\(delta)")
-    XCTAssertEqual(delta["result"]?["content"]?["mode"], .string("delta"))
-    let objects = delta["result"]?["content"]?.array("objects") ?? []
+    XCTAssertEqual(delta["result"]?["data"]?["mode"], .string("delta"))
+    let objects = delta["result"]?["data"]?.array("objects") ?? []
     XCTAssertEqual(objects.count, 1)
     XCTAssertEqual(objects.first?["id"], .string("arrow"))
-    XCTAssertNotEqual(objects.first?["value"], initial["result"]?["content"]?.array("objects").first?["value"])
+    XCTAssertNotEqual(objects.first?["value"], initial["result"]?["data"]?.array("objects").first?["value"])
     XCTAssertEqual(try owner.store.loadPage(pageID).elements.first { $0.id == "arrow" }, arrow)
     await host.shutdown()
   }
@@ -201,13 +201,13 @@ final class NotebookScriptServiceTests: XCTestCase {
     let owner = try Owner(), host = try await coordinator(owner), id = UUID()
     defer { try? FileManager.default.removeItem(at: owner.store.root) }
     let page = try owner.store.loadOrCreate(actor: UUID(), pageSize: .init(width: 834, height: 1194)).0.selectedPageID!
-    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 1, code: """
+    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 2, code: """
       const p=await nb.page({id:args.page});
       const receipt=await nb.transaction('markdown',{summary:'XPC normalization',
-        expected:[{target:{kind:'page',id:args.page},revision:p.agentRevision}],
+        base:p.basis,
         operations:[{kind:'insertElement',target:{kind:'page',id:args.page},id:'proof',
           values:{kind:'markdown',source:'# Actual parser\\n\\n**Saved**',frame:{x:20,y:20,width:300,height:180}}}]});
-      return {actionID:receipt[0].receipt.id};
+      return {actionID:receipt.actionID};
       """, arguments: .object(["page": .string(page.uuidString)])))
     let result = try await finish(host, id)
     XCTAssertEqual(result.string("status"), "completed", "\(result)")
@@ -215,6 +215,42 @@ final class NotebookScriptServiceTests: XCTestCase {
     XCTAssertTrue(saved.html.contains("<strong>Saved</strong>"))
     let action = try XCTUnwrap(result["result"]?.string("actionID").flatMap(UUID.init(uuidString:)))
     XCTAssertNotNil(try owner.store.collaborationAction(action).requestFingerprint)
+    await host.shutdown()
+  }
+
+  func testSDKV2LabelBasisAndEarlyEmitReturnOneImmutableResult() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), run = UUID()
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    let pageID = try XCTUnwrap(owner.store.loadIndex().selectedPageID)
+    var page = try owner.store.loadPage(pageID)
+    let element = AgentElement(id: "label-node", kind: .graphic, frame: .init(x: 20, y: 30, width: 200, height: 100),
+      source: "", html: "", graphic: .init(label: "Before"))
+    XCTAssertTrue(page.replaceElements([element], actor: UUID())); try owner.store.savePage(page)
+    // Warm both signed service launch paths before testing the short-run budget.
+    let warm = UUID()
+    _ = try await host.handle(.init(op: .start, runID: warm, code: "const s=await nb.page({id:args.page}); return await nb.transaction('warm',{base:s.basis,summary:'Warm label',operations:[{kind:'updateElement',target:{kind:'page',id:args.page},id:'label-node',values:{graphic:{label:'Before'}}}]});", arguments: .object(["page": .string(pageID.uuidString)])))
+    let warmed = try await finish(host, warm)
+    XCTAssertEqual(warmed.string("status"), "completed", "\(warmed)")
+    let result = try await host.handle(.init(op: .start, runID: run, code: """
+      await emit({started:true});
+      const s=await nb.page({id:args.page,elementID:'label-node'});
+      return await nb.transaction('label',{base:s.basis,summary:'Change label',operations:[
+        {kind:'updateElement',target:{kind:'page',id:args.page},id:s.data.element.id,values:{graphic:{label:'After'}}}
+      ]});
+      """, arguments: .object(["page": .string(pageID.uuidString)])))
+    XCTAssertEqual(result.string("status"), "completed", "Early emit must not force an external resume: \(result)")
+    XCTAssertEqual(result.array("events").count, 1)
+    let saved = try XCTUnwrap(owner.store.readPageElement(pageID: pageID, elementID: "label-node"))
+    XCTAssertEqual(saved.graphic?.label, "After")
+    XCTAssertEqual(saved.source, element.source); XCTAssertEqual(saved.frame, element.frame)
+    XCTAssertEqual(saved.graphic?.style, element.graphic?.style)
+    let actionID = try XCTUnwrap(result["result"]?.string("actionID").flatMap(UUID.init(uuidString:)))
+    let original = try XCTUnwrap(result["result"])
+    _ = try owner.store.undoCollaborationAction(actionID, actor: UUID())
+    XCTAssertEqual(try owner.store.savedActionResult(actionID), original)
+    XCTAssertEqual(original["publication"]?.string("saved"), "confirmed")
+    XCTAssertNotEqual(original["publication"]?.string("shownOnIPad"), "confirmed")
+    XCTAssertEqual(try owner.store.scriptEffect(run, id: actionID).value, original)
     await host.shutdown()
   }
 
@@ -227,14 +263,14 @@ final class NotebookScriptServiceTests: XCTestCase {
       frame: .init(x: 10, y: 10, width: 100, height: 100), source: "needle \($0)", html: "<p>\($0)</p>") }, actor: UUID())
     XCTAssertTrue(changed)
     try owner.store.savePage(page)
-    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 1, code: """
+    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 2, code: """
       const filters={kinds:['page'],target:{kind:'page',id:args.page}};
       let next, hits=[], pages=0;
       do { const result=await nb.search({query:'needle',limit:3,filters,...(next?{next}:{})});
-        hits.push(...result.results); next=result.coverage.next; pages++;
+        hits.push(...result.data.results); next=result.coverage.next; pages++;
       } while(next && pages<10);
       const hit=await nb.page({id:args.page,elementID:hits.at(-1).elementID});
-      return {ids:hits.map(x=>x.elementID),pages,source:hit.values[0].element.source};
+      return {ids:hits.map(x=>x.elementID),pages,source:hit.data.element.source};
       """, arguments: .object(["page": .string(pageID.uuidString)])))
     let result = try await finish(host, id)
     XCTAssertEqual(result.string("status"), "completed", "\(result)")
@@ -249,10 +285,10 @@ final class NotebookScriptServiceTests: XCTestCase {
     owner.holdCommit = true
     defer { owner.releaseCommit?.resume(); try? FileManager.default.removeItem(at: owner.store.root) }
     let page = try owner.store.loadOrCreate(actor: UUID(), pageSize: .init(width: 834, height: 1194)).0.selectedPageID!
-    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 1, code: """
+    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 2, code: """
       const p=await nb.page({id:args.page});
       await nb.transaction('accepted',{summary:'accepted before cancel',
-        expected:[{target:{kind:'page',id:args.page},revision:p.agentRevision}],
+        base:p.basis,
         operations:[{kind:'insertElement',target:{kind:'page',id:args.page},id:'accepted',
           values:{kind:'markdown',source:'**accepted**',frame:{x:20,y:20,width:300,height:180}}}]});
       await nb.point('must-not-start',{references:[]});
@@ -277,18 +313,18 @@ final class NotebookScriptServiceTests: XCTestCase {
     for code in ["while(true){}", "throw new Error('deliberate-proof');", "return 'x'.repeat(300000);",
       "const a=[];while(true)a.push(new Uint8Array(1024*1024));"] {
       let id = UUID()
-      _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 1, code: code))
+      _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 2, code: code))
       let result = try await finish(host, id)
       XCTAssertEqual(result.string("status"), "failed", "\(result)")
       XCTAssertNotEqual(result["error"], .null)
     }
     let refused = UUID()
-    _ = try await host.handle(.init(op: .start, runID: refused, apiVersion: 1, code: "await nb.page({id:'not-a-uuid'});"))
+    _ = try await host.handle(.init(op: .start, runID: refused, apiVersion: 2, code: "await nb.page({id:'not-a-uuid'});"))
     let refusal = try await finish(host, refused)
     XCTAssertEqual(refusal.string("status"), "failed")
     XCTAssertTrue(refusal["error"]?.string("message")?.contains("invalid_reference") == true, "\(refusal)")
     let id = UUID()
-    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 1, code: "return 42;"))
+    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 2, code: "return 42;"))
     let result = try await finish(host, id)
     XCTAssertEqual(result["result"], .number(42))
     await host.shutdown()
@@ -297,7 +333,7 @@ final class NotebookScriptServiceTests: XCTestCase {
   func testCancelStopsAwaitWithoutInventingAnEffectAndMarkupRefusesSource() async throws {
     let owner = try Owner(), host = try await coordinator(owner), id = UUID()
     defer { try? FileManager.default.removeItem(at: owner.store.root) }
-    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 1,
+    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 2,
       code: "for(let i=0;i<20;i++) await nb.wait({milliseconds:1000}); await nb.point('never',{references:[]});"))
     try await Task.sleep(for: .milliseconds(100))
     _ = try await host.handle(.init(op: .cancel, runID: id))
@@ -336,11 +372,11 @@ final class NotebookScriptServiceTests: XCTestCase {
     let placement: JSONValue = .object(["target": try .encode(target), "expectedRevision": .string(try owner.store.targetContentRevision(target: target)),
       "items": .array([.object(["id": .string("next-note"), "size": .object(["width": .number(180), "height": .number(100)]), "direction": .string("free")])])])
     let context = try await host.context(.init(method: "place", arguments: placement))
-    XCTAssertEqual(context.string("status"), "snapshot_pending")
-    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 1, code: """
+    XCTAssertEqual(context["data"]?.string("status"), "snapshot_pending")
+    _ = try await host.handle(.init(op: .start, runID: id, apiVersion: 2, code: """
       const place=await nb.place(args.placement);
       const p=await nb.page({id:args.page}), target={kind:'page',id:args.page};
-      const action={summary:'atomic rejected operation',expected:[{target,revision:p.agentRevision}],operations:[
+      const action={summary:'atomic rejected operation',base:p.basis,operations:[
         {kind:'insertElement',target,id:'must-remain-absent',values:{kind:'web',source:'private source',html:'<p>Absent</p>',frame:{x:20,y:20,width:200,height:100}}},
         {kind:'removeElement',target,id:'absent',values:{}}]};
       const failures=[];
@@ -348,7 +384,7 @@ final class NotebookScriptServiceTests: XCTestCase {
         try { await nb.transaction('atomic',action); }
         catch(e) { failures.push({code:e.code,operation:e.operation}); }
       }
-      return {place:place.status,failures};
+      return {place:place.data.status,failures};
       """, arguments: .object(["page": .string(page.uuidString.lowercased()), "placement": placement])))
     let result = try await finish(host, id)
     XCTAssertEqual(result.string("status"), "completed", "\(result)")
@@ -369,7 +405,7 @@ final class NotebookScriptServiceTests: XCTestCase {
   func testStartupRecoversJobsBeforeTheFirstContextReadWithoutReplayingCode() async throws {
     let owner = try Owner(), run = UUID(), job = UUID()
     defer { try? FileManager.default.removeItem(at: owner.store.root) }
-    _ = try owner.store.admitScriptRun(.init(op: .start, runID: run, apiVersion: 1,
+    _ = try owner.store.admitScriptRun(.init(op: .start, runID: run, apiVersion: 2,
       code: "throw new Error('must never replay');"))
     _ = try owner.store.setScriptRunState(run, state: .running)
     try owner.store.saveScriptExportJob(job, value: .object(["status": .string("running"), "jobID": .string(job.uuidString)]))
@@ -377,7 +413,7 @@ final class NotebookScriptServiceTests: XCTestCase {
     try await host.start()
     try await host.start()
     let status = try await host.context(.init(method: "exportStatus", arguments: .object(["jobID": .string(job.uuidString)])))
-    XCTAssertEqual(status.string("status"), "interrupted")
+    XCTAssertEqual(status["data"]?.string("status"), "interrupted")
     XCTAssertEqual(try owner.store.scriptRun(run)?.state, .interrupted)
     let page = try await host.handle(.init(op: .resume, runID: run))
     XCTAssertEqual(page.string("status"), "interrupted")
@@ -402,7 +438,7 @@ final class NotebookScriptServiceTests: XCTestCase {
     ])
     try owner.store.saveDocument(document); try owner.store.saveDocumentState(.init(id: document.id, actor: UUID()))
     owner.holdPublication = true
-    _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 1,
+    _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2,
       code: "return await nb.export('actual-pdf',{documentID:args.documentID});",
       arguments: .object(["documentID": .string(document.id.uuidString)])))
     let completed = try await finish(host, run)
@@ -411,12 +447,12 @@ final class NotebookScriptServiceTests: XCTestCase {
     let deadline = ContinuousClock.now + .seconds(130)
     while !owner.publicationAccepted, ContinuousClock.now < deadline {
       let status = try await host.context(.init(method: "exportStatus", arguments: .object(["jobID": .string(job)])))
-      if status.string("status") == "failed" { XCTFail("Actual compiler failed: \(status)"); break }
+      if status["data"]?.string("status") == "failed" { XCTFail("Actual compiler failed: \(status)"); break }
       try await Task.sleep(for: .milliseconds(100))
     }
     XCTAssertTrue(owner.publicationAccepted, "Only the test barrier delays a real compiled PDF; no receipt or PDF is fabricated.")
     let another = UUID()
-    _ = try await host.handle(.init(op: .start, runID: another, apiVersion: 1, code: "return 42;"))
+    _ = try await host.handle(.init(op: .start, runID: another, apiVersion: 2, code: "return 42;"))
     let independent = try await finish(host, another)
     XCTAssertEqual(independent["result"], .number(42))
     owner.releasePublication?.resume(); owner.releasePublication = nil
@@ -424,10 +460,10 @@ final class NotebookScriptServiceTests: XCTestCase {
     let publicationDeadline = ContinuousClock.now + .seconds(10)
     repeat {
       status = try await host.context(.init(method: "exportStatus", arguments: .object(["jobID": .string(job)])))
-      if status.string("status") != "saved" { try await Task.sleep(for: .milliseconds(25)) }
-    } while status.string("status") != "saved" && ContinuousClock.now < publicationDeadline
-    XCTAssertEqual(status.string("status"), "saved", "\(status)")
-    let receipt = try XCTUnwrap(status["receipt"]).decode(NotebookExportReceipt.self)
+      if status["data"]?.string("status") != "saved" { try await Task.sleep(for: .milliseconds(25)) }
+    } while status["data"]?.string("status") != "saved" && ContinuousClock.now < publicationDeadline
+    XCTAssertEqual(status["data"]?.string("status"), "saved", "\(status)")
+    let receipt = try XCTUnwrap(status["data"]?["receipt"]).decode(NotebookExportReceipt.self)
     let pdf = try Data(contentsOf: URL(fileURLWithPath: receipt.pdfPath))
     XCTAssertTrue(pdf.starts(with: Data("%PDF".utf8)))
     let exportedPDF = XCTAttachment(data: pdf, uniformTypeIdentifier: "com.adobe.pdf")
@@ -511,7 +547,7 @@ final class NotebookScriptServiceTests: XCTestCase {
       let owner = try Owner(), host = try await coordinator(owner), id = UUID()
       defer { owner.releaseAdmission?.resume(); try? FileManager.default.removeItem(at: owner.store.root) }
       owner.holdAdmission = true
-      let start = Task { try await host.handle(.init(op: .start, runID: id, apiVersion: 1,
+      let start = Task { try await host.handle(.init(op: .start, runID: id, apiVersion: 2,
         code: "return await nb.read({kind:'workspaceHeader'});")) }
       let deadline = ContinuousClock.now + .seconds(5)
       while !owner.admissionAccepted, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }

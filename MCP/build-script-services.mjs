@@ -1,4 +1,5 @@
 import { build } from "esbuild";
+import {sdkDeclarations} from "./generate-sdk-declarations.mjs";
 import { fileURLToPath } from "node:url";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 
@@ -26,3 +27,5 @@ for (const name of ["parse5", "entities"]) {
 const contract=await build({absWorkingDir:root,entryPoints:["src/sdk-contracts.ts"],bundle:true,format:"esm",platform:"node",target:"es2022",write:false});
 const {sdkReference}=await import("data:text/javascript;base64,"+Buffer.from(contract.outputFiles[0].contents).toString("base64"));
 await resource("../Sources/NotebookScriptHost/Resources/sdk-reference.json",JSON.stringify(sdkReference,null,2)+"\n");
+
+await resource("../Sources/NotebookScriptHost/Resources/notebook-sdk.d.ts",sdkDeclarations(sdkReference));

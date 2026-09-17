@@ -7,7 +7,7 @@ enum NotebookScriptAPI {
     "context", "attention", "code", "search", "reference", "referenceStatus", "action", "render", "pageMap",
     "pageImage", "regions", "place", "exportStatus", "presentation", "wait"]
   static var help: JSONValue { .object([
-    "status": .string("ready"), "api_version": .number(1), "language": .string("ECMAScript / QuickJS 2026-06-04"),
+    "status": .string("ready"), "api_version": .number(2), "language": .string("ECMAScript / QuickJS 2026-06-04"),
     "limits": .object(["active_runs": .number(1), "queued_runs": .number(8), "source_bytes": .number(262144),
       "arguments_bytes": .number(1048576), "heap_bytes": .number(134217728), "stack_bytes": .number(1048576),
       "cpu_seconds": .number(5), "wall_seconds": .number(30), "tool_reply_seconds": .number(4), "outstanding_calls": .number(4),
@@ -17,7 +17,7 @@ enum NotebookScriptAPI {
     "effects": .array(["transaction(key, action)", "undo(key, {actionID})", "point(key, {references, contextID?, replyTo?})",
       "present(key, {view, steps})", "cancelPresentation(key, {id})", "export(key, {documentID})"].map(JSONValue.string)),
     "utilities": .array(["await nb.id(key)", "await emit(value)", "await emitImage(artifact)", "await nb.wait({milliseconds:100})"].map(JSONValue.string)),
-    "read_contract": .string("read({kind,...}) returns one native owner and cursor; readMany({queries,expectedCursor?}) returns one bounded snapshot. IDs, revisions and continuation cursors come from owners, never inferred from omitted data."),
+    "read_contract": .string("Reads return Snapshot {data,basis,coverage,cursor}; readMany returns a tuple with per-query coverages from one WAL snapshot. IDs, revisions and continuation cursors come from owners, never inferred from omitted data."),
     "execution_contract": .string("Async JavaScript with args and nb only. No Node, Python, DOM, require, fetch, filesystem, network, module loader, SQLite or user bytecode. Same run_id+code+args attaches. Changed payload conflicts. Resume never replays source or restores a JS heap. Mac owns the 30s active-run wall deadline, including XPC sandbox launch; script_timeout does not depend on a worker reply."),
     "reply_deadline": .string("One MCP reply has four seconds total, including owner admission and images. response_pending includes run_id, original after_seq and admission unknown/confirmed. It never cancels an accepted write. Resume that ID and cursor. If run_missing with after_seq:0, retry the identical start, never a fresh ID. wait_ms is an upper bound from native handler entry, not after admission; the adapter shortens it to leave room for IPC response."),
     "mutation_contract": .string("Every effect requires a stable key. One transaction is atomic and undoable; a whole program may save several effects. Cancellation prevents new effects and reports accepted native outcomes. Native undo preserves later human edits."),
@@ -49,7 +49,7 @@ enum NotebookScriptAPI {
     guard let value else {
       throw CollaborationError("unknown_help_topic", "Выберите тему из справочника SDK.")
     }
-    return .object(["api_version": .number(1), "topic": .string(topic), "contract": value])
+    return .object(["api_version": .number(2), "topic": .string(topic), "contract": value])
   }
 }
 
@@ -64,47 +64,52 @@ extension NotebookScriptCoordinator {
     return try await send(request)
   }
 
+  func snapshotRead(_ queries: [JSONValue], cursor: String? = nil, many: Bool = false) async throws -> JSONValue {
+    var request: [String: JSONValue] = ["command": .string("read"), "readSnapshots": .bool(true), "queries": .array(queries)]
+    request["expectedCursor"] = cursor.map(JSONValue.string)
+    let snapshots = try await send(request).decode([NotebookSnapshot].self)
+    if !many {
+      guard let snapshot = snapshots.first, snapshots.count == 1 else { throw CollaborationError("invalid_read", "Нужен один адрес чтения.") }
+      return try .encode(snapshot)
+    }
+    guard let first = snapshots.first else { throw CollaborationError("invalid_read", "readMany требует хотя бы одно чтение.") }
+    let basis = try NotebookReadBasis.merging(snapshots.map(\.basis))
+    // Each member retains its own continuation; the tuple and its merged basis
+    // belong to one native snapshot, not sequential fresh reads.
+    var result = try JSONValue.encode(NotebookSnapshot(data: .array(snapshots.map(\.data)), basis: basis,
+      coverage: .init(complete: snapshots.allSatisfy { $0.coverage.complete }), cursor: first.cursor)).fields
+    result["coverages"] = try .encode(snapshots.map(\.coverage))
+    return .object(result)
+  }
+
+  private func evidenceSnapshot(_ data: JSONValue) async throws -> JSONValue {
+    try await persistence { store in
+      try .encode(NotebookSnapshot(data: data, basis: store.readBasis(targets: []), cursor: String(store.currentReadCursor())))
+    }
+  }
+
   func read(method: String, arguments args: JSONValue) async throws -> JSONValue {
     guard case .object = args else { throw CollaborationError("invalid_arguments", "Метод SDK получает объект аргументов из nb.help(method).") }
     switch method {
     case "help": return try NotebookScriptAPI.documentation(args.string("topic"))
-    case "read": return try await nativeRead([args])
-    case "readMany": return try await nativeRead(args.array("queries"), cursor: args.string("expectedCursor"))
+    case "read": return try await snapshotRead([args])
+    case "readMany": return try await snapshotRead(args.array("queries"), cursor: args.string("expectedCursor"), many: true)
     case "observe": return try await observe(args)
     case "wait":
       guard let milliseconds = args.number("milliseconds"), milliseconds >= 0, milliseconds <= 1000 else {
         throw CollaborationError("invalid_wait", "Ожидание ограничено одной секундой.")
       }
       try await Task.sleep(for: .milliseconds(Int(milliseconds))); return .null
-    case "page":
-      let id = try await selectedID(args, page: true)
-      if let element = args.string("elementID") {
-        return try await nativeRead([.object(["kind": .string("pageElement"), "id": .string(id.uuidString), "elementID": .string(element)])])
-      }
-      return try await persistence { store in
-        try store.readTransaction { _ in
-          let page = try store.loadPage(id)
-          return .object(["page": try page.graphicReadProjection(), "agentRevision": .string(page.agentStamp.revision),
-            "drawingRevision": .string(page.drawingStamp.revision), "cursor": .string(String(try store.currentReadCursor()))])
-        }
-      }
-    case "document":
-      let id = try await selectedID(args, page: false)
-      if let block = args.string("blockID") {
-        return try await nativeRead([.object(["kind": .string("documentBlock"), "id": .string(id.uuidString), "elementID": .string(block)])])
-      }
-      return try await persistence { store in
-        try store.readTransaction { _ in
-          let document = try store.loadDocument(id), state = try store.loadDocumentState(id)
-          return .object(["document": try .encode(document), "state": try .encode(state),
-            "contentRevision": .string(document.contentStamp.revision), "stateRevision": .string(state.stamp.revision),
-            "cursor": .string(String(try store.currentReadCursor()))])
-        }
-      }
+    case "page", "document":
+      let page = method == "page", id = try await selectedID(args, page: page)
+      let member = args.string(page ? "elementID" : "blockID")
+      var query: [String: JSONValue] = ["kind": .string(page ? (member == nil ? "page" : "pageElement") : (member == nil ? "document" : "documentBlock")), "id": .string(id.uuidString)]
+      query["elementID"] = member.map(JSONValue.string)
+      return try await snapshotRead([.object(query)])
     case "notebook":
       var query = args.fields; query["kind"] = .string("notebookDirectory")
       if query["limit"] == nil { query["limit"] = .number(4) }
-      return try await nativeRead([.object(query)])
+      return try await snapshotRead([.object(query)])
     case "board":
       var query = args.fields; query["kind"] = .string("sceneWindow")
       if query["id"] == nil || query["bounds"] == nil {
@@ -116,42 +121,36 @@ extension NotebookScriptCoordinator {
           "x": .number(-presence.viewport.x / scale / 2), "y": .number(-presence.viewport.y / scale / 2),
           "width": .number(presence.viewport.x / scale), "height": .number(presence.viewport.y / scale)])])
       }
-      return try await nativeRead([.object(query)])
+      return try await snapshotRead([.object(query)])
     case "context":
       var query = args.fields
       query["kind"] = .string(query["id"] == nil ? "contexts" : "contextEntries")
-      return try await nativeRead([.object(query)])
-    case "attention": return try await attention(args)
+      return try await snapshotRead([.object(query)])
+    case "attention": return try await evidenceSnapshot(attention(args))
     case "code":
       var query = args.fields; query["kind"] = .string(query["file"] == nil ? "codeFragment" : "codeFragments")
-      let result = try await nativeRead([.object(query)])
-      if let id = args.string("id"), let value = result.array("values").first, value != .null {
-        var fields = value.fields
-        if let stamp = value["fragment"]?["stamp"], let revision = try? stamp.decode(VersionStamp.self).revision { fields["revision"] = .string(revision) }
-        if let stamp = value["ink"]?["stamp"], let revision = try? stamp.decode(VersionStamp.self).revision { fields["inkRevision"] = .string(revision) }
-        fields["link"] = .string("notebook://code/" + id.lowercased()); fields["cursor"] = result["cursor"]
-        return .object(fields)
-      }
-      return result
+      return try await snapshotRead([.object(query)])
     case "search", "reference", "referenceStatus":
-      var request = args.fields; request["command"] = .string(method); return try await send(request)
+      var request = args.fields; request["command"] = .string(method); request["readSnapshots"] = .bool(true); return try await send(request)
     case "action":
-      var request: [String: JSONValue] = ["command": .string("actionDetails")]
-      for key in ["actionID", "contextID", "limit"] { request[key] = args[key] }
+      var request: [String: JSONValue] = ["command": .string("actionDetails"), "readSnapshots": .bool(true)]
+      for key in ["actionID", "contextID", "limit", "next"] { request[key] = args[key] }
       var page: [String: JSONValue] = [:]
-      for key in ["section", "offset", "after"] { page[key] = args[key] }
+      for key in ["section", "offset", "after", "actionVersion"] { page[key] = args[key] }
       page["limit"] = args["pageSize"]; request["actionPage"] = .object(page)
       return try await send(request)
-    case "place": return try await send(["command": .string("placement"), "placement": args])
-    case "render": return try await render(args)
-    case "pageMap", "pageImage", "regions": return try await pageVision(method: method, arguments: args)
+    case "place": return try await send(["command": .string("placement"), "placement": args, "readSnapshots": .bool(true)])
+    case "render": return try await evidenceSnapshot(render(args))
+    case "pageMap", "pageImage", "regions": return try await evidenceSnapshot(pageVision(method: method, arguments: args))
     case "presentation":
       var request: [String: JSONValue] = ["command": .string("presentation")]
-      request["actionID"] = args["id"]; return try await send(request)
+      request["actionID"] = args["id"]; return try await evidenceSnapshot(send(request))
     case "exportStatus":
       guard let id = args.string("jobID").flatMap(UUID.init(uuidString:)) else { throw CollaborationError("invalid_export", "Нужен jobID.") }
-      return try await persistence { try $0.scriptExportJob(id) ?? .object(["status": .string("missing")]) }
-    default: throw CollaborationError("unknown_sdk_method", "Метод отсутствует в API v1.")
+      return try await persistence { store in
+        try .encode(NotebookSnapshot(data: store.scriptExportJob(id) ?? .object(["status": .string("missing")]), basis: store.readBasis(targets: []), cursor: String(store.currentReadCursor())))
+      }
+    default: throw CollaborationError("unknown_sdk_method", "Метод отсутствует в API v2.")
     }
   }
 
@@ -211,18 +210,19 @@ extension NotebookScriptCoordinator {
 
   private func pageVision(method: String, arguments args: JSONValue) async throws -> JSONValue {
     let id = try await selectedID(args, page: true)
-    let page = try await persistence { try .encode($0.loadPage(id)) }.decode(PageDocument.self)
-    if let expected = args.string("drawingRevision"), expected != page.drawingStamp.revision {
+    let page = try await persistence { try .encode($0.readContentHeader(target: .init(kind: .page, id: id))) }.decode(NotebookContentHeader.self)
+    guard let drawing = page.inkStamp, let size = page.size else { throw CollaborationError("target_missing", "Нет метаданных листа.") }
+    if let expected = args.string("drawingRevision"), expected != drawing.revision {
       throw CollaborationError("revision_conflict", "Чернила изменились; прочитайте новую карту.")
     }
     let snapshot = try await nativeRead([.object(["kind": .string("pageVisionReceipt"), "id": .string(id.uuidString)])])
     guard let receipt = snapshot.array("values").first, let stamp = receipt["drawingStamp"],
-      try stamp.decode(VersionStamp.self) == page.drawingStamp,
-      try receipt["pageSize"]?.decode(PageSize.self) == page.size else {
-      return try await requestPageVision(id: id, revision: page.drawingStamp.revision)
+      try stamp.decode(VersionStamp.self) == drawing,
+      try receipt["pageSize"]?.decode(PageSize.self) == size else {
+      return try await requestPageVision(id: id, revision: drawing.revision)
     }
     if method == "pageMap" {
-      var result: [String: JSONValue] = ["status": .string("ready"), "drawingRevision": .string(page.drawingStamp.revision), "map": receipt]
+      var result: [String: JSONValue] = ["status": .string("ready"), "drawingRevision": .string(drawing.revision), "map": receipt]
       if let since = args.string("sinceDrawingRevision") {
         let old = try await nativeRead([.object(["kind": .string("pageVisionReceipt"), "id": .string(id.uuidString), "revision": .string(since)])]).array("values").first
         let current = receipt.array("regions"), previous = old?.array("regions") ?? []
@@ -254,10 +254,10 @@ extension NotebookScriptCoordinator {
     for artifact in artifacts {
       do { _ = try await send(["command": .string("artifact"), "artifact": artifact]) }
       catch let error as CollaborationError where error.code == "artifact_missing" {
-        return try await requestPageVision(id: id, revision: page.drawingStamp.revision)
+        return try await requestPageVision(id: id, revision: drawing.revision)
       }
     }
-    return .object(["status": .string("ready"), "drawingRevision": .string(page.drawingStamp.revision), "artifacts": .array(artifacts)])
+    return .object(["status": .string("ready"), "drawingRevision": .string(drawing.revision), "artifacts": .array(artifacts)])
   }
 
   private func requestPageVision(id: UUID, revision: String) async throws -> JSONValue {

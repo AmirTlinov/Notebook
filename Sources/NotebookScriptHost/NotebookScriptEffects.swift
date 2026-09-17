@@ -44,6 +44,16 @@ extension NotebookScriptCoordinator {
         }
         fields["id"] = .string(id.uuidString.lowercased())
         fields["references"] = fields["references"] ?? .array([])
+        guard fields["expected"] == nil, let supplied = fields.removeValue(forKey: "base") else {
+          throw CollaborationError("basis_required", "SDK v2 принимает base из чтения, не вручную собранный expected.")
+        }
+        let bases: [NotebookReadBasis]
+        if case .array = supplied { bases = try supplied.decode([NotebookReadBasis].self) }
+        else { bases = [try supplied.decode(NotebookReadBasis.self)] }
+        let base = try NotebookReadBasis.merging(bases)
+        let operations = try (fields["operations"] ?? .null).decode([CollaborationOperation].self)
+        fields["expected"] = try await persistence { try .encode($0.expectations(base: base, operations: operations)) }
+
         let admission = try await send(["command": .string("admitAction"), "action": .object(fields)])
         if admission.string("state") == "saved" {
           let recovered = try await reconcileEffect(runID: runID, id: id)
@@ -85,10 +95,13 @@ extension NotebookScriptCoordinator {
       switch effect.method {
       case "transaction":
         guard let prepared else { throw CollaborationError("normalization_required", "Нет нормализованного хода.") }
-        result = try await send(prepared.fields)
+        var request = prepared.fields
+        request["scriptEffect"] = .object(["runID": .string(runID.uuidString), "effectID": .string(id.uuidString)])
+        result = try await send(request)
       case "undo":
         guard let actionID = args["actionID"] else { throw CollaborationError("action_required", "Отмена называет исходный actionID.") }
-        result = try await send(["command": .string("undo"), "actionID": actionID])
+        result = try await send(["command": .string("undo"), "actionID": actionID,
+          "scriptEffect": .object(["runID": .string(runID.uuidString), "effectID": .string(id.uuidString)])])
       case "point":
         guard let prepared else { throw CollaborationError("invalid_reference", "Нет подготовленных ссылок.") }
         result = try await send(prepared.fields)
@@ -101,6 +114,7 @@ extension NotebookScriptCoordinator {
       case "export": result = try await startExport(id: id, arguments: args)
       default: throw CollaborationError("unknown_effect", "Неизвестное изменение.")
       }
+      if ["transaction", "undo"].contains(effect.method) { return result }
       effect.state = .saved; effect.value = result; effect.error = nil
       let saved = effect
       _ = try await persistence { try $0.saveScriptEffect(runID, effect: saved); return .null }

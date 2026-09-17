@@ -7,8 +7,8 @@ import {join} from "node:path";
 import test from "node:test";
 import {Client,InMemoryTransport} from "@modelcontextprotocol/client";
 import {createServer,executionOutput} from "../src/server.js";
-import {sdkReference} from "../src/sdk-contracts.js";
-import {actionSchema,operationSchema} from "../src/actions.js";
+import {sdkReference,sdkInputs} from "../src/sdk-contracts.js";
+import {operationSchema} from "../src/actions.js";
 
 test("public SDK help covers every method, all 20 operations, native content and all old capabilities",async()=>{
   const source=await readFile(new URL("../../Sources/NotebookScriptWorker/Resources/notebook-sdk.js",import.meta.url),"utf8");
@@ -33,7 +33,7 @@ test("public SDK help covers every method, all 20 operations, native content and
 test("operation discovery is compact and every exact schema reference resolves locally",()=>{
   const bytes=(value:unknown)=>Buffer.byteLength(JSON.stringify(value));
   assert.ok(bytes(sdkReference.operations)<6*1024,"The operation index must not repeat full schemas");
-  assert.ok(bytes(sdkReference.methods.transaction)<24*1024,"Shared target schemas must not be inlined 19 times");
+  assert.ok(bytes(sdkReference.methods.transaction!.input)<24*1024,"Shared target schemas must not be inlined 19 times");
   for(const {name,input} of Object.values(sdkReference.operationDetails)) {
     assert.ok(bytes(input)<12*1024,`${name} is not a compact individual operation`);
     assert.equal((input as any).properties.kind.const,name);
@@ -53,17 +53,17 @@ test("operation discovery is compact and every exact schema reference resolves l
 
 test("individual geometry help constructs an addressed move with source scope and a fresh board revision",async()=>{
   const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
-  const boardID=randomUUID(),itemID=randomUUID(),calls:any[]=[],actions:any[]=[];
+  const boardID=randomUUID(),rootBoardID=randomUUID(),itemID=randomUUID(),calls:any[]=[],actions:any[]=[];
   const detail=sdkReference.operationDetails.moveItem!;
   assert.match(detail.compositionScope!.rule,/contextID.*stored references/);
   assert.match(detail.compositionScope!.owner,/Listing only the board is insufficient/);
   await new AsyncFunction("nb","args","emit",detail.example)({
-    board:async(args:unknown)=>{calls.push(args);return {values:[{boardContentRevisions:{[boardID]:"9@human"}}]};},
-    transaction:async(key:string,value:unknown)=>{assert.equal(key,"move-item");actions.push(actionSchema.parse(value));return [];},
+    board:async(args:unknown)=>{calls.push(args);return {data:{boardID},basis:{workspaceID:rootBoardID,owners:[{target:{kind:"board",id:boardID},revision:"9@human"}]}};},
+    transaction:async(key:string,value:unknown)=>{assert.equal(key,"move-item");actions.push((sdkInputs.transaction!.parse({key,action:value}) as any).action);return [];},
   },{boardID,itemID},async()=>{});
   assert.deepEqual(calls,[{id:boardID}]);
   assert.deepEqual(actions[0].additionalOwners,[{kind:"cover",id:itemID,boardID}]);
-  assert.deepEqual(actions[0].expected,[{target:{kind:"board",id:boardID},revision:"9@human"}]);
+  assert.deepEqual(actions[0].base.owners,[{target:{kind:"board",id:boardID},revision:"9@human"}]);
   assert.equal(actions[0].operations[0].id,itemID);
   for(const name of ["moveItem","stackItems","updateElement","reorderElements"]) {
     assert.match(sdkReference.operationDetails[name]!.compositionScope!.rule,/additionalOwners/);
@@ -77,14 +77,14 @@ test("rename help discovers its containing board and expects both native owners"
   const detail=sdkReference.operationDetails.renameItem!;
   assert.match(detail.owner!,/containing board/);
   await new AsyncFunction("nb","args","emit",detail.example)({
-    read:async(query:unknown)=>{reads.push(query);return {values:[boardID]};},
+    read:async(query:unknown)=>{reads.push(query);return {data:boardID,basis:{workspaceID:randomUUID(),owners:[{target:{kind:"board",id:boardID},revision:"9@human"},{target:{kind:"workspace",id:rootBoardID},revision:`8@${actor}`} ]}};},
     board:async(args:unknown)=>{assert.deepEqual(args,{id:boardID});return {values:[{
       header:{rootBoardID,stamp:{counter:8,actor:actor.toUpperCase()}},boardContentRevisions:{[boardID]:"9@human"},
     }]};},
-    transaction:async(key:string,value:unknown)=>{assert.equal(key,"rename-item");actions.push(actionSchema.parse(value));return [];},
+    transaction:async(key:string,value:unknown)=>{assert.equal(key,"rename-item");actions.push((sdkInputs.transaction!.parse({key,action:value}) as any).action);return [];},
   },{itemID,title:"Named through public help"},async()=>{});
   assert.deepEqual(reads,[{kind:"ownerBoard",id:itemID}]);
-  assert.deepEqual(actions[0].expected,[{target:{kind:"board",id:boardID},revision:"9@human"},
+  assert.deepEqual(actions[0].base.owners,[{target:{kind:"board",id:boardID},revision:"9@human"},
     {target:{kind:"workspace",id:rootBoardID},revision:`8@${actor}`}]);
   const operation=actions[0].operations[0];
   assert.equal(operationSchema.safeParse(operation).success,true);
@@ -95,11 +95,11 @@ test("minimal placement example omits optional lists and documents actionable er
   const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
   const pageID=randomUUID(),requests:any[]=[];
   await new AsyncFunction("nb","args","emit",sdkReference.methods.place!.example)({
-    page:async(args:unknown)=>{assert.deepEqual(args,{id:pageID});return {page:{id:pageID},agentRevision:"4@actor"};},
+    page:async(args:unknown)=>{assert.deepEqual(args,{id:pageID});return {data:{id:pageID},basis:{owners:[{revision:"4@actor"}]}};},
     place:async(args:unknown)=>{requests.push(args);return {status:"snapshot_pending"};},
   },{pageID},async()=>{});
   assert.deepEqual(requests,[{target:{kind:"page",id:pageID},expectedRevision:"4@actor",
-    items:[{id:"next-note",size:{width:180,height:100},direction:"free"}]}]);
+    items:[{id:"note",size:{width:180,height:100},direction:"free"}]}]);
   assert.match(sdkReference.execution.operationErrors,/index is zero-based/);
   assert.match(sdkReference.execution.operationErrors,/caught JS error and effects\[\]\.error/);
   assert.match(sdkReference.execution.cancellation,/error.code:'run_cancelled'/);
@@ -109,11 +109,11 @@ test("document program example installs, declares initial readiness and redraws 
   const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
   const documentID=randomUUID();let action:any;
   await new AsyncFunction("nb","args","emit",sdkReference.examples.interactive)({
-    document:async()=>({document:{id:documentID},contentRevision:"7@fixture"}),
-    transaction:async(key:string,value:unknown)=>{assert.equal(key,"counter");action=actionSchema.parse(value);return [];},
+    document:async()=>({data:{id:documentID},basis:{workspaceID:randomUUID(),owners:[{target:{kind:"document",id:documentID},revision:"7@fixture"}]}}),
+    transaction:async(key:string,value:unknown)=>{assert.equal(key,"counter");action=(sdkInputs.transaction!.parse({key,action:value}) as any).action;return [];},
   },{documentID},async()=>{});
-  assert.equal(action.expected[0].target.id,documentID);
-  assert.equal(action.expected[0].revision,"7@fixture");
+  assert.equal(action.base.owners[0].target.id,documentID);
+  assert.equal(action.base.owners[0].revision,"7@fixture");
   const block=action.operations[0].values;
   let state=block.initialState,ready:Promise<unknown>|undefined;const commits:unknown[]=[];
   const events:Record<string,()=>void>={},buttonEvents:Record<string,()=>void>={};
@@ -158,9 +158,9 @@ test("two-tool MCP preserves attention statuses and exact run identity across st
     socket.on("end",()=>{
       const packet=JSON.parse(Buffer.concat(chunks).subarray(4).toString()),request=packet.request;
       requests.push(request);
-      const result=request.command==="scriptContext"?{status:attentionStatus,reference:{id:randomUUID()},payload:{kind:"fixture"}}
+      const result=request.command==="scriptContext"?{api_version:2,value:{data:{status:attentionStatus,reference:{id:randomUUID()},payload:{kind:"fixture"}},basis:{workspaceID:randomUUID(),owners:[]},coverage:{complete:true},cursor:"1"}}
         :{status:request.script.op==="cancel"?"cancelled":"completed",run_id:request.script.runID,
-          fingerprint:"a".repeat(64),api_version:1,events:[],next_seq:0,has_more:false,result:42,error:null,
+          fingerprint:"a".repeat(64),api_version:2,run_api_version:2,events:[],next_seq:0,has_more:false,result:42,error:null,
           effects,resume_semantics:"attach_only_no_replay"};
       const payload=attentionStatus==="native_error"?{error:{code:"capture_failed",message:"Source is unavailable",status:"source_pixels"}}:{result};
       const body=Buffer.from(JSON.stringify({version:1,id:packet.id,...payload})),size=Buffer.alloc(4);size.writeUInt32BE(body.length);
@@ -177,16 +177,16 @@ test("two-tool MCP preserves attention statuses and exact run identity across st
       attentionStatus=status;
       const result=await client.callTool({name:"notebook_context",arguments:{method:"attention",args:{contextID:randomUUID(),referenceID:randomUUID()}}});
       assert.notEqual(result.isError,true,JSON.stringify(result));
-      assert.equal((result.structuredContent as any).value.status,status);
+      assert.equal((result.structuredContent as any).value.data.status,status);
     }
     const id=randomUUID(),code="return args.answer",args={answer:42};
     for(const op of ["start","resume","cancel"]) {
       const result=await client.callTool({name:"notebook_execute",arguments:{op,run_id:id,
-        ...(op==="start"?{api_version:1,code,args}:{})}});
+        ...(op==="start"?{api_version:2,code,args}:{})}});
       assert.notEqual(result.isError,true,JSON.stringify(result));
       assert.equal((result.structuredContent as any).run_id,id);
     }
-    assert.deepEqual(requests[2],{command:"script",script:{op:"start",runID:id,apiVersion:1,code,arguments:args,afterSequence:0,waitMilliseconds:0}});
+    assert.deepEqual(requests[2],{command:"script",script:{op:"start",runID:id,apiVersion:2,code,arguments:args,afterSequence:0,waitMilliseconds:1000}});
     assert.equal(requests[3].script.code,undefined);
     assert.equal(requests[4].script.code,undefined);
     // Shapes observed on the actual v6 blind endpoint: the typed operation
@@ -223,7 +223,7 @@ test("one MCP deadline includes blocked admission and subsequent image reads, wi
   const root=await mkdtemp(join(tmpdir(),"notebook-script-deadline-")),path=join(root,"bridge.sock");
   const id=randomUUID(),pollID=randomUUID(),code="return 42",requests:any[]=[],timers:NodeJS.Timeout[]=[];
   let completed=false;
-  const receipt=()=>({status:completed?"completed":"queued",run_id:id,fingerprint:"a".repeat(64),api_version:1,
+  const receipt=()=>({status:completed?"completed":"queued",run_id:id,fingerprint:"a".repeat(64),api_version:2,run_api_version:2,
     events:[],next_seq:0,has_more:false,result:completed?42:null,error:null,effects:[],resume_semantics:"attach_only_no_replay"});
   const native=createNativeServer({allowHalfOpen:true},socket=>{
     const chunks:Buffer[]=[];
@@ -246,7 +246,7 @@ test("one MCP deadline includes blocked admission and subsequent image reads, wi
         // enough of the same four-second budget to send its empty running page.
         timers.push(setTimeout(()=>send({...receipt(),run_id:pollID,status:"running",result:null}),request.script.waitMilliseconds+30));
       } else if(request.command==="scriptContext") {
-        timers.push(setTimeout(()=>send({artifact:{kind:"fixture"}}),3_100));
+        timers.push(setTimeout(()=>send({api_version:2,value:{data:{artifact:{kind:"fixture"}}}}),3_100));
       } else if(request.command==="scriptArtifact") {
         timers.push(setTimeout(()=>send({data:"",mimeType:"image/png",sha256:"a".repeat(64)}),1_200));
       } else send(receipt());
@@ -259,7 +259,7 @@ test("one MCP deadline includes blocked admission and subsequent image reads, wi
     await server.connect(serverTransport);await client.connect(clientTransport);
     const started=performance.now();
     const [run,image,poll]=await Promise.all([
-      client.callTool({name:"notebook_execute",arguments:{op:"start",run_id:id,api_version:1,code,wait_ms:4000}}),
+      client.callTool({name:"notebook_execute",arguments:{op:"start",run_id:id,api_version:2,code,wait_ms:4000}}),
       client.callTool({name:"notebook_context",arguments:{method:"observe"}}),
       client.callTool({name:"notebook_execute",arguments:{op:"resume",run_id:pollID,wait_ms:4000}}),
     ]);

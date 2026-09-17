@@ -91,11 +91,11 @@ struct NotebookScriptAdmissionTests {
 
   @Test func durableRunAndEffectFingerprintsDoNotExposeTheirSourceOnResume() throws {
     let (store, _) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
-    let id = UUID(), request = NotebookScriptRequest(op: .start, runID: id, apiVersion: 1,
+    let id = UUID(), request = NotebookScriptRequest(op: .start, runID: id, apiVersion: 2,
       code: "return args.answer", arguments: .object(["answer": .number(42)]))
     let run = try store.admitScriptRun(request)
     #expect(try store.admitScriptRun(request) == run)
-    do { _ = try store.admitScriptRun(.init(op: .start, runID: id, apiVersion: 1, code: "return 7")); Issue.record("Conflicting source reused run ID.") }
+    do { _ = try store.admitScriptRun(.init(op: .start, runID: id, apiVersion: 2, code: "return 7")); Issue.record("Conflicting source reused run ID.") }
     catch let error as CollaborationError { #expect(error.code == "run_id_conflict") }
     _ = try store.setScriptRunState(id, state: .running)
     var effect = try store.admitScriptEffect(id, key: "document", method: "transaction",
@@ -141,7 +141,7 @@ struct NotebookScriptAdmissionTests {
   @Test func emittedPixelsSurvivePreviewReplacementAndResumePagesHaveFourImages() throws {
     let (store, _) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
     let run = UUID()
-    _ = try store.admitScriptRun(.init(op: .start, runID: run, apiVersion: 1, code: "image-output"))
+    _ = try store.admitScriptRun(.init(op: .start, runID: run, apiVersion: 2, code: "image-output"))
     _ = try store.setScriptRunState(run, state: .running)
     let png = Data([137,80,78,71,13,10,26,10,1,2,3,4])
     let hash = SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined()
@@ -186,9 +186,9 @@ struct NotebookScriptAdmissionTests {
     let result = try dispatcher.handle(commit), encoded = try JSONEncoder().encode(result)
     #expect(encoded.count < 65_536)
     #expect(!String(decoding: encoded, as: UTF8.self).contains("PRIVATE_BODY_FOR_INVERSE"))
-    #expect(result.array.first?["receipt"]?["id"]?.string?.lowercased() == raw.id.uuidString.lowercased())
-    #expect(result.array.first?["pages"]?["operations"]?["total"] == .number(40))
-    #expect(result.array.first?["pages"]?["operations"]?["nextOffset"] == .number(32))
+    #expect(result["actionID"]?.string?.lowercased() == raw.id.uuidString.lowercased())
+    #expect(result["changed"]?.array.count == 32)
+    #expect(result["next"]?.string != nil)
     #expect(try store.collaborationAction(raw.id).action.operations.first?.values["source"] == .string(source))
     var detail = NotebookCommand(command: .actionDetails); detail.actionID = raw.id
     detail.actionPage = .init(section: .operations, offset: 32, limit: 5)

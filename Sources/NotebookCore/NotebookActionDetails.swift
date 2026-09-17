@@ -6,6 +6,7 @@ public struct NotebookActionDetailsPage: Codable, Sendable {
   public enum Section: String, Codable, Sendable {
     case operations, revisions, changes, continuations, undo, snapshots
   }
+  public var actionVersion: String?
   public var section: Section?
   public var offset: Int?
   public var limit: Int?
@@ -23,14 +24,13 @@ extension NotebookStore {
   }
 
   public func scriptActionOutcome(_ receipt: CollaborationReceipt) throws -> JSONValue {
-    .array([try actionDetails(receipt, page: nil, includeCurrentState: false)])
+    guard let result = try savedActionResult(receipt.id, version: receipt.deliveryVersion()) else {
+      throw CollaborationError("action_version_unavailable", "Неизменяемый результат этой версии недоступен; текущее содержание не подставляется.")
+    }
+    return result
   }
 
-  func actionDetails(_ receipt: CollaborationReceipt, page: NotebookActionDetailsPage?, includeCurrentState: Bool = true) throws -> JSONValue {
-    try actionDetails(NotebookActionReadModel(receipt), page: page, includeCurrentState: includeCurrentState)
-  }
-
-  func actionDetails(_ receipt: NotebookActionReadModel, page: NotebookActionDetailsPage?, includeCurrentState: Bool = true) throws -> JSONValue {
+  func actionDetails(_ receipt: NotebookActionReadModel, page: NotebookActionDetailsPage?) throws -> JSONValue {
     let offset = page?.offset ?? 0, limit = page?.limit ?? 32
     guard offset >= 0, (1...64).contains(limit) else {
       throw CollaborationError("invalid_cursor", "Раздел квитанции читается порциями от 1 до 64 записей, offset неотрицателен.")
@@ -65,11 +65,6 @@ extension NotebookStore {
         (section.rawValue, .object(["total": .number(Double(values.count)),
           "nextOffset": values.count > limit ? .number(Double(limit)) : .null]))
       }))
-    }
-    if !includeCurrentState {
-      return .object(["receipt": .object(projected), "publication": .object(["saved": .string("confirmed")]),
-        "pages": cursors([(.operations, operations), (.revisions, revisions), (.changes, changes), (.undo, undo)]),
-        "readDetails": .object(["method": .string("action"), "args": .object(["actionID": try .encode(receipt.id)])])])
     }
     func continuations() throws -> [JSONValue] {
       try actionContinuations(receipt).map(JSONValue.encode)

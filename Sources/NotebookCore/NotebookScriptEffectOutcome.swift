@@ -60,14 +60,15 @@ extension NotebookStore {
       switch effect.method {
       case "transaction":
         guard let receipt = try collaborationActionIfPresent(effect.id) else { return .notSaved }
-        return .saved(try scriptActionOutcome(receipt))
+        guard let result = try savedActionResult(receipt.id) else { return .unavailable }
+        return .saved(result)
       case "point":
         guard let receipt = try scriptPointReceipt(effect.id) else { return .notSaved }
         return .saved(receipt)
       case "undo":
         guard let id = effect.arguments["actionID"]?.string.flatMap(UUID.init(uuidString:)),
           let receipt = try collaborationActionIfPresent(id), receipt.undo != nil else { return .notSaved }
-        return .saved(try scriptActionOutcome(receipt))
+        return .unavailable
       case "export":
         guard let job = try scriptExportJob(effect.id) else { return .notSaved }
         guard case .object = job, let status = job["status"]?.string,

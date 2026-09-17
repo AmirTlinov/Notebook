@@ -45,11 +45,12 @@ public final class NotebookScriptCoordinator {
   }
 
   public func handle(_ request: NotebookScriptRequest) async throws -> JSONValue {
-    let deadline = ContinuousClock.now + .milliseconds(request.waitMilliseconds ?? 0)
+    guard request.apiVersion == 2 else { throw CollaborationError("api_version_mismatch", "Нужен согласованный MCP API v2; исторические runs читаются через resume v2.") }
+    let deadline = ContinuousClock.now + .milliseconds(request.waitMilliseconds ?? 1000)
     guard !closing || request.op == .resume else { throw CollaborationError("owner_unavailable", "Mac завершает работу; новые программы не принимаются.") }
     try await initialize()
     guard !closing || request.op == .resume else { throw CollaborationError("owner_unavailable", "Mac завершает работу; новые программы не принимаются.") }
-    guard (0...4000).contains(request.waitMilliseconds ?? 0), (request.afterSequence ?? 0) >= 0 else {
+    guard (0...4000).contains(request.waitMilliseconds ?? 1000), (request.afterSequence ?? 0) >= 0 else {
       throw CollaborationError("invalid_script_request", "wait_ms ограничен четырьмя секундами, after_seq неотрицателен.")
     }
     switch request.op {
@@ -64,8 +65,7 @@ public final class NotebookScriptCoordinator {
       _ = try await persistence { try .encode($0.requestScriptRunCancellation(request.runID)) }
     }
     var result = try await persistence { try $0.scriptRunPage(request.runID, after: request.afterSequence ?? 0) }
-    while ContinuousClock.now < deadline, ["queued", "running"].contains(result.string("status") ?? ""),
-      result.array("events").isEmpty {
+    while ContinuousClock.now < deadline, ["queued", "running"].contains(result.string("status") ?? "") {
       try await Task.sleep(for: .milliseconds(50))
       result = try await persistence { try $0.scriptRunPage(request.runID, after: request.afterSequence ?? 0) }
     }
@@ -73,6 +73,7 @@ public final class NotebookScriptCoordinator {
   }
 
   public func context(_ request: NotebookScriptContextRequest) async throws -> JSONValue {
+    guard request.apiVersion == 2 else { throw CollaborationError("api_version_mismatch", "Нужен согласованный MCP API v2.") }
     if request.method == "help" { return try NotebookScriptAPI.documentation(request.arguments.string("topic")) }
     guard NotebookScriptAPI.readMethods.contains(request.method) else {
       throw CollaborationError("read_method_required", "Изменения выполняются через notebook_execute и устойчивый key.")

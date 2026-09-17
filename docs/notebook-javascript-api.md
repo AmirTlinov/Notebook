@@ -1,4 +1,4 @@
-# Notebook JavaScript API v1
+# Notebook SDK API v2: JavaScript
 
 Два MCP-инструмента передают сообщения единственному Mac-владельцу.
 `notebook_context` читает общую среду и справку; `notebook_execute` запускает
@@ -8,7 +8,7 @@ JavaScript или присоединяется к его журналу. MCP-п�
 
 ## Справка и программа
 
-В `notebook_context` передайте `{"method":"help"}`. Тема `operations` даёт
+Справку раскрывайте только при неизвестном контракте: в `notebook_context` передайте `{"method":"help"}`. Тема `operations` даёт
 компактный список всех 20 операций. Например,
 `{"method":"help","args":{"topic":"operation/createDocument"}}` возвращает
 точную схему одной операции. `transaction` содержит полную схему атомарной записи
@@ -20,8 +20,8 @@ JavaScript или присоединяется к его журналу. MCP-п�
 {
   "op":"start",
   "run_id":"новый UUID",
-  "api_version":1,
-  "code":"const p=await nb.page({id:args.pageID}); await emit({id:p.page.id,revision:p.agentRevision});",
+  "api_version":2,
+  "code":"const p=await nb.page({id:args.pageID}); await emit({id:p.data.id,basis:p.basis});",
   "args":{"pageID":"прочитанный UUID листа"},
   "wait_ms":1000
 }
@@ -44,14 +44,45 @@ SQL-снимке. `pageHeader` и `documentHeader` возвращают толь
 независимо от камеры и первых 32 превью. Для документа — `target` и `blockID`.
 Без адреса используется опубликованная среда; превью действительно читает
 не более `limit` (1–32, по умолчанию 32) записей, без чернил и состояний блоков.
-`truncated` явно обозначает неполноту. Полные `nb.page`/`nb.document` остаются
-явными полными чтениями.
+`coverage.complete:false` явно обозначает неполноту. Полные `nb.page`/`nb.document`
+остаются явными полными чтениями. Все чтения содержания возвращают
+`Snapshot<T> {data,basis,coverage,cursor}`. `readMany` возвращает типизированный
+кортеж `data` и отдельные `coverages` для каждого запроса в том же SQL-снимке.
+В публичном SDK нет `values[0]`. Нативные внутренние IPC-проекции не являются
+второй публичной версией SDK.
 
-Передайте прежние `changeKeys` как `since`: версии проверяются до чтения тел,
-а неизменившееся содержание возвращает `unchanged:true`. Новый адрес или limit
-считается новой областью чтения. Изображение текущего экрана запрашивается
-отдельно через `includeImage:true`; его свежесть проверяется по заголовкам,
-без полной загрузки листа/документа. Это ещё не адресная дельта журнала.
+`ReadBasis {workspaceID,owners}` содержит существующие content/state/source/ink
+предусловия владельца. Это данные, не разрешения или новая сессия. Передавайте
+`base:snapshot.basis`, либо явный массив оснований. Core детерминированно объединяет
+их; разные версии одного владельца дают `basis_conflict`, отсутствующий компонент —
+`basis_incomplete` с нужным чтением, другое пространство — `basis_workspace_mismatch`.
+Версии перед записью не освежаются. Scope ссылок/контекста/additionalOwners проверяется
+независимо: чтение соседа не разрешает его перемещение.
+
+```js
+const s = await nb.page({id: args.pageID, elementID: args.elementID});
+const result = await nb.transaction("label", {
+  base: s.basis, summary: "Изменить подпись",
+  operations: [{kind:"updateElement", target:{kind:"page", id:args.pageID},
+    id:args.elementID, values:{graphic:{label:"Обратная связь"}}}]
+});
+await emit(result);
+```
+
+`ActionResult {actionID,actionVersion,publication,changed,basis,next?}` сохраняется
+в той же нативной транзакции, что содержание и журнал эффекта. Ограниченная страница
+`changed` содержит канонические адреса, хеши результата и небольшие новые значения;
+крупное значение обозначено `valueOmitted`, а не усечено. `next` читается через
+`nb.action({actionID,actionVersion,next})`. Подробные разделы требуют эту же
+`actionVersion`. Undo сохраняет новую версию, не переписывая первоначальный результат.
+Старую квитанцию без такого свидетельства нельзя выдать за новый точный результат.
+`saved`, получение и показ на iPad остаются раздельными; повтор результата не
+перепроверяет и не выдумывает текущее состояние устройства.
+
+Декларации `notebook-sdk.d.ts`, входные/выходные JSON-схемы и справка генерируются
+существующим `MCP/build-script-services.mjs` из общего машинного контракта.
+Типы помогают составлять код; нативная валидация остаётся обязательной. Наличие
+деклараций ещё не включает исполнение TypeScript — это отдельный срез compiler-границы.
 
 ### Наблюдение и дельты области
 
@@ -81,22 +112,16 @@ outOfScope`; исчезновение из связей или геометри�
 ```js
 const scope = {target: args.target, fields: ["content", "geometry"]};
 let page = await nb.read({kind: "observation", scope, limit: 32});
-// В v1 read ещё возвращает values; единый Snapshot заменяет это в срезе v2.
-let result = page.values[0];
-while (result.coverage.next) {
-  page = await nb.read({kind: "observation", scope, next: result.coverage.next});
-  result = page.values[0];
+while (page.coverage.next) {
+  page = await nb.read({kind: "observation", scope, next: page.coverage.next});
 }
-const delta = await nb.read({kind: "observation", scope, since: result.checkpoint});
+const delta = await nb.read({kind: "observation", scope, since: page.data.checkpoint});
 ```
 
-У `observe` прежняя оболочка v1 сохраняется до единого переключения v2:
-страницы продолжаются через `next: response.content.coverage.next`, затем
-`since: finalResponse.changeKeys`. Промежуточные `changeKeys` не являются основанием
-нового инкрементального чтения. `cursor` оболочки остаётся read-cursor,
-`content.through` — change-cursor; они намеренно разные. Изображения — только
-по `includeImage: true`. Чтение расширенных соседей не добавляет разрешённых
-владельцев в действие и не изменяет Core-проверки области записи.
+`observe` возвращает ту же оболочку `Snapshot`: `coverage.next` продолжает страницу,
+а `data.checkpoint` — основание нового инкрементального чтения. `cursor` оболочки
+остаётся read-cursor, `data.through` — change-cursor; они намеренно разные.
+Изображения — только по `includeImage:true`. Раскрытие соседей не расширяет scope.
 
 ## Идентичность, вывод и отмена
 
@@ -139,7 +164,7 @@ fingerprint, state и ссылки на квитанции. HTML, исходны
 
 `renameItem` адресует **доску, в которой находится предмет**. UUID предмета
 передаётся в `operation.id`; его доска читается через
-`nb.read({kind:'ownerBoard',id:itemID})`. `expected` содержит версии этой доски
+`nb.read({kind:'ownerBoard',id:itemID})`. Его `basis` содержит версии этой доски
 и каталога `{kind:'workspace',id:rootBoardID}`. Каталог участвует в проверке
 версий, но не является допустимым `operation.target` для переименования.
 `nb.help('operation/renameItem')` даёт исполняемый пример с обоими владельцами.
@@ -206,14 +231,14 @@ PDF job — 120 секунд; оба срока также включают за
 const p = await nb.page({id:args.pageID});
 const saved = await nb.transaction("explanation", {
   summary:"Пояснение на листе",
-  expected:[{target:{kind:"page",id:p.page.id},revision:p.agentRevision}],
+  base:p.basis,
   operations:[{
-    kind:"insertElement",target:{kind:"page",id:p.page.id},id:"explanation",
+    kind:"insertElement",target:{kind:"page",id:p.data.id},id:"explanation",
     values:{kind:"markdown",source:"# Пример",
       frame:{x:20,y:30,width:300,height:180}}
   }]
 });
-await emit({actionID:saved[0].receipt.id});
+await emit({actionID:saved.actionID});
 ```
 
 Каждый изменяющий вызов получает устойчивый `key`. ID эффекта выводится из run
@@ -403,8 +428,8 @@ node transport.mjs /absolute/endpoint.json call notebook_execute < arguments.jso
 
 ## Продолжение поиска
 
-`nb.search({query,limit,filters?,next?})` возвращает `results`, точный индексный
-`total` и `coverage:{complete,next?}`. Чтобы получить остальные совпадения,
+`nb.search({query,limit,filters?,next?})` возвращает `Snapshot` с `data.results`, точным индексным
+`data.total` и `coverage:{complete,next?}`. Чтобы получить остальные совпадения,
 передавайте `coverage.next` с теми же запросом и фильтрами; размер страницы
 можно менять. Порядок закреплён типом источника и уникальным адресом записи.
 Фильтр `kinds` выбирает `item` (заголовок), `page` (элемент листа), `document`
@@ -419,3 +444,15 @@ node transport.mjs /absolute/endpoint.json call notebook_execute < arguments.jso
 `total` читает индекс при каждом запросе; это работа, пропорциональная
 совпадениям, а не бесплатное поле. Сортируются только ключи, после LIMIT
 раскрываются выбранные тексты и адресные версии. OCR не добавлялся.
+
+## Согласованное переключение и короткий результат
+
+Новый `start` принимает только `api_version:2`. MCP и helper явно отвергают
+несовпадающий протокол. `resume` передаёт `api_version:2` в ответе и настоящую
+`run_api_version` сохранённой программы, включая v1. Старые результаты не переписываются
+и старый исполнитель не сохраняется. Возобновление не исполняет исходник заново.
+
+По умолчанию start/resume ждёт до 1000 мс от входа в coordinator, возвращая готовый
+результат немедленно. Ранний emit не завершает ожидание; terminal или deadline —
+единственная граница. Общий бюджет MCP остаётся четыре секунды. Длительный run
+возвращает тот же run_id и курсор продолжения, без скрытого увеличения ожидания.

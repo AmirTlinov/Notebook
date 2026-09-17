@@ -17,14 +17,15 @@ try {
   const deadline=Date.now()+30_000;
   let result;
   do {
-    result=await client.callTool({name:"notebook_context",arguments:{method:"observe"}});
-    const context=(result.structuredContent as any)?.value;
-    if(!result.isError&&context?.visual?.status==="ready"&&context?.connection?.status==="connected") break;
+    result=await client.callTool({name:"notebook_context",arguments:{method:"observe",args:{includeImage:true}}});
+    const context=(result.structuredContent as any)?.value?.data;
+    if(!result.isError&&context?.visual?.status==="ready") break;
     await new Promise(resolve=>setTimeout(resolve,100));
   } while(Date.now()<deadline);
   assert.notEqual(result?.isError,true,JSON.stringify(result));
-  assert.equal((result?.structuredContent as any)?.value?.visual?.status,"ready");
-  assert.equal((result?.structuredContent as any)?.value?.connection?.status,"connected");
+  assert.equal((result?.structuredContent as any)?.value?.data?.visual?.status,"ready");
+  const runtime=await client.callTool({name:"notebook_context",arguments:{method:"read",args:{kind:"runtime"}}});
+  assert.equal((runtime.structuredContent as any)?.value?.data?.status,"connected");
   assert.ok(result?.content.some(block=>block.type==="image"));
   console.log(JSON.stringify({status:"ready",scope:"installed read-only pair",observation:result?.structuredContent},null,2));
 } finally {await client.close();}

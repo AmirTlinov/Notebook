@@ -44,29 +44,29 @@ struct NotebookScriptAddressedReadTests {
     let args: JSONValue = .object(["target": try .encode(CollaborationTarget(kind: .page, id: owner.pageID)),
       "elementID": .string("element-39")])
     let value = try await host.context(.init(method: "observe", arguments: args))
-    #expect(value["content"]?["element"]?["id"] == .string("element-39"))
-    #expect(value["content"]?["element"]?["source"] == .string("source-39"))
-    #expect(value["content"]?["agentRevision"] != nil)
+    #expect(value["data"]?["objects"]?.array.first?["value"]?["content"]?["id"] == .string("element-39"))
+    #expect(value["data"]?["objects"]?.array.first?["value"]?["content"]?["source"] == .string("source-39"))
+    #expect(value["basis"]?["owners"]?.array.first?["revision"] != nil)
     let direct = try await host.read(method: "page", arguments: .object(["id": .string(owner.pageID.uuidString), "elementID": .string("element-39")]))
-    #expect(direct["values"]?.array.first?["element"]?["id"] == .string("element-39"))
+    #expect(direct["data"]?["element"]?["id"] == .string("element-39"))
   }
 
   @Test func repeatObservationChecksVersionsBeforeBodies() async throws {
     let owner = try Owner(), host = owner.host()
     defer { try? FileManager.default.removeItem(at: owner.store.root) }
     let first = try await host.context(.init(method: "observe"))
-    #expect(first["content"]?["truncated"] == .bool(true))
-    #expect(first["content"]?["checkpoint"] == nil)
-    let last = try await host.context(.init(method: "observe", arguments: .object(["next": try #require(first["content"]?["coverage"]?["next"])])))
+    #expect(first["coverage"]?["complete"] == .bool(false))
+    #expect(first["data"]?["checkpoint"] == nil)
+    let last = try await host.context(.init(method: "observe", arguments: .object(["next": try #require(first["coverage"]?["next"])])))
     try owner.poison("element-0")
-    let repeated = try await host.context(.init(method: "observe", arguments: .object(["since": try #require(last["changeKeys"])])))
-    #expect(repeated["content"]?["unchanged"] == .bool(true))
-    #expect(repeated["changes"]?["changed"] == .array([]))
+    let repeated = try await host.context(.init(method: "observe", arguments: .object(["since": try #require(last["data"]?["checkpoint"])])))
+    #expect(repeated["data"]?["mode"] == .string("delta"))
+    #expect(repeated["data"]?["objects"] == .array([]))
     // Changing the address is a new scope even with the same owner versions.
     let other = try await host.context(.init(method: "observe", arguments: .object([
       "target": try .encode(CollaborationTarget(kind: .page, id: owner.pageID)), "elementID": .string("element-39"),
-      "since": try #require(last["changeKeys"])])))
-    #expect(other["content"]?["element"]?["id"] == .string("element-39"))
+      "since": try #require(last["data"]?["checkpoint"])])))
+    #expect(other["data"]?["objects"]?.array.first?["value"]?["content"]?["id"] == .string("element-39"))
   }
 
   @Test func previewOnlyDecodesItsBoundedMembers() async throws {
@@ -74,7 +74,7 @@ struct NotebookScriptAddressedReadTests {
     defer { try? FileManager.default.removeItem(at: owner.store.root) }
     try owner.poison("element-39")
     let value = try await host.context(.init(method: "observe"))
-    #expect(value["content"]?["elements"]?.array.count == 32)
-    #expect(value["content"]?["truncated"] == .bool(true))
+    #expect(value["data"]?["objects"]?.array.count == 32)
+    #expect(value["coverage"]?["complete"] == .bool(false))
   }
 }
