@@ -32,7 +32,7 @@ import XCTest
     XCTAssertFalse(paper.hasActiveAction)
   }
 
-  func testHeldShapeEdgesFollowThePencilFromEverySideAtAnyScale() {
+  func testHeldShapesKeepBothDimensionsAdjustableFromEverySideAtAnyScale() {
     for scale in [0.5, 1.0, 3.0] {
       for shape in [NotebookGraphic.Shape.ellipse, .rectangle, .plus] {
         let frame = PageRect(x: 100 / scale, y: 70 / scale, width: 180 / scale, height: 120 / scale)
@@ -44,8 +44,8 @@ import XCTest
           let moved = SpatialPoint(x: held.x + (x == 0 ? 9 : x * 20) / scale,
             y: held.y + (y == 0 ? 9 : y * 20) / scale)
           let fit = NotebookQuickShapeSession.adjusted(original, heldAt: held, to: moved, screenScale: scale)
-          XCTAssertEqual(fit.frame.width * scale, x == 0 ? 180 : 200, accuracy: 0.0001)
-          XCTAssertEqual(fit.frame.height * scale, y == 0 ? 120 : 140, accuracy: 0.0001)
+          XCTAssertEqual(fit.frame.width * scale, x == 0 ? 189 : 200, accuracy: 0.0001)
+          XCTAssertEqual(fit.frame.height * scale, y == 0 ? 129 : 140, accuracy: 0.0001)
           XCTAssertEqual(fit.frame.x * scale, x < 0 ? 80 : 100, accuracy: 0.0001)
           XCTAssertEqual(fit.frame.y * scale, y < 0 ? 50 : 70, accuracy: 0.0001)
           XCTAssertEqual(fit.shape, shape); XCTAssertEqual(fit.sampleCount, 49)

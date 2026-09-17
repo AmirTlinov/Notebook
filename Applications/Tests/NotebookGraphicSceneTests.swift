@@ -272,11 +272,11 @@ import XCTest
     try await drawAndClose(onBoard: true, delaysPublication: true)
   }
 
-  func testPageHeldLeftEdgeFollowsPencilAndKeepsTheAdjustedObjectAfterLift() async throws {
+  func testPageHeldShapeCanSwitchAxesWithoutLiftingPencil() async throws {
     try await drawAndClose(onBoard: false, delaysPublication: true, adjustsHeldShape: true)
   }
 
-  func testBoardHeldLeftEdgeFollowsPencilAndKeepsTheAdjustedObjectAfterLift() async throws {
+  func testBoardHeldShapeCanSwitchAxesWithoutLiftingPencil() async throws {
     try await drawAndClose(onBoard: true, delaysPublication: true, adjustsHeldShape: true)
   }
 
@@ -337,11 +337,12 @@ import XCTest
       evidence.name = "same-object-\(onBoard ? "board" : "page")-\(stage)"
       evidence.lifetime = .keepAlways; add(evidence)
     }
-    var measured: [CGPoint] = [], enlargement: CGFloat = 0
+    var measured: [CGPoint] = [], enlargement = CGSize.zero
     for strokeIndex in 0..<(compound ? 2 : 1) {
       let touch = SceneGraphicTouch(window: window), event = SceneGraphicEvent()
       for index in 0...120 {
-        let t = Double(index)/120, angle = t * 2 * Double.pi + (adjustsHeldShape ? .pi : 0)
+        // Finish near the left midpoint, unambiguously in its lower half.
+        let t = Double(index)/120, angle = t * 2 * Double.pi + (adjustsHeldShape ? .pi - 0.1 : 0)
         if compound {
           touch.point = strokeIndex == 0 ? .init(x:midpoint.x-90+180*t,y:midpoint.y)
             : .init(x:midpoint.x,y:midpoint.y-60+120*t)
@@ -363,27 +364,36 @@ import XCTest
         XCTAssertNotNil(shownObject())
         XCTAssertFalse(try XCTUnwrap(recognized).accepted)
         if adjustsHeldShape {
-          attachFrame("before-left-edge-drag")
+          attachFrame("before-two-axis-drag")
           let initial = try XCTUnwrap(recognized), held = touch.point
-          touch.point.x -= 30; touch.point.y += 10; touch.sampleTime += 0.01
+          touch.point.x -= 30; touch.sampleTime += 0.01
           receiver.touchesMoved([touch], with: event)
-          let change: Double
-          if let paper { change = Double(paper.convert(held, from: window).x - paper.convert(touch.point, from: window).x) }
-          else { change = 30 / presence.camera.scale }
+          let horizontal = try XCTUnwrap(model.workingGraphics.first)
+          XCTAssertEqual(horizontal.frame.height, initial.frame.height, accuracy: 0.001)
+          // Change direction during the SAME held contact. Neither axis may
+          // be latched off by its start point or the preceding horizontal move.
+          touch.point.y += 20; touch.sampleTime += 0.01
+          receiver.touchesMoved([touch], with: event)
+          let change: CGSize
+          if let paper {
+            let from = paper.convert(held, from: window), to = paper.convert(touch.point, from: window)
+            change = .init(width: from.x - to.x, height: to.y - from.y)
+          } else { change = .init(width: 30 / presence.camera.scale, height: 20 / presence.camera.scale) }
           recognized = try XCTUnwrap(model.workingGraphics.first)
           let adjusted = try XCTUnwrap(recognized)
           XCTAssertEqual(adjusted.id, initial.id)
           if onBoard {
             let shift = try XCTUnwrap(initial.worldOrigin).delta(to: XCTUnwrap(adjusted.worldOrigin))
-            XCTAssertEqual(shift.x, -change, accuracy: 0.001)
+            XCTAssertEqual(shift.x, -change.width, accuracy: 0.001)
             XCTAssertEqual(shift.y, 0, accuracy: 0.001)
             XCTAssertEqual(adjusted.frame.x, initial.frame.x)
-          } else { XCTAssertEqual(adjusted.frame.x, initial.frame.x - change, accuracy: 0.001) }
-          XCTAssertEqual(adjusted.frame.width, initial.frame.width + change, accuracy: 0.001)
+          } else { XCTAssertEqual(adjusted.frame.x, initial.frame.x - change.width, accuracy: 0.001) }
+          XCTAssertEqual(adjusted.frame.width, initial.frame.width + change.width, accuracy: 0.001)
+          XCTAssertEqual(adjusted.frame.width, horizontal.frame.width, accuracy: 0.001)
           XCTAssertEqual(adjusted.frame.y, initial.frame.y, accuracy: 0.001)
-          XCTAssertEqual(adjusted.frame.height, initial.frame.height, accuracy: 0.001,
-            "Dragging the left edge does not squeeze the unrelated vertical dimension")
-          enlargement = onBoard ? 30 : CGFloat(change)
+          XCTAssertEqual(adjusted.frame.height, initial.frame.height + change.height, accuracy: 0.001,
+            "Vertical motion still resizes after horizontal motion without lifting Pencil")
+          enlargement = onBoard ? .init(width: 30, height: 20) : change
           try await Task.sleep(for: .milliseconds(40))
         }
         if delaysPublication { attachFrame("held") }
@@ -471,10 +481,10 @@ import XCTest
     XCTAssertTrue(graphic.showsGeometry); XCTAssertEqual(graphic.sourceInkIDs.count, compound ? 2 : 1)
     XCTAssertEqual(graphic.shape,compound ? .plus : .ellipse)
     XCTAssertEqual(measuredSourceCount, measured.count)
-    XCTAssertEqual(actual.minX, try XCTUnwrap(measured.map(\.x).min()) - enlargement, accuracy: 0.1)
+    XCTAssertEqual(actual.minX, try XCTUnwrap(measured.map(\.x).min()) - enlargement.width, accuracy: 0.1)
     XCTAssertEqual(actual.minY, try XCTUnwrap(measured.map(\.y).min()), accuracy: 0.1)
     XCTAssertEqual(actual.width, try XCTUnwrap(measured.map(\.x).max()) - actual.minX, accuracy: 0.1)
-    XCTAssertEqual(actual.height, try XCTUnwrap(measured.map(\.y).max()) - actual.minY, accuracy: 0.1)
+    XCTAssertEqual(actual.height, try XCTUnwrap(measured.map(\.y).max()) - actual.minY + enlargement.height, accuracy: 0.1)
     XCTAssertEqual(model.presence?.camera, presence.camera)
   }
 

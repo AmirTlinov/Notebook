@@ -77,8 +77,8 @@ final class NotebookQuickShapeSession {
     }
   }
 
-  /// Hold grabs the nearby edge/corner (or connector terminal), once. That
-  /// handle follows the Pencil 1:1; the opposite edge stays where it was drawn.
+  /// Hold chooses the moving sides (or connector terminal), once. Both axes
+  /// follow Pencil travel; the opposite sides stay where they were drawn.
   /// Always derive from the held fit, so clamp/reversal cannot accumulate drift.
   static func adjusted(_ original: NotebookQuickShapeFit, heldAt held: SpatialPoint,
     to point: SpatialPoint, screenScale: Double) -> NotebookQuickShapeFit {
@@ -97,18 +97,13 @@ final class NotebookQuickShapeSession {
       if grabsStart { connection.start = endpoint } else { connection.end = endpoint }
       result.connection = connection
     } else {
-      let x = (held.x - frame.x - frame.width / 2) / (frame.width / 2)
-      let y = (held.y - frame.y - frame.height / 2) / (frame.height / 2)
-      // Near an edge midpoint only that dimension changes; near a corner both
-      // do. The choice is tied to the hold point, not retargeted while dragging.
-      let horizontal = abs(x) * 2 >= abs(y)
-      let vertical = abs(y) * 2 >= abs(x)
-      let left = x < 0, top = y < 0
+      let left = held.x < frame.x + frame.width / 2
+      let top = held.y < frame.y + frame.height / 2
       let minimum = 12 / screenScale
-      let width = horizontal ? max(minimum, frame.width + (left ? -dx : dx)) : frame.width
-      let height = vertical ? max(minimum, frame.height + (top ? -dy : dy)) : frame.height
-      result.frame = .init(x: horizontal && left ? frame.x + frame.width - width : frame.x,
-        y: vertical && top ? frame.y + frame.height - height : frame.y, width: width, height: height)
+      let width = max(minimum, frame.width + (left ? -dx : dx))
+      let height = max(minimum, frame.height + (top ? -dy : dy))
+      result.frame = .init(x: left ? frame.x + (frame.width - width) : frame.x,
+        y: top ? frame.y + (frame.height - height) : frame.y, width: width, height: height)
     }
     return result
   }
