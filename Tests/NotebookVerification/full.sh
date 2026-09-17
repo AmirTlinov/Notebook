@@ -42,12 +42,14 @@ swift test 2>&1 | tee "$EVIDENCE/core.log"
 
 ICON_PROOF="$DERIVED/AppIcon.appiconset"
 "$ROOT/Applications/render-app-icon.sh" "$ICON_PROOF"
-for icon in "$ROOT"/Applications/Assets.xcassets/AppIcon.appiconset/*.png; do
-  if ! cmp -s "$icon" "$ICON_PROOF/$(basename "$icon")"; then
-    printf '%s\n' \
-      'Иконки Mac и iPad должны быть свежим результатом одного AppIcon.svg.' >&2
-    exit 1
-  fi
+for asset in AppIcon.appiconset NotebookStatusIcon.imageset; do
+  for icon in "$ROOT/Applications/Assets.xcassets/$asset/"*.png; do
+    if ! cmp -s "$icon" "$DERIVED/$asset/$(basename "$icon")"; then
+      printf '%s\n' \
+        'Иконки Mac, iPad и строки меню должны быть свежим результатом одного AppIcon.svg.' >&2
+      exit 1
+    fi
+  done
 done
 
 # Canvas continuity is exercised by native/UI tests; the headless Mac launch

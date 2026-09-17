@@ -1,0 +1,8 @@
+{
+  "images": [
+    { "filename": "NotebookStatusIcon@1x.png", "idiom": "mac", "scale": "1x" },
+    { "filename": "NotebookStatusIcon@2x.png", "idiom": "mac", "scale": "2x" }
+  ],
+  "info": { "author": "xcode", "version": 1 },
+  "properties": { "template-rendering-intent": "template" }
+}
