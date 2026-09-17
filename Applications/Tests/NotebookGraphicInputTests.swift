@@ -23,11 +23,80 @@ import XCTest
     paper.touchesMoved([touch], with: nil)
     paper.touchesEnded([touch], with: nil)
     XCTAssertNotNil(fit)
-    XCTAssertGreaterThan(try XCTUnwrap(fit).frame.width, 210, "Pencil adjusts the recognized geometry before lift")
+    XCTAssertEqual(try XCTUnwrap(fit).frame.width, 210, accuracy: 0.1,
+      "The held edge follows ten points of Pencil travel, not twice the distance")
+    XCTAssertEqual(try XCTUnwrap(fit).frame.x, 100, accuracy: 0.1, "The opposite edge remains fixed")
     let raw = try XCTUnwrap(accepted)
     XCTAssertEqual(raw.samples.count, 121, "Handle motion is not appended to the original sketch")
     XCTAssertEqual(raw.samples.last?.point.x ?? 0, 300, accuracy: 0.001)
     XCTAssertFalse(paper.hasActiveAction)
+  }
+
+  func testHeldShapeEdgesFollowThePencilFromEverySideAtAnyScale() {
+    for scale in [0.5, 1.0, 3.0] {
+      for shape in [NotebookGraphic.Shape.ellipse, .rectangle, .plus] {
+        let frame = PageRect(x: 100 / scale, y: 70 / scale, width: 180 / scale, height: 120 / scale)
+        var original = NotebookQuickShapeFit(frame: frame, sampleCount: 49, shape: shape)
+        original.precedingStrokeIDs = [UUID()]
+        for (x, y) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {
+          let held = SpatialPoint(x: frame.x + frame.width * (x + 1) / 2,
+            y: frame.y + frame.height * (y + 1) / 2)
+          let moved = SpatialPoint(x: held.x + (x == 0 ? 9 : x * 20) / scale,
+            y: held.y + (y == 0 ? 9 : y * 20) / scale)
+          let fit = NotebookQuickShapeSession.adjusted(original, heldAt: held, to: moved, screenScale: scale)
+          XCTAssertEqual(fit.frame.width * scale, x == 0 ? 180 : 200, accuracy: 0.0001)
+          XCTAssertEqual(fit.frame.height * scale, y == 0 ? 120 : 140, accuracy: 0.0001)
+          XCTAssertEqual(fit.frame.x * scale, x < 0 ? 80 : 100, accuracy: 0.0001)
+          XCTAssertEqual(fit.frame.y * scale, y < 0 ? 50 : 70, accuracy: 0.0001)
+          XCTAssertEqual(fit.shape, shape); XCTAssertEqual(fit.sampleCount, 49)
+          XCTAssertEqual(fit.precedingStrokeIDs, original.precedingStrokeIDs)
+          XCTAssertEqual(NotebookQuickShapeSession.adjusted(original, heldAt: held, to: held, screenScale: scale), original,
+            "Returning to the hold point restores the drawn geometry without drift")
+        }
+      }
+    }
+  }
+
+  func testHeldCornersKeepTheOppositeCornerAndDoNotFlipAtMinimumSize() {
+    let frame = PageRect(x: 100, y: 70, width: 180, height: 120)
+    let original = NotebookQuickShapeFit(frame: frame, sampleCount: 49, shape: .rectangle)
+    for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+      let held = SpatialPoint(x: x < 0 ? 100 : 280, y: y < 0 ? 70 : 190)
+      let fit = NotebookQuickShapeSession.adjusted(original, heldAt: held,
+        to: .init(x: held.x + x * 20, y: held.y + y * 30), screenScale: 1)
+      XCTAssertEqual(fit.frame.width, 200); XCTAssertEqual(fit.frame.height, 150)
+      XCTAssertEqual(fit.frame.x, x < 0 ? 80 : 100)
+      XCTAssertEqual(fit.frame.y, y < 0 ? 40 : 70)
+      let clamped = NotebookQuickShapeSession.adjusted(original, heldAt: held,
+        to: .init(x: held.x - x * 400, y: held.y - y * 400), screenScale: 1)
+      XCTAssertEqual(clamped.frame.width, 12); XCTAssertEqual(clamped.frame.height, 12)
+      XCTAssertEqual(clamped.frame.x, x < 0 ? 268 : 100)
+      XCTAssertEqual(clamped.frame.y, y < 0 ? 178 : 70)
+      XCTAssertEqual(NotebookQuickShapeSession.adjusted(original, heldAt: held, to: held, screenScale: 1), original)
+    }
+  }
+
+  func testHeldArrowMovesTheNearbyTerminalWithoutChangingTheOtherEndOrDirection() throws {
+    let connection = NotebookGraphicConnection(
+      start: .init(point: .init(x: 10, y: 30), binding: .init(elementID: "tail")),
+      end: .init(point: .init(x: 190, y: 30), binding: .init(elementID: "tip")), endArrowhead: .arrow)
+    let original = NotebookQuickShapeFit(frame: .init(x: 100, y: 70, width: 200, height: 60),
+      sampleCount: 91, connection: connection)
+    for terminal in NotebookGraphicConnection.Terminal.allCases {
+      let initial = terminal == .start ? connection.start : connection.end
+      // A finishing wing need not end exactly at the geometrical arrow tip.
+      let held = SpatialPoint(x: 100 + initial.point.x - 8, y: 70 + initial.point.y + 6)
+      let fit = NotebookQuickShapeSession.adjusted(original, heldAt: held,
+        to: .init(x: held.x - 20, y: held.y + 35), screenScale: 1)
+      let adjusted = try XCTUnwrap(fit.connection)
+      let endpoint = terminal == .start ? adjusted.start : adjusted.end
+      XCTAssertEqual(endpoint.point, .init(x: initial.point.x - 20, y: initial.point.y + 35))
+      XCTAssertNil(endpoint.binding, "The moved terminal is rebound at its new position by the existing resolver")
+      XCTAssertEqual(terminal == .start ? adjusted.end : adjusted.start,
+        terminal == .start ? connection.end : connection.start)
+      XCTAssertEqual(adjusted.endArrowhead, .arrow)
+      XCTAssertEqual(fit.frame, original.frame)
+    }
   }
 
   func testPencilCancellationAndOrdinaryHandwritingNeverConvert() async throws {

@@ -67,24 +67,50 @@ final class NotebookQuickShapeSession {
   }
 
   func move(to point: SpatialPoint) {
+    guard point.x.isFinite, point.y.isFinite else { return }
     last = point
     if let originalFit {
-      if var connection = originalFit.connection {
-        connection.end.point = .init(x:connection.end.point.x+point.x-heldPoint.x,y:connection.end.point.y+point.y-heldPoint.y)
-        var adjusted = originalFit; adjusted.connection = connection
-        fit = resolve(adjusted); onChange?(fit); return
-      }
-      let frame = originalFit.frame
-      let width = max(12 / scale, frame.width + 2 * (point.x - heldPoint.x))
-      let height = max(12 / scale, frame.height + 2 * (point.y - heldPoint.y))
-      var adjusted = originalFit
-      adjusted.frame = .init(x: frame.x + (frame.width - width) / 2,
-        y: frame.y + (frame.height - height) / 2, width: width, height: height)
-      fit = resolve(adjusted)
+      fit = resolve(Self.adjusted(originalFit, heldAt: heldPoint, to: point, screenScale: scale))
       onChange?(fit)
     } else if hypot(point.x - anchor.x, point.y - anchor.y) * scale > Self.movementTolerance {
       anchor = point; lastMotion = ProcessInfo.processInfo.systemUptime
     }
+  }
+
+  /// Hold grabs the nearby edge/corner (or connector terminal), once. That
+  /// handle follows the Pencil 1:1; the opposite edge stays where it was drawn.
+  /// Always derive from the held fit, so clamp/reversal cannot accumulate drift.
+  static func adjusted(_ original: NotebookQuickShapeFit, heldAt held: SpatialPoint,
+    to point: SpatialPoint, screenScale: Double) -> NotebookQuickShapeFit {
+    guard point.x.isFinite, point.y.isFinite else { return original }
+    let dx = point.x - held.x, dy = point.y - held.y
+    guard dx != 0 || dy != 0 else { return original }
+    let frame = original.frame
+    var result = original
+    if var connection = original.connection {
+      let local = SpatialPoint(x: held.x - frame.x, y: held.y - frame.y)
+      let grabsStart = hypot(local.x - connection.start.point.x, local.y - connection.start.point.y)
+        < hypot(local.x - connection.end.point.x, local.y - connection.end.point.y)
+      var endpoint = grabsStart ? connection.start : connection.end
+      endpoint.point = .init(x: endpoint.point.x + dx, y: endpoint.point.y + dy)
+      endpoint.binding = nil
+      if grabsStart { connection.start = endpoint } else { connection.end = endpoint }
+      result.connection = connection
+    } else {
+      let x = (held.x - frame.x - frame.width / 2) / (frame.width / 2)
+      let y = (held.y - frame.y - frame.height / 2) / (frame.height / 2)
+      // Near an edge midpoint only that dimension changes; near a corner both
+      // do. The choice is tied to the hold point, not retargeted while dragging.
+      let horizontal = abs(x) * 2 >= abs(y)
+      let vertical = abs(y) * 2 >= abs(x)
+      let left = x < 0, top = y < 0
+      let minimum = 12 / screenScale
+      let width = horizontal ? max(minimum, frame.width + (left ? -dx : dx)) : frame.width
+      let height = vertical ? max(minimum, frame.height + (top ? -dy : dy)) : frame.height
+      result.frame = .init(x: horizontal && left ? frame.x + frame.width - width : frame.x,
+        y: vertical && top ? frame.y + frame.height - height : frame.y, width: width, height: height)
+    }
+    return result
   }
 
   func remember(_ id: UUID, points: [SpatialPoint]) {

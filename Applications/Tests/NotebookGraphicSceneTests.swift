@@ -202,6 +202,14 @@ import XCTest
       : store.readPageElement(pageID:pageID,elementID:id)?.graphic
     XCTAssertEqual(retained,graphic,"Node movement must not rewrite the connector's authored coordinates")
     model.selectElement(link)
+    if onBoard {
+      // Selection requests ordinary live admission. A synchronous model call
+      // must not impersonate a drag before that native owner is installed.
+      let admissionDeadline = ContinuousClock.now + .seconds(3)
+      while model.compositionTiles.published.flatMap({ model.presentedElement(link, cohort: $0) }) == nil,
+        ContinuousClock.now < admissionDeadline { try await Task.sleep(for: .milliseconds(20)) }
+      XCTAssertNotNil(model.compositionTiles.published.flatMap { model.presentedElement(link, cohort: $0) })
+    }
     let detach = try XCTUnwrap(model.beginElementManipulation(link,kind:.endpoint(.end)))
     model.finishElementManipulation(detach,translation:.init(x:110,y:130))
     let detached = await model.finishPendingPersistence(); XCTAssertTrue(detached)
@@ -264,8 +272,16 @@ import XCTest
     try await drawAndClose(onBoard: true, delaysPublication: true)
   }
 
+  func testPageHeldLeftEdgeFollowsPencilAndKeepsTheAdjustedObjectAfterLift() async throws {
+    try await drawAndClose(onBoard: false, delaysPublication: true, adjustsHeldShape: true)
+  }
+
+  func testBoardHeldLeftEdgeFollowsPencilAndKeepsTheAdjustedObjectAfterLift() async throws {
+    try await drawAndClose(onBoard: true, delaysPublication: true, adjustsHeldShape: true)
+  }
+
   private func drawAndClose(onBoard: Bool, compound: Bool = false, measuresPublication: Bool = false,
-    restingHand: Bool = false, delaysPublication: Bool = false) async throws {
+    restingHand: Bool = false, delaysPublication: Bool = false, adjustsHeldShape: Bool = false) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-scene-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
@@ -321,11 +337,11 @@ import XCTest
       evidence.name = "same-object-\(onBoard ? "board" : "page")-\(stage)"
       evidence.lifetime = .keepAlways; add(evidence)
     }
-    var measured: [CGPoint] = []
+    var measured: [CGPoint] = [], enlargement: CGFloat = 0
     for strokeIndex in 0..<(compound ? 2 : 1) {
       let touch = SceneGraphicTouch(window: window), event = SceneGraphicEvent()
       for index in 0...120 {
-        let t = Double(index)/120, angle = t * 2 * Double.pi
+        let t = Double(index)/120, angle = t * 2 * Double.pi + (adjustsHeldShape ? .pi : 0)
         if compound {
           touch.point = strokeIndex == 0 ? .init(x:midpoint.x-90+180*t,y:midpoint.y)
             : .init(x:midpoint.x,y:midpoint.y-60+120*t)
@@ -346,6 +362,30 @@ import XCTest
           "The hold creates the actual displayed graphic, not a separate preview path")
         XCTAssertNotNil(shownObject())
         XCTAssertFalse(try XCTUnwrap(recognized).accepted)
+        if adjustsHeldShape {
+          attachFrame("before-left-edge-drag")
+          let initial = try XCTUnwrap(recognized), held = touch.point
+          touch.point.x -= 30; touch.point.y += 10; touch.sampleTime += 0.01
+          receiver.touchesMoved([touch], with: event)
+          let change: Double
+          if let paper { change = Double(paper.convert(held, from: window).x - paper.convert(touch.point, from: window).x) }
+          else { change = 30 / presence.camera.scale }
+          recognized = try XCTUnwrap(model.workingGraphics.first)
+          let adjusted = try XCTUnwrap(recognized)
+          XCTAssertEqual(adjusted.id, initial.id)
+          if onBoard {
+            let shift = try XCTUnwrap(initial.worldOrigin).delta(to: XCTUnwrap(adjusted.worldOrigin))
+            XCTAssertEqual(shift.x, -change, accuracy: 0.001)
+            XCTAssertEqual(shift.y, 0, accuracy: 0.001)
+            XCTAssertEqual(adjusted.frame.x, initial.frame.x)
+          } else { XCTAssertEqual(adjusted.frame.x, initial.frame.x - change, accuracy: 0.001) }
+          XCTAssertEqual(adjusted.frame.width, initial.frame.width + change, accuracy: 0.001)
+          XCTAssertEqual(adjusted.frame.y, initial.frame.y, accuracy: 0.001)
+          XCTAssertEqual(adjusted.frame.height, initial.frame.height, accuracy: 0.001,
+            "Dragging the left edge does not squeeze the unrelated vertical dimension")
+          enlargement = onBoard ? 30 : CGFloat(change)
+          try await Task.sleep(for: .milliseconds(40))
+        }
         if delaysPublication { attachFrame("held") }
       }
       let publicationFence = UUID()
@@ -431,7 +471,7 @@ import XCTest
     XCTAssertTrue(graphic.showsGeometry); XCTAssertEqual(graphic.sourceInkIDs.count, compound ? 2 : 1)
     XCTAssertEqual(graphic.shape,compound ? .plus : .ellipse)
     XCTAssertEqual(measuredSourceCount, measured.count)
-    XCTAssertEqual(actual.minX, try XCTUnwrap(measured.map(\.x).min()), accuracy: 0.1)
+    XCTAssertEqual(actual.minX, try XCTUnwrap(measured.map(\.x).min()) - enlargement, accuracy: 0.1)
     XCTAssertEqual(actual.minY, try XCTUnwrap(measured.map(\.y).min()), accuracy: 0.1)
     XCTAssertEqual(actual.width, try XCTUnwrap(measured.map(\.x).max()) - actual.minX, accuracy: 0.1)
     XCTAssertEqual(actual.height, try XCTUnwrap(measured.map(\.y).max()) - actual.minY, accuracy: 0.1)
