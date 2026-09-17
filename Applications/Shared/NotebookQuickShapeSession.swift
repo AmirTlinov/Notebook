@@ -23,7 +23,7 @@ final class NotebookQuickShapeSession {
   private var originalFit: NotebookQuickShapeFit?
   private var heldPoint = SpatialPoint.zero
   private(set) var fit: NotebookQuickShapeFit?
-  var onPreview: ((NotebookQuickShapeFit?) -> Void)?
+  var onChange: ((NotebookQuickShapeFit?) -> Void)?
   private var resolve: @MainActor (NotebookQuickShapeFit) -> NotebookQuickShapeFit = { $0 }
 
   func begin(at point: SpatialPoint, screenScale: Double,
@@ -61,7 +61,7 @@ final class NotebookQuickShapeSession {
         }
         guard !Task.isCancelled, self.generation == generation else { return }
         originalFit = fit; self.fit = self.resolve(fit); heldPoint = last
-        onPreview?(self.fit); return
+        onChange?(self.fit); return
       }
     }
   }
@@ -72,7 +72,7 @@ final class NotebookQuickShapeSession {
       if var connection = originalFit.connection {
         connection.end.point = .init(x:connection.end.point.x+point.x-heldPoint.x,y:connection.end.point.y+point.y-heldPoint.y)
         var adjusted = originalFit; adjusted.connection = connection
-        fit = resolve(adjusted); onPreview?(fit); return
+        fit = resolve(adjusted); onChange?(fit); return
       }
       let frame = originalFit.frame
       let width = max(12 / scale, frame.width + 2 * (point.x - heldPoint.x))
@@ -80,9 +80,8 @@ final class NotebookQuickShapeSession {
       var adjusted = originalFit
       adjusted.frame = .init(x: frame.x + (frame.width - width) / 2,
         y: frame.y + (frame.height - height) / 2, width: width, height: height)
-      adjusted.resolvedLayout = nil
       fit = resolve(adjusted)
-      onPreview?(fit)
+      onChange?(fit)
     } else if hypot(point.x - anchor.x, point.y - anchor.y) * scale > Self.movementTolerance {
       anchor = point; lastMotion = ProcessInfo.processInfo.systemUptime
     }
@@ -102,12 +101,14 @@ final class NotebookQuickShapeSession {
   }
   func finish() -> NotebookQuickShapeFit? {
     let accepted = fit
-    endContact()
+    endContact(cancelling: false)
     if accepted != nil { recent.removeAll() }
     return accepted
   }
   func cancel() { endContact(); recent.removeAll() }
-  func endContact() {
-    task?.cancel(); task = nil; generation = UUID(); fit = nil; originalFit = nil; resolve = { $0 }; onPreview?(nil)
+  func endContact(cancelling: Bool = true) {
+    let hadShape = fit != nil
+    task?.cancel(); task = nil; generation = UUID(); fit = nil; originalFit = nil; resolve = { $0 }
+    if cancelling && hadShape { onChange?(nil) }
   }
 }

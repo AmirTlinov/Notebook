@@ -633,7 +633,7 @@ final class SpatialInkHandoffTests: XCTestCase {
       window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
       window.rootViewController = host; host.view.addSubview(canvas); host.view.addSubview(passive); window.makeKeyAndVisible()
       passive.frame = .init(x: viewport.x / 2 - 120, y: viewport.y / 2 - 120, width: 240, height: 240)
-      coordinator = .init(surfaceRegistry: registry, inputGate: gate) { [weak self] tool, color, spans in self?.accept(tool, color, spans) }
+      coordinator = .init(surfaceRegistry: registry, inputGate: gate) { [weak self] tool, color, spans, _ in self?.accept(tool, color, spans) }
     }
     func mountActive(_ id: UUID) throws {
       coordinator.uninstall(); physical?.close(); currentID = id
@@ -661,7 +661,7 @@ final class SpatialInkHandoffTests: XCTestCase {
       coordinator.update(view: canvas, cohort: cohort, boardID: currentID, camera: activeCamera, viewport: viewport,
         items: physical?.surfaces ?? [], journal: journal, penStyle: .standard, eraserStyle: .standard,
         drawingTool: tool, surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { _ in false },
-        admitsNewContact: { true }, isEnabled: true, onCommit: { [weak self] tool, color, spans in self?.accept(tool, color, spans) })
+        admitsNewContact: { true }, isEnabled: true, onCommit: { [weak self] tool, color, spans, _ in self?.accept(tool, color, spans) })
     }
     func contact(tool: DrawingTool, from: CGPoint, to: CGPoint) {
       update(tool: tool)

@@ -62,18 +62,6 @@ struct NotebookGraphicView: View {
     }
     return path
   }
-  static func previewPath(_ fit: NotebookQuickShapeFit) -> Path {
-    guard fit.connection != nil, let layout = fit.layout else {
-      return fit.connection == nil ? outline(fit.shape,in:.init(x:fit.frame.x,y:fit.frame.y,width:fit.frame.width,height:fit.frame.height)) : Path()
-    }
-    var path = path(layout)
-    for head in layout.heads {
-      if let first = head.points.first { path.move(to:first.cgPoint) }
-      for point in head.points.dropFirst() { path.addLine(to:point.cgPoint) }
-      if head.closed { path.closeSubpath() }
-    }
-    return path.offsetBy(dx:layout.frame.x,dy:layout.frame.y)
-  }
   private static func outline(_ shape: NotebookGraphic.Shape, in rect: CGRect) -> Path {
     switch shape {
     case .ellipse: return Path(ellipseIn:rect)

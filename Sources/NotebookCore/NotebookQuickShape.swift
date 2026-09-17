@@ -4,7 +4,6 @@ public struct NotebookQuickShapeFit: Equatable, Sendable {
   public var frame: PageRect
   public let sampleCount: Int
   public var connection: NotebookGraphicConnection?
-  public var resolvedLayout: NotebookGraphicLayout?
   public let shape: NotebookGraphic.Shape
   public var precedingStrokeIDs: [UUID] = []
   public init(frame: PageRect, sampleCount: Int, connection: NotebookGraphicConnection? = nil,
@@ -21,7 +20,6 @@ public struct NotebookQuickShapeFit: Equatable, Sendable {
       connection.bend *= scale
       value.connection = connection
     }
-    value.resolvedLayout = nil
     return value
   }
   public func binding(in graph: NotebookGraphicGraph, surface: SurfaceID, origin: WorldPoint = .zero,
@@ -34,16 +32,7 @@ public struct NotebookQuickShapeFit: Equatable, Sendable {
       if terminal == .start { connection.start = endpoint } else { connection.end = endpoint }
     }
     var result = self; result.connection = connection
-    let id = UUID().uuidString
-    let candidate = NotebookGraphicGraph.Node(id:id,graphic:.init(shape:.connector,connection:connection),frame:frame,
-      origin:origin,surface:surface,shown:true)
-    result.resolvedLayout = NotebookGraphicGraph(Array(graph.nodes.values)+[candidate]).resolve(id).layout
     return result
-  }
-  public var layout: NotebookGraphicLayout? {
-    if let resolvedLayout { return resolvedLayout }
-    return NotebookGraphicGraph([.init(id:"preview",graphic:.init(shape:shape,connection:connection),frame:frame,
-      surface:.board(UUID()),shown:true)]).resolve("preview").layout
   }
 }
 

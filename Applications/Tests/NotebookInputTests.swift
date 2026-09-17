@@ -65,7 +65,7 @@ final class NotebookInputTests: XCTestCase {
       presence: .init(boardID: board, mode: .board, camera: inkCamera, viewport: viewport),
       canvas: anchor, parent: host, registry: registry, gate: gate)
     defer { physical.close() }
-    let commit: (SpatialInkTool, SpatialInkColor, [SpatialInkSpan]) -> SpatialInkAction? = { _, _, _ in
+    let commit: (SpatialInkTool, SpatialInkColor, [SpatialInkSpan], UUID) -> SpatialInkAction? = { _, _, _, _ in
       XCTFail("A menu contact cannot create ink"); return nil
     }
     let ink = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate, onCommit: commit)
@@ -430,12 +430,12 @@ final class NotebookInputTests: XCTestCase {
       presence: .init(boardID: board, mode: .board, camera: .init(scale: 0.1), viewport: .init(x: 600, y: 800)),
       canvas: canvas, parent: host, registry: registry, gate: gate, journal: nil)
     defer { physical.close() }
-    let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { tool, color, spans in commits.append(spans); return self.acceptedAction(tool, color, spans) }
+    let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { tool, color, spans, _ in commits.append(spans); return self.acceptedAction(tool, color, spans) }
     defer { owner.uninstall(); window.isHidden = true }
     func update(camera: SpatialCamera, items: [SpatialWorkspaceItemSurface]) {
       owner.update(view: canvas, cohort: cohort, boardID: board, camera: camera, viewport: .init(x: 600, y: 800),
         items: items, journal: cohort.liveData.ink, penStyle: .standard, eraserStyle: .standard, drawingTool: .pen,
-        surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { _ in false }, admitsNewContact: { true }, isEnabled: true, onCommit: { tool, color, spans in commits.append(spans); return self.acceptedAction(tool, color, spans) })
+        surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { _ in false }, admitsNewContact: { true }, isEnabled: true, onCommit: { tool, color, spans, _ in commits.append(spans); return self.acceptedAction(tool, color, spans) })
     }
     update(camera: .init(scale: 0.1), items: [.init(itemID: cover, geometry: .notebook, center: .zero, zIndex: 1)])
     let pencil = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
@@ -475,14 +475,14 @@ final class NotebookInputTests: XCTestCase {
       canvas: canvas, parent: host, registry: registry, gate: gate, journal: nil)
     defer { physical.close() }
     var blocked: Set<UUID> = [], commits: [[SpatialInkSpan]] = [], events: [String] = []
-    let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { _, _, _ in nil }
+    let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { _, _, _, _ in nil }
     defer { owner.uninstall(); window.isHidden = true }
     owner.update(view: canvas, cohort: cohort, boardID: board, camera: .init(scale: 0.3), viewport: .init(x: 1000, y: 800),
       items: [.init(itemID: deleting, geometry: .notebook, center: .zero, zIndex: 1),
         .init(itemID: other, geometry: .notebook, center: .init(x: 1000, y: 0), zIndex: 2)],
       journal: cohort.liveData.ink, penStyle: .standard, eraserStyle: .standard, drawingTool: .pen,
       surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { blocked.contains($0) }, admitsNewContact: { true }, isEnabled: true,
-      onCommit: { tool, color, spans in commits.append(spans); events.append("ink"); return self.acceptedAction(tool, color, spans) })
+      onCommit: { tool, color, spans, _ in commits.append(spans); events.append("ink"); return self.acceptedAction(tool, color, spans) })
     let pencil = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
     let touch = InputTouch(), event = UIEvent()
     touch.point = .init(x: 500, y: 400)
@@ -552,7 +552,7 @@ final class NotebookInputTests: XCTestCase {
       canvas: canvas, parent: host, registry: registry, gate: gate, journal: nil)
     defer { physical.close() }
     var preparing = false, commits: [[SpatialInkSpan]] = []
-    let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { _, _, _ in nil }
+    let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { _, _, _, _ in nil }
     defer { owner.uninstall(); window.isHidden = true }
     func update(enabled: Bool = true) {
       owner.update(view: canvas, cohort: cohort, boardID: board, camera: .init(scale: 0.3), viewport: .init(x: 600, y: 800),
@@ -560,7 +560,7 @@ final class NotebookInputTests: XCTestCase {
         journal: cohort.liveData.ink, penStyle: .standard, eraserStyle: .standard, drawingTool: .pen,
         surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { _ in false },
         admitsNewContact: { !preparing }, isEnabled: enabled,
-        onCommit: { tool, color, spans in commits.append(spans); return self.acceptedAction(tool, color, spans) })
+        onCommit: { tool, color, spans, _ in commits.append(spans); return self.acceptedAction(tool, color, spans) })
     }
     update()
     let pencil = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
@@ -618,12 +618,12 @@ final class NotebookInputTests: XCTestCase {
       presence: .init(boardID: board, mode: .board, camera: .init(scale: 1), viewport: .init(x: 600, y: 800)),
       canvas: canvas, parent: host, registry: registry, gate: gate, journal: journal)
     defer { physical.close() }
-    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { _, _, _ in nil }
+    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { _, _, _, _ in nil }
     defer { coordinator.uninstall(); window.isHidden = true }
     func update(camera: SpatialCamera = .init(scale: 1)) {
       coordinator.update(view: canvas, cohort: cohort, boardID: board, camera: camera, viewport: .init(x: 600, y: 800),
         items: [], journal: journal, penStyle: .standard, eraserStyle: .standard, drawingTool: .eraser,
-        surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { _ in false }, admitsNewContact: { true }, isEnabled: true, onCommit: { tool, color, spans in
+        surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { _ in false }, admitsNewContact: { true }, isEnabled: true, onCommit: { tool, color, spans, _ in
           journal.append(tool: tool, color: color, spans: spans, actor: actor)
         })
     }
@@ -717,7 +717,7 @@ final class NotebookInputTests: XCTestCase {
     var nextBoardID = boardID
     var projection = SpatialCamera(scale: 1)
     var commits: [(SpatialInkTool, [SpatialInkSpan])] = []
-    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { tool, color, spans in commits.append((tool, spans)); return self.acceptedAction(tool, color, spans) }
+    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { tool, color, spans, _ in commits.append((tool, spans)); return self.acceptedAction(tool, color, spans) }
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene)
     let host = UIViewController()
@@ -736,7 +736,7 @@ final class NotebookInputTests: XCTestCase {
       coordinator.update(view: canvas, cohort: cohort, boardID: nextBoardID, camera: projection, viewport: .init(x: 600, y: 800),
         items: [], journal: cohort.liveData.ink, penStyle: .standard, eraserStyle: .standard, drawingTool: .eraser,
         surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { _ in false }, admitsNewContact: { true }, isEnabled: enabled,
-        onCommit: { tool, color, spans in commits.append((tool, spans)); return self.acceptedAction(tool, color, spans) })
+        onCommit: { tool, color, spans, _ in commits.append((tool, spans)); return self.acceptedAction(tool, color, spans) })
     }
     update(enabled: true)
     let recognizer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
@@ -986,7 +986,7 @@ extension NotebookInputTests {
             presence: .init(boardID: board, mode: .board, camera: camera, viewport: viewport),
             canvas: canvas, parent: host, registry: registry, gate: gate)
           defer { physical.close() }
-          let commit: (SpatialInkTool, SpatialInkColor, [SpatialInkSpan]) -> SpatialInkAction? = { tool, color, spans in
+          let commit: (SpatialInkTool, SpatialInkColor, [SpatialInkSpan], UUID) -> SpatialInkAction? = { tool, color, spans, _ in
             let value = self.acceptedAction(tool, color, spans); commits.append(value); return value
           }
           let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate, onCommit: commit)

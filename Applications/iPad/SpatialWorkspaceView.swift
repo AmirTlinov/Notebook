@@ -745,6 +745,7 @@ struct SpatialWorkspaceView: View {
     let selectionID: UUID
     let manipulation: NotebookElementManipulation?
     let graphicCommandPreview: NotebookElementManipulation?
+    let workingGraphics: [NotebookWorkingGraphic]
   }
 
   private func boardElements(_ elements: [SpatialElement], presence: SessionPresence,
@@ -753,7 +754,7 @@ struct SpatialWorkspaceView: View {
     let revision = ElementPlaneRevision(cohortID: cohort?.paintID, generation: model.sceneIndex?.generationID,
       focus: model.interactiveElementFocus, elements: elements,
       selection: selection, selectionID: model.selectionSession.id, manipulation: model.selectionSession.manipulation,
-      graphicCommandPreview: model.graphicCommandPreview)
+      graphicCommandPreview: model.graphicCommandPreview, workingGraphics: model.workingGraphics)
     return SceneCameraPlane(presence: presence, revision: revision, reanchorsOnRevision: false,
       isCameraActive: model.presencePhase == .active || cameraGesture != nil || panStart != nil || settling,
       installation: cohort?.installation(for: .elements),
@@ -784,6 +785,14 @@ struct SpatialWorkspaceView: View {
           scale: presence.camera.scale, size: .init(width: viewport.x, height: viewport.y),
           projectOrigin: { presence.camera.worldToScreen($0, viewport: viewport).cgPoint })
           .zIndex(cohort.plan.rank(id: run.id.id, in: run.plane) ?? 0)
+      }
+      if let run = model.workingGraphicRun(boardID: presence.boardID, cohort: cohort) {
+        NotebookGraphicBatchView(run: run,
+          elements: model.workingBoardGraphics(boardID: presence.boardID, cohort: cohort)
+            .map { $0.spatialElement(stamp: .init(counter: 0, actor: model.actorID)) },
+          graph: graph, scale: presence.camera.scale, size: .init(width: viewport.x, height: viewport.y),
+          projectOrigin: { presence.camera.worldToScreen($0, viewport: viewport).cgPoint }, commitsState: false)
+          .zIndex(Double((cohort.plan.bands.map(\.rank).max() ?? 0) + 2))
       }
     }
     ForEach(elements.filter { $0.graphic == nil && cohort?.plan.allowsLive(.element($0.id), in: .board(presence.boardID)) == true }) { element in

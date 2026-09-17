@@ -81,14 +81,6 @@ public struct NotebookGraphicLayout: Equatable, Sendable {
   public let end: SpatialPoint
   public let bend: SpatialPoint
 
-  public func transformed(scale: Double, offset: SpatialPoint) -> Self {
-    func p(_ point: SpatialPoint) -> SpatialPoint { .init(x:point.x*scale,y:point.y*scale) }
-    return .init(frame:.init(x:frame.x*scale+offset.x,y:frame.y*scale+offset.y,width:frame.width*scale,height:frame.height*scale),
-      curves:curves.map { .init(start:p($0.start),control1:p($0.control1),control2:p($0.control2),end:p($0.end)) },
-      heads:heads.map { .init(points:$0.points.map(p),filled:$0.filled,closed:$0.closed) },
-      label:p(label),start:p(start),end:p(end),bend:p(bend))
-  }
-
   public func hitTest(_ point: SpatialPoint, graphic: NotebookGraphic, tolerance: Double) -> Bool {
     if graphic.shape != .connector {
       return NotebookGraphicGeometry.hitTest(graphic, width: frame.width, height: frame.height,

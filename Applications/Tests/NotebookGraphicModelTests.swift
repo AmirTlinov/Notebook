@@ -3,6 +3,42 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookGraphicModelTests: XCTestCase {
+  func testConsecutiveHeldShapesKeepBothIdentitiesWhileThePreviousCommandWaits() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-queue-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let pageID = try XCTUnwrap(model.activePage?.id)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let fence = UUID()
+    XCTAssertTrue(model.inputGate.beginPencilAction(source: fence))
+    defer { model.inputGate.endPencilAction(source: fence) }
+    var ids: [String] = []
+    for index in 0..<2 {
+      let fit = NotebookQuickShapeFit(frame: .init(x: 100 + Double(index)*180, y: 100, width: 100, height: 80), sampleCount: 49)
+      let stroke = PageInkAction(tool: .pen, samples: (0...48).map { sample in
+        let angle = Double(sample)/48 * 2 * Double.pi
+        return .init(point: .init(x: fit.frame.x + 50 + 50*cos(angle), y: 140 + 40*sin(angle)),
+          timeOffset: Double(sample)/100, width: 2, opacity: 1, force: 1, azimuth: 0, altitude: .pi/2)
+      })
+      let object = NotebookWorkingGraphic(strokeID: stroke.id, fit: fit, surface: .page(pageID), color: .black, width: 2)
+      ids.append(object.id)
+      model.updateWorkingGraphic(object, strokeID: stroke.id)
+      let stamp = try XCTUnwrap(model.reserveDrawingAction(pageID: pageID))
+      _ = model.acceptDrawingAction(stroke, pageID: pageID, stamp: stamp, quickShape: fit)
+    }
+    try await Task.sleep(for: .milliseconds(100))
+    XCTAssertEqual(model.workingGraphics.map(\.id), ids)
+    XCTAssertTrue(model.workingGraphics.allSatisfy { $0.accepted && $0.publicationCursor == nil })
+    model.inputGate.endPencilAction(source: fence)
+    let closed = await model.shutdown(); XCTAssertTrue(closed)
+    let reopened = NotebookStore(root: root), page = try reopened.loadPage(pageID)
+    XCTAssertEqual(Set(page.elements.map(\.id)), Set(ids))
+    XCTAssertEqual(try reopened.collaborationActions(afterID: nil).filter {
+      $0.action.operations.contains { $0.kind == .convertInkToElement }
+    }.count, 2)
+  }
+
   func testPageShapeUsesNativeCommandsAgentEditsAndSequentialUndo() async throws { try await scenario(onBoard: false) }
   func testBoardShapeUsesNativeCommandsAgentEditsAndSequentialUndo() async throws { try await scenario(onBoard: true) }
   func testPageShapeSequentialUndoSurvivesColdModelReopening() async throws { try await scenario(onBoard: false, reopens: true) }
@@ -121,9 +157,15 @@ import XCTest
     }
     let conversion = try XCTUnwrap(store.collaborationActions(afterID: nil).first { $0.action.operations.contains { $0.kind == .convertInkToElement } })
     XCTAssertEqual(conversion.author, .human)
+    let creationCursor = model.workingGraphics.first(where: { $0.id == id })?.publicationCursor
     model.moveElementAccessibly(reference, by: .init(x: 24, y: 18))
     try await wait { !model.graphicCommandPending }
     await model.reloadExternalChanges()?.value
+    if onBoard {
+      XCTAssertNotNil(creationCursor)
+      XCTAssertEqual(model.workingGraphics.first(where: { $0.id == id })?.publicationCursor, creationCursor,
+        "An edit cannot re-open the original creation draft while its display confirmation is pending")
+    }
     let moved = try XCTUnwrap(store.collaborationActions(afterID: nil).first { $0.action.operations.contains { $0.kind == .updateElement } })
     XCTAssertEqual(moved.author, .human)
     let edit = try store.applyCollaborationAction(.init(summary: "Agent label",

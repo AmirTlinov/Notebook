@@ -781,11 +781,15 @@ final class NotebookAppModel {
   private var cueTask: Task<Void, Never>?
   private var pencilUndoHistory = PencilUndoHistory()
   private var graphicCommandTask: Task<Void, Never>?
+  @ObservationIgnored private var graphicCommandGeneration = UUID()
+  var workingGraphics: [NotebookWorkingGraphic] = []
   // Lift transfers its final draft to the accepted command. It is retired by
   // a scene read at/after the durable cursor, not by lift or receipt delivery.
   private(set) var graphicCommandPreview: NotebookElementManipulation?
   @ObservationIgnored private var graphicCommandPreviewCursor: UInt64?
-  var graphicCommandPending: Bool { graphicCommandTask != nil || graphicCommandPreview != nil }
+  var graphicCommandPending: Bool {
+    graphicCommandTask != nil || graphicCommandPreview != nil || workingGraphics.contains { $0.accepted && $0.publicationCursor == nil }
+  }
   private var inkUndoInProgress = false
   private var reservedDrawingCounters: [UUID: UInt64] = [:]
   typealias PageInkPreparation = @Sendable (PageDocument, PageInkMutation, VersionStamp) async throws -> PreparedPageInkChange
@@ -876,6 +880,8 @@ final class NotebookAppModel {
   var permitsScenePreparation: Bool {
     !isStopped && !peerInputIsActive && !inputGate.hasActivePencil
       && (!inputIsActive || presencePhase == .active)
+      && !workingGraphics.contains { $0.surface.kind == .board && $0.accepted
+        && ($0.publicationCursor.map { (workspaceHeader?.cursor ?? 0) < $0 } ?? true) }
   }
   #if os(macOS)
     @ObservationIgnored private var codexSidecar: NotebookCodexSidecar?
@@ -2105,14 +2111,16 @@ final class NotebookAppModel {
   func appendSpatialInk(
     tool: SpatialInkTool,
     color: SpatialInkColor,
-    spans: [SpatialInkSpan]
+    spans: [SpatialInkSpan],
+    id: UUID = UUID()
   ) -> SpatialInkAction? {
     guard spans.allSatisfy({ surfaceAcceptsChanges($0.surface) }), var journal = spatialInk,
       let action = journal.append(
         tool: tool,
         color: color,
         spans: spans,
-        actor: actorID
+        actor: actorID,
+        id: id
       )
     else { return nil }
     spatialInk = journal
@@ -2285,8 +2293,15 @@ final class NotebookAppModel {
   private func acceptInkIntent(_ intent: AcceptedPageInk.Intent, pageID: UUID,
     stamp: VersionStamp, quickShape: NotebookQuickShapeFit? = nil) -> Task<PreparedPageInkChange?, Never> {
     guard let page = drawingReservations.removeValue(forKey: .init(pageID: pageID, stamp: stamp)),
-      !isPageBeingDeleted(pageID) else { return Task { nil } }
+      !isPageBeingDeleted(pageID) else {
+      if case .append(let action) = intent { updateWorkingGraphic(nil, strokeID: action.id) }
+      return Task { nil }
+    }
     let accepted = AcceptedPageInk(page: page, intent: intent, stamp: stamp, quickShape: quickShape)
+    if case .append(let action) = intent, quickShape != nil,
+      let index = workingGraphics.firstIndex(where: { $0.strokeID == action.id }) {
+      workingGraphics[index].accepted = true
+    }
     if let tail = acceptedPageInkTail { tail.next = accepted }
     else { acceptedPageInkHead = accepted }
     acceptedPageInkTail = accepted
@@ -2643,19 +2658,28 @@ final class NotebookAppModel {
   }
 
   func acceptQuickShape(_ fit: NotebookQuickShapeFit, pageID: UUID, stroke: PageInkAction) {
-    let graphic = NotebookGraphic(shape:fit.shape,style: .init(stroke: stroke.color, strokeWidth: stroke.samples.first?.width ?? 2), sourceInkIDs: fit.precedingStrokeIDs + [stroke.id],connection:fit.connection)
-    guard let values = try? ["kind": JSONValue.string("graphic"), "source": .string(""),
-      "frame": .encode(fit.frame), "graphic": .encode(graphic)] else { return }
-    performGraphicOperation(.convertInkToElement, reference: .page(pageID: pageID, elementID: UUID().uuidString.lowercased()),
-      values: values, summary:"Преобразовать набросок: " + fit.shape.displayName)
+    acceptQuickShape(.init(strokeID: stroke.id, fit: fit, surface: .page(pageID),
+      color: stroke.color, width: stroke.samples.first?.width ?? 2))
   }
 
   func acceptQuickShape(_ fit: NotebookQuickShapeFit, boardID: UUID, origin: WorldPoint, stroke: SpatialInkAction) {
-    let graphic = NotebookGraphic(shape:fit.shape,style: .init(stroke: stroke.color, strokeWidth: stroke.spans.first?.samples.first?.width ?? 2), sourceInkIDs: fit.precedingStrokeIDs + [stroke.id],connection:fit.connection)
-    guard let values = try? ["kind": JSONValue.string("graphic"), "source": .string(""),
-      "frame": .encode(fit.frame), "graphic": .encode(graphic), "worldOrigin": .encode(origin)] else { return }
-    performGraphicOperation(.convertInkToElement, reference: .spatial(boardID: boardID, elementID: UUID().uuidString.lowercased()),
-      values: values, summary:"Преобразовать набросок: " + fit.shape.displayName)
+    acceptQuickShape(.init(strokeID: stroke.id, fit: fit, surface: .board(boardID), worldOrigin: origin,
+      color: stroke.color, width: stroke.spans.first?.samples.first?.width ?? 2))
+  }
+
+  private func acceptQuickShape(_ object: NotebookWorkingGraphic) {
+    guard let owner = object.surface.ownerID else { return }
+    var accepted = object
+    accepted.accepted = true
+    if let index = workingGraphics.firstIndex(where: { $0.id == object.id }) { workingGraphics[index] = accepted }
+    else { workingGraphics.append(accepted) }
+    guard var values = try? ["kind": JSONValue.string("graphic"), "source": .string(""),
+      "frame": .encode(object.frame), "graphic": .encode(object.graphic)] else { return }
+    if let origin = object.worldOrigin { values["worldOrigin"] = try? .encode(origin) }
+    let reference: EditableElementReference = object.surface.kind == .page
+      ? .page(pageID: owner, elementID: object.id) : .spatial(boardID: owner, elementID: object.id)
+    performGraphicOperation(.convertInkToElement, reference: reference,
+      values: values, summary: "Преобразовать набросок: " + object.graphic.shape.displayName)
   }
 
   func setGraphicLabel(_ text: String, reference: EditableElementReference, replacing original: String? = nil) {
@@ -2686,8 +2710,8 @@ final class NotebookAppModel {
   @discardableResult
   private func performGraphicOperation(_ kind: CollaborationOperation.Kind, reference: EditableElementReference,
     values: [String: JSONValue], summary: String, preview: NotebookElementManipulation? = nil) -> Bool {
-    guard !graphicCommandPending else {
-      if kind != .convertInkToElement { showCue("Предыдущее изменение ещё сохраняется") }
+    guard kind == .convertInkToElement || !graphicCommandPending else {
+      showCue("Предыдущее изменение ещё сохраняется")
       return false
     }
     let target: CollaborationTarget, id: String, expectedPage: AgentElement?, expectedSpatial: SpatialElement?
@@ -2701,10 +2725,15 @@ final class NotebookAppModel {
         ? .init(kind: .cover, id: expectedSpatial!.surface.ownerID!, boardID: boardID) : .init(kind: .board, id: boardID)
     }
     let actor = actorID
-    graphicCommandPreview = preview
+    if let preview { graphicCommandPreview = preview }
+    let predecessor = graphicCommandTask, generation = UUID()
+    graphicCommandGeneration = generation
     graphicCommandTask = Task { [weak self] in
       guard let self else { return }
-      defer { graphicCommandTask = nil }
+      defer { if graphicCommandGeneration == generation { graphicCommandTask = nil } }
+      // A second held shape is accepted even while the first is being saved.
+      // Both use the same writer and retain their own stable identity.
+      await predecessor?.value
       await withCheckedContinuation { continuation in
         inputGate.performAfterIdle { continuation.resume() }
       }
@@ -2724,11 +2753,17 @@ final class NotebookAppModel {
             operations: [.init(kind: kind, target: target, id: id, values: values)]), actor: actor)
           return (receipt, try store.currentChangeCursor())
         }
-        if graphicCommandPreview != nil { graphicCommandPreviewCursor = cursor }
+        if preview != nil { graphicCommandPreviewCursor = cursor }
+        if kind == .convertInkToElement, let index = workingGraphics.firstIndex(where: { $0.id == id }) {
+          // Later edits have their own contact draft. Advancing creation's
+          // cursor would resurrect its old geometry over those accepted edits.
+          workingGraphics[index].publicationCursor = cursor
+        }
         pencilUndoHistory.recordCommand(ownerID: target.id, actionID: receipt.id)
         reloadExternalChanges()
       } catch {
-        clearGraphicCommandPreview()
+        if preview != nil { clearGraphicCommandPreview() }
+        workingGraphics.removeAll { $0.id == id }
         showCue(error.localizedDescription)
       }
     }
@@ -3749,6 +3784,7 @@ final class NotebookAppModel {
   func confirmVisibleActions(presence visible: SessionPresence, scene: WorkspaceSceneWorkset? = nil,
     cohort: SceneCompositionCohort? = nil) {
     #if os(iOS)
+      if let cohort { retireWorkingGraphics(in: cohort) }
       func matches(_ receipt: DeviceActionReceipt, _ action: NotebookActionReadModel) -> Bool {
         receipt.matches(action)
       }
@@ -3933,6 +3969,10 @@ final class NotebookAppModel {
     spatialInk = state.ink
     loadedInkSurfaces = state.inkSurfaces
     pages = state.pages
+    workingGraphics.removeAll { graphic in
+      graphic.surface.kind == .page
+        && (graphic.publicationCursor.map { state.header.cursor >= $0 } ?? false)
+    }
     pageAddresses = Dictionary(uniqueKeysWithValues: state.pagePositions.map {
       (PageAddress(itemID: $0.itemID, index: $0.index, root: $0.visibleRoot), $0.pageID)
     })
@@ -4126,7 +4166,7 @@ final class NotebookAppModel {
       observeNavigation("writer_flush_end", fields: trace)
       guard !Task.isCancelled, continuing() else { return false }
     } while boundary == .quiescent && (diskRefreshTask != nil || headerRefreshTask != nil || documentOpeningTask != nil || persistence.pendingCount > 0
-      || pageInkPreparationTask != nil || acceptedPageInkHead != nil)
+      || pageInkPreparationTask != nil || acceptedPageInkHead != nil || graphicCommandTask != nil)
     return publicationFailure == nil
   }
 

@@ -17,7 +17,7 @@ import XCTest
       touch.point = .init(x: 200 + 100 * cos(angle), y: 200 + 65 * sin(angle)); touch.sampleTime += 0.01
       paper.touchesMoved([touch], with: nil)
     }
-    XCTAssertNil(accepted, "A hold previews; it does not publish a stroke or shape")
+    XCTAssertNil(accepted, "The contact edits the held object; measured ink is accepted at lift")
     try await Task.sleep(for: .milliseconds(600))
     touch.point.x += 10; touch.sampleTime += 0.01
     paper.touchesMoved([touch], with: nil)

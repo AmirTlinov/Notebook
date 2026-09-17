@@ -17,6 +17,7 @@ struct PencilCanvasView: UIViewRepresentable {
   let acceptAction: (PageInkAction, UUID, VersionStamp, NotebookQuickShapeFit?) -> Task<PreparedPageInkChange?, Never>
   let onRenderReady: (Bool) -> Void
   var resolveQuickShape: (NotebookQuickShapeFit, Double) -> NotebookQuickShapeFit = { fit, _ in fit }
+  var onWorkingGraphic: (NotebookWorkingGraphic?, UUID) -> Void = { _, _ in }
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
@@ -31,6 +32,7 @@ struct PencilCanvasView: UIViewRepresentable {
     let paper = PaperCanvasContainerView()
     paper.touchView.quickShapePageID = pageID
     paper.touchView.resolveQuickShape = resolveQuickShape
+    paper.touchView.onWorkingGraphic = onWorkingGraphic
     paper.inkView.onRenderReadinessChange = { ready in
       Task { @MainActor in onRenderReady(ready) }
     }
@@ -50,6 +52,7 @@ struct PencilCanvasView: UIViewRepresentable {
   func updateUIView(_ paper: PaperCanvasContainerView, context: Context) {
     paper.touchView.quickShapePageID = pageID
     paper.touchView.resolveQuickShape = resolveQuickShape
+    paper.touchView.onWorkingGraphic = onWorkingGraphic
     paper.inkView.onRenderReadinessChange = { ready in
       Task { @MainActor in onRenderReady(ready) }
     }
@@ -149,6 +152,7 @@ struct PencilCanvasView: UIViewRepresentable {
       decodeTask = nil
       pendingLocalDeliveries[pageID, default: 0] += 1
       unpublishedActions[pageID, default: []].insert(mutation.id)
+      if let fit { suppressedInkIDs.formUnion(fit.precedingStrokeIDs + [mutation.id]) }
       let delivery = acceptAction(mutation, pageID, stamp, fit)
       Task { [self, weak paper] in
         let accepted = await delivery.value
@@ -283,7 +287,9 @@ struct PencilCanvasView: UIViewRepresentable {
       suppressedInkIDs = suppressedIDs
       let pageChanged = self.pageID != pageID
       if !pageChanged, modelDrawingData == data {
-        if presentationChanged, !paper.touchView.hasActiveAction { paper.inkView.apply(appliedDrawing.presenting(excluding: suppressedInkIDs)) }
+        if presentationChanged, unpublishedActions[pageID, default: []].isEmpty {
+          paper.inkView.settle(appliedDrawing.presenting(excluding: suppressedInkIDs))
+        }
         if decodeTask != nil { paper.setInputEnabled(false) }
         return
       }
@@ -548,11 +554,11 @@ final class PaperInputView: UIView {
   var commitActiveEraser: (() -> Void)?
   var clearActiveAction: (() -> Void)?
   var resolveQuickShape: (NotebookQuickShapeFit, Double) -> NotebookQuickShapeFit = { fit, _ in fit }
+  var onWorkingGraphic: (NotebookWorkingGraphic?, UUID) -> Void = { _, _ in }
 
   var hasActiveAction: Bool { actionTool != nil }
   private let quickShape = NotebookQuickShapeSession()
   var quickShapePageID: UUID? { didSet { if oldValue != quickShapePageID { quickShape.cancel() } } }
-  private let quickShapeLayer = CAShapeLayer()
   private(set) var completedQuickShape: NotebookQuickShapeFit?
 
 
@@ -596,18 +602,18 @@ final class PaperInputView: UIView {
   override init(frame: CGRect) {
     super.init(frame: frame)
     isMultipleTouchEnabled = true
-    layer.addSublayer(quickShapeLayer)
-    quickShapeLayer.fillColor = UIColor.clear.cgColor
-    quickShapeLayer.actions = ["path": NSNull(), "strokeColor": NSNull(), "lineWidth": NSNull()]
-    quickShape.onPreview = { [weak self] fit in
+    quickShape.onChange = { [weak self] fit in
       guard let self else { return }
-      if let fit {
-        quickShapeLayer.path = NotebookGraphicView.previewPath(fit).cgPath
+      if let fit, let pageID = quickShapePageID {
         let color = (actionPenStyle ?? penStyle).color.components
-        quickShapeLayer.strokeColor = UIColor(red: color.red, green: color.green, blue: color.blue, alpha: 1).cgColor
-        quickShapeLayer.lineWidth = samples.first?.point.size.width ?? 2
+        onWorkingGraphic(.init(strokeID: actionStrokeID, fit: fit, surface: .page(pageID),
+          color: .init(red: color.red, green: color.green, blue: color.blue),
+          width: Double(samples.first?.point.size.width ?? 2)), actionStrokeID)
         clearActiveAction?()
-      } else { quickShapeLayer.path = nil }
+      } else {
+        onWorkingGraphic(nil, actionStrokeID)
+        if let activePenStroke { presentActivePen?(activePenStroke) }
+      }
     }
     updateAccessibilityValue()
   }
@@ -1089,7 +1095,7 @@ final class PaperInputView: UIView {
   }
 
   private func refreshAction() {
-    guard actionTool != nil, !samples.isEmpty else { return }
+    guard actionTool != nil, !samples.isEmpty, quickShape.fit == nil else { return }
     predictedSamples = predictedSamples.filter {
       $0.timestamp > (samples.last?.timestamp ?? 0)
     }
@@ -1141,7 +1147,7 @@ final class PaperInputView: UIView {
     let fit = quickShape.finish()
     let tool = actionTool
     let continuesSequence = actionEndedNormally && tool == .pen && actionPenStyle == penStyle
-    if tool == .pen {
+    if tool == .pen, fit == nil {
       commitActivePen?()
     } else if tool == .eraser {
       commitActiveEraser?()

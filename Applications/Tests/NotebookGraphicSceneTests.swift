@@ -256,8 +256,16 @@ import XCTest
     try await drawAndClose(onBoard: true, measuresPublication: true, restingHand: true)
   }
 
+  func testPageHeldObjectKeepsItsIdentityAndGeometryWhilePublicationIsBlocked() async throws {
+    try await drawAndClose(onBoard: false, delaysPublication: true)
+  }
+
+  func testBoardHeldObjectKeepsItsIdentityAndGeometryWhilePublicationIsBlocked() async throws {
+    try await drawAndClose(onBoard: true, delaysPublication: true)
+  }
+
   private func drawAndClose(onBoard: Bool, compound: Bool = false, measuresPublication: Bool = false,
-    restingHand: Bool = false) async throws {
+    restingHand: Bool = false, delaysPublication: Bool = false) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-scene-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
@@ -297,6 +305,22 @@ import XCTest
       observer.touchesBegan([hand], with: UIEvent())
     }
     defer { if restingHand { observer.touchesEnded([hand], with: UIEvent()) } }
+    var recognized: NotebookWorkingGraphic?
+    func shownObject() -> NotebookGraphicGraph.Node? {
+      guard let recognized else { return nil }
+      if onBoard, let cohort = model.compositionTiles.published {
+        return model.presentedGraphicGraph(boardID: workspace.rootBoardID, cohort: cohort).nodes[recognized.id]
+      }
+      return model.pages[pageID].flatMap { model.graphicGraph(page: $0).nodes[recognized.id] }
+    }
+    func attachFrame(_ stage: String) {
+      let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+        window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+      }
+      let evidence = XCTAttachment(image: image)
+      evidence.name = "same-object-\(onBoard ? "board" : "page")-\(stage)"
+      evidence.lifetime = .keepAlways; add(evidence)
+    }
     var measured: [CGPoint] = []
     for strokeIndex in 0..<(compound ? 2 : 1) {
       let touch = SceneGraphicTouch(window: window), event = SceneGraphicEvent()
@@ -315,9 +339,40 @@ import XCTest
           XCTAssertTrue(model.inputGate.hasActivePencil)
         } else { receiver.touchesMoved([touch], with: event) }
       }
-      if !compound || strokeIndex == 1 { try await Task.sleep(for:.milliseconds(650)) }
+      let holdsShape = !compound || strokeIndex == 1
+      if holdsShape {
+        try await Task.sleep(for:.milliseconds(650))
+        recognized = try XCTUnwrap(model.workingGraphics.first,
+          "The hold creates the actual displayed graphic, not a separate preview path")
+        XCTAssertNotNil(shownObject())
+        XCTAssertFalse(try XCTUnwrap(recognized).accepted)
+        if delaysPublication { attachFrame("held") }
+      }
+      let publicationFence = UUID()
+      defer { if delaysPublication { model.inputGate.endPencilAction(source: publicationFence) } }
+      if delaysPublication { XCTAssertTrue(model.inputGate.beginPencilAction(source: publicationFence)) }
       receiver.touchesEnded([touch],with:event)
       observer.touchesEnded([touch],with:event)
+      if holdsShape {
+        XCTAssertEqual(shownObject()?.frame, recognized?.frame, "Lift must not retract the recognized object")
+        XCTAssertEqual(shownObject()?.graphic, recognized?.graphic)
+        XCTAssertTrue(try XCTUnwrap(model.workingGraphics.first).accepted)
+      }
+      if delaysPublication {
+        model.updateWorkingGraphic(nil, strokeID: try XCTUnwrap(recognized).strokeID)
+        // Commit cannot pass the ordinary idle gate. The shown object must not
+        // depend on that scheduling gap, a database receipt or a scene reload.
+        for index in 0..<30 {
+          try await Task.sleep(for: .milliseconds(20))
+          XCTAssertEqual(shownObject()?.frame, recognized?.frame)
+          XCTAssertEqual(shownObject()?.graphic, recognized?.graphic)
+          XCTAssertNil(model.workingGraphics.first?.publicationCursor)
+          if let page = model.pages[pageID], !onBoard {
+            XCTAssertTrue(model.pageSuppressedInkIDs(page).isSuperset(of: try XCTUnwrap(recognized).graphic.sourceInkIDs))
+          }
+          if index == 4 { attachFrame("lifted-100ms-before-commit") }
+        }
+      }
       // The canonical publication of the first stroke must not erase the
       // short-lived recognition sequence before the second contact arrives.
       if compound && strokeIndex == 0 { try await Task.sleep(for:.milliseconds(250)) }
@@ -357,6 +412,7 @@ import XCTest
     if onBoard {
       let board = try reopened.loadBoard(items: workspace.items)
       let element = try XCTUnwrap(board.board(workspace.rootBoardID)?.elements.first { $0.graphic != nil })
+      XCTAssertEqual(element.id, recognized?.id, "Persistence retains the held object's identity")
       graphic = try XCTUnwrap(element.graphic)
       let origin = presence.camera.worldToScreen((element.worldOrigin ?? .zero).offsetBy(x: element.frame.x, y: element.frame.y), viewport: presence.viewport)
       actual = .init(x: origin.x, y: origin.y, width: element.frame.width * presence.camera.scale, height: element.frame.height * presence.camera.scale)
@@ -366,6 +422,7 @@ import XCTest
     } else {
       let page = try reopened.loadPage(pageID)
       let element = try XCTUnwrap(page.elements.first { $0.graphic != nil })
+      XCTAssertEqual(element.id, recognized?.id, "Persistence retains the held object's identity")
       graphic = try XCTUnwrap(element.graphic)
       actual = .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height)
       let actions = try PageInkDrawing.decode(page.drawingData).actions.filter { graphic.sourceInkIDs.contains($0.id) }

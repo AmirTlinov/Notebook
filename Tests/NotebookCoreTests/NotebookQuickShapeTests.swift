@@ -63,7 +63,9 @@ func quickShapeConnectors(scale: Double) throws {
       #expect(fit.shape == .connector)
       #expect(fit.connection?.endArrowhead == (arrow ? NotebookGraphicConnection.Arrowhead.arrow : NotebookGraphicConnection.Arrowhead.none))
       #expect(fit.sampleCount == measured.count)
-      #expect(fit.layout?.curves.isEmpty == false)
+      let graph = NotebookGraphicGraph([.init(id: "line", graphic: .init(shape: fit.shape, connection: fit.connection),
+        frame: fit.frame, surface: .page(UUID()), shown: true)])
+      #expect(graph.resolve("line").layout?.curves.isEmpty == false)
     }
   }
 }

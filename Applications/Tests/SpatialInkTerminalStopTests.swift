@@ -131,8 +131,8 @@ final class SpatialInkTerminalStopTests: XCTestCase {
       fixture.host.view.backgroundColor = .white; fixture.host.view.addSubview(fixture.mount)
       fixture.window.makeKeyAndVisible()
       try await waitUntil { fixture.host.appeared }
-      fixture.coordinator = .init(surfaceRegistry: fixture.tiles.surfaceRegistry, inputGate: fixture.gate) { [weak fixture] in
-        fixture?.accept(tool: $0, color: $1, spans: $2)
+      fixture.coordinator = .init(surfaceRegistry: fixture.tiles.surfaceRegistry, inputGate: fixture.gate) { [weak fixture] tool, color, spans, _ in
+        fixture?.accept(tool: tool, color: color, spans: spans)
       }
       fixture.update()
       try await waitUntil { fixture.mount.inkView?.isStableFramePresented == true }
@@ -166,7 +166,7 @@ final class SpatialInkTerminalStopTests: XCTestCase {
         viewport: viewport, items: [], journal: journal, penStyle: .standard, eraserStyle: .standard,
         drawingTool: .pen, surfaceRegistry: tiles.surfaceRegistry, inputGate: gate,
         isItemBeingDeleted: { _ in false }, admitsNewContact: { true }, isEnabled: true,
-        onCommit: { [weak self] in self?.accept(tool: $0, color: $1, spans: $2) })
+        onCommit: { [weak self] tool, color, spans, _ in self?.accept(tool: tool, color: color, spans: spans) })
     }
 
     func parkAndRemount() {

@@ -26,8 +26,13 @@ extension NotebookAppModel {
     let usesPreview: Bool
     if case .spatial(let owner, _) = graphicPreviewManipulation?.reference { usesPreview = preview && owner == boardID }
     else { usesPreview = false }
-    return board.graphicGraph(frames: usesPreview ? graphicPreviewFrames() : [:],
+    let graph = board.graphicGraph(frames: usesPreview ? graphicPreviewFrames() : [:],
       connections: usesPreview ? graphicPreviewConnections() : [:])
+    guard preview else { return graph }
+    let working = workingBoardGraphics(boardID: boardID, cohort: cohort)
+    guard !working.isEmpty else { return graph }
+    let ids = Set(working.map(\.id))
+    return .init(Array(graph.nodes.values).filter { !ids.contains($0.id) } + working.map(\.node))
   }
   /// The cohort admits physical hosts and excludes their pixels from its tiles.
   /// Its immutable geometry is not another owner of subsequent accepted input.

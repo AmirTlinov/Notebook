@@ -36,7 +36,7 @@ struct PageSurface: View {
             pageID: page.id,
             pageSize: page.size,
             renderingScale: scale * displayProjection,
-            elements: page.elements,
+            elements: model.pageElementsForDisplay(page),
             allowsInteraction: isVisible && isCurrent,
             inputEnabled: isVisible && isInteractive,
             onRenderReady: { ready in
@@ -56,7 +56,7 @@ struct PageSurface: View {
           PencilCanvasView(
             pageID: page.id,
             drawingData: page.drawingData,
-            suppressedInkIDs: page.graphicPresentation.suppressedInkIDs,
+            suppressedInkIDs: model.pageSuppressedInkIDs(page),
             isInputEnabled: isInteractive,
             penStyle: model.penStyle,
             eraserStyle: model.eraserStyle,
@@ -72,7 +72,7 @@ struct PageSurface: View {
               publishReadiness(ink: ready, overlay: overlayIsReady)
             }, resolveQuickShape: { fit, scale in
               fit.binding(in:page.graphicGraph(),surface:.page(page.id),tolerance:18/scale)
-            }
+            }, onWorkingGraphic: model.updateWorkingGraphic
           )
         #else
           PencilDrawingView(page: page)

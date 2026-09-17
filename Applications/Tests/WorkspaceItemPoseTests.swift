@@ -203,7 +203,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
       host.didMove(toParent: parent); window.makeKeyAndVisible()
       canvas.update(lease: cohort.nativeInk, surface: .board(boardID), boardID: boardID,
         camera: presence.camera, active: true)
-      let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: model.inputGate) { _, _, _ in nil }
+      let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: model.inputGate) { _, _, _, _ in nil }
       defer { coordinator.uninstall(); window.isHidden = true; window.rootViewController = nil }
       try await waitUntil {
         [a, b].allSatisfy { registry.pose(for: .cover($0))?.cohortID == cohort.id && registry.installedSource(on: .cover($0)) != nil }
@@ -227,7 +227,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
         items: cohort.frame.workset(boardID: boardID).items.map { .init(itemID: $0.id, geometry: $0.geometry, center: $0.center, zIndex: $0.zIndex) },
         journal: journal, penStyle: .standard, eraserStyle: .standard, drawingTool: .pen,
         surfaceRegistry: registry, inputGate: model.inputGate, isItemBeingDeleted: { _ in false },
-        admitsNewContact: { true }, isEnabled: true, onCommit: { tool, color, spans in
+        admitsNewContact: { true }, isEnabled: true, onCommit: { tool, color, spans, _ in
           guard let action = journal.append(tool: tool, color: color, spans: spans, actor: model.actorID) else { return nil }
           actions.append(action); return action
         })
@@ -500,7 +500,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
       window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
       window.rootViewController = host; host.view.addSubview(canvas); window.makeKeyAndVisible()
       physical = try .init(cohort: cohort, presence: presence, canvas: canvas, parent: host, registry: registry, gate: gate, journal: journal)
-      coordinator = .init(surfaceRegistry: registry, inputGate: gate) { _, _, _ in nil }
+      coordinator = .init(surfaceRegistry: registry, inputGate: gate) { _, _, _, _ in nil }
       update()
     }
     func update() { update(cohort: physical.cohort) }
@@ -509,7 +509,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
         camera: presence.camera, viewport: presence.viewport, items: physical.surfaces,
         journal: journal, penStyle: .standard, eraserStyle: .standard, drawingTool: tool,
         surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { [weak self] in self?.blocked.contains($0) == true },
-        admitsNewContact: { true }, isEnabled: true, onCommit: { [weak self] tool, color, spans in
+        admitsNewContact: { true }, isEnabled: true, onCommit: { [weak self] tool, color, spans, _ in
           guard let self else { return nil }; onCommit?()
           guard let action = journal.append(tool: tool, color: color, spans: spans, actor: actor) else { return nil }
           actions.append(action); return action

@@ -39,8 +39,13 @@ extension NotebookAppModel {
     let usesPreview: Bool
     if case .page(let pageID, _) = graphicPreviewManipulation?.reference { usesPreview = preview && pageID == page.id }
     else { usesPreview = false }
-    return page.graphicGraph(frames: usesPreview ? graphicPreviewFrames() : [:],
+    let graph = page.graphicGraph(frames: usesPreview ? graphicPreviewFrames() : [:],
       connections: usesPreview ? graphicPreviewConnections() : [:])
+    guard preview else { return graph }
+    let working = workingGraphics.filter { $0.surface == .page(page.id) }
+    guard !working.isEmpty else { return graph }
+    let ids = Set(working.map(\.id))
+    return .init(Array(graph.nodes.values).filter { !ids.contains($0.id) } + working.map(\.node))
   }
 
   func graphicLayout(_ reference: EditableElementReference, preview: Bool = true) -> NotebookGraphicLayout? {

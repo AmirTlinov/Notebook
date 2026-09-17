@@ -38,8 +38,8 @@ final class SpatialInkInputBudgetTests: XCTestCase {
     let gate = NotebookInputGate(), host = BudgetInputHost()
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let mount = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: oldViewport.x, height: oldViewport.y))
-    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: tiles.surfaceRegistry, inputGate: gate) {
-      accepted.append(tool: $0, color: $1, spans: $2)
+    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: tiles.surfaceRegistry, inputGate: gate) { tool, color, spans, _ in
+      accepted.append(tool: tool, color: color, spans: spans)
     }
     addTeardownBlock { @MainActor [weak coordinator] in
       coordinator?.uninstall(); mount.unmount(); mount.removeFromSuperview()
@@ -74,7 +74,7 @@ final class SpatialInkInputBudgetTests: XCTestCase {
         penStyle: .standard, eraserStyle: .standard, drawingTool: .pen,
         surfaceRegistry: tiles.surfaceRegistry, inputGate: gate, isItemBeingDeleted: { _ in false },
         admitsNewContact: { true }, isEnabled: true,
-        onCommit: { accepted.append(tool: $0, color: $1, spans: $2) })
+        onCommit: { tool, color, spans, _ in accepted.append(tool: tool, color: color, spans: spans) })
     }
     update(old, viewport: oldViewport)
     let canvas = try XCTUnwrap(mount.inkView), oldBounds = canvas.bounds.size
@@ -165,8 +165,8 @@ final class SpatialInkInputBudgetTests: XCTestCase {
     let gate = NotebookInputGate(), host = BudgetInputHost()
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let mount = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: viewport.x, height: viewport.y))
-    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: tiles.surfaceRegistry, inputGate: gate) {
-      accepted.append(tool: $0, color: $1, spans: $2)
+    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: tiles.surfaceRegistry, inputGate: gate) { tool, color, spans, _ in
+      accepted.append(tool: tool, color: color, spans: spans)
     }
     let pressure = BudgetPinnedRasters()
     addTeardownBlock { @MainActor [weak coordinator] in
@@ -204,7 +204,7 @@ final class SpatialInkInputBudgetTests: XCTestCase {
       penStyle: .standard, eraserStyle: .standard, drawingTool: .pen,
       surfaceRegistry: tiles.surfaceRegistry, inputGate: gate, isItemBeingDeleted: { _ in false },
       admitsNewContact: { true }, isEnabled: true,
-      onCommit: { accepted.append(tool: $0, color: $1, spans: $2) })
+      onCommit: { tool, color, spans, _ in accepted.append(tool: tool, color: color, spans: spans) })
     let canvas = try XCTUnwrap(mount.inkView)
     XCTAssertTrue(canvas === tiles.surfaceRegistry.canvas(for: .board(header.rootBoardID)))
     XCTAssertTrue(canvas.window === window)
