@@ -101,7 +101,7 @@ struct NotebookChatBrowser: View {
           default: EmptyView()
           }
         }.padding(.horizontal, 8).frame(minHeight: 44)
-          .background(chat.threadID == task.id ? Color(.secondarySystemBackground) : .clear, in: RoundedRectangle(cornerRadius: 8))
+          .background(chat.threadID == task.id ? NotebookChrome.selectionSurface : .clear, in: RoundedRectangle(cornerRadius: 8))
           .contentShape(Rectangle())
       }.accessibilityIdentifier("notebook-chat-task-" + task.id)
     }

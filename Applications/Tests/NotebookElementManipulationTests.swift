@@ -355,7 +355,7 @@ import XCTest
     let modes: [(NotebookSelectionSession.GeometryMode,NotebookSelectionSession.GeometryMode)] = [(.transform,.vertices),(.vertices,.rounding),(.rounding,.transform)]
     for (current,next) in modes {
       controls.configure(selectionID:selection,frame:frame,mode:current); controls.layoutIfNeeded()
-      XCTAssertFalse(mode.isHidden); XCTAssertNotNil(mode.image(for:.normal))
+      XCTAssertFalse(mode.isHidden); XCTAssertNotNil(mode.configuration?.image)
       mode.sendActions(for:.touchUpInside); XCTAssertEqual(selected.last,next)
     }
     XCTAssertTrue(try button("graphic-start-menu").isHidden)
@@ -366,6 +366,11 @@ import XCTest
     let start = try button("graphic-start-menu"), end = try button("graphic-end-menu")
     XCTAssertFalse(start.isHidden); XCTAssertFalse(end.isHidden)
     XCTAssertEqual(start.accessibilityValue,"Нет"); XCTAssertEqual(end.accessibilityValue,"Стрелка")
+    let surfaces = controls.subviews.flatMap(\.subviews).filter { $0.backgroundColor == UIColor(NotebookChrome.surface) }
+    XCTAssertEqual(surfaces.count,1)
+    XCTAssertEqual(surfaces.first?.bounds.height,40)
+    XCTAssertLessThan(try XCTUnwrap(surfaces.first).bounds.width,274)
+    XCTAssertFalse(controls.subviews.contains { $0 is UIVisualEffectView },"No glass presentation around the same object controls")
     let menu = start.menu
     for _ in 0..<20 {
       controls.setEndpointMenu(.start,children:[UIAction(title:"Круг") { _ in }])
@@ -376,6 +381,7 @@ import XCTest
     for button in (controls.accessibilityElements ?? []).compactMap({ $0 as? UIButton }).filter({ !$0.isHidden }) {
       let rect = button.convert(button.bounds,to:controls)
       XCTAssertTrue(controls.bounds.contains(rect)); XCTAssertEqual(rect.width,44); XCTAssertEqual(rect.height,44)
+      XCTAssertLessThanOrEqual(try XCTUnwrap(button.imageView?.image).size.height,23,"Compact glyph, not a scaled-down touch target")
     }
   }
 

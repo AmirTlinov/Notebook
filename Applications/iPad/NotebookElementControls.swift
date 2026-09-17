@@ -132,7 +132,8 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
   private var pointingHandle: ElementHandle?
   private var pencilRevision: UInt64?
   private var contactOrigin = CGPoint.zero
-  private let toolbar = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
+  private let toolbar = UIView()
+  private let toolbarSurface = UIView()
   private let toolbarStack = UIStackView()
   private let divider = UIView()
   private let deleteButton = UIButton(type: .system)
@@ -178,14 +179,20 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
     self.gate = gate
     super.init(frame: .zero)
     backgroundColor = .clear; isOpaque = false
-    toolbar.cornerConfiguration = .capsule()
-    toolbarStack.axis = .horizontal; toolbarStack.alignment = .center; toolbarStack.spacing = 2
+    toolbarSurface.backgroundColor = UIColor(NotebookChrome.surface)
+    toolbarSurface.layer.cornerRadius = NotebookChrome.barHeight / 2
+    toolbarSurface.layer.cornerCurve = .continuous
+    toolbarSurface.layer.borderColor = UIColor(NotebookChrome.border).cgColor; toolbarSurface.layer.borderWidth = 0.5
+    toolbarSurface.layer.shadowColor = UIColor.black.cgColor; toolbarSurface.layer.shadowOpacity = 0.07
+    toolbarSurface.layer.shadowRadius = 8; toolbarSurface.layer.shadowOffset = .init(width:0,height:2)
+    toolbarSurface.isUserInteractionEnabled = false; toolbar.addSubview(toolbarSurface)
+    toolbarStack.axis = .horizontal; toolbarStack.alignment = .center; toolbarStack.spacing = 0
     toolbarStack.translatesAutoresizingMaskIntoConstraints = false
-    toolbar.contentView.addSubview(toolbarStack); addSubview(toolbar)
-    NSLayoutConstraint.activate([toolbarStack.leadingAnchor.constraint(equalTo:toolbar.contentView.leadingAnchor,constant:8),
-      toolbarStack.trailingAnchor.constraint(equalTo:toolbar.contentView.trailingAnchor,constant:-8),
-      toolbarStack.topAnchor.constraint(equalTo:toolbar.contentView.topAnchor,constant:4),
-      toolbarStack.bottomAnchor.constraint(equalTo:toolbar.contentView.bottomAnchor,constant:-4)])
+    toolbar.addSubview(toolbarStack); addSubview(toolbar)
+    NSLayoutConstraint.activate([toolbarStack.leadingAnchor.constraint(equalTo:toolbar.leadingAnchor,constant:4),
+      toolbarStack.trailingAnchor.constraint(equalTo:toolbar.trailingAnchor,constant:-4),
+      toolbarStack.topAnchor.constraint(equalTo:toolbar.topAnchor),
+      toolbarStack.bottomAnchor.constraint(equalTo:toolbar.bottomAnchor)])
     let buttons: [(UIButton,String,String,String)] = [
       (styleButton,"paintbrush.pointed","Оформление фигуры","graphic-style-menu"),
       (editButton,"character.cursor.ibeam","Подпись фигуры","edit-agent-element"),
@@ -195,22 +202,26 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
       (deleteButton,"trash","Удалить элемент","delete-agent-element"),
       (moreButton,"ellipsis","Действия с элементом","element-actions-menu")]
     for (button, symbol, label, identifier) in buttons {
-      button.setImage(UIImage(systemName:symbol,withConfiguration:UIImage.SymbolConfiguration(pointSize:20,weight:.regular)),for:.normal)
+      var configuration = UIButton.Configuration.plain()
+      configuration.image = UIImage(systemName:symbol)
+      configuration.preferredSymbolConfigurationForImage = .init(pointSize:NotebookChrome.iconSize,weight:.regular)
+      configuration.contentInsets = .zero
+      configuration.baseForegroundColor = button === deleteButton ? .systemRed : .label
+      button.configuration = configuration
       button.tintColor = button === deleteButton ? .systemRed : .label
       button.accessibilityLabel = label; button.accessibilityIdentifier = identifier
       button.widthAnchor.constraint(equalToConstant:44).isActive = true; button.heightAnchor.constraint(equalToConstant:44).isActive = true
       toolbarStack.addArrangedSubview(button)
       if button === styleButton {
         divider.backgroundColor = .separator; divider.widthAnchor.constraint(equalToConstant:0.5).isActive = true
-        divider.heightAnchor.constraint(equalToConstant:24).isActive = true; toolbarStack.addArrangedSubview(divider)
+        divider.heightAnchor.constraint(equalToConstant:18).isActive = true; toolbarStack.addArrangedSubview(divider)
       }
     }
     styleButton.isHidden = true; divider.isHidden = true
     modeButton.isHidden = true; startButton.isHidden = true; endButton.isHidden = true
-    modeButton.layer.cornerRadius = 12
     for (button,title) in [(startButton,"Начало"),(endButton,"Конец")] {
-      var configuration = UIButton.Configuration.plain()
-      configuration.title = title; configuration.image = button.image(for:.normal)
+      var configuration = button.configuration!
+      configuration.title = title
       configuration.imagePlacement = .top; configuration.imagePadding = 1
       configuration.contentInsets = .zero
       configuration.titleTextAttributesTransformer = .init { input in
@@ -254,12 +265,16 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
     if self.selectionID != selectionID { cancel(); dismissPalette(); dismissMenus(); self.selectionID = selectionID }
     let vertices = graphic.flatMap(NotebookGraphicGeometry.polygon)
     geometryMode = vertices == nil ? .transform : mode
-    modeButton.setImage(UIImage(systemName:geometryMode.controlSymbol,withConfiguration:UIImage.SymbolConfiguration(pointSize:20,weight:.regular)),for:.normal)
+    var modeConfiguration = modeButton.configuration!
+    modeConfiguration.image = UIImage(systemName:geometryMode.controlSymbol)
+    modeConfiguration.baseForegroundColor = geometryMode == .transform ? .label : tintColor
+    modeConfiguration.background.backgroundColor = geometryMode == .transform ? .clear : UIColor(NotebookChrome.selectionSurface)
+    modeConfiguration.background.cornerRadius = 8
+    modeConfiguration.background.backgroundInsets = .init(top:6,leading:6,bottom:6,trailing:6)
+    modeButton.configuration = modeConfiguration
     modeButton.accessibilityValue = geometryMode.controlTitle
     modeButton.accessibilityHint = "Переключить: " + geometryMode.next.controlTitle
     modeButton.toolTip = geometryMode.controlTitle
-    modeButton.tintColor = geometryMode == .transform ? .label : tintColor
-    modeButton.backgroundColor = geometryMode == .transform ? .clear : .tertiarySystemFill
     let next: [ElementHandle]
     if layout != nil { next = [.start,.end,.bend] }
     else if geometryMode == .vertices, let vertices { next = vertices.indices.map(ElementHandle.vertex) }
@@ -294,8 +309,8 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
     super.layoutSubviews()
     let visible = toolbarStack.arrangedSubviews.filter { !$0.isHidden }
     let contentWidth = visible.reduce(0.0) { $0 + ($1 === divider ? 0.5 : 44) }
-      + Double(max(0,visible.count-1))*toolbarStack.spacing + 16
-    let width = min(bounds.width - 24,contentWidth), height = 52.0
+      + Double(max(0,visible.count-1))*toolbarStack.spacing + 8
+    let width = min(bounds.width - 24,contentWidth), height = NotebookChrome.controlSize
     let usable = bounds.inset(by: .init(top:max(12,safeAreaInsets.top + 76),left:12,
       bottom:max(12,safeAreaInsets.bottom + 76),right:12))
     let x = min(max(usable.minX,frameRect.midX-width/2),max(usable.minX,usable.maxX-width))
@@ -304,6 +319,8 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
     toolbar.frame = candidates.first { candidate in
       !candidate.intersects(frameRect) && handles.allSatisfy { !hitFrame($0).intersects(candidate) }
     } ?? candidates.first { candidate in handles.allSatisfy { !hitFrame($0).intersects(candidate) } } ?? candidates[0]
+    toolbarSurface.frame = toolbar.bounds.insetBy(dx:0,dy:(NotebookChrome.controlSize-NotebookChrome.barHeight)/2)
+    toolbarSurface.layer.shadowPath = UIBezierPath(roundedRect:toolbarSurface.bounds,cornerRadius:NotebookChrome.barHeight/2).cgPath
     for (index, handle) in handles.enumerated() {
       handleAccessibility[index].accessibilityFrameInContainerSpace = hitFrame(handle)
     }

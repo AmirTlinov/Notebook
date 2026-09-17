@@ -28,10 +28,10 @@ struct NotebookRootView: View {
 
         if let cue = model.actionCue {
           Text(cue)
-            .font(.system(size: 15, weight: .medium, design: .rounded))
+            .font(.system(size: 14, weight: .medium))
             .padding(.horizontal, 14)
             .frame(height: 38)
-            .background(.thinMaterial, in: Capsule())
+            .notebookPanel()
             .transition(.opacity.combined(with: .scale(scale: 0.96)))
             .allowsHitTesting(false)
         }
@@ -45,7 +45,7 @@ struct NotebookRootView: View {
               .frame(minHeight: 44)
           }
           .padding(14)
-          .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+          .notebookPanel(radius:NotebookChrome.cardRadius)
           .frame(maxWidth: 420)
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
           .padding(18)

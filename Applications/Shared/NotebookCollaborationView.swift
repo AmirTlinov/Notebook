@@ -79,7 +79,7 @@ struct NotebookCollaborationView: View {
                   .accessibilityIdentifier("context-directory-next")
               }
             }.disabled(loadingDirectory).padding(8)
-          }.background(.regularMaterial)
+          }.background(NotebookChrome.surface)
         }
         .task { await loadDirectory() }
         .buttonStyle(.borderless)
@@ -176,7 +176,7 @@ private struct NotebookContextHistoryView: View {
           Button { after = next; cursor = page.readCursor; request = UUID() } label: { Text("Дальше").frame(minHeight: 44) }
             .accessibilityIdentifier("context-history-next")
         }
-      }.disabled(loading).padding(12).background(.regularMaterial)
+      }.disabled(loading).padding(12).background(NotebookChrome.surface)
     }
     .navigationTitle("История фрагмента")
     .task(id: request) {

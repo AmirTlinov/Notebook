@@ -36,6 +36,8 @@ final class NotebookChatRenderingTests: XCTestCase {
         const user=document.querySelector('article[data-role=user] .content');
         const assistant=document.querySelector('article[data-role=assistant] .content');
         return {font:getComputedStyle(document.body).fontSize,
+          bodyBackground:getComputedStyle(document.body).backgroundColor,
+          pageBackground:getComputedStyle(document.documentElement).backgroundColor,
           userBackground:getComputedStyle(user).backgroundColor,
           userRadius:getComputedStyle(user).borderRadius,
           assistantBackground:getComputedStyle(assistant).backgroundColor,
@@ -44,6 +46,8 @@ final class NotebookChatRenderingTests: XCTestCase {
       })()
       """) as? [String: Any]
     XCTAssertEqual(style?["font"] as? String, "15px")
+    XCTAssertEqual(style?["bodyBackground"] as? String,"rgb(252, 252, 250)")
+    XCTAssertEqual(style?["pageBackground"] as? String,"rgb(252, 252, 250)")
     XCTAssertEqual(style?["userBackground"] as? String, "rgb(234, 243, 253)")
     XCTAssertEqual(style?["userRadius"] as? String, "20px")
     XCTAssertEqual(style?["assistantBackground"] as? String, "rgba(0, 0, 0, 0)")

@@ -133,7 +133,7 @@ struct SpatialWorkspaceView: View {
         SpatialBoardGrid(camera: presence.camera)
         if cohort == nil {
           ProgressView(model.compositionTiles.failure == nil ? "Подготовка пространства" : "Ожидание ресурсов изображения")
-            .padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .padding(12).notebookPanel(radius:NotebookChrome.cardRadius)
             .zIndex(9_000)
         }
 
@@ -486,10 +486,10 @@ struct SpatialWorkspaceView: View {
         }
       } label: {
         Image(systemName: "trash")
-          .font(.system(size: 17, weight: .semibold))
+          .font(NotebookChrome.iconFont).foregroundStyle(.red)
           .frame(width: 44, height: 44)
-          .background(.regularMaterial, in: Circle())
-          .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
+          .contentShape(Circle())
+          .background { NotebookSurface().padding(2) }
       }
       .buttonStyle(.plain)
       .disabled(model.isItemBeingDeleted(selectedItemID))
@@ -558,9 +558,9 @@ struct SpatialWorkspaceView: View {
           }
         } label: {
           Image(systemName: "plus")
-            .font(.system(size: 21, weight: .medium))
-            .frame(width: 48, height: 48)
-            .background(.ultraThinMaterial, in: Circle())
+            .font(NotebookChrome.iconFont)
+            .frame(width: 44, height: 44)
+            .background { NotebookSurface().padding(2) }
             .contentShape(Circle())
         }
         .buttonStyle(.plain)

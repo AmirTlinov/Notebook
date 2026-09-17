@@ -26,7 +26,7 @@ struct NotebookCompanion: View {
     } ?? 0
     let cardSections = [hasStatus, chat.conversation?.requests.isEmpty == false,
       chat.voice.error != nil, chat.dictation.notice != nil].filter { $0 }.count
-    let height: CGFloat = 48 + (hasCard ? 16 : 0) + (hasStatus ? 44 : 0)
+    let height: CGFloat = NotebookChrome.controlSize + (hasCard ? 16 : 0) + (hasStatus ? 44 : 0)
       + (chat.conversation?.requests.isEmpty == false ? 160 : 0) + (chat.voice.error != nil ? 90 : 0)
       + noticeHeight + CGFloat(max(0, cardSections - 1)) * 4
       + CGFloat((hasCard ? 1 : 0) + chat.companionReplies.count) * 8
@@ -76,7 +76,7 @@ struct NotebookCompanion: View {
             }
           }.padding(.horizontal, 14).padding(.vertical, 8)
         }.scrollBounceBehavior(.basedOnSize)
-          .background { surface(radius: 22) }
+          .notebookPanel(radius:NotebookChrome.cardRadius)
       }
       ForEach(chat.companionReplies) { reply in
         HStack(alignment: .top, spacing: 4) {
@@ -88,7 +88,7 @@ struct NotebookCompanion: View {
             Image(systemName: "xmark").font(.system(size: 12)).foregroundStyle(.secondary)
               .frame(width: 40, height: 40).contentShape(Rectangle())
           }.accessibilityLabel("Убрать превью ответа").accessibilityIdentifier("notebook-companion-dismiss-reply")
-        }.padding(.leading, 14).padding(.trailing, 8).padding(.vertical, 8).background { surface(radius: 22) }
+        }.padding(.leading, 14).padding(.trailing, 8).padding(.vertical, 8).notebookPanel(radius:NotebookChrome.cardRadius)
           .transition(.opacity)
       }
     }
@@ -119,7 +119,7 @@ struct NotebookCompanion: View {
   private var controls: some View {
     HStack(spacing: 0) {
       Button { chat.revealReply() } label: {
-        Image(systemName: "square.and.pencil").frame(width: 44, height: 48).contentShape(Rectangle())
+        Image(systemName: "square.and.pencil").frame(width: 44, height: 44).contentShape(Rectangle())
           .overlay(alignment: .topTrailing) {
             if !chat.unreadReplies.isEmpty || !chat.draft.isEmpty || needsDecision || chat.runs.record?.isActive == true {
               Circle().fill(Color.accentColor).frame(width: 5, height: 5).offset(x: -5, y: 8)
@@ -136,32 +136,26 @@ struct NotebookCompanion: View {
         NotebookDictationInput(chat: chat)
       } else if chat.voice.capturing {
         Button { Task { await chat.voice.mute() } } label: {
-          Image(systemName: chat.voice.muted ? "mic.slash" : "mic").frame(width: 40, height: 48).contentShape(Rectangle())
+          Image(systemName: chat.voice.muted ? "mic.slash" : "mic").frame(width: 44, height: 44).contentShape(Rectangle())
         }.accessibilityLabel(chat.voice.muted ? "Включить микрофон" : "Выключить микрофон")
           .disabled(chat.voice.ending || chat.voice.changingMute)
         NotebookVoiceOrb(phase: chat.voice.phase).frame(width: 28, height: 28).padding(.horizontal, 4)
           .accessibilityLabel(chat.voice.status)
         Button { Task { await chat.voice.toggleSpeaker() } } label: {
-          Image(systemName: chat.voice.speakerMuted ? "speaker.slash" : "speaker.wave.2").frame(width: 40, height: 48).contentShape(Rectangle())
+          Image(systemName: chat.voice.speakerMuted ? "speaker.slash" : "speaker.wave.2").frame(width: 44, height: 44).contentShape(Rectangle())
         }.accessibilityLabel(chat.voice.speakerMuted ? "Включить звук GPT" : "Выключить звук GPT")
           .disabled(chat.voice.ending || chat.voice.changingSpeaker || chat.voice.activeID == nil)
         Button { Task { await chat.voice.end() } } label: {
-          Image(systemName: "phone.down.fill").foregroundStyle(.red).frame(width: 40, height: 48).contentShape(Rectangle())
+          Image(systemName: "phone.down.fill").foregroundStyle(.red).frame(width: 44, height: 44).contentShape(Rectangle())
         }.accessibilityLabel("Завершить голосовой разговор").disabled(chat.voice.ending)
       } else {
         NotebookDictationButton(chat: chat, compact: true)
         NotebookVoiceStartButton(chat: chat, compact: true)
       }
-    }.font(.system(size: 16)).padding(.horizontal, 4)
+    }.notebookBar()
       .frame(width: chat.dictation.busy ? size.width : nil)
       .fixedSize(horizontal: !chat.dictation.busy, vertical: true)
-      .background { surface(radius: 24) }
       .accessibilityElement(children: .contain).accessibilityIdentifier("notebook-companion-bar")
-  }
-  private func surface(radius: CGFloat) -> some View {
-    RoundedRectangle(cornerRadius: radius).fill(Color(.systemBackground))
-      .overlay { RoundedRectangle(cornerRadius: radius).strokeBorder(Color(.separator).opacity(0.3), lineWidth: 0.5) }
-      .shadow(color: .black.opacity(0.1), radius: 9, y: 3).allowsHitTesting(false)
   }
 }
 

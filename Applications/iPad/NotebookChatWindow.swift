@@ -50,7 +50,7 @@ struct NotebookChatWindowLayout: Codable, Equatable {
   var anchor = CGPoint(x: 1, y: 1)
   var size = CGSize(width: 560, height: 640)
 
-  func frame(in available: CGRect, expanded: Bool, compactSize: CGSize = CGSize(width: 112, height: 48)) -> CGRect {
+  func frame(in available: CGRect, expanded: Bool, compactSize: CGSize = CGSize(width: 112, height: NotebookChrome.controlSize)) -> CGRect {
     let requested = expanded ? size : compactSize
     let fitted = CGSize(width: min(requested.width, available.width), height: min(requested.height, available.height))
     return CGRect(x: available.minX + (available.width - fitted.width) * anchor.x,
@@ -124,7 +124,7 @@ struct NotebookChatWindow: View {
   @State private var interaction: (frame: CGRect, available: CGRect, layout: NotebookChatWindowLayout)?
   @State private var liveLayout: NotebookChatWindowLayout?
   @State private var interruptedDrag = false
-  @State private var companionControlsSize = CGSize(width: 148, height: 48)
+  @State private var companionControlsSize = CGSize(width: 148, height: NotebookChrome.controlSize)
 
   private var layout: NotebookChatWindowLayout { liveLayout ?? .init(restoring: savedLayout) }
 

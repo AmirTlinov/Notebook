@@ -90,7 +90,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(start.waitForExistence(timeout:5)); XCTAssertTrue(end.isHittable)
     XCTAssertFalse(app.buttons["graphic-geometry-mode"].exists)
     XCTAssertEqual(start.frame.midY,end.frame.midY,accuracy:1)
-    XCTAssertLessThan(more.frame.maxX-app.buttons["graphic-style-menu"].frame.minX,300)
+    XCTAssertLessThan(more.frame.maxX-app.buttons["graphic-style-menu"].frame.minX,266)
     let neighbour = app.webViews.containing(.button,identifier:"Graphic scene counter").firstMatch, neighbourFrame = neighbour.frame
     let plain = app.screenshot(), region = line.frame.insetBy(dx:-12,dy:-12)
     start.tap()
@@ -200,12 +200,19 @@ final class DrawingResponsivenessTests: XCTestCase {
     let triangle = app.images["Треугольник"]
     XCTAssertTrue(triangle.waitForExistence(timeout:10))
     let paper = app.otherElements["paper-input"], paperFrame = paper.frame
+    // Earlier chat-window scenarios preserve their user-chosen position. Move
+    // the real companion away rather than tapping through its visible button.
+    let companion = app.buttons["notebook-companion-compose"]
+    let grip = companion.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+    grip.press(forDuration:0.1,thenDragTo:app.coordinate(withNormalizedOffset:.init(dx:0.8,dy:0.88)))
+    XCTAssertFalse(companion.frame.intersects(triangle.frame))
     triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.6)).tap()
     let style = app.buttons["graphic-style-menu"], more = app.buttons["element-actions-menu"], remove = app.buttons["delete-agent-element"]
     XCTAssertTrue(style.waitForExistence(timeout:5)); XCTAssertTrue(style.isHittable)
     XCTAssertEqual(style.frame.midY,remove.frame.midY,accuracy:1)
     XCTAssertEqual(more.frame.midY,remove.frame.midY,accuracy:1)
-    XCTAssertLessThan(more.frame.maxX-style.frame.minX,250)
+    XCTAssertLessThan(more.frame.maxX-style.frame.minX,222)
+    XCTAssertEqual(style.frame.height,44,accuracy:1)
     let before = triangle.frame
     let controls = XCTAttachment(screenshot:app.screenshot()); controls.name = "compact-element-controls"; controls.lifetime = .keepAlways; add(controls)
     style.tap()
@@ -1732,7 +1739,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertLessThanOrEqual(
       abs(eraser.frame.minX - pen.frame.maxX),
       10,
-      "Ластик должен стоять отдельным кружком непосредственно рядом с ручкой"
+      "Ластик должен стоять отдельной кнопкой непосредственно рядом с ручкой"
     )
 
     let settings = app.sliders["pen-width"]
@@ -1744,13 +1751,13 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(pen.isSelected)
     XCTAssertFalse(eraser.isSelected)
     let selectedPen = pen.screenshot()
-    // Sample the selection circle beside the icon, so the pen's ink colour
+    // Sample the selection background beside the icon, so the pen's ink colour
     // alone cannot satisfy the visible-selection contract.
     let selectionBackground = CGRect(x: 0.2, y: 0.4, width: 0.08, height: 0.2)
     XCTAssertGreaterThan(
       changedPixelShare(from: inactivePen, to: selectedPen, normalizedRect: selectionBackground),
       0.8,
-      "Выбранная ручка должна показывать круговую подложку, как ластик"
+      "Выбранная ручка должна показывать заметную подложку, как ластик"
     )
     let penProof = XCTAttachment(screenshot: app.screenshot())
     penProof.name = "selected-pen-highlight"
@@ -1759,8 +1766,10 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     pen.tap()
     XCTAssertFalse(settings.exists, "Повторное касание тоже только выбирает ручку")
-    app.buttons["pen-settings"].tap()
-    XCTAssertTrue(settings.waitForExistence(timeout: 2), "Настройки открывает отдельное действие")
+    let settingsButton = app.buttons["pen-settings"]
+    XCTAssertEqual(settingsButton.frame.width,44,accuracy:1); XCTAssertEqual(settingsButton.frame.height,44,accuracy:1)
+    settingsButton.coordinate(withNormalizedOffset:.init(dx:0.1,dy:0.1)).tap()
+    XCTAssertTrue(settings.waitForExistence(timeout: 2), "Вся область кнопки открывает настройки, не только штрихи иконки")
     XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "pen-stroke-preview").firstMatch.waitForExistence(timeout: 2))
     let previewProof = XCTAttachment(screenshot: app.screenshot())
     previewProof.name = "actual-pen-pressure-preview"; previewProof.lifetime = .keepAlways; add(previewProof)
@@ -2325,6 +2334,37 @@ final class DrawingResponsivenessTests: XCTestCase {
       "Возврат восстанавливает содержание того же листа")
   }
 
+  func testCompactPageControlsKeepFullTargetsAndOpenOverviewAndSearch() async throws {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-document-runtime-fixture", "--notebook-document-prose-fixture"]
+    launchPortraitFixture(app)
+    let surface = app.otherElements["page-turn-surface"]
+    XCTAssertTrue(surface.waitForExistence(timeout:8))
+    func landed(_ page: Int) async {
+      await fulfillment(of:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"value BEGINSWITH %@", "Страница \(page) из "),object:surface)],timeout:5)
+    }
+    func edgeTap(_ id: String, width: CGFloat = 44) {
+      let button = app.buttons[id]
+      XCTAssertEqual(button.frame.width,width,accuracy:1); XCTAssertEqual(button.frame.height,44,accuracy:1)
+      button.coordinate(withNormalizedOffset:.init(dx:0.1,dy:0.1)).tap()
+    }
+    await fulfillment(of:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"value BEGINSWITH 'Страница 1 из ' AND value != 'Страница 1 из 1'"),object:surface)],timeout:5)
+    edgeTap("next-page"); await landed(2)
+    edgeTap("page-overview",width:64)
+    let third = app.buttons["Страница 3"]
+    XCTAssertTrue(third.waitForExistence(timeout:5))
+    let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "compact-page-overview"; proof.lifetime = .keepAlways; add(proof)
+    third.tap(); await landed(3)
+    edgeTap("previous-page"); await landed(2)
+    edgeTap("notebook-search")
+    XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout:3))
+    app.buttons["Готово"].tap()
+    XCTAssertTrue(app.searchFields.firstMatch.waitForNonExistence(timeout:3)); await landed(2)
+    edgeTap("previous-page"); await landed(1)
+    app.terminate()
+  }
+
   func testPageControlsAndSearchReturnToTheReadPage() async throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
@@ -2334,7 +2374,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     let surface = app.otherElements["page-turn-surface"]
     XCTAssertTrue(surface.waitForExistence(timeout: 8))
     await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Страница 1 из ' AND value != 'Страница 1 из 1'"), object: surface)], timeout: 5)
-    app.buttons["next-page"].tap()
+    let next = app.buttons["next-page"]
+    XCTAssertEqual(next.frame.width,44,accuracy:1); XCTAssertEqual(next.frame.height,44,accuracy:1)
+    next.coordinate(withNormalizedOffset:.init(dx:0.1,dy:0.1)).tap()
     await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Страница 2 из '"), object: surface)], timeout: 3)
     app.buttons["page-overview"].tap()
     let thumbnail = app.buttons["Страница 3"]
@@ -2851,7 +2893,10 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     removed.tap()
     XCTAssertTrue(delete.waitForExistence(timeout: 2))
-    delete.tap()
+    XCTAssertEqual(delete.frame.width,44,accuracy:1); XCTAssertEqual(delete.frame.height,44,accuracy:1)
+    // A standalone round control owns its disc, not the empty square corners.
+    // Tap beside the glyph to check the button background remains usable.
+    delete.coordinate(withNormalizedOffset:.init(dx:0.25,dy:0.5)).tap()
 
     XCTAssertTrue(remaining.waitForExistence(timeout: 2))
     XCTAssertFalse(removed.exists)

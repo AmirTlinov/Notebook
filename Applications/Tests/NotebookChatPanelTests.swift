@@ -33,6 +33,10 @@ final class NotebookChatPanelTests: XCTestCase {
     coordinator.update(messages: messages, conversationID: "task")
     try await heading("Работа Codex · 1 действие")
     let web = try XCTUnwrap(coordinator.web)
+    XCTAssertTrue(web.isOpaque)
+    XCTAssertEqual(root.view.backgroundColor,UIColor(NotebookChrome.surface))
+    XCTAssertEqual(web.backgroundColor,UIColor(NotebookChrome.surface))
+    XCTAssertEqual(web.scrollView.backgroundColor,UIColor(NotebookChrome.surface))
     _ = try await web.evaluateJavaScript("document.querySelector('.work').open=true;true")
     // Messages and active-work state are identical. Only the native terminal
     // status changes; a completed tool must not mask the interrupted turn.
@@ -85,6 +89,10 @@ final class NotebookChatPanelTests: XCTestCase {
     }
     XCTAssertTrue(rendered, "The native transcript did not render")
     let web = try XCTUnwrap(coordinator.web)
+    XCTAssertTrue(web.isOpaque)
+    XCTAssertEqual(container.backgroundColor,UIColor(NotebookChrome.surface))
+    XCTAssertEqual(web.backgroundColor,UIColor(NotebookChrome.surface))
+    XCTAssertEqual(web.scrollView.backgroundColor,UIColor(NotebookChrome.surface))
     let status = try await web.evaluateJavaScript("document.querySelectorAll('.work').length===1 && document.querySelector('.work-label').textContent==='Проверяю рисунок на доске' && document.querySelectorAll('[data-running=true]').length===1") as? Bool
     XCTAssertEqual(status, true)
     _ = try await web.evaluateJavaScript("document.querySelector('.work').open=true;window.kept=document.querySelector('[data-item-id=tool]');true")

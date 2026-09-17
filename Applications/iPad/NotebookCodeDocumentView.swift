@@ -31,7 +31,7 @@ struct NotebookCodeDocumentView: View {
               Button(String(fragment.text.prefix(60))) { model.inputGate.performAfterPageContact { files.notes.reviewed = fragment } }
             }
             if files.notes.hasMore { Button("Ещё пометки") { Task { await files.notes.refresh(more: true) } } }
-          } label: { Image(systemName: "pencil.tip.crop.circle").frame(width: 44, height: 44) }
+          } label: { Image(systemName: "pencil.tip.crop.circle").frame(width: 44, height: 44).contentShape(Rectangle()) }
             .accessibilityLabel("Сохранённые пометки")
           Menu {
             Button("Переименовать файл на Mac") { renamedPath = document.address.path; showsRename = true }
@@ -41,12 +41,12 @@ struct NotebookCodeDocumentView: View {
               Button("Использовать версию Mac") { files.resolveUsingMac() }
               Button("Использовать мой исправленный черновик") { files.resolveUsingDraft() }
             }
-          } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("Действия с файлом")
+          } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44).contentShape(Rectangle()) }.accessibilityLabel("Действия с файлом")
           control("square.and.arrow.down", "Сохранить файл на Mac") { files.save() }
             .disabled(!files.remoteAvailable || files.saving || document.pending != nil || document.other != nil || document.text == document.base)
           control("xmark", "Закрыть файл") { editing = false; files.close() }
         }
-        .background(Color(.secondarySystemBackground).opacity(0.65))
+        .font(NotebookChrome.iconFont).background(NotebookChrome.insetSurface)
         if let message = files.notes.error ?? files.error ?? (document.other == nil ? nil : "Конфликт: черновик и версия Mac сохранены. Сравните их в меню файла.") {
           Text(message).font(.system(size: 12)).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading).padding(10)
         }
@@ -66,9 +66,7 @@ struct NotebookCodeDocumentView: View {
         NotebookCodeEditor(files: files, document: document, editing: editing && document.rename == nil && files.notes.changingFile == nil, findRequest: findRequest, undoRequest: undoRequest, inputGate: model.inputGate, pen: model.penStyle, eraser: model.eraserStyle, tool: model.drawingTool)
           .id(document.address.id)
       }
-      .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 14))
-      .clipShape(RoundedRectangle(cornerRadius: 14))
-      .shadow(color: .black.opacity(0.1), radius: 16, y: 4)
+      .background(NotebookChrome.surface).notebookPanel()
       .background(NotebookControlRegion(gate: model.inputGate))
       .accessibilityElement(children: .contain)
       .accessibilityIdentifier("notebook-code-document")
@@ -101,7 +99,7 @@ struct NotebookCodeDocumentView: View {
     return files.notice ?? document.address.path
   }
   private func control(_ image: String, _ label: String, action: @escaping NotebookInputCompletion) -> some View {
-    Button(action: { model.inputGate.performAfterPageContact(action) }) { Image(systemName: image).font(.system(size: 16)).frame(width: 44, height: 44) }
+    Button(action: { model.inputGate.performAfterPageContact(action) }) { Image(systemName: image).font(NotebookChrome.iconFont).frame(width: 44, height: 44).contentShape(Rectangle()) }
       .accessibilityLabel(label).accessibilityIdentifier("code-" + image)
   }
 }

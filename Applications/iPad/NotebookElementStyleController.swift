@@ -30,7 +30,8 @@ final class NotebookElementStyleController: UIViewController, UIPopoverPresentat
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
   override func loadView() {
-    view = UIView(); view.backgroundColor = .clear
+    view = UIView(); view.backgroundColor = UIColor(NotebookChrome.surface)
+    popoverPresentationController?.backgroundColor = UIColor(NotebookChrome.surface)
     let stack = UIStackView(); stack.axis = .vertical; stack.spacing = 10
     stack.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(stack)
     NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo:view.leadingAnchor,constant:14),
@@ -98,7 +99,7 @@ final class NotebookElementStyleController: UIViewController, UIPopoverPresentat
     for (index, button) in patterns.enumerated() { decorate(button, selected: (style.dash ?? .solid) == Self.dashes[index]) }
   }
   private func decorate(_ button: UIButton, selected: Bool) {
-    button.backgroundColor = selected ? .tertiarySystemFill : .clear; button.layer.cornerRadius = 10
+    button.backgroundColor = selected ? UIColor(NotebookChrome.selectionSurface) : .clear; button.layer.cornerRadius = 10
     button.tintColor = .label; button.accessibilityTraits = selected ? [.button,.selected] : .button
   }
   private static let dashes: [NotebookGraphic.Style.Dash] = [.solid,.dashed,.dotted]
