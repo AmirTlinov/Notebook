@@ -8,6 +8,81 @@ import XCTest
   func testPageShapeSequentialUndoSurvivesColdModelReopening() async throws { try await scenario(onBoard: false, reopens: true) }
   func testBoardShapeSequentialUndoSurvivesColdModelReopening() async throws { try await scenario(onBoard: true, reopens: true) }
 
+  func testAcceptedMoveKeepsItsGeometryWhileTheWriterAndAnOlderSceneArePending() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-handoff-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let pageID = try XCTUnwrap(model.activePage?.id), target = CollaborationTarget(kind: .page, id: pageID)
+    let reference = EditableElementReference.page(pageID: pageID, elementID: "circle")
+    let store = model.store
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    _ = try store.applyCollaborationAction(.init(summary: "Circle", expected: [
+      .init(target: target, revision: store.targetContentRevision(target: target))], operations: [
+        .init(kind: .insertElement, target: target, id: "circle", values: ["kind": .string("graphic"), "source": .string(""),
+          "frame": .encode(PageRect(x: 100, y: 100, width: 100, height: 100)), "graphic": .encode(NotebookGraphic())])]), actor: UUID())
+    await model.reloadExternalChanges()?.value
+    let before = await model.finishPendingPersistence(); XCTAssertTrue(before)
+    let presence = try XCTUnwrap(model.presence)
+    let older = try NotebookSceneState.read(store: store, presence: presence, viewport: presence.viewport)
+    let writer = try NotebookSQLWriteBlocker(store: store)
+    defer { try? writer.release() }
+    model.selectElement(reference)
+    let contact = try XCTUnwrap(model.beginElementManipulation(reference, kind: .move))
+    XCTAssertTrue(model.finishElementManipulation(contact, translation: .init(x: 38, y: 26)))
+    let expected = PageRect(x: 138, y: 126, width: 100, height: 100)
+    XCTAssertEqual(model.graphicLayout(reference)?.frame, expected)
+    await withCheckedContinuation { continuation in model.inputGate.performAfterIdle { continuation.resume() } }
+    XCTAssertTrue(model.acceptExternalScene(older, observedEpoch: model.collaborationReadEpoch,
+      observedPresence: presence, itemPins: [:]), "An older canonical cut can publish while the command is still queued")
+    XCTAssertEqual(model.activePage?.elements.first?.frame, .init(x: 100, y: 100, width: 100, height: 100))
+    XCTAssertEqual(model.graphicLayout(reference)?.frame, expected, "Canonical publication without this command cannot retire its draft")
+    XCTAssertTrue(model.graphicCommandPending)
+    try writer.release()
+    let completed = await model.finishPendingPersistence(); XCTAssertTrue(completed)
+    XCTAssertNil(model.graphicCommandPreview)
+    XCTAssertEqual(model.activePage?.elements.first?.frame, expected)
+    XCTAssertEqual(model.graphicLayout(reference)?.frame, expected)
+  }
+
+  func testRejectedMoveReleasesAcceptedDraftWithoutOverwritingConcurrentGeometry() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-rejected-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let pageID = try XCTUnwrap(model.activePage?.id), target = CollaborationTarget(kind: .page, id: pageID)
+    let reference = EditableElementReference.page(pageID: pageID, elementID: "circle")
+    let store = model.store
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    func action(_ kind: CollaborationOperation.Kind, values: [String: JSONValue]) throws {
+      let revision = try store.targetContentRevision(target: target)
+      _ = try store.applyCollaborationAction(.init(summary: "Concurrent geometry",
+        references: kind == .updateElement ? [.init(target: target, elementID: "circle", revision: revision)] : [],
+        expected: [.init(target: target, revision: revision)],
+        operations: [.init(kind: kind, target: target, id: "circle", values: values)]), actor: UUID())
+    }
+    let original = PageRect(x: 100, y: 100, width: 100, height: 100)
+    try action(.insertElement, values: ["kind": .string("graphic"), "source": .string(""),
+      "frame": .encode(original), "graphic": .encode(NotebookGraphic(label: "+"))])
+    await model.reloadExternalChanges()?.value
+    model.selectElement(reference)
+    let contact = try XCTUnwrap(model.beginElementManipulation(reference, kind: .move))
+    model.updateElementManipulation(contact, translation: .init(x: 38, y: 26))
+    let preview = try XCTUnwrap(model.graphicLayout(reference))
+    let concurrent = PageRect(x: 230, y: 180, width: 100, height: 100)
+    try action(.updateElement, values: ["frame": .encode(concurrent), "graphic": .object(["label": .string("agent")])])
+    XCTAssertTrue(model.finishElementManipulation(contact, translation: .init(x: 38, y: 26)))
+    XCTAssertEqual(model.graphicLayout(reference), preview)
+    try await wait { !model.graphicCommandPending }
+    XCTAssertNil(model.graphicCommandPreview)
+    XCTAssertNotNil(model.actionCue, "Rejection is visible, not a silently successful drag")
+    await model.reloadExternalChanges()?.value
+    XCTAssertEqual(model.graphicLayout(reference)?.frame, concurrent)
+    XCTAssertEqual(model.graphicElement(reference)?.label, "agent")
+    XCTAssertEqual(try store.readPageElement(pageID: pageID, elementID: "circle")?.frame, concurrent)
+    XCTAssertEqual(try store.collaborationActions(afterID: nil).count, 2, "The rejected native command has no receipt to undo")
+  }
+
   private func scenario(onBoard: Bool, reopens: Bool = false) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-model-\(UUID())")
     var model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)

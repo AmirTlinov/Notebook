@@ -24,7 +24,7 @@ extension NotebookAppModel {
     guard let captured = cohort.frame.index.capturedHierarchy.board(boardID) else { return .init([]) }
     let board = presentedBoard(captured, boardID:boardID,cohort:cohort)
     let usesPreview: Bool
-    if case .spatial(let owner, _) = selectionSession.manipulation?.reference { usesPreview = preview && owner == boardID }
+    if case .spatial(let owner, _) = graphicPreviewManipulation?.reference { usesPreview = preview && owner == boardID }
     else { usesPreview = false }
     return board.graphicGraph(frames: usesPreview ? graphicPreviewFrames() : [:],
       connections: usesPreview ? graphicPreviewConnections() : [:])
