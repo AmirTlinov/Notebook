@@ -7,7 +7,7 @@ struct NotebookMacApp: App {
   @NSApplicationDelegateAdaptor(NotebookMacLifecycle.self) private var lifecycle
 
   var body: some Scene {
-    MenuBarExtra("Notebook", systemImage: "book.closed") {
+    MenuBarExtra("Notebook", image: "NotebookStatusIcon") {
       if let model = lifecycle.launch.model {
         Text(model.isPeerConnected ? "iPad подключён" : "Ожидается iPad")
         if case .failed(let message) = model.loadState {
