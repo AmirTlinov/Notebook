@@ -27,7 +27,7 @@ export type AgentElementKind = "markdown" | "web" | "graphic";
 export type NotebookGraphicResolution = {state:"geometry";frame:PageRect} | {state:"hidden"} | {state:"pending";dependencies:string[]};
 
 export interface NotebookGraphic {
-  shape: "ellipse" | "connector";
+  shape: "ellipse" | "rectangle" | "plus" | "connector";
   style: { stroke: { red: number; green: number; blue: number }; strokeWidth: number; fill?: { red: number; green: number; blue: number }; dash?: "solid" | "dashed" | "dotted" };
   label: string;
   representation: "ink" | "geometry";

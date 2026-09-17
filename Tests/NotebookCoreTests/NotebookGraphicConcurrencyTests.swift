@@ -30,9 +30,9 @@ private struct GraphicFixture {
     _ = try write(.appendInkStroke, id: id.uuidString, values: values, human: false)
     return id
   }
-  func convert(_ id: String, sources: [UUID], human: Bool = true) throws -> CollaborationReceipt {
+  func convert(_ id: String, sources: [UUID], shape: NotebookGraphic.Shape = .ellipse, human: Bool = true) throws -> CollaborationReceipt {
     var values: [String: JSONValue] = ["kind": .string("graphic"), "source": .string(""),
-      "frame": try .encode(PageRect(x: 10, y: 10, width: 100, height: 100)), "graphic": try .encode(NotebookGraphic(sourceInkIDs: sources))]
+      "frame": try .encode(PageRect(x: 10, y: 10, width: 100, height: 100)), "graphic": try .encode(NotebookGraphic(shape:shape,sourceInkIDs:sources))]
     if target.kind == .board { values["worldOrigin"] = try .encode(WorldPoint.zero) }
     return try write(.convertInkToElement, id: id, values: values, human: human)
   }
@@ -69,7 +69,7 @@ func graphicConcurrentClaimsConverge(onBoard: Bool) throws {
     let peer = try GraphicFixture(onBoard: onBoard,
       actor: UUID(uuidString: "00000000-0000-4000-8000-00000000000\(i + 1)")!, seed: seed, target: base.target)
     defer { peer.clean() }
-    let action = try peer.convert("shape-\(i)", sources: [strokes[i], strokes[i + 1]], human: i != 1)
+    let action = try peer.convert("shape-\(i)", sources: [strokes[i], strokes[i + 1]], shape: [NotebookGraphic.Shape.ellipse,.rectangle,.plus][i], human: i != 1)
     payloads.append((try peer.store.collaborationContent(), action))
   }
   let orders = [[0,1,2], [0,2,1], [1,0,2], [1,2,0], [2,0,1], [2,1,0]]

@@ -216,10 +216,15 @@ struct SpatialInkCanvas: UIViewRepresentable {
       let nextBoardSurface = SurfaceID.board(boardID)
       if boardSurface != nextBoardSurface { boardSurface = nextBoardSurface }
       let current = view.currentCameraPresence(for: boardID)
-      self.camera = current?.camera ?? camera
-      self.viewport = current?.viewport ?? viewport
+      let nextCamera = current?.camera ?? camera, nextViewport = current?.viewport ?? viewport
+      if self.camera != nextCamera || self.viewport != nextViewport || self.penStyle != penStyle || self.drawingTool != drawingTool {
+        quickShape.cancel()
+      }
+      self.camera = nextCamera
+      self.viewport = nextViewport
       view.onCameraProjection = { [weak self] presence in
         guard let self, !isRetired, boardSurface == .board(presence.boardID) else { return }
+        if self.camera != presence.camera || self.viewport != presence.viewport { quickShape.cancel() }
         self.camera = presence.camera
         self.viewport = presence.viewport
       }
@@ -341,7 +346,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
     private func beginAction(touch: UITouch, event: UIEvent) {
       guard inputGate.permitsNewContact else { return }
-      finishAction()
+      if actionTool != nil { finishAction() }
       guard let view, let surfaces = admissionSurfaces() else { return }
       var leases: [SpatialInkSurfaceRegistry.ContactLease] = []
       var frozen: [SpatialScreenSurface] = []
@@ -391,7 +396,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
             sample.worldPoint.map { geometry.camera.worldToScreen($0, viewport: geometry.viewport) }
           }
         }
-      }
+      } else { quickShape.cancel() }
     }
 
     private func appendSamples(touch: UITouch, event: UIEvent) {
@@ -464,6 +469,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
         return
       }
       let geometry = actionGeometry
+      let continuesSequence = convertsHeldShape && actionTool == .pen && actionPenStyle == penStyle
+        && geometry?.camera == camera && geometry?.viewport == viewport
+      if !continuesSequence { quickShape.cancel() }
       defer {
         for lease in geometry?.leases ?? [] { lease.release() }
         actionGeometry = nil
@@ -506,7 +514,13 @@ struct SpatialInkCanvas: UIViewRepresentable {
         let origin = geometry.camera.screenToWorld(.init(x: fit.frame.x, y: fit.frame.y), viewport: geometry.viewport)
         let physical = fit.scaled(by:1/geometry.camera.scale,frameOrigin:.zero)
         onQuickShape?(physical, boardID, origin, committed)
-      }
+      } else if continuesSequence, let geometry, let committed,
+        spans.allSatisfy({ $0.surface == boardSurface }), spans.reduce(0, { $0 + $1.samples.count }) <= 8192 {
+        let points = spans.flatMap(\.samples).compactMap { sample in
+          sample.worldPoint.map { geometry.camera.worldToScreen($0, viewport: geometry.viewport) }
+        }
+        quickShape.remember(committed.id, points: points)
+      } else { quickShape.cancel() }
       for surface in touchedSurfaces {
         surfaceRegistry.finishAction(
           on: surface,

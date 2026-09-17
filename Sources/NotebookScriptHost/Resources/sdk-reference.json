@@ -3494,6 +3494,8 @@
             "type": "string",
             "enum": [
               "ellipse",
+              "rectangle",
+              "plus",
               "connector"
             ]
           },
@@ -5265,6 +5267,8 @@
                     "type": "string",
                     "enum": [
                       "ellipse",
+                      "rectangle",
+                      "plus",
                       "connector"
                     ]
                   },
@@ -5814,6 +5818,8 @@
                     "type": "string",
                     "enum": [
                       "ellipse",
+                      "rectangle",
+                      "plus",
                       "connector"
                     ]
                   },
@@ -6251,6 +6257,8 @@
                     "type": "string",
                     "enum": [
                       "ellipse",
+                      "rectangle",
+                      "plus",
                       "connector"
                     ]
                   },
@@ -9712,7 +9720,7 @@
   },
   "examples": {
     "createDocument": "const s=(await nb.board({})).values[0]; const boardID=s.boardID; await emit(await nb.transaction('document',{summary:'Учебный документ',expected:[{target:{kind:'board',id:boardID},revision:s.boardContentRevisions[boardID.toLowerCase()]},{target:{kind:'workspace',id:s.header.rootBoardID},revision:s.header.stamp.counter+'@'+s.header.stamp.actor.toLowerCase()}],operations:[{kind:'createDocument',target:{kind:'board',id:boardID},values:{title:'Пример',center:{tileX:0,tileY:0,localX:0,localY:0},paperSize:'a4',blocks:[{id:'intro',kind:'markdown',source:'# Введение'}]}}]}));",
-    "graphic": "insertElement: {kind:'graphic',source:'',frame:{x:20,y:20,width:100,height:100},graphic:{shape:'ellipse',style:{stroke:{red:0,green:0,blue:0},strokeWidth:2},label:'+',representation:'geometry',visible:true,sourceInkIDs:[]}}. For a board add worldOrigin. updateElement accepts a graphic patch, e.g. {graphic:{label:'?'}}; sourceInkIDs cannot be patched. convertInkToElement uses the same payload with existing sourceInkIDs and requires inkRevision.",
+    "graphic": "insertElement: {kind:'graphic',source:'',frame:{x:20,y:20,width:100,height:100},graphic:{shape:'ellipse',style:{stroke:{red:0,green:0,blue:0},strokeWidth:2},label:'+',representation:'geometry',visible:true,sourceInkIDs:[]}}. Native shapes: ellipse, rectangle, plus, connector. For a board add worldOrigin. updateElement accepts a graphic patch, e.g. {graphic:{label:'?'}}; sourceInkIDs cannot be patched. convertInkToElement uses the same payload with existing sourceInkIDs and requires inkRevision.",
     "connector": "A graphic with shape:'connector' has connection:{start:{point:{x:0,y:0},binding:{elementID:'a',normalizedAnchor:{x:0.5,y:0.5},isExact:false,isPrecise:false}},end:{point:{x:100,y:0},binding:{elementID:'b',normalizedAnchor:{x:0.5,y:0.5},isExact:false,isPrecise:false}},bend:0,startArrowhead:'none',endArrowhead:'arrow',labelPosition:0.5}. Points are element-local; bindings address native nodes on the same owner. Moving nodes derives the connection without changing its authored frame. Missing or hidden bound nodes hide the link, never detach it. Patch connection fields independently, e.g. {graphic:{connection:{bend:40},label:'1:2'}}. Replace an endpoint with {point:{x:...,y:...}} to detach explicitly. Styles support stroke, strokeWidth and dash solid/dashed/dotted. Heads: none/arrow/triangle/square/dot/pipe/diamond/inverted/bar. Read page/board/boardElement returns graphicResolution:{state:'geometry',frame} or {state:'hidden'} or {state:'pending',dependencies}; frame is derived, while the authored element.frame and binding values remain unchanged. Hidden means this geometry is not shown, including an ink representation; it does not remove intent. Undo reports retained_dependency addresses for later links that protect earlier node creation/conversion.",
     "nativeText": "insertElement on board: {kind:'nativeText',source:'Подпись',worldOrigin:{tileX:0,tileY:0,localX:0,localY:0},frame:{x:0,y:0,width:200,height:80},textStyle:{fontSize:24,weight:0.45,red:0.09,green:0.09,blue:0.08,alpha:1}}. For a cover omit worldOrigin and use cover-local frame coordinates. Omit textStyle to use native defaults.",
     "interactive": "const d = await nb.document({id:args.documentID});\nawait emit(await nb.transaction('counter', {\n  summary:'Интерактивный счётчик',\n  expected:[{target:{kind:'document',id:d.document.id},revision:d.contentRevision}],\n  operations:[{kind:'insertBlock',target:{kind:'document',id:d.document.id},id:'counter',values:{\n  \"kind\": \"interactive\",\n  \"html\": \"<button id=\\\"increment\\\">Прибавить один</button> <output id=\\\"count\\\"></output>\",\n  \"css\": \"button,output{font:24px -apple-system,sans-serif}button{padding:12px}\",\n  \"initialState\": {\n    \"count\": 0\n  },\n  \"height\": 120,\n  \"javaScript\": \"const button = document.getElementById('increment');\\nconst output = document.getElementById('count');\\nconst draw = () => { output.textContent = String(notebook.state?.count ?? 0); };\\nbutton.addEventListener('click', () => {\\n  notebook.commit({count: (notebook.state?.count ?? 0) + 1});\\n  draw();\\n});\\naddEventListener('notebookstate', draw);\\nnotebook.ready(Promise.resolve().then(draw));\"\n}}]\n}));"

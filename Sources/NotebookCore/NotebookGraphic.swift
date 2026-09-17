@@ -3,7 +3,7 @@ import Foundation
 /// Native content on a physical page or board, not an embedded document.
 /// Measurements remain in that owner's ink journal; presentation only names them.
 public struct NotebookGraphic: Codable, Equatable, Sendable {
-  public enum Shape: String, Codable, Sendable { case ellipse, connector }
+  public enum Shape: String, Codable, Sendable { case ellipse, rectangle, plus, connector }
   public enum Representation: String, Codable, Sendable { case ink, geometry }
   public struct Style: Codable, Equatable, Sendable {
     public enum Dash: String, Codable, Sendable { case solid, dashed, dotted }
@@ -54,14 +54,35 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
 public enum NotebookGraphicGeometry {
   public static func hitTest(_ graphic: NotebookGraphic, width: Double, height: Double,
     x: Double, y: Double, tolerance: Double) -> Bool {
-    guard graphic.showsGeometry, graphic.shape == .ellipse, width > 0, height > 0 else { return false }
+    guard graphic.showsGeometry, graphic.shape != .connector, width > 0, height > 0 else { return false }
     let dx = (x - width / 2) / (width / 2), dy = (y - height / 2) / (height / 2)
     let radius = hypot(dx, dy)
     if !graphic.label.isEmpty, abs(x - width / 2) <= min(width / 2, Double(graphic.label.count) * 8 + tolerance),
       abs(y - height / 2) <= 16 + tolerance { return true }
-    if graphic.style.fill != nil { return radius <= 1 + tolerance / min(width, height) * 2 }
+    if graphic.style.fill != nil {
+      if graphic.shape == .ellipse { return radius <= 1 + tolerance / min(width, height) * 2 }
+      if graphic.shape == .rectangle { return x >= -tolerance && x <= width+tolerance && y >= -tolerance && y <= height+tolerance }
+    }
     // A contour must not steal its empty interior from enclosed nodes.
-    return abs(radius - 1) * min(width, height) / 2 <= tolerance + graphic.style.strokeWidth / 2
+    return outlineDistance(graphic.shape,width:width,height:height,x:x,y:y) <= tolerance + graphic.style.strokeWidth / 2
+  }
+
+  public static func outlineDistance(_ shape: NotebookGraphic.Shape, width: Double, height: Double,
+    x: Double, y: Double) -> Double {
+    func segment(_ ax: Double, _ ay: Double, _ bx: Double, _ by: Double) -> Double {
+      let dx = bx-ax, dy = by-ay, square = dx*dx+dy*dy
+      let t = square > 0 ? min(1,max(0,((x-ax)*dx+(y-ay)*dy)/square)) : 0
+      return hypot(x-ax-t*dx,y-ay-t*dy)
+    }
+    switch shape {
+    case .ellipse:
+      return abs(hypot((x-width/2)/(width/2),(y-height/2)/(height/2))-1)*min(width,height)/2
+    case .rectangle:
+      return min(segment(0,0,width,0),segment(width,0,width,height),segment(width,height,0,height),segment(0,height,0,0))
+    case .plus:
+      return min(segment(0,height/2,width,height/2),segment(width/2,0,width/2,height))
+    case .connector: return .infinity
+    }
   }
 }
 

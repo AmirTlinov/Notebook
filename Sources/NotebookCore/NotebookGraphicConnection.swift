@@ -90,7 +90,7 @@ public struct NotebookGraphicLayout: Equatable, Sendable {
   }
 
   public func hitTest(_ point: SpatialPoint, graphic: NotebookGraphic, tolerance: Double) -> Bool {
-    if graphic.shape == .ellipse {
+    if graphic.shape != .connector {
       return NotebookGraphicGeometry.hitTest(graphic, width: frame.width, height: frame.height,
         x: point.x, y: point.y, tolerance: tolerance)
     }
@@ -169,8 +169,8 @@ public struct NotebookGraphicGraph: Sendable {
     for node in nodes.values where node.shown && node.graphic.shape != .connector && node.surface == surface && node.id != id {
       let delta = origin.delta(to:node.origin), frame = node.frame
       let x = point.x-delta.x-frame.x-frame.width/2, y = point.y-delta.y-frame.y-frame.height/2
-      let radius = hypot(x/(frame.width/2),y/(frame.height/2))
-      let edge = abs(radius-1)*min(frame.width,frame.height)/2, center = hypot(x,y)
+      let edge = NotebookGraphicGeometry.outlineDistance(node.graphic.shape,width:frame.width,height:frame.height,
+        x:x+frame.width/2,y:y+frame.height/2), center = hypot(x,y)
       guard edge <= tolerance || center <= tolerance else { continue }
       candidates.append((node,min(edge,center)))
     }
@@ -220,6 +220,17 @@ public struct NotebookGraphicGraph: Sendable {
       let rx = target.frame.width/2, ry = target.frame.height/2
       let px = (anchor.x-center.x)/rx, py = (anchor.y-center.y)/ry
       let dx = (toward.x-anchor.x)/rx, dy = (toward.y-anchor.y)/ry
+      if target.graphic.shape == .plus { return anchor }
+      if target.graphic.shape == .rectangle {
+        let intersections = [-1.0,1.0].flatMap { side -> [Double] in
+          var values: [Double] = []
+          if abs(dx) > 0.000001 { let t = (side-px)/dx; if t >= 0 && abs(py+t*dy) <= 1.000001 { values.append(t) } }
+          if abs(dy) > 0.000001 { let t = (side-py)/dy; if t >= 0 && abs(px+t*dx) <= 1.000001 { values.append(t) } }
+          return values
+        }
+        guard let t = intersections.min() else { return anchor }
+        return .init(x:anchor.x+(toward.x-anchor.x)*t,y:anchor.y+(toward.y-anchor.y)*t)
+      }
       let aa = dx*dx+dy*dy, bb = 2*(px*dx+py*dy), cc = px*px+py*py-1
       let discriminant = bb*bb-4*aa*cc
       guard aa > 0, discriminant >= 0 else { return anchor }

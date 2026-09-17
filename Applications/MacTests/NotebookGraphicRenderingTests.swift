@@ -4,6 +4,29 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookGraphicRenderingTests: XCTestCase {
+  func testRectangleAndPlusPaintTheirOwnContoursRatherThanEllipses() async throws {
+    let elements = [NotebookGraphic.Shape.rectangle,.plus].enumerated().map { index, shape in
+      AgentElement(id:shape.rawValue,kind:.graphic,frame:.init(x:20+Double(index)*140,y:20,width:100,height:100),
+        source:"",html:"",graphic:.init(shape:shape,style:.init(strokeWidth:4)))
+    }
+    let page = PageDocument(size:.init(width:280,height:150),actor:UUID(),elements:elements)
+    let result = try await PageCompositionRenderer.render(page,scale:1) { _ in
+      XCTFail("Native contours do not request WebKit"); throw CocoaError(.featureUnsupported)
+    }
+    let image = try XCTUnwrap(NSBitmapImageRep(data:result.png))
+    func dark(_ x: Int, _ y: Int) -> Bool {
+      guard let color = image.colorAt(x:x,y:y)?.usingColorSpace(.deviceRGB) else { return false }
+      return max(color.redComponent,color.greenComponent,color.blueComponent) < 0.3
+    }
+    XCTAssertTrue(dark(22,22),"Rectangle corner, not ellipse")
+    XCTAssertFalse(dark(70,70),"Rectangle interior remains empty")
+    XCTAssertTrue(dark(210,70),"Plus intersection is painted")
+    XCTAssertTrue(dark(210,24)); XCTAssertTrue(dark(164,70))
+    XCTAssertFalse(dark(164,24),"Plus has no box or ellipse around it")
+    let proof = XCTAttachment(data:result.png,uniformTypeIdentifier:"public.png")
+    proof.name = "native-rectangle-plus"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testBoundArcsAndNineArrowheadsRenderAsNativeGeometryWithoutWebKit() async throws {
     let actor = UUID()
     var elements: [AgentElement] = []

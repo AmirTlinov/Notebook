@@ -240,3 +240,17 @@ func connectorCurveHitUsesPhysicalTolerance() throws {
   let points = try #require(square.heads.first).points
   #expect(square.hitTest(.init(x:points.map(\.x).reduce(0,+)/4,y:points.map(\.y).reduce(0,+)/4),graphic:solid,tolerance:0.01))
 }
+
+@Test("Связь обрезается о сторону прямоугольника, а не о вписанный эллипс")
+func connectorRectangleBoundary() throws {
+  let surface = SurfaceID.board(UUID())
+  let graph = NotebookGraphicGraph([
+    .init(id:"box",graphic:.init(shape:.rectangle),frame:.init(x:0,y:0,width:100,height:100),surface:surface,shown:true),
+    .init(id:"link",graphic:.init(shape:.connector,connection:.init(start:.init(point:.init(x:50,y:50),binding:.init(elementID:"box")),
+      end:.init(point:.init(x:200,y:125)),endArrowhead:.none)),frame:.init(x:0,y:0,width:200,height:125),surface:surface,shown:true)
+  ])
+  let layout = try #require(graph.resolve("link").layout)
+  #expect(abs(layout.frame.x+layout.start.x-100) < 0.01)
+  #expect(abs(layout.frame.y+layout.start.y-75) < 0.01)
+  #expect(graph.binding(at:.init(x:0,y:0),origin:.zero,surface:surface,tolerance:4)?.elementID == "box")
+}

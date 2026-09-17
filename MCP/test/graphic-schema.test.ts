@@ -32,3 +32,10 @@ test("connection patches own each endpoint independently and reject unknown geom
   for (const connection of [{bend:Infinity},{route:"unknown"},{start:{...endpoint,binding:{...endpoint.binding,isExact:"yes"}}}])
     assert.throws(()=>operationSchema.parse({kind:"updateElement",target,id:"arrow",values:{graphic:{connection}}}));
 });
+
+test("native rectangles and pluses use the existing graphic command", () => {
+  for (const shape of ["rectangle", "plus"]) {
+    const values = { kind: "graphic", source: "", frame: { x: 10, y: 10, width: 80, height: 80 }, graphic: { ...graphic, shape } };
+    assert.deepEqual(operationSchema.parse({ kind: "insertElement", target, id: shape, values }).values, values);
+  }
+});

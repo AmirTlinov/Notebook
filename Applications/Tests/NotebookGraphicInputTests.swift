@@ -49,6 +49,80 @@ import XCTest
     }
   }
 
+  func testMultiStrokeArrowSquareAndPlusUseTheExistingPageContact() async throws {
+    let cases: [(NotebookGraphic.Shape, [[CGPoint]])] = [
+      (.connector, [[.init(x:100,y:180),.init(x:280,y:180)], [.init(x:240,y:150),.init(x:280,y:180),.init(x:240,y:210)]]),
+      (.connector, [[.init(x:240,y:150),.init(x:280,y:180)], [.init(x:280,y:180),.init(x:100,y:180)], [.init(x:240,y:210),.init(x:280,y:180)]]),
+      (.rectangle, [[.init(x:100,y:100),.init(x:240,y:100),.init(x:240,y:240),.init(x:100,y:240),.init(x:100,y:100)]]),
+      (.plus, [[.init(x:100,y:180),.init(x:260,y:180)], [.init(x:180,y:100),.init(x:180,y:260)]])
+    ]
+    for (expected, strokes) in cases {
+      let paper = PaperInputView(frame:.init(x:0,y:0,width:500,height:500))
+      paper.configure(penStyle:.standard,eraserStyle:.standard,drawingTool:.pen)
+      var raw: [PageInkAction] = [], fit: NotebookQuickShapeFit?
+      paper.onDrawingMutation = { raw.append($0); fit = paper.completedQuickShape }
+      for (index, vertices) in strokes.enumerated() {
+        let touch = draw(vertices, on:paper)
+        if index == strokes.count-1 { try await Task.sleep(for:.milliseconds(650)) }
+        paper.touchesEnded([touch],with:nil)
+        paper.finishCurrentAction {} // Ordinary publication fence between contacts.
+      }
+      let shape = try XCTUnwrap(fit)
+      XCTAssertEqual(shape.shape,expected)
+      XCTAssertEqual(shape.precedingStrokeIDs,raw.dropLast().map(\.id))
+      XCTAssertEqual(shape.sampleCount,raw.last?.samples.count)
+      XCTAssertEqual(raw.count,strokes.count)
+      if expected == .connector { XCTAssertEqual(shape.connection?.endArrowhead,.arrow) }
+    }
+  }
+
+  func testPageChangeCancellationAndToolChangeDoNotBorrowPreviousStrokes() async throws {
+    for reset in 0...3 {
+      let paper = PaperInputView(frame:.init(x:0,y:0,width:500,height:500))
+      paper.quickShapePageID = UUID()
+      var fit: NotebookQuickShapeFit?
+      paper.onDrawingMutation = { _ in fit = paper.completedQuickShape }
+      let first = draw([.init(x:100,y:180),.init(x:260,y:180)],on:paper)
+      if reset == 0 { paper.touchesCancelled([first],with:nil) }
+      else { paper.touchesEnded([first],with:nil) }
+      if reset == 1 { paper.quickShapePageID = UUID() }
+      if reset == 2 { paper.endShapeSequence() }
+      if reset == 3 {
+        paper.configure(penStyle:.standard,eraserStyle:.standard,drawingTool:.eraser)
+        paper.configure(penStyle:.standard,eraserStyle:.standard,drawingTool:.pen)
+      }
+      let last = draw([.init(x:180,y:100),.init(x:180,y:260)],on:paper)
+      try await Task.sleep(for:.milliseconds(650))
+      paper.touchesEnded([last],with:nil)
+      XCTAssertEqual(fit?.shape,.connector)
+      XCTAssertEqual(fit?.precedingStrokeIDs,[])
+    }
+  }
+
+  func testExpiredSequenceDoesNotAbsorbOldInk() async throws {
+    let session = NotebookQuickShapeSession()
+    session.remember(UUID(),points:[.init(x:100,y:180),.init(x:260,y:180)])
+    try await Task.sleep(for:.seconds(NotebookQuickShapeSession.sequenceSeconds+0.1))
+    let vertical = (0...60).map { SpatialPoint(x:180,y:100+Double($0)*160/60) }
+    session.begin(at:vertical.last!,screenScale:1) { vertical }
+    try await Task.sleep(for:.milliseconds(650))
+    let fit = try XCTUnwrap(session.finish())
+    XCTAssertEqual(fit.shape,.connector); XCTAssertTrue(fit.precedingStrokeIDs.isEmpty)
+  }
+
+  private func draw(_ vertices: [CGPoint], on paper: PaperInputView) -> GraphicPencilTouch {
+    let touch = GraphicPencilTouch(); touch.point = vertices[0]
+    paper.touchesBegan([touch],with:nil)
+    for (a,b) in zip(vertices,vertices.dropFirst()) {
+      for index in 1...30 {
+        let t = Double(index)/30
+        touch.point = .init(x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t); touch.sampleTime += 0.01
+        paper.touchesMoved([touch],with:nil)
+      }
+    }
+    return touch
+  }
+
   func testFigureDragNeedsNoHoldAndSecondFingerCancelsWithoutAWrite() {
     let gate = NotebookInputGate(), recognizer = SceneSelectionRecognizer(), touch = GraphicFingerTouch()
     let view = UIView(); view.addGestureRecognizer(recognizer); recognizer.gate = gate

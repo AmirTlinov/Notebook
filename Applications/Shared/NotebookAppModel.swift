@@ -2639,19 +2639,19 @@ final class NotebookAppModel {
   }
 
   func acceptQuickShape(_ fit: NotebookQuickShapeFit, pageID: UUID, stroke: PageInkAction) {
-    let graphic = NotebookGraphic(shape:fit.shape,style: .init(stroke: stroke.color, strokeWidth: stroke.samples.first?.width ?? 2), sourceInkIDs: [stroke.id],connection:fit.connection)
+    let graphic = NotebookGraphic(shape:fit.shape,style: .init(stroke: stroke.color, strokeWidth: stroke.samples.first?.width ?? 2), sourceInkIDs: fit.precedingStrokeIDs + [stroke.id],connection:fit.connection)
     guard let values = try? ["kind": JSONValue.string("graphic"), "source": .string(""),
       "frame": .encode(fit.frame), "graphic": .encode(graphic)] else { return }
     performGraphicOperation(.convertInkToElement, reference: .page(pageID: pageID, elementID: UUID().uuidString.lowercased()),
-      values: values, summary:fit.connection == nil ? "Преобразовать набросок в эллипс" : "Преобразовать набросок в связь")
+      values: values, summary:"Преобразовать набросок: " + fit.shape.displayName)
   }
 
   func acceptQuickShape(_ fit: NotebookQuickShapeFit, boardID: UUID, origin: WorldPoint, stroke: SpatialInkAction) {
-    let graphic = NotebookGraphic(shape:fit.shape,style: .init(stroke: stroke.color, strokeWidth: stroke.spans.first?.samples.first?.width ?? 2), sourceInkIDs: [stroke.id],connection:fit.connection)
+    let graphic = NotebookGraphic(shape:fit.shape,style: .init(stroke: stroke.color, strokeWidth: stroke.spans.first?.samples.first?.width ?? 2), sourceInkIDs: fit.precedingStrokeIDs + [stroke.id],connection:fit.connection)
     guard let values = try? ["kind": JSONValue.string("graphic"), "source": .string(""),
       "frame": .encode(fit.frame), "graphic": .encode(graphic), "worldOrigin": .encode(origin)] else { return }
     performGraphicOperation(.convertInkToElement, reference: .spatial(boardID: boardID, elementID: UUID().uuidString.lowercased()),
-      values: values, summary:fit.connection == nil ? "Преобразовать набросок в эллипс" : "Преобразовать набросок в связь")
+      values: values, summary:"Преобразовать набросок: " + fit.shape.displayName)
   }
 
   func setGraphicLabel(_ text: String, reference: EditableElementReference, replacing original: String? = nil) {

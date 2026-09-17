@@ -9,7 +9,7 @@ struct NotebookGraphicView: View {
   var body: some View {
     Canvas { context, size in Self.paint(graphic, layout: layout, in: context, size: size) }
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel(graphic.label.isEmpty ? (graphic.shape == .ellipse ? "Эллипс" : "Связь") : graphic.label)
+    .accessibilityLabel(graphic.label.isEmpty ? graphic.shape.displayName : graphic.label)
     .accessibilityAddTraits(.isImage)
   }
   static func paint(_ graphic: NotebookGraphic, layout: NotebookGraphicLayout?,
@@ -23,11 +23,11 @@ struct NotebookGraphicView: View {
       case .dotted: [0, width*3]
       }
       let style = StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round, dash: dash)
-      if graphic.shape == .ellipse {
+      if graphic.shape != .connector {
         let inset = min(width / 2, min(size.width, size.height) / 2 - 0.01)
         let rect = CGRect(origin: .zero, size: size).insetBy(dx: max(0, inset), dy: max(0, inset))
-        let path = Path(ellipseIn: rect)
-        if let fill = graphic.style.fill { context.fill(path, with: .color(fill.swiftUIColor)) }
+        let path = outline(graphic.shape, in:rect)
+        if graphic.shape != .plus, let fill = graphic.style.fill { context.fill(path, with: .color(fill.swiftUIColor)) }
         context.stroke(path, with: .color(stroke), style: style)
       } else if let layout {
         var lineContext = context
@@ -64,7 +64,7 @@ struct NotebookGraphicView: View {
   }
   static func previewPath(_ fit: NotebookQuickShapeFit) -> Path {
     guard fit.connection != nil, let layout = fit.layout else {
-      return fit.connection == nil ? Path(ellipseIn:.init(x:fit.frame.x,y:fit.frame.y,width:fit.frame.width,height:fit.frame.height)) : Path()
+      return fit.connection == nil ? outline(fit.shape,in:.init(x:fit.frame.x,y:fit.frame.y,width:fit.frame.width,height:fit.frame.height)) : Path()
     }
     var path = path(layout)
     for head in layout.heads {
@@ -73,6 +73,24 @@ struct NotebookGraphicView: View {
       if head.closed { path.closeSubpath() }
     }
     return path.offsetBy(dx:layout.frame.x,dy:layout.frame.y)
+  }
+  private static func outline(_ shape: NotebookGraphic.Shape, in rect: CGRect) -> Path {
+    switch shape {
+    case .ellipse: return Path(ellipseIn:rect)
+    case .rectangle: return Path(rect)
+    case .plus:
+      var path = Path()
+      path.move(to:.init(x:rect.minX,y:rect.midY)); path.addLine(to:.init(x:rect.maxX,y:rect.midY))
+      path.move(to:.init(x:rect.midX,y:rect.minY)); path.addLine(to:.init(x:rect.midX,y:rect.maxY))
+      return path
+    case .connector: return Path()
+    }
+  }
+}
+
+extension NotebookGraphic.Shape {
+  var displayName: String {
+    switch self { case .ellipse: "Эллипс"; case .rectangle: "Прямоугольник"; case .plus: "Плюс"; case .connector: "Связь" }
   }
 }
 

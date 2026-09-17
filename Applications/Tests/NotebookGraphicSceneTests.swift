@@ -13,6 +13,13 @@ import XCTest
     try await drawAndClose(onBoard: true)
   }
 
+  func testPageMultiStrokePlusSurvivesPublicationBetweenContactsAndColdReopen() async throws {
+    try await drawAndClose(onBoard:false,compound:true)
+  }
+  func testBoardMultiStrokePlusSurvivesPublicationBetweenContactsAndColdReopen() async throws {
+    try await drawAndClose(onBoard:true,compound:true)
+  }
+
   func testPageHeldLineBindsNodesAndFollowsAnUnwrittenMove() async throws {
     try await drawConnection(onBoard:false)
   }
@@ -159,7 +166,7 @@ import XCTest
     XCTAssertEqual(try NotebookStore(root:root).readGraphicResolution(target:target,elementID:id).layout,finalLayout)
   }
 
-  private func drawAndClose(onBoard: Bool) async throws {
+  private func drawAndClose(onBoard: Bool, compound: Bool = false) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-scene-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
@@ -187,23 +194,30 @@ import XCTest
       paper = try XCTUnwrap(descendants(try XCTUnwrap(window.rootViewController?.view))
         .compactMap { $0 as? PaperInputView }.first { $0.isUserInteractionEnabled })
     }
-    let touch = SceneGraphicTouch(window: window), event = SceneGraphicEvent()
     let midpoint = CGPoint(x: window.bounds.midX, y: window.bounds.midY)
     var measured: [CGPoint] = []
-    for index in 0...120 {
-      let angle = Double(index) / 120 * 2 * Double.pi
-      touch.point = .init(x: midpoint.x + 90 * cos(angle), y: midpoint.y + 60 * sin(angle))
-      touch.sampleTime += 0.01
-      measured.append(paper?.convert(touch.point, from: window) ?? touch.point)
-      if index == 0 {
-        // Empty allTouches mirrors iPadOS' initial Pencil hit-test boundary.
-        touch.sourceView = window.hitTest(touch.point, with: event)
-        receiver.touchesBegan([touch], with: event)
-        XCTAssertTrue(model.inputGate.hasActivePencil)
-      } else { receiver.touchesMoved([touch], with: event) }
+    for strokeIndex in 0..<(compound ? 2 : 1) {
+      let touch = SceneGraphicTouch(window: window), event = SceneGraphicEvent()
+      for index in 0...120 {
+        let t = Double(index)/120, angle = t * 2 * Double.pi
+        if compound {
+          touch.point = strokeIndex == 0 ? .init(x:midpoint.x-90+180*t,y:midpoint.y)
+            : .init(x:midpoint.x,y:midpoint.y-60+120*t)
+        } else { touch.point = .init(x:midpoint.x+90*cos(angle),y:midpoint.y+60*sin(angle)) }
+        touch.sampleTime += 0.01
+        measured.append(paper?.convert(touch.point, from: window) ?? touch.point)
+        if index == 0 {
+          touch.sourceView = window.hitTest(touch.point, with: event)
+          receiver.touchesBegan([touch], with: event)
+          XCTAssertTrue(model.inputGate.hasActivePencil)
+        } else { receiver.touchesMoved([touch], with: event) }
+      }
+      if !compound || strokeIndex == 1 { try await Task.sleep(for:.milliseconds(650)) }
+      receiver.touchesEnded([touch],with:event)
+      // The canonical publication of the first stroke must not erase the
+      // short-lived recognition sequence before the second contact arrives.
+      if compound && strokeIndex == 0 { try await Task.sleep(for:.milliseconds(250)) }
     }
-    try await Task.sleep(for: .milliseconds(650))
-    receiver.touchesEnded([touch], with: event)
     // No yield to a sheet callback, no extra fit call and no polling for a
     // graphic task before the application's real persistence boundary.
     let closed = await model.shutdown(); XCTAssertTrue(closed)
@@ -216,17 +230,18 @@ import XCTest
       let origin = presence.camera.worldToScreen((element.worldOrigin ?? .zero).offsetBy(x: element.frame.x, y: element.frame.y), viewport: presence.viewport)
       actual = .init(x: origin.x, y: origin.y, width: element.frame.width * presence.camera.scale, height: element.frame.height * presence.camera.scale)
       let journal = try reopened.loadSpatialInk()
-      let action = try XCTUnwrap(journal.actions.first { graphic.sourceInkIDs.contains($0.id) })
-      XCTAssertTrue(action.isActive); measuredSourceCount = action.spans.flatMap(\.samples).count
+      let actions = journal.actions.filter { graphic.sourceInkIDs.contains($0.id) }
+      XCTAssertTrue(actions.allSatisfy(\.isActive)); measuredSourceCount = actions.flatMap(\.spans).flatMap(\.samples).count
     } else {
       let page = try reopened.loadPage(pageID)
       let element = try XCTUnwrap(page.elements.first { $0.graphic != nil })
       graphic = try XCTUnwrap(element.graphic)
       actual = .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height)
-      let action = try XCTUnwrap(PageInkDrawing.decode(page.drawingData).actions.first { graphic.sourceInkIDs.contains($0.id) })
-      XCTAssertTrue(action.isActive); measuredSourceCount = action.samples.count
+      let actions = try PageInkDrawing.decode(page.drawingData).actions.filter { graphic.sourceInkIDs.contains($0.id) }
+      XCTAssertTrue(actions.allSatisfy(\.isActive)); measuredSourceCount = actions.flatMap(\.samples).count
     }
-    XCTAssertTrue(graphic.showsGeometry); XCTAssertEqual(graphic.sourceInkIDs.count, 1)
+    XCTAssertTrue(graphic.showsGeometry); XCTAssertEqual(graphic.sourceInkIDs.count, compound ? 2 : 1)
+    XCTAssertEqual(graphic.shape,compound ? .plus : .ellipse)
     XCTAssertEqual(measuredSourceCount, measured.count)
     XCTAssertEqual(actual.minX, try XCTUnwrap(measured.map(\.x).min()), accuracy: 0.1)
     XCTAssertEqual(actual.minY, try XCTUnwrap(measured.map(\.y).min()), accuracy: 0.1)

@@ -77,7 +77,7 @@ struct NotebookGraphicBatchView: View {
   @ViewBuilder private func accessibleObject(_ object: Object) -> some View {
     let graphic = object.element.graphic!
     let content = Color.clear.accessibilityElement(children: .ignore)
-      .accessibilityLabel(graphic.label.isEmpty ? (graphic.shape == .ellipse ? "Эллипс" : "Связь") : graphic.label)
+      .accessibilityLabel(graphic.label.isEmpty ? graphic.shape.displayName : graphic.label)
       .accessibilityAddTraits(.isImage)
     if commitsState {
       EditableElementContainer(reference: reference(object.id), coordinateScale: scale) { content }
