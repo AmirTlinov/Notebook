@@ -144,6 +144,50 @@ func quickShapeRectanglesAndPluses() throws {
   }
 }
 
+@Test("Реальные штрихи iPad: неровные стороны, замыкание с хвостом и несимметричный плюс", arguments: [0.4,1.0,3.0])
+func quickShapeMeasuredRectanglesAndPluses(scale: Double) throws {
+  let url = try #require(Bundle.module.url(forResource:"QuickShapeMeasured",withExtension:"json"))
+  let examples = try JSONDecoder().decode([String: [[[[Double]]]]].self, from:Data(contentsOf:url))
+  for key in ["rectangles","pluses","unsupportedPolygons"] {
+    for (index, strokes) in try #require(examples[key]).enumerated() {
+      for mirror in [1.0,-1.0] {
+        let paths = strokes.map { $0.map { SpatialPoint(x:300+mirror*$0[0]/scale,y:400+$0[1]/scale) } }
+        let fit = NotebookQuickShape.recognize(strokes:paths,screenScale:scale)
+        if key == "unsupportedPolygons" {
+          #expect(fit == nil, "\(key)[\(index)] must not become an oval or rectangle")
+        } else {
+          let actual = try #require(fit,"\(key)[\(index)] scale=\(scale) mirror=\(mirror)")
+          #expect(actual.shape == (key == "rectangles" ? .rectangle : .plus),"\(key)[\(index)]")
+          #expect(actual.sampleCount == paths.last?.count)
+          if key == "rectangles" { #expect(NotebookQuickShape.ellipse(paths[0],screenScale:scale) == nil) }
+        }
+      }
+    }
+  }
+}
+
+@Test("Подгонка сторон не превращает овалы, дуги, трапеции и буквы в прямоугольники")
+func quickShapeSideFitNegatives() {
+  for aspect in [0.35,0.7,1.0,2.0,4.0] {
+    for noise in [0.0,0.025,0.055,0.085] {
+      let points = (0...180).map { i -> SpatialPoint in
+        let angle = Double(i)/180 * 2 * Double.pi, radius = 1+noise*sin(3*angle)
+        return .init(x:200+60*aspect*cos(angle)*radius,y:200+60*sin(angle)*radius)
+      }
+      #expect(NotebookQuickShape.recognize(points,screenScale:1)?.shape != .rectangle)
+    }
+  }
+  let examples: [[SpatialPoint]] = [
+    [.init(x:0,y:0),.init(x:160,y:0),.init(x:90,y:100),.init(x:70,y:100),.init(x:0,y:0)],
+    [.init(x:0,y:100),.init(x:0,y:0),.init(x:100,y:0),.init(x:100,y:100)], // П
+    [.init(x:0,y:0),.init(x:0,y:100),.init(x:100,y:0),.init(x:100,y:100)], // И
+    [.init(x:0,y:100),.init(x:0,y:0),.init(x:100,y:0),.init(x:100,y:45),.init(x:0,y:45)] // P
+  ]
+  for vertices in examples {
+    #expect(NotebookQuickShape.recognize(sketch(vertices),screenScale:1) == nil)
+  }
+}
+
 @Test("Неполные фигуры, буквы и соседние штрихи не поглощаются общим распознавателем")
 func quickShapeCompoundNegatives() {
   let examples: [[[SpatialPoint]]] = [

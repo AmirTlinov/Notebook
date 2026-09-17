@@ -103,40 +103,107 @@ public enum NotebookQuickShape {
     let frame = bounds(points), w = frame.width, h = frame.height
     guard min(w,h)*scale >= 24, max(w,h)/min(w,h) <= 8 else { return nil }
     let normalized = points.map { SpatialPoint(x:($0.x-frame.x)/w,y:($0.y-frame.y)/h) }
-    let corners = [SpatialPoint(x:0,y:0), .init(x:1,y:0), .init(x:1,y:1), .init(x:0,y:1)]
-    guard corners.allSatisfy({ corner in normalized.contains { distance($0,corner) < 0.19 } }) else { return nil }
+    // Fit the four measured sides, not the extrema of an axis-aligned box.
+    // A bowed side or a small closing overshoot must not move the template
+    // away from the other three sides (or turn a rectangle into an ellipse).
+    guard let sides = fittedSides(normalized, offsets: [0,1,1,0], aspect: w/h) else { return nil }
+    let corners = [intersection(sides[0],sides[3]), intersection(sides[0],sides[1]),
+      intersection(sides[2],sides[1]), intersection(sides[2],sides[3])]
+    guard corners[0].x < corners[1].x, corners[3].x < corners[2].x,
+      corners[0].y < corners[3].y, corners[1].y < corners[2].y else { return nil }
+    // A smooth oval also admits four approximate lines. Require actual corner
+    // evidence: three tight corners and a fourth that may be rounded/open.
+    let cornerErrors = corners.map { corner in normalized.map { distance($0,corner) }.min()! }
+    guard cornerErrors.allSatisfy({ $0 < 0.16 }), cornerErrors.filter({ $0 < 0.09 }).count >= 3 else { return nil }
     var coverage = Array(repeating: Set<Int>(), count: 4), error = 0.0
     for p in normalized {
-      let distances = [abs(p.y),abs(1-p.x),abs(1-p.y),abs(p.x)]
+      let distances = corners.indices.map { deviation(p,corners[$0],corners[($0+1)%4]) }
       let side = distances.indices.min { distances[$0] < distances[$1] }!
       let d = distances[side]; error += d*d
-      guard d < 0.14 else { return nil }
-      let position = side % 2 == 0 ? p.x : p.y
+      guard d < 0.20 else { return nil }
+      let a = corners[side], b = corners[(side+1)%4], dx = b.x-a.x, dy = b.y-a.y
+      let position = ((p.x-a.x)*dx+(p.y-a.y)*dy)/(dx*dx+dy*dy)
       coverage[side].insert(min(7,max(0,Int(position*8))))
     }
-    guard sqrt(error/Double(points.count)) < 0.065, coverage.allSatisfy({ $0.count >= 6 }) else { return nil }
-    if max(w,h)/min(w,h) < 1.18 {
-      let side = (w+h)/2
-      return .init(x:frame.x+(w-side)/2,y:frame.y+(h-side)/2,width:side,height:side)
+    guard sqrt(error/Double(points.count)) < 0.06, coverage.allSatisfy({ $0.count >= 6 }) else { return nil }
+    let left = (corners[0].x+corners[3].x)/2, right = (corners[1].x+corners[2].x)/2
+    let top = (corners[0].y+corners[1].y)/2, bottom = (corners[2].y+corners[3].y)/2
+    var width = (right-left)*w, height = (bottom-top)*h
+    guard min(width,height)*scale >= 24, max(width,height)/min(width,height) <= 8 else { return nil }
+    if max(width,height)/min(width,height) < 1.18 {
+      let side = (width+height)/2; width = side; height = side
     }
-    return frame
+    return .init(x:frame.x+(left+right)*w/2-width/2,y:frame.y+(top+bottom)*h/2-height/2,width:width,height:height)
   }
 
   private static func plus(_ points: [SpatialPoint], scale: Double) -> PageRect? {
     let frame = bounds(points), w = frame.width, h = frame.height
-    guard min(w,h)*scale >= 24, max(w,h)/min(w,h) < 2.3 else { return nil }
-    let center = SpatialPoint(x:frame.x+w/2,y:frame.y+h/2)
+    guard min(w,h)*scale >= 16, max(w,h)*scale >= 24, max(w,h)/min(w,h) < 2.3 else { return nil }
+    let normalized = points.map { SpatialPoint(x:($0.x-frame.x)/w,y:($0.y-frame.y)/h) }
+    guard let sides = fittedSides(normalized, offsets: [0.5,0.5], aspect: w/h) else { return nil }
+    let center = intersection(sides[0],sides[1])
+    // The crossing need not be the bounding-box center, but all four arms
+    // must exist. In particular, a T or handwriting tail is not a plus.
+    guard (0.2...0.8).contains(center.x), (0.2...0.8).contains(center.y) else { return nil }
     var coverage = Array(repeating: Set<Int>(), count: 4), error = 0.0
-    for point in points {
-      let x = (point.x-center.x)/w, y = (point.y-center.y)/h
-      let horizontal = abs(y) < abs(x), d = min(abs(x),abs(y))
-      guard d < 0.12 else { return nil }; error += d*d
-      let position = horizontal ? x : y
+    for point in normalized {
+      let horizontalError = sides[0].distance(point,horizontal:true)
+      let verticalError = sides[1].distance(point,horizontal:false)
+      let horizontal = horizontalError < verticalError, d = min(horizontalError,verticalError)
+      guard d < 0.18 else { return nil }; error += d*d
+      let origin = horizontal ? center.x : center.y
+      let position = (horizontal ? point.x : point.y)-origin
+      let extent = position < 0 ? origin : 1-origin
       let arm = (horizontal ? 0 : 2)+(position < 0 ? 0 : 1)
-      coverage[arm].insert(min(3,max(0,Int(abs(position)*8))))
+      coverage[arm].insert(min(3,max(0,Int(abs(position)/extent*4))))
     }
     guard sqrt(error/Double(points.count)) < 0.045, coverage.allSatisfy({ $0.count >= 3 }) else { return nil }
     return frame
+  }
+
+  private struct Side {
+    var offset: Double
+    var slope = 0.0
+    func distance(_ point: SpatialPoint, horizontal: Bool) -> Double {
+      let u = horizontal ? point.x : point.y, v = horizontal ? point.y : point.x
+      return abs(v-offset-slope*u)/hypot(1,slope)
+    }
+  }
+
+  /// Four fixed refinement passes over at most 384 length-resampled points.
+  /// Even sides are horizontal, odd sides vertical; slight tilt/skew is fitted
+  /// but a diagonal diamond is not silently straightened into a rectangle.
+  private static func fittedSides(_ points: [SpatialPoint], offsets: [Double], aspect: Double) -> [Side]? {
+    var sides = offsets.map { Side(offset:$0) }
+    for _ in 0..<4 {
+      var groups = Array(repeating:[SpatialPoint](),count:sides.count)
+      for point in points {
+        let side = sides.indices.min { sides[$0].distance(point,horizontal:$0%2 == 0)
+          < sides[$1].distance(point,horizontal:$1%2 == 0) }!
+        groups[side].append(point)
+      }
+      for index in sides.indices {
+        let group = groups[index], horizontal = index%2 == 0
+        guard group.count >= 4 else { return nil }
+        let u = group.reduce(0) { $0+(horizontal ? $1.x : $1.y) }/Double(group.count)
+        let v = group.reduce(0) { $0+(horizontal ? $1.y : $1.x) }/Double(group.count)
+        var variance = 0.0, covariance = 0.0
+        for point in group {
+          let du = (horizontal ? point.x : point.y)-u, dv = (horizontal ? point.y : point.x)-v
+          variance += du*du; covariance += du*dv
+        }
+        guard variance > 0.000001 else { return nil }
+        let slope = covariance/variance
+        sides[index] = .init(offset:v-slope*u,slope:slope)
+      }
+    }
+    guard sides.indices.allSatisfy({ abs(sides[$0].slope*($0%2 == 0 ? 1/aspect : aspect)) < 0.45 }) else { return nil }
+    return sides
+  }
+
+  private static func intersection(_ horizontal: Side, _ vertical: Side) -> SpatialPoint {
+    let x = (vertical.offset+vertical.slope*horizontal.offset)/(1-horizontal.slope*vertical.slope)
+    return .init(x:x,y:horizontal.offset+horizontal.slope*x)
   }
 
   public static func ellipse(_ measured: [SpatialPoint], screenScale: Double) -> NotebookQuickShapeFit? {

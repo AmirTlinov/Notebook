@@ -145,6 +145,53 @@ import XCTest
     }
   }
 
+  static func measuredShapes(_ name: String) throws -> [[[CGPoint]]] {
+    let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource:"QuickShapeMeasured",withExtension:"json"))
+    let groups = try JSONDecoder().decode([String: [[[[Double]]]]].self,from:Data(contentsOf:url))
+    return try XCTUnwrap(groups[name]).map { $0.map { $0.map { CGPoint(x:100+$0[0],y:100+$0[1]) } } }
+  }
+
+  func testRealMeasuredRectanglesAndOffCenterPlusesThroughPencilHoldAndLift() async throws {
+    var fitTimes: [Double] = []
+    for name in ["rectangles","pluses"] {
+      for strokes in try Self.measuredShapes(name) {
+        let paths = strokes.map { $0.map { SpatialPoint(x:$0.x,y:$0.y) } }
+        for _ in 0..<5 {
+          let start = ContinuousClock.now
+          let fit = NotebookQuickShape.recognize(strokes:paths,screenScale:1)
+          let elapsed = start.duration(to:.now).components
+          fitTimes.append(Double(elapsed.seconds)*1000+Double(elapsed.attoseconds)/1e15)
+          XCTAssertEqual(fit?.shape,name == "rectangles" ? .rectangle : .plus)
+        }
+        let paper = PaperInputView(frame:.init(x:0,y:0,width:500,height:500))
+        paper.configure(penStyle:.standard,eraserStyle:.standard,drawingTool:.pen)
+        var raw: [PageInkAction] = [], accepted: NotebookQuickShapeFit?
+        paper.onDrawingMutation = { raw.append($0); accepted = paper.completedQuickShape }
+        for (strokeIndex, points) in strokes.enumerated() {
+          let touch = GraphicPencilTouch()
+          for (index, point) in points.enumerated() {
+            touch.point = point; touch.sampleTime += 1.0/240
+            if index == 0 { paper.touchesBegan([touch],with:nil) }
+            else { paper.touchesMoved([touch],with:nil) }
+          }
+          if strokeIndex == strokes.count-1 { try await Task.sleep(for:.milliseconds(650)) }
+          paper.touchesEnded([touch],with:nil)
+          paper.finishCurrentAction {}
+        }
+        let fit = try XCTUnwrap(accepted)
+        XCTAssertEqual(fit.shape,name == "rectangles" ? .rectangle : .plus)
+        XCTAssertEqual(fit.precedingStrokeIDs,raw.dropLast().map(\.id))
+        XCTAssertEqual(raw.map { $0.samples.count },strokes.map(\.count),"Keep all original measurements")
+        XCTAssertEqual(fit.sampleCount,strokes.last?.count)
+      }
+    }
+    fitTimes.sort()
+    let timing = "QUICKSHAPE_MEASURED_FIT count=\(fitTimes.count) medianMS=\(fitTimes[fitTimes.count/2]) p95MS=\(fitTimes[Int(Double(fitTimes.count)*0.95)]) maxMS=\(fitTimes.last!)"
+    print(timing)
+    let evidence = XCTAttachment(string:timing); evidence.name = "measured-shape-fit-time"
+    evidence.lifetime = .keepAlways; add(evidence)
+  }
+
   func testPageChangeCancellationAndToolChangeDoNotBorrowPreviousStrokes() async throws {
     for reset in 0...3 {
       let paper = PaperInputView(frame:.init(x:0,y:0,width:500,height:500))

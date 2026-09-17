@@ -96,6 +96,13 @@ import XCTest
     try await drawAndClose(onBoard:true,compound:true)
   }
 
+  func testPageBowedMeasuredRectangleRemainsTheSameObjectWithRestingHandAndColdReopen() async throws {
+    try await drawAndClose(onBoard:false,restingHand:true,delaysPublication:true,measuredRectangle:true)
+  }
+  func testBoardBowedMeasuredRectangleUsesTheInstalledCameraAndSurvivesReopen() async throws {
+    try await drawAndClose(onBoard:true,delaysPublication:true,measuredRectangle:true)
+  }
+
   func testPageHeldLineBindsNodesAndFollowsAnUnwrittenMove() async throws {
     try await drawConnection(onBoard:false)
   }
@@ -281,7 +288,8 @@ import XCTest
   }
 
   private func drawAndClose(onBoard: Bool, compound: Bool = false, measuresPublication: Bool = false,
-    restingHand: Bool = false, delaysPublication: Bool = false, adjustsHeldShape: Bool = false) async throws {
+    restingHand: Bool = false, delaysPublication: Bool = false, adjustsHeldShape: Bool = false,
+    measuredRectangle: Bool = false) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-scene-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
@@ -338,12 +346,15 @@ import XCTest
       evidence.lifetime = .keepAlways; add(evidence)
     }
     var measured: [CGPoint] = [], enlargement = CGSize.zero
+    let rectanglePoints = measuredRectangle ? try NotebookGraphicInputTests.measuredShapes("rectangles")[8][0] : []
     for strokeIndex in 0..<(compound ? 2 : 1) {
       let touch = SceneGraphicTouch(window: window), event = SceneGraphicEvent()
-      for index in 0...120 {
+      for index in 0..<(measuredRectangle ? rectanglePoints.count : 121) {
         // Finish near the left midpoint, unambiguously in its lower half.
         let t = Double(index)/120, angle = t * 2 * Double.pi + (adjustsHeldShape ? .pi - 0.1 : 0)
-        if compound {
+        if measuredRectangle {
+          touch.point = .init(x:midpoint.x+rectanglePoints[index].x-100,y:midpoint.y+rectanglePoints[index].y-100)
+        } else if compound {
           touch.point = strokeIndex == 0 ? .init(x:midpoint.x-90+180*t,y:midpoint.y)
             : .init(x:midpoint.x,y:midpoint.y-60+120*t)
         } else { touch.point = .init(x:midpoint.x+90*cos(angle),y:midpoint.y+60*sin(angle)) }
@@ -479,8 +490,18 @@ import XCTest
       XCTAssertTrue(actions.allSatisfy(\.isActive)); measuredSourceCount = actions.flatMap(\.samples).count
     }
     XCTAssertTrue(graphic.showsGeometry); XCTAssertEqual(graphic.sourceInkIDs.count, compound ? 2 : 1)
-    XCTAssertEqual(graphic.shape,compound ? .plus : .ellipse)
+    XCTAssertEqual(graphic.shape,measuredRectangle ? .rectangle : (compound ? .plus : .ellipse))
     XCTAssertEqual(measuredSourceCount, measured.count)
+    if measuredRectangle {
+      // Fitted sides, not extremal closing tails, own the final frame.
+      let scale = paper.map { hypot($0.convert(.init(x:1,y:0),to:window).x-$0.convert(.zero,to:window).x,
+        $0.convert(.init(x:1,y:0),to:window).y-$0.convert(.zero,to:window).y) } ?? 1
+      let fit = try XCTUnwrap(NotebookQuickShape.recognize(measured.map { .init(x:$0.x,y:$0.y) },screenScale:scale))
+      XCTAssertEqual(actual.minX,fit.frame.x,accuracy:0.1); XCTAssertEqual(actual.minY,fit.frame.y,accuracy:0.1)
+      XCTAssertEqual(actual.width,fit.frame.width,accuracy:0.1); XCTAssertEqual(actual.height,fit.frame.height,accuracy:0.1)
+      XCTAssertEqual(model.presence?.camera,presence.camera)
+      return
+    }
     XCTAssertEqual(actual.minX, try XCTUnwrap(measured.map(\.x).min()) - enlargement.width, accuracy: 0.1)
     XCTAssertEqual(actual.minY, try XCTUnwrap(measured.map(\.y).min()), accuracy: 0.1)
     XCTAssertEqual(actual.width, try XCTUnwrap(measured.map(\.x).max()) - actual.minX, accuracy: 0.1)

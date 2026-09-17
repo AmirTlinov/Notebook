@@ -37,7 +37,7 @@ let package = Package(
     .executableTarget(name: "NotebookIPCTestHost", dependencies: ["NotebookCore"], path: "Tests/NotebookIPCTestHost"),
     .executableTarget(name: "NotebookArchiveTransfer", dependencies: ["NotebookCore", "CSQLite"]),
     .executableTarget(name: "NotebookAcceptance", dependencies: ["NotebookCore"]),
-    .testTarget(name: "NotebookCoreTests", dependencies: ["NotebookCore"]),
+    .testTarget(name: "NotebookCoreTests", dependencies: ["NotebookCore"], resources: [.copy("Resources/QuickShapeMeasured.json")]),
     .testTarget(name: "NotebookScriptHostTests", dependencies: ["NotebookScriptHost", "NotebookCore"]),
     .testTarget(name: "NotebookScriptWorkerTests", dependencies: ["NotebookScriptWorker", "NotebookScriptProtocol"]),
     .testTarget(name: "NotebookArchiveTransferTests", dependencies: ["NotebookArchiveTransfer"], resources: [.copy("Resources")]),
