@@ -28,13 +28,15 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
   public var connection: NotebookGraphicConnection?
   /// Normalized convex corners preserve the drawn polygon orientation on resize.
   public var vertices: [SpatialPoint]?
+  /// Circular corner radius in physical owner points. Nil leaves sharp corners.
+  public var cornerRadius: Double?
 
   public init(shape: Shape = .ellipse, style: Style = .init(), label: String = "",
     representation: Representation = .geometry, visible: Bool = true, sourceInkIDs: [UUID] = [],
-    connection: NotebookGraphicConnection? = nil, vertices: [SpatialPoint]? = nil) {
+    connection: NotebookGraphicConnection? = nil, vertices: [SpatialPoint]? = nil, cornerRadius: Double? = nil) {
     self.shape = shape; self.style = style; self.label = label
     self.representation = representation; self.visible = visible; self.sourceInkIDs = sourceInkIDs
-    self.connection = connection; self.vertices = vertices
+    self.connection = connection; self.vertices = vertices; self.cornerRadius = cornerRadius
   }
 
   /// A native accepted edit and a delivered action interpret the same field
@@ -51,17 +53,17 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
           throw CollaborationError("invalid_operation", "Правка связи называет её концы, изгиб, наконечники или положение подписи.")
         }
         value = value.setting(part, .object(previous.object.merging(supplied.object) { _, latest in latest }))
-      } else { value = value.setting(part, part == "vertices" && supplied == .null ? nil : supplied) }
+      } else { value = value.setting(part, ["vertices", "cornerRadius"].contains(part) && supplied == .null ? nil : supplied) }
     }
     let result = try value.decode(Self.self)
     guard result.isValid else { throw CollaborationError("invalid_operation", "Недопустимая геометрия.") }
     return result
   }
 
-  static let causalFields = ["shape", "style", "label", "representation", "visible", "sourceInkIDs", "vertices"]
+  static let causalFields = ["shape", "style", "label", "representation", "visible", "sourceInkIDs", "vertices", "cornerRadius"]
   static let allCausalPaths = causalFields.map { [$0] } + NotebookGraphicConnection.causalFields.map { ["connection", $0] }
   var causalPaths: [[String]] {
-    Self.causalFields.filter { $0 != "vertices" || vertices != nil }.map { [$0] } + (connection == nil ? [] : NotebookGraphicConnection.causalFields.map { ["connection", $0] })
+    Self.causalFields.filter { ($0 != "vertices" || vertices != nil) && ($0 != "cornerRadius" || cornerRadius != nil) }.map { [$0] } + (connection == nil ? [] : NotebookGraphicConnection.causalFields.filter { $0 != "bendPosition" || connection?.bendPosition != nil }.map { ["connection", $0] })
   }
   public var showsGeometry: Bool { visible && representation == .geometry }
   var isValid: Bool {
@@ -70,16 +72,13 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
       && (representation != .ink || !sourceInkIDs.isEmpty)
       && (shape == .connector ? connection?.isValid == true : connection == nil)
       && validVertices
+      && (cornerRadius == nil || (NotebookGraphicGeometry.polygon(self) != nil && cornerRadius!.isFinite && (0...1_000_000).contains(cornerRadius!)))
   }
   private var validVertices: Bool {
     guard let vertices else { return true }
-    guard (shape == .triangle && vertices.count == 3) || (shape == .diamond && vertices.count == 4),
+    guard (shape == .triangle && vertices.count == 3) || ([.diamond, .rectangle].contains(shape) && vertices.count == 4),
       vertices.allSatisfy({ $0.x.isFinite && $0.y.isFinite && (0...1).contains($0.x) && (0...1).contains($0.y) }) else { return false }
-    let turns = vertices.indices.map { i in
-      let a = vertices[i], b = vertices[(i+1)%vertices.count], c = vertices[(i+2)%vertices.count]
-      return (b.x-a.x)*(c.y-b.y)-(b.y-a.y)*(c.x-b.x)
-    }
-    return turns.allSatisfy({ $0 > 0.0001 }) || turns.allSatisfy({ $0 < -0.0001 })
+    return NotebookGraphicGeometry.isConvex(vertices)
   }
 
 }
@@ -93,7 +92,7 @@ public enum NotebookGraphicGeometry {
     x: Double, y: Double) -> Bool {
     guard graphic.showsGeometry, width > 0, height > 0 else { return false }
     if graphic.shape == .ellipse { return hypot((x-width/2)/(width/2),(y-height/2)/(height/2)) <= 1 }
-    guard let vertices = polygon(graphic) else { return false }
+    guard let vertices = outlinePolygon(graphic, width: width, height: height) else { return false }
     var inside = false
     for (a,b) in zip(vertices,vertices.dropFirst()+vertices.prefix(1)) where (a.y*height > y) != (b.y*height > y) {
       if x < (b.x-a.x)*width*(y-a.y*height)/((b.y-a.y)*height)+a.x*width { inside.toggle() }
@@ -104,7 +103,7 @@ public enum NotebookGraphicGeometry {
     switch graphic.shape {
     case .triangle: return graphic.vertices ?? [.init(x:0.5,y:0),.init(x:1,y:1),.init(x:0,y:1)]
     case .diamond: return graphic.vertices ?? [.init(x:0.5,y:0),.init(x:1,y:0.5),.init(x:0.5,y:1),.init(x:0,y:0.5)]
-    case .rectangle: return [.init(x:0,y:0),.init(x:1,y:0),.init(x:1,y:1),.init(x:0,y:1)]
+    case .rectangle: return graphic.vertices ?? [.init(x:0,y:0),.init(x:1,y:0),.init(x:1,y:1),.init(x:0,y:1)]
     case .ellipse, .plus, .connector: return nil
     }
   }
@@ -134,7 +133,7 @@ public enum NotebookGraphicGeometry {
     case .ellipse:
       return abs(hypot((x-width/2)/(width/2),(y-height/2)/(height/2))-1)*min(width,height)/2
     case .rectangle, .triangle, .diamond:
-      let vertices = polygon(graphic)!
+      let vertices = outlinePolygon(graphic, width: width, height: height)!
       return zip(vertices,vertices.dropFirst()+vertices.prefix(1)).map {
         segment($0.x*width,$0.y*height,$1.x*width,$1.y*height)
       }.min()!

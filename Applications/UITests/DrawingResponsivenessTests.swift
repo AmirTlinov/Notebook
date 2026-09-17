@@ -72,6 +72,78 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.terminate()
   }
 
+  func testVertexRoundingAndFreeBendModesOnPage() { geometryEditing(onPage:true) }
+  func testVertexRoundingAndFreeBendModesOnBoard() { geometryEditing(onPage:false) }
+
+  private func geometryEditing(onPage: Bool) {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture",
+      "--notebook-native-connector","--notebook-native-geometry-edit"] + (onPage ? ["--notebook-native-graphic-page"] : [])
+    launchPortraitFixture(app)
+    let triangle = app.images["Треугольник"], box = app.images["Прямоугольник"], line = app.images["Связь"]
+    XCTAssertTrue(triangle.waitForExistence(timeout:10)); XCTAssertTrue(box.waitForExistence(timeout:10)); XCTAssertTrue(line.waitForExistence(timeout:10))
+    let neighbour = app.webViews.containing(.button,identifier:"Graphic scene counter").firstMatch, neighbourFrame = neighbour.frame
+    func handle(_ id: String) -> XCUIElement { app.descendants(matching:.any).matching(identifier:id).firstMatch }
+    func mode(_ title: String) {
+      app.buttons["element-actions-menu"].tap()
+      XCTAssertTrue(app.buttons[title].waitForExistence(timeout:3)); app.buttons[title].tap()
+    }
+    func drag(_ element: XCUIElement, _ delta: CGVector) {
+      let start = element.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+      start.press(forDuration:0.01,thenDragTo:start.withOffset(delta),withVelocity:.slow,thenHoldForDuration:0)
+    }
+    triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.6)).tap()
+    mode("Изменить вершины")
+    let vertex = handle("graphic-vertex-0"), other = handle("graphic-vertex-1")
+    XCTAssertTrue(vertex.waitForExistence(timeout:5)); XCTAssertFalse(handle("resize-agent-element-topLeading").exists)
+    let first = vertex.frame, second = other.frame
+    drag(vertex,.init(dx:42,dy:-28))
+    XCTAssertEqual(vertex.frame.midX-first.midX,42,accuracy:4); XCTAssertEqual(vertex.frame.midY-first.midY,-28,accuracy:4)
+    XCTAssertEqual(other.frame.midX,second.midX,accuracy:2); XCTAssertEqual(other.frame.midY,second.midY,accuracy:2)
+    let changedVertex = vertex.frame
+    mode("Скруглить углы")
+    let radius = handle("graphic-corner-radius-handle")
+    XCTAssertTrue(radius.waitForExistence(timeout:3)); XCTAssertFalse(vertex.exists)
+    let pointed = app.screenshot(), triangleFrame = triangle.frame, radiusBefore = radius.frame
+    drag(radius,.init(dx:0,dy:40))
+    XCTAssertGreaterThan(radius.frame.midY,radiusBefore.midY+20)
+    XCTAssertEqual(triangle.frame,triangleFrame)
+    let rounded = app.screenshot()
+    let proof = XCTAttachment(screenshot:rounded); proof.name = "rounded-vertex-\(onPage ? "page" : "board")"; proof.lifetime = .keepAlways; add(proof)
+    XCTAssertGreaterThan(changedPixelShare(from:pointed,to:rounded,normalizedRect:.init(x:triangleFrame.minX/app.frame.width,y:triangleFrame.minY/app.frame.height,
+      width:triangleFrame.width/app.frame.width,height:triangleFrame.height/app.frame.height)),0.001,"The actual contour changes, not just its handle")
+    mode("Размер и положение")
+    XCTAssertTrue(handle("resize-agent-element-bottomTrailing").waitForExistence(timeout:3))
+    box.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).tap(); mode("Изменить вершины")
+    XCTAssertTrue(vertex.waitForExistence(timeout:3))
+    let boxFirst = vertex.frame, boxOther = other.frame
+    drag(vertex,.init(dx:32,dy:22))
+    XCTAssertEqual(vertex.frame.midX-boxFirst.midX,32,accuracy:4); XCTAssertEqual(vertex.frame.midY-boxFirst.midY,22,accuracy:4)
+    XCTAssertEqual(other.frame.midX,boxOther.midX,accuracy:2); XCTAssertEqual(other.frame.midY,boxOther.midY,accuracy:2)
+    mode("Скруглить углы"); XCTAssertTrue(radius.waitForExistence(timeout:3)); drag(radius,.init(dx:24,dy:24))
+    line.tap()
+    let bend = handle("graphic-bend-handle"), start = handle("graphic-start-handle"), end = handle("graphic-end-handle")
+    XCTAssertTrue(bend.waitForExistence(timeout:3))
+    let bendBefore = bend.frame, startBefore = start.frame, endBefore = end.frame
+    drag(bend,.init(dx:35,dy:40))
+    XCTAssertEqual(bend.frame.midX-bendBefore.midX,35,accuracy:4); XCTAssertEqual(bend.frame.midY-bendBefore.midY,40,accuracy:4)
+    XCTAssertEqual(start.frame.midX,startBefore.midX,accuracy:2); XCTAssertEqual(start.frame.midY,startBefore.midY,accuracy:2)
+    XCTAssertEqual(end.frame.midX,endBefore.midX,accuracy:2); XCTAssertEqual(end.frame.midY,endBefore.midY,accuracy:2)
+    XCTAssertEqual(neighbour.frame,neighbourFrame)
+    let bendAfter = bend.frame, lineFrame = line.frame
+    let final = XCTAttachment(screenshot:app.screenshot()); final.name = "geometry-modes-\(onPage ? "page" : "board")"; final.lifetime = .keepAlways; add(final)
+    app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+    XCTAssertTrue(line.waitForExistence(timeout:10)); XCTAssertEqual(line.frame.midX,lineFrame.midX,accuracy:3); XCTAssertEqual(line.frame.midY,lineFrame.midY,accuracy:3)
+    // A curved line's empty bounding-box centre is not its painted contour.
+    app.coordinate(withNormalizedOffset:.zero).withOffset(.init(dx:bendAfter.midX,dy:bendAfter.midY)).tap()
+    XCTAssertTrue(bend.waitForExistence(timeout:3))
+    XCTAssertEqual(bend.frame.midX,bendAfter.midX,accuracy:3); XCTAssertEqual(bend.frame.midY,bendAfter.midY,accuracy:3)
+    triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.65)).tap(); mode("Изменить вершины")
+    XCTAssertTrue(vertex.waitForExistence(timeout:3)); XCTAssertEqual(vertex.frame.midX,changedVertex.midX,accuracy:3); XCTAssertEqual(vertex.frame.midY,changedVertex.midY,accuracy:3)
+    app.terminate()
+  }
+
   func testSelectionPaletteAndContextMenuStayAnchoredAndKeepThePaper() {
     continueAfterFailure = false
     let app = XCUIApplication()

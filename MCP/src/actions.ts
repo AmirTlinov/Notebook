@@ -33,9 +33,10 @@ const graphicEndpoint = z.object({point: graphicPoint, binding: graphicBinding.o
 const arrowhead = z.enum(["none", "arrow", "triangle", "square", "dot", "pipe", "diamond", "inverted", "bar"]);
 const graphicConnection = z.object({start:graphicEndpoint, end:graphicEndpoint,
   bend:z.number().finite().min(-1e6).max(1e6), startArrowhead:arrowhead, endArrowhead:arrowhead,
-  labelPosition:z.number().min(0).max(1)}).strict();
+  labelPosition:z.number().min(0).max(1), bendPosition:z.number().min(0).max(1).optional()}).strict();
 const graphic = z.object({ shape: z.enum(["ellipse", "rectangle", "triangle", "diamond", "plus", "connector"]), style: graphicStyle, label: z.string().max(100_000),
   representation: z.enum(["ink", "geometry"]), visible: z.boolean(), sourceInkIDs: z.array(z.uuid()).max(16), connection:graphicConnection.optional(),
+  cornerRadius:z.number().finite().min(0).max(1e6).nullable().optional(),
   vertices:z.array(z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1)}).strict()).min(3).max(4).nullable().optional() }).strict();
 const graphicEdit = graphic.omit({ sourceInkIDs: true, connection: true }).partial().extend({connection:graphicConnection.partial().strict().optional()}).strict();
 const editFields = z.object({ source: source.optional(), html: source.optional(), css: source.optional(), javaScript: source.optional(),

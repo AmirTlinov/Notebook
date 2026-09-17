@@ -78,6 +78,7 @@
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-connector") ? "Connector" : "")
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-dense") ? "Dense" : "")
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-polygons") ? "Polygons" : "")
+          + (ProcessInfo.processInfo.arguments.contains("--notebook-native-geometry-edit") ? "GeometryEdit" : "")
       } else if ProcessInfo.processInfo.arguments.contains(penPersistenceArgument) {
         fixtureName = "PenPersistence"
       } else if let materialCount {
@@ -546,9 +547,10 @@
         _ = after.moveItem(index.selectedItemID, in: index.rootBoardID, to: .init(x: 8_000, y: 8_000), actor: actor)
         _ = try store.saveBoardEdits(before: before, after: after)
       }
-      let polygons = ProcessInfo.processInfo.arguments.contains("--notebook-native-polygons")
+      let geometryEdit = ProcessInfo.processInfo.arguments.contains("--notebook-native-geometry-edit")
+      let polygons = geometryEdit || ProcessInfo.processInfo.arguments.contains("--notebook-native-polygons")
       var node: [String: JSONValue] = ["kind": .string("graphic"), "source": .string(""),
-        "frame": try .encode(PageRect(x: onPage ? 80 : 0, y: onPage ? 240 : 0, width: polygons ? 40 : 200, height: polygons ? 32 : 160)),
+        "frame": try .encode(PageRect(x: onPage ? 80 : 0, y: onPage ? 240 : 0, width: geometryEdit ? 180 : polygons ? 40 : 200, height: geometryEdit ? 140 : polygons ? 32 : 160)),
         "graphic": try .encode(polygons ? NotebookGraphic(shape:.triangle) : NotebookGraphic(label: "Узел +"))]
       var program: [String: JSONValue] = ["kind": .string("web"), "source": .string("Live neighbour"),
         "frame": try .encode(PageRect(x: onPage ? 420 : 0, y: onPage ? 250 : 0, width: 280, height: 220)),
@@ -567,7 +569,7 @@
       if ProcessInfo.processInfo.arguments.contains("--notebook-native-connector") {
         var second = node
         second["frame"] = try .encode(PageRect(x:onPage ? 100 : 20,y:onPage ? 570 : 330,width:160,height:140))
-        second["graphic"] = try .encode(polygons ? NotebookGraphic(shape:.diamond) : NotebookGraphic(label:"Узел −"))
+        second["graphic"] = try .encode(geometryEdit ? NotebookGraphic(shape:.rectangle) : polygons ? NotebookGraphic(shape:.diamond) : NotebookGraphic(label:"Узел −"))
         var link = node
         link["frame"] = try .encode(PageRect(x:onPage ? 180 : 100,y:onPage ? 400 : 160,width:1,height:170))
         link["graphic"] = try .encode(NotebookGraphic(shape:.connector,label:"1:2",connection:.init(
@@ -575,6 +577,14 @@
           end:.init(point:.init(x:0,y:170),binding:.init(elementID:"native-second")))))
         operations += [.init(kind:.insertElement,target:target,id:"native-second",values:second),
           .init(kind:.insertElement,target:target,id:"native-connection",values:link)]
+      }
+      if geometryEdit {
+        var line = node
+        line["frame"] = try .encode(PageRect(x:onPage ? 420 : 100,y:onPage ? 820 : 260,width:240,height:60))
+        line["graphic"] = try .encode(NotebookGraphic(shape:.connector,connection:.init(start:.init(point:.zero),
+          end:.init(point:.init(x:240,y:60)),endArrowhead:.none)))
+        if !onPage { line["worldOrigin"] = try .encode(WorldPoint.zero) }
+        operations.append(.init(kind:.insertElement,target:target,id:"free-line",values:line))
       }
       if ProcessInfo.processInfo.arguments.contains("--notebook-native-dense") {
         for index in 0..<12 {

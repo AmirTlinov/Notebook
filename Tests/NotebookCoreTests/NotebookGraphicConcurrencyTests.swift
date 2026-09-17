@@ -168,3 +168,28 @@ func graphicNativeArrangeUsesCompleteOwner(onBoard: Bool) throws {
     : try f.store.readPageElement(pageID:f.target.id,elementID:"a")?.graphic
   #expect(actual?.label == "Peer")
 }
+
+@Test("Vertex and radius edits survive delivery, reopening and causal undo", arguments:[false,true])
+func graphicCornerGeometryPersists(onBoard: Bool) throws {
+  let f = try GraphicFixture(onBoard:onBoard); defer { f.clean() }
+  let source = try f.stroke(); _ = try f.convert("box",sources:[source],shape:.rectangle)
+  let patch: JSONValue = .object(["vertices":try .encode([SpatialPoint(x:0.2,y:0.1),.init(x:1,y:0),.init(x:1,y:1),.init(x:0,y:1)]),"cornerRadius":.number(18)])
+  let action = try f.write(.updateElement,id:"box",values:["graphic":patch])
+  let snapshot = try f.store.collaborationContent()
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent("corners-peer-\(UUID())")
+  defer { try? FileManager.default.removeItem(at:root) }
+  let peer = NotebookStore(root:root)
+  _ = try peer.loadOrCreate(actor:UUID(),pageSize:.init(width:834,height:1194))
+  _ = try peer.loadOrCreateSpatialInk(actor:UUID())
+  _ = try peer.mergeCollaborationContent(snapshot,actions:try f.store.collaborationActions(afterID:nil))
+  func read(_ store: NotebookStore) throws -> NotebookGraphic? {
+    if onBoard { return try store.readSpatialElement(boardID:f.target.id,elementID:"box")?.graphic }
+    return try store.readPageElement(pageID:f.target.id,elementID:"box")?.graphic
+  }
+  #expect(try read(NotebookStore(root:root))?.cornerRadius == 18)
+  #expect(try read(peer)?.vertices?.first == .init(x:0.2,y:0.1))
+  _ = try peer.undoCollaborationAction(action.id,actor:f.actor)
+  #expect(try read(peer)?.vertices == nil)
+  #expect(try read(peer)?.cornerRadius == nil)
+  #expect(try read(peer)?.sourceInkIDs == [source])
+}

@@ -2529,6 +2529,12 @@ final class NotebookAppModel {
     selectionSession.isInteractive = false
   }
 
+  func setElementGeometryMode(_ mode: NotebookSelectionSession.GeometryMode, reference: EditableElementReference) {
+    guard selectionSession.element == reference else { return }
+    cancelElementManipulation()
+    selectionSession.geometryMode = mode
+  }
+
   /// A contact belongs to the current selection and exact source frame, not a
   /// reusable element ID. No late lift can commit a superseded contact.
   func beginElementManipulation(_ reference: EditableElementReference,
@@ -2544,7 +2550,7 @@ final class NotebookAppModel {
     cancelElementManipulation()
     let contact = NotebookElementManipulation(reference: reference, kind: kind,
       frame: geometry.frame, bounds: geometry.bounds, identity: geometry.identity, worldOrigin: geometry.worldOrigin,
-      connection: connection, layout: graphicLayout(reference))
+      connection: connection, layout: graphicLayout(reference), graphic: graphicElement(reference))
     selectionSession.manipulation = contact
     inputGate.beginContact(source: contact.id)
     inputGate.registerFingerCancellation(source: contact.id) { [weak self] in self?.cancelElementManipulation(contact.id) }
@@ -2564,16 +2570,30 @@ final class NotebookAppModel {
     updateElementManipulation(id, translation: translation)
     guard let contact = selectionSession.manipulation else { return false }
     cancelElementManipulation(id)
-    guard contact.frame != contact.original || contact.connection != contact.originalConnection,
+    guard contact.frame != contact.original || contact.connection != contact.originalConnection
+      || contact.vertices != contact.originalVertices || contact.cornerRadius != contact.originalCornerRadius,
       let current = elementGeometry(contact.reference), current.frame == contact.original,
       current.identity == contact.identity, current.worldOrigin == contact.worldOrigin,
       graphicElement(contact.reference)?.connection == contact.originalConnection else { return false }
+    if contact.vertices != contact.originalVertices || contact.cornerRadius != contact.originalCornerRadius {
+      guard graphicElement(contact.reference).flatMap(NotebookGraphicGeometry.polygon) == contact.originalVertices,
+        (graphicElement(contact.reference)?.cornerRadius ?? 0) == contact.originalCornerRadius else { return false }
+      var patch: [String:JSONValue] = [:]
+      if contact.vertices != contact.originalVertices { patch["vertices"] = try? .encode(contact.vertices) }
+      if contact.cornerRadius != contact.originalCornerRadius { patch["cornerRadius"] = .number(contact.cornerRadius) }
+      var values: [String:JSONValue] = ["graphic":.object(patch)]
+      if contact.frame != contact.original {
+        values["frame"] = try? .encode(PageRect(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height))
+      }
+      return performElementOperation(.updateElement,reference:contact.reference,values:values,summary:"Изменить геометрию фигуры")
+    }
     if let connection = contact.connection, connection != contact.originalConnection {
       guard let original = contact.originalConnection else { return false }
       var patch: [String: JSONValue] = [:]
       if connection.start != original.start { patch["start"] = try? .encode(connection.start) }
       if connection.end != original.end { patch["end"] = try? .encode(connection.end) }
       if connection.bend != original.bend { patch["bend"] = .number(connection.bend) }
+      if connection.bendPosition != original.bendPosition { patch["bendPosition"] = try? .encode(connection.bendPosition) }
       var values: [String:JSONValue] = ["graphic": .object(["connection": .object(patch)])]
       if contact.frame != contact.original {
         values["frame"] = try? .encode(PageRect(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height))

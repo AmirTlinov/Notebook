@@ -30,6 +30,53 @@ import XCTest
     }
   }
 
+  func testIndividualVerticesKeepOtherCornersFixedAndStopBeforeCrossing() throws {
+    let ref = EditableElementReference.page(pageID:UUID(),elementID:"polygon")
+    for shape in [NotebookGraphic.Shape.triangle,.rectangle,.diamond] {
+      let graphic = NotebookGraphic(shape:shape), frame = CGRect(x:100,y:100,width:160,height:120)
+      var contact = NotebookElementManipulation(reference:ref,kind:.vertex(0),frame:frame,bounds:.init(x:0,y:0,width:600,height:800),graphic:graphic)
+      let points = try XCTUnwrap(contact.originalVertices)
+      contact.update(translation:.init(x:35,y:-30))
+      let changed = try XCTUnwrap(contact.vertices)
+      for index in points.indices {
+        XCTAssertEqual(contact.frame.minX+changed[index].x*contact.frame.width,frame.minX+points[index].x*frame.width+(index == 0 ? 35 : 0),accuracy:0.001)
+        XCTAssertEqual(contact.frame.minY+changed[index].y*contact.frame.height,frame.minY+points[index].y*frame.height+(index == 0 ? -30 : 0),accuracy:0.001)
+      }
+      contact.update(translation:.init(x:5_000,y:5_000))
+      XCTAssertTrue(NotebookGraphicGeometry.isConvex(try XCTUnwrap(contact.vertices),sameWindingAs:points))
+      XCTAssertTrue(CGRect(x:0,y:0,width:600,height:800).contains(contact.frame))
+    }
+  }
+
+  func testCornerRadiusContactDoesNotResizeAndCanReturnToSharp() {
+    let graphic = NotebookGraphic(shape:.rectangle), frame = CGRect(x:100,y:100,width:160,height:120)
+    var contact = NotebookElementManipulation(reference:.page(pageID:UUID(),elementID:"box"),kind:.roundCorners,
+      frame:frame,bounds:nil,graphic:graphic)
+    contact.update(translation:.init(x:30,y:30))
+    XCTAssertEqual(contact.cornerRadius,30,accuracy:0.001); XCTAssertEqual(contact.frame,frame)
+    contact.update(translation:.init(x:5_000,y:5_000))
+    XCTAssertEqual(contact.cornerRadius,60,accuracy:0.001)
+    contact.update(translation:.init(x:-40,y:-40)); XCTAssertEqual(contact.cornerRadius,0)
+  }
+
+  func testBendContactTracksBothAxesWithoutMovingItsFreeEnds() throws {
+    let graphic = NotebookGraphic(shape:.connector,connection:.init(start:.init(point:.zero),end:.init(point:.init(x:200,y:100)),bend:20,endArrowhead:.none))
+    let surface = SurfaceID.page(UUID()), frame = PageRect(x:100,y:100,width:200,height:100)
+    func layout(_ graphic: NotebookGraphic) throws -> NotebookGraphicLayout {
+      try XCTUnwrap(NotebookGraphicGraph([.init(id:"line",graphic:graphic,frame:frame,surface:surface,shown:true)]).resolve("line").layout)
+    }
+    let before = try layout(graphic)
+    var contact = NotebookElementManipulation(reference:.page(pageID:UUID(),elementID:"line"),kind:.bend,
+      frame:.init(x:100,y:100,width:200,height:100),bounds:nil,connection:graphic.connection,layout:before,graphic:graphic)
+    contact.update(translation:.zero); XCTAssertEqual(contact.connection,graphic.connection)
+    contact.update(translation:.init(x:30,y:40))
+    var changed = graphic; changed.connection = contact.connection
+    let after = try layout(changed)
+    XCTAssertEqual(after.frame.x+after.bend.x-before.frame.x-before.bend.x,30,accuracy:0.001)
+    XCTAssertEqual(after.frame.y+after.bend.y-before.frame.y-before.bend.y,40,accuracy:0.001)
+    XCTAssertEqual(changed.connection?.start,graphic.connection?.start); XCTAssertEqual(changed.connection?.end,graphic.connection?.end)
+  }
+
   func testTouchTargetsDoNotImposeA44PointGeometryMinimumOrAnArtificialBoardMaximum() {
     let ref = EditableElementReference.spatial(boardID: UUID(), elementID: "small")
     var small = NotebookElementManipulation(reference: ref, kind: .resize(.bottomTrailing),

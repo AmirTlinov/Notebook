@@ -4,6 +4,19 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookGraphicRenderingTests: XCTestCase {
+  func testRoundedPolygonPaintUsesTheSharedContour() async throws {
+    let graphic = NotebookGraphic(shape:.rectangle,style:.init(strokeWidth:3,fill:.black),cornerRadius:30)
+    let page = PageDocument(size:.init(width:200,height:180),actor:UUID(),elements:[
+      .init(id:"round",kind:.graphic,frame:.init(x:30,y:30,width:120,height:100),source:"",html:"",graphic:graphic)])
+    let render = try await PageCompositionRenderer.render(page,scale:1) { _ in
+      XCTFail("A native contour never starts WebKit"); throw CocoaError(.featureUnsupported)
+    }
+    let image = try XCTUnwrap(NSBitmapImageRep(data:render.png))
+    XCTAssertGreaterThan(try XCTUnwrap(image.colorAt(x:32,y:32)?.usingColorSpace(.deviceRGB)).redComponent,0.8)
+    XCTAssertLessThan(try XCTUnwrap(image.colorAt(x:47,y:47)?.usingColorSpace(.deviceRGB)).redComponent,0.2)
+    let proof = XCTAttachment(data:render.png,uniformTypeIdentifier:"public.png"); proof.name = "rounded-polygon-mac"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testPartialEraserUnionsOverlapsAndMovesWithEveryNativeFigure() async throws {
     let actor = UUID(), frame = PageRect(x: 40, y: 40, width: 160, height: 160)
     for shape in [NotebookGraphic.Shape.ellipse, .rectangle, .triangle, .diamond, .plus] {

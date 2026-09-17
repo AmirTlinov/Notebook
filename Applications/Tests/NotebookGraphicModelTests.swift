@@ -134,6 +134,41 @@ import XCTest
     XCTAssertEqual(try reopened.readPageElement(pageID:pageID,elementID:"a")?.frame,.init(x:120,y:130,width:40,height:30))
   }
 
+  func testAcceptedVertexAndRoundingContinueThroughTheSameWriterAndUndo() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-corners-\(UUID())")
+    let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize); await model.finishPendingPersistence()
+    let pageID = try XCTUnwrap(model.activePage?.id), target = CollaborationTarget(kind:.page,id:pageID), store = model.store
+    _ = try store.applyCollaborationAction(.init(summary:"Box",expected:[.init(target:target,revision:store.targetContentRevision(target:target))],
+      operations:[.init(kind:.insertElement,target:target,id:"box",values:["kind":.string("graphic"),"source":.string(""),
+        "frame":try .encode(PageRect(x:100,y:100,width:160,height:120)),"graphic":try .encode(NotebookGraphic(shape:.rectangle))])]),actor:UUID())
+    await model.reloadExternalChanges()?.value; await model.finishPendingPersistence()
+    let reference = EditableElementReference.page(pageID:pageID,elementID:"box")
+    let writer = try NotebookSQLWriteBlocker(store:store); defer { try? writer.release() }
+    model.selectElement(reference)
+    let first = try XCTUnwrap(model.beginElementManipulation(reference,kind:.vertex(0)))
+    XCTAssertTrue(model.finishElementManipulation(first,translation:.init(x:30,y:15)))
+    let accepted = try XCTUnwrap(model.graphicElement(reference)?.vertices)
+    let round = try XCTUnwrap(model.beginElementManipulation(reference,kind:.roundCorners))
+    model.updateElementManipulation(round,translation:.init(x:30,y:30))
+    let liveRadius = try XCTUnwrap(model.graphicGraph(page:try XCTUnwrap(model.activePage)).nodes["box"]?.graphic.cornerRadius)
+    XCTAssertGreaterThan(liveRadius,0)
+    XCTAssertNil(try store.readPageElement(pageID:pageID,elementID:"box")?.graphic?.cornerRadius)
+    XCTAssertTrue(model.finishElementManipulation(round,translation:.init(x:30,y:30)))
+    model.setGraphicStyle(reference:reference) { $0.strokeWidth = 4 }
+    XCTAssertEqual(model.graphicElement(reference)?.vertices,accepted)
+    XCTAssertEqual(model.graphicElement(reference)?.cornerRadius,liveRadius)
+    try writer.release(); let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let reopened = NotebookStore(root:root)
+    let graphic = try XCTUnwrap(reopened.readPageElement(pageID:pageID,elementID:"box")?.graphic)
+    XCTAssertEqual(graphic.vertices,accepted); XCTAssertEqual(graphic.cornerRadius,liveRadius); XCTAssertEqual(graphic.style.strokeWidth,4)
+    let rounding = try XCTUnwrap(reopened.collaborationActions(afterID:nil).first { $0.action.operations.first?.values["graphic"]?["cornerRadius"] != nil })
+    _ = try reopened.undoCollaborationAction(rounding.id,actor:model.actorID)
+    let undone = try XCTUnwrap(reopened.readPageElement(pageID:pageID,elementID:"box")?.graphic)
+    XCTAssertNil(undone.cornerRadius); XCTAssertEqual(undone.vertices,accepted); XCTAssertEqual(undone.style.strokeWidth,4)
+  }
+
   func testRejectedMoveReleasesAcceptedDraftWithoutOverwritingConcurrentGeometry() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-rejected-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)

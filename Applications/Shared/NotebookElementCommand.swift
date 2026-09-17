@@ -39,6 +39,10 @@ extension NotebookAppModel {
       let contact = selectionSession.manipulation.flatMap { $0.reference == ref ? $0 : nil }
       var graphic = draft?.graphic ?? node.graphic
       if let connection = contact?.connection { graphic.connection = connection }
+      if let contact {
+        if contact.vertices != contact.originalVertices { graphic.vertices = contact.vertices }
+        if contact.cornerRadius != contact.originalCornerRadius { graphic.cornerRadius = contact.cornerRadius }
+      }
       let frame = contact.map { PageRect(x: $0.frame.minX, y: $0.frame.minY, width: $0.frame.width, height: $0.frame.height) }
         ?? draft?.frame ?? node.frame
       return .init(id: node.id, graphic: graphic, frame: frame, origin: node.origin, surface: node.surface,

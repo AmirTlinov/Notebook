@@ -80,12 +80,11 @@ struct NotebookGraphicView: View {
     switch graphic.shape {
     case .ellipse: return Path(ellipseIn:rect)
     case .rectangle, .triangle, .diamond:
-      let vertices = NotebookGraphicGeometry.polygon(graphic)!
+      let curves = NotebookGraphicGeometry.polygonCurves(graphic,width:rect.width,height:rect.height)
       var path = Path()
-      for (index,point) in vertices.enumerated() {
-        let p = CGPoint(x:rect.minX+point.x*rect.width,y:rect.minY+point.y*rect.height)
-        if index == 0 { path.move(to:p) } else { path.addLine(to:p) }
-      }
+      func point(_ p: SpatialPoint) -> CGPoint { .init(x:rect.minX+p.x,y:rect.minY+p.y) }
+      if let first = curves.first { path.move(to:point(first.start)) }
+      for curve in curves { path.addCurve(to:point(curve.end),control1:point(curve.control1),control2:point(curve.control2)) }
       path.closeSubpath(); return path
     case .plus:
       var path = Path()

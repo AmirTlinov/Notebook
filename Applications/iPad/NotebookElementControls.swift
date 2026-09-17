@@ -13,7 +13,7 @@ struct NotebookGraphicBindingHint: View {
       let frame = NotebookAttentionProjection.editingFrame(target,model:model,presence:presence) {
       NotebookGraphicView(graphic:.init(shape:graphic.shape,
         style:.init(stroke:.init(red:0.15,green:0.4,blue:0.85),strokeWidth:2),
-        vertices:graphic.vertices))
+        vertices:graphic.vertices,cornerRadius:graphic.cornerRadius))
         .frame(width:frame.width,height:frame.height).position(x:frame.midX,y:frame.midY)
         .allowsHitTesting(false).accessibilityHidden(true)
     }
@@ -31,8 +31,14 @@ struct NotebookElementControls: UIViewRepresentable {
 
   func makeUIView(context: Context) -> NotebookElementControlsView { .init(gate: model.inputGate) }
   func updateUIView(_ view: NotebookElementControlsView, context: Context) {
+    var graphic = model.graphicElement(reference)
+    if let contact = model.selectionSession.manipulation, contact.reference == reference {
+      if contact.vertices != contact.originalVertices { graphic?.vertices = contact.vertices }
+      if contact.cornerRadius != contact.originalCornerRadius { graphic?.cornerRadius = contact.cornerRadius }
+    }
+    view.graphic = graphic
     view.configure(selectionID: selectionID, frame: frame, layout: model.graphicElement(reference)?.connection == nil ? nil : model.graphicLayout(reference), scale:scale,
-      hasLabel: !(model.graphicElement(reference)?.label.isEmpty ?? true), manipulating: model.selectionSession.manipulation != nil)
+      hasLabel: !(graphic?.label.isEmpty ?? true), mode:model.selectionSession.geometryMode, manipulating: model.selectionSession.manipulation != nil)
     view.beginManipulation = { kind in
       guard model.selectionSession.id == selectionID,
         let contact = model.beginElementManipulation(reference, kind: kind) else { return nil }
@@ -47,7 +53,6 @@ struct NotebookElementControls: UIViewRepresentable {
       guard model.selectionSession.id == selectionID else { return }
       model.deleteElement(reference)
     }
-    view.graphic = model.graphicElement(reference)
     view.updateStyle = { update in
       guard model.selectionSession.id == selectionID else { return }
       model.setGraphicStyle(reference: reference, update: update)
@@ -71,6 +76,16 @@ struct NotebookElementControls: UIViewRepresentable {
           model.arrangeElement(reference, front: true)
         }
     ])]
+    if graphic.flatMap(NotebookGraphicGeometry.polygon) != nil {
+      let titles = ["Размер и положение", "Изменить вершины", "Скруглить углы"]
+      let symbols = ["arrow.up.left.and.arrow.down.right", "point.topleft.down.to.point.bottomright.curvepath", "rectangle.roundedtop"]
+      menus.insert(UIMenu(title:"Геометрия",options:.displayInline,children:NotebookSelectionSession.GeometryMode.allCases.enumerated().map { index, mode in
+        UIAction(title:titles[index],image:UIImage(systemName:symbols[index]),state:model.selectionSession.geometryMode == mode ? .on : .off) { _ in
+          guard model.selectionSession.id == selectionID else { return }
+          model.setElementGeometryMode(mode,reference:reference)
+        }
+      }),at:0)
+    }
     if let connection = model.graphicElement(reference)?.connection {
       for terminal in NotebookGraphicConnection.Terminal.allCases {
         menus.append(UIMenu(title: terminal == .start ? "Начало линии" : "Конец линии", image:UIImage(systemName:"arrow.up.right"),
@@ -94,9 +109,9 @@ struct NotebookElementControls: UIViewRepresentable {
 }
 
 private enum ElementHandle: Hashable {
-  case corner(NotebookElementResizeHandle), start, end, bend
+  case corner(NotebookElementResizeHandle), start, end, bend, vertex(Int), rounding
   var kind: NotebookElementManipulation.Kind {
-    switch self { case .corner(let value): .resize(value); case .start: .endpoint(.start); case .end: .endpoint(.end); case .bend: .bend }
+    switch self { case .corner(let value): .resize(value); case .start: .endpoint(.start); case .end: .endpoint(.end); case .bend: .bend; case .vertex(let index): .vertex(index); case .rounding: .roundCorners }
   }
   var label: String {
     switch self {
@@ -104,11 +119,14 @@ private enum ElementHandle: Hashable {
     case .start: "Начало связи"
     case .end: "Конец связи"
     case .bend: "Изгиб связи"
+    case .vertex(let index): "Вершина \(index+1)"
+    case .rounding: "Радиус углов"
     }
   }
   var identifier: String {
     switch self { case .corner(let value): "resize-agent-element-" + value.rawValue
-    case .start: "graphic-start-handle"; case .end: "graphic-end-handle"; case .bend: "graphic-bend-handle" }
+    case .start: "graphic-start-handle"; case .end: "graphic-end-handle"; case .bend: "graphic-bend-handle"
+    case .vertex(let index): "graphic-vertex-\(index)"; case .rounding: "graphic-corner-radius-handle" }
   }
 }
 
@@ -147,6 +165,7 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
   private var connectionLayout: NotebookGraphicLayout?
   private var projectionScale = 1.0
   private var hasLabel = false
+  private var geometryMode: NotebookSelectionSession.GeometryMode = .transform
   var beginManipulation: ((NotebookElementManipulation.Kind) -> SceneSelectionLift?)?
   var deleteElement: (() -> Void)?
 
@@ -207,9 +226,15 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-  func configure(selectionID: UUID, frame: CGRect, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false, manipulating: Bool = false) {
+  func configure(selectionID: UUID, frame: CGRect, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false, mode: NotebookSelectionSession.GeometryMode = .transform, manipulating: Bool = false) {
     if self.selectionID != selectionID { cancel(); dismissPalette(); self.selectionID = selectionID }
-    let next: [ElementHandle] = layout == nil ? NotebookElementResizeHandle.visible(in: frame.size).map(ElementHandle.corner) : [.start,.end,.bend]
+    let vertices = graphic.flatMap(NotebookGraphicGeometry.polygon)
+    geometryMode = vertices == nil ? .transform : mode
+    let next: [ElementHandle]
+    if layout != nil { next = [.start,.end,.bend] }
+    else if geometryMode == .vertices, let vertices { next = vertices.indices.map(ElementHandle.vertex) }
+    else if geometryMode == .rounding { next = [.rounding] }
+    else { next = NotebookElementResizeHandle.visible(in: frame.size).map(ElementHandle.corner) }
     if handles != next { handles = next; rebuildAccessibility() }
     connectionLayout = layout; projectionScale = scale; self.hasLabel = hasLabel
     frameRect = frame; toolbar.isHidden = manipulating
@@ -258,6 +283,18 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
   }
   private func point(_ handle: ElementHandle) -> CGPoint {
     if case .corner(let corner) = handle { return corner.point(in:frameRect) }
+    if case .vertex(let index) = handle, let vertices = graphic.flatMap(NotebookGraphicGeometry.polygon), vertices.indices.contains(index) {
+      return .init(x:frameRect.minX+vertices[index].x*frameRect.width,y:frameRect.minY+vertices[index].y*frameRect.height)
+    }
+    if handle == .rounding, let graphic {
+      let width = frameRect.width/projectionScale, height = frameRect.height/projectionScale
+      if let corner = NotebookGraphicGeometry.corners(graphic,width:width,height:height).first {
+        let radius = min(graphic.cornerRadius ?? 0,NotebookGraphicGeometry.maximumCornerRadius(graphic,width:width,height:height))
+        let distance = 18 + radius/corner.sine*projectionScale
+        return .init(x:frameRect.minX+corner.vertex.x*projectionScale+corner.bisector.x*distance,
+          y:frameRect.minY+corner.vertex.y*projectionScale+corner.bisector.y*distance)
+      }
+    }
     guard let layout = connectionLayout else { return .zero }
     let point = handle == .start ? layout.start : handle == .end ? layout.end : layout.bend
     let dx = layout.end.x-layout.start.x, dy = layout.end.y-layout.start.y, length = max(0.001,hypot(dx,dy))
@@ -288,7 +325,16 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
   override func draw(_ rect: CGRect) {
     tintColor.withAlphaComponent(0.7).setStroke()
     if connectionLayout == nil {
-      let outline = UIBezierPath(rect: frameRect); outline.lineWidth = 1; outline.stroke()
+      let outline: UIBezierPath
+      if geometryMode != .transform, let vertices = graphic.flatMap(NotebookGraphicGeometry.polygon) {
+        outline = UIBezierPath()
+        for (index,p) in vertices.enumerated() {
+          let point = CGPoint(x:frameRect.minX+p.x*frameRect.width,y:frameRect.minY+p.y*frameRect.height)
+          if index == 0 { outline.move(to:point) } else { outline.addLine(to:point) }
+        }
+        outline.close(); outline.setLineDash([3,3],count:2,phase:0)
+      } else { outline = UIBezierPath(rect:frameRect) }
+      outline.lineWidth = 1; outline.stroke()
     }
     for handle in handles {
       guard case .corner(let corner) = handle else {

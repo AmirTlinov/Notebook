@@ -49,3 +49,12 @@ test("polygon corners use the same typed action and allow an explicit reset", ()
     assert.throws(()=>operationSchema.parse({kind:"updateElement",target,id:"triangle",values:{graphic:{vertices}}}));
   }
 });
+
+test("geometry edits admit a physical radius and longitudinal bend position", () => {
+  for (const graphic of [{cornerRadius:24}, {cornerRadius:null}, {connection:{bendPosition:0.7,bend:36}}]) {
+    assert.doesNotThrow(() => operationSchema.parse({kind:"updateElement",target,id:"shape",values:{graphic}}));
+  }
+  for (const graphic of [{cornerRadius:-1}, {cornerRadius:Infinity}, {connection:{bendPosition:1.1}}]) {
+    assert.throws(() => operationSchema.parse({kind:"updateElement",target,id:"shape",values:{graphic}}));
+  }
+});

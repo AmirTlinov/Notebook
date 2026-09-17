@@ -34,17 +34,20 @@ public struct NotebookGraphicConnection: Codable, Equatable, Sendable {
   public var end: Endpoint
   /// Signed sagitta of the circular arc. Zero is an exactly straight line.
   public var bend: Double
+  /// Position of the held curve point along the endpoint axis; nil is the midpoint.
+  public var bendPosition: Double?
   public var startArrowhead: Arrowhead
   public var endArrowhead: Arrowhead
   public var labelPosition: Double
   public init(start: Endpoint, end: Endpoint, bend: Double = 0,
-    startArrowhead: Arrowhead = .none, endArrowhead: Arrowhead = .arrow, labelPosition: Double = 0.5) {
-    self.start = start; self.end = end; self.bend = bend
+    startArrowhead: Arrowhead = .none, endArrowhead: Arrowhead = .arrow, labelPosition: Double = 0.5, bendPosition: Double? = nil) {
+    self.start = start; self.end = end; self.bend = bend; self.bendPosition = bendPosition
     self.startArrowhead = startArrowhead; self.endArrowhead = endArrowhead; self.labelPosition = labelPosition
   }
-  static let causalFields = ["start", "end", "bend", "startArrowhead", "endArrowhead", "labelPosition"]
+  static let causalFields = ["start", "end", "bend", "startArrowhead", "endArrowhead", "labelPosition", "bendPosition"]
   var isValid: Bool {
     start.isValid && end.isValid && bend.isFinite && abs(bend) <= 1_000_000
+      && (bendPosition == nil || (bendPosition!.isFinite && (0...1).contains(bendPosition!)))
       && labelPosition.isFinite && (0...1).contains(labelPosition)
   }
   public var bindings: [Binding] { [start.binding, end.binding].compactMap { $0 } }
@@ -80,6 +83,8 @@ public struct NotebookGraphicLayout: Equatable, Sendable {
   public let start: SpatialPoint
   public let end: SpatialPoint
   public let bend: SpatialPoint
+  public let axisStart: SpatialPoint
+  public let axisEnd: SpatialPoint
 
   public func hitTest(_ point: SpatialPoint, graphic: NotebookGraphic, tolerance: Double) -> Bool {
     if graphic.shape != .connector {
@@ -182,7 +187,7 @@ public struct NotebookGraphicGraph: Sendable {
     // Outside, target the contour itself so a thin edge never becomes a center jump.
     var anchor = chosen.point
     if !chosen.inside {
-      if let vertices = NotebookGraphicGeometry.polygon(node.graphic) {
+      if let vertices = NotebookGraphicGeometry.outlinePolygon(node.graphic, width: frame.width, height: frame.height) {
         anchor = zip(vertices,vertices.dropFirst()+vertices.prefix(1)).map { a,b -> SpatialPoint in
           let x = a.x*frame.width, y = a.y*frame.height, dx = (b.x-a.x)*frame.width, dy = (b.y-a.y)*frame.height
           let t = min(1,max(0,((chosen.point.x-x)*dx+(chosen.point.y-y)*dy)/max(0.000001,dx*dx+dy*dy)))
@@ -203,7 +208,7 @@ public struct NotebookGraphicGraph: Sendable {
     let frame = node.frame, graphic = node.graphic
     guard let connection = graphic.connection else {
       return .geometry(.init(frame: frame, curves: [], heads: [], label: .init(x: frame.width/2, y: frame.height/2),
-        start: .zero, end: .zero, bend: .zero))
+        start: .zero, end: .zero, bend: .zero, axisStart: .zero, axisEnd: .zero))
     }
     let missing = Set(connection.bindings.filter { nodes[collaborationIdentity($0.elementID)] == nil }.map(\.elementID))
     guard missing.isEmpty else { return .pending(missing) }
@@ -224,7 +229,8 @@ public struct NotebookGraphicGraph: Sendable {
     let distance = hypot(b.x-a.x, b.y-a.y)
     guard distance > 0.001 else { return .hidden }
     let normal = SpatialPoint(x: -(b.y-a.y)/distance, y: (b.x-a.x)/distance)
-    let middle = SpatialPoint(x: (a.x+b.x)/2 + normal.x*connection.bend, y: (a.y+b.y)/2 + normal.y*connection.bend)
+    let position = connection.bendPosition ?? 0.5
+    let middle = SpatialPoint(x: a.x+(b.x-a.x)*position + normal.x*connection.bend, y: a.y+(b.y-a.y)*position + normal.y*connection.bend)
     func clipped(_ endpoint: NotebookGraphicConnection.Endpoint, anchor: SpatialPoint, toward: SpatialPoint) -> SpatialPoint {
       guard let binding = endpoint.binding, !binding.isExact,
         let target = nodes[collaborationIdentity(binding.elementID)] else { return anchor }
@@ -234,7 +240,7 @@ public struct NotebookGraphicGraph: Sendable {
       let px = (anchor.x-center.x)/rx, py = (anchor.y-center.y)/ry
       let dx = (toward.x-anchor.x)/rx, dy = (toward.y-anchor.y)/ry
       if target.graphic.shape == .plus { return anchor }
-      if let vertices = NotebookGraphicGeometry.polygon(target.graphic) {
+      if let vertices = NotebookGraphicGeometry.outlinePolygon(target.graphic, width: target.frame.width, height: target.frame.height) {
         let intersections = zip(vertices,vertices.dropFirst()+vertices.prefix(1)).compactMap { a,b -> Double? in
           let ax = a.x*2-1, ay = a.y*2-1, ex = (b.x-a.x)*2, ey = (b.y-a.y)*2
           let cross = dx*ey-dy*ex
@@ -254,11 +260,11 @@ public struct NotebookGraphicGraph: Sendable {
     }
     let start = clipped(connection.start, anchor: a, toward: middle)
     let end = clipped(connection.end, anchor: b, toward: middle)
-    return .geometry(Self.connectionLayout(graphic: graphic, start: start, end: end, middle: middle))
+    return .geometry(Self.connectionLayout(graphic: graphic, start: start, end: end, middle: middle, axisStart: a, axisEnd: b))
   }
 
   private static func connectionLayout(graphic: NotebookGraphic, start: SpatialPoint, end: SpatialPoint,
-    middle: SpatialPoint) -> NotebookGraphicLayout {
+    middle: SpatialPoint, axisStart: SpatialPoint, axisEnd: SpatialPoint) -> NotebookGraphicLayout {
     let connection = graphic.connection!
     let dx = end.x-start.x, dy = end.y-start.y
     let cross = dx*(middle.y-start.y)-dy*(middle.x-start.x)
@@ -320,7 +326,7 @@ public struct NotebookGraphicGraph: Sendable {
     return .init(frame: .init(x: x,y: y,width: max(1,right-x),height: max(1,bottom-y)),
       curves: curves.map { $0.offset(x: -x,y: -y) },
       heads: heads.map { .init(points: $0.points.map(local), filled: $0.filled, closed: $0.closed) },
-      label: local(label), start: local(start), end: local(end), bend: local(middle))
+      label: local(label), start: local(start), end: local(end), bend: local(middle), axisStart: local(axisStart), axisEnd: local(axisEnd))
   }
 }
 

@@ -18,6 +18,9 @@ struct NotebookSelectionSession: Equatable, Sendable {
     case reference(CollaborationReference)
   }
 
+  enum GeometryMode: String, CaseIterable { case transform, vertices, rounding }
+  var geometryMode: GeometryMode = .transform
+
   let id: UUID
   var target: Target?
   var context: NotebookAgentQuestion?

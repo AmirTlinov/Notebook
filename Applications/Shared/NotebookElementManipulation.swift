@@ -32,7 +32,7 @@ enum NotebookElementResizeHandle: String, CaseIterable, Sendable {
 /// One accepted contact, anchored to the physical frame it actually touched.
 /// The opposite corner never moves, even when a page edge or minimum is reached.
 struct NotebookElementManipulation: Equatable, Sendable {
-  enum Kind: Equatable, Sendable { case move, resize(NotebookElementResizeHandle), endpoint(NotebookGraphicConnection.Terminal), bend }
+  enum Kind: Equatable, Sendable { case move, resize(NotebookElementResizeHandle), endpoint(NotebookGraphicConnection.Terminal), bend, vertex(Int), roundCorners }
   let id = UUID()
   let reference: EditableElementReference
   let kind: Kind
@@ -44,17 +44,28 @@ struct NotebookElementManipulation: Equatable, Sendable {
   let originalConnection: NotebookGraphicConnection?
   let originalLayout: NotebookGraphicLayout?
   private(set) var connection: NotebookGraphicConnection?
+  let originalVertices: [SpatialPoint]?
+  private(set) var vertices: [SpatialPoint]?
+  let originalCornerRadius: Double
+  private(set) var cornerRadius: Double
+  private let graphic: NotebookGraphic?
 
   init(reference: EditableElementReference, kind: Kind, frame: CGRect, bounds: CGRect?, identity: VersionStamp? = nil,
-    worldOrigin: WorldPoint? = nil, connection: NotebookGraphicConnection? = nil, layout: NotebookGraphicLayout? = nil) {
+    worldOrigin: WorldPoint? = nil, connection: NotebookGraphicConnection? = nil, layout: NotebookGraphicLayout? = nil, graphic: NotebookGraphic? = nil) {
     self.reference = reference; self.kind = kind; original = frame
     self.frame = frame; self.bounds = bounds
     self.identity = identity; self.worldOrigin = worldOrigin
     originalConnection = connection; self.connection = connection; originalLayout = layout
+    self.graphic = graphic; originalVertices = graphic.flatMap(NotebookGraphicGeometry.polygon); vertices = originalVertices
+    originalCornerRadius = graphic?.cornerRadius ?? 0; cornerRadius = originalCornerRadius
   }
 
   mutating func update(translation: CGPoint) {
     guard translation.x.isFinite, translation.y.isFinite else { return }
+    if translation == .zero {
+      frame = original; connection = originalConnection; vertices = originalVertices; cornerRadius = originalCornerRadius
+      return
+    }
     switch kind {
     case .move:
       let x = bounds.map { min(max(original.minX + translation.x, $0.minX), $0.maxX - original.width) } ?? (original.minX + translation.x)
@@ -68,9 +79,9 @@ struct NotebookElementManipulation: Equatable, Sendable {
           .init(x:layout.frame.x+p.x-original.minX,y:layout.frame.y+p.y-original.minY)
         }
         value.start = .init(point:point(layout.start)); value.end = .init(point:point(layout.end))
-        let middleIndex = layout.curves.count/2
-        let midpoint = layout.curves[middleIndex].point(at:layout.curves.count.isMultiple(of:2) ? 0 : 0.5)
+        let midpoint = layout.bend
         let dx = layout.end.x-layout.start.x, dy = layout.end.y-layout.start.y, length = max(0.001,hypot(dx,dy))
+        value.bendPosition = min(1,max(0,((midpoint.x-layout.start.x)*dx+(midpoint.y-layout.start.y)*dy)/(length*length)))
         value.bend = (-dy*(midpoint.x-(layout.start.x+layout.end.x)/2)+dx*(midpoint.y-(layout.start.y+layout.end.y)/2))/length
         connection = value
       }
@@ -103,9 +114,37 @@ struct NotebookElementManipulation: Equatable, Sendable {
       connection = value
     case .bend:
       guard var value = originalConnection, let layout = originalLayout else { return }
-      let dx = layout.end.x-layout.start.x, dy = layout.end.y-layout.start.y, length = max(0.001,hypot(dx,dy))
+      let dx = layout.axisEnd.x-layout.axisStart.x, dy = layout.axisEnd.y-layout.axisStart.y, length = max(0.001,hypot(dx,dy))
+      value.bendPosition = min(1,max(0,(value.bendPosition ?? 0.5)+(dx*translation.x+dy*translation.y)/(length*length)))
       value.bend += (-dy*translation.x+dx*translation.y)/length
       connection = value
+    case .vertex(let index):
+      guard let originalVertices, originalVertices.indices.contains(index) else { return }
+      let points = originalVertices.map { CGPoint(x:original.minX+$0.x*original.width,y:original.minY+$0.y*original.height) }
+      var wanted = CGPoint(x:points[index].x+translation.x,y:points[index].y+translation.y)
+      if let bounds { wanted.x = min(bounds.maxX,max(bounds.minX,wanted.x)); wanted.y = min(bounds.maxY,max(bounds.minY,wanted.y)) }
+      func candidate(_ fraction: Double) -> (CGRect,[SpatialPoint])? {
+        var next = points
+        next[index] = .init(x:points[index].x+(wanted.x-points[index].x)*fraction,y:points[index].y+(wanted.y-points[index].y)*fraction)
+        let x = next.map(\.x).min()!, y = next.map(\.y).min()!
+        let width = next.map(\.x).max()!-x, height = next.map(\.y).max()!-y
+        guard width >= 1, height >= 1 else { return nil }
+        let normalized = next.map { SpatialPoint(x:($0.x-x)/width,y:($0.y-y)/height) }
+        guard NotebookGraphicGeometry.isConvex(normalized,sameWindingAs:originalVertices) else { return nil }
+        return (.init(x:x,y:y,width:width,height:height),normalized)
+      }
+      if let next = candidate(1) { frame = next.0; vertices = next.1 }
+      else {
+        // Stop at the convex boundary instead of flipping/crossing other edges.
+        var low = 0.0, high = 1.0
+        for _ in 0..<24 { let mid = (low+high)/2; if candidate(mid) == nil { high = mid } else { low = mid } }
+        if let next = candidate(low) { frame = next.0; vertices = next.1 }
+      }
+    case .roundCorners:
+      guard let graphic, let corner = NotebookGraphicGeometry.corners(graphic,width:original.width,height:original.height).first else { return }
+      let maximum = NotebookGraphicGeometry.maximumCornerRadius(graphic,width:original.width,height:original.height)
+      let start = min(originalCornerRadius,maximum)
+      cornerRadius = min(maximum,max(0,start+(translation.x*corner.bisector.x+translation.y*corner.bisector.y)*corner.sine))
     }
   }
 

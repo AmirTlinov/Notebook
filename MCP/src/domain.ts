@@ -35,12 +35,14 @@ export interface NotebookGraphic {
   sourceInkIDs: string[];
   connection?: NotebookGraphicConnection;
   vertices?: { x: number; y: number }[] | null;
+  cornerRadius?: number | null;
 }
 
 export interface NotebookGraphicConnection {
   start: NotebookGraphicEndpoint;
   end: NotebookGraphicEndpoint;
   bend: number;
+  bendPosition?: number;
   startArrowhead: "none" | "arrow" | "triangle" | "square" | "dot" | "pipe" | "diamond" | "inverted" | "bar";
   endArrowhead: NotebookGraphicConnection["startArrowhead"];
   labelPosition: number;

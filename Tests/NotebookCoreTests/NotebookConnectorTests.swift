@@ -254,3 +254,44 @@ func connectorRectangleBoundary() throws {
   #expect(abs(layout.frame.y+layout.start.y-75) < 0.01)
   #expect(graph.binding(at:.init(x:0,y:0),origin:.zero,surface:surface,tolerance:4)?.elementID == "box")
 }
+
+@Test("Rounded polygons share their actual contour with picking and binding")
+func connectorRoundedPolygonBoundary() throws {
+  let surface = SurfaceID.page(UUID()), graphic = NotebookGraphic(shape:.rectangle,cornerRadius:25)
+  #expect(!NotebookGraphicGeometry.containsInterior(graphic,width:100,height:100,x:1,y:1))
+  #expect(NotebookGraphicGeometry.containsInterior(graphic,width:100,height:100,x:12,y:12))
+  let graph = NotebookGraphicGraph([
+    .init(id:"box",graphic:graphic,frame:.init(x:0,y:0,width:100,height:100),surface:surface,shown:true),
+    .init(id:"link",graphic:.init(shape:.connector,connection:.init(start:.init(point:.init(x:50,y:50),binding:.init(elementID:"box")),
+      end:.init(point:.init(x:-50,y:-50)),endArrowhead:.none)),frame:.init(x:0,y:0,width:1,height:1),surface:surface,shown:true)
+  ])
+  let layout = try #require(graph.resolve("link").layout)
+  let tangent = 25-25/sqrt(2)
+  #expect(abs(layout.frame.x+layout.start.x-tangent) < 0.15)
+  #expect(abs(layout.frame.y+layout.start.y-tangent) < 0.15)
+  #expect(graph.binding(at:.zero,surface:surface,tolerance:2) == nil)
+  #expect(graph.binding(at:.init(x:tangent,y:tangent),surface:surface,tolerance:2)?.elementID == "box")
+  for shape in [NotebookGraphic.Shape.rectangle,.triangle,.diamond] {
+    let graphic = NotebookGraphic(shape:shape,cornerRadius:1_000)
+    let curves = NotebookGraphicGeometry.polygonCurves(graphic,width:100,height:80)
+    #expect(curves.count >= 6)
+    for curve in curves { for t in [0.0,0.3,0.7,1.0] {
+      let p = curve.point(at:t)
+      #expect(p.x >= -0.01 && p.x <= 100.01 && p.y >= -0.01 && p.y <= 80.01)
+      #expect(NotebookGraphicGeometry.outlineDistance(graphic,width:100,height:80,x:p.x,y:p.y) < 0.12)
+    } }
+  }
+}
+
+@Test("The connector control moves along both axes and remains on the curve")
+func connectorAsymmetricBend() throws {
+  let graphic = NotebookGraphic(shape:.connector,connection:.init(start:.init(point:.zero),
+    end:.init(point:.init(x:200,y:0)),bend:60,endArrowhead:.none,bendPosition:0.7))
+  let graph = NotebookGraphicGraph([.init(id:"line",graphic:graphic,frame:.init(x:100,y:100,width:200,height:1),surface:.page(UUID()),shown:true)])
+  let layout = try #require(graph.resolve("line").layout)
+  #expect(abs(layout.frame.x+layout.bend.x-240) < 0.0001)
+  #expect(abs(layout.frame.y+layout.bend.y-160) < 0.0001)
+  #expect(layout.hitTest(layout.bend,graphic:graphic,tolerance:0.1))
+  #expect(abs(layout.frame.x+layout.start.x-100) < 0.0001)
+  #expect(abs(layout.frame.x+layout.end.x-300) < 0.0001)
+}
