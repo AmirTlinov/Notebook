@@ -130,6 +130,59 @@ struct NotebookCloudDeliveryTests {
     #expect(try reopened.readItemHeader(item)?.title == "Local tail")
   }
 
+  @Test(arguments: [false, true])
+  func boundConnectorsKeepTheirDependenciesAndIndependentFieldsAcrossCloud(board: Bool) throws {
+    let pair = try Pair(), index = try pair.a.loadIndex()
+    let target = try CollaborationTarget(kind: board ? .board : .page,
+      id: board ? index.rootBoardID : #require(index.selectedPageID))
+    func write(_ store: NotebookStore, actor: UUID, operations: [CollaborationOperation]) throws {
+      let revision = try store.targetContentRevision(target: target)
+      let action = try CollaborationAction(summary: "Cloud connector",
+        references: [.init(target: target, revision: revision)],
+        expected: [.init(target: target, revision: revision, inkRevision: store.inkRevision(on: target))],
+        operations: operations)
+      _ = try store.applyNativeGraphicAction(action, actor: actor)
+    }
+    func insert(_ id: String, graphic: NotebookGraphic, x: Double) throws -> CollaborationOperation {
+      var values: [String: JSONValue] = ["kind": .string("graphic"), "source": .string(""),
+        "graphic": try .encode(graphic), "frame": try .encode(PageRect(x: x, y: 100, width: 100, height: 100))]
+      if board { values["worldOrigin"] = try .encode(WorldPoint.zero) }
+      return .init(kind: .insertElement, target: target, id: id, values: values)
+    }
+    try write(pair.a, actor: pair.actorA, operations: [
+      insert("a", graphic: .init(label: "A"), x: 100),
+      insert("b", graphic: .init(label: "B"), x: 400),
+      insert("edge", graphic: .init(shape: .connector, connection: .init(
+        start: .init(point: .zero, binding: .init(elementID: "a")),
+        end: .init(point: .init(x: 100, y: 1), binding: .init(elementID: "b")))), x: 250)
+    ])
+    let initial = try upload(pair.a, source: pair.sourceA, account: pair.account)
+    try receive(Array(initial.reversed()), to: pair.b, source: pair.sourceB, account: pair.account)
+    #expect(try pair.b.readGraphicResolution(target: target, elementID: "edge").layout != nil)
+    func update(_ field: String, value: JSONValue) -> CollaborationOperation {
+      .init(kind: .updateElement, target: target, id: "edge",
+        values: ["graphic": .object(["connection": .object([field: value])])])
+    }
+    try write(pair.a, actor: pair.actorA, operations: [update("bend", value: .number(50))])
+    try write(pair.b, actor: pair.actorB, operations: [update("endArrowhead", value: .string("diamond"))])
+    let fromPad = try upload(pair.a, source: pair.sourceA, account: pair.account)
+    let fromMac = try upload(pair.b, source: pair.sourceB, account: pair.account)
+    try receive(Array(fromPad.reversed()), to: pair.b, source: pair.sourceB, account: pair.account)
+    try receive(Array(fromMac.reversed()), to: pair.a, source: pair.sourceA, account: pair.account)
+    let reopened = NotebookStore(root: pair.b.root)
+    let graphic = try board ? reopened.readSpatialElement(boardID: target.id, elementID: "edge")?.graphic
+      : reopened.readPageElement(pageID: target.id, elementID: "edge")?.graphic
+    #expect(graphic?.connection?.bend == 50)
+    #expect(graphic?.connection?.endArrowhead == .diamond)
+    #expect(graphic?.connection?.start.binding?.elementID == "a")
+    #expect(graphic?.connection?.end.binding?.elementID == "b")
+    #expect(try reopened.readGraphicResolution(target: target, elementID: "edge")
+      == pair.a.readGraphicResolution(target: target, elementID: "edge"))
+    let cursor = try reopened.currentChangeCursor()
+    for delivery in fromPad.compactMap(\.value.delivery) { _ = try reopened.applyDelivery(delivery) }
+    #expect(try reopened.currentChangeCursor() == cursor)
+  }
+
   @Test func snapshotRetainsDeletionEvenWithoutHistoricalDeliveryRows() throws {
     let pair = try Pair(), index = try pair.a.loadIndex(), removed = index.selectedItemID, page = try #require(index.selectedPageID)
     var next = index, tree = try pair.a.loadBoard(items: index.items)

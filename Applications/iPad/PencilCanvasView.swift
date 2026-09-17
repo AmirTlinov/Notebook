@@ -16,6 +16,7 @@ struct PencilCanvasView: UIViewRepresentable {
   let releaseAction: (UUID, VersionStamp) -> Void
   let acceptAction: (PageInkAction, UUID, VersionStamp, NotebookQuickShapeFit?) -> Task<PreparedPageInkChange?, Never>
   let onRenderReady: (Bool) -> Void
+  var resolveQuickShape: (NotebookQuickShapeFit, Double) -> NotebookQuickShapeFit = { fit, _ in fit }
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
@@ -28,6 +29,7 @@ struct PencilCanvasView: UIViewRepresentable {
 
   func makeUIView(context: Context) -> PaperCanvasContainerView {
     let paper = PaperCanvasContainerView()
+    paper.touchView.resolveQuickShape = resolveQuickShape
     paper.inkView.onRenderReadinessChange = { ready in
       Task { @MainActor in onRenderReady(ready) }
     }
@@ -45,6 +47,7 @@ struct PencilCanvasView: UIViewRepresentable {
   }
 
   func updateUIView(_ paper: PaperCanvasContainerView, context: Context) {
+    paper.touchView.resolveQuickShape = resolveQuickShape
     paper.inkView.onRenderReadinessChange = { ready in
       Task { @MainActor in onRenderReady(ready) }
     }
@@ -540,6 +543,7 @@ final class PaperInputView: UIView {
   var presentActiveEraser: ((ActiveEraserStroke) -> Void)?
   var commitActiveEraser: (() -> Void)?
   var clearActiveAction: (() -> Void)?
+  var resolveQuickShape: (NotebookQuickShapeFit, Double) -> NotebookQuickShapeFit = { fit, _ in fit }
 
   var hasActiveAction: Bool { actionTool != nil }
   private let quickShape = NotebookQuickShapeSession()
@@ -592,7 +596,7 @@ final class PaperInputView: UIView {
     quickShape.onPreview = { [weak self] fit in
       guard let self else { return }
       if let fit {
-        quickShapeLayer.path = UIBezierPath(ovalIn: CGRect(x: fit.frame.x, y: fit.frame.y, width: fit.frame.width, height: fit.frame.height)).cgPath
+        quickShapeLayer.path = NotebookGraphicView.previewPath(fit).cgPath
         let color = (actionPenStyle ?? penStyle).color.components
         quickShapeLayer.strokeColor = UIColor(red: color.red, green: color.green, blue: color.blue, alpha: 1).cgColor
         quickShapeLayer.lineWidth = samples.first?.point.size.width ?? 2
@@ -770,7 +774,8 @@ final class PaperInputView: UIView {
     completedQuickShape = nil
     if actionTool == .pen, let first = samples.first?.point.location {
       let a = convert(CGPoint.zero, to: window), b = convert(CGPoint(x: 1, y: 0), to: window)
-      quickShape.begin(at: .init(x: first.x, y: first.y), screenScale: max(0.001, hypot(b.x - a.x, b.y - a.y))) { [weak self] in
+      let scale = max(0.001, hypot(b.x-a.x,b.y-a.y)), resolve = resolveQuickShape
+      quickShape.begin(at: .init(x: first.x, y: first.y), screenScale:scale,resolve:{ resolve($0,scale) }) { [weak self] in
         self?.samples.map { .init(x: $0.point.location.x, y: $0.point.location.y) } ?? []
       }
     }

@@ -11,10 +11,13 @@ enum PageCompositionRenderer {
   static func elements(in page: PageDocument, region: PageRect, elementID: String?) -> [AgentElement] {
     let bounds = CGRect(x: region.x, y: region.y, width: region.width, height: region.height)
     let graphics = page.graphicPresentation.geometryIDs
+    let graph = page.graphicGraph()
     return page.elements.filter {
-      (elementID == nil || elementID == $0.id)
+      let frame = graph.resolve($0.id).layout?.frame ?? $0.frame
+      return (elementID == nil || elementID == $0.id)
         && ($0.graphic == nil || graphics.contains($0.id))
-        && bounds.intersects(CGRect(x: $0.frame.x, y: $0.frame.y, width: $0.frame.width, height: $0.frame.height))
+        && ($0.graphic == nil || graph.resolve($0.id).layout != nil)
+        && bounds.intersects(CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height))
     }
   }
 
@@ -38,14 +41,17 @@ enum PageCompositionRenderer {
     if elementID == nil {
       try await canvas.drawView(GridPaperView().environment(\.displayScale, scale), size: size, in: frame)
     }
+    let graph = page.graphicGraph()
     for element in elements(in: page, region: region, elementID: elementID) {
       try Task.checkCancellation()
       // The resolver returns a borrowed entry. A frozen selection owns its
       // lease, whereas the export resolver releases its previous entry.
-      let frame = CGRect(x: element.frame.x - region.x, y: element.frame.y - region.y,
-        width: element.frame.width, height: element.frame.height)
+      let layout = element.graphic == nil ? nil : graph.resolve(element.id).layout
+      let local = layout?.frame ?? element.frame
+      let frame = CGRect(x: local.x - region.x, y: local.y - region.y,
+        width: local.width, height: local.height)
       if let graphic = element.graphic {
-        try await canvas.drawView(NotebookGraphicView(graphic: graphic), size: frame.size, in: frame)
+        try await canvas.drawView(NotebookGraphicView(graphic: graphic, layout:layout), size: frame.size, in: frame)
         continue
       }
       let image = try await raster(element)

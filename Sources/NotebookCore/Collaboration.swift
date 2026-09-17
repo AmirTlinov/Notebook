@@ -172,6 +172,13 @@ public struct CollaborationUndoResult: Codable, Equatable, Sendable {
   public let preserved: [CollaborationFieldChange]
   public let completedAt: Date
   public var restorations: [CollaborationFieldRestoration]? = nil
+  public var dependencies: [CollaborationPreservedDependency]? = nil
+}
+
+public struct CollaborationPreservedDependency: Codable, Equatable, Sendable {
+  public let file: String
+  public let path: [CollaborationPathComponent]
+  public let dependsOn: [CollaborationPathComponent]
 }
 
 public struct CollaborationContinuation: Codable, Equatable, Sendable {

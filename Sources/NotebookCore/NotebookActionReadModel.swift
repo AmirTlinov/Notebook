@@ -52,6 +52,7 @@ public struct NotebookActionReadModel: Codable, Equatable, Sendable, Identifiabl
     public let restored: Int
     public let completedAt: Date
     public let preserved: [Field]
+    public let dependencies: [CollaborationPreservedDependency]?
   }
 
   public let id: UUID
@@ -73,7 +74,7 @@ public struct NotebookActionReadModel: Codable, Equatable, Sendable, Identifiabl
     createdAt = receipt.createdAt; requestFingerprint = receipt.requestFingerprint
     revisions = receipt.revisions; changes = try receipt.changes.map(Field.init)
     undo = try receipt.undo.map { try .init(restored: $0.restored, completedAt: $0.completedAt,
-      preserved: $0.preserved.map(Field.init)) }
+      preserved: $0.preserved.map(Field.init), dependencies:$0.dependencies) }
   }
 
   public func continuations(in files: [String: JSONValue]) throws -> [CollaborationContinuation] {

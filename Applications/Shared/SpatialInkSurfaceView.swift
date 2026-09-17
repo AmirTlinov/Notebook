@@ -41,7 +41,7 @@ final class SpatialInkSurfaceRegistry {
     private var installedFocusedCoverID: UUID?
     private var preparingSceneInk: UUID?
     private var sceneInkWaiter: (id: UUID, continuation: CheckedContinuation<Bool, Never>)?
-    private var inkParking: UIWindow?
+    private var inkParking: NotebookPreparationHost?
     private(set) var sceneInkIsStopped = false
     var registeredPhysicalInkOwnerCount: Int { physicalInkOwners.count }
     private(set) var activeBoardInkID: UUID?
@@ -100,17 +100,12 @@ final class SpatialInkSurfaceRegistry {
       if inkParking == nil {
         guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
           .first(where: { $0.activationState == .foregroundActive }) else { return }
-        let window = NotebookPreparationWindow(windowScene: scene)
-        let host = UIViewController()
-        host.view.backgroundColor = .clear; host.view.isUserInteractionEnabled = false
-        host.view.accessibilityElementsHidden = true
-        window.rootViewController = host
-        window.frame = .init(x: -20_000 - canvas.bounds.width, y: -20_000 - canvas.bounds.height,
-          width: canvas.bounds.width, height: canvas.bounds.height)
-        window.isUserInteractionEnabled = false; window.isHidden = false
-        inkParking = window
+        inkParking = try? NotebookPreparationHost(windowScene: scene)
       }
-      if let host = inkParking?.rootViewController?.view, canvas.superview !== host {
+      if let parking = inkParking, canvas.superview !== parking.view {
+        let host = parking.view
+        parking.resize(to: .init(width: max(host.bounds.width, canvas.bounds.width),
+          height: max(host.bounds.height, canvas.bounds.height)))
         host.addSubview(canvas); canvas.center = .init(x: canvas.bounds.midX, y: canvas.bounds.midY)
       }
     }
@@ -181,7 +176,7 @@ final class SpatialInkSurfaceRegistry {
             let identity: ScenePhysicalOwner = surface.kind == .board ? .boardInk(id) : .item(id)
             let focused = focusedCoverID.map { surface == .cover($0) } ?? false
             let priority: SceneAllocationPriority = surface == .board(plan.rootBoardID) || focused ? .input : .passive
-            guard let admission = resources.reservePhysicalOwners([identity], priority: priority) else { throw SceneRenderError.resourceLimit }
+            let admission = resources.reservePhysicalOwners([identity], priority: priority)
             owner = .init(surface: surface, size: size, camera: camera,
               registry: self, resources: resources, displayScale: displayScale, physical: admission)
             created.append(owner)
@@ -262,7 +257,7 @@ final class SpatialInkSurfaceRegistry {
       physicalInkOwners.removeAll()
       installedSceneSurfaces.removeAll()
       installedRootBoardID = nil; sceneResources = nil
-      inkParking?.isHidden = true; inkParking?.rootViewController = nil; inkParking = nil
+      inkParking?.close(); inkParking = nil
     }
 
     func register(_ view: InkCanvasView, for surface: SurfaceID) {

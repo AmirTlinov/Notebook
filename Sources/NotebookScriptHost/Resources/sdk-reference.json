@@ -2574,13 +2574,13 @@
                         "$ref": "#/$defs/__schema13"
                       },
                       "state": {
-                        "$ref": "#/$defs/__schema22"
+                        "$ref": "#/$defs/__schema26"
                       },
                       "worldOrigin": {
                         "$ref": "#/$defs/__schema6"
                       },
                       "textStyle": {
-                        "$ref": "#/$defs/__schema23"
+                        "$ref": "#/$defs/__schema27"
                       }
                     },
                     "required": [
@@ -2698,6 +2698,30 @@
                           },
                           "visible": {
                             "$ref": "#/$defs/__schema20"
+                          },
+                          "connection": {
+                            "type": "object",
+                            "properties": {
+                              "start": {
+                                "$ref": "#/$defs/__schema22"
+                              },
+                              "end": {
+                                "$ref": "#/$defs/__schema22"
+                              },
+                              "bend": {
+                                "$ref": "#/$defs/__schema23"
+                              },
+                              "startArrowhead": {
+                                "$ref": "#/$defs/__schema24"
+                              },
+                              "endArrowhead": {
+                                "$ref": "#/$defs/__schema24"
+                              },
+                              "labelPosition": {
+                                "$ref": "#/$defs/__schema25"
+                              }
+                            },
+                            "additionalProperties": false
                           }
                         },
                         "additionalProperties": false
@@ -2709,7 +2733,7 @@
                         "$ref": "#/$defs/__schema6"
                       },
                       "textStyle": {
-                        "$ref": "#/$defs/__schema23"
+                        "$ref": "#/$defs/__schema27"
                       }
                     },
                     "additionalProperties": false
@@ -2742,7 +2766,7 @@
                     "type": "object",
                     "properties": {
                       "state": {
-                        "$ref": "#/$defs/__schema24"
+                        "$ref": "#/$defs/__schema28"
                       }
                     },
                     "required": [
@@ -2806,7 +2830,7 @@
                         "maxItems": 512,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema25"
+                          "$ref": "#/$defs/__schema29"
                         }
                       }
                     },
@@ -2862,7 +2886,7 @@
                         "$ref": "#/$defs/__schema13"
                       },
                       "initialState": {
-                        "$ref": "#/$defs/__schema26"
+                        "$ref": "#/$defs/__schema30"
                       },
                       "height": {
                         "type": "number",
@@ -2953,7 +2977,7 @@
                     "type": "object",
                     "properties": {
                       "state": {
-                        "$ref": "#/$defs/__schema27"
+                        "$ref": "#/$defs/__schema31"
                       }
                     },
                     "required": [
@@ -3017,7 +3041,7 @@
                         "maxItems": 512,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema28"
+                          "$ref": "#/$defs/__schema32"
                         }
                       }
                     },
@@ -3084,7 +3108,7 @@
                         "maxItems": 512,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema29"
+                          "$ref": "#/$defs/__schema33"
                         }
                       }
                     },
@@ -3185,7 +3209,7 @@
                         "maxItems": 512,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema29"
+                          "$ref": "#/$defs/__schema33"
                         }
                       }
                     },
@@ -3335,7 +3359,7 @@
                         "maxItems": 5,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema31"
+                          "$ref": "#/$defs/__schema35"
                         }
                       }
                     },
@@ -3422,6 +3446,38 @@
                 "items": {
                   "$ref": "#/$defs/__schema21"
                 }
+              },
+              "connection": {
+                "type": "object",
+                "properties": {
+                  "start": {
+                    "$ref": "#/$defs/__schema22"
+                  },
+                  "end": {
+                    "$ref": "#/$defs/__schema22"
+                  },
+                  "bend": {
+                    "$ref": "#/$defs/__schema23"
+                  },
+                  "startArrowhead": {
+                    "$ref": "#/$defs/__schema24"
+                  },
+                  "endArrowhead": {
+                    "$ref": "#/$defs/__schema24"
+                  },
+                  "labelPosition": {
+                    "$ref": "#/$defs/__schema25"
+                  }
+                },
+                "required": [
+                  "start",
+                  "end",
+                  "bend",
+                  "startArrowhead",
+                  "endArrowhead",
+                  "labelPosition"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
@@ -3436,7 +3492,10 @@
           },
           "__schema15": {
             "type": "string",
-            "const": "ellipse"
+            "enum": [
+              "ellipse",
+              "connector"
+            ]
           },
           "__schema16": {
             "type": "object",
@@ -3451,6 +3510,14 @@
               },
               "fill": {
                 "$ref": "#/$defs/__schema17"
+              },
+              "dash": {
+                "type": "string",
+                "enum": [
+                  "solid",
+                  "dashed",
+                  "dotted"
+                ]
               }
             },
             "required": [
@@ -3505,6 +3572,102 @@
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
           },
           "__schema22": {
+            "type": "object",
+            "properties": {
+              "point": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": -1000000,
+                    "maximum": 1000000
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": -1000000,
+                    "maximum": 1000000
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false
+              },
+              "binding": {
+                "type": "object",
+                "properties": {
+                  "elementID": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "normalizedAnchor": {
+                    "type": "object",
+                    "properties": {
+                      "x": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "y": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "isExact": {
+                    "type": "boolean"
+                  },
+                  "isPrecise": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "elementID",
+                  "normalizedAnchor",
+                  "isExact",
+                  "isPrecise"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "point"
+            ],
+            "additionalProperties": false
+          },
+          "__schema23": {
+            "type": "number",
+            "minimum": -1000000,
+            "maximum": 1000000
+          },
+          "__schema24": {
+            "type": "string",
+            "enum": [
+              "none",
+              "arrow",
+              "triangle",
+              "square",
+              "dot",
+              "pipe",
+              "diamond",
+              "inverted",
+              "bar"
+            ]
+          },
+          "__schema25": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "__schema26": {
             "anyOf": [
               {
                 "type": "string"
@@ -3521,7 +3684,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema22"
+                  "$ref": "#/$defs/__schema26"
                 }
               },
               {
@@ -3530,12 +3693,12 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema22"
+                  "$ref": "#/$defs/__schema26"
                 }
               }
             ]
           },
-          "__schema23": {
+          "__schema27": {
             "type": "object",
             "properties": {
               "fontSize": {
@@ -3579,106 +3742,106 @@
             ],
             "additionalProperties": false
           },
-          "__schema24": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              },
-              {
-                "type": "array",
-                "items": {
-                  "$ref": "#/$defs/__schema24"
-                }
-              },
-              {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "$ref": "#/$defs/__schema24"
-                }
-              }
-            ]
-          },
-          "__schema25": {
-            "type": "string"
-          },
-          "__schema26": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              },
-              {
-                "type": "array",
-                "items": {
-                  "$ref": "#/$defs/__schema26"
-                }
-              },
-              {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "$ref": "#/$defs/__schema26"
-                }
-              }
-            ]
-          },
-          "__schema27": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              },
-              {
-                "type": "array",
-                "items": {
-                  "$ref": "#/$defs/__schema27"
-                }
-              },
-              {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "$ref": "#/$defs/__schema27"
-                }
-              }
-            ]
-          },
           "__schema28": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema28"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema28"
+                }
+              }
+            ]
           },
           "__schema29": {
+            "type": "string"
+          },
+          "__schema30": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema30"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema30"
+                }
+              }
+            ]
+          },
+          "__schema31": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema31"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema31"
+                }
+              }
+            ]
+          },
+          "__schema32": {
+            "type": "string"
+          },
+          "__schema33": {
             "oneOf": [
               {
                 "type": "object",
@@ -3728,7 +3891,7 @@
                     "$ref": "#/$defs/__schema13"
                   },
                   "initialState": {
-                    "$ref": "#/$defs/__schema30"
+                    "$ref": "#/$defs/__schema34"
                   },
                   "height": {
                     "type": "number",
@@ -3745,7 +3908,7 @@
               }
             ]
           },
-          "__schema30": {
+          "__schema34": {
             "anyOf": [
               {
                 "type": "string"
@@ -3762,7 +3925,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema30"
+                  "$ref": "#/$defs/__schema34"
                 }
               },
               {
@@ -3771,12 +3934,12 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema30"
+                  "$ref": "#/$defs/__schema34"
                 }
               }
             ]
           },
-          "__schema31": {
+          "__schema35": {
             "type": "string",
             "format": "uuid",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
@@ -4539,7 +4702,7 @@
       {
         "name": "convertInkToElement",
         "topic": "operation/convertInkToElement",
-        "description": "Convert 1–16 existing pen strokes on the same physical owner into a native ellipse. Requires inkRevision. sourceInkIDs remain immutable; undo restores original ink. The graphic must be visible and use geometry representation."
+        "description": "Convert 1–16 existing pen strokes on the same physical owner into native geometry. Requires inkRevision. sourceInkIDs remain immutable; undo restores original ink. The graphic must be visible and use geometry representation."
       },
       {
         "name": "updateElement",
@@ -5100,7 +5263,10 @@
                 "properties": {
                   "shape": {
                     "type": "string",
-                    "const": "ellipse"
+                    "enum": [
+                      "ellipse",
+                      "connector"
+                    ]
                   },
                   "style": {
                     "type": "object",
@@ -5115,6 +5281,14 @@
                       },
                       "fill": {
                         "$ref": "#/$defs/__schema1"
+                      },
+                      "dash": {
+                        "type": "string",
+                        "enum": [
+                          "solid",
+                          "dashed",
+                          "dotted"
+                        ]
                       }
                     },
                     "required": [
@@ -5143,6 +5317,42 @@
                     "items": {
                       "$ref": "#/$defs/__schema2"
                     }
+                  },
+                  "connection": {
+                    "type": "object",
+                    "properties": {
+                      "start": {
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "end": {
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "bend": {
+                        "type": "number",
+                        "minimum": -1000000,
+                        "maximum": 1000000
+                      },
+                      "startArrowhead": {
+                        "$ref": "#/$defs/__schema4"
+                      },
+                      "endArrowhead": {
+                        "$ref": "#/$defs/__schema4"
+                      },
+                      "labelPosition": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      }
+                    },
+                    "required": [
+                      "start",
+                      "end",
+                      "bend",
+                      "startArrowhead",
+                      "endArrowhead",
+                      "labelPosition"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -5165,7 +5375,7 @@
                 "$ref": "#/$defs/__schema0"
               },
               "state": {
-                "$ref": "#/$defs/__schema3"
+                "$ref": "#/$defs/__schema5"
               },
               "worldOrigin": {
                 "type": "object",
@@ -5296,6 +5506,92 @@
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
           },
           "__schema3": {
+            "type": "object",
+            "properties": {
+              "point": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": -1000000,
+                    "maximum": 1000000
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": -1000000,
+                    "maximum": 1000000
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false
+              },
+              "binding": {
+                "type": "object",
+                "properties": {
+                  "elementID": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "normalizedAnchor": {
+                    "type": "object",
+                    "properties": {
+                      "x": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "y": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "isExact": {
+                    "type": "boolean"
+                  },
+                  "isPrecise": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "elementID",
+                  "normalizedAnchor",
+                  "isExact",
+                  "isPrecise"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "point"
+            ],
+            "additionalProperties": false
+          },
+          "__schema4": {
+            "type": "string",
+            "enum": [
+              "none",
+              "arrow",
+              "triangle",
+              "square",
+              "dot",
+              "pipe",
+              "diamond",
+              "inverted",
+              "bar"
+            ]
+          },
+          "__schema5": {
             "anyOf": [
               {
                 "type": "string"
@@ -5312,7 +5608,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema3"
+                  "$ref": "#/$defs/__schema5"
                 }
               },
               {
@@ -5321,7 +5617,7 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema3"
+                  "$ref": "#/$defs/__schema5"
                 }
               }
             ]
@@ -5335,7 +5631,7 @@
     },
     "convertInkToElement": {
       "name": "convertInkToElement",
-      "description": "Convert 1–16 existing pen strokes on the same physical owner into a native ellipse. Requires inkRevision. sourceInkIDs remain immutable; undo restores original ink. The graphic must be visible and use geometry representation.",
+      "description": "Convert 1–16 existing pen strokes on the same physical owner into native geometry. Requires inkRevision. sourceInkIDs remain immutable; undo restores original ink. The graphic must be visible and use geometry representation.",
       "input": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -5516,7 +5812,10 @@
                 "properties": {
                   "shape": {
                     "type": "string",
-                    "const": "ellipse"
+                    "enum": [
+                      "ellipse",
+                      "connector"
+                    ]
                   },
                   "style": {
                     "type": "object",
@@ -5531,6 +5830,14 @@
                       },
                       "fill": {
                         "$ref": "#/$defs/__schema0"
+                      },
+                      "dash": {
+                        "type": "string",
+                        "enum": [
+                          "solid",
+                          "dashed",
+                          "dotted"
+                        ]
                       }
                     },
                     "required": [
@@ -5559,6 +5866,42 @@
                     "items": {
                       "$ref": "#/$defs/__schema1"
                     }
+                  },
+                  "connection": {
+                    "type": "object",
+                    "properties": {
+                      "start": {
+                        "$ref": "#/$defs/__schema2"
+                      },
+                      "end": {
+                        "$ref": "#/$defs/__schema2"
+                      },
+                      "bend": {
+                        "type": "number",
+                        "minimum": -1000000,
+                        "maximum": 1000000
+                      },
+                      "startArrowhead": {
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "endArrowhead": {
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "labelPosition": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      }
+                    },
+                    "required": [
+                      "start",
+                      "end",
+                      "bend",
+                      "startArrowhead",
+                      "endArrowhead",
+                      "labelPosition"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -5651,6 +5994,92 @@
             "type": "string",
             "format": "uuid",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema2": {
+            "type": "object",
+            "properties": {
+              "point": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": -1000000,
+                    "maximum": 1000000
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": -1000000,
+                    "maximum": 1000000
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false
+              },
+              "binding": {
+                "type": "object",
+                "properties": {
+                  "elementID": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "normalizedAnchor": {
+                    "type": "object",
+                    "properties": {
+                      "x": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "y": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "isExact": {
+                    "type": "boolean"
+                  },
+                  "isPrecise": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "elementID",
+                  "normalizedAnchor",
+                  "isExact",
+                  "isPrecise"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "point"
+            ],
+            "additionalProperties": false
+          },
+          "__schema3": {
+            "type": "string",
+            "enum": [
+              "none",
+              "arrow",
+              "triangle",
+              "square",
+              "dot",
+              "pipe",
+              "diamond",
+              "inverted",
+              "bar"
+            ]
           }
         }
       },
@@ -5820,7 +6249,10 @@
                 "properties": {
                   "shape": {
                     "type": "string",
-                    "const": "ellipse"
+                    "enum": [
+                      "ellipse",
+                      "connector"
+                    ]
                   },
                   "style": {
                     "type": "object",
@@ -5835,6 +6267,14 @@
                       },
                       "fill": {
                         "$ref": "#/$defs/__schema1"
+                      },
+                      "dash": {
+                        "type": "string",
+                        "enum": [
+                          "solid",
+                          "dashed",
+                          "dotted"
+                        ]
                       }
                     },
                     "required": [
@@ -5856,6 +6296,34 @@
                   },
                   "visible": {
                     "type": "boolean"
+                  },
+                  "connection": {
+                    "type": "object",
+                    "properties": {
+                      "start": {
+                        "$ref": "#/$defs/__schema2"
+                      },
+                      "end": {
+                        "$ref": "#/$defs/__schema2"
+                      },
+                      "bend": {
+                        "type": "number",
+                        "minimum": -1000000,
+                        "maximum": 1000000
+                      },
+                      "startArrowhead": {
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "endArrowhead": {
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "labelPosition": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      }
+                    },
+                    "additionalProperties": false
                   }
                 },
                 "additionalProperties": false
@@ -6003,6 +6471,92 @@
               "blue"
             ],
             "additionalProperties": false
+          },
+          "__schema2": {
+            "type": "object",
+            "properties": {
+              "point": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": -1000000,
+                    "maximum": 1000000
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": -1000000,
+                    "maximum": 1000000
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false
+              },
+              "binding": {
+                "type": "object",
+                "properties": {
+                  "elementID": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "normalizedAnchor": {
+                    "type": "object",
+                    "properties": {
+                      "x": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "y": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "isExact": {
+                    "type": "boolean"
+                  },
+                  "isPrecise": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "elementID",
+                  "normalizedAnchor",
+                  "isExact",
+                  "isPrecise"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "point"
+            ],
+            "additionalProperties": false
+          },
+          "__schema3": {
+            "type": "string",
+            "enum": [
+              "none",
+              "arrow",
+              "triangle",
+              "square",
+              "dot",
+              "pipe",
+              "diamond",
+              "inverted",
+              "bar"
+            ]
           }
         }
       },
@@ -9159,6 +9713,7 @@
   "examples": {
     "createDocument": "const s=(await nb.board({})).values[0]; const boardID=s.boardID; await emit(await nb.transaction('document',{summary:'Учебный документ',expected:[{target:{kind:'board',id:boardID},revision:s.boardContentRevisions[boardID.toLowerCase()]},{target:{kind:'workspace',id:s.header.rootBoardID},revision:s.header.stamp.counter+'@'+s.header.stamp.actor.toLowerCase()}],operations:[{kind:'createDocument',target:{kind:'board',id:boardID},values:{title:'Пример',center:{tileX:0,tileY:0,localX:0,localY:0},paperSize:'a4',blocks:[{id:'intro',kind:'markdown',source:'# Введение'}]}}]}));",
     "graphic": "insertElement: {kind:'graphic',source:'',frame:{x:20,y:20,width:100,height:100},graphic:{shape:'ellipse',style:{stroke:{red:0,green:0,blue:0},strokeWidth:2},label:'+',representation:'geometry',visible:true,sourceInkIDs:[]}}. For a board add worldOrigin. updateElement accepts a graphic patch, e.g. {graphic:{label:'?'}}; sourceInkIDs cannot be patched. convertInkToElement uses the same payload with existing sourceInkIDs and requires inkRevision.",
+    "connector": "A graphic with shape:'connector' has connection:{start:{point:{x:0,y:0},binding:{elementID:'a',normalizedAnchor:{x:0.5,y:0.5},isExact:false,isPrecise:false}},end:{point:{x:100,y:0},binding:{elementID:'b',normalizedAnchor:{x:0.5,y:0.5},isExact:false,isPrecise:false}},bend:0,startArrowhead:'none',endArrowhead:'arrow',labelPosition:0.5}. Points are element-local; bindings address native nodes on the same owner. Moving nodes derives the connection without changing its authored frame. Missing or hidden bound nodes hide the link, never detach it. Patch connection fields independently, e.g. {graphic:{connection:{bend:40},label:'1:2'}}. Replace an endpoint with {point:{x:...,y:...}} to detach explicitly. Styles support stroke, strokeWidth and dash solid/dashed/dotted. Heads: none/arrow/triangle/square/dot/pipe/diamond/inverted/bar. Read page/board/boardElement returns graphicResolution:{state:'geometry',frame} or {state:'hidden'} or {state:'pending',dependencies}; frame is derived, while the authored element.frame and binding values remain unchanged. Hidden means this geometry is not shown, including an ink representation; it does not remove intent. Undo reports retained_dependency addresses for later links that protect earlier node creation/conversion.",
     "nativeText": "insertElement on board: {kind:'nativeText',source:'Подпись',worldOrigin:{tileX:0,tileY:0,localX:0,localY:0},frame:{x:0,y:0,width:200,height:80},textStyle:{fontSize:24,weight:0.45,red:0.09,green:0.09,blue:0.08,alpha:1}}. For a cover omit worldOrigin and use cover-local frame coordinates. Omit textStyle to use native defaults.",
     "interactive": "const d = await nb.document({id:args.documentID});\nawait emit(await nb.transaction('counter', {\n  summary:'Интерактивный счётчик',\n  expected:[{target:{kind:'document',id:d.document.id},revision:d.contentRevision}],\n  operations:[{kind:'insertBlock',target:{kind:'document',id:d.document.id},id:'counter',values:{\n  \"kind\": \"interactive\",\n  \"html\": \"<button id=\\\"increment\\\">Прибавить один</button> <output id=\\\"count\\\"></output>\",\n  \"css\": \"button,output{font:24px -apple-system,sans-serif}button{padding:12px}\",\n  \"initialState\": {\n    \"count\": 0\n  },\n  \"height\": 120,\n  \"javaScript\": \"const button = document.getElementById('increment');\\nconst output = document.getElementById('count');\\nconst draw = () => { output.textContent = String(notebook.state?.count ?? 0); };\\nbutton.addEventListener('click', () => {\\n  notebook.commit({count: (notebook.state?.count ?? 0) + 1});\\n  draw();\\n});\\naddEventListener('notebookstate', draw);\\nnotebook.ready(Promise.resolve().then(draw));\"\n}}]\n}));"
   }

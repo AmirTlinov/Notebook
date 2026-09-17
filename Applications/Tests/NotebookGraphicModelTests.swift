@@ -13,7 +13,7 @@ import XCTest
     var model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let workspace = try XCTUnwrap(model.workspace), pageID = try XCTUnwrap(workspace.selectedPageID)
+    let workspace = try XCTUnwrap(model.workspace, "Startup: \(model.loadState)"), pageID = try XCTUnwrap(workspace.selectedPageID)
     let target = CollaborationTarget(kind: onBoard ? .board : .page, id: onBoard ? workspace.rootBoardID : pageID)
     if onBoard { model.updatePresence(.init(boardID: target.id, mode: .board, camera: .init(), viewport: .init(x: 834, y: 1194)), settled: true) }
     let initialSave = await model.finishPendingPersistence(); XCTAssertTrue(initialSave)

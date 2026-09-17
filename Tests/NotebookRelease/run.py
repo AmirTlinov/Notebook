@@ -75,7 +75,9 @@ class PairCLI(preview.FakeCLI):
             assert argv[1:3] == ["-B", str(self.source / "Applications/prepare_notebook_tex.py")]
             assert "--prepare" in argv and "--stage" in argv
         elif label == "image-resources":
-            assert "--prepare" in argv and "--stage-root" in argv
+            # Both public build inputs are valid. The fake still returns only
+            # its isolated stage, never reads or writes the caller's real cache.
+            assert "--prepare" in argv and (("--stage-root" in argv) != ("--stage" in argv))
             output = json.dumps({"status": "ready", "stage": str(self.source / ".build/fixture-image-runtime")}).encode()
         elif label == "build-mac":
             if self.mac_fail:

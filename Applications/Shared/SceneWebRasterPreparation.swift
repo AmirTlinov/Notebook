@@ -24,7 +24,7 @@ final class SceneWebRasterPreparation {
   private let coordinator: AgentWebCoordinator
   private let web: WKWebView
   #if os(iOS)
-    private let window: UIWindow
+    private let host: NotebookPreparationHost
   #else
     private let window: NSWindow
   #endif
@@ -57,18 +57,17 @@ final class SceneWebRasterPreparation {
 
   private init(resources: SceneRenderResources, lease: WebSurfaceLease) throws {
     self.resources = resources; self.lease = lease
-    coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
-    web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     #if os(iOS)
       guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
         .first(where: { $0.activationState == .foregroundActive }) else {
-        coordinator.invalidate(); throw SceneRenderError.snapshotPending("preparation_scene")
+        throw SceneRenderError.snapshotPending("preparation_scene")
       }
-      window = NotebookPreparationWindow(windowScene: scene)
-      let controller = UIViewController()
-      controller.view.backgroundColor = .clear
-      controller.view.addSubview(web)
-      window.rootViewController = controller
+      host = try NotebookPreparationHost(windowScene: scene)
+    #endif
+    coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
+    web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
+    #if os(iOS)
+      host.view.addSubview(web)
     #else
       window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: 1, height: 1),
         styleMask: .borderless, backing: .buffered, defer: false)
@@ -146,9 +145,8 @@ final class SceneWebRasterPreparation {
     let size = CGSize(width: element.frame.width, height: element.frame.height)
     let crop = policy.captureRect(for: element)
     #if os(iOS)
-      window.frame = CGRect(origin: .init(x: -20_000 - crop.width, y: -20_000 - crop.height), size: crop.size)
+      host.resize(to: crop.size)
       web.frame = CGRect(origin: .init(x: -crop.minX, y: -crop.minY), size: size)
-      window.isHidden = false
     #else
       window.setContentSize(crop.size); window.setFrameOrigin(.init(x: -20_000 - crop.width, y: -20_000 - crop.height))
       web.frame = CGRect(origin: .init(x: -crop.minX, y: -crop.minY), size: size); window.orderBack(nil)
@@ -161,7 +159,7 @@ final class SceneWebRasterPreparation {
     finish(.failure(CancellationError()))
     coordinator.invalidate()
     #if os(iOS)
-      web.removeFromSuperview(); window.isHidden = true; window.rootViewController = nil
+      web.removeFromSuperview(); host.close()
     #else
       window.orderOut(nil); window.contentView = nil; window.close()
     #endif

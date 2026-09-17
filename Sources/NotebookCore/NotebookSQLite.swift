@@ -338,7 +338,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  private static let currentDatabaseVersion: Int64 = 5
+  private static let currentDatabaseVersion: Int64 = 6
 
   func prepareDatabase(initialWorkspaceID: UUID? = nil) throws {
     if currentSQL != nil { guard initialWorkspaceID == nil else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }; return }
@@ -420,7 +420,7 @@ extension NotebookStore {
     try commandTransaction(advancesReadRevision: version == 2, preparedDatabase: database) {
       let admittedVersion = try database.rows("PRAGMA user_version").first?.first?.integer ?? 0
       if admittedVersion == Self.currentDatabaseVersion { return }
-      guard (2...4).contains(admittedVersion) else { throw NotebookStorageError.unsupportedFormat }
+      guard (2..<Self.currentDatabaseVersion).contains(admittedVersion) else { throw NotebookStorageError.unsupportedFormat }
       try prepareCurrentDatabaseSchema(database)
       if admittedVersion == 2 { try migrateStoredBoardPlacements(database: database) }
       // One historical receipt at a time; no whole-history buffer and no
@@ -439,6 +439,8 @@ extension NotebookStore {
   private func prepareCurrentDatabaseSchema(_ database: NotebookSQLConnection) throws {
     try database.run("CREATE TABLE IF NOT EXISTS graphic_sources(address TEXT NOT NULL REFERENCES records(address) ON DELETE CASCADE,owner TEXT NOT NULL,element_id TEXT NOT NULL,stroke_id TEXT NOT NULL,PRIMARY KEY(address,stroke_id))")
     try database.run("CREATE INDEX IF NOT EXISTS graphic_source_owner ON graphic_sources(owner,stroke_id)")
+    try database.run("CREATE TABLE IF NOT EXISTS graphic_bindings(address TEXT NOT NULL REFERENCES records(address) ON DELETE CASCADE,owner TEXT NOT NULL,target_id TEXT NOT NULL,terminal TEXT NOT NULL,PRIMARY KEY(address,terminal))")
+    try database.run("CREATE INDEX IF NOT EXISTS graphic_binding_target ON graphic_bindings(owner,target_id)")
     try database.run("CREATE TABLE IF NOT EXISTS action_field_restorations(address TEXT NOT NULL REFERENCES records(address) ON DELETE CASCADE,field TEXT NOT NULL,version TEXT NOT NULL,value BLOB NOT NULL,PRIMARY KEY(address,field))")
     try database.run("CREATE INDEX IF NOT EXISTS action_field_restoration_version ON action_field_restorations(field,version)")
     try database.run("CREATE TABLE IF NOT EXISTS action_read_models(address TEXT PRIMARY KEY REFERENCES records(address) ON DELETE CASCADE,receipt_hash TEXT NOT NULL,value BLOB NOT NULL)")

@@ -1,6 +1,52 @@
 import Foundation
 
 extension CollaborationWorkspace {
+  /// Only newly authored bindings are validated against this transaction's
+  /// complete after-state. Delivery preserves a formerly valid intent whose
+  /// endpoint was concurrently hidden; the projection, not a repair, hides it.
+  func validateGraphicBindings(action: CollaborationAction, scope: NotebookStore) throws {
+    for (index, operation) in action.operations.enumerated() {
+      guard let id = operation.id,
+        [.insertElement, .convertInkToElement, .updateElement].contains(operation.kind),
+        operation.values["graphic"]?["connection"] != nil else { continue }
+      do {
+        let target = operation.target
+        let elements: [JSONValue]
+        if target.kind == .page { elements = files["pages/\(target.id.uuidString.lowercased()).json"]?["elements"]?.array ?? [] }
+        else {
+          elements = files["board.json"]?["boards"]?.array.first { $0["id"]?.string.flatMap(UUID.init(uuidString:)) == (target.boardID ?? target.id) }?["board"]?["elements"]?.array ?? []
+        }
+        guard let value = elements.first(where: { $0["id"]?.string == id }),
+          let connection = try value["graphic"]?.decode(NotebookGraphic.self).connection else { continue }
+        let authored = operation.values["graphic"]?["connection"]
+        for terminal in NotebookGraphicConnection.Terminal.allCases {
+          // A label, head or bend change must not reject a retained hidden
+          // endpoint. Only the endpoint authored by this operation is checked.
+          guard operation.kind != .updateElement || authored?[terminal.rawValue] != nil,
+            let binding = (terminal == .start ? connection.start : connection.end).binding else { continue }
+          let found: JSONValue?
+          if let local = elements.first(where: { $0["id"]?.string.map(collaborationIdentity) == collaborationIdentity(binding.elementID) }) {
+            found = local
+          } else if target.kind == .page {
+            found = try scope.readPageElement(pageID: target.id, elementID: binding.elementID).map(JSONValue.encode)
+          } else {
+            found = try scope.readSpatialElement(boardID: target.boardID ?? target.id, elementID: binding.elementID).map(JSONValue.encode)
+          }
+          guard let found, let node = try found["graphic"]?.decode(NotebookGraphic.self),
+            node.showsGeometry, node.shape != .connector, binding.elementID != id else {
+            throw CollaborationError("invalid_binding", "Привязка \(id) → \(binding.elementID) требует видимый нативный узел этого владельца.", target: target)
+          }
+          if target.kind != .page {
+            let expected: SurfaceID = target.kind == .cover ? .cover(target.id) : .board(target.id)
+            guard try found["surface"]?.decode(SurfaceID.self) == expected else {
+              throw CollaborationError("invalid_binding", "Концы связи принадлежат одной физической поверхности.", target: target)
+            }
+          }
+        }
+      } catch let error as CollaborationError { throw error.atOperation(index, operation) }
+    }
+  }
+
   func validateGraphicSources(_ graphic: NotebookGraphic, target: CollaborationTarget,
     elements: [JSONValue]) throws {
     func invalid() -> CollaborationError {

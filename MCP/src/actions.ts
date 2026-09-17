@@ -24,10 +24,19 @@ const block = z.discriminatedUnion("kind", [
     css: source.optional(), javaScript: source.optional(), initialState: z.json().optional(), height: z.number().min(48).max(2048).optional() }).strict(),
 ]);
 const graphicColor = z.object({ red: z.number().min(0).max(1), green: z.number().min(0).max(1), blue: z.number().min(0).max(1) }).strict();
-const graphicStyle = z.object({ stroke: graphicColor, strokeWidth: z.number().positive().max(1_000_000), fill: graphicColor.optional() }).strict();
-const graphic = z.object({ shape: z.literal("ellipse"), style: graphicStyle, label: z.string().max(100_000),
-  representation: z.enum(["ink", "geometry"]), visible: z.boolean(), sourceInkIDs: z.array(z.uuid()).max(16) }).strict();
-const graphicEdit = graphic.omit({ sourceInkIDs: true }).partial().strict();
+const graphicStyle = z.object({ stroke: graphicColor, strokeWidth: z.number().positive().max(1_000_000), fill: graphicColor.optional(), dash: z.enum(["solid", "dashed", "dotted"]).optional() }).strict();
+const graphicPoint = z.object({ x: z.number().finite().min(-1e6).max(1e6), y: z.number().finite().min(-1e6).max(1e6) }).strict();
+const graphicBinding = z.object({ elementID: z.string().min(1).max(120),
+  normalizedAnchor: z.object({x:z.number().min(0).max(1), y:z.number().min(0).max(1)}).strict(),
+  isExact: z.boolean(), isPrecise: z.boolean() }).strict();
+const graphicEndpoint = z.object({point: graphicPoint, binding: graphicBinding.optional()}).strict();
+const arrowhead = z.enum(["none", "arrow", "triangle", "square", "dot", "pipe", "diamond", "inverted", "bar"]);
+const graphicConnection = z.object({start:graphicEndpoint, end:graphicEndpoint,
+  bend:z.number().finite().min(-1e6).max(1e6), startArrowhead:arrowhead, endArrowhead:arrowhead,
+  labelPosition:z.number().min(0).max(1)}).strict();
+const graphic = z.object({ shape: z.enum(["ellipse", "connector"]), style: graphicStyle, label: z.string().max(100_000),
+  representation: z.enum(["ink", "geometry"]), visible: z.boolean(), sourceInkIDs: z.array(z.uuid()).max(16), connection:graphicConnection.optional() }).strict();
+const graphicEdit = graphic.omit({ sourceInkIDs: true, connection: true }).partial().extend({connection:graphicConnection.partial().strict().optional()}).strict();
 const editFields = z.object({ source: source.optional(), html: source.optional(), css: source.optional(), javaScript: source.optional(),
   graphic: graphicEdit.optional(), frame: frame.optional(), worldOrigin: point.optional(), textStyle: textStyle.optional() }).strict();
 const op = <K extends string, S extends z.ZodType>(kind: K, values: S, id: z.ZodType | null = z.string().min(1).max(120)) =>

@@ -64,12 +64,13 @@ public enum AgentElementKind: String, Codable, Sendable {
 }
 
 public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
-  static func causalFieldKeys(id: String, graphic: Bool = false) -> [String] {
+  static func causalFieldKeys(id: String, graphic: Bool = false, connection: Bool = false) -> [String] {
     let base = ["exists", "id", "frame", "content", "css", "javaScript", "state"].map {
       fieldKey(["elements", collaborationIdentity(id), $0])
     }
-    return base + (graphic ? NotebookGraphic.causalFields.map {
-      fieldKey(["elements", collaborationIdentity(id), "graphic", $0])
+    let paths = connection ? NotebookGraphic.allCausalPaths : NotebookGraphic.causalFields.map { [$0] }
+    return base + (graphic ? paths.map {
+      fieldKey(["elements", collaborationIdentity(id), "graphic"] + $0)
     } : [])
   }
 
@@ -193,7 +194,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     drawingStamp = VersionStamp(counter: 0, actor: actor)
     self.elements = elements
     agentStamp = VersionStamp(counter: 0, actor: actor)
-    let keys = ["elements/order"] + elements.flatMap { AgentElement.causalFieldKeys(id: $0.id, graphic: $0.graphic != nil) }
+    let keys = ["elements/order"] + elements.flatMap { AgentElement.causalFieldKeys(id: $0.id, graphic: $0.graphic != nil, connection: $0.graphic?.connection != nil) }
     collaboration = .init(fields: Dictionary(keys.map { ($0, ContentFieldVersion(stamp: agentStamp, human: true)) },
       uniquingKeysWith: { first, _ in first }))
     precondition(isValid)

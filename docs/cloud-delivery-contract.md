@@ -68,6 +68,11 @@ Apple Account; зона `Notebook-<workspace UUID>`. Устройства дол
 - `NotebookDelivery`: версия wire и ограниченный JSON envelope (до 4096 bytes);
 - `NotebookBlob`: hash целого blob, offset/total, SHA-256 порции и `CKAsset`.
 
+У этих типов нет public `GRANT`: доставка использует только private database.
+CloudKit RBAC относится к публичной базе, поэтому выдавать `_world` или
+`_icloud` доступ к типам Notebook не требуется. Автоматический системный тип
+`Users` не меняется. [Правила доступа Apple](https://developer.apple.com/icloud/cloudkit/designing/).
+
 Порция — не более 1 MiB; партия отправки — 8 записей. Манифесты сохраняют
 существующий лимит 16 384 адресов в части. Большой снимок не собирается в один
 Swift-массив или один облачный record. Вспомогательные индексы хранятся в SQL.
@@ -106,7 +111,7 @@ CKSyncEngine; отдельного цикла опроса данных нет. 
 незавершённую попытку старта, и её повтор.
 
 Постоянное содержание направляется в **Production**, без скрытого fallback в
-Development. Native/Simulator acceptance не получает container setting или
+Development. Изолированная native acceptance не получает container setting или
 CloudKit entitlement и не обращается к облаку пользователя.
 
 `notebook_release.py` генерирует и проверяет точный общий контейнер, CloudKit,
@@ -127,13 +132,17 @@ XPC workers этих прав не получают. Bundle IDs и Keychain-гр
    сценарий «iPad загрузил → выключен → Mac получил без LAN».
 
 Проверка syntax/import schema требует CloudKit management access; файл `.ckdb`
-сам по себе не доказывает развёртывание. Токен хранится штатным `cktool save-token`
-в Keychain, не в репозитории, логах или чате. На 17 сентября проверка Production
-через `cktool export-schema` остановилась на отсутствии management token.
-Реальная signed Mac-сборка также остановилась до компиляции: в Xcode нет
-Developer Account и подходящего Mac App Development profile. Нужен штатный
-вход в Xcode Settings → Accounts и настройка прав существующих App ID;
-подмена подписи или смена идентичности приложения не используются.
+сам по себе не доказывает развёртывание. Достаточен авторизованный CloudKit
+Console, отдельный management token для приложения не нужен. При использовании
+`cktool` токен хранится штатным `cktool save-token` в Keychain, не в репозитории,
+логах или чате.
+
+17 сентября 2026 подтверждены создание контейнера, привязка обоих App ID,
+серверные validation/import в первоначально пустой Development и публикация
+двух типов в Production без новых public grants. Это **не** подтверждение
+подписанной пары, включения синхронизации или облачного обмена: эти границы
+проверяются отдельно. Подмена подписи и смена идентичности приложения не
+используются. Актуальные результаты — в `docs/verification.md`.
 
 Apple подтверждает интеграцию CKSyncEngine с собственной базой данных:
 [WWDC23](https://developer.apple.com/videos/play/wwdc2023/10188/).

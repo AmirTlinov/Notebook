@@ -42,6 +42,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
       coordinator.install(on: window, inside: view)
     }
     context.coordinator.onQuickShape = onQuickShape
+    context.coordinator.resolveGraphicGraph = { [weak model] cohort, board in
+      model?.presentedGraphicGraph(boardID:board,cohort:cohort,preview:false) ?? cohort.frame.index.board(id:board)?.graphicGraph() ?? .init([])
+    }
     context.coordinator.update(
       view: view, cohort: cohort,
       boardID: boardID,
@@ -65,6 +68,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
   func updateUIView(_ view: SpatialInkContainerView, context: Context) {
     view.bindCameraProjection(to: model?.nativeCameraProjection)
     context.coordinator.onQuickShape = onQuickShape
+    context.coordinator.resolveGraphicGraph = { [weak model] cohort, board in
+      model?.presentedGraphicGraph(boardID:board,cohort:cohort,preview:false) ?? cohort.frame.index.board(id:board)?.graphicGraph() ?? .init([])
+    }
     context.coordinator.update(
       view: view, cohort: cohort,
       boardID: boardID,
@@ -97,6 +103,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private var surfaceRegistry: SpatialInkSurfaceRegistry
     private let inputSourceID = UUID()
     var onQuickShape: ((NotebookQuickShapeFit, UUID, WorldPoint, SpatialInkAction) -> Void)?
+    var resolveGraphicGraph: ((SceneCompositionCohort, UUID) -> NotebookGraphicGraph)?
     private let quickShape = NotebookQuickShapeSession()
     private let quickShapeLayer = CAShapeLayer()
     private var inputGate: NotebookInputGate
@@ -133,6 +140,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       let blockedSurfaces: Set<SurfaceID>
       let cohort: SceneCompositionCohort?
       let leases: [SpatialInkSurfaceRegistry.ContactLease]
+      let graphics: NotebookGraphicGraph
     }
     private var actionGeometry: ContactGeometry?
     private var lastActionPoint: PKStrokePoint?
@@ -166,7 +174,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         guard let self else { return }
         if let fit {
           if quickShapeLayer.superlayer == nil { view?.layer.addSublayer(quickShapeLayer) }
-          quickShapeLayer.path = UIBezierPath(ovalIn: CGRect(x: fit.frame.x, y: fit.frame.y, width: fit.frame.width, height: fit.frame.height)).cgPath
+          quickShapeLayer.path = NotebookGraphicView.previewPath(fit).cgPath
           let color = (actionPenStyle ?? penStyle).color.components
           quickShapeLayer.strokeColor = UIColor(red: color.red, green: color.green, blue: color.blue, alpha: 1).cgColor
           quickShapeLayer.lineWidth = lastActionPoint?.size.width ?? 2
@@ -350,7 +358,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
       // request a return animation. No sample is deferred or replayed later.
       actionGeometry = .init(camera: camera, viewport: viewport, surfaces: frozen,
         blockedSurfaces: Set(items.filter { isItemBeingDeleted($0.itemID) || surfaceRegistry.isRetired(.cover($0.itemID)) }.map { .cover($0.itemID) }),
-        cohort: cohort, leases: leases)
+        cohort: cohort, leases: leases,
+        graphics:cohort.flatMap { cohort in boardSurface.ownerID.flatMap { resolveGraphicGraph?(cohort,$0) } } ?? .init([]))
       setPencilActionActive(touch.type == .pencil || inputGate.simulatesPencilContacts)
       actionTool = drawingTool
       actionPenStyle = penStyle
@@ -367,7 +376,15 @@ struct SpatialInkCanvas: UIViewRepresentable {
       actionStartTimestamp = touch.timestamp
       appendSamples(touch: touch, event: event)
       if actionTool == .pen, currentSurface == boardSurface, let point = lastActionPoint?.location {
-        quickShape.begin(at: .init(x: point.x, y: point.y), screenScale: 1) { [weak self] in
+        quickShape.begin(at: .init(x: point.x, y: point.y), screenScale: 1, resolve: { [weak self] fit in
+          guard let self, let geometry = actionGeometry else { return fit }
+          let scale = geometry.camera.scale, screenOrigin = SpatialPoint(x:fit.frame.x,y:fit.frame.y)
+          let origin = geometry.camera.screenToWorld(screenOrigin,viewport:geometry.viewport)
+          let physical = fit.scaled(by:1/scale,frameOrigin:.zero).binding(in:geometry.graphics,surface:boardSurface,origin:origin,tolerance:18/scale)
+          var result = physical.scaled(by:scale,frameOrigin:screenOrigin)
+          result.resolvedLayout = physical.resolvedLayout?.transformed(scale:scale,offset:screenOrigin)
+          return result
+        }) { [weak self] in
           guard let self, let geometry = actionGeometry, currentSurface == boardSurface,
             actionSpans.allSatisfy({ $0.surface == boardSurface }) else { return [] }
           return (actionSpans.flatMap(\.samples) + segmentSamples).compactMap { sample in
@@ -487,8 +504,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       if let fit, let geometry, let committed, let boardID = boardSurface.ownerID,
         spans.allSatisfy({ $0.surface == .board(boardID) }) {
         let origin = geometry.camera.screenToWorld(.init(x: fit.frame.x, y: fit.frame.y), viewport: geometry.viewport)
-        let physical = NotebookQuickShapeFit(frame: .init(x: 0, y: 0,
-          width: fit.frame.width / geometry.camera.scale, height: fit.frame.height / geometry.camera.scale), sampleCount: fit.sampleCount)
+        let physical = fit.scaled(by:1/geometry.camera.scale,frameOrigin:.zero)
         onQuickShape?(physical, boardID, origin, committed)
       }
       for surface in touchedSurfaces {

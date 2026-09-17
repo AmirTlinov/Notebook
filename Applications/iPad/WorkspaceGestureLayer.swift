@@ -359,9 +359,7 @@ final class GestureAnchorView: UIView {
 
 struct BoardPanView: UIViewRepresentable {
   let isEnabled: Bool
-  let itemFrames: [CGRect]
   let inputGate: NotebookInputGate
-  let onTap: () -> Void
   let onBegan: () -> Void
   let onChanged: (CGPoint) -> Void
   let onEnded: (CGPoint) -> Void
@@ -370,9 +368,7 @@ struct BoardPanView: UIViewRepresentable {
   func makeCoordinator() -> Coordinator {
     Coordinator(
       isEnabled: isEnabled,
-      itemFrames: itemFrames,
       inputGate: inputGate,
-      onTap: onTap,
       onBegan: onBegan,
       onChanged: onChanged,
       onEnded: onEnded,
@@ -392,9 +388,7 @@ struct BoardPanView: UIViewRepresentable {
 
   func updateUIView(_ view: GestureAnchorView, context: Context) {
     context.coordinator.isEnabled = isEnabled
-    context.coordinator.itemFrames = itemFrames
     context.coordinator.inputGate = inputGate
-    context.coordinator.onTap = onTap
     context.coordinator.onBegan = onBegan
     context.coordinator.onChanged = onChanged
     context.coordinator.onEnded = onEnded
@@ -421,10 +415,8 @@ struct BoardPanView: UIViewRepresentable {
         // the recognizer; publish the SwiftUI completion after that update.
         if !isEnabled { cancelFingerSequence(deferCallbacks: true) }
         pan?.isEnabled = isEnabled
-        tap?.isEnabled = isEnabled
       }
     }
-    var itemFrames: [CGRect]
     var inputGate: NotebookInputGate {
       didSet {
         guard oldValue !== inputGate else { return }
@@ -433,7 +425,6 @@ struct BoardPanView: UIViewRepresentable {
         if hostView != nil { registerCancellation() }
       }
     }
-    var onTap: () -> Void
     var onBegan: () -> Void
     var onChanged: (CGPoint) -> Void
     var onEnded: (CGPoint) -> Void
@@ -442,12 +433,10 @@ struct BoardPanView: UIViewRepresentable {
     private weak var hostView: UIView?
     private weak var sceneView: UIView?
     private var pan: UIPanGestureRecognizer?
-    private var tap: UITapGestureRecognizer?
     private weak var startingCover: NotebookInteractionTouchView?
     private let inputSource = UUID()
     private var panRevision: UInt64?
     private var panContact: ObjectIdentifier?
-    private var tapRevision: UInt64?
     private var panIsActive = false
     private var panTouchdown: CGPoint?
     private var panRecognitionOffset = CGPoint.zero
@@ -455,18 +444,14 @@ struct BoardPanView: UIViewRepresentable {
 
     init(
       isEnabled: Bool,
-      itemFrames: [CGRect],
       inputGate: NotebookInputGate,
-      onTap: @escaping () -> Void,
       onBegan: @escaping () -> Void,
       onChanged: @escaping (CGPoint) -> Void,
       onEnded: @escaping (CGPoint) -> Void,
       onCancelled: @escaping () -> Void
     ) {
       self.isEnabled = isEnabled
-      self.itemFrames = itemFrames
       self.inputGate = inputGate
-      self.onTap = onTap
       self.onBegan = onBegan
       self.onChanged = onChanged
       self.onEnded = onEnded
@@ -494,24 +479,10 @@ struct BoardPanView: UIViewRepresentable {
       pan.cancelsTouchesInView = true
       pan.delegate = self
       pan.isEnabled = isEnabled
-      let tap = UITapGestureRecognizer(
-        target: self,
-        action: #selector(handleTap)
-      )
-      tap.allowedTouchTypes = [
-        NSNumber(value: UITouch.TouchType.direct.rawValue)
-      ]
-      tap.cancelsTouchesInView = false
-      tap.delaysTouchesBegan = false
-      tap.delaysTouchesEnded = false
-      tap.delegate = self
-      tap.isEnabled = isEnabled
       hostView.addGestureRecognizer(pan)
-      hostView.addGestureRecognizer(tap)
       self.hostView = hostView
       self.sceneView = sceneView
       self.pan = pan
-      self.tap = tap
       registerCancellation()
     }
 
@@ -519,9 +490,7 @@ struct BoardPanView: UIViewRepresentable {
       inputGate.unregisterFingerCancellation(source: inputSource)
       cancelFingerSequence(deferCallbacks: true)
       if let pan { hostView?.removeGestureRecognizer(pan) }
-      if let tap { hostView?.removeGestureRecognizer(tap) }
       pan = nil
-      tap = nil
       startingCover = nil
       hostView = nil
       sceneView = nil
@@ -537,7 +506,6 @@ struct BoardPanView: UIViewRepresentable {
     private func cancelFingerSequence(deferCallbacks: Bool = false) {
       panRevision = nil
       panContact = nil
-      tapRevision = nil
       panTouchdown = nil
       panRecognitionOffset = .zero
       if panIsActive {
@@ -602,12 +570,6 @@ struct BoardPanView: UIViewRepresentable {
       }
     }
 
-    @objc private func handleTap() {
-      guard let revision = tapRevision, inputGate.acceptsFingerSequence(revision) else { return }
-      tapRevision = nil
-      onTap()
-    }
-
     func gestureRecognizer(
       _ gestureRecognizer: UIGestureRecognizer,
       shouldReceive touch: UITouch
@@ -622,36 +584,29 @@ struct BoardPanView: UIViewRepresentable {
       let owner = NotebookSceneFingerRouting.owner(of: touch, gate: inputGate)
       guard owner.permitsSceneNavigation else { return false }
       let point = touch.location(in: sceneView)
-      let isFreeBoard = !itemFrames.contains(where: { $0.contains(point) })
-      if gestureRecognizer === pan {
-        if !panIsActive, gestureRecognizer.numberOfTouches == 0 {
-          panRevision = revision
-          panContact = ObjectIdentifier(touch)
-          panTouchdown = point
-          panRecognitionOffset = .zero
-          startingCover = touch.view as? NotebookInteractionTouchView
-        }
-        // The actual native owner has already admitted this contact to the
-        // scene. A passive drawing's rectangle cannot take it back merely
-        // because it is an element rather than empty board. Covers still
-        // arbitrate their pending hold in gestureRecognizerShouldBegin.
-        return true
+      if !panIsActive, gestureRecognizer.numberOfTouches == 0 {
+        panRevision = revision
+        panContact = ObjectIdentifier(touch)
+        panTouchdown = point
+        panRecognitionOffset = .zero
+        startingCover = touch.view as? NotebookInteractionTouchView
       }
-      tapRevision = revision
-      return isFreeBoard && owner == .scene
+      // Selection owns taps and refines native-object contacts at touchdown.
+      // Camera motion resolves that claim at recognition, not a second hit
+      // test against authored rectangles which may not be the shown geometry.
+      return true
     }
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-      let revision = gestureRecognizer === pan ? panRevision : tapRevision
-      guard let revision, inputGate.acceptsFingerSequence(revision) else { return false }
-      if gestureRecognizer === pan,
-        let panContact, !inputGate.permitsSingleFingerNavigation(panContact) {
+      guard gestureRecognizer === pan, let revision = panRevision,
+        inputGate.acceptsFingerSequence(revision) else { return false }
+      if let panContact, !inputGate.permitsSingleFingerNavigation(panContact) {
         // Selection's touchdown may arrive after shouldReceive. Resolve the
         // refined owner now, before any camera callback or SwiftUI publication.
         panRevision = nil
         return false
       }
-      guard gestureRecognizer === pan, let startingCover else { return true }
+      guard let startingCover else { return true }
       return startingCover.yieldToCameraPan()
     }
 

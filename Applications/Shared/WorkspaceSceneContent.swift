@@ -92,15 +92,23 @@ struct BoardPortalPreview: View {
           ForEach(SceneCompositionTileBandView.bands(in: cohort, plane: plane, layer: .elements, presence: presence)) { band in
             band.zIndex(Double(band.rank))
           }
-          ForEach(workset.elements.filter { cohort.plan.allowsLive(.element($0.id), in: plane) }) { element in
+          ForEach(cohort.plan.vectorRuns.filter { $0.plane == plane }) { run in
+            NotebookGraphicBatchView(run: run, elements: workset.elements,
+              graph: cohort.frame.index.capturedHierarchy.board(boardID)?.graphicGraph() ?? .init([]),
+              scale: camera.scale, size: .init(width: viewport.x, height: viewport.y),
+              projectOrigin: { camera.worldToScreen($0, viewport: viewport).cgPoint }, commitsState: false)
+              .zIndex(cohort.plan.rank(id: run.id.id, in: plane) ?? 0)
+          }
+          ForEach(workset.elements.filter { $0.graphic == nil && cohort.plan.allowsLive(.element($0.id), in: plane) }) { element in
             if let origin = element.worldOrigin {
+              let local = element.frame
               let screen = camera.worldToScreen(origin, viewport: viewport)
               SpatialElementContent(element: element, commitsState: false, boardID: boardID)
-                .frame(width: element.frame.width, height: element.frame.height)
+                .frame(width: local.width, height: local.height)
                 .scaleEffect(camera.scale)
-                .frame(width: element.frame.width * camera.scale, height: element.frame.height * camera.scale)
-                .position(x: screen.x + (element.frame.x + element.frame.width / 2) * camera.scale,
-                  y: screen.y + (element.frame.y + element.frame.height / 2) * camera.scale)
+                .frame(width: local.width * camera.scale, height: local.height * camera.scale)
+                .position(x: screen.x + (local.x + local.width / 2) * camera.scale,
+                  y: screen.y + (local.y + local.height / 2) * camera.scale)
                 .zIndex(cohort.plan.rank(id: .element(element.id), in: plane) ?? 0)
             }
           }
@@ -192,6 +200,8 @@ struct WorkspaceItemCoverView: View {
     let plane = cohort?.plan.liveOwners.first(where: { $0.id == .item(item.id) }).map {
       SceneCompositionPlane.cover(boardID: $0.plane.boardID, itemID: item.id)
     }
+    let graph = cohort.map { model.presentedGraphicGraph(boardID:boardID,cohort:$0,preview:!isPortalProjection) }
+      ?? model.boardHierarchy?.board(boardID)?.graphicGraph()
     ZStack(alignment: .topLeading) {
       coverBackground.zIndex(-2)
       WorkspaceCoverTitle(item: item, geometry: geometry).zIndex(-1)
@@ -200,11 +210,22 @@ struct WorkspaceItemCoverView: View {
           band.zIndex(Double(band.rank)).opacity(portalOverlayOpacity)
         }
       }
+      if let cohort, let plane, let graph {
+        ForEach(cohort.plan.vectorRuns.filter { $0.plane == plane }) { run in
+          NotebookGraphicBatchView(run: run, elements: elements, graph: graph, scale: 1,
+            size: .init(width: geometry.width, height: geometry.height), projectOrigin: { _ in .zero },
+            commitsState: !isPortalProjection)
+            .opacity(portalOverlayOpacity)
+            .zIndex(cohort.plan.rank(id: run.id.id, in: plane) ?? 0)
+        }
+      }
       ForEach(elements.filter { element in
+        if element.graphic != nil { return false }
         guard let cohort, let plane else { return true }
         return cohort.plan.allowsLive(.element(element.id), in: plane)
       }) { element in
         let reference = EditableElementReference.spatial(boardID: boardID, elementID: element.id)
+        let local = element.frame
         let retainsTextInput = !isPortalProjection
           && element.kind == .nativeText && editingTextID == element.id
         EditableElementContainer(reference: reference, coordinateScale: 1) {
@@ -216,8 +237,8 @@ struct WorkspaceItemCoverView: View {
           )
         }
         .allowsHitTesting(ownerIsAvailable)
-        .frame(width: element.frame.width, height: element.frame.height)
-        .offset(x: element.frame.x, y: element.frame.y)
+        .frame(width: local.width, height: local.height)
+        .offset(x: local.x, y: local.y)
         .opacity(portalOverlayOpacity)
         .zIndex(plane.flatMap { cohort?.plan.rank(id: .element(element.id), in: $0) } ?? 0)
       }
@@ -364,6 +385,7 @@ struct SpatialElementContent: View {
     isTextEditing: Bool = false,
     onTextEditingEnded: @escaping () -> Void = {}
   ) {
+    precondition(element.kind != .graphic, "Native graphics belong to the scene's vector runs")
     self.element = element
     self.commitsState = commitsState
     self.boardID = boardID
@@ -373,10 +395,7 @@ struct SpatialElementContent: View {
 
   var body: some View {
     switch element.kind {
-    case .graphic:
-      if let graphic = element.graphic, let sourceBoardID {
-        NotebookGraphicElementView(graphic: graphic, reference: .spatial(boardID: sourceBoardID, elementID: element.id))
-      }
+    case .graphic: EmptyView()
     case .nativeText:
       NativeTextElementView(
         element: element,

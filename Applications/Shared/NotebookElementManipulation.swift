@@ -21,7 +21,7 @@ enum NotebookElementCorner: String, CaseIterable, Sendable {
 /// One accepted contact, anchored to the physical frame it actually touched.
 /// The opposite corner never moves, even when a page edge or minimum is reached.
 struct NotebookElementManipulation: Equatable, Sendable {
-  enum Kind: Equatable, Sendable { case move, resize(NotebookElementCorner) }
+  enum Kind: Equatable, Sendable { case move, resize(NotebookElementCorner), endpoint(NotebookGraphicConnection.Terminal), bend }
   let id = UUID()
   let reference: EditableElementReference
   let kind: Kind
@@ -30,12 +30,16 @@ struct NotebookElementManipulation: Equatable, Sendable {
   let identity: VersionStamp?
   let worldOrigin: WorldPoint?
   private(set) var frame: CGRect
+  let originalConnection: NotebookGraphicConnection?
+  let originalLayout: NotebookGraphicLayout?
+  private(set) var connection: NotebookGraphicConnection?
 
   init(reference: EditableElementReference, kind: Kind, frame: CGRect, bounds: CGRect?, identity: VersionStamp? = nil,
-    worldOrigin: WorldPoint? = nil) {
+    worldOrigin: WorldPoint? = nil, connection: NotebookGraphicConnection? = nil, layout: NotebookGraphicLayout? = nil) {
     self.reference = reference; self.kind = kind; original = frame
     self.frame = frame; self.bounds = bounds
     self.identity = identity; self.worldOrigin = worldOrigin
+    originalConnection = connection; self.connection = connection; originalLayout = layout
   }
 
   mutating func update(translation: CGPoint) {
@@ -64,7 +68,24 @@ struct NotebookElementManipulation: Equatable, Sendable {
         bottom = max(y + minimumHeight, min(bounds?.maxY ?? (y + heightLimit), original.maxY + translation.y))
       }
       frame = .init(x: x, y: y, width: right - x, height: bottom - y)
+    case .endpoint(let terminal):
+      guard var value = originalConnection, let layout = originalLayout else { return }
+      let p = terminal == .start ? layout.start : layout.end
+      let endpoint = NotebookGraphicConnection.Endpoint(point: .init(x:layout.frame.x+p.x-original.minX+translation.x,
+        y:layout.frame.y+p.y-original.minY+translation.y))
+      if terminal == .start { value.start = endpoint } else { value.end = endpoint }
+      connection = value
+    case .bend:
+      guard var value = originalConnection, let layout = originalLayout else { return }
+      let dx = layout.end.x-layout.start.x, dy = layout.end.y-layout.start.y, length = max(0.001,hypot(dx,dy))
+      value.bend += (-dy*translation.x+dx*translation.y)/length
+      connection = value
     }
+  }
+
+  mutating func bindEndpoint(_ binding: NotebookGraphicConnection.Binding?) {
+    guard case .endpoint(let terminal) = kind else { return }
+    if terminal == .start { connection?.start.binding = binding } else { connection?.end.binding = binding }
   }
 
   var movement: CGPoint {

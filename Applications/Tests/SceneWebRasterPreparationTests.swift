@@ -5,6 +5,11 @@ import XCTest
 @testable import Notebook
 
 final class SceneWebRasterPreparationTests: XCTestCase {
+  override func setUp() async throws {
+    try await super.setUp()
+    try await WorkspaceInkFixture.waitForForegroundWindow()
+  }
+
   @MainActor
   func testQueuedCaptureOutlivesTheExecutionDeadlineAndUsesItsLatestDemandAfterAdmission() async throws {
     let resources = SceneRenderResources(maximumBackgroundWebSurfaces: 1)
@@ -95,8 +100,9 @@ final class SceneWebRasterPreparationTests: XCTestCase {
     for index in 0..<(image.width * image.height) where bytes[index * 4 + 3] > 127 { opaque += 1 }
     if opaque >= image.width * image.height / 20,
       let window = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
-        .flatMap(\.windows).compactMap({ $0 as? NotebookPreparationWindow }).last,
-      let web = window.rootViewController?.view.subviews.compactMap({ $0 as? WKWebView }).first {
+        .flatMap(\.windows).first(where: \.isKeyWindow),
+      let web = window.subviews.flatMap(\.subviews).compactMap({ $0 as? WKWebView })
+        .first(where: { ObjectIdentifier($0) == preparation.webIdentity }) {
       let dom = try await web.evaluateJavaScript("""
         JSON.stringify({body:document.body.getBoundingClientRect(),svg:document.querySelector('svg')?.getBoundingClientRect(),
           viewport:[innerWidth,innerHeight], background:getComputedStyle(document.body).backgroundColor,
@@ -155,10 +161,12 @@ final class SceneWebRasterPreparationTests: XCTestCase {
     defer { preparation.close() }
     let identity = preparation.webIdentity
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-    let window = try XCTUnwrap(scene.windows.compactMap { $0 as? NotebookPreparationWindow }.last)
-    XCTAssertFalse(window.canBecomeKey)
-    XCTAssertFalse(window.isUserInteractionEnabled)
-    XCTAssertTrue(window.accessibilityElementsHidden)
+    let window = try XCTUnwrap(scene.keyWindow)
+    let host = try XCTUnwrap(window.subviews.first { parent in
+      parent.subviews.contains { ObjectIdentifier($0) == identity }
+    })
+    XCTAssertFalse(host.isUserInteractionEnabled)
+    XCTAssertTrue(host.accessibilityElementsHidden)
     for index in 0..<8 {
       let element = AgentElement(id: "sequential-\(index)", kind: .web,
         frame: .init(x: 0, y: 0, width: 2689.263, height: 3943.43), source: "Distinct program \(index)",
@@ -167,6 +175,7 @@ final class SceneWebRasterPreparationTests: XCTestCase {
         window.previousJob = true;
         """)
       let raster = try await preparation.prepare(element, requestedScale: 0.125, permitsPreparation: { true })
+      XCTAssertFalse(host.convert(host.bounds, to: window).intersects(window.bounds))
       XCTAssertEqual(preparation.webIdentity, identity)
       XCTAssertEqual(resources.activeWebSurfaceCount, 1)
       XCTAssertNil(resources.retainRaster(for: element, minimumScale: 2), "A coarse tile source cannot certify a full-resolution export")

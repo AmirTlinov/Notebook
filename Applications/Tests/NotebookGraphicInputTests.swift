@@ -82,10 +82,12 @@ import XCTest
       var cancellations = 0
       selection.onLift = { _ in .init(requiresHold: false, begin: {}, change: { _ in },
         end: { _ in XCTFail("The second finger cancelled the drop") }, cancel: { cancellations += 1 }) }
-      let camera = BoardPanView.Coordinator(isEnabled: true, itemFrames: [], inputGate: gate,
-        onTap: {}, onBegan: { XCTFail("The object contact cannot also pan") }, onChanged: { _ in },
+      let camera = BoardPanView.Coordinator(isEnabled: true, inputGate: gate,
+        onBegan: { XCTFail("The object contact cannot also pan") }, onChanged: { _ in },
         onEnded: { _ in }, onCancelled: {})
       camera.install(on: window, inside: anchor)
+      XCTAssertFalse(window.gestureRecognizers?.contains { $0 is UITapGestureRecognizer && $0.delegate === camera } == true,
+        "Background and object taps have one selection owner; camera cannot clear the editor on the same lift")
       let pan = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }.first)
       let first = GraphicFingerTouch(), second = GraphicFingerTouch(), event = UIEvent()
       let pair = TwoFingerPaperGestureRecognizer(); anchor.addGestureRecognizer(pair)

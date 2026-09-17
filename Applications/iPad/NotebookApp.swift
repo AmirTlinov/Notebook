@@ -11,8 +11,8 @@ struct NotebookApp: App {
       _launch = State(initialValue: isolated)
       return
     }
-    #if DEBUG && targetEnvironment(simulator)
-      let launch = NotebookSimulatorLaunch(arguments: ProcessInfo.processInfo.arguments,
+    #if DEBUG
+      let launch = NotebookDebugLaunch(arguments: ProcessInfo.processInfo.arguments,
         environment: ProcessInfo.processInfo.environment)
       _launch = State(initialValue: launch.makeLaunch())
     #else
@@ -60,13 +60,13 @@ struct NotebookApp: App {
   }
 }
 
-#if DEBUG && targetEnvironment(simulator)
+#if DEBUG
   @MainActor
-  enum NotebookSimulatorLaunch: Equatable {
+  enum NotebookDebugLaunch: Equatable {
     case workspace, drawingFixture, unitTestHost
 
     init(arguments: [String], environment: [String: String]) {
-      if arguments.contains(SimulatorDrawingFixture.launchArgument) {
+      if arguments.contains(NotebookDrawingFixture.launchArgument) {
         self = .drawingFixture
       } else if environment["XCTestConfigurationFilePath"] != nil {
         self = .unitTestHost
@@ -78,7 +78,7 @@ struct NotebookApp: App {
     func makeLaunch() -> NotebookApplicationLaunch {
       switch self {
       case .workspace: NotebookApplicationLaunch()
-      case .drawingFixture: NotebookApplicationLaunch(fixture: SimulatorDrawingFixture.makeModel())
+      case .drawingFixture: NotebookApplicationLaunch(fixture: NotebookDrawingFixture.makeModel())
       // Hosted unit tests own their stores, models and windows. Constructing the
       // default model here would read another archive and compete for the same
       // raster/ink budget before the first isolated fixture publishes.

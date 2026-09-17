@@ -19,8 +19,8 @@ final class NotebookControlRegionTests: XCTestCase {
     let camera = WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn: false,
       isEnabled: true, inputGate: gate, onCamera: { _ in XCTFail("Card input must not move camera") }, onUndo: {})
     camera.install(on: window, inside: anchor)
-    let pan = BoardPanView.Coordinator(isEnabled: true, itemFrames: [], inputGate: gate,
-      onTap: {}, onBegan: {}, onChanged: { _ in }, onEnded: { _ in }, onCancelled: {})
+    let pan = BoardPanView.Coordinator(isEnabled: true, inputGate: gate,
+      onBegan: {}, onChanged: { _ in }, onEnded: { _ in }, onCancelled: {})
     pan.install(on: window, inside: anchor)
     defer { camera.uninstall(); pan.uninstall(); card.unregister(); window.isHidden = true }
     let cameraGesture = try XCTUnwrap(window.gestureRecognizers?.first { $0 is TwoFingerPaperGestureRecognizer })

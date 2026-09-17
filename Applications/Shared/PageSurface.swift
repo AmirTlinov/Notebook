@@ -70,6 +70,8 @@ struct PageSurface: View {
             onRenderReady: { ready in
               inkIsReady = ready
               publishReadiness(ink: ready, overlay: overlayIsReady)
+            }, resolveQuickShape: { fit, scale in
+              fit.binding(in:page.graphicGraph(),surface:.page(page.id),tolerance:18/scale)
             }
           )
         #else

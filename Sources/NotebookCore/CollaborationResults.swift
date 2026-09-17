@@ -15,10 +15,16 @@ extension NotebookActionReadModel {
       elementGeometry: { target, elementID in
         if target.kind == .page,
           let element = content.pages.first(where: { $0.id == target.id })?.elements.first(where: { $0.id == elementID }) {
+          if element.graphic != nil {
+            return content.pages.first(where: { $0.id == target.id })?.graphicGraph().resolve(elementID).layout.map { ($0.frame,nil) }
+          }
           return (element.frame, nil)
         }
         if target.kind == .board || target.kind == .cover,
           let element = content.hierarchy.board(target.boardID ?? target.id)?.elements.first(where: { $0.id == elementID }) {
+          if element.graphic != nil {
+            return content.hierarchy.board(target.boardID ?? target.id)?.graphicGraph().resolve(elementID).layout.map { ($0.frame,element.worldOrigin) }
+          }
           return (.init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height), element.worldOrigin)
         }
         return nil

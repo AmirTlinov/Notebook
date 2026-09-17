@@ -139,37 +139,11 @@ struct SpatialWorkspaceView: View {
 
           BoardPanView(
             isEnabled: (presence.mode == .board || presence.mode == .cover)
-              && cameraGesture == nil && !settling && !model.isPointing,
-            itemFrames: rendered.map { item in
-              let center = presence.camera.worldToScreen(
-                item.center,
-                viewport: viewport
-              )
-              let width = item.geometry.width * presence.camera.scale
-              let height = item.geometry.height * presence.camera.scale
-              return CGRect(
-                x: center.x - width / 2,
-                y: center.y - height / 2,
-                width: width,
-                height: height
-              )
-            } + workset.elements.compactMap { element in
-              guard let origin = element.worldOrigin else { return nil }
-              let screen = presence.camera.worldToScreen(origin, viewport: viewport)
-              return CGRect(x: screen.x + element.frame.x * presence.camera.scale,
-                y: screen.y + element.frame.y * presence.camera.scale,
-                width: element.frame.width * presence.camera.scale,
-                height: element.frame.height * presence.camera.scale).insetBy(dx: -16, dy: -16)
-            },
+              && cameraGesture == nil && !model.isPointing,
             inputGate: model.inputGate,
-            onTap: {
-              withAnimation(.easeOut(duration: 0.12)) {
-                model.clearSelection()
-              }
-              model.interactiveElementFocus = nil
-            },
             onBegan: {
               referencePageResolution.cancel()
+              interruptSettlementForInput()
               model.cancelElementManipulation()
               panStart = presenceForNewContact(presence)
             },
@@ -245,7 +219,7 @@ struct SpatialWorkspaceView: View {
         if let reference = model.selectionSession.editingElement,
           let rect = NotebookAttentionProjection.editingFrame(reference, model: model, presence: presence) {
           NotebookElementControls(reference: reference, selectionID: model.selectionSession.id,
-            frame: model.selectionSession.manipulation?.projected(over: rect, scale: presence.camera.scale) ?? rect,
+            frame: model.graphicElement(reference) != nil ? rect : model.selectionSession.manipulation?.projected(over: rect, scale: presence.camera.scale) ?? rect,
             scale: presence.camera.scale)
             .frame(width: viewport.x, height: viewport.y)
         }
@@ -800,27 +774,37 @@ struct SpatialWorkspaceView: View {
     viewport: SpatialPoint,
     cohort: SceneCompositionCohort?
   ) -> some View {
-    ForEach(elements.filter { cohort?.plan.allowsLive(.element($0.id), in: .board(presence.boardID)) == true }) { element in
+    let graph = cohort.map { model.presentedGraphicGraph(boardID:presence.boardID,cohort:$0) }
+    if let cohort, let graph {
+      ForEach(cohort.plan.vectorRuns.filter { $0.plane == .board(presence.boardID) }) { run in
+        NotebookGraphicBatchView(run: run, elements: elements, graph: graph,
+          scale: presence.camera.scale, size: .init(width: viewport.x, height: viewport.y),
+          projectOrigin: { presence.camera.worldToScreen($0, viewport: viewport).cgPoint })
+          .zIndex(cohort.plan.rank(id: run.id.id, in: run.plane) ?? 0)
+      }
+    }
+    ForEach(elements.filter { $0.graphic == nil && cohort?.plan.allowsLive(.element($0.id), in: .board(presence.boardID)) == true }) { element in
         if let worldOrigin = element.worldOrigin {
+          let local = element.frame
           let reference = EditableElementReference.spatial(boardID: presence.boardID, elementID: element.id)
           let base = presence.camera.worldToScreen(
             worldOrigin,
             viewport: viewport
           )
           let origin = CGPoint(
-            x: base.x + element.frame.x * presence.camera.scale,
-            y: base.y + element.frame.y * presence.camera.scale
+            x: base.x + local.x * presence.camera.scale,
+            y: base.y + local.y * presence.camera.scale
           )
           SceneElementPose(frame: .init(origin: origin,
-            size: .init(width: element.frame.width * presence.camera.scale,
-              height: element.frame.height * presence.camera.scale)),
-            contentSize: .init(width: element.frame.width, height: element.frame.height),
+            size: .init(width: local.width * presence.camera.scale,
+              height: local.height * presence.camera.scale)),
+            contentSize: .init(width: local.width, height: local.height),
             observationElementID: element.id, observationElementStamp: element.stamp) {
             EditableElementContainer(reference: reference, coordinateScale: 1) {
               SpatialElementContent(element: element, boardID: presence.boardID,
                 isTextEditing: editingSpatialText == reference,
                 onTextEditingEnded: { [selectionID = model.selectionSession.id] in model.finishInteractiveElementInput(reference, selectionID: selectionID) })
-                .frame(width: element.frame.width, height: element.frame.height)
+                .frame(width: local.width, height: local.height)
             }
           }
             .frame(width: viewport.x, height: viewport.y)

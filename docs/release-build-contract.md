@@ -23,6 +23,11 @@ lockfiles, исходники иконки, инструменты выпуск�
 Ошибки, пропуски, runtime warnings и изменение версий инструментов запрещают
 завершение. Исторические сводки не превращаются в такую квитанцию задним числом.
 
+Выбранные iPad-проверки устанавливают подписанный Debug `.native-test` на
+физическое устройство выпуска, затем исполняют native/UI-сценарии. Simulator
+этот маршрут не запускает. Тестовое приложение отдельно от `.preview`: его
+фикстуры не заменяют рабочее содержимое, допуск и Keychain-группу пары.
+
 ```sh
 /Users/amir/Documents/projects/Notebook/Applications/build-verified-pair.sh \
   --verification-dir /absolute/completed-verify-evidence \

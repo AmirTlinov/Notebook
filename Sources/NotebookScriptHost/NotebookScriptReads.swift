@@ -81,7 +81,7 @@ extension NotebookScriptCoordinator {
       return try await persistence { store in
         try store.readTransaction { _ in
           let page = try store.loadPage(id)
-          return .object(["page": try .encode(page), "agentRevision": .string(page.agentStamp.revision),
+          return .object(["page": try page.graphicReadProjection(), "agentRevision": .string(page.agentStamp.revision),
             "drawingRevision": .string(page.drawingStamp.revision), "cursor": .string(String(try store.currentReadCursor()))])
         }
       }
