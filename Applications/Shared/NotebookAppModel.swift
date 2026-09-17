@@ -585,7 +585,7 @@ final class NotebookAppModel {
   let presentationPlayer = NotebookPresentationPlayer()
   let presentationRelay = NotebookPresentationRelay()
   var highlightedReference: CollaborationReference? { selectionSession.highlightedReference }
-  static let agentHighlightDuration = 1.4
+  static let agentHighlightDuration = 1.8
   private(set) var agentHighlightStarts: [UUID: Date] = [:]
   private var hasReadCollaborationActions = false
   @ObservationIgnored private var agentHighlightTask: Task<Void, Never>?

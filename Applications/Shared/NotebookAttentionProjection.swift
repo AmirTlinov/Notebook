@@ -10,6 +10,38 @@ enum NotebookAttentionProjection {
       worldOrigin: reference.worldOrigin, pageIndex: reference.pageIndex, model: model, presence: presence)
   }
 
+  static func agentPearl(_ reference: CollaborationReference, model: NotebookAppModel,
+    presence: SessionPresence) -> NotebookAgentPearlSurface? {
+    guard let rect = frame(target:reference.target,elementID:reference.elementID,region:reference.region,
+      worldOrigin:reference.worldOrigin,pageIndex:reference.pageIndex,model:model,presence:presence,minimumSide:0),
+      rect.width > 0, rect.height > 0 else { return nil }
+    var result = NotebookAgentPearlSurface(rect:rect,scale:presence.camera.scale)
+    if reference.target.kind != .board {
+      result.clipRect = frame(target:reference.target,elementID:nil,region:nil,worldOrigin:nil,
+        pageIndex:reference.pageIndex,model:model,presence:presence,minimumSide:0)
+    }
+    guard let id = reference.elementID else { return result }
+    let editable: EditableElementReference, surface: SurfaceID
+    switch reference.target.kind {
+    case .page:
+      editable = .page(pageID:reference.target.id,elementID:id); surface = .page(reference.target.id)
+      result.graphic = model.pages[reference.target.id]?.elements.first(where: { $0.id == id })?.graphic
+    case .board, .cover:
+      editable = .spatial(boardID:presence.boardID,elementID:id)
+      guard let cohort = model.compositionTiles.published,
+        let element = model.presentedElement(editable,cohort:cohort) else { return nil }
+      surface = element.surface; result.graphic = element.graphic
+    case .document: return result
+    case .workspace, .codeFragment: return nil
+    }
+    if result.graphic != nil {
+      guard let layout = model.graphicLayout(editable) else { return nil }
+      result.layout = layout
+    }
+    result.erasures = model.elementErasures(on:surface,fallback:model.compositionTiles.published?.liveData.ink)[id] ?? []
+    return result
+  }
+
   static func editingFrame(_ reference: EditableElementReference, model: NotebookAppModel, presence: SessionPresence) -> CGRect? {
     let target: CollaborationTarget, id: String
     switch reference {

@@ -13,6 +13,17 @@ struct NotebookGraphicView: View {
     .accessibilityLabel(graphic.label.isEmpty ? graphic.shape.displayName : graphic.label)
     .accessibilityAddTraits(.isImage)
   }
+
+  /// The agent light uses this same painter: closed shapes expose their whole
+  /// interior, open paths retain their real stroke, heads, label and erasures.
+  static func paintSilhouette(_ graphic: NotebookGraphic, layout: NotebookGraphicLayout?,
+    in context: GraphicsContext, size: CGSize, erasures: [InkElementErasure] = []) {
+    var mask = graphic
+    mask.style.stroke = .init(red:1,green:1,blue:1)
+    mask.style.fill = mask.style.stroke
+    paint(mask,layout:layout,in:context,size:size,erasures:erasures)
+  }
+
   static func paint(_ graphic: NotebookGraphic, layout: NotebookGraphicLayout?,
     in context: GraphicsContext, size: CGSize, erasures: [InkElementErasure] = []) {
       var context = context
