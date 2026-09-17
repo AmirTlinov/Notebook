@@ -9028,7 +9028,8 @@ Simulator, полная 30-минутная приёмка пары и сист�
 `.build/quickshape-measured-release-20260917/build.json`, `verified-build`,
 тот же source. Установка:
 `.build/quickshape-measured-install-20260917/operation.json`.
-Все девять путей данных сохранились, их метаданные до запуска не изменились.
+Все девять путей данных сохранились. Метаданные SQLite до запуска совпали;
+изменился только диагностический `runtime/input-frames.json`.
 `.native-test` удалена; inventory содержит ровно один Notebook Lab 76.
 Рабочее приложение не удалялось, архивы не восстанавливались, CloudKit не
 включался. Mac собран, но не установлен; прежнее ограничение пары protocol
