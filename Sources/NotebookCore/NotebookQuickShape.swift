@@ -5,11 +5,12 @@ public struct NotebookQuickShapeFit: Equatable, Sendable {
   public let sampleCount: Int
   public var connection: NotebookGraphicConnection?
   public let shape: NotebookGraphic.Shape
+  public var vertices: [SpatialPoint]?
   public var precedingStrokeIDs: [UUID] = []
   public init(frame: PageRect, sampleCount: Int, connection: NotebookGraphicConnection? = nil,
-    shape: NotebookGraphic.Shape = .ellipse) {
+    shape: NotebookGraphic.Shape = .ellipse, vertices: [SpatialPoint]? = nil) {
     self.frame = frame; self.sampleCount = sampleCount; self.connection = connection
-    self.shape = connection == nil ? shape : .connector
+    self.shape = connection == nil ? shape : .connector; self.vertices = vertices
   }
   public func scaled(by scale: Double, frameOrigin: SpatialPoint) -> Self {
     var value = self
@@ -27,8 +28,20 @@ public struct NotebookQuickShapeFit: Equatable, Sendable {
     guard var connection else { return self }
     for terminal in NotebookGraphicConnection.Terminal.allCases {
       var endpoint = terminal == .start ? connection.start : connection.end
-      endpoint.binding = graph.binding(at:.init(x:frame.x+endpoint.point.x,y:frame.y+endpoint.point.y),
-        origin:origin,surface:surface,tolerance:tolerance)
+      let point = SpatialPoint(x:frame.x+endpoint.point.x,y:frame.y+endpoint.point.y)
+      endpoint.binding = nil
+      if var binding = graph.binding(at:point,origin:origin,surface:surface,tolerance:tolerance),
+        let node = graph.nodes[collaborationIdentity(binding.elementID)] {
+        let offset = origin.delta(to:node.origin)
+        let anchor = SpatialPoint(x:(point.x-offset.x-node.frame.x)/node.frame.width,
+          y:(point.y-offset.y-node.frame.y)/node.frame.height)
+        // Pencil authors the endpoint, not the magnet. Attach at that exact
+        // position only; proximity outside a node must not pull ink off the nib.
+        if (-0.000001...1.000001).contains(anchor.x), (-0.000001...1.000001).contains(anchor.y) {
+          binding.normalizedAnchor = .init(x:min(1,max(0,anchor.x)),y:min(1,max(0,anchor.y))); binding.isExact = true; binding.isPrecise = true
+          endpoint.binding = binding
+        }
+      }
       if terminal == .start { connection.start = endpoint } else { connection.end = endpoint }
     }
     var result = self; result.connection = connection
@@ -51,6 +64,7 @@ public enum NotebookQuickShape {
       return .init(frame: frame, sampleCount: count, shape: .rectangle)
     }
     if strokes.count == 1, let fit = ellipse(strokes[0], screenScale: screenScale) { return fit }
+    if let fit = polygon(points, count: count, scale: screenScale) { return fit }
     if let frame = plus(points, scale: screenScale) {
       return .init(frame: frame, sampleCount: count, shape: .plus)
     }
@@ -69,7 +83,7 @@ public enum NotebookQuickShape {
   private static func valid(_ strokes: [[SpatialPoint]], scale: Double) -> Bool {
     scale.isFinite && scale > 0 && strokes.reduce(0, { $0 + $1.count }) <= 8192
       && strokes.allSatisfy { $0.count >= 2 && $0.allSatisfy { $0.x.isFinite && $0.y.isFinite }
-        && length($0) * scale >= 8 }
+        && length($0) * scale >= 4 }
   }
   private static func distance(_ a: SpatialPoint, _ b: SpatialPoint) -> Double { hypot(b.x-a.x, b.y-a.y) }
   private static func length(_ points: [SpatialPoint]) -> Double {
@@ -87,8 +101,13 @@ public enum NotebookQuickShape {
   private static func line(_ measured: [SpatialPoint], scale: Double) -> NotebookQuickShapeFit? {
     guard measured.count >= 4, let first = measured.first, let last = measured.last else { return nil }
     let span = distance(first, last), points = resampled(measured, count: 96)
-    guard span*scale >= 28, length(measured)/span < 1.22,
-      points.allSatisfy({ deviation($0,first,last) < max(3/scale,span*0.045) }) else { return nil }
+    guard span*scale >= 6, length(measured)/span < 2 else { return nil }
+    let ux = (last.x-first.x)/span, uy = (last.y-first.y)/span
+    for point in points {
+      let x = point.x-first.x, y = point.y-first.y, along = x*ux+y*uy
+      guard abs(-x*uy+y*ux) <= max(0.65/scale,span*0.08),
+        along >= -max(3/scale,span*0.4), along <= span+max(3/scale,span*0.4) else { return nil }
+    }
     return connection(points: measured, tail: first, tip: last, head: .none, count: measured.count)
   }
   private static func connection(points: [SpatialPoint], tail: SpatialPoint, tip: SpatialPoint,
@@ -134,6 +153,99 @@ public enum NotebookQuickShape {
       let side = (width+height)/2; width = side; height = side
     }
     return .init(x:frame.x+(left+right)*w/2-width/2,y:frame.y+(top+bottom)*h/2-height/2,width:width,height:height)
+  }
+
+  /// Convex hull corners, bounded by 384 resampled points. Every side needs
+  /// measured coverage; an open V, oval or disconnected note is not a polygon.
+  private static func polygon(_ points: [SpatialPoint], count: Int, scale: Double) -> NotebookQuickShapeFit? {
+    let frame = bounds(points), size = min(frame.width,frame.height)
+    guard size*scale >= 20, max(frame.width,frame.height)/size < 6 else { return nil }
+    func cross(_ a: SpatialPoint,_ b: SpatialPoint,_ c: SpatialPoint) -> Double {
+      (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x)
+    }
+    let sorted = points.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
+    func half(_ points: [SpatialPoint]) -> [SpatialPoint] {
+      var result: [SpatialPoint] = []
+      for point in points {
+        while result.count >= 2 && cross(result[result.count-2],result.last!,point) <= 0 { result.removeLast() }
+        result.append(point)
+      }
+      return result
+    }
+    let hull = Array(half(sorted).dropLast()) + half(sorted.reversed()).dropLast()
+    for sides in [3,4] {
+      var corners = hull
+      while corners.count > sides {
+        let i = corners.indices.min { a,b in
+          abs(cross(corners[(a+corners.count-1)%corners.count],corners[a],corners[(a+1)%corners.count]))
+            < abs(cross(corners[(b+corners.count-1)%corners.count],corners[b],corners[(b+1)%corners.count]))
+        }!
+        corners.remove(at:i)
+      }
+      guard corners.count == sides else { continue }
+      let area = abs(corners.indices.reduce(0.0) { total,i in
+        let a = corners[i], b = corners[(i+1)%sides]; return total+a.x*b.y-a.y*b.x
+      })/2
+      guard area > frame.width*frame.height*0.22 else { continue }
+      // Hull corners initialize the sides; orthogonal least squares removes
+      // outward bowing without changing orientation or inventing a fourth edge.
+      var refined = true
+      for _ in 0..<3 {
+        var groups = Array(repeating:[SpatialPoint](),count:sides)
+        for point in points {
+          let i = corners.indices.min { deviation(point,corners[$0],corners[($0+1)%sides])
+            < deviation(point,corners[$1],corners[($1+1)%sides]) }!
+          groups[i].append(point)
+        }
+        var lines: [(SpatialPoint,SpatialPoint)] = []
+        for group in groups {
+          guard group.count >= 4 else { refined = false; break }
+          let center = SpatialPoint(x:group.reduce(0) { $0+$1.x }/Double(group.count),
+            y:group.reduce(0) { $0+$1.y }/Double(group.count))
+          var xx = 0.0, yy = 0.0, xy = 0.0
+          for point in group { let x = point.x-center.x, y = point.y-center.y; xx += x*x; yy += y*y; xy += x*y }
+          let angle = atan2(2*xy,xx-yy)/2
+          lines.append((center,.init(x:cos(angle),y:sin(angle))))
+        }
+        guard refined else { break }
+        var next: [SpatialPoint] = []
+        for i in corners.indices {
+          let (a,u) = lines[(i+sides-1)%sides], (b,v) = lines[i], divisor = u.x*v.y-u.y*v.x
+          guard abs(divisor) > 0.15 else { refined = false; break }
+          let t = ((b.x-a.x)*v.y-(b.y-a.y)*v.x)/divisor
+          next.append(.init(x:a.x+t*u.x,y:a.y+t*u.y))
+        }
+        guard refined else { break }; corners = next
+      }
+      guard refined, corners.allSatisfy({ corner in points.map { distance($0,corner) }.min()! < size*0.18 }) else { continue }
+      var coverage = Array(repeating:Set<Int>(),count:sides), error = 0.0, maximum = 0.0
+      for point in points {
+        let distances = corners.indices.map { deviation(point,corners[$0],corners[($0+1)%sides]) }
+        let i = distances.indices.min { distances[$0] < distances[$1] }!, d = distances[i]/size
+        error += d*d; maximum = max(maximum,d)
+        let a = corners[i], b = corners[(i+1)%sides], dx = b.x-a.x, dy = b.y-a.y
+        let t = ((point.x-a.x)*dx+(point.y-a.y)*dy)/(dx*dx+dy*dy)
+        coverage[i].insert(min(7,max(0,Int(t*8))))
+      }
+      guard sqrt(error/Double(points.count)) < (sides == 3 ? 0.075 : 0.065), maximum < 0.23,
+        coverage.allSatisfy({ $0.count >= 6 }) else { continue }
+      if sides == 4 {
+        let a = corners[0], b = corners[1], c = corners[2], d = corners[3]
+        let ux = c.x-a.x, uy = c.y-a.y, vx = d.x-b.x, vy = d.y-b.y
+        let u = hypot(ux,uy), v = hypot(vx,vy)
+        guard abs(ux*vx+uy*vy)/(u*v) < 0.48,
+          hypot(a.x+c.x-b.x-d.x,a.y+c.y-b.y-d.y)/2 < min(u,v)*0.28 else { continue }
+        let center = SpatialPoint(x:(a.x+b.x+c.x+d.x)/4,y:(a.y+b.y+c.y+d.y)/4)
+        let sign = ux*vy-uy*vx > 0 ? 1.0 : -1.0
+        let wx = -uy/u*v/2*sign, wy = ux/u*v/2*sign
+        corners = [.init(x:center.x-ux/2,y:center.y-uy/2),.init(x:center.x-wx,y:center.y-wy),
+          .init(x:center.x+ux/2,y:center.y+uy/2),.init(x:center.x+wx,y:center.y+wy)]
+      }
+      let fitted = bounds(corners)
+      return .init(frame:fitted,sampleCount:count,shape:sides == 3 ? .triangle : .diamond,
+        vertices:corners.map { .init(x:($0.x-fitted.x)/fitted.width,y:($0.y-fitted.y)/fitted.height) })
+    }
+    return nil
   }
 
   private static func plus(_ points: [SpatialPoint], scale: Double) -> PageRect? {
@@ -251,7 +363,7 @@ public enum NotebookQuickShape {
     for (a,b) in pairs {
       for (tail,tip) in [(a,b),(b,a)] {
         let span = distance(tail,tip)
-        guard span*scale >= 40 else { continue }
+        guard span*scale >= 28 else { continue }
         let ux = (tip.x-tail.x)/span, uy = (tip.y-tail.y)/span
         func coordinate(_ p: SpatialPoint) -> SpatialPoint {
           let x = p.x-tail.x, y = p.y-tail.y
@@ -263,20 +375,27 @@ public enum NotebookQuickShape {
         let l = coordinate(left), r = coordinate(right)
         guard (0.045...0.45).contains(l.y), (-0.45 ... -0.045).contains(r.y),
           (0.45...0.96).contains(l.x), (0.45...0.96).contains(r.x),
-          max(l.y,-r.y)/min(l.y,-r.y) < 3 else { continue }
+          max(l.y,-r.y)/min(l.y,-r.y) < 4 else { continue }
         let segments = [(tail,tip),(tip,left),(tip,right)]
         var coverage = Array(repeating:Set<Int>(),count:3), error = 0.0, fits = true
         for point in points {
           let errors = segments.map { deviation(point,$0.0,$0.1) }
           let index = errors.indices.min { errors[$0] < errors[$1] }!, d = errors[index]
-          if d > max(4/scale,span*0.055) { fits = false; break }
+          if d > max(5/scale,span*0.12) { fits = false; break }
           error += d*d
-          let (a,b) = segments[index], dx = b.x-a.x, dy = b.y-a.y
-          let t = ((point.x-a.x)*dx+(point.y-a.y)*dy)/(dx*dx+dy*dy)
-          coverage[index].insert(min(7,max(0,Int(t*8))))
+          // At the junction a measured point supports more than one segment.
+          // Exclusive nearest-side assignment starved a short/uneven wing and
+          // converted just its last stroke to a line, leaving the shaft behind.
+          for segment in segments.indices {
+            let (a,b) = segments[segment], dx = b.x-a.x, dy = b.y-a.y
+            let t = ((point.x-a.x)*dx+(point.y-a.y)*dy)/(dx*dx+dy*dy)
+            if (-0.05...1.05).contains(t), errors[segment] <= max(2/scale,hypot(dx,dy)*0.18) {
+              coverage[segment].insert(min(7,max(0,Int(t*8))))
+            }
+          }
         }
         let rms = sqrt(error/Double(points.count))/span
-        guard fits, rms < 0.028, coverage.allSatisfy({ $0.count >= 5 }) else { continue }
+        guard fits, rms < 0.06, coverage.allSatisfy({ $0.count >= 5 }) else { continue }
         if best == nil || rms < best!.0 { best = (rms,tail,tip) }
       }
     }

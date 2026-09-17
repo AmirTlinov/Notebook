@@ -6,12 +6,13 @@ import XCTest
 @MainActor final class NotebookGraphicRenderingTests: XCTestCase {
   func testPartialEraserUnionsOverlapsAndMovesWithEveryNativeFigure() async throws {
     let actor = UUID(), frame = PageRect(x: 40, y: 40, width: 160, height: 160)
-    for shape in [NotebookGraphic.Shape.ellipse, .rectangle, .plus] {
+    for shape in [NotebookGraphic.Shape.ellipse, .rectangle, .triangle, .diamond, .plus] {
+      let left = shape == .triangle ? 81 : 43, right = shape == .triangle ? 158 : 196
       let graphic = NotebookGraphic(shape: shape, style: .init(strokeWidth: 6))
       let element = AgentElement(id: "shape", kind: .graphic, frame: frame, source: "", html: "", graphic: graphic)
       let target = InkElementTarget(elementID: element.id, frame: frame)
       let samples = [110.0, 130.0].map { y in
-        SpatialInkSample(point: .init(x: 43, y: y), timeOffset: y, width: 24,
+        SpatialInkSample(point: .init(x: Double(left), y: y), timeOffset: y, width: 24,
           opacity: 1, force: 1, azimuth: 0, altitude: 1)
       }
       let eraser = PageInkAction(tool: .eraser, samples: samples).erasingElements([target])
@@ -32,18 +33,18 @@ import XCTest
         return max(color.redComponent, color.greenComponent, color.blueComponent) < 0.3
       }
       let erased = try await image(page)
-      XCTAssertFalse(dark(erased, 43, 120), "The traversed contour is cut, including overlapping erasers")
-      XCTAssertTrue(dark(erased, 196, 120), "The opposite side survives as the same native figure")
+      XCTAssertFalse(dark(erased, left, 120), "The traversed contour is cut, including overlapping erasers")
+      XCTAssertTrue(dark(erased, right, 120), "The opposite side survives as the same native figure")
       var moved = page
       moved.replaceElements([.init(id: element.id, kind: .graphic,
         frame: .init(x: 140, y: 40, width: 160, height: 160), source: "", html: "", graphic: graphic)], actor: actor)
       let shifted = try await image(moved)
-      XCTAssertFalse(dark(shifted, 143, 120), "A cutout travels with the object, not the old screen position")
-      XCTAssertTrue(dark(shifted, 296, 120))
+      XCTAssertFalse(dark(shifted, left+100, 120), "A cutout travels with the object, not the old screen position")
+      XCTAssertTrue(dark(shifted, right+100, 120))
       let restored = PageDocument(size: page.size, actor: actor,
         drawingData: try drawing.removing([eraser.id, second.id]).dataRepresentation(), elements: [element])
       let uncut = try await image(restored)
-      XCTAssertTrue(dark(uncut, 43, 120), "Undo restores original native geometry, not a traced bitmap")
+      XCTAssertTrue(dark(uncut, left, 120), "Undo restores original native geometry, not a traced bitmap")
     }
   }
 

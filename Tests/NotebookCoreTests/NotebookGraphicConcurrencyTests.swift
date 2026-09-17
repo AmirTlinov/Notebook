@@ -30,9 +30,9 @@ private struct GraphicFixture {
     _ = try write(.appendInkStroke, id: id.uuidString, values: values, human: false)
     return id
   }
-  func convert(_ id: String, sources: [UUID], shape: NotebookGraphic.Shape = .ellipse, human: Bool = true) throws -> CollaborationReceipt {
+  func convert(_ id: String, sources: [UUID], shape: NotebookGraphic.Shape = .ellipse, vertices: [SpatialPoint]? = nil, human: Bool = true) throws -> CollaborationReceipt {
     var values: [String: JSONValue] = ["kind": .string("graphic"), "source": .string(""),
-      "frame": try .encode(PageRect(x: 10, y: 10, width: 100, height: 100)), "graphic": try .encode(NotebookGraphic(shape:shape,sourceInkIDs:sources))]
+      "frame": try .encode(PageRect(x: 10, y: 10, width: 100, height: 100)), "graphic": try .encode(NotebookGraphic(shape:shape,sourceInkIDs:sources,vertices:vertices))]
     if target.kind == .board { values["worldOrigin"] = try .encode(WorldPoint.zero) }
     return try write(.convertInkToElement, id: id, values: values, human: human)
   }
@@ -109,4 +109,17 @@ func graphicAgentUndoInDispatcherTransaction() throws {
     }
   }
   #expect(try f.presentation().geometryIDs.isEmpty)
+}
+
+@Test("Изменение и очистка углов принимают многоугольник; отмена правки возвращает прежнее авторство", arguments:[false,true], [false,true])
+func graphicPolygonVerticesAdoption(onBoard: Bool, undoEdit: Bool) throws {
+  let f = try GraphicFixture(onBoard:onBoard); defer { f.clean() }
+  let points: [SpatialPoint] = [.init(x:0,y:0),.init(x:1,y:0.2),.init(x:0.4,y:1)]
+  let source = try f.stroke()
+  let conversion = try f.convert("triangle",sources:[source],shape:.triangle,vertices:points)
+  let cleared = try f.write(.updateElement,id:"triangle",values:["graphic":.object(["vertices":.null])],human:false)
+  if undoEdit { _ = try f.store.undoCollaborationAction(cleared.id,actor:f.actor) }
+  let inverse = try NotebookStore(root:f.root).undoCollaborationAction(conversion.id,actor:f.actor)
+  #expect(try f.presentation().geometryIDs == (undoEdit ? [] : ["triangle"]))
+  #expect(inverse.undo?.preserved.isEmpty == undoEdit)
 }

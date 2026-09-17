@@ -97,10 +97,21 @@ import XCTest
   }
 
   func testPageBowedMeasuredRectangleRemainsTheSameObjectWithRestingHandAndColdReopen() async throws {
-    try await drawAndClose(onBoard:false,restingHand:true,delaysPublication:true,measuredRectangle:true)
+    try await drawAndClose(onBoard:false,restingHand:true,delaysPublication:true,measuredFigure:("rectangles",8))
   }
   func testBoardBowedMeasuredRectangleUsesTheInstalledCameraAndSurvivesReopen() async throws {
-    try await drawAndClose(onBoard:true,delaysPublication:true,measuredRectangle:true)
+    try await drawAndClose(onBoard:true,delaysPublication:true,measuredFigure:("rectangles",8))
+  }
+
+  func testPageMeasuredPolygonsAndConnectorsKeepIdentityAndNibThroughLiftAndReopen() async throws {
+    for sample in [("triangles",4),("diamonds",7),("arrows",1),("arrows",0),("lines",14)] {
+      try await drawAndClose(onBoard:false,restingHand:true,delaysPublication:true,measuredFigure:sample)
+    }
+  }
+  func testBoardMeasuredPolygonsAndConnectorsKeepIdentityAndNibThroughLiftAndReopen() async throws {
+    for sample in [("triangles",4),("diamonds",7),("arrows",1),("arrows",0),("lines",14)] {
+      try await drawAndClose(onBoard:true,delaysPublication:true,measuredFigure:sample)
+    }
   }
 
   func testPageHeldLineBindsNodesAndFollowsAnUnwrittenMove() async throws {
@@ -289,7 +300,7 @@ import XCTest
 
   private func drawAndClose(onBoard: Bool, compound: Bool = false, measuresPublication: Bool = false,
     restingHand: Bool = false, delaysPublication: Bool = false, adjustsHeldShape: Bool = false,
-    measuredRectangle: Bool = false) async throws {
+    measuredFigure: (String,Int)? = nil) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-scene-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
@@ -346,20 +357,24 @@ import XCTest
       evidence.lifetime = .keepAlways; add(evidence)
     }
     var measured: [CGPoint] = [], enlargement = CGSize.zero
-    let rectanglePoints = measuredRectangle ? try NotebookGraphicInputTests.measuredShapes("rectangles")[8][0] : []
-    for strokeIndex in 0..<(compound ? 2 : 1) {
+    let figurePaths = try measuredFigure.map { try NotebookGraphicInputTests.measuredShapes($0.0)[$0.1] }
+    let strokeCount = figurePaths?.count ?? (compound ? 2 : 1)
+    var measuredPaths: [[CGPoint]] = []
+    for strokeIndex in 0..<strokeCount {
+      var currentPoints: [CGPoint] = []
       let touch = SceneGraphicTouch(window: window), event = SceneGraphicEvent()
-      for index in 0..<(measuredRectangle ? rectanglePoints.count : 121) {
+      for index in 0..<(figurePaths?[strokeIndex].count ?? 121) {
         // Finish near the left midpoint, unambiguously in its lower half.
         let t = Double(index)/120, angle = t * 2 * Double.pi + (adjustsHeldShape ? .pi - 0.1 : 0)
-        if measuredRectangle {
-          touch.point = .init(x:midpoint.x+rectanglePoints[index].x-100,y:midpoint.y+rectanglePoints[index].y-100)
+        if let points = figurePaths?[strokeIndex] {
+          touch.point = .init(x:midpoint.x+points[index].x-100,y:midpoint.y+points[index].y-100)
         } else if compound {
           touch.point = strokeIndex == 0 ? .init(x:midpoint.x-90+180*t,y:midpoint.y)
             : .init(x:midpoint.x,y:midpoint.y-60+120*t)
         } else { touch.point = .init(x:midpoint.x+90*cos(angle),y:midpoint.y+60*sin(angle)) }
         touch.sampleTime += 0.01
-        measured.append(paper?.convert(touch.point, from: window) ?? touch.point)
+        let point = paper?.convert(touch.point, from: window) ?? touch.point
+        measured.append(point); currentPoints.append(point)
         if index == 0 {
           touch.sourceView = window.hitTest(touch.point, with: event)
           observer.touchesBegan([touch], with: event)
@@ -367,13 +382,40 @@ import XCTest
           XCTAssertTrue(model.inputGate.hasActivePencil)
         } else { receiver.touchesMoved([touch], with: event) }
       }
-      let holdsShape = !compound || strokeIndex == 1
+      measuredPaths.append(currentPoints)
+      let holdsShape = strokeIndex == strokeCount-1
       if holdsShape {
         try await Task.sleep(for:.milliseconds(650))
         recognized = try XCTUnwrap(model.workingGraphics.first,
           "The hold creates the actual displayed graphic, not a separate preview path")
         XCTAssertNotNil(shownObject())
         XCTAssertFalse(try XCTUnwrap(recognized).accepted)
+        if recognized?.graphic.connection != nil {
+          func assertNib() throws {
+            let node = try XCTUnwrap(shownObject())
+            let graph = NotebookGraphicGraph([node])
+            let layout = try XCTUnwrap(graph.resolve(node.id).layout)
+            let distances = [layout.start,layout.end].map { endpoint -> Double in
+              let p = SpatialPoint(x:layout.frame.x+endpoint.x,y:layout.frame.y+endpoint.y)
+              let screen: CGPoint
+              if let paper { screen = paper.convert(p.cgPoint,to:window) }
+              else {
+                let world = node.origin.offsetBy(x:p.x,y:p.y)
+                screen = presence.camera.worldToScreen(world,viewport:presence.viewport).cgPoint
+              }
+              return hypot(screen.x-touch.point.x,screen.y-touch.point.y)
+            }
+            XCTAssertLessThan(distances.min()!,0.01,"Installed page/world projection keeps the endpoint at Pencil")
+          }
+          try assertNib()
+          let held = touch.point
+          for delta in [CGPoint(x:25,y:0),CGPoint(x:25,y:35),.zero] {
+            touch.point = .init(x:held.x+delta.x,y:held.y+delta.y); touch.sampleTime += 0.01
+            receiver.touchesMoved([touch],with:event)
+            try assertNib()
+          }
+          recognized = try XCTUnwrap(model.workingGraphics.first)
+        }
         if adjustsHeldShape {
           attachFrame("before-two-axis-drag")
           let initial = try XCTUnwrap(recognized), held = touch.point
@@ -411,7 +453,7 @@ import XCTest
       }
       let publicationFence = UUID()
       defer { if delaysPublication { model.inputGate.endPencilAction(source: publicationFence) } }
-      if delaysPublication { XCTAssertTrue(model.inputGate.beginPencilAction(source: publicationFence)) }
+      if delaysPublication && holdsShape { XCTAssertTrue(model.inputGate.beginPencilAction(source: publicationFence)) }
       receiver.touchesEnded([touch],with:event)
       observer.touchesEnded([touch],with:event)
       if holdsShape {
@@ -419,7 +461,7 @@ import XCTest
         XCTAssertEqual(shownObject()?.graphic, recognized?.graphic)
         XCTAssertTrue(try XCTUnwrap(model.workingGraphics.first).accepted)
       }
-      if delaysPublication {
+      if delaysPublication && holdsShape {
         model.updateWorkingGraphic(nil, strokeID: try XCTUnwrap(recognized).strokeID)
         // Commit cannot pass the ordinary idle gate. The shown object must not
         // depend on that scheduling gap, a database receipt or a scene reload.
@@ -436,7 +478,7 @@ import XCTest
       }
       // The canonical publication of the first stroke must not erase the
       // short-lived recognition sequence before the second contact arrives.
-      if compound && strokeIndex == 0 { try await Task.sleep(for:.milliseconds(250)) }
+      if strokeIndex < strokeCount-1 { try await Task.sleep(for:.milliseconds(250)) }
     }
     if measuresPublication {
       let start = ContinuousClock.now
@@ -479,7 +521,22 @@ import XCTest
       actual = .init(x: origin.x, y: origin.y, width: element.frame.width * presence.camera.scale, height: element.frame.height * presence.camera.scale)
       let journal = try reopened.loadSpatialInk()
       let actions = journal.actions.filter { graphic.sourceInkIDs.contains($0.id) }
-      XCTAssertTrue(actions.allSatisfy(\.isActive)); measuredSourceCount = actions.flatMap(\.spans).flatMap(\.samples).count
+      XCTAssertTrue(actions.allSatisfy(\.isActive))
+      var sourceCount = 0
+      for (index,id) in graphic.sourceInkIDs.enumerated() {
+        let samples = try XCTUnwrap(actions.first { $0.id == id }).spans.flatMap(\.samples)
+        let expectedCount = measuredPaths[index].count
+        // The board router may repeat the coincident terminal sample at lift.
+        // Check that exact duplicate, not an extra handle stroke or lost input.
+        if samples.count == expectedCount+1 {
+          let last = try XCTUnwrap(samples.last), previous = samples[samples.count-2]
+          XCTAssertEqual(last.timeOffset,previous.timeOffset,accuracy:0.000001)
+          let delta = try XCTUnwrap(last.worldPoint).delta(to:XCTUnwrap(previous.worldPoint))
+          XCTAssertLessThan(hypot(delta.x,delta.y),0.000001)
+          sourceCount += samples.count-1
+        } else { sourceCount += samples.count; XCTAssertEqual(samples.count,expectedCount) }
+      }
+      measuredSourceCount = sourceCount
     } else {
       let page = try reopened.loadPage(pageID)
       let element = try XCTUnwrap(page.elements.first { $0.graphic != nil })
@@ -489,14 +546,14 @@ import XCTest
       let actions = try PageInkDrawing.decode(page.drawingData).actions.filter { graphic.sourceInkIDs.contains($0.id) }
       XCTAssertTrue(actions.allSatisfy(\.isActive)); measuredSourceCount = actions.flatMap(\.samples).count
     }
-    XCTAssertTrue(graphic.showsGeometry); XCTAssertEqual(graphic.sourceInkIDs.count, compound ? 2 : 1)
-    XCTAssertEqual(graphic.shape,measuredRectangle ? .rectangle : (compound ? .plus : .ellipse))
+    XCTAssertTrue(graphic.showsGeometry); XCTAssertEqual(graphic.sourceInkIDs.count, strokeCount)
+    XCTAssertEqual(graphic,recognized?.graphic,"Serialized geometry is exactly the held object, including polygon orientation")
     XCTAssertEqual(measuredSourceCount, measured.count)
-    if measuredRectangle {
+    if measuredFigure != nil {
       // Fitted sides, not extremal closing tails, own the final frame.
       let scale = paper.map { hypot($0.convert(.init(x:1,y:0),to:window).x-$0.convert(.zero,to:window).x,
         $0.convert(.init(x:1,y:0),to:window).y-$0.convert(.zero,to:window).y) } ?? 1
-      let fit = try XCTUnwrap(NotebookQuickShape.recognize(measured.map { .init(x:$0.x,y:$0.y) },screenScale:scale))
+      let fit = try XCTUnwrap(NotebookQuickShape.recognize(strokes:measuredPaths.map { $0.map { .init(x:$0.x,y:$0.y) } },screenScale:scale))
       XCTAssertEqual(actual.minX,fit.frame.x,accuracy:0.1); XCTAssertEqual(actual.minY,fit.frame.y,accuracy:0.1)
       XCTAssertEqual(actual.width,fit.frame.width,accuracy:0.1); XCTAssertEqual(actual.height,fit.frame.height,accuracy:0.1)
       XCTAssertEqual(model.presence?.camera,presence.camera)

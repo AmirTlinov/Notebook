@@ -645,7 +645,7 @@ struct CollaborationWorkspace {
                 throw invalid("Правка связи называет её концы, изгиб, наконечники или положение подписи.")
               }
               graphic = graphic.setting(part, .object(previous.object.merging(supplied.object) { _, latest in latest }))
-            } else { graphic = graphic.setting(part, supplied) }
+            } else { graphic = graphic.setting(part, part == "vertices" && supplied == .null ? nil : supplied) }
           }
           elements[index] = elements[index].setting(key, graphic)
         } else { elements[index] = elements[index].setting(key, value) }

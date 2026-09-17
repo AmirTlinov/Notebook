@@ -3,7 +3,7 @@ import Foundation
 /// Native content on a physical page or board, not an embedded document.
 /// Measurements remain in that owner's ink journal; presentation only names them.
 public struct NotebookGraphic: Codable, Equatable, Sendable {
-  public enum Shape: String, Codable, Sendable { case ellipse, rectangle, plus, connector }
+  public enum Shape: String, Codable, Sendable { case ellipse, rectangle, triangle, diamond, plus, connector }
   public enum Representation: String, Codable, Sendable { case ink, geometry }
   public struct Style: Codable, Equatable, Sendable {
     public enum Dash: String, Codable, Sendable { case solid, dashed, dotted }
@@ -26,19 +26,21 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
   public var visible: Bool
   public let sourceInkIDs: [UUID]
   public var connection: NotebookGraphicConnection?
+  /// Normalized convex corners preserve the drawn polygon orientation on resize.
+  public var vertices: [SpatialPoint]?
 
   public init(shape: Shape = .ellipse, style: Style = .init(), label: String = "",
     representation: Representation = .geometry, visible: Bool = true, sourceInkIDs: [UUID] = [],
-    connection: NotebookGraphicConnection? = nil) {
+    connection: NotebookGraphicConnection? = nil, vertices: [SpatialPoint]? = nil) {
     self.shape = shape; self.style = style; self.label = label
     self.representation = representation; self.visible = visible; self.sourceInkIDs = sourceInkIDs
-    self.connection = connection
+    self.connection = connection; self.vertices = vertices
   }
 
-  static let causalFields = ["shape", "style", "label", "representation", "visible", "sourceInkIDs"]
+  static let causalFields = ["shape", "style", "label", "representation", "visible", "sourceInkIDs", "vertices"]
   static let allCausalPaths = causalFields.map { [$0] } + NotebookGraphicConnection.causalFields.map { ["connection", $0] }
   var causalPaths: [[String]] {
-    Self.causalFields.map { [$0] } + (connection == nil ? [] : NotebookGraphicConnection.causalFields.map { ["connection", $0] })
+    Self.causalFields.filter { $0 != "vertices" || vertices != nil }.map { [$0] } + (connection == nil ? [] : NotebookGraphicConnection.causalFields.map { ["connection", $0] })
   }
   public var showsGeometry: Bool { visible && representation == .geometry }
   var isValid: Bool {
@@ -46,12 +48,32 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
       && Set(sourceInkIDs).count == sourceInkIDs.count
       && (representation != .ink || !sourceInkIDs.isEmpty)
       && (shape == .connector ? connection?.isValid == true : connection == nil)
+      && validVertices
   }
+  private var validVertices: Bool {
+    guard let vertices else { return true }
+    guard (shape == .triangle && vertices.count == 3) || (shape == .diamond && vertices.count == 4),
+      vertices.allSatisfy({ $0.x.isFinite && $0.y.isFinite && (0...1).contains($0.x) && (0...1).contains($0.y) }) else { return false }
+    let turns = vertices.indices.map { i in
+      let a = vertices[i], b = vertices[(i+1)%vertices.count], c = vertices[(i+2)%vertices.count]
+      return (b.x-a.x)*(c.y-b.y)-(b.y-a.y)*(c.x-b.x)
+    }
+    return turns.allSatisfy({ $0 > 0.0001 }) || turns.allSatisfy({ $0 < -0.0001 })
+  }
+
 }
 
 /// The same normalized outline serves native paint, hit testing and anchors.
 /// Camera / page placement belongs to the installed scene, never this geometry.
 public enum NotebookGraphicGeometry {
+  public static func polygon(_ graphic: NotebookGraphic) -> [SpatialPoint]? {
+    switch graphic.shape {
+    case .triangle: return graphic.vertices ?? [.init(x:0.5,y:0),.init(x:1,y:1),.init(x:0,y:1)]
+    case .diamond: return graphic.vertices ?? [.init(x:0.5,y:0),.init(x:1,y:0.5),.init(x:0.5,y:1),.init(x:0,y:0.5)]
+    case .rectangle: return [.init(x:0,y:0),.init(x:1,y:0),.init(x:1,y:1),.init(x:0,y:1)]
+    case .ellipse, .plus, .connector: return nil
+    }
+  }
   public static func hitTest(_ graphic: NotebookGraphic, width: Double, height: Double,
     x: Double, y: Double, tolerance: Double) -> Bool {
     guard graphic.showsGeometry, graphic.shape != .connector, width > 0, height > 0 else { return false }
@@ -61,24 +83,33 @@ public enum NotebookGraphicGeometry {
       abs(y - height / 2) <= 16 + tolerance { return true }
     if graphic.style.fill != nil {
       if graphic.shape == .ellipse { return radius <= 1 + tolerance / min(width, height) * 2 }
-      if graphic.shape == .rectangle { return x >= -tolerance && x <= width+tolerance && y >= -tolerance && y <= height+tolerance }
+      if let vertices = polygon(graphic) {
+        var inside = false
+        for (a,b) in zip(vertices,vertices.dropFirst()+vertices.prefix(1)) where (a.y*height > y) != (b.y*height > y) {
+          if x < (b.x-a.x)*width*(y-a.y*height)/((b.y-a.y)*height)+a.x*width { inside.toggle() }
+        }
+        if inside { return true }
+      }
     }
     // A contour must not steal its empty interior from enclosed nodes.
-    return outlineDistance(graphic.shape,width:width,height:height,x:x,y:y) <= tolerance + graphic.style.strokeWidth / 2
+    return outlineDistance(graphic,width:width,height:height,x:x,y:y) <= tolerance + graphic.style.strokeWidth / 2
   }
 
-  public static func outlineDistance(_ shape: NotebookGraphic.Shape, width: Double, height: Double,
+  public static func outlineDistance(_ graphic: NotebookGraphic, width: Double, height: Double,
     x: Double, y: Double) -> Double {
     func segment(_ ax: Double, _ ay: Double, _ bx: Double, _ by: Double) -> Double {
       let dx = bx-ax, dy = by-ay, square = dx*dx+dy*dy
       let t = square > 0 ? min(1,max(0,((x-ax)*dx+(y-ay)*dy)/square)) : 0
       return hypot(x-ax-t*dx,y-ay-t*dy)
     }
-    switch shape {
+    switch graphic.shape {
     case .ellipse:
       return abs(hypot((x-width/2)/(width/2),(y-height/2)/(height/2))-1)*min(width,height)/2
-    case .rectangle:
-      return min(segment(0,0,width,0),segment(width,0,width,height),segment(width,height,0,height),segment(0,height,0,0))
+    case .rectangle, .triangle, .diamond:
+      let vertices = polygon(graphic)!
+      return zip(vertices,vertices.dropFirst()+vertices.prefix(1)).map {
+        segment($0.x*width,$0.y*height,$1.x*width,$1.y*height)
+      }.min()!
     case .plus:
       return min(segment(0,height/2,width,height/2),segment(width/2,0,width/2,height))
     case .connector: return .infinity

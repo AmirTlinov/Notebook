@@ -63,9 +63,12 @@ extension NotebookStore {
     var adopted = false
     if conversion {
       let graphic = try files[change.file]?.value(at: prefix[...])?["graphic"]?.decode(NotebookGraphic.self)
-      let paths = [["frame"]] + (graphic?.causalPaths ?? []).filter { !["representation", "visible", "sourceInkIDs"].contains($0[0]) }.map { ["graphic"] + $0 }
+      let paths = [["frame"]] + (graphic == nil ? [] : NotebookGraphic.allCausalPaths).filter { !["representation", "visible", "sourceInkIDs"].contains($0[0]) }.map { ["graphic"] + $0 }
       for suffix in paths {
         let path = prefix + suffix.map(CollaborationPathComponent.field)
+        // Optional geometry can be absent initially, or deliberately cleared
+        // later. Only the latter has an authored register and can adopt a shape.
+        if files[change.file]?.value(at:path[...]) == nil && collaborationFieldVersion(file:files[change.file],path:path) == nil { continue }
         let field = CollaborationFieldChange(file: change.file, path: path, before: nil, after: nil, afterVersion: version)
         if try !fieldIsOwned(collaborationFieldVersion(file: files[change.file], path: path), by: field) { adopted = true; break }
       }

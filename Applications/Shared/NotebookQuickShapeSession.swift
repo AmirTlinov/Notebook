@@ -60,7 +60,8 @@ final class NotebookQuickShapeSession {
           continue
         }
         guard !Task.isCancelled, self.generation == generation else { return }
-        originalFit = fit; self.fit = self.resolve(fit); heldPoint = last
+        let anchored = Self.anchoringConnector(fit, heldAt:last, to:last)
+        originalFit = anchored; self.fit = self.resolve(anchored); heldPoint = last
         onChange?(self.fit); return
       }
     }
@@ -87,15 +88,8 @@ final class NotebookQuickShapeSession {
     guard dx != 0 || dy != 0 else { return original }
     let frame = original.frame
     var result = original
-    if var connection = original.connection {
-      let local = SpatialPoint(x: held.x - frame.x, y: held.y - frame.y)
-      let grabsStart = hypot(local.x - connection.start.point.x, local.y - connection.start.point.y)
-        < hypot(local.x - connection.end.point.x, local.y - connection.end.point.y)
-      var endpoint = grabsStart ? connection.start : connection.end
-      endpoint.point = .init(x: endpoint.point.x + dx, y: endpoint.point.y + dy)
-      endpoint.binding = nil
-      if grabsStart { connection.start = endpoint } else { connection.end = endpoint }
-      result.connection = connection
+    if original.connection != nil {
+      result = anchoringConnector(original, heldAt:held, to:point)
     } else {
       let left = held.x < frame.x + frame.width / 2
       let top = held.y < frame.y + frame.height / 2
@@ -105,6 +99,22 @@ final class NotebookQuickShapeSession {
       result.frame = .init(x: left ? frame.x + (frame.width - width) : frame.x,
         y: top ? frame.y + (frame.height - height) : frame.y, width: width, height: height)
     }
+    return result
+  }
+
+  /// Recognition and later travel have the same grip: the closest terminal
+  /// sits at the actual nib, including arrows finished on a wing. Pin it before
+  /// the first visible frame, not on a later move or on Pencil release.
+  static func anchoringConnector(_ original: NotebookQuickShapeFit, heldAt held: SpatialPoint,
+    to point: SpatialPoint) -> NotebookQuickShapeFit {
+    guard var connection = original.connection else { return original }
+    let frame = original.frame, local = SpatialPoint(x:held.x-frame.x,y:held.y-frame.y)
+    let start = hypot(local.x-connection.start.point.x,local.y-connection.start.point.y)
+      < hypot(local.x-connection.end.point.x,local.y-connection.end.point.y)
+    var endpoint = start ? connection.start : connection.end
+    endpoint.point = .init(x:point.x-frame.x,y:point.y-frame.y); endpoint.binding = nil
+    if start { connection.start = endpoint } else { connection.end = endpoint }
+    var result = original; result.connection = connection
     return result
   }
 

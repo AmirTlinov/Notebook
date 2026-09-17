@@ -29,7 +29,7 @@ struct NotebookGraphicView: View {
       if graphic.shape != .connector {
         let inset = min(width / 2, min(size.width, size.height) / 2 - 0.01)
         let rect = CGRect(origin: .zero, size: size).insetBy(dx: max(0, inset), dy: max(0, inset))
-        let path = outline(graphic.shape, in:rect)
+        let path = outline(graphic, in:rect)
         if graphic.shape != .plus, let fill = graphic.style.fill { context.fill(path, with: .color(fill.swiftUIColor)) }
         context.stroke(path, with: .color(stroke), style: style)
       } else if let layout {
@@ -65,10 +65,17 @@ struct NotebookGraphicView: View {
     }
     return path
   }
-  private static func outline(_ shape: NotebookGraphic.Shape, in rect: CGRect) -> Path {
-    switch shape {
+  private static func outline(_ graphic: NotebookGraphic, in rect: CGRect) -> Path {
+    switch graphic.shape {
     case .ellipse: return Path(ellipseIn:rect)
-    case .rectangle: return Path(rect)
+    case .rectangle, .triangle, .diamond:
+      let vertices = NotebookGraphicGeometry.polygon(graphic)!
+      var path = Path()
+      for (index,point) in vertices.enumerated() {
+        let p = CGPoint(x:rect.minX+point.x*rect.width,y:rect.minY+point.y*rect.height)
+        if index == 0 { path.move(to:p) } else { path.addLine(to:p) }
+      }
+      path.closeSubpath(); return path
     case .plus:
       var path = Path()
       path.move(to:.init(x:rect.minX,y:rect.midY)); path.addLine(to:.init(x:rect.maxX,y:rect.midY))
@@ -81,7 +88,7 @@ struct NotebookGraphicView: View {
 
 extension NotebookGraphic.Shape {
   var displayName: String {
-    switch self { case .ellipse: "Эллипс"; case .rectangle: "Прямоугольник"; case .plus: "Плюс"; case .connector: "Связь" }
+    switch self { case .ellipse: "Эллипс"; case .rectangle: "Прямоугольник"; case .triangle: "Треугольник"; case .diamond: "Ромб"; case .plus: "Плюс"; case .connector: "Связь" }
   }
 }
 

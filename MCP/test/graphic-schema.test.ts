@@ -34,8 +34,18 @@ test("connection patches own each endpoint independently and reject unknown geom
 });
 
 test("native rectangles and pluses use the existing graphic command", () => {
-  for (const shape of ["rectangle", "plus"]) {
+  for (const shape of ["rectangle", "triangle", "diamond", "plus"]) {
     const values = { kind: "graphic", source: "", frame: { x: 10, y: 10, width: 80, height: 80 }, graphic: { ...graphic, shape } };
     assert.deepEqual(operationSchema.parse({ kind: "insertElement", target, id: shape, values }).values, values);
+  }
+});
+
+test("polygon corners use the same typed action and allow an explicit reset", () => {
+  for (const vertices of [[{x:0,y:0},{x:1,y:0},{x:0.5,y:1}],null]) {
+    const values = {graphic:{vertices}};
+    assert.deepEqual(operationSchema.parse({kind:"updateElement",target,id:"triangle",values}).values,values);
+  }
+  for (const vertices of [[],[{x:-1,y:0},{x:1,y:0},{x:0.5,y:1}]]) {
+    assert.throws(()=>operationSchema.parse({kind:"updateElement",target,id:"triangle",values:{graphic:{vertices}}}));
   }
 });

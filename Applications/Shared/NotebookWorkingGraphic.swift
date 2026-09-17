@@ -18,7 +18,7 @@ struct NotebookWorkingGraphic: Equatable, Identifiable {
     self.strokeID = strokeID; self.surface = surface; self.frame = fit.frame
     self.worldOrigin = worldOrigin
     graphic = .init(shape: fit.shape, style: .init(stroke: color, strokeWidth: width),
-      sourceInkIDs: fit.precedingStrokeIDs + [strokeID], connection: fit.connection)
+      sourceInkIDs: fit.precedingStrokeIDs + [strokeID], connection: fit.connection, vertices: fit.vertices)
   }
 
   var pageElement: AgentElement {

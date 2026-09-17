@@ -161,7 +161,7 @@ public struct NotebookGraphicGraph: Sendable {
     for node in nodes.values where node.shown && node.graphic.shape != .connector && node.surface == surface && node.id != id {
       let delta = origin.delta(to:node.origin), frame = node.frame
       let x = point.x-delta.x-frame.x-frame.width/2, y = point.y-delta.y-frame.y-frame.height/2
-      let edge = NotebookGraphicGeometry.outlineDistance(node.graphic.shape,width:frame.width,height:frame.height,
+      let edge = NotebookGraphicGeometry.outlineDistance(node.graphic,width:frame.width,height:frame.height,
         x:x+frame.width/2,y:y+frame.height/2), center = hypot(x,y)
       guard edge <= tolerance || center <= tolerance else { continue }
       candidates.append((node,min(edge,center)))
@@ -213,12 +213,14 @@ public struct NotebookGraphicGraph: Sendable {
       let px = (anchor.x-center.x)/rx, py = (anchor.y-center.y)/ry
       let dx = (toward.x-anchor.x)/rx, dy = (toward.y-anchor.y)/ry
       if target.graphic.shape == .plus { return anchor }
-      if target.graphic.shape == .rectangle {
-        let intersections = [-1.0,1.0].flatMap { side -> [Double] in
-          var values: [Double] = []
-          if abs(dx) > 0.000001 { let t = (side-px)/dx; if t >= 0 && abs(py+t*dy) <= 1.000001 { values.append(t) } }
-          if abs(dy) > 0.000001 { let t = (side-py)/dy; if t >= 0 && abs(px+t*dx) <= 1.000001 { values.append(t) } }
-          return values
+      if let vertices = NotebookGraphicGeometry.polygon(target.graphic) {
+        let intersections = zip(vertices,vertices.dropFirst()+vertices.prefix(1)).compactMap { a,b -> Double? in
+          let ax = a.x*2-1, ay = a.y*2-1, ex = (b.x-a.x)*2, ey = (b.y-a.y)*2
+          let cross = dx*ey-dy*ex
+          guard abs(cross) > 0.000001 else { return nil }
+          let t = ((ax-px)*ey-(ay-py)*ex)/cross
+          let u = ((ax-px)*dy-(ay-py)*dx)/cross
+          return t >= 0 && (-0.000001...1.000001).contains(u) ? t : nil
         }
         guard let t = intersections.min() else { return anchor }
         return .init(x:anchor.x+(toward.x-anchor.x)*t,y:anchor.y+(toward.y-anchor.y)*t)

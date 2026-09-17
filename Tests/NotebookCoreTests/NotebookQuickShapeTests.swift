@@ -75,7 +75,7 @@ func quickShapeConnectorNegatives() {
   let wave = (0...180).map { SpatialPoint(x:Double($0),y:25*sin(Double($0)/12)) }
   let v = (0...180).map { SpatialPoint(x:Double($0),y:abs(Double($0)-90)) }
   let scribble = (0...180).map { SpatialPoint(x:Double($0)+20*sin(Double($0)),y:20*cos(Double($0))) }
-  for points in [wave,v,scribble,Array(wave.prefix(5))] {
+  for points in [wave,v,scribble,[.zero,.init(x:1,y:1),.init(x:2,y:1),.init(x:2,y:2)]] {
     #expect(NotebookQuickShape.connector(points,screenScale:1) == nil)
   }
 }
@@ -144,23 +144,24 @@ func quickShapeRectanglesAndPluses() throws {
   }
 }
 
-@Test("Реальные штрихи iPad: неровные стороны, замыкание с хвостом и несимметричный плюс", arguments: [0.4,1.0,3.0])
-func quickShapeMeasuredRectanglesAndPluses(scale: Double) throws {
+@Test("Реальные штрихи iPad: многоугольники, короткие минусы и составные стрелки", arguments: [0.4,1.0,3.0])
+func quickShapeMeasuredFigures(scale: Double) throws {
   let url = try #require(Bundle.module.url(forResource:"QuickShapeMeasured",withExtension:"json"))
   let examples = try JSONDecoder().decode([String: [[[[Double]]]]].self, from:Data(contentsOf:url))
-  for key in ["rectangles","pluses","unsupportedPolygons"] {
+  let groups: [(String,NotebookGraphic.Shape)] = [("rectangles",.rectangle),("pluses",.plus),
+    ("triangles",.triangle),("diamonds",.diamond),("lines",.connector),("arrows",.connector)]
+  for (key,shape) in groups {
     for (index, strokes) in try #require(examples[key]).enumerated() {
       for mirror in [1.0,-1.0] {
         let paths = strokes.map { $0.map { SpatialPoint(x:300+mirror*$0[0]/scale,y:400+$0[1]/scale) } }
         let fit = NotebookQuickShape.recognize(strokes:paths,screenScale:scale)
-        if key == "unsupportedPolygons" {
-          #expect(fit == nil, "\(key)[\(index)] must not become an oval or rectangle")
-        } else {
-          let actual = try #require(fit,"\(key)[\(index)] scale=\(scale) mirror=\(mirror)")
-          #expect(actual.shape == (key == "rectangles" ? .rectangle : .plus),"\(key)[\(index)]")
-          #expect(actual.sampleCount == paths.last?.count)
-          if key == "rectangles" { #expect(NotebookQuickShape.ellipse(paths[0],screenScale:scale) == nil) }
-        }
+        let actual = try #require(fit,"\(key)[\(index)] scale=\(scale) mirror=\(mirror)")
+        #expect(actual.shape == shape,"\(key)[\(index)]")
+        #expect(actual.sampleCount == paths.last?.count)
+        if key == "arrows" { #expect(actual.connection?.endArrowhead == .arrow) }
+        if key == "lines" { #expect(actual.connection?.endArrowhead == NotebookGraphicConnection.Arrowhead.none) }
+        if key == "rectangles" { #expect(NotebookQuickShape.ellipse(paths[0],screenScale:scale) == nil) }
+        #expect(NotebookGraphic(shape:actual.shape,connection:actual.connection,vertices:actual.vertices).isValid)
       }
     }
   }
@@ -178,7 +179,7 @@ func quickShapeSideFitNegatives() {
     }
   }
   let examples: [[SpatialPoint]] = [
-    [.init(x:0,y:0),.init(x:160,y:0),.init(x:90,y:100),.init(x:70,y:100),.init(x:0,y:0)],
+    [.init(x:0,y:0),.init(x:160,y:0),.init(x:110,y:100),.init(x:50,y:100),.init(x:0,y:0)],
     [.init(x:0,y:100),.init(x:0,y:0),.init(x:100,y:0),.init(x:100,y:100)], // П
     [.init(x:0,y:0),.init(x:0,y:100),.init(x:100,y:0),.init(x:100,y:100)], // И
     [.init(x:0,y:100),.init(x:0,y:0),.init(x:100,y:0),.init(x:100,y:45),.init(x:0,y:45)] // P
@@ -194,7 +195,6 @@ func quickShapeCompoundNegatives() {
     [[.init(x:0,y:0),.init(x:0,y:100),.init(x:100,y:100)]], // L
     [[.init(x:0,y:0),.init(x:100,y:0)],[.init(x:50,y:0),.init(x:50,y:100)]], // T
     [[.init(x:0,y:0),.init(x:100,y:100),.init(x:200,y:0)]], // V
-    [[.init(x:0,y:0),.init(x:100,y:100),.init(x:200,y:0),.init(x:0,y:0)]],
     [[.init(x:0,y:0),.init(x:100,y:0)],[.init(x:300,y:0),.init(x:300,y:100)]],
     [[.init(x:0,y:0),.init(x:10,y:0),.init(x:10,y:10),.init(x:0,y:10),.init(x:0,y:0)]]
   ]
@@ -213,4 +213,61 @@ func graphicRectangleAndPlusContourHitTesting() {
   #expect(NotebookGraphicGeometry.hitTest(plus,width:100,height:80,x:50,y:40,tolerance:3))
   #expect(NotebookGraphicGeometry.hitTest(plus,width:100,height:80,x:0,y:40,tolerance:3))
   #expect(!NotebookGraphicGeometry.hitTest(plus,width:100,height:80,x:0,y:0,tolerance:3))
+}
+
+@Test("Треугольник сохраняет направление, порядок штрихов не диктует вершины", arguments:[0.0,0.7,2.4,4.5])
+func quickShapeTriangleOrientation(angle: Double) throws {
+  let a = SpatialPoint(x:0,y:0), b = SpatialPoint(x:130,y:30), c = SpatialPoint(x:40,y:130)
+  for strokes in [[[a,b,c,a]],[[c,b],[a,c],[b,a]]] {
+    let points = strokes.map { sketch($0,angle:angle) }
+    let fit = try #require(NotebookQuickShape.recognize(strokes:points,screenScale:1))
+    #expect(fit.shape == .triangle)
+    let corners = try #require(fit.vertices).map { SpatialPoint(x:fit.frame.x+$0.x*fit.frame.width,y:fit.frame.y+$0.y*fit.frame.height) }
+    for p in [a,b,c] {
+      let expected = SpatialPoint(x:300+p.x*cos(angle)-p.y*sin(angle),y:300+p.x*sin(angle)+p.y*cos(angle))
+      #expect(corners.contains { hypot($0.x-expected.x,$0.y-expected.y) < 4 })
+    }
+  }
+}
+
+@Test("Привязка Pencil сохраняет измеренный конец возле контура, внутри узла и вдали от него")
+func quickShapeBindingDoesNotMoveNib() throws {
+  for shape in [NotebookGraphic.Shape.ellipse,.rectangle,.triangle,.diamond] {
+    let surface = SurfaceID.page(UUID()), origin = WorldPoint(x:9000,y:-12000)
+    let node = NotebookGraphicGraph.Node(id:"node",graphic:.init(shape:shape),
+      frame:.init(x:100,y:100,width:100,height:100),origin:origin,surface:surface,shown:true)
+    for point in [SpatialPoint(x:100,y:150),.init(x:150,y:150),.init(x:95,y:150),.init(x:20,y:20)] {
+      let fit = NotebookQuickShapeFit(frame:.init(x:0,y:0,width:400,height:300),sampleCount:30,
+        connection:.init(start:.init(point:point),end:.init(point:.init(x:350,y:170))))
+        .binding(in:.init([node]),surface:surface,origin:origin,tolerance:18)
+      let link = NotebookGraphicGraph.Node(id:"link",graphic:.init(shape:.connector,connection:fit.connection),
+        frame:fit.frame,origin:origin,surface:surface,shown:true)
+      let layout = try #require(NotebookGraphicGraph([node,link]).resolve("link").layout)
+      #expect(abs(layout.frame.x+layout.start.x-point.x) < 0.0001)
+      #expect(abs(layout.frame.y+layout.start.y-point.y) < 0.0001)
+    }
+  }
+}
+
+@Test("Контур, заполнение и привязка многоугольников используют одни углы")
+func graphicPolygonGeometryContract() throws {
+  for shape in [NotebookGraphic.Shape.triangle,.diamond] {
+    var graphic = NotebookGraphic(shape:shape)
+    #expect(!NotebookGraphicGeometry.hitTest(graphic,width:100,height:100,x:50,y:50,tolerance:1))
+    #expect(NotebookGraphicGeometry.hitTest(graphic,width:100,height:100,x:50,y:0,tolerance:1))
+    #expect(!NotebookGraphicGeometry.hitTest(graphic,width:100,height:100,x:0,y:0,tolerance:1))
+    graphic.style.fill = .black
+    #expect(NotebookGraphicGeometry.hitTest(graphic,width:100,height:100,x:50,y:50,tolerance:1))
+    let surface = SurfaceID.page(UUID())
+    let graph = NotebookGraphicGraph([
+      .init(id:"node",graphic:graphic,frame:.init(x:0,y:0,width:100,height:100),surface:surface,shown:true),
+      .init(id:"link",graphic:.init(shape:.connector,connection:.init(
+        start:.init(point:.zero,binding:.init(elementID:"node")),end:.init(point:.init(x:200,y:50)))),
+        frame:.init(x:0,y:0,width:200,height:100),surface:surface,shown:true)])
+    let layout = try #require(graph.resolve("link").layout)
+    #expect(abs(layout.frame.x+layout.start.x-(shape == .triangle ? 75 : 100)) < 0.001)
+    #expect(abs(layout.frame.y+layout.start.y-50) < 0.001)
+    graphic.vertices = [.zero,.zero,.init(x:1,y:1)]
+    #expect(!graphic.isValid)
+  }
 }

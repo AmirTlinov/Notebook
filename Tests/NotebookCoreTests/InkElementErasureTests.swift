@@ -99,7 +99,7 @@ struct InkElementErasureTests {
     #expect(try reopened.readSpatialInk(surfaces: [surface]).elementErasures(on: surface).isEmpty)
   }
 
-  @Test func newManifestFencesOldReadersWithoutDroppingQueuedFormatFour() throws {
+  @Test(arguments:[4,5]) func newManifestFencesOldReadersWithoutDroppingQueuedHistory(legacyFormat: Int) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let a = NotebookStore(root: root.appendingPathComponent("a")), b = NotebookStore(root: root.appendingPathComponent("b"))
@@ -108,8 +108,8 @@ struct InkElementErasureTests {
     let initial = try #require(a.changeJournal(after: 0).first)
     let data = try a.readBlobChunk(hash: initial.manifestHash, offset: 0, maxBytes: 1_048_576)
     let value = try JSONDecoder().decode(JSONValue.self, from: data)
-    #expect(value["format"] == .number(5))
-    let old = try JSONEncoder().encode(value.setting("format", .number(4)))
+    #expect(value["format"] == .number(6))
+    let old = try JSONEncoder().encode(value.setting("format", .number(Double(legacyFormat))))
     let hash = SHA256.hash(data: old).map { String(format: "%02x", $0) }.joined()
     try a.stageBlob(data: old, expectedHash: hash)
     let queued = NotebookDurableChange(sequence: initial.sequence, transactionID: initial.transactionID,

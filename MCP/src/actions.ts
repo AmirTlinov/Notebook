@@ -34,8 +34,9 @@ const arrowhead = z.enum(["none", "arrow", "triangle", "square", "dot", "pipe", 
 const graphicConnection = z.object({start:graphicEndpoint, end:graphicEndpoint,
   bend:z.number().finite().min(-1e6).max(1e6), startArrowhead:arrowhead, endArrowhead:arrowhead,
   labelPosition:z.number().min(0).max(1)}).strict();
-const graphic = z.object({ shape: z.enum(["ellipse", "rectangle", "plus", "connector"]), style: graphicStyle, label: z.string().max(100_000),
-  representation: z.enum(["ink", "geometry"]), visible: z.boolean(), sourceInkIDs: z.array(z.uuid()).max(16), connection:graphicConnection.optional() }).strict();
+const graphic = z.object({ shape: z.enum(["ellipse", "rectangle", "triangle", "diamond", "plus", "connector"]), style: graphicStyle, label: z.string().max(100_000),
+  representation: z.enum(["ink", "geometry"]), visible: z.boolean(), sourceInkIDs: z.array(z.uuid()).max(16), connection:graphicConnection.optional(),
+  vertices:z.array(z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1)}).strict()).min(3).max(4).nullable().optional() }).strict();
 const graphicEdit = graphic.omit({ sourceInkIDs: true, connection: true }).partial().extend({connection:graphicConnection.partial().strict().optional()}).strict();
 const editFields = z.object({ source: source.optional(), html: source.optional(), css: source.optional(), javaScript: source.optional(),
   graphic: graphicEdit.optional(), frame: frame.optional(), worldOrigin: point.optional(), textStyle: textStyle.optional() }).strict();

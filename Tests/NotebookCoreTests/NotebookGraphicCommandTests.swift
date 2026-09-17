@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import NotebookCore
 
-@Test("Фигуры на листе и доске: все исходные штрихи, преобразование, удаление и две отмены с перезапуском", arguments: [false, true], [NotebookGraphic.Shape.ellipse, .rectangle, .plus])
+@Test("Фигуры на листе и доске: все исходные штрихи, преобразование, удаление и две отмены с перезапуском", arguments: [false, true], [NotebookGraphic.Shape.ellipse, .rectangle, .triangle, .diamond, .plus])
 func graphicConversionDeletionUndo(onBoard: Bool, shape: NotebookGraphic.Shape) throws {
   let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-command-\(UUID())")
   defer { try? FileManager.default.removeItem(at: root) }
@@ -27,7 +27,9 @@ func graphicConversionDeletionUndo(onBoard: Bool, shape: NotebookGraphic.Shape) 
   }
   let rawPage = onBoard ? nil : try store.loadPage(target.id).drawingData
   let rawBoard = onBoard ? try store.loadSpatialInk() : nil
-  let graphic = NotebookGraphic(shape:shape,sourceInkIDs:strokes)
+  let vertices: [SpatialPoint]? = shape == .triangle
+    ? [.init(x:0,y:0.2),.init(x:1,y:0),.init(x:0.8,y:1)] : nil
+  let graphic = NotebookGraphic(shape:shape,sourceInkIDs:strokes,vertices:vertices)
   values = ["kind": .string("graphic"), "source": .string(""), "graphic": try .encode(graphic),
     "frame": try .encode(PageRect(x: 60, y: 60, width: 80, height: 80))]
   if onBoard { values["worldOrigin"] = try .encode(WorldPoint.zero) }

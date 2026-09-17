@@ -34,7 +34,7 @@ import XCTest
 
   func testHeldShapesKeepBothDimensionsAdjustableFromEverySideAtAnyScale() {
     for scale in [0.5, 1.0, 3.0] {
-      for shape in [NotebookGraphic.Shape.ellipse, .rectangle, .plus] {
+      for shape in [NotebookGraphic.Shape.ellipse, .rectangle, .triangle, .diamond, .plus] {
         let frame = PageRect(x: 100 / scale, y: 70 / scale, width: 180 / scale, height: 120 / scale)
         var original = NotebookQuickShapeFit(frame: frame, sampleCount: 49, shape: shape)
         original.precedingStrokeIDs = [UUID()]
@@ -90,7 +90,7 @@ import XCTest
         to: .init(x: held.x - 20, y: held.y + 35), screenScale: 1)
       let adjusted = try XCTUnwrap(fit.connection)
       let endpoint = terminal == .start ? adjusted.start : adjusted.end
-      XCTAssertEqual(endpoint.point, .init(x: initial.point.x - 20, y: initial.point.y + 35))
+      XCTAssertEqual(endpoint.point, .init(x: held.x - 20 - original.frame.x, y: held.y + 35 - original.frame.y))
       XCTAssertNil(endpoint.binding, "The moved terminal is rebound at its new position by the existing resolver")
       XCTAssertEqual(terminal == .start ? adjusted.end : adjusted.start,
         terminal == .start ? connection.end : connection.start)
@@ -151,9 +151,11 @@ import XCTest
     return try XCTUnwrap(groups[name]).map { $0.map { $0.map { CGPoint(x:100+$0[0],y:100+$0[1]) } } }
   }
 
-  func testRealMeasuredRectanglesAndOffCenterPlusesThroughPencilHoldAndLift() async throws {
+  func testRealMeasuredFiguresThroughPencilHoldAndLift() async throws {
     var fitTimes: [Double] = []
-    for name in ["rectangles","pluses"] {
+    let groups: [(String,NotebookGraphic.Shape)] = [("rectangles",.rectangle),("pluses",.plus),
+      ("triangles",.triangle),("diamonds",.diamond),("lines",.connector),("arrows",.connector)]
+    for (name,expected) in groups {
       for strokes in try Self.measuredShapes(name) {
         let paths = strokes.map { $0.map { SpatialPoint(x:$0.x,y:$0.y) } }
         for _ in 0..<5 {
@@ -161,7 +163,7 @@ import XCTest
           let fit = NotebookQuickShape.recognize(strokes:paths,screenScale:1)
           let elapsed = start.duration(to:.now).components
           fitTimes.append(Double(elapsed.seconds)*1000+Double(elapsed.attoseconds)/1e15)
-          XCTAssertEqual(fit?.shape,name == "rectangles" ? .rectangle : .plus)
+          XCTAssertEqual(fit?.shape,expected)
         }
         let paper = PaperInputView(frame:.init(x:0,y:0,width:500,height:500))
         paper.configure(penStyle:.standard,eraserStyle:.standard,drawingTool:.pen)
@@ -179,10 +181,18 @@ import XCTest
           paper.finishCurrentAction {}
         }
         let fit = try XCTUnwrap(accepted)
-        XCTAssertEqual(fit.shape,name == "rectangles" ? .rectangle : .plus)
+        XCTAssertEqual(fit.shape,expected)
         XCTAssertEqual(fit.precedingStrokeIDs,raw.dropLast().map(\.id))
         XCTAssertEqual(raw.map { $0.samples.count },strokes.map(\.count),"Keep all original measurements")
         XCTAssertEqual(fit.sampleCount,strokes.last?.count)
+        if expected == .connector {
+          let connection = try XCTUnwrap(fit.connection), nib = try XCTUnwrap(strokes.last?.last)
+          let distance = [connection.start.point,connection.end.point].map {
+            hypot($0.x+fit.frame.x-nib.x,$0.y+fit.frame.y-nib.y)
+          }.min()!
+          XCTAssertLessThan(distance,0.001,"Recognized endpoint starts under the nib, not at an offset wing")
+          XCTAssertEqual(connection.endArrowhead,name == "arrows" ? .arrow : NotebookGraphicConnection.Arrowhead.none)
+        }
       }
     }
     fitTimes.sort()
