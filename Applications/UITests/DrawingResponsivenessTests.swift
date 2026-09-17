@@ -75,6 +75,52 @@ final class DrawingResponsivenessTests: XCTestCase {
   func testVertexRoundingAndFreeBendModesOnPage() { geometryEditing(onPage:true) }
   func testVertexRoundingAndFreeBendModesOnBoard() { geometryEditing(onPage:false) }
 
+  func testLineEndpointControlsOnPage() { endpointControls(onPage:true) }
+  func testLineEndpointControlsOnBoard() { endpointControls(onPage:false) }
+
+  private func endpointControls(onPage: Bool) {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture",
+      "--notebook-native-connector","--notebook-native-geometry-edit"] + (onPage ? ["--notebook-native-graphic-page"] : [])
+    launchPortraitFixture(app)
+    let line = app.images["Связь"]
+    XCTAssertTrue(line.waitForExistence(timeout:10)); line.tap()
+    let start = app.buttons["graphic-start-menu"], end = app.buttons["graphic-end-menu"], more = app.buttons["element-actions-menu"]
+    XCTAssertTrue(start.waitForExistence(timeout:5)); XCTAssertTrue(end.isHittable)
+    XCTAssertFalse(app.buttons["graphic-geometry-mode"].exists)
+    XCTAssertEqual(start.frame.midY,end.frame.midY,accuracy:1)
+    XCTAssertLessThan(more.frame.maxX-app.buttons["graphic-style-menu"].frame.minX,300)
+    let neighbour = app.webViews.containing(.button,identifier:"Graphic scene counter").firstMatch, neighbourFrame = neighbour.frame
+    let plain = app.screenshot(), region = line.frame.insetBy(dx:-12,dy:-12)
+    start.tap()
+    XCTAssertTrue(app.buttons["Круг"].waitForExistence(timeout:3))
+    let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "endpoint-direct-menu-\(onPage ? "page" : "board")"; proof.lifetime = .keepAlways; add(proof)
+    app.buttons["Круг"].tap(); XCTAssertTrue(app.buttons["Круг"].waitForNonExistence(timeout:3))
+    XCTAssertEqual(start.value as? String,"Круг"); XCTAssertEqual(end.value as? String,"Нет")
+    end.tap(); XCTAssertTrue(app.buttons["Треугольник"].waitForExistence(timeout:3)); app.buttons["Треугольник"].tap()
+    XCTAssertTrue(app.buttons["Треугольник"].waitForNonExistence(timeout:3))
+    XCTAssertEqual(end.value as? String,"Треугольник"); XCTAssertEqual(start.value as? String,"Круг")
+    XCTAssertGreaterThan(changedPixelShare(from:plain,to:app.screenshot(),normalizedRect:.init(x:region.minX/app.frame.width,
+      y:region.minY/app.frame.height,width:region.width/app.frame.width,height:region.height/app.frame.height)),0.0003)
+    let frame = line.frame
+    // Opening again uses fresh values; the dismissing contact never selects paper.
+    start.tap(); XCTAssertTrue(app.buttons["Круг"].waitForExistence(timeout:3))
+    app.coordinate(withNormalizedOffset:.init(dx:0.75,dy:0.18)).tap()
+    XCTAssertTrue(app.buttons["Круг"].waitForNonExistence(timeout:3)); XCTAssertTrue(end.isHittable)
+    XCTAssertEqual(line.frame,frame); XCTAssertEqual(neighbour.frame,neighbourFrame)
+    more.tap(); XCTAssertTrue(app.buttons["На задний план"].waitForExistence(timeout:3)); app.buttons["На задний план"].tap()
+    XCTAssertTrue(app.buttons["На задний план"].waitForNonExistence(timeout:3)); XCTAssertTrue(start.isHittable)
+    let final = XCTAttachment(screenshot:app.screenshot()); final.name = "endpoint-capsule-\(onPage ? "page" : "board")"; final.lifetime = .keepAlways; add(final)
+    app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+    XCTAssertTrue(line.waitForExistence(timeout:10)); line.tap()
+    XCTAssertTrue(start.waitForExistence(timeout:3)); XCTAssertEqual(start.value as? String,"Круг"); XCTAssertEqual(end.value as? String,"Треугольник")
+    end.tap(); XCTAssertTrue(app.buttons["Стрелка"].waitForExistence(timeout:3)); app.buttons["Стрелка"].tap()
+    XCTAssertTrue(app.buttons["Стрелка"].waitForNonExistence(timeout:3)); XCTAssertEqual(end.value as? String,"Стрелка")
+    XCTAssertEqual(start.value as? String,"Круг")
+    app.terminate()
+  }
+
   private func geometryEditing(onPage: Bool) {
     continueAfterFailure = false
     let app = XCUIApplication()
@@ -86,8 +132,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     let neighbour = app.webViews.containing(.button,identifier:"Graphic scene counter").firstMatch, neighbourFrame = neighbour.frame
     func handle(_ id: String) -> XCUIElement { app.descendants(matching:.any).matching(identifier:id).firstMatch }
     func mode(_ title: String) {
-      app.buttons["element-actions-menu"].tap()
-      XCTAssertTrue(app.buttons[title].waitForExistence(timeout:3)); app.buttons[title].tap()
+      let mode = app.buttons["graphic-geometry-mode"]
+      XCTAssertTrue(mode.waitForExistence(timeout:3)); mode.tap()
+      XCTAssertEqual(mode.value as? String,title,"One capsule button cycles the geometry mode directly")
     }
     func drag(_ element: XCUIElement, _ delta: CGVector) {
       let start = element.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
@@ -158,7 +205,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(style.waitForExistence(timeout:5)); XCTAssertTrue(style.isHittable)
     XCTAssertEqual(style.frame.midY,remove.frame.midY,accuracy:1)
     XCTAssertEqual(more.frame.midY,remove.frame.midY,accuracy:1)
-    XCTAssertLessThan(more.frame.maxX-style.frame.minX,210)
+    XCTAssertLessThan(more.frame.maxX-style.frame.minX,250)
     let before = triangle.frame
     let controls = XCTAttachment(screenshot:app.screenshot()); controls.name = "compact-element-controls"; controls.lifetime = .keepAlways; add(controls)
     style.tap()

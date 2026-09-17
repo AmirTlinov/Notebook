@@ -61,6 +61,10 @@ struct NotebookElementControls: UIViewRepresentable {
       guard model.selectionSession.id == selectionID else { return }
       model.editSelectedElement(reference)
     }
+    view.changeGeometryMode = { mode in
+      guard model.selectionSession.id == selectionID else { return }
+      model.setElementGeometryMode(mode,reference:reference)
+    }
     let id: String
     switch reference { case .page(_, let value), .spatial(_, let value): id = value }
     let order = model.completeElementOrder(reference)
@@ -76,33 +80,20 @@ struct NotebookElementControls: UIViewRepresentable {
           model.arrangeElement(reference, front: true)
         }
     ])]
-    if graphic.flatMap(NotebookGraphicGeometry.polygon) != nil {
-      let titles = ["Размер и положение", "Изменить вершины", "Скруглить углы"]
-      let symbols = ["arrow.up.left.and.arrow.down.right", "point.topleft.down.to.point.bottomright.curvepath", "rectangle.roundedtop"]
-      menus.insert(UIMenu(title:"Геометрия",options:.displayInline,children:NotebookSelectionSession.GeometryMode.allCases.enumerated().map { index, mode in
-        UIAction(title:titles[index],image:UIImage(systemName:symbols[index]),state:model.selectionSession.geometryMode == mode ? .on : .off) { _ in
+    for terminal in NotebookGraphicConnection.Terminal.allCases {
+      let connection = graphic?.connection
+      let current = terminal == .start ? connection?.startArrowhead : connection?.endArrowhead
+      view.setEndpointMenu(terminal,children:connection == nil ? [] : NotebookGraphicConnection.Arrowhead.allCases.map { head in
+        UIAction(title:head.controlTitle,state:current == head ? .on : .off) { _ in
           guard model.selectionSession.id == selectionID else { return }
-          model.setElementGeometryMode(mode,reference:reference)
+          model.setGraphicArrowhead(head,terminal:terminal,reference:reference)
         }
-      }),at:0)
-    }
-    if let connection = model.graphicElement(reference)?.connection {
-      for terminal in NotebookGraphicConnection.Terminal.allCases {
-        menus.append(UIMenu(title: terminal == .start ? "Начало линии" : "Конец линии", image:UIImage(systemName:"arrow.up.right"),
-          children: NotebookGraphicConnection.Arrowhead.allCases.map { head in
-            let labels: [NotebookGraphicConnection.Arrowhead:String] = [.none:"Нет",.arrow:"Стрелка",.triangle:"Треугольник",.square:"Квадрат",.dot:"Круг",.pipe:"Черта",.diamond:"Ромб",.inverted:"Обратная стрелка",.bar:"Полоса"]
-            let current = terminal == .start ? connection.startArrowhead : connection.endArrowhead
-            return UIAction(title:labels[head]!,state:current == head ? .on : .off) { _ in
-              guard model.selectionSession.id == selectionID else { return }
-              model.setGraphicArrowhead(head,terminal:terminal,reference:reference)
-            }
-          }))
-      }
+      })
     }
     menus.append(UIMenu(options:.displayInline,children:[UIAction(title:"Удалить",image:UIImage(systemName:"trash"),attributes:.destructive) { _ in
       guard model.selectionSession.id == selectionID else { return }; model.deleteElement(reference)
     }]))
-    view.moreMenu = UIMenu(children: menus)
+    view.setActionsMenu(menus)
   }
 
   static func dismantleUIView(_ view: NotebookElementControlsView, coordinator: ()) { view.uninstall() }
@@ -147,17 +138,31 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
   private let deleteButton = UIButton(type: .system)
   private let styleButton = UIButton(type: .system)
   private let editButton = UIButton(type: .system)
-  private let moreButton = UIButton(type: .system)
+  private let modeButton = UIButton(type: .system)
+  private let startButton = ElementMenuButton(type: .system)
+  private let endButton = ElementMenuButton(type: .system)
+  private let moreButton = ElementMenuButton(type: .system)
+  private var menuButtons: [ElementMenuButton] { [startButton,endButton,moreButton] }
+  private var toolbarButtons: [UIButton] { [styleButton,editButton,modeButton,startButton,endButton,deleteButton,moreButton] }
   private var palette: NotebookElementStyleController?
   var graphic: NotebookGraphic? {
     didSet {
       styleButton.isHidden = graphic == nil; divider.isHidden = graphic == nil
+      modeButton.isHidden = graphic.flatMap(NotebookGraphicGeometry.polygon) == nil
+      startButton.isHidden = graphic?.connection == nil; endButton.isHidden = graphic?.connection == nil
+      startButton.accessibilityValue = graphic?.connection?.startArrowhead.controlTitle
+      endButton.accessibilityValue = graphic?.connection?.endArrowhead.controlTitle
       editButton.accessibilityLabel = graphic == nil ? "Редактировать элемент" : "Подпись фигуры"
       if let graphic { palette?.configure(style: graphic.style) }
+      updateAccessibilityElements()
       setNeedsLayout()
     }
   }
-  var moreMenu: UIMenu? { didSet { moreButton.menu = moreMenu } }
+  func setActionsMenu(_ children: [UIMenuElement]) { moreButton.contents = children }
+  func setEndpointMenu(_ terminal: NotebookGraphicConnection.Terminal, children: [UIMenuElement]) {
+    (terminal == .start ? startButton : endButton).contents = children
+  }
+  var changeGeometryMode: ((NotebookSelectionSession.GeometryMode) -> Void)?
   var updateStyle: ((inout NotebookGraphic.Style) -> Void) -> Void = { _ in }
   var editElement: (() -> Void)?
   private var handleAccessibility: [ElementHandleAccessibility] = []
@@ -184,6 +189,9 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
     let buttons: [(UIButton,String,String,String)] = [
       (styleButton,"paintbrush.pointed","Оформление фигуры","graphic-style-menu"),
       (editButton,"character.cursor.ibeam","Подпись фигуры","edit-agent-element"),
+      (modeButton,"arrow.up.left.and.arrow.down.right","Режим геометрии","graphic-geometry-mode"),
+      (startButton,"arrow.left.to.line","Начало линии","graphic-start-menu"),
+      (endButton,"arrow.right.to.line","Конец линии","graphic-end-menu"),
       (deleteButton,"trash","Удалить элемент","delete-agent-element"),
       (moreButton,"ellipsis","Действия с элементом","element-actions-menu")]
     for (button, symbol, label, identifier) in buttons {
@@ -197,10 +205,23 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
         divider.heightAnchor.constraint(equalToConstant:24).isActive = true; toolbarStack.addArrangedSubview(divider)
       }
     }
+    styleButton.isHidden = true; divider.isHidden = true
+    modeButton.isHidden = true; startButton.isHidden = true; endButton.isHidden = true
+    modeButton.layer.cornerRadius = 12
+    for (button,title) in [(startButton,"Начало"),(endButton,"Конец")] {
+      var configuration = UIButton.Configuration.plain()
+      configuration.title = title; configuration.image = button.image(for:.normal)
+      configuration.imagePlacement = .top; configuration.imagePadding = 1
+      configuration.contentInsets = .zero
+      configuration.titleTextAttributesTransformer = .init { input in
+        var output = input; output.font = .systemFont(ofSize:10,weight:.medium); return output
+      }
+      button.configuration = configuration
+    }
     deleteButton.addTarget(self,action:#selector(removeElement),for:.touchUpInside)
     editButton.addTarget(self,action:#selector(edit),for:.touchUpInside)
     styleButton.addTarget(self,action:#selector(showStyle),for:.touchUpInside)
-    moreButton.showsMenuAsPrimaryAction = true
+    modeButton.addTarget(self,action:#selector(cycleGeometryMode),for:.touchUpInside)
     rebuildAccessibility()
     pan.minimumNumberOfTouches = 1; pan.maximumNumberOfTouches = 1
     pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
@@ -222,14 +243,23 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
       }
       return item
     }
-    accessibilityElements = [styleButton,editButton,deleteButton,moreButton] + handleAccessibility
+    updateAccessibilityElements()
+  }
+  private func updateAccessibilityElements() {
+    accessibilityElements = toolbarButtons.filter { !$0.isHidden } + handleAccessibility
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
   func configure(selectionID: UUID, frame: CGRect, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false, mode: NotebookSelectionSession.GeometryMode = .transform, manipulating: Bool = false) {
-    if self.selectionID != selectionID { cancel(); dismissPalette(); self.selectionID = selectionID }
+    if self.selectionID != selectionID { cancel(); dismissPalette(); dismissMenus(); self.selectionID = selectionID }
     let vertices = graphic.flatMap(NotebookGraphicGeometry.polygon)
     geometryMode = vertices == nil ? .transform : mode
+    modeButton.setImage(UIImage(systemName:geometryMode.controlSymbol,withConfiguration:UIImage.SymbolConfiguration(pointSize:20,weight:.regular)),for:.normal)
+    modeButton.accessibilityValue = geometryMode.controlTitle
+    modeButton.accessibilityHint = "Переключить: " + geometryMode.next.controlTitle
+    modeButton.toolTip = geometryMode.controlTitle
+    modeButton.tintColor = geometryMode == .transform ? .label : tintColor
+    modeButton.backgroundColor = geometryMode == .transform ? .clear : .tertiarySystemFill
     let next: [ElementHandle]
     if layout != nil { next = [.start,.end,.bend] }
     else if geometryMode == .vertices, let vertices { next = vertices.indices.map(ElementHandle.vertex) }
@@ -249,7 +279,7 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
       let local = convert(point, from: window)
       // Dismissing a modal palette is native UI input too. The window's scene
       // recognizer must not also select the paper beneath that same contact.
-      if palette != nil { return true }
+      if palette != nil || menuButtons.contains(where: \.isMenuPresented) { return true }
       return (!toolbar.isHidden && toolbar.frame.contains(local)) || (kind == .finger && handle(at: local) != nil)
     }
     gate.registerFingerCancellation(source: source) { [weak self] in
@@ -257,12 +287,15 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
     }
   }
   func uninstall() {
-    cancel(); dismissPalette(); installedWindow?.removeGestureRecognizer(pan); installedWindow = nil
+    cancel(); dismissPalette(); dismissMenus(); installedWindow?.removeGestureRecognizer(pan); installedWindow = nil
     gate.unregisterControlRegion(source: source); gate.unregisterFingerCancellation(source: source)
   }
   override func layoutSubviews() {
     super.layoutSubviews()
-    let width = min(bounds.width - 24, graphic == nil ? 152 : 200.5), height = 52.0
+    let visible = toolbarStack.arrangedSubviews.filter { !$0.isHidden }
+    let contentWidth = visible.reduce(0.0) { $0 + ($1 === divider ? 0.5 : 44) }
+      + Double(max(0,visible.count-1))*toolbarStack.spacing + 16
+    let width = min(bounds.width - 24,contentWidth), height = 52.0
     let usable = bounds.inset(by: .init(top:max(12,safeAreaInsets.top + 76),left:12,
       bottom:max(12,safeAreaInsets.bottom + 76),right:12))
     let x = min(max(usable.minX,frameRect.midX-width/2),max(usable.minX,usable.maxX-width))
@@ -384,6 +417,8 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
   private func cancel() { let old = contact; contact = nil; pencilRevision = nil; pointingHandle = nil; old?.cancel() }
   @objc private func removeElement() { dismissPalette(); deleteElement?() }
   @objc private func edit() { dismissPalette(); editElement?() }
+  @objc private func cycleGeometryMode() { dismissPalette(); changeGeometryMode?(geometryMode.next) }
+  private func dismissMenus() { for button in menuButtons { button.contextMenuInteraction?.dismissMenu() } }
   private func dismissPalette() { palette?.dismiss(animated:false); palette = nil }
   @objc private func showStyle() {
     guard let graphic, palette == nil else { return }
@@ -401,6 +436,55 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
     controller.popoverPresentationController?.sourceRect = frameRect.union(toolbar.frame)
     controller.popoverPresentationController?.permittedArrowDirections = .any
     palette = controller; owner.present(controller,animated:true)
+  }
+}
+
+/// UIKit owns one immutable menu during presentation. SwiftUI can update the
+/// next menu's contents without replacing the menu beneath an active touch.
+private final class ElementMenuButton: UIButton {
+  var contents: [UIMenuElement] = []
+  private var presentedConfiguration: UIContextMenuConfiguration?
+  var isMenuPresented: Bool { presentedConfiguration != nil }
+  override init(frame: CGRect) {
+    super.init(frame:frame)
+    menu = UIMenu(children:[UIDeferredMenuElement.uncached { [weak self] completion in
+      completion(self?.contents ?? [])
+    }])
+    showsMenuAsPrimaryAction = true
+  }
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+  override func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+    willDisplayMenuFor configuration: UIContextMenuConfiguration, animator: (any UIContextMenuInteractionAnimating)?) {
+    presentedConfiguration = configuration
+    super.contextMenuInteraction(interaction,willDisplayMenuFor:configuration,animator:animator)
+  }
+  override func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+    willEndFor configuration: UIContextMenuConfiguration, animator: (any UIContextMenuInteractionAnimating)?) {
+    super.contextMenuInteraction(interaction,willEndFor:configuration,animator:animator)
+    let finish = { [weak self] in
+      guard self?.presentedConfiguration === configuration else { return }
+      self?.presentedConfiguration = nil
+    }
+    if let animator { animator.addCompletion(finish) } else { finish() }
+  }
+}
+
+private extension NotebookSelectionSession.GeometryMode {
+  var next: Self { switch self { case .transform: .vertices; case .vertices: .rounding; case .rounding: .transform } }
+  var controlTitle: String {
+    switch self { case .transform: "Размер и положение"; case .vertices: "Изменить вершины"; case .rounding: "Скруглить углы" }
+  }
+  var controlSymbol: String {
+    switch self { case .transform: "arrow.up.left.and.arrow.down.right"; case .vertices: "point.topleft.down.to.point.bottomright.curvepath"; case .rounding: "rectangle.roundedtop" }
+  }
+}
+
+private extension NotebookGraphicConnection.Arrowhead {
+  var controlTitle: String {
+    switch self {
+    case .none: "Нет"; case .arrow: "Стрелка"; case .triangle: "Треугольник"; case .square: "Квадрат"; case .dot: "Круг"
+    case .pipe: "Черта"; case .diamond: "Ромб"; case .inverted: "Обратная стрелка"; case .bar: "Полоса"
+    }
   }
 }
 

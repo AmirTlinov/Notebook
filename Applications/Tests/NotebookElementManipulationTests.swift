@@ -336,6 +336,49 @@ import XCTest
     }
   }
 
+  func testCapsuleModesAndEndpointMenusKeepOnePresentationOwner() throws {
+    let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let controls = NotebookElementControlsView(gate:NotebookInputGate())
+    controls.frame = .init(x:0,y:0,width:320,height:900)
+    controller.view.addSubview(controls)
+    let selection = UUID(), frame = CGRect(x:80,y:240,width:160,height:120)
+    func button(_ id: String) throws -> UIButton {
+      func descendants(_ view: UIView) -> [UIView] { view.subviews.flatMap { [$0] + descendants($0) } }
+      return try XCTUnwrap(descendants(controls).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == id })
+    }
+    controls.graphic = .init(shape:.triangle)
+    var selected: [NotebookSelectionSession.GeometryMode] = []
+    controls.changeGeometryMode = { selected.append($0) }
+    let mode = try button("graphic-geometry-mode")
+    let modes: [(NotebookSelectionSession.GeometryMode,NotebookSelectionSession.GeometryMode)] = [(.transform,.vertices),(.vertices,.rounding),(.rounding,.transform)]
+    for (current,next) in modes {
+      controls.configure(selectionID:selection,frame:frame,mode:current); controls.layoutIfNeeded()
+      XCTAssertFalse(mode.isHidden); XCTAssertNotNil(mode.image(for:.normal))
+      mode.sendActions(for:.touchUpInside); XCTAssertEqual(selected.last,next)
+    }
+    XCTAssertTrue(try button("graphic-start-menu").isHidden)
+    controls.graphic = .init(shape:.connector,connection:.init(start:.init(point:.zero),end:.init(point:.init(x:160,y:120))))
+    controls.configure(selectionID:UUID(),frame:frame); controls.layoutIfNeeded()
+    XCTAssertTrue(mode.isHidden)
+    XCTAssertFalse((controls.accessibilityElements ?? []).contains { ($0 as? UIButton) === mode })
+    let start = try button("graphic-start-menu"), end = try button("graphic-end-menu")
+    XCTAssertFalse(start.isHidden); XCTAssertFalse(end.isHidden)
+    XCTAssertEqual(start.accessibilityValue,"Нет"); XCTAssertEqual(end.accessibilityValue,"Стрелка")
+    let menu = start.menu
+    for _ in 0..<20 {
+      controls.setEndpointMenu(.start,children:[UIAction(title:"Круг") { _ in }])
+      controls.configure(selectionID:selection,frame:frame)
+      XCTAssertTrue(start.menu === menu,"Model/layout updates cannot replace a displayed UIKit menu")
+    }
+    controls.layoutIfNeeded()
+    for button in (controls.accessibilityElements ?? []).compactMap({ $0 as? UIButton }).filter({ !$0.isHidden }) {
+      let rect = button.convert(button.bounds,to:controls)
+      XCTAssertTrue(controls.bounds.contains(rect)); XCTAssertEqual(rect.width,44); XCTAssertEqual(rect.height,44)
+    }
+  }
+
   private func fixture(_ body: (NotebookAppModel, EditableElementReference) async throws -> Void) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
