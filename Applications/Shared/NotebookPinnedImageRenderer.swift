@@ -21,16 +21,18 @@ final class NotebookFrozenVisualSources {
   private var submittedRegions: [UUID: NotebookSubmittedPixels] = [:]
   private var failures: [UUID: [String: Error]] = [:]
   private let graphicLayouts: [UUID: NotebookGraphicLayout]
+  private let elementMasks: [UUID: [InkElementErasure]]
   private init(rasters: [UUID: [String: RasterLease]], liveCaptures: [UUID: [String: Capture]] = [:],
-    regionalCaptures: [UUID: RegionalCapture] = [:], graphicLayouts: [UUID: NotebookGraphicLayout] = [:]) {
+    regionalCaptures: [UUID: RegionalCapture] = [:], graphicLayouts: [UUID: NotebookGraphicLayout] = [:],
+    elementMasks: [UUID: [InkElementErasure]] = [:]) {
     self.rasters = rasters; self.liveCaptures = liveCaptures; self.regionalCaptures = regionalCaptures
-    self.graphicLayouts = graphicLayouts
+    self.graphicLayouts = graphicLayouts; self.elementMasks = elementMasks
   }
 
   /// Sending fixes both the selected source and the existing visible owner.
   /// No later cache entry or newly created JavaScript context can supply it.
   func freezingForSubmission() -> NotebookFrozenVisualSources {
-    let frozen = NotebookFrozenVisualSources(rasters: rasters,graphicLayouts:graphicLayouts)
+    let frozen = NotebookFrozenVisualSources(rasters: rasters,graphicLayouts:graphicLayouts,elementMasks:elementMasks)
     for (reference, captures) in liveCaptures {
       for (key, capture) in captures {
         frozen.rasters[reference]?[key] = nil
@@ -52,7 +54,8 @@ final class NotebookFrozenVisualSources {
 
   static func capture(fragments: [NotebookAttentionSelection.Fragment],
     hierarchy: BoardHierarchy, pages: [UUID: PageDocument], documents: [UUID: DocumentDocument],
-    states: [UUID: DocumentStateJournal], installedSources: [SceneSourceAddress: RasterLease]? = nil,
+    states: [UUID: DocumentStateJournal],
+    elementErasures: (SurfaceID, String) -> [InkElementErasure] = { _, _ in [] }, installedSources: [SceneSourceAddress: RasterLease]? = nil,
     capturesLivePrograms: Bool = false, liveSourceAddresses: Set<SceneSourceAddress> = [],
     captureSceneRegion: (@MainActor (NotebookAttentionSelection.Fragment) throws -> NotebookSubmittedPixels?)? = nil,
     resources: SceneRenderResources = .shared) -> NotebookFrozenVisualSources {
@@ -60,6 +63,7 @@ final class NotebookFrozenVisualSources {
     var captures: [UUID: [String: Capture]] = [:]
     var regionalCaptures: [UUID: RegionalCapture] = [:]
     var graphics: [UUID: NotebookGraphicLayout] = [:]
+    var masks: [UUID: [InkElementErasure]] = [:]
     struct Slot: Hashable { let reference: UUID; let key: String }
     var slots = Set<Slot>()
     func admits(_ reference: UUID, _ key: String) -> Bool {
@@ -107,6 +111,10 @@ final class NotebookFrozenVisualSources {
         }
         #endif
       case .board, .cover:
+        if let id = fragment.elementID {
+          let surface: SurfaceID = fragment.target.kind == .board ? .board(fragment.target.id) : .cover(fragment.target.id)
+          masks[fragment.id] = elementErasures(surface, id)
+        }
         if fragment.elementID == nil, let captureSceneRegion,
           admits(fragment.id, "scene-region") {
           regionalCaptures[fragment.id] = { try captureSceneRegion(fragment) }
@@ -148,8 +156,10 @@ final class NotebookFrozenVisualSources {
       case .workspace, .codeFragment: break
       }
     }
-    return .init(rasters: rasters, liveCaptures: captures, regionalCaptures: regionalCaptures,graphicLayouts:graphics)
+    return .init(rasters: rasters, liveCaptures: captures, regionalCaptures: regionalCaptures,graphicLayouts:graphics,elementMasks:masks)
   }
+
+  func erasures(referenceID: UUID) -> [InkElementErasure] { elementMasks[referenceID] ?? [] }
 
   func graphicLayout(referenceID: UUID) -> NotebookGraphicLayout? { graphicLayouts[referenceID] }
 
@@ -247,14 +257,15 @@ enum NotebookPinnedImageRenderer {
         scale: scale, resources: resources)
       let delta = (reference.worldOrigin ?? .zero).delta(to: element.worldOrigin ?? .zero)
       let layout = visuals?.graphicLayout(referenceID:reference.id)
+      let erasures = visuals?.erasures(referenceID: reference.id) ?? []
       let local = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
       let frame = CGRect(x: delta.x + local.x - region.x, y: delta.y + local.y - region.y,
         width: local.width, height: local.height)
       if let graphic = element.graphic {
         guard graphic.connection == nil || layout != nil else { throw SceneRenderError.snapshotPending("historical_graphic_dependencies") }
-        try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:layout), size: frame.size, in: frame)
+        try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:layout,erasures:erasures), size: frame.size, in: frame)
       } else if element.kind == .nativeText {
-        try await canvas.drawView(SpatialTextSnapshot(element: element), size: frame.size, in: frame)
+        try await canvas.drawView(SpatialTextSnapshot(element: element).erased(by: erasures), size: frame.size, in: frame)
       } else {
         guard let visuals else { throw SceneRenderError.snapshotPending("historical_frame_unavailable") }
         let raster = try visuals.raster(referenceID: reference.id, key: element.id,
@@ -266,9 +277,9 @@ enum NotebookPinnedImageRenderer {
           guard !selected.isNull, captured.contains(selected) else {
             throw SceneRenderError.snapshotPending("historical_region_unavailable")
           }
-          try await canvas.draw(raster, in: captured.offsetBy(dx: frame.minX, dy: frame.minY))
+          try await canvas.draw(raster, in: captured.offsetBy(dx: frame.minX, dy: frame.minY), erasures: erasures, elementFrame: frame)
         } else {
-          try await canvas.draw(raster, in: frame)
+          try await canvas.draw(raster, in: frame, erasures: erasures)
         }
       }
       png = try await canvas.finishPNG()

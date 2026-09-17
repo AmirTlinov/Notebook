@@ -488,6 +488,112 @@ import XCTest
     XCTAssertEqual(model.presence?.camera, presence.camera)
   }
 
+  func testPageEraserCutsPartOfNativeGeometryThroughLiftReopenAndOneUndo() async throws {
+    try await eraseElement(onBoard: false)
+  }
+
+  func testBoardEraserCutsPartOfNativeGeometryInInstalledWorldCoordinates() async throws {
+    try await eraseElement(onBoard: true)
+  }
+
+  private func eraseElement(onBoard: Bool) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("element-erasing-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let workspace = try XCTUnwrap(model.workspace), pageID = try XCTUnwrap(workspace.selectedPageID)
+    let target = CollaborationTarget(kind: onBoard ? .board : .page, id: onBoard ? workspace.rootBoardID : pageID)
+    let surface: SurfaceID = onBoard ? .board(target.id) : .page(pageID)
+    let origin = WorldPoint(tileX: 90_000_000, tileY: -120_000_000, localX: 1, localY: 2)
+    let viewport = SpatialPoint(x: 834, y: 1194)
+    if onBoard { model.moveItem(workspace.selectedItemID, to: .init(x: 100_000, y: 100_000)) }
+    let center = onBoard ? origin.offsetBy(x: 417, y: 597)
+      : model.boardHierarchy?.focusedCenter(of: workspace.selectedItemID, in: workspace.rootBoardID) ?? .zero
+    model.updatePresence(.init(boardID: workspace.rootBoardID, mode: onBoard ? .board : .page,
+      camera: .init(center: center, scale: onBoard ? 0.8 : WorkspaceItemGeometry.notebook.fitScale(viewport: viewport)),
+      viewport: viewport, focusedItemID: onBoard ? nil : workspace.selectedItemID, openProgress: onBoard ? 0 : 1), settled: true)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let window = try await mountNotebookScene(model)
+    let frame = PageRect(x: 260, y: 420, width: 220, height: 180)
+    let graphic = NotebookGraphic(shape: .rectangle, style: .init(strokeWidth: 6))
+    var values: [String: JSONValue] = ["kind": .string("graphic"), "source": .string(""),
+      "frame": try .encode(frame), "graphic": try .encode(graphic)]
+    if onBoard { values["worldOrigin"] = try .encode(origin) }
+    _ = try model.store.applyCollaborationAction(.init(summary: "Eraser fixture",
+      expected: [.init(target: target, revision: model.store.targetContentRevision(target: target))],
+      operations: [.init(kind: .insertElement, target: target, id: "box", values: values)]), actor: UUID())
+    await model.reloadExternalChanges()?.value
+    model.selectEraserWidth(24)
+    let presence = try XCTUnwrap(model.presence)
+    let deadline = ContinuousClock.now + .seconds(5)
+    while (onBoard ? model.compositionTiles.published?.frame.index.element(id: "box", boardID: target.id) == nil
+      : model.activePage.map { !model.pagePresentations.isPresented($0) } == true), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    try await Task.sleep(for: .milliseconds(40))
+    let paper = descendants(try XCTUnwrap(window.rootViewController?.view)).compactMap { $0 as? PaperInputView }
+      .first { $0.isUserInteractionEnabled }
+    let receiver = try XCTUnwrap(window.gestureRecognizers?.first {
+      onBoard ? $0 is SpatialPencilGestureRecognizer : $0.name == "NotebookPaperPencil"
+    })
+    func screen(_ point: CGPoint) -> CGPoint {
+      if let paper { return paper.convert(point, to: window) }
+      let p = presence.camera.worldToScreen(origin.offsetBy(x: point.x, y: point.y), viewport: presence.viewport)
+      return .init(x: p.x, y: p.y)
+    }
+    func attachment(_ stage: String) {
+      let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+        window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+      }
+      let proof = XCTAttachment(image: image); proof.name = "partial-erase-\(onBoard ? "board" : "page")-\(stage)"
+      proof.lifetime = .keepAlways; add(proof)
+    }
+    attachment("before")
+    let touch = SceneGraphicTouch(window: window), event = SceneGraphicEvent()
+    for i in 0...30 {
+      touch.point = screen(.init(x: 235 + Double(i)*2, y: 510)); touch.sampleTime += 0.01
+      if i == 0 {
+        touch.sourceView = window.hitTest(touch.point, with: event)
+        receiver.touchesBegan([touch], with: event)
+        XCTAssertTrue(model.inputGate.hasActivePencil)
+      } else { receiver.touchesMoved([touch], with: event) }
+    }
+    XCTAssertNotNil(model.elementErasures(on: surface)["box"], "Measured contact masks the real object before lift")
+    try await Task.sleep(for: .milliseconds(60)); attachment("contact")
+    receiver.touchesEnded([touch], with: event)
+    XCTAssertNotNil(model.elementErasures(on: surface)["box"], "Lift cannot retract an accepted erasure")
+    if !onBoard, let paper {
+      // A peer refresh can replace the disposable paper's old drawing before
+      // the accepted action has finished its asynchronous CAS preparation.
+      paper.apply(try PageInkDrawing.decode(XCTUnwrap(model.activePage).drawingData))
+      XCTAssertNotNil(model.elementErasures(on: surface)["box"], "Late paper cancellation cannot revoke accepted input")
+    }
+    let persisted = await model.finishPendingPersistence(); XCTAssertTrue(persisted)
+    await model.reloadExternalChanges()?.value
+    let reopened = NotebookStore(root: root)
+    let masks: [String: [InkElementErasure]]
+    if onBoard {
+      let element = try XCTUnwrap(reopened.readSpatialElement(boardID: target.id, elementID: "box"))
+      XCTAssertEqual(element.graphic, graphic)
+      masks = try reopened.readSpatialInk(surfaces: [surface]).elementErasures(on: surface)
+    } else {
+      let page = try reopened.loadPage(pageID)
+      XCTAssertEqual(page.elements.first { $0.id == "box" }?.graphic, graphic)
+      masks = try PageInkDrawing.decode(page.drawingData).elementErasures
+    }
+    let mask = try XCTUnwrap(masks["box"]?.first)
+    XCTAssertEqual(mask.target.frame, frame)
+    XCTAssertEqual(mask.target.localPoint(try XCTUnwrap(mask.samples.last)).y, 90, accuracy: 0.001)
+    try await Task.sleep(for: .milliseconds(100)); attachment("saved")
+    model.undoLastSurfaceAction()
+    let undone = await model.finishPendingPersistence(); XCTAssertTrue(undone)
+    XCTAssertNil(model.elementErasures(on: surface)["box"], "One ordinary undo restores the cutout")
+    try await Task.sleep(for: .milliseconds(100)); attachment("undo")
+    let closed = await model.shutdown(); XCTAssertTrue(closed)
+    if onBoard { XCTAssertTrue(try reopened.loadSpatialInk().elementErasures(on: surface).isEmpty) }
+    else { XCTAssertTrue(try PageInkDrawing.decode(reopened.loadPage(pageID).drawingData).elementErasures.isEmpty) }
+  }
+
   private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
 }
 

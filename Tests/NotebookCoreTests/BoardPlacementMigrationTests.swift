@@ -316,7 +316,7 @@ struct BoardPlacementMigrationTests {
     let changes = try seed.changeJournal(after: 0)
     #expect(changes.count == 1)
     let manifest = try seed.commandTransaction { try seed.validatedManifest(changes[0]) }
-    #expect(manifest.format == 4)
+    #expect(manifest.format == 5)
     #expect(try seed.loadBoard(items: seed.loadIndex().items) == store.loadBoard(items: store.loadIndex().items))
     _ = try seed.validateArchiveSnapshot()
     let item = try store.loadIndex().items[0].id

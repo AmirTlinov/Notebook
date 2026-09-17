@@ -73,7 +73,7 @@ final class SceneRasterCompositor {
 
   /// Use the retained entry, not a cache lookup after an asynchronous boundary.
   /// A newer capture of the same program cannot replace the borrowed pixels.
-  func draw(_ raster: RasterLease, in frame: CGRect) async throws {
+  func draw(_ raster: RasterLease, in frame: CGRect, erasures: [InkElementErasure] = [], elementFrame: CGRect? = nil) async throws {
     try checkPreparation()
     guard !raster.isReleased else { throw SceneRenderError.snapshotPending("released_source") }
     #if os(iOS)
@@ -82,6 +82,17 @@ final class SceneRasterCompositor {
       let image = raster.image.cgImage(forProposedRect: nil, context: nil, hints: nil)
     #endif
     guard let image else { throw SceneRenderError.snapshotPending("source_pixels") }
+    if !erasures.isEmpty, let element = raster.source.agentElement {
+      let size = CGSize(width: element.frame.width, height: element.frame.height)
+      let crop = raster.source.captureRegion.map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) }
+        ?? CGRect(origin: .zero, size: size)
+      try await drawView(Image(decorative: image, scale: 1).resizable()
+        .frame(width: crop.width, height: crop.height)
+        .position(x: crop.midX, y: crop.midY)
+        .frame(width: size.width, height: size.height).erased(by: erasures),
+        size: size, in: elementFrame ?? frame)
+      return
+    }
     try await buffer.draw(image, in: frame)
     try checkPreparation()
   }

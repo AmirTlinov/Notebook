@@ -4,6 +4,50 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookGraphicRenderingTests: XCTestCase {
+  func testPartialEraserUnionsOverlapsAndMovesWithEveryNativeFigure() async throws {
+    let actor = UUID(), frame = PageRect(x: 40, y: 40, width: 160, height: 160)
+    for shape in [NotebookGraphic.Shape.ellipse, .rectangle, .plus] {
+      let graphic = NotebookGraphic(shape: shape, style: .init(strokeWidth: 6))
+      let element = AgentElement(id: "shape", kind: .graphic, frame: frame, source: "", html: "", graphic: graphic)
+      let target = InkElementTarget(elementID: element.id, frame: frame)
+      let samples = [110.0, 130.0].map { y in
+        SpatialInkSample(point: .init(x: 43, y: y), timeOffset: y, width: 24,
+          opacity: 1, force: 1, azimuth: 0, altitude: 1)
+      }
+      let eraser = PageInkAction(tool: .eraser, samples: samples).erasingElements([target])
+      let second = PageInkAction(tool: .eraser, samples: samples).erasingElements([target])
+      let drawing = try PageInkDrawing().appending(eraser).appending(second)
+      let page = PageDocument(size: .init(width: 350, height: 250), actor: actor,
+        drawingData: try drawing.dataRepresentation(), elements: [element])
+      func image(_ page: PageDocument) async throws -> NSBitmapImageRep {
+        let result = try await PageCompositionRenderer.render(page, scale: 1) { _ in
+          XCTFail("Native erasure must not start WebKit"); throw CocoaError(.featureUnsupported)
+        }
+        let proof = XCTAttachment(data: result.png, uniformTypeIdentifier: "public.png")
+        proof.name = "partially-erased-\(shape.rawValue)"; proof.lifetime = .keepAlways; add(proof)
+        return try XCTUnwrap(NSBitmapImageRep(data: result.png))
+      }
+      func dark(_ image: NSBitmapImageRep, _ x: Int, _ y: Int) -> Bool {
+        guard let color = image.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { return false }
+        return max(color.redComponent, color.greenComponent, color.blueComponent) < 0.3
+      }
+      let erased = try await image(page)
+      XCTAssertFalse(dark(erased, 43, 120), "The traversed contour is cut, including overlapping erasers")
+      XCTAssertTrue(dark(erased, 196, 120), "The opposite side survives as the same native figure")
+      var moved = page
+      moved.replaceElements([.init(id: element.id, kind: .graphic,
+        frame: .init(x: 140, y: 40, width: 160, height: 160), source: "", html: "", graphic: graphic)], actor: actor)
+      let shifted = try await image(moved)
+      XCTAssertFalse(dark(shifted, 143, 120), "A cutout travels with the object, not the old screen position")
+      XCTAssertTrue(dark(shifted, 296, 120))
+      let restored = PageDocument(size: page.size, actor: actor,
+        drawingData: try drawing.removing([eraser.id, second.id]).dataRepresentation(), elements: [element])
+      let uncut = try await image(restored)
+      XCTAssertTrue(dark(uncut, 43, 120), "Undo restores original native geometry, not a traced bitmap")
+    }
+  }
+
+
   func testRectangleAndPlusPaintTheirOwnContoursRatherThanEllipses() async throws {
     let elements = [NotebookGraphic.Shape.rectangle,.plus].enumerated().map { index, shape in
       AgentElement(id:shape.rawValue,kind:.graphic,frame:.init(x:20+Double(index)*140,y:20,width:100,height:100),

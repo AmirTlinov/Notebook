@@ -6,14 +6,17 @@ import SwiftUI
 struct NotebookGraphicView: View {
   let graphic: NotebookGraphic
   var layout: NotebookGraphicLayout? = nil
+  var erasures: [InkElementErasure] = []
   var body: some View {
-    Canvas { context, size in Self.paint(graphic, layout: layout, in: context, size: size) }
+    Canvas { context, size in Self.paint(graphic, layout: layout, in: context, size: size, erasures: erasures) }
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(graphic.label.isEmpty ? graphic.shape.displayName : graphic.label)
     .accessibilityAddTraits(.isImage)
   }
   static func paint(_ graphic: NotebookGraphic, layout: NotebookGraphicLayout?,
-    in context: GraphicsContext, size: CGSize) {
+    in context: GraphicsContext, size: CGSize, erasures: [InkElementErasure] = []) {
+      var context = context
+      NotebookElementErasurePaint.clip(erasures, context: &context, size: size)
       guard graphic.showsGeometry else { return }
       let stroke = graphic.style.stroke.swiftUIColor
       let width = graphic.style.strokeWidth

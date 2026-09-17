@@ -87,7 +87,7 @@ extension NotebookAppModel {
     return .init(rootBoardID: captured.rootBoardID, boards: nodes, stamp: captured.stamp)
   }
 
-  private func presentedBoard(_ captured: BoardDocument, boardID: UUID,
+  func presentedBoard(_ captured: BoardDocument, boardID: UUID,
     cohort: SceneCompositionCohort) -> BoardDocument {
     let current = boardHierarchy?.board(boardID) ?? captured
     let liveItems = Set(cohort.plan.liveOwners.compactMap { owner -> UUID? in

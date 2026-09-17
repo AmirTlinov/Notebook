@@ -72,7 +72,9 @@ struct PageSurface: View {
               publishReadiness(ink: ready, overlay: overlayIsReady)
             }, resolveQuickShape: { fit, scale in
               fit.binding(in:page.graphicGraph(),surface:.page(page.id),tolerance:18/scale)
-            }, onWorkingGraphic: model.updateWorkingGraphic
+            }, onWorkingGraphic: model.updateWorkingGraphic,
+            eraserTargets: { model.eraserTargets(pageID: page.id) },
+            onElementErasing: model.updateElementErasing
           )
         #else
           PencilDrawingView(page: page)

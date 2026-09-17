@@ -76,15 +76,23 @@ public struct SpatialInkSample: Codable, Equatable, Sendable {
 public struct SpatialInkSpan: Codable, Equatable, Sendable {
   public let surface: SurfaceID
   public let samples: [SpatialInkSample]
+  public let elementTargets: [InkElementTarget]?
 
-  public init(surface: SurfaceID, samples: [SpatialInkSample]) {
+  public init(surface: SurfaceID, samples: [SpatialInkSample], elementTargets: [InkElementTarget]? = nil) {
     precondition(surface.kind != .page && !samples.isEmpty)
     self.surface = surface
     self.samples = samples
+    self.elementTargets = elementTargets?.isEmpty == false ? elementTargets : nil
+  }
+
+  public func erasingElements(_ targets: [InkElementTarget]) -> Self {
+    .init(surface: surface, samples: samples, elementTargets: targets.filter { $0.intersects(samples) })
   }
 
   var isValid: Bool {
-    surface.isValid && surface.kind != .page
+    (elementTargets == nil || (elementTargets!.allSatisfy { $0.isValid && ($0.worldOrigin != nil) == (surface.kind == .board) }
+      && Set(elementTargets!.map(\.elementID)).count == elementTargets!.count))
+      && surface.isValid && surface.kind != .page
       && !samples.isEmpty && samples.allSatisfy(\.isValid)
       && samples.allSatisfy {
         surface.kind == .board
@@ -148,6 +156,7 @@ public struct SpatialInkAction: Codable, Equatable, Identifiable, Sendable {
 
   var isValid: Bool {
     color.isValid && !spans.isEmpty && spans.allSatisfy(\.isValid)
+      && (tool == .eraser || spans.allSatisfy { $0.elementTargets == nil })
       && stamp.counter <= VersionStamp.maximumCounter
       && stateStamp.counter <= VersionStamp.maximumCounter
       && !(stateStamp < stamp)

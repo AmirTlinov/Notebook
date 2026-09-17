@@ -178,6 +178,7 @@ enum NotebookAttentionProjection {
     #endif
     let visuals = NotebookFrozenVisualSources.capture(fragments: fragments, hierarchy: sources.hierarchy,
       pages: sources.pages, documents: sources.documents, states: sources.states,
+      elementErasures: { model.elementErasures(on: $0, fallback: sources.ink)[$1] ?? [] },
       installedSources: cohort.sourceRasters, capturesLivePrograms: true,
       liveSourceAddresses: Set(sampled.filter { cohort.plan.allowsLive(.element($0.elementID), in: $0.plane) }),
       captureSceneRegion: { [weak model] fragment in

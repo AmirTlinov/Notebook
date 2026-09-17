@@ -265,6 +265,7 @@ final class NotebookAppModel {
   }
   private(set) var spatialInk: SpatialInkJournal? {
     didSet {
+      elementErasureCache.invalidateSpatial()
       collaborationReadEpoch &+= 1
       if oldValue != spatialInk { collaborationContentEpoch &+= 1 }
     }
@@ -783,6 +784,8 @@ final class NotebookAppModel {
   private var graphicCommandTask: Task<Void, Never>?
   @ObservationIgnored private var graphicCommandGeneration = UUID()
   var workingGraphics: [NotebookWorkingGraphic] = []
+  var workingElementErasures: [UUID: [NotebookElementErasing]] = [:]
+  @ObservationIgnored let elementErasureCache = NotebookElementErasureCache()
   // Lift transfers its final draft to the accepted command. It is retired by
   // a scene read at/after the durable cursor, not by lift or receipt delivery.
   private(set) var graphicCommandPreview: NotebookElementManipulation?
@@ -2298,6 +2301,10 @@ final class NotebookAppModel {
       return Task { nil }
     }
     let accepted = AcceptedPageInk(page: page, intent: intent, stamp: stamp, quickShape: quickShape)
+    if case .append(let action) = intent, let targets = action.elementTargets {
+      workingElementErasures[action.id] = [.init(id: action.id, surface: .page(pageID),
+        samples: action.samples, targets: targets, accepted: true)]
+    }
     if case .append(let action) = intent, quickShape != nil,
       let index = workingGraphics.firstIndex(where: { $0.strokeID == action.id }) {
       workingGraphics[index].accepted = true
@@ -2362,6 +2369,7 @@ final class NotebookAppModel {
   }
 
   private func completeAcceptedPageInk(_ accepted: AcceptedPageInk, result: PreparedPageInkChange?) {
+    if case .append(let action) = accepted.intent { workingElementErasures[action.id] = nil }
     acceptedPageInkHead = accepted.next
     accepted.next = nil
     accepted.nextOnPage = nil
@@ -2386,6 +2394,7 @@ final class NotebookAppModel {
       accepted.nextOnPage?.page = current
       accepted.page = current
       if change.stamp != change.baseStamp {
+        elementErasureCache.record(change)
         if pages[accepted.pageID] != nil { pages[accepted.pageID] = current }
         scheduleSave(current)
       }

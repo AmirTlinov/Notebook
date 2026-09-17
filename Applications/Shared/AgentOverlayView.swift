@@ -67,6 +67,7 @@ struct AgentOverlayView: View {
   var body: some View {
     let visible = visibleElements
     let graph = graph
+    let erasures = model.elementErasures(on: .page(pageID))
     let runningPrograms = runtimeIDs(in: visible)
     ZStack(alignment: .topLeading) {
       ForEach(visible) { element in
@@ -102,6 +103,7 @@ struct AgentOverlayView: View {
           width: frame.width,
           height: frame.height
         )
+        .erased(by: erasures[element.id] ?? [])
         .offset(x: frame.x, y: frame.y)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent-element-\(element.id)")

@@ -4,9 +4,9 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Native rectangles and plus signs join bound connectors and reversible ink.
-  // An older peer cannot decode these shape values; both peers upgrade together.
-  public static let protocolVersion = 17
+  // Eraser actions carry element-local cutouts. Older peers must not strip
+  // those immutable targets while accepting the same ink action ID.
+  public static let protocolVersion = 18
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16
