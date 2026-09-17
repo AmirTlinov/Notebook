@@ -23,16 +23,12 @@ extension NotebookAppModel {
   func presentedGraphicGraph(boardID: UUID, cohort: SceneCompositionCohort, preview: Bool = true) -> NotebookGraphicGraph {
     guard let captured = cohort.frame.index.capturedHierarchy.board(boardID) else { return .init([]) }
     let board = presentedBoard(captured, boardID:boardID,cohort:cohort)
-    let usesPreview: Bool
-    if case .spatial(let owner, _) = graphicPreviewManipulation?.reference { usesPreview = preview && owner == boardID }
-    else { usesPreview = false }
-    let graph = board.graphicGraph(frames: usesPreview ? graphicPreviewFrames() : [:],
-      connections: usesPreview ? graphicPreviewConnections() : [:])
+    let graph = board.graphicGraph()
     guard preview else { return graph }
     let working = workingBoardGraphics(boardID: boardID, cohort: cohort)
-    guard !working.isEmpty else { return graph }
     let ids = Set(working.map(\.id))
-    return .init(Array(graph.nodes.values).filter { !ids.contains($0.id) } + working.map(\.node))
+    let combined = NotebookGraphicGraph(Array(graph.nodes.values).filter { !ids.contains($0.id) } + working.map(\.node))
+    return projectingGraphicCommands(combined) { .spatial(boardID: boardID, elementID: $0) }
   }
   /// The cohort admits physical hosts and excludes their pixels from its tiles.
   /// Its immutable geometry is not another owner of subsequent accepted input.

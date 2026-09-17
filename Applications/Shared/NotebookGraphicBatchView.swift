@@ -49,7 +49,7 @@ struct NotebookGraphicBatchView: View {
           var local = context
           local.translateBy(x: object.frame.minX, y: object.frame.minY)
           local.scaleBy(x: scale, y: scale)
-          NotebookGraphicView.paint(object.element.graphic!, layout: object.layout, in: local,
+          NotebookGraphicView.paint(graph.nodes[object.id]!.graphic, layout: object.layout, in: local,
             size: .init(width: object.layout.frame.width, height: object.layout.frame.height), erasures: erasures[object.id] ?? [])
         }
       }
@@ -64,7 +64,7 @@ struct NotebookGraphicBatchView: View {
       }
       .allowsHitTesting(false)
       if let object = objects.first(where: { $0.id == editingID }) {
-        NotebookGraphicElementView(graphic: object.element.graphic!, reference: reference(object.id), layout: object.layout)
+        NotebookGraphicElementView(graphic: graph.nodes[object.id]!.graphic, reference: reference(object.id), layout: object.layout)
           .frame(width: object.layout.frame.width, height: object.layout.frame.height)
           .erased(by: erasures[object.id] ?? [])
           .scaleEffect(scale)
@@ -79,7 +79,7 @@ struct NotebookGraphicBatchView: View {
   }
 
   @ViewBuilder private func accessibleObject(_ object: Object) -> some View {
-    let graphic = object.element.graphic!
+    let graphic = graph.nodes[object.id]!.graphic
     let content = Color.clear.accessibilityElement(children: .ignore)
       .accessibilityLabel(graphic.label.isEmpty ? graphic.shape.displayName : graphic.label)
       .accessibilityAddTraits(.isImage)

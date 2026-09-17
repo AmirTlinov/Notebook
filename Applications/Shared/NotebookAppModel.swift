@@ -783,17 +783,17 @@ final class NotebookAppModel {
   private var peerActivities: [UUID: NotebookInputActivity] = [:]
   private var cueTask: Task<Void, Never>?
   private var pencilUndoHistory = PencilUndoHistory()
-  private var graphicCommandTask: Task<Void, Never>?
+  private var graphicCommandTask: Task<NotebookElementCommandResult?, Never>?
   @ObservationIgnored private var graphicCommandGeneration = UUID()
   var workingGraphics: [NotebookWorkingGraphic] = []
   var workingElementErasures: [UUID: [NotebookElementErasing]] = [:]
   @ObservationIgnored let elementErasureCache = NotebookElementErasureCache()
   // Lift transfers its final draft to the accepted command. It is retired by
   // a scene read at/after the durable cursor, not by lift or receipt delivery.
-  private(set) var graphicCommandPreview: NotebookElementManipulation?
-  @ObservationIgnored private var graphicCommandPreviewCursor: UInt64?
+  var graphicCommandDrafts: [EditableElementReference: NotebookGraphicCommandDraft] = [:]
+  @ObservationIgnored var elementCommandSources: [EditableElementReference: NotebookElementCommand] = [:]
   var graphicCommandPending: Bool {
-    graphicCommandTask != nil || graphicCommandPreview != nil || workingGraphics.contains { $0.accepted && $0.publicationCursor == nil }
+    graphicCommandTask != nil || !graphicCommandDrafts.isEmpty || workingGraphics.contains { $0.accepted && $0.publicationCursor == nil }
   }
   private var inkUndoInProgress = false
   private var reservedDrawingCounters: [UUID: UInt64] = [:]
@@ -2533,7 +2533,6 @@ final class NotebookAppModel {
   /// reusable element ID. No late lift can commit a superseded contact.
   func beginElementManipulation(_ reference: EditableElementReference,
     kind: NotebookElementManipulation.Kind) -> UUID? {
-    if graphicElement(reference) != nil, graphicCommandPending { return nil }
     // A passive raster is selectable, but it is not a live manipulation owner.
     // Selection requests its ordinary scene admission; do not commit an
     // invisible drag while the installed cohort still owns baked pixels.
@@ -2545,7 +2544,7 @@ final class NotebookAppModel {
     cancelElementManipulation()
     let contact = NotebookElementManipulation(reference: reference, kind: kind,
       frame: geometry.frame, bounds: geometry.bounds, identity: geometry.identity, worldOrigin: geometry.worldOrigin,
-      connection: connection, layout: graphicLayout(reference, preview:false))
+      connection: connection, layout: graphicLayout(reference))
     selectionSession.manipulation = contact
     inputGate.beginContact(source: contact.id)
     inputGate.registerFingerCancellation(source: contact.id) { [weak self] in self?.cancelElementManipulation(contact.id) }
@@ -2579,8 +2578,8 @@ final class NotebookAppModel {
       if contact.frame != contact.original {
         values["frame"] = try? .encode(PageRect(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height))
       }
-      return performGraphicOperation(.updateElement, reference: contact.reference,
-        values: values, summary: "Изменить связь", preview: contact)
+      return performElementOperation(.updateElement, reference: contact.reference,
+        values: values, summary: "Изменить связь")
     }
     return commitElementFrame(contact)
   }
@@ -2591,9 +2590,9 @@ final class NotebookAppModel {
     guard let identity = contact.identity else { return false }
     let frame = contact.frame, original = contact.original, actor = actorID
     if graphicElement(contact.reference) != nil {
-      return performGraphicOperation(.updateElement, reference: contact.reference,
+      return performElementOperation(.updateElement, reference: contact.reference,
         values: ["frame": (try? .encode(PageRect(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height))) ?? .null],
-        summary: "Переместить фигуру", preview: contact)
+        summary: "Переместить фигуру")
     }
     switch contact.reference {
     case .page(let pageID, let elementID):
@@ -2637,9 +2636,9 @@ final class NotebookAppModel {
     inputGate.endContact(source: contact.id)
   }
 
-  func elementMovement(_ reference: EditableElementReference) -> SpatialPoint {
-    guard let contact = selectionSession.manipulation, contact.reference == reference else { return .zero }
-    return .init(x: contact.movement.x, y: contact.movement.y)
+  func elementPresentationFrame(_ reference: EditableElementReference, fallback: PageRect, preview: Bool = true) -> PageRect {
+    guard preview, let contact = selectionSession.manipulation, contact.reference == reference else { return fallback }
+    return .init(x: contact.frame.minX, y: contact.frame.minY, width: contact.frame.width, height: contact.frame.height)
   }
 
   private func elementGeometry(_ reference: EditableElementReference) -> (frame: CGRect, bounds: CGRect?, identity: VersionStamp?, worldOrigin: WorldPoint?)? {
@@ -2647,14 +2646,14 @@ final class NotebookAppModel {
     case .page(let pageID, let id):
       guard !isPageBeingDeleted(pageID), let page = pages[pageID],
         let element = page.elements.first(where: { $0.id == id }) else { return nil }
-      return (.init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height),
+      return (graphicCommandDrafts[reference]?.rect ?? .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height),
         .init(x: 0, y: 0, width: page.size.width, height: page.size.height), page.elementIdentityStamp(id), nil)
     case .spatial(let boardID, let id):
       guard let element = boardHierarchy?.board(boardID)?.elements.first(where: { $0.id == id }),
         surfaceAcceptsChanges(element.surface) else { return nil }
       let size = itemGeometry(element.surface.ownerID)
       let bounds: CGRect? = element.surface.kind == .cover ? .init(x: 0, y: 0, width: size.width, height: size.height) : nil
-      return (.init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height), bounds,
+      return (graphicCommandDrafts[reference]?.rect ?? .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height), bounds,
         boardHierarchy?.board(boardID)?.elementIdentityStamp(id), element.worldOrigin)
     }
   }
@@ -2666,6 +2665,7 @@ final class NotebookAppModel {
   }
 
   func graphicElement(_ reference: EditableElementReference) -> NotebookGraphic? {
+    if let draft = graphicCommandDrafts[reference] { return draft.graphic }
     switch reference {
     case .page(let pageID, let id): return pages[pageID]?.elements.first { $0.id == id }?.graphic
     case .spatial(let boardID, let id): return boardHierarchy?.board(boardID)?.elements.first { $0.id == id }?.graphic
@@ -2693,7 +2693,7 @@ final class NotebookAppModel {
     if let origin = object.worldOrigin { values["worldOrigin"] = try? .encode(origin) }
     let reference: EditableElementReference = object.surface.kind == .page
       ? .page(pageID: owner, elementID: object.id) : .spatial(boardID: owner, elementID: object.id)
-    performGraphicOperation(.convertInkToElement, reference: reference,
+    performElementOperation(.convertInkToElement, reference: reference,
       values: values, summary: "Преобразовать набросок: " + object.graphic.shape.displayName)
   }
 
@@ -2703,7 +2703,7 @@ final class NotebookAppModel {
       return
     }
     guard graphicElement(reference)?.label != text else { return }
-    performGraphicOperation(.updateElement, reference: reference,
+    performElementOperation(.updateElement, reference: reference,
       values: ["graphic": .object(["label": .string(text)])], summary: "Изменить подпись фигуры")
   }
 
@@ -2711,24 +2711,20 @@ final class NotebookAppModel {
     guard let original = graphicElement(reference)?.style else { return }
     var style = original; update(&style)
     guard original != style, let value = try? JSONValue.encode(style) else { return }
-    performGraphicOperation(.updateElement,reference:reference,values:["graphic":.object(["style":value])],summary:"Изменить оформление фигуры")
+    performElementOperation(.updateElement,reference:reference,values:["graphic":.object(["style":value])],summary:"Изменить оформление фигуры")
   }
 
   func setGraphicArrowhead(_ head: NotebookGraphicConnection.Arrowhead, terminal: NotebookGraphicConnection.Terminal,
     reference: EditableElementReference) {
     guard graphicElement(reference)?.connection != nil else { return }
-    performGraphicOperation(.updateElement,reference:reference,
+    performElementOperation(.updateElement,reference:reference,
       values:["graphic":.object(["connection":.object([terminal == .start ? "startArrowhead" : "endArrowhead":.string(head.rawValue)])])],
       summary:"Изменить наконечник связи")
   }
 
   @discardableResult
-  private func performGraphicOperation(_ kind: CollaborationOperation.Kind, reference: EditableElementReference,
-    values: [String: JSONValue], summary: String, preview: NotebookElementManipulation? = nil) -> Bool {
-    guard kind == .convertInkToElement || !graphicCommandPending else {
-      showCue("Предыдущее изменение ещё сохраняется")
-      return false
-    }
+  func performElementOperation(_ kind: CollaborationOperation.Kind, reference: EditableElementReference,
+    values: [String: JSONValue], summary: String, moveToFront: Bool? = nil) -> Bool {
     let target: CollaborationTarget, id: String, expectedPage: AgentElement?, expectedSpatial: SpatialElement?
     switch reference {
     case .page(let pageID, let elementID):
@@ -2739,61 +2735,73 @@ final class NotebookAppModel {
       target = expectedSpatial?.surface.kind == .cover
         ? .init(kind: .cover, id: expectedSpatial!.surface.ownerID!, boardID: boardID) : .init(kind: .board, id: boardID)
     }
-    let actor = actorID
-    if let preview { graphicCommandPreview = preview }
-    let predecessor = graphicCommandTask, generation = UUID()
+    let actor = actorID, predecessor = graphicCommandTask, generation = UUID()
+    let sourceTask = elementCommandSources[reference]?.task
+    let source = NotebookElementCommandResult(page: expectedPage, spatial: expectedSpatial)
+    // Only this element's accepted value is projected. Neither a delayed save
+    // nor an unrelated element disables the next contact or style choice.
+    if var graphic = graphicElement(reference), let geometry = elementGeometry(reference) {
+      do {
+        if let patch = values["graphic"] { graphic = try graphic.applying(patch) }
+        if kind == .removeElement { graphic.visible = false }
+        let frame = try values["frame"]?.decode(PageRect.self)
+          ?? PageRect(x: geometry.frame.minX, y: geometry.frame.minY, width: geometry.frame.width, height: geometry.frame.height)
+        graphicCommandDrafts[reference] = .init(frame: frame, graphic: graphic)
+      } catch { showCue(error.localizedDescription); return false }
+    }
     graphicCommandGeneration = generation
-    graphicCommandTask = Task { [weak self] in
-      guard let self else { return }
+    let task = Task<NotebookElementCommandResult?, Never> { [weak self] in
+      guard let self else { return nil }
       defer { if graphicCommandGeneration == generation { graphicCommandTask = nil } }
-      // A second held shape is accepted even while the first is being saved.
-      // Both use the same writer and retain their own stable identity.
-      await predecessor?.value
+      _ = await predecessor?.value
+      let expected: NotebookElementCommandResult
+      if let sourceTask {
+        guard let accepted = await sourceTask.value else {
+          if elementCommandSources[reference]?.id == generation { graphicCommandDrafts[reference] = nil; elementCommandSources[reference] = nil }
+          cancelElementManipulationForFailedCommand(reference)
+          return nil
+        }
+        expected = accepted
+      } else { expected = source }
       await withCheckedContinuation { continuation in
         inputGate.performAfterIdle { continuation.resume() }
       }
       do {
-        let (receipt, cursor) = try await persistence.submit(publishesChanges: true) { store in
-          if let expectedPage, try store.readPageElement(pageID: target.id, elementID: id) != expectedPage {
-            throw CollaborationError("revision_conflict", "Фигура изменилась до завершения жеста.")
-          }
-          if let expectedSpatial, try store.readSpatialElement(boardID: target.boardID ?? target.id, elementID: id) != expectedSpatial {
-            throw CollaborationError("revision_conflict", "Фигура изменилась до завершения жеста.")
-          }
-          let revision = try store.targetContentRevision(target: target)
-          let ink = kind == .convertInkToElement ? try store.inkRevision(on: target) : nil
-          let receipt = try store.applyNativeGraphicAction(.init(summary: summary,
-            references: [.init(target: target, elementID: id, revision: revision)],
-            expected: [.init(target: target, revision: revision, inkRevision: ink)],
-            operations: [.init(kind: kind, target: target, id: id, values: values)]), actor: actor)
-          return (receipt, try store.currentChangeCursor())
+        let (receipt, cursor, result) = try await persistence.submit(publishesChanges: true) { store in
+          let saved = try store.applyNativeElementEdit(.init(kind: kind, target: target, id: id, values: values),
+            summary: summary, expectedPage: expected.page, expectedSpatial: expected.spatial, moveToFront: moveToFront, actor: actor)
+          // The cursor is observed after the owning transaction has committed.
+          return (saved.receipt, try store.currentChangeCursor(), NotebookElementCommandResult(page: saved.page, spatial: saved.spatial))
         }
-        if preview != nil { graphicCommandPreviewCursor = cursor }
+        if elementCommandSources[reference]?.id == generation { elementCommandSources[reference]?.cursor = cursor }
         if kind == .convertInkToElement, let index = workingGraphics.firstIndex(where: { $0.id == id }) {
-          // Later edits have their own contact draft. Advancing creation's
-          // cursor would resurrect its old geometry over those accepted edits.
           workingGraphics[index].publicationCursor = cursor
         }
         pencilUndoHistory.recordCommand(ownerID: target.id, actionID: receipt.id)
         reloadExternalChanges()
+        return result
       } catch {
-        if preview != nil { clearGraphicCommandPreview() }
+        if elementCommandSources[reference]?.id == generation { graphicCommandDrafts[reference] = nil; elementCommandSources[reference] = nil }
+        cancelElementManipulationForFailedCommand(reference)
         workingGraphics.removeAll { $0.id == id }
         showCue(error.localizedDescription)
+        reloadExternalChanges()
+        return nil
       }
     }
+    graphicCommandTask = task
+    elementCommandSources[reference] = .init(id: generation, task: task)
     return true
   }
 
-  private func clearGraphicCommandPreview() {
-    graphicCommandPreview = nil
-    graphicCommandPreviewCursor = nil
+  private func cancelElementManipulationForFailedCommand(_ reference: EditableElementReference) {
+    if selectionSession.manipulation?.reference == reference { cancelElementManipulation() }
   }
 
   func deleteElement(_ reference: EditableElementReference) {
     guard selectionSession.element == reference else { return }
     if graphicElement(reference) != nil {
-      performGraphicOperation(.removeElement, reference: reference, values: [:], summary: "Удалить фигуру")
+      performElementOperation(.removeElement, reference: reference, values: [:], summary: "Удалить фигуру")
       clearSelection(); return
     }
     clearSelection()
@@ -3032,7 +3040,9 @@ final class NotebookAppModel {
           persistenceFailure = error.localizedDescription
           // A failed publication cannot masquerade as a still-pending write.
           // Its durable command remains available to undo/reopen normally.
-          if graphicCommandPreviewCursor != nil { clearGraphicCommandPreview() }
+          for (reference, command) in elementCommandSources where command.cursor != nil {
+            graphicCommandDrafts[reference] = nil; elementCommandSources[reference] = nil
+          }
           return
         }
       }
@@ -4017,9 +4027,7 @@ final class NotebookAppModel {
     documentEditingSessions = state.drafts
     admitDocumentReading(state.reading)
     presence = state.presence
-    if let cursor = graphicCommandPreviewCursor, state.header.cursor >= cursor {
-      clearGraphicCommandPreview()
-    }
+    retireGraphicCommands(through: state.header.cursor)
     alignWorkspaceSelection()
     if case .page(let pageID, let elementID) = selectionSession.element,
       let page = pages[pageID], !page.elements.contains(where: { $0.id == elementID }) {
@@ -4179,7 +4187,7 @@ final class NotebookAppModel {
       observeNavigation("wait_accepted_ink_begin", fields: trace)
       guard await finishAcceptedPageInk() else { return false }
       observeNavigation("wait_accepted_ink_end", fields: trace)
-      if let task = graphicCommandTask { await task.value }
+      if let task = graphicCommandTask { _ = await task.value }
       if let task = collaborationUndoTask { await task.value }
       guard !Task.isCancelled, continuing() else { return false }
       if boundary == .quiescent {

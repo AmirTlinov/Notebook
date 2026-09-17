@@ -225,7 +225,8 @@ struct WorkspaceItemCoverView: View {
         return cohort.plan.allowsLive(.element(element.id), in: plane)
       }) { element in
         let reference = EditableElementReference.spatial(boardID: boardID, elementID: element.id)
-        let local = element.frame
+        let local = model.elementPresentationFrame(reference, fallback: .init(x: element.frame.x, y: element.frame.y,
+          width: element.frame.width, height: element.frame.height), preview: !isPortalProjection)
         let retainsTextInput = !isPortalProjection
           && element.kind == .nativeText && editingTextID == element.id
         EditableElementContainer(reference: reference, coordinateScale: 1) {

@@ -77,9 +77,9 @@ struct AgentOverlayView: View {
         )
         let interactiveReference = InteractiveElementReference.page(pageID: pageID, elementID: element.id)
         let layout = element.graphic == nil ? nil : graph.resolve(element.id).layout
-        let frame = layout?.frame ?? element.frame
+        let frame = layout?.frame ?? model.elementPresentationFrame(reference, fallback: element.frame)
         EditableElementContainer(reference: reference, coordinateScale: 1) {
-          if let graphic = element.graphic {
+          if let graphic = graph.nodes[element.id]?.graphic {
             NotebookGraphicElementView(graphic: graphic, reference: reference, layout: layout)
           } else {
           PreparedAgentElementView(

@@ -32,7 +32,7 @@ struct NotebookElementControls: UIViewRepresentable {
   func makeUIView(context: Context) -> NotebookElementControlsView { .init(gate: model.inputGate) }
   func updateUIView(_ view: NotebookElementControlsView, context: Context) {
     view.configure(selectionID: selectionID, frame: frame, layout: model.graphicElement(reference)?.connection == nil ? nil : model.graphicLayout(reference), scale:scale,
-      hasLabel: !(model.graphicElement(reference)?.label.isEmpty ?? true))
+      hasLabel: !(model.graphicElement(reference)?.label.isEmpty ?? true), manipulating: model.selectionSession.manipulation != nil)
     view.beginManipulation = { kind in
       guard model.selectionSession.id == selectionID,
         let contact = model.beginElementManipulation(reference, kind: kind) else { return nil }
@@ -47,32 +47,34 @@ struct NotebookElementControls: UIViewRepresentable {
       guard model.selectionSession.id == selectionID else { return }
       model.deleteElement(reference)
     }
-    if let graphic = model.graphicElement(reference) {
-      var menus: [UIMenuElement] = []
-      let colors: [(String,SpatialInkColor)] = [("Чёрный",.black),("Синий",.init(red:0.1,green:0.3,blue:0.85)),
-        ("Красный",.init(red:0.85,green:0.15,blue:0.15)),("Зелёный",.init(red:0.1,green:0.6,blue:0.35))]
-      menus.append(UIMenu(title:"Цвет",children:colors.map { name,color in
-        UIAction(title:name,state:graphic.style.stroke == color ? .on : .off) { _ in
+    view.graphic = model.graphicElement(reference)
+    view.updateStyle = { update in
+      guard model.selectionSession.id == selectionID else { return }
+      model.setGraphicStyle(reference: reference, update: update)
+    }
+    view.editElement = {
+      guard model.selectionSession.id == selectionID else { return }
+      model.editSelectedElement(reference)
+    }
+    let id: String
+    switch reference { case .page(_, let value), .spatial(_, let value): id = value }
+    let order = model.completeElementOrder(reference)
+    var menus: [UIMenuElement] = [UIMenu(options: .displayInline, children: [
+      UIAction(title: "На задний план", image: UIImage(systemName:"square.3.layers.3d.bottom.filled"),
+        attributes: order?.first == id ? .disabled : []) { _ in
           guard model.selectionSession.id == selectionID else { return }
-          model.setGraphicStyle(reference:reference) { $0.stroke = color }
-        }
-      }))
-      menus.append(UIMenu(title:"Толщина",children:[1.0,2.0,4.0,8.0].map { width in
-        UIAction(title:String(Int(width)),state:graphic.style.strokeWidth == width ? .on : .off) { _ in
+          model.arrangeElement(reference, front: false)
+        },
+      UIAction(title: "На передний план", image: UIImage(systemName:"square.3.layers.3d.top.filled"),
+        attributes: order?.last == id ? .disabled : []) { _ in
           guard model.selectionSession.id == selectionID else { return }
-          model.setGraphicStyle(reference:reference) { $0.strokeWidth = width }
+          model.arrangeElement(reference, front: true)
         }
-      }))
-      let dashes: [(String,NotebookGraphic.Style.Dash)] = [("Сплошная",.solid),("Пунктир",.dashed),("Точки",.dotted)]
-      menus.append(UIMenu(title:"Линия",children:dashes.map { name,dash in
-        UIAction(title:name,state:(graphic.style.dash ?? .solid) == dash ? .on : .off) { _ in
-          guard model.selectionSession.id == selectionID else { return }
-          model.setGraphicStyle(reference:reference) { $0.dash = dash }
-        }
-      }))
-      if let connection = graphic.connection {
-        for terminal in NotebookGraphicConnection.Terminal.allCases {
-          menus.append(UIMenu(title:terminal == .start ? "Начало" : "Конец",children:NotebookGraphicConnection.Arrowhead.allCases.map { head in
+    ])]
+    if let connection = model.graphicElement(reference)?.connection {
+      for terminal in NotebookGraphicConnection.Terminal.allCases {
+        menus.append(UIMenu(title: terminal == .start ? "Начало линии" : "Конец линии", image:UIImage(systemName:"arrow.up.right"),
+          children: NotebookGraphicConnection.Arrowhead.allCases.map { head in
             let labels: [NotebookGraphicConnection.Arrowhead:String] = [.none:"Нет",.arrow:"Стрелка",.triangle:"Треугольник",.square:"Квадрат",.dot:"Круг",.pipe:"Черта",.diamond:"Ромб",.inverted:"Обратная стрелка",.bar:"Полоса"]
             let current = terminal == .start ? connection.startArrowhead : connection.endArrowhead
             return UIAction(title:labels[head]!,state:current == head ? .on : .off) { _ in
@@ -80,11 +82,14 @@ struct NotebookElementControls: UIViewRepresentable {
               model.setGraphicArrowhead(head,terminal:terminal,reference:reference)
             }
           }))
-        }
       }
-      view.styleMenu = UIMenu(children:menus)
-    } else { view.styleMenu = nil }
+    }
+    menus.append(UIMenu(options:.displayInline,children:[UIAction(title:"Удалить",image:UIImage(systemName:"trash"),attributes:.destructive) { _ in
+      guard model.selectionSession.id == selectionID else { return }; model.deleteElement(reference)
+    }]))
+    view.moreMenu = UIMenu(children: menus)
   }
+
   static func dismantleUIView(_ view: NotebookElementControlsView, coordinator: ()) { view.uninstall() }
 }
 
@@ -115,11 +120,28 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
   private var selectionID: UUID?
   private var frameRect = CGRect.zero
   private var contact: SceneSelectionLift?
+  private var pointingHandle: ElementHandle?
   private var pencilRevision: UInt64?
   private var contactOrigin = CGPoint.zero
+  private let toolbar = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
+  private let toolbarStack = UIStackView()
+  private let divider = UIView()
   private let deleteButton = UIButton(type: .system)
   private let styleButton = UIButton(type: .system)
-  var styleMenu: UIMenu? { didSet { styleButton.menu = styleMenu; setNeedsLayout() } }
+  private let editButton = UIButton(type: .system)
+  private let moreButton = UIButton(type: .system)
+  private var palette: NotebookElementStyleController?
+  var graphic: NotebookGraphic? {
+    didSet {
+      styleButton.isHidden = graphic == nil; divider.isHidden = graphic == nil
+      editButton.accessibilityLabel = graphic == nil ? "Редактировать элемент" : "Подпись фигуры"
+      if let graphic { palette?.configure(style: graphic.style) }
+      setNeedsLayout()
+    }
+  }
+  var moreMenu: UIMenu? { didSet { moreButton.menu = moreMenu } }
+  var updateStyle: ((inout NotebookGraphic.Style) -> Void) -> Void = { _ in }
+  var editElement: (() -> Void)?
   private var handleAccessibility: [ElementHandleAccessibility] = []
   private var handles = NotebookElementResizeHandle.allCases.map(ElementHandle.corner)
   private var connectionLayout: NotebookGraphicLayout?
@@ -132,19 +154,34 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
     self.gate = gate
     super.init(frame: .zero)
     backgroundColor = .clear; isOpaque = false
-    deleteButton.setImage(UIImage(systemName: "trash"), for: .normal)
-    deleteButton.tintColor = .label
-    deleteButton.backgroundColor = .secondarySystemBackground.withAlphaComponent(0.9)
-    deleteButton.layer.cornerRadius = 22
-    deleteButton.accessibilityLabel = "Удалить элемент"
-    deleteButton.accessibilityIdentifier = "delete-agent-element"
-    deleteButton.addTarget(self, action: #selector(removeElement), for: .touchUpInside)
-    addSubview(deleteButton)
-    styleButton.setImage(UIImage(systemName:"slider.horizontal.3"),for:.normal)
-    styleButton.tintColor = .label; styleButton.backgroundColor = .secondarySystemBackground.withAlphaComponent(0.9)
-    styleButton.layer.cornerRadius = 22; styleButton.showsMenuAsPrimaryAction = true
-    styleButton.accessibilityLabel = "Оформление фигуры"; styleButton.accessibilityIdentifier = "graphic-style-menu"
-    addSubview(styleButton)
+    toolbar.cornerConfiguration = .capsule()
+    toolbarStack.axis = .horizontal; toolbarStack.alignment = .center; toolbarStack.spacing = 2
+    toolbarStack.translatesAutoresizingMaskIntoConstraints = false
+    toolbar.contentView.addSubview(toolbarStack); addSubview(toolbar)
+    NSLayoutConstraint.activate([toolbarStack.leadingAnchor.constraint(equalTo:toolbar.contentView.leadingAnchor,constant:8),
+      toolbarStack.trailingAnchor.constraint(equalTo:toolbar.contentView.trailingAnchor,constant:-8),
+      toolbarStack.topAnchor.constraint(equalTo:toolbar.contentView.topAnchor,constant:4),
+      toolbarStack.bottomAnchor.constraint(equalTo:toolbar.contentView.bottomAnchor,constant:-4)])
+    let buttons: [(UIButton,String,String,String)] = [
+      (styleButton,"paintbrush.pointed","Оформление фигуры","graphic-style-menu"),
+      (editButton,"character.cursor.ibeam","Подпись фигуры","edit-agent-element"),
+      (deleteButton,"trash","Удалить элемент","delete-agent-element"),
+      (moreButton,"ellipsis","Действия с элементом","element-actions-menu")]
+    for (button, symbol, label, identifier) in buttons {
+      button.setImage(UIImage(systemName:symbol,withConfiguration:UIImage.SymbolConfiguration(pointSize:20,weight:.regular)),for:.normal)
+      button.tintColor = button === deleteButton ? .systemRed : .label
+      button.accessibilityLabel = label; button.accessibilityIdentifier = identifier
+      button.widthAnchor.constraint(equalToConstant:44).isActive = true; button.heightAnchor.constraint(equalToConstant:44).isActive = true
+      toolbarStack.addArrangedSubview(button)
+      if button === styleButton {
+        divider.backgroundColor = .separator; divider.widthAnchor.constraint(equalToConstant:0.5).isActive = true
+        divider.heightAnchor.constraint(equalToConstant:24).isActive = true; toolbarStack.addArrangedSubview(divider)
+      }
+    }
+    deleteButton.addTarget(self,action:#selector(removeElement),for:.touchUpInside)
+    editButton.addTarget(self,action:#selector(edit),for:.touchUpInside)
+    styleButton.addTarget(self,action:#selector(showStyle),for:.touchUpInside)
+    moreButton.showsMenuAsPrimaryAction = true
     rebuildAccessibility()
     pan.minimumNumberOfTouches = 1; pan.maximumNumberOfTouches = 1
     pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
@@ -166,16 +203,17 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
       }
       return item
     }
-    accessibilityElements = [deleteButton,styleButton] + handleAccessibility
+    accessibilityElements = [styleButton,editButton,deleteButton,moreButton] + handleAccessibility
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-  func configure(selectionID: UUID, frame: CGRect, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false) {
-    if self.selectionID != selectionID { cancel(); self.selectionID = selectionID }
-    let next: [ElementHandle] = layout == nil ? NotebookElementResizeHandle.allCases.map(ElementHandle.corner) : [.start,.end,.bend]
+  func configure(selectionID: UUID, frame: CGRect, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false, manipulating: Bool = false) {
+    if self.selectionID != selectionID { cancel(); dismissPalette(); self.selectionID = selectionID }
+    let next: [ElementHandle] = layout == nil ? NotebookElementResizeHandle.visible(in: frame.size).map(ElementHandle.corner) : [.start,.end,.bend]
     if handles != next { handles = next; rebuildAccessibility() }
     connectionLayout = layout; projectionScale = scale; self.hasLabel = hasLabel
-    frameRect = frame; setNeedsLayout(); setNeedsDisplay()
+    frameRect = frame; toolbar.isHidden = manipulating
+    setNeedsLayout(); setNeedsDisplay()
   }
   override func didMoveToWindow() {
     super.didMoveToWindow(); uninstall()
@@ -184,46 +222,37 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
     gate.registerControlRegion(source: source) { [weak self] point, kind in
       guard let self, let window = installedWindow, !isHidden else { return false }
       let local = convert(point, from: window)
-      return (!deleteButton.isHidden && deleteButton.frame.contains(local)) || (!styleButton.isHidden && styleButton.frame.contains(local))
-        || (kind == .finger && handle(at: local) != nil)
+      // Dismissing a modal palette is native UI input too. The window's scene
+      // recognizer must not also select the paper beneath that same contact.
+      if palette != nil { return true }
+      return (!toolbar.isHidden && toolbar.frame.contains(local)) || (kind == .finger && handle(at: local) != nil)
     }
     gate.registerFingerCancellation(source: source) { [weak self] in
       self?.cancel(); self?.pan.isEnabled = false; self?.pan.isEnabled = true
     }
   }
   func uninstall() {
-    cancel(); installedWindow?.removeGestureRecognizer(pan); installedWindow = nil
+    cancel(); dismissPalette(); installedWindow?.removeGestureRecognizer(pan); installedWindow = nil
     gate.unregisterControlRegion(source: source); gate.unregisterFingerCancellation(source: source)
   }
   override func layoutSubviews() {
     super.layoutSubviews()
-    let candidates = [
-      CGPoint(x: frameRect.maxX - 22, y: frameRect.minY - 72),
-      CGPoint(x: frameRect.maxX - 22, y: frameRect.maxY + 28),
-      CGPoint(x: frameRect.midX - 22, y: frameRect.minY + 28),
-      CGPoint(x: frameRect.maxX + 28, y: frameRect.midY - 22),
-      CGPoint(x: frameRect.minX - 72, y: frameRect.midY - 22)
-    ].map { point in
-      CGRect(x: min(max(0, point.x), max(0, bounds.width - 44)),
-        y: min(max(0, point.y), max(0, bounds.height - 44)), width: 44, height: 44)
-    }
-    // Near a screen edge the delete action must not cover a resize corner.
-    let available = candidates.first { candidate in
-      handles.allSatisfy { !hitFrame($0).intersects(candidate) }
-    }
-    deleteButton.isHidden = available == nil
-    deleteButton.frame = available ?? .zero
-    let styleFrame = styleMenu == nil ? nil : candidates.first { candidate in
-      !candidate.intersects(deleteButton.frame) && handles.allSatisfy { !hitFrame($0).intersects(candidate) }
-    }
-    styleButton.isHidden = styleFrame == nil; styleButton.frame = styleFrame ?? .zero
+    let width = min(bounds.width - 24, graphic == nil ? 152 : 200.5), height = 52.0
+    let usable = bounds.inset(by: .init(top:max(12,safeAreaInsets.top + 76),left:12,
+      bottom:max(12,safeAreaInsets.bottom + 76),right:12))
+    let x = min(max(usable.minX,frameRect.midX-width/2),max(usable.minX,usable.maxX-width))
+    let candidates = [frameRect.minY - height - 30, frameRect.maxY + 30, usable.minY, usable.maxY-height]
+      .map { CGRect(x:x,y:min(max(usable.minY,$0),max(usable.minY,usable.maxY-height)),width:width,height:height) }
+    toolbar.frame = candidates.first { candidate in
+      !candidate.intersects(frameRect) && handles.allSatisfy { !hitFrame($0).intersects(candidate) }
+    } ?? candidates.first { candidate in handles.allSatisfy { !hitFrame($0).intersects(candidate) } } ?? candidates[0]
     for (index, handle) in handles.enumerated() {
       handleAccessibility[index].accessibilityFrameInContainerSpace = hitFrame(handle)
     }
   }
   override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
     guard bounds.contains(point) else { return false }
-    let control = (!deleteButton.isHidden && deleteButton.frame.contains(point)) || (!styleButton.isHidden && styleButton.frame.contains(point))
+    let control = !toolbar.isHidden && toolbar.frame.contains(point)
     if event?.allTouches?.contains(where: { $0.type == .pencil }) == true { return control }
     return control || handle(at: point) != nil
   }
@@ -269,38 +298,64 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
         circle.lineWidth = 2; circle.fill(); circle.stroke(); continue
       }
       let point = corner.point(in: frameRect)
-      UIColor.systemBackground.setFill()
-      let path = UIBezierPath(roundedRect:.init(x:point.x-4,y:point.y-4,width:8,height:8),cornerRadius:1)
+      let rect: CGRect
+      if corner.isCorner { rect = .init(x:point.x-5,y:point.y-5,width:10,height:10) }
+      else if corner.changesWidth { rect = .init(x:point.x-3,y:point.y-9,width:6,height:18) }
+      else { rect = .init(x:point.x-9,y:point.y-3,width:18,height:6) }
+      let path = UIBezierPath(roundedRect:rect,cornerRadius:corner.isCorner ? 5 : 3)
+      tintColor.setFill(); UIColor.systemBackground.setStroke()
       path.lineWidth = 1.5; path.fill(); path.stroke()
+
     }
   }
   func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
     guard touch.type == .direct else { return false }
-    if contact != nil { return true }
+    if pointingHandle != nil { return true }
     guard installedWindow != nil, gate.permitsNewContact,
       let revision = gate.beginFingerSequence(),
       touch.view === self, let handle = handle(at: touch.location(in: self)) else { return false }
     pencilRevision = revision
     contactOrigin = touch.location(in: installedWindow)
-    contact = beginManipulation?(handle.kind)
-    return contact != nil
+    pointingHandle = handle
+    return true
   }
   func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
   @objc private func resizeChanged() {
-    guard let contact, let revision = pencilRevision, gate.acceptsFingerSequence(revision) else { cancel(); return }
+    guard let revision = pencilRevision, gate.acceptsFingerSequence(revision) else { cancel(); return }
+    if pan.state == .began, let handle = pointingHandle { contact = beginManipulation?(handle.kind) }
+    guard let contact else { if pan.state != .possible { cancel() }; return }
     let point = pan.location(in: installedWindow)
     let delta = CGPoint(x: point.x - contactOrigin.x, y: point.y - contactOrigin.y)
     switch pan.state {
     case .began, .changed: contact.change(.init(x: delta.x, y: delta.y))
     case .ended:
-      self.contact = nil; pencilRevision = nil
+      self.contact = nil; pencilRevision = nil; pointingHandle = nil
       contact.end(.init(x: delta.x, y: delta.y))
     case .cancelled, .failed: cancel()
     default: break
     }
   }
-  private func cancel() { let old = contact; contact = nil; pencilRevision = nil; old?.cancel() }
-  @objc private func removeElement() { deleteElement?() }
+  private func cancel() { let old = contact; contact = nil; pencilRevision = nil; pointingHandle = nil; old?.cancel() }
+  @objc private func removeElement() { dismissPalette(); deleteElement?() }
+  @objc private func edit() { dismissPalette(); editElement?() }
+  private func dismissPalette() { palette?.dismiss(animated:false); palette = nil }
+  @objc private func showStyle() {
+    guard let graphic, palette == nil else { return }
+    var responder: UIResponder? = self
+    while responder != nil && !(responder is UIViewController) { responder = responder?.next }
+    guard let owner = responder as? UIViewController else { return }
+    let controller = NotebookElementStyleController(graphic:graphic)
+    controller.updateStyle = { [weak self] update in self?.updateStyle(update) }
+    controller.onDismiss = { [weak self, weak controller] in
+      if self?.palette === controller { self?.palette = nil }
+    }
+    // Anchor around the selection, not just the small button: the system must
+    // leave the edited geometry visible while the person chooses its colour.
+    controller.popoverPresentationController?.sourceView = self
+    controller.popoverPresentationController?.sourceRect = frameRect.union(toolbar.frame)
+    controller.popoverPresentationController?.permittedArrowDirections = .any
+    palette = controller; owner.present(controller,animated:true)
+  }
 }
 
 private final class ElementHandlePan: UIPanGestureRecognizer {

@@ -15,7 +15,7 @@ import XCTest
         let result = contact.frame
         XCTAssertEqual(corner.leading ? result.maxX : result.minX, corner.leading ? original.maxX : original.minX)
         XCTAssertEqual(corner.top ? result.maxY : result.minY, corner.top ? original.maxY : original.minY)
-        XCTAssertGreaterThanOrEqual(result.width, 44); XCTAssertGreaterThanOrEqual(result.height, 44)
+        XCTAssertGreaterThanOrEqual(result.width, 1); XCTAssertGreaterThanOrEqual(result.height, 1)
         XCTAssertTrue(page.contains(result))
         for scale in [0.15, 1, 3] {
           let screen = original.applying(.init(scaleX: scale, y: scale))
@@ -27,6 +27,33 @@ import XCTest
           XCTAssertEqual(projected.height, expected.height, accuracy: 0.000001)
         }
       }
+    }
+  }
+
+  func testTouchTargetsDoNotImposeA44PointGeometryMinimumOrAnArtificialBoardMaximum() {
+    let ref = EditableElementReference.spatial(boardID: UUID(), elementID: "small")
+    var small = NotebookElementManipulation(reference: ref, kind: .resize(.bottomTrailing),
+      frame: .init(x: 100,y:100,width:40,height:32), bounds:nil)
+    small.update(translation:.init(x:-28,y:-20))
+    XCTAssertEqual(small.frame,.init(x:100,y:100,width:12,height:12))
+    var large = NotebookElementManipulation(reference: ref, kind: .resize(.topLeading),
+      frame:.init(x:100,y:100,width:3000,height:2200),bounds:nil)
+    large.update(translation:.init(x:-400,y:-500))
+    XCTAssertEqual(large.frame,.init(x:-300,y:-400,width:3400,height:2700))
+    XCTAssertEqual(NotebookElementResizeHandle.visible(in:.init(width:40,height:32)).count,4)
+    XCTAssertEqual(NotebookElementResizeHandle.visible(in:.init(width:160,height:32)).count,6)
+  }
+
+  func testMaterialResizeProjectsTheActualLiveFrameBeforeCommit() async throws {
+    try await fixture { model, reference in
+      model.selectElement(reference)
+      let source = try XCTUnwrap(model.activePage?.elements.first?.frame)
+      let contact = try XCTUnwrap(model.beginElementManipulation(reference,kind:.resize(.topLeading)))
+      model.updateElementManipulation(contact,translation:.init(x:-35,y:-25))
+      XCTAssertEqual(model.elementPresentationFrame(reference,fallback:source),.init(x:65,y:55,width:235,height:185))
+      XCTAssertEqual(model.activePage?.elements.first?.frame,source,"A live resize is not a per-sample storage write")
+      model.cancelElementManipulation(contact)
+      XCTAssertEqual(model.elementPresentationFrame(reference,fallback:source),source)
     }
   }
 
@@ -254,7 +281,7 @@ import XCTest
       let center = controls.convert(.init(x:frame.midX,y:frame.midY),to:window)
       XCTAssertFalse(window.hitTest(center,with:nil) === controls,"The center is not a hidden resize handle")
       XCTAssertTrue(gate.permitsSceneContact(at:center,kind:.finger))
-      for handle in NotebookElementResizeHandle.allCases {
+      for handle in NotebookElementResizeHandle.visible(in: size) {
         let point = controls.convert(handle.point(in:frame),to:window)
         XCTAssertTrue(window.hitTest(point,with:nil) === controls)
         XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.finger))

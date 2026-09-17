@@ -37,6 +37,27 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
     self.connection = connection; self.vertices = vertices
   }
 
+  /// A native accepted edit and a delivered action interpret the same field
+  /// patch. It never changes source-ink ownership or authors a second action.
+  public func applying(_ patch: JSONValue) throws -> Self {
+    guard !patch.object.isEmpty,
+      Set(patch.object.keys).isSubset(of: Set(Self.causalFields + ["connection"]).subtracting(["sourceInkIDs"])) else {
+      throw CollaborationError("invalid_operation", "Правка геометрии не меняет её исходные измерения.")
+    }
+    var value = try JSONValue.encode(self)
+    for (part, supplied) in patch.object {
+      if part == "connection", let previous = value[part] {
+        guard !supplied.object.isEmpty, Set(supplied.object.keys).isSubset(of: Set(NotebookGraphicConnection.causalFields)) else {
+          throw CollaborationError("invalid_operation", "Правка связи называет её концы, изгиб, наконечники или положение подписи.")
+        }
+        value = value.setting(part, .object(previous.object.merging(supplied.object) { _, latest in latest }))
+      } else { value = value.setting(part, part == "vertices" && supplied == .null ? nil : supplied) }
+    }
+    let result = try value.decode(Self.self)
+    guard result.isValid else { throw CollaborationError("invalid_operation", "Недопустимая геометрия.") }
+    return result
+  }
+
   static let causalFields = ["shape", "style", "label", "representation", "visible", "sourceInkIDs", "vertices"]
   static let allCausalPaths = causalFields.map { [$0] } + NotebookGraphicConnection.causalFields.map { ["connection", $0] }
   var causalPaths: [[String]] {

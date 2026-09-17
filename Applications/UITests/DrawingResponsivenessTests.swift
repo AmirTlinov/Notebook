@@ -22,12 +22,21 @@ final class DrawingResponsivenessTests: XCTestCase {
       point.press(forDuration:0.01,thenDragTo:point.withOffset(.init(dx:dx,dy:dy)),withVelocity:.slow,thenHoldForDuration:0)
     }
     triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.6)).tap()
-    let right = app.descendants(matching:.any).matching(identifier:"resize-agent-element-trailingCenter").firstMatch
-    XCTAssertTrue(right.waitForExistence(timeout:5),"A hollow polygon is selected by its interior, not a narrow contour")
+    let corner = app.descendants(matching:.any).matching(identifier:"resize-agent-element-bottomTrailing").firstMatch
+    XCTAssertTrue(corner.waitForExistence(timeout:5),"A hollow polygon is selected by its interior, not a narrow contour")
+    XCTAssertFalse(app.descendants(matching:.any).matching(identifier:"resize-agent-element-trailingCenter").firstMatch.exists,
+      "Small objects do not hide one-axis grips under the visible corners")
     let initial = triangle.frame
     drag(triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.6)),dx:36,dy:24)
     XCTAssertEqual(triangle.frame.minX-initial.minX,36,accuracy:5)
     XCTAssertEqual(triangle.frame.minY-initial.minY,24,accuracy:5)
+    let small = triangle.frame
+    drag(corner.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)),dx:-20,dy:-16)
+    XCTAssertEqual(triangle.frame.width,small.width-20,accuracy:4)
+    XCTAssertEqual(triangle.frame.height,small.height-16,accuracy:4)
+    drag(corner.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)),dx:128,dy:128)
+    let right = app.descendants(matching:.any).matching(identifier:"resize-agent-element-trailingCenter").firstMatch
+    XCTAssertTrue(right.waitForExistence(timeout:5))
     let moved = triangle.frame
     drag(right.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)),dx:48,dy:25)
     XCTAssertEqual(triangle.frame.width-moved.width,48,accuracy:5)
@@ -38,7 +47,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(triangle.frame.height-wide.height,32,accuracy:5)
     XCTAssertEqual(triangle.frame.width,wide.width,accuracy:2)
     let triangleFinal = triangle.frame
+    let beforeLink = XCTAttachment(screenshot:app.screenshot()); beforeLink.name = "before-link-selection"; beforeLink.lifetime = .keepAlways; add(beforeLink)
     link.tap()
+    let afterLink = XCTAttachment(screenshot:app.screenshot()); afterLink.name = "after-link-selection"; afterLink.lifetime = .keepAlways; add(afterLink)
     let terminal = app.descendants(matching:.any).matching(identifier:"graphic-end-handle").firstMatch
     XCTAssertTrue(terminal.waitForExistence(timeout:5))
     let handle = terminal.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
@@ -58,6 +69,51 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(triangle.frame.size.height,triangleFinal.size.height,accuracy:3)
     XCTAssertEqual(diamond.frame.minX,finalDiamond.minX,accuracy:3)
     XCTAssertEqual(link.frame.midX,finalLink.midX,accuracy:3)
+    app.terminate()
+  }
+
+  func testSelectionPaletteAndContextMenuStayAnchoredAndKeepThePaper() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture",
+      "--notebook-native-connector","--notebook-native-polygons","--notebook-native-graphic-page"]
+    launchPortraitFixture(app)
+    let triangle = app.images["Треугольник"]
+    XCTAssertTrue(triangle.waitForExistence(timeout:10))
+    let paper = app.otherElements["paper-input"], paperFrame = paper.frame
+    triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.6)).tap()
+    let style = app.buttons["graphic-style-menu"], more = app.buttons["element-actions-menu"], remove = app.buttons["delete-agent-element"]
+    XCTAssertTrue(style.waitForExistence(timeout:5)); XCTAssertTrue(style.isHittable)
+    XCTAssertEqual(style.frame.midY,remove.frame.midY,accuracy:1)
+    XCTAssertEqual(more.frame.midY,remove.frame.midY,accuracy:1)
+    XCTAssertLessThan(more.frame.maxX-style.frame.minX,210)
+    let before = triangle.frame
+    let controls = XCTAttachment(screenshot:app.screenshot()); controls.name = "compact-element-controls"; controls.lifetime = .keepAlways; add(controls)
+    style.tap()
+    let blue = app.buttons["element-color-11"]
+    XCTAssertTrue(blue.waitForExistence(timeout:5)); blue.tap()
+    XCTAssertFalse(app.popovers.firstMatch.frame.intersects(triangle.frame), "The palette leaves the edited shape visible")
+    XCTAssertTrue(blue.isSelected)
+    app.buttons["element-width-4"].tap()
+    XCTAssertTrue(app.buttons["element-width-4"].isSelected)
+    app.buttons["element-dash-1"].tap()
+    XCTAssertTrue(app.buttons["element-dash-1"].isSelected)
+    let palette = XCTAttachment(screenshot:app.screenshot()); palette.name = "native-element-palette"; palette.lifetime = .keepAlways; add(palette)
+    // Outside the popover and its arrow: UIKit dismisses without a canvas gesture.
+    app.coordinate(withNormalizedOffset:.init(dx:0.8,dy:0.7)).tap()
+    XCTAssertTrue(blue.waitForNonExistence(timeout:3))
+    XCTAssertEqual(triangle.frame,before); XCTAssertEqual(paper.frame,paperFrame)
+    more.tap()
+    XCTAssertTrue(app.buttons["На задний план"].waitForExistence(timeout:3))
+    let menu = XCTAttachment(screenshot:app.screenshot()); menu.name = "native-element-context-menu"; menu.lifetime = .keepAlways; add(menu)
+    app.buttons["На передний план"].tap()
+    XCTAssertEqual(triangle.frame,before); XCTAssertEqual(paper.frame,paperFrame)
+    // The dismissed palette can be opened again; no retained dead presentation owner.
+    style.tap(); XCTAssertTrue(blue.waitForExistence(timeout:3)); XCTAssertTrue(blue.isSelected)
+    app.coordinate(withNormalizedOffset:.init(dx:0.8,dy:0.7)).tap()
+    XCTAssertTrue(blue.waitForNonExistence(timeout:3))
+    remove.tap(); XCTAssertTrue(triangle.waitForNonExistence(timeout:5))
+    XCTAssertEqual(paper.frame,paperFrame)
     app.terminate()
   }
 

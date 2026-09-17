@@ -227,6 +227,9 @@ struct SpatialWorkspaceView: View {
         NotebookSelectionGesture(inputGate: model.inputGate, onPreview: model.updateSelectionPreview,
           onPoint: { start, end, held, tapCount in
           guard cameraGesture == nil, !settling, let cohort else { return }
+          if !held, let selected = selectedElement(at: end, presence: presence) {
+            if tapCount > 1 { model.editSelectedElement(selected) }; return
+          }
           guard let capture = NotebookAttentionProjection.capture(start: start, end: end, model: model, presence: presence,
             cohort: cohort, installedInk: spatialInkSurfaces.installedSources()) else { return }
           if !held, capture.fragments.allSatisfy({ $0.elementID == nil && $0.target.kind != .cover }) {
@@ -255,17 +258,17 @@ struct SpatialWorkspaceView: View {
           }
           model.publishHumanContext(capture, target: target)
         }, onLift: { point in
-          guard cameraGesture == nil, !settling, let cohort,
-            let capture = NotebookAttentionProjection.capture(start: point, end: point, model: model, presence: presence,
-              cohort: cohort, installedInk: spatialInkSurfaces.installedSources(),
-              acceptsFirstFragment: { editableReference($0, boardID: presence.boardID) != nil }),
-            let fragment = capture.fragments.first,
-            let reference = editableReference(fragment, boardID: presence.boardID) else { return nil }
+          guard cameraGesture == nil, !settling, let cohort else { return nil }
+          let selected = selectedElement(at: point, presence: presence)
+          let capture = selected == nil ? NotebookAttentionProjection.capture(start: point, end: point, model: model, presence: presence,
+            cohort: cohort, installedInk: spatialInkSurfaces.installedSources(),
+            acceptsFirstFragment: { editableReference($0, boardID: presence.boardID) != nil }) : nil
+          guard let reference = selected ?? capture?.fragments.first.flatMap({ editableReference($0, boardID: presence.boardID) }) else { return nil }
           let scale = max(presence.camera.scale, 0.001)
           var contactID: UUID?
           func translation(_ delta: CGPoint) -> SpatialPoint { .init(x: delta.x / scale, y: delta.y / scale) }
-          return SceneSelectionLift(requiresHold: model.graphicElement(reference) == nil, begin: {
-            if model.selectionSession.element != reference || model.agentQuestion == nil {
+          return SceneSelectionLift(requiresHold: model.graphicElement(reference) == nil && model.selectionSession.editingElement != reference, begin: {
+            if let capture, model.selectionSession.element != reference || model.agentQuestion == nil {
               model.publishHumanContext(capture, target: .element(reference))
             }
             contactID = model.beginElementManipulation(reference, kind: .move)
@@ -737,6 +740,24 @@ struct SpatialWorkspaceView: View {
 
   }
 
+  /// A second contact hits the same accepted geometry that is on screen, not
+  /// the older source cut still awaiting the writer. This does not invent a
+  /// newer agent-context receipt: it continues the current human selection.
+  private func selectedElement(at point: CGPoint, presence: SessionPresence) -> EditableElementReference? {
+    guard let reference = model.selectionSession.editingElement,
+      let frame = NotebookAttentionProjection.editingFrame(reference, model: model, presence: presence) else { return nil }
+    guard let graphic = model.graphicElement(reference) else { return frame.contains(point) ? reference : nil }
+    // Settled shapes use normal topmost picking, including overlapping links.
+    guard model.graphicCommandDrafts[reference] != nil else { return nil }
+    let scale = max(0.001,presence.camera.scale)
+    let local = SpatialPoint(x:(point.x-frame.minX)/scale,y:(point.y-frame.minY)/scale)
+    if graphic.shape == .connector {
+      return model.graphicLayout(reference)?.hitTest(local,graphic:graphic,tolerance:12/scale) == true ? reference : nil
+    }
+    return NotebookGraphicGeometry.containsInterior(graphic,width:frame.width/scale,height:frame.height/scale,x:local.x,y:local.y)
+      || NotebookGraphicGeometry.hitTest(graphic,width:frame.width/scale,height:frame.height/scale,x:local.x,y:local.y,tolerance:12/scale) ? reference : nil
+  }
+
   private struct ElementPlaneRevision: Equatable {
     let cohortID: UUID?
     let generation: UUID?
@@ -745,7 +766,7 @@ struct SpatialWorkspaceView: View {
     let selection: EditableElementReference?
     let selectionID: UUID
     let manipulation: NotebookElementManipulation?
-    let graphicCommandPreview: NotebookElementManipulation?
+    let graphicCommandDrafts: [EditableElementReference: NotebookGraphicCommandDraft]
     let workingGraphics: [NotebookWorkingGraphic]
   }
 
@@ -755,7 +776,7 @@ struct SpatialWorkspaceView: View {
     let revision = ElementPlaneRevision(cohortID: cohort?.paintID, generation: model.sceneIndex?.generationID,
       focus: model.interactiveElementFocus, elements: elements,
       selection: selection, selectionID: model.selectionSession.id, manipulation: model.selectionSession.manipulation,
-      graphicCommandPreview: model.graphicCommandPreview, workingGraphics: model.workingGraphics)
+      graphicCommandDrafts: model.graphicCommandDrafts, workingGraphics: model.workingGraphics)
     return SceneCameraPlane(presence: presence, revision: revision, reanchorsOnRevision: false,
       isCameraActive: model.presencePhase == .active || cameraGesture != nil || panStart != nil || settling,
       installation: cohort?.installation(for: .elements),
@@ -798,8 +819,9 @@ struct SpatialWorkspaceView: View {
     }
     ForEach(elements.filter { $0.graphic == nil && cohort?.plan.allowsLive(.element($0.id), in: .board(presence.boardID)) == true }) { element in
         if let worldOrigin = element.worldOrigin {
-          let local = element.frame
           let reference = EditableElementReference.spatial(boardID: presence.boardID, elementID: element.id)
+          let local = model.elementPresentationFrame(reference, fallback: .init(x: element.frame.x, y: element.frame.y,
+            width: element.frame.width, height: element.frame.height))
           let base = presence.camera.worldToScreen(
             worldOrigin,
             viewport: viewport
@@ -886,7 +908,9 @@ struct SpatialWorkspaceView: View {
       if let id, !spatialInkSurfaces.isRetired(.cover(id)) { pins.insert(.item(id)) }
     }
     if case .spatial(let boardID, let id) = model.selectionSession.element, boardID == presence.boardID { pins.insert(.element(id)) }
-    if case .spatial(let boardID, let id) = model.graphicCommandPreview?.reference, boardID == presence.boardID { pins.insert(.element(id)) }
+    for reference in model.graphicCommandDrafts.keys {
+      if case .spatial(let boardID, let id) = reference, boardID == presence.boardID { pins.insert(.element(id)) }
+    }
     if let id = editingTextID(on: presence.boardID) { pins.insert(.element(id)) }
     if case .board(let boardID, let elementID) = model.interactiveElementFocus {
       pins.insert(.element(elementID))

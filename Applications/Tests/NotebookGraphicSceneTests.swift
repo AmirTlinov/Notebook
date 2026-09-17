@@ -200,10 +200,12 @@ import XCTest
     let finalContact = try XCTUnwrap(model.beginElementManipulation(node,kind:.move))
     XCTAssertTrue(model.finishElementManipulation(finalContact,translation:.init(x:0,y:90)))
     XCTAssertNil(model.selectionSession.manipulation, "The lifted contact no longer owns input")
-    XCTAssertEqual(model.graphicCommandPreview?.id, finalContact)
+    XCTAssertNotNil(model.graphicCommandDrafts[node])
     XCTAssertEqual(model.graphicLayout(link), preview, "Lift cannot expose the old node or its old bound line")
     XCTAssertEqual(try store.targetContentRevision(target:target), revision, "The accepted command has not run synchronously")
-    XCTAssertNil(model.beginElementManipulation(node,kind:.move), "A new drag cannot borrow the pre-commit source")
+    let nextContact = try XCTUnwrap(model.beginElementManipulation(node,kind:.move))
+    XCTAssertEqual(model.selectionSession.manipulation?.original, model.graphicCommandDrafts[node]?.rect)
+    model.cancelElementManipulation(nextContact)
     model.clearSelection()
     model.cancelElementManipulation(finalContact)
     let nextPencil = UUID()
@@ -213,7 +215,7 @@ import XCTest
     let moved = await model.finishPendingPersistence(); XCTAssertTrue(moved)
     await model.reloadExternalChanges()?.value
     let actual = try XCTUnwrap(store.readGraphicResolution(target:target,elementID:id).layout)
-    XCTAssertNil(model.graphicCommandPreview, "The canonical scene has taken over the accepted draft")
+    XCTAssertTrue(model.graphicCommandDrafts.isEmpty, "The canonical scene has taken over the accepted draft")
     XCTAssertEqual(model.graphicLayout(link),preview)
     XCTAssertEqual(actual,preview)
     let retained = try onBoard ? store.readSpatialElement(boardID:target.id,elementID:id)?.graphic
@@ -250,7 +252,7 @@ import XCTest
     let bent = await model.finishPendingPersistence(); XCTAssertTrue(bent)
     await model.reloadExternalChanges()?.value
     XCTAssertGreaterThan(abs(model.graphicElement(link)?.connection?.bend ?? 0),50)
-    XCTAssertNil(model.graphicCommandPreview)
+    XCTAssertTrue(model.graphicCommandDrafts.isEmpty)
     XCTAssertEqual(model.graphicLayout(link),heldBend)
     model.setGraphicLabel("1:2",reference:link)
     let labelled = await model.finishPendingPersistence(); XCTAssertTrue(labelled)

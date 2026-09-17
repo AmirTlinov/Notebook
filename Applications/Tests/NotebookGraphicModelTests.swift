@@ -76,9 +76,62 @@ import XCTest
     XCTAssertTrue(model.graphicCommandPending)
     try writer.release()
     let completed = await model.finishPendingPersistence(); XCTAssertTrue(completed)
-    XCTAssertNil(model.graphicCommandPreview)
+    XCTAssertTrue(model.graphicCommandDrafts.isEmpty)
     XCTAssertEqual(model.activePage?.elements.first?.frame, expected)
     XCTAssertEqual(model.graphicLayout(reference)?.frame, expected)
+  }
+
+  func testFastConsecutiveDragsAndStylesKeepEachAcceptedValueWhileSQLiteIsBusy() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-continuation-\(UUID())")
+    let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize); await model.finishPendingPersistence()
+    let pageID = try XCTUnwrap(model.activePage?.id), target = CollaborationTarget(kind:.page,id:pageID)
+    let store = model.store
+    _ = try store.applyCollaborationAction(.init(summary:"Two figures",expected:[.init(target:target,revision:store.targetContentRevision(target:target))],
+      operations: try ["a","b"].enumerated().map { index, id in
+        try .init(kind:.insertElement,target:target,id:id,values:["kind":.string("graphic"),"source":.string(""),
+          "frame":.encode(PageRect(x:100+Double(index)*220,y:100,width:100,height:100)),"graphic":.encode(NotebookGraphic())])
+      }),actor:UUID())
+    await model.reloadExternalChanges()?.value; await model.finishPendingPersistence()
+    let a = EditableElementReference.page(pageID:pageID,elementID:"a"), b = EditableElementReference.page(pageID:pageID,elementID:"b")
+    let writer = try NotebookSQLWriteBlocker(store:store)
+    defer { try? writer.release() }
+    model.selectElement(a)
+    let first = try XCTUnwrap(model.beginElementManipulation(a,kind:.move))
+    XCTAssertTrue(model.finishElementManipulation(first,translation:.init(x:20,y:30)))
+    let second = try XCTUnwrap(model.beginElementManipulation(a,kind:.resize(.bottomTrailing)))
+    XCTAssertEqual(model.selectionSession.manipulation?.original,.init(x:120,y:130,width:100,height:100))
+    XCTAssertTrue(model.finishElementManipulation(second,translation:.init(x:-60,y:-70)))
+    model.setGraphicStyle(reference:a) { $0.stroke = .init(red:1,green:0,blue:0) }
+    model.setGraphicStyle(reference:a) { $0.strokeWidth = 4 }
+    model.selectElement(b)
+    let other = try XCTUnwrap(model.beginElementManipulation(b,kind:.move))
+    XCTAssertTrue(model.finishElementManipulation(other,translation:.init(x:50,y:0)))
+    model.selectElement(a)
+    let third = try XCTUnwrap(model.beginElementManipulation(a,kind:.move))
+    XCTAssertTrue(model.finishElementManipulation(third,translation:.init(x:7,y:9)))
+    let expected = PageRect(x:127,y:139,width:40,height:30)
+    XCTAssertEqual(model.graphicLayout(a)?.frame,expected)
+    XCTAssertEqual(model.graphicElement(a)?.style.strokeWidth,4)
+    XCTAssertEqual(model.graphicElement(a)?.style.stroke,.init(red:1,green:0,blue:0))
+    XCTAssertEqual(model.graphicLayout(b)?.frame.x,370)
+    XCTAssertEqual(model.graphicCommandDrafts.count,2)
+    try writer.release()
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    await model.reloadExternalChanges()?.value
+    XCTAssertTrue(model.graphicCommandDrafts.isEmpty)
+    XCTAssertTrue(model.elementCommandSources.isEmpty)
+    let reopened = NotebookStore(root:root)
+    XCTAssertEqual(try reopened.readPageElement(pageID:pageID,elementID:"a")?.frame,expected)
+    XCTAssertEqual(try reopened.readPageElement(pageID:pageID,elementID:"a")?.graphic?.style,model.graphicElement(a)?.style)
+    let actions = try reopened.collaborationActions(afterID:nil).filter { $0.author == .human }
+    XCTAssertEqual(actions.count,6,"Every completed gesture/style choice is authored exactly once")
+    let last = try XCTUnwrap(actions.first { receipt in
+      receipt.action.operations.contains { $0.id == "a" && (try? $0.values["frame"]?.decode(PageRect.self)) == expected }
+    })
+    _ = try reopened.undoCollaborationAction(last.id,actor:model.actorID)
+    XCTAssertEqual(try reopened.readPageElement(pageID:pageID,elementID:"a")?.frame,.init(x:120,y:130,width:40,height:30))
   }
 
   func testRejectedMoveReleasesAcceptedDraftWithoutOverwritingConcurrentGeometry() async throws {
@@ -109,11 +162,13 @@ import XCTest
     try action(.updateElement, values: ["frame": .encode(concurrent), "graphic": .object(["label": .string("agent")])])
     XCTAssertTrue(model.finishElementManipulation(contact, translation: .init(x: 38, y: 26)))
     XCTAssertEqual(model.graphicLayout(reference), preview)
+    model.setGraphicStyle(reference:reference) { $0.strokeWidth = 8 }
     try await wait { !model.graphicCommandPending }
-    XCTAssertNil(model.graphicCommandPreview)
+    XCTAssertTrue(model.graphicCommandDrafts.isEmpty)
     XCTAssertNotNil(model.actionCue, "Rejection is visible, not a silently successful drag")
     await model.reloadExternalChanges()?.value
     XCTAssertEqual(model.graphicLayout(reference)?.frame, concurrent)
+    XCTAssertEqual(model.graphicElement(reference)?.style.strokeWidth,2,"A rejected predecessor cannot rebase its dependent edit onto a peer")
     XCTAssertEqual(model.graphicElement(reference)?.label, "agent")
     XCTAssertEqual(try store.readPageElement(pageID: pageID, elementID: "circle")?.frame, concurrent)
     XCTAssertEqual(try store.collaborationActions(afterID: nil).count, 2, "The rejected native command has no receipt to undo")

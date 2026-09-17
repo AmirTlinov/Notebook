@@ -123,3 +123,48 @@ func graphicPolygonVerticesAdoption(onBoard: Bool, undoEdit: Bool) throws {
   #expect(try f.presentation().geometryIDs == (undoEdit ? [] : ["triangle"]))
   #expect(inverse.undo?.preserved.isEmpty == undoEdit)
 }
+
+@Test("Принятое оформление и запись применяют один patch, не меняя происхождение чернил")
+func graphicPatchUsesTheSameReducerAsStorage() throws {
+  let f = try GraphicFixture(onBoard:false); defer { f.clean() }
+  let source = try f.stroke(); _ = try f.convert("circle",sources:[source])
+  let before = try #require(f.store.readPageElement(pageID:f.target.id,elementID:"circle")?.graphic)
+  let patch: JSONValue = .object(["style":try .encode(NotebookGraphic.Style(stroke:.init(red:0.2,green:0.4,blue:0.8),strokeWidth:4)),
+    "label":.string("Changed")])
+  let accepted = try before.applying(patch)
+  _ = try f.write(.updateElement,id:"circle",values:["graphic":patch])
+  #expect(try f.store.readPageElement(pageID:f.target.id,elementID:"circle")?.graphic == accepted)
+  #expect(accepted.sourceInkIDs == [source])
+  #expect(throws:CollaborationError.self) { try before.applying(.object(["sourceInkIDs":.array([])])) }
+  #expect(throws:CollaborationError.self) { try before.applying(.object(["style":try .encode(NotebookGraphic.Style(strokeWidth:-2))])) }
+}
+
+@Test("Native arrange uses complete membership and exact-source admission", arguments: [false, true])
+func graphicNativeArrangeUsesCompleteOwner(onBoard: Bool) throws {
+  let f = try GraphicFixture(onBoard:onBoard); defer { f.clean() }
+  for (index,id) in ["a","b","offscreen"].enumerated() {
+    var values: [String:JSONValue] = ["kind":.string("graphic"),"source":.string(""),
+      "frame":try .encode(PageRect(x:10,y:10,width:80,height:80)),"graphic":try .encode(NotebookGraphic())]
+    if onBoard { values["worldOrigin"] = try .encode(WorldPoint(x:Double(index)*100_000,y:0)) }
+    _ = try f.write(.insertElement,id:id,values:values)
+  }
+  let page = onBoard ? nil : try f.store.readPageElement(pageID:f.target.id,elementID:"a")
+  let spatial = onBoard ? try f.store.readSpatialElement(boardID:f.target.id,elementID:"a") : nil
+  if onBoard {
+    let window = try f.store.readSceneWindow(boardID:f.target.id,bounds:.init(origin:.zero,width:200,height:200))
+    #expect(!window.boards[0].board.elements.contains { $0.id == "offscreen" })
+  }
+  let arranged = try f.store.applyNativeElementEdit(.init(kind:.reorderElements,target:f.target,id:"a",values:[:]),
+    summary:"Front",expectedPage:page,expectedSpatial:spatial,moveToFront:true,actor:f.actor)
+  #expect(arranged.receipt.author == .human)
+  #expect(arranged.receipt.action.operations.first?.values["ids"] == .array(["b","offscreen","a"].map(JSONValue.string)))
+  // A peer edit after this accepted command is not our own predecessor.
+  _ = try f.write(.updateElement,id:"a",values:["graphic":.object(["label":.string("Peer")])],human:false)
+  #expect(throws:CollaborationError.self) {
+    try f.store.applyNativeElementEdit(.init(kind:.updateElement,target:f.target,id:"a",values:["graphic":.object(["label":.string("Stale")])]),
+      summary:"Stale",expectedPage:arranged.page,expectedSpatial:arranged.spatial,actor:f.actor)
+  }
+  let actual = onBoard ? try f.store.readSpatialElement(boardID:f.target.id,elementID:"a")?.graphic
+    : try f.store.readPageElement(pageID:f.target.id,elementID:"a")?.graphic
+  #expect(actual?.label == "Peer")
+}

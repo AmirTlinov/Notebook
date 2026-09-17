@@ -99,6 +99,45 @@ extension NotebookStore {
     return try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: nil, human: true)
   }
 
+  /// The next native edit is admitted against the exact element saved by its
+  /// predecessor, in the same SQLite transaction as the existing action executor.
+  /// A viewport is not an ordering authority: arrange reads complete membership
+  /// metadata here, without requiring off-screen element bodies in the UI.
+  public func applyNativeElementEdit(_ operation: CollaborationOperation, summary: String,
+    expectedPage: AgentElement?, expectedSpatial: SpatialElement?, moveToFront: Bool? = nil, actor: UUID
+  ) throws -> (receipt: CollaborationReceipt, page: AgentElement?, spatial: SpatialElement?) {
+    try commandTransaction(readAllowance: .agentCommand) {
+      let target = operation.target
+      guard [.page, .board, .cover].contains(target.kind), let id = operation.id else {
+        throw invalid("Нативной правке нужен владелец и ID элемента.")
+      }
+      let page = target.kind == .page ? try readPageElement(pageID: target.id, elementID: id) : nil
+      let spatial = target.kind == .page ? nil : try readSpatialElement(boardID: target.boardID ?? target.id, elementID: id)
+      guard page == expectedPage, spatial == expectedSpatial else {
+        throw CollaborationError("revision_conflict", "Элемент изменился до завершения жеста.")
+      }
+      var admitted = operation
+      if let moveToFront {
+        guard operation.kind == .reorderElements else { throw invalid("Порядок меняется только операцией перестановки.") }
+        let owner = target.kind.rawValue + ":" + target.id.uuidString.lowercased() + (target.kind == .page ? "|elements" : "")
+        var ids = try currentSQL!.rows("SELECT member FROM reference_element_order WHERE owner_key=? ORDER BY position,member", [.text(owner)])
+          .compactMap { $0[0].text }
+        guard ids.contains(id) else { throw invalid("Элемент больше не принадлежит выбранной поверхности.") }
+        ids.removeAll { $0 == id }
+        if moveToFront { ids.append(id) } else { ids.insert(id, at: 0) }
+        admitted = .init(kind: .reorderElements, target: target, id: id, values: ["ids": .array(ids.map(JSONValue.string))])
+      }
+      let revision = try targetContentRevision(target: target)
+      let ink = operation.kind == .convertInkToElement ? try inkRevision(on: target) : nil
+      let receipt = try applyNativeGraphicAction(.init(summary: summary,
+        references: [.init(target: target, elementID: operation.kind == .reorderElements ? nil : id, revision: revision)],
+        expected: [.init(target: target, revision: revision, inkRevision: ink)], operations: [admitted]), actor: actor)
+      return (receipt,
+        target.kind == .page ? try readPageElement(pageID: target.id, elementID: id) : nil,
+        target.kind == .page ? nil : try readSpatialElement(boardID: target.boardID ?? target.id, elementID: id))
+    }
+  }
+
   private func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID, requestFingerprint: String?, human: Bool) throws -> CollaborationReceipt {
     try prepare()
     return try commandTransaction(readAllowance: .agentCommand) {
@@ -635,19 +674,8 @@ struct CollaborationWorkspace {
       guard !op.values.isEmpty, Set(op.values.keys).isSubset(of: allowed) else { throw invalid("Поля изменения принадлежат выбранной операции.") }
       for (key, value) in op.values {
         if key == "graphic" {
-          guard var graphic = elements[index]["graphic"], !value.object.isEmpty,
-            Set(value.object.keys).isSubset(of: Set(NotebookGraphic.causalFields + ["connection"]).subtracting(["sourceInkIDs"])) else {
-            throw invalid("Правка геометрии не меняет её исходные измерения.")
-          }
-          for (part, supplied) in value.object {
-            if part == "connection", let previous = graphic[part] {
-              guard !supplied.object.isEmpty, Set(supplied.object.keys).isSubset(of: Set(NotebookGraphicConnection.causalFields)) else {
-                throw invalid("Правка связи называет её концы, изгиб, наконечники или положение подписи.")
-              }
-              graphic = graphic.setting(part, .object(previous.object.merging(supplied.object) { _, latest in latest }))
-            } else { graphic = graphic.setting(part, part == "vertices" && supplied == .null ? nil : supplied) }
-          }
-          elements[index] = elements[index].setting(key, graphic)
+          guard let raw = elements[index]["graphic"] else { throw invalid("Элемент не содержит геометрии.") }
+          elements[index] = try elements[index].setting(key, .encode(raw.decode(NotebookGraphic.self).applying(value)))
         } else { elements[index] = elements[index].setting(key, value) }
       }
     case .removeElement:

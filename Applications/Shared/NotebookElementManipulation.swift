@@ -7,6 +7,12 @@ enum NotebookElementResizeHandle: String, CaseIterable, Sendable {
   var top: Bool { self == .topLeading || self == .topTrailing || self == .topCenter }
   var changesWidth: Bool { self != .topCenter && self != .bottomCenter }
   var changesHeight: Bool { self != .leadingCenter && self != .trailingCenter }
+  var isCorner: Bool { changesWidth && changesHeight }
+  /// Side grips need room between the corners. Touch target size never changes
+  /// the authored geometry or makes a small object's centre into a resize grip.
+  static func visible(in size: CGSize) -> [Self] {
+    allCases.filter { $0.isCorner || ($0.changesWidth ? size.height : size.width) >= 112 }
+  }
   var label: String {
     switch self {
     case .topLeading: "верхний левый угол"
@@ -69,24 +75,23 @@ struct NotebookElementManipulation: Equatable, Sendable {
         connection = value
       }
     case .resize(let corner):
-      let minimumWidth = min(44, original.width), minimumHeight = min(44, original.height)
-      let widthLimit = max(2048, original.width), heightLimit = max(2048, original.height)
+      let minimumWidth = min(1, original.width), minimumHeight = min(1, original.height)
       let x: CGFloat, y: CGFloat, right: CGFloat, bottom: CGFloat
       if !corner.changesWidth { x = original.minX; right = original.maxX }
       else if corner.leading {
         right = original.maxX
-        x = min(original.maxX - minimumWidth, max(bounds?.minX ?? (original.maxX - widthLimit), original.minX + translation.x))
+        x = min(original.maxX - minimumWidth, max(bounds?.minX ?? -.greatestFiniteMagnitude, original.minX + translation.x))
       } else {
         x = original.minX
-        right = max(x + minimumWidth, min(bounds?.maxX ?? (x + widthLimit), original.maxX + translation.x))
+        right = max(x + minimumWidth, min(bounds?.maxX ?? .greatestFiniteMagnitude, original.maxX + translation.x))
       }
       if !corner.changesHeight { y = original.minY; bottom = original.maxY }
       else if corner.top {
         bottom = original.maxY
-        y = min(original.maxY - minimumHeight, max(bounds?.minY ?? (original.maxY - heightLimit), original.minY + translation.y))
+        y = min(original.maxY - minimumHeight, max(bounds?.minY ?? -.greatestFiniteMagnitude, original.minY + translation.y))
       } else {
         y = original.minY
-        bottom = max(y + minimumHeight, min(bounds?.maxY ?? (y + heightLimit), original.maxY + translation.y))
+        bottom = max(y + minimumHeight, min(bounds?.maxY ?? .greatestFiniteMagnitude, original.maxY + translation.y))
       }
       frame = .init(x: x, y: y, width: right - x, height: bottom - y)
     case .endpoint(let terminal):
