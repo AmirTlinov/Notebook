@@ -3,7 +3,7 @@ import Foundation
 import NotebookCore
 
 enum WorkspaceMagnificationPhase: Equatable {
-  case began(centroid: CGPoint, isOpeningApproach: Bool)
+  case began(centroid: CGPoint)
   case changed(
     scale: CGFloat,
     velocity: CGFloat,

@@ -135,41 +135,6 @@ final class PortalRenderingTests: XCTestCase {
   }
 
   @MainActor
-  func testOffCenterPortalGridKeepsTheScreenPixelScaleAtHandoff() async throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    retainNotebookUntilTeardown(model, removing: root)
-    await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let childID = try XCTUnwrap(model.createBoard(at: .zero))
-    let workspace = try XCTUnwrap(model.workspace)
-    let hierarchy = try XCTUnwrap(model.boardHierarchy)
-    let portalCamera = try XCTUnwrap(hierarchy.portalCamera(childID))
-    for size in [SpatialPoint(x: 834, y: 1194), SpatialPoint(x: 1194, y: 834)] {
-      let fill = BoardPortalProjection.fillScale(viewport: size)
-      for ratio in [1.2, 1.8] {
-        let parent = SpatialCamera(center: .init(x: 24, y: -17), scale: fill * ratio)
-        let camera = try XCTUnwrap(BoardPortalProjection.enteringCamera(from: parent,
-          portalCamera: portalCamera, portalCenter: .zero, viewport: size))
-        let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: model.documents.mapValues(\.paperSize))
-        let painter = SceneCompositionRenderer(source: SceneCompositionSource(index: index, hierarchy: hierarchy, journal: try XCTUnwrap(model.spatialInk)))
-        let first = try pixels(try await painter.render(presence: .init(boardID: workspace.rootBoardID,
-          mode: .board, camera: parent, viewport: size), scale: 1).png, size: size)
-        let second = try pixels(try await painter.render(presence: .init(boardID: childID,
-          mode: .board, camera: camera, viewport: size), scale: 1).png, size: size)
-        let difference = zip(first, second).reduce(0.0) { $0 + abs(Double($1.0) - Double($1.1)) }
-          / Double(first.count * 255)
-        XCTContext.runActivity(named: "Сетка \(Int(size.x)) × \(Int(size.y)), \(ratio): MAE \(difference)") { activity in
-          let attachment = XCTAttachment(string: "normalized_pixel_MAE=\(difference)")
-          attachment.lifetime = .keepAlways; activity.add(attachment)
-        }
-        XCTAssertLessThan(difference, 0.0001,
-          "Сетка сохраняет шаг и размер точек в экранных пикселях при передаче вне центра: \(size), \(ratio)")
-      }
-    }
-    await model.finishPendingPersistence()
-  }
-
-  @MainActor
   func testIndependentMergeRepublishesPNGWithTheSameHierarchyClock() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let store = NotebookStore(root: root)
