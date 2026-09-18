@@ -2,20 +2,20 @@ import Foundation
 import NotebookCore
 
 /// A captured physical owner, not a live selection that can change during paste.
-struct NotebookTldrawDestination: Identifiable, Hashable, Sendable {
+struct NotebookPasteDestination: Identifiable, Hashable, Sendable {
   let target: CollaborationTarget
   let title: String
   let center: SpatialPoint
   let availableSize: SpatialPoint
   let worldOrigin: WorldPoint?
   var id: String { target.kind.rawValue + ":" + target.id.uuidString }
-  func offset(for fragment: NotebookTldrawImport.Fragment) -> SpatialPoint {
+  func offset(for fragment: NotebookPasteFragment) -> SpatialPoint {
     .init(x:center.x-fragment.size.x/2,y:center.y-fragment.size.y/2)
   }
 }
 
 extension NotebookAppModel {
-  var tldrawDestination: NotebookTldrawDestination? {
+  var pasteDestination: NotebookPasteDestination? {
     guard case .ready = loadState, let presence, presencePhase == .settled else { return nil }
     switch presence.mode {
     case .board:
@@ -40,8 +40,8 @@ extension NotebookAppModel {
 
   /// The Mac can paste while the iPad is offline. The visible owner is an
   /// explicit option; an unavailable page never silently redirects a paste.
-  var tldrawDestinations: [NotebookTldrawDestination] {
-    var destinations = tldrawDestination.map { [$0] } ?? []
+  var pasteDestinations: [NotebookPasteDestination] {
+    var destinations = pasteDestination.map { [$0] } ?? []
     if let root = workspace?.rootBoardID, !destinations.contains(where:{$0.target.kind == .board && $0.target.id == root}) {
       destinations.append(.init(target:.init(kind:.board,id:root),title:"Пространство",
         center:.zero,availableSize:.init(x:834,y:1194),worldOrigin:.zero))

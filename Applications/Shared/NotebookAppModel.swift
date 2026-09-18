@@ -2960,7 +2960,7 @@ final class NotebookAppModel {
 
   /// Clipboard and SDK fragments use the ordinary atomic action executor. This
   /// task joins the existing command tail, so navigation/shutdown cannot outrun it.
-  func insertTldraw(_ fragment: NotebookTldrawImport.Fragment, at destination: NotebookTldrawDestination) async -> Bool {
+  func insertClipboardFragment(_ fragment: NotebookPasteFragment, at destination: NotebookPasteDestination) async -> Bool {
     guard fragment.canInsert, await finishPendingInteraction(boundary:.acceptedInput), !isClosing else { return false }
     let actor = actorID, predecessor = graphicCommandTask, generation = UUID()
     let task = Task<NotebookElementCommandResult?, Never> { [weak self] in
@@ -2972,7 +2972,7 @@ final class NotebookAppModel {
         let operations = try fragment.operations(target:destination.target,offset:destination.offset(for:fragment),worldOrigin:destination.worldOrigin)
         let receipt = try await persistence.submit(publishesChanges:true) { store in
           let revision = try store.targetContentRevision(target:destination.target)
-          return try store.applyNativeGraphicAction(.init(summary:"Вставить фрагмент tldraw",
+          return try store.applyNativeGraphicAction(.init(summary:"Вставить из буфера",
             expected:[.init(target:destination.target,revision:revision)],operations:operations),actor:actor)
         }
         pencilUndoHistory.recordCommand(ownerID:destination.target.id,actionID:receipt.id)

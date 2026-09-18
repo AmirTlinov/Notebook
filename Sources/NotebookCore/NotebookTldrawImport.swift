@@ -5,48 +5,19 @@ import CoreText
 /// A portable selection, not a second document model or storage owner. The
 /// resulting elements go through the existing action/undo/replication executor.
 public enum NotebookTldrawImport {
-  public struct Diagnostic: Codable, Equatable, Sendable {
-    public enum Severity: String, Codable, Sendable { case warning, error }
-    public let severity: Severity
-    public let code: String
-    public let sourceID: String?
-    public let message: String
-  }
-  public struct Item: Codable, Equatable, Sendable, Identifiable {
-    public let id: String
-    public let parentID: String?
-    public let type: String
-    public let label: String
-  }
-  public struct Fragment: Codable, Sendable {
-    public let items: [Item]
-    public let selectedIDs: [String]
-    public let elements: [AgentElement]
-    public let sourceIDs: [String: String]
-    public let diagnostics: [Diagnostic]
-    public let size: SpatialPoint
-    public let canInsert: Bool
 
-    public func operations(target: CollaborationTarget, offset: SpatialPoint = .init(x:0,y:0),
-      worldOrigin: WorldPoint? = nil) throws -> [CollaborationOperation] {
-      guard canInsert, [.page,.board,.cover].contains(target.kind), offset.x.isFinite, offset.y.isFinite,
-        abs(offset.x) <= 1_000_000, abs(offset.y) <= 1_000_000,
-        target.kind == .board ? worldOrigin?.isValid == true : worldOrigin == nil else {
-        throw CollaborationError("import_not_ready", "Выберите поддерживаемые элементы и точную поверхность вставки.")
-      }
-      return try elements.map { element in
-        var values = try JSONValue.encode(element).object
-        values.removeValue(forKey:"id")
-        values["frame"] = try .encode(PageRect(x:element.frame.x+offset.x,y:element.frame.y+offset.y,
-          width:element.frame.width,height:element.frame.height))
-        if let worldOrigin { values["worldOrigin"] = try .encode(worldOrigin) }
-        return .init(kind:.insertElement,target:target,id:element.id,values:values)
-      }
-    }
+  /// Recognize a structured format before choosing it over ordinary text/image.
+  /// A malformed marked envelope still belongs to this parser; never flatten it.
+  public static func recognizes(_ source: String) -> Bool {
+    if source.range(of: #"<div\s+data-tldraw(?:\s|=|>)"#, options: [.regularExpression, .caseInsensitive]) != nil { return true }
+    guard source.utf8.count <= NotebookTldrawClipboard.maximumBytes,
+      let json = try? JSONSerialization.jsonObject(with: Data(source.utf8)) as? [String: Any] else { return false }
+    return json["type"] as? String == "application/tldraw" || json["tldrawFileFormatVersion"] != nil
+      || (json["schema"] != nil && json["shapes"] is [Any])
   }
 
   public static func prepare(source: String, selectedIDs: [String]? = nil, namespace: UUID,
-    scale: Double = 1) throws -> Fragment {
+    scale: Double = 1) throws -> NotebookPasteFragment {
     guard scale.isFinite, (0.01...100).contains(scale) else { throw NotebookTldrawClipboard.failure("Масштаб должен быть от 0.01 до 100.") }
     let content = try NotebookTldrawClipboard.content(source)
     guard content["schema"]?["schemaVersion"] == .number(2), case .object = content["schema"]?["sequences"] else {
@@ -81,9 +52,9 @@ public enum NotebookTldrawImport {
       for shape in shapes where selected.contains(shape["parentId"]?.string ?? "") { selected.insert(shape["id"]!.string!) }
       if selected.count == before { break }
     }
-    var diagnostics: [Diagnostic] = [.init(severity:.warning,code:"theme",sourceID:nil,
+    var diagnostics: [NotebookPasteFragment.Diagnostic] = [.init(severity:.warning,code:"theme",sourceID:nil,
       message:"Цвета переносятся из стандартной светлой палитры tldraw; произвольные темы не входят в буфер.")]
-    func note(_ severity: Diagnostic.Severity, _ code: String, _ id: String?, _ message: String) {
+    func note(_ severity: NotebookPasteFragment.Diagnostic.Severity, _ code: String, _ id: String?, _ message: String) {
       if !diagnostics.contains(where:{$0.code == code && $0.sourceID == id}) {
         diagnostics.append(.init(severity:severity,code:code,sourceID:id,message:message))
       }
@@ -118,7 +89,7 @@ public enum NotebookTldrawImport {
     let keys: [(String,String)] = try records.keys.map { ($0,try orderKey($0)) }
     let sortedKeys = keys.sorted { a,b in a.1 == b.1 ? a.0 < b.0 : a.1 < b.1 }
     let ordered: [String] = sortedKeys.map { $0.0 }
-    let items = ordered.map { id in Item(id:id,parentID:records[id]?["parentId"]?.string.flatMap { records[$0] == nil ? nil : $0 },
+    let items = ordered.map { id in NotebookPasteFragment.Item(id:id,parentID:records[id]?["parentId"]?.string.flatMap { records[$0] == nil ? nil : $0 },
       type:records[id]!["type"]!.string!,label:title(records[id]!)) }
     let sourcePages = Set(selected.compactMap { id -> String? in
       var current=id, visited=Set<String>()

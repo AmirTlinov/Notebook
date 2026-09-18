@@ -18,7 +18,7 @@ struct NotebookTldrawImportTests {
       "shapes":.array(shapes),"bindings":.array(bindings)])
     return String(decoding:try JSONEncoder().encode(value),as:UTF8.self)
   }
-  static func prepare(_ shapes:[JSONValue], selected:[String]? = nil, bindings:[JSONValue] = [], scale:Double = 1) throws -> NotebookTldrawImport.Fragment {
+  static func prepare(_ shapes:[JSONValue], selected:[String]? = nil, bindings:[JSONValue] = [], scale:Double = 1) throws -> NotebookPasteFragment {
     try NotebookTldrawImport.prepare(source:content(shapes,bindings:bindings),selectedIDs:selected,namespace:namespace,scale:scale)
   }
   static var diagram: [JSONValue] {
@@ -130,7 +130,7 @@ struct NotebookTldrawImportTests {
     let target = CollaborationTarget(kind:onBoard ? .board : .page,id:onBoard ? workspace.rootBoardID : workspace.selectedPageID!)
     let fragment = try Self.prepare(Self.diagram,bindings:Self.bindings)
     let operations = try fragment.operations(target:target,offset:.init(x:20,y:40),worldOrigin:onBoard ? .zero : nil)
-    let action = CollaborationAction(summary:"Вставить фрагмент tldraw",expected:[.init(target:target,revision:try store.targetContentRevision(target:target))],operations:operations)
+    let action = CollaborationAction(summary:"Вставить из буфера",expected:[.init(target:target,revision:try store.targetContentRevision(target:target))],operations:operations)
     let receipt = try store.applyNativeGraphicAction(action,actor:actor)
     #expect(receipt.author == .human)
     let reopened = NotebookStore(root:root)

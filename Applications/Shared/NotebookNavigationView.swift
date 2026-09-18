@@ -44,7 +44,7 @@ struct NotebookNavigationView: View {
           if path.count > 1 { Text(path.dropLast().joined(separator: " › ")).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
           Text(path.last ?? "Пространство").font(.system(size:14,weight:.medium)).lineLimit(1)
         }.padding(.leading, 8).frame(maxWidth: 200, alignment: .leading)
-        if let destination = model.tldrawDestination { NotebookActionsMenu(destination:destination) }
+        if let destination = model.pasteDestination { NotebookActionsMenu(destination:destination) }
         Button { showsSearch = true } label: { Image(systemName: "magnifyingglass").frame(width: 44, height: 44).contentShape(Rectangle()) }
           .accessibilityLabel("Найти мысль").accessibilityIdentifier("notebook-search")
           .keyboardShortcut("f", modifiers: .command)

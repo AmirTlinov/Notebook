@@ -17,7 +17,7 @@ import NotebookCore
     provider.registerDataRepresentation(forTypeIdentifier:UTType.plainText.identifier,visibility:.all) { completion in
       completion(Data("Labels alone must not win".utf8),nil); return nil
     }
-    let source=try await NotebookTldrawPaste.source([provider])
+    guard case .composition(let source) = try await NotebookClipboard.read([provider], availableSize: .init(x:834,y:1194)) else { return XCTFail("Structure must win over its text representation") }
     let fragment=try NotebookTldrawImport.prepare(source:source,namespace:UUID())
     XCTAssertEqual(fragment.elements.count,2)
     for onBoard in [false,true] {
@@ -30,8 +30,8 @@ import NotebookCore
       model.updatePresence(.init(boardID:workspace.rootBoardID,mode:onBoard ? .board : .page,
         camera:.init(center:center,scale:1),viewport:.init(x:834,y:1194),focusedItemID:onBoard ? nil : workspace.selectedItemID,
         openProgress:onBoard ? 0 : 1,notebookPageID:onBoard ? nil : pageID),settled:true)
-      let destination=try XCTUnwrap(model.tldrawDestination)
-      let saved=await model.insertTldraw(fragment,at:destination)
+      let destination=try XCTUnwrap(model.pasteDestination)
+      let saved=await model.insertClipboardFragment(fragment,at:destination)
       XCTAssertTrue(saved)
       await model.reloadExternalChanges()?.value
       func ids() throws -> Set<String> {

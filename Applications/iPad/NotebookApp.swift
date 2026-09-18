@@ -57,8 +57,8 @@ struct NotebookApp: App {
           // test still uses the real system PasteButton/provider path.
           if phase == .active,
             ProcessInfo.processInfo.arguments.contains(NotebookDrawingFixture.launchArgument),
-            let html = ProcessInfo.processInfo.environment["NOTEBOOK_TLDRAW_CLIPBOARD"] {
-            UIPasteboard.general.setItems([["public.html": Data(html.utf8)]], options:[.localOnly:true])
+            let representation = NotebookClipboardFixture.item {
+            UIPasteboard.general.setItems([representation], options:[.localOnly:true])
           }
         #endif
         model.chat?.dictation.setForeground(phase != .background)
