@@ -5,7 +5,7 @@ import NotebookCore
 enum NotebookScriptAPI {
   static let readMethods: Set<String> = ["help", "observe", "read", "readMany", "board", "notebook", "page", "document",
     "context", "attention", "code", "search", "reference", "referenceStatus", "action", "render", "pageMap",
-    "pageImage", "regions", "place", "exportStatus", "presentation", "wait"]
+    "pageImage", "regions", "place", "prepareTldraw", "exportStatus", "presentation", "wait"]
   static var help: JSONValue { .object([
     "status": .string("ready"), "api_version": .number(2), "language": .string("TypeScript 7.0.2 or ECMAScript / QuickJS 2026-06-04"),
     "limits": .object(["active_runs": .number(1), "queued_runs": .number(8), "source_bytes": .number(262144),
@@ -95,6 +95,18 @@ extension NotebookScriptCoordinator {
     case "read": return try await snapshotRead([args])
     case "readMany": return try await snapshotRead(args.array("queries"), cursor: args.string("expectedCursor"), many: true)
     case "observe": return try await observe(args)
+    case "prepareTldraw":
+      guard let source = args.string("source"), let namespace = args.string("namespace").flatMap(UUID.init(uuidString:)) else {
+        throw CollaborationError("invalid_arguments", "Нужны source и namespace из nb.id(key).")
+      }
+      let selected = try args["selectedIDs"]?.decode([String].self)
+      let scale = try args["scale"]?.decode(Double.self) ?? 1
+      // Conversion does not reserve the save queue or grant destination authority.
+      let task = Task.detached(priority: .userInitiated) {
+        try NotebookTldrawImport.prepare(source:source,selectedIDs:selected,namespace:namespace,scale:scale)
+      }
+      let fragment = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+      return try await evidenceSnapshot(.encode(fragment))
     case "wait":
       guard let milliseconds = args.number("milliseconds"), milliseconds >= 0, milliseconds <= 1000 else {
         throw CollaborationError("invalid_wait", "Ожидание ограничено одной секундой.")

@@ -48,6 +48,16 @@ struct NotebookApp: App {
       .statusBarHidden(true)
       .persistentSystemOverlays(.hidden)
       .onChange(of: scenePhase, initial: true) { _, phase in
+        #if DEBUG
+          // The physical XCTest runner is background-only and cannot seed the
+          // system pasteboard. Seed it in the foreground isolated fixture; the
+          // test still uses the real system PasteButton/provider path.
+          if phase == .active,
+            ProcessInfo.processInfo.arguments.contains(NotebookDrawingFixture.launchArgument),
+            let html = ProcessInfo.processInfo.environment["NOTEBOOK_TLDRAW_CLIPBOARD"] {
+            UIPasteboard.general.setItems([["public.html": Data(html.utf8)]], options:[.localOnly:true])
+          }
+        #endif
         model.chat?.dictation.setForeground(phase != .background)
         model.setPreparationForeground(phase == .active)
         model.setSelectionSurfaceActive(phase == .active)

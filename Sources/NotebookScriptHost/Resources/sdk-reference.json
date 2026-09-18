@@ -19728,6 +19728,947 @@
         }
       }
     },
+    "prepareTldraw": {
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "source": {
+            "maxLength": 1048576,
+            "$ref": "#/$defs/__schema0"
+          },
+          "namespace": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "selectedIDs": {
+            "maxItems": 512,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            }
+          },
+          "scale": {
+            "type": "number",
+            "minimum": 0.01,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "source",
+          "namespace"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string"
+          },
+          "__schema1": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      },
+      "returns": "Pure preparation of a tldraw clipboard HTML/envelope or TLContent into separate editable native elements. Returns items, sourceIDs (source ID to new ID), selectedIDs, elements, size, diagnostics and canInsert. Groups become independent children. Unsupported selected records block the entire fragment; select supported IDs and prepare again. No clipboard access, network, writes or destination authority. Use a stable namespace from nb.id. Read the destination and use its basis in one transaction of insertElement operations; values are each element without id, plus worldOrigin for a board. Adjust individual frames for composition, retaining binding IDs. Prepared basis has no owners and cannot authorize insertion.",
+      "example": "const copy = await nb.prepareTldraw({source:args.source,namespace:await nb.id('tldraw-fragment'),selectedIDs:args.selectedIDs}); await emit(copy.data);",
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "parentID": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "type": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "label": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "type",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "selectedIDs": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "elements": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "markdown",
+                        "web",
+                        "graphic",
+                        "nativeText"
+                      ]
+                    },
+                    "frame": {
+                      "$ref": "#/$defs/__schema1"
+                    },
+                    "source": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "html": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "css": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "javaScript": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "state": {
+                      "$ref": "#/$defs/__schema3"
+                    },
+                    "appearance": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "intact",
+                            "partial",
+                            "erased"
+                          ]
+                        },
+                        "sourceIsCompleteAppearance": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "sourceIsCompleteAppearance"
+                      ],
+                      "additionalProperties": {}
+                    },
+                    "graphic": {
+                      "type": "object",
+                      "properties": {
+                        "shape": {
+                          "type": "string",
+                          "enum": [
+                            "ellipse",
+                            "rectangle",
+                            "triangle",
+                            "diamond",
+                            "plus",
+                            "connector"
+                          ]
+                        },
+                        "style": {
+                          "type": "object",
+                          "properties": {
+                            "stroke": {
+                              "$ref": "#/$defs/__schema4"
+                            },
+                            "strokeWidth": {
+                              "type": "number",
+                              "exclusiveMinimum": 0,
+                              "maximum": 1000000
+                            },
+                            "fill": {
+                              "$ref": "#/$defs/__schema4"
+                            },
+                            "dash": {
+                              "type": "string",
+                              "enum": [
+                                "solid",
+                                "dashed",
+                                "dotted"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "stroke",
+                            "strokeWidth"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "label": {
+                          "type": "string",
+                          "maxLength": 100000
+                        },
+                        "representation": {
+                          "type": "string",
+                          "enum": [
+                            "ink",
+                            "geometry"
+                          ]
+                        },
+                        "visible": {
+                          "type": "boolean"
+                        },
+                        "sourceInkIDs": {
+                          "maxItems": 16,
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/__schema5"
+                          }
+                        },
+                        "connection": {
+                          "type": "object",
+                          "properties": {
+                            "start": {
+                              "$ref": "#/$defs/__schema6"
+                            },
+                            "end": {
+                              "$ref": "#/$defs/__schema6"
+                            },
+                            "bend": {
+                              "type": "number",
+                              "minimum": -1000000,
+                              "maximum": 1000000
+                            },
+                            "startArrowhead": {
+                              "$ref": "#/$defs/__schema7"
+                            },
+                            "endArrowhead": {
+                              "$ref": "#/$defs/__schema7"
+                            },
+                            "routing": {
+                              "type": "string",
+                              "enum": [
+                                "straight",
+                                "elbow",
+                                "curved"
+                              ]
+                            },
+                            "labelPosition": {
+                              "type": "number",
+                              "minimum": 0,
+                              "maximum": 1
+                            },
+                            "bendPosition": {
+                              "type": "number",
+                              "minimum": 0,
+                              "maximum": 1
+                            }
+                          },
+                          "required": [
+                            "start",
+                            "end",
+                            "bend",
+                            "startArrowhead",
+                            "endArrowhead",
+                            "labelPosition"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "cornerRadius": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0,
+                              "maximum": 1000000
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "vertices": {
+                          "anyOf": [
+                            {
+                              "minItems": 3,
+                              "maxItems": 4,
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema8"
+                              }
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "shape",
+                        "style",
+                        "label",
+                        "representation",
+                        "visible",
+                        "sourceInkIDs"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "graphicResolution": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "state": {
+                              "type": "string",
+                              "const": "geometry"
+                            },
+                            "frame": {
+                              "$ref": "#/$defs/__schema1"
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "frame"
+                          ],
+                          "additionalProperties": {}
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "state": {
+                              "type": "string",
+                              "const": "hidden"
+                            }
+                          },
+                          "required": [
+                            "state"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "state": {
+                              "type": "string",
+                              "const": "pending"
+                            },
+                            "dependencies": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema0"
+                              }
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "dependencies"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "surface": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "board",
+                            "cover",
+                            "page",
+                            "codeFragment"
+                          ]
+                        },
+                        "ownerID": {
+                          "$ref": "#/$defs/__schema9"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "ownerID"
+                      ],
+                      "additionalProperties": {}
+                    },
+                    "worldOrigin": {
+                      "type": "object",
+                      "properties": {
+                        "tileX": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "tileY": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "localX": {
+                          "type": "number",
+                          "minimum": 0,
+                          "exclusiveMaximum": 6651.968503937008
+                        },
+                        "localY": {
+                          "type": "number",
+                          "minimum": 0,
+                          "exclusiveMaximum": 6651.968503937008
+                        }
+                      },
+                      "required": [
+                        "tileX",
+                        "tileY",
+                        "localX",
+                        "localY"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "textStyle": {
+                      "type": "object",
+                      "properties": {
+                        "fontSize": {
+                          "type": "number",
+                          "minimum": 8,
+                          "maximum": 240
+                        },
+                        "weight": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1
+                        },
+                        "red": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1
+                        },
+                        "green": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1
+                        },
+                        "blue": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1
+                        },
+                        "alpha": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1
+                        }
+                      },
+                      "required": [
+                        "fontSize",
+                        "weight",
+                        "red",
+                        "green",
+                        "blue",
+                        "alpha"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "frame",
+                    "source",
+                    "html",
+                    "css",
+                    "javaScript",
+                    "state"
+                  ],
+                  "additionalProperties": {}
+                }
+              },
+              "sourceIDs": {
+                "type": "object",
+                "propertyNames": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "diagnostics": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "severity": {
+                      "type": "string",
+                      "enum": [
+                        "warning",
+                        "error"
+                      ]
+                    },
+                    "code": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "sourceID": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "message": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  },
+                  "required": [
+                    "severity",
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "size": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "$ref": "#/$defs/__schema2"
+                  },
+                  "y": {
+                    "$ref": "#/$defs/__schema2"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": {}
+              },
+              "canInsert": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "items",
+              "selectedIDs",
+              "elements",
+              "sourceIDs",
+              "diagnostics",
+              "size",
+              "canInsert"
+            ],
+            "additionalProperties": false
+          },
+          "basis": {
+            "type": "object",
+            "properties": {
+              "workspaceID": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "owners": {
+                "maxItems": 1024,
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema10"
+                }
+              }
+            },
+            "required": [
+              "workspaceID",
+              "owners"
+            ],
+            "additionalProperties": false
+          },
+          "coverage": {
+            "type": "object",
+            "properties": {
+              "complete": {
+                "type": "boolean"
+              },
+              "next": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            "required": [
+              "complete"
+            ],
+            "additionalProperties": false
+          },
+          "cursor": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        "required": [
+          "data",
+          "basis",
+          "coverage",
+          "cursor"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string"
+          },
+          "__schema1": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "y": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "width": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "height": {
+                "$ref": "#/$defs/__schema2"
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "width",
+              "height"
+            ],
+            "additionalProperties": {}
+          },
+          "__schema2": {
+            "type": "number"
+          },
+          "__schema3": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema3"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema3"
+                }
+              }
+            ]
+          },
+          "__schema4": {
+            "type": "object",
+            "properties": {
+              "red": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "green": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "blue": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "red",
+              "green",
+              "blue"
+            ],
+            "additionalProperties": false
+          },
+          "__schema5": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema6": {
+            "type": "object",
+            "properties": {
+              "point": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": -1000000,
+                    "maximum": 1000000
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": -1000000,
+                    "maximum": 1000000
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false
+              },
+              "binding": {
+                "type": "object",
+                "properties": {
+                  "elementID": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "normalizedAnchor": {
+                    "type": "object",
+                    "properties": {
+                      "x": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "y": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "isExact": {
+                    "type": "boolean"
+                  },
+                  "isPrecise": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "elementID",
+                  "normalizedAnchor",
+                  "isExact",
+                  "isPrecise"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "point"
+            ],
+            "additionalProperties": false
+          },
+          "__schema7": {
+            "type": "string",
+            "enum": [
+              "none",
+              "arrow",
+              "triangle",
+              "square",
+              "dot",
+              "pipe",
+              "diamond",
+              "inverted",
+              "bar"
+            ]
+          },
+          "__schema8": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "y": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "x",
+              "y"
+            ],
+            "additionalProperties": false
+          },
+          "__schema9": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema10": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "codeFragment"
+                      },
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "page"
+                      },
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "document"
+                      },
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "board"
+                      },
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "cover"
+                      },
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "boardID": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id",
+                      "boardID"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "workspace"
+                      },
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "description": "rootBoardID"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "revision": {
+                "type": "string",
+                "minLength": 1
+              },
+              "stateRevision": {
+                "type": "string"
+              },
+              "sourceRevision": {
+                "type": "string"
+              },
+              "lifecycleRevision": {
+                "description": "Complete item extent from an explicit itemLifecycle read; covers off-screen content and is not mutation authority.",
+                "$ref": "#/$defs/__schema11"
+              },
+              "inkRevision": {
+                "description": "For appendInkStroke: drawingRevision of a page, spatialInkRevision of a board/cover, or inkRevision returned by nb.code.",
+                "$ref": "#/$defs/__schema12"
+              }
+            },
+            "required": [
+              "target",
+              "revision"
+            ],
+            "additionalProperties": false
+          },
+          "__schema11": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "__schema12": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "place": {
       "input": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",

@@ -33,7 +33,7 @@
     context: read("context"), attention: read("attention"), code: read("code"),
     search: read("search"), reference: read("reference"), referenceStatus: read("referenceStatus"),
     action: read("action"), render: read("render"), pageMap: read("pageMap"),
-    pageImage: read("pageImage"), regions: read("regions"), place: read("place"),
+    pageImage: read("pageImage"), regions: read("regions"), place: read("place"), prepareTldraw: read("prepareTldraw"),
     exportStatus: read("exportStatus"), presentation: read("presentation"), wait: read("wait"), id: key => host("id", { key }),
     transaction: (key, action) => host("transaction", { key, action }),
     undo: effect("undo"), point: effect("point"), present: effect("present"), cancelPresentation: effect("cancelPresentation"), export: effect("export"),

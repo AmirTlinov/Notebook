@@ -17,6 +17,9 @@ struct NotebookMacApp: App {
           Text("Изменения ещё не сохранены: \(failure)")
           Button("Повторить сохранение") { model.retryPendingPersistence() }
         }
+        Button("Вставить из tldraw…") { lifecycle.showTldrawImport() }
+          .accessibilityIdentifier("tldraw-paste-open")
+          .disabled(model.tldrawDestinations.isEmpty)
         Menu("Codex") {
           Text(model.agentStartupError ?? "Задачи Codex доступны из Notebook на iPad")
           Text("Разговор, модель и разрешения принадлежат Codex")
@@ -48,6 +51,7 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
   let launch: NotebookApplicationLaunch
   private var launchTask: Task<Void, Never>?
   @ObservationIgnored private(set) var pairingWindowController: NotebookMacPairingWindowController?
+  @ObservationIgnored private var tldrawWindow: NotebookMacTldrawWindow?
   private(set) var launchesAtLogin = false
   private(set) var loginError: String?
   private let isRunningTests: Bool
@@ -96,6 +100,14 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
     showPairing()
     return false
+  }
+
+  func showTldrawImport() {
+    guard let model=launch.model, !model.tldrawDestinations.isEmpty else { return }
+    // A new explicit paste captures a new clipboard and destination snapshot.
+    tldrawWindow?.close()
+    tldrawWindow=NotebookMacTldrawWindow(model:model)
+    tldrawWindow?.present()
   }
 
   func showPairing() {

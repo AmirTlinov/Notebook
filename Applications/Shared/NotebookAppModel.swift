@@ -2849,6 +2849,34 @@ final class NotebookAppModel {
       summary:"Изменить наконечник связи")
   }
 
+  /// Clipboard and SDK fragments use the ordinary atomic action executor. This
+  /// task joins the existing command tail, so navigation/shutdown cannot outrun it.
+  func insertTldraw(_ fragment: NotebookTldrawImport.Fragment, at destination: NotebookTldrawDestination) async -> Bool {
+    guard fragment.canInsert, await finishPendingInteraction(boundary:.acceptedInput), !isClosing else { return false }
+    let actor = actorID, predecessor = graphicCommandTask, generation = UUID()
+    let task = Task<NotebookElementCommandResult?, Never> { [weak self] in
+      guard let self else { return nil }
+      defer { if graphicCommandGeneration == generation { graphicCommandTask = nil } }
+      _ = await predecessor?.value
+      await withCheckedContinuation { continuation in inputGate.performAfterIdle { continuation.resume() } }
+      do {
+        let operations = try fragment.operations(target:destination.target,offset:destination.offset(for:fragment),worldOrigin:destination.worldOrigin)
+        let receipt = try await persistence.submit(publishesChanges:true) { store in
+          let revision = try store.targetContentRevision(target:destination.target)
+          return try store.applyNativeGraphicAction(.init(summary:"Вставить фрагмент tldraw",
+            expected:[.init(target:destination.target,revision:revision)],operations:operations),actor:actor)
+        }
+        pencilUndoHistory.recordCommand(ownerID:destination.target.id,actionID:receipt.id)
+        reloadExternalChanges()
+        showCue("Вставлено: \(fragment.elements.count)")
+        return .init(page:nil,spatial:nil)
+      } catch { showCue(error.localizedDescription); return nil }
+    }
+    graphicCommandGeneration = generation
+    graphicCommandTask = task
+    return await task.value != nil
+  }
+
   @discardableResult
   func performElementOperation(_ kind: CollaborationOperation.Kind, reference: EditableElementReference,
     values: [String: JSONValue], summary: String, moveToFront: Bool? = nil) -> Bool {

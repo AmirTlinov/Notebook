@@ -1242,3 +1242,37 @@ final class NotebookScriptServiceTests: XCTestCase {
     XCTAssertTrue(normalized.array("operations").first?["values"]?.string("html")?.contains("<strong>Independent markup</strong>") == true)
   }
 }
+
+extension NotebookScriptServiceTests {
+  func testTldrawSelectionCompositionAndUndoCrossTheTypedSandboxedSDK() async throws {
+    let owner=try Owner(), host=try await coordinator(owner), run=UUID()
+    defer { try? FileManager.default.removeItem(at:owner.store.root) }
+    let page=try XCTUnwrap(owner.store.loadIndex().selectedPageID)
+    let source = #"{"schema":{"schemaVersion":2,"sequences":{}},"shapes":[{"id":"shape:a","type":"geo","parentId":"page:a","index":"a1","x":10,"y":20,"rotation":0,"props":{"geo":"triangle","w":120,"h":100,"text":"First"}},{"id":"shape:b","type":"geo","parentId":"page:a","index":"a2","x":240,"y":20,"rotation":0,"props":{"geo":"ellipse","w":100,"h":100,"text":"Second"}},{"id":"shape:ignored","type":"image","parentId":"page:a","index":"a3","x":600,"y":20,"rotation":0,"props":{}}],"bindings":[]}"#
+    _ = try await host.handle(.init(op:.start,runID:run,apiVersion:2,code:"""
+      const input=args as {source:string;page:string};
+      const copy=await nb.prepareTldraw({source:input.source,namespace:await nb.id('fragment'),selectedIDs:['shape:a','shape:b']});
+      if (!copy.data.canInsert || copy.data.elements.length!==2 || copy.basis.owners.length) throw new Error('Preparation contract');
+      const target={kind:'page' as const,id:input.page};
+      const before=await nb.page({id:input.page});
+      const operations=copy.data.elements.map(e => ({kind:'insertElement' as const,target,id:e.id,values:{
+        kind:e.kind,source:e.source,html:e.html,css:e.css,javaScript:e.javaScript,state:e.state,graphic:e.graphic,
+        frame:{...e.frame,x:e.frame.x+30,y:e.frame.y+(e.id===copy.data.sourceIDs['shape:b']?180:40)}
+      }}));
+      const saved=await nb.transaction('paste',{base:before.basis,summary:'Compose editable tldraw selection',operations});
+      const first=await nb.page({id:input.page,elementID:copy.data.sourceIDs['shape:a']});
+      const second=await nb.page({id:input.page,elementID:copy.data.sourceIDs['shape:b']});
+      await nb.undo('undo-paste',{actionID:saved.actionID});
+      const after=await nb.page({id:input.page});
+      return {first:first.data,second:second.data,remaining:after.data.elements.length,publication:saved.publication};
+      """,arguments:.object(["source":.string(source),"page":.string(page.uuidString)]),language:.typescript))
+    let result=try await finish(host,run)
+    XCTAssertEqual(result.string("status"),"completed","\(result)")
+    XCTAssertEqual(result["result"]?["first"]?["element"]?["graphic"]?["shape"],.string("triangle"))
+    XCTAssertEqual(result["result"]?["second"]?["element"]?["frame"]?["y"],.number(180))
+    XCTAssertEqual(result["result"]?["remaining"],.number(0))
+    XCTAssertEqual(result["result"]?["publication"]?["saved"],.string("confirmed"))
+    XCTAssertNotEqual(result["result"]?["publication"]?["shownOnIPad"],.string("confirmed"))
+    await host.shutdown()
+  }
+}

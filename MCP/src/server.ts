@@ -34,7 +34,7 @@ export const executionInput=z.discriminatedUnion("op",[
   z.object({op:z.literal("cancel"),run_id:z.uuid(),...cursorFields}).strict(),
 ]);
 const reads=z.enum(["help","observe","read","readMany","board","notebook","page","document","context","attention",
-  "code","search","reference","referenceStatus","action","render","pageMap","pageImage","regions","place","exportStatus","presentation","wait"]);
+  "code","search","reference","referenceStatus","action","render","pageMap","pageImage","regions","place","prepareTldraw","exportStatus","presentation","wait"]);
 type Value=Record<string,unknown>;
 type Image={type:"image";data:string;mimeType:string};
 type PendingRun={run_id:string;op:string;after_seq:number;admission:"unknown"|"confirmed";observed_status?:string};
