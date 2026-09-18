@@ -153,8 +153,9 @@ Reflow меняет derived frame связи, сохраняя её authored fra
 
 - Поиск здесь имеет один hit. Continuation отдельно доказан Core и signed SDK
   тестами; эти latency серии не измеряют раскрытие нескольких страниц.
-- SQL VM counts из S1–S3/S9 не являются полным количеством read/decode за эти
-  семь Mac-сценариев. Последние здесь не измерены.
+- SQL VM counts из S1–S3/S9 не являются количеством read/decode этих
+  latency-серий. Отдельные настоящие счётчики семи сценариев приведены ниже;
+  они не подменяют время неинструментированных сборок.
 - Финальный signed CLI gate дал две компиляции: 48.457917 / 51.187334 ms,
   sampled RSS 39 272 448 / 43 859 968 B, sampled CPU 713 599 / 844 513 ns.
   Sampling interval 20 ms; это не true peak или память всей программы.
@@ -174,3 +175,63 @@ Reflow меняет derived frame связи, сохраняя её authored fra
 `.build/s10-completion-signed-20260918/verification.json`.
 В них сохранены actual source/app identities, команды, запросы/ответы и driver.
 Готовность всех десяти срезов не следует из этого Mac-only сравнения.
+
+## SQL/read/decode: отдельная диагностическая серия
+
+После исправления SDK `8c00bbe` выполнены ещё **33 v1 + 33 v2** сценария
+с теми же рецептами и новыми isolated roots. Оба Mac Release приложения
+подписаны Apple Development; production и iPad не участвовали. Только две
+private source copies получили одинаковые 76 строк наблюдателя в прежних
+`NotebookSQLConnection.rows`, `NotebookStoredPayload.init(from:)` и синхронных
+persistence closures. Canonical runtime, SQL, бюджеты и публичный API не менялись.
+
+Измерены admitted SQL result rows/bytes перед копированием и успешные decode
+физических `NotebookStoredPayload<Value>`. Повторное чтение/декодирование
+считается повторно; это **не disk I/O и не все JSON conversions**. Начало/конец
+каждой программы отделены offset-ами append-only JSONL. Setup, проверки результата,
+undo и фоновая работа вне этих scopes не включены. Наблюдатель пишет агрегат
+до возврата persistence closure, не удерживает thread-local через `await`.
+
+Две raw scope метки отражают **маршруты**, не непересекающиеся доменные роли:
+`domain` — native command closure, `journal` — script persistence closure.
+Последняя в v1 включает также прямые SDK page/document reads, поэтому нельзя
+приписывать разность этих столбцов только оптимизации журнала. Ниже показана
+их сумма — медиана пяти обычных или трёх reconnect повторов:
+
+| Задача | SQL rows v1 → v2 | SQL value bytes v1 → v2 | Fragment decodes v1 → v2 |
+|---|---:|---:|---:|
+| Подпись | 877 → 362 | 425027 → 91470 | 680 → 134 |
+| Внеэкранный поиск | 53 → 74 | 11406 → 15172 | 18 → 26 |
+| Один блок | 49 → 67 | 12396 → 16481 | 18 → 28 |
+| Три связанных объекта | 2407 → 1840 | 1273810 → 893687 | 2050 → 1410 |
+| Перестройка схемы | 1376 → 682 | 632479 → 188920 | 987 → 233 |
+| Продолжение после конфликта | 1213 → 487 | 591256 → 139410 | 958 → 191 |
+| Reconnect | 1341 → 409 | 659834 → 112874 | 1022 → 155 |
+
+**Поиск и адресный блок стали дороже по этим счётчикам.** Это не скрыто
+выигрышем остальных задач и не превращено в обещание общего ускорения.
+После graph undo остаётся причинная история: пять повторов дают диапазоны
+rows v1 **2133–2677**, v2 **1660–2020**; декодирования соответственно
+**1778–2320**, **1230–1590**. Это одинаковые последовательные рецепты, не
+пять восстановлений базы в исходное состояние. Полные диапазоны сохранены.
+
+Сопоставлены и совпали **39** последовательных различных проекций страницы
+и **81** блок документа с тем же перечнем полей, что в предыдущих сериях.
+Реальная обработка scripted conflict и replay осталась прежней. Обе private
+app и принадлежащие им XPC остановлены; проверены отсутствие ошибок metric I/O
+и неизменные fingerprints после сборки. Синтетический Swift 6 strict-concurrency
+fixture отдельно подтвердил Codable equivalence, repeated/failed decodes,
+вложенный scope и disabled mode; это не подмена настоящих workload counts.
+
+Идентичности instrumented sources:
+- v1 `7f51e673a22b95b933e995db58207ce041839500f7da3d5dcb8099978a412035`,
+  CDHash `523318c04695f0f7364c12ba00995651b52ec7ef`;
+- v2 `a242c415a49bf9115a29bc3727d82b09f64b2a81d0b53ff9ca284538e6704b30`,
+  CDHash `b5c00b70c8811a20a4161de4441549481da89907`.
+
+Evidence: `.build/s10-read-metrics-20260918/comparison.json`, `evidence-manifest.json`,
+`drivers/` (patcher, collector, build/launch/stop, рецепты и агрегатор),
+`{baseline,v2}/instrumentation/`, `build.json`, `run/counts/` и raw JSONL.
+**Instrumented wall/CPU timings не заменяют прежние uninstrumented latency
+серии.** Этот результат закрывает прежнее отсутствие read/decode counts семи
+сценариев, но не физическую доставку, gestures или системные frames/CPU/GPU/memory.

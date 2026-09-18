@@ -10927,3 +10927,27 @@ Evidence: `.build/gui200-erasure-fix-20260918/` (Core logs, final-summary.json,
 обновление на месте и повтор Instruments на том же содержимом. Ускорение
 в процентах, пик памяти, FPS/GPU, десять повторов и 30 минут не подтверждены.
 GUI-200 остаётся In Progress; нативный PASS не объявлен физической приёмкой.
+
+## 18 сентября 2026 — S10: настоящие read/decode counts семи сценариев
+
+Закрыто прежнее отсутствие SQL/read/decode измерений: ещё **33 v1 + 33 v2**
+public MCP сценария на новых isolated roots и двух signed Mac Release copies.
+Одинаковый observer добавлен только в private copies; canonical runtime/API
+не менялись. Admitted SQL rows/bytes и successful physical-fragment decodes
+измерены вокруг программы, без setup/verify/undo и фонового чтения.
+Это не disk I/O, не все JSON conversions и не новая latency серия.
+
+Медианы SQL rows v1→v2: подпись **877→362**, поиск **53→74**, блок **49→67**,
+связанный граф **2407→1840**, reflow **1376→682**, conflict **1213→487**,
+reconnect **1341→409**. Fragment decodes подписи **680→134**. Удорожание
+поиска/блока не скрыто; диапазоны и causal-history рост graph повторов сохранены.
+**39** последовательных проекций страницы и **81** блок совпали.
+Raw `journal` scope означает script-persistence closure и в v1 включает
+SDK reads: не называем его счётчиком исключительно журнала.
+
+Полный метод, bytes/decodes и fingerprints — `docs/programmable-notebook-measurements.md`,
+квитанции — `.build/s10-read-metrics-20260918/comparison.json`, `evidence-manifest.json`
+и `{baseline,v2}/run/`. Collector 3/3 synthetic tests и отдельный Swift 6 helper
+fixture PASS, оба настоящих workload drivers PASS. Две private app и четыре
+принадлежащих им XPC остановлены по точным executable paths. Production,
+iPad и доверие не менялись; это не приёмка общего release cut.
