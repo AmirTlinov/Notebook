@@ -60,6 +60,13 @@ struct NotebookSelectionReadTests {
     }
     let args = JSONValue.object(["includeImage": .bool(true)])
     try publish(1, surface: .init(kind: .board, id: header.rootBoardID))
+    let withoutPeerPresence = try await coordinator.context(.init(method: "observe", arguments: args))
+    #expect(withoutPeerPresence["data"]?["visual"]?["status"] == .string("pending"),
+      "A local Mac camera must not stand in for the connected iPad")
+    #expect(try store.acceptPresencePublication(.init(sessionID:session,sequence:1,phase:.settled,presence:presence),
+      deviceID:device,connectionID:connection))
+    try store.savePresence(.init(boardID:header.rootBoardID,mode:.board,
+      camera:.init(center:.init(x:900,y:800),scale:2),viewport:presence.viewport))
     let matching = try await coordinator.context(.init(method: "observe", arguments: args))
     #expect(matching["data"]?["visual"]?["status"] == .string("ready"))
     try publish(2, surface: .init(kind: .page, id: #require(store.readItemHeaders(limit: 1).first?.firstPageID)))
