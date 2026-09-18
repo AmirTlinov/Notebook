@@ -22,6 +22,20 @@ import Testing
     #expect(result.readProjection()["sourceIsCompleteAppearance"] == .bool(false))
     #expect(appearance([]).state == .intact)
   }
+  @Test(arguments: [31, 40, 64, 127]) func sampledFullRimDoesNotLeaveBooleanSeams(_ steps: Int) {
+    let corners = [SpatialPoint(x:0,y:0),.init(x:160,y:0),.init(x:160,y:100),.init(x:0,y:100),.init(x:0,y:0)]
+    var points: [SpatialPoint] = []
+    for (a,b) in zip(corners,corners.dropFirst()) {
+      for i in 0...steps {
+        let t = Double(i)/Double(steps)
+        points.append(.init(x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t))
+      }
+    }
+    for size in [CGSize(width:160,height:100),CGSize(width:220,height:180)] {
+      let result = appearance([cut(points,width:24)],size:size)
+      #expect(result.state == .erased, "No artificial batch seam: \(result.remaining.boundingBoxOfPath)")
+    }
+  }
   @Test func partialEraseKeepsOnlySurvivingPaintAcrossResizeAndOverlap() {
     let erased = cut([.init(x:-10,y:50),.init(x:30,y:50)])
     let result = appearance([erased,erased])
@@ -41,6 +55,41 @@ import Testing
     #expect(part.state == .partial)
     #expect(!part.contains(.init(x:80,y:50),tolerance:12))
     #expect(part.contains(.init(x:10,y:10),tolerance:0))
+  }
+  @Test func normalizedMaskPreservesMeasuredTriangleCoverageAcrossBatchesAndResize() {
+    // Independent coverage oracle: the original Metal triangles, not another
+    // boolean operation or a resampled/simplified eraser centreline.
+    let samples = (0..<192).map { i in
+      let t = Double(i) * 0.19
+      return SpatialInkSample(point:.init(x:frame.x + 80 + 65*sin(t),y:frame.y + 50 + 38*sin(t*1.7)),
+        timeOffset:Double(i)/240,width:3+Double(i%19),opacity:1,force:1,azimuth:0,altitude:1)
+    }
+    let erasure = InkElementErasure(target:.init(elementID:"box",frame:frame),samples:samples)
+    let points = samples.map { sample in
+      let p = erasure.target.localPoint(sample)
+      return InkStrokeGeometry.RenderPoint(position:.init(Float(p.x),Float(p.y)),
+        radius:Float(sample.width/2),premultipliedColor:.init(repeating:1))
+    }
+    var vertices: [InkStrokeGeometry.Vertex] = []
+    InkStrokeGeometry.appendStrokeVertices(renderPoints:points,to:&vertices)
+    for size in [CGSize(width:160,height:100),CGSize(width:240,height:75)] {
+      let mask = NotebookElementAppearance.erasurePath([erasure,erasure],size:size)
+      let triangles = stride(from:0,to:vertices.count,by:3).map { index in
+        let triangle = CGMutablePath()
+        for i in 0..<3 {
+          let p = vertices[index+i].position
+          let point = CGPoint(x:Double(p.x)*size.width/160,y:Double(p.y)*size.height/100)
+          if i == 0 { triangle.move(to:point) } else { triangle.addLine(to:point) }
+        }
+        triangle.closeSubpath(); return triangle
+      }
+      for x in stride(from:0.317,to:size.width,by:3) {
+        for y in stride(from:0.193,to:size.height,by:3) {
+          let point = CGPoint(x:x,y:y)
+          #expect(mask.contains(point) == triangles.contains { $0.contains(point) })
+        }
+      }
+    }
   }
   @Test func addressedIndexSurvivesMigrationAndUndo() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

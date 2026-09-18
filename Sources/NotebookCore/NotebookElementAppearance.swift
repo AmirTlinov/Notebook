@@ -35,7 +35,36 @@ public struct NotebookElementAppearance {
 
   /// Exactly the positive-winding triangles that the live renderer erases.
   public static func erasurePath(_ erasures: [InkElementErasure], size: CGSize) -> CGPath {
-    let path = CGMutablePath()
+    // Repeated passes can cover the same small area with tens of thousands of
+    // overlapping triangles. Never hand that entire triangle soup to Clipper:
+    // normalize bounded batches and union them in balanced levels, retaining
+    // the same measured coverage rather than simplifying Pencil samples.
+    var batch = CGMutablePath()
+    var triangles = 0
+    var lastTriangle: [CGPoint] = []
+    var levels: [CGPath?] = []
+    func flush() {
+      guard triangles > 0 else { return }
+      var merged = batch.normalized()
+      var level = 0
+      while level < levels.count, let previous = levels[level] {
+        merged = previous.union(merged)
+        levels[level] = nil
+        level += 1
+      }
+      if level == levels.count { levels.append(merged) }
+      else { levels[level] = merged }
+      batch = CGMutablePath()
+      triangles = 0
+      // Shared coverage, not merely touching edges: CoreGraphics quantizes
+      // each boolean operand independently. The same last triangle in both
+      // batches prevents a numerical crack without enlarging the erase.
+      if let first = lastTriangle.first {
+        batch.move(to:first)
+        for p in lastTriangle.dropFirst() { batch.addLine(to:p) }
+        batch.closeSubpath()
+      }
+    }
     for erasure in erasures {
       var points: [InkStrokeGeometry.RenderPoint] = []
       for sample in erasure.samples {
@@ -51,12 +80,16 @@ public struct NotebookElementAppearance {
       func point(_ p: SIMD2<Float>) -> CGPoint { .init(x:Double(p.x)*sx,y:Double(p.y)*sy) }
       for i in stride(from:0,to:vertices.count,by:3) {
         let a = vertices[i].position, b = vertices[i+1].position, c = vertices[i+2].position
-        path.move(to:point(a))
-        for p in (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x) >= 0 ? [b,c] : [c,b] { path.addLine(to:point(p)) }
-        path.closeSubpath()
+        lastTriangle = [point(a)] + ((b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x) >= 0 ? [b,c] : [c,b]).map(point)
+        batch.move(to:lastTriangle[0])
+        for p in lastTriangle.dropFirst() { batch.addLine(to:p) }
+        batch.closeSubpath()
+        triangles += 1
+        if triangles == 128 { flush() }
       }
     }
-    return path
+    flush()
+    return levels.compactMap { $0 }.reduce(CGMutablePath() as CGPath) { $0.union($1) }
   }
 }
 

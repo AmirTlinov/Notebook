@@ -600,7 +600,13 @@ import XCTest
   func testBoardFullErasureHasNoSelectableGhostAfterReloadAndUndoRestoresIt() async throws {
     try await eraseElement(onBoard:true,full:true)
   }
-  private func eraseElement(onBoard: Bool, full: Bool = false) async throws {
+  func testPageDenseErasureDoesNotBlockSceneAndSurvivesReopen() async throws {
+    try await eraseElement(onBoard:false,dense:true)
+  }
+  func testBoardDenseErasureDoesNotBlockSceneAndSurvivesReopen() async throws {
+    try await eraseElement(onBoard:true,dense:true)
+  }
+  private func eraseElement(onBoard: Bool, full: Bool = false, dense: Bool = false) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("element-erasing-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
@@ -646,8 +652,14 @@ import XCTest
       return .init(x: p.x, y: p.y)
     }
     func attachment(_ stage: String) {
+      let started = ContinuousClock.now
       let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
         window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+      }
+      if dense {
+        let elapsed = started.duration(to:.now)
+        print("DENSE_ERASURE_SCENE board=\(onBoard) stage=\(stage) elapsed=\(elapsed)")
+        XCTAssertLessThan(elapsed,.seconds(1),"A repeated erase must not block a scene update")
       }
       let proof = XCTAttachment(image: image); proof.name = "\(full ? "full" : "partial")-erase-\(onBoard ? "board" : "page")-\(stage)"
       proof.lifetime = .keepAlways; add(proof)
@@ -660,9 +672,14 @@ import XCTest
       trace = zip(corners,corners.dropFirst()).flatMap { a,b in
         (0...40).map { i in CGPoint(x:a.x+(b.x-a.x)*Double(i)/40,y:a.y+(b.y-a.y)*Double(i)/40) }
       }
+    } else if dense {
+      trace = (0...2048).map { i in
+        let angle = Double(i%32)*2*Double.pi/32
+        return CGPoint(x:260+2*cos(angle),y:510+40*sin(angle))
+      }
     } else { trace = (0...30).map { CGPoint(x:235+Double($0)*2,y:510) } }
     for (i,point) in trace.enumerated() {
-      touch.point = screen(point); touch.sampleTime += 0.01
+      touch.point = screen(point); touch.sampleTime += dense ? 1.0/240 : 0.01
       if i == 0 {
         touch.sourceView = window.hitTest(touch.point, with: event)
         receiver.touchesBegan([touch], with: event)
