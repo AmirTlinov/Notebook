@@ -21,7 +21,6 @@ struct NotebookChatPanel: View {
   @State private var editingProject: CodexProject?
   @State private var terminalDrag: NotebookTerminalSplit?
   @State private var terminalFraction: Double?
-  @State private var showsChatActions = false
   @FocusState private var draftFocused: Bool
   @GestureState private var draggingTerminal = false
 
@@ -30,28 +29,32 @@ struct NotebookChatPanel: View {
       if chat.expanded {
         VStack(spacing: 0) {
           header
-          if chat.threadID == nil || chat.browsesChats { browserToolbar }
+          Rectangle().fill(NotebookChrome.border).frame(height: 0.5)
           GeometryReader { geometry in
             let split = NotebookTerminalSplit(height: geometry.size.height, fraction: terminalFraction ?? chat.files.window.terminalFraction)
             let height = chat.files.window.terminal == true ? split.conversation : geometry.size.height
             VStack(spacing: 0) {
-              HStack(spacing: 0) {
-                VStack(spacing: 0) {
-                  if chat.threadID == nil || chat.browsesChats {
-                    NotebookChatBrowser(chat: chat, openPairing: openPairing,
-                      editProject: { editingProject = $0 }, createInProject: { project in
-                        chat.selectProject(project); createChat()
-                      })
+              VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                  VStack(spacing: 0) {
+                    if chat.threadID == nil || chat.browsesChats {
+                      browserToolbar
+                      NotebookChatBrowser(chat: chat, openPairing: openPairing,
+                        editProject: { editingProject = $0 }, createInProject: { project in
+                          chat.selectProject(project); createChat()
+                        })
+                    } else { conversation(height: height) }
                   }
-                  else { conversation(height: height) }
-                  composer
+                  .frame(maxWidth: .infinity, maxHeight: .infinity)
+                  if chat.files.window.sidebar {
+                    Rectangle().fill(NotebookChrome.border).frame(width: 0.5)
+                    NotebookProjectFilesView(files: chat.files, computer: chat.computerID)
+                      .frame(width: filesWidth)
+                  }
                 }
-                .frame(maxWidth: .infinity)
-                if chat.files.window.sidebar {
-                  Divider()
-                  NotebookProjectFilesView(files: chat.files, computer: chat.computerID)
-                    .frame(width: filesWidth)
-                }
+                .frame(maxHeight: .infinity)
+                Rectangle().fill(NotebookChrome.border).frame(height: 0.5)
+                composer
               }.frame(height: height)
               if chat.files.window.terminal == true {
                 terminalDivider(split)
@@ -133,17 +136,34 @@ struct NotebookChatPanel: View {
 
   private var header: some View {
     HStack(spacing: 0) {
-      Button { showsChatActions = true } label: {
+      Menu {
+        if !chat.computers.isEmpty {
+          Section("Компьютер") {
+            ForEach(chat.computers, id: \.deviceID) { computer in
+              Button { model.chooseChatComputer(computer.deviceID) } label: {
+                Label(computer.displayName + (chat.onlineComputers.contains(computer.deviceID) ? "" : " · не в сети"),
+                  systemImage: chat.computerID == computer.deviceID ? "checkmark" : "laptopcomputer")
+              }.disabled(chat.switchingComputer)
+            }
+          }
+        }
+        if !chat.projects.isEmpty {
+          Section("Настройки проектов") {
+            ForEach(chat.projects) { project in
+              Button(project.name, systemImage: "folder") { editingProject = project }
+                .accessibilityIdentifier("notebook-chat-project-settings-" + project.id)
+            }
+          }
+        }
+        Section {
+          Button("Совместные ходы", systemImage: "clock.arrow.circlepath", action: openHistory)
+            .accessibilityIdentifier("collaboration-history")
+          Button("Подключение и устройства", systemImage: "link", action: openPairing)
+            .accessibilityIdentifier("pairing-settings")
+        }
+      } label: {
         Image(systemName: "line.3.horizontal").font(NotebookChrome.iconFont).frame(width: 44, height: 44).contentShape(Rectangle())
       }.accessibilityLabel("Действия чата").accessibilityIdentifier("notebook-chat-menu")
-        .popover(isPresented: $showsChatActions) {
-          VStack(alignment: .leading, spacing: 0) {
-            Button("Совместные ходы", systemImage: "clock.arrow.circlepath") { showsChatActions = false; openHistory() }
-              .frame(minHeight: 44).accessibilityIdentifier("collaboration-history")
-            Button("Подключение и устройства", systemImage: "link") { showsChatActions = false; openPairing() }
-              .frame(minHeight: 44).accessibilityIdentifier("pairing-settings")
-          }.font(.system(size:14)).padding(16).presentationCompactAdaptation(.popover).presentationBackground(NotebookChrome.surface)
-        }
       Button {
         chat.browsesChats.toggle()
       } label: {
@@ -182,7 +202,7 @@ struct NotebookChatPanel: View {
         .accessibilityLabel("Новый чат").accessibilityIdentifier("notebook-chat-new")
         .disabled(chat.saving || chat.voice.capturing)
       Button { draftFocused = false; chat.expanded = false } label: {
-        Image(systemName: "minus").frame(width: 44, height: 44).contentShape(Rectangle())
+        Image(systemName: "xmark").frame(width: 44, height: 44).contentShape(Rectangle())
       }
         .accessibilityLabel("Свернуть чат").accessibilityIdentifier("notebook-chat-toggle")
     }
@@ -200,35 +220,11 @@ struct NotebookChatPanel: View {
   }
 
   private var browserToolbar: some View {
-    HStack(spacing: 12) {
-      Picker("Показать", selection: Binding(get: { chat.browserMode }, set: chat.browse)) {
-        ForEach(NotebookChatController.BrowserMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-      }.pickerStyle(.segmented).accessibilityIdentifier("notebook-chat-browser-mode")
-      Menu {
-        if !chat.computers.isEmpty {
-          Section("Компьютер") {
-            ForEach(chat.computers, id: \.deviceID) { computer in
-              Button { model.chooseChatComputer(computer.deviceID) } label: {
-                Label(computer.displayName + (chat.onlineComputers.contains(computer.deviceID) ? "" : " · не в сети"),
-                  systemImage: chat.computerID == computer.deviceID ? "checkmark" : "laptopcomputer")
-              }.disabled(chat.switchingComputer)
-            }
-          }
-        }
-        Button("Подключение и устройства", systemImage: "link", action: openPairing)
-        Button("Совместные ходы", systemImage: "clock.arrow.circlepath", action: openHistory)
-        ForEach(chat.projects) { project in Button("Настроить «" + project.name + "»") { editingProject = project } }
-      } label: {
-        VStack(spacing: 2) {
-          Image(systemName: "slider.horizontal.3").font(.system(size: 14))
-          if chat.computers.count > 1 {
-            Text(chat.computers.first(where: { $0.deviceID == chat.computerID })?.displayName ?? "Mac не подключён")
-              .font(.system(size: 9)).lineLimit(1)
-          }
-        }.frame(width: chat.computers.count > 1 ? 84 : 44, height: 44)
-      }
-        .accessibilityLabel("Настроить проекты").accessibilityIdentifier("notebook-chat-projects")
-    }.padding(.leading, 22).padding(.trailing, 8).padding(.bottom, 8)
+    Picker("Показать", selection: Binding(get: { chat.browserMode }, set: chat.browse)) {
+      ForEach(NotebookChatController.BrowserMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+    }
+    .pickerStyle(.segmented).accessibilityIdentifier("notebook-chat-browser-mode")
+    .padding(.horizontal, 14).padding(.vertical, 8)
   }
 
   private func conversation(height: CGFloat) -> some View {
@@ -278,7 +274,7 @@ struct NotebookChatPanel: View {
         Text(notice).font(.caption).foregroundStyle(chat.error != nil || model.agentRequestError != nil ? .red : .secondary)
           .lineLimit(3).padding(.horizontal, 12).accessibilityIdentifier("notebook-chat-notice")
       }
-      NotebookChatComposer(chat: chat, draftFocused: $draftFocused, width: size.width - (chat.files.window.sidebar ? filesWidth + 1 : 0) - 16,
+      NotebookChatComposer(chat: chat, draftFocused: $draftFocused, width: size.width - 16,
         canSend: canSend, saving: chat.saving || model.isSavingAgentQuestion,
         send: { model.sendChatMessage() }, steer: { model.sendChatMessage(steering: true) })
     }

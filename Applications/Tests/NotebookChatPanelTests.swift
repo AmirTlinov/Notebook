@@ -293,7 +293,19 @@ final class NotebookChatPanelTests: XCTestCase {
     XCTAssertFalse(inputs.contains(where: \.isFirstResponder), "Opening chat does not summon the keyboard or take Pencil focus")
     let frame = input.convert(input.bounds, to: host.view)
     XCTAssertTrue(host.view.bounds.contains(frame), "The composer cannot require scrolling the conversation to reach it")
-    XCTAssertGreaterThan(frame.width, 120)
+    XCTAssertGreaterThan(frame.width, width - 80, "Files never borrow the composer's width")
+    if files {
+      for _ in 0..<2 {
+        chat.files.toggleSidebar()
+        try await Task.sleep(for: .milliseconds(100)); host.view.layoutIfNeeded()
+        XCTAssertTrue(descendants(host.view).contains(where: { $0 === input }), "The existing editor keeps its identity")
+        let changed = input.convert(input.bounds, to: host.view)
+        XCTAssertEqual(changed.minX, frame.minX, accuracy: 0.5)
+        XCTAssertEqual(changed.minY, frame.minY, accuracy: 0.5)
+        XCTAssertEqual(changed.width, frame.width, accuracy: 0.5)
+        XCTAssertEqual(changed.height, frame.height, accuracy: 0.5)
+      }
+    }
     XCTAssertGreaterThan(frame.minY, 64, "The full-width editor stays below the header even in a short panel")
     let image = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
       XCTAssertTrue(host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true))

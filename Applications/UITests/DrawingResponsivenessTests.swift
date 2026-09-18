@@ -1555,7 +1555,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     openChat(in: app)
     let files = app.scrollViews["notebook-project-files"], composer = app.otherElements["notebook-chat-composer"]
     XCTAssertTrue(files.waitForExistence(timeout: 3))
-    XCTAssertGreaterThanOrEqual(files.frame.minX, composer.frame.maxX, "The one divider separates conversation/composer on the left from files on the right")
+    XCTAssertLessThanOrEqual(files.frame.maxY, composer.frame.minY, "The files pane ends at the full-width composer, not beside its input")
+    XCTAssertGreaterThan(composer.frame.width, files.frame.width * 2)
     let panelShot = XCTAttachment(screenshot: app.screenshot()); panelShot.name = "files-right-of-conversation"; panelShot.lifetime = .keepAlways; add(panelShot)
     app.buttons["notebook-file-reopen"].tap()
     XCTAssertTrue(app.otherElements["notebook-code-document"].waitForExistence(timeout: 3))
@@ -1578,13 +1579,59 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue((text.value as? String)?.contains("# written on iPad") == true)
   }
 
+  func testFilesSidebarKeepsDraftAndComposerFixedThroughKeyboardAndCollapse() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-code-document-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"], paperFrame = paper.frame, ink = paper.value as? String
+    openChat(in: app)
+    let files = app.scrollViews["notebook-project-files"], toggle = app.buttons["notebook-files-toggle"]
+    let composer = app.otherElements["notebook-chat-composer"]
+    let field = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
+    XCTAssertTrue(files.waitForExistence(timeout: 3))
+    toggle.tap(); XCTAssertTrue(files.waitForNonExistence(timeout: 3))
+    func checkFrame(_ expected: CGRect) {
+      XCTAssertEqual(composer.frame.minX, expected.minX, accuracy: 1)
+      XCTAssertEqual(composer.frame.minY, expected.minY, accuracy: 1)
+      XCTAssertEqual(composer.frame.width, expected.width, accuracy: 1)
+      XCTAssertEqual(composer.frame.height, expected.height, accuracy: 1)
+    }
+    func toggleFilesKeepingComposer() {
+      let frame = composer.frame
+      toggle.tap(); XCTAssertTrue(files.waitForExistence(timeout: 3)); checkFrame(frame)
+      XCTAssertLessThanOrEqual(files.frame.maxY, composer.frame.minY)
+      XCTAssertGreaterThan(composer.frame.width, files.frame.width * 2)
+      let proof = XCTAttachment(screenshot: app.screenshot())
+      proof.name = "files-above-stationary-composer"; proof.lifetime = .keepAlways; add(proof)
+      toggle.tap(); XCTAssertTrue(files.waitForNonExistence(timeout: 3)); checkFrame(frame)
+    }
+    toggleFilesKeepingComposer()
+    XCTAssertFalse(app.buttons["notebook-chat-projects"].exists, "Settings no longer take space beside the chat/project tabs")
+    field.tap(); field.typeText("Keep this draft while browsing project files")
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+    XCTAssertTrue(waitForKeyboardLayout(app, above: app.buttons["notebook-chat-dictation"]))
+    for _ in 0..<2 {
+      toggleFilesKeepingComposer()
+      XCTAssertTrue(app.keyboards.firstMatch.exists)
+      XCTAssertEqual(field.value as? String, "Keep this draft while browsing project files")
+    }
+    let close = app.buttons["notebook-chat-toggle"]
+    XCTAssertEqual(close.label, "Свернуть чат")
+    close.tap(); XCTAssertTrue(close.waitForNonExistence(timeout: 3))
+    openChat(in: app)
+    XCTAssertEqual(field.value as? String, "Keep this draft while browsing project files")
+    XCTAssertFalse(files.exists)
+    XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, ink)
+  }
+
   func testChatMovesResizesAndOpensSettingsWithoutMovingPaper() {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
     launchPortraitFixture(app)
-    XCTAssertFalse(app.buttons["pairing-settings"].exists)
-    XCTAssertFalse(app.buttons["collaboration-history"].exists)
+    XCTAssertFalse(app.buttons["Подключение и устройства"].exists)
+    XCTAssertFalse(app.buttons["Совместные ходы"].exists)
     openChat(in: app)
     let panel = app.descendants(matching: .any).matching(identifier: "notebook-chat-panel").firstMatch
     let paper = app.otherElements["paper-input"], paperFrame = paper.frame, drawing = paper.value as? String
@@ -1620,8 +1667,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 3))
     app.buttons["Готово"].tap()
     app.buttons["notebook-chat-menu"].tap()
-    XCTAssertTrue(app.buttons["pairing-settings"].waitForExistence(timeout: 2))
-    app.buttons["pairing-settings"].tap()
+    XCTAssertTrue(app.buttons["Подключение и устройства"].waitForExistence(timeout: 2))
+    app.buttons["Подключение и устройства"].tap()
     XCTAssertTrue(app.navigationBars["Соединение"].waitForExistence(timeout: 3))
     app.buttons["Готово"].tap()
     XCTAssertEqual(paper.frame, paperFrame)
@@ -2558,8 +2605,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     if !menu.exists { app.buttons["notebook-companion-compose"].tap() }
     XCTAssertTrue(menu.waitForExistence(timeout: 3))
     menu.tap()
-    XCTAssertTrue(app.buttons["collaboration-history"].waitForExistence(timeout: 3))
-    app.buttons["collaboration-history"].tap()
+    XCTAssertTrue(app.buttons["Совместные ходы"].waitForExistence(timeout: 3))
+    app.buttons["Совместные ходы"].tap()
   }
 
   private func launchPortraitFixture(_ app: XCUIApplication) {
