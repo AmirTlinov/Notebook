@@ -59,6 +59,10 @@ public struct DocumentSourceCommitResult: Equatable, Sendable {
   public enum Status: String, Codable, Sendable { case committed, conflict, targetMissing }
   public let status: Status
   public let publication: DocumentBlockSourcePublication?
+  public let actionID: UUID?
+  public init(status: Status, publication: DocumentBlockSourcePublication?, actionID: UUID? = nil) {
+    self.status = status; self.publication = publication; self.actionID = actionID
+  }
 }
 
 extension DocumentDocument {
@@ -121,7 +125,7 @@ extension NotebookStore {
           guard previous.edit == edit else { throw CollaborationError("stale_draft", "Завершённый сеанс нельзя использовать для другого текста.") }
           return .init(status: .committed, publication: try documentSourceForEdit(edit).flatMap {
             DocumentBlockSourcePublication(document: $0, blockID: edit.blockID)
-          })
+          }, actionID: try collaborationActionIfPresent(edit.sessionID)?.id)
         }
         guard previous.phase != .discarded, edit.sequence >= previous.edit.sequence else {
           throw CollaborationError("stale_draft", "Этот вариант черновика уже завершён или продолжен.")
@@ -135,13 +139,16 @@ extension NotebookStore {
       else if block?.source != edit.baseSource || document?.sourceVersion(blockID: edit.blockID) != edit.baseVersion {
         status = .conflict
       } else { status = .committed }
-      if status == .committed, block?.source != edit.source, let before {
-        guard document?.replaceBlockSource(id: block!.id, source: edit.source, actor: actor) == true else {
-          throw CollaborationError("invalid_draft", "Не удалось применить исходник черновика.")
-        }
-        let file = documentFile(edit.documentID), old = try JSONValue.encode(before), next = try JSONValue.encode(document!)
-        try admitContentCausalFields(file: file, before: old, after: next)
-        try publishProjectionEdits(file: file, before: old, after: next)
+      var actionID: UUID?
+      if status == .committed, let block, block.source != edit.source {
+        let target = CollaborationTarget(kind: .document, id: edit.documentID)
+        // The addressed field CAS above and this owner expectation are in the
+        // same transaction. Changes in other blocks do not invalidate a draft.
+        let action = CollaborationAction(id: edit.sessionID, summary: "Изменение текста документа",
+          expected: [.init(target: target, revision: try targetContentRevision(target: target))],
+          operations: [.init(kind: .updateBlock, target: target, id: block.id, values: ["source": .string(edit.source)])])
+        actionID = try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: nil, human: true).id
+        document = try documentSourceForEdit(edit)
       }
       let phase: DocumentEditingSession.Phase = status == .committed ? .committed : status == .conflict ? .conflict : .targetMissing
       let draft = DocumentEditingSession(edit: edit,
@@ -150,7 +157,7 @@ extension NotebookStore {
       try publishCollaboration(writes: [documentDraftPath(edit.sessionID): try .encode(draft)])
       return .init(status: status, publication: document.flatMap {
         DocumentBlockSourcePublication(document: $0, blockID: edit.blockID)
-      })
+      }, actionID: actionID)
     }
   }
 

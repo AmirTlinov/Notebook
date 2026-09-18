@@ -76,11 +76,38 @@ final class NotebookDocumentSourcePersistenceTests: XCTestCase {
     let shown = try XCTUnwrap(model.documents[id])
     XCTAssertEqual(shown.blocks[0].source, edit.source)
     XCTAssertEqual(shown, try model.store.loadDocument(id))
+    let settled = await model.finishPendingPersistence()
+    XCTAssertTrue(settled, model.persistenceFailure ?? "")
     let cursor = try model.store.currentChangeCursor()
     let repeated = try await model.commitDocumentSource(edit: edit)
     XCTAssertEqual(repeated, .committed)
     XCTAssertEqual(model.documents[id], shown)
     XCTAssertEqual(try model.store.currentChangeCursor(), cursor)
+    let state = try model.store.loadDocumentState(id)
+    model.undoLastSurfaceAction()
+    let undone = await model.finishPendingPersistence()
+    XCTAssertTrue(undone, model.persistenceFailure ?? "")
+    await model.reloadExternalChanges()?.value
+    XCTAssertEqual(try model.store.loadDocument(id).blocks, before.blocks)
+    XCTAssertEqual(model.documents[id]?.blocks, before.blocks)
+    XCTAssertEqual(try model.store.loadDocumentState(id), state,
+      "Undo of a source field does not undo a live program's independent state")
+  }
+
+  @MainActor
+  func testSaveJoinsItsReleasedHumanContactWithoutBypassingTheCommonInputBarrier() async throws {
+    let (model, id) = try await makeModel()
+    let before = try XCTUnwrap(model.documents[id]), contact = UUID()
+    model.inputGate.beginContact(source: contact)
+    let edit = DocumentSourceEdit(sessionID: UUID(), documentID: id, blockID: "a", baseSource: before.blocks[0].source,
+      baseVersion: before.sourceVersion(blockID: "a"), source: "Saved after lifting", sequence: 1)
+    let saving = Task { try await model.commitDocumentSource(edit: edit) }
+    await Task.yield()
+    XCTAssertEqual(try model.store.loadDocument(id).blocks, before.blocks)
+    model.inputGate.endContact(source: contact)
+    let status = try await saving.value
+    XCTAssertEqual(status, .committed)
+    XCTAssertEqual(try model.store.loadDocument(id).blocks[0].source, edit.source)
   }
 
   @MainActor

@@ -2657,6 +2657,15 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(saved.waitForExistence(timeout: 5), "Reopened anchors and the saved first page must still agree")
     let reopened = XCTAttachment(screenshot: app.screenshot())
     reopened.name = "full-document-cycle-cold-reopened"; reopened.lifetime = .keepAlways; add(reopened)
+    // The page container extends behind the status bar; XCTest chooses its
+    // top hit point for multi-touch. Target visible paper text, not that inset.
+    heading.tap(withNumberOfTaps: 1, numberOfTouches: 2)
+    let undone = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !saved.exists }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [undone], timeout: 8), .completed,
+      "The ordinary two-finger undo must restore the saved document action after a cold reopening")
+    XCTAssertTrue(heading.exists, "Undo restores the block; it must not navigate away or remove the paper")
+    let undoImage = XCTAttachment(screenshot: app.screenshot())
+    undoImage.name = "document-source-undo-after-cold-reopening"; undoImage.lifetime = .keepAlways; add(undoImage)
     app.terminate()
   }
 

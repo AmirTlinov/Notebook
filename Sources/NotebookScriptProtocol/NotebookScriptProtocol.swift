@@ -71,7 +71,10 @@ public struct NotebookCompilerResult: Codable, Sendable {
   public let pdf: Data
   public let log: String
   public let assets: [NotebookCompilerFile]
-  public init(pdf: Data, log: String, assets: [NotebookCompilerFile] = []) { self.pdf = pdf; self.log = log; self.assets = assets }
+  public let syncTeX: Data
+  public init(pdf: Data, log: String, assets: [NotebookCompilerFile] = [], syncTeX: Data = Data()) {
+    self.pdf = pdf; self.log = log; self.assets = assets; self.syncTeX = syncTeX
+  }
 }
 
 /// A compiler receives source and admitted identities, never paths or tsconfig.

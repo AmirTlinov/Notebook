@@ -331,16 +331,13 @@
             fatalError("Не удалось получить центр документа проверки")
           }
           let viewport = SpatialPoint(x: size.width, y: size.height)
-          try store.saveDocument(document)
-          try store.saveDocumentState(state)
-          try store.saveBoard(
-            BoardHierarchy(
+          _ = try store.loadOrCreateSpatialInk(actor: actor)
+          try store.saveDocumentWorkspaceBundle(index: index, document: document, state: state,
+            board: BoardHierarchy(
               rootBoardID: index.rootBoardID,
               boards: [BoardNode(id: index.rootBoardID, board: board)],
               stamp: board.stamp
-            ),
-            items: index.items
-          )
+            ))
           try store.savePresence(
             SessionPresence(
               boardID: index.rootBoardID,

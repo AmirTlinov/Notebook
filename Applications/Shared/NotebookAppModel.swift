@@ -2280,8 +2280,17 @@ final class NotebookAppModel {
         files.notes.undo(); return
       }
     #endif
-    guard inputGate.permitsNewContact, !inputGate.hasActivePencil,
-      presence?.mode != .document else { return }
+    guard inputGate.permitsNewContact, !inputGate.hasActivePencil else { return }
+    if presence?.mode == .document {
+      guard let owner = presence?.focusedItemID else { return }
+      let restored = collaborationActions.first {
+        $0.author == .human && $0.undo == nil && $0.action.operations.contains {
+          $0.target == CollaborationTarget(kind: .document, id: owner) && $0.kind == .updateBlock
+        }
+      }?.id
+      if let command = pencilUndoHistory.lastCommand(for: owner) ?? restored { undoCollaboration(command) }
+      return
+    }
     if let owner = isPageOpen ? activePage?.id : (presence?.focusedItemID ?? presence?.boardID) {
       let restored = pencilUndoHistory.hasHistory(for: owner) ? nil : collaborationActions.first {
         $0.author == .human && $0.undo == nil && $0.action.operations.contains { $0.target.id == owner && [.convertInkToElement, .insertElement, .updateElement, .removeElement].contains($0.kind) }
@@ -3335,6 +3344,12 @@ final class NotebookAppModel {
     }
     let result: DocumentSourceCommitResult
     do {
+      // The Save button can post its WebKit message before UIKit retires the
+      // same contact. Join that contact and its ordered input publication;
+      // do not bypass the common command executor's human-input barrier.
+      await withCheckedContinuation { continuation in
+        inputGate.performAfterIdle { continuation.resume() }
+      }
       result = try await persistence.submit(publishesChanges: true) { try $0.commitDocumentSource(edit: edit, actor: actor) }
     } catch {
       clearDocumentSavePresentation(sessionID: edit.sessionID)
@@ -3342,6 +3357,7 @@ final class NotebookAppModel {
     }
     documentDraftEpoch &+= 1
     if result.status == .committed {
+      if let actionID = result.actionID { pencilUndoHistory.recordCommand(ownerID: edit.documentID, actionID: actionID) }
       documentEditingSessions.removeAll { $0.id == edit.sessionID }
       if !isStopped, !isItemBeingDeleted(edit.documentID),
         let publication = result.publication, var document = documents[edit.documentID] {
