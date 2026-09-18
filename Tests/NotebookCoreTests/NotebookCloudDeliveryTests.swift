@@ -183,8 +183,16 @@ struct NotebookCloudDeliveryTests {
     #expect(try reopened.currentChangeCursor() == cursor)
   }
 
-  @Test func snapshotRetainsDeletionEvenWithoutHistoricalDeliveryRows() throws {
+  @Test(arguments: [false, true])
+  func snapshotRetainsDeletionEvenWithoutHistoricalDeliveryRows(freshReceiver: Bool) throws {
     let pair = try Pair(), index = try pair.a.loadIndex(), removed = index.selectedItemID, page = try #require(index.selectedPageID)
+    let text = "CloudRetainedPageSource"
+    var content = try pair.a.loadPage(page)
+    let edited = content.replaceElements([.init(id: "retained", kind: .markdown,
+      frame: .init(x: 10, y: 20, width: 240, height: 100), source: text, html: "<p>\(text)</p>")], actor: pair.actorA)
+    #expect(edited)
+    _ = try pair.a.savePage(content)
+    #expect(try pair.a.search(text).total == 1)
     var next = index, tree = try pair.a.loadBoard(items: index.items)
     let creation = next.createNotebook(title: "Survivor", actor: pair.actorA, pageSize: .init(width: 834, height: 1194))
     let created = try #require(creation)
@@ -194,10 +202,26 @@ struct NotebookCloudDeliveryTests {
     // Prepared replicas can retain causal tombstones but start a fresh journal.
     try pair.a.commandTransaction { try pair.a.currentSQL!.run("DELETE FROM change_records") }
     let cloud = try upload(pair.a, source: pair.sourceA, account: pair.account)
-    try receive(cloud, to: pair.b, source: pair.sourceB, account: pair.account)
-    #expect(try pair.b.readItemHeader(removed) == nil)
-    #expect(try pair.b.ownerItemID(ofPage: page) == nil)
-    #expect(try pair.b.storedFragments(address: pageFile(page) + "#").isEmpty)
+    let receiver = freshReceiver ? NotebookStore(root: pair.root.appendingPathComponent("fresh")) : pair.b
+    if freshReceiver {
+      try receiver.prepareEmptyWorkspace(workspaceID: pair.a.workspaceHeader().workspaceID)
+      try receiver.prepareCloudStorage()
+      try receiver.enableCloud(account: pair.account, source: pair.sourceB)
+    }
+    try receive(cloud, to: receiver, source: pair.sourceB, account: pair.account)
+    // Deletion retires public membership, not the admitted PAGE baseline:
+    // late human fields and lifecycle undo must keep the same native owner.
+    for store in [receiver, NotebookStore(root: receiver.root)] {
+      #expect(try store.readItemHeader(removed) == nil)
+      #expect(try store.ownerItemID(ofPage: page) == nil)
+      #expect(try store.pageSourceOwnerID(ofPage: page) == removed)
+      _ = try store.requireRetiredPageBaseline(pageID: page, itemID: removed)
+      #expect(try store.storedMember(file: pageFile(page), collection: "elements", id: "retained")?
+        .decode(AgentElement.self).source == text)
+      #expect(throws: CocoaError(.fileNoSuchFile)) { _ = try store.loadPage(page) }
+      #expect(throws: CollaborationError.self) { _ = try store.readContentHeader(target: .init(kind: .page, id: page)) }
+      #expect(try store.search(text).total == 0)
+    }
   }
 
   @Test func partialAssetsSurviveRestartAndNeverPublishPartialContent() throws {

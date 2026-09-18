@@ -11384,3 +11384,18 @@ Mac остановлен обычным `NSRunningApplication.terminate`, без
 не подтверждение доставки на iPad. Экспорт staged-исходников совпал с финальной
 проверенной сборкой по source SHA-256
 (`.build/tldraw-index-source-match.json`); чужие незавершённые правки не включены.
+
+## 18 сентября 2026, 12:02 UTC — Cloud snapshot: устранено устаревшее ожидание теста
+
+Отказ `snapshotRetainsDeletionEvenWithoutHistoricalDeliveryRows` воспроизведён
+на чистом `6b12201`, без account/transport WIP. Тест требовал физического удаления
+PAGE, хотя S8 (`9949e4a`) намеренно сохраняет скрытый источник для поздних человеческих
+правок и undo. Runtime не менялся. Теперь проверяются новый и существующий
+получатели Cloud snapshot без `change_records`, затем повторное открытие Store:
+каталог/живая принадлежность отсутствуют, правильный PAGE source сохранён, публичные
+load/header отказывают, поиск не возвращает скрытый текст (до удаления находил его).
+**23 теста / 4 suite PASS**, включая retained lifecycle undo и retired document/board.
+Команда: `swift test --package-path .build/s10-cloud-retirement-20260918/source
+--filter 'NotebookCloudDeliveryTests|NotebookRetainedLifecycleUndoTests|NotebookRetiredDocumentSourceTests|NotebookRetiredBoardAdmissionTests'`.
+Источник — `6b12201` плюс единственный изменённый тест; RED и GREEN2 сохранены в
+`.build/s10-cloud-retirement-20260918/`. Физическая связь этой проверкой не подтверждается.
