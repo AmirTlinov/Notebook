@@ -49,6 +49,10 @@ struct NotebookElementManipulation: Equatable, Sendable {
   let originalCornerRadius: Double
   private(set) var cornerRadius: Double
   private let graphic: NotebookGraphic?
+  var selectedMembers: [NotebookGraphicSelection.Member] = []
+  var selectedEdits: [NotebookGraphicSelection.Edit] {
+    NotebookGraphicSelection.translated(selectedMembers, by: .init(x: movement.x,y: movement.y))
+  }
 
   init(reference: EditableElementReference, kind: Kind, frame: CGRect, bounds: CGRect?, identity: VersionStamp? = nil,
     worldOrigin: WorldPoint? = nil, connection: NotebookGraphicConnection? = nil, layout: NotebookGraphicLayout? = nil, graphic: NotebookGraphic? = nil) {

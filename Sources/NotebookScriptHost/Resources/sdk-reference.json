@@ -354,7 +354,7 @@
           }
         }
       },
-      "returns": "Snapshot of a bounded observation: data.objects, data.header, data.checkpoint, data.mode. coverage.next drains the same frozen scope; pass data.checkpoint as since only after complete. Fields/one-hop expansion/geometry remain Core-owned. Without target/contextID, data.selection reports the authenticated active UI choice (known or unknown); a selected element is read by exact physical target/id, even beyond the preview window. Selection grants no write scope. contextID reads only that historical source, never today’s camera/basis. includeImage:true returns current-view pixels only for an active known scene with a matching physical surface (otherwise current_scene_unknown/pending); for historical sources use attention({contextID,referenceID}), and for explicit targets use render. Missing source pixels are never replaced with the current view.",
+      "returns": "Snapshot of a bounded observation: data.objects, data.header, data.checkpoint, data.mode. coverage.next drains the same frozen scope; pass data.checkpoint as since only after complete. Fields/one-hop expansion/geometry remain Core-owned. Without target/contextID, data.selection reports the authenticated active UI choice (known or unknown); a selected element or set (kind:elements, elementIDs) is read by exact physical target/IDs, even beyond the preview window. Selection grants no write scope. contextID reads only that historical source, never today’s camera/basis. includeImage:true returns current-view pixels only for an active known scene with a matching physical surface (otherwise current_scene_unknown/pending); for historical sources use attention({contextID,referenceID}), and for explicit targets use render. Missing source pixels are never replaced with the current view.",
       "example": "let r=await nb.observe({target:args.target}); while(r.coverage.next) r=await nb.observe({target:args.target,next:r.coverage.next}); await emit(r);",
       "old": [
         "notebook_observe"
@@ -983,6 +983,50 @@
                               "kind",
                               "target",
                               "elementID"
+                            ],
+                            "additionalProperties": {}
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "$ref": "#/$defs/__schema4"
+                              },
+                              "surface": {
+                                "$ref": "#/$defs/__schema1"
+                              },
+                              "pageIndex": {
+                                "$ref": "#/$defs/__schema17"
+                              },
+                              "contextID": {
+                                "$ref": "#/$defs/__schema18"
+                              },
+                              "resolving": {
+                                "$ref": "#/$defs/__schema19"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "const": "elements"
+                              },
+                              "target": {
+                                "$ref": "#/$defs/__schema1"
+                              },
+                              "elementIDs": {
+                                "minItems": 2,
+                                "maxItems": 32,
+                                "type": "array",
+                                "items": {
+                                  "$ref": "#/$defs/__schema0"
+                                }
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "surface",
+                              "resolving",
+                              "kind",
+                              "target",
+                              "elementIDs"
                             ],
                             "additionalProperties": {}
                           },
@@ -4970,6 +5014,50 @@
                           "kind",
                           "target",
                           "elementID"
+                        ],
+                        "additionalProperties": {}
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "$ref": "#/$defs/__schema6"
+                          },
+                          "surface": {
+                            "$ref": "#/$defs/__schema1"
+                          },
+                          "pageIndex": {
+                            "$ref": "#/$defs/__schema33"
+                          },
+                          "contextID": {
+                            "$ref": "#/$defs/__schema34"
+                          },
+                          "resolving": {
+                            "$ref": "#/$defs/__schema35"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "elements"
+                          },
+                          "target": {
+                            "$ref": "#/$defs/__schema1"
+                          },
+                          "elementIDs": {
+                            "minItems": 2,
+                            "maxItems": 32,
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "surface",
+                          "resolving",
+                          "kind",
+                          "target",
+                          "elementIDs"
                         ],
                         "additionalProperties": {}
                       },
@@ -9289,6 +9377,50 @@
                           "kind",
                           "target",
                           "elementID"
+                        ],
+                        "additionalProperties": {}
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "$ref": "#/$defs/__schema6"
+                          },
+                          "surface": {
+                            "$ref": "#/$defs/__schema1"
+                          },
+                          "pageIndex": {
+                            "$ref": "#/$defs/__schema33"
+                          },
+                          "contextID": {
+                            "$ref": "#/$defs/__schema34"
+                          },
+                          "resolving": {
+                            "$ref": "#/$defs/__schema35"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "elements"
+                          },
+                          "target": {
+                            "$ref": "#/$defs/__schema1"
+                          },
+                          "elementIDs": {
+                            "minItems": 2,
+                            "maxItems": 32,
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/$defs/__schema0"
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "surface",
+                          "resolving",
+                          "kind",
+                          "target",
+                          "elementIDs"
                         ],
                         "additionalProperties": {}
                       },
@@ -29026,6 +29158,50 @@
                         },
                         "kind": {
                           "type": "string",
+                          "const": "elements"
+                        },
+                        "target": {
+                          "$ref": "#/$defs/__schema1"
+                        },
+                        "elementIDs": {
+                          "minItems": 2,
+                          "maxItems": 32,
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/__schema0"
+                          }
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "surface",
+                        "resolving",
+                        "kind",
+                        "target",
+                        "elementIDs"
+                      ],
+                      "additionalProperties": {}
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/$defs/__schema4"
+                        },
+                        "surface": {
+                          "$ref": "#/$defs/__schema1"
+                        },
+                        "pageIndex": {
+                          "$ref": "#/$defs/__schema17"
+                        },
+                        "contextID": {
+                          "$ref": "#/$defs/__schema18"
+                        },
+                        "resolving": {
+                          "$ref": "#/$defs/__schema19"
+                        },
+                        "kind": {
+                          "type": "string",
                           "const": "context"
                         }
                       },
@@ -37860,7 +38036,7 @@
                       "$ref": "#/$defs/__schema2"
                     },
                     "elementID": {
-                      "type": "string"
+                      "$ref": "#/$defs/__schema6"
                     }
                   },
                   "required": [
@@ -37870,6 +38046,50 @@
                     "kind",
                     "target",
                     "elementID"
+                  ],
+                  "additionalProperties": {}
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "surface": {
+                      "$ref": "#/$defs/__schema2"
+                    },
+                    "pageIndex": {
+                      "$ref": "#/$defs/__schema3"
+                    },
+                    "contextID": {
+                      "$ref": "#/$defs/__schema4"
+                    },
+                    "resolving": {
+                      "$ref": "#/$defs/__schema5"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "elements"
+                    },
+                    "target": {
+                      "$ref": "#/$defs/__schema2"
+                    },
+                    "elementIDs": {
+                      "minItems": 2,
+                      "maxItems": 32,
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/__schema6"
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "surface",
+                    "resolving",
+                    "kind",
+                    "target",
+                    "elementIDs"
                   ],
                   "additionalProperties": {}
                 },
@@ -38207,6 +38427,9 @@
         },
         "__schema5": {
           "type": "boolean"
+        },
+        "__schema6": {
+          "type": "string"
         }
       }
     },

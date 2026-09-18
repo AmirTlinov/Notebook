@@ -69,7 +69,19 @@ struct NotebookElementControls: UIViewRepresentable {
     let id: String
     switch reference { case .page(_, let value), .spatial(_, let value): id = value }
     let order = model.completeElementOrder(reference)
-    var menus: [UIMenuElement] = [UIMenu(options: .displayInline, children: [
+    var menus: [UIMenuElement] = []
+    if graphic != nil {
+      menus.append(UIMenu(options:.displayInline,children:[
+        UIAction(title:model.selectionSession.addingElements ? "Завершить выбор" : "Выбрать несколько",image:UIImage(systemName:"checkmark.circle")) { _ in
+          guard model.selectionSession.id == selectionID else { return }
+          if model.selectionSession.addingElements { model.finishMultipleSelection() } else { model.beginMultipleSelection() }
+        },
+        UIAction(title:"Дублировать",image:UIImage(systemName:"plus.square.on.square")) { _ in
+          guard model.selectionSession.id == selectionID else { return }; model.duplicateGraphicSelection()
+        }
+      ]))
+    }
+    menus.append(UIMenu(options: .displayInline, children: [
       UIAction(title: "На задний план", image: UIImage(systemName:"square.3.layers.3d.bottom.filled"),
         attributes: order?.first == id ? .disabled : []) { _ in
           guard model.selectionSession.id == selectionID else { return }
@@ -80,7 +92,7 @@ struct NotebookElementControls: UIViewRepresentable {
           guard model.selectionSession.id == selectionID else { return }
           model.arrangeElement(reference, front: true)
         }
-    ])]
+    ]))
     view.changeRouting = { routing in
       guard model.selectionSession.id == selectionID else { return }
       model.setGraphicRouting(routing,reference:reference)
@@ -95,6 +107,41 @@ struct NotebookElementControls: UIViewRepresentable {
     view.setActionsMenu(menus)
   }
 
+  static func dismantleUIView(_ view: NotebookSelectionControlsView, coordinator: ()) { view.uninstall() }
+}
+
+/// The same control owner renders one capsule and the installed member frames.
+struct NotebookMultipleElementControls: UIViewRepresentable {
+  @Environment(NotebookAppModel.self) private var model
+  let selectionID: UUID
+  let frames: [CGRect]
+  func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate:model.inputGate) }
+  func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
+    view.graphic = nil; view.memberFrames = frames
+    let frame = frames.reduce(CGRect.null) { $0.union($1) }
+    view.configure(selectionID:selectionID,frame:frame,manipulating:model.selectionSession.manipulation != nil,subject:.elements(frames.count))
+    view.editElement = { if model.selectionSession.id == selectionID { model.finishMultipleSelection() } }
+    view.deleteElement = { if model.selectionSession.id == selectionID { model.deleteGraphicSelection() } }
+    let alignments: [(NotebookGraphicSelection.Alignment,String)] = [(.left,"По левому краю"),(.center,"По центру горизонтально"),
+      (.right,"По правому краю"),(.top,"По верхнему краю"),(.middle,"По центру вертикально"),(.bottom,"По нижнему краю")]
+    view.setActionsMenu([
+      UIAction(title:model.selectionSession.addingElements ? "Завершить выбор" : "Добавить к выбору",image:UIImage(systemName:"checkmark.circle")) { _ in
+        guard model.selectionSession.id == selectionID else { return }; model.setMultipleSelectionAdding(!model.selectionSession.addingElements)
+      },
+      UIAction(title:"Дублировать",image:UIImage(systemName:"plus.square.on.square")) { _ in
+        guard model.selectionSession.id == selectionID else { return }; model.duplicateGraphicSelection()
+      },
+      UIAction(title:"На передний план",image:UIImage(systemName:"square.3.layers.3d.top.filled")) { _ in
+        guard model.selectionSession.id == selectionID else { return }; model.arrangeGraphicSelection(front:true)
+      },
+      UIAction(title:"На задний план",image:UIImage(systemName:"square.3.layers.3d.bottom.filled")) { _ in
+        guard model.selectionSession.id == selectionID else { return }; model.arrangeGraphicSelection(front:false)
+      },
+      UIMenu(title:"Выровнять",image:UIImage(systemName:"align.horizontal.left"),children:alignments.map { alignment,title in
+        UIAction(title:title) { _ in guard model.selectionSession.id == selectionID else { return }; model.alignGraphicSelection(alignment) }
+      })
+    ])
+  }
   static func dismantleUIView(_ view: NotebookSelectionControlsView, coordinator: ()) { view.uninstall() }
 }
 
@@ -157,8 +204,9 @@ private enum ElementHandle: Hashable {
 
 /// One owner of capsule appearance, placement, menu lifetime and touch exclusion.
 final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegate {
-  enum Subject { case element, item(WorkspaceItemKind) }
+  enum Subject { case element, elements(Int), item(WorkspaceItemKind) }
   private var subject: Subject = .element
+  var memberFrames: [CGRect] = []
   override var isEnabled: Bool {
     didSet { toolbar.isUserInteractionEnabled = isEnabled; toolbar.alpha = isEnabled ? 1 : 0.45 }
   }
@@ -310,6 +358,13 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
       deleteButton.accessibilityLabel = "Удалить элемент"
       deleteButton.accessibilityIdentifier = "delete-agent-element"
       moreButton.isHidden = false
+    case .elements(let count):
+      primary.image = UIImage(systemName:"checkmark")
+      editButton.accessibilityLabel = "Завершить выбор: \(count)"
+      editButton.accessibilityIdentifier = "finish-graphic-selection"
+      deleteButton.accessibilityLabel = "Удалить выбранные фигуры"
+      deleteButton.accessibilityIdentifier = "delete-graphic-selection"
+      moreButton.isHidden = false
     case .item(let kind):
       primary.image = UIImage(systemName:"arrow.up.forward.app")
       editButton.accessibilityLabel = switch kind {
@@ -335,6 +390,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     modeButton.toolTip = geometryMode.controlTitle
     let next: [ElementHandle]
     if case .item = subject { next = [] }
+    else if case .elements = subject { next = [] }
     else if layout != nil { next = [.start,.end,.bend] }
     else if geometryMode == .vertices, let vertices { next = vertices.indices.map(ElementHandle.vertex) }
     else if geometryMode == .rounding { next = [.rounding] }
@@ -438,7 +494,13 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     return handle
   }
   override func draw(_ rect: CGRect) {
-    guard case .element = subject else { return }
+    if case .item = subject { return }
+    if case .elements = subject {
+      tintColor.withAlphaComponent(0.7).setStroke()
+      for frame in memberFrames { let p = UIBezierPath(rect:frame); p.lineWidth = 1; p.stroke() }
+      let union = UIBezierPath(rect:frameRect.insetBy(dx:-4,dy:-4)); union.setLineDash([4,4],count:2,phase:0); union.stroke()
+      return
+    }
     tintColor.withAlphaComponent(0.7).setStroke()
     if connectionLayout == nil {
       let outline: UIBezierPath

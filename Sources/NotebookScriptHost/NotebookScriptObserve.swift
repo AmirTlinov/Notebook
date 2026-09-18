@@ -12,7 +12,7 @@ extension NotebookScriptCoordinator {
         }
         let currentSelection = args["target"] == nil && contextID == nil ? try store.readSelectionPublication() : nil
         let selected = currentSelection?.status == "known" ? currentSelection?.selection : nil
-        let selectedElement = selected?.kind == .element ? selected : nil
+        let selectedElement = [.element, .elements].contains(selected?.kind) ? selected : nil
         let target: CollaborationTarget?
         if let supplied = args["target"] { target = try supplied.decode(CollaborationTarget.self) }
         else if contextID != nil { target = nil }
@@ -35,8 +35,8 @@ extension NotebookScriptCoordinator {
         var coverage = NotebookReadCoverage(complete: true)
         if let target {
           let implicitID = selectedElement?.elementID
-          let ids = try args["ids"]?.decode([String].self) ?? (elementID ?? blockID ?? implicitID).map { [$0] }
-          let defaults: [NotebookObservationScope.Field] = blockID != nil ? [.content, .state] : elementID != nil || implicitID != nil ? [.content, .geometry] : [.preview]
+          let ids = try args["ids"]?.decode([String].self) ?? (elementID ?? blockID ?? implicitID).map { [$0] } ?? selectedElement?.elementIDs
+          let defaults: [NotebookObservationScope.Field] = blockID != nil ? [.content, .state] : elementID != nil || implicitID != nil || selectedElement?.elementIDs != nil ? [.content, .geometry] : [.preview]
           let scope = NotebookObservationScope(target: target, ids: ids,
             fields: try args["fields"]?.decode([NotebookObservationScope.Field].self) ?? defaults,
             expand: try args["expand"]?.decode([NotebookObservationScope.Relation].self) ?? [],

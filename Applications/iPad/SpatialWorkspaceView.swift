@@ -169,11 +169,22 @@ struct SpatialWorkspaceView: View {
             scale: presence.camera.scale)
             .frame(width: viewport.x, height: viewport.y)
         }
+        if model.selectionSession.elements.count > 1 {
+          let layouts = model.graphicLayouts(model.selectionSession.elements)
+          let frames = model.selectionSession.elements.compactMap { reference in
+            layouts[reference].flatMap { NotebookAttentionProjection.editingFrame(reference,model:model,presence:presence,layout:$0) }
+          }
+          if frames.count == model.selectionSession.elements.count {
+            NotebookMultipleElementControls(selectionID:model.selectionSession.id,frames:frames)
+              .frame(width:viewport.x,height:viewport.y)
+          }
+        }
         NotebookSelectionGesture(inputGate: model.inputGate, onPreview: model.updateSelectionPreview,
           onPoint: { start, end, held, tapCount in
           guard cameraGesture == nil, !settling, let cohort else { return }
           if !held, let selected = selectedElement(at: end, presence: presence) {
-            if tapCount > 1 { model.editSelectedElement(selected) }; return
+            if model.selectionSession.addingElements { toggleGraphicSelection(selected,presence:presence,cohort:cohort); return }
+            if tapCount > 1 { model.selectElement(selected); model.editSelectedElement(selected) }; return
           }
           guard let capture = NotebookAttentionProjection.capture(start: start, end: end, model: model, presence: presence,
             cohort: cohort, installedInk: spatialInkSurfaces.installedSources()) else { return }
@@ -183,6 +194,8 @@ struct SpatialWorkspaceView: View {
           var target = NotebookSelectionSession.Target.context
           if !held, let fragment = capture.fragments.first {
             if let reference = editableReference(fragment, boardID: presence.boardID) {
+              if model.selectionSession.addingElements { toggleGraphicSelection(reference,presence:presence,cohort:cohort); return }
+              if model.selectionSession.elements.count > 1, model.selectionSession.contains(reference), tapCount == 1 { return }
               let focus: InteractiveElementReference
               switch reference {
               case .page(let pageID, let id): focus = .page(pageID: pageID, elementID: id)
@@ -209,11 +222,14 @@ struct SpatialWorkspaceView: View {
             cohort: cohort, installedInk: spatialInkSurfaces.installedSources(),
             acceptsFirstFragment: { editableReference($0, boardID: presence.boardID) != nil }) : nil
           guard let reference = selected ?? capture?.fragments.first.flatMap({ editableReference($0, boardID: presence.boardID) }) else { return nil }
+          if model.selectionSession.addingElements, !model.selectionSession.contains(reference) {
+            return SceneSelectionLift(requiresHold:false,begin:{},change:{ _ in },end:{ _ in },cancel:{})
+          }
           let scale = max(presence.camera.scale, 0.001)
           var contactID: UUID?
           func translation(_ delta: CGPoint) -> SpatialPoint { .init(x: delta.x / scale, y: delta.y / scale) }
           return SceneSelectionLift(requiresHold: model.graphicElement(reference) == nil && model.selectionSession.editingElement != reference, begin: {
-            if let capture, model.selectionSession.element != reference || model.agentQuestion == nil {
+            if let capture, !model.selectionSession.contains(reference) || (model.selectionSession.elements.count == 1 && model.agentQuestion == nil && !model.selectionSession.addingElements) {
               model.publishHumanContext(capture, target: .element(reference))
             }
             contactID = model.beginElementManipulation(reference, kind: .move)
@@ -659,12 +675,29 @@ struct SpatialWorkspaceView: View {
 
   }
 
-  /// A second contact hits the same accepted geometry that is on screen, not
-  /// the older source cut still awaiting the writer. This does not invent a
-  /// newer agent-context receipt: it continues the current human selection.
+  private func toggleGraphicSelection(_ reference: EditableElementReference, presence: SessionPresence, cohort: SceneCompositionCohort) {
+    guard let refs = model.graphicSelectionToggling(reference) else { return }
+    guard !refs.isEmpty else { model.clearSelection(); return }
+    guard let capture = NotebookAttentionProjection.capture(start:.zero,end:.zero,model:model,presence:presence,
+      cohort:cohort,installedInk:spatialInkSurfaces.installedSources(),selectedElements:refs) else {
+      model.showCue("Выбранная геометрия ещё сохраняется. Повторите касание после её готовности."); return
+    }
+    model.publishHumanContext(capture,target:refs.count == 1 ? .element(refs[0]) : .elements(refs))
+    model.setMultipleSelectionAdding(true)
+  }
+
+  /// A second contact hits accepted geometry, not the older source awaiting
+  /// the writer. It continues selection without inventing a newer source receipt.
   private func selectedElement(at point: CGPoint, presence: SessionPresence) -> EditableElementReference? {
-    guard let reference = model.selectionSession.editingElement,
-      let frame = NotebookAttentionProjection.editingFrame(reference, model: model, presence: presence) else { return nil }
+    guard !model.selectionSession.isInteractive else { return nil }
+    for reference in model.selectionSession.elements.reversed() {
+      if let hit = selectedElement(reference,at:point,presence:presence) { return hit }
+    }
+    return nil
+  }
+
+  private func selectedElement(_ reference: EditableElementReference, at point: CGPoint, presence: SessionPresence) -> EditableElementReference? {
+    guard let frame = NotebookAttentionProjection.editingFrame(reference, model: model, presence: presence) else { return nil }
     let surface: SurfaceID, id: String
     switch reference {
     case .page(let pageID,let elementID): surface = .page(pageID); id = elementID
@@ -826,7 +859,9 @@ struct SpatialWorkspaceView: View {
     for id in [presence.focusedItemID, selectedItemID, cameraGesture?.candidateItemID] + liftedItemIDs.map(Optional.some) {
       if let id, !spatialInkSurfaces.isRetired(.cover(id)) { pins.insert(.item(id)) }
     }
-    if case .spatial(let boardID, let id) = model.selectionSession.element, boardID == presence.boardID { pins.insert(.element(id)) }
+    for reference in model.selectionSession.elements {
+      if case .spatial(let boardID,let id) = reference, boardID == presence.boardID { pins.insert(.element(id)) }
+    }
     for reference in model.graphicCommandDrafts.keys {
       if case .spatial(let boardID, let id) = reference, boardID == presence.boardID { pins.insert(.element(id)) }
     }

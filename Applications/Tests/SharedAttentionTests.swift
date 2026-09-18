@@ -244,6 +244,46 @@ final class SharedAttentionTests: XCTestCase {
   }
 
   @MainActor
+  func testSelectedGraphicsFreezeExactlyTheirSourcesForTheAgent() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-attention-" + UUID().uuidString)
+    let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
+    await model.finishPendingPersistence()
+    let workspace = try XCTUnwrap(model.workspace)
+    var page = try XCTUnwrap(model.activePage)
+    XCTAssertTrue(page.replaceElements(["a","b","unselected"].enumerated().map { index,id in
+      .init(id:id,kind:.graphic,frame:.init(x:40+Double(index)*150,y:80,width:100,height:100),
+        source:"",html:"",graphic:.init(label:id))
+    },actor:model.actorID))
+    try model.store.savePage(page); await model.reloadExternalChanges()?.value
+    let presence = SessionPresence(boardID:workspace.rootBoardID,mode:.page,
+      camera:.init(center:try XCTUnwrap(model.board?.focusedCenter(of:workspace.selectedItemID)),scale:1),
+      viewport:.init(x:834,y:1194),focusedItemID:workspace.selectedItemID,openProgress:1,
+      selectedItemID:workspace.selectedItemID,notebookPageID:page.id)
+    model.updatePresence(presence,settled:true)
+    try await waitForScene(model); try await mountNotebookScene(model)
+    let refs = ["b","a"].map { EditableElementReference.page(pageID:page.id,elementID:$0) }
+    let cohort = try XCTUnwrap(model.compositionTiles.published)
+    let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start:.zero,end:.zero,model:model,
+      presence:presence,cohort:cohort,installedInk:[:],selectedElements:refs))
+    XCTAssertEqual(selection.fragments.compactMap(\.elementID),["b","a"])
+    let sealed = try selection.seal(in:model.store)
+    XCTAssertEqual(sealed.references.compactMap(\.elementID),["b","a"])
+    model.publishHumanContext(selection,target:.elements(refs))
+    await model.finishPendingPersistence()
+    let deadline = ContinuousClock.now + .seconds(3)
+    while model.selectionSession.isResolvingContext, .now < deadline { try await Task.sleep(for:.milliseconds(10)) }
+    XCTAssertEqual(model.selectionSession.context?.references.compactMap(\.elementID),["b","a"])
+    XCTAssertEqual(model.selectionForPublication?.elementIDs,["b","a"])
+    let contact = try XCTUnwrap(model.beginElementManipulation(refs[0],kind:.move))
+    model.updateElementManipulation(contact,translation:.init(x:20,y:30))
+    XCTAssertNil(NotebookAttentionProjection.capture(start:.zero,end:.zero,model:model,presence:presence,
+      cohort:cohort,installedInk:[:],selectedElements:refs),"A moving preview cannot masquerade as a frozen canonical source")
+    model.cancelElementManipulation(contact)
+  }
+
+  @MainActor
   private func waitForScene(_ model: NotebookAppModel) async throws {
     await model.finishPendingPersistence()
     let deadline = ContinuousClock.now + .seconds(5)

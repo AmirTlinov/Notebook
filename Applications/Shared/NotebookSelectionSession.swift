@@ -14,11 +14,13 @@ struct NotebookSelectionSession: Equatable, Sendable {
   enum Target: Equatable, Sendable {
     case item(boardID: UUID, itemID: UUID)
     case element(EditableElementReference)
+    case elements([EditableElementReference])
     case context
     case reference(CollaborationReference)
   }
 
   enum GeometryMode: String, CaseIterable { case transform, vertices, rounding }
+  var addingElements = false
   var geometryMode: GeometryMode = .transform
 
   let id: UUID
@@ -36,6 +38,10 @@ struct NotebookSelectionSession: Equatable, Sendable {
   var element: EditableElementReference? {
     if case .element(let reference) = target { return reference }; return nil
   }
+  var elements: [EditableElementReference] {
+    switch target { case .element(let ref): [ref]; case .elements(let refs): refs; default: [] }
+  }
+  func contains(_ reference: EditableElementReference) -> Bool { elements.contains(reference) }
   /// Direct program/text input does not expose transformation handles.
   var editingElement: EditableElementReference? { isInteractive ? nil : element }
 

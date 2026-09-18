@@ -96,6 +96,7 @@ const selected=z.discriminatedUnion("kind",[
   object({...selectionFields,kind:z.literal("empty")}),
   object({...selectionFields,kind:z.literal("item"),itemID:id}),
   object({...selectionFields,kind:z.literal("element"),target:targetSchema,elementID:text}),
+  object({...selectionFields,kind:z.literal("elements"),target:targetSchema,elementIDs:z.array(text).min(2).max(32)}),
   object({...selectionFields,kind:z.literal("context")}),
   object({...selectionFields,kind:z.literal("reference"),reference:referenceSchema})]);
 const selection=z.discriminatedUnion("status",[

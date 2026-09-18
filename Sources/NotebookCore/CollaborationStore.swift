@@ -121,30 +121,9 @@ extension NotebookStore {
       guard [.page, .board, .cover].contains(target.kind), let id = operation.id else {
         throw invalid("Нативной правке нужен владелец и ID элемента.")
       }
-      let page = target.kind == .page ? try readPageElement(pageID: target.id, elementID: id) : nil
-      let spatial = target.kind == .page ? nil : try readSpatialElement(boardID: target.boardID ?? target.id, elementID: id)
-      guard page == expectedPage, spatial == expectedSpatial else {
-        throw CollaborationError("revision_conflict", "Элемент изменился до завершения жеста.")
-      }
-      var admitted = operation
-      if let moveToFront {
-        guard operation.kind == .reorderElements else { throw invalid("Порядок меняется только операцией перестановки.") }
-        let owner = target.kind.rawValue + ":" + target.id.uuidString.lowercased() + (target.kind == .page ? "|elements" : "")
-        var ids = try currentSQL!.rows("SELECT member FROM reference_element_order WHERE owner_key=? ORDER BY position,member", [.text(owner)])
-          .compactMap { $0[0].text }
-        guard ids.contains(id) else { throw invalid("Элемент больше не принадлежит выбранной поверхности.") }
-        ids.removeAll { $0 == id }
-        if moveToFront { ids.append(id) } else { ids.insert(id, at: 0) }
-        admitted = .init(kind: .reorderElements, target: target, id: id, values: ["ids": .array(ids.map(JSONValue.string))])
-      }
-      let revision = try targetContentRevision(target: target)
-      let ink = operation.kind == .convertInkToElement ? try inkRevision(on: target) : nil
-      let receipt = try applyNativeGraphicAction(.init(summary: summary,
-        references: [.init(target: target, elementID: operation.kind == .reorderElements ? nil : id, revision: revision)],
-        expected: [.init(target: target, revision: revision, inkRevision: ink)], operations: [admitted]), actor: actor)
-      return (receipt,
-        target.kind == .page ? try readPageElement(pageID: target.id, elementID: id) : nil,
-        target.kind == .page ? nil : try readSpatialElement(boardID: target.boardID ?? target.id, elementID: id))
+      let result = try applyNativeElementEdits([operation], summary: summary,
+        sources: [.init(target: target, id: id, page: expectedPage, spatial: expectedSpatial)], moveToFront: moveToFront, actor: actor)
+      return (result.receipt, result.sources.first?.page, result.sources.first?.spatial)
     }
   }
 

@@ -40,14 +40,30 @@ extension NotebookAppModel {
   }
 
   func graphicLayout(_ reference: EditableElementReference, preview: Bool = true) -> NotebookGraphicLayout? {
-    switch reference {
-    case .page(let pageID, let id): return pages[pageID].map { graphicGraph(page:$0,preview:preview).resolve(id).layout } ?? nil
-    case .spatial(let boardID, let id):
-      guard let cohort = compositionTiles.published else {
-        return boardHierarchy?.board(boardID)?.graphicGraph().resolve(id).layout
+    graphicLayouts([reference],preview:preview)[reference]
+  }
+
+  /// A selected set resolves one graph per owner, not one whole graph for each
+  /// outline on every movement sample. Projection still belongs to the scene.
+  func graphicLayouts(_ references: [EditableElementReference], preview: Bool = true) -> [EditableElementReference:NotebookGraphicLayout] {
+    var graphs: [SurfaceID:NotebookGraphicGraph] = [:]
+    var result: [EditableElementReference:NotebookGraphicLayout] = [:]
+    for reference in references {
+      let owner: SurfaceID, id: String
+      switch reference {
+      case .page(let pageID,let elementID):
+        owner = .page(pageID); id = elementID
+        if graphs[owner] == nil, let page = pages[pageID] { graphs[owner] = graphicGraph(page:page,preview:preview) }
+      case .spatial(let boardID,let elementID):
+        owner = .board(boardID); id = elementID
+        if graphs[owner] == nil {
+          graphs[owner] = compositionTiles.published.map { presentedGraphicGraph(boardID:boardID,cohort:$0,preview:preview) }
+            ?? boardHierarchy?.board(boardID)?.graphicGraph()
+        }
       }
-      return presentedGraphicGraph(boardID:boardID,cohort:cohort,preview:preview).resolve(id).layout
+      result[reference] = graphs[owner]?.resolve(id).layout
     }
+    return result
   }
 
 }

@@ -11,7 +11,7 @@ import XCTest
     let header = try fixture.store.workspaceHeader()
     let peer = NotebookTransportIdentity(deviceID: UUID(), workspaceID: header.workspaceID, displayName: "iPad")
     let connection = UUID(), session = UUID(), surface = CollaborationTarget(kind: .board, id: header.rootBoardID)
-    let selected = NotebookSelection(id: UUID(), kind: .item, surface: surface, itemID: UUID())
+    let selected = NotebookSelection(id: UUID(), kind: .elements, surface: surface, target: surface, elementIDs: ["node", "connection"])
     func send(_ sequence: UInt64, _ selection: NotebookSelection?, generation: UUID) {
       model.receivePeerTransient(.selection(.init(deviceID: peer.deviceID, sessionID: session,
         sequence: sequence, selection: selection)), peerID: peer.deviceID, generation: generation)
