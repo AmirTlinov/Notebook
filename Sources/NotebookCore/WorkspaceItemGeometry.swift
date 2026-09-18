@@ -28,6 +28,18 @@ public struct WorkspaceItemGeometry: Equatable, Hashable, Sendable {
     return min(viewport.x / width, viewport.y / height)
   }
 
+  /// Reading cannot recede into the board or pan the sheet out of view.
+  /// The camera remains the sole projection for paint, hit testing and persistence.
+  public func readingCamera(_ camera: SpatialCamera, centeredOn center: WorldPoint,
+    viewport: SpatialPoint, margin: Double = 0, maximumScale: Double = SpatialCamera.maximumScale) -> SpatialCamera {
+    let available = SpatialPoint(x: max(1, viewport.x - margin * 2), y: max(1, viewport.y - margin * 2))
+    let scale = max(fitScale(viewport: available), min(maximumScale, camera.scale))
+    let x = max(0, width / 2 - available.x / (2 * scale))
+    let y = max(0, height / 2 - available.y / (2 * scale))
+    let offset = center.delta(to: camera.center)
+    return .init(center: center.offsetBy(x: min(x, max(-x, offset.x)), y: min(y, max(-y, offset.y))), scale: scale)
+  }
+
   public func coverScale(viewport: SpatialPoint) -> Double {
     fitScale(viewport: viewport) * 0.72
   }

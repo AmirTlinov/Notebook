@@ -2805,6 +2805,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     marker.pinch(withScale: 0.28, velocity: -2)
     XCTAssertTrue(paper.exists)
     XCTAssertTrue(marker.exists, "Zoom must retain the same physical page")
+    XCTAssertEqual(paper.frame.width, original.width, accuracy: 2, "The open sheet must stay fitted, not recede into the board")
+    XCTAssertEqual(paper.frame.midX, original.midX, accuracy: 2)
+    XCTAssertEqual(paper.frame.midY, original.midY, accuracy: 2)
     XCTAssertFalse(app.buttons["create-workspace-item"].exists)
     XCTAssertTrue(app.buttons["next-page"].exists)
     app.buttons["next-page"].tap()
@@ -2868,8 +2871,14 @@ final class DrawingResponsivenessTests: XCTestCase {
         "The two releases of a pinch are not a double tap on document text")
       XCTAssertFalse(app.keyboards.firstMatch.exists)
     }
-    gestureSurface.pinch(withScale: 0.94, velocity: -0.2)
-    assertOpen("paper-small-reduction-\(document)")
+    for attempt in 0..<2 {
+      gestureSurface.pinch(withScale: 0.28, velocity: -2)
+      assertOpen("paper-strong-reduction-\(document)-\(attempt)")
+      XCTAssertEqual(sheet.frame.width, fitted.width, accuracy: 2, "Zoom-out must stop at the whole sheet")
+      XCTAssertEqual(sheet.frame.height, fitted.height, accuracy: 2)
+      XCTAssertEqual(sheet.frame.midX, fitted.midX, accuracy: 2)
+      XCTAssertEqual(sheet.frame.midY, fitted.midY, accuracy: 2)
+    }
     gestureSurface.pinch(withScale: 1.6, velocity: 0.7)
     assertOpen("paper-enlarged-\(document)")
     XCTAssertGreaterThan(sheet.frame.width, fitted.width * 1.1,

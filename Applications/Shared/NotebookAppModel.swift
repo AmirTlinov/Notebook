@@ -1990,7 +1990,7 @@ final class NotebookAppModel {
     if settled {
       resolved = settledPresence(from: presence, viewport: presence.viewport)
     } else {
-      resolved = presence
+      resolved = constrainedPaperPresence(presence)
     }
     let inputOwnerChanged = self.presence?.boardID != resolved.boardID
       || self.presence?.mode != resolved.mode
@@ -4462,7 +4462,7 @@ final class NotebookAppModel {
     documentStates = state.states
     documentEditingSessions = state.drafts
     admitDocumentReading(state.reading)
-    presence = state.presence
+    presence = constrainedPaperPresence(state.presence)
     retireGraphicCommands(through: state.header.cursor)
     alignWorkspaceSelection()
     if selectionSession.elements.contains(where: { reference in
@@ -4746,7 +4746,19 @@ final class NotebookAppModel {
   /// semantic mode belong to NotebookSceneState's addressed SQL snapshot; a
   /// bounded display projection cannot revoke a navigation destination.
   private func settledPresence(from presence: SessionPresence, viewport: SpatialPoint) -> SessionPresence {
-    presence.adapted(to: viewport, geometry: itemGeometry(presence.focusedItemID))
+    constrainedPaperPresence(presence.adapted(to: viewport, geometry: itemGeometry(presence.focusedItemID)))
+  }
+
+  private func constrainedPaperPresence(_ presence: SessionPresence) -> SessionPresence {
+    #if os(iOS)
+    guard (presence.mode == .page || presence.mode == .document), presence.openProgress == 1,
+      let id = presence.focusedItemID,
+      let center = boardHierarchy?.board(presence.boardID)?.focusedCenter(of: id) else { return presence }
+    return presence.replacingCamera(itemGeometry(id).readingCamera(presence.camera,
+      centeredOn: center, viewport: presence.viewport))
+    #else
+    return presence
+    #endif
   }
 
   private func makePresenceEnvelope(
