@@ -5,6 +5,43 @@ import SwiftUI
 @testable import Notebook
 
 @MainActor final class NotebookMacWorkspaceTests: XCTestCase {
+  func testOpeningExistingNotebookAdmitsItsColdPage() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let fixture = MacCommandFixture(root: root), model = fixture.model
+    retainNotebookUntilTeardown(model, removing: root)
+    let header = try fixture.store.initializeWorkspace(actor: UUID(), pageSize: NotebookAppModel.defaultPageSize)
+    let item = try XCTUnwrap(fixture.store.readItemHeaders(limit: 1).first)
+    try fixture.store.savePresence(.init(boardID: header.rootBoardID, mode: .board,
+      camera: .init(scale: 0.22), viewport: .init(x: 1100, y: 780), selectedItemID: item.id))
+    try await fixture.start()
+    XCTAssertNil(model.activePage, "A closed cover must not eagerly load its paper")
+    let boardView = try XCTUnwrap(model.presence)
+    model.macOpenItem(item.id)
+    XCTAssertEqual(model.returnPlaces.last?.presence, boardView, "Back restores the exact board camera, not a new guessed scale")
+    try await fixture.waitUntil { model.activePage?.id == item.firstPageID }
+    XCTAssertEqual(model.presence?.mode, .page)
+  }
+
+  func testReaderFitsWidthAtTopAndCannotScrollAwayFromPaper() {
+    let center = WorldPoint(x: 1800, y: -2400)
+    let geometry = WorkspaceItemGeometry.notebook
+    let viewport = SpatialPoint(x: 1100, y: 780)
+    let fit = MacReadingCamera.fitted(center: center, geometry: geometry, viewport: viewport, fit: .width)
+    let frame = geometry.screenFrame(center: center, camera: fit, viewport: viewport)
+    XCTAssertEqual(frame.width, viewport.x - 48, accuracy: 0.001)
+    XCTAssertEqual(frame.x, 24, accuracy: 0.001)
+    XCTAssertEqual(frame.y, 24, accuracy: 0.001)
+    let far = SpatialCamera(center: center.offsetBy(x: 100_000, y: 100_000), scale: fit.scale)
+    let constrained = MacReadingCamera.constrained(far, center: center, geometry: geometry, viewport: viewport)
+    let bottom = geometry.screenFrame(center: center, camera: constrained, viewport: viewport)
+    XCTAssertEqual(bottom.x, 24, accuracy: 0.001)
+    XCTAssertEqual(bottom.y + bottom.height, viewport.y - 24, accuracy: 0.001)
+    let whole = MacReadingCamera.fitted(center: center, geometry: geometry, viewport: viewport, fit: .page)
+    let paper = geometry.screenFrame(center: center, camera: whole, viewport: viewport)
+    XCTAssertEqual(paper.height, viewport.y - 48, accuracy: 0.001)
+    XCTAssertEqual(whole.center, center)
+  }
+
   func testPeerCameraDoesNotMoveLocalWindowAndIPCStillObservesIPad() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let fixture = MacCommandFixture(root: root), model = fixture.model

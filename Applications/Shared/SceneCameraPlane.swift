@@ -509,6 +509,8 @@ final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneA
     hitRegions: ((SessionPresence) -> [CGRect])? = nil,
     content: (SessionPresence, ScenePlaneProjection) -> AnyView) {
     guard !isRetired else { return }
+    CATransaction.begin(); CATransaction.setDisableActions(true)
+    defer { CATransaction.commit() }
     self.installation = installation
     installation?.bind(self)
     hasInstalledLayout = false

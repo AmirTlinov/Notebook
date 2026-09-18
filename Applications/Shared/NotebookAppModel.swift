@@ -3869,12 +3869,7 @@ final class NotebookAppModel {
       #endif
       return
     }
-    if !replacesPendingShow, let presence,
-      returnPlaces.last?.presence != presence {
-      returnPlaces.append(.init(presence: presence, pageID: presence.notebookPageID,
-        reading: presence.focusedItemID.flatMap { documentReadingPositions[$0] }))
-      returnPlaces = Array(returnPlaces.suffix(32))
-    }
+    if !replacesPendingShow { rememberReturnPlace() }
     requestedReference = .init(target:reference.target,elementID:reference.elementID,region:reference.region,
       worldOrigin:reference.worldOrigin,pageIndex:reference.pageIndex,revision:reference.revision,label:reference.label)
     observeNavigation("request_published")
@@ -3969,6 +3964,13 @@ final class NotebookAppModel {
         return
       }
     }
+  }
+
+  func rememberReturnPlace() {
+    guard let presence, returnPlaces.last?.presence != presence else { return }
+    returnPlaces.append(.init(presence: presence, pageID: presence.notebookPageID,
+      reading: presence.focusedItemID.flatMap { documentReadingPositions[$0] }))
+    returnPlaces = Array(returnPlaces.suffix(32))
   }
 
   func requestReturnToPlace() {

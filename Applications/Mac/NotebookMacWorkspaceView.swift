@@ -95,20 +95,34 @@ struct NotebookMacWorkspaceView: View {
         }
       }
       ToolbarItemGroup {
-        Picker("Инструмент", selection: Binding(get: { model.macInputTool }, set: model.selectMacInputTool)) {
-          Label("Выбор", systemImage: "cursorarrow").tag(MacNotebookInputTool.pointer)
-          Label("Ручка", systemImage: "pencil.tip").tag(MacNotebookInputTool.pen)
-          Label("Ластик", systemImage: "eraser").tag(MacNotebookInputTool.eraser)
-        }.pickerStyle(.segmented).frame(width: 118).disabled(!model.isPageOpen).accessibilityIdentifier("mac-input-tool")
-        Menu {
-          ForEach(PenColor.allCases) { color in
-            Button(color.name) { model.selectPenColor(color) }
-          }
-          Divider()
-          ForEach([1.0, 2.2, 4.0, 8.0], id: \.self) { width in
-            Button("Толщина \(width.formatted())") { model.selectPenWidth(width) }
-          }
-        } label: { Label("Параметры ручки", systemImage: "slider.horizontal.3") }
+        if model.presence?.mode == .page || model.presence?.mode == .document {
+          Menu {
+            Button("По ширине") { model.macFitReading(.width) }
+            Button("Вся страница") { model.macFitReading(.page) }
+            Button("100%") { model.macFitReading(.actual) }
+          } label: {
+            Text("\(Int(((model.presence?.camera.scale ?? 1) * 100).rounded()))%")
+              .monospacedDigit()
+          }.accessibilityIdentifier("mac-reading-zoom")
+        }
+      }
+      ToolbarItemGroup {
+        if model.isPageOpen {
+          Picker("Инструмент", selection: Binding(get: { model.macInputTool }, set: model.selectMacInputTool)) {
+            Label("Выбор", systemImage: "cursorarrow").tag(MacNotebookInputTool.pointer)
+            Label("Ручка", systemImage: "pencil.tip").tag(MacNotebookInputTool.pen)
+            Label("Ластик", systemImage: "eraser").tag(MacNotebookInputTool.eraser)
+          }.pickerStyle(.segmented).frame(width: 118).accessibilityIdentifier("mac-input-tool")
+          Menu {
+            ForEach(PenColor.allCases) { color in
+              Button(color.name) { model.selectPenColor(color) }
+            }
+            Divider()
+            ForEach([1.0, 2.2, 4.0, 8.0], id: \.self) { width in
+              Button("Толщина \(width.formatted())") { model.selectPenWidth(width) }
+            }
+          } label: { Label("Параметры ручки", systemImage: "slider.horizontal.3") }
+        }
         Menu {
           Button("Тетрадь") { model.macCreateItem(.notebook) }
           Button("Документ") { model.macCreateItem(.document) }
@@ -124,7 +138,7 @@ struct NotebookMacWorkspaceView: View {
     }
     .sheet(isPresented: $showsSearch) { NotebookSearchView().environment(model).frame(width: 560, height: 500) }
     .onChange(of: model.presence?.focusedItemID) { _, _ in documentLayout = nil }
-    .navigationTitle(model.activeItem?.title ?? "Notebook")
+    .navigationTitle(model.activeItem.flatMap { $0.title.isEmpty ? nil : $0.title } ?? "Notebook")
     .accessibilityIdentifier("notebook-workspace")
   }
 
@@ -143,6 +157,7 @@ struct NotebookMacWorkspaceView: View {
     let target = pageIndex + delta
     guard target >= 0 else { return }
     model.afterPageInput {
+      model.macReadingTop()
       if p.mode == .document { _ = model.selectDocumentPage(target, documentID: item) }
       else if let root = model.notebookPageRoot(item) {
         if target == model.notebookPageCount(item) { _ = model.selectNotebookPage(target, notebookID: item, expectedRoot: root) }
@@ -186,13 +201,18 @@ extension NotebookAppModel {
       guard let p = presence, !isItemBeingDeleted(itemID),
         let item = itemForDisplay(id: itemID),
         let center = boardHierarchy?.board(p.boardID)?.focusedCenter(of: itemID) else { return }
-      cancelRequestedNavigation(); endSurfaceEditing(); selectItem(itemID)
+      cancelRequestedNavigation(); endSurfaceEditing(); rememberReturnPlace(); selectItem(itemID)
       if item.kind == .board { _ = enterBoard(itemID); return }
       if item.kind == .document { prepareDocumentOpening(itemID, pageIndex: 0) }
       updatePresence(.init(boardID: p.boardID, mode: item.kind == .document ? .document : .page,
-        camera: .init(center: center, scale: itemGeometry(itemID).fitScale(viewport: p.viewport)),
+        camera: MacReadingCamera.fitted(center: center, geometry: itemGeometry(itemID), viewport: p.viewport, fit: item.kind == .document ? .width : .page),
         viewport: p.viewport, focusedItemID: itemID, openProgress: 1,
         selectedItemID: itemID, notebookPageID: presence?.notebookPageID), settled: true)
+      if item.kind == .notebook, let root = notebookPageRoot(itemID) {
+        let index = presence?.notebookPageID.flatMap { notebookPageIndex($0, in: itemID) } ?? 0
+        let generation = navigationGeneration
+        Task { await navigateToNotebookPage(at: index, in: itemID, expectedRoot: root, navigationGeneration: generation) }
+      }
     }
   }
 
