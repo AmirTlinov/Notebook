@@ -858,7 +858,16 @@ final class NotebookAppModel {
   var cloudStatus = NotebookCloudStatus.off
   @ObservationIgnored private var cloudSync: NotebookCloudSync?
   @ObservationIgnored private var sync: NearbySync?
-  private(set) var pairingState = NotebookPairingState.idle
+  private(set) var connectionState = NotebookConnectionState.waiting
+  private(set) var accountConnection: NotebookAccountConnection?
+  @ObservationIgnored var openAccountWorkspace: (@MainActor (UUID) -> Void)?
+  @ObservationIgnored var openDefaultAccountWorkspace: (@MainActor (UUID) -> Void)?
+  @ObservationIgnored var returnToLocalWorkspace: (@MainActor () -> Void)?
+  private let requiresExistingAccountContent: Bool
+  private(set) var awaitingAccountContent = false
+  @ObservationIgnored private var accountContentTask: Task<Void, Never>?
+  private let opensDefaultAccountWorkspace: Bool
+  private var initialAccountWorkspaceCursor: UInt64?
   private(set) var pairedPeers: [NotebookTransportIdentity] = []
   @ObservationIgnored private var peerGenerations: [UUID: UUID] = [:]
   #if os(iOS)
@@ -910,6 +919,7 @@ final class NotebookAppModel {
   #endif
 
   let allowsCodexRegistration: Bool
+  var workspaceSwitchError: String?
   let pairingActivationID: UUID?
   let acceptance: NotebookAcceptanceConfiguration?
   @ObservationIgnored let documentMeasurements: DocumentPresentationRecorder
@@ -924,6 +934,8 @@ final class NotebookAppModel {
     pairingActivationID: UUID? = nil,
     preferences: UserDefaults = .standard,
     pairingService: String? = nil,
+    opensDefaultAccountWorkspace: Bool = false,
+    requiresExistingAccountContent: Bool = false,
     acceptance: NotebookAcceptanceConfiguration? = nil,
     preparePageInk: @escaping PageInkPreparation = { page, mutation, stamp in
       try await Task.detached(priority: .userInitiated) {
@@ -936,6 +948,8 @@ final class NotebookAppModel {
     self.pairingActivationID = pairingActivationID
     self.preferences = preferences
     self.pairingService = pairingService
+    self.opensDefaultAccountWorkspace = opensDefaultAccountWorkspace
+    self.requiresExistingAccountContent = requiresExistingAccountContent
     self.acceptance = acceptance
     documentMeasurements = DocumentPresentationRecorder(enabled: acceptance != nil
       || ProcessInfo.processInfo.arguments.contains("--notebook-profile-documents"))
@@ -1020,7 +1034,7 @@ final class NotebookAppModel {
     enqueueStoreWrite(owner: .inputActivity(activity.deviceID)) { try $0.saveInputActivity(activity) }
   }
 
-  /// Connection identity is established by TLS and both pairing approvals.
+  /// Connection identity is established by TLS and persisted account authorization.
   /// Only this generation may publish or release the peer's contact barrier.
   func peerConnected(_ peer: NotebookTransportIdentity, generation: UUID) {
     peerGenerations[peer.deviceID] = generation
@@ -1061,7 +1075,7 @@ final class NotebookAppModel {
 
   private func startTrustedSync() async throws {
     guard sync == nil else { return }
-    let header = try await persistence.submit { try $0.workspaceHeader() }
+    let workspaceID = try await persistence.submit { try $0.storedWorkspaceID() }
     let writer = persistence
     let source = try await writer.submit { [actorID] in try $0.replicationSource(deviceID: actorID) }
     let storage = NotebookTransportStorage(
@@ -1089,12 +1103,14 @@ final class NotebookAppModel {
       let name = Host.current().localizedName ?? "Mac"
     #endif
     let connection = NearbySync(role: role,
-      identity: .init(deviceID: actorID, workspaceID: header.workspaceID, displayName: name),
+      identity: .init(deviceID: actorID, workspaceID: workspaceID, displayName: name),
       storage: storage, stagingRoot: store.root.appendingPathComponent("transfer-staging", isDirectory: true),
-      trustStore: NotebookKeychainPairingStore(activationID: pairingActivationID, service: pairingService))
-    connection.onPairingChange = { [weak self] state in
-      self?.pairingState = state
+      trustStore: NotebookKeychainDeviceStore(activationID: pairingActivationID, service: pairingService))
+    connection.onStateChange = { [weak self] state in
+      self?.connectionState = state
       self?.pairedPeers = self?.sync?.pairedPeers ?? []
+      self?.knownDevices = self?.sync?.savedTrust.records.map(\.identity) ?? []
+      self?.blockedDeviceIDs = self?.sync?.savedTrust.blocked ?? []
       #if os(iOS)
       self?.chat?.updateComputers(self?.pairedPeers ?? [])
       #endif
@@ -1112,6 +1128,9 @@ final class NotebookAppModel {
     await connection.start()
     guard !isClosing, sync === connection else { connection.stop(); return }
     pairedPeers = connection.pairedPeers
+    knownDevices = connection.savedTrust.records.map(\.identity)
+    blockedDeviceIDs = connection.savedTrust.blocked
+    await startAccountConnection(connection)
     #if os(iOS)
     chat?.updateComputers(pairedPeers)
     #endif
@@ -1139,16 +1158,32 @@ final class NotebookAppModel {
       }
       return try store.applyDelivery(delivery)
     }
-    reloadExternalChanges()
+    if awaitingAccountContent { resumeAccountContent() } else { reloadExternalChanges() }
+    if delivery.isSnapshot { sync?.receivedCheckpoint(from: delivery.source.deviceID) }
     return cursor
   }
 
+  /// A new replica receives the existing scene; it must never manufacture a
+  /// competing initial notebook (or resurrect a notebook the account deleted).
+  private func resumeAccountContent() {
+    guard accountContentTask == nil, !isClosing else { return }
+    accountContentTask = Task { [weak self] in
+      guard let self else { return }
+      defer { self.accountContentTask = nil }
+      await self.startupTask?.value
+      guard !self.isClosing, self.awaitingAccountContent else { return }
+      await self.loadInitialState(pageSize: self.notebookPageSize,
+        viewport: .init(x: self.notebookPageSize.width, y: self.notebookPageSize.height))
+    }
+  }
+
   private func prepareCloudSync() async {
+    guard cloudSync == nil else { return }
     do {
       let writer = persistence, actor = actorID
       let identity = try await writer.submit { store in
         try store.prepareCloudStorage()
-        return try (store.replicationSource(deviceID: actor), store.workspaceHeader().workspaceID)
+        return try (store.replicationSource(deviceID: actor), store.storedWorkspaceID())
       }
       let cloud = NotebookCloudSync(store: store, writer: writer, source: identity.0, workspaceID: identity.1,
         apply: { [weak self] delivery, account in
@@ -1156,38 +1191,18 @@ final class NotebookAppModel {
           _ = try await self.applyDurableDelivery(delivery, cloudAccount: account)
         }, report: { [weak self] status in await self?.acceptCloudStatus(status) })
       cloudSync = cloud
-      // Account/network discovery must not hold up LAN or local startup.
-      Task { await cloud.resume() }
+      // Account connection alone authorizes automatic content sync.
+      // No second account-discovery loop races the device owner.
     } catch { cloudStatus = .init(enabled: false, message: error.localizedDescription) }
   }
 
   private func acceptCloudStatus(_ value: NotebookCloudStatus) { cloudStatus = value }
   func enableCloud() async {
     if cloudSync == nil { await prepareCloudSync() }
-    await cloudSync?.enable()
+    guard let account = accountConnection?.account else { return }
+    await cloudSync?.enable(account: account)
   }
   func disableCloud() async { await cloudSync?.disable() }
-  func syncCloudNow() async { await cloudSync?.syncNow() }
-
-  func createPairingInvitation() async throws -> String {
-    guard !isClosing, let sync else { throw NotebookTransportError.storageUnavailable }
-    return try await sync.createPairingInvitation().encoded()
-  }
-
-  func joinPairingInvitation(_ invitation: String) async throws {
-    guard !isClosing, let sync else { throw NotebookTransportError.storageUnavailable }
-    try await sync.joinPairingInvitation(invitation.trimmingCharacters(in: .whitespacesAndNewlines))
-  }
-
-  func confirmPairing(generation: UUID) async throws {
-    guard !isClosing, let sync else { throw NotebookTransportError.storageUnavailable }
-    try await sync.confirmPairing(generation: generation)
-  }
-
-  func cancelPairing() async throws {
-    guard !isClosing else { throw NotebookTransportError.storageUnavailable }
-    try await sync?.cancelPairing()
-  }
 
   #if os(iOS)
   func chooseChatComputer(_ id: UUID) {
@@ -1195,18 +1210,98 @@ final class NotebookAppModel {
   }
   #endif
 
-  func revokePeer(_ id: UUID) async throws {
-    guard !isClosing, let sync else { throw NotebookTransportError.storageUnavailable }
-    try await sync.revokePeer(id)
-    pairedPeers = sync.pairedPeers
-    #if os(iOS)
-    chat?.updateComputers(pairedPeers)
-    #endif
+  private(set) var knownDevices: [NotebookTransportIdentity] = []
+  private(set) var blockedDeviceIDs: Set<UUID> = []
+  func deviceIsConnected(_ id: UUID) -> Bool { peerGenerations[id] != nil }
+  func deviceConnectsAutomatically(_ id: UUID) -> Bool { !blockedDeviceIDs.contains(id) }
+  var canChangeDeviceConnections: Bool {
+    switch accountConnection?.status {
+    case .checking, .needsAccount, .accountChanged: false
+    default: !isClosing
+    }
   }
+  func setDeviceAutomatic(_ id: UUID, allowed: Bool) async {
+    guard canChangeDeviceConnections else { return }
+    do { try await sync?.setDeviceAllowed(id, allowed: allowed) }
+    catch { connectionState = .failed(error.localizedDescription) }
+  }
+
+  func mayAutomaticallySwitchWorkspace() async -> Bool {
+    guard let baseline = initialAccountWorkspaceCursor, !isClosing, !inputGate.isActive,
+      await finishPendingInteraction() else { return false }
+    // finishPendingInteraction drained the writer. Read the bounded cursor in
+    // this uninterrupted admission turn: an async submit can resume before its
+    // own FIFO entry is retired and must not be mistaken for new user input.
+    guard !isClosing, !inputGate.isActive, persistence.pendingCount == 0,
+      pendingAcceptedPageInkCount == 0 else { return false }
+    return (try? store.currentChangeCursor()) == baseline
+  }
+
+  func prepareAutomaticWorkspaceSwitch() async -> Bool {
+    guard await mayAutomaticallySwitchWorkspace(), !isClosing, !inputGate.isActive,
+      persistence.pendingCount == 0, pendingAcceptedPageInkCount == 0 else { return false }
+    // Close input admission BEFORE the last SQL cut. A contact accepted while
+    // CloudKit was answering keeps this space; it can never be left behind.
+    shutdownPhase = .closing
+    let cursor = try? await persistence.submit { try $0.currentChangeCursor() }
+    guard cursor == initialAccountWorkspaceCursor else { shutdownPhase = .running; return false }
+    return true
+  }
+
+  func automaticWorkspaceCutIsUnchanged() throws -> Bool {
+    guard shutdownPhase == .stopped, let baseline = initialAccountWorkspaceCursor else { return false }
+    return try store.currentChangeCursor() == baseline
+  }
+
+  var deviceStatusMessage: String {
+    if isPeerConnected { return "Подключено" }
+    if case .failed(let message) = connectionState { return message }
+    switch accountConnection?.status {
+    case .needsAccount: return "Войдите в iCloud в системных настройках."
+    case .accountChanged: return "Apple Account изменился. Материалы сохранены на устройстве."
+    case .failed(let message): return message
+    case .checking: return pairedPeers.isEmpty ? "Ищем ваши устройства…" : "Подключаемся автоматически…"
+    case .waitingForNetwork: return "Ожидаем сеть. Сохранение на устройстве работает."
+    default: return pairedPeers.isEmpty ? "Откройте Notebook на своём Mac и iPad. Они подключатся автоматически." : "Устройство сейчас недоступно. Подключение восстановится автоматически."
+    }
+  }
+
+  func refreshDeviceConnection() { accountConnection?.refresh() }
+
+  private func startAccountConnection(_ connection: NearbySync) async {
+    guard acceptance == nil else { return }
+    #if os(iOS)
+      let platform = NotebookAccountDirectory.Device.Platform.iPad
+    #else
+      let platform = NotebookAccountDirectory.Device.Platform.mac
+    #endif
+    let bound: String?
+    do { bound = try await persistence.submit { try $0.cloudConfiguration().account } }
+    catch {
+      // Unknown is not unbound: an unreadable old account must never let its
+      // retained credentials be promoted into whichever account is signed in.
+      connectionState = .failed("Не удалось проверить настройки устройств. Локальное сохранение доступно.")
+      return
+    }
+    guard !isClosing else { return }
+    let account = NotebookAccountConnection(
+      device: .init(identity: connection.identity, platform: platform, activation: pairingActivationID), sync: connection, initialBoundAccount: bound,
+      shouldOpenDefault: { [weak self] in
+        await self?.mayAutomaticallySwitchWorkspace() ?? false
+      }, openWorkspace: { [weak self] id in self?.openDefaultAccountWorkspace?(id) },
+      accountReady: { [weak self] account in
+        guard let self, !self.isClosing else { return }
+        await self.cloudSync?.connect(account: account)
+      }, accountUnavailable: { [weak self] in await self?.cloudSync?.stop() })
+    accountConnection = account
+    account.start()
+  }
+
 
   isolated deinit {
     if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
     sync?.stop()
+    if let accountConnection { Task { await accountConnection.stop() } }
     if let cloudSync { Task { await cloudSync.stop() } }
     #if os(macOS)
       commandServer?.stop()
@@ -1261,6 +1356,17 @@ final class NotebookAppModel {
 
   private func loadInitialState(pageSize: PageSize, viewport: SpatialPoint) async {
     do {
+      if requiresExistingAccountContent {
+        let hasScene = try await persistence.submit { store in try store.hasWorkspaceContent() }
+        if !hasScene {
+          awaitingAccountContent = true
+          if startsNearbySync {
+            await prepareCloudSync()
+            try await startTrustedSync()
+          }
+          return
+        }
+      }
       let actor = actorID
       let notebookID = Self.initialNotebookID, pageID = Self.initialPageID
       let stored = try await persistence.submit { store in
@@ -1283,7 +1389,13 @@ final class NotebookAppModel {
           phase: .settled
         )
       }
+      // Initial presence is part of bootstrap too. Capture its durable cut
+      // before making the scene editable, never after async service startup.
+      if opensDefaultAccountWorkspace {
+        initialAccountWorkspaceCursor = try await persistence.submit { try $0.currentChangeCursor() }
+      }
       loadState = .ready
+      awaitingAccountContent = false
       reloadCollaborationMetadata()
       reloadExternalChanges()
       #if os(macOS)
@@ -4387,6 +4499,10 @@ final class NotebookAppModel {
       documentShellPreparation?.stop(); documentShellPreparation = nil
       presentationPlayer.interrupt("closing")
       if let startupTask { await startupTask.value }
+      accountContentTask?.cancel()
+      await accountContentTask?.value
+      accountContentTask = nil
+      await accountConnection?.stop()
       await cloudSync?.stop()
       if let sync, !(await sync.stopAndDrainTrust()) { return false }
       sync = nil

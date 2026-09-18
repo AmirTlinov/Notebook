@@ -118,7 +118,7 @@ struct NotebookChatWindow: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Bindable var chat: NotebookChatController
   let available: CGRect
-  let openPairing: () -> Void
+  let openDevices: () -> Void
   let openHistory: () -> Void
   @AppStorage("notebook.chat-window") private var savedLayout = ""
   @State private var interaction: (frame: CGRect, available: CGRect, layout: NotebookChatWindowLayout)?
@@ -134,7 +134,7 @@ struct NotebookChatWindow: View {
       preferredSize: preferred,
       controlsSize: .init(width: chat.dictation.busy ? preferred.width : companionControlsSize.width, height: companionControlsSize.height))
     let frame = chat.expanded ? layout.frame(in: available, expanded: true) : companion.frame
-    NotebookChatPanel(chat: chat, size: frame.size, openPairing: openPairing, openHistory: openHistory,
+    NotebookChatPanel(chat: chat, size: frame.size, openDevices: openDevices, openHistory: openHistory,
       companion: companion, onCompanionControlsSize: { if $0.width > 0, $0.height > 0 { companionControlsSize = $0 } },
       move: { update($0, ended: $1, corner: nil, frame: chat.expanded ? frame : companion.movementFrame) },
       resize: { update($0, ended: $1, corner: $2, frame: frame) },

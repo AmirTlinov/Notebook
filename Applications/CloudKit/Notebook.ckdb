@@ -1,5 +1,10 @@
 DEFINE SCHEMA
 
+    RECORD TYPE NotebookDevices (
+        "format" INT64,
+        "directory" ENCRYPTED BYTES
+    );
+
     RECORD TYPE NotebookDelivery (
         "format" INT64,
         "body" BYTES

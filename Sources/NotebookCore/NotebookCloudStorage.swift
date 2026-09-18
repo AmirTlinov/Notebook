@@ -108,6 +108,9 @@ extension NotebookStore {
     try commandTransaction(advancesReadRevision: false) {
       try requireCloudAccount(account)
       let db = currentSQL!
+      // An account-discovered empty replica receives first. Publishing a blank
+      // bootstrap scene would create competing content in the existing space.
+      guard try hasWorkspaceContent() else { return }
       guard try db.rows("SELECT 1 FROM cloud_exports WHERE account=?", [.text(account)]).isEmpty else { return }
       let cursor = UInt64(try db.rows("SELECT cursor FROM cloud_accounts WHERE account=?", [.text(account)]).first![0].integer!)
       let delivery: NotebookReplicationDelivery

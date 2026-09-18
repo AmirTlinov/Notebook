@@ -63,7 +63,7 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(value["timeoutSeconds"], 660)
         changed = acceptance.document_ui_request("ipad", method + "Other", identifier, "Control")
         self.assertEqual(changed["timeoutSeconds"], 300)
-        ordinary = "NotebookAcceptanceUITests/testRealChatReplyAfterPairing"
+        ordinary = "NotebookAcceptanceUITests/testRealChatReplyThroughConnectedMac"
         self.assertIsNone(acceptance.document_ui_request("ipad", ordinary, None, None))
         with self.assertRaises(release.ReleaseError):
             acceptance.document_ui_request("ipad", ordinary, identifier, "Control")
@@ -86,7 +86,7 @@ class SelectionTests(unittest.TestCase):
                     acceptance.ui_timeout("mac", scenario)
 
     def test_ui_deadlines_preserve_document_and_bounded_mixed_workload_contracts(self):
-        self.assertEqual(acceptance.ui_timeout("ipad", "NotebookAcceptanceUITests/testRealChatReplyAfterPairing"), 240)
+        self.assertEqual(acceptance.ui_timeout("ipad", "NotebookAcceptanceUITests/testRealChatReplyThroughConnectedMac"), 240)
         for seconds in (300, 660):
             self.assertEqual(acceptance.ui_timeout("ipad", "NotebookDocumentAcceptanceUITests/testDocument",
                                                   document={"timeoutSeconds": seconds}), seconds)
@@ -102,7 +102,7 @@ class SelectionTests(unittest.TestCase):
             "NotebookCollaborationAcceptanceUITests/testCreatedMaterialRetainsHumanEditsThroughAgentUndoAndCancellation",
             "NotebookCollaborationAcceptanceUITests/testConcurrentHumanStateRejectsStaleAgentWriteAndSurvivesItsUndo",
         ]
-        for scenario in collaborative + ["NotebookAcceptanceUITests/testRealChatReplyAfterPairing",
+        for scenario in collaborative + ["NotebookAcceptanceUITests/testRealChatReplyThroughConnectedMac",
                                         "NotebookDocumentAcceptanceUITests/testRealPageControlsLinksAndTouchSourceEditingSurviveColdReopening"]:
             self.assertTrue(acceptance.supports_attached_ui_trace("ipad", scenario))
             self.assertFalse(acceptance.supports_attached_ui_trace("mac", scenario))
@@ -802,63 +802,6 @@ class SelectionTests(unittest.TestCase):
         release.write_json(evidence / "selection.json", plan)
         receipt["artifacts"] = release.verification_artifacts(evidence, full=False)
         with self.assertRaises(release.ReleaseError): verify.validate_selected(self.root, evidence, receipt)
-
-
-class PairingInvitationTests(unittest.TestCase):
-    def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary.cleanup)
-        self.home = Path(self.temporary.name)
-        home = patch.object(acceptance.Path, "home", return_value=self.home)
-        home.start(); self.addCleanup(home.stop)
-        self.run_id, self.attempt = str(uuid.uuid4()), str(uuid.uuid4())
-        self.runtime = self.home / "Library/Application Support/NotebookAcceptance" / self.run_id
-        self.runtime.mkdir(parents=True)
-        self.value = {"runID": self.run_id, "macManifest": str(self.runtime / "mac.json")}
-        self.reference = {"runID": self.run_id, "attempt": self.attempt}
-
-    def invitation(self):
-        path = acceptance.pairing_invitation_path(self.value, self.attempt)
-        path.parent.mkdir(parents=True, mode=0o700)
-        path.write_text("notebook-pair:v2:private-test-invitation")
-        path.chmod(0o600)
-        return path
-
-    def test_ui_secret_belongs_to_runtime_and_each_copy_has_a_new_file(self):
-        first = self.invitation()
-        second = acceptance.pairing_invitation_path(self.value, str(uuid.uuid4()))
-        self.assertEqual(first.parent, self.home / "Library/Containers" /
-            (acceptance.MAC_BUNDLE + ".uitests.xctrunner") / "Data/Library/Application Support/NotebookAcceptance" / self.run_id)
-        self.assertNotEqual(first, second)
-        self.assertFalse(second.exists())
-        self.assertEqual(acceptance.read_pairing_invitation(self.value, self.reference), first.read_text())
-
-    def test_a_reference_cannot_select_another_pair_or_file_path(self):
-        self.invitation()
-        with self.assertRaises(release.ReleaseError):
-            acceptance.read_pairing_invitation(self.value, {**self.reference, "runID": str(uuid.uuid4())})
-        with self.assertRaises(ValueError):
-            acceptance.pairing_invitation_path(self.value, "../../Documents/secret")
-        with self.assertRaises(release.ReleaseError):
-            acceptance.pairing_invitation_path({**self.value, "macManifest": str(self.home / "mac.json")}, self.attempt)
-
-    def test_reader_rejects_public_oversized_and_non_invitation_files(self):
-        path = self.invitation()
-        path.chmod(0o644)
-        with self.assertRaises(release.ReleaseError):
-            acceptance.read_pairing_invitation(self.value, self.reference)
-        path.chmod(0o600)
-        for body in ("x" * 16_385, "not-an-invitation"):
-            path.write_text(body)
-            with self.assertRaises(release.ReleaseError):
-                acceptance.read_pairing_invitation(self.value, self.reference)
-
-    def test_reader_rejects_a_symbolic_link(self):
-        path = self.invitation()
-        target = self.runtime / "unrelated.private"
-        path.rename(target); path.symlink_to(target)
-        with self.assertRaises(release.ReleaseError):
-            acceptance.read_pairing_invitation(self.value, self.reference)
 
 
 class UIOnlyBuildTests(unittest.TestCase):

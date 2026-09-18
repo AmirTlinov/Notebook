@@ -244,7 +244,7 @@ struct NotebookArchiveActivationTests {
     #expect(try replica.sqlRead { try $0.rows("SELECT * FROM peer_cursors").isEmpty })
     #expect(try replica.currentChangeCursor() == 1)
     let seed = try #require(replica.changeJournal(after: 0).first)
-    #expect(try replica.sqlRead { _ in try replica.validatedManifest(seed).format } == 6)
+    #expect(try replica.sqlRead { _ in try replica.validatedManifest(seed).format } == NotebookChangeManifest.currentFormat)
     #expect(throws: NotebookStorageError.self) { try store.prepareDeviceSnapshot(at: replicaURL, presence: presence, preservingLocalState: false) }
   }
 

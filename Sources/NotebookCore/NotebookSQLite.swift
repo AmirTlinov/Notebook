@@ -749,6 +749,19 @@ extension NotebookStore {
   public func prepareEmptyWorkspace(workspaceID: UUID) throws {
     try prepareDatabase(initialWorkspaceID: workspaceID)
   }
+
+  /// Bootstrap may know a space before its first scene exists. Reading this
+  /// identity does not manufacture a catalog or retarget existing content.
+  public func storedWorkspaceID() throws -> UUID {
+    try sqlRead { database in
+      guard let id = try database.rows("SELECT value FROM metadata WHERE key='workspace_id'").first?[0].text.flatMap(UUID.init(uuidString:)) else {
+        throw NotebookStorageError.corruptRecord("workspace identity")
+      }
+      return id
+    }
+  }
+
+  public func hasWorkspaceContent() throws -> Bool { try hasStoredValue("workspace.json") }
 }
 
 extension NotebookStore {

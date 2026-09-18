@@ -4,8 +4,9 @@ import NotebookCore
 /// Two projections of the native Codex catalogue. Opening a folder reads its
 /// own pages; it does not change the selected conversation or project files.
 struct NotebookChatBrowser: View {
+  @Environment(NotebookAppModel.self) private var model
   @Bindable var chat: NotebookChatController
-  let openPairing: () -> Void
+  let openDevices: () -> Void
   let editProject: (CodexProject) -> Void
   let createInProject: (CodexProject) -> Void
 
@@ -20,8 +21,10 @@ struct NotebookChatBrowser: View {
             .accessibilityIdentifier("notebook-chat-creation-" + job.id.uuidString)
         }
         if !chat.connected {
-          Button("Подключить Mac", systemImage: "link", action: openPairing)
-            .font(.system(size: 14)).frame(minHeight: 44).accessibilityIdentifier("notebook-chat-connect")
+          VStack(alignment: .leading, spacing: 6) {
+            Text(model.deviceStatusMessage).foregroundStyle(.secondary)
+            Button("Подробнее", action: openDevices).accessibilityIdentifier("notebook-chat-devices")
+          }.font(.system(size: 14)).padding(.vertical, 10)
         }
         if chat.browserMode == .chats {
           taskRows(chat.catalogues[.chats], project: nil)

@@ -1700,7 +1700,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
     launchPortraitFixture(app)
-    XCTAssertFalse(app.buttons["Подключение и устройства"].exists)
+    XCTAssertFalse(app.buttons["Устройства"].exists)
     XCTAssertFalse(app.buttons["Совместные ходы"].exists)
     openChat(in: app)
     let panel = app.descendants(matching: .any).matching(identifier: "notebook-chat-panel").firstMatch
@@ -1737,9 +1737,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 3))
     app.buttons["Готово"].tap()
     app.buttons["notebook-chat-menu"].tap()
-    XCTAssertTrue(app.buttons["Подключение и устройства"].waitForExistence(timeout: 2))
-    app.buttons["Подключение и устройства"].tap()
-    XCTAssertTrue(app.navigationBars["Соединение"].waitForExistence(timeout: 3))
+    XCTAssertTrue(app.buttons["Устройства"].waitForExistence(timeout: 2))
+    app.buttons["Устройства"].tap()
+    XCTAssertTrue(app.navigationBars["Устройства"].waitForExistence(timeout: 3))
     app.buttons["Готово"].tap()
     XCTAssertEqual(paper.frame, paperFrame)
     XCTAssertEqual(paper.value as? String, drawing)

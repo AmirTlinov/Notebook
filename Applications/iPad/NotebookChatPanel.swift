@@ -9,7 +9,7 @@ struct NotebookChatPanel: View {
   @Environment(NotebookAppModel.self) private var model
   @Bindable var chat: NotebookChatController
   let size: CGSize
-  let openPairing: () -> Void
+  let openDevices: () -> Void
   let openHistory: () -> Void
   let companion: NotebookCompanionPlacement
   let onCompanionControlsSize: (CGSize) -> Void
@@ -39,7 +39,7 @@ struct NotebookChatPanel: View {
                   VStack(spacing: 0) {
                     if chat.threadID == nil || chat.browsesChats {
                       browserToolbar
-                      NotebookChatBrowser(chat: chat, openPairing: openPairing,
+                      NotebookChatBrowser(chat: chat, openDevices: openDevices,
                         editProject: { editingProject = $0 }, createInProject: { project in
                           chat.selectProject(project); createChat()
                         })
@@ -137,7 +137,7 @@ struct NotebookChatPanel: View {
   private var header: some View {
     HStack(spacing: 0) {
       Menu {
-        if !chat.computers.isEmpty {
+        if chat.computers.count > 1 {
           Section("Компьютер") {
             ForEach(chat.computers, id: \.deviceID) { computer in
               Button { model.chooseChatComputer(computer.deviceID) } label: {
@@ -158,8 +158,8 @@ struct NotebookChatPanel: View {
         Section {
           Button("Совместные ходы", systemImage: "clock.arrow.circlepath", action: openHistory)
             .accessibilityIdentifier("collaboration-history")
-          Button("Подключение и устройства", systemImage: "link", action: openPairing)
-            .accessibilityIdentifier("pairing-settings")
+          Button("Устройства", systemImage: "link", action: openDevices)
+            .accessibilityIdentifier("devices-settings")
         }
       } label: {
         Image(systemName: "line.3.horizontal").font(NotebookChrome.iconFont).frame(width: 44, height: 44).contentShape(Rectangle())

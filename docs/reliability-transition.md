@@ -406,7 +406,7 @@ MCP подтвердил связь и чтение текущего докум�
 | S3 | Единственная транзакция SQLite WAL публикует содержание, версии, квитанцию и журнал; `NotebookSQLiteTests` проверяет rollback и неоднозначный ответ после commit | Интеграция; двойного файлового писателя нет |
 | S4 | Создание предшествует первому штриху, ошибка удерживает очередь; `NotebookPersistenceTests` | Срез |
 | S5 | Содержание, защита от повторов и входящий курсор публикуются вместе; `NotebookReplicationTests`, `AgentStateTests`, `MacModelLifecycleTests` | Интеграция; восстановление полных логических владельцев ещё осталось |
-| S6 | Явное двустороннее сопряжение, UUID пространства и системный TLS; `NotebookTransportSessionTests`, `NearbySyncTests` | Интеграция; физическая пара ещё не принята |
+| S6 | Account-authorized trust без ручного сопряжения, UUID пространства и системный TLS; `NotebookAccountConnectionTests`, `NotebookTransportSessionTests`, `NearbySyncTests` | Интеграция; физическая пара ещё не принята |
 | S7 | Дубликаты ID и неоднозначное физическое владение отклоняются; `WorkspacePublicationTests` | Срез |
 | S8 | Ограниченные кадры и кредиты, дисковая сборка, страницы журнала и ACK после commit; `NearbySyncTests`, `NotebookTransportSessionTests`, `NotebookReplicationTests` | Интеграция; работа большого входящего пакета и срок хранения журнала ещё не ограничены |
 | S9 | Контакт и камера принадлежат поколению соединения; поздний disconnect/ответ не восстанавливает старый ввод; `NotebookPersistenceTests`, `NotebookTransportSessionTests` | Интеграция; запись локального положения не входит в устойчивую репликацию |

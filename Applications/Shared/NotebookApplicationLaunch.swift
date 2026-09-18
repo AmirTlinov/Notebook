@@ -14,6 +14,7 @@ final class NotebookApplicationLaunch {
   private let target: NotebookArchiveTarget?
   private let makeModel: ((NotebookStore, UUID?) throws -> NotebookAppModel)?
   private let isFixture: Bool
+  private enum SwitchCancellation: Error { case acceptedLocalWork }
 
   init(root: URL = NotebookStore.defaultRoot, target: NotebookArchiveTarget? = nil,
     makeModel: ((NotebookStore, UUID?) throws -> NotebookAppModel)? = nil) {
@@ -32,9 +33,9 @@ final class NotebookApplicationLaunch {
 
   var message: String {
     if isFixture, let failure { return failure }
-    if let failure { return "Перенос не завершён. Исходные копии сохранены. \(failure)" }
+    if let failure { return "Не удалось открыть Notebook. Сохранённые материалы не изменены. \(failure)" }
     if case .waitingForPair = activation { return "Архив проверен. Ожидается готовность второго устройства…" }
-    return "Проверяется сохранённый архив…"
+    return "Открываем Notebook…"
   }
 
   var canRetry: Bool { !isFixture && failure != nil }
@@ -59,20 +60,84 @@ final class NotebookApplicationLaunch {
       try Task.checkCancellation()
       switch activation {
       case .unchanged, .admitted:
-        if case .admitted(let receipt) = activation {
-          try await NotebookKeychainPairingStore(activationID: receipt.transitionID)
-            .consumeInstallationGrant(root: root, receipt: receipt)
-        }
         try Task.checkCancellation()
-        let store = NotebookStore(root: root)
+        let selectedRoot = try makeModel == nil ? NotebookWorkspaceLibrary(originalRoot: root).selectedRoot() : root
+        let store = NotebookStore(root: selectedRoot)
+        let fresh = !FileManager.default.fileExists(atPath: store.databaseURL.path)
         model = try makeModel?(store, pairingActivationID) ?? NotebookAppModel(store: store,
-          allowsCodexRegistration: allowsCodexRegistration, pairingActivationID: pairingActivationID)
+          allowsCodexRegistration: allowsCodexRegistration, pairingActivationID: pairingActivationID,
+          opensDefaultAccountWorkspace: fresh, requiresExistingAccountContent: selectedRoot != root)
+        installWorkspaceSelection()
       case .waitingForPair: break
       }
     } catch is CancellationError {
       // A committed activation remains on disk; cancellation cannot restore old
       // bytes or publish a model after the calling scene has disappeared.
     } catch { failure = error.localizedDescription }
+  }
+
+  private func installWorkspaceSelection() {
+    guard makeModel == nil, !isFixture else { return }
+    model?.openAccountWorkspace = { [weak self] id in
+      Task { await self?.openWorkspace(id, automatically: false) }
+    }
+    model?.openDefaultAccountWorkspace = { [weak self] id in
+      Task { await self?.openWorkspace(id, automatically: true) }
+    }
+    if model?.store.root != root,
+      let original = try? NotebookStore(root: root).storedWorkspaceID() {
+      model?.returnToLocalWorkspace = { [weak self] in
+        Task { await self?.openWorkspace(original, automatically: false) }
+      }
+    }
+  }
+
+  private func openWorkspace(_ id: UUID, automatically: Bool) async {
+    guard !isChecking, let previous = model else { return }
+    isChecking = true
+    var retired = false
+    var replacement: NotebookAppModel?
+    defer { isChecking = false }
+    do {
+      let currentID = try previous.store.storedWorkspaceID()
+      guard currentID != id else { return }
+      if automatically {
+        guard await previous.prepareAutomaticWorkspaceSwitch() else { previous.refreshDeviceConnection(); return }
+      } else {
+        guard await previous.finishPendingInteraction() else { throw NotebookTransportError.storageUnavailable }
+      }
+      guard await previous.shutdown() else { throw NotebookTransportError.storageUnavailable }
+      retired = true
+      if automatically, !(try previous.automaticWorkspaceCutIsUnchanged()) { throw SwitchCancellation.acceptedLocalWork }
+      let library = NotebookWorkspaceLibrary(originalRoot: root)
+      let destination = try await Task.detached { try library.prepare(id) }.value
+      let next = NotebookAppModel(store: NotebookStore(root: destination),
+        allowsCodexRegistration: allowsCodexRegistration, pairingActivationID: pairingActivationID,
+        requiresExistingAccountContent: destination != root)
+      replacement = next
+      await next.start(pageSize: NotebookAppModel.defaultPageSize)
+      guard next.loadState == .ready || next.awaitingAccountContent else { throw NotebookTransportError.storageUnavailable }
+      _ = try await Task.detached { try library.select(id) }.value
+      model = next; failure = nil; installWorkspaceSelection()
+    } catch {
+      let cancelledForInput = error is SwitchCancellation
+      failure = cancelledForInput ? nil : error.localizedDescription
+      previous.workspaceSwitchError = cancelledForInput ? nil : "Не удалось открыть пространство. Текущие материалы остались на этом устройстве."
+      guard retired else { return }
+      if let replacement, !(await replacement.shutdown()) {
+        model = replacement
+        replacement.workspaceSwitchError = "Не удалось завершить открытие пространства. Изменения остаются на этом устройстве."
+        installWorkspaceSelection()
+        return
+      }
+      // The source was not changed or merged. Reopen its same owner after an
+      // unsuccessful switch instead of leaving a stopped model on screen.
+      model = NotebookAppModel(store: previous.store, allowsCodexRegistration: allowsCodexRegistration,
+        pairingActivationID: pairingActivationID, requiresExistingAccountContent: previous.store.root != root)
+      model?.workspaceSwitchError = previous.workspaceSwitchError
+      installWorkspaceSelection()
+      await model?.start(pageSize: NotebookAppModel.defaultPageSize)
+    }
   }
 
   /// Replacing a pair's delivery journals requires fresh trust, not a new

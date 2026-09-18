@@ -79,7 +79,7 @@ final class NotebookTransportSessionTests: XCTestCase {
     XCTAssertTrue(peer.server?.isReady == true)
     XCTAssertTrue(peer.client?.isReady == true)
     // Session readiness is reachable only after TLS metadata accepts exactly
-    // 1.2 / 0xCCAC, PSK proof and both human-confirmation records.
+    // 1.2 / 0xCCAC, PSK proof and saved account authorization.
   }
 
   func testCodexEnvelopeUsesTheSameAuthenticatedPeerAndReceiptID() async throws {
@@ -137,71 +137,53 @@ final class NotebookTransportSessionTests: XCTestCase {
     XCTAssertFalse(pair.server?.isReady == true)
     XCTAssertFalse(pair.client?.isReady == true)
     let reads = await pair.serverStorage.cursorReads
-    XCTAssertEqual(reads, 0, "Even the durable cursor remains unread before pairing")
+    XCTAssertEqual(reads, 0, "Even the durable cursor remains unread before account authorization")
   }
 
-  func testPairingRequiresBothConfirmationsBeforeAnyContentOrCursor() async throws {
-    let authenticated = expectation(description: "Both TLS identities proved"); authenticated.expectedFulfillmentCount = 2
-    let ready = expectation(description: "Both peers explicitly confirmed"); ready.expectedFulfillmentCount = 2
-    let pair = try NotebookTransportTestPair(autoConfirm: false)
+  func testAccountAdmissionPrecedesCursorAndContentWithoutHumanConfirmation() async throws {
+    let waiting = expectation(description: "Account admission is pending")
+    let ready = expectation(description: "Both account-authorized devices ready"); ready.expectedFulfillmentCount = 2
+    let pair = try NotebookTransportTestPair()
     defer { pair.stop() }
-    pair.onAuthenticated = { _, _ in authenticated.fulfill() }
-    pair.onReady = { _, _ in ready.fulfill() }
-    try pair.start()
-    await fulfillment(of: [authenticated], timeout: 10)
-    let server = try XCTUnwrap(pair.server), client = try XCTUnwrap(pair.client)
-    XCTAssertFalse(server.isReady); XCTAssertFalse(client.isReady)
-    let cursorReads = await pair.serverStorage.cursorReads + pair.clientStorage.cursorReads
-    XCTAssertEqual(cursorReads, 0)
-    for (session, packet) in [(server, NotebookTransportPacket(sequence: 1, message: .offer(pair.sampleChange))),
-      (client, .init(sequence: 0, message: .ready(cursor: 0))),
-      (client, .init(sequence: 0, message: .contentUnavailable(.checkpoint)))] {
-      do { try await session.receive(packet); XCTFail("Unconfirmed peers cannot exchange content or cursors") }
-      catch { XCTAssertEqual(error as? NotebookTransportError, .authenticationRequired) }
+    var gate: CheckedContinuation<Bool, Never>?
+    defer { gate?.resume(returning: false) }
+    pair.authorize = { peer in
+      if peer.deviceID == pair.clientIdentity.deviceID {
+        return await withCheckedContinuation { gate = $0; waiting.fulfill() }
+      }
+      return true
     }
-    try await client.confirmPairing()
-    XCTAssertFalse(server.isReady); XCTAssertFalse(client.isReady)
-    try await server.confirmPairing()
+    pair.onReady = { _, _ in ready.fulfill() }
+    try pair.start(); await fulfillment(of: [waiting], timeout: 10)
+    let server = try XCTUnwrap(pair.server)
+    let cursorReads = await pair.serverStorage.cursorReads
+    XCTAssertEqual(cursorReads, 0); XCTAssertFalse(server.isReady)
+    do { try await server.receive(.init(sequence: 1, message: .offer(pair.sampleChange))); XCTFail("No content before authorization") }
+    catch { XCTAssertEqual(error as? NotebookTransportError, .authenticationRequired) }
+    gate?.resume(returning: true); gate = nil
     await fulfillment(of: [ready], timeout: 10)
   }
 
-  func testStoppedSessionCannotPublishAConfirmationWhoseTrustWriteCompletesLater() async throws {
-    let authenticated = expectation(description: "Both identities proved"); authenticated.expectedFulfillmentCount = 2
-    let pair = try NotebookTransportTestPair(autoConfirm: false)
+  func testStoppedSessionCannotPublishLateAccountAdmission() async throws {
+    let waiting = expectation(description: "Account admission waits")
+    let pair = try NotebookTransportTestPair()
     defer { pair.stop() }
-    pair.onAuthenticated = { _, _ in authenticated.fulfill() }
-    try pair.start()
-    await fulfillment(of: [authenticated], timeout: 10)
-    let server = try XCTUnwrap(pair.server), client = try XCTUnwrap(pair.client)
-    try await client.confirmPairing()
-    let saving = expectation(description: "Local approval awaits its actual persistence callback")
-    let original = server.onConfirmation
-    var gate: CheckedContinuation<Void, Never>?
-    defer { gate?.resume() }
-    var localWrites = 0
-    server.onConfirmation = { peer, pairing, local in
-      if local {
-        localWrites += 1
-        await withCheckedContinuation { gate = $0; saving.fulfill() }
+    var gate: CheckedContinuation<Bool, Never>?
+    defer { gate?.resume(returning: false) }
+    pair.authorize = { peer in
+      if peer.deviceID == pair.clientIdentity.deviceID {
+        return await withCheckedContinuation { gate = $0; waiting.fulfill() }
       }
-      try await original?(peer, pairing, local)
+      return true
     }
-    let first = Task { try await server.confirmPairing() }
-    await fulfillment(of: [saving], timeout: 2)
-    let submitted = expectation(description: "Repeated approval awaits the same write")
-    let repeated = Task { submitted.fulfill(); try await server.confirmPairing() }
-    await fulfillment(of: [submitted], timeout: 2)
-    XCTAssertEqual(localWrites, 1)
-    XCTAssertFalse(server.isReady); XCTAssertFalse(client.isReady)
-    server.stop()
-    gate?.resume(); gate = nil
-    for task in [first, repeated] {
-      do { try await task.value; XCTFail("A stopped session cannot confirm readiness") }
-      catch { XCTAssertEqual(error as? NotebookTransportError, .disconnected) }
-    }
-    let reads = await pair.serverStorage.cursorReads + pair.clientStorage.cursorReads
-    XCTAssertEqual(reads, 0, "The durable content lane cannot open before saved approval")
-    XCTAssertFalse(server.isReady); XCTAssertFalse(client.isReady)
+    try pair.start(); await fulfillment(of: [waiting], timeout: 10)
+    let server = try XCTUnwrap(pair.server)
+    server.stop(); gate?.resume(returning: true); gate = nil
+    let finished = expectation(description: "Late admission unwinds")
+    Task { await Task.yield(); finished.fulfill() }
+    await fulfillment(of: [finished], timeout: 2)
+    let reads = await pair.serverStorage.cursorReads
+    XCTAssertEqual(reads, 0); XCTAssertFalse(server.isReady)
   }
 
   func testDurableAcknowledgementWaitsForCommitWhileCameraAndContactContinue() async throws {
@@ -300,13 +282,14 @@ private final class NotebookTransportTestPair {
   var client: NotebookTransportSession?
   var onReady: ((NotebookTransportIdentity, UUID) -> Void)?
   var onAuthenticated: ((NotebookTransportIdentity, UUID) -> Void)?
+  var authorize: ((NotebookTransportIdentity) async throws -> Bool)?
   var onTransient: ((NotebookTransportTransient, NotebookTransportIdentity) -> Void)?
   var onDurable: ((NotebookDurableChange, NotebookTransportIdentity) -> Void)?
   var onFailure: ((Error) -> Void)?
   var onStopped: ((NotebookTransportIdentity, Error?) -> Void)?
-  private let autoConfirm: Bool
+  private let authorized: Bool
   private let wrongSecret: Bool
-  private let pairingID = UUID()
+  private let credentialID = UUID()
   private let secret = Data(repeating: 17, count: 32)
   private let root = FileManager.default.temporaryDirectory.appendingPathComponent("NotebookTLSLoopback-\(UUID())")
   private let queue = DispatchQueue(label: "Notebook.Tests.TLSLoopback")
@@ -314,13 +297,13 @@ private final class NotebookTransportTestPair {
   private var reportedFailure = false
   private var isStopped = false
 
-  init(wrongSecret: Bool = false, autoConfirm: Bool = true, withChange: Bool = false, holdCommit: Bool = false,
+  init(wrongSecret: Bool = false, authorized: Bool = true, withChange: Bool = false, holdCommit: Bool = false,
     serverStorage: NotebookTransportMemoryStore? = nil, clientStorage: NotebookTransportMemoryStore? = nil,
     serverIdentity: NotebookTransportIdentity? = nil, clientIdentity: NotebookTransportIdentity? = nil) throws {
     let workspaceID = serverIdentity?.workspaceID ?? UUID()
     self.serverIdentity = serverIdentity ?? .init(deviceID: UUID(), workspaceID: workspaceID, displayName: "Loopback Mac")
     self.clientIdentity = clientIdentity ?? .init(deviceID: UUID(), workspaceID: workspaceID, displayName: "Loopback iPad")
-    self.wrongSecret = wrongSecret; self.autoConfirm = autoConfirm
+    self.wrongSecret = wrongSecret; self.authorized = authorized
     let content = Data(repeating: 7, count: 400_000), contentHash = Self.digest(content), transactionID = UUID()
     let manifest = try JSONEncoder().encode(NotebookChangeManifest(transactionID: transactionID, workspaceID: workspaceID,
       records: [.init(address: "pages/test.json", blobHash: contentHash)]))
@@ -332,7 +315,7 @@ private final class NotebookTransportTestPair {
   }
 
   func start() throws {
-    let key = NotebookTransportTLS.Key(identity: "paired:\(pairingID)", secret: secret)
+    let key = NotebookTransportTLS.Key(identity: "device:\(credentialID)", secret: secret)
     let listener = try NWListener(using: NotebookTransportTLS.parameters(keys: [key], loopback: true)); self.listener = listener
     listener.newConnectionHandler = { [weak self] connection in
       Task { @MainActor in
@@ -342,8 +325,8 @@ private final class NotebookTransportTestPair {
             storage: self.serverStorage.adapter(), stagingRoot: self.root.appendingPathComponent("server"), queue: self.queue)
           self.server = session
           session.resolveCredential = { hello in
-            guard hello.identity == self.clientIdentity, hello.pairingID == self.pairingID else { throw NotebookTransportError.identityMismatch }
-            return .init(pairingID: self.pairingID, kind: .paired, secret: self.secret, expectedPeer: self.clientIdentity)
+            guard hello.identity == self.clientIdentity, hello.credentialID == self.credentialID else { throw NotebookTransportError.identityMismatch }
+            return .init(credentialID: self.credentialID, secret: self.secret, expectedPeer: self.clientIdentity)
           }
           self.configure(session); session.start()
         } catch { self.failed(error) }
@@ -357,7 +340,7 @@ private final class NotebookTransportTestPair {
           guard self.client == nil, let port = self.listener?.port else { return }
           do {
             let secret = self.wrongSecret ? Data(repeating: 18, count: 32) : self.secret
-            let credential = NotebookPeerCredential(pairingID: self.pairingID, kind: .paired, secret: secret, expectedPeer: self.serverIdentity)
+            let credential = NotebookPeerCredential(credentialID: self.credentialID, secret: secret, expectedPeer: self.serverIdentity)
             let connection = NWConnection(host: "127.0.0.1", port: port,
               using: try NotebookTransportTLS.parameters(keys: [credential.tlsKey], loopback: true))
             let session = try NotebookTransportSession(connection: connection, identity: self.clientIdentity, credential: credential,
@@ -381,9 +364,10 @@ private final class NotebookTransportTestPair {
     let generation = session.generation
     session.onAuthenticated = { [weak self] identity, _ in
       guard let self else { throw NotebookTransportError.disconnected }
-      self.onAuthenticated?(identity, generation); return self.autoConfirm
+      self.onAuthenticated?(identity, generation)
+      if let authorize = self.authorize { return try await authorize(identity) }
+      return self.authorized
     }
-    session.onConfirmation = { _, _, _ in } // persisted trust is injected, never the user's Keychain
     session.onReady = { [weak self] identity in self?.onReady?(identity, generation) }
     session.onTransient = { [weak self] value, peer in self?.onTransient?(value, peer) }
     session.onDurableChange = { [weak self] change, peer in self?.onDurable?(change, peer) }

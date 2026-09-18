@@ -4,9 +4,9 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Selection is an authenticated session transient. Old readers must reject
-  // this wire instead of dropping a clear/unknown publication silently.
-  public static let protocolVersion = 22
+  // Account-authorized devices use one proof/ready handshake. Manual invitations
+  // and confirmation frames no longer exist; both applications must update.
+  public static let protocolVersion = 23
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16
@@ -18,7 +18,7 @@ public enum NotebookTransportLimits {
 
 public enum NotebookTransportError: Error, Equatable, Sendable {
   case invalidFrame, frameTooLarge, unsupportedVersion, authenticationRequired
-  case identityMismatch, invalidPairingInvitation, pairingExpired, pairingRejected
+  case identityMismatch
   case invalidSequence, backpressure, invalidBlob, blobTooLarge, unexpectedBlob
   case disconnected, storageUnavailable, invalidAcknowledgement, resourceLimit
 }
@@ -32,48 +32,6 @@ public struct NotebookTransportIdentity: Codable, Equatable, Hashable, Sendable 
     self.deviceID = deviceID; self.workspaceID = workspaceID; self.displayName = displayName
   }
   public var isValid: Bool { !displayName.isEmpty && displayName.utf8.count <= 120 }
-}
-
-/// The 128-bit secret is carried by an explicit invitation, never advertised
-/// through Bonjour. A short numeric password is not a TLS PSK.
-public struct NotebookPairingInvitation: Codable, Equatable, Sendable {
-  public let version: Int
-  public let id: UUID
-  public let inviter: NotebookTransportIdentity
-  public let secret: Data
-  public let expiresAt: Date
-
-  public init(id: UUID = UUID(), inviter: NotebookTransportIdentity, secret: Data, expiresAt: Date) throws {
-    guard inviter.isValid, secret.count == 16, expiresAt.timeIntervalSince1970.isFinite else {
-      throw NotebookTransportError.invalidPairingInvitation
-    }
-    version = NotebookTransportLimits.protocolVersion
-    self.id = id; self.inviter = inviter; self.secret = secret; self.expiresAt = expiresAt
-  }
-
-  public func encoded() throws -> String {
-    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-    return "notebook-pair:v2:" + (try encoder.encode(self)).base64EncodedString()
-      .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
-      .replacingOccurrences(of: "=", with: "")
-  }
-
-  public static func decode(_ text: String, now: Date = Date()) throws -> Self {
-    let prefix = "notebook-pair:v2:"
-    guard text.utf8.count <= 2_048, text.hasPrefix(prefix) else { throw NotebookTransportError.invalidPairingInvitation }
-    var encoded = String(text.dropFirst(prefix.count)).replacingOccurrences(of: "-", with: "+")
-      .replacingOccurrences(of: "_", with: "/")
-    encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
-    guard let data = Data(base64Encoded: encoded), let invitation = try? JSONDecoder().decode(Self.self, from: data),
-      invitation.version == NotebookTransportLimits.protocolVersion,
-      invitation.secret.count == 16, invitation.inviter.isValid,
-      invitation.expiresAt.timeIntervalSince1970.isFinite
-    else { throw NotebookTransportError.invalidPairingInvitation }
-    guard invitation.expiresAt > now, invitation.expiresAt.timeIntervalSince(now) <= 600 else {
-      throw NotebookTransportError.pairingExpired
-    }
-    return invitation
-  }
 }
 
 public enum NotebookTransportTransient: Codable, Equatable, Sendable {
@@ -109,14 +67,12 @@ public enum NotebookTransportTransient: Codable, Equatable, Sendable {
 }
 
 public struct NotebookTransportHello: Codable, Equatable, Sendable {
-  public enum Credential: String, Codable, Sendable { case invitation, paired }
   public let identity: NotebookTransportIdentity
-  public let pairingID: UUID
-  public let credential: Credential
+  public let credentialID: UUID
   public let nonce: Data
   public let journalGeneration: UUID
-  public init(identity: NotebookTransportIdentity, pairingID: UUID, credential: Credential, nonce: Data, journalGeneration: UUID? = nil) {
-    self.identity = identity; self.pairingID = pairingID; self.credential = credential; self.nonce = nonce
+  public init(identity: NotebookTransportIdentity, credentialID: UUID, nonce: Data, journalGeneration: UUID? = nil) {
+    self.identity = identity; self.credentialID = credentialID; self.nonce = nonce
     self.journalGeneration = journalGeneration ?? identity.deviceID
   }
 }
@@ -155,7 +111,6 @@ public enum NotebookTransportContentRequirement: String, Codable, Equatable, Sen
 public enum NotebookTransportMessage: Codable, Equatable, Sendable {
   case hello(NotebookTransportHello)
   case proof(Data)
-  case confirm(Data)
   case ready(cursor: UInt64)
   case credit([UInt64])
   case offer(NotebookDurableChange)
@@ -167,7 +122,7 @@ public enum NotebookTransportMessage: Codable, Equatable, Sendable {
 
   public var isControl: Bool {
     switch self {
-    case .hello, .proof, .confirm, .ready, .credit, .committed, .contentUnavailable: true
+    case .hello, .proof, .ready, .credit, .committed, .contentUnavailable: true
     default: false
     }
   }
@@ -266,8 +221,7 @@ public enum NotebookTransportAuthentication {
     guard first.identity.isValid, second.identity.isValid,
       first.identity.deviceID != second.identity.deviceID,
       first.identity.workspaceID == second.identity.workspaceID,
-      first.pairingID == second.pairingID,
-      first.credential == second.credential,
+      first.credentialID == second.credentialID,
       first.nonce.count == 32, second.nonce.count == 32, first.nonce != second.nonce
     else { throw NotebookTransportError.identityMismatch }
     let ordered = [first, second].sorted { $0.identity.deviceID.uuidString < $1.identity.deviceID.uuidString }
@@ -280,20 +234,7 @@ public enum NotebookTransportAuthentication {
   public static func verifies(_ proof: Data, secret: Data, transcript: Data, sender: UUID) -> Bool {
     HMAC<SHA256>.isValidAuthenticationCode(proof, authenticating: transcript + Data(sender.uuidString.utf8), using: SymmetricKey(data: secret))
   }
-  public static func confirmation(secret: Data, transcript: Data, sender: UUID) -> Data {
-    proof(secret: secret, transcript: Data("Notebook human confirmation v1\0".utf8) + transcript, sender: sender)
-  }
-  public static func verifiesConfirmation(_ value: Data, secret: Data, transcript: Data, sender: UUID) -> Bool {
-    verifies(value, secret: secret, transcript: Data("Notebook human confirmation v1\0".utf8) + transcript, sender: sender)
-  }
-  public static func pairedSecret(invitation: NotebookPairingInvitation, joiner: NotebookTransportIdentity) throws -> Data {
-    guard invitation.inviter.workspaceID == joiner.workspaceID,
-      invitation.inviter.deviceID != joiner.deviceID else { throw NotebookTransportError.identityMismatch }
-    let context = "Notebook trusted pair v1:\(invitation.id):\(invitation.inviter.deviceID):\(joiner.deviceID):\(joiner.workspaceID)"
-    let key = HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: invitation.secret),
-      salt: Data(invitation.id.uuidString.utf8), info: Data(context.utf8), outputByteCount: 32)
-    return key.withUnsafeBytes { Data($0) }
-  }
+
 }
 
 /// Each transient priority has one replaceable slot, beside sixteen durable offers and
@@ -350,11 +291,9 @@ public struct NotebookTransportOutgoing: Sendable {
   }
 }
 
-public enum NotebookPairingState: Equatable, Sendable {
-  case idle
-  case invitation(NotebookPairingInvitation)
+public enum NotebookConnectionState: Equatable, Sendable {
+  case waiting
   case connecting
-  case confirmation(peer: NotebookTransportIdentity, generation: UUID, locallyConfirmed: Bool)
-  case paired(NotebookTransportIdentity)
+  case connected(NotebookTransportIdentity)
   case failed(String)
 }

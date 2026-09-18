@@ -2,6 +2,7 @@ import CloudKit
 import CryptoKit
 import Foundation
 import NotebookCore
+import OSLog
 
 struct NotebookCloudStatus: Sendable {
   let enabled: Bool
@@ -40,7 +41,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   private func container() throws -> CKContainer {
     // Unsigned/Simulator acceptance builds must never touch the user's cloud.
     guard Bundle.main.object(forInfoDictionaryKey: "NotebookCloudContainer") as? String == Self.containerIdentifier else {
-      throw CloudFailure("В этой сборке CloudKit не настроен. Нужна подписанная сборка с общим iCloud-контейнером.")
+      throw CloudFailure("В этой сборке синхронизация iCloud не настроена. Нужна подписанная сборка с общим iCloud-контейнером.")
     }
     return CKContainer(identifier: Self.containerIdentifier)
   }
@@ -52,15 +53,34 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
     return try await container.userRecordID().recordName
   }
 
-  /// Called only by the human's explicit Enable action. Other accounts get a
-  /// fresh outbox/snapshot, not the previous account's CKSyncEngine tokens.
-  func enable() async {
+  /// First account enrollment enables normal sync. A saved user opt-out stays
+  /// off, and a different account never receives this workspace implicitly.
+  func connect(account verifiedAccount: String) async {
+    do {
+      let configuration = try await writer.submit { try $0.cloudConfiguration() }
+      guard configuration.account == nil || configuration.account == verifiedAccount else {
+        await stop()
+        await report(.init(enabled: false, message: NotebookAccountError.changed.localizedDescription))
+        return
+      }
+      if configuration.account == nil { await enable(account: verifiedAccount) }
+      else if configuration.enabled { await resume() }
+      else { await report(.off) }
+    } catch { await reportFailure(error) }
+  }
+
+  func enable(account expected: String) async {
     let token = await stopEngine()
     guard epoch == token else { return }
     do {
       let container = try container(), current = try await currentAccount(container)
       guard epoch == token else { return }
-      try await writer.submit { [source] in try $0.enableCloud(account: current, source: source) }
+      guard current == expected else { throw NotebookAccountError.changed }
+      try await writer.submit { [source] store in
+        let bound = try store.cloudConfiguration().account
+        guard bound == nil || bound == expected else { throw NotebookAccountError.changed }
+        try store.enableCloud(account: current, source: source)
+      }
       try await start(container: container, account: current, token: token)
     } catch { if epoch == token { await reportFailure(error) } }
   }
@@ -80,7 +100,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
         try await writer.submit { try $0.disableCloud(account: bound) }
         guard epoch == token else { return }
         await stop()
-        await report(.init(enabled: false, message: "Apple Account изменился. Для отправки этой тетради новому аккаунту включите CloudKit явно.")); return
+        await report(.init(enabled: false, message: "Apple Account изменился. Для отправки этой тетради новому аккаунту откройте пространство этого аккаунта.")); return
       }
       try await start(container: container, account: bound, token: token)
     } catch {
@@ -116,7 +136,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
     // CKSyncEngine's following serialization event.
     engine.state.remove(pendingRecordZoneChanges: engine.state.pendingRecordZoneChanges)
     if state == nil { engine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))]) }
-    await report(.init(enabled: true, message: "CloudKit включён. Обмен выполняется при доступности сети; локальное сохранение не ждёт облака."))
+    await report(.init(enabled: true, message: "Синхронизация iCloud включена."))
     await pump()
   }
 
@@ -152,17 +172,6 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
       await previous?.cancelOperations()
       for file in files { try? FileManager.default.removeItem(at: file) }
     }
-  }
-
-  func syncNow() async {
-    hasFailure = false
-    if engine == nil { await resume() }
-    guard let engine else { return }
-    do {
-      await pump()
-      try await engine.fetchChanges(.init(scope: .zoneIDs([zoneID])))
-      try await engine.sendChanges(.init(scope: .zoneIDs([zoneID])))
-    } catch { await reportFailure(error) }
   }
 
   func notifyLocalChanges() async {
@@ -210,8 +219,8 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
           let uploaded = try await writer.submit { try $0.cloudHasUploadedCurrentContent(account: account) }
           guard epoch == token else { return }
           await report(.init(enabled: true, message: uploaded
-            ? "Текущие изменения отправлены в iCloud. Получение и показ на другом устройстве этим не подтверждаются."
-            : "Сохранено на этом устройстве. Есть изменения, ожидающие отправки в iCloud."))
+            ? "Изменения отправлены в iCloud."
+            : "Сохранено на устройстве. Ожидаем отправку в iCloud."))
         }
       } catch { await reportFailure(error); return }
     }
@@ -297,7 +306,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
             accepted.append(server.recordID.recordName)
             syncEngine.state.remove(pendingRecordZoneChanges: [.saveRecord(server.recordID)])
           } else if failed.error.code == .zoneNotFound {
-            throw CloudFailure("Облачная зона недоступна. Проверьте контейнер CloudKit; локальные данные сохранены.")
+            throw CloudFailure("Синхронизация iCloud временно недоступна. Материалы сохранены на устройстве.")
           } else {
             // Scheduling/retries belong to CKSyncEngine. The durable outbox
             // remains intact for quota, offline, or interrupted requests.
@@ -330,13 +339,22 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
     do { try await writer.submit { try $0.disableCloud(account: bound) } }
     catch { await reportFailure(error) }
     guard epoch == token else { return }
-    await report(.init(enabled: false, message: "iCloud отключён или аккаунт изменился. Тетрадь осталась на устройстве; повторное включение — только вручную."))
+    await report(.init(enabled: false, message: "iCloud недоступен или аккаунт изменился. Материалы сохранены на устройстве."))
   }
 
   private func reportFailure(_ error: Error) async {
     hasFailure = true
     let enabled = (try? await writer.submit { try $0.cloudConfiguration().enabled }) ?? false
-    await report(.init(enabled: enabled, message: "Облачный обмен приостановлен: \(error.localizedDescription) Локальная работа и LAN доступны."))
+    let code = (error as? CKError)?.code
+    Logger(subsystem: "com.amirtlinov.notebook", category: "CloudSync")
+      .error("Cloud delivery failed: code \(code?.rawValue ?? -1), type \(String(reflecting: type(of: error)), privacy: .public)")
+    let message: String
+    if let failure = error as? CloudFailure { message = failure.message }
+    else if let failure = error as? NotebookAccountError { message = failure.localizedDescription }
+    else if code == .quotaExceeded { message = "В iCloud закончилось свободное место. Материалы сохранены на устройстве." }
+    else if code == .notAuthenticated { message = "Войдите в iCloud в системных настройках. Материалы сохранены на устройстве." }
+    else { message = "Синхронизация iCloud приостановлена. Материалы сохранены на устройстве." }
+    await report(.init(enabled: enabled, message: message))
   }
 
   private static func encode<T: Encodable>(_ value: T) throws -> Data {

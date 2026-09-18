@@ -45,8 +45,8 @@ PROFILES = {
         "core": ["NotebookSQLScaleTests/oneHundredThousandOwnersKeepAnEditAndItsJournalAddressed"],
     },
     "computer-enrollment": {
-        "core": ["ArchiveComputerPreparationTests", "NotebookArchiveActivationTests", "NotebookInstallationPairingGrantTests"],
-        "mac": ["NotebookMacTests/NotebookArchiveLaunchTests", "NotebookMacTests/NotebookInstallationPairingTests"],
+        "core": ["ArchiveComputerPreparationTests", "NotebookArchiveActivationTests", "NotebookAccountDirectoryTests", "NotebookAccountBootstrapTests"],
+        "mac": ["NotebookMacTests/NotebookArchiveLaunchTests", "NotebookMacTests/NotebookDeviceTrustTests", "NotebookMacTests/NotebookAccountConnectionTests", "NotebookMacTests/NotebookAccountWorkspaceTests"],
     },
     "computers": {
         "core": ["NotebookComputerStoreTests", "NotebookChatStoreTests", "NotebookProjectFileTests"],

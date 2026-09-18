@@ -3,7 +3,7 @@ import NotebookCore
 
 struct NotebookRootView: View {
   @Environment(NotebookAppModel.self) private var model
-  @State private var showsPairing = false
+  @State private var showsDevices = false
   @State private var showsHistory = false
   @State private var penControlsFrame = CGRect.zero
 
@@ -15,7 +15,16 @@ struct NotebookRootView: View {
 
         switch model.loadState {
         case .loading:
-          Color.clear
+          if model.awaitingAccountContent {
+            VStack(spacing: 14) {
+              ProgressView("Открываем ваши материалы…")
+              Text(model.deviceStatusMessage).font(.callout).foregroundStyle(.secondary)
+              Button("Состояние устройств") { showsDevices = true }
+              if let back = model.returnToLocalWorkspace {
+                Button("Пока работать на этом устройстве", action: back)
+              }
+            }.padding(24)
+          } else { Color.clear }
         case .ready:
           SpatialWorkspaceView()
         case .failed(let message):
@@ -92,7 +101,7 @@ struct NotebookRootView: View {
         let available = CGRect(x: 18, y: top, width: max(44, geometry.size.width - 36),
           height: max(44, geometry.size.height - 80 - top))
         NotebookChatWindow(chat: chat, available: available,
-          openPairing: { showsPairing = true },
+          openDevices: { showsDevices = true },
           openHistory: { showsHistory = true })
       }
       // Both task presentations use available window space. A widget may own
@@ -105,7 +114,7 @@ struct NotebookRootView: View {
       if let voice = model.chat?.voice { NotebookVoiceSurface(voice: voice).frame(width: 1, height: 1).allowsHitTesting(false).accessibilityHidden(true) }
     }
     .coordinateSpace(name: "notebook-window")
-    .sheet(isPresented: $showsPairing) { NotebookPairingView().environment(model) }
+    .sheet(isPresented: $showsDevices) { NotebookDevicesView().environment(model) }
     .sheet(item: Binding(get: { model.chat?.files.notes.reviewed }, set: { model.chat?.files.notes.reviewed = $0 })) { fragment in
       if let notes = model.chat?.files.notes { NotebookCodeReviewView(notes: notes, fragment: fragment).environment(model) }
     }

@@ -8,7 +8,7 @@ import XCTest
 final class NearbySyncTests: XCTestCase {
   @MainActor
   func testDiscoveryIncludesThePeerToPeerInterfacesUsedByTheTransport() async throws {
-    let trust = RecoverablePairingStore(); trust.unavailable = false
+    let trust = RecoverableDeviceStore(); trust.unavailable = false
     let sync = makeRecoverableSync(trust); defer { sync.stop() }
     trust.records = [confirmedPeer(for: sync)]
     await sync.start()
@@ -18,12 +18,12 @@ final class NearbySyncTests: XCTestCase {
 
   @MainActor
   func testDiscoveryWaitingReportsLocalNetworkDenialWithoutChangingTrust() async throws {
-    let trust = RecoverablePairingStore(); trust.unavailable = false
+    let trust = RecoverableDeviceStore(); trust.unavailable = false
     let sync = makeRecoverableSync(trust); defer { sync.stop() }
     let peer = confirmedPeer(for: sync); trust.records = [peer]
     await sync.start()
     let reported = expectation(description: "Local network permission failure is actionable")
-    sync.onPairingChange = { state in
+    sync.onStateChange = { state in
       if case .failed(let message) = state, message.contains("Локальная сеть") { reported.fulfill() }
     }
     let callback = try XCTUnwrap(try XCTUnwrap(sync.browser).stateUpdateHandler)
@@ -35,7 +35,7 @@ final class NearbySyncTests: XCTestCase {
 
   @MainActor
   func testRetiredBrowserCannotPublishFailureAfterDiscoveryRestarts() async throws {
-    let trust = RecoverablePairingStore(); trust.unavailable = false
+    let trust = RecoverableDeviceStore(); trust.unavailable = false
     let sync = makeRecoverableSync(trust); defer { sync.stop() }
     trust.records = [confirmedPeer(for: sync)]; await sync.start()
     let retired = try XCTUnwrap(sync.browser)
@@ -43,58 +43,19 @@ final class NearbySyncTests: XCTestCase {
     sync.stop(); await sync.start()
     XCTAssertFalse(sync.browser === retired)
     let staleFailure = expectation(description: "Retired discovery remains silent"); staleFailure.isInverted = true
-    sync.onPairingChange = { if case .failed = $0 { staleFailure.fulfill() } }
+    sync.onStateChange = { if case .failed = $0 { staleFailure.fulfill() } }
     callback(.failed(.posix(.ENETDOWN)))
     await fulfillment(of: [staleFailure], timeout: 0.3)
   }
 
   @MainActor
-  private func confirmedPeer(for sync: NearbySync) -> NotebookTrustedPeer {
+  private func confirmedPeer(for sync: NearbySync) -> NotebookTrustedDevice {
     .init(identity: .init(deviceID: UUID(), workspaceID: sync.identity.workspaceID, displayName: "Retained peer"),
-      pairingID: UUID(), secret: Data(repeating: 3, count: 32), locallyConfirmed: true, remotelyConfirmed: true)
+      credentialID: UUID(), secret: Data(repeating: 3, count: 32))
   }
 
   @MainActor
-  func testResetCannotPublishIdleWhileCredentialStorageIsUnavailable() async throws {
-    let trust = RecoverablePairingStore()
-    let sync = makeRecoverableSync(trust)
-    defer { sync.stop() }
-    var states: [NotebookPairingState] = []
-    sync.onPairingChange = { states.append($0) }
-    await sync.start()
-    XCTAssertEqual(trust.loads, 1)
-    guard case .failed(let message) = try XCTUnwrap(states.last) else { return XCTFail("Startup failure must remain visible") }
-    XCTAssertTrue(message.contains("хранилище"))
-    do { try await sync.cancelPairing(); XCTFail("Unavailable trust must reject reset") }
-    catch { XCTAssertEqual(error as? NotebookTransportError, .storageUnavailable) }
-    XCTAssertEqual(trust.loads, 2)
-    XCTAssertEqual(states.count, 1, "Reset cannot promise idle until credentials are accessible")
-    XCTAssertEqual(trust.saves, 0, "A failed read must not overwrite trust with an empty list")
-  }
-
-  @MainActor
-  func testResetRecoversTheSameTransportAndAllowsAnOrdinaryJoin() async throws {
-    let trust = RecoverablePairingStore()
-    let sync = makeRecoverableSync(trust)
-    defer { sync.stop() }
-    var states: [NotebookPairingState] = []
-    sync.onPairingChange = { states.append($0) }
-    await sync.start()
-    trust.unavailable = false
-    try await sync.cancelPairing()
-    guard case .idle = try XCTUnwrap(states.last) else { return XCTFail("Successful restart must be ready") }
-    XCTAssertEqual(trust.loads, 2)
-    let invitation = try NotebookPairingInvitation(
-      inviter: .init(deviceID: UUID(), workspaceID: sync.identity.workspaceID, displayName: "Acceptance Mac"),
-      secret: Data(repeating: 7, count: 16), expiresAt: .now.addingTimeInterval(60))
-    try await sync.joinPairingInvitation(invitation.encoded())
-    guard case .connecting = try XCTUnwrap(states.last) else { return XCTFail("The restarted owner must accept the invitation") }
-    XCTAssertEqual(trust.loads, 2, "Joining an already started owner must not restart it")
-    XCTAssertEqual(trust.saves, 0, "A join does not approve a peer or fabricate trust")
-  }
-
-  @MainActor
-  private func makeRecoverableSync(_ trust: RecoverablePairingStore) -> NearbySync {
+  private func makeRecoverableSync(_ trust: RecoverableDeviceStore) -> NearbySync {
     let storage = NotebookTransportStorage(changes: { _, _ in [] }, incomingCursor: { _ in 0 },
       acknowledgePeer: { _, _ in }, blobSize: { _ in throw NotebookTransportError.invalidBlob },
       readBlobChunk: { _, _, _ in throw NotebookTransportError.invalidBlob }, stageBlob: { _, _, _ in },
@@ -106,11 +67,10 @@ final class NearbySyncTests: XCTestCase {
 
   @MainActor
   func testStoppedStartupCannotPublishLateCredentialsAndRestartReadsAgain() async throws {
-    let trust = RecoverablePairingStore(); trust.unavailable = false
+    let trust = RecoverableDeviceStore(); trust.unavailable = false
     let sync = makeRecoverableSync(trust); defer { sync.stop() }
-    let peer = NotebookTrustedPeer(identity: .init(deviceID: UUID(), workspaceID: sync.identity.workspaceID,
-      displayName: "Retained peer"), pairingID: UUID(), secret: Data(repeating: 3, count: 32),
-      locallyConfirmed: true, remotelyConfirmed: true)
+    let peer = NotebookTrustedDevice(identity: .init(deviceID: UUID(), workspaceID: sync.identity.workspaceID,
+      displayName: "Retained peer"), credentialID: UUID(), secret: Data(repeating: 3, count: 32))
     trust.records = [peer]; trust.suspendNextLoad = true
     let loading = expectation(description: "Credential read suspended")
     trust.onLoad = { loading.fulfill() }
@@ -124,67 +84,40 @@ final class NearbySyncTests: XCTestCase {
   }
 
   @MainActor
-  func testConcurrentRevocationsTransformTheLastSavedTrustNotStaleCopies() async throws {
-    let trust = RecoverablePairingStore(); trust.unavailable = false
+  func testConcurrentDisconnectsTransformTheLastSavedTrustNotStaleCopies() async throws {
+    let trust = RecoverableDeviceStore(); trust.unavailable = false
     let sync = makeRecoverableSync(trust); defer { sync.stop() }
     let peers = (0..<2).map { index in
-      NotebookTrustedPeer(identity: .init(deviceID: UUID(), workspaceID: sync.identity.workspaceID,
-        displayName: "Peer \(index)"), pairingID: UUID(), secret: Data(repeating: 3, count: 32),
-        locallyConfirmed: true, remotelyConfirmed: true)
+      NotebookTrustedDevice(identity: .init(deviceID: UUID(), workspaceID: sync.identity.workspaceID,
+        displayName: "Peer \(index)"), credentialID: UUID(), secret: Data(repeating: 3, count: 32))
     }
     trust.records = peers; await sync.start()
     trust.suspendNextSave = true
     let saving = expectation(description: "First revocation awaits Keychain")
     trust.onSave = { saving.fulfill() }
-    let first = Task { try await sync.revokePeer(peers[0].identity.deviceID) }
+    let first = Task { try await sync.setDeviceAllowed(peers[0].identity.deviceID, allowed: false) }
     await fulfillment(of: [saving], timeout: 2)
     let submitted = expectation(description: "Second revocation submitted")
-    let second = Task { submitted.fulfill(); try await sync.revokePeer(peers[1].identity.deviceID) }
+    let second = Task { submitted.fulfill(); try await sync.setDeviceAllowed(peers[1].identity.deviceID, allowed: false) }
     await fulfillment(of: [submitted], timeout: 2)
     XCTAssertEqual(trust.saves, 1, "The next credential mutation cannot race the accepted write")
     XCTAssertEqual(trust.records, peers)
     trust.onSave = nil; trust.releaseSave()
     try await first.value; try await second.value
     XCTAssertEqual(trust.saves, 2)
-    XCTAssertTrue(trust.records.isEmpty); XCTAssertTrue(sync.pairedPeers.isEmpty)
-  }
-
-  @MainActor
-  func testNewerJoinReplacesAnIntentStillWaitingForCredentialStartup() async throws {
-    let trust = RecoverablePairingStore(); trust.unavailable = false; trust.suspendNextLoad = true
-    let sync = makeRecoverableSync(trust); defer { sync.stop() }
-    func invitation(_ name: String) throws -> String {
-      try NotebookPairingInvitation(inviter: .init(deviceID: UUID(), workspaceID: sync.identity.workspaceID,
-        displayName: name), secret: Data(repeating: 7, count: 16), expiresAt: .now.addingTimeInterval(60)).encoded()
-    }
-    let firstInvitation = try invitation("Old intent"), secondInvitation = try invitation("Current intent")
-    let loading = expectation(description: "Shared startup read")
-    trust.onLoad = { loading.fulfill() }
-    var connecting = 0
-    sync.onPairingChange = { if case .connecting = $0 { connecting += 1 } }
-    let first = Task { try await sync.joinPairingInvitation(firstInvitation) }
-    await fulfillment(of: [loading], timeout: 2)
-    let submitted = expectation(description: "Newer join submitted")
-    let second = Task { submitted.fulfill(); try await sync.joinPairingInvitation(secondInvitation) }
-    await fulfillment(of: [submitted], timeout: 2)
-    trust.releaseLoad()
-    do { try await first.value; XCTFail("An older intent cannot replace the newer invitation") }
-    catch { XCTAssertTrue(error is CancellationError) }
-    try await second.value
-    XCTAssertEqual(connecting, 1); XCTAssertEqual(trust.loads, 1); XCTAssertEqual(trust.saves, 0)
+    XCTAssertEqual(trust.records, peers); XCTAssertEqual(trust.state.blocked.count, 2); XCTAssertTrue(sync.pairedPeers.isEmpty)
   }
 
   @MainActor
   func testStopDuringCredentialWriteSuppressesPublicationButRetainsTheAcceptedWrite() async throws {
-    let trust = RecoverablePairingStore(); trust.unavailable = false
+    let trust = RecoverableDeviceStore(); trust.unavailable = false
     let sync = makeRecoverableSync(trust); defer { sync.stop() }
-    let peer = NotebookTrustedPeer(identity: .init(deviceID: UUID(), workspaceID: sync.identity.workspaceID,
-      displayName: "Retained peer"), pairingID: UUID(), secret: Data(repeating: 3, count: 32),
-      locallyConfirmed: true, remotelyConfirmed: true)
+    let peer = NotebookTrustedDevice(identity: .init(deviceID: UUID(), workspaceID: sync.identity.workspaceID,
+      displayName: "Retained peer"), credentialID: UUID(), secret: Data(repeating: 3, count: 32))
     trust.records = [peer]; await sync.start(); trust.suspendNextSave = true
     let saving = expectation(description: "Accepted revocation awaits Keychain")
     trust.onSave = { saving.fulfill() }
-    let revoke = Task { try await sync.revokePeer(peer.identity.deviceID) }
+    let revoke = Task { try await sync.setDeviceAllowed(peer.identity.deviceID, allowed: false) }
     await fulfillment(of: [saving], timeout: 2)
     var stopped = false
     let stopping = expectation(description: "Shutdown submitted")
@@ -195,7 +128,7 @@ final class NearbySyncTests: XCTestCase {
     let drained = await shutdown.value; XCTAssertTrue(drained)
     do { try await revoke.value; XCTFail("A stopped transport cannot publish success") }
     catch { XCTAssertTrue(error is CancellationError) }
-    XCTAssertTrue(trust.records.isEmpty, "Stopping the UI cannot roll back an accepted revocation")
+    XCTAssertTrue(trust.state.blocked.contains(peer.identity.deviceID), "Stopping the UI cannot roll back an accepted revocation")
     await sync.start()
     XCTAssertTrue(sync.pairedPeers.isEmpty)
   }
@@ -286,40 +219,27 @@ final class NearbySyncTests: XCTestCase {
     XCTAssertNotNil(try outgoing.takeNext())
   }
 
-  func testInvitationRequires128BitsExpiryAndAValidWorkspaceIdentity() throws {
-    let identity = NotebookTransportIdentity(deviceID: UUID(), workspaceID: UUID(), displayName: "Mac")
-    XCTAssertThrowsError(try NotebookPairingInvitation(inviter: identity, secret: Data("123456".utf8), expiresAt: .now.addingTimeInterval(60)))
-    let now = Date(timeIntervalSince1970: 1_000)
-    let invitation = try NotebookPairingInvitation(inviter: identity, secret: Data(repeating: 4, count: 16), expiresAt: now.addingTimeInterval(600))
-    XCTAssertEqual(try NotebookPairingInvitation.decode(invitation.encoded(), now: now), invitation)
-    XCTAssertThrowsError(try NotebookPairingInvitation.decode(invitation.encoded(), now: now.addingTimeInterval(601)))
-    XCTAssertThrowsError(try NotebookPairingInvitation.decode(String(repeating: "x", count: 2_049), now: now))
-    XCTAssertThrowsError(try NotebookTransportAuthentication.pairedSecret(invitation: invitation,
-      joiner: .init(deviceID: UUID(), workspaceID: UUID(), displayName: "Wrong workspace")))
-  }
-
-  func testFreshNoncesBindProofToDeviceWorkspaceAndHumanConfirmation() throws {
+  func testFreshNoncesBindProofToDeviceWorkspaceAndJournal() throws {
     let workspaceID = UUID(), pairID = UUID()
     let first = NotebookTransportHello(identity: .init(deviceID: UUID(), workspaceID: workspaceID, displayName: "Mac"),
-      pairingID: pairID, credential: .invitation, nonce: Data(repeating: 1, count: 32))
+      credentialID: pairID, nonce: Data(repeating: 1, count: 32))
     let second = NotebookTransportHello(identity: .init(deviceID: UUID(), workspaceID: workspaceID, displayName: "iPad"),
-      pairingID: pairID, credential: .invitation, nonce: Data(repeating: 2, count: 32))
-    let secret = Data(repeating: 3, count: 16)
+      credentialID: pairID, nonce: Data(repeating: 2, count: 32))
+    let secret = Data(repeating: 3, count: 32)
     let transcript = try NotebookTransportAuthentication.transcript(first, second)
     let proof = NotebookTransportAuthentication.proof(secret: secret, transcript: transcript, sender: first.identity.deviceID)
     XCTAssertTrue(NotebookTransportAuthentication.verifies(proof, secret: secret, transcript: transcript, sender: first.identity.deviceID))
-    XCTAssertFalse(NotebookTransportAuthentication.verifies(proof, secret: Data(repeating: 4, count: 16), transcript: transcript, sender: first.identity.deviceID))
+    XCTAssertFalse(NotebookTransportAuthentication.verifies(proof, secret: Data(repeating: 4, count: 32), transcript: transcript, sender: first.identity.deviceID))
     XCTAssertFalse(NotebookTransportAuthentication.verifies(proof, secret: secret, transcript: transcript, sender: second.identity.deviceID))
-    XCTAssertFalse(NotebookTransportAuthentication.verifiesConfirmation(proof, secret: secret, transcript: transcript, sender: first.identity.deviceID))
-    let freshSecond = NotebookTransportHello(identity: second.identity, pairingID: pairID, credential: .invitation, nonce: Data(repeating: 5, count: 32))
+    let freshSecond = NotebookTransportHello(identity: second.identity, credentialID: pairID, nonce: Data(repeating: 5, count: 32))
     XCTAssertFalse(NotebookTransportAuthentication.verifies(proof, secret: secret,
       transcript: try NotebookTransportAuthentication.transcript(first, freshSecond), sender: first.identity.deviceID))
-    let anotherJournal = NotebookTransportHello(identity: second.identity, pairingID: pairID, credential: .invitation,
+    let anotherJournal = NotebookTransportHello(identity: second.identity, credentialID: pairID,
       nonce: second.nonce, journalGeneration: UUID())
     XCTAssertFalse(NotebookTransportAuthentication.verifies(proof, secret: secret,
       transcript: try NotebookTransportAuthentication.transcript(first, anotherJournal), sender: first.identity.deviceID))
     let wrongWorkspace = NotebookTransportHello(identity: .init(deviceID: UUID(), workspaceID: UUID(), displayName: "Other"),
-      pairingID: pairID, credential: .invitation, nonce: second.nonce)
+      credentialID: pairID, nonce: second.nonce)
     XCTAssertThrowsError(try NotebookTransportAuthentication.transcript(first, wrongWorkspace))
   }
 
@@ -341,9 +261,10 @@ final class NearbySyncTests: XCTestCase {
 }
 
 @MainActor
-private final class RecoverablePairingStore: NotebookPairingTrustStore {
+private final class RecoverableDeviceStore: NotebookDeviceTrustStore {
   var unavailable = true
-  var records: [NotebookTrustedPeer] = []
+  var state = NotebookDeviceTrustState()
+  var records: [NotebookTrustedDevice] { get { state.records } set { state.records = newValue } }
   var suspendNextLoad = false
   var suspendNextSave = false
   var onLoad: (() -> Void)?
@@ -352,19 +273,19 @@ private final class RecoverablePairingStore: NotebookPairingTrustStore {
   private var saveGate: CheckedContinuation<Void, Never>?
   private(set) var loads = 0
   private(set) var saves = 0
-  func load(for identity: NotebookTransportIdentity) async throws -> [NotebookTrustedPeer] {
+  func load(for identity: NotebookTransportIdentity) async throws -> NotebookDeviceTrustState {
     loads += 1
     if unavailable { throw NotebookTransportError.storageUnavailable }
     onLoad?()
     if suspendNextLoad { suspendNextLoad = false; await withCheckedContinuation { loadGate = $0 } }
-    return records
+    return state
   }
-  func save(_ records: [NotebookTrustedPeer], for identity: NotebookTransportIdentity) async throws {
+  func save(_ state: NotebookDeviceTrustState, for identity: NotebookTransportIdentity) async throws {
     saves += 1
     if unavailable { throw NotebookTransportError.storageUnavailable }
     onSave?()
     if suspendNextSave { suspendNextSave = false; await withCheckedContinuation { saveGate = $0 } }
-    self.records = records
+    self.state = state
   }
   func releaseLoad() { loadGate?.resume(); loadGate = nil }
   func releaseSave() { saveGate?.resume(); saveGate = nil }

@@ -11456,6 +11456,72 @@ workspace header и cursor: `.build/gui227-live98/receipt.json`.
 полная приёмка, системные FPS/CPU/GPU/память, десять повторов и 30 минут совместной
 работы. Реальные жесты выполнены на физическом iPad, не в Simulator.
 
+## 2026-09-18 — GUI-228, автоматическое подключение: проверенный кандидат, не выпуск
+
+Один account owner заменяет приглашения, QR, ручное подтверждение и установочные
+pairing grants. Private CloudKit directory выдаёт собственным Mac/iPad одного
+пространства общий ключ; сохранённые установленные ключи сохраняются однократным
+чтением данных. Protocol 23 не исполняет старый enrollment. Новый получатель
+ожидает существующий материал, не создаёт вторую начальную тетрадь и не публикует
+пустой cloud snapshot. Принятый локальный ввод отменяет автоматическое открытие
+другого пространства; завершение очереди и финальный cut не оставляют запись
+позади. Самостоятельные наполненные пространства не объединяются.
+
+Изолированный candidate `.build/gui228-source99` основан на `b202630` и содержит
+только GUI-228, временная версия **0.3.96 (99)**. UI100 из соседней задачи сюда
+не включён; корневая установленная версия на момент проверки — **0.3.95 (98)**.
+
+- `.build/gui228-mac99d/verification.json`: **25 Core + 21 Mac native PASS**.
+- `.build/gui228-ipad99-native/verification.json`: **49 native PASS** на
+  физическом iPad `00008103-001E059934D9001E`, iOS 27.0. Проверены настоящий TLS,
+  отказ неверному ключу, admission до курсора/содержания, account lifecycle,
+  Keychain, сохранение block/credentials, receive-first и chat state.
+- Оба native receipt имеют source SHA-256
+  `5454adc61d24baa644bd076c63124c0a3cf903fa027c7fb16205f3ac76f4c345`.
+- `.build/gui228-ipad99-ui-final/verification.json`: **2 physical UI PASS**,
+  открытие/закрытие «Устройства» без формы подключения и перенос/resize чата с
+  открытием настроек без сдвига бумаги. Source SHA-256
+  `bc0a27e3d88054a2975117641e1530e0c6902c75e324430b17ca8fe0867d27ca` отличается
+  только двумя UI-тестами: системный Menu отдаёт label «Устройства», но не
+  SwiftUI accessibilityIdentifier. Фактическая AX-иерархия обнаружила ошибочный
+  селектор, исправлен тест, а не системное меню.
+- Failed/skipped/runtime warnings в принятых receipt — **0**. PNG
+  `devices-without-setup` из xcresult осмотрен; это отдельный `.native-test`,
+  не скриншот обновлённого production. Симуляторы не запускались.
+- Первые Mac попытки сохранены отдельно: старая проверка manifest 6 заменена
+  currentFormat; исправлены bootstrap FIFO self-count и Keychain cleanup на
+  main thread. Неудачный UI-прогон `.build/gui228-ipad99-ui-run` не принят.
+
+После этих receipt только callback `shouldOpenDefault` сведён к тому же
+`mayAutomaticallySwitchWorkspace`, чтобы первичное обнаружение и переключение
+не имели двух разных admission-проверок. Это последующее изменение не
+приписывается предыдущим runtime receipt. Полный Shared+Mac Swift 6
+strict-concurrency typecheck после него PASS:
+`.build/gui228-final-typecheck/result.json`. Перед выпуском нужно проверить
+окончательный срез вместе с версией пары.
+
+**Граница: GUI-228 не выпущен.** Новая schema `NotebookDevices` (encrypted private
+field, без public grants) ещё не опубликована в Production: CloudKit Console
+ждёт входа владельца Apple Developer. Установленная пара, контейнеры, identities,
+Keychain и отключённая ранее content sync не изменены. Не подтверждены реальное
+первичное account enrollment, восстановление Mac↔iPad, live SDK delivery/shown
+и новый cloud observer. До schema и сквозной проверки автосвязь не объявляется
+готовой; общий HEAD/версия не меняются до окончания соседнего UI100 выпуска.
+
+### GUI-228 — Production schema опубликована, 12:58:52 UTC
+
+После входа владельца Apple Developer CloudKit Console подтвердила
+«Changes Deployed — The schema is deployed to Production» для контейнера
+`iCloud.com.amirtlinov.notebook`, команда `M94V58FCVP`. Проверенный diff между
+Production `eec85ef0-b276-11f1-9375-874dd3c05d46` и Development
+`9c309d20-b360-11f1-9483-b9bc18929f33`: только новый `NotebookDevices`, поля
+`directory ENCRYPTED BYTES` и `format INT64`, ноль изменений индексов/ролей.
+Автоматические public grants нового пустого Development-типа сняты до публикации;
+у `NotebookDevices` нет grants `_world`, `_icloud`, `_creator`. Права Users,
+NotebookBlob и NotebookDelivery не менялись. Ни записи, ни ключи вручную не
+создавались; application enrollment ещё должен пройти обычный runtime.
+Свидетельство: `.build/gui228-cloud-schema/deployment.json`.
+
 ## 2026-09-18 — GUI-229, явный вход в тетрадь; меню действий GUI-205
 
 Тетрадь и документ открываются двойным нажатием, закрываются явной кнопкой
@@ -11512,3 +11578,53 @@ GUI-228. Исторические архивы, содержимое, identities
 Production пока 0.3.95 (98). Установку и очистку `.native-test`/runner подтверждает
 отдельная последующая квитанция GUI-228/101. Полная приёмка, системные
 FPS/CPU/GPU/память, десять повторов и 30 минут совместной работы не заявляются.
+
+### GUI-228 — финальный source 101c, 13:25 UTC
+
+Проверенный общий срез **0.3.98 (101)** основан на `3c7e35e` и включает
+GUI-229/Actions100, но не следующий отдельный clipboard WIP. Источник:
+`.build/gui228-source101c`; SHA-256
+`73e87b34266940ad4e54624a6d88041eb3b923d5aff848ac8d818194a4914073`.
+`.build/gui228-final101c/verification.json`: **25 Core + 22 Mac native +
+50 physical iPad native + 4 physical UI PASS**, без failed/skipped/runtime
+warnings. UI покрывает «Устройства» без формы подключения, перемещение/resize
+чата и открытие настроек, pinch без semantic enter/exit с double-tap/Back,
+редактируемую вставку объектов. PNG `devices-without-setup` осмотрен, это
+подписанный изолированный test host, а не live production.
+
+Итоговый review обнаружил запрещённые Apple два CKSyncEngine для одной private
+базы. До выпуска account observer заменён на прямую private-zone push-подписку
+с AppDelegate; прежний второй engine удалён полностью. Push только запрашивает
+повторное account-чтение, не несёт доверие; смена владельца/устаревший stop и
+чужие payload проверены native-тестом. Cloud content остаётся единственным
+CKSyncEngine. Полный Shared+Mac Swift 6 typecheck PASS, журнал
+`/tmp/notebook-account-push-mac2.log` пуст. Предыдущий успешный receipt101
+предшествует этой правке; failed101b содержит промежуточную compile-ошибку,
+не использован для выпуска. Установка и живое соединение на этом этапе ещё
+не проверены.
+
+### GUI-228 — установленная пара101, разные сохранённые пространства
+
+`.build/gui228-release101/build.json` имеет `verified-build`, тот же source101c,
+Mac manifest `353b8333e19cd9c76af6acb0aa9491b872bff56d17fb8d30aaf47104bed3bc31`,
+iPad manifest `40976c6da8612731ff20fa694ee9571633faccd4dde5ff5217dc0acbb0a29f32`.
+Пара **0.3.98 (101)** установлена 18 сентября около13:27:58 UTC:
+`.build/gui228-install101/{artifact.json,mac-installed.json,apps-after.json}`.
+Mac PID80671 запущен из `~/Applications/Notebook.app`; helper98 завершён обычным
+NSRunningApplication.terminate, без forced kill. Контейнеры, SQLite, identities,
+Keychain и архивы не удалялись/не восстанавливались. Перед заменой app bundle
+проверены нулевые активные native/SDK задания, терминалы, голос, файл и ввод.
+
+Реальный Mac показывает новый статус устройств и два account-пространства,
+то есть directory enrollment прошёл. Соединение пары пока не подтверждено:
+read-only чтение фактических баз установило **разные** workspaceID:
+Mac `FAAAC405-8EF9-4FB9-9B93-CBD876FA97A4`, iPad
+`6E14684D-3135-4A86-8E26-289CEB06835E`. На iPad сохранено `cloudEnabled=0`,
+на Mac `cloudEnabled=1`; оба bound, выбор не переопределён.
+`.build/gui228-live101/workspace-identities.json` хранит только эту диагностику.
+MCP сохранил workspace/board revision и cursor11133; presenceGeneration0 не
+выдаётся за живую доставку. Приложение верно не слило два наполненных пространства.
+Амиру задан выбор общего пространства с сохранением второго отдельно; до ответа
+не выполняется скрытое переключение. GUI-228 остаётся In Progress: live
+connection, delivery/shown и reconnect после выбора ещё открыты. Это отдельная
+граница от успешно установленного и проверенного исходного среза.

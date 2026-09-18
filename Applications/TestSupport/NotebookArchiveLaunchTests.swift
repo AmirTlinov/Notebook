@@ -1,4 +1,5 @@
 import NotebookCore
+import Security
 import XCTest
 @testable import Notebook
 
@@ -92,45 +93,26 @@ final class NotebookArchiveLaunchTests: XCTestCase {
     XCTAssertNil(launch.pairingActivationID)
   }
 
-  func testNewActivationRequiresFreshKeychainConfirmationWithoutChangingDeviceIdentity() async throws {
+  func testNewActivationHasIndependentDeviceTrustWithoutChangingIdentity() async throws {
     let workspace = UUID(), activation = UUID()
-    let device = NotebookTransportIdentity(deviceID: UUID(), workspaceID: workspace, displayName: "activation fixture")
-    let peer = NotebookTransportIdentity(deviceID: UUID(), workspaceID: workspace, displayName: "independent peer")
-    let old = NotebookKeychainPairingStore()
-    let current = NotebookKeychainPairingStore(activationID: activation)
-    let next = NotebookKeychainPairingStore(activationID: UUID())
+    let identity = NotebookTransportIdentity(deviceID: UUID(), workspaceID: workspace, displayName: "Device")
+    let peer = NotebookTrustedDevice(identity: .init(deviceID: UUID(), workspaceID: workspace, displayName: "Mac"),
+      credentialID: UUID(), secret: Data(repeating: 11, count: 32))
+    let service = "Notebook.tests.activation." + UUID().uuidString
     addTeardownBlock {
-      try await old.save([], for: device)
-      try await current.save([], for: device)
-      try await next.save([], for: device)
+      await Task.detached {
+        _ = SecItemDelete([kSecClass: kSecClassGenericPassword, kSecAttrService: service] as CFDictionary)
+      }.value
     }
-    let previous = NotebookTrustedPeer(identity: peer, pairingID: UUID(), secret: Data(repeating: 11, count: 32),
-      locallyConfirmed: true, remotelyConfirmed: true)
-    try await old.save([previous], for: device)
-    let oldPeers = try await old.load(for: device)
-    let unapproved = try await current.load(for: device)
-    XCTAssertEqual(oldPeers, [previous])
-    XCTAssertEqual(unapproved, [], "The retained actor and workspace cannot reuse pre-activation trust")
-
-    var accepted = NotebookTrustedPeer(identity: peer, pairingID: UUID(), secret: Data(repeating: 23, count: 32),
-      locallyConfirmed: true, remotelyConfirmed: false)
-    try await current.save([accepted], for: device)
-    let reopened = NotebookKeychainPairingStore(activationID: activation)
-    let pending = try await reopened.load(for: device)
-    XCTAssertEqual(pending, [accepted])
-    XCTAssertFalse(try XCTUnwrap(pending.first).isConfirmed)
-    accepted.remotelyConfirmed = true
-    try await reopened.save([accepted], for: device)
-    let confirmed = try await current.load(for: device)
-    let retainedOld = try await old.load(for: device)
-    let nextPeers = try await next.load(for: device)
-    XCTAssertTrue(try XCTUnwrap(confirmed.first).isConfirmed)
-    XCTAssertEqual(retainedOld, [previous], "Fresh trust never overwrites another activation's credentials")
-    XCTAssertEqual(nextPeers, [])
-    try await current.save([], for: device)
-    let revoked = try await reopened.load(for: device)
-    let oldAfterRevoke = try await old.load(for: device)
-    XCTAssertEqual(revoked, [])
-    XCTAssertEqual(oldAfterRevoke, [previous])
+    let old = NotebookKeychainDeviceStore(service: service)
+    let current = NotebookKeychainDeviceStore(activationID: activation, service: service)
+    try await old.save(.init(account: "account", records: [peer]), for: identity)
+    let oldState = try await old.load(for: identity), empty = try await current.load(for: identity)
+    XCTAssertEqual(oldState.records, [peer]); XCTAssertTrue(empty.records.isEmpty)
+    let newPeer = NotebookTrustedDevice(identity: peer.identity, credentialID: UUID(), secret: Data(repeating: 12, count: 32))
+    try await current.save(.init(account: "account", records: [newPeer]), for: identity)
+    let reopened = try await NotebookKeychainDeviceStore(activationID: activation, service: service).load(for: identity)
+    let retained = try await old.load(for: identity)
+    XCTAssertEqual(reopened.records, [newPeer]); XCTAssertEqual(retained.records, [peer])
   }
 }

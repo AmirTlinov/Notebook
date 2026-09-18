@@ -69,7 +69,6 @@ struct ArchiveComputerPreparationTests {
     guard case .waitingForPair(let receipt) = try activation.launch(root: f.fresh, target: f.nextTarget) else { Issue.record("new Mac must wait for actual receipt admission"); return }
     let admission = try report.source.admission(receipt: receipt, manifest: report.manifest)
     #expect(throws: (any Error).self) { try admission.publish(at: NotebookArchiveActivation.controlURL(for: f.iPad)) }
-    #expect(throws: (any Error).self) { try NotebookInstallationPairingGrant(admission: admission) }
     try admission.publish(at: control)
     #expect(try activation.launch(root: f.fresh, target: f.nextTarget) == .admitted(receipt))
     let next = NotebookStore(root: f.fresh)

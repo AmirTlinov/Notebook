@@ -9,7 +9,7 @@ struct NotebookMacApp: App {
   var body: some Scene {
     MenuBarExtra("Notebook", image: "NotebookStatusIcon") {
       if let model = lifecycle.launch.model {
-        Text(model.isPeerConnected ? "iPad подключён" : "Ожидается iPad")
+        Text(model.deviceStatusMessage)
         if case .failed(let message) = model.loadState {
           Text(message)
         }
@@ -30,8 +30,8 @@ struct NotebookMacApp: App {
           Button("Повторить проверку") { lifecycle.start() }
         }
       }
-      Button("Сопряжение устройств…") { lifecycle.showPairing() }
-        .accessibilityIdentifier("notebook.pairing.open")
+      Button("Устройства…") { lifecycle.showDevices() }
+        .accessibilityIdentifier("notebook.devices.open")
       if let loginError = lifecycle.loginError { Text(loginError) }
       Toggle("Запускать при входе", isOn: Binding(
         get: { lifecycle.launchesAtLogin },
@@ -50,7 +50,7 @@ struct NotebookMacApp: App {
 final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
   let launch: NotebookApplicationLaunch
   private var launchTask: Task<Void, Never>?
-  @ObservationIgnored private(set) var pairingWindowController: NotebookMacPairingWindowController?
+  @ObservationIgnored private(set) var devicesWindowController: NotebookMacDevicesWindowController?
   @ObservationIgnored private var tldrawWindow: NotebookMacTldrawWindow?
   private(set) var launchesAtLogin = false
   private(set) var loginError: String?
@@ -81,8 +81,14 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
       if isFixture, let model = launch.model { Task { await MacDocumentLaunchFixture.writeProof(model: model) } }
     #endif
     guard !isRunningTests, !isFixture, !isAcceptance else { return }
+    NSApplication.shared.registerForRemoteNotifications()
     let enabled = UserDefaults.standard.object(forKey: "notebook.launch-at-login") as? Bool ?? true
     setLaunchesAtLogin(enabled)
+  }
+
+  func application(_ application: NSApplication, didReceiveRemoteNotification userInfo: [String: Any]) {
+    guard NotebookAccountPush.matches(userInfo) else { return }
+    Task { await NotebookAccountPush.refresh() }
   }
 
   func start() {
@@ -95,10 +101,9 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
     }
   }
 
-  /// Reopening the helper is navigation only. Invitation creation and trust
-  /// confirmation remain explicit controls in the same pairing view.
+  /// Reopening shows status; connection never depends on opening a window.
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-    showPairing()
+    showDevices()
     return false
   }
 
@@ -110,11 +115,11 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
     tldrawWindow?.present()
   }
 
-  func showPairing() {
-    if pairingWindowController == nil {
-      pairingWindowController = NotebookMacPairingWindowController(launch: launch) { [weak self] in self?.start() }
+  func showDevices() {
+    if devicesWindowController == nil {
+      devicesWindowController = NotebookMacDevicesWindowController(launch: launch) { [weak self] in self?.start() }
     }
-    pairingWindowController?.showPairing()
+    devicesWindowController?.showDevices()
   }
 
   func setLaunchesAtLogin(_ enabled: Bool) {

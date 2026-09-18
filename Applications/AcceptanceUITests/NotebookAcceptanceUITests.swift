@@ -102,92 +102,7 @@ import XCTest
     screenshot("acceptance-controls-ready-after-real-navigation")
   }
 
-  private func assertPresentedPairingIdentity() throws {
-    // LabeledContent exposes its value on the combined accessible row. It
-    // need not create a separate StaticText on every iOS version.
-    for (key, label) in [("NOTEBOOK_ACCEPTANCE_PEER_ID", "Устройство"),
-                         ("NOTEBOOK_ACCEPTANCE_WORKSPACE_ID", "Пространство")] {
-      let expected = try XCTUnwrap(ProcessInfo.processInfo.environment[key]).lowercased()
-      let identity = app.descendants(matching: .any).matching(
-        NSPredicate(format: "label == %@ OR label == %@ OR value == %@",
-                    label + ", " + expected, expected, expected)).firstMatch
-      XCTAssertTrue(identity.exists, "Expected visible identity \(expected): \(app.debugDescription)")
-    }
-  }
-
-  func testJoinRealMacThroughPairingUI() throws {
-    try launch(readinessIdentifier: "notebook-companion-compose"); openChat()
-    app.buttons["notebook-chat-menu"].tap()
-    app.buttons["pairing-settings"].tap()
-    let invitation = try XCTUnwrap(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_INVITATION"])
-    let field = app.descendants(matching: .any).matching(identifier: "pairing-invitation").firstMatch
-    XCTAssertTrue(field.waitForExistence(timeout: 5)); field.tap(); field.typeText(invitation)
-    let entered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-      (field.value as? String) == invitation
-    }, object: nil)
-    XCTAssertEqual(XCTWaiter.wait(for: [entered], timeout: 5), .completed,
-      "The complete invitation must reach the ordinary field before connecting")
-    let hideKeyboard = app.keyboards.buttons["Hide keyboard"]
-    if hideKeyboard.exists && hideKeyboard.isHittable { hideKeyboard.tap() }
-    let connect = app.buttons["Подключиться"]
-    var previousFrame: CGRect?
-    let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-      guard connect.exists && connect.isEnabled && connect.isHittable else { return false }
-      let frame = connect.frame
-      defer { previousFrame = frame }
-      return !frame.isEmpty && previousFrame == frame
-    }, object: nil)
-    XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed,
-      "The multi-line field and keyboard must finish moving the visible button before the real tap")
-    connect.tap()
-    let confirm = app.buttons["Разрешить этому Mac доступ"]
-    XCTAssertTrue(confirm.waitForExistence(timeout: 20), app.debugDescription)
-    screenshot("ipad-real-peer-before-confirmation")
-    try assertPresentedPairingIdentity()
-    confirm.tap()
-    XCTAssertTrue(app.staticTexts["Вы подтвердили. Ожидается подтверждение на Mac."].waitForExistence(timeout: 10),
-      "The local approval must be saved before this UI step completes")
-    screenshot("ipad-confirmed-awaiting-mac")
-    try systemTrace?.ended(app)
-  }
-
-  /// The Mac invitation is copied with its visible product button. This test
-  /// focuses the ordinary iPad field, then waits for Simulator's Edit > Paste.
-  /// It neither reads UIPasteboard nor accepts invitation text from the runner.
-  func testJoinRealMacAfterSystemPaste() throws {
-    executionTimeAllowance = 160
-    try launch(readinessIdentifier: "notebook-companion-compose"); openChat()
-    app.buttons["notebook-chat-menu"].tap()
-    app.buttons["pairing-settings"].tap()
-    let restart = app.buttons["Начать заново"]
-    if restart.waitForExistence(timeout: 1) {
-      screenshot("ipad-pairing-failed-before-visible-restart")
-      restart.tap()
-    }
-    let field = app.descendants(matching: .any).matching(identifier: "pairing-invitation").firstMatch
-    XCTAssertTrue(field.waitForExistence(timeout: 5)); XCTAssertTrue(field.isHittable)
-    field.tap()
-    FileHandle.standardOutput.write(Data("NOTEBOOK_ACCEPTANCE_READY_FOR_SYSTEM_PASTE\n".utf8))
-    screenshot("ipad-invitation-field-ready-for-system-paste")
-    let pasted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-      (field.value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        .hasPrefix("notebook-pair:v2:") == true
-    }, object: nil)
-    XCTAssertEqual(XCTWaiter.wait(for: [pasted], timeout: 90), .completed,
-      "Paste the invitation using the Simulator Edit menu while the real field is focused.")
-    let connect = app.buttons["Подключиться"]
-    XCTAssertTrue(connect.isEnabled); connect.tap()
-    let confirm = app.buttons["Разрешить этому Mac доступ"]
-    XCTAssertTrue(confirm.waitForExistence(timeout: 20), app.debugDescription)
-    screenshot("ipad-pasted-invitation-real-peer-before-confirmation")
-    try assertPresentedPairingIdentity()
-    confirm.tap()
-    XCTAssertTrue(app.staticTexts["Вы подтвердили. Ожидается подтверждение на Mac."].waitForExistence(timeout: 5))
-    screenshot("ipad-pasted-invitation-confirmed-awaiting-mac")
-    try systemTrace?.ended(app)
-  }
-
-  func testRealChatReplyAfterPairing() throws {
+  func testRealChatReplyThroughConnectedMac() throws {
     try launch(); openChat()
     let create = app.buttons["notebook-chat-new"]
     XCTAssertTrue(create.isEnabled); create.tap()
@@ -479,7 +394,7 @@ import XCTest
   }
 
   /// This probes the real attach lifecycle before a long performance workload.
-  /// It uses the ordinary private app even when pairing has not completed yet.
+  /// It uses the ordinary private app even when the Mac is not yet connected.
   func testSystemTraceAttachesToLaunchedApplication() throws {
     try launch(readinessIdentifier: "notebook-companion-compose")
     XCTAssertNotNil(systemTrace, "Run this probe with the explicit Time Profiler option")
