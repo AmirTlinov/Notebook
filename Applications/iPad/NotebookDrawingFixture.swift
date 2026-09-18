@@ -16,6 +16,7 @@
     static let stackArgument = "--notebook-stacked-page-fixture"
     static let lowerStackArgument = "--notebook-stacked-lower-page-fixture"
     static let stackBoardArgument = "--notebook-stacked-board-fixture"
+    static let nestedBoardArgument = "--notebook-nested-board-fixture"
     static let documentArgument = "--notebook-document-runtime-fixture"
     static let documentPageArgument = "--notebook-document-page-three-fixture"
     static let documentProseArgument = "--notebook-document-prose-fixture"
@@ -85,6 +86,8 @@
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-geometry-edit") ? "GeometryEdit" : "")
       } else if ProcessInfo.processInfo.arguments.contains(penPersistenceArgument) {
         fixtureName = "PenPersistence"
+      } else if ProcessInfo.processInfo.arguments.contains(nestedBoardArgument) {
+        fixtureName = "NestedBoardCamera"
       } else if let materialCount {
         fixtureName = "IndependentMaterials-\(materialCount)"
       } else if ProcessInfo.processInfo.arguments.contains(mixedWebArgument) {
@@ -181,7 +184,23 @@
             ] : [])
         )
         try store.savePage(page)
-        if let materialCount {
+        if ProcessInfo.processInfo.arguments.contains(nestedBoardArgument) {
+          let childID = UUID(uuidString: "7E7A1000-0000-4000-8000-00000000000D")!
+          let stamp = VersionStamp(counter: 0, actor: actor)
+          index = WorkspaceIndex(items: index.items + [.board(id: childID, title: "Вложенная доска")],
+            selectedItemID: childID, selectedPageID: nil, stamp: stamp)
+          var rootBoard = BoardDocument.initial(itemIDs: [childID], actor: actor)
+          var childBoard = BoardDocument.initial(itemIDs: [itemID], actor: actor)
+          _ = rootBoard.moveItem(childID, to: .zero, actor: actor)
+          _ = childBoard.moveItem(itemID, to: .zero, actor: actor)
+          try store.saveWorkspaceBundle(index: index, page: page, board: .init(rootBoardID: index.rootBoardID, boards: [
+            .init(id: index.rootBoardID, board: rootBoard),
+            .init(id: childID, board: childBoard, portalCamera: .init(scale: 0.6))
+          ], stamp: stamp))
+          try store.savePresence(.init(boardID: index.rootBoardID, mode: .board,
+            camera: .init(center: .zero, scale: 0.35), viewport: .init(x: size.width, y: size.height),
+            selectedItemID: childID))
+        } else if let materialCount {
           precondition([2, 4, 8].contains(materialCount))
           var board = BoardDocument.initial(itemIDs: [itemID], actor: actor)
           _ = board.moveItem(itemID, to: .init(x: 8_000, y: 8_000), actor: actor)

@@ -198,27 +198,6 @@ func notebookCornerMatchesTheFullSizeIPadSilhouette() {
   )
 }
 
-@Test("Сила выбора растёт по мере приближения щипка к центру обложки")
-func selectionFieldGrowsTowardCenter() {
-  let cover = SpatialRect(x: 100, y: 100, width: 300, height: 420)
-  let outside = NotebookSelectionField.influence(
-    centroid: SpatialPoint(x: 800, y: 800),
-    cover: cover
-  )
-  let edge = NotebookSelectionField.influence(
-    centroid: SpatialPoint(x: 110, y: 310),
-    cover: cover
-  )
-  let center = NotebookSelectionField.influence(
-    centroid: SpatialPoint(x: 250, y: 310),
-    cover: cover
-  )
-  #expect(outside == 0)
-  #expect(edge > outside)
-  #expect(center > edge)
-  #expect(center == 1)
-}
-
 @Test("Тетрадь принадлежит либо доске, либо одной стопке")
 func boardHasOnePlacementOwner() {
   let actor = UUID()

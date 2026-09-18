@@ -21,7 +21,7 @@ final class NotebookPaperCameraTests: XCTestCase {
     let pair = CGPoint(x: start.viewport.x * 0.4, y: start.viewport.y * 0.43)
     let moved = CGPoint(x: pair.x + 42, y: pair.y + 27)
     let owner = try coordinator(in: window)
-    owner.onCamera(.began(centroid: pair, isOpeningApproach: false))
+    owner.onCamera(.began(centroid: pair))
     for scale in [CGFloat(0.96), 1.4, 0.015, 4, 0.15, 1.1] {
       owner.onCamera(.changed(scale: scale, velocity: 0.2, elapsed: 0.2, centroid: moved))
       try await Task.sleep(for: .milliseconds(35))
@@ -44,7 +44,7 @@ final class NotebookPaperCameraTests: XCTestCase {
     XCTAssertFalse(owner.defersHorizontalMotionToPageTurn, "Zoomed paper owns two-finger panning, not a curl")
 
     let panEnd = CGPoint(x: moved.x + 90, y: moved.y + 12)
-    owner.onCamera(.began(centroid: moved, isOpeningApproach: false))
+    owner.onCamera(.began(centroid: moved))
     owner.onCamera(.changed(scale: 1, velocity: 0, elapsed: 0.2, centroid: panEnd))
     owner.onCamera(.ended(scale: 1, velocity: 0, elapsed: 0.3, centroid: panEnd))
     try await Task.sleep(for: .milliseconds(100))
@@ -60,7 +60,7 @@ final class NotebookPaperCameraTests: XCTestCase {
     let start = try XCTUnwrap(model.presence)
     let pair = CGPoint(x: start.viewport.x / 2, y: start.viewport.y / 2)
     let owner = try coordinator(in: window)
-    owner.onCamera(.began(centroid: pair, isOpeningApproach: true))
+    owner.onCamera(.began(centroid: pair))
     for factor: CGFloat in [1.2, 4, 0.01, 2] {
       owner.onCamera(.changed(scale: factor, velocity: 2, elapsed: 0.2, centroid: pair))
       let actual = try XCTUnwrap(model.presence)
@@ -82,7 +82,7 @@ final class NotebookPaperCameraTests: XCTestCase {
     let owner = try coordinator(in: window)
     let pair = CGPoint(x: start.viewport.x / 2, y: start.viewport.y / 2)
     for factor: CGFloat in [0.1, 10, 0.25, 4] {
-      owner.onCamera(.began(centroid: pair, isOpeningApproach: factor > 1))
+      owner.onCamera(.began(centroid: pair))
       owner.onCamera(.changed(scale: factor, velocity: 1, elapsed: 0.2, centroid: pair))
       owner.onCamera(.ended(scale: factor, velocity: 1, elapsed: 0.3, centroid: pair))
       try await Task.sleep(for: .milliseconds(40))
@@ -91,7 +91,7 @@ final class NotebookPaperCameraTests: XCTestCase {
       XCTAssertEqual(model.presence?.notebookPageID, start.notebookPageID)
     }
     let beforeCancel = try XCTUnwrap(model.presence)
-    owner.onCamera(.began(centroid: pair, isOpeningApproach: false))
+    owner.onCamera(.began(centroid: pair))
     owner.onCamera(.changed(scale: 0.01, velocity: -2, elapsed: 0.2, centroid: pair))
     owner.onCamera(.cancelled)
     try await Task.sleep(for: .milliseconds(400))

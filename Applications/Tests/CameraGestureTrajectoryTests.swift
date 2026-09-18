@@ -15,7 +15,6 @@ final class CameraGestureTrajectoryTests: XCTestCase {
     let trajectory = CameraGestureTrajectory(
       startingCamera: startingCamera,
       startingCentroid: centroid,
-      startingMagnification: 1,
       viewport: viewport
     )
     let noisyMagnifications: [CGFloat] = [
@@ -53,7 +52,6 @@ final class CameraGestureTrajectoryTests: XCTestCase {
         scale: 0.58
       ),
       startingCentroid: start,
-      startingMagnification: 1,
       viewport: viewport
     )
     let first = displayCamera(

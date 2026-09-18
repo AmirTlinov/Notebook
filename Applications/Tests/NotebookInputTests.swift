@@ -866,7 +866,7 @@ final class NotebookInputTests: XCTestCase {
   }
 
   @MainActor
-  func testContactProtectionFollowsPortalWithoutEndingContact() async throws {
+  func testContactProtectionFollowsExplicitBoardNavigationWithoutEndingContact() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
@@ -881,12 +881,12 @@ final class NotebookInputTests: XCTestCase {
     await model.finishPendingPersistence()
     XCTAssertEqual(try model.store.inputActivities().first?.targets, [.init(kind: .board, id: parent)])
 
-    XCTAssertTrue(model.enterBoard(child, through: .init(scale: 1), settled: false))
+    XCTAssertTrue(model.enterBoard(child))
     await model.finishPendingPersistence()
     XCTAssertTrue(model.inputGate.isActive)
     XCTAssertEqual(try model.store.inputActivities().first?.targets, [.init(kind: .board, id: child)])
 
-    XCTAssertTrue(model.leaveBoard(settled: false))
+    XCTAssertTrue(model.leaveBoard())
     await model.finishPendingPersistence()
     XCTAssertTrue(model.inputGate.isActive)
     XCTAssertEqual(try model.store.inputActivities().first?.targets, [.init(kind: .cover, id: child, boardID: parent)])

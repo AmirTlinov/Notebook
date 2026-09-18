@@ -960,8 +960,7 @@ final class SceneCompositionTests: XCTestCase {
       let plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
         pinned: [.item(childID)], displayScale: 2, previous: nil)
       let preparedChild = try XCTUnwrap(plan.presentations[.board(childID)])
-      let transferred = try XCTUnwrap(BoardPortalProjection.enteringCamera(from: presence.camera,
-        portalCamera: portalCamera, portalCenter: .zero, viewport: viewport))
+      let transferred = BoardPortalProjection.entryCamera(portalCamera: portalCamera, viewport: viewport)
       let point = WorldPoint(x: 160, y: -45)
       let local = preparedChild.camera.worldToScreen(point, viewport: preparedChild.viewport)
       let center = presence.camera.worldToScreen(.zero, viewport: viewport)
