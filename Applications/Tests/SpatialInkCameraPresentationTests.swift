@@ -23,6 +23,8 @@ final class SpatialInkCameraPresentationTests: XCTestCase {
         viewport: viewport, refinesDetails: true), "Settling a covered pan does not need a new GPU basis")
       XCTAssertEqual(canvas.drawableRequestCount, requests)
       XCTAssertEqual(canvas.spatialMeshInstallCount, meshes)
+      XCTAssertTrue(fixture.owner.needsProjection(camera: .init(scale: 2), viewport: viewport, refinesDetails: false),
+        "A long pinch eventually refines even before settlement")
       XCTAssertTrue(fixture.owner.needsProjection(camera: .init(center: .init(x: 10_000, y: 0)),
         viewport: viewport, refinesDetails: false), "Finite overscan still requests the missing world area")
       await fixture.close()

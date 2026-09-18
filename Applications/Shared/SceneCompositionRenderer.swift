@@ -19,24 +19,30 @@ final class SceneCompositionRenderer {
   private var fallbackSources: [SceneSourceAddress: RasterLease]
   private var sourceFailures: [SceneSourceAddress: SceneSourceFailure]
   private var currentTile: SceneCompositionTileKey?
-  private var sourcePresentation: (plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double)?
+  private var sourcePresentation: (plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double, refinesDetails: Bool)?
   private(set) var sourceDemands: [SceneSourceAddress: SceneSourceDemand] = [:]
   private(set) var sourceRasters: [SceneSourceAddress: RasterLease] = [:]
   private(set) var tileSources: [SceneCompositionTileKey: Set<SceneSourceAddress>] = [:]
 
-  func useSourcePresentation(plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double) {
-    sourcePresentation = (plan, frame, displayScale)
+  func useSourcePresentation(plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double, refinesDetails: Bool = true) {
+    sourcePresentation = (plan, frame, displayScale, refinesDetails)
   }
 
   private func demand(for element: SpatialElement, plane: SceneCompositionPlane, density: Double) -> SceneSourceDemand {
     let source = agentElementSnapshotSource(element)
     guard let window = sourcePresentation,
       let view = window.plan.presentations[.board(plane.boardID)] else { return .init(source: source, minimumScale: density) }
+    let address = SceneSourceAddress(plane: plane, elementID: source.id)
+    let previous = fallbackSources[address].flatMap { raster in
+      raster.source.agentElement.map { SceneRasterSource.agent($0) == .agent(source) } == true ? raster : nil
+    }
+    let density: Double = if !window.refinesDetails, let previous,
+      (0.6...1.6).contains(density / previous.pixelScale) { previous.pixelScale }
+      else { pow(2, ceil(log2(density) * 2) / 2) }
     var region = SceneSourceCapture.region(element: element, plane: plane,
       presence: view, frame: window.frame, density: density)
     let origin = SceneSourceCapture.origin(element: element, plane: plane, frame: window.frame)
-    let address = SceneSourceAddress(plane: plane, elementID: source.id)
-    if region != nil, let previous = fallbackSources[address], previous.source.agentElement.map({ SceneRasterSource.agent($0) == .agent(source) }) == true,
+    if region != nil, let previous,
       previous.pixelScale + 0.000_001 >= density, let old = previous.source.captureRegion {
       let visible = SceneSourceCapture.visibleRect(source: source, origin: origin, presence: view)
       if CGRect(x: old.x, y: old.y, width: old.width, height: old.height).contains(visible) { region = old }

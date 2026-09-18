@@ -46,7 +46,17 @@ struct SceneCompositionTileKey: Hashable, Codable, Sendable {
   let viewportHeight: Double
   let focusedItemID: UUID?
   let mode: String
-  var pixelSize: Int = CompositionTile.pixelSize
+  let pixelSize: Int
+  init(workspaceID: UUID, revision: UInt64, plane: SceneCompositionPlane, tile: CompositionTile,
+    range: ScenePaintRange, presentationScale: Double, viewportWidth: Double, viewportHeight: Double,
+    focusedItemID: UUID?, mode: String, pixelSize: Int = CompositionTile.pixelSize) {
+    self.workspaceID = workspaceID; self.revision = revision; self.plane = plane; self.tile = tile; self.range = range
+    // Only cover/portal painting uses the external camera to choose its content.
+    // World-space elements and ink are rasterized in the tile's own basis.
+    self.presentationScale = range.layer == .covers ? presentationScale : 1
+    self.viewportWidth = viewportWidth; self.viewportHeight = viewportHeight
+    self.focusedItemID = focusedItemID; self.mode = mode; self.pixelSize = pixelSize
+  }
   func atRevision(_ revision: UInt64) -> Self {
     .init(workspaceID: workspaceID, revision: revision, plane: plane, tile: tile, range: range,
       presentationScale: presentationScale, viewportWidth: viewportWidth, viewportHeight: viewportHeight,
@@ -196,7 +206,7 @@ struct SceneCompositionPlan: Sendable {
   /// physical quota: dividing a viewport by its painter bands first creates
   /// enormous mostly transparent images, even for one small visible source.
   func allocatingPopulatedCoverage(source: SceneCompositionSource, presence: SessionPresence,
-    frame: WorkspaceSceneFrame, displayScale: Double) async throws -> Self {
+    frame: WorkspaceSceneFrame, displayScale: Double, previous: Self?) async throws -> Self {
     let sparse = try await removingEmptyTiles(source: source)
     let occupied = Set(sparse.tiles.map { SceneCompositionBand.SelfID(plane: $0.plane, range: $0.range) })
     let planes = presentations.keys.sorted { a, b in
@@ -223,17 +233,21 @@ struct SceneCompositionPlan: Sendable {
     // This is a finite metadata probe, not an image allocation. Each plane
     // has at most 256 cells and the source reads at most 64 indexed entries
     // per cell, shared by all painter bands on that cell.
-    func probe(_ plane: SceneCompositionPlane, gridDensity: Double) async throws {
+    func probe(_ plane: SceneCompositionPlane, gridDensity: Double, previousLevel: Int? = nil) async throws {
       let populated = bands.filter { $0.plane == plane && occupied.contains($0.id) }
       guard !populated.isEmpty else { return }
       guard let area = bounds[plane], let view = presentations[plane] else { throw SceneRenderError.resourceLimit }
       let pixels = (frame.pixelScales[plane.boardID] ?? view.camera.scale) * displayScale
-      let prepared = try CompositionTileCoverage(bounds: area, pixelsPerWorldPoint: gridDensity, maximumTiles: 256)
+      let prepared = try CompositionTileCoverage(bounds: area, pixelsPerWorldPoint: gridDensity, previousLevel: previousLevel, maximumTiles: 256)
       coverage[plane] = prepared
       var candidates: [SceneCompositionTileKey] = []
       for band in populated {
         for tile in prepared.tiles {
-          let pixelSize = Int(min(2048, max(Double(CompositionTile.pixelSize), ceil(tile.worldSize * pixels))))
+          let required = min(2048, max(Double(CompositionTile.pixelSize), tile.worldSize * pixels))
+          let quantized = Int(pow(2, ceil(log2(required))))
+          // Do not alternate 512/1024 at a density boundary of a retained LOD.
+          let retained = previous?.tiles.first { $0.plane == plane && $0.tile.level == tile.level }?.pixelSize ?? 0
+          let pixelSize = max(quantized, retained)
           candidates.append(.init(workspaceID: workspaceID, revision: revision, plane: plane, tile: tile,
             range: band.range, presentationScale: view.camera.scale,
             viewportWidth: view.viewport.x, viewportHeight: view.viewport.y,
@@ -244,7 +258,8 @@ struct SceneCompositionPlan: Sendable {
     }
     for plane in planes {
       guard let view = presentations[plane] else { throw SceneRenderError.resourceLimit }
-      try await probe(plane, gridDensity: (frame.pixelScales[plane.boardID] ?? view.camera.scale) * displayScale)
+      try await probe(plane, gridDensity: (frame.pixelScales[plane.boardID] ?? view.camera.scale) * displayScale,
+        previousLevel: previous?.coverage[plane]?.level)
     }
     // Only an actually overfull set coarsens. Each step advances one finite
     // grid level; re-probe that plane because a new cell can straddle a band.
@@ -331,7 +346,7 @@ struct SceneCompositionPlan: Sendable {
         let assembled = try assemble(revision: source.revision, workspaceID: source.workspaceID, owners: owners, presence: presence,
           frame: frame, pinned: pinned, protected: protected, displayScale: displayScale, previous: previous, vectorRuns: vectorRuns)
         return try await assembled.allocatingPopulatedCoverage(source: source, presence: presence,
-          frame: frame, displayScale: displayScale)
+          frame: frame, displayScale: displayScale, previous: previous)
       } catch {
         // Fragmented native runs can require too many intervening raster
         // bands. Flatten an optional run, never lose its source or evict a
@@ -594,15 +609,13 @@ final class SceneCompositionCohort {
     return installation.isInstalled && SceneRasterSource.agent(source) == .agent(receipt.demand.source)
   }
 
-  func containsSourceWindows(presence: SessionPresence, frame: WorkspaceSceneFrame, displayScale: Double) -> Bool {
-    for (address, receipt) in sourceReceipts {
-      guard let crop = receipt.demand.region else { continue }
-      guard let origin = receipt.demand.worldOrigin,
-        let view = address.plane.boardID == presence.boardID ? presence : frame.presences[address.plane.boardID] else { return false }
-      let visible = SceneSourceCapture.visibleRect(source: receipt.demand.source, origin: origin, presence: view)
-      if visible.isNull || visible.isEmpty { continue }
-      guard CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height).contains(visible),
-        receipt.demand.minimumScale + 0.000_001 >= (frame.pixelScales[address.plane.boardID] ?? view.camera.scale) * displayScale else { return false }
+  func containsSourceWindows(presence: SessionPresence, frame: WorkspaceSceneFrame, displayScale: Double,
+    refinesDetails: Bool = true) -> Bool {
+    for (address, receipt) in sourceReceipts where receipt.demand.region != nil {
+      guard let view = address.plane.boardID == presence.boardID ? presence : frame.presences[address.plane.boardID],
+        receipt.coversVisibleWindow(in: view,
+          pixelDensity: (frame.pixelScales[address.plane.boardID] ?? view.camera.scale) * displayScale,
+          refinesDetails: refinesDetails) else { return false }
     }
     return true
   }
@@ -860,7 +873,8 @@ final class SceneCompositionTiles {
     } ?? false
     let containsNativeProjection = containsNativeProjection(for: request)
     if dirtySources.isEmpty, !needsSourceScheduling, containsNativeProjection, let plan = published?.plan,
-      published?.containsSourceWindows(presence: presence, frame: frame, displayScale: displayScale) == true,
+      published?.containsSourceWindows(presence: presence, frame: frame, displayScale: displayScale,
+        refinesDetails: request.refinesDetails) == true,
       (!request.refinesDetails || published?.requestedSources == sources),
       plan.revision == source.revision, plan.workspaceID == source.workspaceID,
       Self.covers(plan, presence: presence, pinned: pinned, refinesDetails: request.refinesDetails) { return }
@@ -892,7 +906,7 @@ final class SceneCompositionTiles {
         guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
         var plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
           pinned: pinned, displayScale: displayScale, previous: self?.published?.plan)
-        renderer.useSourcePresentation(plan: plan, frame: frame, displayScale: displayScale)
+        renderer.useSourcePresentation(plan: plan, frame: frame, displayScale: displayScale, refinesDetails: request.refinesDetails)
         let requests = try await renderer.liveRasterRequests(plan: plan, frame: frame, displayScale: displayScale)
         let previous = self?.published
         var previousLiveData = previous.map { (plan: $0.plan, data: $0.liveData) }
@@ -1420,7 +1434,8 @@ final class SceneCompositionTiles {
       // During a camera contact, only missing spatial coverage needs work.
       // Density and live-owner refinement follow settlement, so a pinch within
       // an already painted area projects the same pixels instead of recapturing.
-      (!refinesDetails || ((0.6...1).contains(presence.camera.scale / basis.camera.scale) && plan.meetsRequiredDensity)),
+      (refinesDetails ? ((0.6...1).contains(presence.camera.scale / basis.camera.scale) && plan.meetsRequiredDensity)
+        : (0.6...1.6).contains(presence.camera.scale / basis.camera.scale)),
       pinned.allSatisfy({ pin in plan.presentedOwners.contains { $0.id == pin } }), let tiles = plan.coverage[plane]?.tiles,
       let first = tiles.first, let last = tiles.last else { return false }
     let visible = WorkspaceSpatialBounds(origin: presence.camera.screenToWorld(.zero, viewport: presence.viewport),

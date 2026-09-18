@@ -1,5 +1,27 @@
 # Проверка Notebook
 
+## 19 сентября, 00:18 МСК — GUI-252: устойчивые LOD и pixel keys
+
+После `22ea1fd` финальный occupancy probe сохраняет предыдущий LOD; при
+бюджетном coarsening гистерезис не мешает движению к меньшему плану. Растры
+тайлов используют 512/1024/2048 px и не колеблются вниз внутри того же LOD.
+Мировые элементы/чернила исключают continuous camera scale из pixel identity;
+обложки/порталы сохраняют эту зависимость, viewport/state/revision не удалены.
+Crop coverage отделён от density refinement. Source density использует
+полуоктавные ступени; пригодный crop/density сохраняется во время короткого
+жеста, длинный pinch выходит из диапазона 0.6…1.6. Native ink также уточняется
+после выхода из диапазона, без ожидания конца бесконечного жеста.
+
+`c2-final.xcresult` в `.build/canvas-plan-20260918/`: **46/46 PASS** на том же
+Simulator, без skips/runtime warnings. Финальная сетка и keys проверены на
+возвратном pinch 0.99↔1.01; source/state/revision и зависимость портала остаются
+различимыми. Проверены cropped coverage/refinement, delayed WebKit readiness
+при непрерывном pinch, sparse/dense painter, byte pressure, remount, реальные
+UI-жесты mixed controls и passive SVG после rotation. Первый проход выявил
+излишне грубую source-density ступень: таблица получала canonical density 1
+вместо достаточной <1. Исправлен production выбор ступени; проверка не ослаблена.
+Физические FPS и время input→scanout не заявляются.
+
 ## 19 сентября, 00:09 МСК — GUI-251: конечный запас native ink, Simulator
 
 По прямому указанию Амира этот срез проверен в **Simulator**, не на физическом

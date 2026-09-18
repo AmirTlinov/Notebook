@@ -97,6 +97,15 @@ struct SceneSourceReceipt: Sendable {
   let status: Status
   var installedRegion: PageRect? = nil
 
+  func coversVisibleWindow(in presence: SessionPresence, pixelDensity: Double, refinesDetails: Bool) -> Bool {
+    guard let crop = demand.region else { return true }
+    guard let origin = demand.worldOrigin else { return false }
+    let visible = SceneSourceCapture.visibleRect(source: demand.source, origin: origin, presence: presence)
+    if visible.isNull || visible.isEmpty { return true }
+    return CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height).contains(visible)
+      && (!refinesDetails || demand.minimumScale + 0.000_001 >= pixelDensity)
+  }
+
   var hasCurrentPixels: Bool {
     guard status == .ready, let installedSource else { return false }
     return SceneRasterSource.agent(installedSource) == .agent(demand.source)

@@ -6,6 +6,55 @@ import XCTest
 
 final class SceneCompositionTests: XCTestCase {
   @MainActor
+  func testFinalPopulatedGridAndWorldPixelKeysSurviveReversedPinch() async throws {
+    let fixture = Fixture(count: 16, side: 32, kind: .nativeText)
+    let source = fixture.source()
+    var previous: SceneCompositionPlan?
+    var warmed: Set<SceneCompositionTileKey>?
+    for scale in [0.99, 1.01, 0.99, 1.01, 0.995, 1.005] {
+      let view = SessionPresence(boardID: fixture.presence.boardID, mode: .board,
+        camera: .init(scale: scale), viewport: .init(x: 320, y: 256))
+      let frame = WorkspaceSceneFrame(index: fixture.index, presence: view, portalCamera: { _ in nil })
+      let plan = try await SceneCompositionPlan.prepare(source: source, presence: view, frame: frame,
+        pinned: [], displayScale: 1, previous: previous)
+      let keys = Set(plan.tiles.filter { $0.range.layer == .elements })
+      XCTAssertFalse(keys.isEmpty)
+      if let previous { XCTAssertEqual(plan.coverage[.board(view.boardID)]?.level, previous.coverage[.board(view.boardID)]?.level) }
+      if let warmed { XCTAssertEqual(keys, warmed, "Subpixel zoom must not replace prepared world pixels") }
+      if scale == 1.01 { warmed = keys }
+      XCTAssertTrue(plan.meetsRequiredDensity)
+      previous = plan
+    }
+    let world = try XCTUnwrap(warmed?.first)
+    func key(_ layer: ScenePaintPosition.Layer, scale: Double) -> SceneCompositionTileKey {
+      .init(workspaceID: world.workspaceID, revision: world.revision, plane: world.plane, tile: world.tile,
+        range: .whole(layer), presentationScale: scale, viewportWidth: 320, viewportHeight: 256,
+        focusedItemID: nil, mode: "board")
+    }
+    XCTAssertEqual(key(.elements, scale: 1), key(.elements, scale: 1.01))
+    XCTAssertNotEqual(key(.covers, scale: 1), key(.covers, scale: 1.01), "Portal content still depends on camera projection")
+    XCTAssertNotEqual(world, world.atRevision(world.revision + 1))
+  }
+
+  @MainActor
+  func testCroppedSourceSeparatesCoverageFromGestureDensity() throws {
+    let fixture = Fixture(count: 1, side: 5000)
+    let element = try XCTUnwrap(fixture.hierarchy.boards[0].board.elements.first)
+    let source = agentElementSnapshotSource(element)
+    let receipt = SceneSourceReceipt(demand: .init(source: source, minimumScale: 1,
+      region: .init(x: 0, y: 0, width: 512, height: 512), worldOrigin: .zero),
+      installedSource: source, installedScale: 1, status: .ready,
+      installedRegion: .init(x: 0, y: 0, width: 512, height: 512))
+    let view = SessionPresence(boardID: fixture.presence.boardID, mode: .board,
+      camera: .init(center: .init(x: 256, y: 256), scale: 1.01), viewport: .init(x: 320, y: 256))
+    XCTAssertTrue(receipt.coversVisibleWindow(in: view, pixelDensity: 1.01, refinesDetails: false))
+    XCTAssertFalse(receipt.coversVisibleWindow(in: view, pixelDensity: 1.01, refinesDetails: true))
+    let outside = SessionPresence(boardID: view.boardID, mode: .board,
+      camera: .init(center: .init(x: 800, y: 256), scale: 1), viewport: view.viewport)
+    XCTAssertFalse(receipt.coversVisibleWindow(in: outside, pixelDensity: 1, refinesDetails: false))
+  }
+
+  @MainActor
   func testAnInstalledProgramCannotBeDemotedByANewNeighbourAndDeletionStillRetiresIt() async throws {
     let fixture = Fixture(count: 0), boardID = fixture.presence.boardID, stamp = fixture.workspace.stamp
     let program = SpatialElement(id: "z-running", surface: .board(boardID), kind: .web,
