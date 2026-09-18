@@ -6,6 +6,105 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class MacSceneCompositionTests: XCTestCase {
+  func testVisiblePaperKeepsNativeInkBesideProgramsAcrossZoom() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let command = MacCommandFixture(root: root), model = command.model, actor = UUID()
+    retainNotebookUntilTeardown(model, removing: root)
+    var (workspace, _) = try command.store.loadOrCreate(actor: actor, pageSize: NotebookAppModel.defaultPageSize)
+    var hierarchy = try command.store.loadBoard(items: workspace.items)
+    let boardID = workspace.rootBoardID, notebookID = workspace.selectedItemID
+    let stamp = VersionStamp(counter: 0, actor: actor)
+    XCTAssertTrue(hierarchy.moveItem(workspace.selectedItemID, in: boardID,
+      to: .init(x: 3800, y: 600), actor: actor))
+    let document = try XCTUnwrap(workspace.createDocument(title: "Full paper", actor: actor))
+    let center = WorldPoint(x: 2098.2841376385095, y: 547.7435409354148)
+    XCTAssertTrue(hierarchy.addItem(document.id, to: boardID, near: center, actor: actor))
+    let frames: [SpatialRect] = [.init(x: 0, y: 0, width: 1120, height: 90),
+      .init(x: 0, y: 120, width: 540, height: 290), .init(x: 0, y: 460, width: 540, height: 290),
+      .init(x: 580, y: 460, width: 540, height: 290), .init(x: 0, y: 820, width: 540, height: 240),
+      .init(x: 580, y: 820, width: 540, height: 240), .init(x: 0, y: 1120, width: 1120, height: 210)]
+    for index in frames.indices {
+      let html: String = (1...3).contains(index) ? "<button>Increment</button><input value='draft'>"
+        : index > 3 ? "<svg viewBox='0 0 540 240'><rect width='540' height='240' fill='white'/></svg>" : ""
+      XCTAssertTrue(hierarchy.upsertElement(.init(id: "element-\(index)", surface: .board(boardID), kind: index == 0 ? .nativeText : .web,
+        frame: frames[index], worldOrigin: .zero, source: "\(index)", html: html, stamp: stamp),
+        in: boardID, expected: nil, actor: actor))
+    }
+    try command.store.saveDocumentWorkspaceBundle(index: workspace,
+      document: .init(id: document.id, actor: actor, paperSize: .a4),
+      state: .init(id: document.id, actor: actor), board: hierarchy)
+    var ink = try command.store.loadOrCreateSpatialInk(actor: actor)
+    for line in 0..<8 {
+      let samples = (0..<60).map { point in
+        SpatialInkSample(point: .init(x: Double(point) * 18, y: 400 + Double(line) * 75 + sin(Double(point) / 9) * 30),
+          timeOffset: Double(point) / 60, width: 3, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+      }
+      _ = ink.append(tool: .pen, spans: [.init(surface: .cover(document.id), samples: samples)], actor: actor)
+    }
+    try command.store.saveSpatialInk(ink)
+    let viewport = SpatialPoint(x: 1100, y: 728), geometry = WorkspaceItemGeometry.document(.a4)
+    let initial = SessionPresence(boardID: boardID, mode: .board,
+      camera: .init(center: .init(x: 1571.4631430057862, y: 350.341394864676), scale: 1), viewport: viewport)
+    try command.store.savePresence(initial)
+    try await command.start()
+    let host = NSHostingView(rootView: NotebookMacCanvas(documentLayout: .constant(nil)).environment(model))
+    let window = NSWindow(contentRect: .init(x: 0, y: 0, width: viewport.x, height: viewport.y),
+      styleMask: .borderless, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false; window.contentView = host; window.orderBack(nil)
+    defer { window.orderOut(nil); window.contentView = nil; window.close() }
+    try await waitUntil { model.compositionTiles.published != nil && !model.compositionTiles.isPreparing }
+    for (step, scale) in [1.0, 0.19694791329734226, 2.0, 0.12, 0.28, 0.19694791329734226].enumerated() {
+      let targetCenter = initial.camera.center.offsetBy(x: step.isMultiple(of: 2) ? -700 : 600,
+        y: step.isMultiple(of: 2) ? 240 : -300)
+      let presence = initial.replacingCamera(.init(center: targetCenter, scale: scale))
+      let previousCamera = try XCTUnwrap(model.presence).camera
+      let previous = previousCamera.scale
+      let delta = previousCamera.center.delta(to: targetCenter)
+      let started = Date()
+      for tick in 1...15 {
+        let fraction = Double(tick) / 15
+        let current = initial.replacingCamera(.init(center: previousCamera.center.offsetBy(x: delta.x * fraction, y: delta.y * fraction),
+          scale: exp(log(previous) * (1 - fraction) + log(scale) * fraction)))
+        model.updatePresence(current, settled: false)
+        try await Task.sleep(for: .milliseconds(16))
+      }
+      model.updatePresence(presence, settled: true)
+      try await Task.sleep(for: .milliseconds(120))
+      try await waitUntil { !model.compositionTiles.isPreparing }
+      XCTAssertNil(model.compositionTiles.failure)
+      let cohort = try XCTUnwrap(model.compositionTiles.published)
+      let diagnostic = XCTAttachment(string: "scale=\(scale) seconds=\(Date().timeIntervalSince(started)) live=\(cohort.plan.allowsLive(.item(document.id), in: .board(boardID))) tiles=\(cohort.plan.tiles.count)")
+      diagnostic.lifetime = .keepAlways; add(diagnostic)
+      CATransaction.flush()
+      let context = try XCTUnwrap(CGContext(data: nil, width: Int(viewport.x), height: Int(viewport.y),
+        bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.translateBy(x: 0, y: viewport.y); context.scaleBy(x: 1, y: -1)
+      try XCTUnwrap(host.layer).render(in: context)
+      let pixels = NSBitmapImageRep(cgImage: try XCTUnwrap(context.makeImage()))
+      let rect = geometry.screenFrame(center: center, camera: presence.camera, viewport: viewport)
+      for (id, material, position) in [(document.id, geometry, center),
+        (notebookID, WorkspaceItemGeometry.notebook, WorldPoint(x: 3800, y: 600))] {
+        let paper = material.screenFrame(center: position, camera: presence.camera, viewport: viewport)
+        if paper.x < viewport.x, paper.y < viewport.y, paper.x + paper.width > 0, paper.y + paper.height > 0 {
+          XCTAssertTrue(cohort.plan.allowsLive(.item(id), in: .board(boardID)),
+            "Visible paper must project its native ink, not wait behind decorative sources for each new tile window")
+        }
+      }
+      XCTAssertLessThanOrEqual(cohort.plan.nativeOwnerCount, SceneCompositionPlan.maximumLiveOwners)
+      for x in [0.15, 0.4, 0.65, 0.9] {
+        for y in [0.2, 0.7, 0.9] {
+          let sx = rect.x + rect.width * x, sy = rect.y + rect.height * y
+          guard sx >= 0, sx < viewport.x, sy >= 0, sy < viewport.y else { continue }
+          let color = try XCTUnwrap(pixels.colorAt(x: Int(sx), y: Int(sy))?.usingColorSpace(.deviceRGB))
+          XCTAssertGreaterThan(color.redComponent, 0.94, "Missing paper at \(x),\(y); scale \(scale)")
+        }
+      }
+      let attachment = XCTAttachment(data: try XCTUnwrap(pixels.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+      attachment.name = "Native paper zoom \(step)"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+  }
+
   func testVisibleProgramsHaveOneInteractiveOwnerBeforeAnyClick() async throws {
     let fixture = Fixture(), resources = SceneRenderResources()
     XCTAssertEqual(resources.profile, .interactive, "A windowed Mac is not a headless export")

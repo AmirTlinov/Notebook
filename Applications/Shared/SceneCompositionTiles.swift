@@ -278,7 +278,7 @@ struct SceneCompositionPlan: Sendable {
     if let id = presence.focusedItemID { pinned.insert(.item(id)) }
     if frame.returnBoardID != nil { pinned.insert(.item(presence.boardID)) }
     guard displayScale.isFinite, displayScale > 0, frame.rootBoardID == presence.boardID else { throw SceneRenderError.resourceLimit }
-    var candidates: [(plane: SceneCompositionPlane, id: WorkspaceSpatialID, pinned: Bool, runtime: Bool)] = []
+    var candidates: [(plane: SceneCompositionPlane, id: WorkspaceSpatialID, pinned: Bool, runtime: Bool, visiblePaper: Bool)] = []
     let boardIDs = [presence.boardID] + frame.worksets.keys.filter { $0 != presence.boardID }.sorted { $0.uuidString < $1.uuidString }
     for boardID in boardIDs {
       guard let workset = frame.worksets[boardID] else { continue }
@@ -286,13 +286,17 @@ struct SceneCompositionPlan: Sendable {
         // A live portal must already own its child's physical plane. Otherwise
         // the streaming painter renders the whole portal, never a placeholder.
         guard item.item.kind != .board || frame.presences[item.id] != nil else { continue }
-        candidates.append((.board(boardID), .item(item.id), pinned.contains(.item(item.id)), false))
+        let rect = item.geometry.screenFrame(center: item.center, camera: presence.camera, viewport: presence.viewport)
+        let visiblePaper = boardID == presence.boardID && item.item.kind != .board
+          && rect.x < presence.viewport.x && rect.y < presence.viewport.y
+          && rect.x + rect.width > 0 && rect.y + rect.height > 0
+        candidates.append((.board(boardID), .item(item.id), pinned.contains(.item(item.id)), false, visiblePaper))
       }
       for element in workset.elements {
         let plane = SceneCompositionPlane.board(boardID)
-        let runtime = plane.demandsRuntime(source: agentElementSnapshotSource(element),
+        let runtime = element.kind == .web && plane.demandsRuntime(source: agentElementSnapshotSource(element),
           origin: SceneSourceCapture.origin(element: element, plane: plane, frame: frame), in: presence)
-        candidates.append((plane, .element(element.id), pinned.contains(.element(element.id)), runtime))
+        candidates.append((plane, .element(element.id), pinned.contains(.element(element.id)), runtime, false))
       }
     }
     // A pin on cover contents pins its physical carrier, then its local element.
@@ -300,7 +304,7 @@ struct SceneCompositionPlan: Sendable {
       guard let boardID = frame.worksets.first(where: { $0.value.items.contains(where: { $0.id == itemID }) })?.key else { continue }
       for element in workset.elements where element.graphic != nil || pinned.contains(.element(element.id)) {
         let isPinned = pinned.contains(.element(element.id))
-        candidates.append((.cover(boardID: boardID, itemID: itemID), .element(element.id), isPinned, false))
+        candidates.append((.cover(boardID: boardID, itemID: itemID), .element(element.id), isPinned, false, false))
         if isPinned, let index = candidates.firstIndex(where: { $0.id == .item(itemID) }) { candidates[index].pinned = true }
       }
     }
@@ -308,6 +312,10 @@ struct SceneCompositionPlan: Sendable {
     candidates.sort { left, right in
       if left.pinned != right.pinned { return left.pinned }
       if left.runtime != right.runtime { return left.runtime }
+      // A visible physical paper projects its ready material and native ink as
+      // one object. Do not flatten it into viewport tiles just to keep a static
+      // label/SVG live: zoom would then expose only the old partial tile window.
+      if left.visiblePaper != right.visiblePaper { return left.visiblePaper }
       if (left.plane.boardID == presence.boardID) != (right.plane.boardID == presence.boardID) { return left.plane.boardID == presence.boardID }
       return String(describing: left.id) < String(describing: right.id)
     }
