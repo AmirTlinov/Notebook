@@ -10849,3 +10849,23 @@ Evidence: `.build/s10-native-result-contracts-20260918/`, включая RED/GRE
 относятся к предыдущему SDK hash. Новая подписанная интеграция, выпуск S8–S10
 и физическая приёмка остаются открыты. Чужие Core/UI правки не включены;
 Simulator, production DB writes и сброс доверия не использовались.
+
+### Подписанная проверка нового SDK, 09:17 UTC
+
+Предыдущее открытое условие **signed SDK integration** закрыто отдельно:
+из immutable `git archive 8c00bbe` штатный selected route исполнил **78/78
+MCP + 10/10 Mac XCTest PASS**, 0 failures/skips/runtime warnings. Проверены
+JS/TS bound graph, basis/короткий результат, отмена допуска/компиляции/принятого
+commit, lost replies и recovery без replay. Это не прогон всех UI-сценариев.
+
+Source SHA256 `8b1a9fc601ae0a4e243a0b189b5594161aef81871d61cad66ce7f4546557a973`
+неизменен. Встроенный compiler **7.0.2**, SDK **e44af80deba9af955fceb7e117b92052580041b0d53ab7b47558d3cee583a261**;
+Mac acceptance CDHash `37625ba5f42325e4cbfc4b67294efec3b65799dd`, Apple Development
+team `M94V58FCVP`; XPC получили точные исходные sandbox entitlements перед
+исполнением, не расширенные тестовые права.
+
+Квитанция `.build/s10-sdk-contracts-signed-20260918/evidence/verification.json`,
+исходный commit/inventory — соседний `source-identity.json`; команды и raw
+xcresult сохранены. Private source copy исключает все незавершённые peer UI
+правки. Это не общий release cut и не установленная production пара;
+физическая доставка/selection, системные метрики и полная приёмка открыты.
