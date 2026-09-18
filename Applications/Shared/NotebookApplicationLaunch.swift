@@ -1,6 +1,8 @@
 import Foundation
+import Network
 import NotebookCore
 import Observation
+import OSLog
 
 /// The application cannot construct a store-owning model before archive
 /// activation. Fixtures inject their own model and never inspect production.
@@ -10,6 +12,27 @@ final class NotebookApplicationLaunch {
   private(set) var activation: NotebookArchiveLaunch = .unchanged
   private(set) var failure: String?
   private(set) var isChecking = false
+  var showsWorkspaces = false
+  private(set) var workspaceList: [Workspace] = []
+  private(set) var workspaceError: String?
+  private(set) var catalogError: String?
+  private(set) var catalogAccount: String?
+  private(set) var hasNoWorkspace = false
+  private var readingCatalog = false
+  private var retiredWorkspaces: Set<UUID> = []
+  private var catalogGeneration = UUID()
+  @ObservationIgnored private var deletionNetwork: NWPathMonitor?
+  private let catalogCloud = NotebookAccountCloud()
+  struct Workspace: Identifiable, Equatable {
+    let id: UUID
+    let name: String
+    let local: Bool
+    let remote: Bool
+    let deleting: Bool
+  }
+  private var library: NotebookWorkspaceLibrary { .init(originalRoot: root) }
+  var selectedWorkspaceID: UUID? { try? model?.store.storedWorkspaceID() }
+
   private let root: URL
   private let target: NotebookArchiveTarget?
   private let makeModel: ((NotebookStore, UUID?) throws -> NotebookAppModel)?
@@ -33,6 +56,7 @@ final class NotebookApplicationLaunch {
 
   var message: String {
     if isFixture, let failure { return failure }
+    if hasNoWorkspace { return "Выберите или создайте пространство." }
     if let failure { return "Не удалось открыть Notebook. Сохранённые материалы не изменены. \(failure)" }
     if case .waitingForPair = activation { return "Архив проверен. Ожидается готовность второго устройства…" }
     return "Открываем Notebook…"
@@ -41,9 +65,9 @@ final class NotebookApplicationLaunch {
   var canRetry: Bool { !isFixture && failure != nil }
 
   func start() async {
-    guard !isFixture, model == nil, !isChecking else { return }
+    guard !isFixture, model == nil, !isChecking, !hasNoWorkspace else { return }
     isChecking = true; failure = nil
-    defer { isChecking = false }
+    defer { finishOperation() }
     do {
       let root = root, previous = activation
       let target: NotebookArchiveTarget?
@@ -61,7 +85,13 @@ final class NotebookApplicationLaunch {
       switch activation {
       case .unchanged, .admitted:
         try Task.checkCancellation()
-        let selectedRoot = try makeModel == nil ? NotebookWorkspaceLibrary(originalRoot: root).selectedRoot() : root
+        try library.finishRemovals()
+        guard let selectedRoot = try library.selectedRoot() else {
+          hasNoWorkspace = true
+          await refreshWorkspaces()
+          return
+        }
+        hasNoWorkspace = false
         let store = NotebookStore(root: selectedRoot)
         let fresh = !FileManager.default.fileExists(atPath: store.databaseURL.path)
         model = try makeModel?(store, pairingActivationID) ?? NotebookAppModel(store: store,
@@ -77,67 +107,233 @@ final class NotebookApplicationLaunch {
   }
 
   private func installWorkspaceSelection() {
-    guard makeModel == nil, !isFixture else { return }
-    model?.openAccountWorkspace = { [weak self] id in
-      Task { await self?.openWorkspace(id, automatically: false) }
+    guard !isFixture, let model else { return }
+    if let id = try? model.store.storedWorkspaceID(), let entry = try? library.catalog().entries.first(where: { $0.id == id }) {
+      model.workspaceName = entry.name
+      model.publishesWorkspaceName = entry.needsNamePublication
     }
-    model?.openDefaultAccountWorkspace = { [weak self] id in
+    model.accountWorkspaceNameSaved = { [weak self, weak model] name, deleted in
+      guard let self, let model, let id = try? model.store.storedWorkspaceID() else { return }
+      do {
+        for entry in try self.library.catalog().entries where deleted.contains(entry.id) { self.retireWorkspace(entry.id) }
+        try self.library.acknowledgeName(id, name: name)
+        let pending = try self.library.catalog().entries.first(where: { $0.id == id })?.needsNamePublication ?? false
+        if !pending { model.workspaceName = name; model.publishesWorkspaceName = false; model.accountConnection?.publishName = false }
+      } catch { self.workspaceError = error.localizedDescription }
+    }
+    model.openWorkspaceLibrary = { [weak self] in self?.showsWorkspaces = true }
+    model.workspaceDeleted = { [weak self, weak model] in
+      guard let self, let model, let id = try? model.store.storedWorkspaceID() else { return }
+      self.retireWorkspace(id)
+    }
+    model.openDefaultAccountWorkspace = { [weak self] id in
       Task { await self?.openWorkspace(id, automatically: true) }
     }
-    if model?.store.root != root,
-      let original = try? NotebookStore(root: root).storedWorkspaceID() {
-      model?.returnToLocalWorkspace = { [weak self] in
-        Task { await self?.openWorkspace(original, automatically: false) }
-      }
-    }
+
   }
 
-  private func openWorkspace(_ id: UUID, automatically: Bool) async {
-    guard !isChecking, let previous = model else { return }
-    isChecking = true
+  func openWorkspace(_ id: UUID, automatically: Bool = false, creatingName: String? = nil) async {
+    guard !isChecking else { return }
+    let previous = model
+    isChecking = true; catalogGeneration = UUID()
     var retired = false
     var replacement: NotebookAppModel?
-    defer { isChecking = false }
+    defer { finishOperation() }
     do {
-      let currentID = try previous.store.storedWorkspaceID()
-      guard currentID != id else { return }
-      if automatically {
+      guard try library.catalog().pendingCloudDeletion[id] == nil else {
+        throw NotebookStorageError.invalidTransaction("Удаление этого пространства ещё не завершено.")
+      }
+      let currentID = try previous?.store.storedWorkspaceID()
+      guard currentID != id else { showsWorkspaces = false; return }
+      if let previous, automatically {
         guard await previous.prepareAutomaticWorkspaceSwitch() else { previous.refreshDeviceConnection(); return }
-      } else {
+      } else if let previous {
         guard await previous.finishPendingInteraction() else { throw NotebookTransportError.storageUnavailable }
       }
-      guard await previous.shutdown() else { throw NotebookTransportError.storageUnavailable }
+      guard await previous?.shutdown() ?? true else { throw NotebookTransportError.storageUnavailable }
       retired = true
-      if automatically, !(try previous.automaticWorkspaceCutIsUnchanged()) { throw SwitchCancellation.acceptedLocalWork }
+      if let previous, automatically, !(try previous.automaticWorkspaceCutIsUnchanged()) { throw SwitchCancellation.acceptedLocalWork }
       let library = NotebookWorkspaceLibrary(originalRoot: root)
       let destination = try await Task.detached { try library.prepare(id) }.value
-      let next = NotebookAppModel(store: NotebookStore(root: destination),
+      let next = try makeModel?(NotebookStore(root: destination), pairingActivationID) ?? NotebookAppModel(store: NotebookStore(root: destination),
         allowsCodexRegistration: allowsCodexRegistration, pairingActivationID: pairingActivationID,
-        requiresExistingAccountContent: destination != root)
+        requiresExistingAccountContent: creatingName == nil && destination != root)
+      next.workspaceName = creatingName ?? workspaceList.first(where: { $0.id == id })?.name
+        ?? (try? library.catalog().entries.first(where: { $0.id == id })?.name) ?? "Моё пространство"
+      next.publishesWorkspaceName = creatingName != nil || ((try? library.catalog().entries.first(where: { $0.id == id })?.needsNamePublication) ?? false)
       replacement = next
       await next.start(pageSize: NotebookAppModel.defaultPageSize)
       guard next.loadState == .ready || next.awaitingAccountContent else { throw NotebookTransportError.storageUnavailable }
-      _ = try await Task.detached { try library.select(id) }.value
-      model = next; failure = nil; installWorkspaceSelection()
+      _ = try library.select(id, name: next.workspaceName, publishName: next.publishesWorkspaceName)
+      // A first enrollment can finish during start, before the catalog entry
+      // existed. Acknowledge its exact name only after the selection is durable.
+      if next.accountConnection?.spaces.first(where: { $0.id == id })?.name == next.workspaceName {
+        try library.acknowledgeName(id, name: next.workspaceName)
+      }
+      model = next; failure = nil; hasNoWorkspace = false; showsWorkspaces = false; installWorkspaceSelection()
+      let row = Workspace(id: id, name: next.workspaceName, local: true,
+        remote: workspaceList.contains(where: { $0.id == id && $0.remote }) || next.accountConnection?.spaces.contains(where: { $0.id == id }) == true,
+        deleting: false)
+      if let index = workspaceList.firstIndex(where: { $0.id == id }) { workspaceList[index] = row }
+      else { workspaceList.append(row) }
     } catch {
+      Logger(subsystem: "com.amirtlinov.notebook", category: "WorkspaceLifecycle").error("Space switch failed: \(String(reflecting: error), privacy: .public)")
       let cancelledForInput = error is SwitchCancellation
       failure = cancelledForInput ? nil : error.localizedDescription
-      previous.workspaceSwitchError = cancelledForInput ? nil : "Не удалось открыть пространство. Текущие материалы остались на этом устройстве."
+      workspaceError = failure
       guard retired else { return }
       if let replacement, !(await replacement.shutdown()) {
         model = replacement
-        replacement.workspaceSwitchError = "Не удалось завершить открытие пространства. Изменения остаются на этом устройстве."
+        workspaceError = "Не удалось завершить открытие пространства. Изменения остаются на этом устройстве."
         installWorkspaceSelection()
         return
       }
+      if creatingName != nil { try? library.remove(id) }
+      guard let previous else { model = nil; hasNoWorkspace = true; return }
       // The source was not changed or merged. Reopen its same owner after an
       // unsuccessful switch instead of leaving a stopped model on screen.
-      model = NotebookAppModel(store: previous.store, allowsCodexRegistration: allowsCodexRegistration,
+      model = try? makeModel?(previous.store, pairingActivationID) ?? NotebookAppModel(store: previous.store, allowsCodexRegistration: allowsCodexRegistration,
         pairingActivationID: pairingActivationID, requiresExistingAccountContent: previous.store.root != root)
-      model?.workspaceSwitchError = previous.workspaceSwitchError
       installWorkspaceSelection()
       await model?.start(pageSize: NotebookAppModel.defaultPageSize)
     }
+  }
+
+  /// A confirmed offline deletion resumes on connectivity, not a timer or a
+  /// ritual "sync now" button. No catalog monitor exists without pending work.
+  private func observePendingDeletions() {
+    guard !isFixture else { return }
+    let pending = (try? library.catalog().pendingCloudDeletion.isEmpty) == false
+    guard pending else { deletionNetwork?.cancel(); deletionNetwork = nil; return }
+    guard deletionNetwork == nil else { return }
+    let monitor = NWPathMonitor(); deletionNetwork = monitor
+    monitor.pathUpdateHandler = { [weak self] path in
+      guard path.status == .satisfied else { return }
+      Task { @MainActor in await self?.refreshWorkspaces() }
+    }
+    monitor.start(queue: DispatchQueue(label: "Notebook.WorkspaceDeletion"))
+  }
+
+  private func finishOperation() {
+    isChecking = false
+    observePendingDeletions()
+    if let id = retiredWorkspaces.first {
+      retiredWorkspaces.remove(id)
+      Task { await self.removeWorkspace(id, everywhere: false) }
+    }
+  }
+
+  private func retireWorkspace(_ id: UUID) {
+    retiredWorkspaces.insert(id)
+    if !isChecking { finishOperation() }
+  }
+
+  func refreshWorkspaces() async {
+    guard !isFixture, !readingCatalog else { return }
+    readingCatalog = true
+    defer { readingCatalog = false; observePendingDeletions() }
+    do {
+      if let id = selectedWorkspaceID, let model {
+        _ = try library.select(id, name: model.workspaceName)
+      }
+      var local = try library.catalog()
+      // Retry a durable, explicitly confirmed deletion, never an inferred one.
+      for (id, _) in local.pendingCloudDeletion where !isChecking {
+        await removeWorkspace(id, everywhere: true)
+      }
+      local = try library.catalog()
+      workspaceList = local.entries.map { .init(id: $0.id, name: $0.name, local: true, remote: false,
+        deleting: local.pendingCloudDeletion[$0.id] != nil) }
+      for (id, deletion) in local.pendingCloudDeletion where !workspaceList.contains(where: { $0.id == id }) {
+        workspaceList.append(.init(id: id, name: deletion.name, local: false, remote: true, deleting: true))
+      }
+      guard !isChecking else { return }
+      let generation = catalogGeneration
+      let bound = try? model?.store.cloudConfiguration().account
+      if let snapshot = try await catalogCloud.spaces(boundAccount: bound) {
+        guard catalogGeneration == generation else { return }
+        catalogAccount = snapshot.account
+        catalogError = nil
+        // A confirmed deletion on another device is authoritative, including
+        // for a replica which was offline when that confirmation happened.
+        for entry in local.entries where snapshot.directory.deletedSpaceIDs.contains(entry.id) && local.pendingCloudDeletion[entry.id] == nil {
+          await removeWorkspace(entry.id, everywhere: false)
+        }
+        local = try library.catalog()
+        var rows = local.entries.map { entry -> Workspace in
+          let remote = snapshot.directory.spaces.first { $0.id == entry.id }
+          return .init(id: entry.id, name: entry.needsNamePublication ? entry.name : remote?.name ?? entry.name, local: true,
+            remote: remote != nil, deleting: local.pendingCloudDeletion[entry.id] != nil)
+        }
+        for space in snapshot.directory.spaces where !rows.contains(where: { $0.id == space.id }) {
+          rows.append(.init(id: space.id, name: space.name, local: false, remote: true, deleting: false))
+        }
+        for (id, deletion) in local.pendingCloudDeletion where !rows.contains(where: { $0.id == id }) {
+          rows.append(.init(id: id, name: deletion.name, local: false, remote: true, deleting: true))
+        }
+        workspaceList = rows
+        for row in rows where row.local && local.entries.first(where: { $0.id == row.id })?.needsNamePublication != true { try library.rename(row.id, name: row.name) }
+        if let name = rows.first(where: { $0.id == selectedWorkspaceID })?.name { model?.workspaceName = name }
+      }
+    } catch { catalogError = "iCloud недоступен. Локальные пространства остаются доступны." }
+  }
+
+  @discardableResult func createWorkspace(name: String) async -> Bool {
+    workspaceError = nil
+    do {
+      let name = try NotebookWorkspaceLibrary.name(name), id = UUID()
+      await openWorkspace(id, creatingName: name)
+      return selectedWorkspaceID == id
+    } catch { workspaceError = error.localizedDescription; return false }
+  }
+
+  @discardableResult func renameWorkspace(_ id: UUID, name: String) async -> Bool {
+    guard !isChecking else { return false }
+    isChecking = true; catalogGeneration = UUID(); workspaceError = nil
+    defer { finishOperation() }
+    do {
+      let name = try NotebookWorkspaceLibrary.name(name)
+      let bound = try? NotebookStore(root: library.root(for: id)).cloudConfiguration().account
+      let registered = workspaceList.first(where: { $0.id == id })?.remote == true || bound != nil
+      if registered {
+        guard let account = bound ?? catalogAccount else { throw NotebookAccountError.unavailable }
+        try await catalogCloud.renameSpace(id, name: name, account: account)
+      }
+      try library.rename(id, name: name, publish: !registered)
+      if selectedWorkspaceID == id {
+        model?.workspaceName = name; model?.publishesWorkspaceName = !registered
+        model?.accountConnection?.spaceName = name; model?.accountConnection?.publishName = !registered
+        model?.refreshDeviceConnection()
+      }
+      if let index = workspaceList.firstIndex(where: { $0.id == id }) {
+        let old = workspaceList[index]
+        workspaceList[index] = .init(id: id, name: name, local: old.local, remote: old.remote, deleting: false)
+      }
+      return true
+    } catch { workspaceError = "Не удалось переименовать пространство. \(error.localizedDescription)"; return false }
+  }
+
+  func removeWorkspace(_ id: UUID, everywhere: Bool) async {
+    guard !isChecking else { if !everywhere { retiredWorkspaces.insert(id) }; return }
+    isChecking = true; catalogGeneration = UUID(); workspaceError = nil
+    defer { finishOperation() }
+    do {
+      let pending = try library.catalog().pendingCloudDeletion[id]
+      guard everywhere || pending == nil else { return }
+      let account = pending?.account ?? catalogAccount
+      if everywhere {
+        guard let account else { throw NotebookAccountError.unavailable }
+        try library.beginCloudRemoval(id, account: account, name: workspaceList.first(where: { $0.id == id })?.name ?? "Пространство")
+      }
+      if selectedWorkspaceID == id {
+        guard await model?.finishPendingInteraction() ?? true,
+          await model?.shutdown() ?? true else { throw NotebookTransportError.storageUnavailable }
+        model = nil; hasNoWorkspace = true; showsWorkspaces = false
+      }
+      if everywhere, let account { try await catalogCloud.deleteSpace(id, account: account) }
+      try library.remove(id)
+      workspaceList.removeAll { $0.id == id }
+    } catch { workspaceError = "Не удалось завершить удаление. Удаление ожидает завершения; повторная попытка продолжит его, когда появится сеть. \(error.localizedDescription)" }
   }
 
   /// Replacing a pair's delivery journals requires fresh trust, not a new
@@ -163,7 +359,7 @@ final class NotebookApplicationLaunch {
   /// IPC watcher. Only two small receipts are read on each waiting iteration.
   func waitForAdmission() async {
     await start()
-    while !Task.isCancelled, model == nil, failure == nil, !isFixture {
+    while !Task.isCancelled, model == nil, failure == nil, !isFixture, !hasNoWorkspace {
       do { try await Task.sleep(for: .seconds(1)) } catch { return }
       await start()
     }

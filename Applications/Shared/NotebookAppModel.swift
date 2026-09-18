@@ -860,9 +860,12 @@ final class NotebookAppModel {
   @ObservationIgnored private var sync: NearbySync?
   private(set) var connectionState = NotebookConnectionState.waiting
   private(set) var accountConnection: NotebookAccountConnection?
-  @ObservationIgnored var openAccountWorkspace: (@MainActor (UUID) -> Void)?
+  var workspaceName = "Моё пространство"
+  var publishesWorkspaceName = false
+  @ObservationIgnored var accountWorkspaceNameSaved: (@MainActor (String, Set<UUID>) -> Void)?
+  @ObservationIgnored var workspaceDeleted: (@MainActor () -> Void)?
+  @ObservationIgnored var openWorkspaceLibrary: (@MainActor () -> Void)?
   @ObservationIgnored var openDefaultAccountWorkspace: (@MainActor (UUID) -> Void)?
-  @ObservationIgnored var returnToLocalWorkspace: (@MainActor () -> Void)?
   private let requiresExistingAccountContent: Bool
   private(set) var awaitingAccountContent = false
   @ObservationIgnored private var accountContentTask: Task<Void, Never>?
@@ -919,7 +922,6 @@ final class NotebookAppModel {
   #endif
 
   let allowsCodexRegistration: Bool
-  var workspaceSwitchError: String?
   let pairingActivationID: UUID?
   let acceptance: NotebookAcceptanceConfiguration?
   @ObservationIgnored let documentMeasurements: DocumentPresentationRecorder
@@ -1285,12 +1287,16 @@ final class NotebookAppModel {
     }
     guard !isClosing, let cloudSync else { return }
     let account = NotebookAccountConnection(
-      device: .init(identity: connection.identity, platform: platform, activation: pairingActivationID), sync: connection, service: NotebookAccountCloud(cloud: cloudSync), initialBoundAccount: bound,
+      device: .init(identity: connection.identity, platform: platform, activation: pairingActivationID), sync: connection, service: NotebookAccountCloud(cloud: cloudSync), initialBoundAccount: bound, spaceName: workspaceName, publishName: publishesWorkspaceName,
+      workspaceDeleted: { [weak self] in self?.workspaceDeleted?() },
       shouldOpenDefault: { [weak self] in
         await self?.mayAutomaticallySwitchWorkspace() ?? false
       }, openWorkspace: { [weak self] id in self?.openDefaultAccountWorkspace?(id) },
       accountReady: { [weak self] account in
         guard let self, !self.isClosing else { return }
+        if let name = self.accountConnection?.spaces.first(where: { $0.id == connection.identity.workspaceID })?.name {
+          self.accountWorkspaceNameSaved?(name, self.accountConnection?.deletedSpaces ?? [])
+        }
         await self.cloudSync?.connect(account: account)
       }, accountUnavailable: { [weak self] in await self?.cloudSync?.stop() })
     accountConnection = account

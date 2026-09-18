@@ -3,6 +3,50 @@ import Testing
 @testable import NotebookCore
 
 struct NotebookAccountDirectoryTests {
+  @Test func deletingTheLastSpaceRevokesKeysAndRejectsAnOfflineReplica() throws {
+    let id = UUID(), mac = device(id, .mac), pad = device(id, .iPad)
+    var directory = NotebookAccountDirectory(space: .init(id: id, name: "Personal"))
+    try directory.enroll(mac, retained: [], spaceName: "Mac")
+    try directory.enroll(pad, retained: [], spaceName: "iPad")
+    let keys = directory.pairs
+    try directory.deleteSpace(id)
+    #expect(directory.spaces.isEmpty); #expect(directory.defaultSpaceID == nil)
+    #expect(directory.devices.isEmpty); #expect(directory.pairs.isEmpty)
+    #expect(throws: NotebookAccountDirectory.Failure.spaceDeleted) {
+      try directory.enroll(pad, retained: keys, spaceName: "Stale replica")
+    }
+    #expect(directory.spaces.isEmpty)
+    let next = UUID()
+    try directory.enroll(device(next, .mac), retained: [], spaceName: "New")
+    #expect(directory.defaultSpaceID == next)
+    #expect(directory.deletedSpaceIDs == [id])
+    try directory.deleteSpace(id) // The same confirmed intent is idempotent.
+    #expect(directory.spaces.map(\.id) == [next])
+  }
+
+  @Test func namesDoNotChangeIdentityKeysOrTheChosenDefault() throws {
+    let id = UUID(), mac = device(id, .mac), pad = device(id, .iPad)
+    var directory = NotebookAccountDirectory(space: .init(id: id, name: "Before"))
+    try directory.enroll(mac, retained: [], spaceName: "Mac")
+    try directory.enroll(pad, retained: [], spaceName: "iPad")
+    let keys = directory.pairs
+    try directory.renameSpace(id, name: "  Work  ")
+    #expect(directory.spaces.first?.name == "Work")
+    #expect(directory.pairs == keys); #expect(directory.defaultSpaceID == id)
+    #expect(throws: NotebookTransportError.self) { try directory.renameSpace(id, name: "  ") }
+  }
+
+  @Test func directoryDataUpgradePreservesExistingCredentialsButWritesOnlyCurrentFormat() throws {
+    let id = UUID(), mac = device(id, .mac), pad = device(id, .iPad)
+    var directory = NotebookAccountDirectory(space: .init(id: id, name: "Existing"))
+    try directory.enroll(mac, retained: [], spaceName: "Mac")
+    try directory.enroll(pad, retained: [], spaceName: "iPad")
+    var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(directory)) as? [String: Any])
+    json["format"] = 1; json.removeValue(forKey: "deletedSpaceIDs")
+    let decoded = try JSONDecoder().decode(NotebookAccountDirectory.self, from: JSONSerialization.data(withJSONObject: json))
+    #expect(decoded == directory); #expect(decoded.format == 2)
+  }
+
   private func device(_ space: UUID, _ platform: NotebookAccountDirectory.Device.Platform,
     id: UUID = UUID(), activation: UUID? = nil) -> NotebookAccountDirectory.Device {
     .init(identity: .init(deviceID: id, workspaceID: space, displayName: platform.rawValue), platform: platform, activation: activation)
@@ -78,8 +122,9 @@ struct NotebookAccountDirectoryTests {
     let directory = NotebookAccountDirectory(space: .init(id: space, name: "Workspace"))
     var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(directory)) as? [String: Any])
     json["format"] = 99
-    let invalid = try JSONDecoder().decode(NotebookAccountDirectory.self, from: JSONSerialization.data(withJSONObject: json))
-    #expect(throws: (any Error).self) { try invalid.validate() }
+    #expect(throws: NotebookTransportError.unsupportedVersion) {
+      _ = try JSONDecoder().decode(NotebookAccountDirectory.self, from: JSONSerialization.data(withJSONObject: json))
+    }
     #expect(throws: (any Error).self) {
       try NotebookAccountDirectory(space: .init(id: space, name: "")).validate()
     }

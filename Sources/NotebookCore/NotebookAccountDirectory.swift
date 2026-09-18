@@ -4,6 +4,7 @@ import Foundation
 /// This value is admitted only from the current account's PRIVATE CloudKit
 /// database. Discovery names and network messages can never enroll a device.
 public struct NotebookAccountDirectory: Codable, Equatable, Sendable {
+  public enum Failure: Error, Equatable { case spaceDeleted, spaceMissing }
   public struct Space: Codable, Equatable, Identifiable, Sendable {
     public let id: UUID
     public let name: String
@@ -35,18 +36,35 @@ public struct NotebookAccountDirectory: Codable, Equatable, Sendable {
   }
 
   public let format: Int
-  public let defaultSpaceID: UUID
+  public private(set) var defaultSpaceID: UUID?
   public private(set) var spaces: [Space]
+  public private(set) var deletedSpaceIDs: Set<UUID> = []
   public private(set) var devices: [Device] = []
   public private(set) var pairs: [Pair] = []
 
   public init(space: Space) {
-    format = 1; defaultSpaceID = space.id; spaces = [space]
+    format = 2; defaultSpaceID = space.id; spaces = [space]
+  }
+
+  private enum CodingKeys: String, CodingKey { case format, defaultSpaceID, spaces, deletedSpaceIDs, devices, pairs }
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    let oldFormat = try values.decode(Int.self, forKey: .format)
+    guard oldFormat == 1 || oldFormat == 2 else { throw NotebookTransportError.unsupportedVersion }
+    format = 2
+    defaultSpaceID = try values.decodeIfPresent(UUID.self, forKey: .defaultSpaceID)
+    spaces = try values.decode([Space].self, forKey: .spaces)
+    devices = try values.decode([Device].self, forKey: .devices)
+    pairs = try values.decode([Pair].self, forKey: .pairs)
+    deletedSpaceIDs = oldFormat == 1 ? [] : try values.decode(Set<UUID>.self, forKey: .deletedSpaceIDs)
+    try validate()
   }
 
   public func validate() throws {
-    guard format == 1, (1...32).contains(spaces.count), devices.count <= 64, pairs.count <= 224,
-      Set(spaces.map(\.id)).count == spaces.count, spaces.contains(where: { $0.id == defaultSpaceID }),
+    guard format == 2, spaces.count <= 32, devices.count <= 64, pairs.count <= 224,
+      deletedSpaceIDs.count <= 4096, Set(spaces.map(\.id)).isDisjoint(with: deletedSpaceIDs),
+      Set(spaces.map(\.id)).count == spaces.count,
+      spaces.isEmpty ? defaultSpaceID == nil : spaces.contains(where: { $0.id == defaultSpaceID }),
       spaces.allSatisfy({ !$0.name.isEmpty && $0.name.utf8.count <= 240 }),
       devices.allSatisfy({ $0.identity.isValid }) else {
       throw NotebookTransportError.identityMismatch
@@ -82,8 +100,10 @@ public struct NotebookAccountDirectory: Codable, Equatable, Sendable {
     try validate()
     guard device.identity.isValid, retained.count <= 8 else { throw NotebookTransportError.identityMismatch }
     let local = device.identity
+    guard !deletedSpaceIDs.contains(local.workspaceID) else { throw Failure.spaceDeleted }
     if !spaces.contains(where: { $0.id == local.workspaceID }) {
       spaces.append(.init(id: local.workspaceID, name: spaceName))
+      if defaultSpaceID == nil { defaultSpaceID = local.workspaceID }
     }
     if let index = devices.firstIndex(where: { $0.identity.deviceID == local.deviceID && $0.identity.workspaceID == local.workspaceID }) {
       if devices[index].activation != device.activation {
@@ -107,6 +127,26 @@ public struct NotebookAccountDirectory: Codable, Equatable, Sendable {
       }
     }
     try validate()
+  }
+
+  public mutating func renameSpace(_ id: UUID, name: String) throws {
+    let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty, name.utf8.count <= 240 else { throw NotebookTransportError.identityMismatch }
+    guard let index = spaces.firstIndex(where: { $0.id == id }) else { throw Failure.spaceMissing }
+    spaces[index] = .init(id: id, name: name)
+  }
+
+  /// The deletion is account authority, not a missing record. A device coming
+  /// back from offline cannot enroll the retired UUID or restore its pair keys.
+  public mutating func deleteSpace(_ id: UUID) throws {
+    guard spaces.contains(where: { $0.id == id }) || deletedSpaceIDs.contains(id) else { throw Failure.spaceMissing }
+    var next = self
+    next.deletedSpaceIDs.insert(id)
+    next.spaces.removeAll { $0.id == id }
+    next.devices.removeAll { $0.identity.workspaceID == id }
+    next.pairs.removeAll { $0.workspaceID == id }
+    if next.defaultSpaceID == id { next.defaultSpaceID = next.spaces.first?.id }
+    try next.validate(); self = next
   }
 
   public func credentials(for device: Device) -> [(Device, Pair)] {

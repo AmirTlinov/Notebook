@@ -30,6 +30,8 @@ struct NotebookMacApp: App {
           Button("Повторить проверку") { lifecycle.start() }
         }
       }
+      Button("Пространства…") { lifecycle.showWorkspaces() }
+        .accessibilityIdentifier("workspaces-open")
       Button("Устройства…") { lifecycle.showDevices() }
         .accessibilityIdentifier("notebook.devices.open")
       if let loginError = lifecycle.loginError { Text(loginError) }
@@ -51,6 +53,7 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
   let launch: NotebookApplicationLaunch
   private var launchTask: Task<Void, Never>?
   @ObservationIgnored private(set) var devicesWindowController: NotebookMacDevicesWindowController?
+  @ObservationIgnored private var workspacesWindow: NSWindow?
   @ObservationIgnored private var pasteWindow: NotebookMacPasteWindow?
   private(set) var launchesAtLogin = false
   private(set) var loginError: String?
@@ -90,15 +93,37 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
     launchTask = Task {
       defer { launchTask = nil }
       await launch.waitForAdmission()
-      guard !Task.isCancelled, let model = launch.model else { return }
+      guard !Task.isCancelled else { return }
+      guard let model = launch.model else { if launch.hasNoWorkspace { showWorkspaces() }; return }
       await model.start(pageSize: NotebookAppModel.defaultPageSize)
     }
   }
 
   /// Reopening shows status; connection never depends on opening a window.
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-    showDevices()
+    if launch.hasNoWorkspace { showWorkspaces() } else { showDevices() }
     return false
+  }
+
+  func showWorkspaces() {
+    if workspacesWindow == nil {
+      let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 560, height: 500),
+        styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+      window.title = "Notebook — Пространства"
+      window.identifier = .init("notebook.workspaces.window")
+      window.setAccessibilityIdentifier("notebook.workspaces.window")
+      window.isReleasedWhenClosed = false
+      // AppKit owns this resizable utility window. A flexible SwiftUI List has
+      // no intrinsic preferred size and must not collapse it to one pixel.
+      let content = NSHostingController(rootView: NotebookWorkspacesView(launch: launch))
+      content.sizingOptions = []
+      window.contentViewController = content
+      window.contentMinSize = .init(width: 460, height: 360)
+      window.setContentSize(.init(width: 560, height: 500))
+      window.center(); workspacesWindow = window
+    }
+    workspacesWindow?.makeKeyAndOrderFront(nil); NSApplication.shared.activate()
+    Task { await launch.refreshWorkspaces() }
   }
 
   func showPaste() {

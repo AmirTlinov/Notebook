@@ -6,10 +6,8 @@ struct NotebookDevicesContent: View {
   let model: NotebookAppModel
   var body: some View {
     Section {
-      if let error = model.workspaceSwitchError { Text(error).foregroundStyle(.secondary) }
       if model.awaitingAccountContent {
         ProgressView("Открываем ваши материалы…")
-        if let back = model.returnToLocalWorkspace { Button("Пока работать на этом устройстве", action: back) }
       }
       Label(model.deviceStatusMessage, systemImage: model.isPeerConnected ? "checkmark.circle" : "laptopcomputer.and.ipad")
         .accessibilityIdentifier("notebook.devices.status")
@@ -28,19 +26,6 @@ struct NotebookDevicesContent: View {
       }
     } footer: {
       Text("Ваши устройства с одним Apple Account подключаются сами. Mac нужен для работы с Codex; писать можно и без него.")
-    }
-    if let account = model.accountConnection, account.spaces.count > 1 {
-      Section("Пространства") {
-        ForEach(account.spaces) { space in
-          Button { model.openAccountWorkspace?(space.id) } label: {
-            HStack {
-              Text(space.name)
-              Spacer()
-              if space.id == model.workspaceHeader?.workspaceID { Image(systemName: "checkmark") }
-            }
-          }.disabled(model.shutdownPhase != .running)
-        }
-      }
     }
     Section { NotebookCloudSection(model: model) }
   }

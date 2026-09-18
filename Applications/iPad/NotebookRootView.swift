@@ -20,9 +20,7 @@ struct NotebookRootView: View {
               ProgressView("Открываем ваши материалы…")
               Text(model.deviceStatusMessage).font(.callout).foregroundStyle(.secondary)
               Button("Состояние устройств") { showsDevices = true }
-              if let back = model.returnToLocalWorkspace {
-                Button("Пока работать на этом устройстве", action: back)
-              }
+              if let open = model.openWorkspaceLibrary { Button("Выбрать пространство", action: open) }
             }.padding(24)
           } else { Color.clear }
         case .ready:

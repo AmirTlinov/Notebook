@@ -159,7 +159,7 @@ final class NotebookAccountConnectionTests: XCTestCase {
   var entered: (() -> Void)?
   private var gate: CheckedContinuation<Void, Never>?
   init(_ directory: AccountTestDirectory) { self.directory = directory }
-  func exchange(device: NotebookAccountDirectory.Device, boundAccount: String?, retained: [NotebookAccountDirectory.Pair]) async throws -> NotebookAccountSnapshot {
+  func exchange(device: NotebookAccountDirectory.Device, boundAccount: String?, retained: [NotebookAccountDirectory.Pair], spaceName: String, publishName: Bool) async throws -> NotebookAccountSnapshot {
     guard boundAccount == nil || boundAccount == directory.account else { throw NotebookAccountError.changed }
     if hold { entered?(); await withCheckedContinuation { gate = $0 } }
     let before = directory.value
@@ -168,7 +168,7 @@ final class NotebookAccountConnectionTests: XCTestCase {
     if before != directory.value { for callback in directory.observers.values { Task { await callback(false) } } }
     return .init(account: directory.account, directory: directory.value)
   }
-  func initialWorkspace(proposed: UUID) async throws -> UUID { directory.value.defaultSpaceID }
+  func initialWorkspace(proposed: UUID) async throws -> UUID { directory.value.defaultSpaceID ?? proposed }
   func observe(changed: @escaping @Sendable (Bool) async -> Void) async throws {
     if directory.observers[id] == nil {
       directory.observers[id] = changed

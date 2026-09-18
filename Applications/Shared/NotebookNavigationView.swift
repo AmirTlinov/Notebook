@@ -42,7 +42,15 @@ struct NotebookNavigationView: View {
         }
         VStack(alignment: .leading, spacing: 2) {
           if path.count > 1 { Text(path.dropLast().joined(separator: " › ")).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
-          Text(path.last ?? "Пространство").font(.system(size:14,weight:.medium)).lineLimit(1)
+          if let open = model.openWorkspaceLibrary {
+            Button(action: open) {
+              HStack(spacing: 5) {
+                Text(presence.mode == .board && presence.boardID == model.workspace?.rootBoardID
+                  ? model.workspaceName : path.last ?? model.workspaceName).lineLimit(1)
+                Image(systemName: "chevron.down").font(.caption2)
+              }.font(.system(size: 14, weight: .medium))
+            }.buttonStyle(.plain).accessibilityLabel("Пространства").accessibilityIdentifier("workspaces-open")
+          } else { Text(path.last ?? "Пространство").font(.system(size:14,weight:.medium)).lineLimit(1) }
         }.padding(.leading, 8).frame(maxWidth: 200, alignment: .leading)
         if let destination = model.pasteDestination { NotebookActionsMenu(destination:destination) }
         Button { showsSearch = true } label: { Image(systemName: "magnifyingglass").frame(width: 44, height: 44).contentShape(Rectangle()) }

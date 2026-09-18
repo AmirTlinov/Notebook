@@ -24,6 +24,7 @@ struct NotebookApp: App {
     WindowGroup {
       Group {
         if let model = launch.model { workspace(model) }
+        else if launch.hasNoWorkspace { NotebookWorkspacesView(launch: launch) }
         else {
           VStack(spacing: 16) {
             Text(launch.message).multilineTextAlignment(.center)
@@ -38,6 +39,9 @@ struct NotebookApp: App {
           .allowsHitTesting(false)
       }
       .task { await launch.waitForAdmission() }
+      .sheet(isPresented: $launch.showsWorkspaces) {
+        NotebookWorkspacesView(launch: launch, close: { launch.showsWorkspaces = false })
+      }
     }
   }
 
@@ -77,10 +81,12 @@ struct NotebookApp: App {
 #if DEBUG
   @MainActor
   enum NotebookDebugLaunch: Equatable {
-    case workspace, drawingFixture, unitTestHost
+    case workspace, drawingFixture, workspaceLibraryFixture, unitTestHost
 
     init(arguments: [String], environment: [String: String]) {
-      if arguments.contains(NotebookDrawingFixture.launchArgument) {
+      if arguments.contains(NotebookWorkspaceLibraryFixture.argument) {
+        self = .workspaceLibraryFixture
+      } else if arguments.contains(NotebookDrawingFixture.launchArgument) {
         self = .drawingFixture
       } else if environment["XCTestConfigurationFilePath"] != nil {
         self = .unitTestHost
@@ -92,6 +98,7 @@ struct NotebookApp: App {
     func makeLaunch() -> NotebookApplicationLaunch {
       switch self {
       case .workspace: NotebookApplicationLaunch()
+      case .workspaceLibraryFixture: NotebookWorkspaceLibraryFixture.makeLaunch()
       case .drawingFixture: NotebookApplicationLaunch(fixture: NotebookDrawingFixture.makeModel())
       // Hosted unit tests own their stores, models and windows. Constructing the
       // default model here would read another archive and compete for the same

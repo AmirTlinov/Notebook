@@ -11,8 +11,12 @@ import OSLog
 final class NotebookAccountConnection {
   enum Status: Equatable { case checking, ready, waitingForNetwork, needsAccount, accountChanged, failed(String) }
   private(set) var status: Status = .checking
+  private(set) var deletedSpaces: Set<UUID> = []
   private(set) var spaces: [NotebookAccountDirectory.Space] = []
   private(set) var account: String?
+  var publishName = false
+  var spaceName: String
+  private let workspaceDeleted: @MainActor () -> Void
   private let device: NotebookAccountDirectory.Device
   private let sync: NearbySync
   private let service: any NotebookAccountService
@@ -33,11 +37,13 @@ final class NotebookAccountConnection {
 
   init(device: NotebookAccountDirectory.Device, sync: NearbySync,
     service: any NotebookAccountService,
-    initialBoundAccount: String? = nil,
+    initialBoundAccount: String? = nil, spaceName: String = "Моё пространство", publishName: Bool = false,
+    workspaceDeleted: @escaping @MainActor () -> Void = {},
     shouldOpenDefault: @escaping @MainActor () async -> Bool = { false },
     openWorkspace: @escaping @MainActor (UUID) -> Void = { _ in },
     accountReady: @escaping @MainActor (String) async -> Void,
     accountUnavailable: @escaping @MainActor () async -> Void) {
+    self.publishName = publishName; self.spaceName = spaceName; self.workspaceDeleted = workspaceDeleted
     self.device = device; self.sync = sync; self.service = service
     self.initialBoundAccount = initialBoundAccount
     self.shouldOpenDefault = shouldOpenDefault; self.openWorkspace = openWorkspace
@@ -87,14 +93,14 @@ final class NotebookAccountConnection {
             NotebookAccountDirectory.Pair(id: $0.credentialID, workspaceID: self.device.identity.workspaceID,
               first: self.device.identity.deviceID, second: $0.identity.deviceID, secret: $0.secret)
           }
-          let result = try await self.service.exchange(device: self.device, boundAccount: trust.account ?? self.initialBoundAccount, retained: retained)
+          let result = try await self.service.exchange(device: self.device, boundAccount: trust.account ?? self.initialBoundAccount, retained: retained, spaceName: self.spaceName, publishName: self.publishName)
           guard self.active, self.epoch == token, !Task.isCancelled else { return }
           let devices = result.directory.credentials(for: self.device).map {
             NotebookTrustedDevice(identity: $0.0.identity, credentialID: $0.1.id, secret: $0.1.secret)
           }
           try await self.sync.applyAccountTrust(account: result.account, devices: devices)
           guard self.active, self.epoch == token, !Task.isCancelled else { return }
-          self.account = result.account; self.spaces = result.directory.spaces; self.status = .ready; self.retryDelay = 2
+          self.account = result.account; self.spaces = result.directory.spaces; self.deletedSpaces = result.directory.deletedSpaceIDs; self.status = .ready; self.retryDelay = 2
           await self.accountReady(result.account)
           guard self.active, self.epoch == token, !Task.isCancelled else { return }
           try await self.service.observe { [weak self] accountChanged in
@@ -103,6 +109,13 @@ final class NotebookAccountConnection {
         } catch is CancellationError { return }
         catch {
           guard self.active, self.epoch == token, !Task.isCancelled else { return }
+          if error as? NotebookAccountDirectory.Failure == .spaceDeleted {
+            self.sync.stop()
+            await self.accountUnavailable()
+            self.active = false
+            self.workspaceDeleted()
+            return
+          }
           let cloudCode = (error as? CKError)?.code
           self.logger.error("Account enrollment failed: cloud code \(cloudCode?.rawValue ?? -1), type \(String(reflecting: type(of: error)), privacy: .public)")
           if error as? NotebookAccountError == .unavailable || error as? NotebookAccountError == .changed || cloudCode == .notAuthenticated {
