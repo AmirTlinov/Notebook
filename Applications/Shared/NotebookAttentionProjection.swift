@@ -5,6 +5,9 @@ import SwiftUI
 /// centers and stack fan as the visible scene, so moving an item moves its mark.
 @MainActor
 enum NotebookAttentionProjection {
+  /// Screen-space forgiveness around visible geometry, not an enlarged object.
+  /// Pending human edits and settled scene picking use the same boundary.
+  static let elementHitPadding: Double = 6
   static func frame(_ reference: CollaborationReference, model: NotebookAppModel, presence: SessionPresence) -> CGRect? {
     frame(target: reference.target, elementID: reference.elementID, region: reference.region,
       worldOrigin: reference.worldOrigin, pageIndex: reference.pageIndex, model: model, presence: presence)
@@ -423,7 +426,7 @@ enum NotebookAttentionProjection {
     appearance: (String, NotebookGraphic?, NotebookGraphicLayout?, CGSize, [InkElementErasure]) -> NotebookElementAppearance? = { _,_,_,_,_ in nil }, scale: Double,
     viewport: SpatialPoint, project: (Element) -> (String, PageRect, NotebookGraphic?, SpatialPoint)) -> Element? {
     var interior: (Element, Double)?
-    let tolerance = 12 / max(0.001, scale)
+    let tolerance = elementHitPadding / max(0.001, scale)
     for element in elements.reversed() {
       let (id, frame, graphic, point) = project(element)
       if let cuts = erasures[id], !cuts.isEmpty {

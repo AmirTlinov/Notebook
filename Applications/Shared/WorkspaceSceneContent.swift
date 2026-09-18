@@ -400,7 +400,7 @@ struct SpatialElementContent: View {
     let appearance = model.elementErasureCache.appearance(surface:element.surface,id:element.id,graphic:nil,layout:nil,
       size:.init(width:element.frame.width,height:element.frame.height),erasures:cuts)
     let erased = appearance?.state == .erased
-    content.erased(by:cuts,appearance:appearance).accessibilityHidden(erased)
+    content.erased(by:cuts,appearance:appearance).accessibilityHidden(erased || (!cuts.isEmpty && appearance == nil))
       .allowsHitTesting(!erased && (cuts.isEmpty || appearance != nil))
   }
 

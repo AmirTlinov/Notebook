@@ -113,8 +113,8 @@ final class NotebookInputGate {
 
   func unregisterControlRegion(source: UUID) { controlRegions[source] = nil }
 
-  func permitsSceneContact(at windowPoint: CGPoint, kind: ContactKind) -> Bool {
-    permitsNewContact && !controlRegions.values.contains { $0(windowPoint, kind) }
+  func permitsSceneContact(at windowPoint: CGPoint, kind: ContactKind, excludingControl source: UUID? = nil) -> Bool {
+    permitsNewContact && !controlRegions.contains { $0.key != source && $0.value(windowPoint, kind) }
   }
 
   func beginContact(source: UUID) {

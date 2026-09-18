@@ -13,21 +13,66 @@ final class DrawingResponsivenessTests: XCTestCase {
     launchPortraitFixture(app)
     let node = app.images["Узел +"], paper = app.otherElements["paper-input"]
     XCTAssertTrue(node.waitForExistence(timeout:10)); XCTAssertTrue(paper.exists)
-    for i in 0..<16 { XCTAssertFalse(app.images["Erased \(i)"].exists) }
+    for i in 0..<16 { XCTAssertTrue(app.images["Erased \(i)"].waitForNonExistence(timeout:2),"Erased \(i) must leave the published accessibility tree") }
     for _ in 0..<3 {
       node.coordinate(withNormalizedOffset:.init(dx:0.97,dy:0.5)).tap()
       XCTAssertTrue(app.buttons["delete-agent-element"].waitForExistence(timeout:2))
       // Tap removed paint, not the surviving opposite edge or a shape's interior.
-      node.coordinate(withNormalizedOffset:.init(dx:0.01,dy:0.5)).tap()
+      node.coordinate(withNormalizedOffset:.init(dx:0.01,dy:0.3)).tap()
       XCTAssertTrue(app.buttons["delete-agent-element"].waitForNonExistence(timeout:2))
       app.buttons["leave-nested-board"].tap()
       let cover = app.descendants(matching:.any).matching(identifier:"workspace-item-7e7a1000-0000-4000-8000-000000000002").firstMatch
       XCTAssertTrue(cover.waitForExistence(timeout:3)); cover.doubleTap()
       XCTAssertTrue(paper.waitForExistence(timeout:3)); XCTAssertTrue(node.waitForExistence(timeout:3))
-      for i in 0..<16 { XCTAssertFalse(app.images["Erased \(i)"].exists) }
+      for i in 0..<16 { XCTAssertTrue(app.images["Erased \(i)"].waitForNonExistence(timeout:2),"Erased \(i) must leave the published accessibility tree") }
     }
     let proof = XCTAttachment(screenshot:app.screenshot())
     proof.name = "erased-figures-after-three-open-close-cycles"; proof.lifetime = .keepAlways; add(proof)
+  }
+
+  func testNearbyBlankTapsDeselectGraphicsOnPage() { nearbyBlankTaps(onPage:true) }
+  func testNearbyBlankTapsDeselectGraphicsOnBoard() { nearbyBlankTaps(onPage:false) }
+
+  private func nearbyBlankTaps(onPage: Bool) {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture",
+      "--notebook-native-connector","--notebook-native-geometry-edit"] + (onPage ? ["--notebook-native-graphic-page"] : [])
+    launchPortraitFixture(app)
+    let line = app.images["Связь"], triangle = app.images["Треугольник"]
+    XCTAssertTrue(line.waitForExistence(timeout:10)); XCTAssertTrue(triangle.waitForExistence(timeout:10))
+    let remove = app.buttons["delete-agent-element"]
+    func deselect(at point: XCUICoordinate, name: String) {
+      point.tap()
+      let gone = XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in !remove.exists },object:nil)
+      let result = XCTWaiter.wait(for:[gone],timeout:2)
+      let proof = XCTAttachment(screenshot:XCUIScreen.main.screenshot())
+      proof.name = "blank-tap-\(name)-\(onPage ? "page" : "board")"; proof.lifetime = .keepAlways; add(proof)
+      XCTAssertEqual(result,.completed,"Nearby blank paper must dismiss the capsule, not silently consume the tap")
+    }
+    line.tap(); XCTAssertTrue(remove.waitForExistence(timeout:3))
+    let initial = line.frame, length = hypot(initial.width,initial.height)
+    let normal = CGVector(dx:-initial.height/length,dy:initial.width/length)
+    deselect(at:line.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+      .withOffset(.init(dx:normal.dx*16,dy:normal.dy*16)),name:"bend-handle")
+    line.tap(); XCTAssertTrue(remove.waitForExistence(timeout:3))
+    deselect(at:line.coordinate(withNormalizedOffset:.init(dx:0.25,dy:0.25))
+      .withOffset(.init(dx:normal.dx*10,dy:normal.dy*10)),name:"line-body")
+    triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.6)).tap()
+    XCTAssertTrue(remove.waitForExistence(timeout:3))
+    let corner = app.descendants(matching:.any).matching(identifier:"resize-agent-element-bottomTrailing").firstMatch
+    XCTAssertTrue(corner.waitForExistence(timeout:3))
+    deselect(at:corner.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).withOffset(.init(dx:16,dy:16)),name:"polygon-corner")
+    XCTAssertEqual(line.frame,initial,"Deselecting must not move the line")
+
+    line.tap(); XCTAssertTrue(remove.waitForExistence(timeout:3))
+    let end = app.descendants(matching:.any).matching(identifier:"graphic-end-handle").firstMatch
+    XCTAssertTrue(end.waitForExistence(timeout:3))
+    let grip = end.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).withOffset(.init(dx:4,dy:0))
+    grip.press(forDuration:0.01,thenDragTo:grip.withOffset(.init(dx:30,dy:20)),withVelocity:.slow,thenHoldForDuration:0)
+    let resized = XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in line.frame.width > initial.width+20 },object:nil)
+    XCTAssertEqual(XCTWaiter.wait(for:[resized],timeout:2),.completed,"The visible handle and a small tolerance still resize")
+    XCTAssertTrue(remove.exists)
   }
 
   func testHollowPolygonsSelectResizeAndBindOnPage() { polygonInteraction(onPage:true) }

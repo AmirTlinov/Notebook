@@ -21,7 +21,8 @@ struct NotebookGraphicBindingHint: View {
 }
 
 /// One screen-space frame for the selected physical element. Its corners and sides
-/// retain 44-point touch targets; neither paper zoom nor a portal duplicates them.
+/// retain accessible targets, with compact physical grips; neither paper zoom
+/// nor a portal duplicates their touch regions.
 struct NotebookElementControls: UIViewRepresentable {
   @Environment(NotebookAppModel.self) private var model
   let reference: EditableElementReference
@@ -376,12 +377,12 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     let candidates = [frameRect.minY - height - 30, frameRect.maxY + 30, usable.minY, usable.maxY-height]
       .map { CGRect(x:x,y:min(max(usable.minY,$0),max(usable.minY,usable.maxY-height)),width:width,height:height) }
     toolbar.frame = candidates.first { candidate in
-      !candidate.intersects(frameRect) && handles.allSatisfy { !hitFrame($0).intersects(candidate) }
-    } ?? candidates.first { candidate in handles.allSatisfy { !hitFrame($0).intersects(candidate) } } ?? candidates[0]
+      !candidate.intersects(frameRect) && handles.allSatisfy { !handleAccessibilityFrame($0).intersects(candidate) }
+    } ?? candidates.first { candidate in handles.allSatisfy { !handleAccessibilityFrame($0).intersects(candidate) } } ?? candidates[0]
     toolbarSurface.frame = toolbar.bounds.insetBy(dx:0,dy:(NotebookChrome.controlSize-NotebookChrome.barHeight)/2)
     toolbarSurface.layer.shadowPath = UIBezierPath(roundedRect:toolbarSurface.bounds,cornerRadius:NotebookChrome.barHeight/2).cgPath
     for (index, handle) in handles.enumerated() {
-      handleAccessibility[index].accessibilityFrameInContainerSpace = hitFrame(handle)
+      handleAccessibility[index].accessibilityFrameInContainerSpace = handleAccessibilityFrame(handle)
     }
   }
   override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
@@ -411,18 +412,23 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     return .init(x:frameRect.minX+point.x*projectionScale+dy/length*offset,
       y:frameRect.minY+point.y*projectionScale-dx/length*offset)
   }
-  private func hitFrame(_ handle: ElementHandle) -> CGRect {
+  private func handleAccessibilityFrame(_ handle: ElementHandle) -> CGRect {
     let point = point(handle)
     return .init(x: point.x - 22, y: point.y - 22, width: 44, height: 44)
   }
   private func handle(at point: CGPoint) -> ElementHandle? {
     // Small objects can have overlapping touch targets. The nearest handle
     // stays reachable instead of always picking the first one.
-    guard let handle = handles.filter({ hitFrame($0).contains(point) }).min(by: {
+    // A physical grip is the visible handle plus a little finger tolerance.
+    // The 44pt VoiceOver frame must not silently consume a nearby blank tap.
+    guard let handle = handles.filter({
+      let center = self.point($0)
+      return hypot(center.x-point.x,center.y-point.y) <= 12
+    }).min(by: {
       let a = self.point($0), b = self.point($1)
       return hypot(a.x - point.x, a.y - point.y) < hypot(b.x - point.x, b.y - point.y)
     }) else { return nil }
-    // An overlapping 44-point target must not consume the whole small figure.
+    // Overlapping grips must not consume the whole small figure.
     // Its center competes with handles so the ordinary body-drag owner remains
     // reachable; the visible handle and its outward touch area still resize.
     if connectionLayout == nil, frameRect.contains(point) {
@@ -467,9 +473,14 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
     guard touch.type == .direct else { return false }
     if pointingHandle != nil { return true }
-    guard installedWindow != nil, gate.permitsNewContact,
+    // SwiftUI can report its hosting view as touch.view even over this drawn
+    // handle. The window-space control registry owns admission, not that
+    // implementation-specific hit-view identity; other chrome still wins.
+    guard let window = installedWindow, touch.view?.window === window, !isHidden, isEnabled,
+      palette == nil, connectionPalette == nil, !menuButtons.contains(where: \.isMenuPresented),
+      gate.permitsSceneContact(at:touch.location(in:window),kind:.finger,excludingControl:source),
       let revision = gate.beginFingerSequence(),
-      touch.view === self, let handle = handle(at: touch.location(in: self)) else { return false }
+      let handle = handle(at: touch.location(in: self)) else { return false }
     pencilRevision = revision
     contactOrigin = touch.location(in: installedWindow)
     pointingHandle = handle

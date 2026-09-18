@@ -749,7 +749,7 @@ struct SpatialWorkspaceView: View {
         let appearance = model.elementErasureCache.appearance(surface:surface,id:id,
           graphic:model.graphicElement(reference),layout:layout,
           size:.init(width:localFrame.width,height:localFrame.height),erasures:cuts) else { return nil }
-      return appearance.contains(.init(x:(point.x-frame.minX)/scale,y:(point.y-frame.minY)/scale),tolerance:12/scale) ? reference : nil
+      return appearance.contains(.init(x:(point.x-frame.minX)/scale,y:(point.y-frame.minY)/scale),tolerance:NotebookAttentionProjection.elementHitPadding/scale) ? reference : nil
     }
     guard let graphic = model.graphicElement(reference) else { return frame.contains(point) ? reference : nil }
     // Settled shapes use normal topmost picking, including overlapping links.
@@ -757,10 +757,10 @@ struct SpatialWorkspaceView: View {
     let scale = max(0.001,presence.camera.scale)
     let local = SpatialPoint(x:(point.x-frame.minX)/scale,y:(point.y-frame.minY)/scale)
     if graphic.shape == .connector {
-      return model.graphicLayout(reference)?.hitTest(local,graphic:graphic,tolerance:12/scale) == true ? reference : nil
+      return model.graphicLayout(reference)?.hitTest(local,graphic:graphic,tolerance:NotebookAttentionProjection.elementHitPadding/scale) == true ? reference : nil
     }
     return NotebookGraphicGeometry.containsInterior(graphic,width:frame.width/scale,height:frame.height/scale,x:local.x,y:local.y)
-      || NotebookGraphicGeometry.hitTest(graphic,width:frame.width/scale,height:frame.height/scale,x:local.x,y:local.y,tolerance:12/scale) ? reference : nil
+      || NotebookGraphicGeometry.hitTest(graphic,width:frame.width/scale,height:frame.height/scale,x:local.x,y:local.y,tolerance:NotebookAttentionProjection.elementHitPadding/scale) ? reference : nil
   }
 
   private struct ElementPlaneRevision: Equatable {

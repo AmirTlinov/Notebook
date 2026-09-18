@@ -6,6 +6,20 @@ import XCTest
 
 final class NotebookControlRegionTests: XCTestCase {
   @MainActor
+  func testDrawnHandleAdmissionExcludesOnlyItsOwnRegion() {
+    let gate = NotebookInputGate(), handle = UUID(), chrome = UUID()
+    let point = CGPoint(x:20,y:20)
+    gate.registerControlRegion(source:handle) { _,_ in true }
+    XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.finger))
+    XCTAssertTrue(gate.permitsSceneContact(at:point,kind:.finger,excludingControl:handle))
+    gate.registerControlRegion(source:chrome) { _,_ in true }
+    XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.finger,excludingControl:handle),"A handle cannot steal a menu or another control")
+    gate.unregisterControlRegion(source:chrome)
+    gate.bindNewContactAdmission { false }
+    XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.finger,excludingControl:handle))
+  }
+
+  @MainActor
   func testNativeControlBoundsRejectSceneGesturesButKeepOutsidePencilAndCamera() throws {
     let gate = NotebookInputGate(), pencil = UUID()
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)

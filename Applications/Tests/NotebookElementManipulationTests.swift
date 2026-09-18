@@ -336,6 +336,43 @@ import XCTest
     }
   }
 
+  func testHandleHitAreasLeaveNearbyPaperAvailableWithoutShrinkingAccessibility() throws {
+    let gate = NotebookInputGate()
+    let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let controls = NotebookSelectionControlsView(gate:gate)
+    controls.frame = controller.view.bounds; controller.view.addSubview(controls)
+    let frame = CGRect(x:200,y:300,width:240,height:180)
+    for mode in [NotebookSelectionSession.GeometryMode.transform,.vertices,.rounding] {
+      controls.graphic = .init(shape:.triangle)
+      controls.configure(selectionID:UUID(),frame:frame,mode:mode); controls.layoutIfNeeded()
+      try checkHandles()
+    }
+    let graphic = NotebookGraphic(shape:.connector,connection:.init(start:.init(point:.zero),end:.init(point:.init(x:240,y:180))))
+    let graph = NotebookGraphicGraph([.init(id:"line",graphic:graphic,
+      frame:.init(x:200,y:300,width:240,height:180),surface:.page(UUID()),shown:true)])
+    controls.graphic = graphic
+    controls.configure(selectionID:UUID(),frame:frame,layout:try XCTUnwrap(graph.resolve("line").layout))
+    controls.layoutIfNeeded(); try checkHandles()
+
+    func checkHandles() throws {
+      let handles = (controls.accessibilityElements ?? []).compactMap { $0 as? UIAccessibilityElement }
+      XCTAssertFalse(handles.isEmpty)
+      for handle in handles {
+        let rect = handle.accessibilityFrameInContainerSpace
+        XCTAssertEqual(rect.size,.init(width:44,height:44),"VoiceOver retains a comfortable semantic target")
+        let center = CGPoint(x:rect.midX,y:rect.midY)
+        let grip = controls.convert(.init(x:center.x+4,y:center.y),to:window)
+        XCTAssertTrue(window.hitTest(grip,with:nil) === controls)
+        XCTAssertFalse(gate.permitsSceneContact(at:grip,kind:.finger))
+        let blank = controls.convert(.init(x:center.x+16,y:center.y-16),to:window)
+        XCTAssertFalse(window.hitTest(blank,with:nil) === controls,"The invisible corner of a 44pt square is paper, not a handle")
+        XCTAssertTrue(gate.permitsSceneContact(at:blank,kind:.finger))
+      }
+    }
+  }
+
   func testCapsuleModesAndEndpointMenusKeepOnePresentationOwner() throws {
     let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()

@@ -271,6 +271,29 @@ import XCTest
     XCTAssertNil(pick(.init(x:400,y:500),[oversized]),"An enclosing canvas cannot steal empty-paper navigation")
   }
 
+  func testGraphicPickingStaysCloseToTheVisibleStrokeAtEveryZoom() throws {
+    let surface = SurfaceID.page(UUID()), frame = PageRect(x:100,y:200,width:240,height:180)
+    for scale in [0.25,1.0,3.0] {
+      for graphic in [NotebookGraphic(shape:.rectangle,style:.init(strokeWidth:2)),
+        NotebookGraphic(shape:.connector,style:.init(strokeWidth:2),connection:.init(
+          start:.init(point:.zero),end:.init(point:.init(x:240,y:0))))] {
+        let element = AgentElement(id:"shape",kind:.graphic,frame:frame,source:"",html:"",graphic:graphic)
+        let graph = NotebookGraphicGraph([.init(id:"shape",graphic:graphic,frame:frame,surface:surface,shown:true)])
+        let layout = try XCTUnwrap(graph.resolve("shape").layout)
+        func pick(outsideStroke distance: Double) -> String? {
+          let offset = graphic.style.strokeWidth/2 + distance/scale
+          let point = graphic.shape == .connector
+            ? SpatialPoint(x:layout.frame.x+(layout.start.x+layout.end.x)/2,y:layout.frame.y+layout.start.y-offset)
+            : SpatialPoint(x:frame.x-offset,y:frame.y+frame.height/2)
+          return NotebookAttentionProjection.pickElement(in:[element],graph:graph,scale:scale,
+            viewport:.init(x:834,y:1194),project:{ ($0.id,$0.frame,$0.graphic,point) })?.id
+        }
+        XCTAssertEqual(pick(outsideStroke:4),"shape","A little finger tolerance remains at scale \(scale)")
+        XCTAssertNil(pick(outsideStroke:9),"Blank paper is not a broad invisible outline at scale \(scale)")
+      }
+    }
+  }
+
   func testOnlyNewAgentActionsGetAnExpiringPearl() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("agent-pearl-\(UUID())")
     let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)

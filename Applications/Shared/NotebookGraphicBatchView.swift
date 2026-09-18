@@ -64,7 +64,7 @@ struct NotebookGraphicBatchView: View {
           ForEach(objects.filter { $0.id != editingID }) { object in
             let erased = appearances[object.id]?.state == .erased
             accessibleObject(object)
-              .accessibilityHidden(erased)
+              .accessibilityHidden(erased || (!(erasures[object.id] ?? []).isEmpty && appearances[object.id] == nil))
               .frame(width: object.frame.width, height: object.frame.height)
               .position(x: object.frame.midX, y: object.frame.midY)
           }
