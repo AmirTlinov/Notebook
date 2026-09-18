@@ -10,7 +10,7 @@ import {writeFixture,fixtureSocket,stopFixture,pageID,rootBoardID} from './fixtu
 const {makeRecipe,chartSVG}=await import(new URL('../skills/notebook/scripts/recipes.mjs',import.meta.url).href);
 const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
 
-test('recipes commit through native admission: bound diagram, persistent SVG, document and native ink',async()=>{
+test('recipes commit through native admission: bound diagram, SVG, document, native ink and animation',async()=>{
   const root=await mkdtemp(join(tmpdir(),'notebook-recipes-ipc-'));
   try {
     await writeFixture(root);const store=new NotebookStore(fixtureSocket(root));
@@ -55,6 +55,18 @@ test('recipes commit through native admission: bound diagram, persistent SVG, do
     await run('document',{target:{kind:'document',id:doc.ids.document},afterID:doc.ids.decision,sections:[{id:'next',body:'Продолжение человека и агента.'}]});
     const updated=await read({kind:'document',id:doc.ids.document});
     assert.equal(updated.data.blocks.length,3);assert.equal(updated.data.blocks[1].id,doc.ids.decision);
+    const program={html:'<svg viewBox="0 0 100 100"><circle id="point" cx="50" cy="50" r="5"/></svg>',
+      css:'svg{width:100%}',javaScript:'notebook.ready(Promise.resolve());',initialState:{phase:0.25}};
+    const animation=await run('animation',{...program,target:{kind:'board',id:rootBoardID},anchor:{tileX:0,tileY:0,localX:400,localY:1200}});
+    assert.equal(animation.action.publication.saved,'confirmed');
+    const scene=(await read({kind:'boardElement',id:rootBoardID,elementID:animation.ids.animation})).data;
+    assert.equal(scene.kind,'web');assert.equal(scene.html,program.html);assert.deepEqual(scene.state,program.initialState);
+    const block=await run('animation',{...program,target:{kind:'document',id:doc.ids.document},afterID:doc.ids.decision});
+    assert.equal(block.action.publication.saved,'confirmed');
+    const withAnimation=(await read({kind:'document',id:doc.ids.document})).data.blocks;
+    const savedBlock=withAnimation.find((value:any)=>value.id===block.ids.animation);
+    assert.equal(savedBlock.kind,'interactive');assert.equal(savedBlock.javaScript,program.javaScript);
+    assert.deepEqual(savedBlock.initialState,program.initialState);
     const ink=await run('sketch',{target,strokes:[{points:[{x:10,y:10},{x:30,y:40},{x:60,y:15}]}]});
     assert.equal(ink.action.publication.saved,'confirmed');
     const undo=await store.command<any>({command:'undo',actionID:graph.action.actionID});

@@ -125,6 +125,20 @@ function visual(input,namespace) {
   const imageID=id(namespace,'image');
   return {ids:{image:imageID},elements:[{id:imageID,kind:'markdown',source,frame:{x:0,y:0,width,height:height+(input.caption?60:0)}}]};
 }
+function animation(input,namespace) {
+  if(typeof input.html!=='string'||!input.html.trim())throw new Error('Animation needs an HTML/SVG fragment');
+  if(typeof input.javaScript!=='string'||!input.javaScript.trim())throw new Error('Animation needs JavaScript for drawing and controls');
+  const animationID=id(namespace,'animation'),height=positive(input.height??560,'height');
+  const program={html:input.html,css:input.css??'',javaScript:input.javaScript};
+  const ids={animation:animationID};
+  if(input.target.kind==='document') {
+    if(height<48||height>2048)throw new Error('Document animation height must be 48–2048');
+    return {ids,operations:[{kind:'insertBlock',target:input.target,id:animationID,
+      values:{kind:'interactive',...program,initialState:input.initialState??{},height,...(input.afterID?{afterID:input.afterID}:{})}}]};
+  }
+  return {ids,operations:insert([{id:animationID,kind:'web',source:input.title??'',...program,
+    state:input.initialState??{},frame:{x:0,y:0,width:positive(input.width??760,'width'),height}}],input)};
+}
 function document(input,namespace) {
   const blocks=[],ids=Object.create(null);
   if(input.title) {ids.title=id(namespace,'title');blocks.push({id:ids.title,kind:'markdown',source:`# ${input.title}${input.subtitle?`\n\n${input.subtitle}`:''}`});}
@@ -174,6 +188,7 @@ export function makeRecipe(name,input,runID=randomUUID()) {
   if(!input.target?.id)throw new Error('Supply the chosen target');
   let prepared;
   if(name==='document')prepared=document(input,runID);
+  else if(name==='animation')prepared=animation(input,runID);
   else if(name==='sketch') {
     if(!['page','board','cover'].includes(input.target.kind))throw new Error('Sketch needs a page, board or cover');
     if(input.target.kind==='board'&&!input.anchor)throw new Error('Board ink needs an anchor');

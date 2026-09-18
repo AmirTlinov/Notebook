@@ -12,6 +12,7 @@ import {join} from 'node:path';
 import {deflateSync} from 'node:zlib';
 import {randomBytes} from 'node:crypto';
 const {prepare,loadImage} = await import(new URL('../skills/notebook/scripts/prepare.mjs',import.meta.url).href);
+const {animationPreview} = await import(new URL('../skills/notebook/scripts/animation-preview.mjs',import.meta.url).href);
 
 const target={kind:'page',id:randomUUID()};
 const tree={id:'root',label:'Вопрос',children:[
@@ -117,6 +118,76 @@ test('image and Markdown source files become self-contained input, not paths',as
     const doc=await prepare('document',{target:{kind:'document',id:randomUUID()},sections:[{sourcePath:'section.md'}]},{baseDirectory:directory});
     assert.equal(doc.args.operations[0].values.source,'Содержательный **вывод**.');
   } finally {await rm(directory,{recursive:true,force:true});}
+});
+
+async function waveInput() {
+  const directory=new URL('../skills/notebook/assets/animation/',import.meta.url);
+  return {html:await readFile(new URL('wave.html',directory),'utf8'),css:await readFile(new URL('wave.css',directory),'utf8'),
+    javaScript:await readFile(new URL('wave.js',directory),'utf8'),initialState:{phase:0,amplitude:1,speed:1}};
+}
+test('animation uses the existing web/interactive owners with embedded code and state',async()=>{
+  const program=await waveInput(),runID=randomUUID();
+  for(const kind of ['page','board','document']) {
+    const input={...program,target:{...target,kind},anchor:{tileX:0,tileY:0,localX:20,localY:30},afterID:'previous'};
+    const request=makeRecipe('animation',input,runID);
+    assert.deepEqual(makeRecipe('animation',input,runID),request);
+    executionInput.parse(request);
+    const op=request.args.operations[0];operationSchema.parse(op);
+    assert.equal(op.kind,kind==='document'?'insertBlock':'insertElement');
+    assert.equal(op.values.kind,kind==='document'?'interactive':'web');
+    assert.equal(op.values.html,program.html);assert.equal(op.values.javaScript,program.javaScript);
+    assert.deepEqual(op.values.initialState??op.values.state,program.initialState);
+    if(kind==='document') assert.equal(op.values.afterID,'previous');
+    assert.ok(animationPreview(request).includes(program.html));
+  }
+  assert.throws(()=>makeRecipe('animation',{target,...program,html:''}),/fragment/);
+  assert.throws(()=>makeRecipe('animation',{target:{...target,kind:'document'},...program,height:2049}),/48–2048/);
+});
+
+test('animation file preparation embeds sources; preview cannot close its script with program data',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'notebook-animation-'));
+  try {
+    await writeFile(join(directory,'scene.html'),'<svg viewBox="0 0 100 100"></svg>');
+    await writeFile(join(directory,'scene.js'),'notebook.ready(Promise.resolve()); // </script><script>bad()</script>');
+    const input={target,htmlPath:'scene.html',javaScriptPath:'scene.js',initialState:{label:'</script>'}};
+    const request=await prepare('animation',input,{baseDirectory:directory});
+    assert.doesNotMatch(JSON.stringify(request),/scene\.html|scene\.js|notebook-animation-/);
+    assert.doesNotMatch(animationPreview(request),/<script>bad\(\)/);
+    assert.match(animationPreview(request),/connect-src 'none'/);
+    await assert.rejects(prepare('animation',{...input,html:'ambiguous'},{baseDirectory:directory}),/not both/);
+  } finally {await rm(directory,{recursive:true,force:true});}
+});
+
+test('wave controls render analytic phases, keep frames local and restore shared state paused',async()=>{
+  const {javaScript}=await waveInput();
+  const elements=new Map<string,any>(),events=new Map<string,Function>(),frames=new Map<number,Function>();
+  let sequence=0,ready:Promise<unknown>|undefined,state:any={phase:0,amplitude:1,speed:1};
+  const commits:any[]=[];
+  const document={hidden:false,getElementById:(id:string)=>{
+    if(!elements.has(id)) elements.set(id,{attributes:{},listeners:{},value:'',textContent:'',
+      setAttribute(key:string,value:unknown){this.attributes[key]=value},
+      addEventListener(key:string,fn:Function){this.listeners[key]=fn}});
+    return elements.get(id);
+  },addEventListener:(key:string,fn:Function)=>events.set(key,fn)};
+  const notebook={get state(){return state},commit:(next:any)=>{state=next;commits.push(next)},ready:(p:Promise<unknown>)=>ready=p};
+  new Function('document','notebook','requestAnimationFrame','cancelAnimationFrame','addEventListener',javaScript)(document,notebook,
+    (fn:Function)=>{frames.set(++sequence,fn);return sequence},(id:number)=>frames.delete(id),(key:string,fn:Function)=>events.set(key,fn));
+  await ready;
+  const click=(id:string)=>elements.get(id).listeners.click();
+  const point=()=>Number(elements.get('particle').attributes.cy);
+  assert.ok(Math.abs(point()-150)<1e-9);
+  click('forward');assert.ok(Math.abs(point()-212)<1e-9);assert.equal(state.phase,0.25);
+  click('back');assert.ok(Math.abs(point()-150)<1e-9);
+  const count=commits.length;
+  click('play');
+  const tick=(now:number)=>{const [id,fn]=[...frames][0]!;frames.delete(id);fn(now)};
+  tick(0);tick(1000);assert.ok(Math.abs(point()-212)<1e-9);
+  assert.equal(commits.length,count);
+  click('play');assert.equal(frames.size,0);assert.equal(commits.length,count+1);assert.equal(state.phase,0.25);
+  click('play');state={phase:0.75,amplitude:0.5,speed:2};events.get('notebookstate')!();
+  assert.equal(frames.size,0);assert.equal(elements.get('play').textContent,'Пуск');
+  assert.ok(Math.abs(point()-119)<1e-9);
+  state={phase:0.25,amplitude:0,speed:1};events.get('notebookstate')!();assert.equal(point(),150);
 });
 
 function png(width:number,height:number):Buffer {

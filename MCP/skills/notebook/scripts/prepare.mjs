@@ -53,12 +53,18 @@ export async function prepare(name,input,{baseDirectory='.',outputPath,runID}={}
   if(name==='document') for(const section of input.sections??[]) {
     if(section.sourcePath) section.body=await readFile(resolve(baseDirectory,section.sourcePath),'utf8');
   }
+  if(name==='animation') for(const field of ['html','css','javaScript']) {
+    if(input[`${field}Path`]) {
+      if(input[field]!==undefined)throw new Error(`Choose ${field} or ${field}Path, not both`);
+      input[field]=await readFile(resolve(baseDirectory,input[`${field}Path`]),'utf8');
+    }
+  }
   return makeRecipe(name,input,runID);
 }
 
 async function main() {
   const [name,inputPath,outputPath,...extra]=process.argv.slice(2);
-  if(!name||!inputPath||!outputPath||extra.length)throw new Error('Usage: node prepare.mjs mindmap|flow|compare|visual|plot|sketch|point|document input.json request.json');
+  if(!name||!inputPath||!outputPath||extra.length)throw new Error('Usage: node prepare.mjs mindmap|flow|compare|visual|plot|sketch|point|document|animation input.json request.json');
   // This saved request is the retry identity; preparing again is a new intention.
   const input=JSON.parse(await readFile(inputPath,'utf8'));
   const request=await prepare(name,input,{baseDirectory:dirname(resolve(inputPath)),outputPath:resolve(outputPath)});

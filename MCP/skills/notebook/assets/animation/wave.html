@@ -1,0 +1,33 @@
+<main class="wave">
+  <header>
+    <span class="eyebrow">Модель в движении</span>
+    <h2>Волна движется. А точка?</h2>
+    <p>Проследите за оранжевой точкой: форма идёт вправо, а выбранная точка меняет только высоту.</p>
+  </header>
+  <svg id="scene" viewBox="0 0 760 280" role="img" aria-labelledby="wave-title wave-desc">
+    <title id="wave-title">Гармоническая бегущая волна</title>
+    <desc id="wave-desc">Синяя синусоида движется вправо. Оранжевая точка остаётся при x = 1 и колеблется по вертикали.</desc>
+    <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#2468b4" stroke-width="1.5"/></marker></defs>
+    <path d="M76 150H708 M76 45V250" stroke="#acb8c5" fill="none"/>
+    <path d="M316 45V250" stroke="#b35b24" stroke-dasharray="4 5" opacity=".45"/>
+    <g fill="#536273" font-size="16"><text x="43" y="49">y</text><text x="717" y="156">x</text><text x="71" y="274">0</text><text x="312" y="274">1</text><text x="552" y="274">2</text></g>
+    <path d="M505 28H675" stroke="#2468b4" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="505" y="17" fill="#2468b4" font-size="16">движение формы</text>
+    <path id="curve" fill="none" stroke="#2468b4" stroke-width="3.5"/>
+    <circle id="particle" cx="316" cy="150" r="8" fill="#b35b24" stroke="white" stroke-width="2"/>
+    <text id="particle-value" x="334" y="135" fill="#954518" font-size="16"></text>
+  </svg>
+  <section class="controls" aria-label="Управление анимацией">
+    <div class="transport">
+      <button id="play" type="button">Пуск</button>
+      <button id="back" type="button" aria-label="Назад на четверть цикла">−¼</button>
+      <button id="forward" type="button" aria-label="Вперёд на четверть цикла">+¼</button>
+      <label>Темп <select id="speed"><option value="0.25">¼×</option><option value="0.5">½×</option><option value="1" selected>1×</option><option value="2">2×</option></select></label>
+    </div>
+    <div class="sliders">
+      <label>Фаза <input id="phase" type="range" min="0" max="1" step="0.001" value="0"/><output id="phase-value">0,00 цикла</output></label>
+      <label>Амплитуда <input id="amplitude" type="range" min="0" max="1.5" step="0.05" value="1"/><output id="amplitude-value">1,00</output></label>
+    </div>
+  </section>
+  <footer>y = A · sin(2π(x − φ)). Координаты нормированы; один цикл при темпе 1× длится 4 с.</footer>
+</main>
