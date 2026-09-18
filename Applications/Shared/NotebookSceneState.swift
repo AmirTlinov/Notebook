@@ -49,11 +49,12 @@ struct NotebookSceneState: Sendable {
   let transferredPinnedItems: [UUID: UUID]
 
   static func start(store: NotebookStore, actor: UUID, pageSize: PageSize,
-    notebookID: UUID, pageID: UUID) throws -> Self {
+    notebookID: UUID, pageID: UUID, viewport: SpatialPoint? = nil) throws -> Self {
     _ = try store.initializeWorkspace(actor: actor, pageSize: pageSize,
       initialNotebookID: notebookID, initialPageID: pageID)
     try store.resetInputActivities()
-    return try read(store: store, presence: nil, viewport: .init(x: pageSize.width, y: pageSize.height))
+    return try read(store: store, presence: nil,
+      viewport: viewport ?? .init(x: pageSize.width, y: pageSize.height))
   }
 
   static func bounds(for presence: SessionPresence, margin: Double = 192) -> WorkspaceSpatialBounds {

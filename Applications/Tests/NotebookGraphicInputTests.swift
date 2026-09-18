@@ -17,17 +17,86 @@ import XCTest
       touch.point = .init(x: 200 + 100 * cos(angle), y: 200 + 65 * sin(angle)); touch.sampleTime += 0.01
       paper.touchesMoved([touch], with: nil)
     }
-    XCTAssertNil(accepted, "A hold previews; it does not publish a stroke or shape")
+    XCTAssertNil(accepted, "The contact edits the held object; measured ink is accepted at lift")
     try await Task.sleep(for: .milliseconds(600))
     touch.point.x += 10; touch.sampleTime += 0.01
     paper.touchesMoved([touch], with: nil)
     paper.touchesEnded([touch], with: nil)
     XCTAssertNotNil(fit)
-    XCTAssertGreaterThan(try XCTUnwrap(fit).frame.width, 210, "Pencil adjusts the recognized geometry before lift")
+    XCTAssertEqual(try XCTUnwrap(fit).frame.width, 210, accuracy: 0.1,
+      "The held edge follows ten points of Pencil travel, not twice the distance")
+    XCTAssertEqual(try XCTUnwrap(fit).frame.x, 100, accuracy: 0.1, "The opposite edge remains fixed")
     let raw = try XCTUnwrap(accepted)
     XCTAssertEqual(raw.samples.count, 121, "Handle motion is not appended to the original sketch")
     XCTAssertEqual(raw.samples.last?.point.x ?? 0, 300, accuracy: 0.001)
     XCTAssertFalse(paper.hasActiveAction)
+  }
+
+  func testHeldShapesKeepBothDimensionsAdjustableFromEverySideAtAnyScale() {
+    for scale in [0.5, 1.0, 3.0] {
+      for shape in [NotebookGraphic.Shape.ellipse, .rectangle, .triangle, .diamond, .plus] {
+        let frame = PageRect(x: 100 / scale, y: 70 / scale, width: 180 / scale, height: 120 / scale)
+        var original = NotebookQuickShapeFit(frame: frame, sampleCount: 49, shape: shape)
+        original.precedingStrokeIDs = [UUID()]
+        for (x, y) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {
+          let held = SpatialPoint(x: frame.x + frame.width * (x + 1) / 2,
+            y: frame.y + frame.height * (y + 1) / 2)
+          let moved = SpatialPoint(x: held.x + (x == 0 ? 9 : x * 20) / scale,
+            y: held.y + (y == 0 ? 9 : y * 20) / scale)
+          let fit = NotebookQuickShapeSession.adjusted(original, heldAt: held, to: moved, screenScale: scale)
+          XCTAssertEqual(fit.frame.width * scale, x == 0 ? 189 : 200, accuracy: 0.0001)
+          XCTAssertEqual(fit.frame.height * scale, y == 0 ? 129 : 140, accuracy: 0.0001)
+          XCTAssertEqual(fit.frame.x * scale, x < 0 ? 80 : 100, accuracy: 0.0001)
+          XCTAssertEqual(fit.frame.y * scale, y < 0 ? 50 : 70, accuracy: 0.0001)
+          XCTAssertEqual(fit.shape, shape); XCTAssertEqual(fit.sampleCount, 49)
+          XCTAssertEqual(fit.precedingStrokeIDs, original.precedingStrokeIDs)
+          XCTAssertEqual(NotebookQuickShapeSession.adjusted(original, heldAt: held, to: held, screenScale: scale), original,
+            "Returning to the hold point restores the drawn geometry without drift")
+        }
+      }
+    }
+  }
+
+  func testHeldCornersKeepTheOppositeCornerAndDoNotFlipAtMinimumSize() {
+    let frame = PageRect(x: 100, y: 70, width: 180, height: 120)
+    let original = NotebookQuickShapeFit(frame: frame, sampleCount: 49, shape: .rectangle)
+    for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+      let held = SpatialPoint(x: x < 0 ? 100 : 280, y: y < 0 ? 70 : 190)
+      let fit = NotebookQuickShapeSession.adjusted(original, heldAt: held,
+        to: .init(x: held.x + x * 20, y: held.y + y * 30), screenScale: 1)
+      XCTAssertEqual(fit.frame.width, 200); XCTAssertEqual(fit.frame.height, 150)
+      XCTAssertEqual(fit.frame.x, x < 0 ? 80 : 100)
+      XCTAssertEqual(fit.frame.y, y < 0 ? 40 : 70)
+      let clamped = NotebookQuickShapeSession.adjusted(original, heldAt: held,
+        to: .init(x: held.x - x * 400, y: held.y - y * 400), screenScale: 1)
+      XCTAssertEqual(clamped.frame.width, 12); XCTAssertEqual(clamped.frame.height, 12)
+      XCTAssertEqual(clamped.frame.x, x < 0 ? 268 : 100)
+      XCTAssertEqual(clamped.frame.y, y < 0 ? 178 : 70)
+      XCTAssertEqual(NotebookQuickShapeSession.adjusted(original, heldAt: held, to: held, screenScale: 1), original)
+    }
+  }
+
+  func testHeldArrowMovesTheNearbyTerminalWithoutChangingTheOtherEndOrDirection() throws {
+    let connection = NotebookGraphicConnection(
+      start: .init(point: .init(x: 10, y: 30), binding: .init(elementID: "tail")),
+      end: .init(point: .init(x: 190, y: 30), binding: .init(elementID: "tip")), endArrowhead: .arrow)
+    let original = NotebookQuickShapeFit(frame: .init(x: 100, y: 70, width: 200, height: 60),
+      sampleCount: 91, connection: connection)
+    for terminal in NotebookGraphicConnection.Terminal.allCases {
+      let initial = terminal == .start ? connection.start : connection.end
+      // A finishing wing need not end exactly at the geometrical arrow tip.
+      let held = SpatialPoint(x: 100 + initial.point.x - 8, y: 70 + initial.point.y + 6)
+      let fit = NotebookQuickShapeSession.adjusted(original, heldAt: held,
+        to: .init(x: held.x - 20, y: held.y + 35), screenScale: 1)
+      let adjusted = try XCTUnwrap(fit.connection)
+      let endpoint = terminal == .start ? adjusted.start : adjusted.end
+      XCTAssertEqual(endpoint.point, .init(x: held.x - 20 - original.frame.x, y: held.y + 35 - original.frame.y))
+      XCTAssertNil(endpoint.binding, "The moved terminal is rebound at its new position by the existing resolver")
+      XCTAssertEqual(terminal == .start ? adjusted.end : adjusted.start,
+        terminal == .start ? connection.end : connection.start)
+      XCTAssertEqual(adjusted.endArrowhead, .arrow)
+      XCTAssertEqual(fit.frame, original.frame)
+    }
   }
 
   func testPencilCancellationAndOrdinaryHandwritingNeverConvert() async throws {
@@ -47,6 +116,137 @@ import XCTest
       } else { paper.touchesEnded([touch], with: nil) }
       XCTAssertNotNil(raw); XCTAssertNil(shape)
     }
+  }
+
+  func testMultiStrokeArrowSquareAndPlusUseTheExistingPageContact() async throws {
+    let cases: [(NotebookGraphic.Shape, [[CGPoint]])] = [
+      (.connector, [[.init(x:100,y:180),.init(x:280,y:180)], [.init(x:240,y:150),.init(x:280,y:180),.init(x:240,y:210)]]),
+      (.connector, [[.init(x:240,y:150),.init(x:280,y:180)], [.init(x:280,y:180),.init(x:100,y:180)], [.init(x:240,y:210),.init(x:280,y:180)]]),
+      (.rectangle, [[.init(x:100,y:100),.init(x:240,y:100),.init(x:240,y:240),.init(x:100,y:240),.init(x:100,y:100)]]),
+      (.plus, [[.init(x:100,y:180),.init(x:260,y:180)], [.init(x:180,y:100),.init(x:180,y:260)]])
+    ]
+    for (expected, strokes) in cases {
+      let paper = PaperInputView(frame:.init(x:0,y:0,width:500,height:500))
+      paper.configure(penStyle:.standard,eraserStyle:.standard,drawingTool:.pen)
+      var raw: [PageInkAction] = [], fit: NotebookQuickShapeFit?
+      paper.onDrawingMutation = { raw.append($0); fit = paper.completedQuickShape }
+      for (index, vertices) in strokes.enumerated() {
+        let touch = draw(vertices, on:paper)
+        if index == strokes.count-1 { try await Task.sleep(for:.milliseconds(650)) }
+        paper.touchesEnded([touch],with:nil)
+        paper.finishCurrentAction {} // Ordinary publication fence between contacts.
+      }
+      let shape = try XCTUnwrap(fit)
+      XCTAssertEqual(shape.shape,expected)
+      XCTAssertEqual(shape.precedingStrokeIDs,raw.dropLast().map(\.id))
+      XCTAssertEqual(shape.sampleCount,raw.last?.samples.count)
+      XCTAssertEqual(raw.count,strokes.count)
+      if expected == .connector { XCTAssertEqual(shape.connection?.endArrowhead,.arrow) }
+    }
+  }
+
+  static func measuredShapes(_ name: String) throws -> [[[CGPoint]]] {
+    let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource:"QuickShapeMeasured",withExtension:"json"))
+    let groups = try JSONDecoder().decode([String: [[[[Double]]]]].self,from:Data(contentsOf:url))
+    return try XCTUnwrap(groups[name]).map { $0.map { $0.map { CGPoint(x:100+$0[0],y:100+$0[1]) } } }
+  }
+
+  func testRealMeasuredFiguresThroughPencilHoldAndLift() async throws {
+    var fitTimes: [Double] = []
+    let groups: [(String,NotebookGraphic.Shape)] = [("rectangles",.rectangle),("pluses",.plus),
+      ("triangles",.triangle),("diamonds",.diamond),("lines",.connector),("arrows",.connector)]
+    for (name,expected) in groups {
+      for strokes in try Self.measuredShapes(name) {
+        let paths = strokes.map { $0.map { SpatialPoint(x:$0.x,y:$0.y) } }
+        for _ in 0..<5 {
+          let start = ContinuousClock.now
+          let fit = NotebookQuickShape.recognize(strokes:paths,screenScale:1)
+          let elapsed = start.duration(to:.now).components
+          fitTimes.append(Double(elapsed.seconds)*1000+Double(elapsed.attoseconds)/1e15)
+          XCTAssertEqual(fit?.shape,expected)
+        }
+        let paper = PaperInputView(frame:.init(x:0,y:0,width:500,height:500))
+        paper.configure(penStyle:.standard,eraserStyle:.standard,drawingTool:.pen)
+        var raw: [PageInkAction] = [], accepted: NotebookQuickShapeFit?
+        paper.onDrawingMutation = { raw.append($0); accepted = paper.completedQuickShape }
+        for (strokeIndex, points) in strokes.enumerated() {
+          let touch = GraphicPencilTouch()
+          for (index, point) in points.enumerated() {
+            touch.point = point; touch.sampleTime += 1.0/240
+            if index == 0 { paper.touchesBegan([touch],with:nil) }
+            else { paper.touchesMoved([touch],with:nil) }
+          }
+          if strokeIndex == strokes.count-1 { try await Task.sleep(for:.milliseconds(650)) }
+          paper.touchesEnded([touch],with:nil)
+          paper.finishCurrentAction {}
+        }
+        let fit = try XCTUnwrap(accepted)
+        XCTAssertEqual(fit.shape,expected)
+        XCTAssertEqual(fit.precedingStrokeIDs,raw.dropLast().map(\.id))
+        XCTAssertEqual(raw.map { $0.samples.count },strokes.map(\.count),"Keep all original measurements")
+        XCTAssertEqual(fit.sampleCount,strokes.last?.count)
+        if expected == .connector {
+          let connection = try XCTUnwrap(fit.connection), nib = try XCTUnwrap(strokes.last?.last)
+          let distance = [connection.start.point,connection.end.point].map {
+            hypot($0.x+fit.frame.x-nib.x,$0.y+fit.frame.y-nib.y)
+          }.min()!
+          XCTAssertLessThan(distance,0.001,"Recognized endpoint starts under the nib, not at an offset wing")
+          XCTAssertEqual(connection.endArrowhead,name == "arrows" ? .arrow : NotebookGraphicConnection.Arrowhead.none)
+        }
+      }
+    }
+    fitTimes.sort()
+    let timing = "QUICKSHAPE_MEASURED_FIT count=\(fitTimes.count) medianMS=\(fitTimes[fitTimes.count/2]) p95MS=\(fitTimes[Int(Double(fitTimes.count)*0.95)]) maxMS=\(fitTimes.last!)"
+    print(timing)
+    let evidence = XCTAttachment(string:timing); evidence.name = "measured-shape-fit-time"
+    evidence.lifetime = .keepAlways; add(evidence)
+  }
+
+  func testPageChangeCancellationAndToolChangeDoNotBorrowPreviousStrokes() async throws {
+    for reset in 0...3 {
+      let paper = PaperInputView(frame:.init(x:0,y:0,width:500,height:500))
+      paper.quickShapePageID = UUID()
+      var fit: NotebookQuickShapeFit?
+      paper.onDrawingMutation = { _ in fit = paper.completedQuickShape }
+      let first = draw([.init(x:100,y:180),.init(x:260,y:180)],on:paper)
+      if reset == 0 { paper.touchesCancelled([first],with:nil) }
+      else { paper.touchesEnded([first],with:nil) }
+      if reset == 1 { paper.quickShapePageID = UUID() }
+      if reset == 2 { paper.endShapeSequence() }
+      if reset == 3 {
+        paper.configure(penStyle:.standard,eraserStyle:.standard,drawingTool:.eraser)
+        paper.configure(penStyle:.standard,eraserStyle:.standard,drawingTool:.pen)
+      }
+      let last = draw([.init(x:180,y:100),.init(x:180,y:260)],on:paper)
+      try await Task.sleep(for:.milliseconds(650))
+      paper.touchesEnded([last],with:nil)
+      XCTAssertEqual(fit?.shape,.connector)
+      XCTAssertEqual(fit?.precedingStrokeIDs,[])
+    }
+  }
+
+  func testExpiredSequenceDoesNotAbsorbOldInk() async throws {
+    let session = NotebookQuickShapeSession()
+    session.remember(UUID(),points:[.init(x:100,y:180),.init(x:260,y:180)])
+    try await Task.sleep(for:.seconds(NotebookQuickShapeSession.sequenceSeconds+0.1))
+    let vertical = (0...60).map { SpatialPoint(x:180,y:100+Double($0)*160/60) }
+    session.begin(at:vertical.last!,screenScale:1) { vertical }
+    try await Task.sleep(for:.milliseconds(650))
+    let fit = try XCTUnwrap(session.finish())
+    XCTAssertEqual(fit.shape,.connector); XCTAssertTrue(fit.precedingStrokeIDs.isEmpty)
+  }
+
+  private func draw(_ vertices: [CGPoint], on paper: PaperInputView) -> GraphicPencilTouch {
+    let touch = GraphicPencilTouch(); touch.point = vertices[0]
+    paper.touchesBegan([touch],with:nil)
+    for (a,b) in zip(vertices,vertices.dropFirst()) {
+      for index in 1...30 {
+        let t = Double(index)/30
+        touch.point = .init(x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t); touch.sampleTime += 0.01
+        paper.touchesMoved([touch],with:nil)
+      }
+    }
+    return touch
   }
 
   func testFigureDragNeedsNoHoldAndSecondFingerCancelsWithoutAWrite() {

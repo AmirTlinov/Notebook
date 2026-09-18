@@ -79,6 +79,7 @@ actor SceneCompositionSource {
     case values(WorkspaceSceneIndex, BoardHierarchy, SpatialInkJournal)
   }
   private let origin: Origin
+  private var erasureProjection: (SurfaceID, [String: [InkElementErasure]])?
 
   init(store: NotebookStore, revision: UInt64, workspaceID: UUID) {
     origin = .sql(store); self.revision = revision; self.workspaceID = workspaceID
@@ -318,6 +319,19 @@ actor SceneCompositionSource {
           record.afterHash == nil || actions[id] != nil else { return false }
         let versions = [oldActions[id], actions[id]].compactMap { $0 }
         guard !versions.isEmpty, versions.allSatisfy({ $0.spans.allSatisfy { surfaces.contains($0.surface) } }) else { return false }
+        for action in versions where action.tool == .eraser {
+          for span in action.spans {
+            for target in span.elementTargets ?? [] {
+              func excluded(_ candidate: SceneCompositionPlan) -> Bool {
+                guard let plane = candidate.presentations.keys.first(where: {
+                  span.surface.kind == .board ? $0 == .board(span.surface.ownerID!) : $0.coverID == span.surface.ownerID
+                }) else { return false }
+                return candidate.allowsLive(.element(target.elementID), in: plane)
+              }
+              guard excluded(oldPlan), excluded(plan) else { return false }
+            }
+          }
+        }
         continue
       }
       let file = String(address.split(separator: "#", maxSplits: 1)[0])
@@ -340,6 +354,13 @@ actor SceneCompositionSource {
     case .sql(let store): try checked(store) { try $0.readSpatialElement(boardID: boardID, elementID: id) }
     case .values(let index, _, _): index.element(id: id, boardID: boardID)
     }
+  }
+  func elementErasures(_ element: SpatialElement) throws -> [InkElementErasure] {
+    try validate()
+    if erasureProjection?.0 != element.surface {
+      erasureProjection = (element.surface, try ink(element.surface).elementErasures(on: element.surface))
+    }
+    return erasureProjection?.1[element.id] ?? []
   }
   func graphicLayout(_ element: SpatialElement, boardID: UUID) throws -> NotebookGraphicLayout? {
     guard element.graphic != nil else { return nil }

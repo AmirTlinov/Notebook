@@ -34,21 +34,21 @@ struct NotebookNavigationView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      HStack(spacing: 4) {
+      HStack(spacing: 0) {
         if !model.returnPlaces.isEmpty || presence.mode != .board || presence.boardID != model.workspace?.rootBoardID {
-          Button(action: onBack) { Image(systemName: "chevron.left").frame(width: 44, height: 44) }
+          Button(action: onBack) { Image(systemName: "chevron.left").frame(width: 44, height: 44).contentShape(Rectangle()) }
             .accessibilityLabel(model.returnPlaces.isEmpty ? "Назад" : "Вернуться к прежнему месту")
             .accessibilityIdentifier("leave-nested-board")
         }
         VStack(alignment: .leading, spacing: 2) {
           if path.count > 1 { Text(path.dropLast().joined(separator: " › ")).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
-          Text(path.last ?? "Пространство").font(.callout.weight(.semibold)).lineLimit(1)
+          Text(path.last ?? "Пространство").font(.system(size:14,weight:.medium)).lineLimit(1)
         }.padding(.leading, 8).frame(maxWidth: 200, alignment: .leading)
-        Button { showsSearch = true } label: { Image(systemName: "magnifyingglass").frame(width: 44, height: 44) }
+        Button { showsSearch = true } label: { Image(systemName: "magnifyingglass").frame(width: 44, height: 44).contentShape(Rectangle()) }
           .accessibilityLabel("Найти мысль").accessibilityIdentifier("notebook-search")
           .keyboardShortcut("f", modifiers: .command)
       }
-      .buttonStyle(.plain).padding(4).background(.regularMaterial, in: Capsule())
+      .notebookBar()
       Spacer(minLength: 0)
       if presence.mode == .page || presence.mode == .document {
         if let save = model.documentSavePresentation, save.documentID == presence.focusedItemID,
@@ -61,7 +61,7 @@ struct NotebookNavigationView: View {
                 .accessibilityIdentifier("show-saved-document-text")
             }
           }
-          .padding(10).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+          .padding(12).notebookPanel(radius:NotebookChrome.cardRadius)
           .accessibilityIdentifier("document-save-status")
           .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 18)
         }
@@ -78,21 +78,21 @@ struct NotebookNavigationView: View {
               Text("Открываем страницу \(target + 1)…").font(.caption)
             }
           }
-          .padding(10).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+          .padding(12).notebookPanel(radius:NotebookChrome.cardRadius)
           .accessibilityIdentifier("document-page-navigation-status")
           .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 18)
         }
         HStack(spacing: 0) {
-          Button { select(pageIndex - 1) } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }
+          Button { select(pageIndex - 1) } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44).contentShape(Rectangle()) }
             .disabled(pageIndex == 0).accessibilityLabel("Предыдущая страница").accessibilityIdentifier("previous-page")
-          Button { pageWindow = pageIndex / 4; showsPages = true } label: { Text(pageCounter).monospacedDigit().frame(minWidth: 64, minHeight: 44) }
+          Button { pageWindow = pageIndex / 4; showsPages = true } label: { Text(pageCounter).monospacedDigit().frame(minWidth: 64, minHeight: 44).contentShape(Rectangle()) }
             .accessibilityLabel(pageCounterLabel)
             .accessibilityHint("Открыть список страниц").accessibilityIdentifier("page-overview")
             .popover(isPresented: $showsPages, arrowEdge: .bottom) { pageOverview }
-          Button { select(pageIndex + 1) } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44) }
+          Button { select(pageIndex + 1) } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44).contentShape(Rectangle()) }
             .disabled(presence.mode == .document && (documentPageCount == nil || pageIndex + 1 >= pageCount))
             .accessibilityLabel("Следующая страница").accessibilityIdentifier("next-page")
-        }.buttonStyle(.plain).font(.callout).padding(4).background(.regularMaterial, in: Capsule())
+        }.notebookBar()
           .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 18).padding(.bottom, 18)
       }
     }
@@ -110,11 +110,11 @@ struct NotebookNavigationView: View {
   private var pageOverview: some View {
       VStack {
         HStack {
-          Button { pageWindow -= 1 } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }.disabled(pageWindow == 0).accessibilityLabel("Предыдущие миниатюры")
+          Button { pageWindow -= 1 } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44).contentShape(Rectangle()) }.disabled(pageWindow == 0).accessibilityLabel("Предыдущие миниатюры")
           Spacer()
           Text("Страницы").font(.headline)
           Spacer()
-          Button { pageWindow += 1 } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44) }.disabled((pageWindow + 1) * 4 >= pageCount).accessibilityLabel("Следующие миниатюры")
+          Button { pageWindow += 1 } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44).contentShape(Rectangle()) }.disabled((pageWindow + 1) * 4 >= pageCount).accessibilityLabel("Следующие миниатюры")
         }.buttonStyle(.plain)
         LazyVGrid(columns: [.init(.adaptive(minimum: 100))], spacing: 16) {
           ForEach((pageWindow * 4)..<min(pageCount, (pageWindow + 1) * 4), id: \.self) { index in

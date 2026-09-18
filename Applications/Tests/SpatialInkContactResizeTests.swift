@@ -150,8 +150,8 @@ final class SpatialInkContactResizeTests: XCTestCase {
         registry: fixture.registry, resources: fixture.resources)
       fixture.window.rootViewController = fixture.host
       fixture.host.view.addSubview(fixture.mount); fixture.window.makeKeyAndVisible()
-      fixture.coordinator = .init(surfaceRegistry: fixture.registry, inputGate: fixture.gate) { [weak fixture] in
-        fixture?.accept(tool: $0, color: $1, spans: $2)
+      fixture.coordinator = .init(surfaceRegistry: fixture.registry, inputGate: fixture.gate) { [weak fixture] tool, color, spans, _ in
+        fixture?.accept(tool: tool, color: color, spans: spans)
       }
       fixture.update(tool: .pen)
       fixture.mount.setNeedsLayout(); fixture.mount.layoutIfNeeded()
@@ -172,7 +172,7 @@ final class SpatialInkContactResizeTests: XCTestCase {
         }, journal: journal, penStyle: .standard, eraserStyle: .standard, drawingTool: tool,
         surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { _ in false },
         admitsNewContact: { true }, isEnabled: true,
-        onCommit: { [weak self] in self?.accept(tool: $0, color: $1, spans: $2) })
+        onCommit: { [weak self] tool, color, spans, _ in self?.accept(tool: tool, color: color, spans: spans) })
     }
 
     func resize(to size: SpatialPoint) {

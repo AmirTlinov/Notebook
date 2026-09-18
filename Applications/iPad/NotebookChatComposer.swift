@@ -48,9 +48,8 @@ struct NotebookChatComposer: View {
       }
     }
     .padding(3)
-    .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 22))
-    .overlay { RoundedRectangle(cornerRadius: 22).strokeBorder(Color(.separator).opacity(0.3), lineWidth: 0.5).allowsHitTesting(false) }
-    .shadow(color: .black.opacity(0.035), radius: 6, y: 2)
+    .background(NotebookChrome.insetSurface, in: RoundedRectangle(cornerRadius: NotebookChrome.cardRadius))
+    .overlay { RoundedRectangle(cornerRadius: NotebookChrome.cardRadius).strokeBorder(NotebookChrome.border, lineWidth: 0.5).allowsHitTesting(false) }
     .accessibilityElement(children: .contain).accessibilityIdentifier("notebook-chat-composer")
   }
   private var additions: some View {

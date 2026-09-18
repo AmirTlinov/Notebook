@@ -6,14 +6,28 @@ import SwiftUI
 struct NotebookGraphicView: View {
   let graphic: NotebookGraphic
   var layout: NotebookGraphicLayout? = nil
+  var erasures: [InkElementErasure] = []
   var body: some View {
-    Canvas { context, size in Self.paint(graphic, layout: layout, in: context, size: size) }
+    Canvas { context, size in Self.paint(graphic, layout: layout, in: context, size: size, erasures: erasures) }
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel(graphic.label.isEmpty ? (graphic.shape == .ellipse ? "Эллипс" : "Связь") : graphic.label)
+    .accessibilityLabel(graphic.label.isEmpty ? graphic.shape.displayName : graphic.label)
     .accessibilityAddTraits(.isImage)
   }
+
+  /// The agent light uses this same painter: closed shapes expose their whole
+  /// interior, open paths retain their real stroke, heads, label and erasures.
+  static func paintSilhouette(_ graphic: NotebookGraphic, layout: NotebookGraphicLayout?,
+    in context: GraphicsContext, size: CGSize, erasures: [InkElementErasure] = []) {
+    var mask = graphic
+    mask.style.stroke = .init(red:1,green:1,blue:1)
+    mask.style.fill = mask.style.stroke
+    paint(mask,layout:layout,in:context,size:size,erasures:erasures)
+  }
+
   static func paint(_ graphic: NotebookGraphic, layout: NotebookGraphicLayout?,
-    in context: GraphicsContext, size: CGSize) {
+    in context: GraphicsContext, size: CGSize, erasures: [InkElementErasure] = []) {
+      var context = context
+      NotebookElementErasurePaint.clip(erasures, context: &context, size: size)
       guard graphic.showsGeometry else { return }
       let stroke = graphic.style.stroke.swiftUIColor
       let width = graphic.style.strokeWidth
@@ -23,11 +37,11 @@ struct NotebookGraphicView: View {
       case .dotted: [0, width*3]
       }
       let style = StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round, dash: dash)
-      if graphic.shape == .ellipse {
+      if graphic.shape != .connector {
         let inset = min(width / 2, min(size.width, size.height) / 2 - 0.01)
         let rect = CGRect(origin: .zero, size: size).insetBy(dx: max(0, inset), dy: max(0, inset))
-        let path = Path(ellipseIn: rect)
-        if let fill = graphic.style.fill { context.fill(path, with: .color(fill.swiftUIColor)) }
+        let path = outline(graphic, in:rect)
+        if graphic.shape != .plus, let fill = graphic.style.fill { context.fill(path, with: .color(fill.swiftUIColor)) }
         context.stroke(path, with: .color(stroke), style: style)
       } else if let layout {
         var lineContext = context
@@ -62,17 +76,29 @@ struct NotebookGraphicView: View {
     }
     return path
   }
-  static func previewPath(_ fit: NotebookQuickShapeFit) -> Path {
-    guard fit.connection != nil, let layout = fit.layout else {
-      return fit.connection == nil ? Path(ellipseIn:.init(x:fit.frame.x,y:fit.frame.y,width:fit.frame.width,height:fit.frame.height)) : Path()
+  private static func outline(_ graphic: NotebookGraphic, in rect: CGRect) -> Path {
+    switch graphic.shape {
+    case .ellipse: return Path(ellipseIn:rect)
+    case .rectangle, .triangle, .diamond:
+      let curves = NotebookGraphicGeometry.polygonCurves(graphic,width:rect.width,height:rect.height)
+      var path = Path()
+      func point(_ p: SpatialPoint) -> CGPoint { .init(x:rect.minX+p.x,y:rect.minY+p.y) }
+      if let first = curves.first { path.move(to:point(first.start)) }
+      for curve in curves { path.addCurve(to:point(curve.end),control1:point(curve.control1),control2:point(curve.control2)) }
+      path.closeSubpath(); return path
+    case .plus:
+      var path = Path()
+      path.move(to:.init(x:rect.minX,y:rect.midY)); path.addLine(to:.init(x:rect.maxX,y:rect.midY))
+      path.move(to:.init(x:rect.midX,y:rect.minY)); path.addLine(to:.init(x:rect.midX,y:rect.maxY))
+      return path
+    case .connector: return Path()
     }
-    var path = path(layout)
-    for head in layout.heads {
-      if let first = head.points.first { path.move(to:first.cgPoint) }
-      for point in head.points.dropFirst() { path.addLine(to:point.cgPoint) }
-      if head.closed { path.closeSubpath() }
-    }
-    return path.offsetBy(dx:layout.frame.x,dy:layout.frame.y)
+  }
+}
+
+extension NotebookGraphic.Shape {
+  var displayName: String {
+    switch self { case .ellipse: "Эллипс"; case .rectangle: "Прямоугольник"; case .triangle: "Треугольник"; case .diamond: "Ромб"; case .plus: "Плюс"; case .connector: "Связь" }
   }
 }
 

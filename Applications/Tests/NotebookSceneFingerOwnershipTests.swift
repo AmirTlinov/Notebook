@@ -193,6 +193,88 @@ final class NotebookSceneFingerOwnershipTests: XCTestCase {
     XCTAssertEqual(gate.admittedFingerContactCount, 0)
   }
 
+  func testRestingSceneFingerDoesNotKeepPencilCompletionBehindTheIdleBarrier() async throws {
+    for fingerFirst in [true, false] {
+      let gate = NotebookInputGate(), surface = UIView(), pencil = UUID()
+      let observer = NotebookContactObserver(gate: gate), hand = SceneFingerOwnershipTouch(target: surface)
+      if fingerFirst { observer.touchesBegan([hand], with: UIEvent()) }
+      XCTAssertTrue(gate.beginPencilAction(source: pencil))
+      if !fingerFirst { observer.touchesBegan([hand], with: UIEvent()) }
+      var completed = false
+      gate.performAfterIdle { completed = true }
+      XCTAssertFalse(completed)
+      gate.endPencilAction(source: pencil)
+      try await Task.sleep(for: .milliseconds(30))
+      XCTAssertFalse(gate.isActive, "A scene finger cancelled by Pencil is not an unfinished command")
+      XCTAssertTrue(completed)
+      XCTAssertEqual(gate.admittedFingerContactCount, 1, "Only physical lift retires the contact identity")
+      observer.touchesEnded([hand], with: UIEvent())
+      XCTAssertEqual(gate.admittedFingerContactCount, 0)
+      observer.touchesBegan([hand], with: UIEvent())
+      XCTAssertTrue(gate.isActive, "A fresh finger-only gesture must still own the barrier")
+      observer.touchesEnded([hand], with: UIEvent())
+    }
+  }
+
+  func testPencilDoesNotReleaseAnIndependentNativeControlContact() async throws {
+    let gate = NotebookInputGate(), button = UIButton(), pencil = UUID()
+    let observer = NotebookContactObserver(gate: gate), finger = SceneFingerOwnershipTouch(target: button)
+    observer.touchesBegan([finger], with: UIEvent())
+    XCTAssertTrue(gate.beginPencilAction(source: pencil))
+    var completed = false
+    gate.performAfterIdle { completed = true }
+    gate.endPencilAction(source: pencil)
+    try await Task.sleep(for: .milliseconds(30))
+    XCTAssertTrue(gate.isActive); XCTAssertFalse(completed)
+    observer.touchesEnded([finger], with: UIEvent())
+    try await Task.sleep(for: .milliseconds(30))
+    XCTAssertFalse(gate.isActive); XCTAssertTrue(completed)
+  }
+
+  func testMeasuredPencilLiftHasNoSecondWindowObserverBarrier() async throws {
+    let gate = NotebookInputGate(), surface = UIView(), source = UUID()
+    let observer = NotebookContactObserver(gate: gate)
+    let pencil = SceneFingerOwnershipTouch(target: surface, kind: .pencil)
+    XCTAssertEqual(observer.allowedTouchTypes, [NSNumber(value: UITouch.TouchType.direct.rawValue)])
+    observer.touchesBegan([pencil], with: UIEvent())
+    XCTAssertFalse(gate.isActive)
+    XCTAssertEqual(gate.admittedFingerContactCount, 0, "Pencil is not a finger-routing claim")
+    let hand = SceneFingerOwnershipTouch(target: surface)
+    observer.touchesBegan([hand], with: UIEvent())
+    XCTAssertTrue(gate.beginPencilAction(source: source))
+    var completed = false
+    gate.performAfterIdle { completed = true }
+    XCTAssertFalse(completed, "The measured Pencil contact still owns the barrier")
+    gate.endPencilAction(source: source)
+    try await Task.sleep(for: .milliseconds(30))
+    XCTAssertFalse(gate.isActive)
+    XCTAssertTrue(completed, "Measured ink is complete; neither observer reset nor hand-up may postpone it")
+    XCTAssertEqual(gate.admittedFingerContactCount, 1)
+    observer.touchesEnded([hand], with: UIEvent())
+  }
+
+  func testRestingContactTransfersWithoutRevivingItsActivity() async throws {
+    let gate = NotebookInputGate(), next = NotebookInputGate(), surface = UIView(), pencil = UUID()
+    let observer = NotebookContactObserver(gate: gate), hand = SceneFingerOwnershipTouch(target: surface)
+    observer.touchesBegan([hand], with: UIEvent())
+    XCTAssertTrue(gate.beginPencilAction(source: pencil))
+    gate.endPencilAction(source: pencil)
+    observer.use(next)
+    try await Task.sleep(for: .milliseconds(30))
+    XCTAssertFalse(gate.isActive); XCTAssertFalse(next.isActive)
+    XCTAssertEqual(gate.admittedFingerContactCount, 0)
+    XCTAssertEqual(next.admittedFingerContactCount, 1)
+    observer.touchesCancelled([hand], with: UIEvent())
+    XCTAssertEqual(next.admittedFingerContactCount, 0)
+    observer.touchesBegan([hand], with: UIEvent())
+    XCTAssertTrue(next.isActive)
+    XCTAssertTrue(next.beginPencilAction(source: pencil))
+    next.endPencilAction(source: pencil)
+    try await Task.sleep(for: .milliseconds(30))
+    XCTAssertFalse(next.isActive, "Pencil cancellation was rebound to the current gate")
+    observer.finish()
+  }
+
   private func mountedWeb(in root: UIView, y: CGFloat, holdsFingerInput: Bool) async throws -> PhysicalWebViewport {
     let web = WKWebView(frame: .zero)
     web.scrollView.isScrollEnabled = false

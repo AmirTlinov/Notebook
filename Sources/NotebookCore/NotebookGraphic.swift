@@ -3,7 +3,7 @@ import Foundation
 /// Native content on a physical page or board, not an embedded document.
 /// Measurements remain in that owner's ink journal; presentation only names them.
 public struct NotebookGraphic: Codable, Equatable, Sendable {
-  public enum Shape: String, Codable, Sendable { case ellipse, connector }
+  public enum Shape: String, Codable, Sendable { case ellipse, rectangle, triangle, diamond, plus, connector }
   public enum Representation: String, Codable, Sendable { case ink, geometry }
   public struct Style: Codable, Equatable, Sendable {
     public enum Dash: String, Codable, Sendable { case solid, dashed, dotted }
@@ -26,19 +26,44 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
   public var visible: Bool
   public let sourceInkIDs: [UUID]
   public var connection: NotebookGraphicConnection?
+  /// Normalized convex corners preserve the drawn polygon orientation on resize.
+  public var vertices: [SpatialPoint]?
+  /// Circular corner radius in physical owner points. Nil leaves sharp corners.
+  public var cornerRadius: Double?
 
   public init(shape: Shape = .ellipse, style: Style = .init(), label: String = "",
     representation: Representation = .geometry, visible: Bool = true, sourceInkIDs: [UUID] = [],
-    connection: NotebookGraphicConnection? = nil) {
+    connection: NotebookGraphicConnection? = nil, vertices: [SpatialPoint]? = nil, cornerRadius: Double? = nil) {
     self.shape = shape; self.style = style; self.label = label
     self.representation = representation; self.visible = visible; self.sourceInkIDs = sourceInkIDs
-    self.connection = connection
+    self.connection = connection; self.vertices = vertices; self.cornerRadius = cornerRadius
   }
 
-  static let causalFields = ["shape", "style", "label", "representation", "visible", "sourceInkIDs"]
+  /// A native accepted edit and a delivered action interpret the same field
+  /// patch. It never changes source-ink ownership or authors a second action.
+  public func applying(_ patch: JSONValue) throws -> Self {
+    guard !patch.object.isEmpty,
+      Set(patch.object.keys).isSubset(of: Set(Self.causalFields + ["connection"]).subtracting(["sourceInkIDs"])) else {
+      throw CollaborationError("invalid_operation", "Правка геометрии не меняет её исходные измерения.")
+    }
+    var value = try JSONValue.encode(self)
+    for (part, supplied) in patch.object {
+      if part == "connection", let previous = value[part] {
+        guard !supplied.object.isEmpty, Set(supplied.object.keys).isSubset(of: Set(NotebookGraphicConnection.causalFields)) else {
+          throw CollaborationError("invalid_operation", "Правка связи называет её концы, изгиб, наконечники или положение подписи.")
+        }
+        value = value.setting(part, .object(previous.object.merging(supplied.object) { _, latest in latest }))
+      } else { value = value.setting(part, ["vertices", "cornerRadius"].contains(part) && supplied == .null ? nil : supplied) }
+    }
+    let result = try value.decode(Self.self)
+    guard result.isValid else { throw CollaborationError("invalid_operation", "Недопустимая геометрия.") }
+    return result
+  }
+
+  static let causalFields = ["shape", "style", "label", "representation", "visible", "sourceInkIDs", "vertices", "cornerRadius"]
   static let allCausalPaths = causalFields.map { [$0] } + NotebookGraphicConnection.causalFields.map { ["connection", $0] }
   var causalPaths: [[String]] {
-    Self.causalFields.map { [$0] } + (connection == nil ? [] : NotebookGraphicConnection.causalFields.map { ["connection", $0] })
+    Self.causalFields.filter { ($0 != "vertices" || vertices != nil) && ($0 != "cornerRadius" || cornerRadius != nil) }.map { [$0] } + (connection == nil ? [] : NotebookGraphicConnection.causalFields.filter { $0 != "bendPosition" || connection?.bendPosition != nil }.map { ["connection", $0] })
   }
   public var showsGeometry: Bool { visible && representation == .geometry }
   var isValid: Bool {
@@ -46,22 +71,76 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
       && Set(sourceInkIDs).count == sourceInkIDs.count
       && (representation != .ink || !sourceInkIDs.isEmpty)
       && (shape == .connector ? connection?.isValid == true : connection == nil)
+      && validVertices
+      && (cornerRadius == nil || (NotebookGraphicGeometry.polygon(self) != nil && cornerRadius!.isFinite && (0...1_000_000).contains(cornerRadius!)))
   }
+  private var validVertices: Bool {
+    guard let vertices else { return true }
+    guard (shape == .triangle && vertices.count == 3) || ([.diamond, .rectangle].contains(shape) && vertices.count == 4),
+      vertices.allSatisfy({ $0.x.isFinite && $0.y.isFinite && (0...1).contains($0.x) && (0...1).contains($0.y) }) else { return false }
+    return NotebookGraphicGeometry.isConvex(vertices)
+  }
+
 }
 
 /// The same normalized outline serves native paint, hit testing and anchors.
 /// Camera / page placement belongs to the installed scene, never this geometry.
 public enum NotebookGraphicGeometry {
+  /// Interior picking is separate from painted-ink hit testing. A hollow node
+  /// can be selected or bound inside without occluding a smaller object there.
+  public static func containsInterior(_ graphic: NotebookGraphic, width: Double, height: Double,
+    x: Double, y: Double) -> Bool {
+    guard graphic.showsGeometry, width > 0, height > 0 else { return false }
+    if graphic.shape == .ellipse { return hypot((x-width/2)/(width/2),(y-height/2)/(height/2)) <= 1 }
+    guard let vertices = outlinePolygon(graphic, width: width, height: height) else { return false }
+    var inside = false
+    for (a,b) in zip(vertices,vertices.dropFirst()+vertices.prefix(1)) where (a.y*height > y) != (b.y*height > y) {
+      if x < (b.x-a.x)*width*(y-a.y*height)/((b.y-a.y)*height)+a.x*width { inside.toggle() }
+    }
+    return inside
+  }
+  public static func polygon(_ graphic: NotebookGraphic) -> [SpatialPoint]? {
+    switch graphic.shape {
+    case .triangle: return graphic.vertices ?? [.init(x:0.5,y:0),.init(x:1,y:1),.init(x:0,y:1)]
+    case .diamond: return graphic.vertices ?? [.init(x:0.5,y:0),.init(x:1,y:0.5),.init(x:0.5,y:1),.init(x:0,y:0.5)]
+    case .rectangle: return graphic.vertices ?? [.init(x:0,y:0),.init(x:1,y:0),.init(x:1,y:1),.init(x:0,y:1)]
+    case .ellipse, .plus, .connector: return nil
+    }
+  }
   public static func hitTest(_ graphic: NotebookGraphic, width: Double, height: Double,
     x: Double, y: Double, tolerance: Double) -> Bool {
-    guard graphic.showsGeometry, graphic.shape == .ellipse, width > 0, height > 0 else { return false }
+    guard graphic.showsGeometry, graphic.shape != .connector, width > 0, height > 0 else { return false }
     let dx = (x - width / 2) / (width / 2), dy = (y - height / 2) / (height / 2)
     let radius = hypot(dx, dy)
     if !graphic.label.isEmpty, abs(x - width / 2) <= min(width / 2, Double(graphic.label.count) * 8 + tolerance),
       abs(y - height / 2) <= 16 + tolerance { return true }
-    if graphic.style.fill != nil { return radius <= 1 + tolerance / min(width, height) * 2 }
+    if graphic.style.fill != nil {
+      if graphic.shape == .ellipse { return radius <= 1 + tolerance / min(width, height) * 2 }
+      if containsInterior(graphic,width:width,height:height,x:x,y:y) { return true }
+    }
     // A contour must not steal its empty interior from enclosed nodes.
-    return abs(radius - 1) * min(width, height) / 2 <= tolerance + graphic.style.strokeWidth / 2
+    return outlineDistance(graphic,width:width,height:height,x:x,y:y) <= tolerance + graphic.style.strokeWidth / 2
+  }
+
+  public static func outlineDistance(_ graphic: NotebookGraphic, width: Double, height: Double,
+    x: Double, y: Double) -> Double {
+    func segment(_ ax: Double, _ ay: Double, _ bx: Double, _ by: Double) -> Double {
+      let dx = bx-ax, dy = by-ay, square = dx*dx+dy*dy
+      let t = square > 0 ? min(1,max(0,((x-ax)*dx+(y-ay)*dy)/square)) : 0
+      return hypot(x-ax-t*dx,y-ay-t*dy)
+    }
+    switch graphic.shape {
+    case .ellipse:
+      return abs(hypot((x-width/2)/(width/2),(y-height/2)/(height/2))-1)*min(width,height)/2
+    case .rectangle, .triangle, .diamond:
+      let vertices = outlinePolygon(graphic, width: width, height: height)!
+      return zip(vertices,vertices.dropFirst()+vertices.prefix(1)).map {
+        segment($0.x*width,$0.y*height,$1.x*width,$1.y*height)
+      }.min()!
+    case .plus:
+      return min(segment(0,height/2,width,height/2),segment(width/2,0,width/2,height))
+    case .connector: return .infinity
+    }
   }
 }
 

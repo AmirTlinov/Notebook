@@ -83,11 +83,12 @@ final class NotebookLiveGesturePresentationTests: XCTestCase {
         "The installed point route must resolve the shown artifact, drop \(index + 1), point \(nativePoint), body \(body.convert(body.bounds, to: host.view)), selection \(String(describing: model.selectionSession.target)), error \(model.agentRequestError ?? "none")")
       observer.touchesBegan([touch], with: UIEvent())
       recognizer.touchesBegan([touch], with: UIEvent())
-      try await waitUntil(diagnostic: {
-        "Hold \(index + 1) was not accepted; recognizer \(recognizer.state.rawValue), enabled \(recognizer.isEnabled), installed \(window.gestureRecognizers?.contains { $0 === recognizer } == true), anchor \(String(describing: recognizer.coordinateView?.bounds)), point \(nativePoint), admission \(model.inputGate.permitsNewContact), Pencil \(model.inputGate.hasActivePencil), selection \(String(describing: model.selectionSession.target)), manipulation \(String(describing: model.selectionSession.manipulation?.reference)), error \(model.agentRequestError ?? "none")"
-      }) { model.selectionSession.manipulation?.reference == reference }
+      if index == 0 {
+        try await waitUntil { model.selectionSession.manipulation?.reference == reference }
+      }
       touch.point.x += delta.width; touch.point.y += delta.height
       recognizer.touchesMoved([touch], with: UIEvent())
+      XCTAssertEqual(model.selectionSession.manipulation?.reference,reference,"The selected material starts directly on movement, without another long hold")
       recognizer.touchesEnded([touch], with: UIEvent())
       observer.touchesEnded([touch], with: UIEvent())
       // A real input barrier prevents the asynchronous composition from
@@ -112,14 +113,17 @@ final class NotebookLiveGesturePresentationTests: XCTestCase {
 
     model.inputGate.endPencilAction(source: pencil)
     let resize = try XCTUnwrap(model.beginElementManipulation(reference, kind: .resize(.topLeading)))
-    XCTAssertTrue(model.finishElementManipulation(resize, translation: .init(x: -40, y: -30)))
-    XCTAssertTrue(model.inputGate.beginPencilAction(source: pencil))
+    model.updateElementManipulation(resize,translation:.init(x:-40,y:-30))
     expected = .init(x: expected.minX - 40, y: expected.minY - 30, width: expected.width + 40, height: expected.height + 30)
     try await waitUntil {
       host.view.layoutIfNeeded()
       return self.framesEqual(body.convert(body.bounds, to: host.view), expected)
     }
     XCTAssertTrue(model.compositionTiles.published === original)
+    XCTAssertNotNil(model.selectionSession.manipulation,"Content already follows the resize while the finger is down")
+    XCTAssertTrue(liveWeb(in:host.view,source:source) === body)
+    XCTAssertTrue(model.finishElementManipulation(resize,translation:.init(x:-40,y:-30)))
+    XCTAssertTrue(model.inputGate.beginPencilAction(source:pencil))
     try assertCornerFrame(in: host.view, expected: expected)
     let resized = try pixelPatch(in: host.view, at: .init(x: expected.minX + 30, y: expected.minY + 30), name: "artifact-resized-old-cohort")
     for channel in 0..<3 { XCTAssertEqual(resized[channel], baseline[channel], accuracy: 12) }
@@ -132,8 +136,8 @@ final class NotebookLiveGesturePresentationTests: XCTestCase {
   private func assertCornerFrame(in view: UIView, expected: CGRect) throws {
     let controls = try XCTUnwrap(descendants(view, as: NotebookElementControlsView.self).first)
     let corners = (controls.accessibilityElements ?? []).compactMap { $0 as? UIAccessibilityElement }
-    XCTAssertEqual(corners.count, 4)
-    for corner in NotebookElementCorner.allCases {
+    XCTAssertEqual(corners.count, 8)
+    for corner in NotebookElementResizeHandle.allCases {
       let accessibility = try XCTUnwrap(corners.first { $0.accessibilityIdentifier == "resize-agent-element-" + corner.rawValue })
       let region = accessibility.accessibilityFrameInContainerSpace
       let center = controls.convert(CGPoint(x: region.midX, y: region.midY), to: view)

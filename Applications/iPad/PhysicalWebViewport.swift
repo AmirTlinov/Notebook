@@ -74,10 +74,13 @@ final class PhysicalWebViewport: UIView, NotebookSceneFingerInputOwner {
     applyContentSize()
     let size = contentSize
     guard size.width > 0, size.height > 0 else { return }
-    let scale = min(bounds.width / size.width, bounds.height / size.height)
-    guard scale.isFinite, scale > 0 else { return }
+    // The installed owner supplies both axes. During a held resize its
+    // accepted rectangle can have a different aspect from the saved browser
+    // layout; aspect-fit would leave content behind the selection handles.
+    let scaleX = bounds.width / size.width, scaleY = bounds.height / size.height
+    guard scaleX.isFinite, scaleY.isFinite, scaleX > 0, scaleY > 0 else { return }
     webView.center = CGPoint(x: bounds.midX, y: bounds.midY)
-    webView.transform = CGAffineTransform(scaleX: scale, y: scale)
+    webView.transform = CGAffineTransform(scaleX: scaleX, y: scaleY)
     if window != nil { onInstalled?() }
   }
 

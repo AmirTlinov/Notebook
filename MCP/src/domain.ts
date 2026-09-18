@@ -27,19 +27,22 @@ export type AgentElementKind = "markdown" | "web" | "graphic";
 export type NotebookGraphicResolution = {state:"geometry";frame:PageRect} | {state:"hidden"} | {state:"pending";dependencies:string[]};
 
 export interface NotebookGraphic {
-  shape: "ellipse" | "connector";
+  shape: "ellipse" | "rectangle" | "triangle" | "diamond" | "plus" | "connector";
   style: { stroke: { red: number; green: number; blue: number }; strokeWidth: number; fill?: { red: number; green: number; blue: number }; dash?: "solid" | "dashed" | "dotted" };
   label: string;
   representation: "ink" | "geometry";
   visible: boolean;
   sourceInkIDs: string[];
   connection?: NotebookGraphicConnection;
+  vertices?: { x: number; y: number }[] | null;
+  cornerRadius?: number | null;
 }
 
 export interface NotebookGraphicConnection {
   start: NotebookGraphicEndpoint;
   end: NotebookGraphicEndpoint;
   bend: number;
+  bendPosition?: number;
   startArrowhead: "none" | "arrow" | "triangle" | "square" | "dot" | "pipe" | "diamond" | "inverted" | "bar";
   endArrowhead: NotebookGraphicConnection["startArrowhead"];
   labelPosition: number;

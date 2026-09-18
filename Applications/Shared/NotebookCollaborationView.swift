@@ -79,7 +79,7 @@ struct NotebookCollaborationView: View {
                   .accessibilityIdentifier("context-directory-next")
               }
             }.disabled(loadingDirectory).padding(8)
-          }.background(.regularMaterial)
+          }.background(NotebookChrome.surface)
         }
         .task { await loadDirectory() }
         .buttonStyle(.borderless)
@@ -176,7 +176,7 @@ private struct NotebookContextHistoryView: View {
           Button { after = next; cursor = page.readCursor; request = UUID() } label: { Text("Дальше").frame(minHeight: 44) }
             .accessibilityIdentifier("context-history-next")
         }
-      }.disabled(loading).padding(12).background(.regularMaterial)
+      }.disabled(loading).padding(12).background(NotebookChrome.surface)
     }
     .navigationTitle("История фрагмента")
     .task(id: request) {
@@ -207,11 +207,12 @@ struct NotebookAttentionMarks: View {
         mark(rect, human: true)
       }
       if !model.scenePreparationPending, model.collaborationDetailsAreCurrent {
-        ForEach(model.collaborationActions.filter { model.pendingAgentHighlights.contains($0.id) && $0.undo == nil }) { action in
+        ForEach(model.collaborationActions.filter { model.agentHighlightStarts[$0.id] != nil && $0.author == .agent && $0.undo == nil }) { action in
           ForEach(model.results(for: action)) { reference in
-            if let rect = NotebookAttentionProjection.frame(reference, model: model, presence: presence),
-              rect.intersects(CGRect(x: 0, y: 0, width: presence.viewport.x, height: presence.viewport.y)) {
-              NotebookAgentPearl(rect: rect) { model.finishAgentHighlight(action.id) }.id(reference.id)
+            if let surface = NotebookAttentionProjection.agentPearl(reference,model:model,presence:presence),
+              let start = model.agentHighlightStarts[action.id],
+              surface.rect.intersects(CGRect(x:0,y:0,width:presence.viewport.x,height:presence.viewport.y)) {
+              NotebookAgentPearl(surface:surface,startedAt:start).id(reference.id)
             }
           }
         }
@@ -226,29 +227,5 @@ struct NotebookAttentionMarks: View {
       .stroke(human ? Color.indigo.opacity(0.55) : Color.teal.opacity(0.6), lineWidth: 1)
       .frame(width: max(12, rect.width), height: max(12, rect.height))
       .position(x: rect.midX, y: rect.midY)
-  }
-}
-
-/// A short light on the changed material, never a modal surface or a gesture owner.
-private struct NotebookAgentPearl: View {
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  let rect: CGRect
-  let finished: () -> Void
-  @State private var visible = false
-  var body: some View {
-    RoundedRectangle(cornerRadius: 10)
-      .strokeBorder(LinearGradient(colors: [.white, Color(red: 0.72, green: 0.85, blue: 0.93),
-        Color(red: 0.90, green: 0.78, blue: 0.89), .white], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 2.5)
-      .shadow(color: Color(red: 0.78, green: 0.82, blue: 0.94).opacity(0.65), radius: 7)
-      .opacity(visible ? 0.95 : 0)
-      .frame(width: max(12, rect.width + 8), height: max(12, rect.height + 8))
-      .position(x: rect.midX, y: rect.midY)
-      .task {
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { visible = true }
-        do { try await Task.sleep(for: .seconds(1.6)) } catch { return }
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.8)) { visible = false }
-        do { try await Task.sleep(for: .seconds(0.8)) } catch { return }
-        finished()
-      }
   }
 }

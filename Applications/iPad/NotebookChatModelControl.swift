@@ -22,7 +22,7 @@ struct NotebookChatModelControl: View {
             Text("Контекстное окно").font(.headline)
             Text(usageText).font(.subheadline).textSelection(.enabled)
             if !chat.connected { Text("Последние данные Codex · Mac не в сети").font(.caption).foregroundStyle(.secondary) }
-          }.padding(16).frame(width: 285).presentationCompactAdaptation(.popover)
+          }.padding(16).frame(width: 285).presentationCompactAdaptation(.popover).presentationBackground(NotebookChrome.surface)
         }
       Button { settings = true } label: {
         HStack(spacing: 4) {
@@ -65,7 +65,7 @@ struct NotebookChatModelControl: View {
             }
             if chat.loadingModels { ProgressView() }
             if let error = chat.modelError { Text(error).font(.caption).foregroundStyle(.secondary) }
-          }.padding(16).frame(width: 300).presentationCompactAdaptation(.popover)
+          }.padding(16).frame(width: 300).presentationCompactAdaptation(.popover).presentationBackground(NotebookChrome.surface)
             .disabled(!chat.connected || (chat.modelChangePending && !chat.modelChangeUncertain) || chat.continuationUnavailable)
             .task { await chat.readModels() }
         }

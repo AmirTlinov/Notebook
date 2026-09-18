@@ -30,9 +30,9 @@ private struct GraphicFixture {
     _ = try write(.appendInkStroke, id: id.uuidString, values: values, human: false)
     return id
   }
-  func convert(_ id: String, sources: [UUID], human: Bool = true) throws -> CollaborationReceipt {
+  func convert(_ id: String, sources: [UUID], shape: NotebookGraphic.Shape = .ellipse, vertices: [SpatialPoint]? = nil, human: Bool = true) throws -> CollaborationReceipt {
     var values: [String: JSONValue] = ["kind": .string("graphic"), "source": .string(""),
-      "frame": try .encode(PageRect(x: 10, y: 10, width: 100, height: 100)), "graphic": try .encode(NotebookGraphic(sourceInkIDs: sources))]
+      "frame": try .encode(PageRect(x: 10, y: 10, width: 100, height: 100)), "graphic": try .encode(NotebookGraphic(shape:shape,sourceInkIDs:sources,vertices:vertices))]
     if target.kind == .board { values["worldOrigin"] = try .encode(WorldPoint.zero) }
     return try write(.convertInkToElement, id: id, values: values, human: human)
   }
@@ -69,7 +69,7 @@ func graphicConcurrentClaimsConverge(onBoard: Bool) throws {
     let peer = try GraphicFixture(onBoard: onBoard,
       actor: UUID(uuidString: "00000000-0000-4000-8000-00000000000\(i + 1)")!, seed: seed, target: base.target)
     defer { peer.clean() }
-    let action = try peer.convert("shape-\(i)", sources: [strokes[i], strokes[i + 1]], human: i != 1)
+    let action = try peer.convert("shape-\(i)", sources: [strokes[i], strokes[i + 1]], shape: [NotebookGraphic.Shape.ellipse,.rectangle,.plus][i], human: i != 1)
     payloads.append((try peer.store.collaborationContent(), action))
   }
   let orders = [[0,1,2], [0,2,1], [1,0,2], [1,2,0], [2,0,1], [2,1,0]]
@@ -109,4 +109,87 @@ func graphicAgentUndoInDispatcherTransaction() throws {
     }
   }
   #expect(try f.presentation().geometryIDs.isEmpty)
+}
+
+@Test("Изменение и очистка углов принимают многоугольник; отмена правки возвращает прежнее авторство", arguments:[false,true], [false,true])
+func graphicPolygonVerticesAdoption(onBoard: Bool, undoEdit: Bool) throws {
+  let f = try GraphicFixture(onBoard:onBoard); defer { f.clean() }
+  let points: [SpatialPoint] = [.init(x:0,y:0),.init(x:1,y:0.2),.init(x:0.4,y:1)]
+  let source = try f.stroke()
+  let conversion = try f.convert("triangle",sources:[source],shape:.triangle,vertices:points)
+  let cleared = try f.write(.updateElement,id:"triangle",values:["graphic":.object(["vertices":.null])],human:false)
+  if undoEdit { _ = try f.store.undoCollaborationAction(cleared.id,actor:f.actor) }
+  let inverse = try NotebookStore(root:f.root).undoCollaborationAction(conversion.id,actor:f.actor)
+  #expect(try f.presentation().geometryIDs == (undoEdit ? [] : ["triangle"]))
+  #expect(inverse.undo?.preserved.isEmpty == undoEdit)
+}
+
+@Test("Принятое оформление и запись применяют один patch, не меняя происхождение чернил")
+func graphicPatchUsesTheSameReducerAsStorage() throws {
+  let f = try GraphicFixture(onBoard:false); defer { f.clean() }
+  let source = try f.stroke(); _ = try f.convert("circle",sources:[source])
+  let before = try #require(f.store.readPageElement(pageID:f.target.id,elementID:"circle")?.graphic)
+  let patch: JSONValue = .object(["style":try .encode(NotebookGraphic.Style(stroke:.init(red:0.2,green:0.4,blue:0.8),strokeWidth:4)),
+    "label":.string("Changed")])
+  let accepted = try before.applying(patch)
+  _ = try f.write(.updateElement,id:"circle",values:["graphic":patch])
+  #expect(try f.store.readPageElement(pageID:f.target.id,elementID:"circle")?.graphic == accepted)
+  #expect(accepted.sourceInkIDs == [source])
+  #expect(throws:CollaborationError.self) { try before.applying(.object(["sourceInkIDs":.array([])])) }
+  #expect(throws:CollaborationError.self) { try before.applying(.object(["style":try .encode(NotebookGraphic.Style(strokeWidth:-2))])) }
+}
+
+@Test("Native arrange uses complete membership and exact-source admission", arguments: [false, true])
+func graphicNativeArrangeUsesCompleteOwner(onBoard: Bool) throws {
+  let f = try GraphicFixture(onBoard:onBoard); defer { f.clean() }
+  for (index,id) in ["a","b","offscreen"].enumerated() {
+    var values: [String:JSONValue] = ["kind":.string("graphic"),"source":.string(""),
+      "frame":try .encode(PageRect(x:10,y:10,width:80,height:80)),"graphic":try .encode(NotebookGraphic())]
+    if onBoard { values["worldOrigin"] = try .encode(WorldPoint(x:Double(index)*100_000,y:0)) }
+    _ = try f.write(.insertElement,id:id,values:values)
+  }
+  let page = onBoard ? nil : try f.store.readPageElement(pageID:f.target.id,elementID:"a")
+  let spatial = onBoard ? try f.store.readSpatialElement(boardID:f.target.id,elementID:"a") : nil
+  if onBoard {
+    let window = try f.store.readSceneWindow(boardID:f.target.id,bounds:.init(origin:.zero,width:200,height:200))
+    #expect(!window.boards[0].board.elements.contains { $0.id == "offscreen" })
+  }
+  let arranged = try f.store.applyNativeElementEdit(.init(kind:.reorderElements,target:f.target,id:"a",values:[:]),
+    summary:"Front",expectedPage:page,expectedSpatial:spatial,moveToFront:true,actor:f.actor)
+  #expect(arranged.receipt.author == .human)
+  #expect(arranged.receipt.action.operations.first?.values["ids"] == .array(["b","offscreen","a"].map(JSONValue.string)))
+  // A peer edit after this accepted command is not our own predecessor.
+  _ = try f.write(.updateElement,id:"a",values:["graphic":.object(["label":.string("Peer")])],human:false)
+  #expect(throws:CollaborationError.self) {
+    try f.store.applyNativeElementEdit(.init(kind:.updateElement,target:f.target,id:"a",values:["graphic":.object(["label":.string("Stale")])]),
+      summary:"Stale",expectedPage:arranged.page,expectedSpatial:arranged.spatial,actor:f.actor)
+  }
+  let actual = onBoard ? try f.store.readSpatialElement(boardID:f.target.id,elementID:"a")?.graphic
+    : try f.store.readPageElement(pageID:f.target.id,elementID:"a")?.graphic
+  #expect(actual?.label == "Peer")
+}
+
+@Test("Vertex and radius edits survive delivery, reopening and causal undo", arguments:[false,true])
+func graphicCornerGeometryPersists(onBoard: Bool) throws {
+  let f = try GraphicFixture(onBoard:onBoard); defer { f.clean() }
+  let source = try f.stroke(); _ = try f.convert("box",sources:[source],shape:.rectangle)
+  let patch: JSONValue = .object(["vertices":try .encode([SpatialPoint(x:0.2,y:0.1),.init(x:1,y:0),.init(x:1,y:1),.init(x:0,y:1)]),"cornerRadius":.number(18)])
+  let action = try f.write(.updateElement,id:"box",values:["graphic":patch])
+  let snapshot = try f.store.collaborationContent()
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent("corners-peer-\(UUID())")
+  defer { try? FileManager.default.removeItem(at:root) }
+  let peer = NotebookStore(root:root)
+  _ = try peer.loadOrCreate(actor:UUID(),pageSize:.init(width:834,height:1194))
+  _ = try peer.loadOrCreateSpatialInk(actor:UUID())
+  _ = try peer.mergeCollaborationContent(snapshot,actions:try f.store.collaborationActions(afterID:nil))
+  func read(_ store: NotebookStore) throws -> NotebookGraphic? {
+    if onBoard { return try store.readSpatialElement(boardID:f.target.id,elementID:"box")?.graphic }
+    return try store.readPageElement(pageID:f.target.id,elementID:"box")?.graphic
+  }
+  #expect(try read(NotebookStore(root:root))?.cornerRadius == 18)
+  #expect(try read(peer)?.vertices?.first == .init(x:0.2,y:0.1))
+  _ = try peer.undoCollaborationAction(action.id,actor:f.actor)
+  #expect(try read(peer)?.vertices == nil)
+  #expect(try read(peer)?.cornerRadius == nil)
+  #expect(try read(peer)?.sourceInkIDs == [source])
 }

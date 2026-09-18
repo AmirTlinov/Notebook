@@ -77,7 +77,7 @@ final class NotebookChatWindowTests: XCTestCase {
     XCTAssertEqual(resized.origin, start.origin)
     XCTAssertEqual(resized.size, CGSize(width: 440, height: 480))
     XCTAssertEqual(NotebookChatWindowLayout(restoring: layout.encoded), layout)
-    XCTAssertEqual(layout.frame(in: portrait, expanded: false).size, CGSize(width: 112, height: 48))
+    XCTAssertEqual(layout.frame(in: portrait, expanded: false).size, CGSize(width: 112, height: 44))
     XCTAssertEqual(layout.frame(in: portrait, expanded: true), resized)
   }
 

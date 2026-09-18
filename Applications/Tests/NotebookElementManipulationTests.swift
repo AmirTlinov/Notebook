@@ -8,14 +8,14 @@ import XCTest
     let original = CGRect(x: 100, y: 80, width: 200, height: 160)
     let reference = EditableElementReference.page(pageID: UUID(), elementID: "chart")
     let page = CGRect(x: 0, y: 0, width: 600, height: 800)
-    for corner in NotebookElementCorner.allCases {
+    for corner in NotebookElementResizeHandle.allCases {
       for delta in [CGPoint(x: 30, y: 25), .init(x: -5000, y: -5000), .init(x: 5000, y: 5000)] {
         var contact = NotebookElementManipulation(reference: reference, kind: .resize(corner), frame: original, bounds: page)
         contact.update(translation: delta)
         let result = contact.frame
         XCTAssertEqual(corner.leading ? result.maxX : result.minX, corner.leading ? original.maxX : original.minX)
         XCTAssertEqual(corner.top ? result.maxY : result.minY, corner.top ? original.maxY : original.minY)
-        XCTAssertGreaterThanOrEqual(result.width, 44); XCTAssertGreaterThanOrEqual(result.height, 44)
+        XCTAssertGreaterThanOrEqual(result.width, 1); XCTAssertGreaterThanOrEqual(result.height, 1)
         XCTAssertTrue(page.contains(result))
         for scale in [0.15, 1, 3] {
           let screen = original.applying(.init(scaleX: scale, y: scale))
@@ -27,6 +27,80 @@ import XCTest
           XCTAssertEqual(projected.height, expected.height, accuracy: 0.000001)
         }
       }
+    }
+  }
+
+  func testIndividualVerticesKeepOtherCornersFixedAndStopBeforeCrossing() throws {
+    let ref = EditableElementReference.page(pageID:UUID(),elementID:"polygon")
+    for shape in [NotebookGraphic.Shape.triangle,.rectangle,.diamond] {
+      let graphic = NotebookGraphic(shape:shape), frame = CGRect(x:100,y:100,width:160,height:120)
+      var contact = NotebookElementManipulation(reference:ref,kind:.vertex(0),frame:frame,bounds:.init(x:0,y:0,width:600,height:800),graphic:graphic)
+      let points = try XCTUnwrap(contact.originalVertices)
+      contact.update(translation:.init(x:35,y:-30))
+      let changed = try XCTUnwrap(contact.vertices)
+      for index in points.indices {
+        XCTAssertEqual(contact.frame.minX+changed[index].x*contact.frame.width,frame.minX+points[index].x*frame.width+(index == 0 ? 35 : 0),accuracy:0.001)
+        XCTAssertEqual(contact.frame.minY+changed[index].y*contact.frame.height,frame.minY+points[index].y*frame.height+(index == 0 ? -30 : 0),accuracy:0.001)
+      }
+      contact.update(translation:.init(x:5_000,y:5_000))
+      XCTAssertTrue(NotebookGraphicGeometry.isConvex(try XCTUnwrap(contact.vertices),sameWindingAs:points))
+      XCTAssertTrue(CGRect(x:0,y:0,width:600,height:800).contains(contact.frame))
+    }
+  }
+
+  func testCornerRadiusContactDoesNotResizeAndCanReturnToSharp() {
+    let graphic = NotebookGraphic(shape:.rectangle), frame = CGRect(x:100,y:100,width:160,height:120)
+    var contact = NotebookElementManipulation(reference:.page(pageID:UUID(),elementID:"box"),kind:.roundCorners,
+      frame:frame,bounds:nil,graphic:graphic)
+    contact.update(translation:.init(x:30,y:30))
+    XCTAssertEqual(contact.cornerRadius,30,accuracy:0.001); XCTAssertEqual(contact.frame,frame)
+    contact.update(translation:.init(x:5_000,y:5_000))
+    XCTAssertEqual(contact.cornerRadius,60,accuracy:0.001)
+    contact.update(translation:.init(x:-40,y:-40)); XCTAssertEqual(contact.cornerRadius,0)
+  }
+
+  func testBendContactTracksBothAxesWithoutMovingItsFreeEnds() throws {
+    let graphic = NotebookGraphic(shape:.connector,connection:.init(start:.init(point:.zero),end:.init(point:.init(x:200,y:100)),bend:20,endArrowhead:.none))
+    let surface = SurfaceID.page(UUID()), frame = PageRect(x:100,y:100,width:200,height:100)
+    func layout(_ graphic: NotebookGraphic) throws -> NotebookGraphicLayout {
+      try XCTUnwrap(NotebookGraphicGraph([.init(id:"line",graphic:graphic,frame:frame,surface:surface,shown:true)]).resolve("line").layout)
+    }
+    let before = try layout(graphic)
+    var contact = NotebookElementManipulation(reference:.page(pageID:UUID(),elementID:"line"),kind:.bend,
+      frame:.init(x:100,y:100,width:200,height:100),bounds:nil,connection:graphic.connection,layout:before,graphic:graphic)
+    contact.update(translation:.zero); XCTAssertEqual(contact.connection,graphic.connection)
+    contact.update(translation:.init(x:30,y:40))
+    var changed = graphic; changed.connection = contact.connection
+    let after = try layout(changed)
+    XCTAssertEqual(after.frame.x+after.bend.x-before.frame.x-before.bend.x,30,accuracy:0.001)
+    XCTAssertEqual(after.frame.y+after.bend.y-before.frame.y-before.bend.y,40,accuracy:0.001)
+    XCTAssertEqual(changed.connection?.start,graphic.connection?.start); XCTAssertEqual(changed.connection?.end,graphic.connection?.end)
+  }
+
+  func testTouchTargetsDoNotImposeA44PointGeometryMinimumOrAnArtificialBoardMaximum() {
+    let ref = EditableElementReference.spatial(boardID: UUID(), elementID: "small")
+    var small = NotebookElementManipulation(reference: ref, kind: .resize(.bottomTrailing),
+      frame: .init(x: 100,y:100,width:40,height:32), bounds:nil)
+    small.update(translation:.init(x:-28,y:-20))
+    XCTAssertEqual(small.frame,.init(x:100,y:100,width:12,height:12))
+    var large = NotebookElementManipulation(reference: ref, kind: .resize(.topLeading),
+      frame:.init(x:100,y:100,width:3000,height:2200),bounds:nil)
+    large.update(translation:.init(x:-400,y:-500))
+    XCTAssertEqual(large.frame,.init(x:-300,y:-400,width:3400,height:2700))
+    XCTAssertEqual(NotebookElementResizeHandle.visible(in:.init(width:40,height:32)).count,4)
+    XCTAssertEqual(NotebookElementResizeHandle.visible(in:.init(width:160,height:32)).count,6)
+  }
+
+  func testMaterialResizeProjectsTheActualLiveFrameBeforeCommit() async throws {
+    try await fixture { model, reference in
+      model.selectElement(reference)
+      let source = try XCTUnwrap(model.activePage?.elements.first?.frame)
+      let contact = try XCTUnwrap(model.beginElementManipulation(reference,kind:.resize(.topLeading)))
+      model.updateElementManipulation(contact,translation:.init(x:-35,y:-25))
+      XCTAssertEqual(model.elementPresentationFrame(reference,fallback:source),.init(x:65,y:55,width:235,height:185))
+      XCTAssertEqual(model.activePage?.elements.first?.frame,source,"A live resize is not a per-sample storage write")
+      model.cancelElementManipulation(contact)
+      XCTAssertEqual(model.elementPresentationFrame(reference,fallback:source),source)
     }
   }
 
@@ -227,11 +301,11 @@ import XCTest
     XCTAssertTrue(gate.permitsSceneContact(at: corner, kind: .pencil))
     XCTAssertTrue(gate.permitsSceneContact(at: controls.convert(.init(x: 220, y: 220), to: window), kind: .finger))
     let corners = (controls.accessibilityElements ?? []).compactMap { $0 as? UIAccessibilityElement }
-    XCTAssertEqual(corners.count, 4)
+    XCTAssertEqual(corners.count, 8)
     for corner in corners { XCTAssertEqual(corner.accessibilityFrameInContainerSpace.size, .init(width: 44, height: 44)) }
     for edgeFrame in [CGRect(x: 0, y: 0, width: 240, height: 180), controls.bounds.insetBy(dx: 2, dy: 2)] {
       controls.configure(selectionID: UUID(), frame: edgeFrame); controls.layoutIfNeeded()
-      for corner in NotebookElementCorner.allCases {
+      for corner in NotebookElementResizeHandle.allCases {
         let point = controls.convert(corner.point(in: edgeFrame), to: window)
         XCTAssertTrue(window.hitTest(point, with: nil) === controls, "A screen edge cannot hide a corner under delete")
         XCTAssertTrue(gate.permitsSceneContact(at: point, kind: .pencil))
@@ -239,6 +313,76 @@ import XCTest
     }
     controls.removeFromSuperview()
     XCTAssertTrue(gate.permitsSceneContact(at: corner, kind: .finger))
+  }
+
+  func testSmallFigureCenterKeepsBodyDragAndEveryHandleReachable() throws {
+    let gate = NotebookInputGate()
+    let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let controls = NotebookElementControlsView(gate:gate)
+    controls.frame = controller.view.bounds; controller.view.addSubview(controls)
+    for size in [CGSize(width:40,height:32),.init(width:12,height:12),.init(width:64,height:100)] {
+      let frame = CGRect(origin:.init(x:200,y:300),size:size)
+      controls.configure(selectionID:UUID(),frame:frame); controls.layoutIfNeeded()
+      let center = controls.convert(.init(x:frame.midX,y:frame.midY),to:window)
+      XCTAssertFalse(window.hitTest(center,with:nil) === controls,"The center is not a hidden resize handle")
+      XCTAssertTrue(gate.permitsSceneContact(at:center,kind:.finger))
+      for handle in NotebookElementResizeHandle.visible(in: size) {
+        let point = controls.convert(handle.point(in:frame),to:window)
+        XCTAssertTrue(window.hitTest(point,with:nil) === controls)
+        XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.finger))
+      }
+    }
+  }
+
+  func testCapsuleModesAndEndpointMenusKeepOnePresentationOwner() throws {
+    let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let controls = NotebookElementControlsView(gate:NotebookInputGate())
+    controls.frame = .init(x:0,y:0,width:320,height:900)
+    controller.view.addSubview(controls)
+    let selection = UUID(), frame = CGRect(x:80,y:240,width:160,height:120)
+    func button(_ id: String) throws -> UIButton {
+      func descendants(_ view: UIView) -> [UIView] { view.subviews.flatMap { [$0] + descendants($0) } }
+      return try XCTUnwrap(descendants(controls).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == id })
+    }
+    controls.graphic = .init(shape:.triangle)
+    var selected: [NotebookSelectionSession.GeometryMode] = []
+    controls.changeGeometryMode = { selected.append($0) }
+    let mode = try button("graphic-geometry-mode")
+    let modes: [(NotebookSelectionSession.GeometryMode,NotebookSelectionSession.GeometryMode)] = [(.transform,.vertices),(.vertices,.rounding),(.rounding,.transform)]
+    for (current,next) in modes {
+      controls.configure(selectionID:selection,frame:frame,mode:current); controls.layoutIfNeeded()
+      XCTAssertFalse(mode.isHidden); XCTAssertNotNil(mode.configuration?.image)
+      mode.sendActions(for:.touchUpInside); XCTAssertEqual(selected.last,next)
+    }
+    XCTAssertTrue(try button("graphic-start-menu").isHidden)
+    controls.graphic = .init(shape:.connector,connection:.init(start:.init(point:.zero),end:.init(point:.init(x:160,y:120))))
+    controls.configure(selectionID:UUID(),frame:frame); controls.layoutIfNeeded()
+    XCTAssertTrue(mode.isHidden)
+    XCTAssertFalse((controls.accessibilityElements ?? []).contains { ($0 as? UIButton) === mode })
+    let start = try button("graphic-start-menu"), end = try button("graphic-end-menu")
+    XCTAssertFalse(start.isHidden); XCTAssertFalse(end.isHidden)
+    XCTAssertEqual(start.accessibilityValue,"Нет"); XCTAssertEqual(end.accessibilityValue,"Стрелка")
+    let surfaces = controls.subviews.flatMap(\.subviews).filter { $0.backgroundColor == UIColor(NotebookChrome.surface) }
+    XCTAssertEqual(surfaces.count,1)
+    XCTAssertEqual(surfaces.first?.bounds.height,40)
+    XCTAssertLessThan(try XCTUnwrap(surfaces.first).bounds.width,274)
+    XCTAssertFalse(controls.subviews.contains { $0 is UIVisualEffectView },"No glass presentation around the same object controls")
+    let menu = start.menu
+    for _ in 0..<20 {
+      controls.setEndpointMenu(.start,children:[UIAction(title:"Круг") { _ in }])
+      controls.configure(selectionID:selection,frame:frame)
+      XCTAssertTrue(start.menu === menu,"Model/layout updates cannot replace a displayed UIKit menu")
+    }
+    controls.layoutIfNeeded()
+    for button in (controls.accessibilityElements ?? []).compactMap({ $0 as? UIButton }).filter({ !$0.isHidden }) {
+      let rect = button.convert(button.bounds,to:controls)
+      XCTAssertTrue(controls.bounds.contains(rect)); XCTAssertEqual(rect.width,44); XCTAssertEqual(rect.height,44)
+      XCTAssertLessThanOrEqual(try XCTUnwrap(button.imageView?.image).size.height,23,"Compact glyph, not a scaled-down touch target")
+    }
   }
 
   private func fixture(_ body: (NotebookAppModel, EditableElementReference) async throws -> Void) async throws {

@@ -33,7 +33,26 @@ test("public SDK help covers every method, all 20 operations, native content and
 test("operation discovery is compact and every exact schema reference resolves locally",()=>{
   const bytes=(value:unknown)=>Buffer.byteLength(JSON.stringify(value));
   assert.ok(bytes(sdkReference.operations)<6*1024,"The operation index must not repeat full schemas");
-  assert.ok(bytes(sdkReference.methods.transaction!.input)<24*1024,"Shared target schemas must not be inlined 19 times");
+  // Keep the v2 action input compact as authored geometry fields grow.
+  assert.ok(bytes(sdkReference.methods.transaction!.input)<25*1024,"Atomic action help must remain compact");
+  const targetReferences=new Set<string>();
+  const collectTargets=(value:any):void=>{
+    if(!value||typeof value!=="object")return;
+    if(value.properties?.target) {
+      assert.ok(value.properties.target.$ref,"Targets must be shared rather than expanded inline");
+      targetReferences.add(value.properties.target.$ref);
+    }
+    for(const child of Object.values(value))collectTargets(child);
+  };
+  collectTargets(sdkReference.methods.transaction!.input);
+  const definitions=(sdkReference.methods.transaction!.input as any).$defs;
+  const targetUnions=[...targetReferences].map(ref=>definitions[ref.split("/").at(-1)!]).filter(value=>value.oneOf);
+  assert.equal(targetUnions.length,1,"General operations must reuse one physical target union");
+  for(const ref of targetReferences) {
+    const definition=definitions[ref.split("/").at(-1)!];
+    assert.ok(definition.oneOf || targetUnions[0].oneOf.some((member:any)=>member.$ref===ref),
+      "A narrower board-only target must reuse the same member of that union");
+  }
   for(const {name,input} of Object.values(sdkReference.operationDetails)) {
     assert.ok(bytes(input)<12*1024,`${name} is not a compact individual operation`);
     assert.equal((input as any).properties.kind.const,name);

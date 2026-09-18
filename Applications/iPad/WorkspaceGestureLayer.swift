@@ -249,7 +249,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       _ gestureRecognizer: UIGestureRecognizer,
       shouldReceive touch: UITouch
     ) -> Bool {
-      guard let sceneView else { return false }
+      guard touch.type == .direct, let sceneView else { return false }
       guard inputGate.permitsSceneContact(at: touch.location(in: sceneView.window), kind: .finger),
         sceneReceives(touch, inside: sceneView) else { return false }
       let owner = NotebookSceneFingerRouting.owner(of: touch, gate: inputGate)
@@ -283,46 +283,74 @@ func sceneReceives(_ touch: UITouch, inside anchor: UIView) -> Bool {
   return false
 }
 
-/// The existing window gesture owner observes contact lifetime independently
-/// of which gesture wins. It never delays, cancels, or claims the touch.
+/// Observes finger lifetime independently of which gesture wins. The measured
+/// ink owner alone reports Pencil activity; this observer never adds a second
+/// Pencil-up barrier to the writer or to publication.
 @MainActor
 final class NotebookContactObserver: UIGestureRecognizer {
   private let source = UUID()
-  private var contacts: Set<ObjectIdentifier> = []
+  private enum Activity { case scene, restingHand, independent }
+  private var contacts: [ObjectIdentifier: Activity] = [:]
   private var gate: NotebookInputGate
 
   init(gate: NotebookInputGate) {
     self.gate = gate
     super.init(target: nil, action: nil)
+    allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
     cancelsTouchesInView = false
     delaysTouchesBegan = false
     delaysTouchesEnded = false
+    observePencil()
   }
 
   isolated deinit {
-    gate.endFingerContacts(contacts)
+    gate.unregisterFingerCancellation(source: source)
+    gate.endFingerContacts(Set(contacts.keys))
     gate.endContact(source: source)
   }
 
   func use(_ next: NotebookInputGate) {
     guard gate !== next else { return }
-    if !contacts.isEmpty {
-      gate.transferFingerContacts(contacts, to: next)
-      gate.endContact(source: source); next.beginContact(source: source)
-    }
+    gate.unregisterFingerCancellation(source: source)
+    gate.transferFingerContacts(Set(contacts.keys), to: next)
+    gate.endContact(source: source)
     gate = next
+    observePencil()
+    if gate.hasActivePencil { restSceneContacts() }
+    else { updateActivity() }
+  }
+
+  private func observePencil() {
+    gate.registerFingerCancellation(source: source) { [weak self] in self?.restSceneContacts() }
+  }
+
+  /// Scene fingers overlapping Pencil have already lost their gesture. Keep
+  /// their identity until actual lift, but do not let a resting hand hold the
+  /// writer/publication barrier after Pencil-up. Native controls keep theirs.
+  private func restSceneContacts() {
+    for (id, activity) in contacts where activity == .scene { contacts[id] = .restingHand }
+    updateActivity()
+  }
+
+  private func updateActivity() {
+    if contacts.values.allSatisfy({ $0 == .restingHand }) { gate.endContact(source: source) }
+    else { gate.beginContact(source: source) }
   }
 
   override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
   override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-    for touch in touches {
-      _ = NotebookSceneFingerRouting.owner(of: touch, gate: gate)
+    let fingers = touches.filter { $0.type == .direct }
+    guard !fingers.isEmpty else { return }
+    for touch in fingers {
+      let owner = NotebookSceneFingerRouting.owner(of: touch, gate: gate)
+      contacts[ObjectIdentifier(touch)] = owner == .scene || owner == .sceneObject
+        ? .scene : .independent
       NotebookInteractionDiagnostics.contact(touch, phase: "began")
     }
     gate.notifyAcceptedContact()
-    contacts.formUnion(touches.map(ObjectIdentifier.init))
-    gate.beginContact(source: source)
+    if gate.hasActivePencil { restSceneContacts() }
+    else { updateActivity() }
   }
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
     for touch in touches { NotebookInteractionDiagnostics.contact(touch, phase: "ended") }
@@ -335,12 +363,13 @@ final class NotebookContactObserver: UIGestureRecognizer {
   private func end(_ touches: Set<UITouch>) {
     let ended = Set(touches.map(ObjectIdentifier.init))
     gate.endFingerContacts(ended)
-    contacts.subtract(ended)
+    for id in ended { contacts[id] = nil }
     if contacts.isEmpty { finish(); state = .failed }
+    else { updateActivity() }
   }
   func finish() {
-    NotebookInteractionDiagnostics.abandon(contacts)
-    gate.endFingerContacts(contacts)
+    NotebookInteractionDiagnostics.abandon(Set(contacts.keys))
+    gate.endFingerContacts(Set(contacts.keys))
     contacts.removeAll()
     gate.endContact(source: source)
   }

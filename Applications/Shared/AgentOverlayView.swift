@@ -67,6 +67,7 @@ struct AgentOverlayView: View {
   var body: some View {
     let visible = visibleElements
     let graph = graph
+    let erasures = model.elementErasures(on: .page(pageID))
     let runningPrograms = runtimeIDs(in: visible)
     ZStack(alignment: .topLeading) {
       ForEach(visible) { element in
@@ -76,9 +77,9 @@ struct AgentOverlayView: View {
         )
         let interactiveReference = InteractiveElementReference.page(pageID: pageID, elementID: element.id)
         let layout = element.graphic == nil ? nil : graph.resolve(element.id).layout
-        let frame = layout?.frame ?? element.frame
+        let frame = layout?.frame ?? model.elementPresentationFrame(reference, fallback: element.frame)
         EditableElementContainer(reference: reference, coordinateScale: 1) {
-          if let graphic = element.graphic {
+          if let graphic = graph.nodes[element.id]?.graphic {
             NotebookGraphicElementView(graphic: graphic, reference: reference, layout: layout)
           } else {
           PreparedAgentElementView(
@@ -102,6 +103,7 @@ struct AgentOverlayView: View {
           width: frame.width,
           height: frame.height
         )
+        .erased(by: erasures[element.id] ?? [])
         .offset(x: frame.x, y: frame.y)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent-element-\(element.id)")

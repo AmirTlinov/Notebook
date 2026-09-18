@@ -3,7 +3,7 @@ import NotebookCore
 
 /// Every editable element carries its physical owner; changing the camera
 /// cannot redirect a delayed drag to another board with the same element ID.
-enum EditableElementReference: Equatable, Sendable {
+enum EditableElementReference: Hashable, Sendable {
   case page(pageID: UUID, elementID: String)
   case spatial(boardID: UUID, elementID: String)
 }
@@ -17,6 +17,9 @@ struct NotebookSelectionSession: Equatable, Sendable {
     case context
     case reference(CollaborationReference)
   }
+
+  enum GeometryMode: String, CaseIterable { case transform, vertices, rounding }
+  var geometryMode: GeometryMode = .transform
 
   let id: UUID
   var target: Target?

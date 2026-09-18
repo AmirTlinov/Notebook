@@ -101,17 +101,20 @@ public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
   public let color: SpatialInkColor
   public let samples: [SpatialInkSample]
   public let sequence: UInt64
+  public let elementTargets: [InkElementTarget]?
   public let isActive: Bool
 
   public init(
     id: UUID = UUID(), tool: SpatialInkTool, color: SpatialInkColor = .black,
-    samples: [SpatialInkSample], sequence: UInt64 = 0, isActive: Bool = true
+    samples: [SpatialInkSample], sequence: UInt64 = 0, isActive: Bool = true,
+    elementTargets: [InkElementTarget]? = nil
   ) {
     self.id = id
     self.tool = tool
     self.color = color
     self.samples = samples
     self.sequence = sequence
+    self.elementTargets = elementTargets?.isEmpty == false ? elementTargets : nil
     self.isActive = isActive
     precondition(isValid)
   }
@@ -119,9 +122,12 @@ public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
   public var isValid: Bool {
     sequence <= VersionStamp.maximumCounter && color.isValid && !samples.isEmpty && samples.count <= 1_000_000
       && samples.allSatisfy { $0.isValid && $0.worldPoint == nil }
+      && (elementTargets == nil || (tool == .eraser
+        && elementTargets!.allSatisfy { $0.isValid && $0.worldOrigin == nil }
+        && Set(elementTargets!.map(\.elementID)).count == elementTargets!.count))
   }
 
-  private enum CodingKeys: String, CodingKey { case id, tool, color, samples, sequence, isActive }
+  private enum CodingKeys: String, CodingKey { case id, tool, color, samples, sequence, isActive, elementTargets }
 
   public init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -131,18 +137,25 @@ public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
     samples = try values.decode([SpatialInkSample].self, forKey: .samples)
     sequence = try values.decode(UInt64.self, forKey: .sequence)
     isActive = try values.decode(Bool.self, forKey: .isActive)
+    elementTargets = try values.decodeIfPresent([InkElementTarget].self, forKey: .elementTargets)
     guard isValid else { throw PageInkDrawing.InkError.invalidDrawing }
   }
 
+  public func erasingElements(_ targets: [InkElementTarget]) -> Self {
+    guard tool == .eraser else { return self }
+    return Self(id: id, tool: tool, color: color, samples: samples, sequence: sequence, isActive: isActive,
+      elementTargets: targets.filter { $0.intersects(samples) })
+  }
+
   fileprivate func ordered(_ sequence: UInt64) -> Self {
-    Self(id: id, tool: tool, color: color, samples: samples, sequence: sequence, isActive: isActive)
+    Self(id: id, tool: tool, color: color, samples: samples, sequence: sequence, isActive: isActive, elementTargets: elementTargets)
   }
 
   fileprivate func hasSameMeasurement(as other: Self) -> Bool {
-    tool == other.tool && color == other.color && samples == other.samples
+    tool == other.tool && color == other.color && samples == other.samples && elementTargets == other.elementTargets
   }
 
   fileprivate func deactivated() -> Self {
-    isActive ? Self(id: id, tool: tool, color: color, samples: samples, sequence: sequence, isActive: false) : self
+    isActive ? Self(id: id, tool: tool, color: color, samples: samples, sequence: sequence, isActive: false, elementTargets: elementTargets) : self
   }
 }

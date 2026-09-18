@@ -19,11 +19,11 @@ struct NotebookDictationButton: View {
         }.accessibilityIdentifier("notebook-microphone-mute")
     } label: {
       Image(systemName: dictation.microphoneMuted ? "mic.slash" : "mic")
-        .font(.system(size: 16))
+        .font(NotebookChrome.iconFont)
         .overlay(alignment: .bottom) {
           if dictation.waiting { Circle().fill(Color.accentColor).frame(width: 3, height: 3).offset(y: 7) }
         }
-        .frame(width: 44, height: compact ? 48 : 44).contentShape(Rectangle())
+        .frame(width: 44, height: 44).contentShape(Rectangle())
     } primaryAction: {
       if dictation.microphoneMuted { dictation.setMicrophoneMuted(false) }
       else { Task { await dictation.begin() } }
@@ -126,8 +126,8 @@ struct NotebookVoiceStartButton: View {
       if chat.voice.capturing { showsSettings = true }
       else { Task { await chat.voice.begin() } }
     } label: {
-      Image(systemName: "waveform").font(.system(size: 16))
-        .frame(width: 44, height: compact ? 48 : 44).contentShape(Rectangle())
+      Image(systemName: "waveform").font(NotebookChrome.iconFont)
+        .frame(width: 44, height: 44).contentShape(Rectangle())
     }.accessibilityLabel(chat.voice.capturing ? "Управление голосом" : "Начать голосовой разговор")
       .disabled(chat.dictation.busy)
       .accessibilityHint("Нажмите и говорите. Удерживайте для настройки обращения к GPT.")
@@ -137,7 +137,7 @@ struct NotebookVoiceStartButton: View {
       .popover(isPresented: $showsSettings) {
         NotebookVoiceSettings(voice: chat.voice, task: chat.taskTitle,
           canStart: chat.connected && chat.threadID != nil && !chat.browsesChats && !chat.switchingComputer) { showsSettings = false }
-          .presentationCompactAdaptation(.popover)
+          .presentationCompactAdaptation(.popover).presentationBackground(NotebookChrome.surface)
       }
   }
 }
@@ -205,7 +205,7 @@ struct NotebookVoiceControls: View {
               if let text = voice.state?.assistantText, !text.isEmpty { Text(text) }
               Button("Готово") { showingText = false }
             }.textSelection(.enabled).padding(18)
-          }.frame(width: 310, height: 260).presentationCompactAdaptation(.popover)
+          }.frame(width: 310, height: 260).presentationCompactAdaptation(.popover).presentationBackground(NotebookChrome.surface)
         }
     }
   }

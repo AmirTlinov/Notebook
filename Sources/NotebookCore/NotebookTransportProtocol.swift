@@ -4,9 +4,9 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Includes journal generations in the authenticated hello, bound native
-  // connectors, and reversible ink presentation. Both peers upgrade together.
-  public static let protocolVersion = 16
+  // Polygon kinds and normalized corners must not reach a reader that only
+  // understands ellipses/rectangles/pluses or silently drops their orientation.
+  public static let protocolVersion = 20
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16

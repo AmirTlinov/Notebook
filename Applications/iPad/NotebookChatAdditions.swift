@@ -30,7 +30,7 @@ struct NotebookChatAdditions: View {
           Button("Отправить после ответа", systemImage: "text.badge.plus", action: send).disabled(!canSend)
         }
       }
-    } label: { Image(systemName: "plus").font(.system(size: 19)).frame(width: 44, height: 44).contentShape(Rectangle()) }
+    } label: { Image(systemName: "plus").font(NotebookChrome.iconFont).frame(width: 44, height: 44).contentShape(Rectangle()) }
       .accessibilityLabel("Добавить файлы, плагины, навыки или команду").accessibilityIdentifier("notebook-chat-actions")
     .onChange(of: chat.computerID) { adding = nil }
     .onChange(of: chat.threadID) { adding = nil }
@@ -41,7 +41,7 @@ struct NotebookChatAdditions: View {
           else if let kind = CodexResourceKind(rawValue: selection.rawValue) { NotebookChatResources(chat: chat, kind: kind) { adding = nil } }
         }
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { adding = nil } } }
-      }.frame(width: 340, height: 420).presentationCompactAdaptation(.popover)
+      }.frame(width: 340, height: 420).presentationCompactAdaptation(.popover).presentationBackground(NotebookChrome.surface)
     }
   }
 }
@@ -57,7 +57,7 @@ struct NotebookChatAttachmentChips: View {
               Button { chat.removeAttachment(item.id) } label: {
                 HStack(spacing: 5) { Image(systemName: item.icon); Text(item.name).lineLimit(1); Image(systemName: "xmark").font(.system(size: 9)) }
                   .font(.system(size: 12)).padding(.horizontal, 10).frame(height: 32)
-                  .background(Color(.secondarySystemBackground), in: Capsule())
+                  .background(NotebookChrome.insetSurface, in: Capsule())
               }.accessibilityLabel("Убрать «" + item.name + "»").accessibilityIdentifier("notebook-chat-attachment-" + item.name)
             }
           }.padding(.horizontal, 10).padding(.top, 6)

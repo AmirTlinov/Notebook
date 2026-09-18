@@ -62,10 +62,8 @@ struct NotebookChatPanel: View {
             }
           }
         }
-        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 28))
-        .clipShape(RoundedRectangle(cornerRadius: 28))
-        .overlay { RoundedRectangle(cornerRadius: 28).strokeBorder(Color(.separator).opacity(0.18), lineWidth: 0.5).allowsHitTesting(false) }
-        .shadow(color: .black.opacity(0.08), radius: 22, y: 7)
+        .background(NotebookChrome.surface)
+        .notebookPanel()
       } else {
         NotebookCompanion(chat: chat, size: size, placement: companion, onControlsSize: onCompanionControlsSize,
           move: move, endInteraction: endInteraction)
@@ -136,7 +134,7 @@ struct NotebookChatPanel: View {
   private var header: some View {
     HStack(spacing: 0) {
       Button { showsChatActions = true } label: {
-        Image(systemName: "line.3.horizontal").font(.system(size: 11)).frame(width: 36, height: 44)
+        Image(systemName: "line.3.horizontal").font(NotebookChrome.iconFont).frame(width: 44, height: 44).contentShape(Rectangle())
       }.accessibilityLabel("Действия чата").accessibilityIdentifier("notebook-chat-menu")
         .popover(isPresented: $showsChatActions) {
           VStack(alignment: .leading, spacing: 0) {
@@ -144,7 +142,7 @@ struct NotebookChatPanel: View {
               .frame(minHeight: 44).accessibilityIdentifier("collaboration-history")
             Button("Подключение и устройства", systemImage: "link") { showsChatActions = false; openPairing() }
               .frame(minHeight: 44).accessibilityIdentifier("pairing-settings")
-          }.padding(14).presentationCompactAdaptation(.popover)
+          }.font(.system(size:14)).padding(16).presentationCompactAdaptation(.popover).presentationBackground(NotebookChrome.surface)
         }
       Button {
         chat.browsesChats.toggle()
@@ -188,7 +186,7 @@ struct NotebookChatPanel: View {
       }
         .accessibilityLabel("Свернуть чат").accessibilityIdentifier("notebook-chat-toggle")
     }
-    .font(.system(size: 14, weight: .regular)).foregroundStyle(.secondary)
+    .font(NotebookChrome.iconFont).foregroundStyle(.secondary)
     // The resize rim and each complete 44-point button are disjoint owners.
     .padding(.leading, 22).padding(.trailing, NotebookChatCornerHitShape.rim)
     .padding(.top, NotebookChatCornerHitShape.rim)
@@ -263,7 +261,7 @@ struct NotebookChatPanel: View {
               Text(job.state == .saved ? "Сохранено на iPad · ожидает Codex" : job.state == .uncertain ? "Принятие проверяется · без повторной отправки" : "Передано Mac · ожидается подтверждение")
                 .font(.caption2).foregroundStyle(.secondary)
             }
-            .padding(12).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+            .padding(12).background(NotebookChrome.insetSurface, in: RoundedRectangle(cornerRadius: NotebookChrome.cardRadius))
             .accessibilityIdentifier("notebook-chat-outgoing-" + job.id.uuidString)
           }
         }
@@ -396,6 +394,7 @@ struct NotebookChatTranscript: UIViewRepresentable {
     var openLink: (URL) -> Void = { _ in }
     var saveExplanation: (CodexMessage) -> Void = { _ in }
     func mount(_ container: UIView) {
+      container.backgroundColor = UIColor(NotebookChrome.surface)
       preparation = Task { [weak self, weak container] in
         do {
           let lease = try await SceneRenderResources.shared.acquireWebSurface(priority: .input)
@@ -405,7 +404,7 @@ struct NotebookChatTranscript: UIViewRepresentable {
           configuration.userContentController.add(self, name: "notebookChat")
           let web = WKWebView(frame: container.bounds, configuration: configuration)
           web.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-          web.isOpaque = false; web.backgroundColor = .clear; web.scrollView.backgroundColor = .clear
+          web.isOpaque = true; web.backgroundColor = UIColor(NotebookChrome.surface); web.scrollView.backgroundColor = UIColor(NotebookChrome.surface)
           web.navigationDelegate = self; web.scrollView.delegate = self; self.web = web; container.addSubview(web)
           if let root = Bundle.main.url(forResource: "WebResources", withExtension: nil) {
             web.loadFileURL(root.appendingPathComponent("chat-shell.html"), allowingReadAccessTo: root)

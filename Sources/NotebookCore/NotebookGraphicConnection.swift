@@ -34,17 +34,20 @@ public struct NotebookGraphicConnection: Codable, Equatable, Sendable {
   public var end: Endpoint
   /// Signed sagitta of the circular arc. Zero is an exactly straight line.
   public var bend: Double
+  /// Position of the held curve point along the endpoint axis; nil is the midpoint.
+  public var bendPosition: Double?
   public var startArrowhead: Arrowhead
   public var endArrowhead: Arrowhead
   public var labelPosition: Double
   public init(start: Endpoint, end: Endpoint, bend: Double = 0,
-    startArrowhead: Arrowhead = .none, endArrowhead: Arrowhead = .arrow, labelPosition: Double = 0.5) {
-    self.start = start; self.end = end; self.bend = bend
+    startArrowhead: Arrowhead = .none, endArrowhead: Arrowhead = .arrow, labelPosition: Double = 0.5, bendPosition: Double? = nil) {
+    self.start = start; self.end = end; self.bend = bend; self.bendPosition = bendPosition
     self.startArrowhead = startArrowhead; self.endArrowhead = endArrowhead; self.labelPosition = labelPosition
   }
-  static let causalFields = ["start", "end", "bend", "startArrowhead", "endArrowhead", "labelPosition"]
+  static let causalFields = ["start", "end", "bend", "startArrowhead", "endArrowhead", "labelPosition", "bendPosition"]
   var isValid: Bool {
     start.isValid && end.isValid && bend.isFinite && abs(bend) <= 1_000_000
+      && (bendPosition == nil || (bendPosition!.isFinite && (0...1).contains(bendPosition!)))
       && labelPosition.isFinite && (0...1).contains(labelPosition)
   }
   public var bindings: [Binding] { [start.binding, end.binding].compactMap { $0 } }
@@ -80,17 +83,11 @@ public struct NotebookGraphicLayout: Equatable, Sendable {
   public let start: SpatialPoint
   public let end: SpatialPoint
   public let bend: SpatialPoint
-
-  public func transformed(scale: Double, offset: SpatialPoint) -> Self {
-    func p(_ point: SpatialPoint) -> SpatialPoint { .init(x:point.x*scale,y:point.y*scale) }
-    return .init(frame:.init(x:frame.x*scale+offset.x,y:frame.y*scale+offset.y,width:frame.width*scale,height:frame.height*scale),
-      curves:curves.map { .init(start:p($0.start),control1:p($0.control1),control2:p($0.control2),end:p($0.end)) },
-      heads:heads.map { .init(points:$0.points.map(p),filled:$0.filled,closed:$0.closed) },
-      label:p(label),start:p(start),end:p(end),bend:p(bend))
-  }
+  public let axisStart: SpatialPoint
+  public let axisEnd: SpatialPoint
 
   public func hitTest(_ point: SpatialPoint, graphic: NotebookGraphic, tolerance: Double) -> Bool {
-    if graphic.shape == .ellipse {
+    if graphic.shape != .connector {
       return NotebookGraphicGeometry.hitTest(graphic, width: frame.width, height: frame.height,
         x: point.x, y: point.y, tolerance: tolerance)
     }
@@ -161,28 +158,49 @@ public struct NotebookGraphicGraph: Sendable {
   public init(_ nodes: [Node]) {
     self.nodes = Dictionary(nodes.map { (collaborationIdentity($0.id), $0) }, uniquingKeysWith: { first, _ in first })
   }
-  /// Contours do not magnetize their empty interior. Prefer the nearest small
-  /// node; an ambiguous overlapping pair remains a free endpoint.
+  /// The whole closed node is a binding target; empty bounding-box corners are
+  /// not. Prefer the innermost target and retain it at its edge during a drag.
   public func binding(at point: SpatialPoint, origin: WorldPoint = .zero, surface: SurfaceID,
-    excluding id: String? = nil, tolerance: Double) -> NotebookGraphicConnection.Binding? {
-    var candidates: [(Node, Double)] = []
+    excluding id: String? = nil, tolerance: Double, retaining retainedID: String? = nil) -> NotebookGraphicConnection.Binding? {
+    var candidates: [(node: Node, distance: Double, inside: Bool, point: SpatialPoint)] = []
     for node in nodes.values where node.shown && node.graphic.shape != .connector && node.surface == surface && node.id != id {
       let delta = origin.delta(to:node.origin), frame = node.frame
-      let x = point.x-delta.x-frame.x-frame.width/2, y = point.y-delta.y-frame.y-frame.height/2
-      let radius = hypot(x/(frame.width/2),y/(frame.height/2))
-      let edge = abs(radius-1)*min(frame.width,frame.height)/2, center = hypot(x,y)
-      guard edge <= tolerance || center <= tolerance else { continue }
-      candidates.append((node,min(edge,center)))
+      let p = SpatialPoint(x:point.x-delta.x-frame.x,y:point.y-delta.y-frame.y)
+      let edge = NotebookGraphicGeometry.outlineDistance(node.graphic,width:frame.width,height:frame.height,x:p.x,y:p.y)
+      let inside = NotebookGraphicGeometry.containsInterior(node.graphic,width:frame.width,height:frame.height,x:p.x,y:p.y)
+      guard inside || edge <= tolerance*(node.id == retainedID ? 1.5 : 1) else { continue }
+      candidates.append((node,edge,inside,p))
     }
-    if let nearest = candidates.map(\.1).min() { candidates.removeAll { $0.1 > nearest+tolerance/4 } }
     candidates.sort {
-      let a = $0.0.frame.width*$0.0.frame.height, b = $1.0.frame.width*$1.0.frame.height
-      return a == b ? $0.0.id < $1.0.id : a < b
+      if $0.inside != $1.inside { return $0.inside }
+      if $0.inside {
+        let a = $0.node.frame.width*$0.node.frame.height, b = $1.node.frame.width*$1.node.frame.height
+        if a != b { return a < b }
+      }
+      if ($0.node.id == retainedID) != ($1.node.id == retainedID) { return $0.node.id == retainedID }
+      if $0.distance != $1.distance { return $0.distance < $1.distance }
+      return $0.node.id < $1.node.id
     }
-    guard let first = candidates.first else { return nil }
-    if candidates.count > 1, abs(candidates[1].1-first.1) < tolerance/4,
-      candidates[1].0.frame.width*candidates[1].0.frame.height < first.0.frame.width*first.0.frame.height*1.25 { return nil }
-    return .init(elementID:first.0.id,normalizedAnchor:.init(x:0.5,y:0.5),isExact:false,isPrecise:false)
+    guard let chosen = candidates.first else { return nil }
+    let node = chosen.node, frame = node.frame
+    // Inside a node, aim through the picked point and terminate on its contour.
+    // Outside, target the contour itself so a thin edge never becomes a center jump.
+    var anchor = chosen.point
+    if !chosen.inside {
+      if let vertices = NotebookGraphicGeometry.outlinePolygon(node.graphic, width: frame.width, height: frame.height) {
+        anchor = zip(vertices,vertices.dropFirst()+vertices.prefix(1)).map { a,b -> SpatialPoint in
+          let x = a.x*frame.width, y = a.y*frame.height, dx = (b.x-a.x)*frame.width, dy = (b.y-a.y)*frame.height
+          let t = min(1,max(0,((chosen.point.x-x)*dx+(chosen.point.y-y)*dy)/max(0.000001,dx*dx+dy*dy)))
+          return .init(x:x+t*dx,y:y+t*dy)
+        }.min { hypot($0.x-chosen.point.x,$0.y-chosen.point.y) < hypot($1.x-chosen.point.x,$1.y-chosen.point.y) }!
+      } else if node.graphic.shape == .ellipse {
+        let x = (anchor.x-frame.width/2)/(frame.width/2), y = (anchor.y-frame.height/2)/(frame.height/2)
+        let radius = max(0.000001,hypot(x,y))
+        anchor = .init(x:frame.width/2*(1+x/radius),y:frame.height/2*(1+y/radius))
+      }
+    }
+    return .init(elementID:node.id,normalizedAnchor:.init(x:min(1,max(0,anchor.x/frame.width)),y:min(1,max(0,anchor.y/frame.height))),
+      isExact:!chosen.inside,isPrecise:true)
   }
   public func resolve(_ id: String) -> NotebookGraphicResolution {
     guard let node = nodes[collaborationIdentity(id)] else { return .pending([id]) }
@@ -190,7 +208,7 @@ public struct NotebookGraphicGraph: Sendable {
     let frame = node.frame, graphic = node.graphic
     guard let connection = graphic.connection else {
       return .geometry(.init(frame: frame, curves: [], heads: [], label: .init(x: frame.width/2, y: frame.height/2),
-        start: .zero, end: .zero, bend: .zero))
+        start: .zero, end: .zero, bend: .zero, axisStart: .zero, axisEnd: .zero))
     }
     let missing = Set(connection.bindings.filter { nodes[collaborationIdentity($0.elementID)] == nil }.map(\.elementID))
     guard missing.isEmpty else { return .pending(missing) }
@@ -211,7 +229,8 @@ public struct NotebookGraphicGraph: Sendable {
     let distance = hypot(b.x-a.x, b.y-a.y)
     guard distance > 0.001 else { return .hidden }
     let normal = SpatialPoint(x: -(b.y-a.y)/distance, y: (b.x-a.x)/distance)
-    let middle = SpatialPoint(x: (a.x+b.x)/2 + normal.x*connection.bend, y: (a.y+b.y)/2 + normal.y*connection.bend)
+    let position = connection.bendPosition ?? 0.5
+    let middle = SpatialPoint(x: a.x+(b.x-a.x)*position + normal.x*connection.bend, y: a.y+(b.y-a.y)*position + normal.y*connection.bend)
     func clipped(_ endpoint: NotebookGraphicConnection.Endpoint, anchor: SpatialPoint, toward: SpatialPoint) -> SpatialPoint {
       guard let binding = endpoint.binding, !binding.isExact,
         let target = nodes[collaborationIdentity(binding.elementID)] else { return anchor }
@@ -220,6 +239,19 @@ public struct NotebookGraphicGraph: Sendable {
       let rx = target.frame.width/2, ry = target.frame.height/2
       let px = (anchor.x-center.x)/rx, py = (anchor.y-center.y)/ry
       let dx = (toward.x-anchor.x)/rx, dy = (toward.y-anchor.y)/ry
+      if target.graphic.shape == .plus { return anchor }
+      if let vertices = NotebookGraphicGeometry.outlinePolygon(target.graphic, width: target.frame.width, height: target.frame.height) {
+        let intersections = zip(vertices,vertices.dropFirst()+vertices.prefix(1)).compactMap { a,b -> Double? in
+          let ax = a.x*2-1, ay = a.y*2-1, ex = (b.x-a.x)*2, ey = (b.y-a.y)*2
+          let cross = dx*ey-dy*ex
+          guard abs(cross) > 0.000001 else { return nil }
+          let t = ((ax-px)*ey-(ay-py)*ex)/cross
+          let u = ((ax-px)*dy-(ay-py)*dx)/cross
+          return t >= 0 && (-0.000001...1.000001).contains(u) ? t : nil
+        }
+        guard let t = intersections.min() else { return anchor }
+        return .init(x:anchor.x+(toward.x-anchor.x)*t,y:anchor.y+(toward.y-anchor.y)*t)
+      }
       let aa = dx*dx+dy*dy, bb = 2*(px*dx+py*dy), cc = px*px+py*py-1
       let discriminant = bb*bb-4*aa*cc
       guard aa > 0, discriminant >= 0 else { return anchor }
@@ -228,11 +260,11 @@ public struct NotebookGraphicGraph: Sendable {
     }
     let start = clipped(connection.start, anchor: a, toward: middle)
     let end = clipped(connection.end, anchor: b, toward: middle)
-    return .geometry(Self.connectionLayout(graphic: graphic, start: start, end: end, middle: middle))
+    return .geometry(Self.connectionLayout(graphic: graphic, start: start, end: end, middle: middle, axisStart: a, axisEnd: b))
   }
 
   private static func connectionLayout(graphic: NotebookGraphic, start: SpatialPoint, end: SpatialPoint,
-    middle: SpatialPoint) -> NotebookGraphicLayout {
+    middle: SpatialPoint, axisStart: SpatialPoint, axisEnd: SpatialPoint) -> NotebookGraphicLayout {
     let connection = graphic.connection!
     let dx = end.x-start.x, dy = end.y-start.y
     let cross = dx*(middle.y-start.y)-dy*(middle.x-start.x)
@@ -294,7 +326,7 @@ public struct NotebookGraphicGraph: Sendable {
     return .init(frame: .init(x: x,y: y,width: max(1,right-x),height: max(1,bottom-y)),
       curves: curves.map { $0.offset(x: -x,y: -y) },
       heads: heads.map { .init(points: $0.points.map(local), filled: $0.filled, closed: $0.closed) },
-      label: local(label), start: local(start), end: local(end), bend: local(middle))
+      label: local(label), start: local(start), end: local(end), bend: local(middle), axisStart: local(axisStart), axisEnd: local(axisEnd))
   }
 }
 

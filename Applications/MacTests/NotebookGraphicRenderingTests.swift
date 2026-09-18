@@ -4,6 +4,87 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookGraphicRenderingTests: XCTestCase {
+  func testRoundedPolygonPaintUsesTheSharedContour() async throws {
+    let graphic = NotebookGraphic(shape:.rectangle,style:.init(strokeWidth:3,fill:.black),cornerRadius:30)
+    let page = PageDocument(size:.init(width:200,height:180),actor:UUID(),elements:[
+      .init(id:"round",kind:.graphic,frame:.init(x:30,y:30,width:120,height:100),source:"",html:"",graphic:graphic)])
+    let render = try await PageCompositionRenderer.render(page,scale:1) { _ in
+      XCTFail("A native contour never starts WebKit"); throw CocoaError(.featureUnsupported)
+    }
+    let image = try XCTUnwrap(NSBitmapImageRep(data:render.png))
+    XCTAssertGreaterThan(try XCTUnwrap(image.colorAt(x:32,y:32)?.usingColorSpace(.deviceRGB)).redComponent,0.8)
+    XCTAssertLessThan(try XCTUnwrap(image.colorAt(x:47,y:47)?.usingColorSpace(.deviceRGB)).redComponent,0.2)
+    let proof = XCTAttachment(data:render.png,uniformTypeIdentifier:"public.png"); proof.name = "rounded-polygon-mac"; proof.lifetime = .keepAlways; add(proof)
+  }
+
+  func testPartialEraserUnionsOverlapsAndMovesWithEveryNativeFigure() async throws {
+    let actor = UUID(), frame = PageRect(x: 40, y: 40, width: 160, height: 160)
+    for shape in [NotebookGraphic.Shape.ellipse, .rectangle, .triangle, .diamond, .plus] {
+      let left = shape == .triangle ? 81 : 43, right = shape == .triangle ? 158 : 196
+      let graphic = NotebookGraphic(shape: shape, style: .init(strokeWidth: 6))
+      let element = AgentElement(id: "shape", kind: .graphic, frame: frame, source: "", html: "", graphic: graphic)
+      let target = InkElementTarget(elementID: element.id, frame: frame)
+      let samples = [110.0, 130.0].map { y in
+        SpatialInkSample(point: .init(x: Double(left), y: y), timeOffset: y, width: 24,
+          opacity: 1, force: 1, azimuth: 0, altitude: 1)
+      }
+      let eraser = PageInkAction(tool: .eraser, samples: samples).erasingElements([target])
+      let second = PageInkAction(tool: .eraser, samples: samples).erasingElements([target])
+      let drawing = try PageInkDrawing().appending(eraser).appending(second)
+      let page = PageDocument(size: .init(width: 350, height: 250), actor: actor,
+        drawingData: try drawing.dataRepresentation(), elements: [element])
+      func image(_ page: PageDocument) async throws -> NSBitmapImageRep {
+        let result = try await PageCompositionRenderer.render(page, scale: 1) { _ in
+          XCTFail("Native erasure must not start WebKit"); throw CocoaError(.featureUnsupported)
+        }
+        let proof = XCTAttachment(data: result.png, uniformTypeIdentifier: "public.png")
+        proof.name = "partially-erased-\(shape.rawValue)"; proof.lifetime = .keepAlways; add(proof)
+        return try XCTUnwrap(NSBitmapImageRep(data: result.png))
+      }
+      func dark(_ image: NSBitmapImageRep, _ x: Int, _ y: Int) -> Bool {
+        guard let color = image.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { return false }
+        return max(color.redComponent, color.greenComponent, color.blueComponent) < 0.3
+      }
+      let erased = try await image(page)
+      XCTAssertFalse(dark(erased, left, 120), "The traversed contour is cut, including overlapping erasers")
+      XCTAssertTrue(dark(erased, right, 120), "The opposite side survives as the same native figure")
+      var moved = page
+      moved.replaceElements([.init(id: element.id, kind: .graphic,
+        frame: .init(x: 140, y: 40, width: 160, height: 160), source: "", html: "", graphic: graphic)], actor: actor)
+      let shifted = try await image(moved)
+      XCTAssertFalse(dark(shifted, left+100, 120), "A cutout travels with the object, not the old screen position")
+      XCTAssertTrue(dark(shifted, right+100, 120))
+      let restored = PageDocument(size: page.size, actor: actor,
+        drawingData: try drawing.removing([eraser.id, second.id]).dataRepresentation(), elements: [element])
+      let uncut = try await image(restored)
+      XCTAssertTrue(dark(uncut, left, 120), "Undo restores original native geometry, not a traced bitmap")
+    }
+  }
+
+
+  func testRectangleAndPlusPaintTheirOwnContoursRatherThanEllipses() async throws {
+    let elements = [NotebookGraphic.Shape.rectangle,.plus].enumerated().map { index, shape in
+      AgentElement(id:shape.rawValue,kind:.graphic,frame:.init(x:20+Double(index)*140,y:20,width:100,height:100),
+        source:"",html:"",graphic:.init(shape:shape,style:.init(strokeWidth:4)))
+    }
+    let page = PageDocument(size:.init(width:280,height:150),actor:UUID(),elements:elements)
+    let result = try await PageCompositionRenderer.render(page,scale:1) { _ in
+      XCTFail("Native contours do not request WebKit"); throw CocoaError(.featureUnsupported)
+    }
+    let image = try XCTUnwrap(NSBitmapImageRep(data:result.png))
+    func dark(_ x: Int, _ y: Int) -> Bool {
+      guard let color = image.colorAt(x:x,y:y)?.usingColorSpace(.deviceRGB) else { return false }
+      return max(color.redComponent,color.greenComponent,color.blueComponent) < 0.3
+    }
+    XCTAssertTrue(dark(22,22),"Rectangle corner, not ellipse")
+    XCTAssertFalse(dark(70,70),"Rectangle interior remains empty")
+    XCTAssertTrue(dark(210,70),"Plus intersection is painted")
+    XCTAssertTrue(dark(210,24)); XCTAssertTrue(dark(164,70))
+    XCTAssertFalse(dark(164,24),"Plus has no box or ellipse around it")
+    let proof = XCTAttachment(data:result.png,uniformTypeIdentifier:"public.png")
+    proof.name = "native-rectangle-plus"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testBoundArcsAndNineArrowheadsRenderAsNativeGeometryWithoutWebKit() async throws {
     let actor = UUID()
     var elements: [AgentElement] = []

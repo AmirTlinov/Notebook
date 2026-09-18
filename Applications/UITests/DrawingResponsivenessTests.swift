@@ -5,6 +5,244 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testHollowPolygonsSelectResizeAndBindOnPage() { polygonInteraction(onPage:true) }
+  func testHollowPolygonsSelectResizeAndBindOnBoard() { polygonInteraction(onPage:false) }
+
+  private func polygonInteraction(onPage: Bool) {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture",
+      "--notebook-native-connector","--notebook-native-polygons"] + (onPage ? ["--notebook-native-graphic-page"] : [])
+    launchPortraitFixture(app)
+    let triangle = app.images["Треугольник"], diamond = app.images["Ромб"], link = app.images["1:2"]
+    XCTAssertTrue(triangle.waitForExistence(timeout:10)); XCTAssertTrue(diamond.waitForExistence(timeout:10))
+    let neighbour = app.webViews.containing(.button,identifier:"Graphic scene counter").firstMatch
+    let neighbourFrame = neighbour.frame
+    func drag(_ point: XCUICoordinate, dx: CGFloat, dy: CGFloat) {
+      point.press(forDuration:0.01,thenDragTo:point.withOffset(.init(dx:dx,dy:dy)),withVelocity:.slow,thenHoldForDuration:0)
+    }
+    triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.6)).tap()
+    let corner = app.descendants(matching:.any).matching(identifier:"resize-agent-element-bottomTrailing").firstMatch
+    XCTAssertTrue(corner.waitForExistence(timeout:5),"A hollow polygon is selected by its interior, not a narrow contour")
+    XCTAssertFalse(app.descendants(matching:.any).matching(identifier:"resize-agent-element-trailingCenter").firstMatch.exists,
+      "Small objects do not hide one-axis grips under the visible corners")
+    let initial = triangle.frame
+    drag(triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.6)),dx:36,dy:24)
+    XCTAssertEqual(triangle.frame.minX-initial.minX,36,accuracy:5)
+    XCTAssertEqual(triangle.frame.minY-initial.minY,24,accuracy:5)
+    let small = triangle.frame
+    drag(corner.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)),dx:-20,dy:-16)
+    XCTAssertEqual(triangle.frame.width,small.width-20,accuracy:4)
+    XCTAssertEqual(triangle.frame.height,small.height-16,accuracy:4)
+    drag(corner.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)),dx:128,dy:128)
+    let right = app.descendants(matching:.any).matching(identifier:"resize-agent-element-trailingCenter").firstMatch
+    XCTAssertTrue(right.waitForExistence(timeout:5))
+    let moved = triangle.frame
+    drag(right.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)),dx:48,dy:25)
+    XCTAssertEqual(triangle.frame.width-moved.width,48,accuracy:5)
+    XCTAssertEqual(triangle.frame.height,moved.height,accuracy:2,"A side handle changes only its own dimension")
+    let bottom = app.descendants(matching:.any).matching(identifier:"resize-agent-element-bottomCenter").firstMatch
+    let wide = triangle.frame
+    drag(bottom.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)),dx:23,dy:32)
+    XCTAssertEqual(triangle.frame.height-wide.height,32,accuracy:5)
+    XCTAssertEqual(triangle.frame.width,wide.width,accuracy:2)
+    let triangleFinal = triangle.frame
+    let beforeLink = XCTAttachment(screenshot:app.screenshot()); beforeLink.name = "before-link-selection"; beforeLink.lifetime = .keepAlways; add(beforeLink)
+    link.tap()
+    let afterLink = XCTAttachment(screenshot:app.screenshot()); afterLink.name = "after-link-selection"; afterLink.lifetime = .keepAlways; add(afterLink)
+    let terminal = app.descendants(matching:.any).matching(identifier:"graphic-end-handle").firstMatch
+    XCTAssertTrue(terminal.waitForExistence(timeout:5))
+    let handle = terminal.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+    handle.press(forDuration:0.01,thenDragTo:diamond.coordinate(withNormalizedOffset:.init(dx:0.58,dy:0.4)),withVelocity:.slow,thenHoldForDuration:0)
+    let bound = link.frame, originalDiamond = diamond.frame
+    drag(diamond.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.55)),dx:60,dy:35)
+    XCTAssertEqual(diamond.frame.minX-originalDiamond.minX,60,accuracy:5)
+    XCTAssertNotEqual(link.frame,bound,"Binding accepts the actual polygon interior and follows its node")
+    XCTAssertEqual(neighbour.frame,neighbourFrame,"Shape manipulation does not move the camera or the neighbour")
+    let finalLink = link.frame, finalDiamond = diamond.frame
+    let proof = XCTAttachment(screenshot:XCUIScreen.main.screenshot())
+    proof.name = "polygon-controls-\(onPage ? "page" : "board")"; proof.lifetime = .keepAlways; add(proof)
+    app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+    XCTAssertTrue(triangle.waitForExistence(timeout:10)); XCTAssertTrue(link.waitForExistence(timeout:10))
+    XCTAssertEqual(triangle.frame.minX,triangleFinal.minX,accuracy:3)
+    XCTAssertEqual(triangle.frame.size.width,triangleFinal.size.width,accuracy:3)
+    XCTAssertEqual(triangle.frame.size.height,triangleFinal.size.height,accuracy:3)
+    XCTAssertEqual(diamond.frame.minX,finalDiamond.minX,accuracy:3)
+    XCTAssertEqual(link.frame.midX,finalLink.midX,accuracy:3)
+    app.terminate()
+  }
+
+  func testVertexRoundingAndFreeBendModesOnPage() { geometryEditing(onPage:true) }
+  func testVertexRoundingAndFreeBendModesOnBoard() { geometryEditing(onPage:false) }
+
+  func testLineEndpointControlsOnPage() { endpointControls(onPage:true) }
+  func testLineEndpointControlsOnBoard() { endpointControls(onPage:false) }
+
+  private func endpointControls(onPage: Bool) {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture",
+      "--notebook-native-connector","--notebook-native-geometry-edit"] + (onPage ? ["--notebook-native-graphic-page"] : [])
+    launchPortraitFixture(app)
+    let line = app.images["Связь"]
+    XCTAssertTrue(line.waitForExistence(timeout:10)); line.tap()
+    let start = app.buttons["graphic-start-menu"], end = app.buttons["graphic-end-menu"], more = app.buttons["element-actions-menu"]
+    XCTAssertTrue(start.waitForExistence(timeout:5)); XCTAssertTrue(end.isHittable)
+    XCTAssertFalse(app.buttons["graphic-geometry-mode"].exists)
+    XCTAssertEqual(start.frame.midY,end.frame.midY,accuracy:1)
+    XCTAssertLessThan(more.frame.maxX-app.buttons["graphic-style-menu"].frame.minX,266)
+    let neighbour = app.webViews.containing(.button,identifier:"Graphic scene counter").firstMatch, neighbourFrame = neighbour.frame
+    let plain = app.screenshot(), region = line.frame.insetBy(dx:-12,dy:-12)
+    start.tap()
+    XCTAssertTrue(app.buttons["Круг"].waitForExistence(timeout:3))
+    let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "endpoint-direct-menu-\(onPage ? "page" : "board")"; proof.lifetime = .keepAlways; add(proof)
+    app.buttons["Круг"].tap(); XCTAssertTrue(app.buttons["Круг"].waitForNonExistence(timeout:3))
+    XCTAssertEqual(start.value as? String,"Круг"); XCTAssertEqual(end.value as? String,"Нет")
+    end.tap(); XCTAssertTrue(app.buttons["Треугольник"].waitForExistence(timeout:3)); app.buttons["Треугольник"].tap()
+    XCTAssertTrue(app.buttons["Треугольник"].waitForNonExistence(timeout:3))
+    XCTAssertEqual(end.value as? String,"Треугольник"); XCTAssertEqual(start.value as? String,"Круг")
+    XCTAssertGreaterThan(changedPixelShare(from:plain,to:app.screenshot(),normalizedRect:.init(x:region.minX/app.frame.width,
+      y:region.minY/app.frame.height,width:region.width/app.frame.width,height:region.height/app.frame.height)),0.0003)
+    let frame = line.frame
+    // Opening again uses fresh values; the dismissing contact never selects paper.
+    start.tap(); XCTAssertTrue(app.buttons["Круг"].waitForExistence(timeout:3))
+    app.coordinate(withNormalizedOffset:.init(dx:0.75,dy:0.18)).tap()
+    XCTAssertTrue(app.buttons["Круг"].waitForNonExistence(timeout:3)); XCTAssertTrue(end.isHittable)
+    XCTAssertEqual(line.frame,frame); XCTAssertEqual(neighbour.frame,neighbourFrame)
+    more.tap(); XCTAssertTrue(app.buttons["На задний план"].waitForExistence(timeout:3)); app.buttons["На задний план"].tap()
+    XCTAssertTrue(app.buttons["На задний план"].waitForNonExistence(timeout:3)); XCTAssertTrue(start.isHittable)
+    let final = XCTAttachment(screenshot:app.screenshot()); final.name = "endpoint-capsule-\(onPage ? "page" : "board")"; final.lifetime = .keepAlways; add(final)
+    app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+    XCTAssertTrue(line.waitForExistence(timeout:10)); line.tap()
+    XCTAssertTrue(start.waitForExistence(timeout:3)); XCTAssertEqual(start.value as? String,"Круг"); XCTAssertEqual(end.value as? String,"Треугольник")
+    end.tap(); XCTAssertTrue(app.buttons["Стрелка"].waitForExistence(timeout:3)); app.buttons["Стрелка"].tap()
+    XCTAssertTrue(app.buttons["Стрелка"].waitForNonExistence(timeout:3)); XCTAssertEqual(end.value as? String,"Стрелка")
+    XCTAssertEqual(start.value as? String,"Круг")
+    app.terminate()
+  }
+
+  private func geometryEditing(onPage: Bool) {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture",
+      "--notebook-native-connector","--notebook-native-geometry-edit"] + (onPage ? ["--notebook-native-graphic-page"] : [])
+    launchPortraitFixture(app)
+    let triangle = app.images["Треугольник"], box = app.images["Прямоугольник"], line = app.images["Связь"]
+    XCTAssertTrue(triangle.waitForExistence(timeout:10)); XCTAssertTrue(box.waitForExistence(timeout:10)); XCTAssertTrue(line.waitForExistence(timeout:10))
+    let neighbour = app.webViews.containing(.button,identifier:"Graphic scene counter").firstMatch, neighbourFrame = neighbour.frame
+    func handle(_ id: String) -> XCUIElement { app.descendants(matching:.any).matching(identifier:id).firstMatch }
+    func mode(_ title: String) {
+      let mode = app.buttons["graphic-geometry-mode"]
+      XCTAssertTrue(mode.waitForExistence(timeout:3)); mode.tap()
+      XCTAssertEqual(mode.value as? String,title,"One capsule button cycles the geometry mode directly")
+    }
+    func drag(_ element: XCUIElement, _ delta: CGVector) {
+      let start = element.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+      start.press(forDuration:0.01,thenDragTo:start.withOffset(delta),withVelocity:.slow,thenHoldForDuration:0)
+    }
+    triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.6)).tap()
+    mode("Изменить вершины")
+    let vertex = handle("graphic-vertex-0"), other = handle("graphic-vertex-1")
+    XCTAssertTrue(vertex.waitForExistence(timeout:5)); XCTAssertFalse(handle("resize-agent-element-topLeading").exists)
+    let first = vertex.frame, second = other.frame
+    drag(vertex,.init(dx:42,dy:-28))
+    XCTAssertEqual(vertex.frame.midX-first.midX,42,accuracy:4); XCTAssertEqual(vertex.frame.midY-first.midY,-28,accuracy:4)
+    XCTAssertEqual(other.frame.midX,second.midX,accuracy:2); XCTAssertEqual(other.frame.midY,second.midY,accuracy:2)
+    let changedVertex = vertex.frame
+    mode("Скруглить углы")
+    let radius = handle("graphic-corner-radius-handle")
+    XCTAssertTrue(radius.waitForExistence(timeout:3)); XCTAssertFalse(vertex.exists)
+    let pointed = app.screenshot(), triangleFrame = triangle.frame, radiusBefore = radius.frame
+    drag(radius,.init(dx:0,dy:40))
+    XCTAssertGreaterThan(radius.frame.midY,radiusBefore.midY+20)
+    XCTAssertEqual(triangle.frame,triangleFrame)
+    let rounded = app.screenshot()
+    let proof = XCTAttachment(screenshot:rounded); proof.name = "rounded-vertex-\(onPage ? "page" : "board")"; proof.lifetime = .keepAlways; add(proof)
+    XCTAssertGreaterThan(changedPixelShare(from:pointed,to:rounded,normalizedRect:.init(x:triangleFrame.minX/app.frame.width,y:triangleFrame.minY/app.frame.height,
+      width:triangleFrame.width/app.frame.width,height:triangleFrame.height/app.frame.height)),0.001,"The actual contour changes, not just its handle")
+    mode("Размер и положение")
+    XCTAssertTrue(handle("resize-agent-element-bottomTrailing").waitForExistence(timeout:3))
+    box.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).tap(); mode("Изменить вершины")
+    XCTAssertTrue(vertex.waitForExistence(timeout:3))
+    let boxFirst = vertex.frame, boxOther = other.frame
+    drag(vertex,.init(dx:32,dy:22))
+    XCTAssertEqual(vertex.frame.midX-boxFirst.midX,32,accuracy:4); XCTAssertEqual(vertex.frame.midY-boxFirst.midY,22,accuracy:4)
+    XCTAssertEqual(other.frame.midX,boxOther.midX,accuracy:2); XCTAssertEqual(other.frame.midY,boxOther.midY,accuracy:2)
+    mode("Скруглить углы"); XCTAssertTrue(radius.waitForExistence(timeout:3)); drag(radius,.init(dx:24,dy:24))
+    line.tap()
+    let bend = handle("graphic-bend-handle"), start = handle("graphic-start-handle"), end = handle("graphic-end-handle")
+    XCTAssertTrue(bend.waitForExistence(timeout:3))
+    let bendBefore = bend.frame, startBefore = start.frame, endBefore = end.frame
+    drag(bend,.init(dx:35,dy:40))
+    XCTAssertEqual(bend.frame.midX-bendBefore.midX,35,accuracy:4); XCTAssertEqual(bend.frame.midY-bendBefore.midY,40,accuracy:4)
+    XCTAssertEqual(start.frame.midX,startBefore.midX,accuracy:2); XCTAssertEqual(start.frame.midY,startBefore.midY,accuracy:2)
+    XCTAssertEqual(end.frame.midX,endBefore.midX,accuracy:2); XCTAssertEqual(end.frame.midY,endBefore.midY,accuracy:2)
+    XCTAssertEqual(neighbour.frame,neighbourFrame)
+    let bendAfter = bend.frame, lineFrame = line.frame
+    let final = XCTAttachment(screenshot:app.screenshot()); final.name = "geometry-modes-\(onPage ? "page" : "board")"; final.lifetime = .keepAlways; add(final)
+    app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+    XCTAssertTrue(line.waitForExistence(timeout:10)); XCTAssertEqual(line.frame.midX,lineFrame.midX,accuracy:3); XCTAssertEqual(line.frame.midY,lineFrame.midY,accuracy:3)
+    // A curved line's empty bounding-box centre is not its painted contour.
+    app.coordinate(withNormalizedOffset:.zero).withOffset(.init(dx:bendAfter.midX,dy:bendAfter.midY)).tap()
+    XCTAssertTrue(bend.waitForExistence(timeout:3))
+    XCTAssertEqual(bend.frame.midX,bendAfter.midX,accuracy:3); XCTAssertEqual(bend.frame.midY,bendAfter.midY,accuracy:3)
+    triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.65)).tap(); mode("Изменить вершины")
+    XCTAssertTrue(vertex.waitForExistence(timeout:3)); XCTAssertEqual(vertex.frame.midX,changedVertex.midX,accuracy:3); XCTAssertEqual(vertex.frame.midY,changedVertex.midY,accuracy:3)
+    app.terminate()
+  }
+
+  func testSelectionPaletteAndContextMenuStayAnchoredAndKeepThePaper() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture",
+      "--notebook-native-connector","--notebook-native-polygons","--notebook-native-graphic-page"]
+    launchPortraitFixture(app)
+    let triangle = app.images["Треугольник"]
+    XCTAssertTrue(triangle.waitForExistence(timeout:10))
+    let paper = app.otherElements["paper-input"], paperFrame = paper.frame
+    // Earlier chat-window scenarios preserve their user-chosen position. Move
+    // the real companion away rather than tapping through its visible button.
+    let companion = app.buttons["notebook-companion-compose"]
+    let grip = companion.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+    grip.press(forDuration:0.1,thenDragTo:app.coordinate(withNormalizedOffset:.init(dx:0.8,dy:0.88)))
+    XCTAssertFalse(companion.frame.intersects(triangle.frame))
+    triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.6)).tap()
+    let style = app.buttons["graphic-style-menu"], more = app.buttons["element-actions-menu"], remove = app.buttons["delete-agent-element"]
+    XCTAssertTrue(style.waitForExistence(timeout:5)); XCTAssertTrue(style.isHittable)
+    XCTAssertEqual(style.frame.midY,remove.frame.midY,accuracy:1)
+    XCTAssertEqual(more.frame.midY,remove.frame.midY,accuracy:1)
+    XCTAssertLessThan(more.frame.maxX-style.frame.minX,222)
+    XCTAssertEqual(style.frame.height,44,accuracy:1)
+    let before = triangle.frame
+    let controls = XCTAttachment(screenshot:app.screenshot()); controls.name = "compact-element-controls"; controls.lifetime = .keepAlways; add(controls)
+    style.tap()
+    let blue = app.buttons["element-color-11"]
+    XCTAssertTrue(blue.waitForExistence(timeout:5)); blue.tap()
+    XCTAssertFalse(app.popovers.firstMatch.frame.intersects(triangle.frame), "The palette leaves the edited shape visible")
+    XCTAssertTrue(blue.isSelected)
+    app.buttons["element-width-4"].tap()
+    XCTAssertTrue(app.buttons["element-width-4"].isSelected)
+    app.buttons["element-dash-1"].tap()
+    XCTAssertTrue(app.buttons["element-dash-1"].isSelected)
+    let palette = XCTAttachment(screenshot:app.screenshot()); palette.name = "native-element-palette"; palette.lifetime = .keepAlways; add(palette)
+    // Outside the popover and its arrow: UIKit dismisses without a canvas gesture.
+    app.coordinate(withNormalizedOffset:.init(dx:0.8,dy:0.7)).tap()
+    XCTAssertTrue(blue.waitForNonExistence(timeout:3))
+    XCTAssertEqual(triangle.frame,before); XCTAssertEqual(paper.frame,paperFrame)
+    more.tap()
+    XCTAssertTrue(app.buttons["На задний план"].waitForExistence(timeout:3))
+    let menu = XCTAttachment(screenshot:app.screenshot()); menu.name = "native-element-context-menu"; menu.lifetime = .keepAlways; add(menu)
+    app.buttons["На передний план"].tap()
+    XCTAssertEqual(triangle.frame,before); XCTAssertEqual(paper.frame,paperFrame)
+    // The dismissed palette can be opened again; no retained dead presentation owner.
+    style.tap(); XCTAssertTrue(blue.waitForExistence(timeout:3)); XCTAssertTrue(blue.isSelected)
+    app.coordinate(withNormalizedOffset:.init(dx:0.8,dy:0.7)).tap()
+    XCTAssertTrue(blue.waitForNonExistence(timeout:3))
+    remove.tap(); XCTAssertTrue(triangle.waitForNonExistence(timeout:5))
+    XCTAssertEqual(paper.frame,paperFrame)
+    app.terminate()
+  }
+
   func testNativeGraphicDragOnBoardKeepsTheLiveNeighbourAndSurvivesReopening() {
     nativeGraphicScenario(onPage: false)
   }
@@ -1501,7 +1739,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertLessThanOrEqual(
       abs(eraser.frame.minX - pen.frame.maxX),
       10,
-      "Ластик должен стоять отдельным кружком непосредственно рядом с ручкой"
+      "Ластик должен стоять отдельной кнопкой непосредственно рядом с ручкой"
     )
 
     let settings = app.sliders["pen-width"]
@@ -1513,13 +1751,13 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(pen.isSelected)
     XCTAssertFalse(eraser.isSelected)
     let selectedPen = pen.screenshot()
-    // Sample the selection circle beside the icon, so the pen's ink colour
+    // Sample the selection background beside the icon, so the pen's ink colour
     // alone cannot satisfy the visible-selection contract.
     let selectionBackground = CGRect(x: 0.2, y: 0.4, width: 0.08, height: 0.2)
     XCTAssertGreaterThan(
       changedPixelShare(from: inactivePen, to: selectedPen, normalizedRect: selectionBackground),
       0.8,
-      "Выбранная ручка должна показывать круговую подложку, как ластик"
+      "Выбранная ручка должна показывать заметную подложку, как ластик"
     )
     let penProof = XCTAttachment(screenshot: app.screenshot())
     penProof.name = "selected-pen-highlight"
@@ -1528,8 +1766,10 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     pen.tap()
     XCTAssertFalse(settings.exists, "Повторное касание тоже только выбирает ручку")
-    app.buttons["pen-settings"].tap()
-    XCTAssertTrue(settings.waitForExistence(timeout: 2), "Настройки открывает отдельное действие")
+    let settingsButton = app.buttons["pen-settings"]
+    XCTAssertEqual(settingsButton.frame.width,44,accuracy:1); XCTAssertEqual(settingsButton.frame.height,44,accuracy:1)
+    settingsButton.coordinate(withNormalizedOffset:.init(dx:0.1,dy:0.1)).tap()
+    XCTAssertTrue(settings.waitForExistence(timeout: 2), "Вся область кнопки открывает настройки, не только штрихи иконки")
     XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "pen-stroke-preview").firstMatch.waitForExistence(timeout: 2))
     let previewProof = XCTAttachment(screenshot: app.screenshot())
     previewProof.name = "actual-pen-pressure-preview"; previewProof.lifetime = .keepAlways; add(previewProof)
@@ -1961,6 +2201,65 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(app.state, .runningForeground)
   }
 
+  func testNotebookPageGeometrySurvivesRepeatedForwardAndReverseTurns() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures"]
+    launchPortraitFixture(app)
+    let surface = app.otherElements["page-turn-surface"]
+    XCTAssertTrue(surface.waitForExistence(timeout: 5))
+    let paper = app.otherElements["paper-input"].firstMatch
+    XCTAssertTrue(paper.waitForExistence(timeout: 5))
+    let originalSurface = surface.frame, originalPaper = paper.frame
+    let originalInk = paper.value as? String
+    XCTAssertGreaterThan(originalSurface.height, originalSurface.width)
+    for turn in 0..<20 {
+      let forward = turn.isMultiple(of: 2), page = forward ? 2 : 1
+      if forward { surface.swipeLeft() } else { surface.swipeRight() }
+      wait(for: [XCTNSPredicateExpectation(
+        predicate: NSPredicate(format: "value BEGINSWITH %@", "Страница \(page) из "), object: surface
+      )], timeout: 5)
+      XCTAssertTrue(paper.waitForExistence(timeout: 5))
+      let attachment = XCTAttachment(screenshot: app.screenshot())
+      attachment.name = "page-geometry-turn-\(turn + 1)"; attachment.lifetime = .keepAlways; add(attachment)
+      XCTAssertEqual(surface.frame.width, originalSurface.width, accuracy: 1)
+      XCTAssertEqual(surface.frame.height, originalSurface.height, accuracy: 1)
+      XCTAssertEqual(paper.frame, originalPaper, "The real Pencil surface must keep its physical paper rectangle after turn \(turn + 1)")
+      if !forward { XCTAssertEqual(paper.value as? String, originalInk) }
+    }
+  }
+
+  func testNotebookPaperKeepsItsBoundsAfterRotatingAndTurningBack() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    defer { XCUIDevice.shared.orientation = .portrait }
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures"]
+    launchPortraitFixture(app)
+    let surface = app.otherElements["page-turn-surface"]
+    let paper = app.otherElements["paper-input"].firstMatch
+    XCTAssertTrue(paper.waitForExistence(timeout: 5))
+    let originalPaper = paper.frame
+    for orientation in [UIDeviceOrientation.landscapeLeft, .portrait, .landscapeRight, .portrait] {
+      XCUIDevice.shared.orientation = orientation
+      wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        (app.frame.width > app.frame.height) == orientation.isLandscape
+      }, object: nil)], timeout: 5)
+      for page in [2, 1] {
+        if page == 2 { surface.swipeLeft() } else { surface.swipeRight() }
+        wait(for: [XCTNSPredicateExpectation(
+          predicate: NSPredicate(format: "value BEGINSWITH %@", "Страница \(page) из "), object: surface
+        )], timeout: 5)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "paper-rotated-\(orientation.rawValue)-page-\(page)"
+        attachment.lifetime = .keepAlways; add(attachment)
+        XCTAssertEqual(paper.frame.width / paper.frame.height, 834.0 / 1194.0, accuracy: 0.002)
+        if orientation == .portrait { XCTAssertEqual(paper.frame, originalPaper) }
+      }
+    }
+  }
+
   func testNotebookAcceptsTheNextTurnAsSoonAsThePreviousSheetLands() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
@@ -2035,6 +2334,37 @@ final class DrawingResponsivenessTests: XCTestCase {
       "Возврат восстанавливает содержание того же листа")
   }
 
+  func testCompactPageControlsKeepFullTargetsAndOpenOverviewAndSearch() async throws {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-document-runtime-fixture", "--notebook-document-prose-fixture"]
+    launchPortraitFixture(app)
+    let surface = app.otherElements["page-turn-surface"]
+    XCTAssertTrue(surface.waitForExistence(timeout:8))
+    func landed(_ page: Int) async {
+      await fulfillment(of:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"value BEGINSWITH %@", "Страница \(page) из "),object:surface)],timeout:5)
+    }
+    func edgeTap(_ id: String, width: CGFloat = 44) {
+      let button = app.buttons[id]
+      XCTAssertEqual(button.frame.width,width,accuracy:1); XCTAssertEqual(button.frame.height,44,accuracy:1)
+      button.coordinate(withNormalizedOffset:.init(dx:0.1,dy:0.1)).tap()
+    }
+    await fulfillment(of:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"value BEGINSWITH 'Страница 1 из ' AND value != 'Страница 1 из 1'"),object:surface)],timeout:5)
+    edgeTap("next-page"); await landed(2)
+    edgeTap("page-overview",width:64)
+    let third = app.buttons["Страница 3"]
+    XCTAssertTrue(third.waitForExistence(timeout:5))
+    let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "compact-page-overview"; proof.lifetime = .keepAlways; add(proof)
+    third.tap(); await landed(3)
+    edgeTap("previous-page"); await landed(2)
+    edgeTap("notebook-search")
+    XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout:3))
+    app.buttons["Готово"].tap()
+    XCTAssertTrue(app.searchFields.firstMatch.waitForNonExistence(timeout:3)); await landed(2)
+    edgeTap("previous-page"); await landed(1)
+    app.terminate()
+  }
+
   func testPageControlsAndSearchReturnToTheReadPage() async throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
@@ -2044,7 +2374,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     let surface = app.otherElements["page-turn-surface"]
     XCTAssertTrue(surface.waitForExistence(timeout: 8))
     await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Страница 1 из ' AND value != 'Страница 1 из 1'"), object: surface)], timeout: 5)
-    app.buttons["next-page"].tap()
+    let next = app.buttons["next-page"]
+    XCTAssertEqual(next.frame.width,44,accuracy:1); XCTAssertEqual(next.frame.height,44,accuracy:1)
+    next.coordinate(withNormalizedOffset:.init(dx:0.1,dy:0.1)).tap()
     await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Страница 2 из '"), object: surface)], timeout: 3)
     app.buttons["page-overview"].tap()
     let thumbnail = app.buttons["Страница 3"]
@@ -2561,7 +2893,10 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     removed.tap()
     XCTAssertTrue(delete.waitForExistence(timeout: 2))
-    delete.tap()
+    XCTAssertEqual(delete.frame.width,44,accuracy:1); XCTAssertEqual(delete.frame.height,44,accuracy:1)
+    // A standalone round control owns its disc, not the empty square corners.
+    // Tap beside the glyph to check the button background remains usable.
+    delete.coordinate(withNormalizedOffset:.init(dx:0.25,dy:0.5)).tap()
 
     XCTAssertTrue(remaining.waitForExistence(timeout: 2))
     XCTAssertFalse(removed.exists)

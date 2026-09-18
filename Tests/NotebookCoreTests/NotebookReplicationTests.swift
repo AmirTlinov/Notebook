@@ -18,6 +18,28 @@ struct NotebookReplicationTests {
     return try destination.applyRemoteChange(change, peerID: peer)
   }
 
+  @Test func polygonCornersSurviveAddressedDeliveryEchoAndRestart() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at:root) }
+    let a = NotebookStore(root:root.appendingPathComponent("a")), b = NotebookStore(root:root.appendingPathComponent("b"))
+    let actor = UUID(), header = try a.initializeWorkspace(actor:actor,pageSize:.init(width:834,height:1194))
+    let pageID = try #require(a.loadIndex().items.first?.pageIDs.first), target = CollaborationTarget(kind:.page,id:pageID)
+    let vertices: [SpatialPoint] = [.init(x:0,y:0.1),.init(x:1,y:0),.init(x:0.7,y:1)]
+    let graphic = NotebookGraphic(shape:.triangle,vertices:vertices)
+    _ = try a.applyCollaborationAction(.init(summary:"Polygon",expected:[.init(target:target,revision:a.targetContentRevision(target:target))],
+      operations:[.init(kind:.insertElement,target:target,id:"triangle",values:["kind":.string("graphic"),"source":.string(""),
+        "frame":try .encode(PageRect(x:20,y:20,width:150,height:150)),"graphic":try .encode(graphic)])]),actor:actor)
+    try b.prepareEmptyWorkspace(workspaceID:header.workspaceID)
+    for change in try a.changeJournal(after:0) {
+      _ = try transfer(change,from:a,to:b,peer:actor)
+      _ = try transfer(change,from:a,to:b,peer:actor)
+    }
+    #expect(try NotebookStore(root:root.appendingPathComponent("b")).loadPage(pageID).elements.first?.graphic == graphic)
+    let peerB = UUID()
+    for change in try b.changeJournal(after:0) { _ = try transfer(change,from:b,to:a,peer:peerB) }
+    #expect(try a.loadPage(pageID).elements.first?.graphic == graphic)
+  }
+
   @Test func anOldEchoCannotRegressTheFrontierOfRetainedPortalNodes() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

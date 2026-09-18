@@ -13,7 +13,6 @@ struct EditableElementContainer<Content: View>: View {
   #endif
 
   var body: some View {
-    let movement = model.graphicElement(reference) == nil ? model.elementMovement(reference) : .zero
     content
       .accessibilityAction(named: "Изменить элемент") { model.selectElement(reference) }
       .accessibilityAction(named: "Удалить элемент") { model.selectElement(reference); model.deleteElement(reference) }
@@ -34,7 +33,6 @@ struct EditableElementContainer<Content: View>: View {
         })
       .onDisappear { if let contact { model.cancelElementManipulation(contact) }; contact = nil }
       #endif
-      .offset(x: movement.x * coordinateScale, y: movement.y * coordinateScale)
       .accessibilityAddTraits(model.selectionSession.element == reference ? .isSelected : [])
   }
 }

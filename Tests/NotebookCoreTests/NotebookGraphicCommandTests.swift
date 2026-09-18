@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import NotebookCore
 
-@Test("Круг на листе и доске: чернила, преобразование, удаление и две отмены с перезапуском", arguments: [false, true])
-func graphicConversionDeletionUndo(onBoard: Bool) throws {
+@Test("Фигуры на листе и доске: все исходные штрихи, преобразование, удаление и две отмены с перезапуском", arguments: [false, true], [NotebookGraphic.Shape.ellipse, .rectangle, .triangle, .diamond, .plus])
+func graphicConversionDeletionUndo(onBoard: Bool, shape: NotebookGraphic.Shape) throws {
   let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-command-\(UUID())")
   defer { try? FileManager.default.removeItem(at: root) }
   let actor = UUID(), store = NotebookStore(root: root)
@@ -16,16 +16,20 @@ func graphicConversionDeletionUndo(onBoard: Bool) throws {
         inkRevision: onBoard ? store.loadSpatialInk().stamp.revision : store.loadPage(target.id).drawingStamp.revision)],
       operations: [.init(kind: kind, target: target, id: id, values: values)])
   }
-  let stroke = UUID()
+  let strokes = (0..<(shape == .ellipse ? 1 : shape == .plus ? 2 : 4)).map { _ in UUID() }
   var values: [String: JSONValue] = ["points": .array((0...48).map { index in
     let angle = Double(index) / 48 * 2 * Double.pi
     return .object(["x": .number(100 + 40 * cos(angle)), "y": .number(100 + 40 * sin(angle))])
   })]
   if onBoard { values["worldOrigin"] = try .encode(WorldPoint.zero) }
-  _ = try store.applyCollaborationAction(action(.appendInkStroke, id: stroke.uuidString, values: values, store: store), actor: actor)
+  for stroke in strokes {
+    _ = try store.applyCollaborationAction(action(.appendInkStroke, id: stroke.uuidString, values: values, store: store), actor: actor)
+  }
   let rawPage = onBoard ? nil : try store.loadPage(target.id).drawingData
   let rawBoard = onBoard ? try store.loadSpatialInk() : nil
-  let graphic = NotebookGraphic(sourceInkIDs: [stroke])
+  let vertices: [SpatialPoint]? = shape == .triangle
+    ? [.init(x:0,y:0.2),.init(x:1,y:0),.init(x:0.8,y:1)] : nil
+  let graphic = NotebookGraphic(shape:shape,sourceInkIDs:strokes,vertices:vertices)
   values = ["kind": .string("graphic"), "source": .string(""), "graphic": try .encode(graphic),
     "frame": try .encode(PageRect(x: 60, y: 60, width: 80, height: 80))]
   if onBoard { values["worldOrigin"] = try .encode(WorldPoint.zero) }
@@ -41,8 +45,8 @@ func graphicConversionDeletionUndo(onBoard: Bool) throws {
   }
   #expect(try state(store).1.geometryIDs == ["circle"])
   let surface: SurfaceID = onBoard ? .board(target.id) : .page(target.id)
-  #expect(try store.graphicPresentation(on: surface, sourceInkIDs: [stroke]) == state(store).1)
-  #expect(try state(store).1.suppressedInkIDs == [stroke])
+  #expect(try store.graphicPresentation(on: surface, sourceInkIDs: Set(strokes)) == state(store).1)
+  #expect(try state(store).1.suppressedInkIDs == Set(strokes))
   func indexed(_ store: NotebookStore) throws -> [String] {
     try store.readSceneWindow(boardID: target.id,
       bounds: .init(origin: .zero, width: 200, height: 200), pinnedElementIDs: ["circle"])
@@ -51,7 +55,7 @@ func graphicConversionDeletionUndo(onBoard: Bool) throws {
   if onBoard { #expect(try indexed(store) == ["circle"]) }
   let deleted = try store.applyNativeGraphicAction(action(.removeElement, id: "circle", values: [:], store: store), actor: actor)
   #expect(try state(store).1.geometryIDs.isEmpty)
-  #expect(try state(store).1.suppressedInkIDs == [stroke])
+  #expect(try state(store).1.suppressedInkIDs == Set(strokes))
   if onBoard { #expect(try indexed(store).isEmpty) }
   let reopened = NotebookStore(root: root)
   _ = try reopened.undoCollaborationAction(deleted.id, actor: actor)

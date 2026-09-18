@@ -57,7 +57,7 @@ final class SpatialInkConfigurationLifetimeTests: XCTestCase {
         camera: .init(), viewport: .init(x: size.width, y: size.height), items: [], journal: journal,
         penStyle: .standard, eraserStyle: .standard, drawingTool: .pen,
         surfaceRegistry: registry, inputGate: .init(), isItemBeingDeleted: { _ in false },
-        admitsNewContact: { true }, onCommit: { _, _, _ in nil }, isEnabled: true)
+        admitsNewContact: { true }, onCommit: { _, _, _, _ in nil }, isEnabled: true)
         .frame(width: size.width, height: size.height))
     }
     let host = UIHostingController(rootView: cachedConfiguration)

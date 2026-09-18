@@ -5,16 +5,16 @@ struct PenControlsView: View {
   @State private var isExpanded = false
 
   var body: some View {
-    HStack(spacing: 2) {
+    HStack(spacing: 0) {
       tool("pencil.tip", title: "Ручка", id: "pen-controls-toggle", selected: isPenSelected) {
         model.selectDrawingTool(.pen)
       }
       tool("eraser.fill", title: "Ластик", id: "drawing-tool-eraser", selected: isEraserSelected) {
         model.selectDrawingTool(.eraser)
       }
-      Divider().frame(height: 22).padding(.horizontal, 4)
+      Divider().frame(height: 18)
       Button { isExpanded = true } label: {
-        Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44)
+        Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44).contentShape(Rectangle())
       }
       .buttonStyle(.plain)
       .accessibilityLabel("Настройки инструмента")
@@ -24,7 +24,7 @@ struct PenControlsView: View {
           HStack {
             Text(model.drawingTool == .pen ? "Ручка" : "Ластик").font(.headline)
             Spacer()
-            Button { isExpanded = false } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }
+            Button { isExpanded = false } label: { Image(systemName: "xmark").frame(width: 44, height: 44).contentShape(Rectangle()) }
               .accessibilityLabel("Закрыть настройки").buttonStyle(.plain)
           }
           if model.drawingTool == .pen {
@@ -35,12 +35,10 @@ struct PenControlsView: View {
           if model.drawingTool == .pen { opacityControl }
         }
         .padding(20).frame(minWidth: 300)
-        .presentationCompactAdaptation(.popover)
+        .presentationCompactAdaptation(.popover).presentationBackground(NotebookChrome.surface)
       }
     }
-    .padding(4)
-    .background(.regularMaterial, in: Capsule())
-    .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
+    .notebookBar()
   }
 
   private var isPenSelected: Bool { model.drawingTool == .pen }
@@ -49,11 +47,11 @@ struct PenControlsView: View {
   private func tool(_ icon: String, title: String, id: String, selected: Bool, action: @escaping () -> Void) -> some View {
     Button(action: action) {
       Image(systemName: icon)
-        .font(.system(size: 18, weight: selected ? .semibold : .regular))
-        .foregroundStyle(selected ? Color.white : Color.primary)
-        .frame(width: 44, height: 44)
-        .contentShape(Circle())
-        .background(selected ? Color.primary : .clear, in: Circle())
+        .font(NotebookChrome.iconFont)
+        .foregroundStyle(Color.primary)
+        .frame(width: 32, height: 32)
+        .background(selected ? NotebookChrome.selectionSurface : .clear, in: RoundedRectangle(cornerRadius:8))
+        .frame(width:44,height:44).contentShape(Rectangle())
     }
     .buttonStyle(.plain)
     .accessibilityLabel(title)
@@ -68,7 +66,7 @@ struct PenControlsView: View {
           Circle().fill(color.displayColor).frame(width: 22, height: 22)
             .padding(4)
             .overlay { Circle().stroke(color == model.penStyle.color ? Color.primary : .clear, lineWidth: 2) }
-            .frame(width: 44, height: 44)
+            .frame(width: 44, height: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(color.name) ручка")

@@ -139,7 +139,8 @@ extension NotebookStore {
       header.collections == [.init(path: ["spans"], kind: .value)], header.value.isValid,
       spans.address == spansAddress, spans.file == header.file, spans.parent == address,
       spans.collection == "spans", spans.member.isEmpty, spans.position == 0, spans.collections.isEmpty,
-      !spans.value.isEmpty, spans.value.allSatisfy(\.isValid)
+      !spans.value.isEmpty, spans.value.allSatisfy(\.isValid),
+      header.value.tool == .eraser || spans.value.allSatisfy({ $0.elementTargets == nil })
     else { throw NotebookStorageError.corruptRecord(address) }
     let value = header.value
     return .init(id: value.id, tool: value.tool, color: value.color, spans: spans.value,

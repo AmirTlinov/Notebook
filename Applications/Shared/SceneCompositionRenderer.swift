@@ -325,16 +325,17 @@ final class SceneCompositionRenderer {
   private func paintElement(_ element: SpatialElement, boardID: UUID, frame: CGRect, canvas: SceneRasterCompositor,
     graphicLayout: NotebookGraphicLayout? = nil) async throws {
     try checkPreparation()
+    let erasures = try await source.elementErasures(element)
     if let graphic = element.graphic {
       if graphic.showsGeometry {
         let size = graphicLayout?.frame ?? .init(x:0,y:0,width:element.frame.width,height:element.frame.height)
-        try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:graphicLayout),
+        try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:graphicLayout, erasures: erasures),
           size: .init(width: size.width, height: size.height), in: frame)
       }
       return
     }
     if element.kind == .nativeText {
-      try await canvas.drawView(SpatialTextSnapshot(element: element),
+      try await canvas.drawView(SpatialTextSnapshot(element: element).erased(by: erasures),
         size: .init(width: element.frame.width, height: element.frame.height), in: frame)
       return
     }
@@ -371,7 +372,7 @@ final class SceneCompositionRenderer {
             y: frame.minY + crop.y / source.frame.height * frame.height,
             width: crop.width / source.frame.width * frame.width, height: crop.height / source.frame.height * frame.height)
         } else { destination = frame }
-        try await canvas.draw(raster, in: destination)
+        try await canvas.draw(raster, in: destination, erasures: erasures, elementFrame: frame)
       } else {
         let message = sourceFailures[address]?.matches(demand) == true ? "Не удалось загрузить" : "Подготовка…"
         try await canvas.drawView(ZStack {
@@ -382,7 +383,7 @@ final class SceneCompositionRenderer {
       return
     }
     let raster = try await prepareRaster(source, requestedScale: requiredScale)
-    do { try await canvas.draw(raster, in: frame); raster.release() }
+    do { try await canvas.draw(raster, in: frame, erasures: erasures); raster.release() }
     catch { raster.release(); throw error }
     canvas.recordDiagnostics(resources.diagnostics(for: [source]))
   }

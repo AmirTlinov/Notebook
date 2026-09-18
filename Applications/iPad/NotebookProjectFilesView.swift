@@ -32,6 +32,7 @@ struct NotebookProjectFilesView: View {
         if let error = files.error { Text(error).font(.system(size: 12)).foregroundStyle(.red).textSelection(.enabled).padding(.vertical, 8) }
       }.padding(.horizontal, 10).padding(.bottom, 12)
     }
+    .background(NotebookChrome.insetSurface)
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("notebook-project-files")
   }

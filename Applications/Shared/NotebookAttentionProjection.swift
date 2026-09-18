@@ -10,6 +10,38 @@ enum NotebookAttentionProjection {
       worldOrigin: reference.worldOrigin, pageIndex: reference.pageIndex, model: model, presence: presence)
   }
 
+  static func agentPearl(_ reference: CollaborationReference, model: NotebookAppModel,
+    presence: SessionPresence) -> NotebookAgentPearlSurface? {
+    guard let rect = frame(target:reference.target,elementID:reference.elementID,region:reference.region,
+      worldOrigin:reference.worldOrigin,pageIndex:reference.pageIndex,model:model,presence:presence,minimumSide:0),
+      rect.width > 0, rect.height > 0 else { return nil }
+    var result = NotebookAgentPearlSurface(rect:rect,scale:presence.camera.scale)
+    if reference.target.kind != .board {
+      result.clipRect = frame(target:reference.target,elementID:nil,region:nil,worldOrigin:nil,
+        pageIndex:reference.pageIndex,model:model,presence:presence,minimumSide:0)
+    }
+    guard let id = reference.elementID else { return result }
+    let editable: EditableElementReference, surface: SurfaceID
+    switch reference.target.kind {
+    case .page:
+      editable = .page(pageID:reference.target.id,elementID:id); surface = .page(reference.target.id)
+      result.graphic = model.pages[reference.target.id]?.elements.first(where: { $0.id == id })?.graphic
+    case .board, .cover:
+      editable = .spatial(boardID:presence.boardID,elementID:id)
+      guard let cohort = model.compositionTiles.published,
+        let element = model.presentedElement(editable,cohort:cohort) else { return nil }
+      surface = element.surface; result.graphic = element.graphic
+    case .document: return result
+    case .workspace, .codeFragment: return nil
+    }
+    if result.graphic != nil {
+      guard let layout = model.graphicLayout(editable) else { return nil }
+      result.layout = layout
+    }
+    result.erasures = model.elementErasures(on:surface,fallback:model.compositionTiles.published?.liveData.ink)[id] ?? []
+    return result
+  }
+
   static func editingFrame(_ reference: EditableElementReference, model: NotebookAppModel, presence: SessionPresence) -> CGRect? {
     let target: CollaborationTarget, id: String
     switch reference {
@@ -178,6 +210,7 @@ enum NotebookAttentionProjection {
     #endif
     let visuals = NotebookFrozenVisualSources.capture(fragments: fragments, hierarchy: sources.hierarchy,
       pages: sources.pages, documents: sources.documents, states: sources.states,
+      elementErasures: { model.elementErasures(on: $0, fallback: sources.ink)[$1] ?? [] },
       installedSources: cohort.sourceRasters, capturesLivePrograms: true,
       liveSourceAddresses: Set(sampled.filter { cohort.plan.allowsLive(.element($0.elementID), in: $0.plane) }),
       captureSceneRegion: { [weak model] fragment in
@@ -315,15 +348,10 @@ enum NotebookAttentionProjection {
       if presence.focusedItemID == item.id && presence.mode == .page, let pageID = sources.selectedPageID {
         target = .init(kind:.page,id:pageID)
         let graph = sources.pages[pageID]?.graphicGraph()
-        if !dragged, let element = sources.pages[pageID]?.elements.last(where: {
-          if let graphic = $0.graphic {
-            guard let layout = graph?.resolve($0.id).layout else { return false }
-            return layout.hitTest(.init(x:region.x-layout.frame.x,y:region.y-layout.frame.y),graphic:graphic,tolerance:8/presence.camera.scale)
-          }
-          return CGRect(x: $0.frame.x, y: $0.frame.y, width: $0.frame.width, height: $0.frame.height)
-            .contains(CGPoint(x: region.x, y: region.y))
-        }) {
-          elementID = element.id; region = graph?.resolve(element.id).layout?.frame ?? element.frame
+        if !dragged, let page = sources.pages[pageID], let graph,
+          let element = pickElement(in: page.elements, graph: graph, scale: presence.camera.scale, viewport: presence.viewport,
+            project: { ($0.id, $0.frame, $0.graphic, .init(x:region.x,y:region.y)) }) {
+          elementID = element.id; region = graph.resolve(element.id).layout?.frame ?? element.frame
         }
       } else if presence.focusedItemID == item.id && presence.mode == .document,
         let document = sources.documents[item.id] {
@@ -338,14 +366,11 @@ enum NotebookAttentionProjection {
         target = .init(kind:.cover,id:item.id,boardID:presence.boardID)
         if !dragged {
           let graph = board.graphicGraph()
-          if let element = board.elements.last(where: {
-            guard $0.surface == .cover(item.id) else { return false }
-            if let graphic = $0.graphic {
-              guard let layout = graph.resolve($0.id).layout else { return false }
-              return layout.hitTest(.init(x:region.x-layout.frame.x,y:region.y-layout.frame.y),graphic:graphic,tolerance:8/presence.camera.scale)
-            }
-            return $0.frame.contains(.init(x:region.x,y:region.y))
-          }) {
+          if let element = pickElement(in: board.elements.filter { $0.surface == .cover(item.id) }, graph: graph,
+            scale: presence.camera.scale, viewport: presence.viewport, project: {
+              ($0.id, .init(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height), $0.graphic,
+                .init(x:region.x,y:region.y))
+            }) {
             elementID = element.id
             region = graph.resolve(element.id).layout?.frame ?? .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height)
           }
@@ -357,24 +382,43 @@ enum NotebookAttentionProjection {
       region = .init(x:0,y:0,width:rect.width/presence.camera.scale,height:rect.height/presence.camera.scale)
       if !dragged, let pointOrigin = origin {
         let graph = board.graphicGraph()
-        for element in admitted.elements.reversed() where element.surface == .board(presence.boardID) {
-          let delta = (element.worldOrigin ?? .zero).delta(to: pointOrigin)
-          let contains: Bool
-          if let graphic = element.graphic {
-            guard let layout = graph.resolve(element.id).layout else { continue }
-            contains = layout.hitTest(.init(x:delta.x-layout.frame.x,y:delta.y-layout.frame.y),graphic:graphic,tolerance:8/presence.camera.scale)
-          } else { contains = element.frame.contains(delta) }
-          if contains {
-            elementID = element.id
-            region = graph.resolve(element.id).layout?.frame ?? .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height)
-            origin = element.worldOrigin ?? .zero
-            break
-          }
+        if let element = pickElement(in: admitted.elements.filter { $0.surface == .board(presence.boardID) }, graph: graph,
+          scale: presence.camera.scale, viewport: presence.viewport, project: {
+            ($0.id, .init(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height), $0.graphic,
+              ($0.worldOrigin ?? .zero).delta(to: pointOrigin))
+          }) {
+          elementID = element.id
+          region = graph.resolve(element.id).layout?.frame ?? .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height)
+          origin = element.worldOrigin ?? .zero
         }
       }
     }
     return .init(target:target,elementID:elementID,region:region,worldOrigin:origin,pageIndex:pageIndex,
       label: dragged ? "Область" : elementID == nil ? "Место" : "Объект")
+  }
+
+  /// Paint wins over a hollow interior, then the smallest enclosing figure.
+  /// The same pick serves tap, direct drag and the resulting shared reference.
+  static func pickElement<Element>(in elements: [Element], graph: NotebookGraphicGraph, scale: Double,
+    viewport: SpatialPoint, project: (Element) -> (String, PageRect, NotebookGraphic?, SpatialPoint)) -> Element? {
+    var interior: (Element, Double)?
+    let tolerance = 12 / max(0.001, scale)
+    for element in elements.reversed() {
+      let (id, frame, graphic, point) = project(element)
+      guard let graphic else {
+        if point.x >= frame.x, point.x <= frame.x+frame.width, point.y >= frame.y, point.y <= frame.y+frame.height { return element }
+        continue
+      }
+      guard let layout = graph.resolve(id).layout else { continue }
+      let local = SpatialPoint(x:point.x-layout.frame.x,y:point.y-layout.frame.y)
+      if layout.hitTest(local,graphic:graphic,tolerance:tolerance) { return element }
+      let width = layout.frame.width, height = layout.frame.height
+      guard !(width*scale >= viewport.x && height*scale >= viewport.y),
+        NotebookGraphicGeometry.containsInterior(graphic,width:width,height:height,x:local.x,y:local.y) else { continue }
+      let area = width*height
+      if interior == nil || area < interior!.1 { interior = (element,area) }
+    }
+    return interior?.0
   }
 
 }

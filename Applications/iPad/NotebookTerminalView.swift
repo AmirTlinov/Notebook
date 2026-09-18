@@ -36,7 +36,7 @@ struct NotebookRunPanel: View {
         Button { withAnimation(.easeInOut(duration: 0.18)) { files.showTerminal(false) } } label: {
           Image(systemName: "minus").frame(width: 44, height: 44).contentShape(Rectangle())
         }.accessibilityLabel("Свернуть терминал").accessibilityIdentifier("notebook-terminal-collapse")
-      }.padding(.horizontal, 12)
+      }.font(NotebookChrome.iconFont).padding(.horizontal, 12).background(NotebookChrome.insetSurface)
       if let root = runs.selectedRoot {
         NotebookTerminalView(runs: runs, root: root, connected: connected).id(root.id)
           .accessibilityIdentifier("notebook-terminal").frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -47,8 +47,8 @@ struct NotebookRunPanel: View {
                   Text(record.error ?? "Сеанс завершён · код \(record.exitCode ?? 0)").font(.caption).lineLimit(2)
                 }
                 Button("Открыть оболочку", systemImage: "terminal") { Task { await runs.openTerminal() } }
-                  .font(.system(size: 13)).padding(10)
-                  .background(.regularMaterial, in: Capsule())
+                  .font(.system(size: 13)).padding(.horizontal, 10).frame(minHeight: 44)
+                  .foregroundStyle(.primary).notebookBar()
                   .disabled(!connected).accessibilityIdentifier("notebook-terminal-open-shell")
               }.padding(12).foregroundStyle(.white)
             }
@@ -62,7 +62,7 @@ struct NotebookRunPanel: View {
           terminalKey("↑", bytes: [27, 91, 65])
           terminalKey("↓", bytes: [27, 91, 66])
           terminalKey("Ctrl-C", bytes: [3])
-        }.padding(.horizontal, 12)
+        }.font(NotebookChrome.iconFont).padding(.horizontal, 12).background(NotebookChrome.insetSurface)
         if let error = runs.error { Text(error).font(.caption2).foregroundStyle(.orange).lineLimit(2).padding(.horizontal, 12) }
         if runs.inputBlocked {
           Button("Продолжить ввод без повтора неподтверждённого") { runs.continueInput() }

@@ -79,6 +79,20 @@ final class PhysicalWebViewportTests: XCTestCase {
     XCTAssertEqual(retained, identity + ":Actual canonical document")
   }
 
+  func testHeldResizeProjectsBothAxesWithoutReplacingOrRelayingOutTheRuntime() {
+    let web = WKWebView(), size = CGSize(width:180,height:120)
+    let viewport = PhysicalWebViewport(webView:web,contentSize:size)
+    defer { viewport.retire() }
+    viewport.frame = .init(x:0,y:0,width:220,height:150); viewport.layoutIfNeeded()
+    XCTAssertEqual(web.bounds.size,size)
+    let projected = web.convert(web.bounds,to:viewport)
+    XCTAssertEqual(projected.minX,viewport.bounds.minX,accuracy:0.0001)
+    XCTAssertEqual(projected.minY,viewport.bounds.minY,accuracy:0.0001)
+    XCTAssertEqual(projected.width,viewport.bounds.width,accuracy:0.0001)
+    XCTAssertEqual(projected.height,viewport.bounds.height,accuracy:0.0001)
+    XCTAssertTrue(web.superview === viewport)
+  }
+
   private func waitForViewport(_ web: WKWebView, width: Double, height: Double) async throws {
     let deadline = ContinuousClock.now + .seconds(5)
     var actual: [Double]?

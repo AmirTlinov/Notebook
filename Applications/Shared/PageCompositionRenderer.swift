@@ -42,6 +42,7 @@ enum PageCompositionRenderer {
       try await canvas.drawView(GridPaperView().environment(\.displayScale, scale), size: size, in: frame)
     }
     let graph = page.graphicGraph()
+    let erasures = try PageInkDrawing.decode(page.drawingData).elementErasures
     for element in elements(in: page, region: region, elementID: elementID) {
       try Task.checkCancellation()
       // The resolver returns a borrowed entry. A frozen selection owns its
@@ -51,7 +52,7 @@ enum PageCompositionRenderer {
       let frame = CGRect(x: local.x - region.x, y: local.y - region.y,
         width: local.width, height: local.height)
       if let graphic = element.graphic {
-        try await canvas.drawView(NotebookGraphicView(graphic: graphic, layout:layout), size: frame.size, in: frame)
+        try await canvas.drawView(NotebookGraphicView(graphic: graphic, layout:layout, erasures: erasures[element.id] ?? []), size: frame.size, in: frame)
         continue
       }
       let image = try await raster(element)
@@ -62,9 +63,9 @@ enum PageCompositionRenderer {
         guard !requested.isNull, captured.contains(requested) else {
           throw SceneRenderError.snapshotPending("historical_region_unavailable")
         }
-        try await canvas.draw(image, in: captured.offsetBy(dx: frame.minX, dy: frame.minY))
+        try await canvas.draw(image, in: captured.offsetBy(dx: frame.minX, dy: frame.minY), erasures: erasures[element.id] ?? [], elementFrame: frame)
       } else {
-        try await canvas.draw(image, in: frame)
+        try await canvas.draw(image, in: frame, erasures: erasures[element.id] ?? [])
       }
       canvas.recordDiagnostics(resources.diagnostics(for: [element]))
     }

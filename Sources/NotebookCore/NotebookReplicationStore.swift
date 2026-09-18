@@ -41,7 +41,7 @@ extension NotebookStore {
     guard data.count <= 67_108_864 else { throw NotebookStorageError.limitExceeded("change_manifest_part") }
     let manifest = try JSONDecoder().decode(NotebookChangeManifest.self, from: data)
     let workspaceID = try currentSQL!.rows("SELECT value FROM metadata WHERE key='workspace_id'").first?[0].text.flatMap(UUID.init(uuidString:))
-    guard manifest.format == 4 || (historical && manifest.format == 3) else {
+    guard (manifest.format == 4 || manifest.format == 5 || manifest.format == 6) || (historical && manifest.format == 3) else {
       throw CollaborationError("placement_peer_upgrade_required", "Сопряжённое устройство передаёт прежний формат изменений. Завершите его обновление; пакет не подтверждён и содержание сохранено.")
     }
     guard manifest.transactionID == change.transactionID, manifest.workspaceID == workspaceID,
