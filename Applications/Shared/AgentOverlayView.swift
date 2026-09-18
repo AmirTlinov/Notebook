@@ -124,6 +124,7 @@ struct AgentOverlayView: View {
         .allowsHitTesting(!erased && (cuts.isEmpty || appearance != nil))
       }
     }
+    .coordinateSpace(name: NotebookManipulationSpace.material)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .onAppear { publishReadiness() }
     .onChange(of: elements) { _, updatedElements in

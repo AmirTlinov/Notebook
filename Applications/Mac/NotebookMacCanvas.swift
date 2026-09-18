@@ -130,7 +130,7 @@ struct NotebookMacCanvas: View {
             let reference = EditableElementReference.spatial(boardID: presence.boardID, elementID: element.id)
             let frame = model.elementPresentationFrame(reference, fallback: .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height))
             let point = anchor.camera.worldToScreen(origin, viewport: anchor.viewport)
-            EditableElementContainer(reference: reference, coordinateScale: 1) {
+            EditableElementContainer(reference: reference, coordinateScale: anchor.camera.scale) {
               if element.graphic != nil || !cohort.plan.allowsLive(.element(element.id), in: .board(presence.boardID)) { Color.clear.contentShape(Rectangle()) }
               else {
                 SpatialElementContent(element: element, boardID: presence.boardID,
@@ -146,7 +146,8 @@ struct NotebookMacCanvas: View {
             .zIndex(cohort.plan.rank(id: .element(element.id), in: .board(presence.boardID)) ?? 0)
           }
         }
-      }.environment(model).environment(\.sceneComposition, .init(cohort))
+      }.coordinateSpace(name: NotebookManipulationSpace.material)
+        .environment(model).environment(\.sceneComposition, .init(cohort))
     }
   }
 
@@ -185,7 +186,8 @@ struct NotebookMacCanvas: View {
             .zIndex(WorkspaceSceneProjection.presentationRank(of: item, in: presence)
               ?? cohort.plan.rank(id: .item(item.id), in: .board(presence.boardID)) ?? 0)
         }
-      }.environment(model).environment(\.sceneComposition, .init(cohort))
+      }.coordinateSpace(name: NotebookManipulationSpace.material)
+        .environment(model).environment(\.sceneComposition, .init(cohort))
     }
   }
 }
@@ -221,7 +223,7 @@ private struct MacWorkspaceMaterial: View {
     .overlay { if isSelected { RoundedRectangle(cornerRadius: item.geometry.cornerRadius).stroke(.tint, lineWidth: 2 / presence.camera.scale).allowsHitTesting(false) } }
     .onTapGesture(count: 2) { model.macOpenItem(item.id) }
     .onTapGesture { model.selectWorkspaceItem(item.id, boardID: presence.boardID) }
-    .gesture(DragGesture(minimumDistance: 4).onChanged { value in
+    .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .named(NotebookManipulationSpace.material)).onChanged { value in
       if draggedFrom == nil {
         guard model.inputGate.beginFingerSequence() != nil else { return }
         if isLive { model.inputGate.beginContact(source: source) }
@@ -232,9 +234,10 @@ private struct MacWorkspaceMaterial: View {
         draggedFrom = item.center
         model.selectWorkspaceItem(item.id, boardID: presence.boardID)
       }
-      translation = value.translation
+      translation = CGSize(width: value.translation.width / presence.camera.scale,
+        height: value.translation.height / presence.camera.scale)
     }.onEnded { value in
-      if let origin = draggedFrom, let destination = origin.addressOffset(x: value.translation.width, y: value.translation.height) {
+      if let origin = draggedFrom, let destination = origin.addressOffset(x: value.translation.width / presence.camera.scale, y: value.translation.height / presence.camera.scale) {
         model.moveItem(item.id, to: destination)
       }
       draggedFrom = nil; translation = .zero
