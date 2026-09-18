@@ -323,14 +323,21 @@ final class NotebookScriptServiceTests: XCTestCase {
         "values": .object(["kind": .string("graphic"), "source": .string(""),
           "frame": try .encode(node.frame), "graphic": try .encode(node.graphic)])]) }
       let encoded = String(decoding: try JSONEncoder().encode(operations), as: UTF8.self)
+      let move: JSONValue = .object(["kind": .string("updateElement"), "target": try .encode(target),
+        "id": .string("new-a"), "values": .object(["frame": try .encode(PageRect(x: 180, y: 220, width: 100, height: 100))])])
+      let encodedMove = String(decoding: try JSONEncoder().encode(move), as: UTF8.self)
       let code = """
         const initial=await nb.page({id:'\(pageID.uuidString)'});
         const receipt=await nb.transaction('create-graph',{base:initial.basis,summary:'Create a connected graph',
           operations:\(encoded)});
         const graph=await nb.page({id:'\(pageID.uuidString)'});
+        const edited=await nb.transaction('move-node',{base:graph.basis,summary:'Move the created graph node',
+          additionalOwners:[{kind:'page',id:'\(pageID.uuidString)'}],operations:[\(encodedMove)]});
+        const undoEdit=await nb.undo('undo-move',{actionID:edited.actionID});
+        const restored=await nb.page({id:'\(pageID.uuidString)'});
         const undo=await nb.undo('remove-graph',{actionID:receipt.actionID});
         const empty=await nb.page({id:'\(pageID.uuidString)'});
-        return {receipt,graph:graph.data,undo,empty:empty.data};
+        return {receipt,graph:graph.data,undoEdit,restored:restored.data,undo,empty:empty.data};
         """
       let request = NotebookScriptRequest(op: .start, runID: run, apiVersion: 2, code: code, language: language)
       _ = try await host.handle(request)
@@ -343,12 +350,14 @@ final class NotebookScriptServiceTests: XCTestCase {
       let arrow = try XCTUnwrap(value["graph"]?.array("elements").first { $0.string("id") == "new-ab" })
       XCTAssertEqual(arrow["graphicResolution"]?.string("state"), "geometry")
       XCTAssertNotEqual(arrow["graphicResolution"]?["frame"], arrow["frame"])
+      XCTAssertEqual(value["restored"]?["elements"], value["graph"]?["elements"])
+      XCTAssertEqual(value["undoEdit"]?["undo"]?["preservedCount"], .number(0))
       XCTAssertEqual(value["empty"]?.array("elements"), [])
       let actionID = try XCTUnwrap(value["receipt"]?.string("actionID").flatMap(UUID.init(uuidString:)))
       XCTAssertEqual(try owner.store.collaborationAction(actionID).action.operations.map(\.id), nodes.map(\.id))
       let replay = try await host.handle(request)
       XCTAssertEqual(replay["result"], result["result"])
-      XCTAssertEqual(owner.nativeWrites, 2, "Three new bound objects share one write; undo shares one write; replay writes nothing")
+      XCTAssertEqual(owner.nativeWrites, 4, "Create, move and their inverses write once each; replay writes nothing")
       await host.shutdown()
     }
     XCTAssertEqual(createdGraphs.first, createdGraphs.last, "JS and TS produce the same domain objects in independent stores")
@@ -366,11 +375,16 @@ final class NotebookScriptServiceTests: XCTestCase {
     let code = """
       const rootID='\(initial.rootBoardID.uuidString)', boardID='\(board.uuidString)', notebookID='\(notebook.uuidString)';
       const root=await nb.board({id:rootID});
-      await nb.transaction('board',{base:root.basis,summary:'Temporary child board',operations:[
+      const createdBoard=await nb.transaction('board',{base:root.basis,summary:'Temporary child board',operations:[
         {kind:'createBoard',target:{kind:'board',id:rootID},id:boardID,values:{title:'Original board',center:{tileX:1,tileY:1,localX:0,localY:0}}}]});
       const child=await nb.board({id:boardID});
-      await nb.transaction('notebook',{base:child.basis,summary:'Temporary notebook',operations:[
+      const createdNotebook=await nb.transaction('notebook',{base:child.basis,summary:'Temporary notebook',operations:[
         {kind:'createNotebook',target:{kind:'board',id:boardID},id:notebookID,values:{title:'Own notebook',pageID:'\(page.uuidString)',center:{tileX:0,tileY:0,localX:0,localY:0}}}]});
+      const location=await nb.read({kind:'ownerBoard',id:notebookID});
+      const placed=await nb.transaction('place',{base:location.basis,summary:'Rename and move own child',
+        additionalOwners:[{kind:'cover',id:notebookID,boardID}],operations:[
+          {kind:'renameItem',target:{kind:'board',id:boardID},id:notebookID,values:{title:'Changed child'}},
+          {kind:'moveItem',target:{kind:'board',id:boardID},id:notebookID,values:{center:{tileX:0,tileY:0,localX:400,localY:300}}}]});
       const extent=await nb.read({kind:'itemLifecycle',id:notebookID});
       const appendAction={base:extent.basis,summary:'Append before restored deletion',additionalOwners:[extent.data.target],
         operations:[{kind:'appendPage',target:extent.data.target,values:{}}]};
@@ -395,7 +409,13 @@ final class NotebookScriptServiceTests: XCTestCase {
       const undone=await nb.undo('undo-append',{actionID:appended.actionID});
       const directory=await nb.notebook({id:notebookID});
       const replay=await nb.transaction('append',appendAction);
-      return {refusal,unchanged:unchanged.data,appended,undone,directory:directory.data,replay};
+      await nb.undo('undo-place',{actionID:placed.actionID});
+      await nb.undo('undo-create-child',{actionID:createdNotebook.actionID});
+      const removedChild=await nb.read({kind:'itemHeader',id:notebookID});
+      await nb.undo('undo-create-board',{actionID:createdBoard.actionID});
+      const removedBoard=await nb.read({kind:'itemHeader',id:boardID});
+      return {refusal,unchanged:unchanged.data,appended,undone,directory:directory.data,replay,
+        removedChild:removedChild.data,removedBoard:removedBoard.data};
       """
     _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2, code: code))
     let result = try await finish(host, run)
@@ -409,9 +429,12 @@ final class NotebookScriptServiceTests: XCTestCase {
     XCTAssertEqual(value["directory"]?.array("pages").count, 1)
     XCTAssertEqual(value["appended"], value["replay"], "Replay keeps the original append result after undo")
     XCTAssertEqual(result.array("effects").filter { $0.string("state") == "notSaved" }.count, 1)
-    XCTAssertEqual(owner.nativeWrites, 8, "Rejected rename/delete and replay never write")
-    XCTAssertEqual(try owner.store.pageCount(in: notebook), 1)
-    XCTAssertEqual(try owner.store.pageID(at: 0, in: notebook), page)
+    XCTAssertEqual(owner.nativeWrites, 12, "Rejected rename/delete and replay never write; inverse chain removes only its own fixture")
+    XCTAssertEqual(value["removedChild"], .null)
+    XCTAssertEqual(value["removedBoard"], .null)
+    XCTAssertNil(try owner.store.readItemHeader(notebook))
+    XCTAssertNil(try owner.store.readItemHeader(board))
+    XCTAssertNil(try owner.store.ownerItemID(ofPage: page))
     XCTAssertEqual(try owner.store.workspaceHeader().selectedItemID, initial.selectedItemID)
     XCTAssertEqual(try owner.store.loadPresence(), presence)
     await host.shutdown()

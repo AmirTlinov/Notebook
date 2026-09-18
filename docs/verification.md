@@ -11151,3 +11151,138 @@ NotebookGraphicRenderingTests.swift:137; это не runtime warnings и не и
 собран/установлен, повтор исправлений на production не объявляется пройденным.
 Связь с iPad всё ещё disconnected, поэтому доставка/показ/физическое выделение
 и полная приёмка остаются открытыми.
+
+
+## 18 сентября 2026, 10:36 UTC — S8/S9/S10: установленная пара 95 и настоящие эффекты
+
+Commit `a01887b` опубликован. `.build/s8-release95-20260918/build.json` —
+**verified-build 0.3.92 (95)**, source
+`c102267422b159190bd53dd656080668f80fa0d9cd46b7f7d4671b9d6bfd5150`.
+Mac UUID `27EAD158-CA23-3039-9563-BDD2E7FA711B`, CDHash
+`e0e62cf88c6ad6f0f0f02d0940dfe38c8ff8918c`, bundle manifest
+`fa034cbba1d283688bbc5fe6b1d0dae90a0560b64bd770852ed1e2d55a1d6ab2`.
+iPad UUID `69A376A7-3135-36ED-8515-885818D2E300`, CDHash
+`ead54229226a9eb6ecd8b9543e1e41c51ec585cb`, bundle manifest
+`bca27149fe2f0fb709eaee37258a31c95a49dd3f794d746aa8166c52b35b9e67`.
+
+`.build/s8-install95-20260918/` подтверждает замену только bundle после обычного
+Mac termination и devicectl update прежнего iPad bundle, затем запуск PID 5520.
+Проверены отсутствие активных terminal/voice/file/native deliveries, input и
+SDK-run перед остановкой. Первый preflight остановился до изменения приложения:
+диагностический reader включил дочерние result fragments вместо только run root;
+после уточнения адреса проверка прошла. Force quit, backup, перенос/удаление базы,
+архивы и сброс ключей/доверия не использовались.
+
+Fresh installed MCP `.build/s10-installed95-20260918/receipt.json`: **PASS** два
+инструмента, JS/TS одинаковое чтение, TypeScript 7.0.2 / SDK e44af80…,
+первый typed completed, неизменный retry, конфликт смены языка, ошибка типов до
+эффектов и исходная строка runtime stack. Это новые действительные public runs,
+не вызов private/native test helper.
+
+Installed lifecycle `.build/s8-installed95-lifecycle-20260918/` подтвердил
+`board_not_empty`/operation.index=1 и атомарный откат; create/rename/place/append,
+удаление-восстановление notebook/document и явного дерева; историческую actionVersion;
+append undo после двух восстановлений действительно removePage/preserved0.
+Затем undo исходного создания сохранил тетрадь после уже отменённых rename/move/
+append — **новый общий provenance gap**, не PASS полной обратной цепи. Изолированный
+Core воспроизвёл rename/append/move независимо при неизменном содержании; direct и
+delete/restore controls проходят. Исправление существующего inverse owner в работе.
+Все три временных предмета удалены отдельной SDK-транзакцией; cleanup receipt:
+itemCount 7→7, presence и выбранные адреса неизменны.
+
+S9 `.build/s9-installed95-20260918/receipt.json` подтверждает реальные production
+эффекты: atomic bound graph, адресный алгоритм reflow, отказ неразрешённого
+перемещения без частичного label write, computed/authored geometry, reflow undo;
+блоки/структура/preamble документа, source/state basis и stale refusal, независимая
+отмена source/state; обычный persisted PDF job. Creation undo после reflow undo
+также сохранил три неизменённых элемента — тот же общий gap, проверяется вместе
+с S8. Первый graph driver пропустил обязательные connection/binding поля;
+исправлен сам driver и использован новый ключ после notSaved, без скрытого retry.
+
+PDF экспортирован в 23 711 байт, SHA256
+`7ffa1826767bc13b94428cb3785c08f78ba9d3e99ebb405eafd73802b9f73a66` сверён с файлом.
+PDFKit подтверждает одну страницу, «Before» и полный interactive ID `counter`.
+TeX log честно содержит предупреждения о системных Georgia fonts — это не
+доказательство побитовой переносимости экспорта между окружениями.
+Все три S9 temporary owner удалены, itemCount снова 7→7/presence unchanged;
+экспорт и история действий остались в обычном persisted owner. Не проверялись
+визуальная композиция на iPad, физический human ink и конкурентный writer во
+время этого export; последняя граница ранее проверена в изолированном signed gate.
+
+В обоих installed сценариях runtime свежий, но **disconnected**: saved не
+выдаётся за received/shown. Пара 95 установлена, однако физическое выделение,
+точный показ, семь сценариев/десять повторов/30 минут совместной работы и полный
+набор системных метрик остаются открытыми. Новые found gaps также блокируют
+закрытие S5/S8/S9/S10; веха не закрывается по smoke или установке.
+
+
+## 18 сентября 2026, 11:02 UTC — S8/S9: полные installed обратные цепи в паре 96
+
+Два найденных на production95 отказа исправлены у прежнего Core inverse owner:
+обычная транзакция теперь сохраняет адресные before/after hashes уже существующим
+`withActionRecordCapture`/`lifecycleInverse`; undo пишет прежний `restorationInverse`.
+Disposable `action_field_restorations` доказывает также неявную existence и полный
+placement register. Условная зависимость проверяется при использовании, поэтому
+порядок receipt UUID при rebuild/snapshot не создаёт и не теряет авторство.
+Полное равенство ContentFieldVersion/frontier обязательно; совпадение видимого
+содержания или human A→B→A не даёт права удалить человеческое продолжение.
+Новый durable протокол, таблица истории, второй writer или ослабление CAS не добавлены.
+Старым receipts без inverse evidence происхождение не приписывается.
+
+`.build/s8-provenance-chain-20260918/` хранит реальные RED lifecycle/graph,
+**37 Core tests / 7 suites PASS** (6.333 s), before/after хеши 380 неизменных входов
+и overlay proof. Проверены 0/1/2 inverse graph chains, независимые rename/append/
+move/full chains, human ABA/frontier negatives, rebuild, received retained sources
+и настоящий addressed remote delivery. SequentialUndo fixture больше не обходит
+blob dependency admission: missing inverse отказывает до ACK и не сдвигает cursor.
+Общий рабочий tree в момент проверки содержал незавершённый чужой feedback/import;
+его compile failure не объявляется регрессией этого исправления и не скрывается
+как PASS: проверен отдельный неизменный source artifact, не вторая рабочая ветка.
+
+`.build/s8-provenance-signed96-20260918/evidence/verification.json`:
+**78 MCP + 8 signed Mac tests PASS**, 0 failed/skipped/runtimeWarnings.
+Это реальные sandboxed JS/TS/XPC/queue сценарии lifecycle, graph reflow/create undo,
+source/state, ink, conflict/delta, lost replies, immutable results. В build log
+сохраняются два прежних unnecessary try/await compiler warning графического теста.
+Source artifact — `a01887b` плюс ровно семь собственных code/test/version файлов;
+ни tracked, ни untracked peer WIP в него не включён. Все семь overlay побайтово
+сверены с рабочими файлами до установки.
+
+`.build/s8-provenance-release96-20260918/build.json`: verified-build **0.3.93 (96)**,
+source `dc1a33bcc876e1afe4f8596c39329bb5220ad1c47253e60c648932c0159815a1`.
+Mac UUID `7C5779BB-D1FE-30B0-B8BE-BA98D63EDFEC`, CDHash
+`d4336525c4dfe4ae308e14169cb1ce0972252b53`, manifest
+`06b965120b347bb7f108a99445c6a2b3ceee2f393087626789622089d1e8daeb`.
+iPad UUID `AE678DC3-44B0-3B12-8CCC-DD850F5A5313`, CDHash
+`9c4dc156842d9c720b3bdd5a1251cbb8da3db891`, manifest
+`42fda1dfb18185a20daf1f451d5986a3c09f4668d26bd8a794636b3004818767`.
+`.build/s8-install96-20260918/` подтверждает update прежней production-пары и
+обычный запуск iPad PID 5569; контейнеры/идентичности/доверие сохранены. Только
+bundle replacement после idle preflight/normal Mac termination; без force kill,
+архивов, backup и сбросов. Проверена идентичность frozen source, не меняющегося WIP.
+
+**Установленный SDK, не test helper:**
+- `.build/s8-installed96-lifecycle-20260918/receipt.json`: PASS 14 действий /
+  36 внешних вызовов, весь create→rename/place→append→delete/restore children→
+  delete/restore explicit tree→undo append→undo rename/place→undo children→undo board.
+  Semantic nonempty refusal/operation index/atomic rollback и исторические
+  actionVersion/replay также PASS. Временные предметы удалены именно полной
+  обратной цепью, а не отдельной скрывающей сбой cleanup-транзакцией.
+- `.build/s9-installed96-20260918/receipt.json`: PASS graph create→algorithmic
+  reflow→undo reflow→undo create; scope refusal атомарен, authored/computed geometry
+  прочитаны. Document source/structure/state/stale refusal/independent undo и
+  persisted PDF export PASS. PDF 23 711 bytes, SHA256
+  `a1c17d8512e6de67bb337902a5ebf739f040b3f8660a5037a4d99ce3ef18301b`
+  совпадает с receipt; PDFKit: одна страница, Before и counter. TeX system-font
+  warnings сохранены; переносимая побитовая воспроизводимость не заявляется.
+- `.build/s10-installed96-20260918/receipt.json`: PASS свежий двухинструментный MCP,
+  JS/TS read equivalence, TS7.0.2/SDK e44af80…, immutable retry/language conflict,
+  type error до любых эффектов/events и исходная строка runtime diagnostic.
+
+В обоих изменяющих сценариях все собственные временные owners удалены:
+itemCount 7→7, presence/выбранные адреса не изменены. Normal export/receipt/run
+history остаётся у своего владельца. Выявленные S8/S9 provenance gaps закрыты
+реальным установленным путём. Runtime всё ещё свежий **disconnected**, поэтому
+saved не означает received/shown. Физическое выделение/чернила/композиция,
+семь сценариев × десять повторов, 30 минут совместной работы и системные метрики
+не объявляются пройденными. S5/S7–S10 и общая веха пока остаются In Progress.

@@ -425,7 +425,7 @@ extension NotebookStore {
       }
 
       let publication: (after: CollaborationWorkspace, targets: [CollaborationTarget], changed: [CollaborationFieldChange])
-      if hasLifecycle {
+      if receipt.lifecycleInverse != nil {
         let captureID = Self.submissionID(receipt.id, suffix: "lifecycle-undo")
         publication = try currentSQL!.withActionRecordCapture(actionID: captureID) { try publishInverse() }
         let inverse = try saveLifecycleInverse(actionID: receipt.id, captureID: captureID)
@@ -460,7 +460,14 @@ extension NotebookStore {
 
   private func commitCollaboration(before: [String: JSONValue], after: CollaborationWorkspace,
     receipt: CollaborationReceipt, revisedTargets: [CollaborationTarget]) throws -> CollaborationReceipt {
-    try publishCollaborationEdits(before: before, after: after.files)
+    var receipt = receipt
+    // The same addressed evidence also owns implicit existence/placement
+    // writes made by ordinary edits. Capture only the actual changed records,
+    // before publishing receipt, context or local result metadata.
+    try currentSQL!.withActionRecordCapture(actionID: receipt.id) {
+      try publishCollaborationEdits(before: before, after: after.files)
+    }
+    receipt.lifecycleInverse = try saveLifecycleInverse(actionID: receipt.id)
     return try finishCollaboration(after: after, receipt: receipt, revisedTargets: revisedTargets,
       changed: collaborationDiff(before, after.files))
   }

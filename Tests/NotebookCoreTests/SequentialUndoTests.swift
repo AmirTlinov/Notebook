@@ -64,9 +64,36 @@ func sequentialUndoSurvivesReceiptReplication() throws {
   let remoteRoot = FileManager.default.temporaryDirectory.appendingPathComponent("undo-peer-\(UUID())")
   defer { try? FileManager.default.removeItem(at: remoteRoot) }
   let remote = NotebookStore(root: remoteRoot)
-  _ = try remote.loadOrCreate(actor: UUID(), pageSize: .init(width: 834, height: 1194))
-  _ = try remote.loadOrCreateSpatialInk(actor: UUID())
-  _ = try remote.mergeCollaborationContent(f.store.collaborationContent(), actions: [a, undone])
+  try remote.prepareEmptyWorkspace(workspaceID: f.store.workspaceHeader().workspaceID)
+  let peer = UUID()
+  let inverseRoots = Set([a.lifecycleInverse?.rootHash, undone.undo?.restorationInverse?.rootHash].compactMap { $0 })
+  var refusedMissingInverse = false
+  for change in try f.store.changeJournal(after: 0) {
+    var delivered = false
+    for _ in 0..<64 {
+      let missing = try remote.missingBlobHashes(for: change)
+      if missing.isEmpty {
+        _ = try remote.applyRemoteChange(change, peerID: peer)
+        delivered = true; break
+      }
+      if !inverseRoots.isDisjoint(with: missing) {
+        let cursor = try remote.peerCursor(peerID: peer, direction: .incoming)
+        #expect(throws: NotebookStorageError.self) { _ = try remote.applyRemoteChange(change, peerID: peer) }
+        #expect(try remote.peerCursor(peerID: peer, direction: .incoming) == cursor)
+        refusedMissingInverse = true
+      }
+      for hash in missing {
+        let size = try f.store.blobSize(hash: hash)
+        var data = Data()
+        while Int64(data.count) < size {
+          data += try f.store.readBlobChunk(hash: hash, offset: Int64(data.count), maxBytes: 1_048_576)
+        }
+        try remote.stageBlob(data: data, expectedHash: hash)
+      }
+    }
+    #expect(delivered)
+  }
+  #expect(refusedMissingInverse, "A receipt alone cannot replace its authenticated inverse closure")
   let inverse = try remote.undoCollaborationAction(a.id, actor: UUID())
   #expect(inverse.undo?.preserved.isEmpty == true)
   #expect(try remote.loadPage(f.target.id).elements[0].css == "")
