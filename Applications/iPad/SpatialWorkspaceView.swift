@@ -21,6 +21,8 @@ private struct CameraGestureSnapshot {
   var dockingCorrection: NotebookDockingCorrection
   var openingWasVisible: Bool
   var followsPortal = false
+
+  var beganOnOpenPaper: Bool { presence.mode == .page || presence.mode == .document }
 }
 
 /// A Show command may outlive its camera animation while WebKit finds a block's
@@ -204,7 +206,8 @@ struct SpatialWorkspaceView: View {
             isEnabled: true,
             defersHorizontalMotionToPageTurn: (presence.mode == .page
               || presence.mode == .document)
-              && presence.openProgress >= 0.999 && !model.isPointing,
+              && presence.openProgress >= 0.999 && !model.isPointing
+              && presence.camera.scale <= model.itemGeometry(presence.focusedItemID).fitScale(viewport: viewport) * 1.001,
             inputGate: model.inputGate,
             onCamera: handleWorkspaceMagnification,
             onUndo: model.undoLastSurfaceAction
@@ -1003,19 +1006,16 @@ struct SpatialWorkspaceView: View {
         dockingStartStrength = 0
       }
       let paperEngagement = focusedItemID.flatMap { itemID -> CameraGestureSnapshot.PaperEngagement? in
-        guard itemKind(itemID) != .board else { return nil }
+        guard itemKind(itemID) != .board, presence.openProgress > 0 else { return nil }
         let coverScale = model.itemGeometry(itemID).coverScale(viewport: presence.viewport)
-        let targetScale = model.itemGeometry(itemID).fitScale(viewport: presence.viewport)
-        let fallback =
-          presence.mode == .cover
-            && presence.openProgress <= 0
-          ? presence.camera.scale
-          : coverScale * NotebookOpeningIntent.entryScaleRatio
+        // Fitting the page is an entry destination, not its zoom limit. The
+        // same physical cover-sized boundary owns opening and closing, leaving
+        // room to zoom out on an open sheet without immediately folding it.
         let openingScale = NotebookOpeningTransition.openingScale(
           cameraScale: presence.camera.scale,
-          pageScale: targetScale,
+          pageScale: coverScale,
           progress: presence.openProgress,
-          fallback: fallback
+          fallback: coverScale * NotebookOpeningIntent.entryScaleRatio
         )
         return CameraGestureSnapshot.PaperEngagement(
           itemID: itemID,
@@ -1127,7 +1127,7 @@ struct SpatialWorkspaceView: View {
     let engagementScale = engagedItemID.map {
       model.itemGeometry($0).fitScale(viewport: viewport)
     } ?? pageScale
-    let maximumScale = snapshot.paperEngagement == nil
+    let maximumScale = snapshot.beganOnOpenPaper || snapshot.paperEngagement == nil
       ? SpatialCamera.maximumScale
       : engagementScale
     let rawCamera = snapshot.trajectory.camera(
@@ -1197,7 +1197,7 @@ struct SpatialWorkspaceView: View {
       viewport: viewport,
       geometry: model.itemGeometry(attractionTarget)
     )
-    if let attractionTarget,
+    if !snapshot.beganOnOpenPaper, let attractionTarget,
       let center = focusedCenter(itemID: attractionTarget, boardID: snapshot.presence.boardID)
     {
       let correction: NotebookDockingCorrection
@@ -1207,7 +1207,7 @@ struct SpatialWorkspaceView: View {
         let rawOpeningProgress = NotebookOpeningTransition.progress(
           cameraScale: rawCamera.scale,
           openingScale: engagement.rawOpeningScale,
-          pageScale: model.itemGeometry(engagement.itemID).fitScale(viewport: viewport)
+          pageScale: model.itemGeometry(engagement.itemID).coverScale(viewport: viewport)
         )
         correction = NotebookDockingField.openingCorrection(
           currentProgress: rawOpeningProgress,
@@ -1240,10 +1240,15 @@ struct SpatialWorkspaceView: View {
         coverScale: model.itemGeometry(candidate).coverScale(viewport: viewport)
       )
     {
+      // A fast first sample may already be beyond fit. The opening interval
+      // belongs to the item's geometry, never to whichever frame happened to
+      // arrive first (which could otherwise make the interval empty forever).
+      let openingScale = model.itemGeometry(candidate).coverScale(viewport: viewport)
+        * NotebookOpeningIntent.entryScaleRatio
       snapshot.paperEngagement = CameraGestureSnapshot.PaperEngagement(
         itemID: candidate,
-        openingScale: camera.scale,
-        rawOpeningScale: rawCamera.scale,
+        openingScale: openingScale,
+        rawOpeningScale: min(rawCamera.scale, openingScale),
         dockingEntryProgress: 0,
         dockingEntryCorrection: snapshot.dockingCorrection
       )
@@ -1256,7 +1261,7 @@ struct SpatialWorkspaceView: View {
       open = NotebookOpeningTransition.progress(
         cameraScale: camera.scale,
         openingScale: engagement.openingScale,
-        pageScale: model.itemGeometry(engagement.itemID).fitScale(viewport: viewport)
+        pageScale: model.itemGeometry(engagement.itemID).coverScale(viewport: viewport)
       )
     } else {
       open = 0
@@ -1266,7 +1271,7 @@ struct SpatialWorkspaceView: View {
     if snapshot.openingWasVisible && !openingWasVisible {
       performOpeningFeedback()
     }
-    let mode: WorkspaceSemanticMode = candidate == nil ? .board : .cover
+    let mode: WorkspaceSemanticMode = candidate.map { open >= 0.999 ? openMode(for: $0) : .cover } ?? .board
     snapshot.lastMagnification = scale
     cameraGesture = snapshot
     model.updatePresence(
@@ -1291,6 +1296,12 @@ struct SpatialWorkspaceView: View {
       return
     }
     cameraGesture = nil
+    if snapshot.beganOnOpenPaper, presence.focusedItemID == snapshot.presence.focusedItemID,
+      presence.mode == .page || presence.mode == .document {
+      contentGestureActive = false
+      model.updatePresence(presence, settled: true)
+      return
+    }
     let viewport = presence.viewport
     let pageScale = model.itemGeometry(presence.focusedItemID).fitScale(viewport: viewport)
     if let engagement = snapshot.paperEngagement,
@@ -1826,7 +1837,7 @@ private struct WorkspaceSceneItem: View {
         navigationIsEnabled: pageNavigationIsEnabled,
         pageIsInteractive: contentIsInteractive,
         canBeginNavigation: {
-          model.inputGate.permitsPageNavigation
+          model.inputGate.permitsPageNavigation && paperFitsViewport
         },
         page: { index, isCurrent, readiness in
           notebookPage(
@@ -1869,7 +1880,7 @@ private struct WorkspaceSceneItem: View {
         allowsTrailingPageCreation: false,
         navigationIsEnabled: pageNavigationIsEnabled,
         pageIsInteractive: contentIsInteractive,
-        canBeginNavigation: { true },
+        canBeginNavigation: { paperFitsViewport },
         page: { index, isCurrent, readiness in
           documentPage(
             document: document,
@@ -1914,6 +1925,13 @@ private struct WorkspaceSceneItem: View {
 
   private var notebookItem: WorkspaceItem {
     model.itemForDisplay(id: rendered.id) ?? rendered.item
+  }
+
+  /// A zoomed sheet gives horizontal finger motion to its camera. Explicit
+  /// folio commands still use the page controller's external-selection path.
+  private var paperFitsViewport: Bool {
+    guard let presence = model.presence, presence.focusedItemID == rendered.id else { return false }
+    return presence.camera.scale <= rendered.geometry.fitScale(viewport: presence.viewport) * 1.001
   }
 
   private var notebookSelectedPageIndex: Int {

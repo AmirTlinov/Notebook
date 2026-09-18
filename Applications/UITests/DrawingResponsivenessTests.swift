@@ -2727,13 +2727,16 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launchArguments = [
       "--notebook-drawing-responsiveness-fixture",
       "--notebook-simulator-finger-gestures",
+      "--notebook-page-turn-content-fixture",
     ]
     launchPortraitFixture(app)
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
     let originalPaperFrame = paper.frame
-    paper.pinch(withScale: 0.28, velocity: -2)
+    let content = app.otherElements["agent-element-page-marker-0"]
+    XCTAssertTrue(content.waitForExistence(timeout: 5))
+    content.pinch(withScale: 0.28, velocity: -2)
 
     XCTAssertTrue(
       app.buttons["create-workspace-item"].waitForExistence(timeout: 5),
@@ -2752,7 +2755,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
     // This is the system end-to-end route, not a calibrated scale measurement.
     // Exact small approaches run against the mounted native scene in PortalPassageTests.
-    workspaceWindow(in: app).pinch(withScale: 4, velocity: 2)
+    notebook.pinch(withScale: 4, velocity: 2)
     XCTAssertTrue(
       paper.waitForExistence(timeout: 5),
       "Щипок над тетрадью должен снова открыть её лист"
@@ -2761,6 +2764,55 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(paper.frame.midY, originalPaperFrame.midY, accuracy: 2)
     XCTAssertEqual(paper.frame.width, originalPaperFrame.width, accuracy: 2)
     XCTAssertEqual(paper.frame.height, originalPaperFrame.height, accuracy: 2)
+  }
+
+  func testNotebookPinchesZoomTheOpenSheetInsteadOfItsCover() throws {
+    try checkOpenSheetPinches(document: false)
+  }
+
+  func testDocumentPinchesZoomTheOpenSheetInsteadOfItsCover() throws {
+    try checkOpenSheetPinches(document: true)
+  }
+
+  private func checkOpenSheetPinches(document: Bool) throws {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures"]
+    app.launchArguments.append(document ? "--notebook-document-runtime-fixture" : "--notebook-page-turn-content-fixture")
+    launchPortraitFixture(app)
+    let sheet = app.otherElements[document ? "page-turn-surface" : "paper-input"].firstMatch
+    XCTAssertTrue(sheet.waitForExistence(timeout: 8))
+    let fitted = sheet.frame
+    // Full-window XCTest pinch starts one finger on the top-left Back button.
+    // Use real visible content so both contacts belong to the paper.
+    let gestureSurface = document
+      ? sheet.staticTexts["Документ соединяет текст, формулы и управление."].firstMatch
+      : app.otherElements["agent-element-page-marker-0"]
+    XCTAssertTrue(gestureSurface.waitForExistence(timeout: 5))
+    let item = app.descendants(matching: .any).matching(identifier:
+      "workspace-item-7e7a1000-0000-4000-8000-00000000000\(document ? 6 : 2)").firstMatch
+    let cover = item.otherElements["cover-opening-surface"].firstMatch
+    func assertOpen(_ name: String) {
+      let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+      proof.name = name; proof.lifetime = .keepAlways; add(proof)
+      let hierarchy = XCTAttachment(string: app.debugDescription)
+      hierarchy.name = name + "-hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+      XCTAssertTrue(sheet.waitForExistence(timeout: 2))
+      XCTAssertEqual(cover.value as? String, "Обложка 100%", "The same sheet must stay fully open during ordinary zoom")
+      XCTAssertFalse(app.buttons["create-workspace-item"].exists)
+      XCTAssertFalse(app.textViews["Исходный Markdown или LaTeX"].exists,
+        "The two releases of a pinch are not a double tap on document text")
+      XCTAssertFalse(app.keyboards.firstMatch.exists)
+    }
+    gestureSurface.pinch(withScale: 0.94, velocity: -0.2)
+    assertOpen("paper-small-reduction-\(document)")
+    gestureSurface.pinch(withScale: 1.6, velocity: 0.7)
+    assertOpen("paper-enlarged-\(document)")
+    XCTAssertGreaterThan(sheet.frame.width, fitted.width * 1.1,
+      "Lifting the pair must retain real paper magnification, not snap back to fit")
+    gestureSurface.pinch(withScale: 0.94, velocity: -0.2)
+    assertOpen("paper-zoom-retained-\(document)")
+    XCTAssertGreaterThan(sheet.frame.width, fitted.width * 1.05)
   }
 
   func testDoubleTapOpensAWholePageImmediately() {
@@ -3367,7 +3419,11 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let page = app.otherElements["page-turn-surface"]
     XCTAssertTrue(page.waitForExistence(timeout: 8))
-    page.pinch(withScale: 0.9, velocity: -0.25)
+    // A small reduction now belongs to the open sheet. Folding starts only
+    // once the physical sheet is reduced below the cover-sized boundary.
+    let content = page.staticTexts["Документ соединяет текст, формулы и управление."].firstMatch
+    XCTAssertTrue(content.waitForExistence(timeout: 5))
+    content.pinch(withScale: 0.69, velocity: -0.25)
     try await Task.sleep(for: .milliseconds(400))
 
     let cover = app.otherElements["cover-opening-surface"]
@@ -3382,6 +3438,10 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(window.exists)
     XCTAssertEqual(app.state, .runningForeground)
     let screenshot = app.screenshot()
+    let proof = XCTAttachment(screenshot: screenshot)
+    proof.name = "document-cover-outside-notebook-frame"
+    proof.lifetime = .keepAlways
+    add(proof)
     let openingSideWidth = min(
       document.frame.minX - window.frame.minX,
       document.frame.width * 0.2
@@ -3402,10 +3462,6 @@ final class DrawingResponsivenessTests: XCTestCase {
       0.5,
       "The curling cover must remain visible after it crosses the notebook frame"
     )
-    let proof = XCTAttachment(screenshot: screenshot)
-    proof.name = "document-cover-outside-notebook-frame"
-    proof.lifetime = .keepAlways
-    add(proof)
   }
 
   func testDocumentCoverAndPaperKeepOneRectangleInBothOrientations() async throws {

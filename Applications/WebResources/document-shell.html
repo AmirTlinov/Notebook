@@ -1168,21 +1168,57 @@
         bridge({kind:'link',...presentationReceipt(),href:link.getAttribute('href'),
           activationSequence:String(++linkActivationSequence),userActivated:event.isTrusted});
       });
+      // Touch editing is admitted only by two completed single-finger taps.
+      // Native paper gestures can deliver two nearby releases (or cancel one
+      // contact); neither that pair nor its compatibility dblclick is a tap.
+      const editingTouches = new Map();
+      let editingPointerType = null;
+      const rejectEditingTaps = () => {
+        lastTouchTap = null;
+        for (const touch of editingTouches.values()) touch.valid = false;
+      };
+      addEventListener('pointerdown', event => {
+        editingPointerType = event.pointerType;
+        if (event.pointerType !== 'touch') return;
+        const section = event.target.closest('.block.editable');
+        const valid = editingTouches.size === 0 && section && root.contains(section)
+          && !event.target.closest('a[href]');
+        if (!valid) rejectEditingTaps();
+        editingTouches.set(event.pointerId, {blockID: section?.dataset.blockId,
+          x: event.clientX, y: event.clientY, time: performance.now(), valid});
+      });
+      addEventListener('pointermove', event => {
+        const touch = editingTouches.get(event.pointerId);
+        if (touch && Math.hypot(event.clientX-touch.x, event.clientY-touch.y) > 10)
+          rejectEditingTaps();
+      });
+      addEventListener('pointercancel', event => {
+        if (event.pointerType !== 'touch') return;
+        rejectEditingTaps();
+        editingTouches.delete(event.pointerId);
+      });
       root.addEventListener('dblclick', event => {
         if(event.target.closest('a[href]'))return;
         event.preventDefault();
+        if (editingPointerType === 'touch') return;
         const section = event.target.closest('.block.editable');
         if (section) beginEditing(section.dataset.blockId);
       });
       editorLayer.addEventListener('pointerdown', event => {
         if (event.target === editorLayer) activeEditorFinish?.(true);
       });
-      root.addEventListener('pointerup', event => {
+      addEventListener('pointerup', event => {
         if (event.pointerType !== 'touch') return;
-        if(event.target.closest('a[href]')){lastTouchTap=null;return;}
+        const touch = editingTouches.get(event.pointerId);
+        editingTouches.delete(event.pointerId);
         const section = event.target.closest('.block.editable');
-        if (!section) { lastTouchTap = null; return; }
         const now = performance.now();
+        if (!touch?.valid || editingTouches.size || !section || !root.contains(section)
+          || section.dataset.blockId !== touch.blockID || event.target.closest('a[href]')
+          || now-touch.time > 360
+          || Math.hypot(event.clientX-touch.x, event.clientY-touch.y) > 10) {
+          lastTouchTap = null; return;
+        }
         const tap = {
           blockID: section.dataset.blockId,
           x: event.clientX,
