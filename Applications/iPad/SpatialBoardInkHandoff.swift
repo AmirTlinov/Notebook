@@ -153,11 +153,11 @@ final class SpatialInkPhysicalOwner {
   }
 
   /// Refill the existing finite backing before its edge reaches the viewport.
-  /// Settlement requests exact density and a fresh input basis even when the
-  /// camera then remains stationary. This demand uses the one scene producer.
+  /// Settlement refines density, not translation: input already maps through
+  /// the installed basis. This demand uses the one scene producer.
   func needsProjection(camera: SpatialCamera, viewport: SpatialPoint, refinesDetails: Bool) -> Bool {
     guard surface.kind == .board, let basis = canvas.spatialCamera, let id = surface.ownerID else { return false }
-    if refinesDetails, camera != basis { return true }
+    if refinesDetails, camera.scale > basis.scale * (1 + 1e-9) { return true }
     let anchor = SessionPresence(boardID: id, mode: .board, camera: basis, viewport: canvas.spatialViewport)
     let current = SessionPresence(boardID: id, mode: .board, camera: camera, viewport: viewport)
     let projection = SceneCameraProjection(anchor: anchor, current: current)

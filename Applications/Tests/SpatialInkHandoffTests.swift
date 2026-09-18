@@ -17,7 +17,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     let crop = canvas.convert(fixture.canvas.bounds, from: fixture.canvas)
     XCTAssertTrue(canvas.bounds.contains(crop),
       "The native backing itself contains all 512 points; admission keeps its strict extent check")
-    XCTAssertEqual(canvas.bounds.width, 512)
+    XCTAssertEqual(canvas.bounds.width, 1024)
     let before = try Self.inkPixelCount(fixture.canvas)
     let first = CGPoint(x: 0, y: 40)
     fixture.contact(tool: .pen, from: first, to: .init(x: 24, y: 80))
@@ -78,8 +78,8 @@ final class SpatialInkHandoffTests: XCTestCase {
     for id in [fixture.parentID, fixture.childID] {
       let canvas = try XCTUnwrap(fixture.cohort.nativeInk.owners[.board(id)]?.canvas)
       XCTAssertTrue(canvas.isStableFramePresented)
-      XCTAssertEqual(canvas.bounds.size, CGSize(width: 834, height: 1194),
-        "Portrait backing covers the current screen and portal, not a hypothetical landscape rotation")
+      XCTAssertEqual(canvas.bounds.size, CGSize(width: 1024, height: 1280),
+        "Motion uses the same 4 by 5 Retina tile pools, including their previously unused edge pixels")
       XCTAssertEqual(canvas.drawableSize.width / canvas.bounds.width, 2, accuracy: 0.001)
       XCTAssertEqual(canvas.drawableSize.height / canvas.bounds.height, 2, accuracy: 0.001)
     }

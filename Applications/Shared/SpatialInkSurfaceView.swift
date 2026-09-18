@@ -115,7 +115,7 @@ final class SpatialInkSurfaceRegistry {
     /// replace the old cohort; refusal cannot publish a cover with missing ink.
     func prepareSceneInk(plan: SceneCompositionPlan, frame: WorkspaceSceneFrame,
       liveData: SceneCompositionLiveData, resources: SceneRenderResources,
-      displayScale: Double) async throws -> SpatialInkSceneLease {
+      displayScale: Double, refinesDetails: Bool = true) async throws -> SpatialInkSceneLease {
       let preparation = try await acquireSceneInkPreparation()
       defer { releaseSceneInkPreparation(preparation) }
       guard !sceneInkIsStopped, let root = plan.presentations[.board(plan.rootBoardID)] else { throw CancellationError() }
@@ -132,22 +132,24 @@ final class SpatialInkSurfaceRegistry {
       // The aspect calculation can round its limiting side down by one ULP
       // (834 * (512 / 834) < 512). Backing must contain the requested crop,
       // not make contact admission forgive an actually smaller native extent.
-      let boardSize = SpatialPoint(x: max(root.viewport.x, projected.x), y: max(root.viewport.y, projected.y))
-      var requested: [(SurfaceID, SpatialPoint, SpatialCamera)] = []
+      let boardSize = InkCanvasView.sceneBackingSize(viewport: .init(
+        x: max(root.viewport.x, projected.x), y: max(root.viewport.y, projected.y)), displayScale: displayScale)
+      var requested: [(SurfaceID, SpatialPoint, SpatialCamera, SpatialPoint)] = []
       for id in plan.inkBoardIDs.sorted() {
         guard let presence = plan.presentations[.board(id)] else { throw SceneRenderError.snapshotPending("native_ink_source") }
-        requested.append((.board(id), boardSize, presence.camera))
+        requested.append((.board(id), boardSize, presence.camera, presence.viewport))
       }
       for live in plan.liveOwners {
         guard case .item(let id) = live.id,
           let item = frame.workset(boardID: live.plane.boardID).items.first(where: { $0.id == id }) else { continue }
-        requested.append((.cover(id), .init(x: item.geometry.width, y: item.geometry.height), .init()))
+        let size = SpatialPoint(x: item.geometry.width, y: item.geometry.height)
+        requested.append((.cover(id), size, .init(), size))
       }
       var owners: [SurfaceID: SpatialInkPhysicalOwner] = [:]
       var updates: [SpatialInkSceneLease.Update] = []
       var created: [SpatialInkPhysicalOwner] = []
       do {
-        for (surface, size, camera) in requested {
+        for (surface, size, camera, viewport) in requested {
           try Task.checkCancellation()
           let previous = physicalInkOwners[surface]?.owner
           let installed = previous?.canvas.installedSpatialSource
@@ -193,7 +195,8 @@ final class SpatialInkSurfaceRegistry {
           owners[surface] = owner
           let staged: InkCanvasView.PreparedSpatialFrame?
           if previous != nil, prepared.1 != nil || owner.canvas.needsSpatialTarget(size: size, displayScale: displayScale)
-            || (surface.kind == .board && owner.canvas.spatialCamera != camera) {
+            || (surface.kind == .board && owner.needsProjection(camera: camera,
+              viewport: viewport, refinesDetails: refinesDetails)) {
             staged = try await owner.canvas.prepareSpatialFrame(prepared.1, size: size, displayScale: displayScale,
               camera: surface.kind == .board ? camera : nil)
           }

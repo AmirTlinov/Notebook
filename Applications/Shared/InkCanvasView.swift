@@ -77,6 +77,16 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   private typealias Vertex = SpatialInkGeometry.Vertex
 
+  /// Board motion uses the slack in the fixed-size native tile pools first.
+  /// One bounded guard band, not another viewport, keeps small pans off the GPU.
+  static func sceneBackingSize(viewport: SpatialPoint, displayScale: Double) -> SpatialPoint {
+    let side = Double(SpatialTile.side)
+    func extent(_ points: Double) -> Double {
+      ceil((points * displayScale + 128) / side) * side / displayScale
+    }
+    return .init(x: extent(viewport.x), y: extent(viewport.y))
+  }
+
   fileprivate struct SpatialTargetLayout: Equatable {
     let size: CGSize
     let displayScale: Double

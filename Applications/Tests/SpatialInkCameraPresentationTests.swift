@@ -8,6 +8,27 @@ import XCTest
 /// their native parent, but cannot silently redraw those pixels in a new basis.
 @MainActor
 final class SpatialInkCameraPresentationTests: XCTestCase {
+  func testSmallPanAndZoomOutUseInstalledCoverageWithoutPreparingAnotherBasis() async throws {
+    for viewport in [SpatialPoint(x: 834, y: 1194), .init(x: 1194, y: 834)] {
+      let fixture = try await Fixture.make(viewport: viewport)
+      let canvas = fixture.owner.canvas
+      let requests = canvas.drawableRequestCount, meshes = canvas.spatialMeshInstallCount
+      for camera in [SpatialCamera(center: .init(x: 8, y: 0), scale: 1),
+        .init(center: .init(x: 0, y: -8), scale: 1), .init(scale: 0.99)] {
+        XCTAssertFalse(fixture.owner.needsProjection(camera: camera, viewport: viewport, refinesDetails: false))
+        fixture.update(camera: camera)
+        fixture.assertWorldGeometry(camera: camera)
+      }
+      XCTAssertFalse(fixture.owner.needsProjection(camera: .init(center: .init(x: 8, y: 0), scale: 1),
+        viewport: viewport, refinesDetails: true), "Settling a covered pan does not need a new GPU basis")
+      XCTAssertEqual(canvas.drawableRequestCount, requests)
+      XCTAssertEqual(canvas.spatialMeshInstallCount, meshes)
+      XCTAssertTrue(fixture.owner.needsProjection(camera: .init(center: .init(x: 10_000, y: 0)),
+        viewport: viewport, refinesDetails: false), "Finite overscan still requests the missing world area")
+      await fixture.close()
+    }
+  }
+
   func testOneAcceptedNativeSampleProjectsBothPlanesAndInkBeforeSwiftUIUpdates() async throws {
     let fixture = try await Fixture.make()
     addTeardownBlock { await fixture.close() }
@@ -188,7 +209,7 @@ final class SpatialInkCameraPresentationTests: XCTestCase {
     addTeardownBlock { await fixture.close() }
     let original = try XCTUnwrap(fixture.owner.canvas.spatialCamera)
     XCTAssertFalse(fixture.owner.needsProjection(camera: original, viewport: fixture.viewport, refinesDetails: true),
-      "The full-width long edge has no overscan, so it cannot promise an impossible demand margin")
+      "A ready finite backing does not request itself again")
     let moved = SpatialCamera(center: .init(x: 14, y: -12), scale: 1.1)
     XCTAssertTrue(fixture.owner.needsProjection(camera: moved, viewport: fixture.viewport, refinesDetails: true))
     fixture.update(camera: moved)

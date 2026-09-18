@@ -943,7 +943,7 @@ final class SceneCompositionTiles {
               phase = "native_ink"
               allocation = .nativeInk
               nativeInk = try await surfaceRegistry.prepareSceneInk(plan: plan, frame: frame,
-                liveData: liveData, resources: resources, displayScale: displayScale)
+                liveData: liveData, resources: resources, displayScale: displayScale, refinesDetails: request.refinesDetails)
               phase = "raster_native_preflight"
               allocation = .raster
               guard borrowed.prepareAdmission(resources) else {
