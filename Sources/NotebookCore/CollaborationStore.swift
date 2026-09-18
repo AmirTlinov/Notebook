@@ -340,7 +340,8 @@ extension NotebookStore {
         for change in receipt.changes where migratedMove == nil {
           let current = before.files[change.file]?.value(at: change.path[...])
           if let address = placementAddress(change.file, change.path) {
-            guard !protected.contains(change), placementIsOwned(current, after: change.after) else {
+            guard !protected.contains(change),
+              try placementIsOwned(current, after: change.after, file: change.file, path: change.path) else {
               preserved.append(change); continue
             }
             let prior = try change.before?.decode(WorkspacePlacement.self)
@@ -729,8 +730,15 @@ struct CollaborationWorkspace {
         throw invalid("Нужны ID предмета и его центр.")
       }
       var tree = try hierarchy
-      guard try tree.moveItem(id, in: boardID(for: operation.target), to: center.decode(WorldPoint.self), actor: actor) else {
-        throw invalid("Предмет должен быть свободным участником указанной доски.")
+      let boardID = try boardID(for: operation.target), destination = try center.decode(WorldPoint.self)
+      let moved: Bool
+      if tree.board(boardID)?.stack(containing: id) != nil {
+        moved = tree.unstackItem(id, in: boardID, at: destination, actor: actor)
+      } else {
+        moved = tree.moveItem(id, in: boardID, to: destination, actor: actor)
+      }
+      guard moved else {
+        throw invalid("Предмет должен принадлежать указанной доске; нужен допустимый центр.")
       }
       files["board.json"] = try .encode(tree)
     case .stackItems:
@@ -1212,18 +1220,19 @@ struct CollaborationWorkspace {
     var protected = Set<UUID>()
     for (id, op) in created {
       guard current(Address("workspace.json", [.field("items"), .member(id.uuidString)])) != nil else { continue }
-      if (owned[id] ?? []).contains(where: { address in
+      if try (owned[id] ?? []).contains(where: { address in
         let value = current(address)
-        if placementAddress(address.file, address.path) != nil,
-          !placementIsOwned(value, after: authored(address)) { return true }
+        if placementAddress(address.file, address.path) != nil {
+          return try !scope.placementIsOwned(value, after: authored(address), file: address.file, path: address.path)
+        }
         if address.file.hasPrefix("pages/"), address.path.isEmpty, value != authored(address) { return true }
         if collaborationComparable(value, file: address.file, path: address.path)
           != collaborationComparable(authored(address), file: address.file, path: address.path) { return true }
         // Existence has its own causal owner: a human edit and later return to
         // the same visible value must not detach a retained item from its paper.
-        guard let change = changes.first(where: { $0.0 == address })?.1, let expected = change.afterVersion else { return false }
+        guard let change = changes.first(where: { $0.0 == address })?.1, change.afterVersion != nil else { return false }
         let version = collaborationFieldVersion(file: files[address.file], path: address.path)
-        return version?.stamp != expected.stamp || version?.human != expected.human
+        return try !scope.fieldIsOwned(version, by: change)
       }) { protected.insert(id) }
       if op.kind == .createNotebook {
         let authoredPages = (owned[id] ?? []).filter { $0.file.hasPrefix("pages/") && $0.path.isEmpty }.count
@@ -1409,14 +1418,6 @@ func placementAddress(_ file: String, _ path: [CollaborationPathComponent]) -> (
     path[2] == .field("board"), path[3] == .field("placements"), case .member(let item) = path[4],
     let boardID = UUID(uuidString: board), let itemID = UUID(uuidString: item) else { return nil }
   return (boardID, itemID)
-}
-
-private func placementIsOwned(_ current: JSONValue?, after: JSONValue?) -> Bool {
-  guard let current = try? current?.decode(WorkspacePlacement.self),
-    let authored = try? after?.decode(WorkspacePlacement.self) else { return false }
-  // A losing concurrent head is still another hand's work. Comparing only the
-  // rendered winner would silently erase it during an otherwise valid undo.
-  return current.itemID == authored.itemID && current.heads == authored.heads
 }
 
 /// Converts only a provable inverse from an immutable version-two receipt.

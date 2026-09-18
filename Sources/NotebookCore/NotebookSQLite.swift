@@ -340,7 +340,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 10
+  static let currentDatabaseVersion: Int64 = 11
 
   func prepareDatabase(initialWorkspaceID: UUID? = nil) throws {
     if currentSQL != nil { guard initialWorkspaceID == nil else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }; return }
@@ -427,7 +427,9 @@ extension NotebookStore {
       if admittedVersion == 2 { try migrateStoredBoardPlacements(database: database) }
       // One historical receipt at a time; no whole-history buffer and no
       // rewritten shared content, hashes, identities or replication cursors.
-      if admittedVersion < 6 {
+      // Version 11 adds typed placement evidence to the same receipt-derived
+      // restoration index. Rebuild it from history, without reauthoring records.
+      if admittedVersion < 11 {
         var after = ""
         while let row = try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file LIKE 'collaboration/actions/%' AND r.parent IS NULL AND r.address>? ORDER BY r.address LIMIT 1", [.text(after)]).first {
           let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: row[1].blob!)

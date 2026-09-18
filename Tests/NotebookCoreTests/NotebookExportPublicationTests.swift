@@ -6,8 +6,15 @@ struct NotebookExportPublicationTests {
   private func fixture() throws -> (NotebookStore, DocumentDocument) {
     let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("notebook-print-package-\(UUID())"))
     _ = try store.loadOrCreate(actor: UUID(), pageSize: .init(width: 834, height: 1194))
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "Printed")])
-    try store.saveDocument(document)
+    let actor = UUID()
+    var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
+    let created = index.createDocument(title: "Print fixture", actor: actor)
+    let item = try #require(created)
+    let added = board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor)
+    #expect(added)
+    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.markdown(id: "body", source: "Printed")])
+    try store.saveDocumentWorkspaceBundle(index: index, document: document,
+      state: .init(id: item.id, actor: actor), board: board)
     return (store, document)
   }
   @Test func packageAddressBindsSourceAndAssetsAndPreservesPriorExportBytes() throws {

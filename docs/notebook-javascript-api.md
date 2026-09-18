@@ -107,7 +107,7 @@ await emit(await nb.transaction('delete-item', {
 | Создать тетрадь, документ, доску | Core create, native workspace publication | `createNotebook`, `createDocument`, `createBoard` |
 | Переименовать | Каталожное поле предмета | `renameItem` |
 | Передвинуть свободный предмет | Placement register | `moveItem` |
-| Достать из стопки | Native `unstackItem`; `moveItem` пока требует свободный предмет | Открытый SDK-пробел S8, не отдельный инструмент |
+| Достать из стопки | Тот же native `unstackItem`, без переписывания соседних registers | `moveItem` с центром извлечённого предмета |
 | Собрать стопку | Те же placement registers | `stackItems` |
 | Добавить лист в хвост | Native landing / `publishPageAppend` | `appendPage` |
 | Удалить тетрадь, документ, пустую доску | `deleteWorkspaceItemContent` | `deleteItem` |
@@ -115,7 +115,13 @@ await emit(await nb.transaction('delete-item', {
 
 Отдельные `deletePage`, `reorderPages`, рекурсивное удаление и generic native
 undo/redo этим срезом не добавлены. Состояние установки, нагрузочные границы и
-непроверенные цепочки отмены указаны в [verification.md](verification.md).
+непроверенные условия указаны в [verification.md](verification.md).
+
+`nb.read({kind:'boardItem',id:itemID})` возвращает содержащую доску и её basis,
+а не трактует UUID предмета как UUID доски. Проекция может показывать соседей
+по стопке, но запись требует scope конкретной обложки. `moveItem` извлекает
+только выбранного участника через существующего владельца placement; версии
+остальных участников не переписываются.
 
 ### Настоящий выбор и исторический источник
 

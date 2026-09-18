@@ -10535,3 +10535,37 @@ receipt provenance нужно довести. Native unstack существуе�
 в этом профиле не запускались; identity, trust, ключи и живые базы не менялись.
 Физические selection/жесты/показ, окончательная цепь undo и согласованный выпуск
 остаются открытыми. Жалоба Амира на вход/выход из тетради не объявлена принятой.
+
+## 18 сентября 2026 — S8: последовательная placement-отмена и SDK извлечение из стопки
+
+Закрыты два кодовых остатка предыдущего среза. В том же receipt-derived
+индексе хранится typed proof полного placement register из исходного и undo
+inverse: цепочки move/create → delete → undo delete → undo earlier работают
+после reopen, доставки свежему peer, двух циклов удаления и миграции schema
+10 → 11. Canonical receipt hashes и read/change cursors при пересборке не
+меняются. Manifest остаётся 8. Human ABA и losing concurrent heads защищены;
+shared merger отвергает повтор dot с другим payload. Неканонические placement
+rows не становятся основанием отмены; отказ откатывает receipt, proof и cursors.
+
+`moveItem` извлекает выбранного участника через прежний native `unstackItem`,
+не переписывая registers соседей. Не добавлены операции или инструменты.
+`boardItem` теперь строит basis по предмету и его настоящей содержащей доске,
+а не ошибочно использует item UUID как board UUID. Чтение соседей не даёт scope.
+Исправлена export-фикстура: документ создаётся вместе с catalogue/state/board,
+как в приложении, а не запрещённым orphan save; production guard не ослаблен.
+
+Доказательства: `.build/s8-placement-followup-20260918/`.
+- Настоящий RED: placement/stack — 20 issues; три malformed receipt cases —
+  14 issues; реальный IPC boardItem — `target_missing`; orphan export fixture —
+  4 failures. Ранние compile errors и неверный отрицательный localY в fixture
+  также сохранены; это не ошибки native WorldPoint contract.
+- GREEN: **128 Core / 14 suites + 1 Host**; ещё **25 Core / 4 suites + 10 Host**;
+  **5 export Core**; **17 MCP/native IPC**, **3 SDK types**, `npm run check` PASS.
+- Реальное адресное чтение блока среди 100 000 state records: **335 SQL instructions**.
+- **551 source inputs** одинаковы до/после Core/MCP; последующее изменение —
+  только export fixture, отдельно проверенная с неизменными 551 inputs.
+
+Это локальный Core/IPC результат, не signed XPC, выпуск или показ на iPad.
+Пара 0.3.90 (93) этих изменений не содержит; новые приложения не устанавливались.
+S8 остаётся In Progress до согласованной физической приёмки. GUI-225 правки
+соседней задачи не включены в коммит; жалоба на жесты входа/выхода не закрыта.

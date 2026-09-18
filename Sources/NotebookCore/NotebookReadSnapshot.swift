@@ -29,7 +29,11 @@ extension NotebookStore {
     case .page, .pageHeader, .pageElement: add(.page, query.id)
     case .document, .documentHeader, .documentBlock, .documentState: add(.document, query.id)
     case .observation: if let target = query.scope?.target { targets.append(target) }
-    case .boardItem, .boardContentRevision, .scenePaintOrder, .boardElement:
+    case .boardItem:
+      // This query names an item, not its containing board. The bounded
+      // placement projection may show siblings, but does not grant their scope.
+      if data != .null, let id = query.id { try item(id) }
+    case .boardContentRevision, .scenePaintOrder, .boardElement:
       add(.board, query.id)
       if query.kind == .boardElement, data["surface"]?["kind"] == .string("cover"),
         let id = data["surface"]?["ownerID"]?.string.flatMap(UUID.init(uuidString:)), let boardID = query.id {

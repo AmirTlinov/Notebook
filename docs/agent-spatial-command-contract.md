@@ -60,3 +60,13 @@ board тела не заменяются из истории: принятая �
 undo. Отмена append удаляет только ещё принадлежащее ходу рождение; принятый
 человеком лист сохраняется. Полная история undo/redo здесь не добавляется.
 Общий [read allowance](agent-command-read-allowance.md) не увеличен.
+
+Цепочка move/create → delete → undo delete → undo earlier следует сохранённому
+inverse доказательству полного placement register. Свежая human-версия undo
+не теряет происхождение после reopen, доставки новому peer или пересборки
+производного индекса. Доказательство хранит ссылки на прежние inverse blobs
+в том же `action_field_restorations`, не вторую историю. Shared causal merger
+проверяет payload общего dot и dominance; canonical address/value проверяются
+до публикации. Независимый human ABA и даже проигрывающий concurrent head
+не становятся собственностью более раннего хода. Нет автоматического
+освежения basis или повторного исполнения действия.

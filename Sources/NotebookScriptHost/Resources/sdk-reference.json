@@ -39025,7 +39025,7 @@
       {
         "name": "moveItem",
         "topic": "operation/moveItem",
-        "description": "Move one item to a tiled board position."
+        "description": "Move one item to a tiled board position. A stack member is extracted as a free item; other members' placement registers are unchanged."
       },
       {
         "name": "stackItems",
@@ -43846,7 +43846,7 @@
     },
     "moveItem": {
       "name": "moveItem",
-      "description": "Move one item to a tiled board position.",
+      "description": "Move one item to a tiled board position. A stack member is extracted as a free item; other members' placement registers are unchanged.",
       "input": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -44037,7 +44037,7 @@
       },
       "compositionScope": {
         "rule": "Geometry of existing content requires a source reference covering each moved subject, or its exact owner in action.additionalOwners. With contextID, only that context's stored references establish source scope; adding action.references cannot widen it. Without contextID, action.references establish it. Current selection/camera and expected revisions alone do not grant composition scope. New subjects created in the same action need no extra scope. A composition_scope rejection saves none of the atomic action.",
-        "owner": "The operation target is the containing board. The moved subject is {kind:'cover',id:itemID,boardID:boardID}; declare that cover in action.additionalOwners when no source context covers it. Listing only the board is insufficient. A context reference to this notebook's page also covers its physical carrier."
+        "owner": "The operation target is the containing board. A stacked item is extracted at the requested center through the native unstack owner; this does not move the remaining members. The moved subject is {kind:'cover',id:itemID,boardID:boardID}; declare that cover in action.additionalOwners when no source context covers it. Listing only the board is insufficient. A context reference to this notebook's page also covers its physical carrier."
       },
       "example": "const target = {kind:'board',id:args.boardID};\nconst owner = {kind:'cover',id:args.itemID,boardID:args.boardID};\nconst scene = await nb.board({id:args.boardID});\nawait emit(await nb.transaction('move-item', {\n  summary:'Переместить выбранный предмет', additionalOwners:[owner],\n  base:scene.basis,\n  operations:[{kind:'moveItem',target,id:args.itemID,\n    values:{center:{tileX:0,tileY:0,localX:100,localY:80}}}]\n}));",
       "relatedTopics": [

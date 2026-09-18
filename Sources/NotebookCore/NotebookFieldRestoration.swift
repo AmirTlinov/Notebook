@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 extension NotebookStore {
@@ -71,7 +72,8 @@ extension NotebookStore {
     try visitLifecycleInverse(reference: original, actionID: receipt.id) { change in
       let row = try readLifecycleInverseFragment(hash: change.beforeHash ?? change.afterHash!, address: change.address)
       guard row.collection == "collaboration/fields" || row.collection == "board/collaboration/fields"
-        || row.collection == "pageIDs" || row.collection == "board/elements" else { return }
+        || row.collection == "pageIDs" || row.collection == "board/elements"
+        || row.collection == "board/placements" else { return }
       try database.run("INSERT INTO lifecycle_restoration_fields VALUES(?,?,?)", [.text(change.address),
         change.beforeHash.map(NotebookSQLValue.text) ?? .null, change.afterHash.map(NotebookSQLValue.text) ?? .null])
     }
@@ -114,6 +116,36 @@ extension NotebookStore {
     try visitLifecycleInverse(reference: inverse, actionID: receipt.id) { change in
       guard let after = change.afterHash else { return }
       let row = try readLifecycleInverseFragment(hash: after, address: change.address)
+      if row.collection == "board/placements" {
+        guard let target = targets.first(where: { target in
+          target.boardID.map { placementRecordAddress(boardID: $0, itemID: target.id) == row.address } == true
+        }), let boardID = target.boardID else { return }
+        guard let hashes = try database.rows("SELECT before_hash,after_hash FROM lifecycle_restoration_fields WHERE address=?",
+          [.text(row.address)]).first, let priorHash = hashes[0].text, let deletedHash = hashes[1].text,
+          let undoBeforeHash = change.beforeHash else {
+          throw NotebookStorageError.invalidTransaction("lifecycle placement restoration evidence")
+        }
+        let prior = try restoredPlacement(hash: priorHash, boardID: boardID, itemID: target.id)
+        let deleted = try restoredPlacement(hash: deletedHash, boardID: boardID, itemID: target.id)
+        let undoBefore = try restoredPlacement(hash: undoBeforeHash, boardID: boardID, itemID: target.id)
+        let written = try restoredPlacement(hash: after, boardID: boardID, itemID: target.id)
+        // Observation alone cannot establish identity: one authored dot may
+        // not carry two poses. The native merge validates that shared frontier
+        // before proving dominance, including intermediate writes in an action.
+        guard prior.pose != nil, deleted.pose == nil, undoBefore == deleted,
+          try deleted.merging(prior) == deleted, try written.merging(deleted) == written, written != prior,
+          written.heads.count == 1, written.heads[0].version.human,
+          written.pose == prior.pose else {
+          throw NotebookStorageError.invalidTransaction("lifecycle placement restoration register")
+        }
+        // Rebuildable pointers into the two already authenticated inverse
+        // streams, not another copy of the placement's causal history.
+        let proof = LifecyclePlacementRestoration(writtenHash: after, restoredHash: priorHash)
+        try database.run("INSERT INTO action_field_restorations(address,field,version,value) VALUES(?,?,?,?)",
+          [.text(address), .text("placement:" + row.address), .text(try placementIdentity(written)),
+            .blob(try Self.storageEncoder.encode(proof))])
+        return
+      }
       guard let path = try fieldPath(row) else { return }
       let expectedAddress = row.parent! + "/" + row.collection + "/@" + fieldKey([row.member])
       guard row.address == expectedAddress, row.collections.isEmpty, row.position == 0 else {
@@ -158,6 +190,53 @@ extension NotebookStore {
       version = try JSONDecoder().decode(CollaborationFieldRestoration.self, from: data).restoredVersion
     }
     return false
+  }
+
+  /// The entire register is the placement owner, including losing concurrent
+  /// heads. Only an attested inverse can bridge a freshly authored undo dot.
+  func placementIsOwned(_ current: JSONValue?, after: JSONValue?,
+    file: String, path: [CollaborationPathComponent]) throws -> Bool {
+    guard let address = placementAddress(file, path),
+      var value = try current?.decode(WorkspacePlacement.self),
+      let expected = try after?.decode(WorkspacePlacement.self),
+      value.itemID == address.itemID, expected.itemID == address.itemID else { return false }
+    let field = "placement:" + placementRecordAddress(boardID: address.boardID, itemID: address.itemID)
+    var visited = Set<String>()
+    while true {
+      if value == expected { return true }
+      let identity = try placementIdentity(value)
+      guard visited.insert(identity).inserted else { return false }
+      let rows = try currentSQL!.rows("SELECT value FROM action_field_restorations WHERE field=? AND version=? LIMIT 2",
+        [.text(field), .text(identity)])
+      guard rows.count == 1, let bytes = rows[0][0].blob else { return false }
+      let proof = try JSONDecoder().decode(LifecyclePlacementRestoration.self, from: bytes)
+      let written = try restoredPlacement(hash: proof.writtenHash, boardID: address.boardID, itemID: address.itemID)
+      guard written == value else { return false }
+      value = try restoredPlacement(hash: proof.restoredHash, boardID: address.boardID, itemID: address.itemID)
+    }
+  }
+
+  private func placementIdentity(_ placement: WorkspacePlacement) throws -> String {
+    SHA256.hash(data: try Self.storageEncoder.encode(placement)).map { String(format: "%02x", $0) }.joined()
+  }
+
+  private func placementRecordAddress(boardID: UUID, itemID: UUID) -> String {
+    "board.json#/boards/@" + boardID.uuidString.lowercased() + "/board/placements/@" + itemID.uuidString.lowercased()
+  }
+
+  private func restoredPlacement(hash: String, boardID: UUID, itemID: UUID) throws -> WorkspacePlacement {
+    let address = placementRecordAddress(boardID: boardID, itemID: itemID)
+    let row = try readLifecycleInverseFragment(hash: hash, address: address)
+    guard row.file == "board.json", row.parent == "board.json#/boards/@" + boardID.uuidString.lowercased(),
+      row.collection == "board/placements", row.member == itemID.uuidString.lowercased(),
+      row.collections.isEmpty, row.position == 0 else {
+      throw NotebookStorageError.invalidTransaction("lifecycle placement restoration address")
+    }
+    let value = try row.value.decode(WorkspacePlacement.self)
+    guard value.itemID == itemID, try row.value == .encode(value) else {
+      throw NotebookStorageError.invalidTransaction("lifecycle placement restoration identity")
+    }
+    return value
   }
 
   func graphicConversionIsAdopted(_ change: CollaborationFieldChange, receipt: CollaborationReceipt,
@@ -220,6 +299,11 @@ extension NotebookStore {
 private struct RestorationAddress: Encodable {
   let file: String
   let path: [CollaborationPathComponent]
+}
+
+private struct LifecyclePlacementRestoration: Codable {
+  let writtenHash: String
+  let restoredHash: String
 }
 
 private extension ContentFieldVersion {

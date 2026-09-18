@@ -14,7 +14,7 @@ test('generated output contracts accept actual same-snapshot native content, bas
     await writeFixture(root); const store=new NotebookStore(fixtureSocket(root));
     const queries=[{kind:'workspaceHeader'},{kind:'itemHeaders'},{kind:'itemHeader',id:itemID},{kind:'itemLifecycle',id:itemID},
       {kind:'pageHeader',id:pageID},{kind:'page',id:pageID},{kind:'notebookDirectory',id:itemID},
-      {kind:'boardItem',id:rootBoardID},{kind:'presence'},{kind:'selection'},{kind:'contexts'}];
+      {kind:'boardItem',id:rootBoardID},{kind:'boardItem',id:itemID},{kind:'presence'},{kind:'selection'},{kind:'contexts'}];
     for(const query of queries) {
       const [result]=await store.command<any[]>({command:'read',readSnapshots:true,queries:[query]});
       const schema=readDataSchemas[query.kind as keyof typeof readDataSchemas];
@@ -170,3 +170,40 @@ for (const kind of ['document','board'] as const) {
     } finally { await stopFixture(root);await rm(root,{recursive:true,force:true}); }
   });
 }
+
+test('an addressed stack read supplies the containing board basis for public extraction and undo',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'notebook-stack-sdk-ipc-'));
+  try {
+    await writeFixture(root); const store=new NotebookStore(fixtureSocket(root));
+    const read=async(query:unknown)=>(await store.command<any[]>({command:'read',readSnapshots:true,queries:[query]}))[0];
+    const commit=async(action:any)=>{
+      const admission=await store.command<any>({command:'admitAction',action});
+      const prepared=await store.command<any>({command:'prepareAction',actionID:action.id,fingerprint:admission.fingerprint});
+      return store.command<any>({command:'commitAction',action:prepared.action,fingerprint:admission.fingerprint});
+    };
+    const board=await read({kind:'ownerBoard',id:itemID}),other=randomUUID();
+    const target={kind:'board',id:board.data},cover=(id:string)=>({kind:'cover',id,boardID:board.data});
+    await commit({id:randomUUID(),summary:'Another stack member',references:[],expected:board.basis.owners,
+      operations:[{kind:'createNotebook',target,id:other,values:{center:{tileX:0,tileY:0,localX:400,localY:100}}}]});
+    const before=await read({kind:'ownerBoard',id:itemID});
+    await commit({id:randomUUID(),summary:'Stack the two members',references:[],expected:before.basis.owners,
+      additionalOwners:[cover(itemID),cover(other)],operations:[{kind:'stackItems',target,values:{itemIDs:[itemID,other]}}]});
+    const stack=await read({kind:'boardItem',id:itemID});
+    assert.equal(snapshotSchema(readDataSchemas.boardItem).safeParse(stack).success,true,JSON.stringify(stack));
+    assert.equal(stack.data.id.toLowerCase(),board.data.toLowerCase());
+    assert.ok(stack.basis.owners.some((owner:any)=>owner.target.kind==='board'&&owner.target.id===stack.data.id));
+    assert.equal(stack.basis.owners.some((owner:any)=>owner.target.kind==='board'&&owner.target.id.toLowerCase()===itemID),false);
+    const original=stack.data.board.stacks.find((value:any)=>value.itemIDs.some((id:string)=>id.toLowerCase()===itemID));
+    assert.ok(original);
+    const center={tileX:0,tileY:0,localX:900,localY:400},actionID=randomUUID();
+    const moved=await commit({id:actionID,summary:'Extract one member',references:[],expected:stack.basis.owners,
+      additionalOwners:[cover(itemID)],operations:[{kind:'moveItem',target,id:itemID,values:{center}}]});
+    assert.equal(actionResultSchema.safeParse(moved).success,true,JSON.stringify(moved));
+    const free=await read({kind:'boardItem',id:itemID});
+    assert.deepEqual(free.data.board.freeItems.find((value:any)=>value.itemID.toLowerCase()===itemID)?.center,center);
+    const undone=await store.command<any>({command:'undo',actionID});
+    assert.equal(actionResultSchema.safeParse(undone).success,true,JSON.stringify(undone));
+    const restored=await read({kind:'boardItem',id:itemID});
+    assert.deepEqual(restored.data.board.stacks.find((value:any)=>value.id===original.id)?.itemIDs,original.itemIDs);
+  } finally { await stopFixture(root);await rm(root,{recursive:true,force:true}); }
+});

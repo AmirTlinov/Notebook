@@ -78,7 +78,7 @@ const operationDescriptions:Record<z.infer<typeof operationSchema>["kind"],strin
   appendPage:"Append one blank page to a notebook's physical cover, inheriting its first page size. Optional id is a UUID; omission is generated once at admission and remains stable on retry. values is empty.",
   deleteItem:"Delete one item through its physical cover and actual containing board. Requires an explicit itemLifecycle read basis covering all stored content, not a visible preview. No id or values fields beyond the empty values object.",
   renameItem:"Change one item's title. target is its containing board, never workspace; expected must include that board and the root workspace catalogue.",
-  moveItem:"Move one item to a tiled board position.",
+  moveItem:"Move one item to a tiled board position. A stack member is extracted as a free item; other members' placement registers are unchanged.",
   stackItems:"Stack two to five named items.",
 };
 const compositionRule="Geometry of existing content requires a source reference covering each moved subject, or its exact owner in action.additionalOwners. With contextID, only that context's stored references establish source scope; adding action.references cannot widen it. Without contextID, action.references establish it. Current selection/camera and expected revisions alone do not grant composition scope. New subjects created in the same action need no extra scope. A composition_scope rejection saves none of the atomic action.";
@@ -112,7 +112,7 @@ await emit(await nb.transaction('set-program-state', {
   operations:[{kind:'setBlockState',target,id:args.blockID,values:{state:args.state}}]
 }));`;
 const geometryScope:Partial<Record<z.infer<typeof operationSchema>["kind"],string>>={
-  moveItem:"The operation target is the containing board. The moved subject is {kind:'cover',id:itemID,boardID:boardID}; declare that cover in action.additionalOwners when no source context covers it. Listing only the board is insufficient. A context reference to this notebook's page also covers its physical carrier.",
+  moveItem:"The operation target is the containing board. A stacked item is extracted at the requested center through the native unstack owner; this does not move the remaining members. The moved subject is {kind:'cover',id:itemID,boardID:boardID}; declare that cover in action.additionalOwners when no source context covers it. Listing only the board is insufficient. A context reference to this notebook's page also covers its physical carrier.",
   stackItems:"Declare each existing item's {kind:'cover',id:itemID,boardID:target.id} in action.additionalOwners unless source references already cover all carriers.",
   updateElement:"Changing frame or worldOrigin of an existing element requires scope for that element. Declare operation.target in action.additionalOwners, or reference its elementID/a source region that intersects its current geometry. Source/style-only edits do not add a geometry requirement.",
   reorderElements:"Every existing named element needs source scope, or declare operation.target in action.additionalOwners. Elements created earlier in this same action are exempt.",
