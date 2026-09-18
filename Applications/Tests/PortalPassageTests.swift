@@ -7,7 +7,7 @@ import XCTest
 
 @MainActor
 final class PortalPassageTests: XCTestCase {
-  func testSmallMeasuredApproachesKeepTheDistantNotebookOnTheBoardUntilOpening() async throws {
+  func testAllMeasuredApproachesKeepTheDistantNotebookOnTheBoard() async throws {
     let scene = try await makeScene()
     let rootID = try XCTUnwrap(scene.model.presence?.boardID)
     let center = CGPoint(x: scene.viewport.x / 2, y: scene.viewport.y / 2)
@@ -41,16 +41,12 @@ final class PortalPassageTests: XCTestCase {
       try scene.send(.changed(scale: scale, velocity: 2, elapsed: Double(scale) / 10, centroid: center))
     }
     try scene.send(.ended(scale: 4, velocity: 2, elapsed: 0.5, centroid: center))
-    let openedDeadline = ContinuousClock.now + .seconds(3)
-    while scene.model.presence?.mode != .page, ContinuousClock.now < openedDeadline {
-      try await Task.sleep(for: .milliseconds(20))
-    }
-    let opened = try XCTUnwrap(scene.model.presence)
-    XCTAssertEqual(opened.mode, .page)
-    XCTAssertEqual(opened.focusedItemID, scene.distantID)
-    XCTAssertEqual(opened.openProgress, 1)
-    XCTAssertEqual(opened.camera.scale,
-      scene.model.itemGeometry(scene.distantID).fitScale(viewport: scene.viewport), accuracy: 1e-10)
+    try await Task.sleep(for: .milliseconds(400))
+    let released = try XCTUnwrap(scene.model.presence)
+    XCTAssertEqual(released.mode, .board)
+    XCTAssertNil(released.focusedItemID)
+    XCTAssertEqual(released.openProgress, 0)
+
   }
 
   func testPinchCrossesThePortalBeforeReleaseAndKeepsTheSameVisiblePoint() async throws {
@@ -83,6 +79,11 @@ final class PortalPassageTests: XCTestCase {
     XCTAssertEqual(inside.camera.scale, entered.camera.scale * 0.55, accuracy: 1e-10)
     XCTAssertGreaterThan(inside.camera.scale, boundary)
 
+    // Creating/selecting a closed notebook must not trap the containing board.
+    let notebookID = try XCTUnwrap(scene.model.createNotebook(at: inside.camera.center))
+    scene.model.updatePresence(.init(boardID: inside.boardID, mode: .cover,
+      camera: inside.camera, viewport: inside.viewport, focusedItemID: notebookID,
+      openProgress: 0), settled: true)
     try scene.send(.began(centroid: center, isOpeningApproach: false))
     try scene.send(.changed(scale: 0.5, velocity: -1, elapsed: 0.2, centroid: center))
     let exiting = try XCTUnwrap(scene.model.presence)

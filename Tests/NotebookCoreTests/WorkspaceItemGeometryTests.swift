@@ -36,8 +36,5 @@ func documentCameraUsesItsOwnGeometry(paper: DocumentPaperSize, viewport: Spatia
     viewport: portrait, focusedItemID: original.focusedItemID)
   let returned = free.adapted(to: viewport, geometry: geometry).adapted(to: portrait, geometry: geometry)
   #expect(abs(returned.camera.scale - free.camera.scale) < 1e-12)
-  let attracted = NotebookDockingField.attractedCamera(free.camera,
-    toward: center, viewport: portrait, geometry: geometry,
-    correction: NotebookDockingCorrection(centerWeight: 1, scaleWeight: 1))
-  #expect(abs(attracted.scale - original.camera.scale) < 1e-12)
+
 }

@@ -14,8 +14,18 @@ import XCTest
       + (onPage ? ["--notebook-native-graphic-page"] : [])
     app.launchEnvironment["NOTEBOOK_TLDRAW_CLIPBOARD"]=Self.html
     app.launch()
-    let paste=app.buttons["tldraw-paste-open"]
-    XCTAssertTrue(paste.waitForExistence(timeout:12))
+    let actions=app.buttons["notebook-actions-open"], paste=app.buttons["tldraw-paste-open"]
+    XCTAssertTrue(actions.waitForExistence(timeout:12))
+    XCTAssertFalse(paste.exists,"Clipboard control belongs inside Actions, not the navigation bar")
+    actions.tap()
+    let close=app.buttons["notebook-actions-close"]
+    XCTAssertTrue(close.waitForExistence(timeout:3))
+    XCTAssertTrue(app.staticTexts["Из tldraw"].exists)
+    let menu=XCTAttachment(screenshot:app.screenshot());menu.name="notebook-actions-menu-\(onPage)";menu.lifetime = .keepAlways;add(menu)
+    close.tap()
+    XCTAssertTrue(paste.waitForNonExistence(timeout:3))
+    actions.tap()
+    XCTAssertTrue(paste.waitForExistence(timeout:3))
     XCTAssertTrue(paste.isEnabled)
     paste.tap()
     let omitted=app.buttons["tldraw-item-shape:ignored"], insert=app.buttons["tldraw-insert"]
@@ -27,6 +37,7 @@ import XCTest
     let before=XCTAttachment(screenshot:app.screenshot());before.name="tldraw-selected-preview-\(onPage)";before.lifetime = .keepAlways;add(before)
     insert.tap()
     XCTAssertTrue(insert.waitForNonExistence(timeout:8))
+    XCTAssertTrue(close.waitForNonExistence(timeout:5),"Completed paste returns to the canvas, not a stranded popover")
     let a=app.images["TL A"],b=app.images["TL B"],link=app.images["TL link"]
     XCTAssertTrue(a.waitForExistence(timeout:8));XCTAssertTrue(b.exists);XCTAssertTrue(link.exists)
     let original=b.frame, arrow=link.frame

@@ -3,26 +3,12 @@ import SwiftUI
 import UIKit
 
 private struct CameraGestureSnapshot {
-  struct PaperEngagement {
-    let itemID: UUID
-    let openingScale: Double
-    let rawOpeningScale: Double
-    let dockingEntryProgress: Double
-    let dockingEntryCorrection: NotebookDockingCorrection
-  }
-
   let presence: SessionPresence
   let trajectory: CameraGestureTrajectory
   var lastMagnification: CGFloat
   var candidateItemID: UUID?
-  var dockingStartStrength: Double
   var isApproaching: Bool
-  var paperEngagement: PaperEngagement?
-  var dockingCorrection: NotebookDockingCorrection
-  var openingWasVisible: Bool
   var followsPortal = false
-
-  var beganOnOpenPaper: Bool { presence.mode == .page || presence.mode == .document }
 }
 
 /// A Show command may outlive its camera animation while WebKit finds a block's
@@ -141,7 +127,7 @@ struct SpatialWorkspaceView: View {
 
           BoardPanView(
             isEnabled: (presence.mode == .board || presence.mode == .cover)
-              && cameraGesture == nil && !model.isPointing,
+              && cameraGesture == nil && !settling && !model.isPointing,
             inputGate: model.inputGate,
             onBegan: {
               referencePageResolution.cancel()
@@ -698,10 +684,6 @@ struct SpatialWorkspaceView: View {
               model.endSurfaceEditing()
               openItem(itemID, viewport: viewport)
             },
-            onEditText: { itemID, point in
-              guard !model.isItemBeingDeleted(itemID), model.presence?.boardID == presence.boardID else { return }
-              beginTextEditing(on: itemID, at: point)
-            },
             onTextEditingEnded: { [selectionID = model.selectionSession.id] elementID in
               model.finishInteractiveElementInput(.spatial(boardID: presence.boardID, elementID: elementID), selectionID: selectionID)
             },
@@ -855,30 +837,6 @@ struct SpatialWorkspaceView: View {
   }
 
 
-  private func beginTextEditing(
-    on itemID: UUID,
-    at point: SpatialPoint
-  ) {
-    guard model.presence?.mode == .cover,
-      model.presence?.focusedItemID == itemID,
-      let boardID = model.presence?.boardID,
-      let board = model.board
-    else { return }
-    let elements = board.elements.filter {
-      $0.surface == .cover(itemID)
-    }
-    if let text = elements.reversed().first(where: {
-      $0.kind == .nativeText && $0.frame.contains(point)
-    }) {
-      model.interactiveElementFocus = .board(boardID: boardID, elementID: text.id)
-      return
-    }
-    guard !elements.contains(where: { $0.frame.contains(point) }),
-      let elementID = model.addNativeText(boardID: boardID, on: itemID, at: point)
-    else { return }
-    model.interactiveElementFocus = .board(boardID: boardID, elementID: elementID)
-  }
-
   private func normalizedPresence(for viewport: SpatialPoint) -> SessionPresence {
     guard let presence = model.presence else {
       return SessionPresence(
@@ -973,99 +931,45 @@ struct SpatialWorkspaceView: View {
     _ itemID: UUID,
     presence: SessionPresence
   ) -> Bool {
-    if let gesture = cameraGesture,
-      let candidate = gesture.candidateItemID,
-      presence.camera.scale >= model.itemGeometry(candidate).coverScale(viewport: presence.viewport)
-        * NotebookOpeningIntent.pagePreparationScaleRatio
-    {
-      return candidate == itemID
-    }
     if let focusedItemID = presence.focusedItemID {
       return focusedItemID == itemID
         && (presence.openProgress > 0 || presence.mode == .page || presence.mode == .document)
     }
     // Selection keeps the cover address, not an invisible WebKit/page pool.
-    // Opening approaches above prepare content before it becomes visible.
+    // Only explicit navigation prepares paper content; zoom never acquires it.
     return false
   }
 
   private func handleBoardMagnification(_ phase: WorkspaceMagnificationPhase) {
     switch phase {
     case .began(let centroid, let isOpeningApproach):
+      // A short explicit navigation owns its complete opening/closing curve.
+      // A contact during it must not strand the scene on a half-open cover.
+      guard !settling else { return }
       interruptSettlementForInput()
-        openingFeedback.prepare()
       model.cancelElementManipulation()
       guard let currentPresence = model.presence else { return }
       let presence = presenceForNewContact(currentPresence)
-      let focusedItemID =
-        presence.mode == .board
-        ? nil
-        : presence.focusedItemID
-      let candidate =
-        focusedItemID
-        ?? focusCandidate(at: centroid, presence: presence)
-      contentGestureActive =
-        presence.mode == .page || presence.mode == .document
-      let dockingStartStrength: Double
-      if let candidate, itemKind(candidate) != .board {
-        dockingStartStrength = NotebookDockingField.strength(
-          camera: presence.camera,
-          viewport: presence.viewport,
-          geometry: model.itemGeometry(candidate)
-        )
-      } else {
-        dockingStartStrength = 0
-      }
-      let paperEngagement = focusedItemID.flatMap { itemID -> CameraGestureSnapshot.PaperEngagement? in
-        guard itemKind(itemID) != .board, presence.openProgress > 0 else { return nil }
-        let coverScale = model.itemGeometry(itemID).coverScale(viewport: presence.viewport)
-        // Fitting the page is an entry destination, not its zoom limit. The
-        // same physical cover-sized boundary owns opening and closing, leaving
-        // room to zoom out on an open sheet without immediately folding it.
-        let openingScale = NotebookOpeningTransition.openingScale(
-          cameraScale: presence.camera.scale,
-          pageScale: coverScale,
-          progress: presence.openProgress,
-          fallback: coverScale * NotebookOpeningIntent.entryScaleRatio
-        )
-        return CameraGestureSnapshot.PaperEngagement(
-          itemID: itemID,
-          openingScale: openingScale,
-          rawOpeningScale: openingScale,
-          dockingEntryProgress: presence.openProgress,
-          dockingEntryCorrection: .zero
-        )
-      }
+      contentGestureActive = presence.mode == .page || presence.mode == .document
       cameraGesture = CameraGestureSnapshot(
         presence: presence,
-        trajectory: CameraGestureTrajectory(
-          startingCamera: presence.camera,
-          startingCentroid: centroid,
-          startingMagnification: 1,
-          viewport: presence.viewport
-        ),
+        trajectory: CameraGestureTrajectory(startingCamera: presence.camera,
+          startingCentroid: centroid, startingMagnification: 1, viewport: presence.viewport),
         lastMagnification: 1,
-        candidateItemID: candidate,
-        dockingStartStrength: dockingStartStrength,
-        isApproaching: isOpeningApproach,
-        paperEngagement: paperEngagement,
-        dockingCorrection: .zero,
-        openingWasVisible:
-          presence.openProgress > 0
+        candidateItemID: isBoardCamera(presence) ? focusCandidate(at: centroid, presence: presence) : nil,
+        isApproaching: isOpeningApproach
       )
-    case .changed(let scale, let velocity, _, let centroid):
+    case .changed(let scale, _, _, let centroid):
       updateMagnification(
         scale: scale,
-        velocity: velocity,
         centroid: centroid
       )
-    case .ended(let scale, let velocity, _, let centroid):
+    case .ended(let scale, _, _, let centroid):
       updateMagnification(
         scale: scale,
-        velocity: velocity,
         centroid: centroid
       )
-      settleMagnification(velocity: velocity)
+      settleMagnification()
     case .cancelled:
       contentGestureActive = false
       cancelMagnification()
@@ -1118,238 +1022,46 @@ struct SpatialWorkspaceView: View {
     }
   }
 
+  /// A selected closed cover still belongs to its board. Only opening paper
+  /// acquires a different interaction owner; board portals retain their passage.
+  private func isBoardCamera(_ presence: SessionPresence) -> Bool {
+    presence.mode == .board || (presence.mode == .cover
+      && (presence.openProgress == 0 || presence.focusedItemID.flatMap(itemKind) == .board))
+  }
+
   private func updateMagnification(
     scale: CGFloat,
-    velocity _: CGFloat,
     centroid: CGPoint
   ) {
     guard var snapshot = cameraGesture else { return }
-    let viewport = snapshot.presence.viewport
-    let geometry = model.itemGeometry(snapshot.paperEngagement?.itemID ?? snapshot.candidateItemID)
-    let pageScale = geometry.fitScale(viewport: viewport)
-    let coverScale = geometry.coverScale(viewport: viewport)
-    let directionThreshold: CGFloat = 0.000_5
-    let directionDelta = scale - snapshot.lastMagnification
-    if abs(directionDelta) > directionThreshold {
-      snapshot.isApproaching = directionDelta > 0
-    }
+    let start = snapshot.presence
+    let camera = snapshot.trajectory.camera(at: scale, centroid: centroid,
+      maximumScale: SpatialCamera.maximumScale)
+    let delta = scale - snapshot.lastMagnification
+    if abs(delta) > 0.000_5 { snapshot.isApproaching = delta > 0 }
 
-    let engagedItemID = snapshot.paperEngagement?.itemID
-    let engagementScale = engagedItemID.map {
-      model.itemGeometry($0).fitScale(viewport: viewport)
-    } ?? pageScale
-    let maximumScale = snapshot.beganOnOpenPaper || snapshot.paperEngagement == nil
-      ? SpatialCamera.maximumScale
-      : engagementScale
-    let rawCamera = snapshot.trajectory.camera(
-      at: scale,
-      centroid: centroid,
-      maximumScale: maximumScale
-    )
-    var camera = rawCamera
-
-    if let paperEngagement = snapshot.paperEngagement {
-      if NotebookOpeningIntent.shouldDisengage(
-        cameraScale: rawCamera.scale,
-        coverScale: coverScale
-      ) {
-        snapshot.paperEngagement = nil
-        snapshot.dockingCorrection = .zero
-      } else {
-        snapshot.candidateItemID = paperEngagement.itemID
+    // Only a board portal changes coordinate systems during a pinch. A paper
+    // gesture keeps its exact physical owner, page ID and fully open state.
+    if isBoardCamera(start) {
+      let boardPresence = SessionPresence(boardID: start.boardID, mode: .board,
+        camera: camera, viewport: start.viewport)
+      let retained = snapshot.candidateItemID.flatMap { id in
+        selectionStrength(for: id, at: centroid, presence: boardPresence, halo: 1.32) > 0 ? id : nil
       }
+      snapshot.candidateItemID = retained ?? focusCandidate(at: centroid, presence: boardPresence)
+      if updatePortalMagnification(snapshot: &snapshot, camera: camera,
+        magnification: scale, centroid: centroid) { return }
     }
-
-    if snapshot.paperEngagement == nil {
-      let liveBoardPresence = SessionPresence(
-        boardID: snapshot.presence.boardID,
-        mode: .board,
-        camera: camera,
-        viewport: viewport
-      )
-      let retainedCandidate = snapshot.candidateItemID.flatMap {
-        retained -> UUID? in
-        let strength = selectionStrength(
-          for: retained,
-          at: centroid,
-          presence: liveBoardPresence,
-          halo: NotebookOpeningIntent.candidateRetentionHalo
-        )
-        return strength > 0 ? retained : nil
-      }
-      let nextCandidate =
-        retainedCandidate
-        ?? focusCandidate(
-          at: centroid,
-          presence: liveBoardPresence
-        )
-      if nextCandidate != snapshot.candidateItemID {
-        snapshot.candidateItemID = nextCandidate
-        if let nextCandidate, itemKind(nextCandidate) != .board {
-          snapshot.dockingStartStrength = NotebookDockingField.strength(
-            camera: camera,
-            viewport: viewport,
-            geometry: model.itemGeometry(nextCandidate)
-          )
-        } else {
-          snapshot.dockingStartStrength = 0
-        }
-      }
-    }
-
-    if updatePortalMagnification(snapshot: &snapshot, camera: rawCamera,
-      magnification: scale, centroid: centroid) { return }
-
-    let attractionTarget =
-      snapshot.paperEngagement?.itemID
-      ?? snapshot.candidateItemID
-    let dockingStrength = NotebookDockingField.strength(
-      camera: rawCamera,
-      viewport: viewport,
-      geometry: model.itemGeometry(attractionTarget)
-    )
-    if !snapshot.beganOnOpenPaper, let attractionTarget,
-      let center = focusedCenter(itemID: attractionTarget, boardID: snapshot.presence.boardID)
-    {
-      let correction: NotebookDockingCorrection
-      if let engagement = snapshot.paperEngagement,
-        rawCamera.scale >= engagement.rawOpeningScale
-      {
-        let rawOpeningProgress = NotebookOpeningTransition.progress(
-          cameraScale: rawCamera.scale,
-          openingScale: engagement.rawOpeningScale,
-          pageScale: model.itemGeometry(engagement.itemID).coverScale(viewport: viewport)
-        )
-        correction = NotebookDockingField.openingCorrection(
-          currentProgress: rawOpeningProgress,
-          startingProgress: engagement.dockingEntryProgress,
-          continuingFrom: engagement.dockingEntryCorrection
-        )
-      } else {
-        correction = NotebookDockingField.approachCorrection(
-          currentStrength: dockingStrength,
-          startingStrength: snapshot.dockingStartStrength
-        )
-      }
-      snapshot.dockingCorrection = correction
-      camera = NotebookDockingField.attractedCamera(
-        camera,
-        toward: center,
-        viewport: viewport,
-        geometry: model.itemGeometry(attractionTarget),
-        correction: correction
-      )
-    } else {
-      snapshot.dockingCorrection = .zero
-    }
-
-    if snapshot.paperEngagement == nil,
-      let candidate = snapshot.candidateItemID,
-      NotebookOpeningIntent.shouldEngage(
-        isApproaching: snapshot.isApproaching,
-        cameraScale: camera.scale,
-        coverScale: model.itemGeometry(candidate).coverScale(viewport: viewport)
-      )
-    {
-      // A fast first sample may already be beyond fit. The opening interval
-      // belongs to the item's geometry, never to whichever frame happened to
-      // arrive first (which could otherwise make the interval empty forever).
-      let openingScale = model.itemGeometry(candidate).coverScale(viewport: viewport)
-        * NotebookOpeningIntent.entryScaleRatio
-      snapshot.paperEngagement = CameraGestureSnapshot.PaperEngagement(
-        itemID: candidate,
-        openingScale: openingScale,
-        rawOpeningScale: min(rawCamera.scale, openingScale),
-        dockingEntryProgress: 0,
-        dockingEntryCorrection: snapshot.dockingCorrection
-      )
-    }
-
-    let engagement = snapshot.paperEngagement
-    let candidate = engagement?.itemID
-    let open: Double
-    if let engagement {
-      open = NotebookOpeningTransition.progress(
-        cameraScale: camera.scale,
-        openingScale: engagement.openingScale,
-        pageScale: model.itemGeometry(engagement.itemID).coverScale(viewport: viewport)
-      )
-    } else {
-      open = 0
-    }
-    let openingWasVisible = snapshot.openingWasVisible
-    snapshot.openingWasVisible = open > 0
-    if snapshot.openingWasVisible && !openingWasVisible {
-      performOpeningFeedback()
-    }
-    let mode: WorkspaceSemanticMode = candidate.map { open >= 0.999 ? openMode(for: $0) : .cover } ?? .board
     snapshot.lastMagnification = scale
     cameraGesture = snapshot
-    model.updatePresence(
-      SessionPresence(
-        boardID: snapshot.presence.boardID,
-        mode: mode,
-        camera: camera,
-        viewport: viewport,
-        focusedItemID: candidate,
-        openProgress: open,
-        documentPageIndex: documentPageIndex(
-          for: candidate,
-          from: snapshot.presence
-        )
-      ),
-      settled: false
-    )
+    model.updatePresence(start.replacingCamera(camera), settled: false)
   }
 
-  private func settleMagnification(velocity: CGFloat) {
-    guard let snapshot = cameraGesture, let presence = model.presence else {
-      return
-    }
+  private func settleMagnification() {
+    guard cameraGesture != nil, let presence = model.presence else { return }
     cameraGesture = nil
-    if snapshot.beganOnOpenPaper, presence.focusedItemID == snapshot.presence.focusedItemID,
-      presence.mode == .page || presence.mode == .document {
-      contentGestureActive = false
-      model.updatePresence(presence, settled: true)
-      return
-    }
-    let viewport = presence.viewport
-    let pageScale = model.itemGeometry(presence.focusedItemID).fitScale(viewport: viewport)
-    if let engagement = snapshot.paperEngagement,
-      let itemID = presence.focusedItemID,
-      engagement.itemID == itemID,
-      NotebookDockingField.shouldDock(
-        openProgress: presence.openProgress,
-        isApproaching: snapshot.isApproaching,
-        releaseVelocity: Double(velocity)
-      ),
-      let center = focusedCenter(itemID: itemID, boardID: presence.boardID)
-    {
-      model.selectItem(itemID)
-      let target = SessionPresence(
-        boardID: presence.boardID,
-        mode: openMode(for: itemID),
-        camera: SpatialCamera(center: center, scale: pageScale),
-        viewport: viewport,
-        focusedItemID: itemID,
-        openProgress: 1,
-        documentPageIndex: documentPageIndex(
-          for: itemID,
-          from: snapshot.presence
-        )
-      )
-      animateSettlement(
-        to: target,
-        duration: NotebookDockingField.settlementDuration(
-          openProgress: presence.openProgress,
-          releaseVelocity: Double(velocity)
-        ),
-        bounce: 0.025
-      )
-    } else {
-      contentGestureActive = false
-      model.updatePresence(presence, settled: true)
-    }
+    contentGestureActive = false
+    model.updatePresence(presence, settled: true)
   }
 
   private func cancelMagnification() {
@@ -1362,14 +1074,13 @@ struct SpatialWorkspaceView: View {
     animateSettlement(to: snapshot.presence, duration: 0.26)
   }
 
-  /// A portal changes the coordinates of the same live gesture. Paper docking
+  /// A portal changes the coordinates of the same live gesture. Paper opening
   /// never participates; releasing the fingers only saves their final frame.
   private func updatePortalMagnification(snapshot: inout CameraGestureSnapshot,
     camera: SpatialCamera, magnification: CGFloat, centroid: CGPoint) -> Bool {
     let start = snapshot.presence
     let viewport = start.viewport
-    if snapshot.paperEngagement == nil,
-      start.mode == .board || (start.mode == .cover && start.focusedItemID.flatMap(itemKind) == .board),
+    if isBoardCamera(start),
       let parentID = model.boardHierarchy?.ownerBoardID(of: start.boardID)
         ?? model.compositionTiles.published?.frame.index.ownerBoard(itemID: start.boardID),
       let portal = model.scenePortalCamera(boardID: start.boardID),
@@ -1390,8 +1101,7 @@ struct SpatialWorkspaceView: View {
         }
       }
     }
-    guard snapshot.paperEngagement == nil,
-      let candidate = snapshot.candidateItemID, itemKind(candidate) == .board,
+    guard let candidate = snapshot.candidateItemID, itemKind(candidate) == .board,
       let center = focusedCenter(itemID: candidate, boardID: start.boardID) else { return false }
     if model.enterBoard(candidate, through: camera, settled: false), let presence = model.presence {
       continuePortalGesture(presence: presence, magnification: magnification, centroid: centroid,
@@ -1413,9 +1123,8 @@ struct SpatialWorkspaceView: View {
     cameraGesture = CameraGestureSnapshot(presence: presence,
       trajectory: .init(startingCamera: presence.camera, startingCentroid: centroid,
         startingMagnification: magnification, viewport: presence.viewport),
-      lastMagnification: magnification, candidateItemID: candidate, dockingStartStrength: 0,
-      isApproaching: isApproaching, paperEngagement: nil, dockingCorrection: .zero,
-      openingWasVisible: presence.openProgress > 0, followsPortal: true)
+      lastMagnification: magnification, candidateItemID: candidate,
+      isApproaching: isApproaching, followsPortal: true)
     contentGestureActive = false
   }
 
@@ -1474,8 +1183,9 @@ struct SpatialWorkspaceView: View {
     sceneWorkset(presence: presence).items
       .reversed()
       .compactMap { rendered -> (UUID, Double)? in
+        guard rendered.item.kind == .board else { return nil }
         let strength = selectionStrength(rendered: rendered, at: centroid, presence: presence,
-          halo: NotebookOpeningIntent.selectionHalo)
+          halo: 1.12)
         return strength > 0 ? (rendered.id, strength) : nil
       }
       .max { $0.1 < $1.1 }?.0
@@ -1485,7 +1195,7 @@ struct SpatialWorkspaceView: View {
     for itemID: UUID,
     at centroid: CGPoint,
     presence: SessionPresence,
-    halo: Double = NotebookOpeningIntent.selectionHalo
+    halo: Double = 1.12
   ) -> Double {
     guard
       let cohort = model.compositionTiles.published,
@@ -1591,7 +1301,9 @@ struct SpatialWorkspaceView: View {
         from: previousPresence
       )
     )
-    animateSettlement(to: target, duration: 0.3)
+    openingFeedback.prepare()
+    performOpeningFeedback()
+    animateSettlement(to: target, duration: 0.3, bounce: 0.025)
   }
 
   private func enterBoard(
@@ -1631,6 +1343,10 @@ struct SpatialWorkspaceView: View {
   ) {
     guard let start = model.presence else { return }
     let wasSettling = settling
+    cameraGesture = nil
+    panStart = nil
+    pageInputGestureID = nil
+    bufferedCameraPhases = []
     settling = true
     let accepted = cameraSettlement.start(from: start, to: target, duration: duration, bounce: bounce, navigationID: navigationID) { presence, settled in
       var transaction = Transaction()
@@ -1771,7 +1487,6 @@ private struct WorkspaceSceneItem: View {
   let onSelect: (UUID) -> Void
   let onLiftChanged: (UUID, Bool) -> Void
   let onOpen: (UUID) -> Void
-  let onEditText: (UUID, SpatialPoint) -> Void
   let onTextEditingEnded: (String) -> Void
   let onPageTurnStateChange: @MainActor @Sendable (Bool) -> Void
   let onDocumentPageLayout: (DocumentPageLayout) -> Void
@@ -2071,24 +1786,14 @@ private struct WorkspaceSceneItem: View {
     )
   }
 
-  private func handleTap(_ location: CGPoint, tapCount: Int) {
-    guard openProgress < 0.12, !model.isItemBeingDeleted(rendered.id) else { return }
+  private func handleTap(_: CGPoint, tapCount: Int) {
+    guard openProgress < 0.999, !model.isItemBeingDeleted(rendered.id) else { return }
     onSelect(rendered.id)
     if let editingTextID {
       onTextEditingEnded(editingTextID)
     }
     guard tapCount >= 2 else { return }
-    if rendered.item.kind == .notebook,
-      isFocused,
-      model.presence?.mode == .cover
-    {
-      onEditText(
-        rendered.id,
-        SpatialPoint(x: location.x, y: location.y)
-      )
-    } else {
-      onOpen(rendered.id)
-    }
+    onOpen(rendered.id)
   }
 
 }

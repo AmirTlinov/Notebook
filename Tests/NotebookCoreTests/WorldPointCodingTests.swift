@@ -96,22 +96,6 @@ struct WorldAddressTransitionTests {
     }
   }
 
-  @Test func dockingUsesTheSameBoundedAddressAndRejectsUnaddressableTargets() {
-    let limit = WorldPoint.maximumTileIndex
-    let camera = SpatialCamera(center: .init(tileX: -limit, tileY: limit, localX: 2, localY: 4), scale: 1)
-    let target = WorldPoint(tileX: limit, tileY: -limit, localX: 4, localY: 2)
-    let correction = NotebookDockingCorrection(centerWeight: 0.5, scaleWeight: 0.5)
-    let viewport = SpatialPoint(x: 834, y: 1194)
-    let result = NotebookDockingField.attractedCamera(camera, toward: target, viewport: viewport,
-      geometry: .notebook, correction: correction)
-    #expect(result.center == .init(x: 3, y: 3) && result.isValid)
-    let invalid = WorldPoint(tileX: Int64.max, tileY: 0, localX: 0, localY: 0)
-    #expect(NotebookDockingField.attractedCamera(camera, toward: invalid, viewport: viewport,
-      geometry: .notebook, correction: correction) == camera)
-    #expect(NotebookDockingField.attractedCamera(camera, toward: target, viewport: .init(x: 0.001, y: 0.001),
-      geometry: .notebook, correction: correction) == camera)
-  }
-
   @Test func rejectedBoardPlacementsDoNotPublishMembershipOrCausalClocks() throws {
     let actor = UUID(), first = UUID(), second = UUID(), fresh = UUID()
     var board = BoardDocument.initial(itemIDs: [first, second], actor: actor)

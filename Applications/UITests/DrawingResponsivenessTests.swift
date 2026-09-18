@@ -2642,7 +2642,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertFalse(editor.exists)
     let installed = XCTAttachment(screenshot: app.screenshot())
     installed.name = "full-document-cycle-saved-before-close"; installed.lifetime = .keepAlways; add(installed)
-    app.otherElements["page-turn-surface"].pinch(withScale: 0.28, velocity: -2)
+    app.buttons["leave-nested-board"].tap()
     XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
     app.terminate()
     app.launchArguments.append("--notebook-reopen-fixture")
@@ -2791,49 +2791,43 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(restored.height, original.height, accuracy: 2)
   }
 
-  func testPinchClosesThePageOntoTheBoard() {
+  func testZoomCannotEnterOrLeaveTheNotebookButDoubleTapAndBackCan() {
     continueAfterFailure = false
     let app = XCUIApplication()
-    app.launchArguments = [
-      "--notebook-drawing-responsiveness-fixture",
-      "--notebook-simulator-finger-gestures",
-      "--notebook-page-turn-content-fixture",
-    ]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures", "--notebook-page-turn-content-fixture"]
     launchPortraitFixture(app)
-
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
-    let originalPaperFrame = paper.frame
-    let content = app.otherElements["agent-element-page-marker-0"]
-    XCTAssertTrue(content.waitForExistence(timeout: 5))
-    content.pinch(withScale: 0.28, velocity: -2)
-
-    XCTAssertTrue(
-      app.buttons["create-workspace-item"].waitForExistence(timeout: 5),
-      "После закрытия листа должна появиться бесконечная доска"
-    )
-    let boardProof = XCTAttachment(screenshot: app.screenshot())
-    boardProof.name = "infinite-board"
-    boardProof.lifetime = .keepAlways
-    add(boardProof)
-
-    let notebook = app.descendants(matching: .any)
-      .matching(
-        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002"
-      )
-      .firstMatch
+    let original = paper.frame
+    let marker = app.otherElements["agent-element-page-marker-0"]
+    XCTAssertTrue(marker.waitForExistence(timeout: 5))
+    marker.pinch(withScale: 0.28, velocity: -2)
+    XCTAssertTrue(paper.exists)
+    XCTAssertTrue(marker.exists, "Zoom must retain the same physical page")
+    XCTAssertFalse(app.buttons["create-workspace-item"].exists)
+    XCTAssertTrue(app.buttons["next-page"].exists)
+    app.buttons["next-page"].tap()
+    XCTAssertTrue(app.otherElements["agent-element-page-marker-1"].waitForExistence(timeout: 5))
+    app.buttons["previous-page"].tap()
+    XCTAssertTrue(marker.waitForExistence(timeout: 5))
+    app.buttons["leave-nested-board"].tap()
+    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
+    let notebook = app.descendants(matching: .any).matching(
+      identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002").firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
-    // This is the system end-to-end route, not a calibrated scale measurement.
-    // Exact small approaches run against the mounted native scene in PortalPassageTests.
-    notebook.pinch(withScale: 4, velocity: 2)
-    XCTAssertTrue(
-      paper.waitForExistence(timeout: 5),
-      "Щипок над тетрадью должен снова открыть её лист"
-    )
-    XCTAssertEqual(paper.frame.midX, originalPaperFrame.midX, accuracy: 2)
-    XCTAssertEqual(paper.frame.midY, originalPaperFrame.midY, accuracy: 2)
-    XCTAssertEqual(paper.frame.width, originalPaperFrame.width, accuracy: 2)
-    XCTAssertEqual(paper.frame.height, originalPaperFrame.height, accuracy: 2)
+    notebook.pinch(withScale: 1.5, velocity: 0.7)
+    XCTAssertFalse(paper.exists, "Zooming toward a cover cannot open it")
+    XCTAssertTrue(app.buttons["create-workspace-item"].exists)
+    notebook.doubleTap()
+    XCTAssertTrue(paper.waitForExistence(timeout: 3))
+    XCTAssertTrue(marker.exists)
+    XCTAssertEqual(paper.frame.midX, original.midX, accuracy: 2)
+    XCTAssertEqual(paper.frame.midY, original.midY, accuracy: 2)
+    XCTAssertEqual(paper.frame.width, original.width, accuracy: 2)
+    XCTAssertEqual(paper.frame.height, original.height, accuracy: 2)
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "explicit-notebook-entry-after-zoom-and-page-turn"; proof.lifetime = .keepAlways; add(proof)
   }
 
   func testNotebookPinchesZoomTheOpenSheetInsteadOfItsCover() throws {
@@ -2897,7 +2891,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
     let originalPaperFrame = paper.frame
-    paper.pinch(withScale: 0.28, velocity: -2)
+    app.buttons["leave-nested-board"].tap()
     let boardShown = app.buttons["create-workspace-item"].waitForExistence(timeout: 5)
     let hierarchy = XCTAttachment(string: app.debugDescription)
     hierarchy.name = "after-pinch-hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
@@ -2936,7 +2930,7 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
-    paper.pinch(withScale: 0.28, velocity: -2)
+    app.buttons["leave-nested-board"].tap()
     XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
 
     func createAndEnterBoard() {
@@ -2989,7 +2983,7 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
-    paper.pinch(withScale: 0.28, velocity: -2)
+    app.buttons["leave-nested-board"].tap()
     XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
     let items = app.descendants(matching: .any).matching(
       NSPredicate(format: "identifier BEGINSWITH 'workspace-item-'")
@@ -3038,60 +3032,21 @@ final class DrawingResponsivenessTests: XCTestCase {
     proof.name = "parent-portal-after-physical-pinch"; proof.lifetime = .keepAlways; add(proof)
   }
 
-  func testDoubleTapCreatesAndReopensTextOnAFocusedCover() {
+  func testDoubleTapOpensAnAlreadyFocusedCoverWithoutStartingTextEditing() {
     continueAfterFailure = false
     let app = XCUIApplication()
-    app.launchArguments = [
-      "--notebook-drawing-responsiveness-fixture",
-      "--notebook-simulator-finger-gestures",
-      "--notebook-nearby-cover-fixture",
-    ]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures", "--notebook-nearby-cover-fixture"]
     launchPortraitFixture(app)
-
-    let notebook = app.descendants(matching: .any)
-      .matching(
-        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002"
-      )
-      .firstMatch
+    let notebook = app.descendants(matching: .any).matching(
+      identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002").firstMatch
     XCTAssertTrue(notebook.waitForExistence(timeout: 5))
+    notebook.tap()
+    XCTAssertFalse(app.otherElements["paper-input"].exists)
     notebook.doubleTap()
-
-    let editor = app.descendants(matching: .any)
-      .matching(identifier: "native-text-editor")
-      .firstMatch
-    XCTAssertTrue(
-      editor.waitForExistence(timeout: 3),
-      "Двойное касание близкой обложки должно сразу передать фокус тексту"
-    )
-    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 2))
-    editor.typeText("Первая мысль")
-
-    notebook.coordinate(
-      withNormalizedOffset: CGVector(dx: 0.12, dy: 0.2)
-    ).tap()
-    XCTAssertTrue(
-      app.keyboards.firstMatch.waitForNonExistence(timeout: 2),
-      "Касание обложки вне текста должно закончить редактирование"
-    )
-
-    let textPoint = notebook.coordinate(
-      withNormalizedOffset: CGVector(dx: 0.55, dy: 0.53)
-    )
-    textPoint.tap()
-    XCTAssertFalse(
-      app.keyboards.firstMatch.exists,
-      "Одно касание готового текста должно оставить обложку спокойной"
-    )
-    textPoint.doubleTap()
-    XCTAssertTrue(
-      app.keyboards.firstMatch.waitForExistence(timeout: 3),
-      "Повторное двойное касание текста должно вернуть редактор"
-    )
-    editor.typeText("!")
-    XCTAssertTrue(
-      (editor.value as? String)?.contains("!") == true,
-      "Открытый повторно текст должен принимать продолжение"
-    )
+    XCTAssertTrue(app.otherElements["paper-input"].waitForExistence(timeout: 3))
+    XCTAssertFalse(app.keyboards.firstMatch.exists)
+    XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "native-text-editor").firstMatch.exists)
   }
 
   func testSingleTapOffersDeletionAndRepairsAStack() {
@@ -3379,7 +3334,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     add(proof)
   }
 
-  func testFirstVisibleOpeningReleaseFinishesTheDock() async throws {
+  func testDoubleTapCentersAnOffCenterNotebookWithItsOpening() async throws {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = [
@@ -3397,18 +3352,18 @@ final class DrawingResponsivenessTests: XCTestCase {
     let window = workspaceWindow(in: app)
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
     XCTAssertTrue(window.exists)
-    notebook.pinch(withScale: 1.04, velocity: 0.15)
+    notebook.doubleTap()
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(
       paper.waitForExistence(timeout: 3),
-      "Первое видимое раскрытие должно само завершить путь после отпускания"
+      "Двойное нажатие должно завершить раскрытие"
     )
     try await Task.sleep(for: .milliseconds(320))
     assertFittedAndCentered(paper.frame, in: window.frame)
 
     let proof = XCTAttachment(screenshot: app.screenshot())
-    proof.name = "first-visible-opening-completes-dock"
+    proof.name = "double-tap-opening-centers-notebook"
     proof.lifetime = .keepAlways
     add(proof)
   }
@@ -3477,61 +3432,26 @@ final class DrawingResponsivenessTests: XCTestCase {
     )
   }
 
-  func testDocumentCoverUsesTheSamePhysicalCurl() async throws {
+  func testDocumentClosesOnlyWithBackAndReopensByDoubleTap() {
     continueAfterFailure = false
     let app = XCUIApplication()
-    app.launchArguments = [
-      "--notebook-drawing-responsiveness-fixture",
-      "--notebook-simulator-finger-gestures",
-      "--notebook-document-runtime-fixture",
-    ]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures", "--notebook-document-runtime-fixture"]
     launchPortraitFixture(app)
-
     let page = app.otherElements["page-turn-surface"]
     XCTAssertTrue(page.waitForExistence(timeout: 8))
-    // A small reduction now belongs to the open sheet. Folding starts only
-    // once the physical sheet is reduced below the cover-sized boundary.
     let content = page.staticTexts["Документ соединяет текст, формулы и управление."].firstMatch
     XCTAssertTrue(content.waitForExistence(timeout: 5))
-    content.pinch(withScale: 0.69, velocity: -0.25)
-    try await Task.sleep(for: .milliseconds(400))
-
-    let cover = app.otherElements["cover-opening-surface"]
-    XCTAssertTrue(cover.waitForExistence(timeout: 3))
-    let document = app.descendants(matching: .any)
-      .matching(
-        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000006"
-      )
-      .firstMatch
-    let window = workspaceWindow(in: app)
-    XCTAssertTrue(document.exists)
-    XCTAssertTrue(window.exists)
-    XCTAssertEqual(app.state, .runningForeground)
-    let screenshot = app.screenshot()
-    let proof = XCTAttachment(screenshot: screenshot)
-    proof.name = "document-cover-outside-notebook-frame"
-    proof.lifetime = .keepAlways
-    add(proof)
-    let openingSideWidth = min(
-      document.frame.minX - window.frame.minX,
-      document.frame.width * 0.2
-    )
-    XCTAssertGreaterThan(openingSideWidth, 16)
-    XCTAssertGreaterThan(
-      warmPaperPixelShare(
-        in: screenshot,
-        normalizedRect: CGRect(
-          x: (document.frame.minX - openingSideWidth - window.frame.minX)
-            / window.frame.width,
-          y: (document.frame.minY + document.frame.height * 0.12
-            - window.frame.minY) / window.frame.height,
-          width: openingSideWidth / window.frame.width,
-          height: document.frame.height * 0.76 / window.frame.height
-        )
-      ),
-      0.5,
-      "The curling cover must remain visible after it crosses the notebook frame"
-    )
+    content.pinch(withScale: 0.28, velocity: -2)
+    XCTAssertTrue(page.exists)
+    XCTAssertFalse(app.buttons["create-workspace-item"].exists)
+    app.buttons["leave-nested-board"].tap()
+    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
+    let document = app.descendants(matching: .any).matching(
+      identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000006").firstMatch
+    XCTAssertTrue(document.waitForExistence(timeout: 3))
+    document.doubleTap()
+    XCTAssertTrue(content.waitForExistence(timeout: 5))
   }
 
   func testDocumentCoverAndPaperKeepOneRectangleInBothOrientations() async throws {
@@ -3576,7 +3496,7 @@ final class DrawingResponsivenessTests: XCTestCase {
         openProof.name = "\(letter ? "letter" : "a4")-\(landscape ? "landscape" : "portrait")-paper"
         openProof.lifetime = .keepAlways
         add(openProof)
-        app.otherElements["page-turn-surface"].pinch(withScale: 0.28, velocity: -2)
+        app.buttons["leave-nested-board"].tap()
         XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
         XCTAssertEqual(document.frame.width / document.frame.height, ratio, accuracy: 0.01)
         let coverProof = XCTAttachment(screenshot: app.screenshot())
@@ -3595,7 +3515,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     }
   }
 
-  func testNearPageApproachMagnetCompletesTheDock() async throws {
+  func testDoubleTapApproachesTheNotebookWithoutAMagneticPinch() async throws {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = [
@@ -3621,7 +3541,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       abs(notebook.frame.midY - window.frame.midY),
       50
     )
-    notebook.pinch(withScale: 1.35, velocity: 0.5)
+    notebook.doubleTap()
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))

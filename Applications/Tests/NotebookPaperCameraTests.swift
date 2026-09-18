@@ -22,12 +22,15 @@ final class NotebookPaperCameraTests: XCTestCase {
     let moved = CGPoint(x: pair.x + 42, y: pair.y + 27)
     let owner = try coordinator(in: window)
     owner.onCamera(.began(centroid: pair, isOpeningApproach: false))
-    for scale in [CGFloat(0.96), 1.4, 1.1] {
+    for scale in [CGFloat(0.96), 1.4, 0.015, 4, 0.15, 1.1] {
       owner.onCamera(.changed(scale: scale, velocity: 0.2, elapsed: 0.2, centroid: moved))
       try await Task.sleep(for: .milliseconds(35))
       let actual = try XCTUnwrap(model.presence)
       XCTAssertEqual(actual.mode, start.mode, "An ordinary paper gesture cannot become a cover gesture")
       XCTAssertEqual(actual.openProgress, 1)
+      XCTAssertEqual(actual.focusedItemID, start.focusedItemID)
+      XCTAssertEqual(actual.notebookPageID, start.notebookPageID)
+      XCTAssertEqual(actual.selectedItemID, start.selectedItemID)
       assertCamera(actual.camera, equals: start.camera.pinched(by: scale,
         from: .init(x: pair.x, y: pair.y), to: .init(x: moved.x, y: moved.y), viewport: start.viewport))
     }
@@ -52,44 +55,50 @@ final class NotebookPaperCameraTests: XCTestCase {
       from: .init(x: moved.x, y: moved.y), to: .init(x: panEnd.x, y: panEnd.y), viewport: start.viewport))
   }
 
-  func testOneLargeFirstSampleCanOpenTheNotebook() async throws {
+  func testBoardZoomCannotAcquireNotebookContentEvenOnALargeFirstSample() async throws {
     let (model, window) = try await scene(document: false, startsOnBoard: true)
     let start = try XCTUnwrap(model.presence)
     let pair = CGPoint(x: start.viewport.x / 2, y: start.viewport.y / 2)
     let owner = try coordinator(in: window)
     owner.onCamera(.began(centroid: pair, isOpeningApproach: true))
-    owner.onCamera(.changed(scale: 4, velocity: 2, elapsed: 0.2, centroid: pair))
-    XCTAssertGreaterThan(try XCTUnwrap(model.presence).openProgress, 0,
-      "Skipped intermediate samples cannot put the beginning of opening beyond its end")
-    owner.onCamera(.ended(scale: 4, velocity: 2, elapsed: 0.3, centroid: pair))
-    try await Task.sleep(for: .milliseconds(600))
-    XCTAssertEqual(model.presence?.mode, .page)
-    XCTAssertEqual(model.presence?.openProgress, 1)
-    XCTAssertEqual(model.presence?.camera.scale,
-      model.itemGeometry(model.workspace?.selectedItemID).fitScale(viewport: start.viewport))
+    for factor: CGFloat in [1.2, 4, 0.01, 2] {
+      owner.onCamera(.changed(scale: factor, velocity: 2, elapsed: 0.2, centroid: pair))
+      let actual = try XCTUnwrap(model.presence)
+      XCTAssertEqual(actual.mode, .board)
+      XCTAssertNil(actual.focusedItemID)
+      XCTAssertEqual(actual.openProgress, 0)
+      assertCamera(actual.camera, equals: start.camera.pinched(by: factor,
+        from: .init(x: pair.x, y: pair.y), to: .init(x: pair.x, y: pair.y), viewport: start.viewport))
+    }
+    owner.onCamera(.ended(scale: 2, velocity: 2, elapsed: 0.3, centroid: pair))
+    try await Task.sleep(for: .milliseconds(450))
+    XCTAssertEqual(model.presence?.mode, .board)
+    XCTAssertEqual(model.presence?.openProgress, 0)
   }
 
-  func testDeliberateClosingAndReversalUseOneAbsolutePaperBoundary() async throws {
+  func testSeparateZoomReversalAndCancellationKeepThePageOwner() async throws {
     let (model, window) = try await scene(document: false)
     let start = try XCTUnwrap(model.presence)
     let owner = try coordinator(in: window)
     let pair = CGPoint(x: start.viewport.x / 2, y: start.viewport.y / 2)
+    for factor: CGFloat in [0.1, 10, 0.25, 4] {
+      owner.onCamera(.began(centroid: pair, isOpeningApproach: factor > 1))
+      owner.onCamera(.changed(scale: factor, velocity: 1, elapsed: 0.2, centroid: pair))
+      owner.onCamera(.ended(scale: factor, velocity: 1, elapsed: 0.3, centroid: pair))
+      try await Task.sleep(for: .milliseconds(40))
+      XCTAssertEqual(model.presence?.mode, .page)
+      XCTAssertEqual(model.presence?.openProgress, 1)
+      XCTAssertEqual(model.presence?.notebookPageID, start.notebookPageID)
+    }
+    let beforeCancel = try XCTUnwrap(model.presence)
     owner.onCamera(.began(centroid: pair, isOpeningApproach: false))
-    owner.onCamera(.changed(scale: 0.65, velocity: -1, elapsed: 0.2, centroid: pair))
-    owner.onCamera(.ended(scale: 0.65, velocity: -1, elapsed: 0.3, centroid: pair))
-    try await Task.sleep(for: .milliseconds(100))
-    let closing = try XCTUnwrap(model.presence)
-    XCTAssertEqual(closing.mode, .cover)
-    XCTAssertGreaterThan(closing.openProgress, 0)
-    XCTAssertLessThan(closing.openProgress, 1)
-    owner.onCamera(.began(centroid: pair, isOpeningApproach: true))
-    owner.onCamera(.changed(scale: 1, velocity: 0, elapsed: 0.1, centroid: pair))
-    XCTAssertEqual(model.presence?.openProgress, closing.openProgress, "Resuming does not replace the visual curve")
-    owner.onCamera(.changed(scale: 1.4, velocity: 1, elapsed: 0.2, centroid: pair))
-    owner.onCamera(.ended(scale: 1.4, velocity: 1, elapsed: 0.3, centroid: pair))
-    try await Task.sleep(for: .milliseconds(600))
+    owner.onCamera(.changed(scale: 0.01, velocity: -2, elapsed: 0.2, centroid: pair))
+    owner.onCamera(.cancelled)
+    try await Task.sleep(for: .milliseconds(400))
     XCTAssertEqual(model.presence?.mode, .page)
     XCTAssertEqual(model.presence?.openProgress, 1)
+    XCTAssertEqual(model.presence?.notebookPageID, start.notebookPageID)
+    assertCamera(try XCTUnwrap(model.presence).camera, equals: beforeCancel.camera)
   }
 
   private func scene(document: Bool, startsOnBoard: Bool = false) async throws -> (NotebookAppModel, UIWindow) {

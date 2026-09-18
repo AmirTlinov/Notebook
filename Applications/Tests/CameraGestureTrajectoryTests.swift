@@ -18,10 +18,6 @@ final class CameraGestureTrajectoryTests: XCTestCase {
       startingMagnification: 1,
       viewport: viewport
     )
-    let startingStrength = NotebookDockingField.strength(
-      camera: startingCamera,
-      viewport: viewport, geometry: .notebook
-    )
     let noisyMagnifications: [CGFloat] = [
       1.08, 1.079, 1.10, 1.099, 1.12, 1.119, 1.14, 1.139, 1.16,
     ]
@@ -32,19 +28,7 @@ final class CameraGestureTrajectoryTests: XCTestCase {
         centroid: centroid,
         maximumScale: SpatialCamera.maximumScale
       )
-      let fieldStrength = NotebookDockingField.strength(
-        camera: raw,
-        viewport: viewport, geometry: .notebook
-      )
-      return NotebookDockingField.attractedCamera(
-        raw,
-        toward: .zero,
-        viewport: viewport, geometry: .notebook,
-        correction: NotebookDockingField.approachCorrection(
-          currentStrength: fieldStrength,
-          startingStrength: startingStrength
-        )
-      )
+      return raw
     }
 
     XCTAssertLessThan(displayed.last?.scale ?? 1, 0.85)
@@ -54,8 +38,7 @@ final class CameraGestureTrajectoryTests: XCTestCase {
         trajectory: trajectory,
         magnification: 1.12,
         centroid: centroid,
-        viewport: viewport,
-        startingStrength: startingStrength
+        viewport: viewport
       ).scale,
       accuracy: 0.000_000_1
     )
@@ -73,30 +56,23 @@ final class CameraGestureTrajectoryTests: XCTestCase {
       startingMagnification: 1,
       viewport: viewport
     )
-    let startingStrength = NotebookDockingField.strength(
-      camera: trajectory.startingCamera,
-      viewport: viewport, geometry: .notebook
-    )
     let first = displayCamera(
       trajectory: trajectory,
       magnification: 1.31,
       centroid: CGPoint(x: 655, y: 405),
-      viewport: viewport,
-      startingStrength: startingStrength
+      viewport: viewport
     )
     _ = displayCamera(
       trajectory: trajectory,
       magnification: 1.48,
       centroid: CGPoint(x: 680, y: 416),
-      viewport: viewport,
-      startingStrength: startingStrength
+      viewport: viewport
     )
     let returned = displayCamera(
       trajectory: trajectory,
       magnification: 1.31,
       centroid: CGPoint(x: 655, y: 405),
-      viewport: viewport,
-      startingStrength: startingStrength
+      viewport: viewport
     )
 
     let centerDelta = first.center.delta(to: returned.center)
@@ -109,26 +85,13 @@ final class CameraGestureTrajectoryTests: XCTestCase {
     trajectory: CameraGestureTrajectory,
     magnification: CGFloat,
     centroid: CGPoint,
-    viewport: SpatialPoint,
-    startingStrength: Double
+    viewport: SpatialPoint
   ) -> SpatialCamera {
     let raw = trajectory.camera(
       at: magnification,
       centroid: centroid,
       maximumScale: SpatialCamera.maximumScale
     )
-    let fieldStrength = NotebookDockingField.strength(
-      camera: raw,
-      viewport: viewport, geometry: .notebook
-    )
-    return NotebookDockingField.attractedCamera(
-      raw,
-      toward: .zero,
-      viewport: viewport, geometry: .notebook,
-      correction: NotebookDockingField.approachCorrection(
-        currentStrength: fieldStrength,
-        startingStrength: startingStrength
-      )
-    )
+    return raw
   }
 }
