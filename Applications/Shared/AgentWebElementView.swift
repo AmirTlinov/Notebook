@@ -531,9 +531,10 @@ struct AgentProgramSource: Equatable {
   let html: String
   let css: String
   let javaScript: String
+  let programPackage: String?
   init(_ element: AgentElement) {
     id = element.id; kind = element.kind; source = element.source
-    html = element.html; css = element.css; javaScript = element.javaScript
+    html = element.html; css = element.css; javaScript = element.javaScript; programPackage = element.programPackage
   }
 }
 

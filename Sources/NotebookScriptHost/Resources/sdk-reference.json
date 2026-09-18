@@ -21310,14 +21310,17 @@
                             "javaScript": {
                               "$ref": "#/$defs/__schema12"
                             },
-                            "state": {
+                            "programPackage": {
                               "$ref": "#/$defs/__schema31"
+                            },
+                            "state": {
+                              "$ref": "#/$defs/__schema33"
                             },
                             "worldOrigin": {
                               "$ref": "#/$defs/__schema8"
                             },
                             "textStyle": {
-                              "$ref": "#/$defs/__schema32"
+                              "$ref": "#/$defs/__schema34"
                             }
                           },
                           "required": [
@@ -21418,6 +21421,9 @@
                             "javaScript": {
                               "$ref": "#/$defs/__schema12"
                             },
+                            "programPackage": {
+                              "$ref": "#/$defs/__schema31"
+                            },
                             "graphic": {
                               "type": "object",
                               "properties": {
@@ -21482,7 +21488,7 @@
                               "$ref": "#/$defs/__schema8"
                             },
                             "textStyle": {
-                              "$ref": "#/$defs/__schema32"
+                              "$ref": "#/$defs/__schema34"
                             }
                           },
                           "additionalProperties": false
@@ -21515,7 +21521,7 @@
                           "type": "object",
                           "properties": {
                             "state": {
-                              "$ref": "#/$defs/__schema33"
+                              "$ref": "#/$defs/__schema35"
                             }
                           },
                           "required": [
@@ -21579,7 +21585,7 @@
                               "maxItems": 512,
                               "type": "array",
                               "items": {
-                                "$ref": "#/$defs/__schema34"
+                                "$ref": "#/$defs/__schema36"
                               }
                             }
                           },
@@ -21634,8 +21640,11 @@
                             "javaScript": {
                               "$ref": "#/$defs/__schema12"
                             },
+                            "programPackage": {
+                              "$ref": "#/$defs/__schema31"
+                            },
                             "initialState": {
-                              "$ref": "#/$defs/__schema35"
+                              "$ref": "#/$defs/__schema37"
                             },
                             "height": {
                               "type": "number",
@@ -21690,6 +21699,9 @@
                             "javaScript": {
                               "$ref": "#/$defs/__schema12"
                             },
+                            "programPackage": {
+                              "$ref": "#/$defs/__schema31"
+                            },
                             "height": {
                               "type": "number",
                               "minimum": 48,
@@ -21726,7 +21738,7 @@
                           "type": "object",
                           "properties": {
                             "state": {
-                              "$ref": "#/$defs/__schema36"
+                              "$ref": "#/$defs/__schema38"
                             }
                           },
                           "required": [
@@ -21790,7 +21802,7 @@
                               "maxItems": 512,
                               "type": "array",
                               "items": {
-                                "$ref": "#/$defs/__schema37"
+                                "$ref": "#/$defs/__schema39"
                               }
                             }
                           },
@@ -21857,7 +21869,7 @@
                               "maxItems": 512,
                               "type": "array",
                               "items": {
-                                "$ref": "#/$defs/__schema38"
+                                "$ref": "#/$defs/__schema40"
                               }
                             }
                           },
@@ -21958,7 +21970,7 @@
                               "maxItems": 512,
                               "type": "array",
                               "items": {
-                                "$ref": "#/$defs/__schema38"
+                                "$ref": "#/$defs/__schema40"
                               }
                             }
                           },
@@ -22159,7 +22171,7 @@
                               "maxItems": 5,
                               "type": "array",
                               "items": {
-                                "$ref": "#/$defs/__schema40"
+                                "$ref": "#/$defs/__schema42"
                               }
                             }
                           },
@@ -22180,7 +22192,7 @@
                 }
               },
               "contextID": {
-                "$ref": "#/$defs/__schema41"
+                "$ref": "#/$defs/__schema43"
               },
               "additionalOwners": {
                 "type": "array",
@@ -22198,7 +22210,7 @@
                 "type": "object",
                 "properties": {
                   "id": {
-                    "$ref": "#/$defs/__schema41"
+                    "$ref": "#/$defs/__schema43"
                   },
                   "target": {
                     "$ref": "#/$defs/__schema0"
@@ -22238,13 +22250,13 @@
             "type": "object",
             "properties": {
               "workspaceID": {
-                "$ref": "#/$defs/__schema41"
+                "$ref": "#/$defs/__schema43"
               },
               "owners": {
                 "maxItems": 1024,
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema42"
+                  "$ref": "#/$defs/__schema44"
                 }
               }
             },
@@ -22874,6 +22886,21 @@
           "__schema31": {
             "anyOf": [
               {
+                "$ref": "#/$defs/__schema32"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline."
+          },
+          "__schema32": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "__schema33": {
+            "anyOf": [
+              {
                 "type": "string"
               },
               {
@@ -22888,7 +22915,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema31"
+                  "$ref": "#/$defs/__schema33"
                 }
               },
               {
@@ -22897,12 +22924,12 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema31"
+                  "$ref": "#/$defs/__schema33"
                 }
               }
             ]
           },
-          "__schema32": {
+          "__schema34": {
             "type": "object",
             "properties": {
               "fontSize": {
@@ -22946,40 +22973,6 @@
             ],
             "additionalProperties": false
           },
-          "__schema33": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              },
-              {
-                "type": "array",
-                "items": {
-                  "$ref": "#/$defs/__schema33"
-                }
-              },
-              {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "$ref": "#/$defs/__schema33"
-                }
-              }
-            ]
-          },
-          "__schema34": {
-            "type": "string"
-          },
           "__schema35": {
             "anyOf": [
               {
@@ -23012,6 +23005,9 @@
             ]
           },
           "__schema36": {
+            "type": "string"
+          },
+          "__schema37": {
             "anyOf": [
               {
                 "type": "string"
@@ -23028,7 +23024,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema36"
+                  "$ref": "#/$defs/__schema37"
                 }
               },
               {
@@ -23037,15 +23033,46 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema36"
+                  "$ref": "#/$defs/__schema37"
                 }
               }
             ]
           },
-          "__schema37": {
+          "__schema38": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema38"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema38"
+                }
+              }
+            ]
+          },
+          "__schema39": {
             "type": "string"
           },
-          "__schema38": {
+          "__schema40": {
             "oneOf": [
               {
                 "type": "object",
@@ -23094,8 +23121,11 @@
                   "javaScript": {
                     "$ref": "#/$defs/__schema12"
                   },
+                  "programPackage": {
+                    "$ref": "#/$defs/__schema31"
+                  },
                   "initialState": {
-                    "$ref": "#/$defs/__schema39"
+                    "$ref": "#/$defs/__schema41"
                   },
                   "height": {
                     "type": "number",
@@ -23112,7 +23142,7 @@
               }
             ]
           },
-          "__schema39": {
+          "__schema41": {
             "anyOf": [
               {
                 "type": "string"
@@ -23129,7 +23159,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema39"
+                  "$ref": "#/$defs/__schema41"
                 }
               },
               {
@@ -23138,22 +23168,22 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema39"
+                  "$ref": "#/$defs/__schema41"
                 }
               }
             ]
           },
-          "__schema40": {
-            "type": "string",
-            "format": "uuid",
-            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-          },
-          "__schema41": {
-            "type": "string",
-            "format": "uuid",
-            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-          },
           "__schema42": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema43": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema44": {
             "type": "object",
             "properties": {
               "target": {
@@ -23171,11 +23201,11 @@
               },
               "lifecycleRevision": {
                 "description": "Complete item extent from an explicit itemLifecycle read; covers off-screen content and is not mutation authority.",
-                "$ref": "#/$defs/__schema43"
+                "$ref": "#/$defs/__schema45"
               },
               "inkRevision": {
                 "description": "For appendInkStroke: drawingRevision of a page, spatialInkRevision of a board/cover, or inkRevision returned by nb.code.",
-                "$ref": "#/$defs/__schema44"
+                "$ref": "#/$defs/__schema46"
               }
             },
             "required": [
@@ -23184,11 +23214,11 @@
             ],
             "additionalProperties": false
           },
-          "__schema43": {
+          "__schema45": {
             "type": "string",
             "pattern": "^[a-f0-9]{64}$"
           },
-          "__schema44": {
+          "__schema46": {
             "type": "string"
           }
         }
@@ -23692,14 +23722,17 @@
                       "javaScript": {
                         "$ref": "#/$defs/__schema16"
                       },
-                      "state": {
+                      "programPackage": {
                         "$ref": "#/$defs/__schema34"
+                      },
+                      "state": {
+                        "$ref": "#/$defs/__schema36"
                       },
                       "worldOrigin": {
                         "$ref": "#/$defs/__schema7"
                       },
                       "textStyle": {
-                        "$ref": "#/$defs/__schema35"
+                        "$ref": "#/$defs/__schema37"
                       }
                     },
                     "required": [
@@ -23800,6 +23833,9 @@
                       "javaScript": {
                         "$ref": "#/$defs/__schema16"
                       },
+                      "programPackage": {
+                        "$ref": "#/$defs/__schema34"
+                      },
                       "graphic": {
                         "type": "object",
                         "properties": {
@@ -23864,7 +23900,7 @@
                         "$ref": "#/$defs/__schema7"
                       },
                       "textStyle": {
-                        "$ref": "#/$defs/__schema35"
+                        "$ref": "#/$defs/__schema37"
                       }
                     },
                     "additionalProperties": false
@@ -23897,7 +23933,7 @@
                     "type": "object",
                     "properties": {
                       "state": {
-                        "$ref": "#/$defs/__schema36"
+                        "$ref": "#/$defs/__schema38"
                       }
                     },
                     "required": [
@@ -23961,7 +23997,7 @@
                         "maxItems": 512,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema37"
+                          "$ref": "#/$defs/__schema39"
                         }
                       }
                     },
@@ -24016,8 +24052,11 @@
                       "javaScript": {
                         "$ref": "#/$defs/__schema16"
                       },
+                      "programPackage": {
+                        "$ref": "#/$defs/__schema34"
+                      },
                       "initialState": {
-                        "$ref": "#/$defs/__schema38"
+                        "$ref": "#/$defs/__schema40"
                       },
                       "height": {
                         "type": "number",
@@ -24072,6 +24111,9 @@
                       "javaScript": {
                         "$ref": "#/$defs/__schema16"
                       },
+                      "programPackage": {
+                        "$ref": "#/$defs/__schema34"
+                      },
                       "height": {
                         "type": "number",
                         "minimum": 48,
@@ -24108,7 +24150,7 @@
                     "type": "object",
                     "properties": {
                       "state": {
-                        "$ref": "#/$defs/__schema39"
+                        "$ref": "#/$defs/__schema41"
                       }
                     },
                     "required": [
@@ -24172,7 +24214,7 @@
                         "maxItems": 512,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema40"
+                          "$ref": "#/$defs/__schema42"
                         }
                       }
                     },
@@ -24239,7 +24281,7 @@
                         "maxItems": 512,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema41"
+                          "$ref": "#/$defs/__schema43"
                         }
                       }
                     },
@@ -24340,7 +24382,7 @@
                         "maxItems": 512,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema41"
+                          "$ref": "#/$defs/__schema43"
                         }
                       }
                     },
@@ -24541,7 +24583,7 @@
                         "maxItems": 5,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema43"
+                          "$ref": "#/$defs/__schema45"
                         }
                       }
                     },
@@ -24928,6 +24970,21 @@
           "__schema34": {
             "anyOf": [
               {
+                "$ref": "#/$defs/__schema35"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline."
+          },
+          "__schema35": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "__schema36": {
+            "anyOf": [
+              {
                 "type": "string"
               },
               {
@@ -24942,7 +24999,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema34"
+                  "$ref": "#/$defs/__schema36"
                 }
               },
               {
@@ -24951,12 +25008,12 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema34"
+                  "$ref": "#/$defs/__schema36"
                 }
               }
             ]
           },
-          "__schema35": {
+          "__schema37": {
             "type": "object",
             "properties": {
               "fontSize": {
@@ -25000,40 +25057,6 @@
             ],
             "additionalProperties": false
           },
-          "__schema36": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              },
-              {
-                "type": "array",
-                "items": {
-                  "$ref": "#/$defs/__schema36"
-                }
-              },
-              {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "$ref": "#/$defs/__schema36"
-                }
-              }
-            ]
-          },
-          "__schema37": {
-            "type": "string"
-          },
           "__schema38": {
             "anyOf": [
               {
@@ -25066,6 +25089,9 @@
             ]
           },
           "__schema39": {
+            "type": "string"
+          },
+          "__schema40": {
             "anyOf": [
               {
                 "type": "string"
@@ -25082,7 +25108,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema39"
+                  "$ref": "#/$defs/__schema40"
                 }
               },
               {
@@ -25091,15 +25117,46 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema39"
+                  "$ref": "#/$defs/__schema40"
                 }
               }
             ]
           },
-          "__schema40": {
+          "__schema41": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema41"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema41"
+                }
+              }
+            ]
+          },
+          "__schema42": {
             "type": "string"
           },
-          "__schema41": {
+          "__schema43": {
             "oneOf": [
               {
                 "type": "object",
@@ -25148,8 +25205,11 @@
                   "javaScript": {
                     "$ref": "#/$defs/__schema16"
                   },
+                  "programPackage": {
+                    "$ref": "#/$defs/__schema34"
+                  },
                   "initialState": {
-                    "$ref": "#/$defs/__schema42"
+                    "$ref": "#/$defs/__schema44"
                   },
                   "height": {
                     "type": "number",
@@ -25166,7 +25226,7 @@
               }
             ]
           },
-          "__schema42": {
+          "__schema44": {
             "anyOf": [
               {
                 "type": "string"
@@ -25183,7 +25243,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema42"
+                  "$ref": "#/$defs/__schema44"
                 }
               },
               {
@@ -25192,12 +25252,12 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema42"
+                  "$ref": "#/$defs/__schema44"
                 }
               }
             ]
           },
-          "__schema43": {
+          "__schema45": {
             "type": "string",
             "format": "uuid",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
@@ -43746,8 +43806,19 @@
               "javaScript": {
                 "$ref": "#/$defs/__schema0"
               },
+              "programPackage": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema6"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline."
+              },
               "state": {
-                "$ref": "#/$defs/__schema6"
+                "$ref": "#/$defs/__schema7"
               },
               "worldOrigin": {
                 "type": "object",
@@ -43984,6 +44055,10 @@
             "additionalProperties": false
           },
           "__schema6": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "__schema7": {
             "anyOf": [
               {
                 "type": "string"
@@ -44000,7 +44075,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema6"
+                  "$ref": "#/$defs/__schema7"
                 }
               },
               {
@@ -44009,7 +44084,7 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema6"
+                  "$ref": "#/$defs/__schema7"
                 }
               }
             ]
@@ -44700,6 +44775,17 @@
               "javaScript": {
                 "$ref": "#/$defs/__schema0"
               },
+              "programPackage": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline."
+              },
               "graphic": {
                 "type": "object",
                 "properties": {
@@ -44718,7 +44804,7 @@
                     "type": "object",
                     "properties": {
                       "stroke": {
-                        "$ref": "#/$defs/__schema1"
+                        "$ref": "#/$defs/__schema2"
                       },
                       "strokeWidth": {
                         "type": "number",
@@ -44726,7 +44812,7 @@
                         "maximum": 1000000
                       },
                       "fill": {
-                        "$ref": "#/$defs/__schema1"
+                        "$ref": "#/$defs/__schema2"
                       },
                       "dash": {
                         "type": "string",
@@ -44776,7 +44862,7 @@
                         "maxItems": 4,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema2"
+                          "$ref": "#/$defs/__schema3"
                         }
                       },
                       {
@@ -44788,10 +44874,10 @@
                     "type": "object",
                     "properties": {
                       "start": {
-                        "$ref": "#/$defs/__schema3"
+                        "$ref": "#/$defs/__schema4"
                       },
                       "end": {
-                        "$ref": "#/$defs/__schema3"
+                        "$ref": "#/$defs/__schema4"
                       },
                       "bend": {
                         "type": "number",
@@ -44799,10 +44885,10 @@
                         "maximum": 1000000
                       },
                       "startArrowhead": {
-                        "$ref": "#/$defs/__schema4"
+                        "$ref": "#/$defs/__schema5"
                       },
                       "endArrowhead": {
-                        "$ref": "#/$defs/__schema4"
+                        "$ref": "#/$defs/__schema5"
                       },
                       "routing": {
                         "type": "string",
@@ -44947,6 +45033,10 @@
             "maxLength": 1000000
           },
           "__schema1": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "__schema2": {
             "type": "object",
             "properties": {
               "red": {
@@ -44972,7 +45062,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema2": {
+          "__schema3": {
             "type": "object",
             "properties": {
               "x": {
@@ -44992,7 +45082,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema3": {
+          "__schema4": {
             "type": "object",
             "properties": {
               "point": {
@@ -45064,7 +45154,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema4": {
+          "__schema5": {
             "type": "string",
             "enum": [
               "none",
@@ -45788,8 +45878,19 @@
               "javaScript": {
                 "$ref": "#/$defs/__schema0"
               },
+              "programPackage": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline."
+              },
               "initialState": {
-                "$ref": "#/$defs/__schema1"
+                "$ref": "#/$defs/__schema2"
               },
               "height": {
                 "type": "number",
@@ -45819,6 +45920,10 @@
             "maxLength": 1000000
           },
           "__schema1": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "__schema2": {
             "anyOf": [
               {
                 "type": "string"
@@ -45835,7 +45940,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema1"
+                  "$ref": "#/$defs/__schema2"
                 }
               },
               {
@@ -45844,7 +45949,7 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema1"
+                  "$ref": "#/$defs/__schema2"
                 }
               }
             ]
@@ -46013,6 +46118,17 @@
               "javaScript": {
                 "$ref": "#/$defs/__schema0"
               },
+              "programPackage": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline."
+              },
               "height": {
                 "type": "number",
                 "minimum": 48,
@@ -46033,6 +46149,10 @@
           "__schema0": {
             "type": "string",
             "maxLength": 1000000
+          },
+          "__schema1": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
           }
         }
       },
@@ -46953,8 +47073,19 @@
                   "javaScript": {
                     "$ref": "#/$defs/__schema0"
                   },
+                  "programPackage": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/__schema2"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline."
+                  },
                   "initialState": {
-                    "$ref": "#/$defs/__schema2"
+                    "$ref": "#/$defs/__schema3"
                   },
                   "height": {
                     "type": "number",
@@ -46972,6 +47103,10 @@
             ]
           },
           "__schema2": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "__schema3": {
             "anyOf": [
               {
                 "type": "string"
@@ -46988,7 +47123,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema2"
+                  "$ref": "#/$defs/__schema3"
                 }
               },
               {
@@ -46997,7 +47132,7 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema2"
+                  "$ref": "#/$defs/__schema3"
                 }
               }
             ]
@@ -47480,8 +47615,19 @@
                   "javaScript": {
                     "$ref": "#/$defs/__schema0"
                   },
+                  "programPackage": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/__schema2"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline."
+                  },
                   "initialState": {
-                    "$ref": "#/$defs/__schema2"
+                    "$ref": "#/$defs/__schema3"
                   },
                   "height": {
                     "type": "number",
@@ -47499,6 +47645,10 @@
             ]
           },
           "__schema2": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "__schema3": {
             "anyOf": [
               {
                 "type": "string"
@@ -47515,7 +47665,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema2"
+                  "$ref": "#/$defs/__schema3"
                 }
               },
               {
@@ -47524,7 +47674,7 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema2"
+                  "$ref": "#/$defs/__schema3"
                 }
               }
             ]

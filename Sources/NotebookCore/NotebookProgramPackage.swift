@@ -39,6 +39,13 @@ public struct NotebookProgramPackage: Codable, Equatable, Sendable {
     hash.utf8.count == 64 && hash.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
   }
 
+  /// A program has one authored source: inline, or this immutable namespace.
+  /// Empty inline fields on a packaged source are intentional, not fallbacks.
+  public static func validSourceReference(_ hash: String?, isProgram: Bool, source: String, html: String, css: String, javaScript: String) -> Bool {
+    guard let hash else { return true }
+    return isProgram && validHash(hash) && source.isEmpty && html.isEmpty && css.isEmpty && javaScript.isEmpty
+  }
+
   public static func validPath(_ path: String) -> Bool {
     guard !path.isEmpty, path.utf8.count <= 512, !path.hasPrefix("/"), !path.hasSuffix("/"),
       path.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0)

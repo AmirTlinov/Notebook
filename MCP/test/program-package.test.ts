@@ -76,3 +76,31 @@ test('trusted import tool forwards only its typed local capability, outside Quic
     assert.equal(invalid.isError,true);assert.equal(requests.length,before);
   } finally {await client.close();await server.close();native.close();await rm(root,{recursive:true,force:true});}
 });
+
+
+test('program CLI prepares a descriptor and animation publishes only its staged identity', async()=>{
+  const {execFileSync}=await import('node:child_process'),{readFile}=await import('node:fs/promises');
+  const {fileURLToPath}=await import('node:url'),{randomUUID}=await import('node:crypto');
+  const {operationSchema}=await import('../src/actions.js');
+  const {makeRecipe}=await import(new URL('../skills/notebook/scripts/recipes.mjs',import.meta.url).href);
+  const root=await mkdtemp(join(tmpdir(),'notebook-program-cli-'));
+  try {
+    await writeFile(join(root,'main.js'),'notebook.ready(Promise.resolve());');
+    await writeFile(join(root,'input.json'),JSON.stringify({directory:'.',javaScript:'main.js',files:['main.js']}));
+    const output=execFileSync(process.execPath,[fileURLToPath(new URL('../skills/notebook/scripts/prepare.mjs',import.meta.url)),
+      'program',join(root,'input.json'),join(root,'prepared.json')],{encoding:'utf8'});
+    const descriptor=JSON.parse(await readFile(join(root,'prepared.json'),'utf8'));
+    assert.equal(JSON.parse(output).packageHash,descriptor.packageHash);
+    for(const kind of ['page','board','document']) {
+      const input={target:{kind,id:randomUUID()},programPackage:descriptor.packageHash,
+        anchor:{tileX:0,tileY:0,localX:0,localY:0},title:'Large program'};
+      const request=makeRecipe('animation',input);
+      const op=request.args.operations[0];operationSchema.parse(op);
+      assert.equal(op.values.programPackage,descriptor.packageHash);
+      assert.equal(op.values.html,'');assert.equal(op.values.javaScript,'');
+      if(kind!=='document')assert.equal(op.values.source,'');
+      assert.ok(JSON.stringify(request.args).length<3000);
+      assert.throws(()=>makeRecipe('animation',{...input,html:'<p>conflict</p>'}),/not both/);
+    }
+  } finally {await rm(root,{recursive:true,force:true});}
+});

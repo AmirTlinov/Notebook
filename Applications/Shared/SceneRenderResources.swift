@@ -18,7 +18,7 @@ enum SceneRasterSource: Equatable, Sendable {
       left.id == right.id && left.kind == right.kind
         && left.frame.width == right.frame.width && left.frame.height == right.frame.height
         && left.source == right.source && left.html == right.html
-        && left.css == right.css && left.javaScript == right.javaScript && left.state == right.state
+        && left.css == right.css && left.javaScript == right.javaScript && left.programPackage == right.programPackage && left.state == right.state
     case (.agentRegion(let left, let leftRegion), .agentRegion(let right, let rightRegion)):
       Self.agent(left) == .agent(right) && leftRegion == rightRegion
     case (.document(let leftID, let leftToken), .document(let rightID, let rightToken)):

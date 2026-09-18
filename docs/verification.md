@@ -1,5 +1,52 @@
 # Проверка Notebook
 
+## 19 сентября, 02:27 МСК — GUI-242: причинная публикация и полная blob-зависимость
+
+`programPackage` включён в прежний причинный source field для page/board/document.
+Один источник — inline либо package; null действительно удаляет ссылку. Native
+checkpoint, live identity и raster identity различают пакеты. Единственный row
+writer отказывает публикации без всех частей. Direct delivery, CloudKit outbox и
+snapshot несут closure текущего источника, inverse/undo и удержанных concurrent
+source heads. Строки в state не превращаются в зависимости. ACK/dedupe не скрывают
+пропажу части. Wire 26 / manifest 9 ограждают пару от прежнего decoder; старые
+исторические manifests остаются читаемыми, но не могут объявлять programPackage.
+
+* Core — **38 PASS**, пять затронутых suites, `/tmp/gui-242-dependencies-v4.log`.
+  Последняя удержанная часть не публикует сцену и не двигает cursor; затем холодный
+  peer читает диапазон через границу частей. Проверены три поверхности, source
+  replacement, старый checkpoint, null → inline, snapshot с прежним пакетом,
+  undo на холодном peer, concurrent heads и попытка smuggle в manifest 8.
+* Native Mac — **5 PASS**, `.build/gui-242-publication-mac-v1/verification.json`.
+  Включены importer и package replacement в native program/raster identities.
+* Собственный iPad Simulator — **3 PASS**,
+  `.build/gui-242-publication-sim-v1.xcresult`: прежняя программа не пишет в новую,
+  origin move не создаёт raster заново, независимая текстовая правка сохраняет
+  program context. Mac/Simulator шли параллельно с разными destinations/derived
+  data, без физического iPad. На обоих source-before == source-after:
+  `3ad8aa347c14d15d5288ac4fc318f76e85e28f67384e235ab73efffb532dbc49`.
+  Skips/runtime warnings отсутствуют; compiler deprecation warnings старых
+  XCTest UIWindow fixtures не являются runtime warnings.
+* MCP — **27 PASS** и pinned SDK check PASS,
+  `/tmp/gui-242-publication-mcp-v2.log`. Проверен именно CLI `prepare program`,
+  затем маленькая animation transaction с package SHA для трёх поверхностей.
+  Последняя правка после native receipt — только тест компактности SDK help.
+
+Отрицательные результаты: v2 Core выявил null вместо отсутствующего optional в
+канонической page projection — исправлен actual update path, v3 пять новых tests
+PASS. Старый inverse test пытался опубликовать отсутствующую restoration root уже
+на отправителе, где штатный indexCapturedFieldRestorations запрещает это. Фикстура
+теперь имеет настоящую root на source и удерживает её именно на peer; native
+validation не ослаблялась, итоговый v4 весь выбранный набор PASS. CLI prepare
+раньше записывал descriptor, затем обращался к отсутствующему args — исправлен и
+проверен запуском процесса. MCP v1: расширенная общая схема занимала 25 845 bytes,
+на 245 bytes больше старого тестового 25 KiB бюджета; предел компактной справки
+явно обновлён до 26 KiB, лимит исполняемых args не менялся.
+
+Это storage/publication/transport-contract срез, **не завершение GUI-242**.
+Scoped WK adapter, показ больших assets и офлайн UI ещё в работе. CloudKit outbox
+проверен локально, живой Apple CloudKit этим проходом не подтверждён. Установленные
+приложения не заменялись; физический iPad115 не понижался. GUI-240/242 не Done.
+
 ## 19 сентября, 02:09 МСК — GUI-242: ограниченный потоковый импорт
 
 Первый, **не полный**, срез GUI-242: канонический manifest связывает namespace,

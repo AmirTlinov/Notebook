@@ -44,6 +44,7 @@ export async function prepare(name,input,{baseDirectory='.',outputPath,runID}={}
   input=structuredClone(input);
   if(name==='program') return prepareProgramPackage({...input,directory:resolve(baseDirectory,input.directory??'.')});
   if(name==='animation'&&input.example) {
+    if(input.programPackage!==undefined)throw new Error('Choose an example or a package, not both');
     for(const field of ['html','css','javaScript'])if(input[field]!==undefined||input[`${field}Path`]!==undefined)throw new Error('Choose a named example or source files, not both');
     input={...await loadScienceExample(input.example),...input};
   }
@@ -76,7 +77,7 @@ async function main() {
   const input=JSON.parse(await readFile(inputPath,'utf8'));
   const request=await prepare(name,input,{baseDirectory:dirname(resolve(inputPath)),outputPath:resolve(outputPath)});
   await writeFile(outputPath,JSON.stringify(request),{flag:'wx',mode:0o600});
-  process.stdout.write(JSON.stringify({request:resolve(outputPath),run_id:request.run_id,operations:request.args.operations?.length??0,ids:request.args.ids??{}})+'\n');
+  process.stdout.write(JSON.stringify({request:resolve(outputPath),run_id:request.run_id,operations:request.args?.operations?.length??0,ids:request.args?.ids??{},...(request.packageHash?{packageHash:request.packageHash}:{})})+'\n');
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   main().catch(error=>{process.stderr.write(error.message+'\n');process.exitCode=1;});

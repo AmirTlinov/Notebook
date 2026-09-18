@@ -1536,7 +1536,7 @@ final class DocumentWebCoordinator: NSObject,
 
   private static func sameProgram(_ left: DocumentBlock, _ right: DocumentBlock) -> Bool {
     left.id == right.id && left.kind == right.kind && left.source == right.source && left.html == right.html
-      && left.css == right.css && left.javaScript == right.javaScript
+      && left.css == right.css && left.javaScript == right.javaScript && left.programPackage == right.programPackage
   }
 
   private func sendFrameIfReady() {

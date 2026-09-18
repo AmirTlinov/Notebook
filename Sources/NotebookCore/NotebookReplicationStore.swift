@@ -46,7 +46,7 @@ extension NotebookStore {
     guard data.count <= 67_108_864 else { throw NotebookStorageError.limitExceeded("change_manifest_part") }
     let manifest = try JSONDecoder().decode(NotebookChangeManifest.self, from: data)
     let workspaceID = try currentSQL!.rows("SELECT value FROM metadata WHERE key='workspace_id'").first?[0].text.flatMap(UUID.init(uuidString:))
-    guard (manifest.format == 4 || manifest.format == 5 || manifest.format == 6 || manifest.format == 7 || manifest.format == NotebookChangeManifest.currentFormat) || (historical && manifest.format == 3) else {
+    guard (manifest.format == 4 || manifest.format == 5 || manifest.format == 6 || manifest.format == 7 || manifest.format == 8 || manifest.format == NotebookChangeManifest.currentFormat) || (historical && manifest.format == 3) else {
       throw CollaborationError("placement_peer_upgrade_required", "Сопряжённое устройство передаёт прежний формат изменений. Завершите его обновление; пакет не подтверждён и содержание сохранено.")
     }
     guard manifest.transactionID == change.transactionID, manifest.workspaceID == workspaceID,
@@ -103,7 +103,9 @@ extension NotebookStore {
       if !missing.isEmpty { return missing }
       let orderMissing = try missingPageOrderBlobs(manifestHash: change.manifestHash, limit: limit)
       if !orderMissing.isEmpty { return orderMissing }
-      return try missingLifecycleInverseBlobs(change: change, limit: limit)
+      let inverseMissing = try missingLifecycleInverseBlobs(change: change, limit: limit)
+      if !inverseMissing.isEmpty { return inverseMissing }
+      return try missingProgramBlobs(change: change, limit: limit)
     }
   }
 

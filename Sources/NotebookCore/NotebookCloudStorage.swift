@@ -143,6 +143,7 @@ extension NotebookStore {
         guard let last = hashes.last else { break }
         for hash in hashes { _ = try addBlob(hash) }; after = last
       }
+      try visitProgramDependencyHashes(manifestHash: delivery.change.manifestHash) { hash in _ = try addBlob(hash) }
       try visitLifecycleInverseDependencyHashes(manifestHash: delivery.change.manifestHash) { hash in
         _ = try addBlob(hash)
       }

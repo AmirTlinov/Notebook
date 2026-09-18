@@ -120,7 +120,8 @@ struct NotebookActionInverseTests {
 
   @Test func anUndoReceiptCannotAcknowledgeItsMissingRestorationRoot() throws {
     let f = try Fixture(), (original, _, _, _) = try f.bundle()
-    let restoration = NotebookLifecycleInverseReference(rootHash: String(repeating: "3", count: 64), recordCount: 1)
+    // The sender has a valid receipt; only the receiver lacks this root.
+    let (restoration, _, _, _) = try f.bundle(name: "missing-at-peer")
     let change = try f.publish(original, restoration: restoration), cursor = try f.peer.peerCursor(peerID: f.peerID, direction: .incoming)
     try f.stage(change, excluding: restoration.rootHash)
     #expect(try f.peer.missingBlobHashes(for: change).contains(restoration.rootHash))
@@ -240,7 +241,7 @@ struct NotebookActionInverseTests {
     _ = try f.publish(reference, restoration: restoration)
     let account = "inverse-cloud", source = try f.source.replicationSource(deviceID: UUID())
     try f.source.prepareCloudStorage(); try f.source.enableCloud(account: account, source: source)
-    #expect(NotebookChangeManifest(transactionID: UUID(), workspaceID: f.workspaceID, records: []).format == 8)
+    #expect(NotebookChangeManifest(transactionID: UUID(), workspaceID: f.workspaceID, records: []).format == 9)
     try f.source.prepareCloudUpload(account: account, source: source)
     var hashes = Set<String>()
     for _ in 0..<100 {

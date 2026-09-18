@@ -1,5 +1,28 @@
 # Физическое продолжение высокой программы
 
+## Файловый источник программы (GUI-242, незавершённая app-интеграция)
+
+У page/board web element и interactive document block есть необязательный
+`programPackage`: SHA-256 канонического `NotebookProgramPackage`. Он атомарен с
+`kind/source/html` в причинном поле `content`, поэтому смена пакета меняет source
+basis и отвергает старый checkpoint. State и геометрия остаются независимыми.
+Inline и package не смешиваются: для package source/html/css/javaScript пусты.
+Update с `programPackage: null` снимает ссылку и может одновременно задать inline.
+
+Один manifest задаёт отсортированные уникальные относительные пути, фиксированные
+MIME, размеры и ordered SHA частей по 4 MiB; максимум 1 MiB metadata, 4096 файлов,
+16384 частей. SHA пакета связывает этот namespace, а не выдаётся за плоскую сумму
+большого файла. Чтение использует прежнее окно <=1 MiB и не собирает файл целиком.
+Части и manifest хранятся в прежнем SQLite SHA store; повтор использует те же bytes.
+
+`prepare.mjs program` хеширует файлы вне QuickJS. `submit.mjs` вызывает типизированный
+`notebook_import_program` на Mac, показывает окончательный status; cancel прекращает
+работу между частями. Путь descriptor — только доверенная локальная file capability,
+не browser permission и не выбор Notebook store. `ready` означает admitted bytes,
+не публикацию и не показ. Затем `prepare.mjs animation` принимает `programPackage`
+и формирует обычную атомарную transaction без исходных bytes в args. В текущем срезе
+scoped WebKit adapter/рендер ещё в работе; установленный skill не обновлялся.
+
 ## Исполнитель блока и физические листы на iPad
 
 `DocumentPagePresentationOwner` владеет подготовкой бумаги, композиционными

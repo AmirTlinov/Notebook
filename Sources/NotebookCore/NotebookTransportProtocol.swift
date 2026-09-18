@@ -6,7 +6,7 @@ import Foundation
 public enum NotebookTransportLimits {
   // Each screen owns its navigation; selection may name multiple graphics.
   // Both applications update together to understand the same transient contract.
-  public static let protocolVersion = 25
+  public static let protocolVersion = 26
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16

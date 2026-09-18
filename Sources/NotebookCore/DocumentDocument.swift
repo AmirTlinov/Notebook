@@ -52,6 +52,7 @@ public struct DocumentBlock: Codable, Equatable, Identifiable, Sendable {
   public private(set) var html: String
   public private(set) var css: String
   public private(set) var javaScript: String
+  public private(set) var programPackage: String?
   public private(set) var initialState: JSONValue
   public private(set) var height: Double
 
@@ -62,6 +63,7 @@ public struct DocumentBlock: Codable, Equatable, Identifiable, Sendable {
     html: String = "",
     css: String = "",
     javaScript: String = "",
+    programPackage: String? = nil,
     initialState: JSONValue = .object([:]),
     height: Double = 320
   ) {
@@ -72,6 +74,7 @@ public struct DocumentBlock: Codable, Equatable, Identifiable, Sendable {
     self.html = html
     self.css = css
     self.javaScript = javaScript
+    self.programPackage = programPackage
     self.initialState = initialState
     self.height = height
     precondition(isValid)
@@ -90,6 +93,7 @@ public struct DocumentBlock: Codable, Equatable, Identifiable, Sendable {
     html: String,
     css: String = "",
     javaScript: String = "",
+    programPackage: String? = nil,
     initialState: JSONValue = .object([:]),
     height: Double = 320
   ) -> Self {
@@ -100,6 +104,7 @@ public struct DocumentBlock: Codable, Equatable, Identifiable, Sendable {
       html: html,
       css: css,
       javaScript: javaScript,
+      programPackage: programPackage,
       initialState: initialState,
       height: height
     )
@@ -129,6 +134,7 @@ public struct DocumentBlock: Codable, Equatable, Identifiable, Sendable {
       [source, html, css, javaScript].allSatisfy({
         $0.utf16.count <= Self.maximumSourceLength
       }),
+      NotebookProgramPackage.validSourceReference(programPackage, isProgram: kind == .interactive, source: source, html: html, css: css, javaScript: javaScript),
       initialState.isValid,
       height.isFinite
     else { return false }
