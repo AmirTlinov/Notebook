@@ -1,0 +1,12 @@
+interface:
+  display_name: "Notebook"
+  short_description: "Совместно думать и работать в Notebook"
+  default_prompt: "Используй $notebook, чтобы разобраться в материале вместе со мной и сделать следующий полезный ход."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "notebook"
+      description: "Локальный общий лист Notebook"
+      transport: "stdio"
+policy:
+  allow_implicit_invocation: true
