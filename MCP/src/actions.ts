@@ -33,6 +33,7 @@ const graphicEndpoint = z.object({point: graphicPoint, binding: graphicBinding.o
 const arrowhead = z.enum(["none", "arrow", "triangle", "square", "dot", "pipe", "diamond", "inverted", "bar"]);
 const graphicConnection = z.object({start:graphicEndpoint, end:graphicEndpoint,
   bend:z.number().finite().min(-1e6).max(1e6), startArrowhead:arrowhead, endArrowhead:arrowhead,
+  routing:z.enum(["straight","elbow","curved"]).optional(),
   labelPosition:z.number().min(0).max(1), bendPosition:z.number().min(0).max(1).optional()}).strict();
 export const graphicSchema = z.object({ shape: z.enum(["ellipse", "rectangle", "triangle", "diamond", "plus", "connector"]), style: graphicStyle, label: z.string().max(100_000),
   representation: z.enum(["ink", "geometry"]), visible: z.boolean(), sourceInkIDs: z.array(z.uuid()).max(16), connection:graphicConnection.optional(),

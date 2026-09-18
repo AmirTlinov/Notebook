@@ -159,8 +159,11 @@ extension NotebookStore {
           // A physically present member leaving this query is not a deletion.
           return .init(target: scope.target, id: id, change: .outOfScope, value: nil)
         }
-        return .init(target: scope.target, id: root.value["id"]?.string ?? id, change: .upsert,
-          value: try observationValue(root, scope: scope, header: metadata))
+        let value = try observationValue(root, scope: scope, header: metadata)
+        if scope.ids == nil, value["appearance"]?["state"] == .string("erased") {
+          return from == nil ? nil : .init(target: scope.target, id: id, change: .outOfScope, value: nil)
+        }
+        return .init(target: scope.target, id: root.value["id"]?.string ?? id, change: .upsert, value: value)
       }
       let complete = candidates.count <= limit
       let token = NotebookObservationCursor(workspaceID: workspace.workspaceID, scope: scope, from: complete ? nil : from,
@@ -212,6 +215,15 @@ extension NotebookStore {
   }
   func observationValue(_ root: NotebookStoredFragment, scope: NotebookObservationScope, header: JSONValue) throws -> JSONValue {
     var result: [String: JSONValue] = [:]
+    if scope.target.kind != .document {
+      let id = root.value["id"]!.string!, graphic = try root.value["graphic"]?.decode(NotebookGraphic.self)
+      let layout = try graphic == nil ? nil : readGraphicResolution(target: scope.target, elementID: id).layout
+      let frame = try layout?.frame ?? root.value["frame"]!.decode(PageRect.self)
+      let surface: SurfaceID = scope.target.kind == .page ? .page(scope.target.id)
+        : scope.target.kind == .cover ? .cover(scope.target.id) : .board(scope.target.id)
+      result["appearance"] = try NotebookElementAppearance(graphic: graphic, layout: layout,
+        size: .init(width: frame.width, height: frame.height), erasures: readElementErasures(on: surface, elementID: id)).readProjection()
+    }
     if scope.fields.contains(.preview) {
       result["kind"] = root.value["kind"]
       result["preview"] = .string(String((root.value["source"]?.string ?? root.value["graphic"]?["label"]?.string ?? "").prefix(160)))

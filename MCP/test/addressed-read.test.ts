@@ -27,7 +27,12 @@ test("native addressed read exposes the same committed versions and element with
     assert.equal(read.values[0].elements,undefined);
     assert.equal(read.values[0].drawingData,undefined);
     assert.equal(typeof read.cursor,"string");
-    assert.deepEqual(read.values[1].element,(await store.readPage(pageID)).elements.find(x=>x.id==="late"));
+    const full=(await store.readPage(pageID)).elements.find(x=>x.id==="late");
+    assert.ok(full);
+    const {appearance,...authored}=full as typeof full & {appearance:unknown};
+    assert.deepEqual(read.values[1].element,authored);
+    assert.deepEqual(read.values[1].appearance,appearance);
+    assert.deepEqual(appearance,{state:"intact",sourceIsCompleteAppearance:true});
     const hits = await store.command<any>({command:"search",query:"element",limit:1,filters:{kinds:["page"],target}});
     assert.equal(hits.results[0].elementID,"late");
     assert.equal(hits.coverage.complete,true);

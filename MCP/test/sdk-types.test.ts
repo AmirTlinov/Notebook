@@ -20,13 +20,15 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
       const s=await nb.page({id:input.pageID,elementID:input.elementID});
       if (!s.data) throw new Error('missing');
       const source:string=s.data.element.source;
+      const appearance:'intact'|'partial'|'erased'=s.data.appearance.state;
+      const sourceIsPixels:boolean=s.data.appearance.sourceIsCompleteAppearance;
       const d=await nb.document({id:input.documentID,blockID:'one'});
       if(d.data) { const kind:'markdown'|'latex'|'interactive'=d.data.block.kind; await emit(kind); }
       const batch=await nb.readMany({queries:[{kind:'pageHeader',id:input.pageID},{kind:'workspaceHeader'}]});
       const workspace:string=batch.data[1].workspaceID;
       const content:number=batch.data[0].contentStamp.counter;
       const result=await nb.transaction('label',{base:[s.basis,batch.basis],summary:'Label',operations:[{
-        kind:'updateElement',target:{kind:'page',id:input.pageID},id:input.elementID,values:{graphic:{label:'Next'}}
+        kind:'updateElement',target:{kind:'page',id:input.pageID},id:input.elementID,values:{graphic:{label:'Next',connection:{routing:'elbow'}}}
       }]});
       const version:string=result.actionVersion;
       await emit({source,workspace,content,version,saved:result.publication.saved});

@@ -14,6 +14,7 @@ public struct NotebookPageElementRead: Codable, Equatable, Sendable {
   public let header: NotebookContentHeader
   public let element: AgentElement
   public let graphicResolution: JSONValue?
+  public let appearance: JSONValue
 }
 
 extension NotebookStore {
@@ -77,8 +78,12 @@ extension NotebookStore {
       guard PageDocument.elementsAreValid([element], in: header.size!) else {
         throw NotebookStorageError.corruptRecord("page element")
       }
-      let resolution = try element.graphic == nil ? nil : readGraphicResolution(target: target, elementID: elementID).readProjection()
-      return .init(header: header, element: element, graphicResolution: resolution)
+      let resolution = try element.graphic == nil ? nil : readGraphicResolution(target: target, elementID: elementID)
+      let frame = resolution?.layout?.frame ?? element.frame
+      let appearance = try NotebookElementAppearance(graphic: element.graphic, layout: resolution?.layout,
+        size: .init(width: frame.width, height: frame.height),
+        erasures: readElementErasures(on: .page(pageID), elementID: elementID)).readProjection()
+      return try .init(header: header, element: element, graphicResolution: resolution?.readProjection(), appearance: appearance)
     }
   }
 

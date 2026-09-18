@@ -11,8 +11,9 @@ export const readBasisSchema=z.object({workspaceID:id,owners:z.array(expectation
 export const coverageSchema=z.object({complete:z.boolean(),next:text.optional()}).strict();
 export const snapshotSchema=(data:z.ZodType)=>z.object({data,basis:readBasisSchema,coverage:coverageSchema,cursor:text}).strict();
 const resolution=z.discriminatedUnion("state",[z.object({state:z.literal("geometry"),frame}).passthrough(),z.object({state:z.literal("hidden")}).strict(),z.object({state:z.literal("pending"),dependencies:z.array(text)}).strict()]);
+const appearance=object({state:z.enum(["intact","partial","erased"]),sourceIsCompleteAppearance:z.boolean()});
 const element=object({id:text,kind:z.enum(["markdown","web","graphic","nativeText"]),frame,source:text,html:text,css:text,javaScript:text,state:json,
-  graphic:graphicSchema.optional(),graphicResolution:resolution.optional(),surface:surface.optional(),worldOrigin:worldPointSchema.optional()});
+  appearance:appearance.optional(),graphic:graphicSchema.optional(),graphicResolution:resolution.optional(),surface:surface.optional(),worldOrigin:worldPointSchema.optional()});
 const item=object({id,kind:z.enum(["notebook","document","board"]),title:text,firstPageID:id.optional(),pageCount:number});
 const header=object({workspaceID:id,rootBoardID:id,stamp,itemCount:number,cursor:number,selectedItemID:id.optional(),selectedPageID:id.optional(),boardRevision:text.optional(),boardStamp:stamp.optional(),spatialInkStamp:stamp.optional()});
 const contentHeader=object({target:targetSchema,contentStamp:stamp,stateStamp:stamp.optional(),inkStamp:stamp.optional(),size:size.optional()});
@@ -22,7 +23,7 @@ const state=object({id:text,value:json,stamp});
 const document=object({format:number,id,paperSize:z.enum(["a4","letter"]),preamble:text,blocks:z.array(block),contentStamp:stamp});
 const documentState=object({format:number,id,records:z.array(state),stamp});
 const page=object({format:number,id,size,elements:z.array(element),agentStamp:stamp,drawingStamp:stamp,drawingData:json});
-const pageElement=object({header:contentHeader,element,graphicResolution:resolution.optional()}).nullable();
+const pageElement=object({header:contentHeader,element,appearance,graphicResolution:resolution.optional()}).nullable();
 const documentBlock=object({documentID:id,contentStamp:stamp,stateStamp:stamp,sourceVersion:fieldVersion,stateVersion:fieldVersion.optional(),block,state:json.optional()}).nullable();
 const inkSample=object({point,worldPoint:worldPointSchema.optional(),timeOffset:number,width:number,opacity:number,force:number,azimuth:number,altitude:number});
 const inkAction=object({id,tool:z.enum(["pen","eraser"]),color:object({red:number,green:number,blue:number}),spans:z.array(object({surface,samples:z.array(inkSample)})),stamp,isActive:z.boolean(),stateStamp:stamp});
@@ -58,7 +59,7 @@ const viewReceipt=object({format:number,workspaceStamp:stamp,boardRevision:text,
 const delivery=object({id,deviceID:id,actionVersion:text.optional(),revisions:z.array(expectationSchema),receivedAt:number,displayComplete:z.boolean()});
 const attention=object({status:text,reference:referenceSchema.optional(),payload:json.optional(),artifact:artifact.optional(),pixelWidth:number.optional(),pixelHeight:number.optional(),code:text.optional()});
 const observation=object({mode:z.enum(["snapshot","delta"]).optional(),status:text.optional(),target:targetSchema.optional(),header:z.union([contentHeader,object({target:targetSchema,contentRevision:text})]).optional(),reset:text.optional(),through:text.optional(),
-  objects:z.array(object({target:targetSchema,id:text,change:z.enum(["upsert","deleted","outOfScope"]),value:object({content:z.union([element,block]).optional(),state:json.optional(),graphicResolution:resolution.optional(),preview:text.optional()}).optional()})).optional(),
+  objects:z.array(object({target:targetSchema,id:text,change:z.enum(["upsert","deleted","outOfScope"]),value:object({appearance:appearance.optional(),content:z.union([element,block]).optional(),state:json.optional(),graphicResolution:resolution.optional(),preview:text.optional()}).optional()})).optional(),
   containers:z.array(item).optional(),checkpoint:text.optional(),presence:presence.nullable().optional(),presenceGeneration:text.optional(),context:contexts.optional(),visual:object({status:text,receipt:viewReceipt.optional(),artifact:artifact.optional()}).optional()});
 const runtime=object({status:text,updatedAt:number});
 const exportJob=object({status:z.enum(["missing","queued","running","saved","failed","interrupted"]),jobID:id.optional(),documentID:id.optional(),contentRevision:text.optional(),receipt:object({documentID:id,pdfPath:text,texPath:text,pdfSHA256:text,byteCount:number,log:text,packageSHA256:text.optional(),assets:z.array(object({path:text,sha256:text})).optional()}).optional(),error:json.optional()});

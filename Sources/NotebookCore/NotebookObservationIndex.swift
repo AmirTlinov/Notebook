@@ -69,10 +69,18 @@ extension NotebookStore {
         let statePrefix = stateFile(scope.target.id) + "#/records/@"
         parts.append(changed(statePrefix, expression: q(prefix) + "||" + head("substr(address,\(statePrefix.count + 1))")))
       }
+      if scope.target.kind != .document {
+        // The immutable erasure-target index selects only touched elements.
+        // A changed activation header (undo) invalidates the same projection.
+        let inkPrefix = scope.target.kind == .page ? layout.file + "#/drawingData/actions/@" : "spatial-ink.json#/actions/@"
+        let actions = changed(inkPrefix, expression: q(inkPrefix) + "||" + head("substr(address,\(inkPrefix.count + 1))"))
+        let escapedID = "replace(replace(e.element_id,'~','~0'),'/','~1')"
+        parts.append("SELECT " + q(prefix) + "||" + escapedID + " AS address FROM (" + actions + ") c JOIN ink_element_erasures e ON e.address=c.address WHERE e.kind=" + q(scope.target.kind.rawValue) + " AND e.owner_id=" + q(scope.target.id.uuidString.lowercased()))
+      }
       let membershipChanges = Set(members ?? []).symmetricDifference(Set(previous ?? []))
       parts += membershipChanges.map { "SELECT " + q($0) + " AS address" }
       let touched = parts.joined(separator: " UNION ")
-      if scope.fields.contains(.geometry) || !scope.expand.isEmpty {
+      if scope.target.kind != .document || !scope.expand.isEmpty {
         // Old immutable fragments matter when removal of a winning ink claim
         // reveals a remaining claimant. Only changed roots enter this join.
         source = """
