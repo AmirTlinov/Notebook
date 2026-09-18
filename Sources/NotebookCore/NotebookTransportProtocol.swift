@@ -4,9 +4,9 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Account-authorized devices use one proof/ready handshake. Manual invitations
-  // and confirmation frames no longer exist; both applications must update.
-  public static let protocolVersion = 23
+  // Native selection can name a set of graphic elements. Both applications
+  // must understand that choice instead of treating it as an empty selection.
+  public static let protocolVersion = 25
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16

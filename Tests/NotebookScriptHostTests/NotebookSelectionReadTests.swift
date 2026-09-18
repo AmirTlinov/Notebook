@@ -102,6 +102,24 @@ struct NotebookSelectionReadTests {
     #expect(explicit["data"]?["selection"] == nil, "An explicit address is not rewritten by the current selection")
   }
 
+  @Test func selectedSetReadsOnlyItsExactMembers() async throws {
+    let owner = try NotebookSDKV2ReadTests.Owner(), coordinator = host(owner)
+    defer { try? FileManager.default.removeItem(at:owner.store.root) }
+    let pageID = try #require(owner.store.loadIndex().selectedPageID)
+    var page = try owner.store.loadPage(pageID)
+    page.replaceElements((0..<40).map { .init(id:"e-\($0)",kind:.markdown,frame:.init(x:0,y:0,width:100,height:100),source:"source-\($0)",html:"<p>Text</p>") },actor:UUID())
+    try owner.store.savePage(page)
+    let target = CollaborationTarget(kind:.page,id:pageID), device = UUID(), connection = UUID()
+    let selected = NotebookSelection(id:UUID(),kind:.elements,surface:target,target:target,elementIDs:["e-35","e-39"])
+    #expect(selected.isValid)
+    try owner.store.beginSelectionPublication(deviceID:device,connectionID:connection)
+    #expect(try owner.store.acceptSelectionPublication(.init(deviceID:device,sessionID:UUID(),sequence:1,selection:selected),connectionID:connection))
+    let value = try await coordinator.context(.init(method:"observe"))
+    #expect(Set(value["data"]?["objects"]?.array.compactMap { $0["id"]?.string } ?? []) == ["e-35","e-39"])
+    #expect(value["data"]?["selection"]?["selection"]?["kind"] == .string("elements"))
+    #expect(value["coverage"]?["complete"] == .bool(true))
+  }
+
   @Test(arguments: [false, true])
   func messageEvidenceKeepsExactSourceOrExplicitMissingPixels(hasPixels: Bool) async throws {
     let owner = try NotebookSDKV2ReadTests.Owner(), coordinator = host(owner)

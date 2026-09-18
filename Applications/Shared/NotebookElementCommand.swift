@@ -34,7 +34,8 @@ extension NotebookAppModel {
   /// Only nodes already admitted by that graph can change here.
   func projectingGraphicCommands(_ graph: NotebookGraphicGraph,
     reference: (String) -> EditableElementReference) -> NotebookGraphicGraph {
-    .init(graph.nodes.values.map { node in
+    let selectedEdits = Dictionary(uniqueKeysWithValues:(selectionSession.manipulation?.selectedEdits ?? []).map { ($0.id,$0) })
+    return .init(graph.nodes.values.map { node in
       let ref = reference(node.id), draft = graphicCommandDrafts[ref]
       let contact = selectionSession.manipulation.flatMap { $0.reference == ref ? $0 : nil }
       var graphic = draft?.graphic ?? node.graphic
@@ -43,10 +44,18 @@ extension NotebookAppModel {
         if contact.vertices != contact.originalVertices { graphic.vertices = contact.vertices }
         if contact.cornerRadius != contact.originalCornerRadius { graphic.cornerRadius = contact.cornerRadius }
       }
-      let frame = contact.map { PageRect(x: $0.frame.minX, y: $0.frame.minY, width: $0.frame.width, height: $0.frame.height) }
+      let selected = selectedEdits[node.id]
+      if let selected { graphic = selected.graphic }
+      let frame = selected?.frame ?? contact.map { PageRect(x: $0.frame.minX, y: $0.frame.minY, width: $0.frame.width, height: $0.frame.height) }
         ?? draft?.frame ?? node.frame
       return .init(id: node.id, graphic: graphic, frame: frame, origin: node.origin, surface: node.surface,
         shown: node.shown && graphic.showsGeometry)
     })
   }
+}
+
+struct NotebookElementEdit {
+  let reference: EditableElementReference
+  let kind: CollaborationOperation.Kind
+  let values: [String: JSONValue]
 }

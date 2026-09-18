@@ -7,12 +7,17 @@ private struct GraphicFixture {
   let store: NotebookStore
   let target: CollaborationTarget
   let actor: UUID
-  init(onBoard: Bool, actor: UUID = UUID(), seed: CollaborationContent? = nil, target: CollaborationTarget? = nil) throws {
+  init(onBoard: Bool, actor: UUID = UUID(), seed: NotebookStore? = nil, target: CollaborationTarget? = nil) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-peer-\(UUID())")
     store = .init(root: root); self.actor = actor
-    let (index, _) = try store.loadOrCreate(actor: actor, pageSize: .init(width: 834, height: 1194))
-    _ = try store.loadOrCreateSpatialInk(actor: actor)
-    if let seed { _ = try store.mergeCollaborationContent(seed) }
+    if let seed {
+      try store.prepareEmptyWorkspace(workspaceID:seed.workspaceHeader().workspaceID)
+      try receiveGraphics(from:seed,to:store,peerID:UUID())
+    } else {
+      _ = try store.loadOrCreate(actor:actor,pageSize:.init(width:834,height:1194))
+      _ = try store.loadOrCreateSpatialInk(actor:actor)
+    }
+    let index = try store.loadIndex()
     self.target = target ?? .init(kind: onBoard ? .board : .page, id: onBoard ? index.rootBoardID : index.selectedPageID!)
   }
   func clean() { try? FileManager.default.removeItem(at: root) }
@@ -42,6 +47,27 @@ private struct GraphicFixture {
   }
 }
 
+/// Use the same addressed admission as devices, including lifecycle inverse
+/// blobs. A value-only CollaborationContent copy cannot transport that proof.
+private func receiveGraphics(_ delivery: NotebookReplicationDelivery, from source: NotebookStore, to destination: NotebookStore) throws {
+  while true {
+    let hashes = try destination.missingBlobHashes(for:delivery.change)
+    if hashes.isEmpty { break }
+    for hash in hashes {
+      let size = try source.blobSize(hash:hash)
+      var bytes = Data()
+      while Int64(bytes.count) < size { bytes += try source.readBlobChunk(hash:hash,offset:Int64(bytes.count),maxBytes:1_048_576) }
+      try destination.stageBlob(data:bytes,expectedHash:hash)
+    }
+  }
+  try destination.applyDelivery(delivery)
+}
+private func receiveGraphics(from source: NotebookStore, to destination: NotebookStore, peerID: UUID) throws {
+  for change in try source.changeJournal(after:0) {
+    try receiveGraphics(.init(source:.init(deviceID:peerID,generation:peerID),change:change),from:source,to:destination)
+  }
+}
+
 @Test("Правка агента принимает геометрию; её причинная отмена разрешает отменить преобразование", arguments: [false, true])
 func graphicUndoPreservesAdoption(onBoard: Bool) throws {
   for undoEdit in [false, true] {
@@ -63,27 +89,32 @@ func graphicUndoPreservesAdoption(onBoard: Bool) throws {
 func graphicConcurrentClaimsConverge(onBoard: Bool) throws {
   let base = try GraphicFixture(onBoard: onBoard); defer { base.clean() }
   let strokes = try (0..<4).map { _ in try base.stroke() }
-  let seed = try base.store.collaborationContent()
-  var payloads: [(CollaborationContent, CollaborationReceipt)] = []
+  var authors: [GraphicFixture] = []
+  defer { authors.forEach { $0.clean() } }
   for i in 0..<3 {
-    let peer = try GraphicFixture(onBoard: onBoard,
-      actor: UUID(uuidString: "00000000-0000-4000-8000-00000000000\(i + 1)")!, seed: seed, target: base.target)
-    defer { peer.clean() }
-    let action = try peer.convert("shape-\(i)", sources: [strokes[i], strokes[i + 1]], shape: [NotebookGraphic.Shape.ellipse,.rectangle,.plus][i], human: i != 1)
-    payloads.append((try peer.store.collaborationContent(), action))
+    let peer = try GraphicFixture(onBoard:onBoard,
+      actor:UUID(uuidString:"00000000-0000-4000-8000-00000000000\(i+1)")!,seed:base.store,target:base.target)
+    _ = try peer.convert("shape-\(i)",sources:[strokes[i],strokes[i+1]],shape:[NotebookGraphic.Shape.ellipse,.rectangle,.plus][i],human:i != 1)
+    authors.append(peer)
   }
-  let orders = [[0,1,2], [0,2,1], [1,0,2], [1,2,0], [2,0,1], [2,1,0]]
+  let orders = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]]
   for order in orders {
-    for grouped in [false, true] {
-      let peer = try GraphicFixture(onBoard: onBoard, seed: seed, target: base.target); defer { peer.clean() }
+    for grouped in [false,true] {
+      let peer = try GraphicFixture(onBoard:onBoard,seed:base.store,target:base.target); defer { peer.clean() }
       if grouped {
-        var merged = payloads[order[0]].0
-        for i in order.dropFirst() { try merged.merge(payloads[i].0) }
-        _ = try peer.store.mergeCollaborationContent(merged, actions: order.map { payloads[$0].1 })
-      } else {
-        for i in order + order.reversed() {
-          _ = try peer.store.mergeCollaborationContent(payloads[i].0, actions: [payloads[i].1])
+        // Coalesce A+B at a real relay, then deliver its ordinary snapshot and
+        // C. Receipt inverse blobs travel with the cut, not fabricated values.
+        let relay = try GraphicFixture(onBoard:onBoard,seed:base.store,target:base.target); defer { relay.clean() }
+        for i in order.prefix(2) { try receiveGraphics(from:authors[i].store,to:relay.store,peerID:authors[i].actor) }
+        let snapshot = try relay.store.commandTransaction {
+          try relay.store.cloudSnapshot(source:.init(deviceID:relay.actor,generation:relay.actor))
         }
+        try receiveGraphics(snapshot,from:relay.store,to:peer.store)
+        try receiveGraphics(snapshot,from:relay.store,to:peer.store)
+        let i = order[2]
+        try receiveGraphics(from:authors[i].store,to:peer.store,peerID:authors[i].actor)
+      } else {
+        for i in order + order.reversed() { try receiveGraphics(from:authors[i].store,to:peer.store,peerID:authors[i].actor) }
       }
       let expected: Set<String> = ["shape-0", "shape-2"]
       #expect(try peer.presentation().geometryIDs == expected)
@@ -109,6 +140,52 @@ func graphicAgentUndoInDispatcherTransaction() throws {
     }
   }
   #expect(try f.presentation().geometryIDs.isEmpty)
+}
+
+@Test("Atomic selection movement converges with concurrent label and visibility edits", arguments:[false,true])
+func graphicSelectionBatchConverges(onBoard: Bool) throws {
+  let base = try GraphicFixture(onBoard:onBoard); defer { base.clean() }
+  for (id,x) in [("a",40.0),("b",240.0)] {
+    var values: [String:JSONValue] = ["kind":.string("graphic"),"source":.string(""),
+      "frame":try .encode(PageRect(x:x,y:60,width:60,height:60)),"graphic":try .encode(NotebookGraphic(label:id))]
+    if onBoard { values["worldOrigin"] = try .encode(WorldPoint.zero) }
+    _ = try base.write(.insertElement,id:id,values:values)
+  }
+  let human = try GraphicFixture(onBoard:onBoard,seed:base.store,target:base.target)
+  let label = try GraphicFixture(onBoard:onBoard,seed:base.store,target:base.target)
+  let hidden = try GraphicFixture(onBoard:onBoard,seed:base.store,target:base.target)
+  let authors = [human,label,hidden]; defer { authors.forEach { $0.clean() } }
+  let sources = try ["a","b"].map { id in
+    try NotebookNativeElementSource(target:base.target,id:id,
+      page:onBoard ? nil : human.store.readPageElement(pageID:base.target.id,elementID:id),
+      spatial:onBoard ? human.store.readSpatialElement(boardID:base.target.id,elementID:id) : nil)
+  }
+  let move = try human.store.applyNativeElementEdits(["a","b"].enumerated().map { index,id in
+    .init(kind:.updateElement,target:base.target,id:id,values:["frame":try .encode(PageRect(x:80+Double(index)*200,y:90,width:60,height:60))])
+  },summary:"Move two nodes",sources:sources,actor:human.actor).receipt
+  _ = try label.write(.updateElement,id:"a",values:["graphic":.object(["label":.string("Agent label")])],human:false)
+  let deletion = try hidden.write(.removeElement,id:"b",values:[:],human:false)
+  for order in [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]] {
+    let peer = try GraphicFixture(onBoard:onBoard,seed:base.store,target:base.target); defer { peer.clean() }
+    for i in order + order.reversed() { try receiveGraphics(from:authors[i].store,to:peer.store,peerID:authors[i].actor) }
+    func objects() throws -> [String:(PageRect,NotebookGraphic)] {
+      let reopened = NotebookStore(root:peer.root)
+      if onBoard {
+        return Dictionary(uniqueKeysWithValues:try reopened.loadBoard(items:reopened.loadIndex().items).board(base.target.id)!.elements.map {
+          ($0.id,(.init(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height),$0.graphic!))
+        })
+      }
+      return Dictionary(uniqueKeysWithValues:try reopened.loadPage(base.target.id).elements.map { ($0.id,($0.frame,$0.graphic!)) })
+    }
+    var state = try objects()
+    #expect(state["a"]?.0.x == 80 && state["b"]?.0.x == 280)
+    #expect(state["a"]?.1.label == "Agent label" && state["b"]?.1.visible == false)
+    _ = try peer.store.undoCollaborationAction(deletion.id,actor:peer.actor)
+    _ = try peer.store.undoCollaborationAction(move.id,actor:peer.actor)
+    state = try objects()
+    #expect(state["a"]?.0.x == 40 && state["b"]?.0.x == 240)
+    #expect(state["a"]?.1.label == "Agent label" && state["b"]?.1.visible == true)
+  }
 }
 
 @Test("Изменение и очистка углов принимают многоугольник; отмена правки возвращает прежнее авторство", arguments:[false,true], [false,true])

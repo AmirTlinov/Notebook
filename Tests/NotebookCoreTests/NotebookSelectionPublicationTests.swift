@@ -52,6 +52,18 @@ import Testing
     #expect(!NotebookSelectionEnvelope(deviceID: UUID(), sessionID: UUID(), sequence: 0, selection: nil).isValid)
   }
 
+  @Test func selectedSetIsExplicitBoundedAndRoundTrips() throws {
+    let page = CollaborationTarget(kind:.page,id:UUID())
+    func selected(_ ids: [String]) -> NotebookSelection {
+      .init(id:UUID(),kind:.elements,surface:page,target:page,elementIDs:ids)
+    }
+    let valid = selected(["b","a"])
+    #expect(valid.isValid)
+    #expect(try JSONDecoder().decode(NotebookSelection.self,from:JSONEncoder().encode(valid)) == valid)
+    for ids in [[],["a"],["a","a"],["a",""],(0..<33).map(String.init)] { #expect(!selected(ids).isValid) }
+    #expect(!NotebookSelection(id:UUID(),kind:.element,surface:page,target:page,elementID:"a",elementIDs:["a","b"]).isValid)
+  }
+
   @Test func authenticatedTransportCoalescesSelectionWithoutReplacingOtherTransients() throws {
     let peer = NotebookTransportIdentity(deviceID: UUID(), workspaceID: UUID(), displayName: "iPad")
     let session = UUID(), surface = CollaborationTarget(kind: .page, id: UUID())

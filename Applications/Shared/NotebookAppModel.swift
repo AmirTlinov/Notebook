@@ -414,7 +414,9 @@ final class NotebookAppModel {
   private func clearRemovedElementPins(_ missing: [UUID: Set<String>]) {
     for (boardID, ids) in missing {
       scenePinnedElements[boardID] = scenePinnedElements[boardID]?.filter { !ids.contains($0) }
-      if case .spatial(let selectedBoard, let id) = selectionSession.element, selectedBoard == boardID, ids.contains(id) { clearSelection() }
+      if selectionSession.elements.contains(where: { reference in
+        if case .spatial(let selectedBoard,let id) = reference { return selectedBoard == boardID && ids.contains(id) }; return false
+      }) { clearSelection() }
     }
   }
 
@@ -2643,6 +2645,113 @@ final class NotebookAppModel {
     if selectionSession.element != reference { replaceSelection(.element(reference)) }
   }
 
+  func beginMultipleSelection() {
+    guard let reference = selectionSession.element, graphicElement(reference) != nil else { return }
+    selectionSession.addingElements = true
+  }
+
+  func finishMultipleSelection() { selectionSession.addingElements = false }
+  func setMultipleSelectionAdding(_ adding: Bool) { selectionSession.addingElements = adding }
+
+  /// Additive picking is an explicit editing mode, never a second recognizer.
+  /// All members remain on the same physical page/cover/board.
+  func graphicSelectionToggling(_ reference: EditableElementReference) -> [EditableElementReference]? {
+    guard selectionSession.addingElements, let graphic = graphicElement(reference), graphic.showsGeometry,
+      let target = nativeElementSource(reference)?.target,
+      selectionSession.elements.allSatisfy({ nativeElementSource($0)?.target == target }) else { return nil }
+    var refs = selectionSession.elements
+    if let index = refs.firstIndex(of:reference) { refs.remove(at:index) }
+    else if refs.count < 32 { refs.append(reference) }
+    else { showCue("Выберите не более 32 объектов за один раз."); return nil }
+    return refs
+  }
+
+  func toggleGraphicSelection(_ reference: EditableElementReference) {
+    guard let refs = graphicSelectionToggling(reference) else { return }
+    guard !refs.isEmpty else { clearSelection(); return }
+    replaceSelection(refs.count == 1 ? .element(refs[0]) : .elements(refs))
+    selectionSession.addingElements = true
+  }
+
+  private func selectedGraphicMembers() -> [NotebookGraphicSelection.Member]? {
+    let refs = selectionSession.elements
+    guard !refs.isEmpty else { return nil }
+    let layouts = graphicLayouts(refs)
+    let members = refs.compactMap { reference -> NotebookGraphicSelection.Member? in
+      guard let graphic = graphicElement(reference), graphic.showsGeometry,
+        let geometry = elementGeometry(reference), let layout = layouts[reference],
+        let source = nativeElementSource(reference) else { return nil }
+      if case .spatial = reference, let cohort = compositionTiles.published,
+        presentedElement(reference,cohort:cohort) == nil { return nil }
+      return .init(id:source.id,frame:.init(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height),
+        origin:geometry.worldOrigin ?? .zero,graphic:graphic,layout:layout)
+    }
+    return members.count == refs.count ? members : nil
+  }
+
+  @discardableResult
+  private func applySelectionEdits(_ edits: [NotebookGraphicSelection.Edit], summary: String) -> Bool {
+    let byID = Dictionary(uniqueKeysWithValues:selectionSession.elements.compactMap { reference in
+      nativeElementSource(reference).map { ($0.id,reference) }
+    })
+    do {
+      let operations = try edits.compactMap { edit -> NotebookElementEdit? in
+        guard let reference = byID[edit.id], let geometry = elementGeometry(reference),
+          let graphic = graphicElement(reference) else { return nil }
+        var values: [String:JSONValue] = [:]
+        let frame = PageRect(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height)
+        if frame != edit.frame { values["frame"] = try .encode(edit.frame) }
+        if graphic.connection != edit.graphic.connection { values["graphic"] = .object(["connection":try .encode(edit.graphic.connection)]) }
+        return values.isEmpty ? nil : .init(reference:reference,kind:.updateElement,values:values)
+      }
+      return operations.isEmpty || performElementOperations(operations,summary:summary,readSources:selectionSession.elements)
+    } catch { showCue(error.localizedDescription); return false }
+  }
+
+  func alignGraphicSelection(_ alignment: NotebookGraphicSelection.Alignment) {
+    guard let members = selectedGraphicMembers() else { return }
+    _ = applySelectionEdits(NotebookGraphicSelection.aligned(members,to:alignment),summary:"Выровнять фигуры")
+  }
+
+  func duplicateGraphicSelection() {
+    guard let members = selectedGraphicMembers(), let first = selectionSession.elements.first else { return }
+    let sources = selectionSession.elements
+    // Page placement is clamped as a whole; a copied construction is never
+    // squeezed or partly moved beyond the physical sheet.
+    var offset = SpatialPoint(x:24,y:24)
+    if let bounds = elementGeometry(first)?.bounds {
+      let right = members.map { $0.frame.x+$0.frame.width }.max()!, bottom = members.map { $0.frame.y+$0.frame.height }.max()!
+      offset = .init(x:min(24,max(0,bounds.maxX-right)),y:min(24,max(0,bounds.maxY-bottom)))
+    }
+    let edits = NotebookGraphicSelection.duplicated(members,namespace:UUID(),offset:offset)
+    do {
+      let operations = try zip(edits,members).map { edit,member -> NotebookElementEdit in
+        let reference: EditableElementReference
+        var values: [String:JSONValue] = ["kind":.string("graphic"),"source":.string(""),"frame":try .encode(edit.frame),"graphic":try .encode(edit.graphic)]
+        switch first {
+        case .page(let owner,_): reference = .page(pageID:owner,elementID:edit.id)
+        case .spatial(let owner,_):
+          reference = .spatial(boardID:owner,elementID:edit.id)
+          if nativeElementSource(first)?.target.kind == .board { values["worldOrigin"] = try .encode(member.origin) }
+        }
+        return .init(reference:reference,kind:.insertElement,values:values)
+      }
+      _ = performElementOperations(operations,summary:"Дублировать фигуры",readSources:sources,
+        copiedFrom:Dictionary(uniqueKeysWithValues:zip(edits,members).map { ($0.id,$1.id) }))
+    } catch { showCue(error.localizedDescription) }
+  }
+
+  func arrangeGraphicSelection(front: Bool) {
+    guard let first = selectionSession.elements.first else { return }
+    _ = performElementOperations([.init(reference:first,kind:.reorderElements,values:[:])],
+      summary:front ? "На передний план" : "На задний план",moveToFront:front,readSources:selectionSession.elements)
+  }
+
+  func deleteGraphicSelection() {
+    guard selectedGraphicMembers() != nil else { return }
+    if performElementOperations(selectionSession.elements.map { .init(reference:$0,kind:.removeElement,values:[:]) },summary:"Удалить выбранные фигуры") { clearSelection() }
+  }
+
   func updateSelectionPreview(_ rect: CGRect?) {
     if let rect {
       if selectionSession.preview == nil { replaceSelection(.context) }
@@ -2677,6 +2786,7 @@ final class NotebookAppModel {
     case nil: kind = .empty
     case .item: kind = .item
     case .element: kind = .element
+    case .elements: kind = .elements
     case .context: kind = .context
     case .reference: kind = .reference
     }
@@ -2697,6 +2807,10 @@ final class NotebookAppModel {
       value.target = .init(kind: element.surface.kind == .cover ? .cover : .board, id: owner,
         boardID: element.surface.kind == .cover ? board : nil)
       value.elementID = id
+    case .elements(let refs):
+      guard let first = refs.first, let target = nativeElementSource(first)?.target,
+        refs.allSatisfy({ nativeElementSource($0)?.target == target }) else { return nil }
+      value.target = target; value.elementIDs = refs.compactMap { nativeElementSource($0)?.id }
     case .reference(let reference): value.reference = reference
     }
     return value.isValid ? value : nil
@@ -2730,11 +2844,12 @@ final class NotebookAppModel {
   /// Navigation ends manipulation, but retains explicitly pinned material for
   /// the conversation. Only the resulting context target can show its outline.
   func endSurfaceEditing() {
-    guard selectionSession.element != nil || selectionSession.target.map({
+    guard !selectionSession.elements.isEmpty || selectionSession.target.map({
       if case .item = $0 { return true }; return false
     }) == true else { return }
     cancelElementManipulation()
     selectionSession.target = .context
+    selectionSession.addingElements = false
     selectionSession.isInteractive = false
   }
 
@@ -2753,13 +2868,17 @@ final class NotebookAppModel {
     // invisible drag while the installed cohort still owns baked pixels.
     if case .spatial = reference, graphicElement(reference) != nil,
       let cohort = compositionTiles.published, presentedElement(reference, cohort: cohort) == nil { return nil }
-    guard selectionSession.element == reference, inputGate.beginFingerSequence() != nil,
+    guard selectionSession.contains(reference), inputGate.beginFingerSequence() != nil,
       let geometry = elementGeometry(reference) else { return nil }
     let connection = graphicElement(reference)?.connection
     cancelElementManipulation()
-    let contact = NotebookElementManipulation(reference: reference, kind: kind,
+    var contact = NotebookElementManipulation(reference: reference, kind: kind,
       frame: geometry.frame, bounds: geometry.bounds, identity: geometry.identity, worldOrigin: geometry.worldOrigin,
       connection: connection, layout: graphicLayout(reference), graphic: graphicElement(reference))
+    if selectionSession.elements.count > 1 {
+      guard kind == .move, let members = selectedGraphicMembers() else { return nil }
+      contact.selectedMembers = members
+    }
     selectionSession.manipulation = contact
     inputGate.beginContact(source: contact.id)
     inputGate.registerFingerCancellation(source: contact.id) { [weak self] in self?.cancelElementManipulation(contact.id) }
@@ -2769,7 +2888,13 @@ final class NotebookAppModel {
   func updateElementManipulation(_ id: UUID, translation: SpatialPoint) {
     guard selectionSession.manipulation?.id == id else { return }
     let previous = manipulatedBindingTarget?.elementID
-    selectionSession.manipulation?.update(translation: .init(x: translation.x, y: translation.y))
+    var delta = translation
+    if let contact = selectionSession.manipulation, !contact.selectedMembers.isEmpty, let bounds = contact.bounds {
+      let frames = contact.selectedMembers.map(\.frame)
+      delta = .init(x:min(bounds.maxX-frames.map { $0.x+$0.width }.max()!,max(bounds.minX-frames.map(\.x).min()!,delta.x)),
+        y:min(bounds.maxY-frames.map { $0.y+$0.height }.max()!,max(bounds.minY-frames.map(\.y).min()!,delta.y)))
+    }
+    selectionSession.manipulation?.update(translation: .init(x: delta.x, y: delta.y))
     selectionSession.manipulation?.bindEndpoint(manipulatedEndpointBinding(retaining:previous))
   }
 
@@ -2779,6 +2904,10 @@ final class NotebookAppModel {
     updateElementManipulation(id, translation: translation)
     guard let contact = selectionSession.manipulation else { return false }
     cancelElementManipulation(id)
+    if !contact.selectedMembers.isEmpty {
+      guard selectedGraphicMembers() == contact.selectedMembers else { return false }
+      return applySelectionEdits(contact.selectedEdits,summary:"Переместить выбранные фигуры")
+    }
     guard contact.frame != contact.original || contact.connection != contact.originalConnection
       || contact.vertices != contact.originalVertices || contact.cornerRadius != contact.originalCornerRadius,
       let current = elementGeometry(contact.reference), current.frame == contact.original,
@@ -2995,77 +3124,110 @@ final class NotebookAppModel {
   @discardableResult
   func performElementOperation(_ kind: CollaborationOperation.Kind, reference: EditableElementReference,
     values: [String: JSONValue], summary: String, moveToFront: Bool? = nil) -> Bool {
-    let target: CollaborationTarget, id: String, expectedPage: AgentElement?, expectedSpatial: SpatialElement?
-    switch reference {
-    case .page(let pageID, let elementID):
-      target = .init(kind: .page, id: pageID); id = elementID
-      expectedPage = pages[pageID]?.elements.first { $0.id == id }; expectedSpatial = nil
-    case .spatial(let boardID, let elementID):
-      expectedSpatial = boardHierarchy?.board(boardID)?.elements.first { $0.id == elementID }; expectedPage = nil; id = elementID
-      target = expectedSpatial?.surface.kind == .cover
-        ? .init(kind: .cover, id: expectedSpatial!.surface.ownerID!, boardID: boardID) : .init(kind: .board, id: boardID)
+    performElementOperations([.init(reference:reference,kind:kind,values:values)],summary:summary,moveToFront:moveToFront)
+  }
+
+  @discardableResult
+  func performElementOperations(_ edits: [NotebookElementEdit], summary: String,
+    moveToFront: Bool? = nil, readSources: [EditableElementReference] = [], copiedFrom: [String:String] = [:]) -> Bool {
+    guard !edits.isEmpty, edits.count <= 32 else { return false }
+    let references = Array(Set(edits.map(\.reference) + readSources))
+    let insertionTarget = readSources.first.flatMap { nativeElementSource($0)?.target }
+    var originals: [EditableElementReference: NotebookNativeElementSource] = [:]
+    for reference in references {
+      guard let source = nativeElementSource(reference) else { return false }
+      originals[reference] = source.page == nil && source.spatial == nil && insertionTarget != nil
+        ? .init(target:insertionTarget!,id:source.id) : source
     }
-    let actor = actorID, predecessor = graphicCommandTask, generation = UUID()
-    let sourceTask = elementCommandSources[reference]?.task
-    let source = NotebookElementCommandResult(page: expectedPage, spatial: expectedSpatial)
-    // Only this element's accepted value is projected. Neither a delayed save
-    // nor an unrelated element disables the next contact or style choice.
-    if var graphic = graphicElement(reference), let geometry = elementGeometry(reference) {
-      do {
-        if let patch = values["graphic"] { graphic = try graphic.applying(patch) }
-        if kind == .removeElement { graphic.visible = false }
-        let frame = try values["frame"]?.decode(PageRect.self)
-          ?? PageRect(x: geometry.frame.minX, y: geometry.frame.minY, width: geometry.frame.width, height: geometry.frame.height)
-        graphicCommandDrafts[reference] = .init(frame: frame, graphic: graphic)
-      } catch { showCue(error.localizedDescription); return false }
+    guard let target = originals[edits[0].reference]?.target,
+      originals.values.allSatisfy({ $0.target == target }) else { return false }
+    let operations = edits.map { edit in
+      CollaborationOperation(kind:edit.kind,target:target,id:originals[edit.reference]!.id,values:edit.values)
     }
-    graphicCommandGeneration = generation
-    let task = Task<NotebookElementCommandResult?, Never> { [weak self] in
+    let sources = originals
+    let predecessor = graphicCommandTask, actor = actorID, generation = UUID()
+    let sourceTasks = references.reduce(into: [EditableElementReference: Task<NotebookElementCommandResult?, Never>]()) {
+      $0[$1] = elementCommandSources[$1]?.task
+    }
+    var drafts: [EditableElementReference: NotebookGraphicCommandDraft] = [:]
+    do {
+      for edit in edits {
+        guard var graphic = graphicElement(edit.reference), let geometry = elementGeometry(edit.reference) else { continue }
+        if let patch = edit.values["graphic"] { graphic = try graphic.applying(patch) }
+        if edit.kind == .removeElement { graphic.visible = false }
+        let frame = try edit.values["frame"]?.decode(PageRect.self)
+          ?? PageRect(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height)
+        drafts[edit.reference] = .init(frame:frame,graphic:graphic)
+      }
+    } catch { showCue(error.localizedDescription); return false }
+    for (reference,draft) in drafts { graphicCommandDrafts[reference] = draft }
+    let task = Task<[EditableElementReference: NotebookElementCommandResult]?, Never> { [weak self] in
       guard let self else { return nil }
       defer { if graphicCommandGeneration == generation { graphicCommandTask = nil } }
       _ = await predecessor?.value
-      let expected: NotebookElementCommandResult
-      if let sourceTask {
-        guard let accepted = await sourceTask.value else {
+      do {
+        var expected: [NotebookNativeElementSource] = []
+        for reference in references {
+          let source = sources[reference]!
+          if let task = sourceTasks[reference] {
+            guard let accepted = await task.value else {
+              throw CollaborationError("revision_conflict","Предыдущее изменение выбранного элемента не было сохранено.")
+            }
+            expected.append(.init(target:target,id:source.id,page:accepted.page,spatial:accepted.spatial))
+          } else { expected.append(source) }
+        }
+        await withCheckedContinuation { continuation in inputGate.performAfterIdle { continuation.resume() } }
+        let admittedSources = expected
+        let (receipt,cursor,saved) = try await persistence.submit(publishesChanges:true) { store in
+          let result = try store.applyNativeElementEdits(operations,summary:summary,sources:admittedSources,moveToFront:moveToFront,copiedFrom:copiedFrom,actor:actor)
+          return (result.receipt,try store.currentChangeCursor(),result.sources)
+        }
+        var results: [EditableElementReference:NotebookElementCommandResult] = [:]
+        for reference in references {
+          if elementCommandSources[reference]?.id == generation { elementCommandSources[reference]?.cursor = cursor }
+          let id = sources[reference]!.id
+          let source = saved.first { $0.id == id }
+          results[reference] = .init(page:source?.page,spatial:source?.spatial)
+          if operations.contains(where: { $0.id == id && $0.kind == .convertInkToElement }),
+            let index = workingGraphics.firstIndex(where: { $0.id == id }) { workingGraphics[index].publicationCursor = cursor }
+        }
+        pencilUndoHistory.recordCommand(ownerID:target.id,actionID:receipt.id)
+        reloadExternalChanges()
+        return results
+      } catch {
+        for reference in references {
           if elementCommandSources[reference]?.id == generation { graphicCommandDrafts[reference] = nil; elementCommandSources[reference] = nil }
           cancelElementManipulationForFailedCommand(reference)
-          return nil
+          workingGraphics.removeAll { $0.id == sources[reference]!.id }
         }
-        expected = accepted
-      } else { expected = source }
-      await withCheckedContinuation { continuation in
-        inputGate.performAfterIdle { continuation.resume() }
-      }
-      do {
-        let (receipt, cursor, result) = try await persistence.submit(publishesChanges: true) { store in
-          let saved = try store.applyNativeElementEdit(.init(kind: kind, target: target, id: id, values: values),
-            summary: summary, expectedPage: expected.page, expectedSpatial: expected.spatial, moveToFront: moveToFront, actor: actor)
-          // The cursor is observed after the owning transaction has committed.
-          return (saved.receipt, try store.currentChangeCursor(), NotebookElementCommandResult(page: saved.page, spatial: saved.spatial))
-        }
-        if elementCommandSources[reference]?.id == generation { elementCommandSources[reference]?.cursor = cursor }
-        if kind == .convertInkToElement, let index = workingGraphics.firstIndex(where: { $0.id == id }) {
-          workingGraphics[index].publicationCursor = cursor
-        }
-        pencilUndoHistory.recordCommand(ownerID: target.id, actionID: receipt.id)
-        reloadExternalChanges()
-        return result
-      } catch {
-        if elementCommandSources[reference]?.id == generation { graphicCommandDrafts[reference] = nil; elementCommandSources[reference] = nil }
-        cancelElementManipulationForFailedCommand(reference)
-        workingGraphics.removeAll { $0.id == id }
-        showCue(error.localizedDescription)
-        reloadExternalChanges()
-        return nil
+        showCue(error.localizedDescription); reloadExternalChanges(); return nil
       }
     }
-    graphicCommandTask = task
-    elementCommandSources[reference] = .init(id: generation, task: task)
+    graphicCommandGeneration = generation
+    graphicCommandTask = Task { await task.value?.values.first }
+    for edit in edits {
+      let reference = edit.reference
+      elementCommandSources[reference] = .init(id:generation,task:Task { await task.value?[reference] })
+    }
     return true
   }
 
+  private func nativeElementSource(_ reference: EditableElementReference) -> NotebookNativeElementSource? {
+    switch reference {
+    case .page(let owner,let id):
+      guard pages[owner] != nil else { return nil }
+      return .init(target:.init(kind:.page,id:owner),id:id,page:pages[owner]?.elements.first { $0.id == id })
+    case .spatial(let owner,let id):
+      let element = boardHierarchy?.board(owner)?.elements.first { $0.id == id }
+      guard boardHierarchy?.board(owner) != nil else { return nil }
+      let target = element?.surface.kind == .cover
+        ? CollaborationTarget(kind:.cover,id:element!.surface.ownerID!,boardID:owner) : .init(kind:.board,id:owner)
+      return .init(target:target,id:id,spatial:element)
+    }
+  }
+
   private func cancelElementManipulationForFailedCommand(_ reference: EditableElementReference) {
-    if selectionSession.manipulation?.reference == reference { cancelElementManipulation() }
+    if selectionSession.manipulation?.reference == reference || selectionSession.contains(reference) { cancelElementManipulation() }
   }
 
   func deleteElement(_ reference: EditableElementReference) {
@@ -4312,10 +4474,9 @@ final class NotebookAppModel {
     presence = state.presence
     retireGraphicCommands(through: state.header.cursor)
     alignWorkspaceSelection()
-    if case .page(let pageID, let elementID) = selectionSession.element,
-      let page = pages[pageID], !page.elements.contains(where: { $0.id == elementID }) {
-      clearSelection()
-    }
+    if selectionSession.elements.contains(where: { reference in
+      if case .page(let pageID,let id) = reference, let page = pages[pageID] { return !page.elements.contains { $0.id == id } }; return false
+    }) { clearSelection() }
   }
 
   private func reloadCollaborationMetadata() { reloadExternalChanges() }
@@ -4580,7 +4741,7 @@ final class NotebookAppModel {
     scenePresentationOwners.removeValue(forKey: ObjectIdentifier(owner))
   }
 
-  private func showCue(_ text: String) {
+  func showCue(_ text: String) {
     cueTask?.cancel()
     actionCue = text
     cueTask = Task { [weak self] in

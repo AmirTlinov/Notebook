@@ -33,6 +33,6 @@ struct EditableElementContainer<Content: View>: View {
         })
       .onDisappear { if let contact { model.cancelElementManipulation(contact) }; contact = nil }
       #endif
-      .accessibilityAddTraits(model.selectionSession.element == reference ? .isSelected : [])
+      .accessibilityAddTraits(model.selectionSession.contains(reference) ? .isSelected : [])
   }
 }

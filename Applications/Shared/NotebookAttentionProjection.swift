@@ -105,7 +105,8 @@ enum NotebookAttentionProjection {
     return finished(result)
   }
 
-  static func editingFrame(_ reference: EditableElementReference, model: NotebookAppModel, presence: SessionPresence) -> CGRect? {
+  static func editingFrame(_ reference: EditableElementReference, model: NotebookAppModel, presence: SessionPresence,
+    layout: NotebookGraphicLayout? = nil) -> CGRect? {
     let target: CollaborationTarget, id: String
     switch reference {
     case .page(let pageID, let elementID): target = .init(kind: .page, id: pageID); id = elementID
@@ -115,11 +116,12 @@ enum NotebookAttentionProjection {
         let element = model.presentedElement(reference, cohort: cohort), let owner = element.surface.ownerID else { return nil }
       target = .init(kind: element.surface.kind == .cover ? .cover : .board, id: owner, boardID: boardID); id = elementID
     }
-    return frame(target: target, elementID: id, region: nil, worldOrigin: nil, pageIndex: nil, model: model, presence: presence, minimumSide: 0)
+    return frame(target: target, elementID: id, region: nil, worldOrigin: nil, pageIndex: nil, model: model, presence: presence, minimumSide: 0, graphicLayout:layout)
   }
 
   private static func frame(target: CollaborationTarget, elementID: String?, region: PageRect?,
-    worldOrigin: WorldPoint?, pageIndex: Int?, model: NotebookAppModel, presence: SessionPresence, minimumSide: Double = 8) -> CGRect? {
+    worldOrigin: WorldPoint?, pageIndex: Int?, model: NotebookAppModel, presence: SessionPresence, minimumSide: Double = 8,
+    graphicLayout: NotebookGraphicLayout? = nil) -> CGRect? {
     guard let workspace = model.workspace, let cohort = model.compositionTiles.published else { return nil }
     let index = cohort.frame.index
     var local = region ?? PageRect(x:0,y:0,width:1,height:1)
@@ -131,7 +133,7 @@ enum NotebookAttentionProjection {
           element.surface == .board(target.id) else { return nil }
         local = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
         if element.graphic != nil {
-          guard let layout = model.graphicLayout(.spatial(boardID:presence.boardID,elementID:id)) else { return nil }
+          guard let layout = graphicLayout ?? model.graphicLayout(.spatial(boardID:presence.boardID,elementID:id)) else { return nil }
           local = layout.frame
         }
         origin = element.worldOrigin ?? .zero
@@ -148,7 +150,7 @@ enum NotebookAttentionProjection {
         guard let element = model.pages[target.id]?.elements.first(where: { $0.id == id }) else { return nil }
         local = element.frame
         if element.graphic != nil {
-          guard let layout = model.graphicLayout(.page(pageID:target.id,elementID:id)) else { return nil }
+          guard let layout = graphicLayout ?? model.graphicLayout(.page(pageID:target.id,elementID:id)) else { return nil }
           local = layout.frame
         }
       }
@@ -167,7 +169,7 @@ enum NotebookAttentionProjection {
             element.surface == .cover(itemID) else { return nil }
           local = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
           if element.graphic != nil {
-            guard let layout = model.graphicLayout(.spatial(boardID:presence.boardID,elementID:id)) else { return nil }
+            guard let layout = graphicLayout ?? model.graphicLayout(.spatial(boardID:presence.boardID,elementID:id)) else { return nil }
             local = layout.frame
           }
         }
@@ -195,6 +197,7 @@ enum NotebookAttentionProjection {
 
   static func capture(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence,
     cohort: SceneCompositionCohort, installedInk: [SurfaceID: SpatialInkInstalledSource], itemID: UUID? = nil,
+    selectedElements: [EditableElementReference]? = nil,
     acceptsFirstFragment: (NotebookAttentionSelection.Fragment) -> Bool = { _ in true }) -> NotebookAttentionSelection? {
     guard cohort.isPaintInstalled, cohort.plan.presentations[.board(presence.boardID)] != nil else { return nil }
     var sources = CaptureSources(workset: model.presentedWorkset(cohort: cohort, boardID: presence.boardID, presence: presence),
@@ -214,9 +217,40 @@ enum NotebookAttentionProjection {
         sources.documents[focused] = document; sources.states[focused] = state
       }
     }
-    let fragments = itemID.map { id in
-      fragment(start: start, end: end, sources: sources, presence: presence, ownerID: id, dragged: true).map { [$0] } ?? []
-    } ?? fragments(start: start, end: end, sources: sources, presence: presence)
+    let fragments: [NotebookAttentionSelection.Fragment]
+    if let selectedElements {
+      guard (1...32).contains(selectedElements.count), Set(selectedElements).count == selectedElements.count,
+        selectedElements.allSatisfy({ model.graphicCommandDrafts[$0] == nil }), model.selectionSession.manipulation == nil else { return nil }
+      var selected: [NotebookAttentionSelection.Fragment] = []
+      var graphs: [SurfaceID:NotebookGraphicGraph] = [:]
+      for reference in selectedElements {
+        let target: CollaborationTarget, id: String, surface: SurfaceID, origin: WorldPoint?
+        switch reference {
+        case .page(let owner,let elementID):
+          guard presence.mode == .page, sources.selectedPageID == owner, let page = sources.pages[owner] else { return nil }
+          surface = .page(owner)
+          if graphs[surface] == nil { graphs[surface] = page.graphicGraph() }
+          target = .init(kind:.page,id:owner); id = elementID; origin = nil
+        case .spatial(let boardID,let elementID):
+          guard boardID == presence.boardID, model.presentedElement(reference,cohort:cohort) != nil,
+            let board = sources.hierarchy.board(boardID), let element = board.elements.first(where: { $0.id == elementID }),
+            let owner = element.surface.ownerID else { return nil }
+          surface = element.surface
+          if graphs[surface] == nil { graphs[surface] = board.graphicGraph() }
+          target = .init(kind:element.surface.kind == .cover ? .cover : .board,id:owner,
+            boardID:element.surface.kind == .cover ? boardID : nil)
+          id = elementID; origin = element.worldOrigin
+        }
+        guard selected.first.map({ $0.target == target }) ?? true,
+          let layout = graphs[surface]?.resolve(id).layout else { return nil }
+        selected.append(.init(target:target,elementID:id,region:layout.frame,worldOrigin:origin,pageIndex:nil,label:"Объект схемы"))
+      }
+      fragments = selected
+    } else {
+      fragments = itemID.map { id in
+        fragment(start:start,end:end,sources:sources,presence:presence,ownerID:id,dragged:true).map { [$0] } ?? []
+      } ?? Self.fragments(start:start,end:end,sources:sources,presence:presence)
+    }
     // A contact owner can decline this resolved source before borrowing or
     // copying pixels. In particular, a document link cannot become an element
     // drag, so touch-down must not snapshot the whole visible paper first.
