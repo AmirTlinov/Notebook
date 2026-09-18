@@ -146,6 +146,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
     // owner for the remaining index; waiting alone does not schedule that work.
     let paper = try XCTUnwrap(fixture.paper(in: 0))
     let renderer = try XCTUnwrap(paper.navigationDelegate as? DocumentWebCoordinator)
+    // The native paper may be mounted before its source receipt authorizes links.
+    try await wait(message: { fixture.diagnostics }) { renderer.currentLinkOrigin != nil }
     renderer.resolveLink("#bad", origin: try XCTUnwrap(renderer.currentLinkOrigin)) { _ in }
     try await wait(message: { fixture.diagnostics }) { source.layout?.isComplete == true }
     let layout = try XCTUnwrap(source.layout)
@@ -911,6 +913,71 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertEqual(editing, document.blocks[0].source, "Return must expose the working source, not just a cached picture")
   }
 
+  func testBackgroundCheckpointFreezesTheModelAndForegroundResumesTheSameHeap() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "clock",
+      html: "<output></output>", javaScript: """
+        let phase=0,timer;
+        const tick=()=>{phase++;document.querySelector('output').textContent=phase};
+        const start=()=>{timer=setInterval(tick,10)};
+        notebook.lifecycle({pause(){clearInterval(timer)},checkpoint(){return {phase}},resume:start,dispose(){clearInterval(timer)}});
+        notebook.ready(Promise.resolve().then(start));
+        """, initialState: .object(["phase": .number(0)]), height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "clock") != nil }
+    let web = try XCTUnwrap(fixture.web(block: "clock"))
+    try await Task.sleep(for: .milliseconds(100))
+    let saved = await DocumentPagePresentationOwner.checkpointPrograms(documentID: document.id, resources: fixture.resources, resume: false)
+    XCTAssertTrue(saved)
+    let phase = fixture.number("clock", field: "phase")
+    XCTAssertGreaterThan(phase, 0)
+    try await Task.sleep(for: .milliseconds(100))
+    let frozen = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertEqual(frozen, phase)
+    await DocumentPagePresentationOwner.resumePrograms(resources: fixture.resources)
+    try await Task.sleep(for: .milliseconds(100))
+    let resumed = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertGreaterThan(resumed ?? 0, phase)
+    XCTAssertTrue(fixture.web(block: "clock") === web)
+  }
+
+  func testClosingAnObsoleteProgramDoesNotPinItsSupersededHeap() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "clock", html: "<output>old</output>",
+      javaScript: "notebook.lifecycle({checkpoint:()=>({phase:0.25})});notebook.ready(Promise.resolve());",
+      initialState: .object(["phase": .number(0)]), height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "clock") != nil }
+    fixture.onCheckpoint = { [weak fixture] _ in fixture?.replaceState(blockID: "clock", value: .object(["phase": .number(0.75)])) }
+    fixture.close()
+    try await wait(message: { fixture.diagnostics }) { fixture.resources.activeWebSurfaceCount == 0 }
+    XCTAssertEqual(fixture.number("clock", field: "phase"), 0.75)
+    XCTAssertNil(fixture.checkpointValues["clock"], "The superseded heap must not overwrite its successor")
+  }
+
+  func testClosingDocumentRetainsAnUnacceptedModelUntilExplicitRetry() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "clock",
+      html: "<output>0.625</output>", javaScript: """
+        notebook.lifecycle({checkpoint:()=>({phase:0.625})});notebook.ready(Promise.resolve());
+        """, initialState: .object(["phase": .number(0)]), height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "clock") != nil }
+    var attempts = 0
+    fixture.onCheckpoint = { _ in attempts += 1 }
+    fixture.acceptsCheckpoints = false
+    fixture.close()
+    try await wait(message: { fixture.diagnostics }) { attempts == 1 }
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertGreaterThan(fixture.resources.activeWebSurfaceCount, 0, "Dismantling is not permission to discard unsaved author state")
+    XCTAssertNil(fixture.checkpointValues["clock"])
+    fixture.acceptsCheckpoints = true
+    DocumentPagePresentationOwner.retryRetiringPrograms(resources: fixture.resources)
+    try await wait(message: { fixture.diagnostics }) { fixture.resources.activeWebSurfaceCount == 0 }
+    XCTAssertEqual(fixture.checkpointValues["clock"], .object(["phase": .number(0.625)]))
+    XCTAssertEqual(fixture.resources.rasterAdmission.pinnedBytes, 0)
+  }
+
   func testReturnProgramFreezesItsModelWithoutWaitingForPoolPressure() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
       html: "<output>0</output>", javaScript: """
@@ -1630,11 +1697,16 @@ private final class ProgramFixture {
         snapshotPixelWidth: thumbnailPresentations.contains(index) ? 256 : nil, onPreparationFailure: { [weak self] error in
           self?.preparationErrors.append("page \(index): \(error)")
         },
-        onStateCheckpoint: { [weak self] block, value, version in
-          guard let self, document.sourceVersion(blockID: block) == version, self.value(block) == value else { return false }
+        onStateCheckpoint: { [weak self] block, value, version, stateVersion in
+          guard let self else { return nil }
           await onCheckpoint(block)
-          guard acceptsCheckpoints else { return false }
-          checkpoints.insert(block); checkpointValues[block] = value; return true
+          guard acceptsCheckpoints else { throw SceneRenderError.snapshotPending("test_writer_unavailable") }
+          guard document.sourceVersion(blockID: block) == version,
+            state.records.first(where: { $0.id == block })?.valueVersion == stateVersion else { return nil }
+          _ = state.commit(blockID: block, value: value, actor: actor)
+          checkpoints.insert(block); checkpointValues[block] = value
+          let accepted = state.records.first { $0.id == block }?.valueVersion
+          refresh(); return accepted
         }, measurements: measurements), in: hosts[index], resources: resources)
     }
   }
@@ -1726,6 +1798,7 @@ private final class ProgramFixture {
     throw SceneRenderError.snapshotPending("test_current_document_capture")
   }
   func close() {
+    retiredPresentations = Set(coordinators.indices)
     coordinators.forEach { $0.invalidate() }; window.isHidden = true; window.rootViewController = nil
   }
 }

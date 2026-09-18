@@ -18,6 +18,12 @@ public struct NotebookProgramStateBasis: Equatable, Sendable {
   public func hasSameSource(as other: Self) -> Bool {
     fields.filter { $0.key != stateKey } == other.fields.filter { $0.key != other.stateKey }
   }
+
+  public func hasNewerState(than other: Self) -> Bool {
+    guard hasSameSource(as: other), let current = fields[stateKey], let previous = other.fields[other.stateKey] else { return false }
+    return current.includes(previous) && !previous.includes(current)
+  }
+
 }
 
 extension PageDocument {
@@ -89,35 +95,35 @@ extension NotebookStore {
   /// A stopped browser model may retire only after this source/state-guarded
   /// write commits. Geometry is read from storage, never rolled back by a frame.
   public func checkpointProgramState(target: CollaborationTarget, rendered: AgentElement,
-    state: JSONValue, basis: NotebookProgramStateBasis, actor: UUID) throws -> Bool {
+    state: JSONValue, basis: NotebookProgramStateBasis, actor: UUID) throws -> NotebookProgramStateBasis? {
     guard state.isValid, rendered.kind == .web else { throw NotebookStorageError.invalidTransaction("program checkpoint") }
     return try commandTransaction {
       switch target.kind {
       case .page:
-        guard try ownerItemID(ofPage: target.id) != nil else { return false }
+        guard try ownerItemID(ofPage: target.id) != nil else { return nil }
         let before = try pageElementCommandProjection(pageID: target.id, elementID: rendered.id)
         let page = try before.decode(NotebookPageElementProjection.self)
-        guard basis == NotebookProgramStateBasis(elementID: rendered.id, metadata: page.collaboration, fallback: page.agentStamp) else { return false }
+        guard basis == NotebookProgramStateBasis(elementID: rendered.id, metadata: page.collaboration, fallback: page.agentStamp) else { return nil }
         guard let element = page.elements.first(where: { $0.id == rendered.id }),
           element.kind == rendered.kind, element.source == rendered.source, element.html == rendered.html,
           element.css == rendered.css, element.javaScript == rendered.javaScript,
-          element.state == rendered.state else { return false }
-        if element.state == state { return true }
+          element.state == rendered.state else { return nil }
+        if element.state == state { return basis }
         guard let stamp = page.agentStamp.advanced(by: actor) else { throw NotebookStorageError.limitExceeded("page clock") }
         var after = try before.setting("elements", .encode([element.updating(state: state)])).setting("agentStamp", .encode(stamp))
         var metadata = page.collaboration
         metadata.record(before: before, after: after, beforeStamp: page.agentStamp, stamp: stamp, human: true)
         after = try after.setting("collaboration", .encode(metadata))
         try publishProjectionEdits(file: pageFile(target.id), before: before, after: after)
-        return true
+        return .init(elementID: rendered.id, metadata: metadata, fallback: stamp)
       case .board:
         guard let before = try spatialElementProjection(boardID: target.id, elementID: rendered.id),
           let board = before.board(target.id), basis == board.programStateBasis(rendered.id),
           var element = board.elements.first,
           element.kind == .web, element.source == rendered.source, element.html == rendered.html,
           element.css == rendered.css, element.javaScript == rendered.javaScript,
-          element.state == rendered.state else { return false }
-        if element.state == state { return true }
+          element.state == rendered.state else { return nil }
+        if element.state == state { return basis }
         let expected = element.stamp
         var after = before
         guard element.update(state: state, actor: actor),
@@ -125,7 +131,7 @@ extension NotebookStore {
           throw NotebookStorageError.transactionConflict
         }
         _ = try saveBoardEdits(before: before, after: after)
-        return true
+        return try spatialElementProjection(boardID: target.id, elementID: rendered.id)?.board(target.id)?.programStateBasis(rendered.id)
       default: throw NotebookStorageError.invalidTransaction("program checkpoint target")
       }
     }

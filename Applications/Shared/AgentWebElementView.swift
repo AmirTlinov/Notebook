@@ -39,6 +39,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
   struct AgentWebElementView: UIViewRepresentable {
     let element: AgentElement
     var stateBasis: NotebookProgramStateBasis? = nil
+    var programOwner: NotebookAppModel? = nil
     let lease: WebSurfaceLease
     let snapshotPolicy: AgentSnapshotPolicy
     var focus: InteractiveElementReference? = nil
@@ -75,7 +76,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     }
 
     static func dismantleUIView(_ view: PhysicalWebViewport, coordinator: AgentWebCoordinator) {
-      coordinator.invalidate()
+      coordinator.retireAfterCheckpoint()
       view.retire()
     }
 
@@ -93,6 +94,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
       }
       context.coordinator.use(onFailure: onFailure)
       context.coordinator.use(onState: onState)
+      context.coordinator.programOwner = programOwner
       context.coordinator.load(element, basis: stateBasis, policy: snapshotPolicy, in: webView)
       view.onInstalled?()
     }
@@ -267,6 +269,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
   struct AgentWebElementView: NSViewRepresentable {
     let element: AgentElement
     var stateBasis: NotebookProgramStateBasis? = nil
+    var programOwner: NotebookAppModel? = nil
     let lease: WebSurfaceLease
     let snapshotPolicy: AgentSnapshotPolicy
     var focus: InteractiveElementReference? = nil
@@ -293,7 +296,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: AgentWebCoordinator) {
-      coordinator.invalidate()
+      coordinator.retireAfterCheckpoint()
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
@@ -302,6 +305,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
       context.coordinator.use(onInteraction: onInteraction)
       context.coordinator.use(onFailure: onFailure)
       context.coordinator.use(onState: onState)
+      context.coordinator.programOwner = programOwner
       context.coordinator.load(element, basis: stateBasis, policy: snapshotPolicy, in: webView)
       context.coordinator.bindPresentation(to: focus)
       if let installation = context.coordinator.installation(for: element), installation.isInstalled { onInstalled(installation) }
@@ -643,8 +647,19 @@ private final class AgentCurrentFrameResult {
 
 @MainActor
 final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, SceneSourceInstallationOwner {
-  private struct WeakPresentation { weak var owner: AgentWebCoordinator? }
-  private static var presentations: [ObjectIdentifier: WeakPresentation] = [:]
+  private final class Presentation {
+    weak var visibleOwner: AgentWebCoordinator?
+    var retiringOwner: AgentWebCoordinator?
+    var retiringWeb: WKWebView?
+    var owner: AgentWebCoordinator? { retiringOwner ?? visibleOwner }
+    init(owner: AgentWebCoordinator) { visibleOwner = owner }
+  }
+  private static var presentations: [ObjectIdentifier: Presentation] = [:]
+  weak var programOwner: NotebookAppModel?
+  private var checkpointTask: Task<AgentElement, Error>?
+  private var checkpointID: UUID?
+  private var checkpointedSource: AgentElement?
+  private var retirementTask: Task<Void, Never>?
   private var presentationFocus: InteractiveElementReference?
   private var presentationToken = UUID()
   private let lease: WebSurfaceLease
@@ -747,7 +762,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   func bindPresentation(to focus: InteractiveElementReference?) {
     guard !isInvalidated else { return }
     if presentationFocus != focus { presentationToken = UUID(); presentationFocus = focus }
-    Self.presentations[ObjectIdentifier(self)] = focus == nil ? nil : .init(owner: self)
+    if focus == nil { Self.presentations[ObjectIdentifier(self)] = nil }
+    else if Self.presentations[ObjectIdentifier(self)] == nil { Self.presentations[ObjectIdentifier(self)] = .init(owner: self) }
   }
 
   func installation(for element: AgentElement) -> SceneSourceInstallation? {
@@ -801,45 +817,140 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
 
   static func resumeCurrent(focus: InteractiveElementReference) async {
     for owner in presentations.values.compactMap(\.owner) where owner.presentationFocus == focus && !owner.isInvalidated {
-      if let web = owner.attachedWebView { _ = try? await NotebookProgramBridge.lifecycle("resume", controller: "notebookProgram", in: web) }
+      await owner.resumeProgram()
     }
   }
 
-  /// The existing spatial owner keeps this viewport until the writer confirms
-  /// its stopped model. A failed write/capture resumes it instead of losing it.
+  private func resumeProgram() async {
+    guard let web = attachedWebView else { return }
+    if (try? await NotebookProgramBridge.lifecycle("resume", controller: "notebookProgram", in: web)) != nil {
+      checkpointedSource = nil
+      if let loadedElement, appliedState != loadedElement.state {
+        stateToApply = loadedElement.state; applyCurrentState()
+      }
+    }
+  }
+
+  static func resumePrograms(ownedBy model: NotebookAppModel) async {
+    for entry in Array(presentations.values) where entry.retiringOwner == nil {
+      if let owner = entry.owner, owner.programOwner === model { await owner.resumeProgram() }
+    }
+  }
+
+  /// Existing presentation ownership crosses a native dismantle until the
+  /// writer acknowledges the final model. The keyed allocator cannot grant a
+  /// duplicate executor for this same physical source during that drain.
+  func retireAfterCheckpoint() {
+    guard !isInvalidated, retirementTask == nil else { return }
+    guard let model = programOwner, let focus = presentationFocus, let element = loadedElement,
+      let basis = programBasis, runtimeLoaded, let web = attachedWebView else { invalidate(); lease.release(); return }
+    let entry = Self.presentations[ObjectIdentifier(self)] ?? Presentation(owner: self)
+    entry.retiringOwner = self; entry.retiringWeb = web
+    Self.presentations[ObjectIdentifier(self)] = entry
+    onRenderReady = { _ in }; onInteractionReady = { _ in }
+    onInteraction = {}; onFailure = { _ in }; onState = { _ in false }
+    retirementTask = Task { @MainActor [self, model, web] in
+      defer { retirementTask = nil }
+      var superseded = false
+      do {
+        _ = try await checkpointModel(element: element) { value in
+          let accepted = try await model.checkpointProgramState(focus: focus, rendered: element, value: value, basis: basis)
+          superseded = accepted == nil
+          return accepted
+        }
+        invalidate(); lease.release()
+      } catch {
+        // Only the addressed writer can distinguish removal/replacement from
+        // a page merely leaving the UI working set. A stale heap is disposable;
+        // an I/O failure is not permission to discard unsaved model state.
+        if superseded { invalidate(); lease.release() }
+        else if !isInvalidated {
+          model.showCue("Не удалось сохранить состояние программы. Повторите сохранение.")
+          // Keep both the browser and its real ledger lease for explicit retry.
+          _ = web
+        }
+      }
+    }
+  }
+
+  static func retryRetirements(ownedBy model: NotebookAppModel) {
+    for entry in Array(presentations.values) where entry.retiringOwner?.programOwner === model {
+      entry.retiringOwner?.retireAfterCheckpoint()
+    }
+  }
+
+  static func checkpointPrograms(ownedBy model: NotebookAppModel, resume: Bool) async -> Bool {
+    let owners = presentations.values.compactMap(\.owner).filter { $0.programOwner === model && !$0.isInvalidated }
+    let tasks = owners.map { owner in Task { @MainActor in
+      if let retiring = owner.retirementTask { await retiring.value }
+      guard !owner.isInvalidated, owner.runtimeLoaded, let focus = owner.presentationFocus,
+        let element = owner.loadedElement, let basis = owner.programBasis else { return true }
+      do {
+        _ = try await owner.checkpointModel(element: element) { value in
+          try await model.checkpointProgramState(focus: focus, rendered: element, value: value, basis: basis)
+        }
+        if presentations[ObjectIdentifier(owner)]?.retiringOwner != nil { owner.invalidate(); owner.lease.release() }
+        else if resume { await owner.resumeProgram() }
+        return true
+      } catch {
+        if resume { await owner.resumeProgram() }
+        return false
+      }
+    } }
+    var accepted = true
+    for task in tasks { if !(await task.value) { accepted = false } }
+    return accepted
+  }
+
+  /// One in-flight checkpoint owns the stopped model for navigation, native
+  /// dismantle and pixel capture alike. The writer remains the model's writer.
+  private func checkpointModel(element: AgentElement,
+    persist: @escaping @MainActor (JSONValue) async throws -> NotebookProgramStateBasis?) async throws -> AgentElement {
+    if let checkpointTask { return try await checkpointTask.value }
+    if let checkpointedSource, checkpointedSource == loadedElement { return checkpointedSource }
+    guard let web = attachedWebView, let token = loadToken, hasLiveSource(element) else {
+      throw SceneRenderError.snapshotPending("program_checkpoint_owner")
+    }
+    let id = UUID(), basis = programBasis, revision = localStateRevision
+    checkpointID = id
+    let task = Task { @MainActor [self, web] in
+      let borrow = try lease.borrow(); defer { borrow.release() }
+      let value = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram", in: web)
+      try Task.checkCancellation()
+      guard accepts(token), programBasis == basis, localStateRevision == revision, hasLiveSource(element) else { throw CancellationError() }
+      guard let acceptedBasis = try await persist(value) else { throw SceneRenderError.snapshotPending("program_checkpoint_not_accepted") }
+      try Task.checkCancellation()
+      guard accepts(token), localStateRevision == revision, let current = loadedElement,
+        AgentProgramSource(current) == AgentProgramSource(element),
+        current.state == element.state || current.state == value else { throw CancellationError() }
+      let accepted = current.updating(state: value)
+      loadedElement = accepted; appliedState = value; stateToApply = nil; programBasis = acceptedBasis; checkpointedSource = accepted
+      return accepted
+    }
+    checkpointTask = task
+    defer { if checkpointID == id { checkpointTask = nil; checkpointID = nil } }
+    return try await task.value
+  }
+
+  /// The same spatial checkpoint additionally captures pixels for a passive
+  /// replacement; a close/background fence does not allocate an unused raster.
   static func checkpointCurrent(focus: InteractiveElementReference, element: AgentElement,
-    persist: @MainActor (JSONValue) async throws -> Bool,
+    persist: @escaping @MainActor (JSONValue) async throws -> NotebookProgramStateBasis?,
     resources: SceneRenderResources = .shared) async throws -> (AgentElement, RasterLease) {
     presentations = presentations.filter { $0.value.owner != nil }
     let owners = presentations.values.compactMap(\.owner).filter {
       $0.resources === resources && $0.presentationFocus == focus && $0.hasLiveSource(element)
     }
-    guard owners.count == 1, let owner = owners.first, let web = owner.attachedWebView,
-      let token = owner.loadToken else { throw SceneRenderError.snapshotPending("program_checkpoint_owner") }
-    let borrow = try owner.lease.borrow(); defer { borrow.release() }
-    let revision = owner.localStateRevision, basis = owner.programBasis
+    guard owners.count == 1, let owner = owners.first else { throw SceneRenderError.snapshotPending("program_checkpoint_owner") }
     do {
-      let value = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram", in: web)
+      let accepted = try await owner.checkpointModel(element: element, persist: persist)
       try Task.checkCancellation()
-      guard owner.accepts(token), owner.programBasis == basis, owner.localStateRevision == revision, owner.hasLiveSource(element) else { throw CancellationError() }
-      guard try await persist(value) else { throw SceneRenderError.snapshotPending("program_checkpoint_not_accepted") }
-      try Task.checkCancellation()
-      guard owner.accepts(token), owner.localStateRevision == revision, let current = owner.loadedElement,
-        AgentProgramSource(current) == AgentProgramSource(element),
-        current.state == element.state || current.state == value else { throw CancellationError() }
-      let accepted = current.updating(state: value)
-      owner.loadedElement = accepted; owner.appliedState = value; owner.stateToApply = nil
       guard let pixels = try await owner.captureCurrent(element: accepted) else {
         throw SceneRenderError.snapshotPending("program_checkpoint_picture")
       }
       if Task.isCancelled { pixels.release(); throw CancellationError() }
       return (accepted, pixels)
-    } catch {
-      if owner.accepts(token) {
-        _ = try? await NotebookProgramBridge.lifecycle("resume", controller: "notebookProgram", in: web)
-      }
-      throw error
-    }
+    } catch { await owner.resumeProgram(); throw error }
   }
 
   private func captureCurrent(element: AgentElement) async throws -> RasterLease? {
@@ -896,6 +1007,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   /// Dismantling ends this owner session. Neither a queued script message nor an
   /// already running WebKit completion may publish into its next owner.
   func invalidate() {
+    checkpointTask?.cancel(); checkpointTask = nil; checkpointID = nil; checkpointedSource = nil
     guard !isInvalidated else { return }
     isInvalidated = true
     #if os(iOS)
@@ -943,7 +1055,17 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
 
   func load(_ element: AgentElement, basis: NotebookProgramStateBasis? = nil, policy: AgentSnapshotPolicy? = nil, in webView: WKWebView) {
     guard !isInvalidated, !lease.isReleased, attachedWebView === webView else { return }
+    // A checkpoint receipt precedes SwiftUI's echo. An old projection may still
+    // visit this mounted view; it cannot roll the admitted model back or restart
+    // a frozen browser. Geometry continues through the same physical view.
+    var element = element, basis = basis
+    if let current = programBasis, let loadedElement,
+      AgentProgramSource(loadedElement) == AgentProgramSource(element),
+      basis == nil || basis.map({ current.hasNewerState(than: $0) }) == true {
+      element = element.updating(state: loadedElement.state); basis = current
+    }
     let sourceChanged = programBasis.map { previous in basis.map { !previous.hasSameSource(as: $0) } ?? true } ?? (basis != nil && loadedElement != nil)
+    if programBasis != basis { checkpointedSource = nil }
     programBasis = basis
     let policyChanged = policy.map { $0 != snapshotPolicy } ?? false
     if policyChanged { readinessGeneration &+= 1 }
@@ -993,6 +1115,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   private func beginLoad(_ element: AgentElement, in webView: WKWebView) {
+    checkpointTask?.cancel(); checkpointTask = nil; checkpointID = nil; checkpointedSource = nil
     readinessGeneration &+= 1
     stateApplicationID = nil; stateApplication?.cancel(); stateApplication = nil
     currentCapture?.cancel(); currentCapture = nil

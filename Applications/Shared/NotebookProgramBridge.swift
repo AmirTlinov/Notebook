@@ -2,6 +2,10 @@ import Foundation
 import NotebookCore
 import WebKit
 
+/// A writer refusal for an obsolete causal basis is not an I/O failure. The
+/// old heap has no remaining publication rights and need not pin a closing UI.
+enum NotebookProgramCheckpointError: Error { case superseded }
+
 /// One source for the public browser API; transport remains with each surface.
 enum NotebookProgramBridge {
   static let script: String = {

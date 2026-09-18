@@ -450,6 +450,72 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.terminate()
   }
 
+  func testLCFirstGestureParametersBackgroundAndColdReopenOnBoardAndDocument() throws {
+    continueAfterFailure = false
+    for document in [false, true] {
+      let app = XCUIApplication()
+      app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-lc-fixture",
+        "--notebook-simulator-finger-gestures"] + (document ? ["--notebook-document-runtime-fixture"] : [])
+      for suffix in ["html", "css", "js"] {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "lc", withExtension: suffix, subdirectory: "animation"))
+        app.launchEnvironment["NOTEBOOK_LC_" + suffix.uppercased()] = try String(contentsOf: url, encoding: .utf8)
+      }
+      launchPortraitFixture(app)
+      let next = app.buttons["Вперёд на четверть периода"], phase = app.sliders["Фаза"]
+      XCTAssertTrue(next.waitForExistence(timeout: 10)); XCTAssertTrue(phase.exists)
+      let zero = try XCTUnwrap(phase.value as? String)
+      next.tap()
+      let quarter = try XCTUnwrap(phase.value as? String)
+      XCTAssertNotEqual(quarter, zero, "The first physical contact changes the model, not only focus")
+      let proof = XCTAttachment(screenshot: app.screenshot())
+      proof.name = document ? "LC-document-first-quarter" : "LC-board-first-quarter"
+      proof.lifetime = .keepAlways; add(proof)
+      let material = app.webViews.containing(.slider, identifier: "Фаза").firstMatch
+      let originalFrame = material.frame
+      let parameters = ["L", "C", "U"].map { prefix in
+        app.sliders.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+      }
+      var changedParameters: [String] = []
+      for (parameter, position) in zip(parameters, [90.0 / 190, 15.0 / 90, 4.0 / 9]) {
+        XCTAssertTrue(parameter.exists)
+        let previous = parameter.value as? String
+        // WebKit has no AX scrubber endpoints. Start on the actual thumb,
+        // whose initial position follows the published min/max/value.
+        let inset = 12 / parameter.frame.width
+        parameter.coordinate(withNormalizedOffset: .init(dx: inset + position * (1 - 2 * inset), dy: 0.5))
+          .press(forDuration: 0.01, thenDragTo: parameter.coordinate(withNormalizedOffset: .init(dx: 0.8, dy: 0.5)))
+        let changed = try XCTUnwrap(parameter.value as? String)
+        XCTAssertNotEqual(changed, previous); changedParameters.append(changed)
+      }
+      XCTAssertEqual(material.frame, originalFrame, "Parameter contacts do not move the camera or material")
+      app.switches["Пуск"].tap()
+      XCTAssertTrue(app.switches["Пауза"].waitForExistence(timeout: 2))
+      let moving = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in phase.value as? String != quarter }, object: nil)
+      XCTAssertEqual(XCTWaiter.wait(for: [moving], timeout: 3), .completed)
+      XCUIDevice.shared.press(.home)
+      app.activate()
+      XCTAssertTrue(app.switches["Пуск"].waitForExistence(timeout: 5), "Background freezes the model before the OS suspends its browser")
+      let frozen = try XCTUnwrap(phase.value as? String)
+      XCTAssertEqual(parameters.compactMap { $0.value as? String }, changedParameters)
+      app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+      XCTAssertTrue(phase.waitForExistence(timeout: 10))
+      XCTAssertEqual(phase.value as? String, frozen, "A cold process restores the final animated moment, not the previous button commit")
+      XCTAssertEqual(parameters.compactMap { $0.value as? String }, changedParameters)
+      let restored = XCTAttachment(screenshot: app.screenshot())
+      restored.name = document ? "LC-document-cold-restored" : "LC-board-cold-restored"
+      restored.lifetime = .keepAlways; add(restored)
+      app.buttons["Начало"].tap(); XCTAssertEqual(phase.value as? String, zero)
+      phase.coordinate(withNormalizedOffset: .init(dx: 12 / phase.frame.width, dy: 0.5)).press(forDuration: 0.01,
+        thenDragTo: phase.coordinate(withNormalizedOffset: .init(dx: 0.8, dy: 0.5)))
+      XCTAssertNotEqual(phase.value as? String, zero)
+      app.buttons["Начало"].tap(); XCTAssertEqual(phase.value as? String, zero)
+      app.buttons["Назад на четверть периода"].tap()
+      XCTAssertNotEqual(phase.value as? String, zero)
+      next.tap(); XCTAssertEqual(phase.value as? String, zero)
+      app.terminate()
+    }
+  }
+
   func testIndependentMaterialsKeepFirstInputAndStateAfterColdReopening() {
     continueAfterFailure = false
     for count in [2, 4, 8] {

@@ -1581,9 +1581,9 @@ private struct WorkspaceSceneItem: View {
         onDraftDiscard: model.discardDocumentDraft,
         isCurrent: isCurrent,
         isVisible: isVisible,
-        onStateCheckpoint: { blockID, value, sourceVersion in
+        onStateCheckpoint: { blockID, value, sourceVersion, stateVersion in
           try await model.checkpointDocumentState(documentID: document.id, blockID: blockID,
-            value: value, sourceVersion: sourceVersion)
+            value: value, sourceVersion: sourceVersion, stateVersion: stateVersion)
         }, measurements: model.documentMeasurements
       )
     )

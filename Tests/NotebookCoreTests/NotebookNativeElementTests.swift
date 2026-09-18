@@ -28,14 +28,14 @@ struct NotebookNativeElementTests {
         try #require(store.loadBoard(items: store.loadIndex().items).board(board)?.programStateBasis(element.id))
       }
       let originalBasis = try basis()
-      #expect(try store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.25), basis: originalBasis, actor: actor))
+      #expect(try store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.25), basis: originalBasis, actor: actor) != nil)
       #expect(try store.readSpatialElement(boardID: board, elementID: element.id)?.state == .number(0.25))
-      #expect(try !store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.5), basis: originalBasis, actor: actor))
+      #expect(try store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.5), basis: originalBasis, actor: actor) == nil)
       #expect(try store.checkpointProgramState(target: target, rendered: rendered.updating(state: .number(0.25)),
-        state: .number(0.75), basis: basis(), actor: actor))
+        state: .number(0.75), basis: basis(), actor: actor) != nil)
       let cursor = try store.currentChangeCursor()
       #expect(try store.checkpointProgramState(target: target, rendered: rendered.updating(state: .number(0.75)),
-        state: .number(0.75), basis: basis(), actor: actor))
+        state: .number(0.75), basis: basis(), actor: actor) != nil)
       #expect(try store.currentChangeCursor() == cursor, "Identical checkpoint has no new write")
     }
   }
@@ -59,8 +59,8 @@ struct NotebookNativeElementTests {
       let latest = try #require(store.loadBoard(items: store.loadIndex().items).board(boardID)?.programStateBasis(element.id))
       #expect(!latest.hasSameSource(as: original))
       let cursor = try store.currentChangeCursor()
-      #expect(try !store.checkpointProgramState(target: .init(kind: .board, id: boardID), rendered: rendered,
-        state: .number(0.5), basis: original, actor: actor))
+      #expect(try store.checkpointProgramState(target: .init(kind: .board, id: boardID), rendered: rendered,
+        state: .number(0.5), basis: original, actor: actor) == nil)
       #expect(try store.currentChangeCursor() == cursor)
     }
   }

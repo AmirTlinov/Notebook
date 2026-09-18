@@ -1,6 +1,7 @@
 import Foundation
 import NotebookCore
 import Observation
+import WebKit
 
 struct DocumentBlockRegion: Equatable {
   let id: String
@@ -79,6 +80,8 @@ final class DocumentRenderRegistry {
   func removeLiveObserver(_ id: UUID) { liveObservers[id] = nil }
   private final class Renderer {
     weak var value: DocumentWebCoordinator?
+    var retiringValue: DocumentWebCoordinator?
+    var retiringWeb: WKWebView?
     init(_ value: DocumentWebCoordinator) { self.value = value }
   }
   @ObservationIgnored private var renderers: [UUID: Renderer] = [:]
@@ -115,6 +118,30 @@ final class DocumentRenderRegistry {
     return true
   }
 
+  func checkpointPrograms(documentID: UUID? = nil, resume: Bool) async -> Bool {
+    #if os(iOS)
+      return await DocumentPagePresentationOwner.checkpointPrograms(documentID: documentID, resume: resume)
+    #else
+      let owners = renderers.values.compactMap(\.value).filter {
+        !$0.isInvalidated && $0.resourceOwner === SceneRenderResources.shared && (documentID == nil || $0.payload?.documentID == documentID)
+      }
+      let tasks = owners.map { owner in Task { @MainActor in await owner.checkpointPrograms(resume: resume) } }
+      var accepted = true
+      for task in tasks { if !(await task.value) { accepted = false } }
+      return accepted
+    #endif
+  }
+
+  func resumePrograms() async {
+    #if os(iOS)
+      await DocumentPagePresentationOwner.resumePrograms()
+    #else
+      for entry in Array(renderers.values) where entry.retiringValue == nil {
+        if let owner = entry.value, owner.resourceOwner === SceneRenderResources.shared, !owner.isInvalidated { await owner.resumePrograms() }
+      }
+    #endif
+  }
+
   func setAgentFeedback(_ episodes: [NotebookAgentFeedback.Episode]) {
     for surface in Array(liveSurfaces.values) {
       let active = surface.isAttached(.paper) ? episodes.filter {
@@ -122,6 +149,19 @@ final class DocumentRenderRegistry {
       } : []
       surface.feedback(active)
     }
+  }
+
+  func retainRetiringProgram(_ renderer: DocumentWebCoordinator, web: WKWebView, hostID: UUID) {
+    let entry = renderers[hostID] ?? Renderer(renderer)
+    entry.retiringValue = renderer; entry.retiringWeb = web; renderers[hostID] = entry
+  }
+
+  func retryRetiringPrograms() {
+    #if os(iOS)
+      DocumentPagePresentationOwner.retryRetiringPrograms()
+    #else
+      for entry in Array(renderers.values) { entry.retiringValue?.retireAfterProgramCheckpoint() }
+    #endif
   }
 
   func mountRenderer(_ renderer: DocumentWebCoordinator, hostID: UUID) {

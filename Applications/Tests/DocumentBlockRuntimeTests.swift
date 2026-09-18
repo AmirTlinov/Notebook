@@ -75,7 +75,7 @@ final class DocumentBlockRuntimeTests: XCTestCase {
     defer { fixture.close() }
     try await fixture.waitUntilReady()
     let web = fixture.runtime.webView
-    fixture.runtime.onStateChange = { _ in nil }
+    fixture.runtime.onStateCheckpoint = { _, _ in throw SceneRenderError.snapshotPending("checkpoint_not_accepted") }
     do { _ = try await fixture.runtime.checkpoint(); XCTFail("Unaccepted state cannot retire the program") }
     catch { XCTAssertTrue(String(describing:error).contains("checkpoint_not_accepted")) }
     XCTAssertTrue(fixture.runtime.webView === web)
@@ -93,11 +93,11 @@ final class DocumentBlockRuntimeTests: XCTestCase {
       """, initialState: .object(["phase": .number(0)]), height: 100))
     defer { fixture.close() }
     try await fixture.waitUntilReady()
-    fixture.runtime.acceptsCheckpoint = { _, _ in false }
+    fixture.runtime.onStateCheckpoint = { _, _ in nil }
     var writes = 0
     fixture.runtime.onStateChange = { _ in writes += 1; return nil }
     do { _ = try await fixture.runtime.checkpoint(); XCTFail("A newer state owns this program") }
-    catch { XCTAssertTrue(String(describing: error).contains("checkpoint_stale")) }
+    catch { XCTAssertTrue(error is NotebookProgramCheckpointError) }
     XCTAssertEqual(writes, 0)
     XCTAssertTrue(fixture.runtime.ready)
     await fixture.runtime.resume()
@@ -244,10 +244,10 @@ private final class RuntimeFixture {
       _ = journal.commit(blockID: block.id, value: value, actor: journal.stamp.actor)
       return journal.records.first { $0.id == block.id }?.valueVersion
     }
-    runtime.acceptsCheckpoint = { [weak self] value, version in
-      guard let self else { return false }
-      let record = journal.records.first { $0.id == block.id }
-      return record?.valueVersion == version && (record?.value ?? block.initialState) == value
+    runtime.onStateCheckpoint = { [weak self] value, version in
+      guard let self, journal.records.first(where: { $0.id == block.id })?.valueVersion == version else { return nil }
+      _ = journal.commit(blockID: block.id, value: value, actor: journal.stamp.actor)
+      return journal.records.first { $0.id == block.id }?.valueVersion
     }
     runtime.onMount = { [weak overlay] web, size in overlay?.park(web, fullSize: size) }
     runtime.start(priority: priority)

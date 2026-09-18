@@ -74,6 +74,17 @@ test('a parked program checkpoints without waiting for a hidden viewport paint',
   assert.equal((await program.checkpoint()).phase, 0.25);
 });
 
+test('a completed frozen checkpoint is idempotent until resume', async () => {
+  let pauses = 0, checkpoints = 0;
+  const {program, api} = fixture();
+  api.lifecycle({pause:() => { pauses++; }, checkpoint:() => ({phase:++checkpoints})});
+  assert.equal((await program.checkpoint()).phase, 1);
+  assert.equal((await program.checkpoint()).phase, 1);
+  assert.equal(pauses, 1);
+  await program.resume();
+  assert.equal((await program.checkpoint()).phase, 2);
+});
+
 test('failed checkpoint retains last explicit state and permits owner-controlled recovery', async () => {
   const {program,api} = fixture();
   api.lifecycle({checkpoint:() => { throw new Error('author checkpoint'); }});

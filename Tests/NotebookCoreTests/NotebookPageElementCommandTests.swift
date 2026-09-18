@@ -44,16 +44,18 @@ struct NotebookPageElementCommandTests {
     try fixture(largeNeighbour: true) { store, actor, page in
       let rendered = try #require(page.elements.first { $0.id == elementID })
       let target = CollaborationTarget(kind: .page, id: page.id)
-      #expect(try store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.25), basis: try #require(page.programStateBasis(elementID)), actor: actor))
+      #expect(try store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.25), basis: try #require(page.programStateBasis(elementID)), actor: actor) != nil)
       let saved = try #require(try store.readPageElement(pageID: page.id, elementID: elementID))
+      let savedBasis = try #require(store.loadPage(page.id).programStateBasis(elementID))
+      #expect(savedBasis.hasNewerState(than: try #require(page.programStateBasis(elementID))))
       #expect(saved.state == .number(0.25))
       #expect(saved.frame == rendered.frame)
       #expect(try store.loadPage(page.id).elements.first(where: { $0.id == "foreign" }) == page.elements[0])
-      #expect(try !store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.5), basis: try #require(page.programStateBasis(elementID)), actor: actor))
-      #expect(try store.checkpointProgramState(target: target, rendered: saved, state: .number(0.75), basis: try #require(store.loadPage(page.id).programStateBasis(elementID)), actor: actor))
+      #expect(try store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.5), basis: try #require(page.programStateBasis(elementID)), actor: actor) == nil)
+      #expect(try store.checkpointProgramState(target: target, rendered: saved, state: .number(0.75), basis: try #require(store.loadPage(page.id).programStateBasis(elementID)), actor: actor) != nil)
       let changed = AgentElement(id: rendered.id, kind: .web, frame: rendered.frame, source: rendered.source,
         html: "different", state: .number(0.75))
-      #expect(try !store.checkpointProgramState(target: target, rendered: changed, state: .number(1), basis: try #require(store.loadPage(page.id).programStateBasis(elementID)), actor: actor))
+      #expect(try store.checkpointProgramState(target: target, rendered: changed, state: .number(1), basis: try #require(store.loadPage(page.id).programStateBasis(elementID)), actor: actor) == nil)
     }
   }
 
@@ -74,11 +76,11 @@ struct NotebookPageElementCommandTests {
       }
       #expect(try store.readPageElement(pageID: page.id, elementID: elementID)?.state == rendered.state)
       let cursor = try store.currentChangeCursor()
-      #expect(try !store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.5), basis: original, actor: actor))
+      #expect(try store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.5), basis: original, actor: actor) == nil)
       #expect(try store.currentChangeCursor() == cursor)
       let latest = try #require(store.loadPage(page.id).programStateBasis(elementID))
       #expect(latest.hasSameSource(as: original))
-      #expect(try store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.5), basis: latest, actor: actor))
+      #expect(try store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.5), basis: latest, actor: actor) != nil)
       #expect(try store.readPageElement(pageID: page.id, elementID: elementID)?.frame == moved)
     }
   }

@@ -197,7 +197,7 @@ struct PreparedAgentElementView: View {
         })
       }
       if let web {
-        AgentWebElementView(element: element, stateBasis: basis, lease: web,
+        AgentWebElementView(element: element, stateBasis: basis, programOwner: model, lease: web,
           snapshotPolicy: snapshotPolicy,
           focus: focus,
           onRenderReady: { ready in
@@ -359,7 +359,7 @@ struct PreparedAgentElementView: View {
       // its keyed admission waits for this owner's final submitted borrow.
       do {
         let (accepted, captured) = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: demand.source) { value in
-          guard let basis = demand.basis else { return false }
+          guard let basis = demand.basis else { return nil }
           return try await model.checkpointProgramState(focus: focus, rendered: demand.source, value: value, basis: basis)
         }
         guard !Task.isCancelled, self.web?.id == retiring.id, !isActive else {

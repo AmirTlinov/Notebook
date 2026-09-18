@@ -28,6 +28,7 @@
     static let historyArgument = "--notebook-history-performance-fixture"
     static let pointerArgument = "--notebook-pointer-fixture"
     static let passiveSVGArgument = "--notebook-passive-svg-fixture"
+    static let lcArgument = "--notebook-lc-fixture"
     static let mixedWebArgument = "--notebook-mixed-web-fixture"
     static let independentMaterialsArgument = "--notebook-independent-materials="
     static let nativeGraphicsArgument = "--notebook-native-graphics-fixture"
@@ -35,6 +36,7 @@
 
     static func makeModel() -> NotebookAppModel {
       let fileManager = FileManager.default
+      let lcFixture = ProcessInfo.processInfo.arguments.contains(lcArgument)
       let nativeGraphics = ProcessInfo.processInfo.arguments.contains(nativeGraphicsArgument)
       let nativeGraphicPage = ProcessInfo.processInfo.arguments.contains(nativeGraphicPageArgument)
       let materialCount = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix(independentMaterialsArgument) })
@@ -75,7 +77,9 @@
       let fixtureName: String
       // The full route reads this gesture's durable result after other UI
       // scenarios. Their fresh default fixture must not replace that evidence.
-      if ProcessInfo.processInfo.arguments.contains(pageTurnContentArgument) {
+      if lcFixture {
+        fixtureName = startsInDocument ? "LCDocument" : "LCBoard"
+      } else if ProcessInfo.processInfo.arguments.contains(pageTurnContentArgument) {
         fixtureName = "PageTurnContent"
       } else if nativeGraphics {
         fixtureName = (nativeGraphicPage ? "NativeGraphicPage" : "NativeGraphicBoard")
@@ -184,7 +188,19 @@
             ] : [])
         )
         try store.savePage(page)
-        if ProcessInfo.processInfo.arguments.contains(nestedBoardArgument) {
+        if lcFixture && !startsInDocument {
+          var board = BoardDocument.initial(itemIDs: [itemID], actor: actor)
+          _ = board.moveItem(itemID, to: .init(x: 8_000, y: 8_000), actor: actor)
+          let program = SpatialElement(id: "lc", surface: .board(index.rootBoardID), kind: .web,
+            frame: .init(x: 0, y: 0, width: 760, height: 720), worldOrigin: .init(x: -380, y: -420),
+            source: "Идеальный LC-контур", html: try lcSource("html"), css: try lcSource("css"),
+            javaScript: try lcSource("js"), stamp: .init(counter: 0, actor: actor))
+          _ = board.upsertElement(program, expected: nil, actor: actor)
+          try store.saveBoard(.init(rootBoardID: index.rootBoardID,
+            boards: [.init(id: index.rootBoardID, board: board)], stamp: board.stamp), items: index.items)
+          try store.savePresence(.init(boardID: index.rootBoardID, mode: .board,
+            camera: .init(center: .zero, scale: 1), viewport: .init(x: size.width, y: size.height)))
+        } else if ProcessInfo.processInfo.arguments.contains(nestedBoardArgument) {
           let childID = UUID(uuidString: "7E7A1000-0000-4000-8000-00000000000D")!
           let stamp = VersionStamp(counter: 0, actor: actor)
           index = WorkspaceIndex(items: index.items + [.board(id: childID, title: "Вложенная доска")],
@@ -282,7 +298,10 @@
             id: documentID,
             actor: actor,
             paperSize: ProcessInfo.processInfo.arguments.contains(documentLetterArgument) ? .letter : .a4,
-            blocks: ProcessInfo.processInfo.arguments.contains(documentLinksArgument)
+            blocks: lcFixture ? [
+              .interactive(id: "lc", html: try lcSource("html"), css: try lcSource("css"),
+                javaScript: try lcSource("js"), height: 720)
+            ] : ProcessInfo.processInfo.arguments.contains(documentLinksArgument)
               ? [
                 .markdown(id: "contents", source: "<h1 id='contents'>Оглавление проверки</h1><p><a href='#глава:предел'>К дальней главе</a></p><p><a href='#missing'>Отсутствующий раздел</a></p>"),
                 .markdown(id: "body", source: String(repeating: "Промежуточный текст занимает настоящие листы и не является целью ссылки.\n\n", count: 120)),
@@ -609,6 +628,15 @@
       } catch {
         fatalError("Не удалось создать лист проверки инструментов: \(error)")
       }
+    }
+
+    // The UI runner supplies the shipped recipe bytes. No second example or
+    // test-only lifecycle implementation is embedded in the application.
+    private static func lcSource(_ suffix: String) throws -> String {
+      guard let source = ProcessInfo.processInfo.environment["NOTEBOOK_LC_" + suffix.uppercased()], !source.isEmpty else {
+        throw NotebookStorageError.invalidTransaction("LC fixture source missing: " + suffix)
+      }
+      return source
     }
 
     private static func installGraphics(store: NotebookStore, index: WorkspaceIndex, pageID: UUID,

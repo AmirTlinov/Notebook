@@ -37,10 +37,11 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   private var presentedRevision: UInt64?
   private var appliedValue: JSONValue
   private var observedStateVersion: ContentFieldVersion?
+  private var checkpointTask: Task<JSONValue, Error>?
   var onChange: () -> Void = { }
   var onStateChange: (JSONValue) -> ContentFieldVersion? = { _ in nil }
+  var onStateCheckpoint: (JSONValue, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _ in nil }
   var requiresStateAcceptance = true
-  var acceptsCheckpoint: (JSONValue, ContentFieldVersion?) -> Bool = { _, _ in false }
   var onFocus: (Bool) -> Void = { _ in }
   var onLink: (String) -> Void = { _ in }
   var onMount: (WKWebView, CGSize) -> Void = { _, _ in }
@@ -144,21 +145,26 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   /// Suspends new commits before reading the exact explicit state. The caller
   /// must confirm persistence and window identity before allowing retirement.
   func checkpoint() async throws -> JSONValue {
+    if let checkpointTask { return try await checkpointTask.value }
+    let task = Task { @MainActor [self] in try await persistCheckpoint() }
+    checkpointTask = task
+    defer { checkpointTask = nil }
+    return try await task.value
+  }
+
+  private func persistCheckpoint() async throws -> JSONValue {
     guard ready, !focused, let webView, let lease else { throw CancellationError() }
     let borrow = try lease.borrow(); defer { borrow.release() }
+    let basis = observedStateVersion, expectedRevision = revision
     let next = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "documentProgram", in: webView)
-    guard !stopped, self.webView === webView, !Task.isCancelled else { throw CancellationError() }
-    if next != value {
-      guard acceptsCheckpoint(value, observedStateVersion) else {
-        throw SceneRenderError.snapshotPending("document_state_checkpoint_stale")
-      }
-      let accepted = onStateChange(next)
-      guard accepted != nil || !requiresStateAcceptance else {
-        throw SceneRenderError.snapshotPending("document_state_checkpoint_not_accepted")
-      }
-      value = next; appliedValue = next
-      if let accepted { observedStateVersion = accepted }
+    guard !stopped, self.webView === webView, !Task.isCancelled,
+      observedStateVersion == basis, revision == expectedRevision else { throw CancellationError() }
+    guard let accepted = try await onStateCheckpoint(next, basis) else {
+      throw NotebookProgramCheckpointError.superseded
     }
+    guard !stopped, self.webView === webView, !Task.isCancelled, revision == expectedRevision,
+      observedStateVersion == basis || observedStateVersion == accepted else { throw CancellationError() }
+    value = next; appliedValue = next; observedStateVersion = accepted
     return next
   }
 
@@ -255,7 +261,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     ready = false; failure = nil; revision = 0; presentedRevision = nil; releaseSurface(); start(priority: .input)
   }
 
-  func stop() { stopped = true; startTask?.cancel(); startTask = nil; startID = nil; releaseSurface() }
+  func stop() { stopped = true; checkpointTask?.cancel(); checkpointTask = nil; startTask?.cancel(); startTask = nil; startID = nil; releaseSurface() }
   private func fail(_ error: Error) {
     failure = error; ready = false; focused = false; presentedRevision = nil
     // A failed program keeps its accepted explicit state, not a broken slot

@@ -37,6 +37,68 @@ final class DocumentRuntimeTests: XCTestCase {
     return .init(coordinator: coordinator, host: host, window: window)
   }
 
+  func testDocumentBoundarySavesTheAnimatedModelAndResumesTheSamePrograms() async throws {
+    let actor = UUID()
+    let document = DocumentDocument(actor: actor, blocks: [.interactive(id: "clock", html: "<output></output>", javaScript: """
+      let phase=0,timer;const start=()=>{timer=setInterval(()=>{phase++;document.querySelector('output').textContent=phase},10)};
+      notebook.lifecycle({pause(){clearInterval(timer)},checkpoint(){return {phase}},resume:start,dispose(){clearInterval(timer)}});
+      notebook.ready(Promise.resolve().then(start));
+      """, initialState: .object(["phase": .number(0)]), height: 100)])
+    var state = DocumentStateJournal(id: document.id, actor: actor)
+    let surface = surface(document: document, state: state)
+    defer { surface.close() }
+    surface.coordinator.onStateCheckpoint = { id, value, source, basis in
+      guard source == document.sourceVersion(blockID: id), state.records.first(where: { $0.id == id })?.valueVersion == basis else { return nil }
+      _ = state.commit(blockID: id, value: value, actor: actor)
+      return state.records.first { $0.id == id }?.valueVersion
+    }
+    await waitUntil { surface.coordinator.renderIsReady }
+    try await Task.sleep(for: .milliseconds(120))
+    let saved = await surface.coordinator.checkpointPrograms(resume: false)
+    XCTAssertTrue(saved)
+    let first = try XCTUnwrap(state.value(for: "clock"))
+    guard case .number(let phase) = first["phase"] else { return XCTFail("The actual model must reach the writer") }
+    XCTAssertGreaterThan(phase, 0)
+    // Do not provide a SwiftUI echo: the durable receipt itself must advance
+    // the iframe's basis and prevent resume from restoring its previous value.
+    let frozen = await surface.coordinator.checkpointPrograms(resume: false)
+    XCTAssertTrue(frozen)
+    XCTAssertEqual(state.value(for: "clock"), first)
+    let web = surface.coordinator.webView
+    await surface.coordinator.resumePrograms()
+    try await Task.sleep(for: .milliseconds(120))
+    let next = await surface.coordinator.checkpointPrograms(resume: false)
+    XCTAssertTrue(next)
+    guard case .number(let later) = state.value(for: "clock")?["phase"] else { return XCTFail("Missing resumed checkpoint") }
+    XCTAssertGreaterThan(later, phase)
+    XCTAssertTrue(surface.coordinator.webView === web)
+  }
+
+  func testDocumentDismantleKeepsItsBrowserUntilTheWriterAcceptsCheckpoint() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "clock", html: "<output>0.75</output>",
+      javaScript: "notebook.lifecycle({checkpoint:()=>({phase:0.75})});notebook.ready(Promise.resolve());",
+      initialState: .object(["phase": .number(0)]), height: 100)])
+    let resources = SceneRenderResources(maximumWebSurfaces: 2), actor = UUID()
+    var state = DocumentStateJournal(id: document.id, actor: actor), entered = false, release = false
+    let surface = surface(document: document, state: state, resources: resources)
+    defer { surface.close() }
+    surface.coordinator.onStateCheckpoint = { id, value, _, _ in
+      entered = true
+      while !release { try await Task.sleep(for: .milliseconds(5)) }
+      _ = state.commit(blockID: id, value: value, actor: actor)
+      return state.records.first { $0.id == id }?.valueVersion
+    }
+    await waitUntil { surface.coordinator.renderIsReady }
+    surface.coordinator.retireAfterProgramCheckpoint()
+    await waitUntil { entered }
+    XCTAssertFalse(surface.coordinator.isInvalidated)
+    XCTAssertGreaterThan(resources.activeWebSurfaceCount, 0)
+    release = true
+    await waitUntil { surface.coordinator.isInvalidated }
+    XCTAssertEqual(state.value(for: "clock"), .object(["phase": .number(0.75)]))
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+  }
+
   func testHeadlessDocumentCompletesActualLayoutWithoutAnimationFrameSubstitution() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# Настоящий WebKit\n\nТекст без таймера готовности.")])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
@@ -1045,10 +1107,13 @@ final class DocumentRuntimeTests: XCTestCase {
       source: "phase", html: "<output>0.5</output>", javaScript: """
       notebook.lifecycle({checkpoint:()=>({phase:0.5})});notebook.ready(Promise.resolve());
       """, state: .object(["phase": .number(0)]))
-    coordinator.bindPresentation(to: focus); coordinator.load(source, in: web)
+    let actor = UUID()
+    var page = PageDocument(size: .init(width: 240, height: 120), actor: actor, elements: [source])
+    let originalBasis = try XCTUnwrap(page.programStateBasis(source.id))
+    coordinator.bindPresentation(to: focus); coordinator.load(source, basis: originalBasis, in: web)
     await waitUntil { ready }
     do {
-      _ = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: source, persist: { _ in false }, resources: resources)
+      _ = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: source, persist: { _ in nil }, resources: resources)
       XCTFail("Writer refusal is not saved")
     } catch { XCTAssertTrue(String(describing:error).contains("checkpoint_not_accepted")) }
     XCTAssertTrue(coordinator.hasLiveSource(source))
@@ -1056,13 +1121,19 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertEqual(suspended, "false")
     var persisted: JSONValue?
     let (accepted, picture) = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: source, persist: { value in
-      persisted = value; return true
+      persisted = value
+      page.replaceElements([source.updating(state: value)], actor: actor)
+      return page.programStateBasis(source.id)
     }, resources: resources)
     defer { picture.release() }
     XCTAssertEqual(persisted, .object(["phase": .number(0.5)]))
     XCTAssertEqual(accepted.state, persisted)
     XCTAssertTrue(coordinator.hasLiveSource(accepted))
     XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+    coordinator.load(source, basis: originalBasis, in: web)
+    XCTAssertTrue(coordinator.hasLiveSource(accepted), "A stale SwiftUI echo cannot roll back the checkpoint receipt")
+    let savedModel = try await js("JSON.stringify(notebook.state)", web)
+    XCTAssertEqual(savedModel, "{\"phase\":0.5}")
   }
 
   func testAgentStateAndPlacementKeepProgramFocusAndUncommittedInput() async throws {

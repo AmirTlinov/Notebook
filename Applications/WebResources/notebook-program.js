@@ -7,7 +7,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
   const canonical = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v)
     ? Object.fromEntries(Object.keys(v).sort().map(key => [key, v[key]])) : v);
   const copy = value => JSON.parse(JSON.stringify(value));
-  let value = copy(state), revision = 0n, disposed = false, suspended = false;
+  let value = copy(state), revision = 0n, disposed = false, suspended = false, frozen = false;
   let hooks = {}, registered = false, generation = 0, operation = null, started = null;
   const readiness = [];
   const error = code => new Error(code);
@@ -80,6 +80,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
     },
     async checkpoint() {
       alive();
+      if (suspended && frozen) return copy(value);
       if (suspended) throw error('program_checkpoint_busy');
       suspended = true; abort();
       const expected = generation, request = new AbortController(); operation = request;
@@ -97,7 +98,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
         // native snapshot owner establishes the pixel boundary afterwards.
         // No optimistic commit: the native checkpoint owner must admit this
         // value and confirm the existing writer before disposing the surface.
-        value = accepted;
+        value = accepted; frozen = true;
         return copy(value);
       } catch (reason) {
         request.abort(); announce(reason); throw reason;
@@ -111,7 +112,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
         await bounded(() => hooks.resume?.({signal:request.signal}), request.signal, 'program_resume');
         alive();
         if (expected !== generation) throw error('program_superseded');
-        suspended = false; return true;
+        suspended = false; frozen = false; return true;
       } catch (reason) { request.abort(); announce(reason); throw reason; }
       finally { if (operation === request) operation = null; }
     },
