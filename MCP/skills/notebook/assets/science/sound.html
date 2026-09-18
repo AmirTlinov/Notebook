@@ -1,0 +1,8 @@
+<main class="science sound"><header><h1>Звук — движение без переноса</h1></header>
+<figure><svg viewBox="0 0 900 440" role="img" aria-labelledby="medium-title"><title id="medium-title">Продольная волна: частицы колеблются, а сжатие перемещается вправо. Ниже — давление.</title><g id="medium"></g></svg></figure>
+<p class="insight">Следи за оранжевой частицей, а не за волной.</p>
+<div class="controls"><button id="play" type="button" class="primary">Пуск</button><input class="scrubber" data-key="phase" id="phase" type="range" min="0" max="1" step="0.002" value="0" aria-label="Фаза волны"></div>
+<details><summary>Как это устроено</summary>
+<p class="note">Частицы среды колеблются около своих положений равновесия. Давление максимально там, где среда сжата. Точки здесь — небольшие объёмы среды, не отдельные молекулы.</p><div class="controls"><label class="control">Амплитуда<output id="amplitude-value"></output><input data-key="amplitude" id="amplitude" type="range" min="0" max="0.18" step="0.005" value="0.13"></label><label class="control">Длина волны<output id="wavelength-value"></output><input data-key="wavelength" id="wavelength" type="range" min="1.5" max="3" step="0.05" value="2"></label></div><button id="quarter" type="button">+¼ цикла</button><p id="sound-readout" class="readout"></p><p class="equation">u(q,t) = A sin(kq − ωt)<br>p′ ∝ −∂u/∂q</p><p class="note">Линейная акустическая модель, нормированные координаты и модуль упругости. Время замедлено; вертикальный масштаб давления фиксирован.</p>
+<!-- source -->
+</details></main>

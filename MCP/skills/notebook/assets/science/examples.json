@@ -1,0 +1,51 @@
+[
+  {
+    "id": "sound",
+    "title": "Звук — движение без переноса",
+    "source": "https://ciechanow.ski/sound/",
+    "author": "Bartosz Ciechanowski",
+    "idea": "Связать движение среды, давление и измеряемую величину."
+  },
+  {
+    "id": "gears",
+    "title": "Одно движение. Три скорости.",
+    "source": "https://ciechanow.ski/mechanical-watch/",
+    "author": "Bartosz Ciechanowski",
+    "idea": "Раскрыть механизм, сохранив положение и связь деталей."
+  },
+  {
+    "id": "linear",
+    "title": "Матрица преобразует пространство",
+    "source": "https://www.3blue1brown.com/lessons/linear-transformations/",
+    "author": "3Blue1Brown",
+    "idea": "Связать базис, формулу, площадь и геометрическое действие."
+  },
+  {
+    "id": "gaussian",
+    "title": "Одно наблюдение меняет целую кривую",
+    "source": "https://distill.pub/2019/visual-exploration-gaussian-processes/",
+    "author": "Görtler, Kehlbeck, Deussen / Distill",
+    "idea": "Показать вместе наблюдения, модель и её неопределённость."
+  },
+  {
+    "id": "astar",
+    "title": "Как A* находит путь",
+    "source": "https://www.redblobgames.com/pathfinding/a-star/introduction.html",
+    "author": "Amit Patel / Red Blob Games",
+    "idea": "Дать изменять условия и наблюдать ход алгоритма."
+  },
+  {
+    "id": "tensor",
+    "title": "Соединить индексы — значит просуммировать",
+    "source": "https://www.tensors.net/tutorial-1",
+    "author": "Glen Evenbly / Tensors.net",
+    "idea": "Соединить формальную диаграмму с каждым численным слагаемым."
+  },
+  {
+    "id": "probability",
+    "title": "Случайность складывается в закономерность",
+    "source": "https://seeing-theory.brown.edu/basic-probability/index.html",
+    "author": "Seeing Theory",
+    "idea": "От наблюдаемого опыта перейти к закономерности и формуле."
+  }
+]
