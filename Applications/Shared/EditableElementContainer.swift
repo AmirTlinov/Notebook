@@ -1,6 +1,10 @@
 import NotebookCore
 import SwiftUI
 
+/// A drag is measured in its stationary carrier, never in the object whose
+/// preview it moves. Each page, cover and board plane defines its own carrier.
+enum NotebookManipulationSpace: Hashable { case material, selection }
+
 /// Only the material's presentation lives in this container. The current
 /// selection has one screen-space frame, independent of page/cover projections.
 struct EditableElementContainer<Content: View>: View {
@@ -27,7 +31,7 @@ struct EditableElementContainer<Content: View>: View {
         Button("Редактировать") { model.selectElement(reference); model.editSelectedElement(reference) }
         Button("Удалить", role: .destructive) { model.selectElement(reference); model.deleteElement(reference) }
       }
-      .gesture(DragGesture(minimumDistance: 3)
+      .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .named(NotebookManipulationSpace.material))
         .onChanged { value in
           if contact == nil { model.selectElement(reference); contact = model.beginElementManipulation(reference, kind: .move) }
           if let contact { model.updateElementManipulation(contact, translation: .init(x: value.translation.width / coordinateScale, y: value.translation.height / coordinateScale)) }
