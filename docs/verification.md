@@ -11075,3 +11075,36 @@ symbolicate/export logs, `open-close-{toc,profile,hangs}.xml`, `summarize.py` и
 `comparison.json`. Историческая трасса production93 не изменена. GUI-200
 сохраняет открытыми обратную связь пользователя и полную физическую приёмку;
 установка и выполненные жестовые регрессии подтверждены отдельно выше.
+
+
+## 18 сентября 2026, 09:56 UTC — S10: установленный SDK общей пары 94
+
+После handoff физического профиля владельцем GUI проверен именно установленный
+`/Users/amir/Applications/Notebook.app` через свежий public stdio MCP; не private
+acceptance app и не native IPC. Общая подписанная пара **0.3.91 (94)** содержит
+S8–S10, source SHA256
+`71203fdc265bbf35ccc3b89b71d6a152d707c27cbe2929f2455ef39377d659ac`.
+Build/install receipts и binary UUID указаны в разделе установки выше.
+
+`.build/s10-installed-94-20260918/installed-proof.json` и сырые call/request/result:
+**PASS** два tools, API v2, 22 операции с appendPage/deleteItem, TypeScript **7.0.2**,
+SDK `e44af80deba9af955fceb7e117b92052580041b0d53ab7b47558d3cee583a261`.
+Первый typed ответ completed; JS и TS читают одинаковый workspace. Повтор исходного
+run сохраняет fingerprint/result, смена языка получает run_id_conflict. Ошибка
+типа не выполняет даже предшествующий emit; runtime stack указывает исходную
+строку 3. Все программы имеют **0 доменных effects**: текущий лист, камера и
+внимание пользователя не менялись. Проверена также опубликованная справка 22
+операций; это не исполнение полного lifecycle/графа в production.
+
+В 09:56 runtime свежий, но **disconnected**, selection **unknown**; сохранён
+workspace `FAAAC405-8EF9-4FB9-9B93-CBD876FA97A4`. Read-only Mac UI в 09:58 показывает
+«Ожидается iPad», сохранённый доверенный iPad и отсутствие сообщения об ошибке.
+По этим сведениям нельзя установить причину LAN-разрыва. Доверие/ключи не менялись,
+CloudKit не включался; запрошен фактический статус подключения на iPad.
+Ранее запущенный connector Codex всё ещё описывает v1; свежая сессия установленного
+bundle проверена отдельно, обход старым start или второй API не добавлялся.
+
+Общий release/install выполнен, но S5/S7–S10 остаются In Progress: точная
+received/shown actionVersion, настоящая публикация select/clear/reselect, полный
+installed lifecycle/content сценарий и физическая/системная приёмка не доказаны.
+Предыдущие signed/native/метрические результаты этим smoke не заменяются.
