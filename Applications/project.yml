@@ -269,6 +269,20 @@ targets:
           - $(NOTEBOOK_IMAGE_RUNTIME)
         outputFileLists:
           - $(SRCROOT)/NotebookImageResources.xcfilelist
+      - name: Bundle pinned TypeScript compiler and SDK
+        script: /bin/sh "$SRCROOT/bundle_notebook_typescript.sh"
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers
+          - $(SRCROOT)/bundle_notebook_typescript.sh
+          - $(SRCROOT)/prepare_notebook_typescript.py
+          - $(SRCROOT)/prepare_notebook_images.py
+          - $(SRCROOT)/NotebookTypeScriptResources.xcfilelist
+          - $(SRCROOT)/../Sources/NotebookMarkupService/TypeScriptResources.lock.json
+          - $(SRCROOT)/../Sources/NotebookScriptHost/Resources/notebook-sdk.d.ts
+          - $(SRCROOT)/../Sources/NotebookMarkupService/tex-child.entitlements.plist
+          - $(NOTEBOOK_TYPESCRIPT_RUNTIME)
+        outputFileLists:
+          - $(SRCROOT)/NotebookTypeScriptResources.xcfilelist
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.markup-service$(NOTEBOOK_SCRIPT_BUNDLE_SUFFIX)

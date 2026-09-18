@@ -52,3 +52,29 @@ final class NotebookCompilerProcess: @unchecked Sendable {
     for callback in callbacks { callback.resume(returning: status) }
   }
 }
+
+final class NotebookCompilerChildren: @unchecked Sendable {
+    static let shared = NotebookCompilerChildren()
+    private let lock = NSLock()
+    private var closing = false
+    private var processes: [ObjectIdentifier: NotebookCompilerProcess] = [:]
+    func start(_ process: Process) throws -> NotebookCompilerProcess {
+      try lock.withLock {
+        guard !closing else { throw CancellationError() }
+        // Admission and registration are atomic relative to the service's
+        // terminal watchdog, so a new child cannot escape its cleanup.
+        let child = NotebookCompilerProcess(process)
+        try child.launch()
+        processes[ObjectIdentifier(process)] = child
+        return child
+      }
+    }
+    var activeProcessIDs: [Int32] { lock.withLock { processes.values.filter { !$0.hasExited }.map { $0.process.processIdentifier } } }
+    func remove(_ process: Process) { _ = lock.withLock { processes.removeValue(forKey: ObjectIdentifier(process)) } }
+    func terminate() {
+      let current = lock.withLock { closing = true; return Array(processes.values) }
+      for child in current { child.terminate() }
+      let deadline = DispatchTime.now() + .seconds(1)
+      for child in current { child.waitForWatchdogCleanup(until: deadline) }
+    }
+  }

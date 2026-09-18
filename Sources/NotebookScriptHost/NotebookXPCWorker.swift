@@ -81,6 +81,16 @@ final class NotebookXPCWorker: NSObject, NotebookScriptBrokerProtocol, @unchecke
       }
     }
   }
+  func compileTypeScript(_ request: NotebookTypeScriptRequest,
+    deadline: ContinuousClock.Instant = .now + .seconds(10)) async -> NotebookWorkerReply {
+    guard let bytes = try? JSONEncoder().encode(request), bytes.count <= 2*1024*1024 else { return .init(code: "resource_limit") }
+    return await exchange(deadline: deadline, timeoutCode: "typescript_timeout", unavailableCode: "compiler_unavailable") { remote, reply in
+      remote.compileTypeScript(bytes) { data in
+        guard data.count <= 2*1024*1024 else { reply.finish(.init(code: "resource_limit")); return }
+        reply.finish((try? JSONDecoder().decode(NotebookWorkerReply.self, from: data)) ?? .init(code: "invalid_worker_reply"))
+      }
+    }
+  }
   func invalidate() { stop(.init(code: "script_worker_unavailable", message: "Соединение с изолированным исполнителем закрыто.")) }
 
   private func exchange(deadline: ContinuousClock.Instant, timeoutCode: String,

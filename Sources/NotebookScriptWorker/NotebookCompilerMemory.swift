@@ -15,13 +15,19 @@ enum NotebookCompilerMemory {
     }
   }
 
-  static func observe(_ pid: Int32) -> Observation {
+  struct Usage { let memory: Observation; let cpuNanoseconds: UInt64? }
+
+  static func observe(_ pid: Int32) -> Observation { measure(pid).memory }
+
+  static func measure(_ pid: Int32) -> Usage {
     var value = proc_taskinfo()
     let size = Int32(MemoryLayout<proc_taskinfo>.stride)
     errno = 0
     let count = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &value, size)
     let errorNumber = errno
-    return interpret(returnedBytes: count, errorNumber: errorNumber, residentBytes: value.pti_resident_size)
+    let sum = value.pti_total_user.addingReportingOverflow(value.pti_total_system)
+    return .init(memory: interpret(returnedBytes: count, errorNumber: errorNumber, residentBytes: value.pti_resident_size),
+      cpuNanoseconds: count == size ? (sum.overflow ? UInt64.max : sum.partialValue) : nil)
   }
 
   /// Keep the syscall result intact: a denied or partial probe must never

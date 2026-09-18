@@ -7,11 +7,7 @@ import Darwin
 /// descriptor, path capability or network entitlement. TeX flags do not form
 /// a filesystem sandbox and must never replace this process boundary.
 enum NotebookSandboxedTeXCompiler {
-  private static let children = Children()
-
-  /// A parser wall watchdog may stop the shared markup service. Its export
-  /// children must stop first, rather than outliving their native owner.
-  static func terminateChildren() { children.terminate() }
+  private static let children = NotebookCompilerChildren.shared
 
   static func compile(_ request: NotebookCompilerRequest) async -> NotebookWorkerReply {
     do {
@@ -221,27 +217,4 @@ enum NotebookSandboxedTeXCompiler {
     var text: String { lock.withLock { String(decoding: bytes, as: UTF8.self) } }
   }
 
-  private final class Children: @unchecked Sendable {
-    private let lock = NSLock()
-    private var closing = false
-    private var processes: [ObjectIdentifier: NotebookCompilerProcess] = [:]
-    func start(_ process: Process) throws -> NotebookCompilerProcess {
-      try lock.withLock {
-        guard !closing else { throw CancellationError() }
-        // Admission and registration are atomic relative to the service's
-        // terminal watchdog, so a new child cannot escape its cleanup.
-        let child = NotebookCompilerProcess(process)
-        try child.launch()
-        processes[ObjectIdentifier(process)] = child
-        return child
-      }
-    }
-    func remove(_ process: Process) { _ = lock.withLock { processes.removeValue(forKey: ObjectIdentifier(process)) } }
-    func terminate() {
-      let current = lock.withLock { closing = true; return Array(processes.values) }
-      for child in current { child.terminate() }
-      let deadline = DispatchTime.now() + .seconds(1)
-      for child in current { child.waitForWatchdogCleanup(until: deadline) }
-    }
-  }
 }

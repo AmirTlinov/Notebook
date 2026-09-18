@@ -22,6 +22,7 @@ const effect = z.object({id:z.uuid(),key:z.string(),method:z.string(),
 export const executionOutput = z.union([z.object({
   status:z.enum(["queued","running","completed","failed","cancelled","interrupted"]),run_id:z.uuid(),
   fingerprint:z.string(),api_version:z.literal(2),run_api_version:z.union([z.literal(1),z.literal(2)]),
+  language:z.enum(["javascript","typescript"]).optional(),compiler_version:z.string().nullable().optional(),sdk_version:z.string().nullable().optional(),
   events:z.array(z.object({sequence:z.number().int().positive(),kind:z.enum(["value","image"]),value:z.json(),createdAt:z.number()}).strict()),
   next_seq:z.number().int().nonnegative(),has_more:z.boolean(),result:z.json(),error:z.json(),effects:z.array(effect).max(128),
   resume_semantics:z.literal("attach_only_no_replay"),

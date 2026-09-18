@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "Applications"))
 import notebook_release as release
 import image_fixture
+import typescript_fixture
 from test_images import ImagePackagingTests
 
 spec = importlib.util.spec_from_file_location("preview_fixture", ROOT / "Tests/PreviewInstaller/run.py")
@@ -57,6 +58,10 @@ class PairCLI(preview.FakeCLI):
         self.missing_tex = False
         self.changed_tex = False
         self.image_rights = {"com.apple.security.app-sandbox": True, "com.apple.security.inherit": True}
+        self.typescript_rights = {"com.apple.security.app-sandbox": True, "com.apple.security.inherit": True}
+        self.missing_typescript = False
+        self.changed_typescript = False
+        self.external_typescript_discovery = False
         self.missing_image = False
         self.changed_image = False
         self.mutate_proof = False
@@ -79,6 +84,9 @@ class PairCLI(preview.FakeCLI):
             # its isolated stage, never reads or writes the caller's real cache.
             assert "--prepare" in argv and (("--stage-root" in argv) != ("--stage" in argv))
             output = json.dumps({"status": "ready", "stage": str(self.source / ".build/fixture-image-runtime")}).encode()
+        elif label == "typescript-resources":
+            assert "--prepare" in argv and "--stage-root" in argv
+            output = json.dumps({"status": "ready", "stage": str(self.source / ".build/fixture-typescript-runtime")}).encode()
         elif label == "build-mac":
             if self.mac_fail:
                 exit_code = 1
@@ -108,6 +116,13 @@ class PairCLI(preview.FakeCLI):
                                 if self.changed_image:
                                     compiler = xpc / "Contents/Helpers/notebook-image-compiler"
                                     changed = bytearray(compiler.read_bytes()); changed[255] = 1; compiler.write_bytes(changed)
+                            if not self.missing_typescript:
+                                typescript_fixture.stage(xpc / "Contents")
+                                if self.changed_typescript:
+                                    (xpc / "Contents" / release.notebook_typescript.RESOURCES / "lib.es5.d.ts").write_text("changed declaration")
+                            if self.external_typescript_discovery:
+                                link = xpc / "Contents" / release.notebook_typescript.DISCOVERY
+                                link.unlink(); link.symlink_to("/tmp/foreign-lib.d.ts")
                             tex = xpc / "Contents/Resources/NotebookTeX"
                             (tex / "licenses").mkdir(parents=True)
                             lock = release.read_json(release.TEX_RESOURCE_LOCK)
@@ -137,6 +152,12 @@ class PairCLI(preview.FakeCLI):
             Path(prefix + "0").write_bytes(self.certificate)
         elif label == "mac-signature-verify":
             exit_code = 1 if self.fail_signature else 0
+        elif label.startswith("typescript-"):
+            if label.endswith("-details"):
+                error = ("Identifier=com.amirtlinov.notebook.typescript-compiler\nTeamIdentifier=" + release.TEAM
+                    + "\nAuthority=Apple Development: Fixture\nCDHash=" + "f" * 40 + "\n").encode()
+            elif label.endswith("-rights"):
+                output = plistlib.dumps(self.typescript_rights)
         elif label.startswith("image-compiler-"):
             if label.endswith("-details"):
                 error = ("Identifier=com.amirtlinov.notebook.image-compiler\nTeamIdentifier=" + release.TEAM
@@ -265,6 +286,9 @@ class ReleaseTests(unittest.TestCase):
         image_source = image_fixture.source(self.source / "Sources/NotebookImageCompiler")
         image_patch = patch.object(release.notebook_images, "SOURCE", image_source)
         image_patch.start(); self.addCleanup(image_patch.stop)
+        for key, value in typescript_fixture.inputs(self.source).items():
+            type_patch = patch.object(release.notebook_typescript, key, value)
+            type_patch.start(); self.addCleanup(type_patch.stop)
         self.verification = self.root / "verification"
         self.verification.mkdir()
         for file in release.VERIFICATION_FILES:
@@ -298,6 +322,22 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(self.cli.calls, [])
         elif self.evidence.exists():
             self.assertEqual(release.read_json(self.evidence / "build.json")["status"], "refused")
+
+    def test_missing_typescript_resources_refuse_release(self):
+        self.cli.missing_typescript = True
+        self.refused("TypeScript compiler resource/source contract failed")
+
+    def test_changed_typescript_declarations_refuse_release(self):
+        self.cli.changed_typescript = True
+        self.refused("TypeScript resource hash mismatch")
+
+    def test_typescript_discovery_cannot_point_outside_the_sealed_bundle(self):
+        self.cli.external_typescript_discovery = True
+        self.refused("TypeScript discovery link must target its own sealed resource")
+
+    def test_typescript_child_cannot_gain_network_rights(self):
+        self.cli.typescript_rights["com.apple.security.network.client"] = True
+        self.refused("TypeScript child must inherit only")
 
     def test_builds_both_signed_apps_from_one_snapshot_without_install_or_archive_access(self):
         self.cli.existing_preview = True

@@ -600,6 +600,7 @@ class SelectionTests(unittest.TestCase):
                      patch.object(release, "read_toolchain", return_value={"toolchain": "fixture"}), \
                      patch.object(release, "prepare_tex_runtime", return_value=self.root / "tex"), \
                      patch.object(release, "prepare_image_runtime", return_value=self.root / "images"), \
+                     patch.object(release, "prepare_typescript_runtime", return_value=self.root / "typescript"), \
                      self.assertRaises(BuildReached):
                     verify.run_selected(self.root, plan, evidence)
                 labels = [item[0] for item in calls]
@@ -611,6 +612,7 @@ class SelectionTests(unittest.TestCase):
                 self.assertEqual("mcp-test" in labels, bool(commands))
                 build = next(item[1] for item in calls if item[0] == "mac-build-for-testing")
                 self.assertIn("NOTEBOOK_IMAGE_RUNTIME=" + str(self.root / "images"), build)
+                self.assertIn("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(self.root / "typescript"), build)
 
     def test_submitted_pixel_owner_selects_native_display_and_immutable_attention_contracts(self):
         self.change("Applications/Shared/NotebookWorkspacePresentation.swift")

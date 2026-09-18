@@ -11,6 +11,7 @@ public enum NotebookScriptServiceNames {
   func execute(_ request: Data, withReply reply: @escaping (Data) -> Void)
   /// Only the trusted markup service accepts this data-only compilation RPC.
   func compile(_ request: Data, withReply reply: @escaping (Data) -> Void)
+  func compileTypeScript(_ request: Data, withReply reply: @escaping (Data) -> Void)
   func cancel(_ runID: String, withReply reply: @escaping () -> Void)
 }
 
@@ -71,4 +72,30 @@ public struct NotebookCompilerResult: Codable, Sendable {
   public let log: String
   public let assets: [NotebookCompilerFile]
   public init(pdf: Data, log: String, assets: [NotebookCompilerFile] = []) { self.pdf = pdf; self.log = log; self.assets = assets }
+}
+
+/// A compiler receives source and admitted identities, never paths or tsconfig.
+public struct NotebookTypeScriptRequest: Codable, Sendable {
+  public let id: UUID
+  public let source: String
+  public let compilerVersion: String
+  public let sdkVersion: String
+  public init(id: UUID, source: String, compilerVersion: String, sdkVersion: String) {
+    self.id = id; self.source = source; self.compilerVersion = compilerVersion; self.sdkVersion = sdkVersion
+  }
+}
+
+public struct NotebookTypeScriptResult: Codable, Sendable {
+  public let javaScript: String
+  public let sourceMap: Data
+  public let compilerVersion: String
+  public let sdkVersion: String
+  public let wallMilliseconds: Double
+  public let peakResidentBytes: UInt64
+  public let cpuNanoseconds: UInt64
+  public init(javaScript: String, sourceMap: Data, compilerVersion: String, sdkVersion: String,
+    wallMilliseconds: Double, peakResidentBytes: UInt64, cpuNanoseconds: UInt64) {
+    self.javaScript = javaScript; self.sourceMap = sourceMap; self.compilerVersion = compilerVersion; self.sdkVersion = sdkVersion
+    self.wallMilliseconds = wallMilliseconds; self.peakResidentBytes = peakResidentBytes; self.cpuNanoseconds = cpuNanoseconds
+  }
 }

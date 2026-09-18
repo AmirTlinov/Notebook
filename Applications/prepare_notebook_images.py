@@ -93,7 +93,7 @@ def source_inputs(source=SOURCE):
     return {"files":records,"sha256":sha(json.dumps(records,sort_keys=True).encode())}
 
 
-def macho(data):
+def macho(data, minimum_os=DEPLOYMENT):
     """Inspect architecture/imports and hash code independently of re-signing.
 
     Codesign changes LC_CODE_SIGNATURE and __LINKEDIT allocation. Normalize
@@ -129,8 +129,8 @@ def macho(data):
             libraries.append(library)
         elif command==0x8000001C:raise RuntimeError("Image helper cannot depend on a runtime library search path")
         cursor+=length
-    if cursor!=32+size or signature is None or platform!=1 or minimum!=(27<<16):raise RuntimeError("Image helper must target signed macOS 27.0")
-    return {"architecture":"arm64","platform":"MACOS","minimumOS":DEPLOYMENT,
+    if cursor!=32+size or signature is None or platform!=1 or minimum!=sum(int(part) << shift for part,shift in zip(minimum_os.split("."),[16,8,0])):raise RuntimeError("Image helper must target signed macOS 27.0")
+    return {"architecture":"arm64","platform":"MACOS","minimumOS":minimum_os,
             "systemLibraries":libraries,"codeSHA256":sha(output[:signature])}
 
 

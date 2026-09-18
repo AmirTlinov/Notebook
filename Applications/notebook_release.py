@@ -13,6 +13,7 @@ import sys
 import stat
 import tempfile
 import prepare_notebook_images as notebook_images
+import prepare_notebook_typescript as notebook_typescript
 
 sys.dont_write_bytecode = True
 
@@ -141,7 +142,18 @@ def app_manifest(app):
     require(app.is_dir() and not app.is_symlink(), "Нужен обычный каталог подписанного bundle.")
     files = []
     for path in sorted(app.rglob("*")):
-        require(not path.is_symlink(), "Подписанный bundle не может ссылаться на внешние файлы.")
+        if path.is_symlink():
+            # The pinned upstream CLI requires a sibling discovery declaration.
+            # Seal the alias itself, not a dereferenced copy. No other links,
+            # directory aliases or external resources belong to this bundle.
+            contents = app / "Contents/XPCServices/NotebookMarkupService.xpc/Contents"
+            require(path == contents / notebook_typescript.DISCOVERY
+                    and os.readlink(path) == notebook_typescript.DISCOVERY_TARGET
+                    and path.resolve() == contents / notebook_typescript.RESOURCES / "lib.d.ts"
+                    and path.is_file(),
+                    "TypeScript discovery link must target its own sealed resource; other bundle links are forbidden.")
+            files.append({"path": path.relative_to(app).as_posix(), "symlink": os.readlink(path)})
+            continue
         require(not (path.is_dir() and path.suffix in (".app", ".appex")), "Вложенные приложения/расширения не входят в preview-контракт.")
         require(path.is_dir() or stat.S_ISREG(path.lstat().st_mode), "Специальный файл не входит в подписанный bundle.")
         if path.is_file():
@@ -459,6 +471,15 @@ def prepare_image_runtime(source, command, stage=None, stage_root=None):
     return Path(value["stage"])
 
 
+def prepare_typescript_runtime(source, command, stage_root=None):
+    output = command("typescript-resources", [sys.executable, "-B", Path(source) / "Applications/prepare_notebook_typescript.py",
+        "--prepare", "--stage-root", Path(stage_root or Path(source) / ".build/notebook-typescript-runtime").resolve()],
+        cwd=source, timeout=120, read_output=True)[0]
+    value = json.loads(output)
+    require(value.get("status") == "ready" and Path(value.get("stage", "")).is_absolute(), "TypeScript resources are not ready.")
+    return Path(value["stage"])
+
+
 def restrict_test_script_services(app, source, command, signing_identity="-"):
     """Remove Xcode's test-only sandbox grants before executing real workers.
 
@@ -479,7 +500,9 @@ def restrict_test_script_services(app, source, command, signing_identity="-"):
     targets = [(root / "NotebookMarkupService.xpc/Contents/Helpers/tectonic",
                 source / "Sources/NotebookMarkupService/tex-child.entitlements.plist", "com.amirtlinov.notebook.tex-compiler"),
                (root / "NotebookMarkupService.xpc/Contents/Helpers/notebook-image-compiler",
-                source / "Sources/NotebookMarkupService/tex-child.entitlements.plist", "com.amirtlinov.notebook.image-compiler")]
+                source / "Sources/NotebookMarkupService/tex-child.entitlements.plist", "com.amirtlinov.notebook.image-compiler"),
+               (root / "NotebookMarkupService.xpc/Contents/Helpers/notebook-typescript",
+                source / "Sources/NotebookMarkupService/tex-child.entitlements.plist", "com.amirtlinov.notebook.typescript-compiler")]
     targets += [(root / (name + ".xpc"), source / "Sources" / name / "entitlements.plist", info.get(name))
                 for name in ("NotebookScriptService", "NotebookMarkupService")]
     for index, (target, entitlement_file, identifier) in enumerate(targets):
@@ -496,6 +519,7 @@ def restrict_test_script_services(app, source, command, signing_identity="-"):
 
 
 def build_mac(snapshot, evidence, command, tex_runtime, image_runtime):
+    typescript_runtime = prepare_typescript_runtime(snapshot, command)
     entitlements = evidence / "mac.entitlements"
     entitlements.write_bytes(plistlib.dumps({"com.apple.security.get-task-allow": True, **cloud_entitlements(mac=True)}))
     command("build-mac", ["/usr/bin/xcrun", "xcodebuild", "-project",
@@ -506,6 +530,7 @@ def build_mac(snapshot, evidence, command, tex_runtime, image_runtime):
         "CODE_SIGN_STYLE=Automatic", "CODE_SIGNING_ALLOWED=YES", "CODE_SIGNING_REQUIRED=YES",
         "CODE_SIGN_IDENTITY=Apple Development", "NOTEBOOK_CLOUD_CONTAINER=" + CLOUD_CONTAINER, "NOTEBOOK_MAC_ENTITLEMENTS=" + str(entitlements),
         "NOTEBOOK_TEX_RUNTIME=" + str(tex_runtime), "NOTEBOOK_IMAGE_RUNTIME=" + str(image_runtime),
+        "NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript_runtime),
         "SWIFT_OPTIMIZATION_LEVEL=" + SWIFT_OPTIMIZATION, "ARCHS=arm64", "build"],
         cwd=snapshot, timeout=1800)
     return evidence / ("derived-mac/Build/Products/" + CONFIGURATION + "/Notebook.app")
@@ -623,8 +648,26 @@ def inspect_script_services(app, app_info, command):
         if name == "NotebookMarkupService":
             identity["tex"] = inspect_tex_runtime(service, command)
             identity["images"] = inspect_image_runtime(service, command)
+            identity["typescript"] = inspect_typescript_runtime(service, command)
         result[name] = identity
     return result
+
+
+def inspect_typescript_runtime(service, command):
+    try:
+        manifest = notebook_typescript.check(service / "Contents", signed=True)
+    except (RuntimeError, OSError, ValueError, KeyError) as error:
+        raise ReleaseError("TypeScript compiler resource/source contract failed: " + str(error)) from error
+    executable = service / "Contents/Helpers/notebook-typescript"
+    bundle_id = "com.amirtlinov.notebook.typescript-compiler"
+    requirement = '=anchor apple generic and identifier "' + bundle_id + '" and certificate leaf[subject.OU] = "' + TEAM + '"'
+    command("typescript-signature-verify", ["/usr/bin/codesign", "--verify", "--strict", "-R", requirement, executable])
+    display = command("typescript-signature-details", ["/usr/bin/codesign", "--display", "--verbose=4", executable], read_output=True)
+    identity = signature_identity(b"\n".join(display).decode(), bundle_id)
+    rights = plistlib.loads(command("typescript-rights", ["/usr/bin/codesign", "--display", "--entitlements", ":-", "--xml", executable], read_output=True)[0])
+    require(rights == {"com.apple.security.app-sandbox": True, "com.apple.security.inherit": True},
+            "TypeScript child must inherit only the compiler sandbox.")
+    return {**manifest, "signature": identity, "entitlements": rights}
 
 
 def inspect_tex_runtime(service, command):

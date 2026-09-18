@@ -88,6 +88,8 @@ final class NotebookScriptServiceTests: XCTestCase {
         ["com.apple.security.app-sandbox": true, "com.apple.security.inherit": true]),
       (root.appendingPathComponent("NotebookMarkupService.xpc/Contents/Helpers/notebook-image-compiler"),
         ["com.apple.security.app-sandbox": true, "com.apple.security.inherit": true]),
+      (root.appendingPathComponent("NotebookMarkupService.xpc/Contents/Helpers/notebook-typescript"),
+        ["com.apple.security.app-sandbox": true, "com.apple.security.inherit": true]),
     ]
     // Security verifies the signed files and communicates with system services.
     // Keep that I/O off the main actor that owns the coordinator under test.
@@ -582,6 +584,40 @@ final class NotebookScriptServiceTests: XCTestCase {
     let rejected = await user.compile(.init(id: UUID(), source: "ignored"))
     user.invalidate()
     XCTAssertEqual(rejected.code, "compiler_unavailable")
+  }
+
+  func testPinnedTypeScriptCLICompilesInsideTheSignedSandboxBeforePublicAdmission() async throws {
+    try await requireRestrictedServiceSignatures()
+    let resources = Bundle.main.bundleURL.appendingPathComponent("Contents/XPCServices/NotebookMarkupService.xpc/Contents/Resources/NotebookTypeScript")
+    let manifest = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: resources.appendingPathComponent("manifest.json")))
+    let version = try XCTUnwrap(manifest.string("compilerVersion")), sdk = try XCTUnwrap(manifest.string("sdkVersion"))
+    XCTAssertEqual(version, "7.0.2")
+    for index in 0..<2 {
+      let compiler = NotebookXPCWorker(serviceName: try service("NotebookMarkupService")) { _ in .init(code: "unexpected_host") }
+      let prepared = await compiler.compileTypeScript(.init(id: UUID(), source: "const value: NotebookSDK.JSONValue = {count: 2}; return value;", compilerVersion: version, sdkVersion: sdk))
+      compiler.invalidate()
+      XCTAssertNil(prepared.code, prepared.message ?? "compiler failure")
+      let value = try JSONDecoder().decode(NotebookTypeScriptResult.self, from: XCTUnwrap(prepared.value))
+      XCTAssertGreaterThan(value.peakResidentBytes, 0)
+      XCTAssertLessThanOrEqual(value.peakResidentBytes, 512*1024*1024)
+      XCTAssertLessThan(value.wallMilliseconds, 10_000)
+      print("TypeScript signed CLI attempt=\(index) wall_ms=\(value.wallMilliseconds) sampled_peak_rss=\(value.peakResidentBytes) sampled_cpu_ns=\(value.cpuNanoseconds)")
+      let interpreter = NotebookXPCWorker(serviceName: try service("NotebookScriptService")) { _ in .init(code: "unexpected_host") }
+      let executed = await interpreter.execute(.init(id: UUID(), code: value.javaScript, arguments: Data("null".utf8)))
+      interpreter.invalidate()
+      XCTAssertNil(executed.code, executed.message ?? "JS failure")
+      XCTAssertEqual(try JSONDecoder().decode(JSONValue.self, from: XCTUnwrap(executed.value)), .object(["count": .number(2)]))
+    }
+    for source in ["const n: number = 'wrong'; await emit(n);", "const p:string = '/private/canary'; await import(p);"] {
+      let compiler = NotebookXPCWorker(serviceName: try service("NotebookMarkupService")) { _ in .init(code: "unexpected_host") }
+      let reply = await compiler.compileTypeScript(.init(id: UUID(), source: source, compilerVersion: version, sdkVersion: sdk))
+      compiler.invalidate()
+      XCTAssertEqual(reply.code, "typescript_diagnostic", reply.message ?? "")
+      XCTAssertNil(reply.value); XCTAssertTrue(reply.message?.contains("notebook-user.ts(1,") == true)
+    }
+    let user = NotebookXPCWorker(serviceName: try service("NotebookScriptService")) { _ in .init(code: "unexpected_host") }
+    let refused = await user.compileTypeScript(.init(id: UUID(), source: "return 1", compilerVersion: version, sdkVersion: sdk))
+    user.invalidate(); XCTAssertEqual(refused.code, "compiler_unavailable")
   }
 
   func testCancelAndShutdownOwnAdmissionEvenWhenTheNativeReplyArrivesLate() async throws {

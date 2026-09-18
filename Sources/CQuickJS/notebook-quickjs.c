@@ -44,13 +44,30 @@ static int interrupted(JSRuntime *rt, void *opaque) {
   NQRuntime *n = opaque;
   return atomic_load(&n->cancelled) || n->cpu_used + (n->entered_at ? thread_time()-n->entered_at : 0) >= n->cpu_limit;
 }
+static void save_error_value(NQRuntime *n, JSValueConst error) {
+  const char *text = JS_ToCString(n->ctx,error);
+  JSValue stack = JS_IsObject(error) ? JS_GetPropertyStr(n->ctx,error,"stack") : JS_UNDEFINED;
+  const char *trace = JS_IsString(stack) ? JS_ToCString(n->ctx,stack) : NULL;
+  char *message = malloc(4097);
+  if (message) {
+    size_t length = text ? strnlen(text,4096) : 27;
+    memcpy(message,text ? text : "JavaScript execution failed",length);
+    if (trace && length < 4096) {
+      message[length++]='\n'; size_t extra=strnlen(trace,4096-length);
+      memcpy(message+length,trace,extra); length+=extra;
+    }
+    message[length]=0;
+  }
+  free(n->error); n->error=message;
+  if(trace) JS_FreeCString(n->ctx,trace);
+  if(text) JS_FreeCString(n->ctx,text);
+  JS_FreeValue(n->ctx,stack);
+}
 static void save_exception(NQRuntime *n) {
   JSValue error = JS_GetException(n->ctx);
-  const char *text = JS_ToCString(n->ctx,error);
-  free(n->error); n->error = strdup(text ? text : "JavaScript execution failed");
-  if (text) JS_FreeCString(n->ctx,text);
-  JS_FreeValue(n->ctx,error);
+  save_error_value(n,error); JS_FreeValue(n->ctx,error);
 }
+
 static JSValue host_call(JSContext *ctx, JSValueConst self, int argc, JSValueConst *argv) {
   (void)self;
   NQRuntime *n = JS_GetContextOpaque(ctx);
@@ -137,8 +154,7 @@ int nq_pump(NQRuntime *n) {
   JSPromiseStateEnum state=JS_PromiseState(n->ctx,n->result);
   if(state==JS_PROMISE_REJECTED) {
     JSValue error=JS_PromiseResult(n->ctx,n->result);
-    const char *text=JS_ToCString(n->ctx,error); free(n->error); n->error=strdup(text?text:"JavaScript rejected");
-    if(text) JS_FreeCString(n->ctx,text); JS_FreeValue(n->ctx,error); leave(n); return -1;
+    save_error_value(n,error); JS_FreeValue(n->ctx,error); leave(n); return -1;
   }
   leave(n); return state==JS_PROMISE_FULFILLED && n->pending_count==0 && !JS_IsJobPending(n->rt) ? 1:0;
 }

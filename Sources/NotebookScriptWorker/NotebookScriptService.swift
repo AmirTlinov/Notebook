@@ -76,7 +76,7 @@ private final class Session: NSObject, NotebookScriptServiceProtocol, @unchecked
     // work does not return, this terminates only this sandboxed service.
     DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + (mode == .user ? 30 : 8)) { [weak self] in
       guard let self, self.lock.withLock({ self.activeID == value.id }) else { return }
-      NotebookSandboxedTeXCompiler.terminateChildren()
+      NotebookCompilerChildren.shared.terminate()
       _exit(70)
     }
     worker.start(code: code, arguments: value.arguments) { [weak self] result in
@@ -108,6 +108,29 @@ private final class Session: NSObject, NotebookScriptServiceProtocol, @unchecked
     }
   }
 
+  func compileTypeScript(_ request: Data, withReply reply: @escaping (Data) -> Void) {
+    let reply = DataReply(reply)
+    guard mode == .markup else { respond(.init(code: "compiler_unavailable"), reply); return }
+    guard request.count <= 2*1024*1024, let value = try? JSONDecoder().decode(NotebookTypeScriptRequest.self, from: request),
+      value.source.utf8.count <= NotebookSandboxedTypeScriptCompiler.maximumSourceBytes else {
+      respond(.init(code: "resource_limit"), reply); return
+    }
+    lock.withLock {
+      guard activeID == nil else { respond(.init(code: "worker_busy"), reply); return }
+      activeID = value.id
+      DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + .seconds(11)) { [weak self] in
+        guard let self, self.lock.withLock({ self.activeID == value.id }) else { return }
+        NotebookCompilerChildren.shared.terminate(); _exit(70)
+      }
+      compilation = Task { [weak self] in
+        let result = await NotebookSandboxedTypeScriptCompiler.compile(value)
+        guard let self else { return }
+        self.lock.withLock { self.compilation = nil; self.activeID = nil }
+        self.respond(result, reply)
+      }
+    }
+  }
+
   func cancel(_ runID: String, withReply reply: @escaping () -> Void) {
     let (worker, compiler) = lock.withLock {
       activeID?.uuidString.lowercased() == runID.lowercased() ? (engine, compilation) : (nil, nil)
@@ -116,7 +139,7 @@ private final class Session: NSObject, NotebookScriptServiceProtocol, @unchecked
     if worker != nil {
       DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + .milliseconds(250)) { [weak self] in
         guard let self, self.lock.withLock({ self.activeID?.uuidString.lowercased() == runID.lowercased() }) else { return }
-        NotebookSandboxedTeXCompiler.terminateChildren()
+        NotebookCompilerChildren.shared.terminate()
         _exit(71)
       }
     }

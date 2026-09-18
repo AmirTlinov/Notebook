@@ -532,6 +532,8 @@ def run_selected(root, plan, evidence):
             args.append("NOTEBOOK_TEX_RUNTIME=" + str(tex_runtime))
             image_runtime = release.prepare_image_runtime(root, command)
             args.append("NOTEBOOK_IMAGE_RUNTIME=" + str(image_runtime))
+            typescript_runtime = release.prepare_typescript_runtime(root, command)
+            args.append("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript_runtime))
             args.extend(native_mac_signing_settings())
             build_args = [value for value in args if value not in ("-resultBundlePath", str(result), "test")]
             command("mac-build-for-testing", build_args + ["build-for-testing"], cwd=root / "Applications", timeout=1800)

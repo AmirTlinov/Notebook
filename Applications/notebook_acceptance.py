@@ -221,6 +221,7 @@ def build(args):
         output=evidence / "tex-resources.log")
     image_runtime = release.prepare_image_runtime(snapshot, release.release_commands(evidence),
         stage_root=ROOT / ".build/notebook-image-runtime")
+    typescript_runtime = release.prepare_typescript_runtime(snapshot, release.release_commands(evidence))
     run(["xcodegen", "generate", "--spec", "project.yml"], cwd=snapshot / "Applications", output=evidence / "project.log")
     for platform, scheme, destination in (("ipad", "NotebookAcceptance", "platform=iOS Simulator,id=" + args.simulator),
                                            ("mac", "NotebookMacAcceptance", "platform=macOS,arch=arm64")):
@@ -238,7 +239,7 @@ def build(args):
                         "CODE_SIGNING_ALLOWED=YES", "DEVELOPMENT_TEAM=" + release.TEAM,
                         "NOTEBOOK_SCRIPT_BUNDLE_SUFFIX=" + SCRIPT_BUNDLE_SUFFIX]
         if platform == "mac":
-            command.extend(["NOTEBOOK_TEX_RUNTIME=" + str(tex_runtime), "NOTEBOOK_IMAGE_RUNTIME=" + str(image_runtime)])
+            command.extend(["NOTEBOOK_TEX_RUNTIME=" + str(tex_runtime), "NOTEBOOK_IMAGE_RUNTIME=" + str(image_runtime), "NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript_runtime)])
         run(command + ["build-for-testing"], output=evidence / (platform + "-build.log"))
         if platform == "mac":
             mac_app = evidence / "derived/mac/Build/Products/Release/Notebook.app"
