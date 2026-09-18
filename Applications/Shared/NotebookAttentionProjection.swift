@@ -305,6 +305,19 @@ enum NotebookAttentionProjection {
 
   private static func fragments(start: CGPoint, end: CGPoint, sources: CaptureSources, presence: SessionPresence) -> [NotebookAttentionSelection.Fragment] {
     let dragged = hypot(end.x - start.x, end.y - start.y) > 8
+    if dragged, presence.mode == .page || presence.mode == .document {
+      // Open paper owns the region even when the finger crosses its edge.
+      // Requiring full containment would silently select the board behind it.
+      guard let focused = presence.focusedItemID,
+        let item = sources.workset.items.first(where: { $0.id == focused }) else { return [] }
+      let box = item.geometry.screenFrame(center: item.center, camera: presence.camera, viewport: presence.viewport)
+      let selection = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
+        width: abs(end.x - start.x), height: abs(end.y - start.y))
+      let clipped = selection.intersection(CGRect(x: box.x, y: box.y, width: box.width, height: box.height))
+      guard !clipped.isNull, clipped.width > 0, clipped.height > 0 else { return [] }
+      return fragment(start: .init(x: clipped.minX, y: clipped.minY), end: .init(x: clipped.maxX, y: clipped.maxY),
+        sources: sources, presence: presence, ownerID: focused, dragged: true).map { [$0] } ?? []
+    }
     guard presence.mode == .board, dragged else {
       return fragment(start: start, end: end, sources: sources, presence: presence, dragged: dragged).map { [$0] } ?? []
     }

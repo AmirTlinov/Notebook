@@ -101,6 +101,16 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     _ = NotebookAttentionProjection.capture(start: point, end: point, model: model, presence: presence,
       cohort: cohort, installedInk: [:], acceptsFirstFragment: { fragment in selected = fragment.target; return false })
     XCTAssertEqual(selected, .init(kind: .document, id: first.id), "Attention resolves the same paper as native hit testing")
+    let paper = opened.geometry.screenFrame(center: opened.center, camera: presence.camera, viewport: presence.viewport)
+    var area: NotebookAttentionSelection.Fragment?
+    _ = NotebookAttentionProjection.capture(start: .init(x: paper.x - 20, y: paper.y - 20),
+      end: .init(x: paper.x + 120, y: paper.y + 160), model: model, presence: presence,
+      cohort: cohort, installedInk: [:], acceptsFirstFragment: { area = $0; return false })
+    XCTAssertEqual(area?.target, .init(kind: .document, id: first.id),
+      "A region crossing open paper must not pick an overlapping cover or the board behind it")
+    XCTAssertEqual(area?.pageIndex, presence.documentPageIndex)
+    XCTAssertNil(area?.elementID)
+    XCTAssertEqual(area?.region, .init(x: 0, y: 0, width: 120 / presence.camera.scale, height: 160 / presence.camera.scale))
     let pose = try XCTUnwrap(model.compositionTiles.surfaceRegistry.pose(for: .cover(first.id)))
     let surface = try XCTUnwrap(pose.screenSurface(in: host.view))
     XCTAssertEqual(surface.presentationRank, rank, "Accepted native surface samples retain this same presentation tier")

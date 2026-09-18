@@ -6,6 +6,60 @@ import XCTest
 
 final class NotebookPinnedImageTests: XCTestCase {
   @MainActor
+  func testAreaCrossingPaperEdgeKeepsItsPageAndMixedElements() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    var page = try XCTUnwrap(model.activePage)
+    let elements: [AgentElement] = [
+      .init(id: "triangle", kind: .graphic, frame: .init(x: 20, y: 20, width: 80, height: 80),
+        source: "", html: "", graphic: .init(shape: .triangle)),
+      .init(id: "line", kind: .graphic, frame: .init(x: 20, y: 140, width: 120, height: 20),
+        source: "", html: "", graphic: .init(shape: .connector,
+          connection: .init(start: .init(point: .init(x: 0, y: 10)), end: .init(point: .init(x: 120, y: 10))))),
+      .init(id: "text", kind: .markdown, frame: .init(x: 160, y: 20, width: 120, height: 80),
+        source: "Selected text", html: "<p>Selected text</p>"),
+      .init(id: "outside", kind: .graphic, frame: .init(x: 400, y: 400, width: 80, height: 80),
+        source: "", html: "", graphic: .init(shape: .ellipse))
+    ]
+    XCTAssertTrue(page.replaceElements(elements, actor: model.actorID))
+    try model.store.savePage(page); await model.reloadExternalChanges()?.value
+    let workspace = try XCTUnwrap(model.workspace)
+    let center = try XCTUnwrap(model.boardHierarchy?.focusedCenter(of: workspace.selectedItemID, in: workspace.rootBoardID))
+    model.updatePresence(.init(boardID: workspace.rootBoardID, mode: .page,
+      camera: .init(center: center, scale: 0.6), viewport: .init(x: 834, y: 1194),
+      focusedItemID: workspace.selectedItemID, openProgress: 1, notebookPageID: page.id), settled: true)
+    await model.finishPendingPersistence()
+    try await mountNotebookScene(model)
+    let presence = try XCTUnwrap(model.presence), cohort = try XCTUnwrap(model.compositionTiles.published)
+    let item = try XCTUnwrap(model.presentedItem(id: workspace.selectedItemID, cohort: cohort, presence: presence))
+    let box = item.geometry.screenFrame(center: item.center, camera: presence.camera, viewport: presence.viewport)
+    let scale = presence.camera.scale
+    let top = CGPoint(x: box.x - 20, y: box.y - 20)
+    let bottom = CGPoint(x: box.x + 300 * scale, y: box.y + 200 * scale)
+    for (start, end) in [(top, bottom), (bottom, top)] {
+      let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start: start, end: end,
+        model: model, presence: presence, cohort: cohort,
+        installedInk: model.compositionTiles.surfaceRegistry.installedSources()))
+      XCTAssertEqual(selection.fragments.count, 1)
+      let reference = try XCTUnwrap(selection.resolvedReferences().first)
+      XCTAssertEqual(reference.target, .init(kind: .page, id: page.id),
+        "Crossing the paper edge must not select the board underneath its visible figures")
+      guard reference.target.kind == .page else { continue }
+      XCTAssertEqual(reference.region, .init(x: 0, y: 0, width: 300, height: 200))
+      XCTAssertNil(reference.elementID)
+      let source = try AgentPinnedSource.capture(requestID: UUID(), reference: reference, files: selection.sourceFiles())
+      let ids = try XCTUnwrap(source.payload["elements"]?.decode([AgentElement].self)).map(\.id)
+      XCTAssertEqual(Set(ids), ["triangle", "line", "text"])
+    }
+    XCTAssertNil(NotebookAttentionProjection.capture(start: .init(x: box.x - 40, y: box.y - 40),
+      end: .init(x: box.x - 10, y: box.y - 10), model: model, presence: presence, cohort: cohort,
+      installedInk: model.compositionTiles.surfaceRegistry.installedSources()),
+      "A drag wholly outside open paper must not grant the board underneath it")
+  }
+
+  @MainActor
   func testWholeBoardSendCapturesInstalledPixelsAfterContextPublicationWithoutControlsOrLaterChanges() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
