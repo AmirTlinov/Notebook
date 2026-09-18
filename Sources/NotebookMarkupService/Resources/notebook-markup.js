@@ -9468,7 +9468,21 @@ ${prefix}${body2}\\par
 \ifdim\ht\NotebookExportImageBox>0.9\textheight
 \resizebox{!}{0.9\textheight}{\usebox{\NotebookExportImageBox}}%
 \else\usebox{\NotebookExportImageBox}\fi\endgroup}`;
-    return { source: [preamble, "\\begin{document}", "\\special{pdf:minorversion 7}", ...body, "\\end{document}", ""].join("\n\n"), assets };
+    const parts = [preamble, "\\begin{document}", "\\special{pdf:minorversion 7}"];
+    let line = parts.reduce((count, part) => count + newlineCount(part) + 2, 1);
+    const sourceRanges = body.map((text, index) => {
+      const firstLine = line;
+      parts.push(text);
+      line += newlineCount(text) + 2;
+      return { blockID: document.blocks[index].id, firstLine, lastLine: line - 1 };
+    });
+    parts.push("\\end{document}", "");
+    return { source: parts.join("\n\n"), assets, sourceRanges };
+  }
+  function newlineCount(value) {
+    let count = 0;
+    for (let index = 0; index < value.length; index++) if (value.charCodeAt(index) === 10) count++;
+    return count;
   }
   function attribute(node, name) {
     return node.attrs.find((value) => value.name === name)?.value ?? null;

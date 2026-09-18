@@ -16,10 +16,6 @@ enum TwoFingerIntentArbiter {
   static let evidenceDelay: TimeInterval = 0.055
   static let participatingTravel: CGFloat = 4
 
-  static func isOpeningApproach(magnification: CGFloat) -> Bool {
-    magnification > 1
-  }
-
   static func resolve(
     defersHorizontalMotionToPageTurn: Bool,
     translation: CGPoint,
@@ -140,7 +136,6 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   private(set) var fingerDisplacements: [CGPoint] = []
   private(set) var magnification: CGFloat = 1
   private(set) var magnificationVelocity: CGFloat = 0
-  private(set) var isOpeningApproach = false
   private(set) var centroid = CGPoint.zero
 
   var defersHorizontalMotionToPageTurn = false
@@ -234,10 +229,6 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
         state = state == .possible ? .began : .changed
       case .magnification:
         cancelHold()
-        let isOpeningApproach = TwoFingerIntentArbiter.isOpeningApproach(
-          magnification: magnification
-        )
-        self.isOpeningApproach = isOpeningApproach
         intent = .magnification
         state = state == .possible ? .began : .changed
       case .undecided:
@@ -333,7 +324,6 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     fingerDisplacements = []
     magnification = 1
     magnificationVelocity = 0
-    isOpeningApproach = false
     centroid = .zero
     magnificationSamples.removeAll(keepingCapacity: true)
     fingerSequenceRevision = nil

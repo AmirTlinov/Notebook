@@ -68,17 +68,10 @@ enum SceneRenderError: Error, Equatable, CustomStringConvertible {
 
 enum SceneAllocationPriority: Equatable, Sendable { case input, passive }
 
-/// Headless export has no future Pencil contact. An interactive scene reserves
-/// half of this same pool; it does not acquire a second allocator or quota.
+/// Both apps mount interactive sources. On iPad their native Pencil canvases
+/// reserve input backing in this same pool; a headless export has no such owner.
 enum SceneResourceProfile: Equatable, Sendable {
   case interactive, headless
-  static var currentPlatform: Self {
-    #if os(iOS)
-      .interactive
-    #else
-      .headless
-    #endif
-  }
 }
 
 /// A retained image is charged until its final lease ends. Released leases cannot
@@ -534,14 +527,21 @@ final class SceneRenderResources {
   @ObservationIgnored private var accessClock: UInt64 = 0
   @ObservationIgnored private var waiterClock: UInt64 = 0
 
-  init(byteLimit: Int = 256 * 1024 * 1024, profile: SceneResourceProfile = .currentPlatform, maximumWebSurfaces: Int = 6,
+  init(byteLimit: Int = 256 * 1024 * 1024, profile: SceneResourceProfile = .interactive, maximumWebSurfaces: Int = 6,
     maximumBackgroundWebSurfaces: Int = 2, maximumPendingWebRequests: Int = 32,
     diagnosticCapacity: Int = 256, maximumRasterCount: Int = 2048, reservedInteractiveSlots: Int = 2) {
     precondition(byteLimit >= 0 && maximumWebSurfaces > 0 && maximumBackgroundWebSurfaces >= 0
       && maximumPendingWebRequests >= 0 && diagnosticCapacity >= 0 && maximumRasterCount >= 0
       && reservedInteractiveSlots >= 0)
     self.byteLimit = byteLimit; self.profile = profile
-    passiveByteLimit = profile == .interactive ? byteLimit / 2 : byteLimit
+    #if os(iOS)
+      passiveByteLimit = profile == .interactive ? byteLimit / 2 : byteLimit
+    #else
+      // AppKit ink uses the raster path, not the iPad input-backing allocator.
+      // Keep its existing byte budget; windowed program ownership must not
+      // silently halve the capacity available to every Mac raster and export.
+      passiveByteLimit = byteLimit
+    #endif
     self.maximumWebSurfaces = maximumWebSurfaces
     self.maximumBackgroundWebSurfaces = min(maximumWebSurfaces, maximumBackgroundWebSurfaces)
     self.maximumPendingWebRequests = maximumPendingWebRequests

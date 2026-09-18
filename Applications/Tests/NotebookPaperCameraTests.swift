@@ -21,7 +21,13 @@ final class NotebookPaperCameraTests: XCTestCase {
     let pair = CGPoint(x: start.viewport.x * 0.4, y: start.viewport.y * 0.43)
     let moved = CGPoint(x: pair.x + 42, y: pair.y + 27)
     let owner = try coordinator(in: window)
-    owner.onCamera(.began(centroid: pair, isOpeningApproach: false))
+    let geometry = model.itemGeometry(start.focusedItemID)
+    let itemID = try XCTUnwrap(start.focusedItemID)
+    let center = try XCTUnwrap(model.boardHierarchy?.focusedCenter(of: itemID, in: start.boardID))
+    func bounded(_ camera: SpatialCamera) -> SpatialCamera {
+      geometry.readingCamera(camera, centeredOn: center, viewport: start.viewport)
+    }
+    owner.onCamera(.began(centroid: pair))
     for scale in [CGFloat(0.96), 1.4, 0.015, 4, 0.15, 1.1] {
       owner.onCamera(.changed(scale: scale, velocity: 0.2, elapsed: 0.2, centroid: moved))
       try await Task.sleep(for: .milliseconds(35))
@@ -31,28 +37,31 @@ final class NotebookPaperCameraTests: XCTestCase {
       XCTAssertEqual(actual.focusedItemID, start.focusedItemID)
       XCTAssertEqual(actual.notebookPageID, start.notebookPageID)
       XCTAssertEqual(actual.selectedItemID, start.selectedItemID)
-      assertCamera(actual.camera, equals: start.camera.pinched(by: scale,
-        from: .init(x: pair.x, y: pair.y), to: .init(x: moved.x, y: moved.y), viewport: start.viewport))
+      XCTAssertGreaterThanOrEqual(actual.camera.scale, geometry.fitScale(viewport: start.viewport),
+        "Keeping page mode alone is insufficient: the visible sheet must not shrink into the board")
+      if scale < 1 { assertCamera(actual.camera, equals: .init(center: center, scale: geometry.fitScale(viewport: start.viewport))) }
+      assertCamera(actual.camera, equals: bounded(start.camera.pinched(by: scale,
+        from: .init(x: pair.x, y: pair.y), to: .init(x: moved.x, y: moved.y), viewport: start.viewport)))
     }
     owner.onCamera(.ended(scale: 1.1, velocity: -0.2, elapsed: 0.3, centroid: moved))
     try await Task.sleep(for: .milliseconds(450))
     let released = try XCTUnwrap(model.presence)
     XCTAssertEqual(released.mode, start.mode)
     XCTAssertEqual(released.openProgress, 1)
-    assertCamera(released.camera, equals: start.camera.pinched(by: 1.1,
-      from: .init(x: pair.x, y: pair.y), to: .init(x: moved.x, y: moved.y), viewport: start.viewport))
+    assertCamera(released.camera, equals: bounded(start.camera.pinched(by: 1.1,
+      from: .init(x: pair.x, y: pair.y), to: .init(x: moved.x, y: moved.y), viewport: start.viewport)))
     XCTAssertFalse(owner.defersHorizontalMotionToPageTurn, "Zoomed paper owns two-finger panning, not a curl")
 
     let panEnd = CGPoint(x: moved.x + 90, y: moved.y + 12)
-    owner.onCamera(.began(centroid: moved, isOpeningApproach: false))
+    owner.onCamera(.began(centroid: moved))
     owner.onCamera(.changed(scale: 1, velocity: 0, elapsed: 0.2, centroid: panEnd))
     owner.onCamera(.ended(scale: 1, velocity: 0, elapsed: 0.3, centroid: panEnd))
     try await Task.sleep(for: .milliseconds(100))
     let panned = try XCTUnwrap(model.presence)
     XCTAssertEqual(panned.mode, start.mode)
     XCTAssertEqual(panned.documentPageIndex, start.documentPageIndex)
-    assertCamera(panned.camera, equals: released.camera.pinched(by: 1,
-      from: .init(x: moved.x, y: moved.y), to: .init(x: panEnd.x, y: panEnd.y), viewport: start.viewport))
+    assertCamera(panned.camera, equals: bounded(released.camera.pinched(by: 1,
+      from: .init(x: moved.x, y: moved.y), to: .init(x: panEnd.x, y: panEnd.y), viewport: start.viewport)))
   }
 
   func testBoardZoomCannotAcquireNotebookContentEvenOnALargeFirstSample() async throws {
@@ -60,7 +69,7 @@ final class NotebookPaperCameraTests: XCTestCase {
     let start = try XCTUnwrap(model.presence)
     let pair = CGPoint(x: start.viewport.x / 2, y: start.viewport.y / 2)
     let owner = try coordinator(in: window)
-    owner.onCamera(.began(centroid: pair, isOpeningApproach: true))
+    owner.onCamera(.began(centroid: pair))
     for factor: CGFloat in [1.2, 4, 0.01, 2] {
       owner.onCamera(.changed(scale: factor, velocity: 2, elapsed: 0.2, centroid: pair))
       let actual = try XCTUnwrap(model.presence)
@@ -82,7 +91,7 @@ final class NotebookPaperCameraTests: XCTestCase {
     let owner = try coordinator(in: window)
     let pair = CGPoint(x: start.viewport.x / 2, y: start.viewport.y / 2)
     for factor: CGFloat in [0.1, 10, 0.25, 4] {
-      owner.onCamera(.began(centroid: pair, isOpeningApproach: factor > 1))
+      owner.onCamera(.began(centroid: pair))
       owner.onCamera(.changed(scale: factor, velocity: 1, elapsed: 0.2, centroid: pair))
       owner.onCamera(.ended(scale: factor, velocity: 1, elapsed: 0.3, centroid: pair))
       try await Task.sleep(for: .milliseconds(40))
@@ -91,7 +100,7 @@ final class NotebookPaperCameraTests: XCTestCase {
       XCTAssertEqual(model.presence?.notebookPageID, start.notebookPageID)
     }
     let beforeCancel = try XCTUnwrap(model.presence)
-    owner.onCamera(.began(centroid: pair, isOpeningApproach: false))
+    owner.onCamera(.began(centroid: pair))
     owner.onCamera(.changed(scale: 0.01, velocity: -2, elapsed: 0.2, centroid: pair))
     owner.onCamera(.cancelled)
     try await Task.sleep(for: .milliseconds(400))

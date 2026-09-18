@@ -19,7 +19,7 @@ struct MacElementControls: View {
         Rectangle().fill(.background).overlay { Rectangle().stroke(.tint, lineWidth: 1) }
           .frame(width: 8, height: 8).padding(5).contentShape(Rectangle())
           .position(point)
-          .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+          .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named(NotebookManipulationSpace.selection)).onChanged { value in
             if contact == nil { contact = model.beginElementManipulation(reference, kind: .resize(handle)) }
             if let contact { model.updateElementManipulation(contact, translation: .init(x: value.translation.width / scale, y: value.translation.height / scale)) }
           }.onEnded { value in
@@ -35,6 +35,7 @@ struct MacElementControls: View {
       }.buttonStyle(.borderless).padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
         .position(x: max(70, rect.midX), y: max(22, rect.minY - 24))
     }
+    .coordinateSpace(name: NotebookManipulationSpace.selection)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .onDisappear { if let contact { model.cancelElementManipulation(contact) }; contact = nil }
   }

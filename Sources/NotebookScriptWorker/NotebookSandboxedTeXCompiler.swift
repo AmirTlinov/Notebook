@@ -72,7 +72,7 @@ enum NotebookSandboxedTeXCompiler {
     let process = Process(), output = Pipe(), capture = Tail()
     process.executableURL = executable
     process.arguments = ["--untrusted", "--only-cached", "--bundle", bundle.path,
-      "--keep-logs", "--outdir", directory.path, tex.path]
+      "--keep-logs", "--synctex", "--outdir", directory.path, tex.path]
     process.environment = ["HOME": directory.path, "TMPDIR": directory.path,
       "TECTONIC_CACHE_DIR": directory.appendingPathComponent("cache").path,
       "PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"]
@@ -127,7 +127,17 @@ enum NotebookSandboxedTeXCompiler {
     guard data.count + prepared.reduce(0, { $0 + $1.data.count }) <= 17*1024*1024 else {
       throw Failure(code: "resource_limit", message: "PDF и изображения вместе превышают 17 МиБ.")
     }
-    return .init(pdf: data, log: capture.text, assets: prepared)
+    let mappingURL = directory.appendingPathComponent("document.synctex.gz")
+    let mappingAttributes = try FileManager.default.attributesOfItem(atPath: mappingURL.path)
+    guard mappingAttributes[.type] as? FileAttributeType == .typeRegular,
+      let mappingSize = mappingAttributes[.size] as? Int, (1...4*1024*1024).contains(mappingSize) else {
+      throw Failure(code: "resource_limit", message: "Карта печатных страниц отсутствует или превышает 4 МиБ.")
+    }
+    let syncTeX = try Data(contentsOf: mappingURL)
+    guard syncTeX.starts(with: [0x1f, 0x8b]) else {
+      throw Failure(code: "export_failed", message: "Нет допустимой карты печатных страниц.")
+    }
+    return .init(pdf: data, log: capture.text, assets: prepared, syncTeX: syncTeX)
   }
 
   private static func renderSVG(_ input: Data, directory: URL, deadline: ContinuousClock.Instant) async throws -> Data {

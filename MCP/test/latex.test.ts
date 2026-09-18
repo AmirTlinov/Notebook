@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { DocumentBlock, DocumentDocument } from "../src/domain.js";
-import { documentTeX } from "../src/document-tex.js";
+import { documentExport, documentTeX } from "../src/document-tex.js";
 import { appActor } from "./fixture.js";
 
 const documentID = "7e7a0000-0000-4000-8000-000000000040";
@@ -38,6 +38,25 @@ function document(
     contentStamp: { counter: 0, actor: appActor },
   };
 }
+
+test("maps repeated, empty and raw TeX blocks to exact generated source lines without injecting IDs", () => {
+  const blocks = [markdown("first", "Repeated paragraph."), markdown("empty", ""),
+    latex("unsafe%\\input{private}", "\\begin{align}\nx&=1\\\\\ny&=2\n\\end{align}"),
+    markdown("last", "Repeated paragraph.")];
+  const result = documentExport(document(blocks, "\\usepackage{mathtools}\n% multiline preamble"));
+  const lines = result.source.split("\n");
+  assert.deepEqual(result.sourceRanges.map(range => range.blockID), blocks.map(block => block.id));
+  const mapped = result.sourceRanges.map(range => lines.slice(range.firstLine - 1, range.lastLine).join("\n"));
+  assert.match(mapped[0]!, /Repeated paragraph\./);
+  assert.equal(mapped[1]!.trim(), "");
+  assert.equal(mapped[2]!.trim(), blocks[2]!.source);
+  assert.equal(mapped[0], mapped[3]);
+  assert.ok(!result.source.includes(blocks[2]!.id));
+  for (let index = 1; index < result.sourceRanges.length; index++) {
+    assert.equal(result.sourceRanges[index - 1]!.lastLine + 1, result.sourceRanges[index]!.firstLine);
+  }
+  assert.equal(lines[result.sourceRanges.at(-1)!.lastLine], "\\end{document}");
+});
 
 test("turns Markdown prose and exact LaTeX blocks into one TeX artifact", () => {
   const source = documentTeX(document([

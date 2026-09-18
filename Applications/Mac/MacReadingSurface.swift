@@ -80,13 +80,7 @@ enum MacReadingCamera {
   }
 
   static func constrained(_ camera: SpatialCamera, center: WorldPoint, geometry: WorkspaceItemGeometry, viewport: SpatialPoint) -> SpatialCamera {
-    let minimum = min(max(1, viewport.x - margin * 2) / geometry.width,
-      max(1, viewport.y - margin * 2) / geometry.height)
-    let scale = min(8, max(minimum, camera.scale))
-    let x = max(0, geometry.width / 2 - (viewport.x / 2 - margin) / scale)
-    let y = max(0, geometry.height / 2 - (viewport.y / 2 - margin) / scale)
-    let offset = center.delta(to: camera.center)
-    return .init(center: center.offsetBy(x: min(x, max(-x, offset.x)), y: min(y, max(-y, offset.y))), scale: scale)
+    geometry.readingCamera(camera, centeredOn: center, viewport: viewport, margin: margin, maximumScale: 8)
   }
 }
 

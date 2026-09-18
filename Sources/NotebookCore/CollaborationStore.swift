@@ -127,7 +127,9 @@ extension NotebookStore {
     }
   }
 
-  private func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID, requestFingerprint: String?, human: Bool) throws -> CollaborationReceipt {
+  /// Internal native owners perform their field-level CAS before entering this
+  /// same executor. Only the public agent entry point accepts agent authorship.
+  func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID, requestFingerprint: String?, human: Bool) throws -> CollaborationReceipt {
     try prepare()
     return try commandTransaction(readAllowance: .agentCommand) {
       if try hasStoredValue(actionFile(action.id)) {

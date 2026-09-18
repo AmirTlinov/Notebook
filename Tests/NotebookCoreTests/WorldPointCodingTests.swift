@@ -290,18 +290,6 @@ struct PhysicalWorldAddressTests {
     }
   }
 
-  @Test(arguments: [Int64(-1), 1])
-  func portalEntryDoesNotInstallAnUnaddressableChildCenter(sign: Int64) {
-    let child = BoardPortalCamera(center: .init(tileX: sign * WorldPoint.maximumTileIndex, tileY: 0,
-      localX: sign > 0 ? WorldPoint.tileSize - 1 : 0, localY: 0), scale: 1)
-    let outside = SpatialCamera(center: .init(x: Double(sign) * 2, y: 0), scale: 2)
-    let inside = SpatialCamera(center: .init(x: Double(sign) * -2, y: 0), scale: 2)
-    #expect(BoardPortalProjection.enteringCamera(from: outside, portalCamera: child,
-      portalCenter: .zero, viewport: .init(x: 100, y: 100)) == nil)
-    #expect(BoardPortalProjection.enteringCamera(from: inside, portalCamera: child,
-      portalCenter: .zero, viewport: .init(x: 100, y: 100))?.center.isValid == true)
-  }
-
   @Test func overflowDoesNotConstructAnInvalidAddress() {
     let camera = SpatialCamera(), viewport = SpatialPoint(x: 600, y: 800)
     #expect(camera.worldAddress(at: .init(x: .greatestFiniteMagnitude, y: 0), viewport: viewport) == nil)

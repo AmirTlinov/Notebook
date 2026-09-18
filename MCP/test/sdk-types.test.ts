@@ -35,6 +35,13 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
       const sourceIsPixels:boolean=s.data.appearance.sourceIsCompleteAppearance;
       const d=await nb.document({id:input.documentID,blockID:'one'});
       if(d.data) { const kind:'markdown'|'latex'|'interactive'=d.data.block.kind; await emit(kind); }
+      const printed=await nb.exportStatus({jobID:input.documentID});
+      for(const map of [printed.data.receipt?.sourceMap,printed.data.receipt?.syncTeX]) {
+        if(map) {
+          const path:string=map.path, hash:string=map.sha256, bytes:number=map.byteCount, mime:string=map.mimeType;
+          await emit({path,hash,bytes,mime});
+        }
+      }
       const vision=await nb.pageMap({id:input.pageID});
       const render=await nb.render({target:{kind:'page',id:input.pageID},expectedRevision:'read'});
       const pageImage=await nb.pageImage({id:input.pageID});

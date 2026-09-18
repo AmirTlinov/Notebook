@@ -5,10 +5,6 @@ import UIKit
 private struct CameraGestureSnapshot {
   let presence: SessionPresence
   let trajectory: CameraGestureTrajectory
-  var lastMagnification: CGFloat
-  var candidateItemID: UUID?
-  var isApproaching: Bool
-  var followsPortal = false
 }
 
 struct SpatialWorkspaceView: View {
@@ -540,7 +536,6 @@ struct SpatialWorkspaceView: View {
     let open: Double
     let selected: UUID?
     let lifted: [UUID]
-    let candidate: UUID?
     let editingText: EditableElementReference?
     let contentGesture: Bool
     let pageTurn: Bool
@@ -561,7 +556,7 @@ struct SpatialWorkspaceView: View {
     let revision = ItemPlaneRevision(cohortID: cohort?.paintID, generation: model.sceneIndex?.generationID,
       contents: model.collaborationReadEpoch, items: rendered, covers: covers, mode: presence.mode,
       focused: presence.focusedItemID, open: presence.openProgress,
-      selected: selectedItemID, lifted: liftedItemIDs, candidate: cameraGesture?.candidateItemID,
+      selected: selectedItemID, lifted: liftedItemIDs,
       editingText: editingSpatialText, contentGesture: contentGestureActive,
       pageTurn: pageTurnIsActive, isCameraGesture: cameraGesture != nil, settling: settling,
       pointing: model.isPointing, prepares: rendered.map { preparesContent($0.id, presence: presence) },
@@ -589,8 +584,7 @@ struct SpatialWorkspaceView: View {
     ForEach(rendered.filter {
           cohort?.plan.allowsLive(.item($0.id), in: .board(presence.boardID)) == true && (
           WorkspaceSceneProjection.mountsContent(of: $0, in: presence)
-            || $0.id == selectedItemID || liftedItemIDs.contains($0.id)
-            || $0.id == cameraGesture?.candidateItemID)
+            || $0.id == selectedItemID || liftedItemIDs.contains($0.id))
         }) { rendered in
           WorkspaceSceneItem(
             rendered: rendered,
@@ -607,7 +601,6 @@ struct SpatialWorkspaceView: View {
             viewport: viewport,
             isFocused: presence.focusedItemID == rendered.id,
             preparesCoverMotion: presence.focusedItemID == rendered.id
-              || cameraGesture?.candidateItemID == rendered.id
               || selectedItemID == rendered.id
               || model.workspace?.selectedItemID == rendered.id,
             preparesContent: preparesContent(
@@ -856,7 +849,7 @@ struct SpatialWorkspaceView: View {
 
   private func scenePins(presence: SessionPresence) -> Set<WorkspaceSpatialID> {
     var pins = Set<WorkspaceSpatialID>()
-    for id in [presence.focusedItemID, selectedItemID, cameraGesture?.candidateItemID] + liftedItemIDs.map(Optional.some) {
+    for id in [presence.focusedItemID, selectedItemID] + liftedItemIDs.map(Optional.some) {
       if let id, !spatialInkSurfaces.isRetired(.cover(id)) { pins.insert(.item(id)) }
     }
     for reference in model.selectionSession.elements {
@@ -932,7 +925,7 @@ struct SpatialWorkspaceView: View {
 
   private func handleBoardMagnification(_ phase: WorkspaceMagnificationPhase) {
     switch phase {
-    case .began(let centroid, let isOpeningApproach):
+    case .began(let centroid):
       // A short explicit navigation owns its complete opening/closing curve.
       // A contact during it must not strand the scene on a half-open cover.
       guard !settling else { return }
@@ -944,10 +937,7 @@ struct SpatialWorkspaceView: View {
       cameraGesture = CameraGestureSnapshot(
         presence: presence,
         trajectory: CameraGestureTrajectory(startingCamera: presence.camera,
-          startingCentroid: centroid, startingMagnification: 1, viewport: presence.viewport),
-        lastMagnification: 1,
-        candidateItemID: isBoardCamera(presence) ? focusCandidate(at: centroid, presence: presence) : nil,
-        isApproaching: isOpeningApproach
+          startingCentroid: centroid, viewport: presence.viewport)
       )
     case .changed(let scale, _, _, let centroid):
       updateMagnification(
@@ -1012,39 +1002,13 @@ struct SpatialWorkspaceView: View {
     }
   }
 
-  /// A selected closed cover still belongs to its board. Only opening paper
-  /// acquires a different interaction owner; board portals retain their passage.
-  private func isBoardCamera(_ presence: SessionPresence) -> Bool {
-    presence.mode == .board || (presence.mode == .cover
-      && (presence.openProgress == 0 || presence.focusedItemID.flatMap(itemKind) == .board))
-  }
-
-  private func updateMagnification(
-    scale: CGFloat,
-    centroid: CGPoint
-  ) {
-    guard var snapshot = cameraGesture else { return }
-    let start = snapshot.presence
+  /// A pinch owns only the camera. Opening and Back are explicit navigation,
+  /// including nested boards; no threshold may change the gesture's surface.
+  private func updateMagnification(scale: CGFloat, centroid: CGPoint) {
+    guard let snapshot = cameraGesture else { return }
     let camera = snapshot.trajectory.camera(at: scale, centroid: centroid,
       maximumScale: SpatialCamera.maximumScale)
-    let delta = scale - snapshot.lastMagnification
-    if abs(delta) > 0.000_5 { snapshot.isApproaching = delta > 0 }
-
-    // Only a board portal changes coordinate systems during a pinch. A paper
-    // gesture keeps its exact physical owner, page ID and fully open state.
-    if isBoardCamera(start) {
-      let boardPresence = SessionPresence(boardID: start.boardID, mode: .board,
-        camera: camera, viewport: start.viewport)
-      let retained = snapshot.candidateItemID.flatMap { id in
-        selectionStrength(for: id, at: centroid, presence: boardPresence, halo: 1.32) > 0 ? id : nil
-      }
-      snapshot.candidateItemID = retained ?? focusCandidate(at: centroid, presence: boardPresence)
-      if updatePortalMagnification(snapshot: &snapshot, camera: camera,
-        magnification: scale, centroid: centroid) { return }
-    }
-    snapshot.lastMagnification = scale
-    cameraGesture = snapshot
-    model.updatePresence(start.replacingCamera(camera), settled: false)
+    model.updatePresence(snapshot.presence.replacingCamera(camera), settled: false)
   }
 
   private func settleMagnification() {
@@ -1057,65 +1021,7 @@ struct SpatialWorkspaceView: View {
   private func cancelMagnification() {
     guard let snapshot = cameraGesture else { return }
     cameraGesture = nil
-    if snapshot.followsPortal, let presence = model.presence {
-      model.updatePresence(presence, settled: true)
-      return
-    }
     animateSettlement(to: snapshot.presence, duration: 0.26)
-  }
-
-  /// A portal changes the coordinates of the same live gesture. Paper opening
-  /// never participates; releasing the fingers only saves their final frame.
-  private func updatePortalMagnification(snapshot: inout CameraGestureSnapshot,
-    camera: SpatialCamera, magnification: CGFloat, centroid: CGPoint) -> Bool {
-    let start = snapshot.presence
-    let viewport = start.viewport
-    if isBoardCamera(start),
-      let parentID = model.boardHierarchy?.ownerBoardID(of: start.boardID)
-        ?? model.compositionTiles.published?.frame.index.ownerBoard(itemID: start.boardID),
-      let portal = model.scenePortalCamera(boardID: start.boardID),
-      let center = focusedCenter(itemID: start.boardID, boardID: parentID) {
-      let entryScale = BoardPortalProjection.entryCamera(portalCamera: portal, viewport: viewport).scale
-      let boundaryScale = min(entryScale, snapshot.trajectory.startingCamera.scale)
-      let rawScale = snapshot.trajectory.startingCamera.scale * Double(magnification / snapshot.trajectory.startingMagnification)
-      if !snapshot.isApproaching, rawScale < boundaryScale {
-        let boundaryMagnification = snapshot.trajectory.startingMagnification * boundaryScale / snapshot.trajectory.startingCamera.scale
-        let boundary = snapshot.trajectory.camera(at: boundaryMagnification, centroid: centroid, maximumScale: SpatialCamera.maximumScale)
-        let passage = BoardPortalProjection.exitingCamera(boundary: boundary,
-          magnification: rawScale / boundaryScale, centroid: .init(x: centroid.x, y: centroid.y),
-          portalCenter: center, viewport: viewport)
-        if model.leaveBoard(through: passage, settled: false), let presence = model.presence {
-          continuePortalGesture(presence: presence, magnification: magnification, centroid: centroid,
-            candidate: start.boardID, isApproaching: false)
-          return true
-        }
-      }
-    }
-    guard let candidate = snapshot.candidateItemID, itemKind(candidate) == .board,
-      let center = focusedCenter(itemID: candidate, boardID: start.boardID) else { return false }
-    if model.enterBoard(candidate, through: camera, settled: false), let presence = model.presence {
-      continuePortalGesture(presence: presence, magnification: magnification, centroid: centroid,
-        candidate: nil, isApproaching: snapshot.isApproaching)
-      return true
-    }
-    let progress = BoardPortalProjection.openingProgress(camera: camera, portalCenter: center, viewport: viewport)
-    snapshot.lastMagnification = magnification
-    snapshot.followsPortal = true
-    cameraGesture = snapshot
-    model.updatePresence(.init(boardID: start.boardID, mode: progress > 0 ? .cover : .board,
-      camera: camera, viewport: viewport, focusedItemID: progress > 0 ? candidate : nil,
-      openProgress: progress), settled: false)
-    return true
-  }
-
-  private func continuePortalGesture(presence: SessionPresence, magnification: CGFloat,
-    centroid: CGPoint, candidate: UUID?, isApproaching: Bool) {
-    cameraGesture = CameraGestureSnapshot(presence: presence,
-      trajectory: .init(startingCamera: presence.camera, startingCentroid: centroid,
-        startingMagnification: magnification, viewport: presence.viewport),
-      lastMagnification: magnification, candidateItemID: candidate,
-      isApproaching: isApproaching, followsPortal: true)
-    contentGestureActive = false
   }
 
   private func interruptSettlementForInput() {
@@ -1164,55 +1070,6 @@ struct SpatialWorkspaceView: View {
     if cameraGesture == nil, let presence = model.presence {
       model.updatePresence(presence, settled: true)
     }
-  }
-
-  private func focusCandidate(
-    at centroid: CGPoint,
-    presence: SessionPresence
-  ) -> UUID? {
-    sceneWorkset(presence: presence).items
-      .reversed()
-      .compactMap { rendered -> (UUID, Double)? in
-        guard rendered.item.kind == .board else { return nil }
-        let strength = selectionStrength(rendered: rendered, at: centroid, presence: presence,
-          halo: 1.12)
-        return strength > 0 ? (rendered.id, strength) : nil
-      }
-      .max { $0.1 < $1.1 }?.0
-  }
-
-  private func selectionStrength(
-    for itemID: UUID,
-    at centroid: CGPoint,
-    presence: SessionPresence,
-    halo: Double = 1.12
-  ) -> Double {
-    guard
-      let cohort = model.compositionTiles.published,
-      let rendered = model.presentedItem(id: itemID, cohort: cohort, presence: presence)
-    else { return 0 }
-    return selectionStrength(rendered: rendered, at: centroid, presence: presence, halo: halo)
-  }
-
-  private func selectionStrength(rendered: RenderedWorkspaceItem, at centroid: CGPoint,
-    presence: SessionPresence, halo: Double) -> Double {
-    guard !model.isItemBeingDeleted(rendered.id) else { return 0 }
-    let screen = presence.camera.worldToScreen(
-      rendered.center,
-      viewport: presence.viewport
-    )
-    let width = rendered.geometry.width * presence.camera.scale
-    let height = rendered.geometry.height * presence.camera.scale
-    return NotebookSelectionField.influence(
-      centroid: SpatialPoint(x: centroid.x, y: centroid.y),
-      cover: SpatialRect(
-        x: screen.x - width / 2,
-        y: screen.y - height / 2,
-        width: width,
-        height: height
-      ),
-      halo: halo
-    )
   }
 
   private func showReference(_ reference: CollaborationReference, location: NotebookReferenceLocation, viewport: SpatialPoint) {

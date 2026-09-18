@@ -1,0 +1,18 @@
+diff --git a/ports/icu/portfile.cmake b/ports/icu/portfile.cmake
+index 67e37f03..35ae6591 100644
+--- a/ports/icu/portfile.cmake
++++ b/ports/icu/portfile.cmake
+@@ -60,6 +60,13 @@ elseif(VCPKG_CROSSCOMPILING)
+     list(APPEND CONFIGURE_OPTIONS "--with-cross-build=${_VCPKG_TOOL_PATH}")
+ endif()
+ 
++# ICU's explicit cross-build must not execute the iOS configure probe on macOS.
++if(VCPKG_CROSSCOMPILING)
++    vcpkg_replace_string("${SOURCE_PATH}/source/configure"
++        "if test \"$cross_compiling\" != yes; then"
++        "if test -n \"$with_cross_build\"; then cross_compiling=yes; fi\nif test \"$cross_compiling\" != yes; then")
++endif()
++
+ vcpkg_make_configure(
+     SOURCE_PATH "${SOURCE_PATH}/source"
+     # AUTORECONF # needs Autoconf version 2.72

@@ -47,8 +47,12 @@ public struct NotebookExportPublication: Codable, Sendable {
   public let pdf: Data
   public let log: String
   public let assets: [NotebookExportAsset]?
-  public init(documentID: UUID, expectedRevision: String, source: String, pdf: Data, log: String, jobID: UUID? = nil, assets: [NotebookExportAsset] = []) {
+  public let sourceMap: DocumentPrintSourceMap?
+  public let syncTeX: Data?
+  public init(documentID: UUID, expectedRevision: String, source: String, pdf: Data, log: String, jobID: UUID? = nil,
+    assets: [NotebookExportAsset] = [], sourceMap: DocumentPrintSourceMap? = nil, syncTeX: Data? = nil) {
     self.assets = assets
+    self.sourceMap = sourceMap; self.syncTeX = syncTeX
     self.jobID = jobID
     self.documentID = documentID; self.expectedRevision = expectedRevision; self.source = source; self.pdf = pdf; self.log = log
   }
@@ -63,6 +67,8 @@ public struct NotebookExportReceipt: Codable, Sendable {
   public let log: String
   public let packageSHA256: String?
   public let assets: [NotebookArtifact]?
+  public let sourceMap: NotebookArtifact?
+  public let syncTeX: NotebookArtifact?
 }
 
 extension NotebookStore {
@@ -178,7 +184,8 @@ extension NotebookStore {
       if let id = publication.jobID, let saved = try scriptExportJob(id), saved["status"] == .string("saved"),
         let receipt = saved["receipt"] { return try receipt.decode(NotebookExportReceipt.self) }
       let document = try loadDocument(publication.documentID)
-      guard document.contentStamp.revision == publication.expectedRevision else {
+      guard document.contentStamp.revision == publication.expectedRevision,
+        prepared.document.map({ $0 == document }) ?? true else {
         throw CollaborationError("revision_conflict", "Документ изменился во время печати.")
       }
       if !prepared.alreadyInstalled {
@@ -194,7 +201,7 @@ extension NotebookStore {
   }
 
   private func prepareDocumentExport(_ publication: NotebookExportPublication) throws ->
-    (staging: URL, destination: URL, alreadyInstalled: Bool, receipt: NotebookExportReceipt) {
+    (staging: URL, destination: URL, alreadyInstalled: Bool, receipt: NotebookExportReceipt, document: DocumentDocument?) {
     guard currentSQL == nil else { throw NotebookStorageError.invalidTransaction("Export preparation must precede SQL admission") }
     let assets = publication.assets ?? []
     let assetBytes = assets.reduce(0) { $0 + $1.data.count }
@@ -206,8 +213,26 @@ extension NotebookStore {
       assets.enumerated().allSatisfy({ index, asset in
         asset.name == "notebook-image-\(index).pdf" && asset.data.starts(with: Data("%PDF-".utf8))
       }) else { throw CollaborationError("invalid_artifact", "Недопустимый или слишком большой печатный пакет.") }
-    let files = [("document.tex", Data(publication.source.utf8)), ("document.pdf", publication.pdf)]
+    var files = [("document.tex", Data(publication.source.utf8)), ("document.pdf", publication.pdf)]
       + assets.map { ($0.name, $0.data) }
+    let snapshot: DocumentDocument?
+    if let map = publication.sourceMap, let syncTeX = publication.syncTeX {
+      guard syncTeX.count <= 4*1024*1024, syncTeX.starts(with: [0x1f, 0x8b]) else {
+        throw CollaborationError("invalid_artifact", "Недопустимая или слишком большая карта печатных страниц.")
+      }
+      let document = try loadDocument(publication.documentID)
+      try map.validate(document: document, source: publication.source, pdf: publication.pdf)
+      let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+      let encoded = try encoder.encode(map)
+      guard encoded.count <= 1024*1024 else { throw CollaborationError("invalid_artifact", "Карта блоков превышает 1 МиБ.") }
+      files += [("document.source-map.json", encoded), ("document.synctex.gz", syncTeX)]
+      snapshot = document
+    } else {
+      guard publication.sourceMap == nil, publication.syncTeX == nil else {
+        throw CollaborationError("invalid_artifact", "Карта блоков и карта страниц публикуются вместе.")
+      }
+      snapshot = nil
+    }
     // Length-framed names and content hashes bind the entire package, including
     // TeX sources that happen to compile to identical PDF pixels.
     var digest = SHA256()
@@ -239,13 +264,19 @@ extension NotebookStore {
     try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     do { for (name, data) in files { try data.write(to: staging.appendingPathComponent(name), options: .atomic) } }
     catch { try? FileManager.default.removeItem(at: staging); throw error }
+    func artifact(_ name: String, type: String) -> NotebookArtifact? {
+      files.first { $0.0 == name }.map { .init(path: destination.appendingPathComponent(name).path,
+        sha256: artifactHash($0.1), byteCount: $0.1.count, mimeType: type) }
+    }
     let receipt = NotebookExportReceipt(documentID: publication.documentID,
       texPath: destination.appendingPathComponent("document.tex").path,
       pdfPath: destination.appendingPathComponent("document.pdf").path,
       pdfSHA256: artifactHash(publication.pdf), byteCount: publication.pdf.count, log: publication.log,
       packageSHA256: hash, assets: assets.map { .init(path: destination.appendingPathComponent($0.name).path,
-        sha256: artifactHash($0.data), byteCount: $0.data.count, mimeType: "application/pdf") })
-    return (staging, destination, alreadyInstalled, receipt)
+        sha256: artifactHash($0.data), byteCount: $0.data.count, mimeType: "application/pdf") },
+      sourceMap: artifact("document.source-map.json", type: "application/json"),
+      syncTeX: artifact("document.synctex.gz", type: "application/gzip"))
+    return (staging, destination, alreadyInstalled, receipt, snapshot)
   }
 
   private func artifactID(_ id: UUID?) throws -> UUID {

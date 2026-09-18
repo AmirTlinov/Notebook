@@ -9,7 +9,14 @@ export interface DocumentExportAsset {
   mediaType: "image/svg+xml" | "image/png" | "image/jpeg";
   data: string;
 }
-export interface DocumentExport { source: string; assets: DocumentExportAsset[] }
+/** One-based, inclusive lines in the exact generated document.tex, not lines
+ * in Markdown. SyncTeX addresses these lines; block IDs never enter TeX. */
+export interface DocumentPrintSourceRange { blockID: string; firstLine: number; lastLine: number }
+export interface DocumentExport {
+  source: string;
+  assets: DocumentExportAsset[];
+  sourceRanges: DocumentPrintSourceRange[];
+}
 
 /** One print preparation owns Markdown and its embedded HTML. Images remain
  * data-only capabilities; the sandboxed compiler renders them before TeX runs. */
@@ -169,9 +176,26 @@ export function documentExport(document: DocumentDocument): DocumentExport {
 
   // The pinned SVG renderer emits PDF 1.7. The output driver must declare the
   // same supported version before importing its first image, on page one.
-  return { source: [preamble, "\\begin{document}", "\\special{pdf:minorversion 7}", ...body, "\\end{document}", ""].join("\n\n"), assets };
+  const parts = [preamble, "\\begin{document}", "\\special{pdf:minorversion 7}"];
+  // Build the mapping while assembling the source. Searching for block text
+  // afterwards is ambiguous for repeated paragraphs and raw TeX macros.
+  let line = parts.reduce((count, part) => count + newlineCount(part) + 2, 1);
+  const sourceRanges = body.map((text, index) => {
+    const firstLine = line;
+    parts.push(text);
+    line += newlineCount(text) + 2;
+    return { blockID: document.blocks[index]!.id, firstLine, lastLine: line - 1 };
+  });
+  parts.push("\\end{document}", "");
+  return { source: parts.join("\n\n"), assets, sourceRanges };
 }
 export function documentTeX(document: DocumentDocument): string { return documentExport(document).source; }
+
+function newlineCount(value: string): number {
+  let count = 0;
+  for (let index = 0; index < value.length; index++) if (value.charCodeAt(index) === 10) count++;
+  return count;
+}
 
 function attribute(node: Element, name: string): string | null { return node.attrs.find(value => value.name === name)?.value ?? null; }
 function descendants(nodes: Node[]): Node[] {

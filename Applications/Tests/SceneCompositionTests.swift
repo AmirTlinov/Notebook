@@ -306,13 +306,14 @@ final class SceneCompositionTests: XCTestCase {
     let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
     addTeardownBlock { @MainActor in await coordinator.stop() }
     let address = SceneSourceAddress(plane: .board(boardID), elementID: delayed.id)
+    let pins = Set(elements.prefix(7).map { WorkspaceSpatialID.element($0.id) })
     var readyDuringMotion = false
     for step in 0..<40 {
       let presence = SessionPresence(boardID: boardID, mode: .board,
         camera: .init(center: .init(x: 64 + Double(step % 3), y: 64), scale: 0.6 + Double(step % 9) / 20),
         viewport: .init(x: 320, y: 256))
       coordinator.prepare(source: source, presence: presence,
-        frame: .init(index: index, presence: presence, portalCamera: { _ in nil }), pinned: [],
+        frame: .init(index: index, presence: presence, portalCamera: { _ in nil }, pinned: pins), pinned: pins,
         displayScale: 2, refinesDetails: false)
       try await Task.sleep(for: .milliseconds(80))
       if coordinator.published?.sourceReceipts[address]?.hasCurrentPixels == true { readyDuringMotion = true }
@@ -347,8 +348,11 @@ final class SceneCompositionTests: XCTestCase {
       camera: .init(center: .init(x: 128, y: 64), scale: 1), viewport: .init(x: 320, y: 256))
     let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
     addTeardownBlock { @MainActor in await coordinator.stop() }
+    // Keep both Web sources in the same static band rather than relying on
+    // native labels winning the live-owner ordering over interactive programs.
+    let pins = Set(elements.prefix(7).map { WorkspaceSpatialID.element($0.id) })
     coordinator.prepare(source: source, presence: presence,
-      frame: .init(index: index, presence: presence, portalCamera: { _ in nil }), pinned: [])
+      frame: .init(index: index, presence: presence, portalCamera: { _ in nil }, pinned: pins), pinned: pins)
     let healthy = SceneSourceAddress(plane: .board(boardID), elementID: "z-healthy")
     let slow = SceneSourceAddress(plane: .board(boardID), elementID: "z-slow")
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
@@ -447,6 +451,13 @@ final class SceneCompositionTests: XCTestCase {
         pinned: [], displayScale: 2, previous: nil)
       XCTAssertEqual(plan.liveOwners.count, 7)
       XCTAssertFalse(plan.allowsLive(.element("z-vector"), in: .board(boardID)))
+      for item in frame.workset(boardID: boardID).items {
+        let rect = item.geometry.screenFrame(center: item.center, camera: presence.camera, viewport: presence.viewport)
+        if rect.x < presence.viewport.x, rect.y < presence.viewport.y, rect.x + rect.width > 0, rect.y + rect.height > 0 {
+          XCTAssertTrue(plan.allowsLive(.item(item.id), in: .board(boardID)),
+            "Passive labels cannot evict visible paper into camera-dependent tiles")
+        }
+      }
       XCTAssertTrue(plan.meetsRequiredDensity)
       XCTAssertLessThanOrEqual(plan.tiles.count, SceneCompositionPlan.maximumTiles)
       let largest = (plan.tiles.map(\.pixelSize).max() ?? 0) + 2
@@ -1204,8 +1215,7 @@ final class SceneCompositionTests: XCTestCase {
       let plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
         pinned: [.item(childID)], displayScale: 2, previous: nil)
       let preparedChild = try XCTUnwrap(plan.presentations[.board(childID)])
-      let transferred = try XCTUnwrap(BoardPortalProjection.enteringCamera(from: presence.camera,
-        portalCamera: portalCamera, portalCenter: .zero, viewport: viewport))
+      let transferred = BoardPortalProjection.entryCamera(portalCamera: portalCamera, viewport: viewport)
       let point = WorldPoint(x: 160, y: -45)
       let local = preparedChild.camera.worldToScreen(point, viewport: preparedChild.viewport)
       let center = presence.camera.worldToScreen(.zero, viewport: viewport)

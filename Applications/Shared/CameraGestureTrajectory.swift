@@ -3,14 +3,11 @@ import SwiftUI
 
 /// Owns the geometric camera path for one two-finger gesture.
 ///
-/// Within one board every frame is solved from the same starting camera and
-/// finger pair. No frame becomes the next frame's baseline. A portal
-/// handoff expresses the current camera and pair in the new board exactly once,
-/// keeping the cumulative magnification of the same physical gesture.
+/// Every frame is solved from the same starting camera and finger pair.
+/// No frame becomes the next frame's baseline, and zoom never changes boards.
 struct CameraGestureTrajectory {
   let startingCamera: SpatialCamera
   let startingCentroid: CGPoint
-  let startingMagnification: CGFloat
   let viewport: SpatialPoint
 
   func camera(
@@ -19,8 +16,7 @@ struct CameraGestureTrajectory {
     maximumScale: Double
   ) -> SpatialCamera {
     startingCamera.pinched(
-      by: Double(magnification)
-        / max(Double(startingMagnification), 0.001),
+      by: Double(magnification),
       from: SpatialPoint(
         x: startingCentroid.x,
         y: startingCentroid.y

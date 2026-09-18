@@ -2657,6 +2657,15 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(saved.waitForExistence(timeout: 5), "Reopened anchors and the saved first page must still agree")
     let reopened = XCTAttachment(screenshot: app.screenshot())
     reopened.name = "full-document-cycle-cold-reopened"; reopened.lifetime = .keepAlways; add(reopened)
+    // The page container extends behind the status bar; XCTest chooses its
+    // top hit point for multi-touch. Target visible paper text, not that inset.
+    heading.tap(withNumberOfTaps: 1, numberOfTouches: 2)
+    let undone = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !saved.exists }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [undone], timeout: 8), .completed,
+      "The ordinary two-finger undo must restore the saved document action after a cold reopening")
+    XCTAssertTrue(heading.exists, "Undo restores the block; it must not navigate away or remove the paper")
+    let undoImage = XCTAttachment(screenshot: app.screenshot())
+    undoImage.name = "document-source-undo-after-cold-reopening"; undoImage.lifetime = .keepAlways; add(undoImage)
     app.terminate()
   }
 
@@ -2805,6 +2814,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     marker.pinch(withScale: 0.28, velocity: -2)
     XCTAssertTrue(paper.exists)
     XCTAssertTrue(marker.exists, "Zoom must retain the same physical page")
+    XCTAssertEqual(paper.frame.width, original.width, accuracy: 2, "The open sheet must stay fitted, not recede into the board")
+    XCTAssertEqual(paper.frame.midX, original.midX, accuracy: 2)
+    XCTAssertEqual(paper.frame.midY, original.midY, accuracy: 2)
     XCTAssertFalse(app.buttons["create-workspace-item"].exists)
     XCTAssertTrue(app.buttons["next-page"].exists)
     app.buttons["next-page"].tap()
@@ -2868,8 +2880,14 @@ final class DrawingResponsivenessTests: XCTestCase {
         "The two releases of a pinch are not a double tap on document text")
       XCTAssertFalse(app.keyboards.firstMatch.exists)
     }
-    gestureSurface.pinch(withScale: 0.94, velocity: -0.2)
-    assertOpen("paper-small-reduction-\(document)")
+    for attempt in 0..<2 {
+      gestureSurface.pinch(withScale: 0.28, velocity: -2)
+      assertOpen("paper-strong-reduction-\(document)-\(attempt)")
+      XCTAssertEqual(sheet.frame.width, fitted.width, accuracy: 2, "Zoom-out must stop at the whole sheet")
+      XCTAssertEqual(sheet.frame.height, fitted.height, accuracy: 2)
+      XCTAssertEqual(sheet.frame.midX, fitted.midX, accuracy: 2)
+      XCTAssertEqual(sheet.frame.midY, fitted.midY, accuracy: 2)
+    }
     gestureSurface.pinch(withScale: 1.6, velocity: 0.7)
     assertOpen("paper-enlarged-\(document)")
     XCTAssertGreaterThan(sheet.frame.width, fitted.width * 1.1,
@@ -2972,64 +2990,41 @@ final class DrawingResponsivenessTests: XCTestCase {
     add(portalProof)
   }
 
-  func testPinchEntersAndLeavesALiveBoardPortal() {
+  func testZoomCannotEnterOrLeaveABoardButDoubleTapAndBackCan() {
     continueAfterFailure = false
     let app = XCUIApplication()
-    app.launchArguments = [
-      "--notebook-drawing-responsiveness-fixture",
-      "--notebook-simulator-finger-gestures",
-    ]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture",
+      "--notebook-simulator-finger-gestures", "--notebook-nested-board-fixture"]
     launchPortraitFixture(app)
-
-    let paper = app.otherElements["paper-input"]
-    XCTAssertTrue(paper.waitForExistence(timeout: 5))
-    app.buttons["leave-nested-board"].tap()
-    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
-    let items = app.descendants(matching: .any).matching(
-      NSPredicate(format: "identifier BEGINSWITH 'workspace-item-'")
-    )
-    let priorItems = Set(items.allElementsBoundByIndex.map(\.identifier))
-    app.buttons["create-workspace-item"].tap()
-    let createBoard = app.buttons["create-nested-board"]
-    XCTAssertTrue(createBoard.waitForExistence(timeout: 2))
-    createBoard.tap()
-
-    let created = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-      !Set(items.allElementsBoundByIndex.map(\.identifier)).subtracting(priorItems).isEmpty
-    }, object: nil)
-    XCTAssertEqual(XCTWaiter.wait(for: [created], timeout: 3), .completed)
-    guard let identifier = Set(items.allElementsBoundByIndex.map(\.identifier)).subtracting(priorItems).first else {
-      return XCTFail("Созданный портал не опубликован")
-    }
-    let portal = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    // Navigation gets an existing two-level workspace; the Create menu is a
+    // separate scenario, not a prerequisite for exercising the camera owner.
+    let portal = app.descendants(matching: .any).matching(identifier:
+      "workspace-item-7e7a1000-0000-4000-8000-00000000000d").firstMatch
+    XCTAssertTrue(portal.waitForExistence(timeout: 5))
     portal.pinch(withScale: 3, velocity: 2)
-    XCTAssertTrue(portal.waitForNonExistence(timeout: 4), "Вложенная сцена заменяет рамку портала")
-    XCTAssertTrue(
-      app.buttons["leave-nested-board"].waitForExistence(timeout: 4),
-      "Щипок наружу должен продолжить окно портала во вложенную доску"
-    )
+    XCTAssertTrue(portal.exists, "Zoom cannot replace a portal with its child board")
+    portal.pinch(withScale: 1.0 / 3.0, velocity: -2)
+    XCTAssertTrue(portal.exists)
+    portal.doubleTap()
+    XCTAssertTrue(portal.waitForNonExistence(timeout: 4), "Only explicit entry changes the board")
+    XCTAssertTrue(app.buttons["leave-nested-board"].waitForExistence(timeout: 4))
 
     // Pinch a real child cover rather than the entire UIWindow: its bottom
     // corner is the Create control, which correctly owns that finger itself.
-    app.buttons["create-workspace-item"].tap()
-    app.buttons["Тетрадь"].tap()
-    let cover = items.firstMatch
+    let cover = app.descendants(matching: .any).matching(identifier:
+      "workspace-item-7e7a1000-0000-4000-8000-000000000002").firstMatch
     XCTAssertTrue(cover.waitForExistence(timeout: 3))
     cover.pinch(withScale: 0.55, velocity: -2)
-    XCTAssertTrue(
-      !portal.exists && app.buttons["leave-nested-board"].exists,
-      "Обычное уменьшение внутри доски не должно выводить наружу по доле отдельного жеста"
-    )
+    XCTAssertFalse(portal.exists)
+    XCTAssertTrue(cover.exists)
     cover.pinch(withScale: 0.35, velocity: -2)
-    XCTAssertTrue(
-      portal.waitForExistence(timeout: 4),
-      "Уменьшение за входной масштаб должно продолжить тот же вид на родительской доске"
-    )
+    XCTAssertFalse(portal.exists, "Even repeated zoom-out below the entry scale cannot leave the board")
+    XCTAssertTrue(cover.exists, "The same child material remains on the current board")
+    app.buttons["leave-nested-board"].tap()
+    XCTAssertTrue(portal.waitForExistence(timeout: 4))
     XCTAssertLessThan(portal.frame.width, workspaceWindow(in: app).frame.width)
-    // Back is also present for a focused cover on the parent. The reinstalled
-    // original portal is the owner-specific proof of leaving its child board.
     let proof = XCTAttachment(screenshot: app.screenshot())
-    proof.name = "parent-portal-after-physical-pinch"; proof.lifetime = .keepAlways; add(proof)
+    proof.name = "parent-portal-after-explicit-back-not-zoom"; proof.lifetime = .keepAlways; add(proof)
   }
 
   func testDoubleTapOpensAnAlreadyFocusedCoverWithoutStartingTextEditing() {
