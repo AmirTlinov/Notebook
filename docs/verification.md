@@ -10048,3 +10048,39 @@ manifest перед установкой. CoreDevice readback подтвержд
 тетради, ключи и идентичность не удалялись. Номер страницы без панели сохранён.
 Ручная проверка аппаратным Pencil запрошена; ответа ещё нет. Установка сама
 по себе не доказывает LAN-доставку или живое чтение агентом.
+
+### S6 — установленный публичный TypeScript, 18 сентября 01:38 UTC
+
+Общая подписанная пара **0.3.84 (87)** построена после допущенного final4:
+`.build/shared-0.3.84-s6-release-20260918/build.json`, source
+`043c3f6be081d7064c322bfe2ae78add62e1bf89e2ad008f2c0d4619141d125e`.
+Mac установлен атомарно в `/Users/amir/Applications/Notebook.app` после graceful
+завершения только canonical PID9423 и drain: `.build/shared-0.3.84-s6-mac-install-20260918`.
+Manifest `b52a295ed7b9b3ea54a3a82ecd6f22b7f68f72f2b7cac3047d216a08012501af` совпал
+до/после установки; strict signature PASS. Контейнеры, ключи, trust не заменялись.
+Квитанция физического iPad87: `.build/appearance87-ipad-install-20260918`.
+
+Fresh stdio именно **установленного** `NotebookTools/dist/index.mjs`:
+`.build/s6-installed-public2-20260918/receipt.json`, PASS, ровно два инструмента.
+Валидный TS с типами/args/адресным чтением завершился первым ответом за 163.61 ms;
+повтор того же run — 3.97 ms, первоначальные result/events/pins неизменны.
+Изменённый язык под прежним ID дал `run_id_conflict`. Type error в строке3 —
+`typescript_diagnostic`, events/effects пусты (64.42 ms). Runtime error сохранил
+исходную TS строку3 (117.96 ms). JS дал тот же read-result (66.26 ms).
+Compiler `7.0.2`, SDK `c9623a73526938be057961005454be0bea5ca72ecfd5910b1552f572db4147ea`.
+Первая попытка попала в ещё не готовый IPC сразу после launch; её evidence
+`.build/s6-installed-public-20260918` сохранён. Повтор использовал **тот же UUID,
+код и args**, а не второй эффект. Доменное содержание этим proof не изменялось;
+эквивалентность записей JS/TS отдельно проверена пятью signed native tests.
+
+Обновлены установленный `/Users/amir/.codex/skills/notebook/SKILL.md` и его
+`references/tool-map.md`: явный язык, строгая проверка до эффектов, исходная
+идентичность/диагностика и отсутствие повторной компиляции. Frontmatter/ссылка
+проверены Ruby YAML; bundled quick_validate недоступен в системном Python из-за
+отсутствия PyYAML, зависимости ради текстовой правки не устанавливались.
+
+Границы: текущее ранее загруженное подключение Codex всё ещё объявляет API1 —
+это не fresh installed sidecar. Legacy fallback не включался. После запуска
+обоих87 отдельное `after-ipad.json` снова показывает **disconnected**. Следовательно,
+S6-компиляция/исполнение установлены и доказаны, но S5 production delivery,
+реальное выделение S7, физический Pencil и полная приёмка S10 не объявлены готовыми.
