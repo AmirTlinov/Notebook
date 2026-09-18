@@ -11888,3 +11888,174 @@ requests/replies и native `.xcresult`/AX/PNG. В принятых UI-запус
 перенесённый xctestrun с неразрешённым `__TESTROOT__` дал0тестов; tap справа
 попал в filler/зону перелистывания вместо пустого центра; строка setup-документа
 с неверным escaping отказала до эффектов. Это не объявлено runtime-регрессиями.
+
+### Системные измерения production105 на физическом iPad
+
+`.build/s10-complete-20260918/physical105.trace`: настоящий Instruments,
+app-targeted launch `com.amirtlinov.notebook.preview`, PID7241,
+15:44:24–15:46:39 UTC, **135.816 секунды**, не Simulator/fixture/CADisplayLink.
+Time Profiler + Activity Monitor + Core Animation FPS + GPU. Попытки attach
+по PID/именам не нашли процесс; принят только завершённый launch trace с TOC
+и фактическими samples. Остановка этого профиля завершила запущенный им процесс;
+приложение затем открыто штатно. Это не crash и не непрерывный30-минутный trace.
+
+| Системный показатель | Наблюдение |
+|---|---|
+| Notebook physical footprint,133 samples | median89.142 / p95 91.985 / max133.063 MiB |
+| Notebook CPU,132 samples | median7.927 / p95 25.105 / max109.057%; CPU time14.088s |
+| Core Animation display FPS estimate,134 samples | median8 / p95/max60; включая ожидание/покой |
+| Device GPU hardware,134 samples | median17 / p95 37 / max63% |
+| GPU intervals именно Notebook PID7241 | 42 интервала, сумма37.899ms; перекрывающиеся каналы не wall utilization |
+
+FPS/GPU hardware относятся к дисплею/устройству, **не изолированному FPS Notebook**;
+из них не следует обещание60FPS или отсутствие dropped frames. Time Profiler
+содержит14024 samples процесса Notebook. Hitches/SwiftUI lanes отсутствуют;
+ноль извлечённых hang rows не является доказательством отсутствия всех зависаний.
+Есть сохранённое предупреждение `Data stream: Time Mapping`. CPU/память других
+приложений не анализировались. Scope — запуск/поиск, не все70 сценариев и не
+память TS-компилятора на Mac; его отдельные измерения сохранены в
+`docs/programmable-notebook-measurements.md`.
+
+На этой beta-паре Xcode/iPadOS повторялись60-секундные ожидания XCTest
+`App animations complete notification not received`, при доступных AX/PNG
+и завершённых жестах. Перезапуск того же105 временно убирал ожидания, но не
+считается исправлением production. Эти паузы нельзя выдавать за обычную
+пользовательскую latency или время CPU. Raw trace/XML, `system-metrics.json`
+и `system-profile-analysis.{json,md}` сохранены рядом с квитанциями сценариев.
+
+## 18 сентября 2026 — S8–S10: полный сценарный цикл и найденная граница старой отмены
+
+На неизменной установленной105 завершены **семь задач ×10 =70 сценариев**:
+подпись (JS/TS попеременно), внеэкранный материал и все80 совпадений поиска
+страницами по7, один блок79 из81, атомарные два узла/связь, алгоритмическая
+перестройка, конфликт после настоящего iPad drag и восстановление после
+разрыва MCP-клиента. Каждый повтор менял данные, не был replay/no-op.
+В каждом цикле шесть точных публикаций подтвердили saved/received/shown
+для actionVersion и физического actor5124…; native AX/PNG/жесты проверялись
+отдельно. В документе native button продолжил агентский state до11…101;
+undo сохранила человеческое значение. Reconnect присоединился к тому же run,
+повтор start вернул тот же результат с одним эффектом. Это разрыв MCP, не
+имитация потери радио; commit fault-injection и offline semantics проверены
+отдельными ранее принятыми контрактами.
+
+Работа на паре шла с15:40 до16:20 UTC, включая настоящий источник сообщения
+и последовательные native/MCP действия; это более30 минут совместного
+сценария, не обещание непрерывной30-минутной записи Instruments. Из серии
+не скрыты паузы XCTest/исправления драйвера. После третьего цикла test runner
+отключил только своё ожидание animation-idle и перестал повторно activate
+уже foreground app; event-loop waits и конкретные UI assertions сохранены,
+анимации production не отключались. Ошибочный ранний drag попал в connector,
+развязал его и потребовал явного исправления **собственной** fixture через SDK;
+попытки repair с синтаксической ошибкой/без movement scope не записали эффект.
+Это не изменения SDK ради теста и не измерение автономной успешности агента.
+
+Экспорт большого документа: **21 страница,45395B**, SHA256
+`22fb3656dae14e5f1fcc866dc97ffd582029a369e53d50170295ac45bd7b786b`.
+PDFKit прочитал Section0 и Section79,53153B текста. Пока persisted export
+до/после записи оставался `running`, независимая SDK-подпись сохранилась
+за179.223ms; её точный shown подтверждён через2.040s polling. Это верхние
+границы round-trip/наблюдения, не внутренний timestamp кадра. Исходный ink
+PNG действительно содержит красный штрих, без OCR; его revision не изменился
+от всех предыдущих правок/жестов схемы.
+
+Финальная отмена этого старого ink-action выявила дефект105: штрих уже исчез
+на физическом iPad, но новая версия квитанции не подтверждалась. Native refresh
+брал последние64 **созданных** действия; старая запись с новым undo выпадала.
+Регрессия с70 более новыми действиями сначала получила три отказа. Исправление
+`6bf6159` индексирует время текущей фазы отдельно от времени создания; delivery
+и display owner читают этот ограниченный индекс. Публичная creation-history
+pagination не меняется. Schema12 перестраивает только derived descriptions,
+не records/версии/идентичности/journal/read cursor. **11 Core tests /2 suites
+PASS**, включая v11 admission,14MiB receipt и запоздалую старую квитанцию.
+
+Физический native refresh regression также PASS. Первый общий source gate
+честно отказал: параллельная незавершённая графика изменила checkout. Для
+повторной проверки и выпуска106 взят immutable cut ровно `6bf6159`, без этих
+чужих изменений: `.build/s10-phase106-source`,
+SHA256 `fc9812ab5043d5bb0eeb181e3f740d291f475f601dc0150aca3f834ed075971d`.
+`.build/s10-old-phase106-verify-final`: **1 physical native PASS**, без skips
+и runtime warnings. Полная семёрка105 не переименовывается в70 прогонов106;
+последняя дельта принимает адресную регрессию и живую старую отмену отдельно.
+
+Evidence: `.build/s10-complete-20260918/cycle-01…10-receipt.json`, public
+`calls/`, native xcresult/AX/PNG, `export-concurrency.json`, `export-result.json`,
+`pdf-proof.log`, `old-undo-{red,green}.log`. Системный профиль, разрешённый
+Амиром в16:08, был оборван прерыванием turn и не финализировался (`Document
+Missing Template`); его начало **не засчитано как измерение**.
+
+## 18 сентября 2026 — все десять срезов MCP TDD приняты, production106
+
+Финальная пара **0.3.103 (106)** установлена поверх105 без удаления контейнеров,
+смены workspace/actor/ключей/доверия. Source `6bf6159` и fingerprint указаны выше;
+signed build `.build/s10-release106-pinned/build.json`, установка
+`.build/s10-install106/`. iPad UUID `4FA30C0C-1C0A-37EC-8A3F-F4F3106F0068`,
+CDHash `3ac43ae641ae8782940c6287b23b606cba3be361`; Mac UUID
+`18C26EFF-34DF-3DA4-AE68-EDDCA0DF21B8`, CDHash
+`3f2c1e85bf43b9b8ee375af4216e8f910e3d5823`. Ровно два installed tools:
+`notebook_context`, `notebook_execute`. Это принятие MCP-вехи, не незавершённых
+параллельных изменений графики или следующего Mac UI.
+
+На106, **без повторного выполнения старой отмены**, action
+`BBD42B8A-40F4-44D8-85AB-AAB4B17A4445`, версия
+`bb5b8747c26b31934cdbe0e7cc5822add35b6c0772d08f7bcec5e18dfc859429`
+получила saved/received/shown confirmed. Физически красного штриха нет,
+схема `R10 → PDF` сохранена; настоящий ink PNG белый, pageMap ready,
+revision2, regions/occupiedCells пусты. Ошибочная105-квитанция сохранена отдельно.
+
+Физический lifecycle106: открытые тетрадь и документ исчезают после SDK delete,
+undo возвращает тот же предмет и число записей; повторное открытие показывает
+`R10 → PDF` и **SDK count101**, включая человеческое продолжение. После удаления
+трёх собственных детей проверены пустая доска, её delete/undo и повторное
+открытие. Последующий cleanup удалил только собственные четыре предмета.
+Итог в16:46 UTC: **itemCount7→7**, четыре адреса `null`, runtime `connected`,
+selection `known/empty` на корневой доске. PNG итоговой поверхности осмотрен;
+пользовательская тетрадь/чернила остались. Собственный standalone UI runner
+удалён с iPad. Тестовая задача с историческим сообщением сохранена: штатное
+архивирование отказало `active writer`, обхода app/bridge не делали.
+
+Две попытки cleanup-навигации не закрыли search sheet: XCTest нажимал пустой
+центр короткой строки с plain button. Tap по видимому заголовку открыл доску;
+production не менялся. Эти failed attempts не засчитаны как успешные сценарии.
+Итоговый агрегатор строго проверил **70 сценариев,60 точных публикаций** и
+**125 успешных native summaries** выбранной серии, исключив5 failed/invalid
+summaries; отдельные S7/106 native proofs хранятся рядом. Это не заявление,
+что весь исторический test suite или `verify.sh --full` запускался и зелёный.
+
+### Завершённый системный профиль106
+
+Разрешённый системный trace `physical106-joint.trace`, **16:37:49–16:42:50 UTC,
+300.948s**, финализирован и экспортирован. Это ограниченная5-минутная запись
+lifecycle/undo и последующего ожидания, а не30 минут активных жестов. Анализ
+CPU/memory/GPU intervals ограничен Notebook **PID7976**; другие процессы не
+анализировались. Display FPS/hardware GPU — показатели всего устройства.
+
+| Показатель | median / p95 / max |
+|---|---|
+| Notebook physical footprint,293 samples | 279.361 / 288.470 / 457.127 MiB |
+| Notebook CPU,292 samples | 25.681 / 72.051 / 127.697%; CPU delta93.539s |
+| Device Core Animation FPS estimate,298 samples | 8 / 60 / 60, с покоем |
+| Device GPU hardware,298 samples | 0 / 55 / 68% |
+
+Notebook GPU:817 intervals, сумма854.219ms; перекрытия не дают wall utilization.
+Xcode27 export сохранил предупреждения об overlapping dylib timelines;
+числовые Activity Monitor/CA/GPU rows присутствуют. Не выводим из этих данных
+изолированный FPS приложения, отсутствие hitches или обещание60FPS. Память
+компилятора на Mac и сравнение v1/v2 — отдельные измерения, не этот iPad trace.
+
+На installed105 обычные публичные программы подписи, поиска, адресного блока,
+создания графа и reflow завершались одним внешним вызовом; медианы round-trip
+соответственно201.123 /31.541 /43.760 /271.207 /180.396ms. Setup, UI и отдельная
+проверка публикации не входят в эти числа. Reconnect включает явное3-секундное
+ожидание: медиана3170.716ms,5 вызовов. Полные диапазоны/байты и идентичности
+в `final-receipt.json`; сравнение до/после и read/decode counts —
+`docs/programmable-notebook-measurements.md`. Общий процент ускорения и
+автономная частота исправления запросов не заявляются.
+
+S8/GUI-217, S9/GUI-218 и S10/GUI-219 закрыты по совокупности прежних контрактов,
+полного installed SDK цикла и этой физической приёмки; S1–S7 уже приняты.
+Все десять срезов одной вехи завершены. Unsupported groups/rotation/import/OCR
+не объявлены реализованными. Evidence: `.build/s10-complete-20260918/`
+`final-receipt.json`, `lifecycle-*-receipt.json`, `ink-acceptance-receipt.json`,
+`final-read.json`, `public-tools106-final.json`, `joint-system-metrics.json`,
+trace/XML, native AX/PNG и public requests/replies. Физический/Xcode слот
+передан следующей задаче в16:47 UTC; здесь дальнейших запусков нет.

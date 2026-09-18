@@ -235,3 +235,15 @@ Evidence: `.build/s10-read-metrics-20260918/comparison.json`, `evidence-manifest
 **Instrumented wall/CPU timings не заменяют прежние uninstrumented latency
 серии.** Этот результат закрывает прежнее отсутствие read/decode counts семи
 сценариев, но не физическую доставку, gestures или системные frames/CPU/GPU/memory.
+
+## Физическая приёмка после сравнительных измерений
+
+18 сентября завершены семь сценариев ×10 на installed105 и адресная
+финальная регрессия/cleanup на production106. Системные профили iPad:
+135.816s (105) и300.948s (106); совместный native/MCP сценарий шёл более30min.
+Это отдельные от приведённых выше private Mac замеров источники и условия.
+Точная идентичность, saved/received/shown, реальные жесты, результаты и пределы
+системных FPS/CPU/GPU/memory приведены в `docs/verification.md`, раздел
+«Все десять срезов MCP TDD приняты, production106». Raw final receipt:
+`.build/s10-complete-20260918/final-receipt.json`. Полная веха принята без
+объявления общего процента ускорения или изолированного60FPS Notebook.
