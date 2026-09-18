@@ -3,7 +3,6 @@ import UIKit
 
 @main
 struct NotebookApp: App {
-  @UIApplicationDelegateAdaptor(NotebookDevicePushDelegate.self) private var pushDelegate
   @Environment(\.scenePhase) private var scenePhase
   @State private var launch: NotebookApplicationLaunch
 
@@ -102,19 +101,3 @@ struct NotebookApp: App {
     }
   }
 #endif
-
-@MainActor
-final class NotebookDevicePushDelegate: NSObject, UIApplicationDelegate {
-  func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-    if Bundle.main.object(forInfoDictionaryKey: "NotebookCloudContainer") as? String == NotebookCloudSync.containerIdentifier,
-      ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
-      application.registerForRemoteNotifications()
-    }
-    return true
-  }
-  func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
-    guard NotebookAccountPush.matches(userInfo) else { return .noData }
-    await NotebookAccountPush.refresh()
-    return .noData // Device metadata, not a content fetch.
-  }
-}

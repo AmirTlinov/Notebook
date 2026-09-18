@@ -81,14 +81,8 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
       if isFixture, let model = launch.model { Task { await MacDocumentLaunchFixture.writeProof(model: model) } }
     #endif
     guard !isRunningTests, !isFixture, !isAcceptance else { return }
-    NSApplication.shared.registerForRemoteNotifications()
     let enabled = UserDefaults.standard.object(forKey: "notebook.launch-at-login") as? Bool ?? true
     setLaunchesAtLogin(enabled)
-  }
-
-  func application(_ application: NSApplication, didReceiveRemoteNotification userInfo: [String: Any]) {
-    guard NotebookAccountPush.matches(userInfo) else { return }
-    Task { await NotebookAccountPush.refresh() }
   }
 
   func start() {

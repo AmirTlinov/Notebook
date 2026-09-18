@@ -32,7 +32,7 @@ final class NotebookAccountConnection {
   private let logger = Logger(subsystem: "com.amirtlinov.notebook", category: "AccountConnection")
 
   init(device: NotebookAccountDirectory.Device, sync: NearbySync,
-    service: any NotebookAccountService = NotebookAccountCloud(),
+    service: any NotebookAccountService,
     initialBoundAccount: String? = nil,
     shouldOpenDefault: @escaping @MainActor () async -> Bool = { false },
     openWorkspace: @escaping @MainActor (UUID) -> Void = { _ in },

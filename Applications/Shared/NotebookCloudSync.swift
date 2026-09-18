@@ -22,6 +22,9 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   private let report: @Sendable (NotebookCloudStatus) async -> Void
   private var engine: CKSyncEngine?
   private var account: String?
+  private var contentEnabled = false
+  private var accountObserver: (account: String, changed: @Sendable (Bool) async -> Void)?
+  private let accountZoneID = CKRecordZone.ID(zoneName: NotebookAccountCloud.zoneName, ownerName: CKCurrentUserDefaultName)
   private var assets: [String: URL] = [:]
   private var pumping = false
   private var pumpAgain = false
@@ -51,6 +54,33 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
       throw CloudFailure("iCloud недоступен. Локальная тетрадь и прямой обмен продолжают работать.")
     }
     return try await container.userRecordID().recordName
+  }
+
+  /// The sole engine also observes device metadata when content sync is off.
+  /// No second engine or competing AppDelegate subscription owns this database.
+  func observeAccount(_ expected: String, changed: @escaping @Sendable (Bool) async -> Void) async throws {
+    let token = epoch, container = try container()
+    guard try await currentAccount(container) == expected else { throw NotebookAccountError.changed }
+    guard epoch == token else { throw CancellationError() }
+    let first = accountObserver == nil || engine == nil
+    accountObserver = (expected, changed)
+    if engine == nil { try await start(container: container, account: expected, token: token) }
+    guard epoch == token, let engine, account == expected else { throw CancellationError() }
+    if first {
+      try await engine.fetchChanges(.init(scope: .zoneIDs([accountZoneID])))
+      // A fetched event never waits for this account task to finish observing.
+      Task { await changed(false) }
+    }
+  }
+
+  private func notifyAccount(_ changed: Bool) {
+    guard let callback = accountObserver?.changed else { return }
+    Task { await callback(changed) }
+  }
+
+  static func fetchZoneIDs(workspaceID: CKRecordZone.ID, contentEnabled: Bool, requested: CKSyncEngine.FetchChangesOptions.Scope = .all) -> [CKRecordZone.ID] {
+    let account = CKRecordZone.ID(zoneName: NotebookAccountCloud.zoneName, ownerName: CKCurrentUserDefaultName)
+    return (contentEnabled ? [account, workspaceID] : [account]).filter { requested.contains($0) }
   }
 
   /// First account enrollment enables normal sync. A saved user opt-out stays
@@ -123,20 +153,24 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   }
 
   private func start(container: CKContainer, account: String, token: UUID) async throws {
-    let data = try await writer.submit { try $0.cloudEngineState(account: account) }
-    guard epoch == token else { return }
+    guard engine == nil else { return }
+    let stored = try await writer.submit { try $0.cloudConfiguration() }
+    guard stored.account == nil || stored.account == account else { throw NotebookAccountError.changed }
+    let enabled = stored.enabled && stored.account == account
+    let data = enabled ? try await writer.submit { try $0.cloudEngineState(account: account) } : nil
+    guard epoch == token, engine == nil else { return }
+    contentEnabled = enabled
     let state = try data.map { try JSONDecoder().decode(CKSyncEngine.State.Serialization.self, from: $0) }
     resumeRetry?.cancel(); resumeRetry = nil
     self.account = account; hasFailure = false
     var configuration = CKSyncEngine.Configuration(database: container.privateCloudDatabase, stateSerialization: state, delegate: self)
     configuration.automaticallySync = true
-    configuration.subscriptionID = "Notebook-" + zoneID.zoneName
     let engine = CKSyncEngine(configuration); self.engine = engine
     // SQLite outbox is authoritative if a process died between an ACK and
     // CKSyncEngine's following serialization event.
     engine.state.remove(pendingRecordZoneChanges: engine.state.pendingRecordZoneChanges)
-    if state == nil { engine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))]) }
-    await report(.init(enabled: true, message: "Синхронизация iCloud включена."))
+    if enabled && state == nil { engine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))]) }
+    await report(enabled ? .init(enabled: true, message: "Синхронизация iCloud включена.") : .off)
     await pump()
   }
 
@@ -145,17 +179,23 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
     guard epoch == token else { return }
     do {
       try await writer.submit { try $0.disableCloud() }
-      if epoch == token { await report(.off) }
+      guard epoch == token else { return }
+      await report(.off)
+      if let observer = accountObserver {
+        let container = try container()
+        guard try await currentAccount(container) == observer.account else { throw NotebookAccountError.changed }
+        try await start(container: container, account: observer.account, token: token)
+      }
     } catch { if epoch == token { await reportFailure(error) } }
   }
 
   private func invalidate() -> CKSyncEngine? {
     resumeRetry?.cancel(); resumeRetry = nil
-    epoch = UUID(); let previous = engine; engine = nil; account = nil
+    epoch = UUID(); let previous = engine; engine = nil; account = nil; contentEnabled = false
     return previous
   }
 
-  func stop() async { _ = await stopEngine() }
+  func stop() async { accountObserver = nil; _ = await stopEngine() }
 
   private func stopEngine() async -> UUID {
     let previous = invalidate(), files = Array(assets.values); assets.removeAll()
@@ -185,7 +225,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
     defer { pumping = false }
     while pumpAgain {
       pumpAgain = false
-      guard let engine, let account else { return }
+      guard contentEnabled, let engine, let account else { return }
       let token = epoch
       do {
         // Asset reconstruction and reads never occupy the application's writer.
@@ -227,11 +267,14 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   }
 
   func nextFetchChangesOptions(_ context: CKSyncEngine.FetchChangesContext, syncEngine: CKSyncEngine) async -> CKSyncEngine.FetchChangesOptions {
-    .init(scope: .zoneIDs([zoneID]))
+    var options = context.options
+    options.scope = .zoneIDs(Self.fetchZoneIDs(workspaceID: zoneID, contentEnabled: contentEnabled, requested: context.options.scope))
+    options.prioritizedZoneIDs = [accountZoneID]
+    return options
   }
 
   func nextRecordZoneChangeBatch(_ context: CKSyncEngine.SendChangesContext, syncEngine: CKSyncEngine) async -> CKSyncEngine.RecordZoneChangeBatch? {
-    guard syncEngine === engine, let account else { return nil }
+    guard contentEnabled, syncEngine === engine, let account else { return nil }
     let token = epoch
     do {
       // A changed account may never receive the previously bound outbox, even
@@ -273,6 +316,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
     do {
       switch event {
       case .stateUpdate(let value):
+        guard contentEnabled else { return }
         let data = try Self.encode(value.stateSerialization)
         try await writer.submit { try $0.saveCloudEngineState(data, account: account) }
       case .accountChange(let value):
@@ -281,10 +325,15 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
         default: await accountChanged()
         }
       case .fetchedDatabaseChanges(let value):
+        if value.deletions.contains(where: { $0.zoneID == accountZoneID }) { notifyAccount(false) }
+        guard contentEnabled else { return }
         if value.deletions.contains(where: { $0.zoneID == zoneID }) {
           throw CloudFailure("Облачная зона удалена. Обмен остановлен; локальные данные сохранены.")
         }
       case .fetchedRecordZoneChanges(let value):
+        if value.modifications.contains(where: { $0.record.recordID.zoneID == accountZoneID })
+          || value.deletions.contains(where: { $0.recordID.zoneID == accountZoneID }) { notifyAccount(false) }
+        guard contentEnabled else { return }
         guard value.deletions.filter({ $0.recordID.zoneID == zoneID }).isEmpty else {
           throw CloudFailure("Удалены неизменяемые облачные записи. Обмен остановлен; локальные данные сохранены.")
         }
@@ -298,6 +347,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
         // asset and envelope is durable before a later stateUpdate is saved.
         await pump()
       case .sentRecordZoneChanges(let value):
+        guard contentEnabled else { return }
         var accepted = value.savedRecords.map { $0.recordID.recordName }
         for failed in value.failedRecordSaves {
           if failed.error.code == .serverRecordChanged, let server = failed.error.serverRecord {
@@ -333,6 +383,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   }
 
   private func accountChanged() async {
+    notifyAccount(true)
     let bound = account
     stopFromDelegate()
     let token = epoch

@@ -117,24 +117,13 @@ final class NotebookAccountConnectionTests: XCTestCase {
     XCTAssertEqual(directory.value.defaultSpaceID, existing)
   }
 
-  func testAccountPushOnlyWakesTheCurrentOwnerAndNeverAuthorizesFromItsPayload() async {
-    let container = NotebookCloudSync.containerIdentifier, subscription = NotebookAccountPush.subscriptionID
-    XCTAssertTrue(NotebookAccountPush.accepts(container: container, subscription: subscription, zone: NotebookAccountCloud.zoneName, database: .private))
-    XCTAssertTrue(NotebookAccountPush.accepts(container: nil, subscription: subscription, zone: nil, database: .private))
-    XCTAssertFalse(NotebookAccountPush.matches([:]))
-    XCTAssertFalse(NotebookAccountPush.accepts(container: "foreign", subscription: subscription, zone: nil, database: .private))
-    XCTAssertFalse(NotebookAccountPush.accepts(container: container, subscription: "content", zone: nil, database: .private))
-    XCTAssertFalse(NotebookAccountPush.accepts(container: container, subscription: subscription, zone: "content", database: .private))
-    XCTAssertFalse(NotebookAccountPush.accepts(container: container, subscription: subscription, zone: nil, database: .shared))
-    let first = UUID(), second = UUID(), calls = AccountPushCalls()
-    NotebookAccountPush.install(id: first) { _ in await calls.incrementFirst() }
-    NotebookAccountPush.install(id: second) { _ in await calls.incrementSecond() }
-    NotebookAccountPush.remove(id: first)
-    await NotebookAccountPush.refresh()
-    NotebookAccountPush.remove(id: second)
-    await NotebookAccountPush.refresh()
-    let counts = await calls.values()
-    XCTAssertEqual(counts.0, 0); XCTAssertEqual(counts.1, 1)
+  func testOneCloudEngineKeepsAccountDiscoveryWhenContentSyncIsOff() {
+    let content = CKRecordZone.ID(zoneName: "Notebook-test", ownerName: CKCurrentUserDefaultName)
+    let account = CKRecordZone.ID(zoneName: NotebookAccountCloud.zoneName, ownerName: CKCurrentUserDefaultName)
+    XCTAssertEqual(NotebookCloudSync.fetchZoneIDs(workspaceID: content, contentEnabled: false), [account])
+    XCTAssertEqual(NotebookCloudSync.fetchZoneIDs(workspaceID: content, contentEnabled: true), [account, content])
+    XCTAssertEqual(NotebookCloudSync.fetchZoneIDs(workspaceID: content, contentEnabled: true, requested: .zoneIDs([account])), [account])
+    XCTAssertEqual(NotebookCloudSync.fetchZoneIDs(workspaceID: content, contentEnabled: false, requested: .zoneIDs([content])), [])
   }
 
   private func makeDevice(_ space: UUID, _ platform: NotebookAccountDirectory.Device.Platform) -> NotebookAccountDirectory.Device {
@@ -187,11 +176,4 @@ final class NotebookAccountConnectionTests: XCTestCase {
     }
   }
   func stop() async { directory.observers[id] = nil; gate?.resume(); gate = nil }
-}
-
-private actor AccountPushCalls {
-  var first = 0, second = 0
-  func incrementFirst() { first += 1 }
-  func incrementSecond() { second += 1 }
-  func values() -> (Int, Int) { (first, second) }
 }

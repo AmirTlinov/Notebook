@@ -130,6 +130,26 @@ struct NotebookCloudDeliveryTests {
     #expect(try reopened.readItemHeader(item)?.title == "Local tail")
   }
 
+  @Test func freshReplicaAdmitsHistoricalAbsenceWithoutCreatingAnUnknownBoardMember() throws {
+    let pair = try Pair(), workspace = try pair.a.workspaceHeader()
+    let absent = "board.json#/boards/@" + workspace.rootBoardID.uuidString.lowercased() + "/board/retired-collection/@absent"
+    // The current board has no such owner. Only its immutable historical
+    // removal remains, and a coherent snapshot must not resurrect or decode it.
+    try pair.a.commandTransaction {
+      try pair.a.currentSQL!.run("INSERT INTO change_records(sequence,address,blob_hash) VALUES(?,?,NULL)",
+        [.integer(Int64(try pair.a.currentChangeCursor())), .text(absent)])
+    }
+    let cloud = try upload(pair.a, source: pair.sourceA, account: pair.account)
+    let receiver = NotebookStore(root: pair.root.appendingPathComponent("empty-replica"))
+    try receiver.prepareEmptyWorkspace(workspaceID: workspace.workspaceID)
+    try receiver.prepareCloudStorage(); try receiver.enableCloud(account: pair.account, source: pair.sourceB)
+    try receive(cloud, to: receiver, source: pair.sourceB, account: pair.account)
+    #expect(try receiver.workspaceHeader().rootBoardID == workspace.rootBoardID)
+    #expect(try receiver.incomingCursor(source: pair.sourceA) == pair.a.currentChangeCursor())
+    #expect(try receiver.sqlRead { try $0.rows("SELECT 1 FROM records WHERE address=?", [.text(absent)]).isEmpty })
+    #expect(try receiver.cloudInbox(account: pair.account).isEmpty)
+  }
+
   @Test(arguments: [false, true])
   func boundConnectorsKeepTheirDependenciesAndIndependentFieldsAcrossCloud(board: Bool) throws {
     let pair = try Pair(), index = try pair.a.loadIndex()

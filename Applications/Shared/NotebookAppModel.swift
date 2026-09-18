@@ -1283,9 +1283,9 @@ final class NotebookAppModel {
       connectionState = .failed("Не удалось проверить настройки устройств. Локальное сохранение доступно.")
       return
     }
-    guard !isClosing else { return }
+    guard !isClosing, let cloudSync else { return }
     let account = NotebookAccountConnection(
-      device: .init(identity: connection.identity, platform: platform, activation: pairingActivationID), sync: connection, initialBoundAccount: bound,
+      device: .init(identity: connection.identity, platform: platform, activation: pairingActivationID), sync: connection, service: NotebookAccountCloud(cloud: cloudSync), initialBoundAccount: bound,
       shouldOpenDefault: { [weak self] in
         await self?.mayAutomaticallySwitchWorkspace() ?? false
       }, openWorkspace: { [weak self] id in self?.openDefaultAccountWorkspace?(id) },

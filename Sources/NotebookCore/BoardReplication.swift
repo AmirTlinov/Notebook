@@ -99,6 +99,10 @@ extension NotebookStore {
           }
         }
       try incoming.visit(from: nodeAddress + "/", to: nodeAddress + "0") { address in
+        // A checkpoint includes historical absences as well as live owners.
+        // Absence on both sides has no schema or mutation to admit. Do not
+        // interpret it as a board member; a nonempty unknown member still fails.
+        if try incoming.fragment(address) == nil, try incoming.previous(address) == nil { return }
         guard address.hasPrefix(placementPrefix) || address.hasPrefix(nodeAddress + "/board/elements/@")
           || address.hasPrefix(nodeAddress + "/board/collaboration/fields/@") else { throw NotebookStorageError.invalidTransaction("board member address") }
       }

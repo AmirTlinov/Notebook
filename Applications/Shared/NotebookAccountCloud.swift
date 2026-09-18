@@ -29,14 +29,14 @@ protocol NotebookAccountService: Sendable {
 
 /// Small account metadata has one CAS owner. Device keys live in an encrypted
 /// field in a private zone, never a public record, Bonjour or content journal.
-/// A zone subscription wakes this owner; the content pipeline is the only
-/// CKSyncEngine for the private database. No perpetual cloud polling.
+/// Account and content notifications share one private-database CKSyncEngine.
+/// This owner only changes the bounded directory through its CAS transaction.
 actor NotebookAccountCloud: NotebookAccountService {
   static let zoneName = "NotebookAccount"
   static let recordName = "devices"
   private let zoneID = CKRecordZone.ID(zoneName: zoneName, ownerName: CKCurrentUserDefaultName)
-  private var observing = false
-  private let observationID = UUID()
+  private let cloud: NotebookCloudSync
+  init(cloud: NotebookCloudSync) { self.cloud = cloud }
   private var generation = UUID()
 
   private func container() throws -> CKContainer {
@@ -122,57 +122,13 @@ actor NotebookAccountCloud: NotebookAccountService {
   }
 
   func observe(changed: @escaping @Sendable (Bool) async -> Void) async throws {
-    guard !observing else { return }
     let token = generation, container = try container()
-    let expectedAccount = try await account(container)
-    let subscription = CKRecordZoneSubscription(zoneID: zoneID, subscriptionID: NotebookAccountPush.subscriptionID)
-    let info = CKSubscription.NotificationInfo()
-    info.shouldSendContentAvailable = true
-    subscription.notificationInfo = info
-    _ = try await container.privateCloudDatabase.save(subscription)
-    guard generation == token, try await account(container) == expectedAccount else { throw NotebookAccountError.changed }
-    await NotebookAccountPush.install(id: observationID, changed: changed)
-    guard generation == token else {
-      await NotebookAccountPush.remove(id: observationID)
-      throw NotebookAccountError.changed
-    }
-    observing = true
-    // Close the enrollment-to-subscription gap, without waiting on the account
-    // work that is currently installing this observer.
-    Task { await changed(false) }
+    let expected = try await account(container)
+    try await cloud.observeAccount(expected, changed: changed)
+    guard generation == token else { throw NotebookAccountError.changed }
   }
-
   func stop() async {
-    generation = UUID(); observing = false
-    await NotebookAccountPush.remove(id: observationID)
+    generation = UUID()
+    await cloud.stop()
   }
-}
-
-/// App delegates deliver a wake-up, never credentials or content. A single
-/// handler belongs to the currently admitted account owner. Background fetch
-/// waits for that owner's work instead of completing before the cloud read.
-@MainActor
-enum NotebookAccountPush {
-  nonisolated static let subscriptionID = "Notebook.AccountDevices"
-  private static var observer: (id: UUID, changed: @Sendable (Bool) async -> Void)?
-
-  static func install(id: UUID, changed: @escaping @Sendable (Bool) async -> Void) {
-    observer = (id, changed)
-  }
-  static func remove(id: UUID) {
-    if observer?.id == id { observer = nil }
-  }
-  static func matches(_ userInfo: [AnyHashable: Any]) -> Bool {
-    guard let value = CKNotification(fromRemoteNotificationDictionary: userInfo) as? CKRecordZoneNotification else { return false }
-    return accepts(container: value.containerIdentifier, subscription: value.subscriptionID,
-      zone: value.recordZoneID?.zoneName, database: value.databaseScope)
-  }
-  static func accepts(container: String?, subscription: String?, zone: String?, database: CKDatabase.Scope) -> Bool {
-    // CloudKit can prune optional payload fields. This only requests a fresh
-    // authenticated read, and cannot enroll a device from push payload data.
-    subscription == subscriptionID && database == .private
-      && (container == nil || container == NotebookCloudSync.containerIdentifier)
-      && (zone == nil || zone == NotebookAccountCloud.zoneName)
-  }
-  static func refresh() async { await observer?.changed(false) }
 }
