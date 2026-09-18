@@ -534,6 +534,11 @@ final class NotebookAppModel {
       }
       openDocumentPresentation?.cameraDidChange()
       pagePresentations.cameraDidChange()
+      if oldValue?.boardID != presence?.boardID || oldValue?.mode != presence?.mode
+        || oldValue?.focusedItemID != presence?.focusedItemID || oldValue?.notebookPageID != presence?.notebookPageID
+        || oldValue?.documentPageIndex != presence?.documentPageIndex {
+        publishSelection()
+      }
       #endif
     }
   }
@@ -733,6 +738,10 @@ final class NotebookAppModel {
   private(set) var selectionSession = NotebookSelectionSession() {
     didSet {
       if oldValue.highlightedReference != selectionSession.highlightedReference { collaborationContentEpoch &+= 1 }
+      if oldValue.id != selectionSession.id || oldValue.target != selectionSession.target
+        || oldValue.context != selectionSession.context || oldValue.isResolvingContext != selectionSession.isResolvingContext {
+        publishSelection()
+      }
     }
   }
 
@@ -843,6 +852,9 @@ final class NotebookAppModel {
   private var presenceSequence: UInt64 = 0
   private var lastSettledPresenceEnvelope: PresenceEnvelope?
   private var presenceSequenceTracker = PresenceSequenceTracker()
+  @ObservationIgnored private(set) var lastSelectionEnvelope: NotebookSelectionEnvelope?
+  @ObservationIgnored private var selectionSequence: UInt64 = 0
+  @ObservationIgnored private var selectionSurfaceIsActive = false
   private let startsNearbySync: Bool
   var cloudStatus = NotebookCloudStatus.off
   @ObservationIgnored private var cloudSync: NotebookCloudSync?
@@ -1013,6 +1025,9 @@ final class NotebookAppModel {
   /// Only this generation may publish or release the peer's contact barrier.
   func peerConnected(_ peer: NotebookTransportIdentity, generation: UUID) {
     peerGenerations[peer.deviceID] = generation
+    #if os(macOS)
+      enqueueStoreWrite(publishesChanges: false) { try $0.beginSelectionPublication(deviceID: peer.deviceID, connectionID: generation) }
+    #endif
     isPeerConnected = true
     pairedPeers = sync?.pairedPeers ?? []
     publishInputActivity()
@@ -1023,6 +1038,7 @@ final class NotebookAppModel {
         await chat?.connect(peer.deviceID)
       }
       if let lastSettledPresenceEnvelope { sync?.sendTransient(.presence(lastSettledPresenceEnvelope)) }
+      publishSelection(force: true)
     #endif
   }
 
@@ -1037,7 +1053,10 @@ final class NotebookAppModel {
     peerActivities[peerID] = nil
     isPeerConnected = !peerGenerations.isEmpty
     peerInputIsActive = peerActivities.values.contains(where: \.isActive)
-    enqueueStoreWrite { try $0.resetInputActivity(deviceID: peerID) }
+    enqueueStoreWrite {
+      try $0.resetInputActivity(deviceID: peerID)
+      try $0.endSelectionPublication(deviceID: peerID, connectionID: generation)
+    }
     if !isPeerConnected { restoreSettledPresenceAfterDisconnect() }
   }
 
@@ -2518,6 +2537,79 @@ final class NotebookAppModel {
     replaceSelection(nil)
   }
 
+  /// A read-only projection of the single UI owner. Missing physical knowledge
+  /// stays unknown; a camera can name a surface, never an element selection.
+  var selectionForPublication: NotebookSelection? {
+    guard let presence else { return nil }
+    let surface: CollaborationTarget
+    switch presence.mode {
+    case .board: surface = .init(kind: .board, id: presence.boardID)
+    case .cover:
+      guard let id = presence.focusedItemID else { return nil }
+      surface = .init(kind: .cover, id: id, boardID: presence.boardID)
+    case .page:
+      guard let id = presence.notebookPageID else { return nil }
+      surface = .init(kind: .page, id: id)
+    case .document:
+      guard let id = presence.focusedItemID else { return nil }
+      surface = .init(kind: .document, id: id)
+    }
+    let session = selectionSession
+    let kind: NotebookSelection.Kind
+    switch session.target {
+    case nil: kind = .empty
+    case .item: kind = .item
+    case .element: kind = .element
+    case .context: kind = .context
+    case .reference: kind = .reference
+    }
+    var value = NotebookSelection(id: session.id, kind: kind, surface: surface,
+      pageIndex: presence.mode == .document ? presence.documentPageIndex : nil,
+      contextID: kind == .empty ? nil : session.context?.contextID,
+      resolving: session.isResolvingContext)
+    switch session.target {
+    case nil, .context: break
+    case .item(let board, let id):
+      guard surface.kind == .board, surface.id == board else { return nil }
+      value.itemID = id
+    case .element(.page(let page, let id)):
+      value.target = .init(kind: .page, id: page); value.elementID = id
+    case .element(.spatial(let board, let id)):
+      guard let element = boardHierarchy?.board(board)?.elements.first(where: { $0.id == id }),
+        [.board, .cover].contains(element.surface.kind), let owner = element.surface.ownerID else { return nil }
+      value.target = .init(kind: element.surface.kind == .cover ? .cover : .board, id: owner,
+        boardID: element.surface.kind == .cover ? board : nil)
+      value.elementID = id
+    case .reference(let reference): value.reference = reference
+    }
+    return value.isValid ? value : nil
+  }
+
+  /// Availability does not clear or replace the UI choice. Returning to the
+  /// active scene republishes it with a new generation in the same process.
+  func setSelectionSurfaceActive(_ active: Bool) {
+    guard selectionSurfaceIsActive != active else { return }
+    selectionSurfaceIsActive = active
+    publishSelection()
+  }
+
+  private func publishSelection(force: Bool = false) {
+    #if os(iOS)
+      guard !isClosing else { return }
+      let selected = selectionSurfaceIsActive ? selectionForPublication : nil
+      if let previous = lastSelectionEnvelope, previous.selection == selected {
+        if force { sync?.sendTransient(.selection(previous)) }
+        return
+      }
+      guard selectionSequence < VersionStamp.maximumCounter else { return }
+      selectionSequence += 1
+      let envelope = NotebookSelectionEnvelope(deviceID: actorID, sessionID: presenceSessionID,
+        sequence: selectionSequence, selection: selected)
+      lastSelectionEnvelope = envelope
+      sync?.sendTransient(.selection(envelope))
+    #endif
+  }
+
   /// Navigation ends manipulation, but retains explicitly pinned material for
   /// the conversation. Only the resulting context target can show its outline.
   func endSurfaceEditing() {
@@ -3199,6 +3291,11 @@ final class NotebookAppModel {
   func receivePeerTransient(_ message: NotebookTransportTransient, peerID: UUID, generation: UUID) {
     guard !isClosing, peerGenerations[peerID] == generation else { return }
     switch message {
+    case .selection(let value):
+      #if os(macOS)
+        guard value.deviceID == peerID, value.isValid else { return }
+        enqueueStoreWrite(publishesChanges: false) { _ = try $0.acceptSelectionPublication(value, connectionID: generation) }
+      #endif
     case .presentation(let message):
       #if os(iOS)
         presentationPlayer.currentView = { [weak self] in
@@ -4152,9 +4249,9 @@ final class NotebookAppModel {
     return page
   }
 
-  private func enqueueStoreWrite(owner: NotebookPersistenceQueue.Owner? = nil,
+  private func enqueueStoreWrite(owner: NotebookPersistenceQueue.Owner? = nil, publishesChanges: Bool = true,
     reload: Bool = false, _ operation: @escaping @Sendable (NotebookStore) throws -> Void) {
-    persistence.enqueue(owner: owner) { store in
+    persistence.enqueue(owner: owner, publishesChanges: publishesChanges) { store in
       try operation(store)
       return reload
     }

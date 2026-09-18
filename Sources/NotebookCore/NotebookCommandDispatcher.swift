@@ -75,7 +75,7 @@ public struct NotebookReadQuery: Codable, Sendable {
     case observation, workspaceHeader, itemHeaders, itemHeader, workingSet, sceneWindow, scenePaintOrder
     case page, pageHeader, pageElement, documentHeader, document, documentState, documentBlock, boardItem, boardElement, boardContentRevision, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
     case attentionEvidence, contexts, contextEntries, actions, currentViewReceipt, pageVisionReceipt, targetRenderReceipt
-    case renderRequests, delivery, actionSnapshots, runtime, codeFragment, codeFragments
+    case renderRequests, delivery, actionSnapshots, runtime, selection, codeFragment, codeFragments
   }
   public var kind: Kind
   public var scope: NotebookObservationScope?
@@ -378,6 +378,7 @@ public struct NotebookCommandDispatcher: Sendable {
       return try .encode(store.resolveNotebookPage(pageID, in: itemID, expectedVisibleRoot: query.visibleRoot))
     case .spatialInk: return try .encode(store.readSpatialInk(surfaces: query.surfaces ?? []))
     case .presence: return try .encode(store.loadPresence())
+    case .selection: return try .encode(store.readSelectionPublication())
     case .attentionEvidence: return try .encode(store.attentionEvidence(contextID: required(query.id), referenceID: required(query.referenceID)))
     case .contexts: return try .encode(store.sharedContexts(contextID: query.id, limit: query.limit ?? 32, afterContextID: query.after, expectedCursor: query.revision))
     case .contextEntries: return try .encode(store.sharedContextPage(contextID: required(query.id), afterEntryID: query.after, expectedCursor: query.revision, limit: query.limit ?? 32))

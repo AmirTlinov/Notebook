@@ -10128,3 +10128,76 @@ Notebook Lab `.preview`, 0.3.85 / 88. Удалены только isolated nativ
 `.build/gui223-ipad-install-20260918/` и `.build/gui223-mac-install-20260918/`.
 Рабочие базы, ключи, trust и идентичность не заменялись. Живое соединение пары
 и пользовательская оценка этой таблетки не выводятся из успешной установки.
+
+## 18 сентября, 05:18 МСК — GUI-216 / S7: настоящее выделение и источник сообщения
+
+Единственным владельцем выбора остался `NotebookSelectionSession`. AppModel
+публикует его точный физический адрес, session/generation и доступность сцены
+через заменяемый слот существующего authenticated transient transport. Камера,
+режим редактирования и повтор того же выбора не создают новые поколения.
+Неактивная сцена публикует unknown, не сбрасывая selection, камеру или принятый
+Pencil. Mac сохраняет публикацию существующей очередью; disconnect/startup
+делают её неизвестной. Старое соединение/поколение не восстанавливает выбор
+после clear. Runtime-запись не реплицируется и не двигает content cursor.
+
+`read({kind:"selection"})` различает known-empty и unknown; basis у этого чтения
+пустая, права записи оно не даёт. `observe()` адресно читает выбранный элемент,
+включая элемент после первых 32. Explicit target не подменяется средой.
+Исторический contextID больше не заимствует текущие target/basis/пиксели;
+attention сохраняет прежние reference/hash либо явную недоступность изображения.
+Current-view receipt допускается только для известной активной поверхности
+и совпадающих версий. Схема, help и d.ts генерируются прежним маршрутом.
+Wire **22**, manifest **7**; это требует согласованного обновления обеих сторон,
+но не смены ключей, доверия или формата пользовательского содержания.
+
+RED сохранён в `.build/s7-contract-red-20260918/`: отсутствовало чтение selection,
+исторический observe подмешивал текущую камеру/основание. Дополнительные RED:
+`/tmp/notebook-s7-session-red2.log` — runtime-публикация двигала content cursor;
+`/tmp/notebook-s7-scene-image-red.log` — неизвестная сцена выдавалась за pending.
+Первый native gate `.build/s7-selection-native-20260918/` не компилировал новый
+тест: он пытался менять immutable presence/camera. Исправлена только подготовка
+теста, не ослаблены проверки; неуспешное свидетельство сохранено.
+
+Финальный selected gate `.build/s7-selection-native2-20260918/verification.json`
+прошёл на неизменном source
+`406ab21290cb178bf1fa259283e9633691c0f99098460d486ab0d925913adf8a`
+поверх общего `92161db`: **26 Core/Host, 62 MCP, 6 physical-iPad, 2 signed-Mac**.
+Native failures/skips/runtimeWarnings — 0. В compile log есть три прежних
+предупреждения `UIWindow(frame:)` в DocumentProgramOverlayHostTests и сообщение
+SwiftCompile с exit 0; все восемь запрошенных native/UI тестов действительно
+исполнены, что проверено по xcresult, а не по тексту stdout.
+
+Физический iPad проверил owner→clear→surface→reselect, сохранение Pencil/camera
+при потере доступности, настоящий TLS transient lane и UI смены выделения.
+Подписанный Mac проверил writer/IPC fence и TS→observe→изменение подписи именно
+40-го элемента, не первого, с одним сохранённым эффектом. Это изолированные
+сценарии, не доказательство production received/shown и не ручной Pencil-тест.
+Симуляторы, архивы, удаление рабочих баз и сброс пары не использовались.
+Проблемы навигационного зума/случайного выхода (GUI-199) этим срезом не исправлены.
+
+Release **0.3.86 (89)** с тем же source установлен поверх обеих рабочих сторон:
+`.build/shared-0.3.86-s7-release-20260918/build.json`. iPad manifest
+`717e0d40ffed818c5719e17315cb7784c78f45d9f77b40f0848d723b8e08a802`,
+binary UUID `46072225-5754-314D-B8E7-ACF85A138C57`; Mac manifest
+`497ac49df12b4fb260073f2555a06eebd57d74bef5fd702e156d3af0d82a448f`.
+Install/readback: `.build/shared89-s7-ipad-install-20260918/` и
+`.build/shared-0.3.86-s7-mac-install-20260918/`. На iPad единственный рабочий
+Notebook Lab 0.3.86/89; удалены только isolated native-test и runner. Mac штатно
+дождался drain и заменён атомарно; manifest/подпись совпали, старый bundle удалён.
+Контейнеры, ключи, trust и пользовательские архивы не менялись.
+
+Установленный публичный MCP проверен отдельно в
+`.build/s7-installed-public-20260918/receipt.json`: ровно два инструмента,
+read-selection с пустой basis, observe, приоритет explicit target, типизированный
+readonly TS и повтор того же run без нового чтения/эффекта. Первый TS-ответ уже
+completed; compiler 7.0.2, SDK
+`d2904fecb1a0807092ba7204c8b5e0a2d14d7c129d5039ae9eac4eb439f484f0`.
+Навык Notebook обновлён под установленный контракт; удалена противоречивая старая
+фраза о недоступности исполнения TS. Текущее подключение этой задачи ещё имеет
+старый tool-schema, поэтому проверялся свежий stdio именно установленного bundle,
+не прямой SQLite/helper обход.
+
+**Граница:** production runtime после установки сообщает disconnected, selection
+честно unknown. Наличие доверенной пары не доказывает живую доставку. Физический
+production select/clear/reselect через это соединение и received/shown остаются
+неподтверждёнными; S7 не закрыт. Публичная проверка не меняла содержание.

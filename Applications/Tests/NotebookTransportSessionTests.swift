@@ -7,6 +7,32 @@ import XCTest
 
 @MainActor
 final class NotebookTransportSessionTests: XCTestCase {
+  func testSelectionAndUnavailableSceneUseTheExistingAuthenticatedTransientLane() async throws {
+    let ready = expectation(description: "Both existing TLS peers ready"); ready.expectedFulfillmentCount = 2
+    let selected = expectation(description: "Exact selected physical owner delivered")
+    let unavailable = expectation(description: "Inactive scene is unknown, not a stale selection")
+    let pair = try NotebookTransportTestPair()
+    defer { pair.stop() }
+    let session = UUID(), target = CollaborationTarget(kind: .page, id: UUID())
+    let choice = NotebookSelection(id: UUID(), kind: .element, surface: target, target: target, elementID: "after-preview-window")
+    pair.onReady = { _, _ in ready.fulfill() }
+    pair.onTransient = { value, peer in
+      guard case .selection(let publication) = value else { return XCTFail("Expected selection transient") }
+      XCTAssertEqual(peer.deviceID, pair.clientIdentity.deviceID)
+      XCTAssertEqual(publication.deviceID, peer.deviceID)
+      XCTAssertEqual(publication.sessionID, session)
+      if publication.sequence == 1 { XCTAssertEqual(publication.selection, choice); selected.fulfill() }
+      else { XCTAssertEqual(publication.sequence, 2); XCTAssertNil(publication.selection); unavailable.fulfill() }
+    }
+    try pair.start(); await fulfillment(of: [ready], timeout: 10)
+    pair.client?.sendTransient(.selection(.init(deviceID: pair.clientIdentity.deviceID,
+      sessionID: session, sequence: 1, selection: choice)))
+    await fulfillment(of: [selected], timeout: 5)
+    pair.client?.sendTransient(.selection(.init(deviceID: pair.clientIdentity.deviceID,
+      sessionID: session, sequence: 2, selection: nil)))
+    await fulfillment(of: [unavailable], timeout: 5)
+  }
+
   func testImmediateJournalBoundaryStopsBothEndsWithTheSameReason() async throws {
     let rejected = expectation(description: "Both peers know why exchange stopped"); rejected.expectedFulfillmentCount = 2
     let source = NotebookTransportMemoryStore(journalRequirement: .checkpoint)

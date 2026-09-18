@@ -58,9 +58,19 @@ const vision=object({drawingStamp:stamp,pageSize:size,regions:z.array(visionRegi
 const viewReceipt=object({format:number,workspaceStamp:stamp,boardRevision:text,spatialInkStamp:stamp,presence,pngSHA256:text,renderViewport:point,surface:object({kind:text})});
 const delivery=object({id,deviceID:id,actionVersion:text.optional(),revisions:z.array(expectationSchema),receivedAt:number,displayComplete:z.boolean()});
 const attention=object({status:text,reference:referenceSchema.optional(),payload:json.optional(),artifact:artifact.optional(),pixelWidth:number.optional(),pixelHeight:number.optional(),code:text.optional()});
+const selectionFields={id,surface:targetSchema,pageIndex:number.optional(),contextID:id.optional(),resolving:z.boolean()};
+const selected=z.discriminatedUnion("kind",[
+  object({...selectionFields,kind:z.literal("empty")}),
+  object({...selectionFields,kind:z.literal("item"),itemID:id}),
+  object({...selectionFields,kind:z.literal("element"),target:targetSchema,elementID:text}),
+  object({...selectionFields,kind:z.literal("context")}),
+  object({...selectionFields,kind:z.literal("reference"),reference:referenceSchema})]);
+const selection=z.discriminatedUnion("status",[
+  object({status:z.literal("known"),deviceID:id,sessionID:id,generation:number,selection:selected}),
+  object({status:z.literal("unknown"),deviceID:id.optional(),sessionID:id.optional(),generation:number.optional()})]);
 const observation=object({mode:z.enum(["snapshot","delta"]).optional(),status:text.optional(),target:targetSchema.optional(),header:z.union([contentHeader,object({target:targetSchema,contentRevision:text})]).optional(),reset:text.optional(),through:text.optional(),
   objects:z.array(object({target:targetSchema,id:text,change:z.enum(["upsert","deleted","outOfScope"]),value:object({appearance:appearance.optional(),content:z.union([element,block]).optional(),state:json.optional(),graphicResolution:resolution.optional(),preview:text.optional()}).optional()})).optional(),
-  containers:z.array(item).optional(),checkpoint:text.optional(),presence:presence.nullable().optional(),presenceGeneration:text.optional(),context:contexts.optional(),visual:object({status:text,receipt:viewReceipt.optional(),artifact:artifact.optional()}).optional()});
+  containers:z.array(item).optional(),checkpoint:text.optional(),presence:presence.nullable().optional(),presenceGeneration:text.optional(),selection:selection.optional(),context:contexts.optional(),visual:object({status:text,receipt:viewReceipt.optional(),artifact:artifact.optional()}).optional()});
 const runtime=object({status:text,updatedAt:number});
 const exportJob=object({status:z.enum(["missing","queued","running","saved","failed","interrupted"]),jobID:id.optional(),documentID:id.optional(),contentRevision:text.optional(),receipt:object({documentID:id,pdfPath:text,texPath:text,pdfSHA256:text,byteCount:number,log:text,packageSHA256:text.optional(),assets:z.array(object({path:text,sha256:text})).optional()}).optional(),error:json.optional()});
 const presentation=object({status:text.optional(),id:id.optional(),view:object({deviceID:id,sessionID:id,sequence:number,nonce:id}).optional(),reason:text.optional()});
@@ -72,7 +82,7 @@ export const readDataSchemas = {
   page,pageHeader:contentHeader,pageElement,documentHeader:contentHeader,document,documentState,documentBlock,
   boardItem:board.nullable(),boardElement:element.nullable(),boardContentRevision:text.nullable(),ownerBoard:id.nullable(),
   notebookPages:object({header:directoryHeader,pages:z.array(object({position,document:page}))}),notebookDirectory:directory,notebookPosition:position.nullable(),
-  spatialInk:ink,presence,attentionEvidence:object({reference:referenceSchema,payload:json,image:object({sha256:text,pixelWidth:number,pixelHeight:number}).optional()}).nullable(),
+  spatialInk:ink,presence,selection,attentionEvidence:object({reference:referenceSchema,payload:json,image:object({sha256:text,pixelWidth:number,pixelHeight:number}).optional()}).nullable(),
   contexts,contextEntries,actions:z.array(receipt),currentViewReceipt:viewReceipt.nullable(),pageVisionReceipt:vision.nullable(),targetRenderReceipt:render.nullable(),
   renderRequests:z.array(renderRequest),delivery:z.array(delivery),actionSnapshots:z.array(object({request:renderRequest,pngSHA256:text.optional()})),runtime,codeFragment:code,codeFragments:z.array(codeFragment),
 };

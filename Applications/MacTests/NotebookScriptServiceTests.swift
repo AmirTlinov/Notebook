@@ -649,6 +649,37 @@ final class NotebookScriptServiceTests: XCTestCase {
       await host.shutdown()
     }
   }
+  func testTypeScriptEditsThePublishedSelectionBeyondThePreviewWindow() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), id = UUID()
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    let pageID = try XCTUnwrap(owner.store.loadIndex().selectedPageID)
+    var page = try owner.store.loadPage(pageID)
+    page.replaceElements((0..<40).map { .init(id: "node-\($0)", kind: .graphic,
+      frame: .init(x: 20, y: 20, width: 100, height: 100), source: "", html: "",
+      graphic: .init(shape: .ellipse, label: "label-\($0)")) }, actor: UUID())
+    try owner.store.savePage(page)
+    let device = UUID(), connection = UUID(), target = CollaborationTarget(kind: .page, id: pageID)
+    try owner.store.beginSelectionPublication(deviceID: device, connectionID: connection)
+    try owner.store.acceptSelectionPublication(.init(deviceID: device, sessionID: UUID(), sequence: 1,
+      selection: .init(id: UUID(), kind: .element, surface: target, target: target, elementID: "node-39")), connectionID: connection)
+    _ = try await host.handle(.init(op: .start, runID: id, code: """
+      const snapshot = await nb.observe();
+      const choice = snapshot.data.selection;
+      if (!choice || choice.status !== 'known' || choice.selection.kind !== 'element') throw new Error('Unknown selection');
+      const selected = choice.selection;
+      return await nb.transaction('selected-label', {base:snapshot.basis, summary:'Change the actual selection', operations:[
+        {kind:'updateElement', target:selected.target, id:selected.elementID, values:{graphic:{label:'Обратная связь'}}}
+      ]});
+      """, language: .typescript))
+    let result = try await finish(host, id)
+    XCTAssertEqual(result.string("status"), "completed", "\(result)")
+    XCTAssertEqual(result["result"]?["publication"]?.string("saved"), "confirmed")
+    XCTAssertEqual(try owner.store.readPageElement(pageID: pageID, elementID: "node-39")?.graphic?.label, "Обратная связь")
+    XCTAssertEqual(try owner.store.readPageElement(pageID: pageID, elementID: "node-0")?.graphic?.label, "label-0")
+    XCTAssertEqual(owner.nativeWrites, 1)
+    await host.shutdown()
+  }
+
   func testTypeScriptTypeFailurePreventsEvenEarlierNativeEffects() async throws {
     let owner = try Owner(), host = try await coordinator(owner), id = UUID()
     defer { try? FileManager.default.removeItem(at: owner.store.root) }

@@ -27,6 +27,15 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
       const batch=await nb.readMany({queries:[{kind:'pageHeader',id:input.pageID},{kind:'workspaceHeader'}]});
       const workspace:string=batch.data[1].workspaceID;
       const content:number=batch.data[0].contentStamp.counter;
+      const choice=await nb.read({kind:'selection'});
+      if(choice.data.status==='known') {
+        const generation:number=choice.data.generation;
+        if(choice.data.selection.kind==='element') {
+          const exact:string=choice.data.selection.elementID;
+          const owner:string=choice.data.selection.target.id;
+          await emit({generation,exact,owner});
+        }
+      }
       const result=await nb.transaction('label',{base:[s.basis,batch.basis],summary:'Label',operations:[{
         kind:'updateElement',target:{kind:'page',id:input.pageID},id:input.elementID,values:{graphic:{label:'Next',connection:{routing:'elbow'}}}
       }]});

@@ -53,6 +53,7 @@ struct NotebookSceneState: Sendable {
     _ = try store.initializeWorkspace(actor: actor, pageSize: pageSize,
       initialNotebookID: notebookID, initialPageID: pageID)
     try store.resetInputActivities()
+    try store.resetSelectionPublication()
     return try read(store: store, presence: nil,
       viewport: viewport ?? .init(x: pageSize.width, y: pageSize.height))
   }

@@ -4,9 +4,9 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Polygon kinds and normalized corners must not reach a reader that only
-  // understands ellipses/rectangles/pluses or silently drops their orientation.
-  public static let protocolVersion = 21
+  // Selection is an authenticated session transient. Old readers must reject
+  // this wire instead of dropping a clear/unknown publication silently.
+  public static let protocolVersion = 22
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16
@@ -78,6 +78,7 @@ public struct NotebookPairingInvitation: Codable, Equatable, Sendable {
 
 public enum NotebookTransportTransient: Codable, Equatable, Sendable {
   case presence(PresenceEnvelope)
+  case selection(NotebookSelectionEnvelope)
   case inputActivity(NotebookInputActivity)
   case documentPageSelection(DocumentPageSelectionRequest)
   case codex(NotebookChatEnvelope)
@@ -86,6 +87,7 @@ public enum NotebookTransportTransient: Codable, Equatable, Sendable {
   public func isValid(from identity: NotebookTransportIdentity) -> Bool {
     switch self {
     case .presence(let value): value.isValid
+    case .selection(let value): value.isValid && value.deviceID == identity.deviceID
     case .inputActivity(let value): value.isValid && value.deviceID == identity.deviceID
     case .documentPageSelection(let value): value.isValid
     case .codex(let value): value.isValid(from: identity.deviceID)
@@ -101,6 +103,7 @@ public enum NotebookTransportTransient: Codable, Equatable, Sendable {
     case .codex(let envelope):
       if case .event = envelope.body { 4 } else { 3 }
     case .presentation: 5
+    case .selection: 6
     }
   }
 }

@@ -14,7 +14,7 @@ test('generated output contracts accept actual same-snapshot native content, bas
     await writeFixture(root); const store=new NotebookStore(fixtureSocket(root));
     const queries=[{kind:'workspaceHeader'},{kind:'itemHeaders'},{kind:'itemHeader',id:itemID},
       {kind:'pageHeader',id:pageID},{kind:'page',id:pageID},{kind:'notebookDirectory',id:itemID},
-      {kind:'boardItem',id:rootBoardID},{kind:'presence'},{kind:'contexts'}];
+      {kind:'boardItem',id:rootBoardID},{kind:'presence'},{kind:'selection'},{kind:'contexts'}];
     for(const query of queries) {
       const [result]=await store.command<any[]>({command:'read',readSnapshots:true,queries:[query]});
       const schema=readDataSchemas[query.kind as keyof typeof readDataSchemas];
