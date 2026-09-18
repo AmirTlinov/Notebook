@@ -6,6 +6,52 @@ import XCTest
 
 final class SceneCameraPlaneTests: XCTestCase {
   @MainActor
+  func testRasterTileKeepsItsProjectedFrameAcrossZoomAndPublication() async throws {
+    let resources = SceneRenderResources(byteLimit: 32 * 1024 * 1024)
+    let source = AgentElement(id: "zoom-tile", kind: .web,
+      frame: .init(x: 0, y: 0, width: 512, height: 512), source: "tile", html: "")
+    let pixels = try XCTUnwrap(CGContext(data: nil, width: 1024, height: 1024,
+      bitsPerComponent: 8, bytesPerRow: 4096, space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    pixels.setFillColor(NSColor.red.cgColor); pixels.fill(.init(x: 0, y: 0, width: 1024, height: 1024))
+    XCTAssertTrue(resources.store(NSImage(cgImage: try XCTUnwrap(pixels.makeImage()),
+      size: .init(width: 1024, height: 1024)), for: source))
+    let raster = try XCTUnwrap(resources.retainRaster(for: source))
+    let tiles = [AgentSnapshotRasterView(), AgentSnapshotRasterView()]
+    tiles.forEach { $0.updateRaster(raster) }
+    defer { tiles.forEach { $0.uninstall() }; raster.release() }
+    let container = SceneCameraPlaneView<Int>()
+    let viewport = SpatialPoint(x: 1100, y: 780)
+    container.frame = .init(x: 0, y: 0, width: viewport.x, height: viewport.y)
+    let window = NSWindow(contentRect: container.frame, styleMask: .borderless, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false; window.contentView = container; window.orderBack(nil)
+    defer { window.orderOut(nil); window.close() }
+    func content(_ anchor: SessionPresence, _ projection: ScenePlaneProjection) -> AnyView {
+      AnyView(ZStack {
+        ForEach(0..<2) { index in
+          let center = anchor.camera.worldToScreen(.init(x: Double(index) * 512 + 256, y: 256), viewport: viewport)
+          RasterBodyProbe(view: tiles[index])
+            .frame(width: 512 * anchor.camera.scale, height: 512 * anchor.camera.scale)
+            .position(x: center.x, y: center.y)
+        }
+      }.frame(width: viewport.x, height: viewport.y))
+    }
+    for (index, scale) in [0.1, 0.7, 1.4, 0.2, 1.8, 0.7, 0.1, 1.4].enumerated() {
+      let presence = SessionPresence(mode: .board, camera: .init(center: .init(x: 512, y: 256), scale: scale), viewport: viewport)
+      container.update(presence: presence, revision: index, isCameraActive: true, content: content)
+      container.layoutSubtreeIfNeeded()
+      try await Task.sleep(for: .milliseconds(30))
+      container.layoutSubtreeIfNeeded()
+      for (number, tile) in tiles.enumerated() {
+        let actual = tile.convert(tile.bounds, to: nil)
+        let expected = presence.camera.worldToScreen(.init(x: Double(number) * 512, y: 0), viewport: viewport)
+        XCTAssertEqual(actual.width, 512 * scale, accuracy: 1, "Native image must not impose intrinsic pixel dimensions")
+        XCTAssertEqual(actual.minX, expected.x, accuracy: 1)
+      }
+    }
+  }
+
+  @MainActor
   func testRebasePublishesMountedBodyBeforeNewBounds() {
     let container = SceneCameraPlaneView<Int>()
     container.frame = .init(x: 0, y: 0, width: 1194, height: 834)
@@ -70,4 +116,10 @@ private struct CameraBodyProbe: NSViewRepresentable {
   let button: NSButton
   func makeNSView(context: Context) -> NSButton { button }
   func updateNSView(_ view: NSButton, context: Context) {}
+}
+
+private struct RasterBodyProbe: NSViewRepresentable {
+  let view: AgentSnapshotRasterView
+  func makeNSView(context: Context) -> AgentSnapshotRasterView { view }
+  func updateNSView(_ view: AgentSnapshotRasterView, context: Context) {}
 }

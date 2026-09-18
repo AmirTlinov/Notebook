@@ -332,6 +332,11 @@ struct AgentWebSourceFailure: Equatable, Sendable {
   }
 
   final class AgentSnapshotRasterView: NSImageView, NotebookScenePresentationOwner, SceneSourceInstallationOwner {
+    // Bitmap dimensions are source resolution, never layout. NSImageView's
+    // intrinsic pixel size otherwise overrides SwiftUI's projected tile frame.
+    override var intrinsicContentSize: NSSize {
+      .init(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
     private weak var sceneModel: NotebookAppModel?
     private var isRetired = false
     private var retainedRaster: RasterLease?

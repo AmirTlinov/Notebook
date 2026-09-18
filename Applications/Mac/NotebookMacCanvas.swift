@@ -16,6 +16,7 @@ struct NotebookMacCanvas: View {
     let publication: UInt64
     let cursor: UInt64?
     let permits: Bool
+    let refinesDetails: Bool
     let selection: NotebookSelectionSession.Target?
   }
 
@@ -30,17 +31,22 @@ struct NotebookMacCanvas: View {
         let workset = cohort.map { model.presentedWorkset(cohort: $0, boardID: presence.boardID, presence: presence) } ?? .empty
         let request = Preparation(presence: presence, generation: model.sceneIndexGeneration,
           publication: model.scenePublicationGeneration, cursor: model.workspaceHeader?.cursor,
-          permits: model.permitsScenePreparation, selection: model.selectionSession.target)
+          permits: model.permitsScenePreparation, refinesDetails: model.presencePhase == .settled, selection: model.selectionSession.target)
         ZStack {
-          SpatialBoardGrid(camera: presence.camera)
+          if presence.mode == .page || presence.mode == .document {
+            Color(red: 0.90, green: 0.91, blue: 0.90)
+          } else { SpatialBoardGrid(camera: presence.camera) }
           MacCanvasNavigation(model: model)
-          if let cohort {
+          if presence.mode == .page || presence.mode == .document {
+            MacReadingSurface(presence: presence, documentLayout: $documentLayout)
+          } else if let cohort {
             elements(workset.elements, presence: presence, cohort: cohort)
             SpatialInkSurfaceView(surface: .board(presence.boardID), journal: cohort.liveData.ink,
               camera: presence.camera, viewport: viewport).allowsHitTesting(false)
             items(workset.items, presence: presence, cohort: cohort)
           } else { ProgressView("Подготовка пространства…") }
-          if let reference = model.selectionSession.editingElement,
+          if presence.mode != .page && presence.mode != .document,
+            let reference = model.selectionSession.editingElement,
             let rect = NotebookAttentionProjection.editingFrame(reference, model: model, presence: presence) {
             MacElementControls(reference: reference, frame: rect, scale: presence.camera.scale)
           }
@@ -52,6 +58,9 @@ struct NotebookMacCanvas: View {
         .environment(\.sceneComposition, .init(cohort))
         .environment(\.workspaceSceneFrame, cohort?.frame)
         .task(id: request) {
+          guard presence.mode != .page && presence.mode != .document else {
+            model.compositionTiles.cancelPreparation(); return
+          }
           model.prepareComposition(presence: presence, frame: frame, pinned: pins,
             displayScale: displayScale, installedItemOwners: [:])
         }
@@ -95,7 +104,7 @@ struct NotebookMacCanvas: View {
   private func elements(_ values: [SpatialElement], presence: SessionPresence, cohort: SceneCompositionCohort) -> some View {
     SceneCameraPlane(presence: presence, revision: ElementRevision(paint: cohort.paintID,
       content: model.collaborationReadEpoch, editing: model.interactiveElementFocus, selection: model.selectionSession.target),
-      isCameraActive: model.presencePhase == .active, installation: cohort.installation(for: .elements), hitRegions: { anchor in
+      reanchorsOnRevision: false, isCameraActive: model.presencePhase == .active, installation: cohort.installation(for: .elements), hitRegions: { anchor in
         values.compactMap { element in
           guard let origin = element.worldOrigin else { return nil }
           let point = anchor.camera.worldToScreen(origin, viewport: anchor.viewport)
@@ -154,7 +163,7 @@ struct NotebookMacCanvas: View {
   private func items(_ values: [RenderedWorkspaceItem], presence: SessionPresence, cohort: SceneCompositionCohort) -> some View {
     SceneCameraPlane(presence: presence,
       revision: ItemRevision(paint: cohort.paintID, content: model.collaborationReadEpoch, focus: presence.focusedItemID, mode: presence.mode, page: presence.notebookPageID, documentPage: presence.documentPageIndex, selection: model.selectionSession.target),
-      isCameraActive: model.presencePhase == .active, installation: cohort.installation(for: .covers), hitRegions: { anchor in
+      reanchorsOnRevision: false, isCameraActive: model.presencePhase == .active, installation: cohort.installation(for: .covers), hitRegions: { anchor in
         values.map { item in
           let center = anchor.camera.worldToScreen(item.center, viewport: anchor.viewport)
           let width = item.geometry.width * anchor.camera.scale, height = item.geometry.height * anchor.camera.scale
@@ -167,7 +176,7 @@ struct NotebookMacCanvas: View {
         }
         ForEach(values) { item in
           let center = anchor.camera.worldToScreen(item.center, viewport: anchor.viewport)
-          MacWorkspaceMaterial(item: item, presence: presence, cohort: cohort, documentLayout: $documentLayout)
+          MacWorkspaceMaterial(item: item, presence: anchor, cohort: cohort)
             .frame(width: item.geometry.width, height: item.geometry.height)
             .background { if cohort.plan.allowsLive(.item(item.id), in: .board(presence.boardID)) { WorkspaceItemShadow(geometry: item.geometry) } }
             .scaleEffect(anchor.camera.scale)
@@ -186,13 +195,11 @@ private struct MacWorkspaceMaterial: View {
   let item: RenderedWorkspaceItem
   let presence: SessionPresence
   let cohort: SceneCompositionCohort
-  @Binding var documentLayout: DocumentPageLayout?
   @State private var source = UUID()
   @State private var draggedFrom: WorldPoint?
   @State private var translation = CGSize.zero
   private var isLive: Bool { cohort.plan.allowsLive(.item(item.id), in: .board(presence.boardID)) }
   private var title: String { item.item.title.isEmpty ? (item.item.kind == .notebook ? "Тетрадь" : item.item.kind == .document ? "Документ" : "Доска") : item.item.title }
-  private var isOpen: Bool { presence.focusedItemID == item.id && presence.openProgress >= 0.999 && presence.mode != .cover }
   private var editingTextID: String? {
     if case .board(let board, let element) = model.interactiveElementFocus, board == presence.boardID { return element }
     return nil
@@ -201,55 +208,42 @@ private struct MacWorkspaceMaterial: View {
 
   var body: some View {
     Group {
-      if isOpen, item.item.kind == .notebook {
-        if let page = model.activePage {
-          PageSurface(page: page, isCurrent: true, isInteractive: true, isVisible: true,
-            onRenderReady: .init { _ in }, displayProjection: presence.camera.scale)
-        } else { ProgressView("Открываем лист…") }
-      } else if isOpen, item.item.kind == .document {
-        if let document = model.documents[item.id], let state = model.documentStates[item.id] {
-          MacDocumentSurface(document: document, state: state, onLayout: { documentLayout = $0 })
-        } else { ProgressView("Открываем документ…") }
-      } else {
-        Group {
-        if isLive {
+      if isLive {
         WorkspaceItemCoverView(item: item.item, boardID: presence.boardID, geometry: item.geometry,
           spatialInkSurfaces: model.compositionTiles.surfaceRegistry,
           elements: model.presentedCoverElements(cohort: cohort, boardID: presence.boardID, itemID: item.id),
           editingTextID: editingTextID, portalOpenProgress: 0, portalViewport: presence.viewport,
           onTap: { _, _ in }, onTextEditingEnded: { _ in model.interactiveElementFocus = nil }, showsDepth: false,
           portalPixelScale: presence.camera.scale)
-        } else { Color.clear }
+      } else { Color.clear }
+    }
+    .contentShape(RoundedRectangle(cornerRadius: item.geometry.cornerRadius))
+    .overlay { if isSelected { RoundedRectangle(cornerRadius: item.geometry.cornerRadius).stroke(.tint, lineWidth: 2 / presence.camera.scale).allowsHitTesting(false) } }
+    .onTapGesture(count: 2) { model.macOpenItem(item.id) }
+    .onTapGesture { model.selectWorkspaceItem(item.id, boardID: presence.boardID) }
+    .gesture(DragGesture(minimumDistance: 4).onChanged { value in
+      if draggedFrom == nil {
+        guard model.inputGate.beginFingerSequence() != nil else { return }
+        if isLive { model.inputGate.beginContact(source: source) }
+        model.inputGate.registerFingerCancellation(source: source) {
+          draggedFrom = nil; translation = .zero
+          model.inputGate.endContact(source: source)
         }
-          .contentShape(RoundedRectangle(cornerRadius: item.geometry.cornerRadius))
-          .overlay { if isSelected { RoundedRectangle(cornerRadius: item.geometry.cornerRadius).stroke(.tint, lineWidth: 2 / presence.camera.scale).allowsHitTesting(false) } }
-          .onTapGesture(count: 2) { model.macOpenItem(item.id) }
-          .onTapGesture { model.selectWorkspaceItem(item.id, boardID: presence.boardID) }
-          .gesture(DragGesture(minimumDistance: 4).onChanged { value in
-            if draggedFrom == nil {
-              guard model.inputGate.beginFingerSequence() != nil else { return }
-              if isLive { model.inputGate.beginContact(source: source) }
-              model.inputGate.registerFingerCancellation(source: source) {
-                draggedFrom = nil; translation = .zero
-                model.inputGate.endContact(source: source)
-              }
-              draggedFrom = item.center
-              model.selectWorkspaceItem(item.id, boardID: presence.boardID)
-            }
-            translation = value.translation
-          }.onEnded { value in
-            if let origin = draggedFrom, let destination = origin.addressOffset(x: value.translation.width, y: value.translation.height) {
-              model.moveItem(item.id, to: destination)
-            }
-            draggedFrom = nil; translation = .zero
-            model.inputGate.unregisterFingerCancellation(source: source)
-            model.inputGate.endContact(source: source)
-          }, including: editingTextID == nil ? .all : .subviews)
-          .contextMenu {
-            Button("Открыть") { model.macOpenItem(item.id) }
-            Button("Удалить", role: .destructive) { Task { await model.deleteItem(item.id) } }
-          }
+        draggedFrom = item.center
+        model.selectWorkspaceItem(item.id, boardID: presence.boardID)
       }
+      translation = value.translation
+    }.onEnded { value in
+      if let origin = draggedFrom, let destination = origin.addressOffset(x: value.translation.width, y: value.translation.height) {
+        model.moveItem(item.id, to: destination)
+      }
+      draggedFrom = nil; translation = .zero
+      model.inputGate.unregisterFingerCancellation(source: source)
+      model.inputGate.endContact(source: source)
+    }, including: editingTextID == nil ? .all : .subviews)
+    .contextMenu {
+      Button("Открыть") { model.macOpenItem(item.id) }
+      Button("Удалить", role: .destructive) { Task { await model.deleteItem(item.id) } }
     }
     .onChange(of: isLive) { _, live in
       if live, draggedFrom != nil { model.inputGate.beginContact(source: source) }

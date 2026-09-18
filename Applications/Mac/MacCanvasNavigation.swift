@@ -57,7 +57,7 @@ final class MacCanvasNavigationView: NSView {
       let factor = event.hasPreciseScrollingDeltas ? 1.0 : 12.0
       camera.pan(screenX: event.scrollingDeltaX * factor, screenY: event.scrollingDeltaY * factor)
     }
-    model.updatePresence(p.replacingCamera(camera), settled: false)
+    model.updatePresence(p.replacingCamera(model.macConstrainReading(camera, presence: p)), settled: false)
     settle = Task { [weak self] in
       do { try await Task.sleep(for: .milliseconds(160)) } catch { return }
       self?.finishCamera()
@@ -76,7 +76,7 @@ final class MacCanvasNavigationView: NSView {
     let point = convert(event.locationInWindow, from: nil)
     var camera = drag.presence.camera
     camera.pan(screenX: point.x - drag.point.x, screenY: point.y - drag.point.y)
-    model.updatePresence(drag.presence.replacingCamera(camera), settled: false)
+    model.updatePresence(drag.presence.replacingCamera(model.macConstrainReading(camera, presence: drag.presence)), settled: false)
   }
   override func mouseUp(with event: NSEvent) {
     if let drag, hypot(convert(event.locationInWindow, from: nil).x - drag.point.x,
