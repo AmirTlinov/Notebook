@@ -24,15 +24,44 @@ struct NotebookNativeElementTests {
         frame: .init(x: 0, y: 0, width: element.frame.width, height: element.frame.height),
         source: element.source, html: element.html, state: element.state)
       let target = CollaborationTarget(kind: .board, id: board)
-      #expect(try store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.25), actor: actor))
+      func basis() throws -> NotebookProgramStateBasis {
+        try #require(store.loadBoard(items: store.loadIndex().items).board(board)?.programStateBasis(element.id))
+      }
+      let originalBasis = try basis()
+      #expect(try store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.25), basis: originalBasis, actor: actor))
       #expect(try store.readSpatialElement(boardID: board, elementID: element.id)?.state == .number(0.25))
-      #expect(try !store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.5), actor: actor))
+      #expect(try !store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.5), basis: originalBasis, actor: actor))
       #expect(try store.checkpointProgramState(target: target, rendered: rendered.updating(state: .number(0.25)),
-        state: .number(0.75), actor: actor))
+        state: .number(0.75), basis: basis(), actor: actor))
       let cursor = try store.currentChangeCursor()
       #expect(try store.checkpointProgramState(target: target, rendered: rendered.updating(state: .number(0.75)),
-        state: .number(0.75), actor: actor))
+        state: .number(0.75), basis: basis(), actor: actor))
       #expect(try store.currentChangeCursor() == cursor, "Identical checkpoint has no new write")
+    }
+  }
+
+  @Test func spatialCheckpointRejectsReplacedThenRestoredProgram() throws {
+    try fixture(kind: .web) { store, actor, boardID, element in
+      let original = try #require(store.loadBoard(items: store.loadIndex().items).board(boardID)?.programStateBasis(element.id))
+      let rendered = AgentElement(id: element.id, kind: .web,
+        frame: .init(x: 0, y: 0, width: element.frame.width, height: element.frame.height), source: element.source, html: element.html)
+      for source in ["different program", element.source] {
+        let before = try store.loadBoard(items: store.loadIndex().items)
+        var current = try #require(before.board(boardID)?.elements.first { $0.id == element.id })
+        let stamp = current.stamp
+        let changed = current.update(source: source, actor: actor)
+        #expect(changed)
+        var after = before
+        let updated = after.upsertElement(current, in: boardID, expected: stamp, actor: actor)
+        #expect(updated)
+        _ = try store.saveBoardEdits(before: before, after: after)
+      }
+      let latest = try #require(store.loadBoard(items: store.loadIndex().items).board(boardID)?.programStateBasis(element.id))
+      #expect(!latest.hasSameSource(as: original))
+      let cursor = try store.currentChangeCursor()
+      #expect(try !store.checkpointProgramState(target: .init(kind: .board, id: boardID), rendered: rendered,
+        state: .number(0.5), basis: original, actor: actor))
+      #expect(try store.currentChangeCursor() == cursor)
     }
   }
 

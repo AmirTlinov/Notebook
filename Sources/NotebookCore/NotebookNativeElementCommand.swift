@@ -1,6 +1,31 @@
 import Foundation
 
+/// The authored source and state read by a browser, not an aggregate page clock.
+/// Geometry edits do not invalidate it; an A -> B -> A edit or recreation does.
+public struct NotebookProgramStateBasis: Equatable, Sendable {
+  let fields: [String: ContentFieldVersion]
+  private let stateKey: String
+
+  init(elementID: String, metadata: CollaborativeContent?, fallback: VersionStamp) {
+    let id = collaborationIdentity(elementID)
+    stateKey = fieldKey(["elements", id, "state"])
+    fields = Dictionary(uniqueKeysWithValues: ["id", "content", "css", "javaScript", "state"].map {
+      let key = fieldKey(["elements", id, $0])
+      return (key, metadata?.fields[key] ?? .init(stamp: fallback, human: true))
+    })
+  }
+
+  public func hasSameSource(as other: Self) -> Bool {
+    fields.filter { $0.key != stateKey } == other.fields.filter { $0.key != other.stateKey }
+  }
+}
+
 extension PageDocument {
+  public func programStateBasis(_ id: String) -> NotebookProgramStateBasis? {
+    guard elements.contains(where: { $0.id == id && $0.kind == .web }) else { return nil }
+    return .init(elementID: id, metadata: collaboration, fallback: agentStamp)
+  }
+
   public func elementIdentityStamp(_ id: String) -> VersionStamp? {
     guard elements.contains(where: { collaborationIdentity($0.id) == collaborationIdentity(id) }) else { return nil }
     return collaboration?.fields[fieldKey(["elements", collaborationIdentity(id), "id"])]?.stamp ?? agentStamp
@@ -8,6 +33,11 @@ extension PageDocument {
 }
 
 extension BoardDocument {
+  public func programStateBasis(_ id: String) -> NotebookProgramStateBasis? {
+    guard elements.contains(where: { $0.id == id && $0.kind == .web }) else { return nil }
+    return .init(elementID: id, metadata: collaboration, fallback: stamp)
+  }
+
   public func elementIdentityStamp(_ id: String) -> VersionStamp? {
     guard elements.contains(where: { collaborationIdentity($0.id) == collaborationIdentity(id) }) else { return nil }
     return collaboration?.fields[fieldKey(["elements", collaborationIdentity(id), "id"])]?.stamp ?? stamp
@@ -59,7 +89,7 @@ extension NotebookStore {
   /// A stopped browser model may retire only after this source/state-guarded
   /// write commits. Geometry is read from storage, never rolled back by a frame.
   public func checkpointProgramState(target: CollaborationTarget, rendered: AgentElement,
-    state: JSONValue, actor: UUID) throws -> Bool {
+    state: JSONValue, basis: NotebookProgramStateBasis, actor: UUID) throws -> Bool {
     guard state.isValid, rendered.kind == .web else { throw NotebookStorageError.invalidTransaction("program checkpoint") }
     return try commandTransaction {
       switch target.kind {
@@ -67,6 +97,7 @@ extension NotebookStore {
         guard try ownerItemID(ofPage: target.id) != nil else { return false }
         let before = try pageElementCommandProjection(pageID: target.id, elementID: rendered.id)
         let page = try before.decode(NotebookPageElementProjection.self)
+        guard basis == NotebookProgramStateBasis(elementID: rendered.id, metadata: page.collaboration, fallback: page.agentStamp) else { return false }
         guard let element = page.elements.first(where: { $0.id == rendered.id }),
           element.kind == rendered.kind, element.source == rendered.source, element.html == rendered.html,
           element.css == rendered.css, element.javaScript == rendered.javaScript,
@@ -81,7 +112,8 @@ extension NotebookStore {
         return true
       case .board:
         guard let before = try spatialElementProjection(boardID: target.id, elementID: rendered.id),
-          var element = before.board(target.id)?.elements.first,
+          let board = before.board(target.id), basis == board.programStateBasis(rendered.id),
+          var element = board.elements.first,
           element.kind == .web, element.source == rendered.source, element.html == rendered.html,
           element.css == rendered.css, element.javaScript == rendered.javaScript,
           element.state == rendered.state else { return false }

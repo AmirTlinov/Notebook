@@ -38,6 +38,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
 #if os(iOS)
   struct AgentWebElementView: UIViewRepresentable {
     let element: AgentElement
+    var stateBasis: NotebookProgramStateBasis? = nil
     let lease: WebSurfaceLease
     let snapshotPolicy: AgentSnapshotPolicy
     var focus: InteractiveElementReference? = nil
@@ -92,7 +93,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
       }
       context.coordinator.use(onFailure: onFailure)
       context.coordinator.use(onState: onState)
-      context.coordinator.load(element, policy: snapshotPolicy, in: webView)
+      context.coordinator.load(element, basis: stateBasis, policy: snapshotPolicy, in: webView)
       view.onInstalled?()
     }
   }
@@ -265,6 +266,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
 #else
   struct AgentWebElementView: NSViewRepresentable {
     let element: AgentElement
+    var stateBasis: NotebookProgramStateBasis? = nil
     let lease: WebSurfaceLease
     let snapshotPolicy: AgentSnapshotPolicy
     var focus: InteractiveElementReference? = nil
@@ -300,7 +302,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
       context.coordinator.use(onInteraction: onInteraction)
       context.coordinator.use(onFailure: onFailure)
       context.coordinator.use(onState: onState)
-      context.coordinator.load(element, policy: snapshotPolicy, in: webView)
+      context.coordinator.load(element, basis: stateBasis, policy: snapshotPolicy, in: webView)
       context.coordinator.bindPresentation(to: focus)
       if let installation = context.coordinator.installation(for: element), installation.isInstalled { onInstalled(installation) }
     }
@@ -660,6 +662,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private var activeNavigation: WKNavigation?
   private weak var attachedWebView: WKWebView?
   private var loadedElement: AgentElement?
+  private var programBasis: NotebookProgramStateBasis?
   private(set) var loadToken: String?
   private var runtimeLoaded = false
   private var fingerRegions: AgentWebFingerRegions?
@@ -814,11 +817,11 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     guard owners.count == 1, let owner = owners.first, let web = owner.attachedWebView,
       let token = owner.loadToken else { throw SceneRenderError.snapshotPending("program_checkpoint_owner") }
     let borrow = try owner.lease.borrow(); defer { borrow.release() }
-    let revision = owner.localStateRevision
+    let revision = owner.localStateRevision, basis = owner.programBasis
     do {
       let value = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram", in: web)
       try Task.checkCancellation()
-      guard owner.accepts(token), owner.localStateRevision == revision, owner.hasLiveSource(element) else { throw CancellationError() }
+      guard owner.accepts(token), owner.programBasis == basis, owner.localStateRevision == revision, owner.hasLiveSource(element) else { throw CancellationError() }
       guard try await persist(value) else { throw SceneRenderError.snapshotPending("program_checkpoint_not_accepted") }
       try Task.checkCancellation()
       guard owner.accepts(token), owner.localStateRevision == revision, let current = owner.loadedElement,
@@ -938,12 +941,14 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     !isInvalidated && !lease.isReleased && loadToken == token
   }
 
-  func load(_ element: AgentElement, policy: AgentSnapshotPolicy? = nil, in webView: WKWebView) {
+  func load(_ element: AgentElement, basis: NotebookProgramStateBasis? = nil, policy: AgentSnapshotPolicy? = nil, in webView: WKWebView) {
     guard !isInvalidated, !lease.isReleased, attachedWebView === webView else { return }
+    let sourceChanged = programBasis.map { previous in basis.map { !previous.hasSameSource(as: $0) } ?? true } ?? (basis != nil && loadedElement != nil)
+    programBasis = basis
     let policyChanged = policy.map { $0 != snapshotPolicy } ?? false
     if policyChanged { readinessGeneration &+= 1 }
     if let policy { snapshotPolicy = policy }
-    guard loadedElement != element else {
+    guard loadedElement != element || sourceChanged else {
       if policyChanged, runtimeLoaded, appliedState == element.state, let token = loadToken {
         snapshotFailure = nil
         setRenderReady(false, token: token)
@@ -954,7 +959,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       // Readiness is published only by an actual preparation transition.
       return
     }
-    if let previous = loadedElement, AgentProgramSource(previous) == AgentProgramSource(element) {
+    if !sourceChanged, let previous = loadedElement, AgentProgramSource(previous) == AgentProgramSource(element) {
       loadedElement = element
       if previous.state != element.state {
         #if os(iOS)

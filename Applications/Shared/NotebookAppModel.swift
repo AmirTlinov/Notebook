@@ -3254,7 +3254,22 @@ final class NotebookAppModel {
     }
   }
 
-  func checkpointProgramState(focus: InteractiveElementReference, rendered: AgentElement, value: JSONValue) async throws -> Bool {
+  func programStateBasis(focus: InteractiveElementReference, rendered: AgentElement) -> NotebookProgramStateBasis? {
+    switch focus {
+    case .page(let pageID, let elementID):
+      guard elementID == rendered.id, let page = pages[pageID],
+        page.elements.first(where: { $0.id == elementID }) == rendered else { return nil }
+      return page.programStateBasis(elementID)
+    case .board(let boardID, let elementID):
+      guard elementID == rendered.id, let board = boardHierarchy?.board(boardID),
+        let source = board.elements.first(where: { $0.id == elementID }),
+        AgentProgramSource(agentElementSnapshotSource(source)) == AgentProgramSource(rendered),
+        source.state == rendered.state else { return nil }
+      return board.programStateBasis(elementID)
+    }
+  }
+
+  func checkpointProgramState(focus: InteractiveElementReference, rendered: AgentElement, value: JSONValue, basis: NotebookProgramStateBasis) async throws -> Bool {
     guard !isStopped else { return false }
     let target: CollaborationTarget
     switch focus {
@@ -3269,7 +3284,7 @@ final class NotebookAppModel {
     let actor = actorID
     collaborationReadEpoch &+= 1; collaborationContentEpoch &+= 1
     let accepted = try await persistence.submit(publishesChanges: true) { store in
-      try store.checkpointProgramState(target: target, rendered: rendered, state: value, actor: actor)
+      try store.checkpointProgramState(target: target, rendered: rendered, state: value, basis: basis, actor: actor)
     }
     if accepted { reloadExternalChanges() }
     return accepted

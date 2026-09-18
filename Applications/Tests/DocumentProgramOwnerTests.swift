@@ -911,6 +911,32 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertEqual(editing, document.blocks[0].source, "Return must expose the working source, not just a cached picture")
   }
 
+  func testReturnProgramFreezesItsModelWithoutWaitingForPoolPressure() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
+      html: "<output>0</output>", javaScript: """
+        let phase=0,timer=setInterval(()=>{phase++;document.querySelector('output').textContent=phase},10);
+        notebook.lifecycle({pause(){clearInterval(timer)},checkpoint(){return {phase}},resume(){},dispose(){clearInterval(timer)}});
+        notebook.ready(Promise.resolve());
+        """, initialState: .object(["phase": .number(0)]), height: 100)])
+    let resources = SceneRenderResources(maximumWebSurfaces: 6)
+    let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: resources)
+    let lifetime = owner.retainOpenDocument()
+    defer { fixture.close(); lifetime.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "program") != nil }
+    let original = try XCTUnwrap(fixture.web(block: "program"))
+    try await Task.sleep(for: .milliseconds(100))
+    lifetime.parkForReturn(); fixture.retirePresentation(0)
+    try await wait(message: { fixture.diagnostics }) { fixture.checkpoints.contains("program") }
+    let frozen = try await original.evaluateJavaScript("document.querySelector('output').textContent") as? String
+    try await Task.sleep(for: .milliseconds(200))
+    let later = try await original.evaluateJavaScript("document.querySelector('output').textContent") as? String
+    XCTAssertEqual(later, frozen)
+    XCTAssertEqual(fixture.number("program", field: "phase"), Double(frozen ?? ""))
+    lifetime.resume(); fixture.restorePresentation(0)
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "program") === original }
+  }
+
   func testReturnProgramsYieldTheirExistingPoolSlotsAfterCheckpointWhenForegroundNeedsThem() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
       html: "<button>Retained return program</button>", javaScript: "notebook.commit({count:1});notebook.ready(Promise.resolve());",

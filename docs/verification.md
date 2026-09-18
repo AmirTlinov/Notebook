@@ -1,5 +1,30 @@
 # Проверка Notebook
 
+## 19 сентября, 00:16 МСК — GUI-241: причинная запись и остановка return-программ
+
+В ветку интегрирована выпущенная база114 (`99b70dc`) без замены установленной пары.
+Spatial checkpoint теперь несёт точные причинные версии id/content/css/JavaScript/state;
+A → B → A отклоняется, независимая геометрия не мешает сохранению. Изменившаяся
+source basis заменяет старый heap даже при побайтно одинаковом исходнике.
+Ушедший документ сразу вызывает pause/checkpoint; подтверждённый runtime может
+сохранить heap для возврата, но не продолжает часы до давления пула. Его обычный
+допуск по-прежнему уступает foreground после сохранения.
+
+Core: **22 PASS**, `/tmp/gui-241-causal-core-v4.log`. Physical iPad:
+**4 PASS**, без skips/runtime warnings, `.build/gui-241-causal-return-v1/ipad.xcresult`,
+source `4a54078af0c60bc6c1c29582ec0029222a289e600b2b0b63964550f3c3ca8333`. Mac: **2 PASS**, без skips/runtime warnings,
+`.build/gui-241-causal-mac-v3/verification.json`, source `b6a41a49fa501d58144814f7ca30001f0ae5543dc834324d2df1899ce952962f`.
+Разница source после iPad — только новая Mac-фикстура: secure-context-only
+crypto.randomUUID заменён тестовым Math.random, ожидание проверяет также настоящий
+hasLiveSource, а не старый отложенный ready callback. Ранние Mac v1/v2 FAIL сохранены.
+
+При первом запуске другой владелец одновременно начал разрешённый ему Simulator
+runner, не использовав наш общий lock. Пересечение обнаружено, дальнейшие серии
+согласованы; данная задача Simulator не запускала. Итоговый Mac-only повтор шёл
+после завершения чужого runner. Это не измерение производительности и не полная
+физическая приёмка. GUI-241 ещё In Progress: фон/закрытие, живые пользовательские
+жесты и визуальная/performance приёмка остаются открытыми.
+
 ## 18 сентября, 22:55 МСК — GUI-241: общий browser lifecycle, промежуточный срез
 
 Изолированная ветка `codex/gui-240-visualizations` начинается от `e204211`.

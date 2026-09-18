@@ -1002,6 +1002,34 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertEqual(raster.image.size, canonical)
   }
 
+  func testCausalSourceABAReplacesTheRuntimeEvenWhenBytesReturnToOriginal() async throws {
+    let actor = UUID(), resources = SceneRenderResources(maximumWebSurfaces: 1)
+    let lease = try await resources.acquireWebSurface(priority: .input)
+    var ready = false
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, snapshotPolicy: .display(scale: 1),
+      onRenderReady: { ready = $0 }, onState: { _ in true })
+    let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
+    let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: 240, height: 120),
+      styleMask: .borderless, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false; window.contentView = web; window.orderBack(nil)
+    defer { coordinator.invalidate(); lease.release(); window.orderOut(nil); window.close() }
+    let original = AgentElement(id: "program", kind: .web, frame: .init(x: 0, y: 0, width: 240, height: 120),
+      source: "program", html: "<output>same bytes</output>",
+      javaScript: "window.boot=Math.random().toString();notebook.ready(Promise.resolve());")
+    var page = PageDocument(size: .init(width: 400, height: 400), actor: actor, elements: [original])
+    coordinator.load(original, basis: page.programStateBasis(original.id), in: web)
+    await waitUntil { ready && coordinator.hasLiveSource(original) }
+    let first = try await js("window.boot", web)
+    let other = AgentElement(id: original.id, kind: .web, frame: original.frame, source: "other", html: original.html,
+      javaScript: original.javaScript)
+    XCTAssertTrue(page.replaceElements([other], actor: actor))
+    XCTAssertTrue(page.replaceElements([original], actor: actor))
+    coordinator.load(original, basis: page.programStateBasis(original.id), in: web)
+    await waitUntil { ready && coordinator.hasLiveSource(original) }
+    let second = try await js("window.boot", web)
+    XCTAssertNotEqual(first, second, "Source equality must not give an obsolete heap new write authority")
+  }
+
   func testSpatialCheckpointKeepsItsOwnerOnWriterRefusalAndCapturesTheAcceptedState() async throws {
     let resources = SceneRenderResources(), focus = InteractiveElementReference.page(pageID: UUID(), elementID: "phase")
     let lease = try await resources.acquireWebSurface(priority: .input)
