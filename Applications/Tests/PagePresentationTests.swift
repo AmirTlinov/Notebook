@@ -40,6 +40,38 @@ final class PagePresentationTests: XCTestCase {
   }
 
   @MainActor
+  func testInactiveOpeningWaitsForForegroundThenPresentsTheStoredPageAndCoverInk() async throws {
+    let model = NotebookDrawingFixture.makeModel()
+    retainNotebookUntilTeardown(model, removing: model.store.root)
+    let index = try model.store.loadIndex(), actor = UUID()
+    var ink = SpatialInkJournal(stamp: .init(counter: 0, actor: actor))
+    _ = ink.append(tool: .pen, spans: [.init(surface: .cover(index.selectedItemID), samples: [
+      .init(point: .init(x: 80, y: 160), timeOffset: 0, width: 6, opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2),
+      .init(point: .init(x: 660, y: 480), timeOffset: 0.1, width: 6, opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+    ])], actor: actor)
+    try model.store.saveSpatialInk(ink)
+    model.setPreparationForeground(false)
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    window.rootViewController = UIHostingController(rootView: NotebookRootView().environment(model))
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    let loaded = ContinuousClock.now + .seconds(5)
+    while model.loadState != .ready, ContinuousClock.now < loaded { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertFalse(model.permitsScenePreparation,
+      "A system dialog or background scene cannot start a canvas that requires a foreground preparation window")
+    XCTAssertNil(model.compositionTiles.published)
+    model.setPreparationForeground(true)
+    let deadline = ContinuousClock.now + .seconds(8)
+    func ready() -> Bool { model.activePage.map { model.pagePresentations.isPresented($0) } == true }
+    while !ready(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertTrue(ready(), "Foreground must resume the same requested scene without another camera gesture: \(model.compositionTiles.failure ?? "no diagnostic")")
+    let canvas = try XCTUnwrap(model.compositionTiles.surfaceRegistry.canvas(for: .cover(index.selectedItemID)))
+    XCTAssertGreaterThan(canvas.committedVertexCount, 0)
+    XCTAssertTrue(canvas.isStableFramePresented)
+  }
+
+  @MainActor
   func testOnlyMountedCurrentReadySourceCanAcknowledgePaperAndRetirementRevokesIt() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("page-presentation-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)

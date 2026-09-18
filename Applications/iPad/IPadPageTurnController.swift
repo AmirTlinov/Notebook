@@ -472,7 +472,8 @@ final class IPadPageTurnController: UIViewController,
     // UIKit may retain a controller after its curl finishes. That identity is
     // not a reason to retain every WebKit/Metal page visited in this document.
     // Keep the live window and the complete in-flight turn; retire only content
-    // that neither can display. Never reparent a controller already handed off.
+    // that neither can display. UIKit retains its shells; their offscreen
+    // hosting children return to the same bounded preparation window.
     let visible = Set((pageViewController.viewControllers ?? []).map(ObjectIdentifier.init))
     for index in Array(controllers.keys) where !required.contains(index) {
       guard let controller = controllers[index],
@@ -800,6 +801,7 @@ private final class IPadIndexedPageController: UIViewController {
   private(set) var hostID = UUID()
   private(set) var wasHandedToUIKit = false
   private var content: UIHostingController<AnyView>?
+  private var contentHasDisappeared = false
 
   var rootView: AnyView {
     get { content?.rootView ?? AnyView(EmptyView()) }
@@ -831,12 +833,22 @@ private final class IPadIndexedPageController: UIViewController {
     if let content, content.parent === self { content.view.frame = view.bounds }
   }
 
+  override func viewDidDisappear(_ animated: Bool) {
+    super.viewDidDisappear(animated)
+    contentHasDisappeared = true
+  }
+
   func renewContentIdentity() { hostID = UUID() }
 
-  /// A newly created hosting child needs a real visible window to run SwiftUI
-  /// tasks and produce its WebKit/Metal frame. The retired UIKit shell does not.
+  /// Both new and previously displayed content need a window to prepare.
+  /// UIKit caches its shell offscreen after a curl, while SwiftUI retires the
+  /// child's render readiness on disappearance. Leaving that child in the
+  /// detached shell makes a reverse turn wait for a frame it cannot produce.
   func prepareContent(in owner: UIViewController, container: UIView) {
-    guard let content, content.parent == nil else { return }
+    guard let content,
+      content.parent == nil || (contentHasDisappeared && content.parent === self && viewIfLoaded?.window == nil)
+    else { return }
+    detach(content)
     owner.addChild(content)
     container.addSubview(content.view)
     content.view.frame = container.bounds
@@ -852,10 +864,13 @@ private final class IPadIndexedPageController: UIViewController {
     content.view.frame = container.bounds
   }
 
-  /// Transfer the already rendered child exactly once. An existing live child
-  /// stays inside its UIKit shell, including while UIKit caches the neighbour.
+  /// Transfer the prepared child without replacing it or UIKit's shell.
+  /// A child that UIKit still has in a window is never stolen for prewarming.
   func installPreparedContent() {
     wasHandedToUIKit = true
+    // A handed-off destination may not have entered UIKit's window yet. It
+    // belongs to the curl until a real disappearance, not merely a nil window.
+    contentHasDisappeared = false
     guard let content, content.parent !== self else { return }
     detach(content)
     loadViewIfNeeded()

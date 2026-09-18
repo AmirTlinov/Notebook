@@ -484,10 +484,12 @@ final class PageTurnSelectionTests: XCTestCase {
       configure()
       XCTAssertEqual(controller.displayedIndex, expected)
       XCTAssertEqual(Set(controller.cachedPageIdentities.keys), Set([0, 1, 2]))
-      XCTAssertTrue(firstShell.children.first === firstChild,
-        "A ready reverse page is not retired while the finite document fits the existing four-host budget")
+      XCTAssertTrue(firstShell.children.contains { $0 === firstChild }
+        || controller.children.contains { $0 === firstChild },
+        "The same child remains owned by its shell or the preparation window, never retired within the four-page budget")
     }
     XCTAssertTrue(controller.pageViewController.viewControllers?.first === firstShell)
+    XCTAssertTrue(firstShell.children.first === firstChild, "Reverse installs the exact original content, not a replacement")
   }
 
   @MainActor
@@ -853,6 +855,6 @@ private final class WindowPreparedPageView: UIView {
       hasFrame = true
       onFirstFrame(identity)
     }
-    if hasFrame { readiness(true) }
+    if hasFrame { readiness(window != nil) }
   }
 }

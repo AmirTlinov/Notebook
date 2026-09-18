@@ -2236,6 +2236,57 @@ final class DrawingResponsivenessTests: XCTestCase {
       "Сохранённый выбор должен показывать тот же физический лист, что и два настоящих перелистывания")
   }
 
+  func testStoredNotebookContentSurvivesForwardAndReverseTurns() async throws {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-page-turn-content-fixture",
+      "--notebook-simulator-finger-gestures"]
+    launchPortraitFixture(app)
+    let surface = app.otherElements["page-turn-surface"]
+    let paper = app.otherElements["paper-input"].firstMatch
+    XCTAssertTrue(paper.waitForExistence(timeout: 8))
+    let originalFrame = paper.frame, originalInk = paper.value as? String
+    XCTAssertGreaterThan(originalFrame.width, app.frame.width * 0.9)
+    func assertVisiblePage(_ page: Int, name: String) {
+      let marker = app.otherElements["agent-element-page-marker-\(page - 1)"]
+      XCTAssertTrue(marker.waitForExistence(timeout: 5), "The native landing must expose the destination")
+      let frame = marker.frame, screen = app.frame, screenshot = app.screenshot()
+      let attachment = XCTAttachment(screenshot: screenshot)
+      attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+      let rgb = [0xeaabab, 0xacd6b8, 0xaebfea, 0xedcd92, 0xceafdc, 0x9bd5de][page - 1]
+      let expected = (rgb >> 16, (rgb >> 8) & 255, rgb & 255)
+      let share = pixelShare(in: screenshot, normalizedRect: .init(
+        x: (frame.minX + 20 - screen.minX) / screen.width,
+        y: (frame.minY + 20 - screen.minY) / screen.height,
+        width: 40 / screen.width, height: 20 / screen.height)) { r, g, b, a in
+          a > 240 && abs(Int(r) - expected.0) < 15
+            && abs(Int(g) - expected.1) < 15 && abs(Int(b) - expected.2) < 15
+        }
+      XCTAssertGreaterThan(share, 0.9, "The visible destination's own color, not its model counter, identifies page \(page)")
+    }
+    for usesButtons in [true, false] {
+      var previous = 1
+      for page in Array(2...6) + Array((1...5).reversed()) {
+        let forward = page > previous
+        if usesButtons { app.buttons[forward ? "next-page" : "previous-page"].tap() }
+        else if forward { surface.swipeLeft() } else { surface.swipeRight() }
+        await fulfillment(of: [XCTNSPredicateExpectation(
+          predicate: NSPredicate(format: "value BEGINSWITH %@", "Страница \(page) из "), object: surface
+        )], timeout: 5)
+        assertVisiblePage(page, name: "stored-paper-\(usesButtons ? "button" : "swipe")-\(previous)-to-\(page)")
+        XCTAssertTrue(paper.waitForExistence(timeout: 5), "The landed sheet must accept input")
+        XCTAssertEqual(paper.frame, originalFrame)
+        XCTAssertEqual(paper.value as? String, originalInk)
+        previous = page
+      }
+      XCUIDevice.shared.press(.home)
+      app.activate()
+      XCTAssertTrue(paper.waitForExistence(timeout: 8))
+      XCTAssertEqual(paper.frame, originalFrame)
+      assertVisiblePage(1, name: "stored-paper-resume-\(usesButtons)")
+    }
+  }
+
   func testNotebookPageTurnCommitsBothDirections() {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait

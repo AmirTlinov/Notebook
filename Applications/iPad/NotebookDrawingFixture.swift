@@ -5,6 +5,7 @@
   @MainActor
   enum NotebookDrawingFixture {
     static let launchArgument = "--notebook-drawing-responsiveness-fixture"
+    static let pageTurnContentArgument = "--notebook-page-turn-content-fixture"
     static let penPersistenceArgument = "--notebook-pen-persistence-fixture"
     static let fingerGestureArgument = "--notebook-simulator-finger-gestures"
     static let mixedInputArgument = "--notebook-simulator-mixed-input"
@@ -73,7 +74,9 @@
       let fixtureName: String
       // The full route reads this gesture's durable result after other UI
       // scenarios. Their fresh default fixture must not replace that evidence.
-      if nativeGraphics {
+      if ProcessInfo.processInfo.arguments.contains(pageTurnContentArgument) {
+        fixtureName = "PageTurnContent"
+      } else if nativeGraphics {
         fixtureName = (nativeGraphicPage ? "NativeGraphicPage" : "NativeGraphicBoard")
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-connector") ? "Connector" : "")
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-dense") ? "Dense" : "")
@@ -149,11 +152,15 @@
           pageID: pageID
         )
         var index = initial.index
+        // Keep dense ink and the visual page marker separate so the installed
+        // destination can be checked in pixels, independently of its counter.
+        let inkSize = ProcessInfo.processInfo.arguments.contains(pageTurnContentArgument)
+          ? PageSize(width: size.width, height: 360) : size
         let page = PageDocument(
           id: pageID,
           size: size,
           actor: actor,
-          drawingData: try (nativeGraphics ? PageInkDrawing() : denseDrawing(size: size)).dataRepresentation(),
+          drawingData: try (nativeGraphics ? PageInkDrawing() : denseDrawing(size: inkSize)).dataRepresentation(),
           elements: (startsWithAgentElement
             ? [
               AgentElement(
@@ -484,6 +491,35 @@
         }
         try store.saveWorkspaceBundle(index: index, page: page,
           board: store.loadOrCreateBoard(workspace: index, actor: actor))
+        if ProcessInfo.processInfo.arguments.contains(pageTurnContentArgument) {
+          try store.savePresence(.init(boardID: index.rootBoardID, mode: .page,
+            camera: .init(center: .zero, scale: WorkspaceItemGeometry.notebook.fitScale(viewport: .init(x: size.width, y: size.height))),
+            viewport: .init(x: size.width, y: size.height), focusedItemID: itemID, openProgress: 1,
+            selectedItemID: itemID, notebookPageID: pageID))
+          for offset in 0..<6 {
+            let id: UUID
+            if offset == 0 { id = pageID }
+            else {
+              guard let created = index.appendPage(in: itemID, actor: actor, pageSize: size) else {
+                fatalError("Не удалось создать лист проверки перелистывания")
+              }
+              id = created.pageID
+            }
+            let marker = ["FIRST", "SECOND", "THIRD", "FOURTH", "FIFTH", "SIXTH"][offset]
+            let color = ["#eaabab", "#acd6b8", "#aebfea", "#edcd92", "#ceafdc", "#9bd5de"][offset]
+            var content = PageDocument(id: id, size: size, actor: actor, drawingData: page.drawingData)
+            _ = content.replaceElements([
+                AgentElement(id: "page-marker-\(offset)", kind: .markdown,
+                  frame: .init(x: 180, y: 420, width: 470, height: 210), source: marker,
+                  html: "<h1>\(marker)</h1>",
+                  css: "body{display:grid;place-items:center;background:\(color)}h1{font:700 72px -apple-system;color:#152533}")
+              ], actor: actor)
+            if offset == 0 { _ = try store.savePage(content) }
+            else { _ = try store.saveWorkspaceSelection(index: index, createdPage: content) }
+          }
+          _ = index.selectItem(itemID, pageID: pageID, actor: actor)
+          _ = try store.saveWorkspaceSelection(index: index, createdPage: nil)
+        }
         if nativeGraphics {
           try installGraphics(store: store, index: index, pageID: pageID, actor: actor, onPage: nativeGraphicPage)
         }

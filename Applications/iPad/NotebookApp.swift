@@ -49,7 +49,7 @@ struct NotebookApp: App {
       .persistentSystemOverlays(.hidden)
       .onChange(of: scenePhase, initial: true) { _, phase in
         model.chat?.dictation.setForeground(phase != .background)
-        model.setDocumentPreparationForeground(phase == .active)
+        model.setPreparationForeground(phase == .active)
         model.setSelectionSurfaceActive(phase == .active)
         guard phase == .background else { return }
         let task = UIApplication.shared.beginBackgroundTask(withName: "Сохранение принятого ввода")

@@ -878,7 +878,7 @@ final class NotebookAppModel {
   }
   @ObservationIgnored private var scenePresentationOwners: [ObjectIdentifier: WeakScenePresentationOwner] = [:]
   @ObservationIgnored private var documentShellPreparation: DocumentShellPreparation?
-  @ObservationIgnored private var documentPreparationIsForeground = true
+  private var preparationIsForeground = true
   @ObservationIgnored private var shutdownTask: Task<Bool, Never>?
   @ObservationIgnored private var inputSequence: UInt64 = 0
   private(set) var inputIsActive = false
@@ -895,7 +895,7 @@ final class NotebookAppModel {
   /// contact or the owner of a content manipulation. Other background work
   /// still waits for settlement through permitsBackgroundPreparation.
   var permitsScenePreparation: Bool {
-    !isStopped && !peerInputIsActive && !inputGate.hasActivePencil
+    preparationIsForeground && !isStopped && !peerInputIsActive && !inputGate.hasActivePencil
       && (!inputIsActive || presencePhase == .active)
       && !workingGraphics.contains { $0.surface.kind == .board && $0.accepted
         && ($0.publicationCursor.map { (workspaceHeader?.cursor ?? 0) < $0 } ?? true) }
@@ -4020,7 +4020,7 @@ final class NotebookAppModel {
   /// rasters or a SwiftUI appearance alone cannot start optional WebKit work.
   func prepareCommonDocumentShellIfIdle(presence visible: SessionPresence, cohort: SceneCompositionCohort?) {
     #if os(iOS)
-      guard documentPreparationIsForeground, UIApplication.shared.applicationState == .active,
+      guard preparationIsForeground, UIApplication.shared.applicationState == .active,
         !isClosing, permitsBackgroundPreparation, presence == visible,
         visible.openProgress <= 0, let cohort, cohort.isPaintInstalled,
         cohort.plan.rootBoardID == visible.boardID,
@@ -4041,11 +4041,17 @@ final class NotebookAppModel {
     #endif
   }
 
-  func setDocumentPreparationForeground(_ foreground: Bool) {
-    guard documentPreparationIsForeground != foreground else { return }
-    documentPreparationIsForeground = foreground
+  func setPreparationForeground(_ foreground: Bool) {
+    guard preparationIsForeground != foreground else { return }
+    preparationIsForeground = foreground
     if foreground { documentShellPreparation?.allowPreparationAfterForeground() }
-    else { documentShellPreparation?.retireUnused() }
+    else {
+      // A system dialog can deactivate the scene before native ink obtains a
+      // window. Retire that candidate, not the last installed composition.
+      // The observed foreground admission restarts the view's same scene task.
+      compositionTiles.cancelPreparation()
+      documentShellPreparation?.retireUnused()
+    }
   }
 
   /// A cached image proves preparation, not mounting. The completed display
