@@ -30,6 +30,27 @@ public final class NotebookScriptCoordinator {
   private var admissions = 0
   private var admissionWaiters: [CheckedContinuation<Void, Never>] = []
 
+  /// A client attachment, not a run result cache. Registration precedes the
+  /// async journal read, so a terminal write cannot fall into a read/wait gap.
+  @MainActor final class RunCompletionWaiter {
+    var result: Result<Void, Error>?
+    var continuation: CheckedContinuation<Void, Error>?
+    var deadlineTask: Task<Void, Never>?
+
+    func finish(_ value: Result<Void, Error>) {
+      guard result == nil else { return }
+      result = value
+      deadlineTask?.cancel(); deadlineTask = nil
+      continuation?.resume(with: value); continuation = nil
+    }
+
+    func value() async throws {
+      if let result { return try result.get() }
+      try await withCheckedThrowingContinuation { continuation = $0 }
+    }
+  }
+  var completionWaiters: [UUID: [UUID: RunCompletionWaiter]] = [:]
+
   public init(command: @escaping Command, persistence: @escaping Persistence, workingDirectory: URL,
     userServiceName: String = NotebookScriptServiceNames.user,
     markupServiceName: String = NotebookScriptServiceNames.markup) {
@@ -64,14 +85,58 @@ public final class NotebookScriptCoordinator {
     case .cancel:
       waiting.removeAll { $0.id == request.runID }
       if active == request.runID { cancelled.insert(request.runID); worker?.cancel(request.runID) }
-      _ = try await persistence { try .encode($0.requestScriptRunCancellation(request.runID)) }
+      try await cancelRun(request.runID)
     }
-    var result = try await persistence { try $0.scriptRunPage(request.runID, after: request.afterSequence ?? 0) }
-    while ContinuousClock.now < deadline, ["queued", "running"].contains(result.string("status") ?? "") {
-      try await Task.sleep(for: .milliseconds(50))
-      result = try await persistence { try $0.scriptRunPage(request.runID, after: request.afterSequence ?? 0) }
+    return try await readRunAfterCompletion(request, deadline: deadline)
+  }
+
+  private func readRunAfterCompletion(_ request: NotebookScriptRequest, deadline: ContinuousClock.Instant) async throws -> JSONValue {
+    try Task.checkCancellation()
+    guard ContinuousClock.now < deadline else {
+      return try await persistence { try $0.scriptRunPage(request.runID, after: request.afterSequence ?? 0) }
     }
-    return result
+    let token = UUID(), waiter = RunCompletionWaiter(), runID = request.runID
+    completionWaiters[runID, default: [:]][token] = waiter
+    waiter.deadlineTask = Task { @concurrent [weak self] in
+      do { try await Task.sleep(until: deadline, clock: .continuous) }
+      catch { return }
+      await self?.releaseCompletionWaiter(runID, token: token, result: .success(()))
+    }
+    return try await withTaskCancellationHandler {
+      defer { releaseCompletionWaiter(runID, token: token, result: .success(())) }
+      try Task.checkCancellation()
+      let page = try await persistence { try $0.scriptRunPage(runID, after: request.afterSequence ?? 0) }
+      guard ["queued", "running"].contains(page.string("status") ?? "") else { return page }
+      try await waiter.value()
+      try Task.checkCancellation()
+      return try await persistence { try $0.scriptRunPage(runID, after: request.afterSequence ?? 0) }
+    } onCancel: {
+      Task { @MainActor [weak self] in
+        self?.releaseCompletionWaiter(runID, token: token, result: .failure(CancellationError()))
+      }
+    }
+  }
+
+  private func releaseCompletionWaiter(_ runID: UUID, token: UUID, result: Result<Void, Error>) {
+    let waiter = completionWaiters[runID]?.removeValue(forKey: token)
+    if completionWaiters[runID]?.isEmpty == true { completionWaiters[runID] = nil }
+    waiter?.finish(result)
+  }
+
+  private func didFinishRun(_ id: UUID) {
+    guard let clients = completionWaiters.removeValue(forKey: id) else { return }
+    for client in clients.values { client.finish(.success(())) }
+  }
+
+  private func cancelRun(_ id: UUID) async throws {
+    let run = try await persistence { try .encode($0.requestScriptRunCancellation(id)) }.decode(NotebookScriptRun.self)
+    // Running cancellation is only a request: accepted effects still drain.
+    if run.isTerminal { didFinishRun(id) }
+  }
+
+  func finishRun(_ id: UUID, state: NotebookScriptRun.State, result: JSONValue? = nil, error: JSONValue? = nil) async throws {
+    let run = try await persistence { try .encode($0.setScriptRunState(id, state: state, result: result, error: error)) }.decode(NotebookScriptRun.self)
+    if run.isTerminal { didFinishRun(id) }
   }
 
   public func context(_ request: NotebookScriptContextRequest) async throws -> JSONValue {
@@ -87,11 +152,11 @@ public final class NotebookScriptCoordinator {
     closing = true
     let pending = waiting; waiting.removeAll()
     for run in pending {
-      _ = try? await persistence { try .encode($0.requestScriptRunCancellation(run.id)) }
+      try? await cancelRun(run.id)
     }
     if let active {
       cancelled.insert(active); worker?.cancel(active)
-      _ = try? await persistence { try .encode($0.requestScriptRunCancellation(active)) }
+      try? await cancelRun(active)
     }
     if admissions > 0 {
       await withCheckedContinuation { admissionWaiters.append($0) }
@@ -117,7 +182,7 @@ public final class NotebookScriptCoordinator {
     // Shutdown/cancel may run while the native admission reply is in flight.
     // The durable state, not this earlier queued snapshot, owns execution.
     if closing {
-      if !value.isTerminal { _ = try await persistence { try .encode($0.setScriptRunState(value.id, state: .cancelled)) } }
+      if !value.isTerminal { try await finishRun(value.id, state: .cancelled) }
       return
     }
     if !value.isTerminal, active != value.id, !waiting.contains(where: { $0.id == value.id }) {
@@ -140,12 +205,10 @@ public final class NotebookScriptCoordinator {
       }
       let runs = try await access { try .encode($0.unfinishedScriptRuns()) }.decode([NotebookScriptRun].self)
       for run in runs {
-        _ = try await access { store in
-          // No JavaScript continuation or source replay is inferred after an
-          // owner restart. Existing native effects remain inspectable by ID.
-          return try .encode(store.setScriptRunState(run.id, state: .interrupted,
-            error: .object(["code": .string("owner_restarted"), "message": .string("Attach reads existing receipts; code is never replayed.")])))
-        }
+        // No JavaScript continuation or source replay is inferred after an
+        // owner restart. Existing native effects remain inspectable by ID.
+        try await finishRun(run.id, state: .interrupted,
+          error: .object(["code": .string("owner_restarted"), "message": .string("Attach reads existing receipts; code is never replayed.")]))
         // Older unfinished runs can predate the global recovery index. Once
         // interrupted they cannot dispatch anything, so their bounded local
         // index can be reconciled here, before IPC opens, without replay.
@@ -207,12 +270,12 @@ public final class NotebookScriptCoordinator {
       let state: NotebookScriptRun.State = wasCancelled ? .cancelled : reply.code == nil ? .completed : .failed
       let error = wasCancelled ? try JSONValue.encode(NotebookStore.scriptCancellationError)
         : reply.code.map { JSONValue.object(["code": .string($0), "message": .string(sourceMap?.map(reply.message ?? $0) ?? reply.message ?? $0)]) }
-      _ = try await persistence { try .encode($0.setScriptRunState(run.id, state: state, result: result, error: error)) }
+      try await finishRun(run.id, state: state, result: result, error: error)
       service.invalidate()
     } catch {
       let value = Self.error(error)
       let state: NotebookScriptRun.State = cancelled.contains(run.id) ? .cancelled : .failed
-      _ = try? await persistence { try .encode($0.setScriptRunState(run.id, state: state, error: value)) }
+      try? await finishRun(run.id, state: state, error: value)
     }
     worker?.invalidate(); worker = nil; active = nil; effectTasks.removeAll(); cancelled.remove(run.id); finishedWorkers.remove(run.id); runningTask = nil; drive()
   }

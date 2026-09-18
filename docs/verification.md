@@ -10683,3 +10683,70 @@ iPad logs потребовал root, существующего passwordless д�
 их присутствие в source inventory selected gate не является приёмкой их UI.
 Жалоба Амира на zoom/вход/выход из тетради остаётся открытой. Данные, identity,
 ключи и доверие не сбрасывались; Simulator не использовался.
+
+
+## 18 сентября 2026 — S10: реальные before/after, ожидание завершения и обновление истории
+
+Сопоставимые public MCP серии выполнены на трёх подписанных Mac Release cuts:
+API v1 baseline, первоначальный v2 и final v2. По **33 испытания**: шесть задач
+по пять повторов и reconnect трижды; дополнительно равная wait policy ×6 и
+app/XPC restart. Настоящие coordinator/QuickJS/native writer, отдельные новые
+root, никакого production content/архивов или fake delivery receipts.
+Подробный метод, таблицы и ограничения: `docs/programmable-notebook-measurements.md`.
+
+Измерения обнаружили 50 ms polling в `NotebookScriptCoordinator.handle`:
+короткие v2 reads, несмотря на один внешний вызов, задерживались относительно
+v1. Теперь клиент подписывается перед async journal read; durable terminal
+reply будит его без polling. Дедлайн/отмена освобождают только attachment;
+принятые эффекты дожидаются drain. Нового result cache или исполнителя нет.
+
+- Настоящий RED: wait=160 ms делал четыре journal read вместо двух. GREEN:
+  **20 Host tests / 3 suites** (completion 8, deadline 3, recovery 9), 1.444 s.
+  Проверены lost-wakeup race, несколько курсоров, client cancellation,
+  shutdown, held durable reply и accepted-effects drain.
+- Финальный selected gate: **74 MCP + 10/10 signed Mac XPC PASS**, 0 skips
+  и runtime warnings. `.build/s10-completion-signed-20260918/verification.json`.
+  Неизменные **997 inputs**, source SHA256
+  `bf946a863aaac2e17142cf351a8eb79313863237e9803f0c19d7056af0080763`.
+- Final Release собран из этого же frozen source; CDHash
+  `f53607260b1d549964a3c2676306dcb36ed1f271`. Exact baseline SHA256
+  `a9aad42a9a647039d94c980645d84c22115fbee9beb11775a44973c1fc5a6a7d`;
+  его точный source commit неизвестен, `1e456d3` — лишь comparison base.
+  GUI-225 inputs в inventory не означают приёмку их физических жестов.
+- В default серии обычные задачи требуют **2 → 1 MCP calls**. Median wall ms
+  v1 → final: label **150.93 → 121.66**, search **16.45 → 16.81**,
+  block **15.53 → 15.24**, graph **227.64 → 186.49**, reflow **194.44 → 148.97**,
+  conflict **225.58 → 191.44**. Reconnect включает намеренные 3000 ms и не ускорен.
+  Ответ graph больше: **5626 → 9154 B**. Универсальное ускорение/сжатие не заявлено.
+- 39 различных последовательных проекций страницы совпадают между всеми
+  cuts, включая authored frames/bindings и вычисленную геометрию. Это проверка
+  перечисленных в measurement doc полей, не всех native fields/styles/state. Сохранённые
+  результаты/повтор run после app+XPC restart проверены без нового эффекта.
+- Final signed TS micro-fixture: **48.457917 / 51.187334 ms**;
+  sampled RSS **39 272 448 / 43 859 968 B**, CPU **713 599 / 844 513 ns**.
+  Это 20 ms sampling компилятора, не истинный peak или system-level нагрузка.
+
+На том же **новом isolated v1 root** обычный startup final v2 затем подтвердил
+обновление истории без DB copy или ручной миграции. Исходный manifest неизменен,
+workspace, исторический actor и проверенные проекции **67 элементов / 81 блока**
+сохранены.
+`resume v2` старого run возвращает `run_api_version=1` с теми же fingerprint,
+result и effects. Большая историческая квитанция по точной actionVersion:
+**64 operations (32+32), 65 changes (32+32+1)**. Чтения не создают доменных
+эффектов; старого v1-start/исполнителя не возвращали. Private app/XPC остановлены.
+Квитанция `.build/s10-legacy-upgrade-20260918/upgrade-proof/report.json`.
+
+Общие измерения и сохранённые drivers/raw receipts:
+`.build/s10-programmable-comparison-20260918/` и
+`.build/s10-measure-{baseline-r2,current-r2,final}-20260918/`.
+Эти серии закрывают прежний пробел **Mac before/after** в предыдущем разделе,
+но не physical release, полный read/decode счёт каждого сценария, системные
+frames/CPU/GPU/memory или число исправлений запросов автономного агента.
+Offscreen search здесь одно совпадение; pagination доказан другими проверками.
+
+**S10/веха остаются In Progress.** Пара **0.3.90 (93)** не обновлялась нами;
+физические saved/received/shown, selection/жесты, десять повторов и 30 минут
+совместной работы не заменены Mac PASS. Жалоба Амира на zoom, загрузку и
+неожиданный выход из тетради остаётся открытой и ведётся совместно с peer.
+Его незавершённые source/docs changes не входят в этот commit. Simulator,
+смена ключей/identity, сброс доверия и восстановление архивов не использовались.
