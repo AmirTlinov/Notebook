@@ -8,7 +8,7 @@ final class NotebookPersistenceQueue {
   enum Owner: Hashable {
     case fileDraft(String), fileWindow(UUID?), chatPanel(UUID?), runCommand(String)
     case page(UUID), document(UUID), documentState(UUID), documentDraft(UUID), documentReading(UUID)
-    case board, spatialInk(UUID), presence, inputActivity(UUID)
+    case board, spatialInk(UUID), presence, peerPresence(UUID), inputActivity(UUID)
     case nativeText(UUID, String), elementState(UUID, String)
   }
 

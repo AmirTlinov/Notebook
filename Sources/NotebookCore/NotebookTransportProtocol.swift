@@ -4,8 +4,8 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Native selection can name a set of graphic elements. Both applications
-  // must understand that choice instead of treating it as an empty selection.
+  // Each screen owns its navigation; selection may name multiple graphics.
+  // Both applications update together to understand the same transient contract.
   public static let protocolVersion = 25
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
@@ -38,7 +38,6 @@ public enum NotebookTransportTransient: Codable, Equatable, Sendable {
   case presence(PresenceEnvelope)
   case selection(NotebookSelectionEnvelope)
   case inputActivity(NotebookInputActivity)
-  case documentPageSelection(DocumentPageSelectionRequest)
   case codex(NotebookChatEnvelope)
   case presentation(NotebookPresentationMessage)
 
@@ -47,7 +46,6 @@ public enum NotebookTransportTransient: Codable, Equatable, Sendable {
     case .presence(let value): value.isValid
     case .selection(let value): value.isValid && value.deviceID == identity.deviceID
     case .inputActivity(let value): value.isValid && value.deviceID == identity.deviceID
-    case .documentPageSelection(let value): value.isValid
     case .codex(let value): value.isValid(from: identity.deviceID)
     case .presentation(let value): value.isValid
     }
@@ -57,7 +55,6 @@ public enum NotebookTransportTransient: Codable, Equatable, Sendable {
     switch self {
     case .inputActivity: 0
     case .presence: 1
-    case .documentPageSelection: 2
     case .codex(let envelope):
       if case .event = envelope.body { 4 } else { 3 }
     case .presentation: 5

@@ -23,7 +23,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# A prior ready receipt must never satisfy this run's headless launch proof.
+# A prior ready receipt must never satisfy this run's workspace launch proof.
 if [[ -n "$(find "$EVIDENCE" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
   printf 'Для новой проверки нужен пустой каталог доказательств: %s\n' "$EVIDENCE" >&2
   exit 1
@@ -61,7 +61,7 @@ for asset in AppIcon.appiconset NotebookStatusIcon.imageset; do
   done
 done
 
-# Canvas continuity is exercised by native/UI tests; the headless Mac launch
+# Canvas continuity is exercised by native/UI tests; the Mac workspace launch
 # below checks actual working windows. Source spelling cannot prove either.
 
 ERASER_APP="$DERIVED/NotebookEraserProof.app"
@@ -166,7 +166,7 @@ p = pathlib.Path(sys.argv[1])
 assert p.exists(), "Mac не завершил проверку фонового документа"
 proof = json.loads(p.read_text())
 assert proof.get("status") == "ready", proof
-assert proof.get("workingWindows") == 0 and proof.get("surface") == "document", proof
+assert proof.get("workingWindows", 0) >= 1 and proof.get("surface") == "document", proof
 assert proof.get("pngBytes", 0) > 0 and len(proof.get("pngSHA256", "")) == 64, proof
 png = p.with_suffix(".png").read_bytes()
 assert len(png) == proof["pngBytes"] and hashlib.sha256(png).hexdigest() == proof["pngSHA256"], proof

@@ -4,7 +4,7 @@ import XCTest
 
 final class DocumentPageSelectionTests: XCTestCase {
   @MainActor
-  func testPeerRequestWaitsForNativeLandingAndOldLandingCannotClearNewIntent() async throws {
+  func testLocalRequestWaitsForNativeLandingAndOldLandingCannotClearNewIntent() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     let model = NotebookAppModel(
@@ -29,17 +29,7 @@ final class DocumentPageSelectionTests: XCTestCase {
       settled: true
     )
 
-    let peerID = UUID(), generation = UUID()
-    model.peerConnected(.init(deviceID: peerID, workspaceID: try model.store.workspaceHeader().workspaceID,
-      displayName: "Test Mac"), generation: generation)
-    model.receivePeerTransient(
-      .documentPageSelection(
-        DocumentPageSelectionRequest(
-          documentID: documentID,
-          pageIndex: 3
-        )
-      ), peerID: peerID, generation: generation
-    )
+    XCTAssertEqual(model.selectDocumentPage(3, documentID: documentID), 3)
 
     XCTAssertEqual(model.presence?.documentPageIndex, 0, "An accepted request is not actual page presence")
     let first = try XCTUnwrap(model.documentPageSelection)
@@ -98,17 +88,7 @@ final class DocumentPageSelectionTests: XCTestCase {
       settled: true
     )
 
-    let peerID = UUID(), generation = UUID()
-    model.peerConnected(.init(deviceID: peerID, workspaceID: try model.store.workspaceHeader().workspaceID,
-      displayName: "Test Mac"), generation: generation)
-    model.receivePeerTransient(
-      .documentPageSelection(
-        DocumentPageSelectionRequest(
-          documentID: UUID(),
-          pageIndex: 2
-        )
-      ), peerID: peerID, generation: generation
-    )
+    XCTAssertNil(model.selectDocumentPage(2, documentID: UUID()))
 
     XCTAssertEqual(model.presence?.documentPageIndex, 0)
     let saved = await model.finishPendingPersistence()

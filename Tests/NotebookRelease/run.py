@@ -33,7 +33,7 @@ class PairCLI(preview.FakeCLI):
         super().__init__(source)
         self.verification = verification
         self.mac = None
-        self.mac_info = {"CFBundleIdentifier": release.MAC_BUNDLE, "LSUIElement": True,
+        self.mac_info = {"CFBundleIdentifier": release.MAC_BUNDLE, "LSUIElement": False,
             "NotebookScriptService": "com.amirtlinov.notebook.script-service",
             "NotebookMarkupService": "com.amirtlinov.notebook.markup-service",
             "NotebookCloudContainer": release.CLOUD_CONTAINER,
@@ -555,9 +555,9 @@ class ReleaseTests(unittest.TestCase):
         self.cli.mutate_mac = True
         self.refused("Mac bundle изменился")
 
-    def test_foreground_mac_is_refused(self):
-        self.cli.mac_info["LSUIElement"] = False
-        self.refused("безоконный")
+    def test_background_only_mac_is_refused(self):
+        self.cli.mac_info["LSUIElement"] = True
+        self.refused("обычное приложение")
 
     def test_mac_without_bundled_mcp_is_refused(self):
         self.cli.mac_sidecar = False

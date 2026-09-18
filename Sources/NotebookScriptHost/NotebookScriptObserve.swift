@@ -5,7 +5,7 @@ extension NotebookScriptCoordinator {
   func observe(_ args: JSONValue) async throws -> JSONValue {
     try await persistence { store in
       try store.readTransaction { _ in
-        let header = try store.workspaceHeader(), presence = try store.readPresenceIfAvailable()
+        let header = try store.workspaceHeader(), presence = try store.readObservedPresenceIfAvailable()
         let contextID = args.string("contextID").flatMap(UUID.init(uuidString:))
         if args["contextID"] != nil && contextID == nil {
           throw CollaborationError("invalid_reference", "Источник сообщения требует точный contextID.")

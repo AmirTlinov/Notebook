@@ -538,12 +538,12 @@ final class NotebookAppModel {
       }
       openDocumentPresentation?.cameraDidChange()
       pagePresentations.cameraDidChange()
+      #endif
       if oldValue?.boardID != presence?.boardID || oldValue?.mode != presence?.mode
         || oldValue?.focusedItemID != presence?.focusedItemID || oldValue?.notebookPageID != presence?.notebookPageID
         || oldValue?.documentPageIndex != presence?.documentPageIndex {
         publishSelection()
       }
-      #endif
     }
   }
   private(set) var presencePhase = PresencePhase.settled
@@ -735,6 +735,9 @@ final class NotebookAppModel {
   private(set) var actionCue: String?
   private(set) var penStyle: PenStyle
   private(set) var eraserStyle: EraserStyle
+  #if os(macOS)
+  var macInputTool = MacNotebookInputTool.pointer
+  #endif
   private(set) var drawingTool: DrawingTool = .pen
   private(set) var selectionSession = NotebookSelectionSession() {
     didSet {
@@ -852,6 +855,12 @@ final class NotebookAppModel {
   private let presenceSessionID = UUID()
   private var presenceSequence: UInt64 = 0
   private var lastSettledPresenceEnvelope: PresenceEnvelope?
+  #if os(macOS)
+  private(set) var observedPeerID: UUID?
+  private(set) var peerPresenceEnvelope: PresenceEnvelope?
+  var observedPresence: SessionPresence? { observedPeerID == nil ? presence : peerPresenceEnvelope?.presence }
+  var observedPresencePhase: PresencePhase { observedPeerID == nil ? presencePhase : peerPresenceEnvelope?.phase ?? .active }
+  #endif
   private var presenceSequenceTracker = PresenceSequenceTracker()
   @ObservationIgnored private(set) var lastSelectionEnvelope: NotebookSelectionEnvelope?
   @ObservationIgnored private var selectionSequence: UInt64 = 0
@@ -992,7 +1001,7 @@ final class NotebookAppModel {
       switch owner {
       case .page, .document, .documentState, .board, .spatialInk, .nativeText, .elementState:
         self?.refreshCommittedHeader()
-      case nil, .presence, .inputActivity, .documentDraft, .documentReading, .fileDraft, .fileWindow, .chatPanel, .runCommand: break
+      case nil, .presence, .peerPresence, .inputActivity, .documentDraft, .documentReading, .fileDraft, .fileWindow, .chatPanel, .runCommand: break
       }
 
     }
@@ -1043,6 +1052,9 @@ final class NotebookAppModel {
   func peerConnected(_ peer: NotebookTransportIdentity, generation: UUID) {
     peerGenerations[peer.deviceID] = generation
     #if os(macOS)
+      observedPeerID = peer.deviceID
+      peerPresenceEnvelope = nil
+      presenceSequenceTracker = PresenceSequenceTracker()
       enqueueStoreWrite(publishesChanges: false) { try $0.beginSelectionPublication(deviceID: peer.deviceID, connectionID: generation) }
     #endif
     isPeerConnected = true
@@ -1074,7 +1086,11 @@ final class NotebookAppModel {
       try $0.resetInputActivity(deviceID: peerID)
       try $0.endSelectionPublication(deviceID: peerID, connectionID: generation)
     }
-    if !isPeerConnected { restoreSettledPresenceAfterDisconnect() }
+    #if os(macOS)
+      if observedPeerID == peerID {
+        observedPeerID = nil; peerPresenceEnvelope = nil
+      }
+    #endif
   }
 
   private func startTrustedSync() async throws {
@@ -1403,6 +1419,7 @@ final class NotebookAppModel {
         initialAccountWorkspaceCursor = try await persistence.submit { try $0.currentChangeCursor() }
       }
       loadState = .ready
+      publishSelection()
       awaitingAccountContent = false
       reloadCollaborationMetadata()
       reloadExternalChanges()
@@ -2134,13 +2151,13 @@ final class NotebookAppModel {
     "\(document.contentStamp.actor):\(document.contentStamp.counter)"
   }
 
-  /// Requests preparation. Only a landing by the bound iPad controller writes
-  /// actual page presence; the Mac sends the same request to that owner.
+  /// Requests preparation. Only the bound native controller's verified landing
+  /// writes this device's page presence; navigation never commands another screen.
   @discardableResult
   func selectDocumentPage(_ pageIndex: Int, documentID: UUID,
-    publishesRequest: Bool = true, restoresReading: Bool = false) -> Int? {
+    restoresReading: Bool = false) -> Int? {
     guard !isClosing, !isItemBeingDeleted(documentID), pageIndex >= 0,
-      pageIndex <= DocumentPageSelectionRequest.maximumPageIndex,
+      pageIndex <= DocumentPageNavigationRequest.maximumPageIndex,
       let document = documents[documentID], let presence,
       presence.mode == .document, presence.focusedItemID == documentID,
       presence.openProgress >= 0.999 else { return nil }
@@ -2158,14 +2175,8 @@ final class NotebookAppModel {
       documentPageSelection?.sourceRevision == source { return pageIndex }
     documentMeasurements.request(documentID: documentID, pageIndex: pageIndex, cause: .page)
     documentPageNavigationStatus = nil
-    #if os(iOS)
-      documentPageSelection = .init(id: UUID(), documentID: documentID,
-        sourceRevision: source, pageIndex: pageIndex)
-    #elseif os(macOS)
-      if publishesRequest {
-        sync?.sendTransient(.documentPageSelection(.init(documentID: documentID, pageIndex: pageIndex)))
-      }
-    #endif
+    documentPageSelection = .init(id: UUID(), documentID: documentID,
+      sourceRevision: source, pageIndex: pageIndex)
     return pageIndex
   }
 
@@ -2198,7 +2209,7 @@ final class NotebookAppModel {
   func acceptDocumentPageLanding(_ landing: DocumentPageLanding) -> Bool {
     guard acceptsDocumentPageController(landing.controllerID, documentID: landing.documentID, source: landing.sourceRevision),
       landing.revision > documentPageLandingRevision, landing.pageIndex >= 0,
-      landing.pageIndex <= DocumentPageSelectionRequest.maximumPageIndex,
+      landing.pageIndex <= DocumentPageNavigationRequest.maximumPageIndex,
       let presence else { return false }
     documentPageLandingRevision = landing.revision
     if let target = readingRestoreTarget, target.id == landing.documentID,
@@ -2825,19 +2836,23 @@ final class NotebookAppModel {
   }
 
   private func publishSelection(force: Bool = false) {
+    guard !isClosing, loadState == .ready else { return }
+    let selected = selectionSurfaceIsActive ? selectionForPublication : nil
+    if let previous = lastSelectionEnvelope, previous.selection == selected {
+      #if os(iOS)
+      if force { sync?.sendTransient(.selection(previous)) }
+      #endif
+      return
+    }
+    guard selectionSequence < VersionStamp.maximumCounter else { return }
+    selectionSequence += 1
+    let envelope = NotebookSelectionEnvelope(deviceID: actorID, sessionID: presenceSessionID,
+      sequence: selectionSequence, selection: selected)
+    lastSelectionEnvelope = envelope
     #if os(iOS)
-      guard !isClosing else { return }
-      let selected = selectionSurfaceIsActive ? selectionForPublication : nil
-      if let previous = lastSelectionEnvelope, previous.selection == selected {
-        if force { sync?.sendTransient(.selection(previous)) }
-        return
-      }
-      guard selectionSequence < VersionStamp.maximumCounter else { return }
-      selectionSequence += 1
-      let envelope = NotebookSelectionEnvelope(deviceID: actorID, sessionID: presenceSessionID,
-        sequence: selectionSequence, selection: selected)
-      lastSelectionEnvelope = envelope
-      sync?.sendTransient(.selection(envelope))
+    sync?.sendTransient(.selection(envelope))
+    #else
+    enqueueStoreWrite(publishesChanges: false) { try $0.saveLocalSelectionPublication(envelope) }
     #endif
   }
 
@@ -3661,27 +3676,15 @@ final class NotebookAppModel {
       enqueueStoreWrite(owner: .inputActivity(activity.deviceID)) { try $0.saveInputActivity(activity) }
     case .presence(let envelope):
       #if os(macOS)
-        guard presenceSequenceTracker.accepts(envelope) else { return }
+        guard observedPeerID == peerID, presenceSequenceTracker.accepts(envelope),
+          presenceIsUsable(envelope.presence) else { return }
         presentationRelay.observe(envelope, from: peerID)
-        let incoming = envelope.phase == .settled
-          ? settledPresence(from: envelope.presence, viewport: envelope.presence.viewport)
-          : envelope.presence
-        guard presenceIsUsable(incoming) else { return }
-        presence = incoming
-        alignWorkspaceSelection()
-        presencePhase = envelope.phase
+        peerPresenceEnvelope = envelope
         if envelope.phase == .settled {
-          lastSettledPresenceEnvelope = envelope
-          schedulePresenceSave(incoming)
-          if externalReloadPending { externalReloadPending = false; reloadExternalChanges() }
+          enqueueStoreWrite(owner: .peerPresence(peerID), publishesChanges: false) {
+            _ = try $0.acceptPresencePublication(envelope, deviceID: peerID, connectionID: generation)
+          }
         }
-      #endif
-    case .documentPageSelection(let request):
-      #if os(iOS)
-        guard request.isValid else { return }
-        guard presence?.mode == .document, presence?.focusedItemID == request.documentID else { return }
-        cancelRequestedNavigation()
-        _ = selectDocumentPage(request.pageIndex, documentID: request.documentID, publishesRequest: false)
       #endif
     }
   }
@@ -4770,15 +4773,6 @@ final class NotebookAppModel {
       phase: phase,
       presence: presence
     )
-  }
-
-  private func restoreSettledPresenceAfterDisconnect() {
-    #if os(macOS)
-      guard presencePhase == .active, let stored = lastSettledPresenceEnvelope?.presence else { return }
-      presence = stored
-      presencePhase = .settled
-      alignWorkspaceSelection()
-    #endif
   }
 
   private func presenceIsUsable(_ presence: SessionPresence) -> Bool {

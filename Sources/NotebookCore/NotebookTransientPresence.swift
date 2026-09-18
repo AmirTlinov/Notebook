@@ -31,22 +31,3 @@ public struct PresenceEnvelope: Codable, Equatable, Sendable {
   }
 }
 
-/// A Mac interaction asks the iPad, which owns session presence, to select one
-/// physical document sheet. The iPad publishes the resulting authoritative
-/// presence; this request never becomes a second persistent page owner.
-public struct DocumentPageSelectionRequest: Codable, Equatable, Sendable {
-  public static let maximumPageIndex = 100_000
-
-  public let documentID: UUID
-  public let pageIndex: Int
-
-  public init(documentID: UUID, pageIndex: Int) {
-    self.documentID = documentID
-    self.pageIndex = pageIndex
-  }
-
-  public var isValid: Bool {
-    pageIndex >= 0 && pageIndex <= Self.maximumPageIndex
-  }
-}
-

@@ -4,10 +4,24 @@ import NotebookCore
 
 @main
 struct NotebookMacApp: App {
+  @Environment(\.openWindow) private var openWindow
   @NSApplicationDelegateAdaptor(NotebookMacLifecycle.self) private var lifecycle
 
   var body: some Scene {
+    Window("Notebook", id: "workspace") {
+      NotebookMacWorkspaceRoot(lifecycle: lifecycle)
+    }
+    .defaultSize(width: 1100, height: 780)
+    .defaultLaunchBehavior(lifecycle.presentsWorkspaceAtLaunch ? .presented : .suppressed)
+    .commands {
+      CommandGroup(after: .newItem) {
+        Button("Открыть Notebook") { openWindow(id: "workspace"); NSApp.activate() }
+          .keyboardShortcut("0", modifiers: .command)
+      }
+    }
     MenuBarExtra("Notebook", image: "NotebookStatusIcon") {
+      Button("Открыть Notebook") { openWindow(id: "workspace"); NSApp.activate() }
+      Divider()
       if let model = lifecycle.launch.model {
         Text(model.deviceStatusMessage)
         if case .failed(let message) = model.loadState {
@@ -51,6 +65,7 @@ struct NotebookMacApp: App {
 @Observable
 final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
   let launch: NotebookApplicationLaunch
+  @ObservationIgnored var openWorkspace: (() -> Void)?
   private var launchTask: Task<Void, Never>?
   @ObservationIgnored private(set) var devicesWindowController: NotebookMacDevicesWindowController?
   @ObservationIgnored private var workspacesWindow: NSWindow?
@@ -63,23 +78,29 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
 
   override init() {
     isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-    let isolated = NotebookAcceptanceConfiguration.requestedLaunch()
-    isAcceptance = isolated != nil
     #if DEBUG
       isFixture = MacDocumentLaunchFixture.isRequested
-      launch = isolated ?? (isFixture ? NotebookApplicationLaunch(fixture: MacDocumentLaunchFixture.makeModel())
-        : isRunningTests ? NotebookApplicationLaunch(fixture: nil) : NotebookApplicationLaunch()
-      )
     #else
       isFixture = false
+    #endif
+    // The explicit DEBUG smoke fixture owns fresh temporary content, not an
+    // acceptance manifest or the installed workspace. These are distinct launches.
+    let isolated = isFixture ? nil : NotebookAcceptanceConfiguration.requestedLaunch()
+    isAcceptance = isolated != nil
+    #if DEBUG
+      launch = isFixture ? NotebookApplicationLaunch(fixture: MacDocumentLaunchFixture.makeModel())
+        : isolated ?? (isRunningTests ? NotebookApplicationLaunch(fixture: nil) : NotebookApplicationLaunch())
+    #else
       launch = isolated ?? (isRunningTests ? NotebookApplicationLaunch(fixture: nil) : NotebookApplicationLaunch())
     #endif
     super.init()
     if !isRunningTests || isAcceptance { start() }
   }
 
+  var presentsWorkspaceAtLaunch: Bool { !isRunningTests || isFixture || isAcceptance }
+
   func applicationDidFinishLaunching(_ notification: Notification) {
-    NSApplication.shared.setActivationPolicy(.accessory)
+    NSApplication.shared.setActivationPolicy(.regular)
     #if DEBUG
       if isFixture, let model = launch.model { Task { await MacDocumentLaunchFixture.writeProof(model: model) } }
     #endif
@@ -99,10 +120,12 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
     }
   }
 
-  /// Reopening shows status; connection never depends on opening a window.
+  /// Closing the working window never terminates the process-owned sync/MCP.
+  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-    if launch.hasNoWorkspace { showWorkspaces() } else { showDevices() }
-    return false
+    if let openWorkspace { openWorkspace(); sender.activate(); return false }
+    return true
   }
 
   func showWorkspaces() {

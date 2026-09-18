@@ -80,12 +80,10 @@ struct PageSurface: View {
             onElementErasing: model.updateElementErasing
           )
         #else
-          PencilDrawingView(page: page)
-            .allowsHitTesting(false)
-            .onAppear {
-              inkIsReady = true
-              publishReadiness(ink: true, overlay: overlayIsReady)
-            }
+          MacPageInkView(page: page, isInteractive: isVisible && isInteractive) { ready in
+            inkIsReady = ready
+            publishReadiness(ink: ready, overlay: overlayIsReady)
+          }.id(page.id)
         #endif
 
       }

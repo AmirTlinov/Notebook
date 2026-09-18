@@ -40,6 +40,40 @@ import Testing
     #expect(try store.currentChangeCursor() == changeCursor, "A selection is not replicated content or an undoable action")
   }
 
+  @Test func peerObservationNeverReplacesLocalNavigationAndDisconnectRestoresLocalSelection() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), localDevice = UUID(), peer = UUID(), connection = UUID(), session = UUID()
+    let header = try store.initializeWorkspace(actor: localDevice, pageSize: .init(width: 834, height: 1194))
+    let local = SessionPresence(boardID: header.rootBoardID, mode: .board,
+      camera: .init(scale: 0.4), viewport: .init(x: 1100, y: 780))
+    let remote = SessionPresence(boardID: header.rootBoardID, mode: .board,
+      camera: .init(scale: 1.2), viewport: .init(x: 834, y: 1194))
+    try store.savePresence(local)
+    let selection = NotebookSelection(id: UUID(), kind: .empty, surface: .init(kind: .board, id: header.rootBoardID))
+    try store.saveLocalSelectionPublication(.init(deviceID: localDevice, sessionID: UUID(), sequence: 1, selection: selection))
+    let cursor = try store.currentChangeCursor(), read = try store.currentReadCursor()
+    #expect(try store.readObservedPresenceIfAvailable() == local)
+    #expect(try store.readSelectionPublication().selection == selection)
+    try store.beginSelectionPublication(deviceID: peer, connectionID: connection)
+    #expect(try store.readObservedPresenceIfAvailable() == nil)
+    #expect(try store.readSelectionPublication().status == "unknown")
+    let envelope = PresenceEnvelope(sessionID: session, sequence: 2, phase: .settled, presence: remote)
+    #expect(try !store.acceptPresencePublication(envelope, deviceID: peer, connectionID: UUID()))
+    #expect(try store.acceptPresencePublication(envelope, deviceID: peer, connectionID: connection))
+    #expect(try !store.acceptPresencePublication(envelope, deviceID: peer, connectionID: connection))
+    #expect(try !store.acceptPresencePublication(.init(sessionID: UUID(), sequence: 3, phase: .settled, presence: local), deviceID: peer, connectionID: connection))
+    #expect(try store.loadPresence() == local)
+    #expect(try store.readObservedPresenceIfAvailable() == remote)
+    try store.endSelectionPublication(deviceID: peer, connectionID: UUID())
+    #expect(try store.readObservedPresenceIfAvailable() == remote)
+    try store.endSelectionPublication(deviceID: peer, connectionID: connection)
+    #expect(try store.readObservedPresenceIfAvailable() == local)
+    #expect(try store.readSelectionPublication().selection == selection)
+    #expect(try store.currentChangeCursor() == cursor)
+    #expect(try store.currentReadCursor() == read)
+  }
+
   @Test func invalidPhysicalOwnerIsRejectedAndNilIsNotAnEmptyChoice() throws {
     let target = CollaborationTarget(kind: .cover, id: UUID())
     #expect(!NotebookSelection(id: UUID(), kind: .empty, surface: target).isValid)

@@ -21,7 +21,12 @@ struct EditableElementContainer<Content: View>: View {
       .accessibilityAction(named: "Переместить вниз") { model.moveElementAccessibly(reference, by: .init(x: 0, y: 20)) }
       .accessibilityAction(named: "Переместить вверх") { model.moveElementAccessibly(reference, by: .init(x: 0, y: -20)) }
       #if os(macOS)
+      .onTapGesture(count: 2) { model.selectElement(reference); model.editSelectedElement(reference) }
       .onTapGesture { model.selectElement(reference) }
+      .contextMenu {
+        Button("Редактировать") { model.selectElement(reference); model.editSelectedElement(reference) }
+        Button("Удалить", role: .destructive) { model.selectElement(reference); model.deleteElement(reference) }
+      }
       .gesture(DragGesture(minimumDistance: 3)
         .onChanged { value in
           if contact == nil { model.selectElement(reference); contact = model.beginElementManipulation(reference, kind: .move) }
@@ -30,7 +35,7 @@ struct EditableElementContainer<Content: View>: View {
         .onEnded { value in
           if let contact { model.finishElementManipulation(contact, translation: .init(x: value.translation.width / coordinateScale, y: value.translation.height / coordinateScale)) }
           contact = nil
-        })
+        }, including: model.selectionSession.isInteractive && model.selectionSession.element == reference ? .subviews : .all)
       .onDisappear { if let contact { model.cancelElementManipulation(contact) }; contact = nil }
       #endif
       .accessibilityAddTraits(model.selectionSession.contains(reference) ? .isSelected : [])

@@ -5,7 +5,7 @@ import Observation
 
 private struct PreviewPageKey: Hashable {
   let pageID: UUID
-  let drawingStamp: VersionStamp
+  let cursor: UInt64
 }
 
 private struct PreviewCurrentViewKey: Hashable {
@@ -15,10 +15,6 @@ private struct PreviewCurrentViewKey: Hashable {
   let spatialInkStamp: VersionStamp
   let presence: SessionPresence
   let presencePhase: PresencePhase
-  let pageDrawingStamp: VersionStamp?
-  let pageAgentStamp: VersionStamp?
-  let documentContentStamp: VersionStamp?
-  let documentStateStamp: VersionStamp?
   let documentSnapshotGeneration: Int
 }
 
@@ -58,7 +54,7 @@ private enum PreviewPublicationError: Error {
   case sourceChanged
 }
 
-/// The menu-bar helper owns publication independently from an application
+/// The process owns publication independently from the working
 /// window. Stopping it drains every accepted preparation before storage closes.
 @MainActor
 final class MacPreviewPublisher {
@@ -233,31 +229,18 @@ final class MacPreviewPublisher {
   }
 
   private var pageKey: PreviewPageKey? {
-    guard let model, let id = model.workspace?.selectedPageID, let page = model.pages[id] else { return nil }
-    return .init(pageID: id, drawingStamp: page.drawingStamp)
+    guard let model, let id = model.observedPresence?.notebookPageID, let header = model.workspaceHeader else { return nil }
+    return .init(pageID: id, cursor: header.cursor)
   }
 
   private func makeCurrentViewKey() -> PreviewCurrentViewKey? {
-    guard let model, let workspace = model.workspace, let header = model.workspaceHeader,
+    guard let model, let header = model.workspaceHeader,
       let boardRevision = header.boardRevision, let inkStamp = header.spatialInkStamp,
-      let presence = model.presence
-    else { return nil }
-    let focusedIsSelected = presence.focusedItemID == workspace.selectedItemID
-    let page = focusedIsSelected ? model.activePage : nil
-    let document = focusedIsSelected ? model.activeDocument : nil
-    let documentState = document.flatMap { model.documentStates[$0.id] }
-    return PreviewCurrentViewKey(
-      workspaceStamp: header.stamp, cursor: header.cursor,
-      boardRevision: boardRevision,
-      spatialInkStamp: inkStamp,
-      presence: presence,
-      presencePhase: model.presencePhase,
-      pageDrawingStamp: page?.drawingStamp,
-      pageAgentStamp: page?.agentStamp,
-      documentContentStamp: document?.contentStamp,
-      documentStateStamp: documentState?.stamp,
-      documentSnapshotGeneration: documentSnapshotGeneration
-    )
+      let presence = model.observedPresence else { return nil }
+    return .init(workspaceStamp: header.stamp, cursor: header.cursor,
+      boardRevision: boardRevision, spatialInkStamp: inkStamp,
+      presence: presence, presencePhase: model.observedPresencePhase,
+      documentSnapshotGeneration: documentSnapshotGeneration)
   }
 
   private func scheduleCurrentView(for key: PreviewCurrentViewKey?) {
@@ -279,17 +262,32 @@ final class MacPreviewPublisher {
         return
       }
       do {
+        guard let model else { throw PreviewPublicationError.sourceUnavailable }
+        // The peer's page may be outside the Mac window's bounded scene cache.
+        // Read its addressed materials from the same writer, not a second model.
+        let presence = key.presence
+        let content = try await model.performStoreCommand { store in
+          try store.readTransaction { _ -> (PageDocument?, DocumentDocument?, DocumentStateJournal?) in
+            let page = try presence.mode == .page ? presence.notebookPageID.map { try store.loadPage($0) } : nil
+            let document = try presence.mode == .document ? presence.focusedItemID.map { try store.loadDocument($0) } : nil
+            let state = try document.map { try store.loadDocumentState($0.id) }
+            return (page, document, state)
+          }
+        }
         var documentRaster: RasterLease?
         defer { documentRaster?.release() }
-        if let model, model.presence?.mode == .document, let document = model.activeDocument,
-          let state = model.documentStates[document.id] {
-          documentRaster = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: model.presence?.documentPageIndex ?? 0)
+        if let document = content.1, let state = content.2 {
+          documentRaster = try await DocumentSnapshotCache.shared.prepare(document: document, state: state,
+            pageIndex: presence.documentPageIndex)
         }
-        guard started, !Task.isCancelled, model?.permitsBackgroundPreparation == true, makeCurrentViewKey() == key else {
+        guard started, !Task.isCancelled, model.permitsBackgroundPreparation, makeCurrentViewKey() == key else {
           throw PreviewPublicationError.sourceChanged
         }
-        finishCurrentViewPublication(key, generation: generation,
-          error: await writeCurrentView(documentRaster: documentRaster))
+        try await CurrentViewPreviewWriter.write(model: model,
+          viewport: .init(width: presence.viewport.x, height: presence.viewport.y), presence: presence,
+          page: content.0, document: content.1, documentState: content.2, documentRaster: documentRaster,
+          pngURL: model.store.currentViewPreviewURL, receiptURL: model.store.currentViewRevisionURL)
+        finishCurrentViewPublication(key, generation: generation, error: nil)
       } catch {
         finishCurrentViewPublication(key, generation: generation, error: error)
       }
@@ -318,8 +316,11 @@ final class MacPreviewPublisher {
       defer { self?.pageRequestTask = nil }
       guard self?.started == true, !Task.isCancelled, let model else { return }
       do {
-        _ = try await model.performStoreCommand {
-          try $0.requestPageVision(pageID: key.pageID, expectedRevision: key.drawingStamp.revision)
+        _ = try await model.performStoreCommand { store in
+          guard let stamp = try store.readContentHeader(target: .init(kind: .page, id: key.pageID)).inkStamp else {
+            throw PreviewPublicationError.sourceUnavailable
+          }
+          return try store.requestPageVision(pageID: key.pageID, expectedRevision: stamp.revision)
         }
         guard !Task.isCancelled, let self, started, pageKey == key else { return }
         requestedPageKey = key
@@ -328,37 +329,4 @@ final class MacPreviewPublisher {
     }
   }
 
-  private func writeCurrentView(documentRaster: RasterLease?) async -> (any Error)? {
-    guard started, !Task.isCancelled, let model, let workspace = model.workspace,
-      let presence = model.presence,
-      presence.viewport.x > 0,
-      presence.viewport.y > 0
-    else { return PreviewPublicationError.sourceUnavailable }
-    let focusedIsSelected = presence.focusedItemID == workspace.selectedItemID
-    let page = focusedIsSelected ? model.activePage : nil
-    let document = focusedIsSelected ? model.activeDocument : nil
-    let documentState = document.flatMap { model.documentStates[$0.id] }
-    guard presence.mode != .document
-      || (document != nil && documentState != nil)
-    else { return PreviewPublicationError.sourceUnavailable }
-    do {
-      try await CurrentViewPreviewWriter.write(
-        model: model,
-        viewport: CGSize(
-          width: presence.viewport.x,
-          height: presence.viewport.y
-        ),
-        presence: presence,
-        page: page,
-        document: document,
-        documentState: documentState,
-        documentRaster: documentRaster,
-        pngURL: model.store.currentViewPreviewURL,
-        receiptURL: model.store.currentViewRevisionURL
-      )
-      return nil
-    } catch {
-      return error
-    }
-  }
 }
