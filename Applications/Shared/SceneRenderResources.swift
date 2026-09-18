@@ -481,6 +481,9 @@ final class SceneRenderResources {
     let publication: UInt64
     var access: UInt64
     var retains: Int
+    // Only complete composition pixels are eligible for a warm return. This
+    // metadata dies with the same budgeted entry; it retains no source images.
+    var compositionReceipts: [SceneSourceAddress: SceneSourceReceipt]? = nil
   }
   private struct DiagnosticEntry {
     let element: AgentElement
@@ -578,6 +581,34 @@ final class SceneRenderResources {
     accessClock &+= 1; entry.access = accessClock; entry.retains += 1; entries[id] = entry
     return RasterLease(source: entry.source, pixelScale: entry.pixelScale, image: entry.image,
       mipmaps: entry.mipmaps, byteCount: entry.cost, entryID: id, resources: self)
+  }
+
+  func compositionReceipts(for raster: RasterLease) -> [SceneSourceAddress: SceneSourceReceipt]? {
+    guard !raster.isReleased else { return nil }
+    return entries[raster.entryID]?.compositionReceipts
+  }
+
+  func retainComposition(_ key: SceneCompositionTileKey,
+    accepts: ([SceneSourceAddress: SceneSourceReceipt]) -> Bool) -> RasterLease? {
+    guard let id = matchingRaster(.composition(key), minimumScale: 0),
+      let receipts = entries[id]?.compositionReceipts, accepts(receipts) else { return nil }
+    return retainRasterEntry(id)
+  }
+
+  func cacheComposition(_ raster: RasterLease, receipts: [SceneSourceAddress: SceneSourceReceipt],
+    sources: [SceneSourceAddress: RasterLease]) {
+    guard !raster.isReleased, case .composition = raster.source,
+      receipts.values.allSatisfy(\.hasCurrentPixels) else { return }
+    for (address, receipt) in receipts {
+      // Capture may finish during an awaited paint. Do not register the old
+      // output as reusable after that newer source already invalidated caches.
+      guard let source = sources[address], let entry = entries[source.entryID],
+        source.image(for: receipt.demand.rasterSource, minimumScale: receipt.demand.minimumScale) != nil,
+        !(rasterOwners[entry.source.owner] ?? []).contains(where: {
+          (entries[$0]?.publication ?? 0) > entry.publication
+        }) else { return }
+    }
+    entries[raster.entryID]?.compositionReceipts = receipts
   }
 
   func reserveWebSnapshot(pixelSize: CGSize) -> RasterReservation? {
@@ -922,6 +953,13 @@ final class SceneRenderResources {
     if let element = source.agentElement, var diagnostics = diagnosticEntries[element.id], diagnostics.element == element {
       diagnostics.values.removeAll { $0.kind == "resource_limit" }
       diagnosticEntries[element.id] = diagnostics
+    }
+    if let element = source.agentElement {
+      // A new capture may have the same durable source/state as its previous
+      // frame. Revoke dependent cache eligibility, never displayed leases.
+      for id in entries.keys where entries[id]?.compositionReceipts?.keys.contains(where: { $0.elementID == element.id }) == true {
+        entries[id]?.compositionReceipts = nil
+      }
     }
     changed(source.owner)
     return id

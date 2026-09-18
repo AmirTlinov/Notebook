@@ -19,6 +19,8 @@ final class SceneCompositionRenderer {
   private var fallbackSources: [SceneSourceAddress: RasterLease]
   private var sourceFailures: [SceneSourceAddress: SceneSourceFailure]
   private var currentTile: SceneCompositionTileKey?
+  private var paintedTiles = Set<SceneCompositionTileKey>()
+  private var carriedReceipts: [SceneSourceAddress: SceneSourceReceipt] = [:]
   private var sourcePresentation: (plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double, refinesDetails: Bool)?
   private(set) var sourceDemands: [SceneSourceAddress: SceneSourceDemand] = [:]
   private(set) var sourceRasters: [SceneSourceAddress: RasterLease] = [:]
@@ -64,15 +66,29 @@ final class SceneCompositionRenderer {
   /// Carried tiles keep the source receipts and owned fallbacks that produced
   /// them. Only fragments actually redrawn in this pass replace those values.
   func carrySources(from previous: SceneCompositionCohort?, tiles: [SceneCompositionTileKey: RasterLease]) {
-    guard let previous else { return }
-    for key in tiles.keys {
-      let oldKey = key.atRevision(previous.plan.revision)
-      guard let dependencies = previous.tileSources[oldKey] else { continue }
+    for (key, raster) in tiles {
+      let oldKey = previous.map { key.atRevision($0.plan.revision) }
+      let fromPrevious = oldKey.flatMap { previous?.rasters[$0]?.entryID } == raster.entryID
+      let receipts = fromPrevious ? previous?.sourceReceipts ?? [:] : resources.compositionReceipts(for: raster) ?? [:]
+      let dependencies = fromPrevious ? oldKey.flatMap { previous?.tileSources[$0] } ?? [] : Set(receipts.keys)
       tileSources[key] = dependencies
       for address in dependencies {
-        if let receipt = previous.sourceReceipts[address] { sourceDemands[address] = receipt.demand }
-        if sourceRasters[address] == nil { sourceRasters[address] = previous.sourceRasters[address]?.retainedCopy() }
+        if let receipt = receipts[address] {
+          sourceDemands[address] = receipt.demand; carriedReceipts[address] = receipt
+        }
+        if sourceRasters[address] == nil, fromPrevious {
+          sourceRasters[address] = previous?.sourceRasters[address]?.retainedCopy()
+        }
       }
+    }
+  }
+
+  func cachePreparedTiles(_ rasters: [SceneCompositionTileKey: RasterLease]) {
+    let receipts = receipts()
+    for key in paintedTiles {
+      guard let raster = rasters[key] else { continue }
+      let dependencies = tileSources[key] ?? []
+      resources.cacheComposition(raster, receipts: receipts.filter { dependencies.contains($0.key) }, sources: sourceRasters)
     }
   }
 
@@ -88,6 +104,9 @@ final class SceneCompositionRenderer {
   func receipts() -> [SceneSourceAddress: SceneSourceReceipt] {
     return Dictionary(uniqueKeysWithValues: sourceDemands.map { address, demand in
       let raster = sourceRasters[address]
+      if raster == nil, let carried = carriedReceipts[address], carried.demand == demand {
+        return (address, carried)
+      }
       let installed: AgentElement?
       installed = raster?.source.agentElement
       let ready = raster?.image(for: demand.rasterSource, minimumScale: demand.minimumScale) != nil
@@ -177,7 +196,9 @@ final class SceneCompositionRenderer {
         frame: frame, projection: cameraScale, range: key.range, canvas: canvas)
     }
     try await source.validate(); try checkPreparation()
-    return try await canvas.finishRaster(for: .composition(key))
+    let raster = try await canvas.finishRaster(for: .composition(key))
+    paintedTiles.insert(key)
+    return raster
   }
 
   private func paintBoard(presence: SessionPresence, frame: CGRect, visible: CGRect,

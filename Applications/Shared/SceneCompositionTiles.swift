@@ -993,6 +993,7 @@ final class SceneCompositionTiles {
                 status: .failed(failed.diagnostic.kind + ": " + failed.diagnostic.message),
                 installedRegion: receipt.installedRegion)
             }
+            renderer.cachePreparedTiles(rasters)
             let ownedSources = renderer.sourceRasters.compactMapValues { $0.retainedCopy() }
             let geometryID = previous.flatMap { previous in
               previous.sharesGeometry(with: plan, frame: frame) ? previous.geometryID : nil
@@ -1368,6 +1369,14 @@ final class SceneCompositionTiles {
       for key in plan.tiles {
         if !invalidatedTiles.contains(key), canCarry, let previous, let old = previous.rasters[key.atRevision(previous.plan.revision)],
           !old.isReleased, let hit = old.retainedCopy() { tiles[key] = hit }
+        else if !invalidatedTiles.contains(key), let hit = resources.retainComposition(key, accepts: { receipts in
+          receipts.allSatisfy { address, receipt in
+            guard let view = plan.presentations[.board(address.plane.boardID)] else { return false }
+            let density = plan.requiredPixelDensity[address.plane] ?? 0
+            return receipt.installedScale + 0.000_001 >= density
+              && receipt.coversVisibleWindow(in: view, pixelDensity: density, refinesDetails: true)
+          }
+        }) { tiles[key] = hit }
         else {
           guard let bytes = SceneRenderResources.estimatedRasterBytes(pixelWidth: key.pixelSize, pixelHeight: key.pixelSize)
           else { throw SceneRenderError.resourceLimit }

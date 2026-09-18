@@ -1,5 +1,27 @@
 # Проверка Notebook
 
+## 19 сентября, 00:28 МСК — GUI-253: reuse готовой композиции
+
+После `493bd2d` preflight заимствует совместимые composition entries из
+существующего SceneRenderResources, а не только из предыдущей когорты.
+Готовность и зависимости хранятся на той же budgeted entry, без удержания
+старой когорты или дополнительного кеша. Placeholder не становится cache hit;
+новый WebKit capture отзывает reuse зависимых записей, не показанные leases.
+Проверка publication order не даёт запоздалому painter вернуть старую запись
+в reusable. Crop, density, painter range и revision сохраняют силу.
+
+Simulator: `c3.xcresult` — **85/85 PASS** (composition, resources, environment).
+`c3-accepted.xcresult` — **3/3 PASS**: A→B→A возвращает те же entryID у native
+и восьми static SVG sources; старая когорта освобождена; pending/new capture,
+revision change и реальное бюджетное eviction не возвращают старые пиксели.
+Document pinch UI прошёл в `c3-final.xcresult`; этот промежуточный bundle
+в целом FAILED из-за слишком короткого ожидания восьми последовательных
+background jobs. Диагностика показала шесть ready и два работающих, а не
+resource failure. Финальная проверка ждёт завершения очереди с пределом 10 s,
+не подменяет readiness таймером. Warm-return/bytes receipt сохранён в
+`.build/canvas-plan-20260918/c3-accepted-images/`. Это published boundary,
+не утверждение о scanout или физическом FPS.
+
 ## 19 сентября, 00:18 МСК — GUI-252: устойчивые LOD и pixel keys
 
 После `22ea1fd` финальный occupancy probe сохраняет предыдущий LOD; при

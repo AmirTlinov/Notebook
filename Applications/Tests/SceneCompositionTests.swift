@@ -6,6 +6,111 @@ import XCTest
 
 final class SceneCompositionTests: XCTestCase {
   @MainActor
+  func testWarmReturnReusesCompositionEntriesAndRevisionChangeDoesNot() async throws {
+    let fixture = Fixture(count: 8, side: 32, kind: .nativeText)
+    let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    func prepare(_ presence: SessionPresence, revision: UInt64 = 0) async throws {
+      let paint = coordinator.published?.paintID
+      coordinator.prepare(source: fixture.source(revision: revision), presence: presence,
+        frame: .init(index: fixture.index, presence: presence, portalCamera: { _ in nil }), pinned: [], displayScale: 1)
+      try await waitUntil { coordinator.published?.paintID != paint || coordinator.failure != nil }
+      XCTAssertNil(coordinator.failure)
+    }
+    try await prepare(fixture.presence)
+    let first = try XCTUnwrap(coordinator.published).rasters.mapValues(\.entryID)
+    XCTAssertFalse(first.isEmpty)
+    let away = SessionPresence(boardID: fixture.presence.boardID, mode: .board,
+      camera: .init(center: .init(x: 12_000, y: 0), scale: 1), viewport: fixture.presence.viewport)
+    try await prepare(away)
+    XCTAssertTrue(try XCTUnwrap(coordinator.published).rasters.isEmpty)
+    let started = ContinuousClock.now
+    try await prepare(fixture.presence)
+    XCTAssertEqual(try XCTUnwrap(coordinator.published).rasters.mapValues(\.entryID), first,
+      "A → B → A must borrow the original composition entries, not render identical new images")
+    let warm = started.duration(to: .now)
+    try await prepare(away)
+    let pressure = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit - resources.passiveReservedBytes, priority: .passive))
+    XCTAssertTrue(first.keys.allSatisfy { resources.image(for: .composition($0)) == nil })
+    pressure.release()
+    try await prepare(fixture.presence)
+    XCTAssertTrue(Set(first.values).isDisjoint(with: try XCTUnwrap(coordinator.published).rasters.values.map(\.entryID)),
+      "Real eviction permits a fresh render, not an unbounded retained cohort cache")
+    try await prepare(away)
+    try await prepare(fixture.presence, revision: 1)
+    XCTAssertTrue(Set(first.values).isDisjoint(with: try XCTUnwrap(coordinator.published).rasters.values.map(\.entryID)))
+    XCTAssertLessThanOrEqual(resources.peakAccountedBytes, resources.byteLimit)
+    let report = XCTAttachment(string: "warmReturnToPublished=\(warm); reusedCompositionTiles=\(first.count); peakAccountedBytes=\(resources.peakAccountedBytes)")
+    report.name = "warm-composition-return"; report.lifetime = .keepAlways; add(report)
+  }
+
+  @MainActor
+  func testWarmStaticWebCompositionKeepsReadinessWithoutRetainingItsOldCohort() async throws {
+    let fixture = Fixture(count: 8, side: 32,
+      html: "<svg viewBox='0 0 32 32'><rect width='32' height='32' fill='red'/></svg>")
+    let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    func prepare(_ presence: SessionPresence) async throws {
+      let paint = coordinator.published?.paintID
+      coordinator.prepare(source: fixture.source(), presence: presence,
+        frame: .init(index: fixture.index, presence: presence, portalCamera: { _ in nil }), pinned: [], displayScale: 1)
+      try await waitUntil { coordinator.published?.paintID != paint || coordinator.failure != nil }
+      XCTAssertNil(coordinator.failure)
+    }
+    try await prepare(fixture.presence)
+    // The single background executor visits eight sources serially. Wait for
+    // completion, not a 3-second deadline intended for one scene publication.
+    let deadline = ContinuousClock.now + .seconds(10)
+    while coordinator.isPreparing, coordinator.failure == nil, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertFalse(coordinator.isPreparing)
+    XCTAssertTrue(coordinator.published?.sourceReceipts.values.allSatisfy(\.hasCurrentPixels) == true)
+    let first = try XCTUnwrap(coordinator.published).rasters.mapValues(\.entryID)
+    weak let retired = coordinator.published
+    XCTAssertFalse(first.isEmpty)
+    let away = SessionPresence(boardID: fixture.presence.boardID, mode: .board,
+      camera: .init(center: .init(x: 12_000, y: 0), scale: 1), viewport: fixture.presence.viewport)
+    try await prepare(away)
+    try await waitUntil { retired == nil }
+    try await prepare(fixture.presence)
+    let returned = try XCTUnwrap(coordinator.published)
+    XCTAssertEqual(returned.rasters.mapValues(\.entryID), first)
+    XCTAssertTrue(returned.sourceReceipts.values.allSatisfy(\.hasCurrentPixels))
+    XCTAssertTrue(returned.tileSources.values.contains { !$0.isEmpty })
+  }
+
+  @MainActor
+  func testCompositionCacheNeverReusesPendingOrSupersededSourcePixels() throws {
+    let fixture = Fixture(count: 1, side: 32)
+    let resources = SceneRenderResources(byteLimit: 32 * 1024 * 1024, profile: .headless)
+    let source = agentElementSnapshotSource(fixture.elements[0])
+    let address = SceneSourceAddress(plane: .board(fixture.presence.boardID), elementID: source.id)
+    let tile = try XCTUnwrap(CompositionTile(containing: .zero, level: 4))
+    let key = fixture.key(tile: tile, range: .whole(.elements))
+    func store(_ source: SceneRasterSource) throws -> RasterLease {
+      let image = bitmap(side: 32, scale: 1, color: .red)
+      let reservation = try XCTUnwrap(resources.reserveRaster(pixelWidth: 32, pixelHeight: 32))
+      return try XCTUnwrap(resources.storeAndRetain(image, for: source, reservation: reservation))
+    }
+    let sourcePixels = try store(.agent(source)), composed = try store(.composition(key))
+    defer { sourcePixels.release(); composed.release() }
+    let demand = SceneSourceDemand(source: source, minimumScale: 1)
+    resources.cacheComposition(composed, receipts: [address: .init(demand: demand, installedSource: nil,
+      installedScale: 0, status: .pending)], sources: [:])
+    XCTAssertNil(resources.retainComposition(key, accepts: { _ in true }))
+    let ready = SceneSourceReceipt(demand: demand, installedSource: source, installedScale: 1, status: .ready)
+    resources.cacheComposition(composed, receipts: [address: ready], sources: [address: sourcePixels])
+    let hit = try XCTUnwrap(resources.retainComposition(key, accepts: { $0[address]?.hasCurrentPixels == true }))
+    XCTAssertEqual(hit.entryID, composed.entryID); hit.release()
+    let newer = try store(.agent(source)); defer { newer.release() }
+    XCTAssertNil(resources.retainComposition(key, accepts: { _ in true }), "Same-source newer live pixels invalidate dependent warm entries")
+    resources.cacheComposition(composed, receipts: [address: ready], sources: [address: sourcePixels])
+    XCTAssertNil(resources.retainComposition(key, accepts: { _ in true }), "An awaited old paint cannot undo that invalidation")
+    XCTAssertFalse(composed.isReleased, "Invalidation does not revoke currently displayed pixels")
+  }
+
+  @MainActor
   func testFinalPopulatedGridAndWorldPixelKeysSurviveReversedPinch() async throws {
     let fixture = Fixture(count: 16, side: 32, kind: .nativeText)
     let source = fixture.source()
