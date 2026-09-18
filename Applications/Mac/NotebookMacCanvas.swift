@@ -179,7 +179,6 @@ struct NotebookMacCanvas: View {
           let center = anchor.camera.worldToScreen(item.center, viewport: anchor.viewport)
           MacWorkspaceMaterial(item: item, presence: anchor, cohort: cohort)
             .frame(width: item.geometry.width, height: item.geometry.height)
-            .background { if cohort.plan.allowsLive(.item(item.id), in: .board(presence.boardID)) { WorkspaceItemShadow(geometry: item.geometry) } }
             .scaleEffect(anchor.camera.scale)
             .frame(width: item.geometry.width * anchor.camera.scale, height: item.geometry.height * anchor.camera.scale)
             .position(x: center.x, y: center.y)
@@ -256,6 +255,7 @@ private struct MacWorkspaceMaterial: View {
       model.inputGate.endContact(source: source)
     }
     .clipShape(RoundedRectangle(cornerRadius: item.geometry.cornerRadius))
+    .background { if isLive { WorkspaceItemShadow(geometry: item.geometry) } }
     .offset(translation)
     .accessibilityElement(children: .contain)
     .accessibilityLabel(title)
