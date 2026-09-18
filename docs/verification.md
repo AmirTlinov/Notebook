@@ -9778,3 +9778,45 @@ Evidence `.build/mcp-s5-live-20260918/` и `.build/mcp-s5-install-20260918/`.
 и контейнеры не менялись. S5 не объявлен Done: прежде требуется объединение
 завершённых peer-коммитов и проверка согласованного Mac, без отката iPad,
 изменения чужого worktree или восстановления архивов.
+
+
+## 18 сентября, 03:08 МСК — согласование SDK v2 с transport v20 и compact UI
+
+Объединены собственные S1–S5 (`daf2cb1`) и завершённая графическая/UI-ветка
+`b5fed1e`, merge `4ed881b`. Причина: установленный production iPad уже говорил
+по transport v20, а исходная ветка Mac — по v16. Это несовместимость сборок,
+не утрата доверия. Графика и compact UI сохранены; SDK v2 использует их shapes,
+vertices, radius и longitudinal bend в общем graphicSchema и заново
+сгенерированных типах. Ни номер протокола вручную, ни контейнеры/архивы/ключи
+не изменялись.
+
+15 Codex + 18 Host + 54 Core PASS; 62 MCP PASS. Интеграционная проверка
+`.build/mcp-integration-verify-20260918`: пять подписанных Mac-тестов (четыре
+S5 cancellation/recovery и native rounded contour), один physical iPad
+`testSharedActionUndoKeepsTheDrawingAndHumanPlacement`; 0 skips и runtime warnings.
+Source `c2a785c43696eeec257e52871f020731b8e1a74150daf8abe087ce3734259bc6`. Это ограниченная интеграционная
+приёмка, не полный release gate. Подписанная пара строится из этого неизменного
+снимка; production Mac ещё не установлен, парная доставка ещё не подтверждена.
+
+
+## 18 сентября, 03:14 МСК — общий checkout и фактическая граница S5
+
+Mac из `.build/mcp-integration-release-20260918` установлен на прежнее место
+`/Users/amir/Applications/Notebook.app`, исходники c2a785c43696eeec257e52871f020731b8e1a74150daf8abe087ce3734259bc6,
+manifest a9d771fe9c82aaeeec13f75b4c233581ad46cc1a1214872c9fb4ea7bbe46760d.
+Точная подпись/опись проверены до и после атомарной замены; data containers,
+идентичности и доверенная пара не менялись. Первый MCP-запрос попал до готовности
+IPC и вернул ipc_unavailable; новый процесс после готовности подтвердил API v2.
+Production iPad не переустанавливался, открыт существующий b5fed1e. После
+ограниченного ожидания и одного restart он остаётся disconnected: исправление
+версии протокола было необходимым, но оказалось недостаточным. Discovery
+публикует Mac v20, listen socket открыт, доверенный iPad сохранён. Никакого
+reset/re-pair/CloudKit toggle не выполнялось. Новые проверочные элементы
+`.build/mcp-integration-live-20260918` ещё не создавались. S5 не закрыт: точная
+actionVersion после подключения пока не подтверждена.
+
+По явному указанию Амира обе задачи перешли на один checkout и ветку
+`codex/notebook-ipad-reliability`. UI-владелец перенёс и сверил свой текущий
+patch из worktree; старый worktree очищен только от перенесённых правок.
+Один общий Xcode lock сохранён. SDK/TS и graphics/erasure имеют разные
+области изменения; общий Core read-контракт согласуется напрямую.
