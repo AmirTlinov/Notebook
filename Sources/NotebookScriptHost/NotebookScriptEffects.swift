@@ -91,6 +91,16 @@ extension NotebookScriptCoordinator {
       effect.state = .committing
       let committing = effect
       _ = try await persistence { try $0.saveScriptEffect(runID, effect: committing); return .null }
+      // The journal reply is an await too: cancellation can win while that
+      // reply is in flight, before the native queue has accepted a command.
+      if cancelled.contains(runID) || finishedWorkers.contains(runID) {
+        // Unlike a missing transient receipt, this is observed non-dispatch.
+        // Persist that fact before throwing; no late response can reopen key.
+        effect.state = .notSaved; effect.error = try .encode(NotebookStore.scriptCancellationError)
+        let stopped = effect
+        _ = try await persistence { try $0.saveScriptEffect(runID, effect: stopped); return .null }
+        throw NotebookStore.scriptCancellationError
+      }
       let result: JSONValue
       switch effect.method {
       case "transaction":

@@ -41,6 +41,18 @@ struct NotebookScriptCancellationTests {
     #expect(try store.setScriptRunState(queued, state: .running) == cancelled)
   }
 
+  @Test func cancellationBeforeDispatchAdmissionCannotReopenACommittingEffect() throws {
+    let (store, run) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
+    _ = try store.setScriptRunState(run, state: .running)
+    var pending = try store.admitScriptEffect(run, key: "prepared", method: "point", arguments: .object([:]))
+    _ = try store.requestScriptRunCancellation(run)
+    pending.state = .committing
+    do { try store.saveScriptEffect(run, effect: pending); Issue.record("Cancelled preparation must not dispatch") }
+    catch let error as CollaborationError { #expect(error.code == "run_cancelled") }
+    #expect(try store.scriptEffect(run, id: pending.id).state == .admitted)
+    #expect(try store.reconcileScriptEffect(run, id: pending.id).state == .notSaved)
+  }
+
   @Test func cancellationClosesNewEffectsWhileAnAcceptedNativeEffectCanStillSave() throws {
     let (store, id) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
     _ = try store.setScriptRunState(id, state: .running)

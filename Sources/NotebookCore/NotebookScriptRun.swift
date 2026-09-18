@@ -282,6 +282,10 @@ extension NotebookStore {
         throw CollaborationError("effect_id_conflict", "Нельзя заменить идентичность принятого изменения.")
       }
       if previous.state == .saved || previous.state == .notSaved { return }
+      if previous.state == .admitted, effect.state == .committing {
+        guard let run = try scriptRun(runID), run.state == .running else { throw CollaborationError("run_closed", "Программа не принимает новую запись.") }
+        guard run.cancellationRequestedAt == nil else { throw Self.scriptCancellationError }
+      }
       var index = try scriptEffectIndex(runID)
       guard let offset = index.firstIndex(where: { $0["id"]?.string == effect.id.uuidString.lowercased() }) else {
         throw NotebookStorageError.corruptRecord("script effect admission")

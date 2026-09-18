@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import NotebookCore
+@testable import NotebookCore
 import NotebookScriptProtocol
 @testable import NotebookScriptHost
 
@@ -16,6 +16,9 @@ struct NotebookScriptEffectRecoveryTests {
     var loseReply = false
     var breakPersistenceAfterCommand = false
     var persistenceAvailable = true
+    var holdCommittingForRun: UUID?
+    var committingAccepted = false
+    var releaseCommitting: CheckedContinuation<Void, Never>?
     var holdEffectAdmission = false
     var effectAdmissionAccepted = false
     var releaseEffectAdmission: CheckedContinuation<Void, Never>?
@@ -39,6 +42,11 @@ struct NotebookScriptEffectRecoveryTests {
         effectAdmissionAccepted = true
         await withCheckedContinuation { releaseEffectAdmission = $0 }
       }
+      if let run = holdCommittingForRun, !committingAccepted,
+        let effect = try? store.scriptEffect(run, id: NotebookStore.submissionID(run, suffix: "effect:source")), effect.state == .committing {
+        committingAccepted = true
+        await withCheckedContinuation { releaseCommitting = $0 }
+      }
       return value
     }
     func host() -> NotebookScriptCoordinator {
@@ -56,6 +64,52 @@ struct NotebookScriptEffectRecoveryTests {
       return .object(["key": .string(key), "references": .array([try .encode(CollaborationReference(
         target: target, revision: store.referenceRevision(target: target)))])])
     }
+  }
+
+  @Test(arguments: ["point", "cancelPresentation"])
+  func cancelWhileCommittingJournalReplyIsInFlightPreventsNativeDispatch(method: String) async throws {
+    let owner = try Owner(), host = owner.host(), run = try owner.run()
+    let args = try method == "point" ? owner.point() : JSONValue.object(["key": .string("source"), "id": .string(UUID().uuidString)])
+    defer { owner.releaseCommitting?.resume(); try? FileManager.default.removeItem(at: owner.store.root) }
+    owner.holdCommittingForRun = run
+    let call = Task { try await host.effect(runID: run, method: method, arguments: args) }
+    let deadline = ContinuousClock.now + .seconds(2)
+    while !owner.committingAccepted, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    #expect(owner.committingAccepted)
+    host.cancelled.insert(run)
+    _ = try owner.store.requestScriptRunCancellation(run)
+    owner.releaseCommitting?.resume(); owner.releaseCommitting = nil
+    do { _ = try await call.value; Issue.record("Cancel before dispatch must prevent content") }
+    catch let error as CollaborationError { #expect(error.code == "run_cancelled") }
+    #expect(owner.commands == 0)
+    let id = NotebookStore.submissionID(run, suffix: "effect:source")
+    #expect(try owner.store.scriptPointReceipt(id) == nil)
+    #expect(try owner.store.scriptEffect(run, id: id).state == .notSaved)
+    await host.shutdown()
+  }
+
+  @Test func startupRecoversUnfinishedV1RunWithOldMissingGlobalEffectIndexWithoutReplay() async throws {
+    let owner = try Owner(), run = try owner.run(), args = try owner.point()
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    var effect = try owner.store.admitScriptEffect(run, key: "source", method: "point", arguments: args)
+    effect.state = .committing; try owner.store.saveScriptEffect(run, effect: effect)
+    var command = NotebookCommand(command: .point); command.actionID = effect.id
+    command.references = try args["references"]?.decode([CollaborationReference].self)
+    let receipt = try NotebookCommandDispatcher(store: owner.store).handle(command)
+    let file = "local/script-runs/\(run.uuidString.lowercased())/run.json"
+    let previous = try #require(try owner.store.storedValue(file))
+    try owner.store.publishRecords(writes: [file: previous.setting("apiVersion", .number(1)).setting("fingerprint", .string("original-v1-identity"))],
+      removals: [owner.store.scriptEffectRecoveryFile(effect.id)])
+    let restarted = owner.host(); try await restarted.start()
+    #expect(try owner.store.scriptRun(run)?.state == .interrupted)
+    #expect(try owner.store.scriptEffect(run, id: effect.id).state == .saved)
+    #expect(try owner.store.scriptEffect(run, id: effect.id).value == receipt)
+    #expect(restarted.active == nil && restarted.waiting.isEmpty && owner.commands == 0)
+    let page = try await restarted.handle(.init(op: .resume, runID: run, waitMilliseconds: 0))
+    #expect(page["run_api_version"] == .number(1))
+    #expect(page["fingerprint"] == .string("original-v1-identity"))
+    #expect(try owner.store.unfinishedScriptEffects().isEmpty)
+    await restarted.shutdown()
   }
 
   @Test func workerCompletionDrainsAnEffectWhoseAdmissionReplyHasNotArrived() async throws {

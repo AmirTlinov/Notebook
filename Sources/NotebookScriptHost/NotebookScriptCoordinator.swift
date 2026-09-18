@@ -141,6 +141,11 @@ public final class NotebookScriptCoordinator {
           return try .encode(store.setScriptRunState(run.id, state: .interrupted,
             error: .object(["code": .string("owner_restarted"), "message": .string("Attach reads existing receipts; code is never replayed.")])))
         }
+        // Older unfinished runs can predate the global recovery index. Once
+        // interrupted they cannot dispatch anything, so their bounded local
+        // index can be reconciled here, before IPC opens, without replay.
+        let ids = try await access { try .encode($0.terminalScriptEffectsForRecovery(run.id)) }.decode([UUID].self)
+        for id in ids { _ = try await reconcileEffect(runID: run.id, id: id) }
       }
     }
     initialization = task

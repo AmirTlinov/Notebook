@@ -23,6 +23,8 @@ final class NotebookScriptServiceTests: XCTestCase {
     var holdAdmission = false
     var admissionAccepted = false
     var releaseAdmission: CheckedContinuation<Void, Never>?
+    var loseWriteReplies = false
+    var nativeWrites = 0
     var reads = 0
     init(root: URL? = nil) throws {
       store = NotebookStore(root: root ?? FileManager.default.temporaryDirectory.appendingPathComponent("notebook-xpc-contract-\(UUID())"))
@@ -39,7 +41,12 @@ final class NotebookScriptServiceTests: XCTestCase {
         publicationAccepted = true
         await withCheckedContinuation { releasePublication = $0 }
       }
-      return try NotebookCommandDispatcher(store: store).handle(request)
+      let result = try NotebookCommandDispatcher(store: store).handle(request)
+      if request.command == .commitAction || request.command == .undo {
+        nativeWrites += 1
+        if loseWriteReplies { throw CollaborationError("native_reply_lost", "Commit succeeded, reply was lost") }
+      }
+      return result
     }
     func persist(_ operation: @Sendable (NotebookStore) throws -> JSONValue) async throws -> JSONValue {
       let result = try operation(store)
@@ -277,6 +284,41 @@ final class NotebookScriptServiceTests: XCTestCase {
     XCTAssertEqual(result["result"]?["pages"], .number(5))
     XCTAssertEqual(result["result"]?["ids"], .array((0..<13).map { .string(String(format: "hit-%02d", $0)) }))
     XCTAssertEqual(result["result"]?["source"], .string("needle 12"))
+    await host.shutdown()
+  }
+
+  func testLostCommitAndUndoRepliesPreserveOriginalResultsAndNeverRepeatEffects() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), run = UUID()
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    let page = try XCTUnwrap(owner.store.loadIndex().selectedPageID)
+    owner.loseWriteReplies = true
+    _ = try await host.handle(.init(op: .start, runID: run, code: """
+      const p=await nb.page({id:args.page});
+      const action={base:p.basis,summary:'Lost native reply',operations:[
+        {kind:'insertElement',target:{kind:'page',id:args.page},id:'lost-reply',values:{kind:'graphic',source:'',
+          frame:{x:20,y:30,width:150,height:100},graphic:{shape:'ellipse',style:{stroke:{red:0,green:0,blue:0},strokeWidth:2},
+          label:'One write',representation:'geometry',visible:true,sourceInkIDs:[]}}}]};
+      const first=await nb.transaction('same',action);
+      const second=await nb.transaction('same',action);
+      let conflict;try{await nb.transaction('same',{...action,summary:'Changed key identity'});}catch(e){conflict=e.code;}
+      const undo=await nb.undo('undo',{actionID:first.actionID});
+      const undoAgain=await nb.undo('undo',{actionID:first.actionID});
+      const originalAfterUndo=await nb.transaction('same',action);
+      return {first,second,undo,undoAgain,originalAfterUndo,conflict};
+      """, arguments: .object(["page": .string(page.uuidString)])))
+    let result = try await finish(host, run)
+    XCTAssertEqual(result.string("status"), "completed", "\(result)")
+    XCTAssertEqual(result["result"]?["first"], result["result"]?["second"])
+    XCTAssertEqual(result["result"]?["first"], result["result"]?["originalAfterUndo"])
+    XCTAssertEqual(result["result"]?["undo"], result["result"]?["undoAgain"])
+    XCTAssertEqual(result["result"]?["conflict"], .string("effect_id_conflict"))
+    XCTAssertEqual(owner.nativeWrites, 2)
+    XCTAssertEqual(result.array("effects").count, 2)
+    XCTAssertTrue(result.array("effects").allSatisfy { $0.string("state") == "saved" })
+    XCTAssertNil(try owner.store.readPageElement(pageID: page, elementID: "lost-reply"))
+    let repeated = try await host.handle(.init(op: .resume, runID: run, waitMilliseconds: 0))
+    XCTAssertEqual(repeated["result"], result["result"])
+    XCTAssertEqual(owner.nativeWrites, 2)
     await host.shutdown()
   }
 
