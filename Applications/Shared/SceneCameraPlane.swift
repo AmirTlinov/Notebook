@@ -120,12 +120,22 @@ struct SceneCameraPlane<Revision: Equatable, Content: View>: View {
   var isCameraActive = false
   var installation: SceneCameraPlaneInstallation? = nil
   var observation: NotebookSceneObservationContext? = nil
+  #if os(macOS)
+  var hitRegions: ((SessionPresence) -> [CGRect])? = nil
+  #endif
   @ViewBuilder let content: (SessionPresence) -> Content
 
   var body: some View {
+    #if os(macOS)
+    NativeSceneCameraPlane(presence: presence, revision: revision, reanchorsOnRevision: reanchorsOnRevision,
+      isCameraActive: isCameraActive, installation: installation, observation: observation,
+      hitRegions: hitRegions, content: content)
+      .frame(width: presence.viewport.x, height: presence.viewport.y)
+    #else
     NativeSceneCameraPlane(presence: presence, revision: revision, reanchorsOnRevision: reanchorsOnRevision,
       isCameraActive: isCameraActive, installation: installation, observation: observation, content: content)
       .frame(width: presence.viewport.x, height: presence.viewport.y)
+    #endif
   }
 }
 
@@ -444,13 +454,14 @@ private struct NativeSceneCameraPlane<Revision: Equatable, Content: View>: NSVie
   let isCameraActive: Bool
   let installation: SceneCameraPlaneInstallation?
   let observation: NotebookSceneObservationContext?
+  let hitRegions: ((SessionPresence) -> [CGRect])?
   let content: (SessionPresence) -> Content
 
   func makeNSView(context: Context) -> SceneCameraPlaneView<Revision> { SceneCameraPlaneView() }
   func updateNSView(_ view: SceneCameraPlaneView<Revision>, context: Context) {
     view.bindSceneLifecycle(to: model)
     view.update(presence: presence, revision: revision, reanchorsOnRevision: reanchorsOnRevision,
-      isCameraActive: isCameraActive, installation: installation) { anchor, projection in
+      isCameraActive: isCameraActive, installation: installation, hitRegions: hitRegions) { anchor, projection in
       AnyView(content(anchor).environment(\.scenePlaneProjection, projection)
         .frame(width: anchor.viewport.x, height: anchor.viewport.y).ignoresSafeArea())
     }
@@ -464,6 +475,7 @@ private struct NativeSceneCameraPlane<Revision: Equatable, Content: View>: NSVie
 final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneActivity, NotebookScenePresentationOwner, SceneCameraPlaneInstallationOwner {
   private weak var sceneModel: NotebookAppModel?
   private let host = NSHostingView(rootView: AnyView(EmptyView()))
+  private var inputRegions: [CGRect] = []
   private var anchor: SessionPresence?
   private var revision: Revision?
   private var projection: ScenePlaneProjection?
@@ -494,6 +506,7 @@ final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneA
   func update(presence: SessionPresence, revision: Revision, reanchorsOnRevision: Bool = true,
     isCameraActive: Bool = false,
     installation: SceneCameraPlaneInstallation? = nil,
+    hitRegions: ((SessionPresence) -> [CGRect])? = nil,
     content: (SessionPresence, ScenePlaneProjection) -> AnyView) {
     guard !isRetired else { return }
     self.installation = installation
@@ -511,6 +524,7 @@ final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneA
       projection.update(presence)
       self.projection = projection
       let prepared = anchor ?? presence
+      inputRegions = hitRegions?(prepared) ?? []
       host.rootView = content(prepared, projection)
       host.frame = CGRect(x: 0, y: 0, width: prepared.viewport.x, height: prepared.viewport.y)
       if previousAnchor != anchor || installation != nil {
@@ -552,8 +566,13 @@ final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneA
   }
 
   override func hitTest(_ point: NSPoint) -> NSView? {
+    guard !isRetired else { return nil }
     let hit = super.hitTest(point)
-    return hit === self || hit === host ? nil : hit
+    guard hit !== self else { return nil }
+    // SwiftUI gestures live on NSHostingView itself. Retain that responder only
+    // over published materials; the empty plane still passes through to camera input.
+    if hit === host, !inputRegions.contains(where: { $0.contains(host.convert(point, from: superview)) }) { return nil }
+    return hit
   }
 }
 #endif

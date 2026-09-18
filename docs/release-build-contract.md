@@ -15,7 +15,7 @@ lockfiles, исходники иконки, инструменты выпуск�
 `verify.sh` записывает `verification.json` только в самом конце успешного
 маршрута. Квитанция связывает неизменные исходники с полным содержимым каталога
 свидетельств. Полный `--full` включает оба xcresult, журналы и изображение
-безоконного помощника. Выбранный маршрут `./verify.sh:selected` включает
+рабочего окна Mac. Выбранный маршрут `./verify.sh:selected` включает
 `selection.json`, завершённые команды и xcresult только затронутых платформ.
 Каждый выбранный XCTest должен действительно исполниться: опечатка в одном
 селекторе не скрывается за успехом соседнего теста. Достаточная область выбирается
@@ -45,8 +45,9 @@ Release iPad и Mac. Xcode, Swift, SDK, XcodeGen, Node и npm должны со�
 `M94V58FCVP`, собственный bundle ID и допустимые права. iPad сохраняет
 `com.amirtlinov.notebook.preview` и собственную Keychain-группу; его профиль
 проверяется против сертификата и согласованного физического устройства.
-Mac сохраняет `com.amirtlinov.notebook.mac`, `LSUIElement`, arm64 и встроенный
-MCP. Обе подписи требуют общий `iCloud.com.amirtlinov.notebook`, CloudKit и
+Mac сохраняет `com.amirtlinov.notebook.mac`, arm64 и встроенный MCP. Это обычное
+приложение с Dock и рабочим окном: `LSUIElement` и `LSBackgroundOnly` выключены.
+Закрытие окна не останавливает единственного владельца хранения, связи и MCP. Обе подписи требуют общий `iCloud.com.amirtlinov.notebook`, CloudKit и
 Production environment; Push остаётся development для Apple Development
 подписи. Mac также проверяет embedded provisioning profile, Provisioning UDID
 (не Hardware UUID),

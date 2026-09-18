@@ -385,7 +385,7 @@ public struct NotebookCommandDispatcher: Sendable {
       guard let itemID = try query.itemID ?? store.ownerItemID(ofPage: pageID) else { return .null }
       return try .encode(store.resolveNotebookPage(pageID, in: itemID, expectedVisibleRoot: query.visibleRoot))
     case .spatialInk: return try .encode(store.readSpatialInk(surfaces: query.surfaces ?? []))
-    case .presence: return try .encode(store.loadPresence())
+    case .presence: return try .encode(store.readObservedPresenceIfAvailable())
     case .selection: return try .encode(store.readSelectionPublication())
     case .attentionEvidence: return try .encode(store.attentionEvidence(contextID: required(query.id), referenceID: required(query.referenceID)))
     case .contexts: return try .encode(store.sharedContexts(contextID: query.id, limit: query.limit ?? 32, afterContextID: query.after, expectedCursor: query.revision))

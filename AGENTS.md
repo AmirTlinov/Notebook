@@ -7,7 +7,7 @@ Notebook/
 |-- Sources/NotebookArchiveTransfer/ # Внешний конвертер копий, отдельно от приложений.
 |-- Applications/Shared/           # Модель приложения, очередь записи, камера, чернила и документы.
 |-- Applications/iPad/             # Рабочая поверхность и системный ввод iPad.
-|-- Applications/Mac/              # Помощник строки меню, IPC и доверенная связь.
+|-- Applications/Mac/              # Рабочее окно, ввод Mac, IPC и доверенная связь.
 |-- Applications/WebResources/     # Представление документов и программ в WebKit.
 |-- MCP/                          # Инструменты общего пространства через Mac-владельца.
 |-- Tests/                        # Контракты Core, MCP, Codex и маршрута проверки.

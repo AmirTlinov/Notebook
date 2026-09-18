@@ -85,12 +85,9 @@ enum CurrentViewPreviewWriter {
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     let receiptData = try encoder.encode(receipt)
     try Task.checkCancellation()
-    guard model.permitsBackgroundPreparation, model.presence == presence,
-      model.presencePhase == .settled, model.workspaceHeader?.cursor == header.cursor,
-      model.workspaceHeader?.workspaceID == header.workspaceID,
-      page == nil || model.pages[page!.id] == page,
-      document == nil || model.documents[document!.id] == document,
-      documentState == nil || model.documentStates[documentState!.id] == documentState
+    guard model.permitsBackgroundPreparation, model.observedPresence == presence,
+      model.observedPresencePhase == .settled, model.workspaceHeader?.cursor == header.cursor,
+      model.workspaceHeader?.workspaceID == header.workspaceID
     else { throw PreviewError.sourceChanged }
     try await model.performStoreCommand { store in
       try Task.checkCancellation()

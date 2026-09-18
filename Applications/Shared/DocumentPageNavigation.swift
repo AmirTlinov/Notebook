@@ -2,6 +2,7 @@ import Foundation
 
 /// A transient request, never evidence that its page has been reached.
 struct DocumentPageNavigationRequest: Equatable {
+  static let maximumPageIndex = 100_000
   let id: UUID
   let documentID: UUID
   let sourceRevision: String

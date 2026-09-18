@@ -482,26 +482,6 @@ func documentDurableOfferReferencesCommittedManifest() throws {
   #expect(try JSONDecoder().decode(NotebookChangeManifest.self, from: JSONEncoder().encode(manifest)) == manifest)
 }
 
-@Test("Mac просит страницу документа, не становясь владельцем presence")
-func documentPageSelectionRequestRoundTrips() throws {
-  let request = DocumentPageSelectionRequest(
-    documentID: UUID(),
-    pageIndex: 7
-  )
-  let message = NotebookTransportTransient.documentPageSelection(request)
-  let encoded = try JSONEncoder().encode(message)
-  let decoded = try JSONDecoder().decode(NotebookTransportTransient.self, from: encoded)
-
-  #expect(request.isValid)
-  #expect(decoded == message)
-  #expect(
-    !DocumentPageSelectionRequest(
-      documentID: request.documentID,
-      pageIndex: -1
-    ).isValid
-  )
-}
-
 @Test("Канонический узел не восстанавливает отсутствующую камеру портала", arguments: ["portalCamera", "portalStamp"])
 func boardNodeRequiresItsOwnPortalFields(key: String) throws {
   let node = BoardNode(id: UUID(), board: .initial(itemIDs: [], actor: legacyActor))

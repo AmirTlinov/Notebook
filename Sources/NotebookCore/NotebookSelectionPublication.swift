@@ -70,6 +70,7 @@ private struct SelectionConnection: Codable {
   let deviceID: UUID
   let connectionID: UUID
   var publication: NotebookSelectionEnvelope?
+  var presence: PresenceEnvelope?
 }
 
 extension NotebookStore {
@@ -80,9 +81,48 @@ extension NotebookStore {
 
   public func readSelectionPublication() throws -> NotebookSelectionSnapshot {
     try readTransaction { _ in
-      let publication = try selectionConnection()?.publication
+      let connection = try selectionConnection()
+      let publication = try connection == nil
+        ? storedValue("runtime/local-selection.json").flatMap { $0 == .null ? nil : try $0.decode(NotebookSelectionEnvelope.self) }
+        : connection?.publication
       return .init(status: publication?.selection == nil ? "unknown" : "known", deviceID: publication?.deviceID,
         sessionID: publication?.sessionID, generation: publication?.sequence, selection: publication?.selection)
+    }
+  }
+
+  /// Local navigation stays in last-context.json. The authenticated peer's
+  /// published context is a separate read model, never the Mac window camera.
+  public func readObservedPresenceIfAvailable() throws -> SessionPresence? {
+    try readTransaction { _ in
+      if let connection = try selectionConnection() { return connection.presence?.presence }
+      return try readPresenceIfAvailable()
+    }
+  }
+
+  public func saveLocalSelectionPublication(_ publication: NotebookSelectionEnvelope) throws {
+    guard publication.isValid else { throw NotebookStorageError.invalidTransaction("local selection") }
+    try prepare()
+    try commandTransaction(advancesReadRevision: false) {
+      try publishRecords(writes: ["runtime/local-selection.json": try .encode(publication)])
+    }
+  }
+
+  @discardableResult
+  public func acceptPresencePublication(_ envelope: PresenceEnvelope, deviceID: UUID, connectionID: UUID) throws -> Bool {
+    guard envelope.isValid, envelope.phase == .settled else {
+      throw NotebookStorageError.invalidTransaction("settled peer presence")
+    }
+    try prepare()
+    return try commandTransaction(advancesReadRevision: false) {
+      guard var active = try selectionConnection(), active.deviceID == deviceID,
+        active.connectionID == connectionID else { return false }
+      if let previous = active.presence {
+        guard previous.sessionID == envelope.sessionID, previous.sequence < envelope.sequence else { return false }
+      }
+      active.presence = envelope
+      try publishRecords(writes: ["runtime/selection.json": try .encode(active)])
+      try advancePresenceGeneration()
+      return true
     }
   }
 
@@ -92,6 +132,7 @@ extension NotebookStore {
     try commandTransaction(advancesReadRevision: false) {
       if let old = try selectionConnection(), old.deviceID == deviceID, old.connectionID == connectionID { return }
       try publishRecords(writes: ["runtime/selection.json": try .encode(SelectionConnection(deviceID: deviceID, connectionID: connectionID))])
+      try advancePresenceGeneration()
     }
   }
 
@@ -116,11 +157,15 @@ extension NotebookStore {
     try commandTransaction(advancesReadRevision: false) {
       guard let active = try selectionConnection(), active.deviceID == deviceID, active.connectionID == connectionID else { return }
       try publishRecords(writes: ["runtime/selection.json": .null])
+      try advancePresenceGeneration()
     }
   }
 
   public func resetSelectionPublication() throws {
     try prepare()
-    try commandTransaction(advancesReadRevision: false) { try publishRecords(writes: ["runtime/selection.json": .null]) }
+    try commandTransaction(advancesReadRevision: false) {
+      try publishRecords(writes: ["runtime/selection.json": .null, "runtime/local-selection.json": .null])
+      try advancePresenceGeneration()
+    }
   }
 }

@@ -325,8 +325,12 @@ public struct NotebookStore: Sendable {
     try withMutationLock {
       guard try readPresenceIfAvailable() != presence else { return }
       try publishCollaboration(writes: ["last-context.json": try .encode(presence)])
-      try currentSQL!.run("INSERT INTO metadata(key,value) VALUES('presence_generation','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1")
+      try advancePresenceGeneration()
     }
+  }
+
+  func advancePresenceGeneration() throws {
+    try currentSQL!.run("INSERT INTO metadata(key,value) VALUES('presence_generation','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1")
   }
 
   /// Creation merges durable catalog fields and publishes its page, placement

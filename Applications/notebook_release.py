@@ -539,10 +539,11 @@ def build_mac(snapshot, evidence, command, tex_runtime, image_runtime):
 def inspect_mac(app, command):
     bundle = app_manifest(app)
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
-    require(info.get("CFBundleIdentifier") == MAC_BUNDLE and info.get("LSUIElement") is True
+    require(info.get("CFBundleIdentifier") == MAC_BUNDLE and info.get("LSUIElement", False) is False
+            and info.get("LSBackgroundOnly", False) is False
             and info.get("NotebookCloudContainer") == CLOUD_CONTAINER
             and info.get("CFBundlePackageType") == "APPL" and info.get("DTPlatformName") == "macosx",
-            "Нужен безоконный macOS helper с собственной идентичностью.")
+            "Нужно обычное приложение macOS с собственной идентичностью.")
     require(all(isinstance(info.get(key), str) and info[key]
                 for key in ("CFBundleShortVersionString", "CFBundleVersion", "LSMinimumSystemVersion")),
             "Mac bundle не назвал версию или минимальную систему.")
