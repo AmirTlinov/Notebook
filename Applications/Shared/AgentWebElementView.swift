@@ -817,23 +817,29 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
           result.finish(.failure(SceneRenderError.snapshotPending("live_capture_" + element.id)))
         }
         web.takeSnapshot(with: configuration) { [weak self, capture, installation] image, error in
-          defer {
-            deadline.cancel(); capture.finish(); self?.submittedCaptures[capture.id] = nil
+          Task { @MainActor [weak self] in
+            defer {
+              deadline.cancel(); capture.finish(); self?.submittedCaptures[capture.id] = nil
+            }
+            guard let self, accepts(token), !capture.isCancelled, installation.isInstalled,
+              hasLiveSource(element) else { result.finish(.success(nil)); return }
+            if let error { result.finish(.failure(error)); return }
+            guard let image else { result.finish(.failure(SceneRenderError.snapshotPending(element.id))); return }
+            let prepared = await resources.storeWebSnapshot(image, for: policy.rasterSource(for: element), reservation: reservation,
+              permitsPublication: { [weak self] in self?.accepts(token) == true && !capture.isCancelled
+                && installation.isInstalled && self?.hasLiveSource(element) == true })
+            guard accepts(token), !capture.isCancelled, installation.isInstalled, hasLiveSource(element)
+            else { prepared?.release(); result.finish(.success(nil)); return }
+            guard let raster = prepared else { result.finish(.failure(SceneRenderError.resourceLimit)); return }
+            guard raster.pixelScale + 0.000_001 >= policy.minimumScale(for: element) else {
+              raster.release(); result.finish(.failure(SceneRenderError.snapshotPending("live_capture_density_" + element.id))); return
+            }
+            result.finish(.success(raster))
           }
-          guard let self, accepts(token), !capture.isCancelled, installation.isInstalled,
-            hasLiveSource(element) else { result.finish(.success(nil)); return }
-          if let error { result.finish(.failure(error)); return }
-          guard let image else { result.finish(.failure(SceneRenderError.snapshotPending(element.id))); return }
-          guard let raster = resources.storeWebSnapshot(image, for: policy.rasterSource(for: element), reservation: reservation)
-          else { result.finish(.failure(SceneRenderError.resourceLimit)); return }
-          guard raster.pixelScale + 0.000_001 >= policy.minimumScale(for: element) else {
-            raster.release(); result.finish(.failure(SceneRenderError.snapshotPending("live_capture_density_" + element.id))); return
-          }
-          result.finish(.success(raster))
         }
       }
     }, onCancel: {
-      Task { @MainActor in result.finish(.failure(CancellationError())) }
+      Task { @MainActor in capture.cancel(); result.finish(.failure(CancellationError())) }
     })
   }
 
@@ -1157,14 +1163,19 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     snapshotInFlight = true
     let capture = holdSubmittedSnapshot(reservation)
     webView.takeSnapshot(with: configuration) { [weak self, capture] image, error in
-      defer { capture.finish(); self?.submittedCaptures[capture.id] = nil }
-      guard let self else { return }
-      if accepts(token) { snapshotInFlight = false; currentCapture = nil }
-      if !capture.isCancelled {
-        completeSnapshot(image, error: error, token: token, element: element, reservation: reservation, policy: policy)
-      }
-      if accepts(token), needsSnapshot, let web = attachedWebView {
-        needsSnapshot = false; captureSnapshot(of: web, token: token)
+      Task { @MainActor [weak self] in
+        defer { capture.finish(); self?.submittedCaptures[capture.id] = nil }
+        guard let self else { return }
+        if !capture.isCancelled {
+          await completeSnapshot(image, error: error, token: token, element: element, reservation: reservation,
+            policy: policy, permitsPublication: { !capture.isCancelled })
+        }
+        if accepts(token) {
+          snapshotInFlight = false; currentCapture = nil
+          if needsSnapshot, let web = attachedWebView {
+            needsSnapshot = false; captureSnapshot(of: web, token: token)
+          }
+        }
       }
     }
   }
@@ -1179,9 +1190,10 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   func completeSnapshot(_ image: AgentSnapshotImage?, error: (any Error)?, token: String,
-    element: AgentElement, reservation: RasterReservation, policy: AgentSnapshotPolicy? = nil) {
+    element: AgentElement, reservation: RasterReservation, policy: AgentSnapshotPolicy? = nil,
+    permitsPublication: @escaping @MainActor () -> Bool = { true }) async {
     defer { reservation.release() }
-    guard accepts(token), let loadedElement,
+    guard permitsPublication(), accepts(token), let loadedElement,
       appliedState == element.state,
       SceneRasterSource.agent(loadedElement) == .agent(element) else { return }
     if let error {
@@ -1189,7 +1201,15 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     } else if let image {
       let capturedPolicy = policy ?? snapshotPolicy
       let source = capturedPolicy.rasterSource(for: element)
-      if resources.storeWebSnapshot(image, for: source, reservation: reservation) != nil {
+      let stillCurrent: @MainActor () -> Bool = { [weak self] in
+        guard permitsPublication(), let self, accepts(token), let current = self.loadedElement else { return false }
+        return appliedState == element.state && SceneRasterSource.agent(current) == .agent(element)
+      }
+      let prepared = await resources.storeWebSnapshot(image, for: source, reservation: reservation,
+        permitsPublication: stillCurrent)
+      guard stillCurrent() else { prepared?.release(); return }
+      if let prepared {
+        defer { prepared.release() }
         // A capture submitted before a density change is a useful fallback,
         // but cannot acknowledge the newer demand. The one queued capture
         // uses the latest policy without reloading the running program.

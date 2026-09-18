@@ -1,5 +1,68 @@
 # Проверка Notebook
 
+## 19 сентября, 01:16 МСК — GUI-255 завершён; GUI-256 не требует усложнения
+
+После `c73ebc7` iPad mipmap строится вне MainActor в существующем
+CompositionPixels. В UI остаются WebKit callback и короткая публикация.
+Исходный CGImage/точные pixels сохранены; grant и submitted WebKit borrow
+живут до фактического завершения работы. Перед публикацией повторно проверяются
+source/state, load token, установленный live owner и отмена capture; уход
+источника не превращается в ложный resource-limit. Старый синхронный цикл
+удалён, второй cache/worker pool и увеличенные квоты не добавлены.
+
+Финальные проверки одного неизменного источника
+`38b90e4942c7c08dc88d9f487fc003e818e46e5a11616c1781bd1c8b5fbd870e`:
+
+- Simulator `.build/canvas-plan-20260918/c5-complete.xcresult`: **23/23 PASS**,
+  включая все AgentWebLease, отмену после async yield, source replacement,
+  live DOM/crop/density, source priority, native installation и mixed WebKit
+  pan/pinch: button, slider и text first-responder сохраняют принятый ввод.
+- Mac `.build/canvas-plan-20260918/mac-native/`: **16/16 PASS** штатного
+  `./verify.sh --only --test NotebookMacTests/SceneCameraPlaneTests --test
+  NotebookMacTests/SceneRasterCompositionTests`. Проверены камера, painter
+  order/alpha/clipping, bounded streaming, WebKit lifetime и input cancellation.
+  Оба финальных прохода — без skips и runtime warnings.
+- Предшествующий `c5-accepted.xcresult`: **91 PASS / 1 FAIL** из 92.
+  Composition/Prepared/resource pressure/первый native Pencil и UI прошли;
+  новый cancellation-тест ошибочно запрещал даже штатный initial readiness=false.
+  Исправлена именно эта проверка: запрещён ready=true от отменённых pixels.
+  Повтор всего AgentWebLease — `c5-fence.xcresult`, **20/20 PASS**, затем 23/23
+  выше после дополнительного live-capture fence. Production ради PASS не ослаблен.
+
+Прежние три passive fixtures не вызывали model.start: loadState=loading
+правильно запрещал admission, WebKit даже не создавался. Теперь fixtures
+проходят настоящий startup и проверяют permitsBackgroundPreparation; все три
+прошли в c5-accepted. Priority fixture проверял порядок завершения при двух
+параллельных executors: для проверки очереди явно задан один background slot.
+Квота production осталась прежней. Неуспешные c5-final/targeted сохранены.
+Два ручных unsigned Mac запуска остановились в packaging до тестов; штатный
+signed selective route выше прошёл без изменения упаковки или sandbox.
+
+В финальном Simulator receipt 2048×1536 mipmap + fence заняли **14.36 ms**
+вне main; main task исполнился во время await, весь grant **33,997,696 B**
+оставался учтён, отменённый source не опубликован. Для 301×173 сохранены
+исходные pixels, десять mip levels и единый charged lifetime. Это проверка
+исполнителя/согласованности и локальное время, не системный frame-time.
+
+**GUI-256 — Canceled без новой реализации.** В настоящих tile presenters двух
+нативных плоскостей здоровый источник установлен через **18.68 ms** после
+готовности pixels, пока сосед с 5-секундным ready promise ещё pending.
+Peak accounted **23,464,960 B**; синхронная публикация плоскостей при уточнении
+**0.612 ms**, начальная **10.547 ms**. Уже существующий atomic cohort не ждёт
+готовности всех источников. Условие для дополнительной частичной установки
+не подтверждено; менять согласованность слоёв/receipts ради неё не требуется.
+По той же измеренной причине GUI-255 не заменяет paintID на geometryID и
+не переписывает hosting root: это не подтверждённое узкое место данного среза.
+Warm reuse C3 уже избегает повторного ImageRenderer неизменной композиции.
+
+Приложения рабочих устройств/данные не менялись. Использован Simulator по
+указанию Амира, не физический iPad; Mac — изолированный подписанный test host.
+Снимки и timing receipts: `c5-complete-images/`, `c5-accepted-images/` внутри
+того же evidence каталога. Просмотрены mixed UI и native first-stroke pixels.
+Физические FPS/CPU/GPU, десять повторов и 30 минут не заявлены. Срезы C1–C5
+закончены; более широкие документные/системные условия GUI-200/GUI-199 остаются
+открытыми. Новых Xcode runners после передачи слота в 01:15 МСК нет.
+
 ## 19 сентября, 00:32 МСК — GUI-254: ранний demand и видимая очередь
 
 После `692d237` известные источники ограниченного scene workset предъявляются
@@ -13,8 +76,8 @@ source identity до publication, а не требует уже опублико
 
 Simulator `.build/canvas-plan-20260918/c4.xcresult`: **51/51 PASS**, без skips
 и runtime warnings. Нативное событие первого composition tile подтверждает,
-что background source уже работает; настоящий единственный background
-executor завершает z-visible раньше a-neighbour, несмотря на их имена.
+что background source уже работает; z-visible завершился раньше a-neighbour,
+несмотря на их имена. Уточнение проверки последовательности см. в записи GUI-255.
 Проверены readiness, pending-neighbour, ранняя отмена, source/state changes,
 input barrier, быстрые camera samples, warm return/eviction, ресурсы и mixed
 WebKit pan/pinch с сохранением принятого ввода. Это порядок исполнения и
@@ -35,8 +98,8 @@ Simulator: `c3.xcresult` — **85/85 PASS** (composition, resources, environment
 и восьми static SVG sources; старая когорта освобождена; pending/new capture,
 revision change и реальное бюджетное eviction не возвращают старые пиксели.
 Document pinch UI прошёл в `c3-final.xcresult`; этот промежуточный bundle
-в целом FAILED из-за слишком короткого ожидания восьми последовательных
-background jobs. Диагностика показала шесть ready и два работающих, а не
+в целом FAILED из-за слишком короткого ожидания восьми заданий ограниченной
+background-очереди. Диагностика показала шесть ready и два работающих, а не
 resource failure. Финальная проверка ждёт завершения очереди с пределом 10 s,
 не подменяет readiness таймером. Warm-return/bytes receipt сохранён в
 `.build/canvas-plan-20260918/c3-accepted-images/`. Это published boundary,

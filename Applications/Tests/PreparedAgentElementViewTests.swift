@@ -292,15 +292,15 @@ final class PreparedAgentElementViewTests: XCTestCase {
     defer { prior.release() }
     let token = try XCTUnwrap(coordinator.loadToken)
     // A lower-density demand can use the real pixels already captured from
-    // this unchanged DOM. Its successful and failed completions are delivered
-    // in one actor turn, before the queued readiness event can run.
+    // this unchanged DOM. Follow pixel completion immediately with failure;
+    // a queued readiness callback must not outlive that failure.
     let currentPolicy = AgentSnapshotPolicy.exact(scale: 1)
     coordinator.load(source, policy: currentPolicy, in: web)
-    coordinator.completeSnapshot(prior.image, error: nil, token: token, element: source,
+    await coordinator.completeSnapshot(prior.image, error: nil, token: token, element: source,
       reservation: try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 320, height: 240))), policy: currentPolicy)
     let queued = try XCTUnwrap(resources.retainRaster(for: .agent(source), minimumScale: 2))
     defer { queued.release() }
-    coordinator.completeSnapshot(nil, error: NSError(domain: "CurrentNativeCapture", code: 1),
+    await coordinator.completeSnapshot(nil, error: NSError(domain: "CurrentNativeCapture", code: 1),
       token: token, element: source,
       reservation: try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 320, height: 240))), policy: currentPolicy)
     failureIssued = true
@@ -338,11 +338,11 @@ final class PreparedAgentElementViewTests: XCTestCase {
     coordinator.load(source, policy: latest, in: web)
     XCTAssertEqual(coordinator.loadToken, token, "A crop change must retain the same JS navigation")
     let error = NSError(domain: "NativeSubmittedSnapshot", code: 1)
-    coordinator.completeSnapshot(nil, error: error, token: token, element: source,
+    await coordinator.completeSnapshot(nil, error: error, token: token, element: source,
       reservation: try XCTUnwrap(resources.reserveRaster(pixelWidth: 80, pixelHeight: 60)), policy: first)
     XCTAssertNil(coordinator.snapshotFailure, "The old capture cannot mark the newest demand failed")
     XCTAssertTrue(resources.diagnostics(for: [source]).isEmpty)
-    coordinator.completeSnapshot(nil, error: error, token: token, element: source,
+    await coordinator.completeSnapshot(nil, error: error, token: token, element: source,
       reservation: try XCTUnwrap(resources.reserveRaster(pixelWidth: 160, pixelHeight: 120)), policy: latest)
     try await waitUntil("The current failed capture delivers its original typed identity") { failures.count == 1 }
     XCTAssertEqual(failures.first?.source, source)
@@ -734,6 +734,8 @@ final class PreparedAgentElementViewTests: XCTestCase {
   @MainActor
   func testPassiveCaptureResumesAfterRealRasterAdmissionWithoutAnotherViewUpdate() async throws {
     let model = makeModel(), resources = SceneRenderResources.shared
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    XCTAssertTrue(model.permitsBackgroundPreparation, "Passive preparation requires the real workspace startup")
     try await waitUntil("Earlier mounted owners must release their asynchronous backing before measuring this pressure") {
       resources.activeWebSurfaceCount == 0 && resources.pendingWebRequestCount == 0
         && resources.rasterAdmission.pinnedBytes == 0 && resources.rasterAdmission.passiveReservedBytes == 0
@@ -976,6 +978,8 @@ final class PreparedAgentElementViewTests: XCTestCase {
   @MainActor
   func testStaticSourceEditPreparesItsReplacementInsteadOfKeepingTheOldRaster() async throws {
     let model = makeModel()
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    XCTAssertTrue(model.permitsBackgroundPreparation, "Passive preparation requires the real workspace startup")
     let id = UUID().uuidString
     let first = element(id: id, source: "first")
     let second = element(id: id, source: "second")
@@ -1054,6 +1058,8 @@ final class PreparedAgentElementViewTests: XCTestCase {
   @MainActor
   func testPreparationFailureUnmountsHiddenWebKitWithoutAutomaticRetryStorm() async throws {
     let model = makeModel()
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    XCTAssertTrue(model.permitsBackgroundPreparation, "Passive preparation requires the real workspace startup")
     let id = UUID().uuidString
     let activityReference = InteractiveElementReference.board(boardID: UUID(), elementID: id)
     let source = AgentElement(id: id, kind: .web,

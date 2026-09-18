@@ -43,7 +43,7 @@ final class SceneCompositionTests: XCTestCase {
     let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: fixture.journal)
     let presence = SessionPresence(boardID: boardID, mode: .board,
       camera: .init(scale: 1), viewport: .init(x: 320, y: 256))
-    let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
+    let resources = SceneRenderResources(maximumBackgroundWebSurfaces: 1), coordinator = SceneCompositionTiles(resources: resources)
     addTeardownBlock { @MainActor in await coordinator.stop() }
     var completed: [String] = []
     let observer = NotificationCenter.default.addObserver(forName: SceneRenderResources.didChange,
@@ -111,8 +111,8 @@ final class SceneCompositionTests: XCTestCase {
       XCTAssertNil(coordinator.failure)
     }
     try await prepare(fixture.presence)
-    // The single background executor visits eight sources serially. Wait for
-    // completion, not a 3-second deadline intended for one scene publication.
+    // Eight sources share the bounded background queue. Wait for completion,
+    // not a 3-second deadline intended for one scene publication.
     let deadline = ContinuousClock.now + .seconds(10)
     while coordinator.isPreparing, coordinator.failure == nil, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(10))
@@ -351,7 +351,51 @@ final class SceneCompositionTests: XCTestCase {
       frame: .init(index: index, presence: presence, portalCamera: { _ in nil }), pinned: [])
     let healthy = SceneSourceAddress(plane: .board(boardID), elementID: "z-healthy")
     let slow = SceneSourceAddress(plane: .board(boardID), elementID: "z-slow")
-    try await waitUntil { coordinator.published?.sourceReceipts[healthy]?.hasCurrentPixels == true }
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let host = UIViewController(), layers: [ScenePaintPosition.Layer] = [.elements, .covers]
+    let controllers = layers.map { _ in SceneCameraPlaneController<UUID>() }
+    window.frame = .init(x: 0, y: 0, width: presence.viewport.x, height: presence.viewport.y)
+    window.rootViewController = host; window.makeKeyAndVisible()
+    for controller in controllers {
+      host.addChild(controller); host.view.addSubview(controller.view); controller.didMove(toParent: host)
+      controller.view.frame = window.bounds
+    }
+    defer {
+      controllers.forEach { $0.uninstall() }
+      window.isHidden = true; window.rootViewController = nil
+    }
+    var readyAt: ContinuousClock.Instant?
+    let observer = NotificationCenter.default.addObserver(forName: SceneRenderResources.didChange,
+      object: nil, queue: .main) { note in
+      guard (note.object as? String) == healthy.elementID else { return }
+      MainActor.assumeIsolated { if readyAt == nil { readyAt = .now } }
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+    let deadline = ContinuousClock.now + .seconds(3)
+    var shown: UUID?, publicationAt: ContinuousClock.Instant?, mainPublications: [Duration] = []
+    while ContinuousClock.now < deadline {
+      if let cohort = coordinator.published, cohort.paintID != shown {
+        let began = ContinuousClock.now
+        for (layer, controller) in zip(layers, controllers) {
+          controller.update(presence: presence, revision: cohort.paintID, reanchorsOnRevision: false,
+            installation: cohort.installation(for: layer)) { anchor, _ in
+              AnyView(ZStack {
+                ForEach(SceneCompositionTileBandView.bands(in: cohort, plane: .board(boardID), layer: layer, presence: anchor)) { band in
+                  band.zIndex(Double(band.rank))
+                }
+              }.frame(width: anchor.viewport.x, height: anchor.viewport.y))
+            }
+        }
+        mainPublications.append(began.duration(to: .now)); shown = cohort.paintID
+        if cohort.sourceReceipts[healthy]?.hasCurrentPixels == true { publicationAt = began }
+      }
+      if coordinator.published?.hasInstalledPixels(for: healthy) == true { break }
+      try await Task.sleep(for: .milliseconds(2))
+    }
+    XCTAssertTrue(coordinator.published?.hasInstalledPixels(for: healthy) == true)
+    let installedAt = ContinuousClock.now, capturedAt = try XCTUnwrap(readyAt)
+    let report = XCTAttachment(string: "healthyReadyToPublished=\(capturedAt.duration(to: try XCTUnwrap(publicationAt))); healthyReadyToNativeInstalled=\(capturedAt.duration(to: installedAt)); synchronousPlanePublications=\(mainPublications); slowNeighbourStillPending=\(coordinator.published?.sourceReceipts[slow]?.hasCurrentPixels != true); peakAccountedBytes=\(resources.peakAccountedBytes)")
+    report.name = "ready-to-native-install-barrier"; report.lifetime = .keepAlways; add(report)
     let first = try XCTUnwrap(coordinator.published)
     XCTAssertFalse(first.sourceReceipts[slow]?.hasCurrentPixels == true,
       "The ready source publishes before its neighbour's five-second readiness promise")

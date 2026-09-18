@@ -874,7 +874,8 @@ final class SceneRenderResources {
   /// NPOT images need explicit levels on renderers that ignore trilinear mipmaps.
   /// This keeps the original exact pixels and adds about a third, not POT padding.
   func storeWebSnapshot(_ image: AgentSnapshotImage, for source: SceneRasterSource,
-    reservation: RasterReservation) -> RasterLease? {
+    reservation: RasterReservation, permitsPublication: @MainActor () -> Bool = { true }) async -> RasterLease? {
+    guard !Task.isCancelled, permitsPublication() else { return nil }
     #if os(iOS)
     guard !reservation.isReleased, reservation.resources === self,
       let allocation = reservations[reservation.id], let original = image.cgImage,
@@ -887,19 +888,8 @@ final class SceneRenderResources {
       guard !sum.overflow, sum.partialValue <= allocation.bytes else { return nil }
       required = sum.partialValue
     }
-    let space = original.colorSpace?.model == .rgb ? original.colorSpace : CGColorSpace(name: CGColorSpace.sRGB)
-    guard let space else { return nil }
-    var previous = original, levels: [CGImage] = []
-    for size in sizes {
-      guard let context = CGContext(data: nil, width: size.width, height: size.height,
-        bitsPerComponent: 8, bytesPerRow: ((size.width * 4 + 63) / 64) * 64, space: space,
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-      context.interpolationQuality = .high
-      context.setBlendMode(.copy)
-      context.draw(previous, in: CGRect(x: 0, y: 0, width: size.width, height: size.height))
-      guard let level = context.makeImage() else { return nil }
-      levels.append(level); previous = level
-    }
+    guard let levels = try? await CompositionPixels.makeMipmaps(original, sizes: sizes),
+      !Task.isCancelled, permitsPublication() else { return nil }
     return storeAndRetain(image, for: source, reservation: reservation, mipmaps: levels)
     #else
     return storeAndRetain(image, for: source, reservation: reservation)
