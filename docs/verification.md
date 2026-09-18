@@ -10238,3 +10238,59 @@ graceful drain, iPad обновлён in-place и оставлен в foreground
 `.build/gui224-mac-install-20260918/` и `.build/gui224-ipad-install-20260918/`.
 Это выборочная приёмка chat UI, не доказательство LAN/CloudKit/Pencil или полной
 приёмки приложения; пользовательская оценка нового оформления ещё ожидается.
+
+## 18 сентября, 05:41 МСК — S7: Nearby discovery, пара 0.3.88 (91)
+
+После S7 и GUI-224 installed 0.3.87 (90) оставалась `disconnected` более
+45 секунд foreground (`.build/s7-on90-public-20260918/receipt.json`). Проверка
+живого NearbySync обнаружила три самостоятельных дефекта: NWBrowser использовал
+стандартные TCP parameters без peer-to-peer, хотя TLS transport включает эти
+интерфейсы; `.waiting` не сообщал причину; callback завершённого browser мог
+опубликовать ошибку после перезапуска владельца.
+
+Все три регрессии исполнились и упали на физическом iPad:
+`.build/discovery91-red2-20260918/ipad.xcresult`. Первая попытка
+`.build/discovery91-red-20260918` остановилась на ошибке Int → Int32 в новом
+тесте; она не считается поведенческим RED. Исправление использует тот же
+NWBrowser и владельца NearbySync: peer-to-peer параметры, browser/lifetime
+fence для state callbacks, обработка waiting/failed, точное сообщение при
+DNS policy denial. Версия wire, идентичности, trust и ключи не изменены.
+Две info-точки существующего Logger показывают готовность discovery и число
+совместимых/несовместимых доверенных peers, не содержание или credentials.
+
+Выбранная проверка `.build/discovery91-green-20260918/verification.json`:
+**19 физических iPad + 1 signed Mac**, 0 failures/skips/runtime warnings.
+Проверены NearbySync (включая credential lifecycle и framing), настоящий
+TLS selection transient и существующий Mac writer/IPC с fencing старого
+соединения. Это не полная приёмка Notebook и не системная UI/performance трасса.
+Неизменный source:
+`d26d0c7160f644c41c4e8b39d811a04cc800f88453ed21933a44504a22017cfa`.
+Signed Release: `.build/shared-0.3.88-discovery-release-20260918/build.json`.
+
+Установлена **0.3.88 (91)**, Mac → iPad, обычным in-place обновлением:
+
+- Mac UUID `A2A9A166-5598-3D99-9D17-E785DB1B6AD9`, manifest
+  `aa582c644c255ffcbb50dd261f998d308d1dd07f16d2665e5bd8a330b71399e7`;
+  `.build/shared-0.3.88-discovery-mac-install-20260918/install.json`.
+- iPad UUID `D53804AD-1C11-33C5-8695-D3750228CA35`, manifest
+  `67c1c49be17b1a35bc139df9392a066c4220581384aec948c071de379c0471b3`;
+  `.build/shared91-discovery-ipad-install-20260918/`.
+  Readback подтверждает единственное рабочее приложение `.preview`; удалён
+  только отдельный native-test bundle. Контейнеры, архивы и сопряжение не сбрасывались.
+
+Рабочий iPad запущен foreground через обычный devicectl с native console
+(без terminate-existing, fixture/env root). Начальное и повторное после 45 с
+чтения установленного публичного MCP:
+`.build/s7-on91-public-20260918/receipt.json` и
+`.build/s7-on91-settled-public-20260918/receipt.json`.
+Два tools, readonly TypeScript 7.0.2 с актуальным SDK, законченный первый
+ответ и повтор исходного run PASS; доменных изменений нет. **Соединение всё
+ещё disconnected, selection unknown.** Причина рабочего разрыва не установлена;
+исправленные discovery-дефекты не объявлены его доказанной причиной.
+S5/S7 received/shown и физический select → write пока не приняты.
+
+Native console дополнительно показала
+`SCENE_COMPOSITION_FAILED ... revision=656 error=snapshot_pending: native_ink_frame`.
+Это передано владельцу GUI-199 как наблюдение, а не диагноз жалобы Амира.
+Ненадёжное открытие щипком, нежелательный выход при зуме внутри тетради и
+зависание листания остаются открытыми UI-дефектами. Этот сетевой срез их не исправляет.

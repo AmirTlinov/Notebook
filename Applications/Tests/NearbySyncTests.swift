@@ -7,6 +7,54 @@ import XCTest
 
 final class NearbySyncTests: XCTestCase {
   @MainActor
+  func testDiscoveryIncludesThePeerToPeerInterfacesUsedByTheTransport() async throws {
+    let trust = RecoverablePairingStore(); trust.unavailable = false
+    let sync = makeRecoverableSync(trust); defer { sync.stop() }
+    trust.records = [confirmedPeer(for: sync)]
+    await sync.start()
+    XCTAssertTrue(try XCTUnwrap(sync.browser).parameters.includePeerToPeer,
+      "Discovery must reach the same nearby interfaces as its TLS connections")
+  }
+
+  @MainActor
+  func testDiscoveryWaitingReportsLocalNetworkDenialWithoutChangingTrust() async throws {
+    let trust = RecoverablePairingStore(); trust.unavailable = false
+    let sync = makeRecoverableSync(trust); defer { sync.stop() }
+    let peer = confirmedPeer(for: sync); trust.records = [peer]
+    await sync.start()
+    let reported = expectation(description: "Local network permission failure is actionable")
+    sync.onPairingChange = { state in
+      if case .failed(let message) = state, message.contains("Локальная сеть") { reported.fulfill() }
+    }
+    let callback = try XCTUnwrap(try XCTUnwrap(sync.browser).stateUpdateHandler)
+    callback(.waiting(.dns(Int32(kDNSServiceErr_PolicyDenied))))
+    await fulfillment(of: [reported], timeout: 1)
+    XCTAssertEqual(sync.pairedPeers, [peer.identity]); XCTAssertEqual(trust.records, [peer])
+    XCTAssertEqual(trust.saves, 0, "Discovery failure is not a reason to replace a trusted pair")
+  }
+
+  @MainActor
+  func testRetiredBrowserCannotPublishFailureAfterDiscoveryRestarts() async throws {
+    let trust = RecoverablePairingStore(); trust.unavailable = false
+    let sync = makeRecoverableSync(trust); defer { sync.stop() }
+    trust.records = [confirmedPeer(for: sync)]; await sync.start()
+    let retired = try XCTUnwrap(sync.browser)
+    let callback = try XCTUnwrap(retired.stateUpdateHandler)
+    sync.stop(); await sync.start()
+    XCTAssertFalse(sync.browser === retired)
+    let staleFailure = expectation(description: "Retired discovery remains silent"); staleFailure.isInverted = true
+    sync.onPairingChange = { if case .failed = $0 { staleFailure.fulfill() } }
+    callback(.failed(.posix(.ENETDOWN)))
+    await fulfillment(of: [staleFailure], timeout: 0.3)
+  }
+
+  @MainActor
+  private func confirmedPeer(for sync: NearbySync) -> NotebookTrustedPeer {
+    .init(identity: .init(deviceID: UUID(), workspaceID: sync.identity.workspaceID, displayName: "Retained peer"),
+      pairingID: UUID(), secret: Data(repeating: 3, count: 32), locallyConfirmed: true, remotelyConfirmed: true)
+  }
+
+  @MainActor
   func testResetCannotPublishIdleWhileCredentialStorageIsUnavailable() async throws {
     let trust = RecoverablePairingStore()
     let sync = makeRecoverableSync(trust)

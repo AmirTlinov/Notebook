@@ -210,7 +210,7 @@ final class NearbySync {
   private var invitation: NotebookPairingInvitation?
   private var joinedInvitation: NotebookPairingInvitation?
   private var listener: NWListener?
-  private var browser: NWBrowser?
+  private(set) var browser: NWBrowser?
   private var endpointByPeer: [UUID: NWEndpoint] = [:]
   private let discoveryGeneration = UUID()
   private var suspendedPeers: Set<UUID> = []
@@ -396,7 +396,9 @@ final class NearbySync {
         browser?.cancel(); browser = nil; endpointByPeer.removeAll(); return
       }
       guard browser == nil, !trusted.isEmpty || joinedInvitation != nil else { return }
-      let browser = NWBrowser(for: .bonjour(type: "_notebook._tcp", domain: nil), using: .tcp)
+      let parameters = NWParameters.tcp
+      parameters.includePeerToPeer = true
+      let browser = NWBrowser(for: .bonjour(type: "_notebook._tcp", domain: nil), using: parameters)
       self.browser = browser
       browser.browseResultsChangedHandler = { [weak self, weak browser] results, _ in
         Task { @MainActor in
@@ -414,11 +416,19 @@ final class NearbySync {
           // callbacks for the same incompatible writer do not replay its data.
           self.suspendedPeers = self.suspendedPeers.filter { self.endpointByPeer[$0] == endpoints[$0] && endpoints[$0] != nil }
           self.endpointByPeer = endpoints; self.connectDiscoveredPeers()
+          self.logger.info("Nearby discovery: \(endpoints.count) compatible trusted peers, \(incompatiblePeers.count) incompatible peers")
           if !incompatiblePeers.subtracting(endpoints.keys).isEmpty { self.report(NotebookTransportError.unsupportedVersion) }
         }
       }
-      browser.stateUpdateHandler = { [weak self] state in
-        if case .failed(let error) = state { Task { @MainActor in self?.report(error) } }
+      browser.stateUpdateHandler = { [weak self, weak browser] state in
+        Task { @MainActor in
+          guard let self, let browser, self.browser === browser, self.isStarted else { return }
+          switch state {
+          case .waiting(let error), .failed(let error): self.report(error)
+          case .ready: self.logger.info("Nearby discovery ready with peer-to-peer interfaces")
+          default: break
+          }
+        }
       }
       browser.start(queue: queue)
     }
@@ -589,6 +599,10 @@ final class NearbySync {
     logger.error("Trusted nearby connection failed: \(String(describing: error), privacy: .public)")
     if error as? NotebookTransportError == .storageUnavailable {
       onPairingChange?(.failed("Не удалось открыть защищённое хранилище сопряжения. Повторите подключение после восстановления доступа."))
+      return
+    }
+    if case .dns(let code) = error as? NWError, code == Int32(kDNSServiceErr_PolicyDenied) {
+      onPairingChange?(.failed("Разрешите Notebook доступ «Локальная сеть» в настройках устройства. Сопряжение сохранено."))
       return
     }
     onPairingChange?(.failed(NotebookPeerDiscovery.upgradeMessage(for: error)
