@@ -127,6 +127,7 @@ enum NotebookAttentionProjection {
     var states: [UUID: DocumentStateJournal]
     let selectedPageID: UUID?
     let erasures: (SurfaceID) -> [String: [InkElementErasure]]
+    let appearance: (SurfaceID, String, NotebookGraphic?, NotebookGraphicLayout?, CGSize, [InkElementErasure]) -> NotebookElementAppearance?
   }
 
   static func capture(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence,
@@ -137,7 +138,8 @@ enum NotebookAttentionProjection {
       workspace: model.presentedWorkspace(cohort: cohort), hierarchy: model.presentedHierarchy(cohort: cohort), ink: cohort.liveData.ink,
       pages: cohort.liveData.pages, documents: cohort.liveData.documents, states: cohort.liveData.states,
       selectedPageID: presence.notebookPageID ?? model.workspace?.selectedPageID,
-      erasures: { model.elementErasures(on:$0,fallback:cohort.liveData.ink) })
+      erasures: { model.elementErasures(on:$0,fallback:cohort.liveData.ink) },
+      appearance: { model.elementErasureCache.appearance(surface:$0,id:$1,graphic:$2,layout:$3,size:$4,erasures:$5) })
     if let focused = presence.focusedItemID, cohort.plan.allowsLive(.item(focused), in: .board(presence.boardID)) {
       if presence.mode == .page, let id = sources.selectedPageID, let page = model.pages[id] {
         #if os(iOS)
@@ -364,7 +366,8 @@ enum NotebookAttentionProjection {
         target = .init(kind:.page,id:pageID)
         let graph = sources.pages[pageID]?.graphicGraph()
         if !dragged, let page = sources.pages[pageID], let graph,
-          let element = pickElement(in: page.elements, graph: graph, erasures:sources.erasures(.page(pageID)), scale: presence.camera.scale, viewport: presence.viewport,
+          let element = pickElement(in: page.elements, graph: graph, erasures:sources.erasures(.page(pageID)),
+            appearance: { sources.appearance(.page(pageID), $0, $1, $2, $3, $4) }, scale: presence.camera.scale, viewport: presence.viewport,
             project: { ($0.id, $0.frame, $0.graphic, .init(x:region.x,y:region.y)) }) {
           elementID = element.id; region = graph.resolve(element.id).layout?.frame ?? element.frame
         }
@@ -382,6 +385,7 @@ enum NotebookAttentionProjection {
         if !dragged {
           let graph = board.graphicGraph()
           if let element = pickElement(in: board.elements.filter { $0.surface == .cover(item.id) }, graph: graph, erasures:sources.erasures(.cover(item.id)),
+            appearance: { sources.appearance(.cover(item.id), $0, $1, $2, $3, $4) },
             scale: presence.camera.scale, viewport: presence.viewport, project: {
               ($0.id, .init(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height), $0.graphic,
                 .init(x:region.x,y:region.y))
@@ -398,6 +402,7 @@ enum NotebookAttentionProjection {
       if !dragged, let pointOrigin = origin {
         let graph = board.graphicGraph()
         if let element = pickElement(in: admitted.elements.filter { $0.surface == .board(presence.boardID) }, graph: graph, erasures:sources.erasures(.board(presence.boardID)),
+            appearance: { sources.appearance(.board(presence.boardID), $0, $1, $2, $3, $4) },
           scale: presence.camera.scale, viewport: presence.viewport, project: {
             ($0.id, .init(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height), $0.graphic,
               ($0.worldOrigin ?? .zero).delta(to: pointOrigin))
@@ -414,7 +419,8 @@ enum NotebookAttentionProjection {
 
   /// Paint wins over a hollow interior, then the smallest enclosing figure.
   /// The same pick serves tap, direct drag and the resulting shared reference.
-  static func pickElement<Element>(in elements: [Element], graph: NotebookGraphicGraph, erasures: [String: [InkElementErasure]] = [:], scale: Double,
+  static func pickElement<Element>(in elements: [Element], graph: NotebookGraphicGraph, erasures: [String: [InkElementErasure]] = [:],
+    appearance: (String, NotebookGraphic?, NotebookGraphicLayout?, CGSize, [InkElementErasure]) -> NotebookElementAppearance? = { _,_,_,_,_ in nil }, scale: Double,
     viewport: SpatialPoint, project: (Element) -> (String, PageRect, NotebookGraphic?, SpatialPoint)) -> Element? {
     var interior: (Element, Double)?
     let tolerance = 12 / max(0.001, scale)
@@ -424,9 +430,8 @@ enum NotebookAttentionProjection {
         let layout = graphic == nil ? nil : graph.resolve(id).layout
         if graphic != nil && layout == nil { continue }
         let box = layout?.frame ?? frame
-        let appearance = NotebookElementAppearance(graphic:graphic,layout:layout,
-          size:.init(width:box.width,height:box.height),erasures:cuts)
-        if appearance.contains(.init(x:point.x-box.x,y:point.y-box.y),tolerance:tolerance) { return element }
+        guard let prepared = appearance(id,graphic,layout,.init(width:box.width,height:box.height),cuts) else { continue }
+        if prepared.contains(.init(x:point.x-box.x,y:point.y-box.y),tolerance:tolerance) { return element }
         // A cutout is not an intact hollow figure: its empty old interior may
         // not steal selection from the paper or surviving fragments below it.
         continue

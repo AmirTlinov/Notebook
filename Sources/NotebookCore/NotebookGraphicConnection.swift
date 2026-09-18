@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 /// Authored intent. Bound endpoints never store copies of the node's position.
 /// Free points belong to the connector's existing element frame / world origin.
@@ -164,7 +165,10 @@ public struct NotebookGraphicGraph: Sendable {
   /// The whole closed node is a binding target; empty bounding-box corners are
   /// not. Prefer the innermost target and retain it at its edge during a drag.
   public func binding(at point: SpatialPoint, origin: WorldPoint = .zero, surface: SurfaceID,
-    excluding id: String? = nil, tolerance: Double, retaining retainedID: String? = nil, erasures: [String: [InkElementErasure]] = [:]) -> NotebookGraphicConnection.Binding? {
+    excluding id: String? = nil, tolerance: Double, retaining retainedID: String? = nil, erasures: [String: [InkElementErasure]] = [:],
+    appearance: (String, NotebookGraphic, CGSize, [InkElementErasure]) -> NotebookElementAppearance? = { _, graphic, size, cuts in
+      .init(graphic:graphic,layout:nil,size:size,erasures:cuts)
+    }) -> NotebookGraphicConnection.Binding? {
     var candidates: [(node: Node, distance: Double, inside: Bool, point: SpatialPoint)] = []
     for node in nodes.values where node.shown && node.graphic.shape != .connector && node.surface == surface && node.id != id {
       let delta = origin.delta(to:node.origin), frame = node.frame
@@ -173,9 +177,8 @@ public struct NotebookGraphicGraph: Sendable {
       let inside = NotebookGraphicGeometry.containsInterior(node.graphic,width:frame.width,height:frame.height,x:p.x,y:p.y)
       guard inside || edge <= tolerance*(node.id == retainedID ? 1.5 : 1) else { continue }
       if let cuts = erasures[node.id], !cuts.isEmpty {
-        let appearance = NotebookElementAppearance(graphic:node.graphic,layout:nil,
-          size:.init(width:frame.width,height:frame.height),erasures:cuts)
-        guard appearance.contains(p,tolerance:tolerance) else { continue }
+        guard let prepared = appearance(node.id,node.graphic,.init(width:frame.width,height:frame.height),cuts),
+          prepared.contains(p,tolerance:tolerance) else { continue }
       }
       candidates.append((node,edge,inside,p))
     }
@@ -226,12 +229,12 @@ public struct NotebookGraphicGraph: Sendable {
     }
     func anchor(_ endpoint: NotebookGraphicConnection.Endpoint) -> SpatialPoint {
       guard let binding = endpoint.binding, let target = nodes[collaborationIdentity(binding.elementID)] else {
-        return .init(x: frame.x + endpoint.point.x, y: frame.y + endpoint.point.y)
+        return endpoint.point
       }
       let offset = node.origin.delta(to: target.origin)
       let a = binding.isPrecise ? binding.normalizedAnchor : .init(x: 0.5, y: 0.5)
-      return .init(x: offset.x + target.frame.x + target.frame.width*a.x,
-        y: offset.y + target.frame.y + target.frame.height*a.y)
+      return .init(x: offset.x + (target.frame.x-frame.x) + target.frame.width*a.x,
+        y: offset.y + (target.frame.y-frame.y) + target.frame.height*a.y)
     }
     let a = anchor(connection.start), b = anchor(connection.end)
     let distance = hypot(b.x-a.x, b.y-a.y)
@@ -244,7 +247,8 @@ public struct NotebookGraphicGraph: Sendable {
       guard let binding = endpoint.binding, !binding.isExact,
         let target = nodes[collaborationIdentity(binding.elementID)] else { return anchor }
       let delta = node.origin.delta(to: target.origin)
-      let center = SpatialPoint(x: delta.x+target.frame.x+target.frame.width/2, y: delta.y+target.frame.y+target.frame.height/2)
+      let center = SpatialPoint(x: delta.x+(target.frame.x-frame.x)+target.frame.width/2,
+        y: delta.y+(target.frame.y-frame.y)+target.frame.height/2)
       let rx = target.frame.width/2, ry = target.frame.height/2
       let px = (anchor.x-center.x)/rx, py = (anchor.y-center.y)/ry
       let dx = (toward.x-anchor.x)/rx, dy = (toward.y-anchor.y)/ry
@@ -272,7 +276,12 @@ public struct NotebookGraphicGraph: Sendable {
     let endToward = connection.resolvedRouting == .elbow ? (horizontal ? SpatialPoint(x:b.x,y:middle.y) : SpatialPoint(x:middle.x,y:b.y)) : middle
     let start = clipped(connection.start, anchor: a, toward: startToward)
     let end = clipped(connection.end, anchor: b, toward: endToward)
-    return .geometry(Self.connectionLayout(graphic: graphic, start: start, end: end, middle: middle, axisStart: a, axisEnd: b))
+    // Resolve in the node's local basis. Translating a connector must not round
+    // its local curves differently and invalidate an otherwise identical mask.
+    let local = Self.connectionLayout(graphic: graphic, start: start, end: end, middle: middle, axisStart: a, axisEnd: b)
+    return .geometry(.init(frame:.init(x:frame.x+local.frame.x,y:frame.y+local.frame.y,
+      width:local.frame.width,height:local.frame.height),curves:local.curves,heads:local.heads,label:local.label,
+      start:local.start,end:local.end,bend:local.bend,axisStart:local.axisStart,axisEnd:local.axisEnd))
   }
 
   private static func connectionLayout(graphic: NotebookGraphic, start: SpatialPoint, end: SpatialPoint,

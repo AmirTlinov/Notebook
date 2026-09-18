@@ -3,7 +3,9 @@ import Foundation
 
 /// Disposable current-content projection. The measured erase stays in its one
 /// undoable action; it is not a second authored visibility register.
-public struct NotebookElementAppearance {
+// CGPath lacks Sendable in the SDK. These paths are immutable copies with no
+// escaping mutable alias. Remove unchecked when CGPath gains that conformance.
+public struct NotebookElementAppearance: @unchecked Sendable {
   public enum State: String, Codable, Sendable { case intact, partial, erased }
   public let state: State
   public let remaining: CGPath
@@ -11,10 +13,14 @@ public struct NotebookElementAppearance {
 
   public init(graphic: NotebookGraphic?, layout: NotebookGraphicLayout?, size: CGSize,
     erasures: [InkElementErasure]) {
-    mask = Self.erasurePath(erasures, size:size)
     let paint = graphic.map { NotebookGraphicGeometry.paintPath($0,layout:layout,size:size) }
       ?? CGPath(rect:CGRect(origin:.zero,size:size),transform:nil)
-    if mask.isEmpty { remaining = paint; state = .intact }
+    if !erasures.isEmpty && paint.isEmpty {
+      mask = CGPath(rect: .zero, transform: nil); remaining = mask; state = .erased
+      return
+    }
+    mask = Self.erasurePath(erasures, size:size)
+    if mask.isEmpty { remaining = paint.copy()!; state = .intact }
     else {
       remaining = paint.subtracting(mask)
       state = remaining.isEmpty ? .erased : (paint.intersection(mask).isEmpty ? .intact : .partial)
@@ -44,7 +50,7 @@ public struct NotebookElementAppearance {
     var lastTriangle: [CGPoint] = []
     var levels: [CGPath?] = []
     func flush() {
-      guard triangles > 0 else { return }
+      guard triangles > 0, !Task.isCancelled else { return }
       var merged = batch.normalized()
       var level = 0
       while level < levels.count, let previous = levels[level] {
@@ -65,7 +71,35 @@ public struct NotebookElementAppearance {
         batch.closeSubpath()
       }
     }
+    forEachErasureTriangle(erasures, size: size) { triangle in
+      lastTriangle = triangle
+      batch.move(to: triangle[0])
+      for p in triangle.dropFirst() { batch.addLine(to:p) }
+      batch.closeSubpath()
+      triangles += 1
+      if triangles == 128 { flush() }
+    }
+    flush()
+    return levels.compactMap { $0 }.reduce(CGMutablePath() as CGPath) { $0.union($1) }
+  }
+
+  /// Nonzero fill of the same positive triangles is already their union.
+  /// Painting does not need CoreGraphics boolean normalization. This linear
+  /// path is also the exact live eraser while semantic preparation is pending.
+  public static func measuredErasurePath(_ erasures: [InkElementErasure], size: CGSize) -> CGPath {
+    let path = CGMutablePath()
+    forEachErasureTriangle(erasures, size: size) { triangle in
+      path.move(to:triangle[0])
+      for p in triangle.dropFirst() { path.addLine(to:p) }
+      path.closeSubpath()
+    }
+    return path.copy()!
+  }
+
+  private static func forEachErasureTriangle(_ erasures: [InkElementErasure], size: CGSize,
+    visit: ([CGPoint]) -> Void) {
     for erasure in erasures {
+      if Task.isCancelled { return }
       var points: [InkStrokeGeometry.RenderPoint] = []
       for sample in erasure.samples {
         let p = erasure.target.localPoint(sample)
@@ -79,18 +113,13 @@ public struct NotebookElementAppearance {
       let sx = size.width/erasure.target.frame.width, sy = size.height/erasure.target.frame.height
       func point(_ p: SIMD2<Float>) -> CGPoint { .init(x:Double(p.x)*sx,y:Double(p.y)*sy) }
       for i in stride(from:0,to:vertices.count,by:3) {
+        if i.isMultiple(of: 768), Task.isCancelled { return }
         let a = vertices[i].position, b = vertices[i+1].position, c = vertices[i+2].position
-        lastTriangle = [point(a)] + ((b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x) >= 0 ? [b,c] : [c,b]).map(point)
-        batch.move(to:lastTriangle[0])
-        for p in lastTriangle.dropFirst() { batch.addLine(to:p) }
-        batch.closeSubpath()
-        triangles += 1
-        if triangles == 128 { flush() }
+        visit([point(a)] + ((b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x) >= 0 ? [b,c] : [c,b]).map(point))
       }
     }
-    flush()
-    return levels.compactMap { $0 }.reduce(CGMutablePath() as CGPath) { $0.union($1) }
   }
+
 }
 
 extension NotebookGraphicGeometry {

@@ -737,8 +737,18 @@ struct SpatialWorkspaceView: View {
     let cuts = model.elementErasures(on:surface)[id] ?? []
     if !cuts.isEmpty {
       let scale = max(0.001,presence.camera.scale)
-      let appearance = NotebookElementAppearance(graphic:model.graphicElement(reference),layout:model.graphicLayout(reference),
-        size:.init(width:frame.width/scale,height:frame.height/scale),erasures:cuts)
+      let layout = model.graphicLayout(reference)
+      let sourceFrame: PageRect?
+      switch reference {
+      case .page(let pageID, let elementID): sourceFrame = model.pages[pageID]?.elements.first { $0.id == elementID }?.frame
+      case .spatial(_, _): sourceFrame = model.compositionTiles.published.flatMap { model.presentedElement(reference,cohort:$0) }.map {
+        .init(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height)
+      }
+      }
+      guard let localFrame = layout?.frame ?? sourceFrame.map({ model.elementPresentationFrame(reference,fallback:$0) }),
+        let appearance = model.elementErasureCache.appearance(surface:surface,id:id,
+          graphic:model.graphicElement(reference),layout:layout,
+          size:.init(width:localFrame.width,height:localFrame.height),erasures:cuts) else { return nil }
       return appearance.contains(.init(x:(point.x-frame.minX)/scale,y:(point.y-frame.minY)/scale),tolerance:12/scale) ? reference : nil
     }
     guard let graphic = model.graphicElement(reference) else { return frame.contains(point) ? reference : nil }

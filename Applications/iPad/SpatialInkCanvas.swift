@@ -43,6 +43,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
     context.coordinator.onWorkingGraphic = { [weak model] in model?.updateWorkingGraphic($0, strokeID: $1) }
     context.coordinator.onQuickShape = onQuickShape
+    context.coordinator.appearances = model?.elementErasureCache
     context.coordinator.resolveEraserTargets = { [weak model] in model?.eraserTargets(boardID: $1, cohort: $0) ?? [:] }
     context.coordinator.onElementErasing = { [weak model] in model?.updateElementErasing($0, id: $1) }
     context.coordinator.resolveGraphicGraph = { [weak model] cohort, board in
@@ -75,6 +76,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     view.bindCameraProjection(to: model?.nativeCameraProjection)
     context.coordinator.onWorkingGraphic = { [weak model] in model?.updateWorkingGraphic($0, strokeID: $1) }
     context.coordinator.onQuickShape = onQuickShape
+    context.coordinator.appearances = model?.elementErasureCache
     context.coordinator.resolveEraserTargets = { [weak model] in model?.eraserTargets(boardID: $1, cohort: $0) ?? [:] }
     context.coordinator.onElementErasing = { [weak model] in model?.updateElementErasing($0, id: $1) }
     context.coordinator.resolveGraphicGraph = { [weak model] cohort, board in
@@ -127,6 +129,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private weak var view: SpatialInkContainerView?
     private weak var window: UIWindow?
     private var recognizer: SpatialPencilGestureRecognizer?
+    weak var appearances: NotebookElementErasureCache?
 
     private var camera = SpatialCamera()
     private var boardSurface = SurfaceID.board
@@ -411,7 +414,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
           guard let self, let geometry = actionGeometry else { return fit }
           let scale = geometry.camera.scale, screenOrigin = SpatialPoint(x:fit.frame.x,y:fit.frame.y)
           let origin = geometry.camera.screenToWorld(screenOrigin,viewport:geometry.viewport)
-          let physical = fit.scaled(by:1/scale,frameOrigin:.zero).binding(in:geometry.graphics,surface:boardSurface,origin:origin,tolerance:18/scale,erasures:geometry.graphicErasures)
+          let physical = fit.scaled(by:1/scale,frameOrigin:.zero).binding(in:geometry.graphics,surface:boardSurface,origin:origin,tolerance:18/scale,erasures:geometry.graphicErasures,appearance: { id,graphic,size,cuts in
+              appearances?.appearance(surface:boardSurface,id:id,graphic:graphic,layout:nil,size:size,erasures:cuts)
+            })
           return physical.scaled(by:scale,frameOrigin:screenOrigin)
         }) { [weak self] in
           guard let self, let geometry = actionGeometry, currentSurface == boardSurface,

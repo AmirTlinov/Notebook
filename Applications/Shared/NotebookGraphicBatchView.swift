@@ -43,6 +43,12 @@ struct NotebookGraphicBatchView: View {
     let objects = objects, editingID = editingID
     let surface: SurfaceID = run.plane.coverID.map(SurfaceID.cover) ?? .board(run.plane.boardID)
     let erasures = model.elementErasures(on: surface, fallback: composition.cohort?.liveData.ink)
+    let appearances = Dictionary(uniqueKeysWithValues: objects.compactMap { object -> (String, NotebookElementAppearance)? in
+      guard let value = model.elementErasureCache.appearance(surface:surface,id:object.id,
+        graphic:graph.nodes[object.id]?.graphic,layout:object.layout,
+        size:.init(width:object.layout.frame.width,height:object.layout.frame.height),erasures:erasures[object.id] ?? []) else { return nil }
+      return (object.id,value)
+    })
     ZStack(alignment: .topLeading) {
       Canvas { context, _ in
         for object in objects where object.id != editingID {
@@ -50,15 +56,13 @@ struct NotebookGraphicBatchView: View {
           local.translateBy(x: object.frame.minX, y: object.frame.minY)
           local.scaleBy(x: scale, y: scale)
           NotebookGraphicView.paint(graph.nodes[object.id]!.graphic, layout: object.layout, in: local,
-            size: .init(width: object.layout.frame.width, height: object.layout.frame.height), erasures: erasures[object.id] ?? [])
+            size: .init(width: object.layout.frame.width, height: object.layout.frame.height), erasures: erasures[object.id] ?? [], appearance: appearances[object.id])
         }
       }
       .accessibilityRepresentation {
         ZStack(alignment: .topLeading) {
           ForEach(objects.filter { $0.id != editingID }) { object in
-            let cuts = erasures[object.id] ?? []
-            let erased = !cuts.isEmpty && NotebookElementAppearance(graphic:graph.nodes[object.id]?.graphic,layout:object.layout,
-              size:.init(width:object.layout.frame.width,height:object.layout.frame.height),erasures:cuts).state == .erased
+            let erased = appearances[object.id]?.state == .erased
             accessibleObject(object)
               .accessibilityHidden(erased)
               .frame(width: object.frame.width, height: object.frame.height)
@@ -70,7 +74,7 @@ struct NotebookGraphicBatchView: View {
       if let object = objects.first(where: { $0.id == editingID }) {
         NotebookGraphicElementView(graphic: graph.nodes[object.id]!.graphic, reference: reference(object.id), layout: object.layout)
           .frame(width: object.layout.frame.width, height: object.layout.frame.height)
-          .erased(by: erasures[object.id] ?? [])
+          .erased(by: erasures[object.id] ?? [], appearance: appearances[object.id])
           .scaleEffect(scale)
           .frame(width: object.frame.width, height: object.frame.height)
           .position(x: object.frame.midX, y: object.frame.midY)

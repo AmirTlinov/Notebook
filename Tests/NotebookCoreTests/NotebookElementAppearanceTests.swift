@@ -74,6 +74,7 @@ import Testing
     InkStrokeGeometry.appendStrokeVertices(renderPoints:points,to:&vertices)
     for size in [CGSize(width:160,height:100),CGSize(width:240,height:75)] {
       let mask = NotebookElementAppearance.erasurePath([erasure,erasure],size:size)
+      let measured = NotebookElementAppearance.measuredErasurePath([erasure,erasure],size:size)
       let triangles = stride(from:0,to:vertices.count,by:3).map { index in
         let triangle = CGMutablePath()
         for i in 0..<3 {
@@ -86,7 +87,9 @@ import Testing
       for x in stride(from:0.317,to:size.width,by:3) {
         for y in stride(from:0.193,to:size.height,by:3) {
           let point = CGPoint(x:x,y:y)
-          #expect(mask.contains(point) == triangles.contains { $0.contains(point) })
+          let expected = triangles.contains { $0.contains(point) }
+          #expect(mask.contains(point) == expected)
+          #expect(measured.contains(point) == expected)
         }
       }
     }

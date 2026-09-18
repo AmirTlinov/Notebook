@@ -80,6 +80,7 @@
         fixtureName = (nativeGraphicPage ? "NativeGraphicPage" : "NativeGraphicBoard")
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-connector") ? "Connector" : "")
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-dense") ? "Dense" : "")
+          + (ProcessInfo.processInfo.arguments.contains("--notebook-native-erased") ? "Erased" : "")
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-polygons") ? "Polygons" : "")
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-geometry-edit") ? "GeometryEdit" : "")
       } else if ProcessInfo.processInfo.arguments.contains(penPersistenceArgument) {
@@ -638,8 +639,40 @@
             .init(kind: .insertElement, target: target, id: "batch-link-\(index)", values: link)]
         }
       }
+      let erasedFixture = onPage && ProcessInfo.processInfo.arguments.contains("--notebook-native-erased")
+      let erasedFrames = (0..<16).map { i in PageRect(x:350+Double(i%4)*65,y:650+Double(i/4)*55,width:40,height:35) }
+      if erasedFixture {
+        for (i,frame) in erasedFrames.enumerated() {
+          operations.append(.init(kind:.insertElement,target:target,id:"erased-\(i)",values:[
+            "kind":.string("graphic"),"source":.string(""),"frame":try .encode(frame),
+            "graphic":try .encode(NotebookGraphic(shape:.rectangle,label:"Erased \(i)"))]))
+        }
+      }
       _ = try store.applyCollaborationAction(.init(summary: "Native diagram with a live neighbour",
         expected: [.init(target: target, revision: store.targetContentRevision(target: target))], operations:operations), actor:actor)
+      if erasedFixture {
+        var page = try store.loadPage(pageID)
+        let sweeps = (0..<4096).map { i in
+          let t = Double(i%64)*2*Double.pi/64
+          return SpatialInkSample(point:.init(x:465+80*cos(t),y:745+70*sin(t)),timeOffset:Double(i)/240,
+            width:260,opacity:1,force:1,azimuth:0,altitude:1)
+        }
+        let erased = PageInkAction(tool:.eraser,samples:sweeps).erasingElements(erasedFrames.enumerated().map {
+          .init(elementID:"erased-\($0.offset)",frame:$0.element)
+        })
+        let partialSamples = (0..<2048).map { i in
+          let t = Double(i%64)*2*Double.pi/64
+          return SpatialInkSample(point:.init(x:80+2*cos(t),y:320+70*sin(t)),timeOffset:Double(i)/240,
+            width:40,opacity:1,force:1,azimuth:0,altitude:1)
+        }
+        let partial = PageInkAction(tool:.eraser,samples:partialSamples).erasingElements([
+          .init(elementID:"native-circle",frame:try node["frame"]!.decode(PageRect.self))])
+        for (offset,action) in [erased,partial].enumerated() {
+          let change = try page.prepareInkChange(.append(action),stamp:.init(counter:UInt64(100+offset),actor:actor))
+          _ = page.publishInkChange(change)
+        }
+        try store.savePage(page)
+      }
       let viewport = SpatialPoint(x: NotebookAppModel.defaultPageSize.width, y: NotebookAppModel.defaultPageSize.height)
       let center = onPage ? before.board(index.rootBoardID)?.focusedCenter(of: index.selectedItemID) ?? .zero : .zero
       try store.savePresence(.init(boardID: index.rootBoardID, mode: onPage ? .page : .board,

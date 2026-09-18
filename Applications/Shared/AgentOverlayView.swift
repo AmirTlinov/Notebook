@@ -79,8 +79,9 @@ struct AgentOverlayView: View {
         let layout = element.graphic == nil ? nil : graph.resolve(element.id).layout
         let frame = layout?.frame ?? model.elementPresentationFrame(reference, fallback: element.frame)
         let cuts = erasures[element.id] ?? []
-        let erased = !cuts.isEmpty && NotebookElementAppearance(graphic:element.graphic,layout:layout,
-          size:.init(width:frame.width,height:frame.height),erasures:cuts).state == .erased
+        let appearance = model.elementErasureCache.appearance(surface:.page(pageID),id:element.id,
+          graphic:graph.nodes[element.id]?.graphic,layout:layout,size:.init(width:frame.width,height:frame.height),erasures:cuts)
+        let erased = appearance?.state == .erased
         EditableElementContainer(reference: reference, coordinateScale: 1) {
           if let graphic = graph.nodes[element.id]?.graphic {
             NotebookGraphicElementView(graphic: graphic, reference: reference, layout: layout)
@@ -106,12 +107,12 @@ struct AgentOverlayView: View {
           width: frame.width,
           height: frame.height
         )
-        .erased(by: erasures[element.id] ?? [])
+        .erased(by: cuts, appearance: appearance)
         .offset(x: frame.x, y: frame.y)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent-element-\(element.id)")
         .accessibilityHidden(erased)
-        .allowsHitTesting(!erased)
+        .allowsHitTesting(!erased && (cuts.isEmpty || appearance != nil))
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

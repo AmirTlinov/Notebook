@@ -56,6 +56,7 @@ final class NotebookAppModel {
   }
   private(set) var pages: [UUID: PageDocument] = [:] {
     didSet {
+      elementErasureCache.retain(pages: pages)
       collaborationReadEpoch &+= 1
       if oldValue != pages { collaborationContentEpoch &+= 1 }
     }
@@ -253,6 +254,7 @@ final class NotebookAppModel {
   }
   private(set) var boardHierarchy: BoardHierarchy? {
     didSet {
+      elementErasureCache.retain(hierarchy: boardHierarchy)
       // An optimistic body is not proof of the complete stored board. Only an
       // accepted SQL scene cut can supply its new content revision.
       for id in Array(boardContentRevisions.keys) where oldValue?.board(id) != boardHierarchy?.board(id) {
@@ -4401,6 +4403,7 @@ final class NotebookAppModel {
       agentHighlightTask?.cancel(); agentHighlightTask = nil; agentHighlightStarts.removeAll()
       referenceHighlightTask?.cancel(); cueTask?.cancel()
       if let task = collaborationUndoTask { await task.value }
+      await elementErasureCache.stop()
       await compositionTiles.stop()
       let saved = await persistence.flush()
       if saved {

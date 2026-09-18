@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 public struct NotebookQuickShapeFit: Equatable, Sendable {
   public var frame: PageRect
@@ -24,13 +25,16 @@ public struct NotebookQuickShapeFit: Equatable, Sendable {
     return value
   }
   public func binding(in graph: NotebookGraphicGraph, surface: SurfaceID, origin: WorldPoint = .zero,
-    tolerance: Double, erasures: [String: [InkElementErasure]] = [:]) -> Self {
+    tolerance: Double, erasures: [String: [InkElementErasure]] = [:],
+    appearance: (String, NotebookGraphic, CGSize, [InkElementErasure]) -> NotebookElementAppearance? = { _, graphic, size, cuts in
+      .init(graphic:graphic,layout:nil,size:size,erasures:cuts)
+    }) -> Self {
     guard var connection else { return self }
     for terminal in NotebookGraphicConnection.Terminal.allCases {
       var endpoint = terminal == .start ? connection.start : connection.end
       let point = SpatialPoint(x:frame.x+endpoint.point.x,y:frame.y+endpoint.point.y)
       endpoint.binding = nil
-      if var binding = graph.binding(at:point,origin:origin,surface:surface,tolerance:tolerance,erasures:erasures),
+      if var binding = graph.binding(at:point,origin:origin,surface:surface,tolerance:tolerance,erasures:erasures,appearance:appearance),
         let node = graph.nodes[collaborationIdentity(binding.elementID)] {
         let offset = origin.delta(to:node.origin)
         let anchor = SpatialPoint(x:(point.x-offset.x-node.frame.x)/node.frame.width,

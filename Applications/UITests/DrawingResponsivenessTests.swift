@@ -5,6 +5,31 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testErasedFiguresKeepOpeningAndPickingResponsive() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture",
+      "--notebook-native-graphic-page","--notebook-native-erased","--notebook-simulator-finger-gestures"]
+    launchPortraitFixture(app)
+    let node = app.images["Узел +"], paper = app.otherElements["paper-input"]
+    XCTAssertTrue(node.waitForExistence(timeout:10)); XCTAssertTrue(paper.exists)
+    for i in 0..<16 { XCTAssertFalse(app.images["Erased \(i)"].exists) }
+    for _ in 0..<3 {
+      node.coordinate(withNormalizedOffset:.init(dx:0.97,dy:0.5)).tap()
+      XCTAssertTrue(app.buttons["delete-agent-element"].waitForExistence(timeout:2))
+      // Tap removed paint, not the surviving opposite edge or a shape's interior.
+      node.coordinate(withNormalizedOffset:.init(dx:0.01,dy:0.5)).tap()
+      XCTAssertTrue(app.buttons["delete-agent-element"].waitForNonExistence(timeout:2))
+      app.buttons["leave-nested-board"].tap()
+      let cover = app.descendants(matching:.any).matching(identifier:"workspace-item-7e7a1000-0000-4000-8000-000000000002").firstMatch
+      XCTAssertTrue(cover.waitForExistence(timeout:3)); cover.doubleTap()
+      XCTAssertTrue(paper.waitForExistence(timeout:3)); XCTAssertTrue(node.waitForExistence(timeout:3))
+      for i in 0..<16 { XCTAssertFalse(app.images["Erased \(i)"].exists) }
+    }
+    let proof = XCTAttachment(screenshot:app.screenshot())
+    proof.name = "erased-figures-after-three-open-close-cycles"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testHollowPolygonsSelectResizeAndBindOnPage() { polygonInteraction(onPage:true) }
   func testHollowPolygonsSelectResizeAndBindOnBoard() { polygonInteraction(onPage:false) }
 

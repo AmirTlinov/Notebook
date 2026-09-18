@@ -25,10 +25,12 @@ struct NotebookGraphicView: View {
   }
 
   static func paint(_ graphic: NotebookGraphic, layout: NotebookGraphicLayout?,
-    in context: GraphicsContext, size: CGSize, erasures: [InkElementErasure] = []) {
+    in context: GraphicsContext, size: CGSize, erasures: [InkElementErasure] = [],
+    appearance: NotebookElementAppearance? = nil) {
+      guard graphic.showsGeometry, appearance?.state != .erased else { return }
       var context = context
-      NotebookElementErasurePaint.clip(erasures, context: &context, size: size)
-      guard graphic.showsGeometry else { return }
+      if let appearance { context.clip(to:Path(appearance.mask),options:.inverse) }
+      else { NotebookElementErasurePaint.clip(erasures, context: &context, size: size) }
       let stroke = graphic.style.stroke.swiftUIColor
       let width = graphic.style.strokeWidth
       let dash: [CGFloat] = switch graphic.style.dash ?? .solid {

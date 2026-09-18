@@ -26,7 +26,9 @@ extension NotebookAppModel {
     }
     let p = terminal == .start ? connection.start.point : connection.end.point
     return graph.binding(at:.init(x:contact.original.minX+p.x,y:contact.original.minY+p.y),
-      origin:contact.worldOrigin ?? .zero,surface:surface,excluding:id,tolerance:14/max(0.001,presence?.camera.scale ?? 1),retaining:retainedID,erasures:elementErasures(on:surface,fallback:compositionTiles.published?.liveData.ink))
+      origin:contact.worldOrigin ?? .zero,surface:surface,excluding:id,tolerance:14/max(0.001,presence?.camera.scale ?? 1),retaining:retainedID,erasures:elementErasures(on:surface,fallback:compositionTiles.published?.liveData.ink), appearance: { elementID, graphic, size, cuts in
+        elementErasureCache.appearance(surface:surface,id:elementID,graphic:graphic,layout:nil,size:size,erasures:cuts)
+      })
   }
   func graphicGraph(page: PageDocument, preview: Bool = true) -> NotebookGraphicGraph {
     let graph = page.graphicGraph()

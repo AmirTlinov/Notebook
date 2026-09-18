@@ -235,7 +235,8 @@ import XCTest
     }
     let rim = cut([.init(x:100,y:200),.init(x:260,y:200),.init(x:260,y:300),.init(x:100,y:300),.init(x:100,y:200)])
     func pick(_ point: SpatialPoint, cuts: [InkElementErasure]) -> String? {
-      NotebookAttentionProjection.pickElement(in:[element],graph:graph,erasures:["ghost":cuts],scale:1,
+      NotebookAttentionProjection.pickElement(in:[element],graph:graph,erasures:["ghost":cuts],
+        appearance: { _,graphic,layout,size,cuts in .init(graphic:graphic,layout:layout,size:size,erasures:cuts) }, scale:1,
         viewport:.init(x:834,y:1194),project:{ ($0.id,$0.frame,$0.graphic,point) })?.id
     }
     XCTAssertNil(pick(.init(x:180,y:250),cuts:[rim]))
