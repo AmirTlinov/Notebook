@@ -9863,3 +9863,48 @@ TypeScript .d.ts ресурсов. verification.json не создан, рабо
 системные frame/CPU/GPU/memory измерения и 30 минут совместной работы не заявлены.
 Текущая Codex MCP-сессия удерживает старый API1 sidecar и получает
 api_version_mismatch; это не повод обходить публичный протокол или читать SQLite.
+
+### GUI-221 / S6 — финальный допуск сборки, 18 сентября 00:50 UTC
+
+После исправления Mac packaging весь выбранный маршрут завершён заново на
+неизменном source `6e7da8839d4a035b11d7c424cccc26c4320bdde65b6dca0c98a5b0b2c04b5d91`:
+`.build/erasure-connector-s6-final3-20260918/verification.json`, status passed,
+route `./verify.sh:selected`. iPad 29/29, Mac 2/2, runtimeWarnings/skips/failures 0.
+Core 28 + worker 4; MCP 62; release guards 79 и verification guards 79 PASS.
+100000 fixture повторно: 7878 VM steps для admission 96 предметов, 114 для
+двух адресных запросов масок (1 существующий target, 1 без маски).
+
+Два Mac теста действительно исполняли подписанный sandbox compiler; ранние
+final1/final2 остаются незавершёнными, их свидетельства не заменены. Начата
+сборка общей пары `.build/shared-0.3.82-s6-boundary-release-20260918`.
+Временные `com.amirtlinov.notebook.native-test` и
+`com.amirtlinov.notebook.uitests.xctrunner` удалены с iPad после проверки;
+рабочий `.preview` сохранён и вновь открыт без изменения его данных.
+
+### GUI-221 — установка рабочей пары, 18 сентября 00:54 UTC
+
+Verified Release-пара 0.3.82 (85) из
+`.build/shared-0.3.82-s6-boundary-release-20260918/build.json` установлена поверх
+допущенных приложений. Mac установлен отдельной согласованной задачей; его
+receipt `.build/shared-0.3.82-s6-install-20260918/install.json`, bundle manifest
+`4c3020815b8e8605d0117a97ccf740187bf1db0cb29f905884565af0be8f5598`.
+iPad `.preview` прошёл strict signature и сравнение artifact manifest
+`81fefaf6954885657c4580fa78aaf9b724c1f7ec9e3a0696a51cc34eeb138ebc` перед install.
+Бинарник iPad UUID `D406B6C3-08A4-31B3-A6F6-FA6FDB4BDA5A`, CDHash
+`3aa6e0328cc048a63952cbee8d98a8ab607ed5c1`.
+
+CoreDevice подтвердил installation, normal launch и readback 0.3.82/build85.
+На iPad ровно один Notebook — `com.amirtlinov.notebook.preview`, Notebook Lab;
+старое рабочее приложение не удалялось, временные native-test/runner отсутствуют.
+Квитанции `.build/gui221-ipad-install-20260918/{artifact,install,launch,apps}.json`.
+Контейнеры, ключи, доверие и человеческие записи не заменялись; архивы не читались.
+Срез кода `c02a6ba` pushed; SDK-проекция интегрирована `4e92e37`, packaging `8c8d3cb`.
+
+На момент этой записи свежий установленный API2 live-read и ручная приёмка
+стирания Амиром ожидаются. Установка не доказывает доставку/показ на другой стороне.
+
+00:55 UTC: новая установленная API2 stdio-сессия подтверждена владельцем SDK,
+но runtime Mac/iPad остаётся disconnected. Production fixture не создавался:
+до восстановления связи нельзя доказать live-read текущего iPad или shownOnIPad.
+Эта диагностика ведётся отдельно, без сброса доверия. GUI-221 — In Review,
+Амиру задана проверка ghost selection и кнопок на установленном build85.
