@@ -162,14 +162,17 @@ private final class AppendedPageUndoEvidence {
     guard try database.rows("SELECT 1 FROM appended_page_undo_inverse WHERE file=? AND before_hash IS NOT NULL LIMIT 1", [.text(file)]).isEmpty else {
       throw NotebookStorageError.invalidTransaction("appended page had prior content")
     }
-    let birthAddress = Self.fieldAddress(fieldKey(["items", item, "pageIDs", id]))
+    let birthKey = fieldKey(["items", item, "pageIDs", id]), birthAddress = Self.fieldAddress(birthKey)
     let birth = try born(birthAddress).value.decode(ContentFieldVersion.self)
     guard birth.isValid else { throw NotebookStorageError.invalidTransaction("appended page birth version") }
     guard try store.ownerBoardID(of: change.target.id) == boardID,
       try store.ownerItemID(ofPage: pageID) == change.target.id,
       let currentMembership = try store.storedFragments(address: address, descendants: false).first,
-      currentMembership.value == membership.value,
-      try store.storedFragments(address: birthAddress, descendants: false).first?.value.decode(ContentFieldVersion.self) == birth else { return nil }
+      currentMembership.value == membership.value else { return nil }
+    let currentBirth = try store.storedFragments(address: birthAddress, descendants: false).first?.value.decode(ContentFieldVersion.self)
+    guard try store.fieldIsOwned(currentBirth, by: .init(file: "workspace.json",
+      path: [.field("collaboration"), .field("fields"), .field(birthKey)], before: nil, after: nil, afterVersion: birth),
+      requiringExactVersion: true) else { return nil }
     let order = try store.readPageOrder(change.target.id)
     guard try NotebookPageOrderVector.pageID(at: currentMembership.position, in: order.visibleRoot,
       read: { try store.readPageOrderNode($0) }) == pageID else { throw NotebookStorageError.invalidTransaction("appended page live membership") }

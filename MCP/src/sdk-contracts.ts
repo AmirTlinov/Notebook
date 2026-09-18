@@ -76,8 +76,8 @@ const operationDescriptions:Record<z.infer<typeof operationSchema>["kind"],strin
   createDocument:"Create a document with paper size and blocks at a board position.",
   createBoard:"Create a board at a board position.",
   appendPage:"Append one blank page to a notebook's physical cover, inheriting its first page size. Optional id is a UUID; omission is generated once at admission and remains stable on retry. values is empty.",
-  deleteItem:"Delete one item through its physical cover and actual containing board. Requires an explicit itemLifecycle read basis covering all stored content, not a visible preview. No id or values fields beyond the empty values object.",
-  renameItem:"Change one item's title. target is its containing board, never workspace; expected must include that board and the root workspace catalogue.",
+  deleteItem:"Delete one item through its physical cover and actual containing board. Requires an explicit itemLifecycle read basis covering all stored content, not a visible preview. Only empty boards can be deleted: children are never deleted implicitly. When intended, explicitly delete the child owners before the board in the same transaction. The workspace retains its last item. No id or values fields beyond the empty values object.",
+  renameItem:"Change one item's title. target is its containing board, never workspace; pass base from the ownerBoard read basis, which includes the board and root workspace catalogue.",
   moveItem:"Move one item to a tiled board position. A stack member is extracted as a free item; other members' placement registers are unchanged.",
   stackItems:"Stack two to five named items.",
 };

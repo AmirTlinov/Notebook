@@ -176,18 +176,23 @@ extension NotebookStore {
 
   /// Values alone never authorize undo (including an independent A → B → A).
   /// Follow only inverse writes attested by durable receipts at this exact path.
-  func fieldIsOwned(_ current: ContentFieldVersion?, by change: CollaborationFieldChange) throws -> Bool {
+  /// Destructive lifecycle callers also require the complete version at every
+  /// hop: an unrelated observation or losing head cannot borrow an inverse dot.
+  func fieldIsOwned(_ current: ContentFieldVersion?, by change: CollaborationFieldChange,
+    requiringExactVersion: Bool = false) throws -> Bool {
     guard let expected = change.afterVersion else { return true }
     guard var version = current else { return false }
     let field = try restorationKey(file: change.file, path: change.path)
     var visited = Set<String>()
     while visited.insert(version.restorationIdentity).inserted {
-      if version.stamp == expected.stamp && version.human == expected.human { return true }
+      if requiringExactVersion ? version == expected : (version.stamp == expected.stamp && version.human == expected.human) { return true }
       let rows = try currentSQL!.rows("SELECT value FROM action_field_restorations WHERE field=? AND version=? LIMIT 2",
         [.text(field), .text(version.restorationIdentity)])
       // Two claims about one inverse dot are not evidence of restored ownership.
       guard rows.count == 1, let data = rows[0][0].blob else { return false }
-      version = try JSONDecoder().decode(CollaborationFieldRestoration.self, from: data).restoredVersion
+      let restoration = try JSONDecoder().decode(CollaborationFieldRestoration.self, from: data)
+      guard !requiringExactVersion || version == restoration.writtenVersion else { return false }
+      version = restoration.restoredVersion
     }
     return false
   }

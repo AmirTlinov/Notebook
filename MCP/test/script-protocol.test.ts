@@ -72,6 +72,10 @@ test("lifecycle help obtains an explicit frozen extent and declares the exact co
   }
   assert.match(sdkReference.operationDetails.appendPage!.description,/first page/);
   assert.match(sdkReference.operationDetails.deleteItem!.description,/explicit.*itemLifecycle/);
+  assert.match(sdkReference.operationDetails.deleteItem!.description,/empty board/i);
+  assert.match(sdkReference.operationDetails.deleteItem!.description,/children.*never.*implicitly/i);
+  assert.match(sdkReference.operationDetails.renameItem!.description,/base.*basis/);
+  assert.doesNotMatch(sdkReference.operationDetails.renameItem!.description,/expected must/);
 });
 
 test("operation discovery is compact and every exact schema reference resolves locally",()=>{

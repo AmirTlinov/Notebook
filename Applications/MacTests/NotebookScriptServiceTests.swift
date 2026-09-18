@@ -354,6 +354,69 @@ final class NotebookScriptServiceTests: XCTestCase {
     XCTAssertEqual(createdGraphs.first, createdGraphs.last, "JS and TS produce the same domain objects in independent stores")
   }
 
+  func testLifecycleRefusalAndRestoredAppendUndoCrossTheRealSDK() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), run = UUID()
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    let initial = try owner.store.workspaceHeader()
+    let presence = SessionPresence(boardID: initial.rootBoardID, mode: .board,
+      camera: .init(center: .init(x: 17, y: 29), scale: 0.7), viewport: .init(x: 834, y: 1194),
+      selectedItemID: initial.selectedItemID, notebookPageID: initial.selectedPageID)
+    try owner.store.savePresence(presence)
+    let board = UUID(), notebook = UUID(), page = UUID()
+    let code = """
+      const rootID='\(initial.rootBoardID.uuidString)', boardID='\(board.uuidString)', notebookID='\(notebook.uuidString)';
+      const root=await nb.board({id:rootID});
+      await nb.transaction('board',{base:root.basis,summary:'Temporary child board',operations:[
+        {kind:'createBoard',target:{kind:'board',id:rootID},id:boardID,values:{title:'Original board',center:{tileX:1,tileY:1,localX:0,localY:0}}}]});
+      const child=await nb.board({id:boardID});
+      await nb.transaction('notebook',{base:child.basis,summary:'Temporary notebook',operations:[
+        {kind:'createNotebook',target:{kind:'board',id:boardID},id:notebookID,values:{title:'Own notebook',pageID:'\(page.uuidString)',center:{tileX:0,tileY:0,localX:0,localY:0}}}]});
+      const extent=await nb.read({kind:'itemLifecycle',id:notebookID});
+      const appendAction={base:extent.basis,summary:'Append before restored deletion',additionalOwners:[extent.data.target],
+        operations:[{kind:'appendPage',target:extent.data.target,values:{}}]};
+      const appended=await nb.transaction('append',appendAction);
+      const parent=await nb.read({kind:'itemLifecycle',id:boardID});
+      let refusal;
+      try {
+        await nb.transaction('nonempty',{base:parent.basis,summary:'Must atomically refuse',additionalOwners:[parent.data.target],operations:[
+          {kind:'renameItem',target:{kind:'board',id:rootID},id:boardID,values:{title:'Must roll back'}},
+          {kind:'deleteItem',target:parent.data.target,values:{}}]});
+      } catch(error) { refusal={code:error.code,message:error.message,operation:error.operation}; }
+      const unchanged=await nb.read({kind:'itemHeader',id:boardID});
+      const first=await nb.read({kind:'itemLifecycle',id:notebookID});
+      const deleted=await nb.transaction('delete-notebook',{base:first.basis,summary:'Delete child',additionalOwners:[first.data.target],
+        operations:[{kind:'deleteItem',target:first.data.target,values:{}}]});
+      await nb.undo('restore-notebook',{actionID:deleted.actionID});
+      const tree=await nb.readMany({queries:[{kind:'itemLifecycle',id:notebookID},{kind:'itemLifecycle',id:boardID}]});
+      const targets=tree.data.map(x=>x.target);
+      const removed=await nb.transaction('delete-tree',{base:tree.basis,summary:'Explicit child before empty board',additionalOwners:targets,
+        operations:targets.map(target=>({kind:'deleteItem',target,values:{}}))});
+      await nb.undo('restore-tree',{actionID:removed.actionID});
+      const undone=await nb.undo('undo-append',{actionID:appended.actionID});
+      const directory=await nb.notebook({id:notebookID});
+      const replay=await nb.transaction('append',appendAction);
+      return {refusal,unchanged:unchanged.data,appended,undone,directory:directory.data,replay};
+      """
+    _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2, code: code))
+    let result = try await finish(host, run)
+    XCTAssertEqual(result.string("status"), "completed", "\(result)")
+    let value = try XCTUnwrap(result["result"])
+    XCTAssertEqual(value["refusal"]?["code"], .string("board_not_empty"))
+    XCTAssertEqual(value["refusal"]?["operation"]?["index"], .number(1))
+    XCTAssertEqual(value["unchanged"]?["title"], .string("Original board"))
+    XCTAssertEqual(value["undone"]?["undo"]?["preservedCount"], .number(0))
+    XCTAssertEqual(value["undone"]?.array("changed").first?["change"], .string("removePage"))
+    XCTAssertEqual(value["directory"]?.array("pages").count, 1)
+    XCTAssertEqual(value["appended"], value["replay"], "Replay keeps the original append result after undo")
+    XCTAssertEqual(result.array("effects").filter { $0.string("state") == "notSaved" }.count, 1)
+    XCTAssertEqual(owner.nativeWrites, 8, "Rejected rename/delete and replay never write")
+    XCTAssertEqual(try owner.store.pageCount(in: notebook), 1)
+    XCTAssertEqual(try owner.store.pageID(at: 0, in: notebook), page)
+    XCTAssertEqual(try owner.store.workspaceHeader().selectedItemID, initial.selectedItemID)
+    XCTAssertEqual(try owner.store.loadPresence(), presence)
+    await host.shutdown()
+  }
+
   func testExplicitConflictDeltaContinuationPreservesTheHumanLabel() async throws {
     let owner = try Owner(), host = try await coordinator(owner)
     defer { try? FileManager.default.removeItem(at: owner.store.root) }

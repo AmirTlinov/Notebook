@@ -99,9 +99,21 @@ struct NotebookDeletedBoardUndoTests {
       .init(kind: .createNotebook, target: target, id: child.uuidString,
         values: ["center": try .encode(WorldPoint.zero), "pageID": try .encode(UUID())])
     ]), actor: f.agent)
-    let action = try f.action(), node = try f.store.readBoardNode(f.id), header = try f.store.readItemHeader(f.id)
+    let deletion = try f.action(), node = try f.store.readBoardNode(f.id), header = try f.store.readItemHeader(f.id)
+    let action = CollaborationAction(additionalOwners: deletion.additionalOwners,
+      summary: "A rejected deletion also rolls back the preceding rename", expected: deletion.expected,
+      operations: [.init(kind: .renameItem, target: .init(kind: .board, id: f.parent),
+        id: f.id.uuidString, values: ["title": .string("Must roll back")])] + deletion.operations)
     let cursor = try f.store.currentChangeCursor()
-    #expect(throws: (any Error).self) { _ = try f.store.applyCollaborationAction(action, actor: f.agent) }
+    do {
+      _ = try f.store.applyCollaborationAction(action, actor: f.agent)
+      Issue.record("A nonempty board must refuse deletion")
+    } catch let error as CollaborationError {
+      #expect(error.code == "board_not_empty")
+      #expect(error.target == f.target)
+      #expect(error.operation?.index == 1)
+      #expect(error.message.contains("Сначала"), "A domain refusal must explain the next step")
+    }
     #expect(try f.store.currentChangeCursor() == cursor)
     #expect(try f.store.readBoardNode(f.id) == node)
     #expect(try f.store.readItemHeader(f.id) == header)

@@ -41644,12 +41644,12 @@
       {
         "name": "deleteItem",
         "topic": "operation/deleteItem",
-        "description": "Delete one item through its physical cover and actual containing board. Requires an explicit itemLifecycle read basis covering all stored content, not a visible preview. No id or values fields beyond the empty values object."
+        "description": "Delete one item through its physical cover and actual containing board. Requires an explicit itemLifecycle read basis covering all stored content, not a visible preview. Only empty boards can be deleted: children are never deleted implicitly. When intended, explicitly delete the child owners before the board in the same transaction. The workspace retains its last item. No id or values fields beyond the empty values object."
       },
       {
         "name": "renameItem",
         "topic": "operation/renameItem",
-        "description": "Change one item's title. target is its containing board, never workspace; expected must include that board and the root workspace catalogue."
+        "description": "Change one item's title. target is its containing board, never workspace; pass base from the ownerBoard read basis, which includes the board and root workspace catalogue."
       },
       {
         "name": "moveItem",
@@ -46346,7 +46346,7 @@
     },
     "deleteItem": {
       "name": "deleteItem",
-      "description": "Delete one item through its physical cover and actual containing board. Requires an explicit itemLifecycle read basis covering all stored content, not a visible preview. No id or values fields beyond the empty values object.",
+      "description": "Delete one item through its physical cover and actual containing board. Requires an explicit itemLifecycle read basis covering all stored content, not a visible preview. Only empty boards can be deleted: children are never deleted implicitly. When intended, explicitly delete the child owners before the board in the same transaction. The workspace retains its last item. No id or values fields beyond the empty values object.",
       "input": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -46402,7 +46402,7 @@
     },
     "renameItem": {
       "name": "renameItem",
-      "description": "Change one item's title. target is its containing board, never workspace; expected must include that board and the root workspace catalogue.",
+      "description": "Change one item's title. target is its containing board, never workspace; pass base from the ownerBoard read basis, which includes the board and root workspace catalogue.",
       "input": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",

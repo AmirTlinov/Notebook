@@ -62,7 +62,13 @@ extension NotebookStore {
       return [.init(kind: .workspace, id: rootID), target, .init(kind: .page, id: pageID)]
     case .deleteItem:
       guard operation.id == nil, operation.values.isEmpty else { throw CollaborationError("invalid_operation", "Удаление называет только физическую обложку предмета.") }
-      try deleteWorkspaceItemContent(itemID: target.id, actor: actor, human: human)
+      do {
+        try deleteWorkspaceItemContent(itemID: target.id, actor: actor, human: human)
+      } catch NotebookStoreError.boardContainsContent(_) {
+        throw CollaborationError("board_not_empty",
+          "Доска содержит предметы, элементы или чернила. Сначала явно удалите или перенесите её содержимое; дочерние предметы не удаляются автоматически.",
+          target: target)
+      }
       return [.init(kind: .workspace, id: rootID), .init(kind: .board, id: parentID)]
     default: throw CollaborationError("invalid_operation", "Нужна операция жизненного цикла предмета.")
     }
