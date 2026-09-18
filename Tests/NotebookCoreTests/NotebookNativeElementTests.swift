@@ -4,18 +4,36 @@ import Testing
 
 @Suite("Addressed native element commands")
 struct NotebookNativeElementTests {
-  private func fixture(id: String = "editor", _ body: (NotebookStore, UUID, UUID, SpatialElement) throws -> Void) throws {
+  private func fixture(id: String = "editor", kind: SpatialElementKind = .nativeText, _ body: (NotebookStore, UUID, UUID, SpatialElement) throws -> Void) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), actor = UUID()
     let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
     let index = try store.loadIndex(), before = try store.loadBoard(items: index.items)
-    let element = SpatialElement(id: id, surface: .cover(index.items[0].id), kind: .nativeText,
+    let element = SpatialElement(id: id, surface: .cover(index.items[0].id), kind: kind,
       frame: .init(x: 10, y: 20, width: 200, height: 90), source: "original", stamp: .init(counter: 0, actor: actor))
     var after = before
     _ = after.upsertElement(element, in: header.rootBoardID, expected: nil, actor: actor)
     _ = try store.saveBoardEdits(before: before, after: after)
     try body(store, actor, header.rootBoardID, element)
+  }
+
+  @Test func spatialProgramCheckpointCommitsOnlyItsExpectedSourceAndState() throws {
+    try fixture(kind: .web) { store, actor, board, element in
+      let rendered = AgentElement(id: element.id, kind: .web,
+        frame: .init(x: 0, y: 0, width: element.frame.width, height: element.frame.height),
+        source: element.source, html: element.html, state: element.state)
+      let target = CollaborationTarget(kind: .board, id: board)
+      #expect(try store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.25), actor: actor))
+      #expect(try store.readSpatialElement(boardID: board, elementID: element.id)?.state == .number(0.25))
+      #expect(try !store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.5), actor: actor))
+      #expect(try store.checkpointProgramState(target: target, rendered: rendered.updating(state: .number(0.25)),
+        state: .number(0.75), actor: actor))
+      let cursor = try store.currentChangeCursor()
+      #expect(try store.checkpointProgramState(target: target, rendered: rendered.updating(state: .number(0.75)),
+        state: .number(0.75), actor: actor))
+      #expect(try store.currentChangeCursor() == cursor, "Identical checkpoint has no new write")
+    }
   }
 
   @Test func AddressedElementIDsNormalizeOnlyUUIDsAndKeepCaseSensitiveNames() throws {

@@ -23,7 +23,7 @@ test('longitudinal wave preserves particle order and pressure equals negative st
 test('gear mesh ratios, direction and full return agree with tooth counts',()=>{
   const a=models.gears(.13),b=models.gears(.31),d=b.map((v:number,i:number)=>v-a[i]);
   near(d[0]*60+d[1]*40,0);near(d[1]*40+d[2]*24,0);
-  models.gears(1).forEach((v:number,i:number)=>near((v-models.gears(0)[i])/(2*Math.PI),[2,-3,5][i]));
+  models.gears(1).forEach((v:number,i:number)=>near((v-models.gears(0)[i])/(2*Math.PI),[2,-3,5][i]!));
 });
 test('linear model agrees with matrix action, oriented area and singular endpoint',()=>{
   const result=models.transform([1,.8,0,1],1,[1,.5]);near(result.point[0],1.4);near(result.point[1],.5);near(result.determinant,1);
@@ -38,9 +38,9 @@ test('GP posterior interpolates noiseless data and remains finite with duplicate
   for(const p of models.gaussianProcess([],xs,1,.2)){near(p.mean,0);near(p.variance,1);}
 });
 test('A* agrees with breadth-first shortest paths, including an unreachable target',()=>{
-  function bfs(w:number,h:number,walls:number[],start:number,goal:number){const blocked=new Set(walls),seen=new Set([start]),q=[[start,0]];for(let i=0;i<q.length;i++){
-    const [n,d]=q[i];if(n===goal)return d;const x=n%w,y=Math.floor(n/w);
-    for(const [a,b] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]]){if(a<0||a>=w||b<0||b>=h)continue;const v=b*w+a;if(!blocked.has(v)&&!seen.has(v)){seen.add(v);q.push([v,d+1]);}}
+  function bfs(w:number,h:number,walls:number[],start:number,goal:number){const blocked=new Set(walls),seen=new Set([start]);const q:Array<[number,number]>=[[start,0]];for(let i=0;i<q.length;i++){
+    const [n,d]=q[i]!;if(n===goal)return d;const x=n%w,y=Math.floor(n/w);
+    for(const [a,b] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]] as const){if(a<0||a>=w||b<0||b>=h)continue;const v=b*w+a;if(!blocked.has(v)&&!seen.has(v)){seen.add(v);q.push([v,d+1]);}}
   }return null;}
   for(let seed=0;seed<12;seed++){const w=9,h=7,walls=Array.from({length:w*h},(_,i)=>i).filter(i=>i!==0&&i!==w*h-1&&(i*17+seed*13)%11<3);
     const frames=models.astar(w,h,walls,0,w*h-1),last=frames.at(-1);assert.equal(last.cost,bfs(w,h,walls,0,w*h-1));

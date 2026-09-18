@@ -173,6 +173,7 @@ final class SceneWebRasterPreparationTests: XCTestCase {
         html: "<div id='paint' style='position:absolute;inset:0'></div>", javaScript: """
         document.getElementById('paint').style.background = window.previousJob ? 'blue' : 'red';
         window.previousJob = true;
+        notebook.ready(Promise.resolve());
         """)
       let raster = try await preparation.prepare(element, requestedScale: 0.125, permitsPreparation: { true })
       XCTAssertFalse(host.convert(host.bounds, to: window).intersects(window.bounds))
@@ -203,7 +204,7 @@ final class SceneWebRasterPreparationTests: XCTestCase {
     let element = AgentElement(id: UUID().uuidString, kind: .web,
       frame: .init(x: 0, y: 0, width: 64, height: 64), source: "delayed job",
       html: "<div style='width:64px;height:64px;background:red'></div>",
-      javaScript: "await new Promise(resolve => setTimeout(resolve, 300));")
+      javaScript: "notebook.ready(new Promise(resolve => setTimeout(resolve, 300)));")
     let task = Task { try await preparation.prepare(element, requestedScale: 1, permitsPreparation: { true }) }
     await Task.yield()
     task.cancel()

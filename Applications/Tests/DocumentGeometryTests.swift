@@ -120,7 +120,7 @@ final class DocumentGeometryTests: XCTestCase {
     var document = DocumentDocument(id: UUID(), actor: UUID(), paperSize: .letter, blocks: [
       .latex(id: "formula", source: #"\mathfrak{A} + \sum_{k=1}^{n} k^2"#),
       .interactive(id: "interactive", html: "<p>Готово</p>", css: "",
-        javaScript: "notebook.commit({ready:true})", initialState: .null, height: 100),
+        javaScript: "notebook.commit({ready:true});notebook.ready(Promise.resolve())", initialState: .null, height: 100),
       .markdown(id: "body", source: (1...40).map {
         "## Раздел \($0)\n\nПоследовательное содержание физического листа."
       }.joined(separator: "\n\n")),

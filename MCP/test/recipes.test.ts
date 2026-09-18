@@ -162,14 +162,14 @@ test('wave controls render analytic phases, keep frames local and restore shared
   const {javaScript}=await waveInput();
   const elements=new Map<string,any>(),events=new Map<string,Function>(),frames=new Map<number,Function>();
   let sequence=0,ready:Promise<unknown>|undefined,state:any={phase:0,amplitude:1,speed:1};
-  const commits:any[]=[];
+  const commits:any[]=[];let lifecycle:any;
   const document={hidden:false,getElementById:(id:string)=>{
     if(!elements.has(id)) elements.set(id,{attributes:{},listeners:{},value:'',textContent:'',
       setAttribute(key:string,value:unknown){this.attributes[key]=value},
       addEventListener(key:string,fn:Function){this.listeners[key]=fn}});
     return elements.get(id);
   },addEventListener:(key:string,fn:Function)=>events.set(key,fn)};
-  const notebook={get state(){return state},commit:(next:any)=>{state=next;commits.push(next)},ready:(p:Promise<unknown>)=>ready=p};
+  const notebook={lifecycle:(hooks:any)=>{lifecycle=hooks},get state(){return state},commit:(next:any)=>{state=next;commits.push(next)},ready:(p:Promise<unknown>)=>ready=p};
   new Function('document','notebook','requestAnimationFrame','cancelAnimationFrame','addEventListener',javaScript)(document,notebook,
     (fn:Function)=>{frames.set(++sequence,fn);return sequence},(id:number)=>frames.delete(id),(key:string,fn:Function)=>events.set(key,fn));
   await ready;
@@ -188,6 +188,9 @@ test('wave controls render analytic phases, keep frames local and restore shared
   assert.equal(frames.size,0);assert.equal(elements.get('play').textContent,'Пуск');
   assert.ok(Math.abs(point()-119)<1e-9);
   state={phase:0.25,amplitude:0,speed:1};events.get('notebookstate')!();assert.equal(point(),150);
+  click('play');tick(0);tick(500);lifecycle.pause();
+  assert.equal(frames.size,0);assert.equal(lifecycle.checkpoint().phase,0.375);
+  lifecycle.dispose();assert.equal(frames.size,0);
 });
 
 function png(width:number,height:number):Buffer {

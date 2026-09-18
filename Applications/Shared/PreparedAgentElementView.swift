@@ -356,17 +356,19 @@ struct PreparedAgentElementView: View {
       // current program frame is retained. No source job boots a second copy;
       // its keyed admission waits for this owner's final submitted borrow.
       do {
-        let captured = try await AgentWebCoordinator.captureCurrent(focus: focus, element: demand.source)
-        guard !Task.isCancelled, self.web?.id == retiring.id, !isActive else { captured?.release(); return }
-        if let captured {
-          raster = captured; preparedSource = demand.source
-          failure = nil; failedSource = nil
-        } else {
-          failure = "Не удалось сохранить вид программы"
+        let (accepted, captured) = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: demand.source) { value in
+          try await model.checkpointProgramState(focus: focus, rendered: demand.source, value: value)
         }
+        guard !Task.isCancelled, self.web?.id == retiring.id, !isActive else {
+          captured.release(); await AgentWebCoordinator.resumeCurrent(focus: focus); return
+        }
+        raster = captured; preparedSource = accepted
+        failure = nil; failedSource = nil
       } catch {
         guard !Task.isCancelled, self.web?.id == retiring.id, !isActive else { return }
-        failure = "Не удалось сохранить вид программы"
+        failure = "Не удалось сохранить состояние программы"
+        // Writer refusal is not permission to destroy a live browser context.
+        return
       }
       runtimeWasPresented = false; retireRuntime(); web = nil; liveProgram = nil
       onRenderReady(failure == nil && preparedSource == demand.source)

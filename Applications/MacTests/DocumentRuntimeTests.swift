@@ -168,8 +168,7 @@ final class DocumentRuntimeTests: XCTestCase {
 
   func testStateEchoAndUnrelatedSourceKeepTheSameInteractiveBrowsingContext() async throws {
     var document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "До"),
-      .interactive(id: "counter", html: "<button>Счётчик</button>", javaScript:
-        "notebook.commit({boot:crypto.randomUUID(),count:notebook.state.count||0})", initialState: .object(["count": .number(0)]), height: 100)])
+      .interactive(id: "counter", html: "<button>Счётчик</button>", javaScript: "notebook.commit({boot:crypto.randomUUID(),count:notebook.state.count||0});notebook.ready(Promise.resolve());", initialState: .object(["count": .number(0)]), height: 100)])
     var state = DocumentStateJournal(id: document.id, actor: UUID())
     var commits: [JSONValue] = []
     let surface = surface(document: document, state: state, commit: { _, value in commits.append(value); return nil })
@@ -192,7 +191,7 @@ final class DocumentRuntimeTests: XCTestCase {
   func testCoalescedSourceReplacementCannotReuseThePreviousProgramContext() async throws {
     let html = "<button>Original source</button>"
     var document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program", html: html,
-      javaScript: "notebook.commit({boot:crypto.randomUUID()})", height: 100)])
+      javaScript: "notebook.commit({boot:crypto.randomUUID()});notebook.ready(Promise.resolve());", height: 100)])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     var boots: [JSONValue] = []
     let mounted = surface(document: document, state: state, commit: { _, value in boots.append(value); return nil })
@@ -306,7 +305,7 @@ final class DocumentRuntimeTests: XCTestCase {
 
   func testPrewarmExecutesOnlyProgramsOnItsPhysicalPage() async throws {
     let blocks = (0..<16).map { index in DocumentBlock.interactive(id: "block-\(index)", html: "<p>\(index)</p>",
-      javaScript: "notebook.commit({boot:\(index)})", initialState: .null, height: 280) }
+      javaScript: "notebook.commit({boot:\(index)});notebook.ready(Promise.resolve());", initialState: .null, height: 280) }
     let document = DocumentDocument(actor: UUID(), blocks: blocks), state = DocumentStateJournal(id: document.id, actor: UUID())
     var booted = Set<String>()
     let surface = surface(document: document, state: state, commit: { block, _ in booted.insert(block); return nil })
@@ -334,7 +333,7 @@ final class DocumentRuntimeTests: XCTestCase {
       + "<div style='height:700px;background:#00ff00'>Middle</div>"
       + "<div style='height:648px;background:#0000ff'>End</div>"
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "tall", html: html,
-      javaScript: "notebook.commit({boot:crypto.randomUUID()})", initialState: .null, height: 2048)])
+      javaScript: "notebook.commit({boot:crypto.randomUUID()});notebook.ready(Promise.resolve());", initialState: .null, height: 2048)])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     var boots = 0
     let surface = surface(document: document, state: state, commit: { _,_ in boots += 1; return nil })
@@ -858,7 +857,7 @@ final class DocumentRuntimeTests: XCTestCase {
     let document = DocumentDocument(actor: UUID(), blocks: [
       .markdown(id: "before", source: "# Перед программой\n\nЕё начало не совпадает с началом физического листа."),
       .interactive(id: "tall", html: "<input aria-label='Retained input'><div style='height:1900px'>Continuation</div>",
-        javaScript: "notebook.commit({boot:crypto.randomUUID(),width:innerWidth,height:innerHeight})", height: 2048)])
+        javaScript: "notebook.commit({boot:crypto.randomUUID(),width:innerWidth,height:innerHeight});notebook.ready(Promise.resolve());", height: 2048)])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     var boots: [JSONValue] = []
     let surface = surface(document: document, state: state, commit: { _, value in boots.append(value); return nil })
@@ -954,7 +953,7 @@ final class DocumentRuntimeTests: XCTestCase {
   func testThumbnailBorrowsTheLivePagePixelsWithoutStartingAnotherProgram() async throws {
     let resources = SceneRenderResources(maximumWebSurfaces: 1)
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program", html: "<p>Живой источник</p>",
-      javaScript: "notebook.commit({boot:crypto.randomUUID()})", initialState: .null, height: 100)])
+      javaScript: "notebook.commit({boot:crypto.randomUUID()});notebook.ready(Promise.resolve());", initialState: .null, height: 100)])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     var bootCount = 0
     let live = surface(document: document, state: state, resources: resources, commit: { _,_ in bootCount += 1; return nil })
@@ -1003,6 +1002,41 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertEqual(raster.image.size, canonical)
   }
 
+  func testSpatialCheckpointKeepsItsOwnerOnWriterRefusalAndCapturesTheAcceptedState() async throws {
+    let resources = SceneRenderResources(), focus = InteractiveElementReference.page(pageID: UUID(), elementID: "phase")
+    let lease = try await resources.acquireWebSurface(priority: .input)
+    var ready = false
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, snapshotPolicy: .display(scale: 1),
+      onRenderReady: { ready = $0 }, onState: { _ in true })
+    let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
+    let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: 240, height: 120),
+      styleMask: .borderless, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false; window.contentView = web; window.orderBack(nil)
+    defer { coordinator.invalidate(); lease.release(); window.orderOut(nil); window.close() }
+    let source = AgentElement(id: "phase", kind: .web, frame: .init(x: 0, y: 0, width: 240, height: 120),
+      source: "phase", html: "<output>0.5</output>", javaScript: """
+      notebook.lifecycle({checkpoint:()=>({phase:0.5})});notebook.ready(Promise.resolve());
+      """, state: .object(["phase": .number(0)]))
+    coordinator.bindPresentation(to: focus); coordinator.load(source, in: web)
+    await waitUntil { ready }
+    do {
+      _ = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: source, persist: { _ in false }, resources: resources)
+      XCTFail("Writer refusal is not saved")
+    } catch { XCTAssertTrue(String(describing:error).contains("checkpoint_not_accepted")) }
+    XCTAssertTrue(coordinator.hasLiveSource(source))
+    let suspended = try await js("String(notebookProgram.suspended)", web)
+    XCTAssertEqual(suspended, "false")
+    var persisted: JSONValue?
+    let (accepted, picture) = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: source, persist: { value in
+      persisted = value; return true
+    }, resources: resources)
+    defer { picture.release() }
+    XCTAssertEqual(persisted, .object(["phase": .number(0.5)]))
+    XCTAssertEqual(accepted.state, persisted)
+    XCTAssertTrue(coordinator.hasLiveSource(accepted))
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+  }
+
   func testAgentStateAndPlacementKeepProgramFocusAndUncommittedInput() async throws {
     let resources = SceneRenderResources(maximumWebSurfaces: 1)
     let lease = try await resources.acquireWebSurface(priority: .input)
@@ -1018,6 +1052,7 @@ final class DocumentRuntimeTests: XCTestCase {
       source: "counter", html: "<input><button>Next</button>", javaScript: """
       window.boot=Math.random().toString();
       document.querySelector('button').onclick=()=>notebook.commit({count:(notebook.state.count||0)+1});
+      notebook.ready(Promise.resolve());
       """, state: .object(["count": .number(0)]))
     coordinator.load(original, in: web)
     await waitUntil { ready }
@@ -1091,8 +1126,7 @@ final class DocumentRuntimeTests: XCTestCase {
   func testStateEchoDoesNoSourceDOMLayoutOrMathWorkAndKeepsTheComposingEditor() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [
       .markdown(id: "body", source: "# Источник $x^2$\n\nНе менять редактор при обновлении модели."),
-      .interactive(id: "counter", html: "<input><output></output>", javaScript:
-        "document.querySelector('input').value='uncommitted'; notebook.commit({boot:crypto.randomUUID()});", height: 100)])
+      .interactive(id: "counter", html: "<input><output></output>", javaScript: "document.querySelector('input').value='uncommitted'; notebook.commit({boot:crypto.randomUUID()});;notebook.ready(Promise.resolve());", height: 100)])
     var state = DocumentStateJournal(id: document.id, actor: UUID())
     var commits: [JSONValue] = [], drafts: [DocumentEditingSession] = []
     let surface = surface(document: document, state: state, draft: { drafts.append($0) }, commit: { _, value in commits.append(value); return nil })

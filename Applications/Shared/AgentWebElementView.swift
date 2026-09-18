@@ -796,6 +796,49 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     return try await owners[0].captureCurrent(element: element)
   }
 
+  static func resumeCurrent(focus: InteractiveElementReference) async {
+    for owner in presentations.values.compactMap(\.owner) where owner.presentationFocus == focus && !owner.isInvalidated {
+      if let web = owner.attachedWebView { _ = try? await NotebookProgramBridge.lifecycle("resume", controller: "notebookProgram", in: web) }
+    }
+  }
+
+  /// The existing spatial owner keeps this viewport until the writer confirms
+  /// its stopped model. A failed write/capture resumes it instead of losing it.
+  static func checkpointCurrent(focus: InteractiveElementReference, element: AgentElement,
+    persist: @MainActor (JSONValue) async throws -> Bool,
+    resources: SceneRenderResources = .shared) async throws -> (AgentElement, RasterLease) {
+    presentations = presentations.filter { $0.value.owner != nil }
+    let owners = presentations.values.compactMap(\.owner).filter {
+      $0.resources === resources && $0.presentationFocus == focus && $0.hasLiveSource(element)
+    }
+    guard owners.count == 1, let owner = owners.first, let web = owner.attachedWebView,
+      let token = owner.loadToken else { throw SceneRenderError.snapshotPending("program_checkpoint_owner") }
+    let borrow = try owner.lease.borrow(); defer { borrow.release() }
+    let revision = owner.localStateRevision
+    do {
+      let value = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram", in: web)
+      try Task.checkCancellation()
+      guard owner.accepts(token), owner.localStateRevision == revision, owner.hasLiveSource(element) else { throw CancellationError() }
+      guard try await persist(value) else { throw SceneRenderError.snapshotPending("program_checkpoint_not_accepted") }
+      try Task.checkCancellation()
+      guard owner.accepts(token), owner.localStateRevision == revision, let current = owner.loadedElement,
+        AgentProgramSource(current) == AgentProgramSource(element),
+        current.state == element.state || current.state == value else { throw CancellationError() }
+      let accepted = current.updating(state: value)
+      owner.loadedElement = accepted; owner.appliedState = value; owner.stateToApply = nil
+      guard let pixels = try await owner.captureCurrent(element: accepted) else {
+        throw SceneRenderError.snapshotPending("program_checkpoint_picture")
+      }
+      if Task.isCancelled { pixels.release(); throw CancellationError() }
+      return (accepted, pixels)
+    } catch {
+      if owner.accepts(token) {
+        _ = try? await NotebookProgramBridge.lifecycle("resume", controller: "notebookProgram", in: web)
+      }
+      throw error
+    }
+  }
+
   private func captureCurrent(element: AgentElement) async throws -> RasterLease? {
     try Task.checkCancellation()
     guard let installation = installation(for: element), installation.isInstalled,
@@ -872,6 +915,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     onInteraction = {}
     onFailure = { _ in }
     onState = { _ in false }
+    attachedWebView?.evaluateJavaScript("void notebookProgram.dispose().catch(()=>{})", completionHandler: nil)
     attachedWebView?.stopLoading()
     attachedWebView?.navigationDelegate = nil
     attachedWebView?.configuration.userContentController.removeScriptMessageHandler(forName: "notebook")
@@ -950,6 +994,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     snapshotInFlight = false; needsSnapshot = false; runtimeLoaded = false
     fingerRegions = nil
     activeNavigation = nil
+    webView.evaluateJavaScript("void window.notebookProgram?.dispose().catch(()=>{})", completionHandler: nil)
     webView.stopLoading()
     let token = "\(lease.id.uuidString)/\(UUID().uuidString)"
     loadToken = token
@@ -983,7 +1028,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         do {
           let state = try JSONSerialization.jsonObject(with: JSONEncoder().encode(next), options: .fragmentsAllowed)
           let accepted = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, any Error>) in
-            web.callAsyncJavaScript("return window.notebookApplyState(state, revision);",
+            web.callAsyncJavaScript("return await window.notebookProgram.apply(state, revision);",
               arguments: ["state": state, "revision": String(expectedRevision)], in: nil, in: .page) { result in
                 switch result {
                 case .success(let value): continuation.resume(returning: value as? Bool == true)
@@ -1048,7 +1093,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     #endif
     if object["kind"] as? String == "diagnostic",
       let kind = object["category"] as? String, let message = object["message"] as? String {
-      resources.record(.init(kind: kind, elementID: element.id, message: String(message.prefix(2000))), for: element)
+      let diagnostic = RenderDiagnostic(kind: kind, elementID: element.id, message: String(message.prefix(2000)))
+      if kind == "javascript_error" || kind == "program_ready_error" { fail(diagnostic, token: token) }
+      else { resources.record(diagnostic, for: element) }
     } else if object["kind"] as? String == "fingerRegions", let value = object["value"] {
       receiveFingerRegions(value)
     } else if object["kind"] as? String == "interaction", runtimeLoaded {
@@ -1112,7 +1159,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       """
       await document.fonts.ready;
       await Promise.all([...document.images].map(image => image.decode().catch(() => {})));
-      await window.notebookReadyPromise;
+      await window.notebookProgram.start({requiresReady:\(!element.javaScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || element.html.localizedCaseInsensitiveContains("<script"))});
       \(frameReadiness)
       for (const image of document.images) if (!image.naturalWidth) window.notebookDiagnostic('load_error', 'Image failed to load');
       if (Math.max(document.body.scrollHeight, document.documentElement.scrollHeight) > innerHeight + 1 || Math.max(document.body.scrollWidth, document.documentElement.scrollWidth) > innerWidth + 1) window.notebookDiagnostic('overflow', 'Content exceeds its frame');
@@ -1393,29 +1440,11 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         window.notebookDiagnostic = (category, message) => window.webkit.messageHandlers.notebook.postMessage({token:notebookLoadToken,kind:'diagnostic',category,message:String(message)});
         addEventListener('error', event => window.notebookDiagnostic('javascript_error', event.message || 'Resource load error'));
         addEventListener('unhandledrejection', event => window.notebookDiagnostic('javascript_error', event.reason));
-        let notebookState = \(state), notebookStateRevision = 0n;
-        const notebookCanonical = value => JSON.stringify(value, (_,v) => v && typeof v === 'object' && !Array.isArray(v)
-          ? Object.fromEntries(Object.keys(v).sort().map(key => [key,v[key]])) : v);
-        window.notebookApplyState = (value, expectedRevision) => {
-          if (String(notebookStateRevision) !== expectedRevision) return false;
-          if (notebookCanonical(value) === notebookCanonical(notebookState)) return true;
-          notebookState = value;
-          dispatchEvent(new CustomEvent('notebookstate', { detail: value }));
-          return String(notebookStateRevision) === expectedRevision;
-        };
-        window.notebook = Object.freeze({
-          get state() { return notebookState; },
-          commit(value) {
-            if (notebookCanonical(value) === notebookCanonical(notebookState)) return;
-            notebookState = value;
-            notebookStateRevision++;
-            window.webkit.messageHandlers.notebook.postMessage({ token: notebookLoadToken, kind: 'state', value, revision: String(notebookStateRevision) });
-          },
-          ready(promise) {
-            window.notebookReadyPromise = Promise.resolve(promise);
-            return window.notebookReadyPromise;
-          }
-        });
+        \(NotebookProgramBridge.script)
+        window.notebookProgram=createNotebookProgram({state:\(state),
+          onCommit:(value,revision)=>window.webkit.messageHandlers.notebook.postMessage({token:notebookLoadToken,kind:'state',value,revision}),
+          report:window.notebookDiagnostic});
+        window.notebook=notebookProgram.api;
         \(AgentWebFingerRegions.script)
       </script>
       </head><body>

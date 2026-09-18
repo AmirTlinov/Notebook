@@ -40,6 +40,23 @@ struct NotebookPageElementCommandTests {
     try body(store, actor, store.loadPage(pageID))
   }
 
+  @Test func programCheckpointIsAddressedAndRejectsStaleStateOrSource() throws {
+    try fixture(largeNeighbour: true) { store, actor, page in
+      let rendered = try #require(page.elements.first { $0.id == elementID })
+      let target = CollaborationTarget(kind: .page, id: page.id)
+      #expect(try store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.25), actor: actor))
+      let saved = try #require(try store.readPageElement(pageID: page.id, elementID: elementID))
+      #expect(saved.state == .number(0.25))
+      #expect(saved.frame == rendered.frame)
+      #expect(try store.loadPage(page.id).elements.first(where: { $0.id == "foreign" }) == page.elements[0])
+      #expect(try !store.checkpointProgramState(target: target, rendered: rendered, state: .number(0.5), actor: actor))
+      #expect(try store.checkpointProgramState(target: target, rendered: saved, state: .number(0.75), actor: actor))
+      let changed = AgentElement(id: rendered.id, kind: .web, frame: rendered.frame, source: rendered.source,
+        html: "different", state: .number(0.75))
+      #expect(try !store.checkpointProgramState(target: target, rendered: changed, state: .number(1), actor: actor))
+    }
+  }
+
   private func action(_ page: PageDocument, id: String? = nil,
     kind: CollaborationOperation.Kind = .updateElement,
     values: [String: JSONValue] = ["source": .string("After"), "html": .string("<button>After</button>")],

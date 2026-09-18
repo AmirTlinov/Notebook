@@ -42,7 +42,7 @@ final class DocumentEditorPresentationTests: XCTestCase {
   private func document() -> DocumentDocument {
     DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# Канонический текст $x^2$"),
       .markdown(id: "other", source: "Соседний блок"),
-      .interactive(id: "program", html: "<input>", javaScript: "notebook.commit({boot:crypto.randomUUID()})", height: 80)])
+      .interactive(id: "program", html: "<input>", javaScript: "notebook.commit({boot:crypto.randomUUID()});notebook.ready(Promise.resolve())", height: 80)])
   }
 
   func testExplicitFenceAndRetirementReadTheFinalEditorWithoutLosingSelectionOrScroll() async throws {

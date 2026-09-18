@@ -508,7 +508,7 @@ final class PortalPassageTests: XCTestCase {
         frame: .init(x: 0, y: 0, width: 400, height: 300),
         worldOrigin: .init(x: Double(index % 3) * 500, y: Double(index / 3) * 400), source: "Portal marker",
         html: "<svg width='100%' height='100%' viewBox='0 0 400 300'><circle cx='200' cy='150' r='65' fill='#ed2020'/></svg>",
-        javaScript: index == 0 ? "document.body.dataset.interactive = 'ready';" : "",
+        javaScript: index == 0 ? "document.body.dataset.interactive = 'ready';notebook.ready(Promise.resolve());" : "",
         stamp: .init(counter: 0, actor: model.actorID))
     }
     for element in elements {

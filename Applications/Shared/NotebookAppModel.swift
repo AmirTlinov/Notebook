@@ -3258,6 +3258,27 @@ final class NotebookAppModel {
     }
   }
 
+  func checkpointProgramState(focus: InteractiveElementReference, rendered: AgentElement, value: JSONValue) async throws -> Bool {
+    guard !isStopped else { return false }
+    let target: CollaborationTarget
+    switch focus {
+    case .page(let pageID, let elementID):
+      guard elementID == rendered.id, !isPageBeingDeleted(pageID),
+        pages[pageID]?.elements.first(where: { $0.id == elementID }) == rendered else { return false }
+      target = .init(kind: .page, id: pageID)
+    case .board(let boardID, let elementID):
+      guard elementID == rendered.id else { return false }
+      target = .init(kind: .board, id: boardID)
+    }
+    let actor = actorID
+    collaborationReadEpoch &+= 1; collaborationContentEpoch &+= 1
+    let accepted = try await persistence.submit(publishesChanges: true) { store in
+      try store.checkpointProgramState(target: target, rendered: rendered, state: value, actor: actor)
+    }
+    if accepted { reloadExternalChanges() }
+    return accepted
+  }
+
   @discardableResult
   func commitElementState(pageID: UUID, elementID: String, state: JSONValue) -> Bool {
     guard !isPageBeingDeleted(pageID), var page = pages[pageID] else { return false }

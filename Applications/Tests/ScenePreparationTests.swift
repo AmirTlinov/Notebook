@@ -42,7 +42,7 @@ final class ScenePreparationTests: XCTestCase {
     var allowed = true
     let element = AgentElement(id: UUID().uuidString, kind: .web,
       frame: .init(x: 0, y: 0, width: 512, height: 512), source: "slow resource",
-      html: "<div>content</div>", javaScript: "await new Promise(r => setTimeout(r, 1000));")
+      html: "<div>content</div>", javaScript: "notebook.ready(new Promise(r => setTimeout(r, 1000)));")
     let task = Task { try await resources.prepareRaster(element, requestedScale: 1, permitsPreparation: { allowed }) }
     let deadline = ContinuousClock.now + .seconds(3)
     while resources.activeWebSurfaceCount == 0, ContinuousClock.now < deadline {

@@ -199,7 +199,7 @@
                 : "<svg xmlns='http://www.w3.org/2000/svg' role='img' aria-label='Material \(number)' viewBox='0 0 170 170'><rect width='170' height='170' fill='#def0df'/><path d='M15 150L85 15L155 150Z' fill='#23784c'/></svg>",
               css: program ? "body{padding:12px;background:#e7efff}button{width:140px;height:60px}output{display:block;margin-top:20px}" : "",
               javaScript: program
-                ? "document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});draw()};function draw(){document.querySelector('output').textContent='Program \(number) count '+notebook.state.count}addEventListener('notebookstate',draw);draw()"
+                ? "document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});draw()};function draw(){document.querySelector('output').textContent='Program \(number) count '+notebook.state.count}addEventListener('notebookstate',draw);draw();notebook.ready(Promise.resolve())"
                 : (slow ? "notebook.ready(new Promise(resolve=>setTimeout(resolve,6000)))" : ""),
               state: .object(["count": .number(0)]), stamp: .init(counter: 0, actor: actor))
             _ = board.upsertElement(element, expected: nil, actor: actor)
@@ -241,7 +241,7 @@
               frame: .init(x: 0, y: 0, width: 240, height: 200), worldOrigin: .init(x: 100, y: 80),
               source: "Controls", html: "<button aria-label='SVG scene counter'>Add</button><output id='count'>Count 0</output><input aria-label='SVG scene slider' type='range' value='20'>",
               css: "body{background:#eef4fc;padding:15px}button,input{display:block;width:180px;height:48px}",
-              javaScript: "document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});draw()};function draw(){document.getElementById('count').textContent='Count '+notebook.state.count}addEventListener('notebookstate',draw);draw()",
+              javaScript: "document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});draw()};function draw(){document.getElementById('count').textContent='Count '+notebook.state.count}addEventListener('notebookstate',draw);draw();notebook.ready(Promise.resolve())",
               state: .object(["count": .number(0)]), stamp: .init(counter: 0, actor: actor))
           ] { _ = board.upsertElement(element, expected: nil, actor: actor) }
           try store.saveBoard(.init(rootBoardID: index.rootBoardID,
@@ -291,7 +291,7 @@
                 id: "square",
                 html: "<label for='x'>x = <output id='value'>3</output></label><input id='x' type='range' min='0' max='10' value='3'><p>x² = <strong id='square'>9</strong></p>",
                 css: "body{font:22px -apple-system;padding:18px}input{width:100%}",
-                javaScript: "const x=document.querySelector('#x');const value=document.querySelector('#value');const square=document.querySelector('#square');x.addEventListener('input',()=>{value.textContent=x.value;square.textContent=Number(x.value)**2;notebook.commit({x:Number(x.value)})});",
+                javaScript: "const x=document.querySelector('#x');const value=document.querySelector('#value');const square=document.querySelector('#square');x.addEventListener('input',()=>{value.textContent=x.value;square.textContent=Number(x.value)**2;notebook.commit({x:Number(x.value)})});notebook.ready(Promise.resolve())",
                 initialState: .object(["x": .number(3)]),
                 height: 190
               ),
@@ -614,7 +614,7 @@
         "frame": try .encode(PageRect(x: onPage ? 420 : 0, y: onPage ? 250 : 0, width: 280, height: 220)),
         "html": .string("<button aria-label='Graphic scene counter'>Add</button><output id='count'></output><input aria-label='Graphic scene draft' value='seed'><p id='runtime'></p>"),
         "css": .string("body{padding:15px;background:#edf4fc}button,input{display:block;width:240px;height:44px;margin-bottom:12px}output{display:block}p{font-size:12px}"),
-        "javaScript": .string("document.querySelector('#runtime').textContent='Runtime '+Date.now()+'-'+Math.random();document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});draw()};function draw(){document.querySelector('#count').textContent='Count '+notebook.state.count}addEventListener('notebookstate',draw);draw()"),
+        "javaScript": .string("document.querySelector('#runtime').textContent='Runtime '+Date.now()+'-'+Math.random();document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});draw()};function draw(){document.querySelector('#count').textContent='Count '+notebook.state.count}addEventListener('notebookstate',draw);draw();notebook.ready(Promise.resolve())"),
         "state": .object(["count": .number(0)])]
       if !onPage {
         node["worldOrigin"] = try .encode(WorldPoint(x: -340, y: -260))

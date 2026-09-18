@@ -39,7 +39,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
           notebook.commit({count:notebook.state.count+1});
           document.querySelector('output').textContent=String(notebook.state.count);
         };
-        """, initialState: .object(["count": .number(3)]), height: 100)])
+      notebook.ready(Promise.resolve());
+      """, initialState: .object(["count": .number(3)]), height: 100)])
     let fixture = try ProgramFixture(document: document, showsNeighbour: false)
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "counter") != nil }
@@ -68,7 +69,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
         const render=()=>document.querySelector('output').textContent=String(notebook.state.count);
         document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});render()};
         addEventListener('notebookstate',render);
-        """, initialState: .object(["count": .number(0)]), height: 100),
+      notebook.ready(Promise.resolve());
+      """, initialState: .object(["count": .number(0)]), height: 100),
       .markdown(id: "text", source: String(repeating: "Independent physical paper stays measured and installed.\n\n", count: 160)),
       .interactive(id: "far", html: "<button>Far control</button>", height: 100)])
     let fixture = try ProgramFixture(document: document)
@@ -140,12 +142,20 @@ final class DocumentProgramOwnerTests: XCTestCase {
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) }
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
+    // Canonical layout is demand-driven. A far link asks its existing source
+    // owner for the remaining index; waiting alone does not schedule that work.
+    let paper = try XCTUnwrap(fixture.paper(in: 0))
+    let renderer = try XCTUnwrap(paper.navigationDelegate as? DocumentWebCoordinator)
+    renderer.resolveLink("#bad", origin: try XCTUnwrap(renderer.currentLinkOrigin)) { _ in }
     try await wait(message: { fixture.diagnostics }) { source.layout?.isComplete == true }
     let layout = try XCTUnwrap(source.layout)
     let target = try XCTUnwrap(layout.regions.first { $0.id == "bad" }?.pageIndex)
     XCTAssertGreaterThan(target, 1)
     fixture.showPages(current: 0, neighbour: target); fixture.restorePresentation(1)
-    try await wait(message: { fixture.diagnostics }) { !fixture.preparationErrors.isEmpty }
+    try await wait(message: {
+      "target=\(target) \(fixture.diagnostics)\n" +
+        DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: fixture.resources)
+    }) { !fixture.preparationErrors.isEmpty }
     XCTAssertNotEqual(fixture.ready[1], true, "A failed program cannot yield a complete curl picture")
     fixture.activity.prepare(target, presentation: .live)
     let demand = try XCTUnwrap(fixture.activity.preparationDemand)
@@ -164,7 +174,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
   func testIndependentLandingDoesNotJoinAnInvisibleProgramsCheckpoint() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [
       .interactive(id: "program", html: "<button>Count</button>", css: "",
-        javaScript: "notebook.commit({count:7})", initialState: .null, height: 200),
+        javaScript: "notebook.commit({count:7});notebook.ready(Promise.resolve());", initialState: .null, height: 200),
       .markdown(id: "body", source: String(repeating: "An independent paper does not wait for an invisible program's disk acknowledgement.\n\n", count: 200) + "\n\n# Far")
     ])
     let fixture = try ProgramFixture(document: document, showsNeighbour: false)
@@ -695,7 +705,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
           notebook.commit({count:(notebook.state.count||0)+1});
           document.querySelector('output').textContent=String(notebook.state.count);
         };
-        """, initialState: .object(["count": .number(0)]), height: 90)])
+      notebook.ready(Promise.resolve());
+      """, initialState: .object(["count": .number(0)]), height: 90)])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.web(block: "counter") != nil }
@@ -902,7 +913,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
 
   func testReturnProgramsYieldTheirExistingPoolSlotsAfterCheckpointWhenForegroundNeedsThem() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
-      html: "<button>Retained return program</button>", javaScript: "notebook.commit({count:1})",
+      html: "<button>Retained return program</button>", javaScript: "notebook.commit({count:1});notebook.ready(Promise.resolve());",
       initialState: .object(["count": .number(0)]), height: 100)])
     let resources = SceneRenderResources(maximumWebSurfaces: 3)
     let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
@@ -929,7 +940,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
 
   func testRefusedReturnCheckpointDoesNotBlockReclaimingAnotherIdleSurface() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
-      html: "<button>Unsaved return program</button>", javaScript: "notebook.commit({count:1})",
+      html: "<button>Unsaved return program</button>", javaScript: "notebook.commit({count:1});notebook.ready(Promise.resolve());",
       initialState: .object(["count": .number(0)]), height: 100)])
     let resources = SceneRenderResources(maximumWebSurfaces: 3)
     let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
@@ -1127,6 +1138,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
       addEventListener('message',event=>{if(event.data==='increment'){count++;report();}if(event.data==='probe')report();});
       setInterval(()=>{ticks++;},40);
       notebook.commit({...notebook.state,nonce,count,mounts:(notebook.state.mounts||0)+1});
+      notebook.ready(Promise.resolve());
       """, initialState: .object(["count": .number(0)]), height: 2048)])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
@@ -1174,7 +1186,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
 
   func testNeverReadyNeighborDoesNotSwitchOrDisableTheCurrentProgram() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [
-      .interactive(id: "current", html: "<button>Ready control</button>", css: "", javaScript: "notebook.commit({started:true})", initialState: .null, height: 1400),
+      .interactive(id: "current", html: "<button>Ready control</button>", css: "", javaScript: "notebook.commit({started:true});notebook.ready(Promise.resolve());", initialState: .null, height: 1400),
       .interactive(id: "delayed", html: "<button>Waiting control</button>", css: "", javaScript: "notebook.ready(new Promise(()=>{}))", initialState: .null, height: 200)
     ])
     let fixture = try ProgramFixture(document: document)
@@ -1197,6 +1209,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
       let count=notebook.state.count||0;const nonce=crypto.randomUUID();
       notebook.commit({...notebook.state,count,nonce,mounts:(notebook.state.mounts||0)+1});
       addEventListener('message',event=>{if(event.data==='increment')notebook.commit({...notebook.state,count:++count});});
+      notebook.ready(Promise.resolve());
       """, initialState: .object(["count": .number(0)]), height: 2000)
     }
     let document = DocumentDocument(actor: UUID(), blocks: [program("program"), program("middle"), program("last")])
@@ -1275,7 +1288,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
   func testAttentionCapturesLivePixelsEvenWhenProgramChangesWithoutAStateCommit() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
       html: "<div id='swatch' style='height:200px;background:#ff0000'></div>", css: "",
-      javaScript: "addEventListener('message',event=>{if(event.data==='blue'){document.querySelector('#swatch').style.background='#0000ff';requestAnimationFrame(()=>window.postMessage('blue-ready','*'));}});",
+      javaScript: "addEventListener('message',event=>{if(event.data==='blue'){document.querySelector('#swatch').style.background='#0000ff';requestAnimationFrame(()=>window.postMessage('blue-ready','*'));}});;notebook.ready(Promise.resolve());",
       initialState: .null, height: 200)])
     let fixture = try ProgramFixture(document: document)
     fixture.showPages(current: 0, neighbour: 0)
@@ -1333,6 +1346,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
         if(event.data==='focus'){document.querySelector('input').focus();notebook.commit({...notebook.state,focused:true});}
         if(event.data==='increment')notebook.commit({...notebook.state,count:(notebook.state.count||0)+1});
       });
+      notebook.ready(Promise.resolve());
       """, initialState: .object(["count": .number(0)]), height: 2000)])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
@@ -1373,7 +1387,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
   func testAnOffscreenProgramReleasesItsExecutorAfterWritingEvenWhenNoRasterCanBeAdmitted() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: (0..<4).map { index in
       .interactive(id: "program-\(index)", html: "<button>Control \(index)</button>",
-        javaScript: "notebook.commit({accepted:1})", height: 100)
+        javaScript: "notebook.commit({accepted:1});notebook.ready(Promise.resolve());", height: 100)
     })
     let resources = SceneRenderResources(maximumRasterCount: 0)
     let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
@@ -1399,7 +1413,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
         const render=()=>document.querySelector('#value').textContent=String(notebook.state.count||0);
         document.querySelector('button').onclick=()=>{notebook.commit({...notebook.state,count:(notebook.state.count||0)+1});render()};
         notebook.commit({...notebook.state,mounts:(notebook.state.mounts||0)+1});render();
-        """, initialState: .object(["count": .number(0)]), height: 90)
+      notebook.ready(Promise.resolve());
+      """, initialState: .object(["count": .number(0)]), height: 90)
     })
     let fixture = try ProgramFixture(document: document, showsNeighbour: false)
     defer { fixture.close() }

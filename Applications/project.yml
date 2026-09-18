@@ -91,6 +91,9 @@ targets:
       - path: TestSupport
       - path: ../Tests/NotebookCoreTests/Resources/QuickShapeMeasured.json
         buildPhase: resources
+      - path: ../MCP/skills/notebook/assets/animation
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: Notebook
     settings:

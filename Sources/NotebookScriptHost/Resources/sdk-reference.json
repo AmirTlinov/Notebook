@@ -48260,9 +48260,10 @@
     "example": "const terminal = [\"completed\",\"failed\",\"cancelled\",\"interrupted\"];\nfor (;;) {\n  if (reply.status === 'error') throw new Error(reply.message);\n  for (const event of reply.events) await consume(event);\n  if (terminal.includes(reply.status) && reply.has_more === false) return reply;\n  reply = await callNotebookExecute({op:'resume',run_id:reply.run_id,after_seq:reply.next_seq,wait_ms:1000});\n}"
   },
   "interactive": {
-    "description": "Embedded document programs have DOM plus notebook.state, notebook.commit(next) and notebook.ready(promise). These are separate from the universal executor's nb API.",
-    "readiness": "Call notebook.ready(promise) while installing the program; resolve it only after the initial drawing and any asynchronous setup are complete. ready marks initial presentation readiness, not the end of future interaction. A program with no declaration produces program_completion_unknown when rendered.",
+    "description": "Embedded spatial and document programs share NotebookProgram/1: DOM plus notebook.state, notebook.commit(next), notebook.ready(promise), notebook.lifecycle(hooks). These are separate from the universal executor's nb API.",
+    "readiness": "Call notebook.ready(promise) while installing the program; resolve it only after the initial drawing and any asynchronous setup are complete. ready marks initial presentation readiness, not the end of future interaction. JavaScript without a declaration fails locally with program_completion_unknown; rejected or hung ready never counts as ready. Static markup does not need a declaration.",
     "state": "notebook.commit(next) publishes complete JSON state; redraw locally after a click. Listen for the notebookstate event to redraw remote or restored state. This local commit is not itself a durable-save receipt.",
+    "lifecycle": "Register once with {pause, checkpoint, resume, dispose} functions. pause stops your clocks/worker/audio before checkpoint returns complete JSON parameters/playhead/seed for the shown model. The native owner confirms its writer before retirement. Failed checkpoints leave the runtime available for resume/retry. Async pause/checkpoint/resume receive {signal}; abort and late completion cannot publish. Each operation has a 4s budget; do not commit on every frame. dispose releases author resources. This is not a heap snapshot or a global timer scheduler.",
     "requiredArgs": {
       "documentID": "Read the document UUID from Notebook first."
     },

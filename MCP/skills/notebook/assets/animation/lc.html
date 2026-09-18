@@ -1,0 +1,25 @@
+<main class="lc">
+  <header><div><small>ИДЕАЛЬНЫЙ LC-КОНТУР</small><h1>Энергия меняет форму</h1></div><output id="clock" aria-live="off"></output></header>
+  <svg viewBox="0 0 840 340" role="img" aria-labelledby="lc-title lc-desc">
+    <title id="lc-title">Электрические колебания</title><desc id="lc-desc">Один момент модели связывает заряд конденсатора, ток катушки, электрическое поле и две формы энергии. Синяя кривая — заряд, оранжевая — ток.</desc>
+    <defs><marker id="blue-arrow" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto-start-reverse"><path d="M0 0L6 3L0 6" fill="none" stroke="#2864a0" stroke-width="1.3"/></marker><marker id="orange-arrow" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto-start-reverse"><path d="M0 0L6 3L0 6" fill="none" stroke="#c56832" stroke-width="1.3"/></marker><linearGradient id="electric-wash" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#2864a0" stop-opacity=".17"/><stop offset="1" stop-color="#2864a0" stop-opacity=".03"/></linearGradient></defs>
+    <g fill="none" stroke="#566477" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M126 144V80H304V119 M304 231V270H126V196"/><path d="M304 119c32 0 32 28 0 28c32 0 32 28 0 28c32 0 32 28 0 28c32 0 32 28 0 28"/></g>
+    <rect id="field-wash" x="82" y="148" width="88" height="44" fill="url(#electric-wash)"/>
+    <g stroke="#2864a0" stroke-width="4" stroke-linecap="round"><path d="M78 144H174 M78 196H174"/></g>
+    <g id="electric" fill="none" stroke="#2864a0" stroke-width="1.5" marker-end="url(#blue-arrow)"></g>
+    <text id="charge-top" x="126" y="132" text-anchor="middle" fill="#2864a0" font-size="22"></text><text id="charge-bottom" x="126" y="222" text-anchor="middle" fill="#2864a0" font-size="22"></text>
+    <path id="current-arrow" fill="none" stroke="#c56832" stroke-width="2.5" marker-end="url(#orange-arrow)"/>
+    <text x="214" y="57" text-anchor="middle" fill="#c56832" font-size="15">ток в проводнике</text>
+    <text x="45" y="177" fill="#2864a0" font-size="19">C</text><text x="350" y="179" fill="#c56832" font-size="19">L</text>
+    <text id="charge" x="126" y="307" text-anchor="middle" fill="#2864a0" font-size="16"></text><text id="current" x="316" y="307" text-anchor="middle" fill="#c56832" font-size="16"></text>
+    <g fill="none" stroke="#d8dfe5" stroke-width="1"><path d="M448 65V264H806 M448 164H806"/><path d="M536 65V264 M624 65V264 M712 65V264 M800 65V264" stroke-dasharray="3 5"/></g>
+    <g fill="#687787" font-size="13"><text x="441" y="290">0</text><text x="528" y="290">¼</text><text x="616" y="290">½</text><text x="704" y="290">¾</text><text x="795" y="290">1</text><text x="711" y="318">доля периода</text><text x="418" y="79">1</text><text x="411" y="260">−1</text></g>
+    <text x="448" y="39" fill="#2864a0" font-size="17">q / Q</text><text x="558" y="39" fill="#c56832" font-size="17">I / Iₘₐₓ</text>
+    <path id="q-curve" fill="none" stroke="#2864a0" stroke-width="2.5"/><path id="i-curve" fill="none" stroke="#c56832" stroke-width="2.5"/>
+    <path id="playhead" stroke="#566477" stroke-width="1"/><circle id="q-dot" r="5" fill="#2864a0" stroke="white" stroke-width="2"/><circle id="i-dot" r="5" fill="#c56832" stroke="white" stroke-width="2"/>
+  </svg>
+  <section class="energy" aria-label="Энергия полей"><div><span class="electric-key">Электрическая</span><output id="electric-energy"></output></div><div class="energy-track"><span id="electric-bar"></span><span id="magnetic-bar"></span></div><div><span class="magnetic-key">Магнитная</span><output id="magnetic-energy"></output></div></section>
+  <section class="transport" aria-label="Момент модели"><button id="play" type="button">Пуск</button><button id="back" type="button" aria-label="Назад на четверть периода">−¼</button><button id="forward" type="button" aria-label="Вперёд на четверть периода">+¼</button><button id="reset" type="button">Начало</button><label>Фаза<input id="phase" type="range" min="0" max="1" step="0.001" value="0"/></label></section>
+  <section class="parameters" aria-label="Параметры контура"><label>L <input id="inductance" type="range" min="10" max="200" step="10" value="100"/><output id="l-value"></output></label><label>C <input id="capacitance" type="range" min="10" max="100" step="5" value="25"/><output id="c-value"></output></label><label>U₀ <input id="voltage" type="range" min="1" max="10" step="0.5" value="5"/><output id="u-value"></output></label></section>
+  <footer><span>q = Q cos(ωt) · I = dq/dt · ω = 1/√LC</span><span>Без потерь. Поле показано условно; движение замедлено.</span></footer>
+</main>

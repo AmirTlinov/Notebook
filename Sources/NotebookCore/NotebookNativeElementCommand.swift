@@ -22,17 +22,8 @@ extension NotebookStore {
     original: PageRect, frame: PageRect, actor: UUID) throws -> (element: AgentElement, stamp: VersionStamp)? {
     try commandTransaction {
       guard try ownerItemID(ofPage: pageID) != nil else { return nil }
-      let file = pageFile(pageID), root = file + "#", id = collaborationIdentity(elementID)
-      let addresses = [(root, false), (root + "/elements/@" + fieldKey([id]), true)]
-        + (["elements/order"] + AgentElement.causalFieldKeys(id: id, allGraphicFields: true)).map {
-          (root + "/collaboration/fields/@" + fieldKey([$0]), false)
-        }
-      let rows = try boundedStoredFragments(addresses, maximumCount: 4096, maximumBytes: 4 * 1024 * 1024,
-        budget: "page_element_command").map { row in
-          row.parent == nil ? row.replacing(value: row.value,
-            collections: row.collections.filter { ![["drawingData"], ["computations"]].contains($0.path) }) : row
-        }
-      let before = try NotebookRecordCodec.decode(rows, root: root)
+      let file = pageFile(pageID), id = collaborationIdentity(elementID)
+      let before = try pageElementCommandProjection(pageID: pageID, elementID: elementID)
       let page = try before.decode(NotebookPageElementProjection.self)
       guard page.id == pageID, page.isValid, frame.isContained(in: page.size) else {
         throw NotebookStorageError.invalidTransaction("page element geometry")
@@ -48,6 +39,63 @@ extension NotebookStore {
       after = try after.setting("collaboration", .encode(metadata))
       try publishProjectionEdits(file: file, before: before, after: after)
       return (moved, stamp)
+    }
+  }
+
+  private func pageElementCommandProjection(pageID: UUID, elementID: String) throws -> JSONValue {
+    let file = pageFile(pageID), root = file + "#", id = collaborationIdentity(elementID)
+    let addresses = [(root, false), (root + "/elements/@" + fieldKey([id]), true)]
+      + (["elements/order"] + AgentElement.causalFieldKeys(id: id, allGraphicFields: true)).map {
+        (root + "/collaboration/fields/@" + fieldKey([$0]), false)
+      }
+    let rows = try boundedStoredFragments(addresses, maximumCount: 4096, maximumBytes: 4 * 1024 * 1024,
+      budget: "page_element_command").map { row in
+        row.parent == nil ? row.replacing(value: row.value,
+        collections: row.collections.filter { ![["drawingData"], ["computations"]].contains($0.path) }) : row
+      }
+    return try NotebookRecordCodec.decode(rows, root: root)
+  }
+
+  /// A stopped browser model may retire only after this source/state-guarded
+  /// write commits. Geometry is read from storage, never rolled back by a frame.
+  public func checkpointProgramState(target: CollaborationTarget, rendered: AgentElement,
+    state: JSONValue, actor: UUID) throws -> Bool {
+    guard state.isValid, rendered.kind == .web else { throw NotebookStorageError.invalidTransaction("program checkpoint") }
+    return try commandTransaction {
+      switch target.kind {
+      case .page:
+        guard try ownerItemID(ofPage: target.id) != nil else { return false }
+        let before = try pageElementCommandProjection(pageID: target.id, elementID: rendered.id)
+        let page = try before.decode(NotebookPageElementProjection.self)
+        guard let element = page.elements.first(where: { $0.id == rendered.id }),
+          element.kind == rendered.kind, element.source == rendered.source, element.html == rendered.html,
+          element.css == rendered.css, element.javaScript == rendered.javaScript,
+          element.state == rendered.state else { return false }
+        if element.state == state { return true }
+        guard let stamp = page.agentStamp.advanced(by: actor) else { throw NotebookStorageError.limitExceeded("page clock") }
+        var after = try before.setting("elements", .encode([element.updating(state: state)])).setting("agentStamp", .encode(stamp))
+        var metadata = page.collaboration
+        metadata.record(before: before, after: after, beforeStamp: page.agentStamp, stamp: stamp, human: true)
+        after = try after.setting("collaboration", .encode(metadata))
+        try publishProjectionEdits(file: pageFile(target.id), before: before, after: after)
+        return true
+      case .board:
+        guard let before = try spatialElementProjection(boardID: target.id, elementID: rendered.id),
+          var element = before.board(target.id)?.elements.first,
+          element.kind == .web, element.source == rendered.source, element.html == rendered.html,
+          element.css == rendered.css, element.javaScript == rendered.javaScript,
+          element.state == rendered.state else { return false }
+        if element.state == state { return true }
+        let expected = element.stamp
+        var after = before
+        guard element.update(state: state, actor: actor),
+          after.upsertElement(element, in: target.id, expected: expected, actor: actor) else {
+          throw NotebookStorageError.transactionConflict
+        }
+        _ = try saveBoardEdits(before: before, after: after)
+        return true
+      default: throw NotebookStorageError.invalidTransaction("program checkpoint target")
+      }
     }
   }
 

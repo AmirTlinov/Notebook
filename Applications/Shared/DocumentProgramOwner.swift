@@ -162,6 +162,12 @@ final class DocumentProgramOwner {
             input.document.sourceVersion(blockID: id) == runtime.sourceVersion else { return nil }
           return input.onStateChange(id, value)
         }
+        runtime.acceptsCheckpoint = { [weak self, weak runtime] value, version in
+          guard let self, let runtime, runtimes[id] === runtime, let input = self.context?.input,
+            input.document.sourceVersion(blockID: id) == runtime.sourceVersion else { return false }
+          let record = input.state.records.first { $0.id == id }
+          return record?.valueVersion == version && (record?.value ?? runtime.block.initialState) == value
+        }
         runtime.onMount = { [weak self] web, size in self?.onMount(web, size) }
         runtime.onLink = { [weak self, weak runtime] href in
           guard let self, let runtime, runtimes[id] === runtime else { return }
