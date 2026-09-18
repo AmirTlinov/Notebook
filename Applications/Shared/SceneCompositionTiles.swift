@@ -937,6 +937,12 @@ final class SceneCompositionTiles {
             guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
             let selected = requests.filter { plan.liveOwners.contains($0.owner) }
             let runtimeOwners = Self.runtimeOwners(requests: selected, plan: plan, resources: resources)
+            renderer.discoverSources(plan: plan, frame: frame, displayScale: displayScale)
+            renderer.onSourceDemand = { [weak self, weak renderer] in
+              guard let self, requestID == id, let renderer else { return }
+              scheduleSources(renderer.receipts(), runtimeOwners: runtimeOwners, presence: presence, frame: frame)
+            }
+            self?.scheduleSources(renderer.receipts(), runtimeOwners: runtimeOwners, presence: presence, frame: frame)
             let cached = selected.filter { resources.image(for: $0.demand.rasterSource, minimumScale: $0.requestedScale) != nil }
             let invalidatedTiles = Set(previous?.tileSources.compactMap { key, addresses in
               addresses.isDisjoint(with: changedSources) ? nil : key.atRevision(plan.revision)
@@ -993,6 +999,14 @@ final class SceneCompositionTiles {
                 status: .failed(failed.diagnostic.kind + ": " + failed.diagnostic.message),
                 installedRegion: receipt.installedRegion)
             }
+            // A source completed early enough to be consumed by this pass.
+            // Its notification must not force another identical paint pass.
+            for (address, receipt) in receipts where receipt.hasCurrentPixels {
+              if let prepared = self?.preparedSources[address],
+                prepared.entryID == renderer.sourceRasters[address]?.entryID {
+                self?.dirtySources.remove(address)
+              }
+            }
             renderer.cachePreparedTiles(rasters)
             let ownedSources = renderer.sourceRasters.compactMapValues { $0.retainedCopy() }
             let geometryID = previous.flatMap { previous in
@@ -1021,7 +1035,7 @@ final class SceneCompositionTiles {
             #endif
             rasters.removeAll(); liveRasters.removeAll()
             self?.hasQualityDebt = !plan.meetsRequiredDensity
-            self?.scheduleSources(receipts, runtimeOwners: runtimeOwners)
+            self?.scheduleSources(receipts, runtimeOwners: runtimeOwners, presence: presence, frame: frame)
             return
           } catch SceneRenderError.resourceLimit {
             if !phase.hasSuffix("preflight") {
@@ -1118,7 +1132,7 @@ final class SceneCompositionTiles {
   }
 
   private func scheduleSources(_ receipts: [SceneSourceAddress: SceneSourceReceipt],
-    runtimeOwners: Set<SceneSourceAddress>) {
+    runtimeOwners: Set<SceneSourceAddress>, presence: SessionPresence, frame: WorkspaceSceneFrame) {
     let wanted = Set(receipts.keys)
     runtimeSources = runtimeSources.filter { wanted.contains($0.key) }
     for (address, job) in sourceJobs {
@@ -1136,7 +1150,19 @@ final class SceneCompositionTiles {
       return failure.1 != SceneRenderError.resourceLimit.description || current == failure.0
     }
     preparedSources = preparedSources.filter { wanted.contains($0.key) }
-    for (address, receipt) in receipts.sorted(by: { $0.key.elementID < $1.key.elementID }) {
+    func priority(_ entry: (key: SceneSourceAddress, value: SceneSourceReceipt)) -> (Int, Double, String) {
+      let demand = entry.value.demand
+      guard let origin = demand.worldOrigin,
+        let view = entry.key.plane.boardID == presence.boardID ? presence : frame.presences[entry.key.plane.boardID]
+      else { return (2, 0, entry.key.elementID) }
+      let visible = SceneSourceCapture.visibleRect(source: demand.source, origin: origin, presence: view)
+      let center = origin.offsetBy(x: demand.source.frame.width / 2, y: demand.source.frame.height / 2)
+      let delta = view.camera.center.delta(to: center)
+      let hasFallback = entry.value.installedSource != nil
+      return (visible.isEmpty || visible.isNull ? 2 : (hasFallback ? 1 : 0),
+        delta.x * delta.x + delta.y * delta.y, entry.key.elementID)
+    }
+    for (address, receipt) in receipts.sorted(by: { priority($0) < priority($1) }) {
       guard !receipt.hasCurrentPixels, sourceJobs[address] == nil,
         sourceFailure(address, demand: receipt.demand) == nil else { continue }
       #if os(iOS)
@@ -1173,7 +1199,7 @@ final class SceneCompositionTiles {
             })
           }
           guard let self, !stopped, sourceJobs[address]?.id == id,
-            published?.sourceReceipts[address]?.demand.source == demand.source, !Task.isCancelled else { raster.release(); return }
+            sourceJobs[address]?.demand.source == demand.source, !Task.isCancelled else { raster.release(); return }
           preparedSources[address] = raster
           sourceJobs[address] = nil
           isPreparing = preparingRequest != nil || !sourceJobs.isEmpty

@@ -6,6 +6,59 @@ import XCTest
 
 final class SceneCompositionTests: XCTestCase {
   @MainActor
+  func testStaticSourceStartsBeforeTheFirstCompositionTileCompletes() async throws {
+    let fixture = Fixture(count: 8, side: 32,
+      html: "<div style='background:red'>Pending</div><script>window.notebook.ready(new Promise(resolve => setTimeout(resolve,700)))</script>")
+    let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    var sourceWasAlreadyRunning: Bool?
+    let observer = NotificationCenter.default.addObserver(forName: SceneRenderResources.didChange,
+      object: nil, queue: .main) { note in
+      guard let key = note.object as? SceneCompositionTileKey, key.workspaceID == fixture.index.generationID else { return }
+      MainActor.assumeIsolated {
+        if sourceWasAlreadyRunning == nil { sourceWasAlreadyRunning = resources.activeBackgroundWebSurfaceCount > 0 }
+      }
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+    coordinator.prepare(source: fixture.source(), presence: fixture.presence, frame: fixture.frame(), pinned: [], displayScale: 1)
+    try await waitUntil { sourceWasAlreadyRunning != nil }
+    XCTAssertEqual(sourceWasAlreadyRunning, true, "The first placeholder pass cannot be the prerequisite for starting source preparation")
+    let address = SceneSourceAddress(plane: .board(fixture.presence.boardID), elementID: fixture.elements.last!.id)
+    try await waitUntil { coordinator.published?.sourceReceipts[address]?.hasCurrentPixels == true }
+    XCTAssertLessThanOrEqual(resources.peakAccountedBytes, resources.byteLimit)
+  }
+
+  @MainActor
+  func testVisibleSourcePrecedesAlphabeticallyEarlierOverscanNeighbour() async throws {
+    let fixture = Fixture(count: 0), boardID = fixture.presence.boardID, stamp = fixture.workspace.stamp
+    let elements: [SpatialElement] = [("a-neighbour", 220.0), ("z-visible", 0.0)].map { id, x in
+      .init(id: id, surface: .board(boardID), kind: .web,
+        frame: .init(x: 0, y: 0, width: 32, height: 32), worldOrigin: .init(x: x, y: 0), source: id,
+        html: "<svg viewBox='0 0 32 32'><rect width='32' height='32' fill='red'/></svg>", stamp: stamp)
+    }
+    let hierarchy = BoardHierarchy(rootBoardID: boardID,
+      boards: [.init(id: boardID, board: .init(freeItems: fixture.hierarchy.boards[0].board.freeItems,
+        elements: elements, stamp: stamp))], stamp: stamp)
+    let index = WorkspaceSceneIndex(workspace: fixture.workspace, hierarchy: hierarchy, paperSizes: [:])
+    let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: fixture.journal)
+    let presence = SessionPresence(boardID: boardID, mode: .board,
+      camera: .init(scale: 1), viewport: .init(x: 320, y: 256))
+    let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    var completed: [String] = []
+    let observer = NotificationCenter.default.addObserver(forName: SceneRenderResources.didChange,
+      object: nil, queue: .main) { note in
+      guard let id = note.object as? String, elements.contains(where: { $0.id == id }) else { return }
+      MainActor.assumeIsolated { if !completed.contains(id) { completed.append(id) } }
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+    coordinator.prepare(source: source, presence: presence,
+      frame: .init(index: index, presence: presence, portalCamera: { _ in nil }), pinned: [], displayScale: 1)
+    try await waitUntil { completed.count == 2 }
+    XCTAssertEqual(completed, ["z-visible", "a-neighbour"], "The single background executor serves missing visible pixels before overscan")
+  }
+
+  @MainActor
   func testWarmReturnReusesCompositionEntriesAndRevisionChangeDoesNot() async throws {
     let fixture = Fixture(count: 8, side: 32, kind: .nativeText)
     let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)

@@ -19,6 +19,7 @@ final class SceneCompositionRenderer {
   private var fallbackSources: [SceneSourceAddress: RasterLease]
   private var sourceFailures: [SceneSourceAddress: SceneSourceFailure]
   private var currentTile: SceneCompositionTileKey?
+  var onSourceDemand: (@MainActor () -> Void)?
   private var paintedTiles = Set<SceneCompositionTileKey>()
   private var carriedReceipts: [SceneSourceAddress: SceneSourceReceipt] = [:]
   private var sourcePresentation: (plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double, refinesDetails: Bool)?
@@ -89,6 +90,24 @@ final class SceneCompositionRenderer {
       guard let raster = rasters[key] else { continue }
       let dependencies = tileSources[key] ?? []
       resources.cacheComposition(raster, receipts: receipts.filter { dependencies.contains($0.key) }, sources: sourceRasters)
+    }
+  }
+
+  /// Start the addressed, bounded workset before native preparation or a
+  /// placeholder pass. Deeper painter discoveries join the same scheduler.
+  func discoverSources(plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double) {
+    for plane in plan.presentations.keys {
+      let workset = plane.coverID.flatMap { frame.covers[$0] } ?? frame.worksets[plane.boardID]
+      for element in workset?.elements ?? [] where element.kind != .nativeText && element.kind != .graphic {
+        let address = SceneSourceAddress(plane: plane, elementID: element.id)
+        let demand = demand(for: element, plane: plane,
+          density: (frame.pixelScales[plane.boardID] ?? 1) * displayScale)
+        sourceDemands[address] = demand
+        if sourceRasters[address] == nil {
+          sourceRasters[address] = resources.retainRaster(for: demand.rasterSource, minimumScale: demand.minimumScale)
+            ?? fallbackSources[address]?.retainedCopy()
+        }
+      }
     }
   }
 
@@ -379,6 +398,7 @@ final class SceneCompositionRenderer {
       let address = SceneSourceAddress(plane: plane, elementID: element.id)
       let desired = sourcePresentation.map { ($0.frame.pixelScales[boardID] ?? 1) * $0.displayScale } ?? density
       let demand = demand(for: element, plane: plane, density: desired)
+      let discoversDemand = sourceDemands[address] != demand
       sourceDemands[address] = demand
       if let currentTile { tileSources[currentTile, default: []].insert(address) }
       // A painter pass consumes immutable, already admitted pixels. It never
@@ -391,8 +411,9 @@ final class SceneCompositionRenderer {
       let raster = sourceRasters[address]
         ?? resources.retainRaster(for: demand.rasterSource, minimumScale: demand.minimumScale)
         ?? fallback
+      if let raster { sourceRasters[address] = raster }
+      if discoversDemand { onSourceDemand?() }
       if let raster {
-        sourceRasters[address] = raster
         let destination: CGRect
         if let crop = raster.source.captureRegion {
           destination = CGRect(x: frame.minX + crop.x / source.frame.width * frame.width,

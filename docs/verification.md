@@ -1,5 +1,25 @@
 # Проверка Notebook
 
+## 19 сентября, 00:32 МСК — GUI-254: ранний demand и видимая очередь
+
+После `692d237` известные источники ограниченного scene workset предъявляются
+прежнему scheduler до native preparation и placeholder pass. Дополнительные
+находки потокового painter присоединяются к той же очереди. Задание владеет
+source identity до publication, а не требует уже опубликованного placeholder.
+Сортировка: видимое без fallback → видимое уточнение → bounded overscan,
+затем расстояние до центра; обязательные live runtime не дублируются.
+Принятые этим же проходом новые pixels гасят собственную dirty notification,
+не вызывая идентичный повторный проход. Квоты WebKit/байтов не увеличены.
+
+Simulator `.build/canvas-plan-20260918/c4.xcresult`: **51/51 PASS**, без skips
+и runtime warnings. Нативное событие первого composition tile подтверждает,
+что background source уже работает; настоящий единственный background
+executor завершает z-visible раньше a-neighbour, несмотря на их имена.
+Проверены readiness, pending-neighbour, ранняя отмена, source/state changes,
+input barrier, быстрые camera samples, warm return/eviction, ресурсы и mixed
+WebKit pan/pinch с сохранением принятого ввода. Это порядок исполнения и
+затронутые сценарии, не физический frame-time benchmark.
+
 ## 19 сентября, 00:28 МСК — GUI-253: reuse готовой композиции
 
 После `493bd2d` preflight заимствует совместимые composition entries из
