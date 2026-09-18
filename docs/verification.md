@@ -10805,3 +10805,47 @@ Evidence: `.build/gui200-preparation-audit-20260918/` — обе `.trace`,
 Другие причины загрузок, неожиданный выход и транспорт этим не исключены.
 **Диагноз, не исправление:** код/приложения в этом срезе не менялись;
 GUI-200 и физическая приёмка остаются открытыми.
+
+## 18 сентября 2026 — S9/S10: SDK соответствует нативным ink/runtime/render results
+
+Продолжение единой вехи GUI-218/GUI-219, без изменения UI или второго пути
+записи. Проверка обнаружила три настоящих разрыва публичного контракта:
+
+- `SpatialInkSpan.elementTargets` уже возвращался Core, но отсутствовал в
+  сгенерированном SDK. Один общий тип target теперь используется PAGE и
+  spatial ink: element identity, исходный frame и optional world origin.
+- До первой публикации native runtime reader возвращает `null`, а не статус
+  соединения. `Snapshot.data` теперь допускает это и требует проверки в TS.
+- Native render diagnostics — объекты `kind`, optional `elementID`, `message`,
+  а не строки. Render, pageMap/pageImage/regions, target receipt и action
+  snapshots используют одну схему этих данных.
+
+Для каждого дефекта сохранён RED перед исправлением; затем native fixture
+проверил действительную сериализацию через прежние read/receipt owners.
+Board/cover targets не теряют координаты, code ink без targets остаётся без
+этого поля, отсутствующий runtime не превращается в выдуманный disconnected.
+Типовые потребители компилируются, неверные формы/непроверенный null отвергаются.
+Структурные page-image projections проверены схемой; это не доказательство
+производства настоящих пикселей или живого соединения.
+
+Финальная проверка из `MCP/`: **78/78 MCP tests PASS**, затем
+`npm run check` PASS (TypeScript + актуальность generated resources).
+Все **7** исходных/generated/test файлов неизменны между началом и концом.
+SHA256 `notebook-sdk.d.ts`:
+`e44af80deba9af955fceb7e117b92052580041b0d53ab7b47558d3cee583a261`.
+Frozen native fixture SHA256:
+`dfdb18017443aad28bc9784c113bbdfba7560558e7211201a6bbe8c47a46cd52`.
+Его exact source commit неизвестен: параллельная сборка peer заменила общий
+Debug fixture, после чего executable был отдельно зафиксирован до финального
+прогона. Это явно не identity подписанной/установленной сборки.
+
+Evidence: `.build/s10-native-result-contracts-20260918/`, включая RED/GREEN,
+`final/{mcp.log,check.log,summary.json,source-before.json,source-after.json}` и
+`native-fixture-final.json`. Первый запуск из неверного cwd дал ENOENT к tsc;
+лог сохранён, invocation исправлен без изменения harness. Промежуточный
+правильный запуск 76/76 предшествовал двум render regressions.
+
+Пара 0.3.90 (93) этим срезом не обновлялась; предыдущие signed receipts
+относятся к предыдущему SDK hash. Новая подписанная интеграция, выпуск S8–S10
+и физическая приёмка остаются открыты. Чужие Core/UI правки не включены;
+Simulator, production DB writes и сброс доверия не использовались.

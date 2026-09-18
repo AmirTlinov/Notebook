@@ -36,6 +36,20 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
       const d=await nb.document({id:input.documentID,blockID:'one'});
       if(d.data) { const kind:'markdown'|'latex'|'interactive'=d.data.block.kind; await emit(kind); }
       const vision=await nb.pageMap({id:input.pageID});
+      const render=await nb.render({target:{kind:'page',id:input.pageID},expectedRevision:'read'});
+      const pageImage=await nb.pageImage({id:input.pageID});
+      const regions=await nb.regions({id:input.pageID,drawingRevision:'read',regionIDs:['one']});
+      const targetReceipt=await nb.read({kind:'targetRenderReceipt',id:input.pageID});
+      const snapshots=await nb.read({kind:'actionSnapshots',id:input.documentID});
+      for(const data of [render.data,vision.data,pageImage.data,regions.data,targetReceipt.data,...snapshots.data]) {
+        for(const diagnostic of data?.diagnostics??[]) {
+          const kind:string=diagnostic.kind, message:string=diagnostic.message;
+          const element:string|undefined=diagnostic.elementID;
+          // @ts-expect-error: a native render diagnostic is structured, never a string
+          const text:string=diagnostic;
+          await emit({kind,message,element});
+        }
+      }
       if(vision.data.map) {
         const map=vision.data.map;
         const format:number=map.format, pageID:string=map.pageID;
@@ -70,8 +84,31 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
           await emit({x,targets,sequence,tool,raster});
         }
       }
+      for(const kind of ['board','cover','codeFragment'] as const) {
+        const spatial=await nb.read({kind:'spatialInk',surfaces:[{kind,ownerID:input.documentID}]});
+        for(const action of spatial.data.actions) for(const span of action.spans) {
+          for(const target of span.elementTargets??[]) {
+            const id:string=target.elementID;
+            const width:number=target.frame.width;
+            const tile:number|undefined=target.worldOrigin?.tileX;
+            await emit({id,width,tile});
+          }
+          // @ts-expect-error: native spans use elementTargets, not a targets alias
+          const invented=span.targets;
+        }
+      }
+      const codeInk=await nb.read({kind:'codeFragment',id:input.documentID});
+      if(codeInk.data) for(const action of codeInk.data.ink.actions) for(const span of action.spans) {
+        const count:number|undefined=span.elementTargets?.length;
+        await emit(count);
+      }
       const receipt=await nb.read({kind:'pageVisionReceipt',id:input.pageID});
       if(receipt.data) { const id:string=receipt.data.pageID; await emit(id); }
+      const runtime=await nb.read({kind:'runtime'});
+      const runtimeStatus:string|undefined=runtime.data?.status;
+      // @ts-expect-error: native runtime status is null until published
+      const unguardedRuntimeStatus=runtime.data.status;
+      await emit(runtimeStatus);
       const batch=await nb.readMany({queries:[{kind:'pageHeader',id:input.pageID},{kind:'workspaceHeader'}]});
       const workspace:string=batch.data[1].workspaceID;
       const content:number=batch.data[0].contentStamp.counter;

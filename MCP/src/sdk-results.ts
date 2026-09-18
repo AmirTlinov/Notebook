@@ -27,12 +27,13 @@ const page=object({format:number,id,size,elements:z.array(element),agentStamp:st
 const pageElement=object({header:contentHeader,element,appearance,graphicResolution:resolution.optional()}).nullable();
 const documentBlock=object({documentID:id,contentStamp:stamp,stateStamp:stamp,sourceVersion:fieldVersion,stateVersion:fieldVersion.optional(),block,state:json.optional()}).nullable();
 const inkSample=object({point,worldPoint:worldPointSchema.optional(),timeOffset:number,width:number,opacity:number,force:number,azimuth:number,altitude:number});
+const inkElementTarget=object({elementID:text,frame,worldOrigin:worldPointSchema.optional()});
 const pageInkMetadata={id,tool:z.enum(["pen","eraser"]),color:object({red:number,green:number,blue:number}),sequence:number,isActive:z.boolean()};
 const pageInkActions=object({header:contentHeader,baseline:object({present:z.boolean(),actionCount:number}),
   actions:z.array(object(pageInkMetadata)),nextActionID:id.optional()});
 const pageInkAction=object({header:contentHeader,action:object({...pageInkMetadata,samples:z.array(inkSample),
-  elementTargets:z.array(object({elementID:text,frame,worldOrigin:worldPointSchema.optional()})).optional()})}).nullable();
-const inkAction=object({id,tool:z.enum(["pen","eraser"]),color:object({red:number,green:number,blue:number}),spans:z.array(object({surface,samples:z.array(inkSample)})),stamp,isActive:z.boolean(),stateStamp:stamp});
+  elementTargets:z.array(inkElementTarget).optional()})}).nullable();
+const inkAction=object({id,tool:z.enum(["pen","eraser"]),color:object({red:number,green:number,blue:number}),spans:z.array(object({surface,samples:z.array(inkSample),elementTargets:z.array(inkElementTarget).optional()})),stamp,isActive:z.boolean(),stateStamp:stamp});
 const ink=object({format:number,actions:z.array(inkAction),stamp});
 const board=object({id,board:object({format:number,elements:z.array(spatialElement),stamp,freeItems:z.array(object({itemID:id,center:worldPointSchema,zIndex:number,stamp})),stacks:z.array(object({id,center:worldPointSchema,zIndex:number,itemIDs:z.array(id),stamp}))})});
 const scene=object({header,boardID:id,items:z.array(item),boards:z.array(board),boardContentRevisions:z.record(text,text),totalMatches:number,truncated:z.boolean()});
@@ -76,7 +77,8 @@ const details=object({actionVersion:text,receipt:receipt.optional(),publication:
   pages:z.record(text,object({total:number,nextOffset:number.nullable()})).optional(),continuations:z.array(object({file:text,path,author:text})).optional(),nextActionID:id.nullable().optional()});
 const artifact=object({kind:z.enum(["currentView","target","pageOverview","pageRegion","attention","scriptImage"]),id:id.optional(),contextID:id.optional(),referenceID:id.optional(),regionID:text.optional(),mode:text.optional(),expectedSHA256:text});
 const renderRequest=object({id,target:targetSchema,sourceRevision:text,region:frame.optional(),worldOrigin:worldPointSchema.optional(),pageIndex:number.optional()});
-const render=object({status:text,request:renderRequest.optional(),id:id.optional(),artifact:artifact.optional(),pngSHA256:text.optional(),sourceRevision:text.optional(),diagnostics:z.array(text).optional()});
+const renderDiagnostics=z.array(object({kind:text,elementID:text.optional(),message:text}));
+const render=object({status:text,request:renderRequest.optional(),id:id.optional(),artifact:artifact.optional(),pngSHA256:text.optional(),sourceRevision:text.optional(),diagnostics:renderDiagnostics.optional()});
 const visionCell=object({column:number,row:number});
 const visionCellFrame=object({column:number,row:number,width:number,height:number});
 const visionRegion=object({id:text,contentCells:visionCellFrame,cropCells:visionCellFrame,
@@ -102,7 +104,7 @@ const selection=z.discriminatedUnion("status",[
 const observation=object({mode:z.enum(["snapshot","delta"]).optional(),status:text.optional(),target:targetSchema.optional(),header:z.union([contentHeader,object({target:targetSchema,contentRevision:text})]).optional(),reset:text.optional(),through:text.optional(),
   objects:z.array(object({target:targetSchema,id:text,change:z.enum(["upsert","deleted","outOfScope"]),value:object({appearance:appearance.optional(),content:z.union([element,block]).optional(),state:json.optional(),graphicResolution:resolution.optional(),preview:text.optional()}).optional()})).optional(),
   containers:z.array(item).optional(),checkpoint:text.optional(),presence:presence.nullable().optional(),presenceGeneration:text.optional(),selection:selection.optional(),context:contexts.optional(),visual:object({status:text,receipt:viewReceipt.optional(),artifact:artifact.optional()}).optional()});
-const runtime=object({status:text,updatedAt:number});
+const runtime=object({status:text,updatedAt:number}).nullable();
 const exportJob=object({status:z.enum(["missing","queued","running","saved","failed","interrupted"]),jobID:id.optional(),documentID:id.optional(),contentRevision:text.optional(),receipt:object({documentID:id,pdfPath:text,texPath:text,pdfSHA256:text,byteCount:number,log:text,packageSHA256:text.optional(),assets:z.array(object({path:text,sha256:text})).optional()}).optional(),error:json.optional()});
 const presentation=object({status:text.optional(),id:id.optional(),view:object({deviceID:id,sessionID:id,sequence:number,nonce:id}).optional(),reason:text.optional()});
 const search=object({results:z.array(object({id,target:targetSchema,elementID:text.optional(),title:text,path:z.array(text),preview:text,revision:text,reference:referenceSchema})),total:number});
@@ -115,13 +117,13 @@ export const readDataSchemas = {
   notebookPages:object({header:directoryHeader,pages:z.array(object({position,document:page}))}),notebookDirectory:directory,notebookPosition:position.nullable(),
   spatialInk:ink,presence,selection,attentionEvidence:object({reference:referenceSchema,payload:json,image:object({sha256:text,pixelWidth:number,pixelHeight:number}).optional()}).nullable(),
   contexts,contextEntries,actions:z.array(receipt),currentViewReceipt:viewReceipt.nullable(),pageVisionReceipt:vision.nullable(),targetRenderReceipt:render.nullable(),
-  renderRequests:z.array(renderRequest),delivery:z.array(delivery),actionSnapshots:z.array(object({request:renderRequest,pngSHA256:text.optional()})),runtime,codeFragment:code,codeFragments:z.array(codeFragment),
+  renderRequests:z.array(renderRequest),delivery:z.array(delivery),actionSnapshots:z.array(object({request:renderRequest,pngSHA256:text.optional(),diagnostics:renderDiagnostics.optional()})),runtime,codeFragment:code,codeFragments:z.array(codeFragment),
 };
 export const methodDataSchemas = {
   observe:observation,page:z.union([page,pageElement]),document:z.union([document,documentBlock]),board:scene,notebook:directory,context:z.union([contexts,contextEntries]),
   attention,code:z.union([code,z.array(codeFragment)]),search,reference:object({target:targetSchema,revision:text}),referenceStatus:object({status:z.enum(["current","changed","checking","review_required","target_missing"]),currentRevision:text.optional(),fingerprint:text.optional()}),
-  action:z.union([details,z.array(details),actionResultSchema]),render,pageMap:object({status:text,drawingRevision:text.optional(),map:vision.optional(),request:renderRequest.optional(),delta:object({fromDrawingRevision:text,available:z.boolean(),unchangedRegionIDs:z.array(text),changedRegionIDs:z.array(text),removedRegionIDs:z.array(text)}).optional()}),
-  pageImage:object({status:text,drawingRevision:text.optional(),artifacts:z.array(artifact).optional(),request:renderRequest.optional()}),regions:object({status:text,drawingRevision:text.optional(),artifacts:z.array(artifact).optional(),request:renderRequest.optional()}),
+  action:z.union([details,z.array(details),actionResultSchema]),render,pageMap:object({status:text,drawingRevision:text.optional(),map:vision.optional(),request:renderRequest.optional(),diagnostics:renderDiagnostics.optional(),delta:object({fromDrawingRevision:text,available:z.boolean(),unchangedRegionIDs:z.array(text),changedRegionIDs:z.array(text),removedRegionIDs:z.array(text)}).optional()}),
+  pageImage:object({status:text,drawingRevision:text.optional(),artifacts:z.array(artifact).optional(),request:renderRequest.optional(),diagnostics:renderDiagnostics.optional()}),regions:object({status:text,drawingRevision:text.optional(),artifacts:z.array(artifact).optional(),request:renderRequest.optional(),diagnostics:renderDiagnostics.optional()}),
   place:object({status:z.enum(["ready","snapshot_pending","placement_unavailable"]),target:targetSchema,placements:z.array(object({id:text,frame,worldOrigin:worldPointSchema.optional()})),moves:z.array(operationSchema),contextID:id.optional(),additionalOwners:z.array(targetSchema),sourceRevision:text,suggestion:text.optional(),renderRequest:renderRequest.optional()}),
   exportStatus:exportJob,presentation,
 };
