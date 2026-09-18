@@ -10750,3 +10750,58 @@ Offscreen search здесь одно совпадение; pagination доказ
 неожиданный выход из тетради остаётся открытой и ведётся совместно с peer.
 Его незавершённые source/docs changes не входят в этот commit. Simulator,
 смена ключей/identity, сброс доверия и восстановление архивов не использовались.
+
+## 18 сентября 2026 — GUI-200: физический профиль долгого открытия и выхода в канвас
+
+Амир уточнил: задержки заметны при открытии тетради и выходе в канвас.
+Диагностика выполнена **без изменения установленной пары 0.3.90 (93)**,
+данных, идентичности или доверия. Физический iPad, production Notebook PID
+5186; Simulator не использовался. Time Profiler записан через all-processes
+после неудачного attach по PID/имени; анализ ниже отфильтрован по Notebook.
+
+Символы соответствуют именно установленному бинарнику: UUID
+`953694D7-4DEE-3F37-905E-A0509B81051D` совпал с Release dSYM из
+`.build/gui199-paper-input-release-20260918/derived-data/Build/Products/Release-iphoneos/`.
+Source identity того выпуска:
+`10716be0a1537138f67db8e11de7f072d85077e4fb2a10b7e474be464b9f0e56`.
+Нынешние незавершённые UI-правки и новые Core/SDK-коммиты этим профилем не проверены.
+
+Две независимые записи дали один доминирующий путь:
+
+- Первые 20 секунд: суммарный CPU sample weight Notebook **20 763 ms**, main
+  **20 743 ms**. Ближайший Notebook frame: `erasurePath.flush`,
+  `batch.normalized()` **18 673 ms**, `previous.union(merged)` **1 135 ms**.
+- Запись **120.838 s**, 08:41:32–08:43:33 UTC: Notebook **105 057 ms**,
+  main **94 250 ms**; стеки с `NotebookElementAppearance.erasurePath`
+  **92 074 ms**, все на main — **97.69%** его sampled CPU.
+- Непересекающиеся вызывающие пути этих 92 074 ms: `AgentOverlayView.body`
+  **70 410 ms**, `NotebookAttentionProjection.pickElement` **19 687 ms**,
+  `NotebookElementErasurePaint.clip` **1 977 ms**.
+- Instruments `potential-hangs` зарегистрировал **30 интервалов** Notebook
+  суммарно **91.776 s**, максимальный **7.977 s**. Интервалы детектора не
+  равны числу отдельных пользовательских переходов.
+
+**Причина подтверждена:** синхронное построение/нормализация геометрии масок
+ластика выполняется прямо при SwiftUI body, рисовании маски и hit-test.
+Один и тот же производный результат не переиспользуется между потребителями.
+Уже существующее разбиение по 128 треугольников и balanced union не устранило
+дорогой реальный случай. Main не обслуживает интерфейс вовремя — ожидание
+выглядит как «подготовка пространства», даже когда причина не в загрузке данных.
+
+Владелец геометрии — `Sources/NotebookCore/NotebookElementAppearance.swift`;
+входы UI — `Applications/Shared/AgentOverlayView.swift`,
+`NotebookElementErasureView.swift`, `NotebookAttentionProjection.swift`.
+Следующий исправляющий срез должен убрать тяжёлое построение из синхронного
+UI-пути и переиспользовать одну производную appearance по актуальным geometry /
+erasure dependencies для paint/pick/read. Нельзя просто убрать проверку erased:
+это вернёт невидимые выбираемые объекты и ложное содержание для агента.
+Нужны сохранение точного покрытия, Undo, resize и инвалидация при изменении,
+затем повтор физического профиля на том же содержимом.
+
+Evidence: `.build/gui200-preparation-audit-20260918/` — обе `.trace`,
+`discovery-profile.xml`, `open-close-profile.xml`, `open-close-hangs.xml`,
+их JSON summaries и `erasure-findings.json`. Это sampling CPU, не точное время
+каждого вызова, не FPS/GPU/memory; у ручных жестов нет временных меток.
+Другие причины загрузок, неожиданный выход и транспорт этим не исключены.
+**Диагноз, не исправление:** код/приложения в этом срезе не менялись;
+GUI-200 и физическая приёмка остаются открытыми.
