@@ -2058,7 +2058,8 @@ final class NotebookAppModel {
       let position = center.addressOffset(x: reading.centerOffset.x, y: reading.centerOffset.y) else {
       return .init(center: center, scale: fit)
     }
-    return .init(center: position, scale: max(SpatialCamera.minimumScale, fit * reading.zoomRatio))
+    return itemGeometry(documentID).readingCamera(
+      .init(center: position, scale: fit * reading.zoomRatio), centeredOn: center, viewport: viewport)
   }
 
   /// Source measurement provides content addresses, never a fabricated landing.
