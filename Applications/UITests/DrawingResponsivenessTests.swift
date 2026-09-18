@@ -2369,6 +2369,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(third.waitForExistence(timeout:5))
     let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "compact-page-overview"; proof.lifetime = .keepAlways; add(proof)
     third.tap(); await landed(3)
+    let folio = XCTAttachment(screenshot:app.screenshot()); folio.name = "paper-page-folio"; folio.lifetime = .keepAlways; add(folio)
     edgeTap("previous-page"); await landed(2)
     edgeTap("notebook-search")
     XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout:3))

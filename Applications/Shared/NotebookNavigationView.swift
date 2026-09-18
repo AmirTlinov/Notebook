@@ -83,16 +83,25 @@ struct NotebookNavigationView: View {
           .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 18)
         }
         HStack(spacing: 0) {
-          Button { select(pageIndex - 1) } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44).contentShape(Rectangle()) }
+          Button { select(pageIndex - 1) } label: {
+            Image(systemName: "chevron.left").font(.system(size: 11))
+              .foregroundStyle(.secondary).frame(width: 44, height: 44).contentShape(Rectangle())
+          }
             .disabled(pageIndex == 0).accessibilityLabel("Предыдущая страница").accessibilityIdentifier("previous-page")
-          Button { pageWindow = pageIndex / 4; showsPages = true } label: { Text(pageCounter).monospacedDigit().frame(minWidth: 64, minHeight: 44).contentShape(Rectangle()) }
+          Button { pageWindow = pageIndex / 4; showsPages = true } label: {
+            Text(pageCounter).font(.system(size: 15, design: .serif)).monospacedDigit()
+              .foregroundStyle(.primary).frame(minWidth: 64, minHeight: 44).contentShape(Rectangle())
+          }
             .accessibilityLabel(pageCounterLabel)
             .accessibilityHint("Открыть список страниц").accessibilityIdentifier("page-overview")
             .popover(isPresented: $showsPages, arrowEdge: .bottom) { pageOverview }
-          Button { select(pageIndex + 1) } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44).contentShape(Rectangle()) }
+          Button { select(pageIndex + 1) } label: {
+            Image(systemName: "chevron.right").font(.system(size: 11))
+              .foregroundStyle(.secondary).frame(width: 44, height: 44).contentShape(Rectangle())
+          }
             .disabled(presence.mode == .document && (documentPageCount == nil || pageIndex + 1 >= pageCount))
             .accessibilityLabel("Следующая страница").accessibilityIdentifier("next-page")
-        }.notebookBar()
+        }.buttonStyle(.plain).padding(.horizontal, 4).contentShape(Rectangle())
           .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 18).padding(.bottom, 18)
       }
     }

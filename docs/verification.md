@@ -9944,3 +9944,36 @@ compiler-границу. S6 ждёт согласованной установк
 S5 production delivery также открыт: fresh installed API2 работает, но runtime
 остаётся disconnected. Production iPad85 watchdog в Core appearance/CGPath
 записан отдельно владельцем GUI-221; эта запись не объявляет его исправленным.
+
+### GUI-222 — номер страницы на бумаге, 18 сентября
+
+У нижнего счётчика удалены подложка, рамка и тень. Номер набран небольшим
+книжным шрифтом, стрелки уменьшены; сохранены положение, исходная область
+hit testing, кнопки 44 pt, список страниц и прежний владелец навигации.
+
+Физический iPad: `testCompactPageControlsKeepFullTargetsAndOpenOverviewAndSearch`
+прошёл 1/1 без failures/skips/runtimeWarnings. Проверены нажатия у края кнопок,
+переход через миниатюру, возврат 3 → 2 → 1 и поиск; осмотрен `paper-page-folio`.
+Квитанция `.build/gui222-folio-verify3-20260918/verification.json`, source
+`1af001518082f610d55a72958d39916c692ca065f99f19a11f9bb2ad5b0594c5`.
+Это узкий UI-сценарий, не полная приёмка. Снимок выпуска — `b584f24` плюс только
+NavigationView, UI-снимок и версия 0.3.83 (86); параллельный S6 `1f22681` сюда
+не включён. Опись — `.build/gui222-folio2-provenance.json`.
+
+Первый проход прерван watchdog **фонового рабочего .preview 0.3.82 (85)**,
+не тестового приложения: `AgentOverlayView.body` → `NotebookElementAppearance`
+→ CGPath/Clipper на main, FRONTBOARD scene-update 10 секунд. Crash сохранён в
+`.build/gui222-folio-visuals-20260918/0D2F965D-0644-4569-9D4D-803A91A24D51.ips`;
+эта отдельная production-проблема GUI-221 не исправлена данным оформлением.
+Второй проход поймал пропуск краевого нажатия без прежнего родительского
+contentShape; он возвращён перед финальной успешной проверкой. Неуспешные
+свидетельства сохранены, ни один из них не выдан за PASS.
+
+Verified Release `.build/gui222-folio-release-20260918/build.json` установлен
+поверх iPad `.preview`: CoreDevice подтвердил 0.3.83 / build86 и обычный launch.
+Bundle manifest `48506a0152c248cb948443ab352df7e19ef320e208be0ddd6e2c3c42120778de`,
+UUID `B1209CCE-61E4-3459-9142-7514BC8B6EBB`. Квитанции установки —
+`.build/gui222-ipad-install-20260918/`. На устройстве один Notebook Lab;
+временный native-test и XCTest runner удалены. Рабочий контейнер, ключи и
+содержание не удалялись и не заменялись. Ручная оценка нового оформления
+Амиром ещё не получена; full/30-минутная приёмка этим срезом не заявлены.
