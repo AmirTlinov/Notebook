@@ -557,6 +557,17 @@ class SelectionTests(unittest.TestCase):
         self.change("Sources/Unknown.swift")
         self.assertEqual(verify.make_plan(self.root, tests=[scenario])["unclassified"], ["Sources/Unknown.swift"])
 
+    def test_shared_fixture_accepts_an_explicit_gesture_from_its_own_ui_suite(self):
+        path = "Applications/iPad/NotebookDrawingFixture.swift"
+        self.change(path)
+        scenario = "NotebookUITests/NotebookAgentFeedbackUITests/testHumanDrag"
+        plan = verify.make_plan(self.root, tests=[scenario], only=True)
+        self.assertFalse(plan["unclassified"])
+        self.assertEqual(plan["checks"]["ipad"], [scenario])
+        with self.assertRaises(release.ReleaseError):
+            verify.make_plan(self.root, tests=["NotebookUITests/NotebookAgentFeedbackUITests"], only=True)
+        self.assertIn(path, verify.make_plan(self.root, tests=["NotebookTests/Feedback/testHumanDrag"], only=True)["unclassified"])
+
     def test_unknown_storage_requires_an_explicit_decision_not_automatic_full(self):
         self.change("Sources/NotebookCore/NotebookSQLite.swift")
         plan = verify.make_plan(self.root)

@@ -592,10 +592,7 @@ final class NotebookAppModel {
   let presentationPlayer = NotebookPresentationPlayer()
   let presentationRelay = NotebookPresentationRelay()
   var highlightedReference: CollaborationReference? { selectionSession.highlightedReference }
-  static let agentHighlightDuration = 1.8
-  private(set) var agentHighlightStarts: [UUID: Date] = [:]
-  private var hasReadCollaborationActions = false
-  @ObservationIgnored private var agentHighlightTask: Task<Void, Never>?
+  let agentFeedback = NotebookAgentFeedback()
   private var referenceHighlightTask: Task<Void, Never>?
   private var collaborationUndoTask: Task<Void, Never>?
   private var collaborationReadSnapshot: CollaborationReadSnapshot?
@@ -3169,15 +3166,19 @@ final class NotebookAppModel {
         let draftEpoch = documentDraftEpoch
         let elementPins = scenePinnedElements, itemPins = scenePinnedItems
         let preparedIDs = preparedNotebookPageIDs(in: presence.selectedItemID)
+        let attentionID = agentFeedback.attentionID, attentionReferences = agentFeedback.attention.map(\.reference)
         #if os(iOS)
           let receivingDeviceID: UUID? = actorID
+          let feedbackKnown = agentFeedback.knownActions, feedbackTracked = agentFeedback.trackedActions
         #else
           let receivingDeviceID: UUID? = nil
+          let feedbackKnown: Set<UUID>? = nil, feedbackTracked: Set<UUID> = []
         #endif
         do {
           let prepared = try await persistence.submit(publishesChanges: receivingDeviceID != nil) { store in
             try NotebookDiskRefresh.prepare(store: store, presence: presence, receivingDeviceID: receivingDeviceID,
-              pinnedElements: elementPins, pinnedItems: itemPins, preparedPages: preparedIDs)
+              pinnedElements: elementPins, pinnedItems: itemPins, preparedPages: preparedIDs,
+              feedbackKnown: feedbackKnown, feedbackTracked: feedbackTracked, attentionReferences: attentionReferences)
           }
           publicationFailure = nil
           if persistence.failure == nil { persistenceFailure = acceptedPageInkFailure }
@@ -3188,6 +3189,11 @@ final class NotebookAppModel {
             diskRefreshRequested = true; continue
           }
           if draftEpoch != documentDraftEpoch { documentEditingSessions = liveDrafts }
+          agentFeedback.receive(actions: prepared.actions, changes: prepared.feedback)
+          if let attentionID, attentionID == agentFeedback.attentionID {
+            if let attention = prepared.attention { agentFeedback.refreshAttention(attention) }
+            else { presentationPlayer.interrupt("attention_source_changed") }
+          }
           acceptCollaborationMetadata(actions: prepared.actions,
             contexts: prepared.contexts, delivery: prepared.delivery)
         } catch {
@@ -3337,6 +3343,7 @@ final class NotebookAppModel {
           guard let self else { return true }
           return inputGate.isActive || presencePhase != .settled || isClosing
         }
+        presentationPlayer.clearAttention = { [weak self] in self?.agentFeedback.clearAttention() }
         presentationPlayer.reply = { [weak self] receipt, peer in
           self?.sync?.sendTransient(.presentation(.receipt(receipt)), to: peer)
         }
@@ -3926,26 +3933,16 @@ final class NotebookAppModel {
     }
   }
 
-  /// Authorship comes from the receipt, not from the fact that a transaction
-  /// appeared in the journal. Expiry belongs to the model, not a remounted view.
-  func updateAgentHighlights(_ actions: [NotebookActionReadModel]) {
-    let now = Date(), active = Set(actions.filter { $0.author == .agent && $0.undo == nil }.map(\.id))
-    agentHighlightStarts = agentHighlightStarts.filter { active.contains($0.key) && now.timeIntervalSince($0.value) < Self.agentHighlightDuration }
-    if hasReadCollaborationActions {
-      let known = Set(collaborationActions.map(\.id))
-      for id in active.subtracting(known) where agentHighlightStarts[id] == nil { agentHighlightStarts[id] = now }
-    }
-    hasReadCollaborationActions = true
-    guard agentHighlightTask == nil, !agentHighlightStarts.isEmpty else { return }
-    agentHighlightTask = Task { [weak self] in
-      defer { self?.agentHighlightTask = nil }
-      while !Task.isCancelled, let next = self?.agentHighlightStarts.values.min() {
-        let delay = max(0,next.addingTimeInterval(Self.agentHighlightDuration).timeIntervalSinceNow)
-        do { try await Task.sleep(for:.seconds(delay)) } catch { return }
-        guard let self else { return }
-        let now = Date()
-        agentHighlightStarts = agentHighlightStarts.filter { now.timeIntervalSince($0.value) < Self.agentHighlightDuration }
-      }
+  func prepareAgentAttention(_ stage: NotebookPresentationPlayer.Stage?) async {
+    agentFeedback.clearAttention()
+    guard let stage, let references = stage.step.attention else { return }
+    do {
+      let subjects = try await persistence.submit { try $0.agentAttentionSubjects(references) }
+      guard !Task.isCancelled, presentationPlayer.stage?.id == stage.id else { return }
+      agentFeedback.setAttention(subjects,id:stage.id)
+    } catch {
+      guard !Task.isCancelled, presentationPlayer.stage?.id == stage.id else { return }
+      presentationPlayer.interrupt("attention_source_changed")
     }
   }
 
@@ -3976,7 +3973,7 @@ final class NotebookAppModel {
     }
   }
 
-  private func collaborationRevision(_ target: CollaborationTarget) -> String? {
+  func collaborationRevision(_ target: CollaborationTarget) -> String? {
     switch target.kind {
     case .codeFragment: return nil // Visibility is acknowledged by the code viewport, never by the board.
     case .page: return pages[target.id]?.agentStamp.revision
@@ -3991,6 +3988,7 @@ final class NotebookAppModel {
     cohort: SceneCompositionCohort? = nil) {
     #if os(iOS)
       if let cohort { retireWorkingGraphics(in: cohort) }
+      confirmAgentFeedback(presence: visible, scene: scene, cohort: cohort)
       func matches(_ receipt: DeviceActionReceipt, _ action: NotebookActionReadModel) -> Bool {
         receipt.matches(action)
       }
@@ -4074,6 +4072,7 @@ final class NotebookAppModel {
   func setPreparationForeground(_ foreground: Bool) {
     guard preparationIsForeground != foreground else { return }
     preparationIsForeground = foreground
+    if !foreground { agentFeedback.stop() }
     if foreground { documentShellPreparation?.allowPreparationAfterForeground() }
     else {
       // A system dialog can deactivate the scene before native ink obtains a
@@ -4087,7 +4086,7 @@ final class NotebookAppModel {
   /// A cached image proves preparation, not mounting. The completed display
   /// callback supplies the actual admitted generation; an overview region
   /// cannot acknowledge that its detailed sources were shown.
-  private func sceneRepresents(_ reference: CollaborationReference,
+  func sceneRepresents(_ reference: CollaborationReference,
     in scene: WorkspaceSceneWorkset, cohort: SceneCompositionCohort?, presence: SessionPresence,
     inkRevision: String? = nil) -> Bool {
     guard let cohort, cohort.isPaintInstalled, scene.generationID == cohort.frame.index.generationID,
@@ -4229,7 +4228,6 @@ final class NotebookAppModel {
 
   private func acceptCollaborationMetadata(actions: [NotebookActionReadModel], contexts: SharedContextDirectory,
     delivery: [DeviceActionReceipt]) {
-    updateAgentHighlights(actions)
     if collaborationActions != actions { collaborationActions = actions }
     var prepared = contexts.contexts
     if let selected = contexts.selectedContext, !prepared.contains(where: { $0.id == selected.id }) {
@@ -4428,7 +4426,7 @@ final class NotebookAppModel {
       collaborationReadTask?.cancel()
       if let task = collaborationReadTask { _ = await task.result }
       collaborationReadTask = nil
-      agentHighlightTask?.cancel(); agentHighlightTask = nil; agentHighlightStarts.removeAll()
+      agentFeedback.stop()
       referenceHighlightTask?.cancel(); cueTask?.cancel()
       if let task = collaborationUndoTask { await task.value }
       await elementErasureCache.stop()

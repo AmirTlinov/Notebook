@@ -206,17 +206,6 @@ struct NotebookAttentionMarks: View {
           .reduce(nil as CGRect?, { $0?.union($1) ?? $1 }) {
         mark(rect, human: true)
       }
-      if !model.scenePreparationPending, model.collaborationDetailsAreCurrent {
-        ForEach(model.collaborationActions.filter { model.agentHighlightStarts[$0.id] != nil && $0.author == .agent && $0.undo == nil }) { action in
-          ForEach(model.results(for: action)) { reference in
-            if let surface = NotebookAttentionProjection.agentPearl(reference,model:model,presence:presence),
-              let start = model.agentHighlightStarts[action.id],
-              surface.rect.intersects(CGRect(x:0,y:0,width:presence.viewport.x,height:presence.viewport.y)) {
-              NotebookAgentPearl(surface:surface,startedAt:start).id(reference.id)
-            }
-          }
-        }
-      }
       if let reference = model.highlightedReference, let rect = NotebookAttentionProjection.frame(reference,model:model,presence:presence) {
         mark(rect, human: false)
       }

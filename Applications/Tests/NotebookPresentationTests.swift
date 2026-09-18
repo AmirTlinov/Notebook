@@ -109,7 +109,7 @@ final class NotebookPresentationTests: XCTestCase {
     let pencil = UUID(); XCTAssertTrue(gate.beginPencilAction(source: pencil))
     XCTAssertNil(player.stage); XCTAssertEqual(receipts.last?.status, .interrupted)
     XCTAssertTrue(gate.hasActivePencil, "Presentation must not finish or cancel accepted Pencil")
-    player.rendered(stage.id)
+    player.rendered(stage.id,material:.svg)
     player.receive(.play(.init(id: UUID(), view: view, steps: request.steps), expiresAt: Date().addingTimeInterval(5)), peer: peer)
     XCTAssertEqual(receipts.last?.reason, "input_active")
     gate.endPencilAction(source: pencil)

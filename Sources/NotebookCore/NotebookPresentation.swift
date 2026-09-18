@@ -42,19 +42,28 @@ public struct NotebookPresentationStep: Codable, Equatable, Sendable {
   public let transition: Double
   public let camera: SpatialCamera?
   public let focus: NotebookPresentationRegion?
+  public let attention: [CollaborationReference]?
   public let svg: String?
   public let bounds: NotebookPresentationRegion?
   public init(duration: Double = 3, transition: Double = 0.3, camera: SpatialCamera? = nil,
-    focus: NotebookPresentationRegion? = nil, svg: String? = nil, bounds: NotebookPresentationRegion? = nil) {
+    focus: NotebookPresentationRegion? = nil, attention: [CollaborationReference]? = nil, svg: String? = nil, bounds: NotebookPresentationRegion? = nil) {
     self.duration = duration; self.transition = transition; self.camera = camera
-    self.focus = focus; self.svg = svg; self.bounds = bounds
+    self.focus = focus; self.attention = attention; self.svg = svg; self.bounds = bounds
   }
   public var isValid: Bool {
     duration.isFinite && (0.5...10).contains(duration)
       && transition.isFinite && (0...1).contains(transition) && transition <= duration
       && !(camera != nil && focus != nil) && (camera?.isValid ?? true) && (focus?.isValid ?? true)
       && ((svg == nil && bounds == nil) || (bounds?.isValid == true && svg.map(NotebookPresentationSVG.isValid) == true))
-      && (camera != nil || focus != nil || svg != nil)
+      && (attention.map { !$0.isEmpty && $0.count <= 16 && $0.allSatisfy { reference in
+        ![.workspace, .codeFragment].contains(reference.target.kind)
+          && (reference.target.kind != .cover || reference.target.boardID != nil)
+          && (reference.target.kind != .board || reference.elementID != nil || reference.region != nil)
+          && !reference.revision.isEmpty && reference.revision.utf8.count <= 256
+          && (reference.region.map { $0.x.isFinite && $0.y.isFinite && $0.width.isFinite && $0.height.isFinite && $0.width > 0 && $0.height > 0 } ?? true)
+          && (reference.worldOrigin?.isValid ?? true)
+      } } ?? true)
+      && (camera != nil || focus != nil || svg != nil || attention != nil)
   }
 }
 

@@ -340,7 +340,7 @@ def make_plan(root, base="HEAD", profiles=(), tests=(), only=False):
         # caller must name the real gesture(s); a broad profile cannot silently
         # select all UI cases or pretend that native tests exercised a tap.
         if path in ("Applications/iPad/NotebookDrawingFixture.swift", "Applications/UITests/DrawingResponsivenessTests.swift"):
-            if not any(t.startswith(UI) and t.count("/") == 2 for t in tests):
+            if not any(t.startswith("NotebookUITests/") and t.count("/") == 2 for t in tests):
                 unknown.append(path)
             continue
         test = test_selector(path)

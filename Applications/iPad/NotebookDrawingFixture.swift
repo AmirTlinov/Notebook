@@ -568,6 +568,27 @@
         if startsWithCoverEraser {
           model.selectDrawingTool(.eraser)
         }
+        if nativeGraphics, ProcessInfo.processInfo.arguments.contains("--notebook-agent-feedback-fixture") {
+          let indexRootBoardID = index.rootBoardID
+          Task { @MainActor [weak model] in
+            let deadline = ContinuousClock.now + .seconds(10)
+            while model?.agentFeedback.knownActions == nil, ContinuousClock.now < deadline {
+              try? await Task.sleep(for:.milliseconds(50))
+            }
+            for index in 1...8 {
+              try? await Task.sleep(for:.seconds(1))
+              guard let model, model.permitsScenePreparation, !model.inputGate.isActive else { continue }
+              let target = CollaborationTarget(kind:nativeGraphicPage ? .page : .board,id:nativeGraphicPage ? pageID : indexRootBoardID)
+              do {
+                _ = try model.store.applyCollaborationAction(.init(summary:"Agent feedback physical gesture",
+                  expected:[.init(target:target,revision:model.store.targetContentRevision(target:target))],operations:[
+                    .init(kind:.updateElement,target:target,id:"native-circle",values:["graphic":.object(["label":.string("Agent \(index)")])]),
+                    .init(kind:.setElementState,target:target,id:"native-neighbour",values:["state":.object(["count":.number(Double(index))])])]),actor:UUID())
+                await model.reloadExternalChanges()?.value
+              } catch { fatalError("Agent feedback fixture failed: \(error)") }
+            }
+          }
+        }
         return model
       } catch {
         fatalError("Не удалось создать лист проверки инструментов: \(error)")

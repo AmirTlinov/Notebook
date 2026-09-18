@@ -16,7 +16,7 @@ struct NotebookPresentationOverlay: View {
         SceneCameraPlane(presence: presence, revision: "\(stage.id)-\(lease?.id.uuidString ?? "waiting")", isCameraActive: cameraIsActive) { anchor in
           if let lease {
             NotebookPresentationSVGView(stage: stage, presence: anchor, lease: lease,
-              ready: { player.rendered(stage.id) }, failed: { player.failed(stage.id) })
+              ready: { player.rendered(stage.id,material:.svg) }, failed: { player.failed(stage.id) })
               .frame(width: anchor.viewport.x, height: anchor.viewport.y)
           }
         }

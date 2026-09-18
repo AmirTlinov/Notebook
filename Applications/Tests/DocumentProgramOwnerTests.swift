@@ -6,6 +6,30 @@ import XCTest
 
 @MainActor
 final class DocumentProgramOwnerTests: XCTestCase {
+  func testAgentFeedbackRoutesThroughTheInstalledPaperOwnerWithoutRecreatingAProgram() async throws {
+    let document = DocumentDocument(actor:UUID(),blocks:[.markdown(id:"words",source:"# Видимый результат\n\nТекст остаётся текстом."),
+      .interactive(id:"program",html:"<button onclick='this.dataset.clicked=1'>Не прерывать</button>",height:100)])
+    let fixture = try ProgramFixture(document:document,showsNeighbour:false)
+    defer { DocumentRenderRegistry.shared.setAgentFeedback([]); fixture.close() }
+    try await wait(message:{ fixture.diagnostics }) { fixture.isPresented && fixture.web(block:"program") != nil }
+    let paper = try XCTUnwrap(fixture.paper(in:0)), program = try XCTUnwrap(fixture.web(block:"program"))
+    let target = CollaborationTarget(kind:.document,id:document.id)
+    let subject = NotebookAgentFeedbackChange.Subject(reference:.init(target:target,elementID:"words",revision:"fixture"),
+      expected:.init(target:target,revision:"fixture"))
+    DocumentRenderRegistry.shared.setAgentFeedback([.init(subject:subject,startedAt:Date(),endsAt:Date().addingTimeInterval(2.4),isAttention:false)])
+    try await Task.sleep(for:.milliseconds(120))
+    let marked = try await paper.evaluateJavaScript("document.querySelectorAll('[data-nb-feedback-ink]').length") as? Int
+    XCTAssertGreaterThan(marked ?? 0,0,"The paper installation ID is distinct from the WebKit coordinator ID")
+    XCTAssertTrue(fixture.web(block:"program") === program)
+    _ = try await program.evaluateJavaScript("document.querySelector('button').click()")
+    let clicked = try await program.evaluateJavaScript("document.querySelector('button').dataset.clicked") as? String
+    XCTAssertEqual(clicked,"1")
+    DocumentRenderRegistry.shared.setAgentFeedback([])
+    try await Task.sleep(for:.milliseconds(50))
+    let remaining = try await paper.evaluateJavaScript("document.querySelectorAll('[data-nb-feedback-ink]').length") as? Int
+    XCTAssertEqual(remaining,0)
+  }
+
   func testSavingIndependentTextKeepsTheProgramContextAndItsUnsavedDOM() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [
       .markdown(id: "text", source: "# Original heading"),

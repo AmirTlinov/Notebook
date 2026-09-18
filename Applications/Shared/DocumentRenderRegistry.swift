@@ -63,6 +63,7 @@ final class DocumentRenderRegistry {
     let pageIndex: Int
     let generation: UInt64
     let isAttached: @MainActor (DocumentPresentationScope) -> Bool
+    let feedback: @MainActor ([NotebookAgentFeedback.Episode]) -> Void
   }
   @ObservationIgnored private var liveSurfaces: [UUID: LiveSurface] = [:]
   private struct LiveObserver {
@@ -112,6 +113,15 @@ final class DocumentRenderRegistry {
       !renderer.isInvalidated, !(await renderer.checkpointEditingDraft()) { return false }
     for editor in Array(retiringEditors.values).filter({ $0.documentID == documentID }) { await editor.task.value }
     return true
+  }
+
+  func setAgentFeedback(_ episodes: [NotebookAgentFeedback.Episode]) {
+    for surface in Array(liveSurfaces.values) {
+      let active = surface.isAttached(.paper) ? episodes.filter {
+        $0.subject.reference.target.kind == .document && $0.subject.reference.target.id == surface.documentID
+      } : []
+      surface.feedback(active)
+    }
   }
 
   func mountRenderer(_ renderer: DocumentWebCoordinator, hostID: UUID) {
@@ -224,15 +234,20 @@ final class DocumentRenderRegistry {
   }
 
   func publishLive(documentID: UUID, token: String, pageIndex: Int, hostID: UUID, generation: UInt64,
+    feedback: @escaping @MainActor ([NotebookAgentFeedback.Episode]) -> Void = { _ in },
     isAttached: @escaping @MainActor (DocumentPresentationScope) -> Bool) {
-    if let previous = liveSurfaces[hostID], previous.generation > generation { return }
+    if let previous = liveSurfaces[hostID] {
+      if previous.generation > generation { return }
+      if previous.token != token || previous.pageIndex != pageIndex { previous.feedback([]) }
+    }
     liveSurfaces[hostID] = .init(documentID: documentID, token: token, pageIndex: pageIndex,
-      generation: generation, isAttached: isAttached)
+      generation: generation, isAttached: isAttached, feedback: feedback)
     for observer in Array(liveObservers.values) where observer.documentID == documentID { observer.changed() }
   }
 
   func revokeLive(hostID: UUID, through generation: UInt64) {
     guard let previous = liveSurfaces[hostID], previous.generation <= generation else { return }
+    previous.feedback([])
     liveSurfaces[hostID] = nil
   }
 

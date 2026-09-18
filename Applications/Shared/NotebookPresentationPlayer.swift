@@ -17,11 +17,14 @@ final class NotebookPresentationPlayer {
   @ObservationIgnored var isInputActive: (() -> Bool)?
   @ObservationIgnored var moveCamera: ((SpatialCamera, Double) -> Bool)?
   @ObservationIgnored var stopCamera: (() -> Void)?
+  @ObservationIgnored var clearAttention: (() -> Void)?
   @ObservationIgnored var reply: ((NotebookPresentationReceipt, UUID) -> Void)?
   @ObservationIgnored private var task: Task<Void, Never>?
   @ObservationIgnored private var active: (NotebookPresentationRequest, UUID)?
   @ObservationIgnored private var stepIndex = 0
-  @ObservationIgnored private var renderedStage: UUID?
+  @ObservationIgnored private var movedCamera = false
+  enum Material: Hashable { case svg, attention }
+  @ObservationIgnored private var renderedMaterials: Set<Material> = []
   @ObservationIgnored private var history: [UUID: (String, NotebookPresentationReceipt)] = [:]
   @ObservationIgnored private var order: [UUID] = []
   var isActive: Bool { active != nil }
@@ -60,7 +63,7 @@ final class NotebookPresentationPlayer {
     }
   }
 
-  func rendered(_ id: UUID) { if stage?.id == id { renderedStage = id } }
+  func rendered(_ id: UUID, material: Material) { if stage?.id == id { renderedMaterials.insert(material) } }
   func failed(_ id: UUID) { if stage?.id == id { finish(.rejected, reason: "svg_render_failed") } }
 
   private func play(_ request: NotebookPresentationRequest) async {
@@ -69,17 +72,19 @@ final class NotebookPresentationPlayer {
         try Task.checkCancellation()
         guard active?.0.id == request.id, isInputActive?() == false,
           let presence = currentView?()?.1.presence else { interrupt("input_active"); return }
-        stepIndex = index; isFading = false; renderedStage = nil
+        stepIndex = index; isFading = false; renderedMaterials = []
         let next = Stage(requestID: request.id, step: step)
         stage = next
         if let camera = step.camera ?? step.focus?.fittedCamera(viewport: presence.viewport) {
           guard moveCamera?(camera, step.transition) == true else { finish(.rejected, reason: "camera_unavailable"); return }
+          movedCamera = true
         }
-        if step.svg != nil {
+        if step.svg != nil || step.attention != nil {
           let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-          while renderedStage != next.id {
+          let required: Set<Material> = Set((step.svg != nil ? [.svg] : []) + (step.attention != nil ? [.attention] : []))
+          while !required.isSubset(of:renderedMaterials) {
             try Task.checkCancellation()
-            guard ContinuousClock.now < deadline else { finish(.rejected, reason: "svg_not_ready"); return }
+            guard ContinuousClock.now < deadline else { finish(.rejected, reason: step.attention != nil ? "attention_not_ready" : "svg_not_ready"); return }
             try await Task.sleep(for: .milliseconds(20))
           }
         }
@@ -111,7 +116,8 @@ final class NotebookPresentationPlayer {
   private func finish(_ status: NotebookPresentationReceipt.Status, reason: String? = nil) {
     publish(status, reason: reason)
     task?.cancel(); task = nil
-    stopCamera?()
-    stage = nil; renderedStage = nil; isFading = false; active = nil
+    if movedCamera { stopCamera?(); movedCamera = false }
+    clearAttention?()
+    stage = nil; renderedMaterials = []; isFading = false; active = nil
   }
 }

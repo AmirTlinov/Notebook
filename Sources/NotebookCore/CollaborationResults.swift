@@ -55,6 +55,13 @@ extension NotebookActionReadModel {
     }
   }
 
+  func resultReferenceID(target: CollaborationTarget, elementID: String?, strokeID: UUID? = nil) -> UUID {
+    let key = target.key + ":" + (strokeID?.uuidString ?? elementID ?? "")
+    let hash = (try? collaborationHash(id.uuidString + key)) ?? id.uuidString.replacingOccurrences(of:"-",with:"")
+    let chars = Array(hash)
+    return UUID(uuidString:String(chars[0..<8])+"-"+String(chars[8..<12])+"-4"+String(chars[13..<16])+"-8"+String(chars[17..<20])+"-"+String(chars[20..<32]))!
+  }
+
   func resultReferences(ownerBoardID: (UUID) throws -> UUID?,
     elementGeometry: (CollaborationTarget, String) throws -> (PageRect, WorldPoint?)?,
     referenceRevision: (CollaborationTarget, String?) throws -> String) throws -> [CollaborationReference] {
@@ -77,13 +84,37 @@ extension NotebookActionReadModel {
         }
         let specificRevision = try revisionIfPresent(target, elementID)
         guard let revision = try specificRevision ?? revisionIfPresent(target, nil) else { continue }
-        let hash = (try? collaborationHash(id.uuidString + key)) ?? id.uuidString.replacingOccurrences(of:"-",with:"")
-        let chars = Array(hash)
-        let stableID = UUID(uuidString:String(chars[0..<8])+"-"+String(chars[8..<12])+"-4"+String(chars[13..<16])+"-8"+String(chars[17..<20])+"-"+String(chars[20..<32]))!
+        let stableID = resultReferenceID(target:target,elementID:elementID,strokeID:operation.strokeID)
         results.append(.init(id:stableID,target:target,elementID:specificRevision != nil ? elementID : nil,
           region:region,worldOrigin:origin,revision:revision,label:action.summary))
       }
     }
     return results
+  }
+}
+
+// Both history and transient feedback use the same addressed geometry reader.
+extension NotebookStore {
+  public func actionResultReferences(_ action: NotebookActionReadModel) throws -> [CollaborationReference] {
+    func geometry(_ target: CollaborationTarget, _ elementID: String) throws -> (PageRect, WorldPoint?)? {
+        if target.kind == .page,
+          let element = try storedMember(file: pageFile(target.id), collection: "elements", id: elementID) {
+          if element["graphic"] != nil {
+            return try readGraphicResolution(target:target,elementID:elementID).layout.map { ($0.frame,nil) }
+          }
+          return try element["frame"].map { (try $0.decode(PageRect.self), nil) }
+        }
+        if target.kind == .board || target.kind == .cover, let boardID = target.boardID ?? (target.kind == .board ? target.id : nil),
+          let element = try readSpatialElement(boardID: boardID, elementID: elementID),
+          element.surface == (target.kind == .board ? .board(target.id) : .cover(target.id)) {
+          if element.graphic != nil {
+            return try readGraphicResolution(target:target,elementID:elementID).layout.map { ($0.frame,element.worldOrigin) }
+          }
+          return (.init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height), element.worldOrigin)
+        }
+        return nil
+      }
+    return try action.resultReferences(ownerBoardID: ownerBoardID, elementGeometry: geometry,
+      referenceRevision: { try self.referenceRevision(target: $0, elementID: $1) })
   }
 }

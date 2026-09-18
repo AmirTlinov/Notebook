@@ -216,6 +216,7 @@ struct SpatialWorkspaceView: View {
 
           itemSelectionControl(presence: presence, viewport: viewport)
 
+        NotebookAgentFeedbackOverlay(presence:presence)
         NotebookAttentionMarks(presence:presence)
         NotebookGraphicBindingHint(presence:presence)
         NotebookPresentationOverlay(player: model.presentationPlayer, presence: presence,

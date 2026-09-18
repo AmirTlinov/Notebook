@@ -11399,3 +11399,59 @@ load/header отказывают, поиск не возвращает скры�
 --filter 'NotebookCloudDeliveryTests|NotebookRetainedLifecycleUndoTests|NotebookRetiredDocumentSourceTests|NotebookRetiredBoardAdmissionTests'`.
 Источник — `6b12201` плюс единственный изменённый тест; RED и GREEN2 сохранены в
 `.build/s10-cloud-retirement-20260918/`. Физическая связь этой проверкой не подтверждается.
+
+## 18 сентября — единое внимание агента и Shimmer + Mesh (GUI-227), 0.3.95 (98)
+
+`NotebookAgentFeedback` заменил `NotebookAgentPearl` и прежний таймер истории.
+Новый результат начинается после установки точного видимого источника, серия
+правок сохраняет фазу, внеэкранные и уже потреблённые результаты не воспроизводятся
+снова. Перестановка ограничена уже прочитанной сценой. `present.steps[].attention`
+использует тот же материал и жизненный цикл представления, без захвата выделения
+человека или движения камеры. Канонические снимки не содержат transient-эффект.
+
+Проверенный неизменный срез — `7848fd8` + GUI-227, source SHA-256
+`61327b6623686a7a4973185b7c5e487b6cd307611dc1b9ca419416eddfc21618`.
+Квитанция выбранного маршрута: `.build/gui227-final98e/verification.json`.
+Профили `presentation`, `verification`; дополнительно `NotebookAgentFeedbackTests`,
+`NotebookGraphicInteractionTests`, адресный тест `DocumentProgramOwnerTests`
+и настоящий жест `NotebookAgentFeedbackUITests`:
+
+- **18 physical iPad native/UI PASS**, iPad `00008103-001E059934D9001E`, iOS 27.0;
+  **3 Mac relay PASS**; failed/skipped/runtime warnings — **0**.
+- **19 Core/Codex PASS**, **79 MCP PASS**, TypeScript check PASS;
+  **79 release-contract + 81 verification-contract PASS**.
+- Ещё **10 Core feedback/history PASS** на том же отпечатке:
+  `.build/gui227-core98e/{tests.log,source-before.json,source-after.json}`.
+- Проверены настоящие добавления фигуры и штриха на лист/доску, одинаковые bounds
+  разных штрихов, точное попадание нескольких эффектов в геометрию, отсутствие
+  изменённых пикселей вне этих предметов, перекрытие, Reduced Motion и окончание.
+  Живой документ сохраняет paper/program owners, DOM, кнопку, ввод и first responder;
+  реальный drag не сдвигает камеру или соседнюю программу.
+
+PNG из `.build/gui227-final98e-attachments/` осмотрены: Mesh остаётся внутри
+заливки/программы, Shimmer — на контурах/буквах, текст программы не выбелен.
+Промежуточный зелёный прогон `98c` **не был принят визуально**: дети Timeline
+выстроились вертикально и подсветка ушла с предмета. Единый ZStack viewport и
+пиксельная регрессия исправили дефект. Реальный WebKit также выявил ненужную
+зависимость служебного SVG ID от `crypto.randomUUID`; теперь локальный счётчик
+проверяет коллизии с существующими DOM ID. Прежние реализации удалены.
+
+Release-квитанция — `.build/gui227-release98b/build.json`, `verified-build`,
+выбранный, не полный маршрут. Mac и физический iPad обновлены **0.3.94 (97) →
+0.3.95 (98)**; `.build/gui227-install98/` содержит preflight, подписи/manifest,
+нормальную остановку helper и devicectl install/launch/readback. Контейнеры,
+идентичности, доверие и архивы не заменялись; тестовые iPad-приложения удалены.
+Установленный sandboxed TypeScript SDK принимает тип attention, отдаёт новый
+`help('present')`; read-only smoke завершился с **0 write effects**, неизменным
+workspace header и cursor: `.build/gui227-live98/receipt.json`.
+
+После заморозки соседняя задача внесла `d5bf3a5` только с CloudDeliveryTests и
+исторической квитанцией. В staged дереве все product inputs совпадают с этим
+проверенным срезом; единственное отличие build inventory — уже отдельно проверенный
+`Tests/NotebookCoreTests/NotebookCloudDeliveryTests.swift`.
+Сравнение: `.build/gui227-staged98-source.json`. Чужие GUI-228/UI WIP не вошли.
+
+Граница: production Mac↔iPad ещё не сопряжены; live доставку новой подсветки между
+ними эта проверка **не подтверждает**. Автосвязь относится к GUI-228. Не заявлены
+полная приёмка, системные FPS/CPU/GPU/память, десять повторов и 30 минут совместной
+работы. Реальные жесты выполнены на физическом iPad, не в Simulator.

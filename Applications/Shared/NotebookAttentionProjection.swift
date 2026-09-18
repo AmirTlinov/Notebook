@@ -13,36 +13,96 @@ enum NotebookAttentionProjection {
       worldOrigin: reference.worldOrigin, pageIndex: reference.pageIndex, model: model, presence: presence)
   }
 
-  static func agentPearl(_ reference: CollaborationReference, model: NotebookAppModel,
-    presence: SessionPresence) -> NotebookAgentPearlSurface? {
+  static func agentFeedback(_ subject: NotebookAgentFeedbackChange.Subject, model: NotebookAppModel,
+    presence: SessionPresence, includingOcclusion: Bool = true) -> NotebookAgentFeedbackSurface? {
+    let reference = subject.reference
     guard let rect = frame(target:reference.target,elementID:reference.elementID,region:reference.region,
       worldOrigin:reference.worldOrigin,pageIndex:reference.pageIndex,model:model,presence:presence,minimumSide:0),
       rect.width > 0, rect.height > 0 else { return nil }
-    var result = NotebookAgentPearlSurface(rect:rect,scale:presence.camera.scale)
+    var result = NotebookAgentFeedbackSurface(rect:rect,scale:presence.camera.scale)
+    func finished(_ value: NotebookAgentFeedbackSurface) -> NotebookAgentFeedbackSurface {
+      guard includingOcclusion, let cohort = model.compositionTiles.published else { return value }
+      var result = value
+      let workset = model.presentedWorkset(cohort:cohort,boardID:presence.boardID,presence:presence)
+      if reference.target.kind == .board || reference.target.kind == .cover {
+        let ownItem = workset.items.first { $0.id == reference.target.id }
+        result.occludedRects = workset.items.filter { item in
+          reference.target.kind == .board || ownItem.map { WorkspaceSceneProjection.isPaintedBelow($0,item,in:presence) } == true
+        }.compactMap { item in
+          let box = item.geometry.screenFrame(center:item.center,camera:presence.camera,viewport:presence.viewport)
+          let rect = CGRect(x:box.x,y:box.y,width:box.width,height:box.height)
+          return rect.intersects(value.rect) ? rect : nil
+        }
+      }
+      if let id = reference.elementID, reference.target.kind != .document {
+        let later: [String]
+        if reference.target.kind == .page, let elements = model.pages[reference.target.id]?.elements,
+          let index = elements.firstIndex(where: { $0.id == id }) {
+          later = elements.dropFirst(index+1).map(\.id)
+        } else {
+          let surface: SurfaceID = reference.target.kind == .cover ? .cover(reference.target.id) : .board(reference.target.id)
+          let elements = reference.target.kind == .cover
+            ? model.presentedCoverElements(cohort:cohort,boardID:presence.boardID,itemID:reference.target.id) : workset.elements
+          let position = cohort.frame.index.paintEntry(id:.element(id),boardID:presence.boardID,coverID:reference.target.kind == .cover ? reference.target.id : nil)
+          later = elements.filter { element in
+            guard element.surface == surface, let position,
+              let next = cohort.frame.index.paintEntry(id:.element(element.id),boardID:presence.boardID,coverID:reference.target.kind == .cover ? reference.target.id : nil) else { return false }
+            return ScenePaintPosition(entry:position) < ScenePaintPosition(entry:next)
+          }.map(\.id)
+        }
+        result.occluders = later.compactMap { id in
+          let next = NotebookAgentFeedbackChange.Subject(reference:.init(target:reference.target,elementID:id,revision:reference.revision),expected:subject.expected)
+          guard let mask = agentFeedback(next,model:model,presence:presence,includingOcclusion:false), mask.rect.intersects(value.rect) else { return nil }
+          return mask
+        }
+      }
+      return result
+    }
     if reference.target.kind != .board {
       result.clipRect = frame(target:reference.target,elementID:nil,region:nil,worldOrigin:nil,
         pageIndex:reference.pageIndex,model:model,presence:presence,minimumSide:0)
     }
-    guard let id = reference.elementID else { return result }
+    if reference.target.kind == .document {
+      if reference.elementID == nil, reference.region != nil { result.isSurface = true; return finished(result) }
+      guard let id = reference.elementID, model.documents[reference.target.id]?.blocks.first(where: { $0.id == id })?.kind == .interactive else { return nil }
+      result.isSurface = true; return finished(result)
+    }
+    if let strokeID = subject.strokeID {
+      guard let ink = NotebookAgentFeedbackInk.path(strokeID:strokeID,reference:reference,model:model) else { return nil }
+      result.ink = ink
+      return finished(result)
+    }
+    guard let id = reference.elementID else { result.isSurface = true; return finished(result) }
     let editable: EditableElementReference, surface: SurfaceID
     switch reference.target.kind {
     case .page:
       editable = .page(pageID:reference.target.id,elementID:id); surface = .page(reference.target.id)
-      result.graphic = model.pages[reference.target.id]?.elements.first(where: { $0.id == id })?.graphic
+      guard let element = model.pages[reference.target.id]?.elements.first(where: { $0.id == id }) else { return nil }
+      result.graphic = element.graphic
+      if element.graphic == nil {
+        result.isSurface = element.kind == .web
+        if !result.isSurface { result.raster = SceneRenderResources.shared.retainRaster(for:.agent(element)) }
+      }
     case .board, .cover:
       editable = .spatial(boardID:presence.boardID,elementID:id)
       guard let cohort = model.compositionTiles.published,
         let element = model.presentedElement(editable,cohort:cohort) else { return nil }
       surface = element.surface; result.graphic = element.graphic
-    case .document: return result
-    case .workspace, .codeFragment: return nil
+      if element.kind == .nativeText { result.text = element }
+      else if element.graphic == nil {
+        result.isSurface = element.kind == .web
+        let plane: SceneCompositionPlane = reference.target.kind == .cover
+          ? .cover(boardID:presence.boardID,itemID:reference.target.id) : .board(reference.target.id)
+        result.raster = result.isSurface ? nil : cohort.sourceRasters[.init(plane:plane,elementID:id)]
+      }
+    case .document, .workspace, .codeFragment: return nil
     }
     if result.graphic != nil {
       guard let layout = model.graphicLayout(editable) else { return nil }
       result.layout = layout
     }
     result.erasures = model.elementErasures(on:surface,fallback:model.compositionTiles.published?.liveData.ink)[id] ?? []
-    return result
+    return finished(result)
   }
 
   static func editingFrame(_ reference: EditableElementReference, model: NotebookAppModel, presence: SessionPresence) -> CGRect? {

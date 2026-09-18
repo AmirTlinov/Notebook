@@ -27084,11 +27084,14 @@
               "focus": {
                 "$ref": "#/$defs/__schema7"
               },
-              "svg": {
+              "attention": {
                 "$ref": "#/$defs/__schema9"
               },
+              "svg": {
+                "$ref": "#/$defs/__schema20"
+              },
               "bounds": {
-                "$ref": "#/$defs/__schema11"
+                "$ref": "#/$defs/__schema22"
               }
             },
             "required": [
@@ -27192,21 +27195,244 @@
             "additionalProperties": false
           },
           "__schema9": {
-            "description": "Temporary vector SVG with viewBox. No scripts, external resources, embedded HTML or images. SVG animation is allowed.",
+            "description": "Hold material attention on these exact current references without moving the camera or changing human selection. Duration, cancellation and human interruption use this same presentation lifecycle.",
             "$ref": "#/$defs/__schema10"
           },
           "__schema10": {
+            "minItems": 1,
+            "maxItems": 16,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/__schema11"
+            }
+          },
+          "__schema11": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/__schema12"
+              },
+              "target": {
+                "$ref": "#/$defs/__schema13"
+              },
+              "elementID": {
+                "$ref": "#/$defs/__schema14"
+              },
+              "region": {
+                "$ref": "#/$defs/__schema15"
+              },
+              "worldOrigin": {
+                "$ref": "#/$defs/__schema16"
+              },
+              "pageIndex": {
+                "$ref": "#/$defs/__schema17"
+              },
+              "revision": {
+                "$ref": "#/$defs/__schema18"
+              },
+              "label": {
+                "$ref": "#/$defs/__schema19"
+              }
+            },
+            "required": [
+              "id",
+              "target",
+              "revision",
+              "label"
+            ],
+            "additionalProperties": false
+          },
+          "__schema12": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema13": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "codeFragment"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "page"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "document"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "board"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "cover"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "boardID": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id",
+                  "boardID"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "workspace"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "description": "rootBoardID"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "__schema14": {
+            "type": "string"
+          },
+          "__schema15": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "width": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "height": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "width",
+              "height"
+            ],
+            "additionalProperties": false
+          },
+          "__schema16": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "__schema17": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "__schema18": {
+            "type": "string"
+          },
+          "__schema19": {
+            "default": "",
+            "type": "string",
+            "maxLength": 1000
+          },
+          "__schema20": {
+            "description": "Temporary vector SVG with viewBox. No scripts, external resources, embedded HTML or images. SVG animation is allowed.",
+            "$ref": "#/$defs/__schema21"
+          },
+          "__schema21": {
             "type": "string",
             "minLength": 1,
             "maxLength": 49152
           },
-          "__schema11": {
+          "__schema22": {
             "description": "Board-world placement of the SVG. Required with svg. Use the observed camera/viewport to place over visible paper; not screen pixels.",
             "$ref": "#/$defs/__schema8"
           }
         }
       },
-      "returns": "Sent/playing/completed/interrupted receipt. Human contact interrupts; read presentation({id}) for actual shown state. No replay after reconnect.",
+      "returns": "Sent/playing/completed/interrupted receipt. Use a step with attention:[currentReference] for material selection without moving camera or human selection; playing waits for the exact source to be installed. Creation/edits get automatic result feedback, so do not send a presentation after every transaction. Human contact interrupts; read presentation({id}) for actual shown state. No replay after reconnect.",
       "example": "const view=(await nb.presentation({})).data; await emit(await nb.present('show',{view:view.view,steps:args.steps}));",
       "old": [
         "notebook_present"

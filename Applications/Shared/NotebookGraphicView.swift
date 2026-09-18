@@ -14,24 +14,16 @@ struct NotebookGraphicView: View {
     .accessibilityAddTraits(.isImage)
   }
 
-  /// The agent light uses this same painter: closed shapes expose their whole
-  /// interior, open paths retain their real stroke, heads, label and erasures.
-  static func paintSilhouette(_ graphic: NotebookGraphic, layout: NotebookGraphicLayout?,
-    in context: GraphicsContext, size: CGSize, erasures: [InkElementErasure] = []) {
-    var mask = graphic
-    mask.style.stroke = .init(red:1,green:1,blue:1)
-    mask.style.fill = mask.style.stroke
-    paint(mask,layout:layout,in:context,size:size,erasures:erasures)
-  }
+  enum PaintLayer { case content, inkMask, fillMask }
 
   static func paint(_ graphic: NotebookGraphic, layout: NotebookGraphicLayout?,
     in context: GraphicsContext, size: CGSize, erasures: [InkElementErasure] = [],
-    appearance: NotebookElementAppearance? = nil) {
+    appearance: NotebookElementAppearance? = nil, layer: PaintLayer = .content) {
       guard graphic.showsGeometry, appearance?.state != .erased else { return }
       var context = context
       if let appearance { context.clip(to:Path(appearance.mask),options:.inverse) }
       else { NotebookElementErasurePaint.clip(erasures, context: &context, size: size) }
-      let stroke = graphic.style.stroke.swiftUIColor
+      let stroke = layer == .content ? graphic.style.stroke.swiftUIColor : .white
       let width = graphic.style.strokeWidth
       let dash: [CGFloat] = switch graphic.style.dash ?? .solid {
       case .solid: []
@@ -43,9 +35,9 @@ struct NotebookGraphicView: View {
         let inset = min(width / 2, min(size.width, size.height) / 2 - 0.01)
         let rect = CGRect(origin: .zero, size: size).insetBy(dx: max(0, inset), dy: max(0, inset))
         let path = outline(graphic, in:rect)
-        if graphic.shape != .plus, let fill = graphic.style.fill { context.fill(path, with: .color(fill.swiftUIColor)) }
-        context.stroke(path, with: .color(stroke), style: style)
-      } else if let layout {
+        if layer != .inkMask, graphic.shape != .plus, let fill = graphic.style.fill { context.fill(path, with: .color(layer == .content ? fill.swiftUIColor : .white)) }
+        if layer != .fillMask { context.stroke(path, with: .color(stroke), style: style) }
+      } else if let layout, layer != .fillMask {
         var lineContext = context
         if !graphic.label.isEmpty {
           let text = context.resolve(Text(graphic.label).font(.system(size:24)))
@@ -65,8 +57,8 @@ struct NotebookGraphicView: View {
           context.stroke(path, with: .color(stroke), style: .init(lineWidth: width, lineCap: .round, lineJoin: .round))
         }
       }
-      if !graphic.label.isEmpty {
-        context.draw(Text(graphic.label).font(.system(size: 24)).foregroundStyle(graphic.style.stroke.swiftUIColor),
+      if !graphic.label.isEmpty, layer != .fillMask {
+        context.draw(Text(graphic.label).font(.system(size: 24)).foregroundStyle(stroke),
           at: layout?.label.cgPoint ?? CGPoint(x: size.width / 2, y: size.height / 2))
       }
   }

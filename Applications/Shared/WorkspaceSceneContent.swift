@@ -460,14 +460,17 @@ struct SpatialTextSnapshot: View {
   let element: SpatialElement
 
   var body: some View {
-    Text(element.source)
-      .font(.system(size: element.textStyle.fontSize, weight: fontWeight(element.textStyle.weight)))
-      .foregroundStyle(Color(red: element.textStyle.red, green: element.textStyle.green,
-        blue: element.textStyle.blue, opacity: element.textStyle.alpha))
+    Self.text(element)
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 
-  private func fontWeight(_ value: Double) -> Font.Weight {
+  static func text(_ element: SpatialElement, mask: Bool = false) -> Text {
+    Text(element.source)
+      .font(.system(size: element.textStyle.fontSize, weight: fontWeight(element.textStyle.weight)))
+      .foregroundStyle(mask ? Color.white.opacity(element.textStyle.alpha) : Color(red: element.textStyle.red, green: element.textStyle.green,
+        blue: element.textStyle.blue, opacity: element.textStyle.alpha))
+  }
+  private static func fontWeight(_ value: Double) -> Font.Weight {
     switch value {
     case ..<0.2: .light
     case ..<0.4: .regular
