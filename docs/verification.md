@@ -11048,3 +11048,30 @@ Mac `/Users/amir/Applications/Notebook.app` обновлён после пров
 Пользователь уведомлён о настоящей установленной версии. Начат отдельный
 120s Time Profiler на production94 с просьбой повторять открытие/выход;
 до анализа и обратной связи ускорение и полная физическая приёмка не заявлены.
+
+
+### Production94 Instruments, 18 сентября, 09:55 UTC
+
+120s Time Profiler сохранён после in-place обновления, symbolicated точным
+Release dSYM. В экспортированных frames подтверждён iPad binary UUID
+`63452003-CDBB-3680-8342-87605835E03F`, процесс **5482**. Один parser прочитал
+обе трассы и разрешил XML ref: исходные production93 результаты воспроизведены.
+
+- Production93: main CPU sample weight **94 250 ms**, из них
+  `NotebookElementAppearance.erasurePath` **92 074 ms**; **30** potential-hangs,
+  суммарно **91 776 ms**, максимум **7 977 ms**.
+- Production94: main CPU sample weight **10 956 ms**, erasurePath на main
+  **0 samples**; **0** potential-hangs при том же системном пороге **250 ms**.
+  UUID соответствует установленному артефакту, не старой или `.native-test` app.
+- К моменту записи кеш мог быть уже прогрет. Пользователю предложено повторить
+  открытие/выход, но одинаковое число/порядок жестов и ответ о субъективном
+  результате пока не подтверждены. Это **не** сопоставимая wall-time benchmark
+  серия, не процент ускорения, не FPS/peak memory/CPU-GPU полная приёмка.
+  Оставшийся main weight включает построение graphicGraph/body; новое узкое
+  исправление не расширялось до отдельного рефакторинга этих вычислений.
+
+Evidence `.build/gui200-production94-profile-20260918/`: native `.trace`, exact
+symbolicate/export logs, `open-close-{toc,profile,hangs}.xml`, `summarize.py` и
+`comparison.json`. Историческая трасса production93 не изменена. GUI-200
+сохраняет открытыми обратную связь пользователя и полную физическую приёмку;
+установка и выполненные жестовые регрессии подтверждены отдельно выше.
