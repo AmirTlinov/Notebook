@@ -34,7 +34,7 @@ var Science = (() => {
     }
     const save=()=>notebook.commit(structuredClone(state));
     function stop(commit=false){playing=false;last=null;cancelAnimationFrame(frame);if(commit)save();}
-    function change(patch,commit=true){stop();state=sanitize({...state,...patch});render();if(commit)save();}
+    function change(patch,commit=true,{pause=true}={}){if(pause)stop();state=sanitize({...state,...patch});render();if(commit)save();}
     function step(now){
       if(!playing)return;
       if(last!==null){const next=tick(state,Math.min(now-last,100));if(next===null){stop(true);render();return;}state=sanitize({...state,...next});}
@@ -42,7 +42,7 @@ var Science = (() => {
     }
     function restore(){stop();state=sanitize(notebook.state??{});render(true);}
     for(const el of document.querySelectorAll('[data-key]')) {
-      el.addEventListener('input',()=>change({[el.dataset.key]:el.type==='range'||el.type==='number'?Number(el.value):el.value},false));
+      el.addEventListener('input',()=>change({[el.dataset.key]:el.type==='range'||el.type==='number'?Number(el.value):el.value},false,{pause:el.dataset.pause!=='false'}));
       el.addEventListener('change',()=>{el.value=state[el.dataset.key];save();});
     }
     if($('play'))$('play').addEventListener('click',()=>{

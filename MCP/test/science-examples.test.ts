@@ -79,22 +79,63 @@ test('shared scene runtime keeps frames local, commits controls and restores foc
   const events=new Map<string,Function>(),frames=new Map<number,Function>(),commits:any[]=[];
   const element=(extra:any={})=>({value:'',textContent:'',listeners:{} as Record<string,Function>,...extra,
     addEventListener(key:string,fn:Function){this.listeners[key]=fn},setAttribute(){}});
-  const input=element({type:'range',dataset:{key:'phase'}}),play=element(),output=element();
+  const input=element({type:'range',dataset:{key:'phase'}}),live=element({type:'range',dataset:{key:'yaw',pause:'false'}}),play=element(),output=element();
   const elements=new Map([['phase',input],['play',play],['phase-value',output]]);
   let state:any={phase:.2},sequence=0,ready:Promise<unknown>|undefined,drawn:any;
   const document={activeElement:null as any,hidden:false,getElementById:(id:string)=>elements.get(id),
-    querySelectorAll:()=>[input],addEventListener:(name:string,fn:Function)=>events.set(name,fn)};
+    querySelectorAll:()=>[input,live],addEventListener:(name:string,fn:Function)=>events.set(name,fn)};
   const notebook={get state(){return state},commit:(value:any)=>{state=value;commits.push(value)},ready:(promise:Promise<unknown>)=>ready=promise};
   const Science=new Function('document','notebook','requestAnimationFrame','cancelAnimationFrame','addEventListener',source+';return Science;')(document,notebook,
     (fn:Function)=>{frames.set(++sequence,fn);return sequence},(id:number)=>frames.delete(id),(name:string,fn:Function)=>events.set(name,fn));
-  Science.mount({defaults:{phase:0},ranges:{phase:[0,1]},draw:(s:any)=>drawn=s.phase,tick:(s:any,dt:number)=>({phase:s.phase+dt/1000})});
+  const app=Science.mount({defaults:{phase:0,yaw:0},ranges:{phase:[0,1]},draw:(s:any)=>drawn=s.phase,tick:(s:any,dt:number)=>({phase:s.phase+dt/1000})});
   await ready;assert.equal(drawn,.2);
   play.listeners.click();
   const tick=(time:number)=>{const [id,fn]=[...frames][0]!;frames.delete(id);fn(time)};
   tick(0);tick(100);near(drawn,.3);assert.equal(commits.length,0);
-  play.listeners.click();assert.equal(frames.size,0);assert.equal(commits.length,1);near(state.phase,.3);
+  app.change({yaw:-.2},false,{pause:false});assert.equal(frames.size,1);assert.equal(play.textContent,'Пауза');
+  live.value='.4';live.listeners.input();assert.equal(frames.size,1);assert.equal(app.state.yaw,.4);
+  tick(200);near(drawn,.4);assert.equal(commits.length,0);
+  play.listeners.click();assert.equal(frames.size,0);assert.equal(commits.length,1);near(state.phase,.4);
   document.activeElement=input;input.value='9';input.listeners.input();assert.equal(drawn,1);assert.equal(commits.length,1);
   input.listeners.change();assert.equal(Number(input.value),1);assert.equal(commits.length,2);
   play.listeners.click();state={phase:.75};events.get('notebookstate')!();
   assert.equal(frames.size,0);assert.equal(drawn,.75);assert.equal(Number(input.value),.75);assert.equal(play.textContent,'Пуск');
+});
+
+test('gear camera gestures preserve playback; WebGL depth testing and framing remain enabled',async()=>{
+  const source=await readFile(new URL('../skills/notebook/assets/science/gears.js',import.meta.url),'utf8');
+  let uploaded:Float32Array=new Float32Array(),rotation:number[]=[],frame:number[]=[],depth=false,cleared=0,count=0;
+  const gl:any={DEPTH_TEST:2929,LEQUAL:515,COLOR_BUFFER_BIT:16384,DEPTH_BUFFER_BIT:256,
+    createShader:()=>({}),createProgram:()=>({}),createBuffer:()=>({}),
+    getShaderParameter:()=>true,getProgramParameter:()=>true,
+    getAttribLocation:(_p:any,name:string)=>['position','normal','color'].indexOf(name),getUniformLocation:(_p:any,name:string)=>name,
+    enable:(key:number)=>{if(key===gl.DEPTH_TEST)depth=true},clear:(mask:number)=>cleared=mask,
+    bufferData:(_kind:any,data:Float32Array)=>uploaded=data,uniformMatrix3fv:(_id:any,_t:any,value:number[])=>rotation=value,
+    uniform3f:(_id:any,...value:number[])=>frame=value,drawArrays:(_kind:any,_first:any,value:number)=>count=value};
+  for(const key of ['shaderSource','compileShader','attachShader','linkProgram','deleteShader','useProgram','bindBuffer','enableVertexAttribArray','vertexAttribPointer','depthFunc','clearDepth','clearColor','viewport'])gl[key]=()=>{};
+  const elements=new Map<string,any>();
+  const get=(id:string)=>{if(!elements.has(id))elements.set(id,{clientWidth:900,clientHeight:490,dataset:{},focus(){},getContext:()=>gl,setPointerCapture(){},addEventListener(){}});return elements.get(id)};
+  let state:any,saves=0,stops=0,draw:Function;
+  const app={get state(){return state},change:(patch:any,commit=true,options:any={})=>{assert.equal(options.pause,false);state={...state,...patch}},save:()=>saves++,stop:()=>stops++};
+  new Function('Science','ScienceModels','devicePixelRatio','ResizeObserver',source)({$:get,mount:(options:any)=>{state={...options.defaults};draw=options.draw;return app}},models,1,class{observe(){}});
+  const el=get('gear-canvas'),initial={...state};
+  let prevented=false;el.onpointerdown({clientX:100,clientY:100,pointerId:1,preventDefault(){prevented=true}});assert.equal(prevented,true);assert.ok('pointerFocus' in el.dataset);
+  el.onpointermove({clientX:150,clientY:140});
+  near(state.yaw,initial.yaw-.3);near(state.tilt,initial.tilt-.2);assert.equal(saves,0);assert.equal(stops,0);
+  el.onpointermove({clientX:50,clientY:60});near(state.yaw,initial.yaw+.3);near(state.tilt,initial.tilt+.2);
+  el.onpointerup();assert.equal(saves,1);
+  const before={...state};el.onpointermove({clientX:200,clientY:200});assert.deepEqual(state,before);
+  for(const key of ['ArrowRight','ArrowDown'])el.onkeydown({key,preventDefault(){}});
+  near(state.yaw,before.yaw-.1);near(state.tilt,before.tilt-.1);assert.ok(!('pointerFocus' in el.dataset));
+  for(const key of ['ArrowLeft','ArrowUp'])el.onkeydown({key,preventDefault(){}});
+  near(state.yaw,before.yaw);near(state.tilt,before.tilt);
+  for(const view of [{yaw:-1.02,tilt:.52,reveal:.3},{yaw:Math.PI/2,tilt:.25,reveal:1},{yaw:-Math.PI/2,tilt:1.3,reveal:0}]){
+    draw!({...state,...view});assert.ok(depth);assert.equal(cleared,gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);assert.ok(count>10000);assert.equal(count,uploaded.length/9);
+    for(let i=0;i<uploaded.length;i+=9){
+      const [x,y,z]=uploaded.slice(i,i+3),u=rotation[0]*x+rotation[3]*y+rotation[6]*z,v=rotation[1]*x+rotation[4]*y+rotation[7]*z,d=rotation[2]*x+rotation[5]*y+rotation[8]*z,p=1250/(1250-d);
+      const sx=450+(u*p-frame[0])*frame[2],sy=245+(v*p-frame[1])*frame[2];
+      assert.ok(sx>=0&&sx<=900&&sy>=0&&sy<=490,`clipped vertex ${sx},${sy}`);
+    }
+  }
+  assert.doesNotMatch(source,/faces\.sort|<polygon/);
 });

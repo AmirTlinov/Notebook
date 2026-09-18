@@ -7,3 +7,7 @@
 
 .science .keyboard-cursor{opacity:0}.science svg:focus-visible .keyboard-cursor{opacity:1}
 @media(max-width:700px){.science svg .axis-label{font-size:26px}.science.sound svg .axis-label,.science.gaussian svg .axis-label{font-size:34px}}
+
+.science .touch:focus:not(:focus-visible),.science .touch[data-pointer-focus]{outline:none}
+
+.science.gears canvas{display:block;width:100%;height:auto;aspect-ratio:90/49}
