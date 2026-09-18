@@ -107,10 +107,21 @@ extension NotebookStore {
   }
 
   public func actionVersionModel(_ id: UUID, version: String) throws -> NotebookActionReadModel {
-    guard let model = try storedValue(actionVersionPrefix(id, version) + "model.json") else {
-      throw CollaborationError("action_version_unavailable", "Эта историческая версия квитанции не сохранена; новое состояние не подставляется.")
+    try readTransaction { _ in
+      if let model = try storedValue(actionVersionPrefix(id, version) + "model.json") {
+        return try model.decode(NotebookActionReadModel.self)
+      }
+      let unavailable = CollaborationError("action_version_unavailable", "Эта историческая версия квитанции не сохранена; новое состояние не подставляется.")
+      // Pre-v2 receipts have no local result archive. Their existing compact
+      // index is bound to the actual receipt hash, so the exact current version
+      // can still supply metadata sections without replaying or freezing values.
+      // Once the receipt changes (e.g. undo), an unsaved older cut stays absent.
+      let current: NotebookActionReadModel
+      do { current = try actionReadModel(id) }
+      catch let error as CollaborationError where error.code == "target_missing" { throw unavailable }
+      guard current.actionVersion == version else { throw unavailable }
+      return current
     }
-    return try model.decode(NotebookActionReadModel.self)
   }
 
   private struct ResultCursor: Codable { let actionID: UUID; let actionVersion: String; let offset: Int }

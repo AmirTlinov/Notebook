@@ -301,6 +301,108 @@ final class NotebookScriptServiceTests: XCTestCase {
     await host.shutdown()
   }
 
+  func testJSAndTypeScriptAtomicallyCreateABoundGraphAndUndoIt() async throws {
+    var createdGraphs: [[AgentElement]] = []
+    for language in [NotebookScriptLanguage.javascript, .typescript] {
+      let owner = try Owner(), host = try await coordinator(owner), run = UUID()
+      defer { try? FileManager.default.removeItem(at: owner.store.root) }
+      let pageID = try XCTUnwrap(owner.store.loadIndex().selectedPageID)
+      let target = CollaborationTarget(kind: .page, id: pageID)
+      let nodes = [
+        AgentElement(id: "new-a", kind: .graphic, frame: .init(x: 50, y: 80, width: 100, height: 100),
+          source: "", html: "", graphic: .init(label: "A")),
+        AgentElement(id: "new-b", kind: .graphic, frame: .init(x: 400, y: 80, width: 100, height: 100),
+          source: "", html: "", graphic: .init(label: "B")),
+        AgentElement(id: "new-ab", kind: .graphic, frame: .init(x: 200, y: 130, width: 100, height: 10),
+          source: "", html: "", graphic: .init(shape: .connector, label: "A → B", connection: .init(
+            start: .init(point: .zero, binding: .init(elementID: "new-a")),
+            end: .init(point: .init(x: 100, y: 0), binding: .init(elementID: "new-b"))))),
+      ]
+      let operations: [JSONValue] = try nodes.map { node in .object([
+        "kind": .string("insertElement"), "target": try .encode(target), "id": .string(node.id),
+        "values": .object(["kind": .string("graphic"), "source": .string(""),
+          "frame": try .encode(node.frame), "graphic": try .encode(node.graphic)])]) }
+      let encoded = String(decoding: try JSONEncoder().encode(operations), as: UTF8.self)
+      let code = """
+        const initial=await nb.page({id:'\(pageID.uuidString)'});
+        const receipt=await nb.transaction('create-graph',{base:initial.basis,summary:'Create a connected graph',
+          operations:\(encoded)});
+        const graph=await nb.page({id:'\(pageID.uuidString)'});
+        const undo=await nb.undo('remove-graph',{actionID:receipt.actionID});
+        const empty=await nb.page({id:'\(pageID.uuidString)'});
+        return {receipt,graph:graph.data,undo,empty:empty.data};
+        """
+      let request = NotebookScriptRequest(op: .start, runID: run, apiVersion: 2, code: code, language: language)
+      _ = try await host.handle(request)
+      let result = try await finish(host, run)
+      XCTAssertEqual(result.string("status"), "completed", "\(result)")
+      let value = try XCTUnwrap(result["result"])
+      let elements = try XCTUnwrap(value["graph"]?["elements"]).decode([AgentElement].self)
+      XCTAssertEqual(elements, nodes)
+      createdGraphs.append(elements)
+      let arrow = try XCTUnwrap(value["graph"]?.array("elements").first { $0.string("id") == "new-ab" })
+      XCTAssertEqual(arrow["graphicResolution"]?.string("state"), "geometry")
+      XCTAssertNotEqual(arrow["graphicResolution"]?["frame"], arrow["frame"])
+      XCTAssertEqual(value["empty"]?.array("elements"), [])
+      let actionID = try XCTUnwrap(value["receipt"]?.string("actionID").flatMap(UUID.init(uuidString:)))
+      XCTAssertEqual(try owner.store.collaborationAction(actionID).action.operations.map(\.id), nodes.map(\.id))
+      let replay = try await host.handle(request)
+      XCTAssertEqual(replay["result"], result["result"])
+      XCTAssertEqual(owner.nativeWrites, 2, "Three new bound objects share one write; undo shares one write; replay writes nothing")
+      await host.shutdown()
+    }
+    XCTAssertEqual(createdGraphs.first, createdGraphs.last, "JS and TS produce the same domain objects in independent stores")
+  }
+
+  func testExplicitConflictDeltaContinuationPreservesTheHumanLabel() async throws {
+    let owner = try Owner(), host = try await coordinator(owner)
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    let pageID = try XCTUnwrap(owner.store.loadIndex().selectedPageID)
+    var page = try owner.store.loadPage(pageID)
+    let original = AgentElement(id: "shared-node", kind: .graphic, frame: .init(x: 80, y: 80, width: 120, height: 100),
+      source: "", html: "", graphic: .init(label: "Before"))
+    XCTAssertTrue(page.replaceElements([original], actor: UUID())); try owner.store.savePage(page)
+    let readRun = UUID()
+    _ = try await host.handle(.init(op: .start, runID: readRun, code: "return await nb.observe({target:{kind:'page',id:args.page},ids:['shared-node'],fields:['content']});",
+      arguments: .object(["page": .string(pageID.uuidString)])))
+    let initial = try await finish(host, readRun)
+    XCTAssertEqual(initial.string("status"), "completed", "\(initial)")
+    // This is a native human continuation between two program turns, not an
+    // automatically refreshed base inside transaction admission.
+    let human = AgentElement(id: original.id, kind: original.kind, frame: original.frame,
+      source: original.source, html: original.html, graphic: .init(label: "Human revision"))
+    XCTAssertTrue(page.replaceElements([human], actor: UUID())); try owner.store.savePage(page)
+    let nextRun = UUID()
+    _ = try await host.handle(.init(op: .start, runID: nextRun, code: """
+      const target={kind:'page',id:args.page};
+      let conflict;
+      try { await nb.transaction('stale',{base:args.previous.basis,summary:'Stale write',operations:[
+        {kind:'updateElement',target,id:'shared-node',values:{graphic:{label:'Must never save'}}}
+      ]}); } catch(error) { conflict=error.code; }
+      if(conflict!=='revision_conflict') throw new Error('Expected the stale base to fail');
+      const delta=await nb.observe({target,ids:['shared-node'],fields:['content'],since:args.previous.data.checkpoint});
+      const current=delta.data.objects.find(x=>x.id==='shared-node'&&x.change==='upsert').value.content;
+      // The program chooses its merge only after inspecting the human delta.
+      const receipt=await nb.transaction('continue',{base:delta.basis,summary:'Continue the human label',operations:[
+        {kind:'updateElement',target,id:current.id,values:{graphic:{label:current.graphic.label+' — agent note'}}}
+      ]});
+      const changed=await nb.page({id:args.page,elementID:current.id});
+      const undo=await nb.undo('undo-note',{actionID:receipt.actionID});
+      return {conflict,delta:delta.data,changed:changed.data,receipt,undo};
+      """, arguments: .object(["page": .string(pageID.uuidString), "previous": try XCTUnwrap(initial["result"])])))
+    let final = try await finish(host, nextRun)
+    XCTAssertEqual(final.string("status"), "completed", "\(final)")
+    let value = try XCTUnwrap(final["result"])
+    XCTAssertEqual(value.string("conflict"), "revision_conflict")
+    XCTAssertEqual(value["delta"]?.string("mode"), "delta")
+    XCTAssertEqual(value["delta"]?.array("objects").count, 1)
+    XCTAssertEqual(value["delta"]?.array("objects").first?["value"]?["content"]?["graphic"]?.string("label"), "Human revision")
+    XCTAssertEqual(value["changed"]?["element"]?["graphic"]?.string("label"), "Human revision — agent note")
+    XCTAssertEqual(try owner.store.readPageElement(pageID: pageID, elementID: "shared-node"), human)
+    XCTAssertEqual(owner.nativeWrites, 2, "The stale write has no effect; explicit continuation and undo are separate writes")
+    await host.shutdown()
+  }
+
   func testTrustedMarkupCanCompleteWhileTheUserInterpreterAwaitsTransaction() async throws {
     let owner = try Owner(), host = try await coordinator(owner), id = UUID()
     defer { try? FileManager.default.removeItem(at: owner.store.root) }

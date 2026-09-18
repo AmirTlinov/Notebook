@@ -37,6 +37,15 @@ python3 -B "$ROOT/Tests/NotebookVerification/run.py" 2>&1 | tee "$EVIDENCE/verif
 python3 -B "$ROOT/Tests/NotebookDocumentAcceptance/test_system_trace.py" 2>&1 | tee "$EVIDENCE/trace-harness.log"
 python3 "$ROOT/Tests/PreviewInstaller/run.py" 2>&1 | tee "$EVIDENCE/preview-installer.log"
 python3 "$ROOT/Tests/NotebookRelease/run.py" 2>&1 | tee "$EVIDENCE/release-tools.log"
+# Swift worker tests execute the pinned CLI against this checkout's SDK. The
+# same prepared stage is reused below by the signed Mac service build.
+cd "$ROOT/MCP"
+npm ci --ignore-scripts
+python3 -B "$ROOT/Applications/prepare_notebook_typescript.py" --prepare \
+  --stage-root "$ROOT/.build/notebook-typescript-runtime" > "$EVIDENCE/typescript-resources.json" 2> "$EVIDENCE/typescript-resources.log"
+NOTEBOOK_TYPESCRIPT_RUNTIME=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["stage"])' "$EVIDENCE/typescript-resources.json")
+export NOTEBOOK_TYPESCRIPT_RUNTIME
+cd "$ROOT"
 swift test 2>&1 | tee "$EVIDENCE/core.log"
 "$ROOT/Applications/test-load-fixture.sh" 2>&1 | tee "$EVIDENCE/load-fixture.log"
 
@@ -73,7 +82,6 @@ plutil -insert CFBundlePackageType \
 "$ERASER_APP/Contents/MacOS/NotebookEraserProof"
 
 cd "$ROOT/MCP"
-npm ci --ignore-scripts
 for pair in \
   "node_modules/@xterm/xterm/lib/xterm.js:$ROOT/Applications/WebResources/xterm.js" \
   "node_modules/@xterm/xterm/css/xterm.css:$ROOT/Applications/WebResources/xterm.css" \
@@ -121,10 +129,6 @@ python3 -B "$ROOT/Applications/prepare_notebook_images.py" --prepare \
   --stage-root "$ROOT/.build/notebook-image-runtime" > "$EVIDENCE/image-resources.json" 2> "$EVIDENCE/image-resources.log"
 NOTEBOOK_IMAGE_RUNTIME=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["stage"])' "$EVIDENCE/image-resources.json")
 export NOTEBOOK_IMAGE_RUNTIME
-python3 -B "$ROOT/Applications/prepare_notebook_typescript.py" --prepare \
-  --stage-root "$ROOT/.build/notebook-typescript-runtime" > "$EVIDENCE/typescript-resources.json" 2> "$EVIDENCE/typescript-resources.log"
-NOTEBOOK_TYPESCRIPT_RUNTIME=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["stage"])' "$EVIDENCE/typescript-resources.json")
-export NOTEBOOK_TYPESCRIPT_RUNTIME
 xcodegen generate --spec project.yml
 xcodebuild \
   -quiet \

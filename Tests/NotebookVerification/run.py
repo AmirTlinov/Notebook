@@ -22,6 +22,22 @@ import notebook_verification as verify
 import notebook_acceptance as acceptance
 
 
+class FullPrerequisiteTests(unittest.TestCase):
+    def test_full_route_prepares_one_pinned_compiler_before_swift_and_reuses_it_for_xcode(self):
+        route = (ROOT / "Tests/NotebookVerification/full.sh").read_text()
+        install = "npm ci --ignore-scripts\n"
+        prepare = 'python3 -B "$ROOT/Applications/prepare_notebook_typescript.py" --prepare'
+        export = "export NOTEBOOK_TYPESCRIPT_RUNTIME\n"
+        core = 'swift test 2>&1 | tee "$EVIDENCE/core.log"'
+        for command in (install, prepare, export, core):
+            self.assertEqual(route.count(command), 1, command)
+        self.assertLess(route.index(install), route.index(prepare))
+        self.assertLess(route.index(prepare), route.index(export))
+        self.assertLess(route.index(export), route.index(core),
+                        "Real compiler tests must not depend on a previous checkout's SDK stage")
+        self.assertLess(route.index(core), route.index("xcodebuild \\\n"))
+
+
 class SelectionTests(unittest.TestCase):
     def test_document_ui_requires_a_real_address_and_ipad_before_touching_the_stand(self):
         method = "NotebookDocumentAcceptanceUITests/testRealPageControlsLinksAndTouchSourceEditingSurviveColdReopening"

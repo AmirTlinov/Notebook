@@ -10612,3 +10612,74 @@ S9 остаётся In Progress: это не установка и не физи
 `selection: unknown` / `connection: disconnected`; содержание не менялось.
 Физические жесты, saved/received/shown и вся веха не объявлены принятыми.
 GUI-225 peer changes исключены из коммита; жалоба на вход/выход остаётся открытой.
+
+
+## 18 сентября 2026 — S10: интеграционный код и честные границы окончательной приёмки
+
+В полном маршруте единственная подготовка npm/закреплённого TS stage перенесена
+перед Swift tests. Раньше clean/current checkout зависел от старого stage и
+останавливался до проверки продукта; тот же подготовленный stage теперь
+используется подписанным Mac build. Второго compiler/bootstrap пути нет.
+
+Большая legacy-квитанция v1 теперь продолжается через v2 metadata-разделы.
+Frozen v2 model имеет приоритет; при его отсутствии допускается только
+существующий receipt-hash-bound read model с **точно совпавшей** actionVersion.
+После изменения legacy receipt несохранённая старая версия остаётся unavailable.
+Не создаются result/archive записи, новые значения не восстанавливаются из
+сегодняшнего содержания, старое действие не запускается заново.
+
+Добавлены два signed XPC сценария: независимые JS и TS одной транзакцией создают
+два новых узла и bound connector, затем одним undo удаляют весь граф; повтор
+run не пишет ничего. Второй сценарий читает → получает native human edit →
+отказывает по старой basis → явно читает дельту → сохраняет дополнение к
+человеческой подписи; undo сохраняет человеческую подпись. Это осознанное
+продолжение программы, не автоматическое освежение предусловий host.
+
+Доказательства: `.build/s10-history-and-route-20260918/`,
+`.build/s10-integration-second-20260918/verification.json`.
+- RED: порядок подготовки full route; 3 случая legacy version continuation.
+- GREEN: **12 Core** (legacy 3, SDK v2 5, action read model 4), **6 настоящих
+  CLI compiler**, **80 route tests**, shell syntax. 380 inputs Swift gate неизменны.
+- Последующий единый selected gate: **74 MCP**, **10/10 signed Mac XPC**,
+  0 skips/runtime warnings; текущий TS **7.0.2**, SDK
+  `a6f192ea3615cfb0e1198a716935e587b7f2ac7febd24ab8edde2a3c10f1f46a`.
+  Source identity **996 files**,
+  `d615df32d19b3cc24f3713be5afb5360de2ed25ca44968cb2582265ae51c936f`.
+  Graph/document/ink/PDF/label/search/lost reply проходят на одном свежем cut.
+- Первая команда с Swift suite в XCTest-only `--test` отвергнута до запуска;
+  первый Mac build нашёл неверный test-only `updating(graphic:)`. Исправлена
+  конструкция fixture по существующему API; production guard не менялся.
+  `.build/s10-integration-selected-20260918/` не является PASS.
+
+### Что действительно измерено, а не восстановлено по размеру логов
+
+| Сценарий | Существующее доказательство | Остаток |
+|---|---|---|
+| Подпись | S4 live: один start → completed, 262.88725 ms | Сопоставимый before/after и серия cold/warm |
+| Поиск вне экрана | S2: 13 hits / 5 страниц; 512 matches — 12 167 SQL instructions | Полная серия public calls/bytes и физический сценарий |
+| Один блок | S1/S3: 335 SQL instructions среди 100k чужих state records | Полные read/decode counters и latency series |
+| Несколько связанных объектов | S10: JS/TS, три новых объекта / одна запись + undo | Производственные calls/bytes/latency/показ |
+| Алгоритмический reflow | S9/S10 signed XPC, authored/derived связи, scope refusal и undo | Сопоставимый исходный performance baseline |
+| Конкурентная правка | S10: конфликт → delta → явное продолжение → undo сохраняет human | Физическое человеческое продолжение |
+| Разрыв связи | S5 live: start 14.975417 ms; resume 13.732708 ms; replay 11.716208 ms, только два эффекта | Распределение, cold restart и точный received/shown |
+
+S1 PAGE read: 207 SQL instructions / 445 B; S3 delta: 548 / 1070 B.
+Эти числа не являются измерением всех декодирований или объёма MCP-провода.
+Время XCTest не равно времени SDK-call, размер log/artifact не равен ответу.
+Исторический commit `1e456d3` и RED тесты не являются измеренным before baseline;
+процент ускорения не заявлен. Сопоставимые семь before/after серий остаются открыты.
+
+**S10 не завершён.** Installed pair 0.3.90 (93) не обновлялась. Read-only probe
+07:44 UTC после foreground launch физического production iPad всё ещё показал
+`disconnected` / `selection: unknown`. CoreDevice: passcodeRequired=false;
+Mac показывает trusted iPad и «Ожидается iPad». Причина разрыва не установлена.
+Device Hub AX не ответил; Console вернул ScreenCaptureKit -3811. Штатный сбор
+iPad logs потребовал root, существующего passwordless допуска нет; обхода нет.
+Это ограничения наблюдения, не доказательство дефекта Notebook/доверия.
+
+Не приняты: выпуск S8–S10, physical gestures/selection и точные received/shown,
+десять повторов и 30 минут совместной работы, системные frames/CPU/GPU/memory.
+9 незавершённых GUI-225 peer paths сохранены отдельно и не включены в коммит;
+их присутствие в source inventory selected gate не является приёмкой их UI.
+Жалоба Амира на zoom/вход/выход из тетради остаётся открытой. Данные, identity,
+ключи и доверие не сбрасывались; Simulator не использовался.
