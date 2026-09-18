@@ -29,8 +29,8 @@ struct NotebookElementControls: UIViewRepresentable {
   let frame: CGRect
   let scale: Double
 
-  func makeUIView(context: Context) -> NotebookElementControlsView { .init(gate: model.inputGate) }
-  func updateUIView(_ view: NotebookElementControlsView, context: Context) {
+  func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate: model.inputGate) }
+  func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
     var graphic = model.graphicElement(reference)
     if let contact = model.selectionSession.manipulation, contact.reference == reference {
       if contact.vertices != contact.originalVertices { graphic?.vertices = contact.vertices }
@@ -94,7 +94,42 @@ struct NotebookElementControls: UIViewRepresentable {
     view.setActionsMenu(menus)
   }
 
-  static func dismantleUIView(_ view: NotebookElementControlsView, coordinator: ()) { view.uninstall() }
+  static func dismantleUIView(_ view: NotebookSelectionControlsView, coordinator: ()) { view.uninstall() }
+}
+
+/// Workspace cards use the same screen-space controls as page/board elements.
+/// Only supported actions are exposed; card movement remains with WorkspaceItemPose.
+struct NotebookItemControls: UIViewRepresentable {
+  @Environment(NotebookAppModel.self) private var model
+  let item: WorkspaceItem
+  let boardID: UUID
+  let selectionID: UUID
+  let frame: CGRect
+  let open: () -> Void
+
+  func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate:model.inputGate) }
+  func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
+    view.graphic = nil
+    view.configure(selectionID:selectionID,frame:frame,subject:.item(item.kind))
+    view.isEnabled = !model.isItemBeingDeleted(item.id)
+    view.editElement = {
+      guard model.selectionSession.id == selectionID,
+        model.selectionSession.itemID(on:boardID) == item.id,
+        !model.isItemBeingDeleted(item.id) else { return }
+      model.interactiveElementFocus = nil
+      model.endSurfaceEditing()
+      open()
+    }
+    view.deleteElement = {
+      guard model.selectionSession.id == selectionID,
+        model.selectionSession.itemID(on:boardID) == item.id else { return }
+      Task {
+        guard await model.deleteItem(item.id), model.selectionSession.id == selectionID else { return }
+        model.clearSelection()
+      }
+    }
+  }
+  static func dismantleUIView(_ view: NotebookSelectionControlsView, coordinator: ()) { view.uninstall() }
 }
 
 private enum ElementHandle: Hashable {
@@ -119,7 +154,13 @@ private enum ElementHandle: Hashable {
   }
 }
 
-final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate {
+/// One owner of capsule appearance, placement, menu lifetime and touch exclusion.
+final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegate {
+  enum Subject { case element, item(WorkspaceItemKind) }
+  private var subject: Subject = .element
+  override var isEnabled: Bool {
+    didSet { toolbar.isUserInteractionEnabled = isEnabled; toolbar.alpha = isEnabled ? 1 : 0.45 }
+  }
   private let gate: NotebookInputGate
   private let source = UUID()
   private let pan = ElementHandlePan()
@@ -256,8 +297,29 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-  func configure(selectionID: UUID, frame: CGRect, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false, mode: NotebookSelectionSession.GeometryMode = .transform, manipulating: Bool = false) {
+  func configure(selectionID: UUID, frame: CGRect, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false, mode: NotebookSelectionSession.GeometryMode = .transform, manipulating: Bool = false, subject: Subject = .element) {
     if self.selectionID != selectionID { cancel(); dismissPalette(); dismissMenus(); self.selectionID = selectionID }
+    self.subject = subject
+    var primary = editButton.configuration!
+    switch subject {
+    case .element:
+      primary.image = UIImage(systemName:"character.cursor.ibeam")
+      editButton.accessibilityLabel = graphic == nil ? "Редактировать элемент" : "Подпись фигуры"
+      editButton.accessibilityIdentifier = "edit-agent-element"
+      deleteButton.accessibilityLabel = "Удалить элемент"
+      deleteButton.accessibilityIdentifier = "delete-agent-element"
+      moreButton.isHidden = false
+    case .item(let kind):
+      primary.image = UIImage(systemName:"arrow.up.forward.app")
+      editButton.accessibilityLabel = switch kind {
+        case .notebook: "Открыть тетрадь"; case .document: "Открыть документ"; case .board: "Открыть доску"
+      }
+      editButton.accessibilityIdentifier = "open-workspace-item"
+      deleteButton.accessibilityLabel = "Удалить"
+      deleteButton.accessibilityIdentifier = "delete-workspace-item"
+      moreButton.isHidden = true
+    }
+    editButton.configuration = primary
     let vertices = graphic.flatMap(NotebookGraphicGeometry.polygon)
     geometryMode = vertices == nil ? .transform : mode
     var modeConfiguration = modeButton.configuration!
@@ -271,11 +333,13 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
     modeButton.accessibilityHint = "Переключить: " + geometryMode.next.controlTitle
     modeButton.toolTip = geometryMode.controlTitle
     let next: [ElementHandle]
-    if layout != nil { next = [.start,.end,.bend] }
+    if case .item = subject { next = [] }
+    else if layout != nil { next = [.start,.end,.bend] }
     else if geometryMode == .vertices, let vertices { next = vertices.indices.map(ElementHandle.vertex) }
     else if geometryMode == .rounding { next = [.rounding] }
     else { next = NotebookElementResizeHandle.visible(in: frame.size).map(ElementHandle.corner) }
     if handles != next { handles = next; rebuildAccessibility() }
+    else { updateAccessibilityElements() }
     connectionLayout = layout; projectionScale = scale; self.hasLabel = hasLabel
     frameRect = frame; toolbar.isHidden = manipulating
     setNeedsLayout(); setNeedsDisplay()
@@ -368,6 +432,7 @@ final class NotebookElementControlsView: UIControl, UIGestureRecognizerDelegate 
     return handle
   }
   override func draw(_ rect: CGRect) {
+    guard case .element = subject else { return }
     tintColor.withAlphaComponent(0.7).setStroke()
     if connectionLayout == nil {
       let outline: UIBezierPath

@@ -216,8 +216,13 @@ final class DrawingResponsivenessTests: XCTestCase {
     // Earlier chat-window scenarios preserve their user-chosen position. Move
     // the real companion away rather than tapping through its visible button.
     let companion = app.buttons["notebook-companion-compose"]
-    let grip = companion.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
-    grip.press(forDuration:0.1,thenDragTo:app.coordinate(withNormalizedOffset:.init(dx:0.8,dy:0.88)))
+    XCTAssertTrue(companion.waitForExistence(timeout:5), "The scene content can publish before window chrome")
+    // A previous run may already have placed it here. A zero-distance drag
+    // is a tap, which opens chat instead of arranging the palette test.
+    if companion.frame.intersects(triangle.frame) {
+      let grip = companion.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+      grip.press(forDuration:0.1,thenDragTo:app.coordinate(withNormalizedOffset:.init(dx:0.8,dy:0.88)))
+    }
     XCTAssertFalse(companion.frame.intersects(triangle.frame))
     triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.6)).tap()
     let style = app.buttons["graphic-style-menu"], more = app.buttons["element-actions-menu"], remove = app.buttons["delete-agent-element"]
@@ -2908,12 +2913,37 @@ final class DrawingResponsivenessTests: XCTestCase {
     removed.tap()
     XCTAssertTrue(delete.waitForExistence(timeout: 2))
     XCTAssertEqual(delete.frame.width,44,accuracy:1); XCTAssertEqual(delete.frame.height,44,accuracy:1)
-    // A standalone round control owns its disc, not the empty square corners.
-    // Tap beside the glyph to check the button background remains usable.
+    let open = app.buttons["open-workspace-item"]
+    XCTAssertTrue(open.exists); XCTAssertEqual(open.frame.midY,delete.frame.midY,accuracy:1)
+    XCTAssertEqual(delete.frame.minX-open.frame.minX,44,accuracy:1)
+    let capsule = XCTAttachment(screenshot:app.screenshot())
+    capsule.name = "workspace-item-shared-capsule"; capsule.lifetime = .keepAlways; add(capsule)
+    // The common capsule keeps full 44-point targets, including beside the glyph.
     delete.coordinate(withNormalizedOffset:.init(dx:0.25,dy:0.5)).tap()
 
     XCTAssertTrue(remaining.waitForExistence(timeout: 2))
     XCTAssertFalse(removed.exists)
+  }
+
+  func testSharedCapsuleOpensSelectedNotebook() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-stacked-board-fixture"]
+    launchPortraitFixture(app)
+    let card = app.descendants(matching:.any).matching(
+      identifier:"workspace-item-7e7a1000-0000-4000-8000-000000000004").firstMatch
+    XCTAssertTrue(card.waitForExistence(timeout:5)); card.tap()
+    let open = app.buttons["open-workspace-item"], remove = app.buttons["delete-workspace-item"]
+    XCTAssertTrue(open.waitForExistence(timeout:3)); XCTAssertTrue(remove.isHittable)
+    XCTAssertEqual(open.frame.width,44,accuracy:1); XCTAssertEqual(open.frame.height,44,accuracy:1)
+    XCTAssertEqual(remove.frame.midY,open.frame.midY,accuracy:1)
+    XCTAssertFalse(app.buttons["graphic-style-menu"].exists)
+    let proof = XCTAttachment(screenshot:app.screenshot())
+    proof.name = "shared-capsule-notebook"; proof.lifetime = .keepAlways; add(proof)
+    open.tap()
+    XCTAssertTrue(open.waitForNonExistence(timeout:5))
+    XCTAssertTrue(app.otherElements["paper-input"].waitForExistence(timeout:5))
+    app.terminate()
   }
 
   func testImmediateDragFromACoverPansTheWholeBoard() {

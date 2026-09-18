@@ -292,7 +292,7 @@ import XCTest
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    let controls = NotebookElementControlsView(gate: gate)
+    let controls = NotebookSelectionControlsView(gate: gate)
     controls.frame = controller.view.bounds
     controls.configure(selectionID: UUID(), frame: .init(x: 100, y: 150, width: 240, height: 180))
     controller.view.addSubview(controls); controls.layoutIfNeeded()
@@ -320,7 +320,7 @@ import XCTest
     let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    let controls = NotebookElementControlsView(gate:gate)
+    let controls = NotebookSelectionControlsView(gate:gate)
     controls.frame = controller.view.bounds; controller.view.addSubview(controls)
     for size in [CGSize(width:40,height:32),.init(width:12,height:12),.init(width:64,height:100)] {
       let frame = CGRect(origin:.init(x:200,y:300),size:size)
@@ -340,7 +340,7 @@ import XCTest
     let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    let controls = NotebookElementControlsView(gate:NotebookInputGate())
+    let controls = NotebookSelectionControlsView(gate:NotebookInputGate())
     controls.frame = .init(x:0,y:0,width:320,height:900)
     controller.view.addSubview(controls)
     let selection = UUID(), frame = CGRect(x:80,y:240,width:160,height:120)
@@ -385,6 +385,44 @@ import XCTest
       XCTAssertTrue(controls.bounds.contains(rect)); XCTAssertEqual(rect.width,44); XCTAssertEqual(rect.height,44)
       XCTAssertLessThanOrEqual(try XCTUnwrap(button.imageView?.image).size.height,23,"Compact glyph, not a scaled-down touch target")
     }
+  }
+
+  func testWorkspaceCardsUseTheSameCapsuleWithoutInventingResizeHandles() throws {
+    let gate = NotebookInputGate()
+    let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let controls = NotebookSelectionControlsView(gate:gate)
+    controls.frame = controller.view.bounds; controller.view.addSubview(controls)
+    func descendants(_ view: UIView) -> [UIView] { view.subviews.flatMap { [$0] + descendants($0) } }
+    let selection = UUID()
+    for kind in [WorkspaceItemKind.notebook,.document,.board] {
+      controls.graphic = nil
+      for frame in [CGRect(x:100,y:220,width:260,height:360), controls.bounds.insetBy(dx:-100,dy:-100)] {
+        controls.configure(selectionID:selection,frame:frame,subject:.item(kind)); controls.layoutIfNeeded()
+        let buttons = try XCTUnwrap(controls.accessibilityElements).compactMap { $0 as? UIButton }
+        XCTAssertEqual(buttons.map(\.accessibilityIdentifier),["open-workspace-item","delete-workspace-item"])
+        XCTAssertEqual(controls.accessibilityElements?.count,2,"Cards expose no unsupported resize handles or styling")
+        let surface = try XCTUnwrap(descendants(controls).first { $0.backgroundColor == UIColor(NotebookChrome.surface) })
+        XCTAssertEqual(surface.bounds.height,40); XCTAssertEqual(surface.bounds.width,96)
+        for button in buttons {
+          let box = button.convert(button.bounds,to:controls)
+          XCTAssertTrue(controls.bounds.contains(box)); XCTAssertEqual(box.width,44); XCTAssertEqual(box.height,44)
+          let point = button.convert(.init(x:22,y:22),to:window)
+          XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.finger))
+          XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.pencil))
+        }
+        let center = controls.convert(.init(x:frame.midX,y:frame.midY),to:window)
+        XCTAssertTrue(gate.permitsSceneContact(at:center,kind:.finger),"Body drag is still owned by WorkspaceItemPose")
+      }
+    }
+    controls.graphic = .init(shape:.triangle)
+    controls.configure(selectionID:UUID(),frame:.init(x:100,y:220,width:260,height:360)); controls.layoutIfNeeded()
+    let buttons = try XCTUnwrap(controls.accessibilityElements).compactMap { $0 as? UIButton }
+    XCTAssertTrue(buttons.contains { $0.accessibilityIdentifier == "graphic-style-menu" })
+    XCTAssertTrue(buttons.contains { $0.accessibilityIdentifier == "edit-agent-element" })
+    XCTAssertTrue(buttons.contains { $0.accessibilityIdentifier == "element-actions-menu" })
+    XCTAssertFalse(buttons.contains { $0.accessibilityIdentifier == "open-workspace-item" })
   }
 
   private func fixture(_ body: (NotebookAppModel, EditableElementReference) async throws -> Void) async throws {

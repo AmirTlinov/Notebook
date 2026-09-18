@@ -473,34 +473,12 @@ struct SpatialWorkspaceView: View {
       let cohort = model.compositionTiles.published,
       let rendered = model.presentedItem(id: selectedItemID, cohort: cohort, presence: presence)
     {
-      let center = presence.camera.worldToScreen(
-        rendered.center,
-        viewport: viewport
-      )
-      let halfWidth = rendered.geometry.width * presence.camera.scale / 2
-      let halfHeight = rendered.geometry.height * presence.camera.scale / 2
-      Button(role: .destructive) {
-        Task {
-          guard await model.deleteItem(selectedItemID) else { return }
-          if self.selectedItemID == selectedItemID { model.clearSelection() }
-        }
-      } label: {
-        Image(systemName: "trash")
-          .font(NotebookChrome.iconFont).foregroundStyle(.red)
-          .frame(width: 44, height: 44)
-          .contentShape(Circle())
-          .background { NotebookSurface().padding(2) }
-      }
-      .buttonStyle(.plain)
-      .disabled(model.isItemBeingDeleted(selectedItemID))
-      .accessibilityLabel("Удалить")
-      .accessibilityIdentifier("delete-workspace-item")
-      .position(
-        x: min(max(center.x + halfWidth + 8, 28), viewport.x - 28),
-        y: min(max(center.y - halfHeight - 8, 28), viewport.y - 28)
-      )
-      .transition(.scale(scale: 0.82).combined(with: .opacity))
-      .zIndex(9_500)
+      let box = rendered.geometry.screenFrame(center:rendered.center, camera:presence.camera, viewport:viewport)
+      NotebookItemControls(item:rendered.item,boardID:presence.boardID,selectionID:model.selectionSession.id,
+        frame:.init(x:box.x,y:box.y,width:box.width,height:box.height),
+        open:{ openItem(selectedItemID,viewport:viewport) })
+        .frame(width:viewport.x,height:viewport.y)
+        .zIndex(9_500)
     }
   }
 

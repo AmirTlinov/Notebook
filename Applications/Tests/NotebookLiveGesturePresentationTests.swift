@@ -134,7 +134,7 @@ final class NotebookLiveGesturePresentationTests: XCTestCase {
   }
 
   private func assertCornerFrame(in view: UIView, expected: CGRect) throws {
-    let controls = try XCTUnwrap(descendants(view, as: NotebookElementControlsView.self).first)
+    let controls = try XCTUnwrap(descendants(view, as: NotebookSelectionControlsView.self).first)
     let corners = (controls.accessibilityElements ?? []).compactMap { $0 as? UIAccessibilityElement }
     XCTAssertEqual(corners.count, 8)
     for corner in NotebookElementResizeHandle.allCases {
