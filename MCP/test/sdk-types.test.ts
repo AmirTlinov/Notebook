@@ -21,10 +21,57 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
       const s=await nb.page({id:input.pageID,elementID:input.elementID});
       if (!s.data) throw new Error('missing');
       const source:string=s.data.element.source;
+      const nativeText=await nb.read({kind:'boardElement',id:input.documentID,elementID:input.elementID});
+      if(nativeText.data) {
+        const size:number=nativeText.data.textStyle.fontSize;
+        const alpha:number=nativeText.data.textStyle.alpha;
+        await nb.transaction('text-style',{base:nativeText.basis,summary:'Increase font size',operations:[
+          {kind:'updateElement',target:{kind:'board',id:input.documentID},id:input.elementID,
+            values:{textStyle:{...nativeText.data.textStyle,fontSize:size+2}}}
+        ]});
+        await emit(alpha);
+      }
       const appearance:'intact'|'partial'|'erased'=s.data.appearance.state;
       const sourceIsPixels:boolean=s.data.appearance.sourceIsCompleteAppearance;
       const d=await nb.document({id:input.documentID,blockID:'one'});
       if(d.data) { const kind:'markdown'|'latex'|'interactive'=d.data.block.kind; await emit(kind); }
+      const vision=await nb.pageMap({id:input.pageID});
+      if(vision.data.map) {
+        const map=vision.data.map;
+        const format:number=map.format, pageID:string=map.pageID;
+        const scale:number=map.renderScale, spacing:number=map.gridSpacing;
+        const columns:number=map.gridColumns, rows:number=map.gridRows;
+        const pixels:number=map.pixelSize.width*map.pixelSize.height;
+        const bounds:number|undefined=map.visibleInkBounds?.width;
+        const suppressed:string[]|undefined=map.suppressedInkIDs;
+        for(const cell of map.occupiedCells) { const column:number=cell.column,row:number=cell.row; await emit({column,row}); }
+        for(const region of map.regions) {
+          const content:number=region.contentPoints.width, crop:number=region.cropPoints.height;
+          const pixelX:number=region.cropPixels.x, count:number=region.inkPixelCount;
+          const cellWidth:number=region.contentCells.width, cellRow:number=region.cropCells.row;
+          const faithful:string=region.faithfulPNG_SHA256, ink:string=region.inkPNG_SHA256;
+          // @ts-expect-error: native PageVisionRegion has content/crop frames, not a region alias
+          const invented=region.region;
+          await emit({content,crop,pixelX,count,cellWidth,cellRow,faithful,ink});
+        }
+        await emit({format,pageID,scale,spacing,columns,rows,pixels,bounds,suppressed});
+      }
+      const inkDirectory=await nb.read({kind:'pageInkActions',id:input.pageID,limit:2});
+      const raster:boolean=inkDirectory.data.baseline.present;
+      for(const stroke of inkDirectory.data.actions) {
+        const id:string=stroke.id, sequence:number=stroke.sequence;
+        const tool:'pen'|'eraser'=stroke.tool;
+        // @ts-expect-error: directory never reads sample bodies
+        const samples=stroke.samples;
+        const source=await nb.read({kind:'pageInkAction',id:input.pageID,elementID:id});
+        if(source.data) {
+          const x:number=source.data.action.samples[0].point.x;
+          const targets=source.data.action.elementTargets;
+          await emit({x,targets,sequence,tool,raster});
+        }
+      }
+      const receipt=await nb.read({kind:'pageVisionReceipt',id:input.pageID});
+      if(receipt.data) { const id:string=receipt.data.pageID; await emit(id); }
       const batch=await nb.readMany({queries:[{kind:'pageHeader',id:input.pageID},{kind:'workspaceHeader'}]});
       const workspace:string=batch.data[1].workspaceID;
       const content:number=batch.data[0].contentStamp.counter;

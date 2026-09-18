@@ -1,5 +1,5 @@
 import * as z from "zod/v4";
-import {expectationSchema, targetSchema, coverTargetSchema, referenceSchema, graphicSchema, operationSchema} from "./actions.js";
+import {expectationSchema, targetSchema, coverTargetSchema, referenceSchema, graphicSchema, textStyleSchema, operationSchema} from "./actions.js";
 import {worldPointSchema} from "./spatial.js";
 
 const id=z.uuid(), text=z.string(), number=z.number(), json=z.json();
@@ -13,7 +13,8 @@ export const snapshotSchema=(data:z.ZodType)=>z.object({data,basis:readBasisSche
 const resolution=z.discriminatedUnion("state",[z.object({state:z.literal("geometry"),frame}).passthrough(),z.object({state:z.literal("hidden")}).strict(),z.object({state:z.literal("pending"),dependencies:z.array(text)}).strict()]);
 const appearance=object({state:z.enum(["intact","partial","erased"]),sourceIsCompleteAppearance:z.boolean()});
 const element=object({id:text,kind:z.enum(["markdown","web","graphic","nativeText"]),frame,source:text,html:text,css:text,javaScript:text,state:json,
-  appearance:appearance.optional(),graphic:graphicSchema.optional(),graphicResolution:resolution.optional(),surface:surface.optional(),worldOrigin:worldPointSchema.optional()});
+  appearance:appearance.optional(),graphic:graphicSchema.optional(),graphicResolution:resolution.optional(),surface:surface.optional(),worldOrigin:worldPointSchema.optional(),textStyle:textStyleSchema.optional()});
+const spatialElement=element.extend({textStyle:textStyleSchema});
 const item=object({id,kind:z.enum(["notebook","document","board"]),title:text,firstPageID:id.optional(),pageCount:number});
 const header=object({workspaceID:id,rootBoardID:id,stamp,itemCount:number,cursor:number,selectedItemID:id.optional(),selectedPageID:id.optional(),boardRevision:text.optional(),boardStamp:stamp.optional(),spatialInkStamp:stamp.optional()});
 const contentHeader=object({target:targetSchema,contentStamp:stamp,stateStamp:stamp.optional(),inkStamp:stamp.optional(),size:size.optional()});
@@ -26,9 +27,14 @@ const page=object({format:number,id,size,elements:z.array(element),agentStamp:st
 const pageElement=object({header:contentHeader,element,appearance,graphicResolution:resolution.optional()}).nullable();
 const documentBlock=object({documentID:id,contentStamp:stamp,stateStamp:stamp,sourceVersion:fieldVersion,stateVersion:fieldVersion.optional(),block,state:json.optional()}).nullable();
 const inkSample=object({point,worldPoint:worldPointSchema.optional(),timeOffset:number,width:number,opacity:number,force:number,azimuth:number,altitude:number});
+const pageInkMetadata={id,tool:z.enum(["pen","eraser"]),color:object({red:number,green:number,blue:number}),sequence:number,isActive:z.boolean()};
+const pageInkActions=object({header:contentHeader,baseline:object({present:z.boolean(),actionCount:number}),
+  actions:z.array(object(pageInkMetadata)),nextActionID:id.optional()});
+const pageInkAction=object({header:contentHeader,action:object({...pageInkMetadata,samples:z.array(inkSample),
+  elementTargets:z.array(object({elementID:text,frame,worldOrigin:worldPointSchema.optional()})).optional()})}).nullable();
 const inkAction=object({id,tool:z.enum(["pen","eraser"]),color:object({red:number,green:number,blue:number}),spans:z.array(object({surface,samples:z.array(inkSample)})),stamp,isActive:z.boolean(),stateStamp:stamp});
 const ink=object({format:number,actions:z.array(inkAction),stamp});
-const board=object({id,board:object({format:number,elements:z.array(element),stamp,freeItems:z.array(object({itemID:id,center:worldPointSchema,zIndex:number,stamp})),stacks:z.array(object({id,center:worldPointSchema,zIndex:number,itemIDs:z.array(id),stamp}))})});
+const board=object({id,board:object({format:number,elements:z.array(spatialElement),stamp,freeItems:z.array(object({itemID:id,center:worldPointSchema,zIndex:number,stamp})),stacks:z.array(object({id,center:worldPointSchema,zIndex:number,itemIDs:z.array(id),stamp}))})});
 const scene=object({header,boardID:id,items:z.array(item),boards:z.array(board),boardContentRevisions:z.record(text,text),totalMatches:number,truncated:z.boolean()});
 const presence=object({format:number,boardID:id,mode:z.enum(["board","cover","page","document"]),camera:object({center:worldPointSchema,scale:number}),viewport:point,
   selectedItemID:id.optional(),notebookPageID:id.optional(),focusedItemID:id.optional(),openProgress:number,documentPageIndex:number});
@@ -71,8 +77,15 @@ const details=object({actionVersion:text,receipt:receipt.optional(),publication:
 const artifact=object({kind:z.enum(["currentView","target","pageOverview","pageRegion","attention","scriptImage"]),id:id.optional(),contextID:id.optional(),referenceID:id.optional(),regionID:text.optional(),mode:text.optional(),expectedSHA256:text});
 const renderRequest=object({id,target:targetSchema,sourceRevision:text,region:frame.optional(),worldOrigin:worldPointSchema.optional(),pageIndex:number.optional()});
 const render=object({status:text,request:renderRequest.optional(),id:id.optional(),artifact:artifact.optional(),pngSHA256:text.optional(),sourceRevision:text.optional(),diagnostics:z.array(text).optional()});
-const visionRegion=object({id:text,region:frame.optional(),inkPNG_SHA256:text.optional(),faithfulPNG_SHA256:text.optional()});
-const vision=object({drawingStamp:stamp,pageSize:size,regions:z.array(visionRegion),inkPNG_SHA256:text.optional(),previewPNG_SHA256:text.optional()});
+const visionCell=object({column:number,row:number});
+const visionCellFrame=object({column:number,row:number,width:number,height:number});
+const visionRegion=object({id:text,contentCells:visionCellFrame,cropCells:visionCellFrame,
+  contentPoints:frame,cropPoints:frame,cropPixels:frame,inkPixelCount:number,
+  faithfulPNG_SHA256:text,inkPNG_SHA256:text});
+const vision=object({format:number,pageID:id,drawingStamp:stamp,suppressedInkIDs:z.array(id).optional(),
+  pageSize:size,renderScale:number,gridSpacing:number,gridColumns:number,gridRows:number,pixelSize:size,
+  visibleInkBounds:frame.optional(),occupiedCells:z.array(visionCell),regions:z.array(visionRegion),
+  previewPNG_SHA256:text,inkPNG_SHA256:text});
 const viewReceipt=object({format:number,workspaceStamp:stamp,boardRevision:text,spatialInkStamp:stamp,presence,pngSHA256:text,renderViewport:point,surface:object({kind:text})});
 const delivery=object({id,deviceID:id,actionVersion:text.optional(),revisions:z.array(expectationSchema),receivedAt:number,displayComplete:z.boolean()});
 const attention=object({status:text,reference:referenceSchema.optional(),payload:json.optional(),artifact:artifact.optional(),pixelWidth:number.optional(),pixelHeight:number.optional(),code:text.optional()});
@@ -97,8 +110,8 @@ export const readDataSchemas = {
   observation, workspaceHeader:header, itemHeaders:z.array(item), itemHeader:item.nullable(), itemLifecycle:object({item,target:coverTargetSchema,revision:text,bodyRecordCount:number.int().nonnegative()}).nullable(),
   workingSet:object({header,items:z.array(item),boards:z.array(board),pages:z.record(text,page),documents:z.record(text,document),states:z.record(text,documentState),ink}),
   sceneWindow:scene, scenePaintOrder:object({revision:text,entries:z.array(object({kind:text,id:text,zIndex:number})),nextCursor:text.nullable()}),
-  page,pageHeader:contentHeader,pageElement,documentHeader:contentHeader,document,documentState,documentBlock,
-  boardItem:board.nullable(),boardElement:element.nullable(),boardContentRevision:text.nullable(),ownerBoard:id.nullable(),
+  page,pageHeader:contentHeader,pageElement,pageInkActions,pageInkAction,documentHeader:contentHeader,document,documentState,documentBlock,
+  boardItem:board.nullable(),boardElement:spatialElement.nullable(),boardContentRevision:text.nullable(),ownerBoard:id.nullable(),
   notebookPages:object({header:directoryHeader,pages:z.array(object({position,document:page}))}),notebookDirectory:directory,notebookPosition:position.nullable(),
   spatialInk:ink,presence,selection,attentionEvidence:object({reference:referenceSchema,payload:json,image:object({sha256:text,pixelWidth:number,pixelHeight:number}).optional()}).nullable(),
   contexts,contextEntries,actions:z.array(receipt),currentViewReceipt:viewReceipt.nullable(),pageVisionReceipt:vision.nullable(),targetRenderReceipt:render.nullable(),

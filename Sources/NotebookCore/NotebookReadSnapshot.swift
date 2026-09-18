@@ -26,7 +26,7 @@ extension NotebookStore {
       })
     case .itemHeader, .ownerBoard: if let id = query.id { try item(id) }
     case .itemHeaders: for value in data.array { if let id = value["id"]?.string.flatMap(UUID.init(uuidString:)) { try item(id) } }
-    case .page, .pageHeader, .pageElement: add(.page, query.id)
+    case .page, .pageHeader, .pageElement, .pageInkActions, .pageInkAction: add(.page, query.id)
     case .document, .documentHeader, .documentBlock, .documentState: add(.document, query.id)
     case .observation: if let target = query.scope?.target { targets.append(target) }
     case .boardItem:
@@ -75,6 +75,8 @@ extension NotebookStore {
     next.next = nil
     var incomplete = false
     switch query.kind {
+    case .pageInkActions:
+      if let after = data["nextActionID"]?.string.flatMap(UUID.init(uuidString:)) { incomplete = true; next.after = after }
     case .notebookDirectory:
       if let index = try data["nextIndex"]?.decode(Int.self) { incomplete = true; next.pageIndex = index; next.visibleRoot = data["header"]?["visibleRoot"]?.string }
     case .contexts, .contextEntries:

@@ -10569,3 +10569,46 @@ rows не становятся основанием отмены; отказ о�
 Пара 0.3.90 (93) этих изменений не содержит; новые приложения не устанавливались.
 S8 остаётся In Progress до согласованной физической приёмки. GUI-225 правки
 соседней задачи не включены в коммит; жалоба на жесты входа/выхода не закрыта.
+
+
+## 18 сентября 2026 — S9: программируемые схемы, документы и адресные источники чернил
+
+Через прежний Core добавлены `pageInkActions` (до 64 metadata headers с курсором)
+и `pageInkAction` (точные samples одного UUID). Каталог не читает samples/PNG;
+чтение источника ограничено двумя physical rows / 4 MiB и прежним общим бюджетом.
+Basis включает версии листа и чернил из того же SQL-снимка; retired page не читается.
+Порядок каталога — UUID, не порядок штрихов; sequence/eraser/isActive не выдают
+источник за видимые пиксели. OCR и новые команды записи не добавлены.
+
+SDK описывает настоящий vision receipt: content/crop cells, points, pixels,
+occupied cells и image hashes вместо выдуманного `region`. Spatial `textStyle`
+читается типизированно и использует ту же схему, что запись; PAGE не получает
+несуществующего обязательного стиля. Обновлены общие generated d.ts/help/schemas.
+
+Доказательства: `.build/s9-programmable-content-20260918/` и подписанный native
+XPC run `.build/s9-composition-native-final-20260918/`.
+- RED: неизвестные PAGE read kinds; неподдержанная typed vision geometry;
+  отсутствующий typed textStyle и принятие spatial read без обязательного стиля.
+- GREEN: **32 Core / 6 suites + 1 Host**, **27 MCP/type/native IPC**, npm check.
+  Финальные MCP/check выполнены на неизменных **556 inputs**; Swift inputs с
+  Core gate не менялись. Board и cover стиль проходят read → edit → undo.
+- 100 000 посторонних ink sources: metadata + точный источник — **1 169 SQL
+  instructions**, **0.00516575 s**; seed **56.336929 s** измерен отдельно.
+  Повреждённые посторонние samples и raster baseline не декодируются.
+- Подписанные реальные XPC: **4/4 PASS**, 0 skipped/runtime warnings. JS перестраивает
+  граф с bound connector и undo; меняет source/структуру/state документа с
+  атомарным stale refusal; обнаруживает UUID человеческого штриха, конвертирует
+  и отменяет; настоящий PDF job сохраняется после run и не блокирует writer.
+  PDF fixture создаёт полный native document bundle, не orphan document.
+- Первый Mac запуск остановился на использовании внутренних JSONValue helpers
+  тестом; второй дал 3 PASS / 1 FAIL из-за неверного ожидания HTML у markdown
+  блока. Исправлены тесты по native контракту (source, пустой authored HTML),
+  production не ослаблен. Последнее SDK-only добавление textStyle проверено
+  отдельным финальным MCP/type gate после Mac XPC run, не объявлено его частью.
+
+S9 остаётся In Progress: это не установка и не физическая приёмка. Рабочая пара
+0.3.90 (93) не обновлялась и не содержит S8/S9. Read-only MCP refresh в 07:34 UTC
+подтвердил два v2 инструмента, TS 7.0.2, исходный результат повторного run и
+`selection: unknown` / `connection: disconnected`; содержание не менялось.
+Физические жесты, saved/received/shown и вся веха не объявлены принятыми.
+GUI-225 peer changes исключены из коммита; жалоба на вход/выход остаётся открытой.

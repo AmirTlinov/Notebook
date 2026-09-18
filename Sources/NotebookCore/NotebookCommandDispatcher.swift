@@ -73,7 +73,7 @@ public struct NotebookReadBounds: Codable, Sendable {
 public struct NotebookReadQuery: Codable, Sendable {
   public enum Kind: String, Codable, Sendable {
     case observation, workspaceHeader, itemHeaders, itemHeader, itemLifecycle, workingSet, sceneWindow, scenePaintOrder
-    case page, pageHeader, pageElement, documentHeader, document, documentState, documentBlock, boardItem, boardElement, boardContentRevision, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
+    case page, pageHeader, pageElement, pageInkActions, pageInkAction, documentHeader, document, documentState, documentBlock, boardItem, boardElement, boardContentRevision, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
     case attentionEvidence, contexts, contextEntries, actions, currentViewReceipt, pageVisionReceipt, targetRenderReceipt
     case renderRequests, delivery, actionSnapshots, runtime, selection, codeFragment, codeFragments
   }
@@ -273,8 +273,8 @@ public struct NotebookCommandDispatcher: Sendable {
           + (query.itemIDs ?? []) + (query.boardIDs ?? [])
       })
       let windowPages = queries.filter { $0.kind == .notebookPages }.reduce(0) { $0 + ($1.pages?.count ?? 0) }
-      guard queries.filter({ [.documentBlock, .pageElement].contains($0.kind) }).count <= 4 else {
-        throw invalid("resource_limit", "Один срез читает до четырёх адресных элементов или блоков по 4 МиБ каждый.")
+      guard queries.filter({ [.documentBlock, .pageElement, .pageInkAction].contains($0.kind) }).count <= 4 else {
+        throw invalid("resource_limit", "Один срез читает до четырёх адресных элементов, блоков или штрихов по 4 МиБ каждый.")
       }
       guard pages.count + windowPages <= 4, heavy.count <= 8, queries.filter({ $0.kind == .attentionEvidence }).count <= 4 else { throw invalid("resource_limit", "Один срез удерживает до четырёх листов и восьми тяжёлых владельцев.") }
       return try store.readTransaction { snapshot in
@@ -352,6 +352,13 @@ public struct NotebookCommandDispatcher: Sendable {
     case .pageElement:
       guard let elementID = query.elementID else { throw invalid("invalid_reference", "Нужен ID элемента листа.") }
       return try .encode(store.readPageElementSnapshot(pageID: required(query.id), elementID: elementID))
+    case .pageInkActions:
+      return try .encode(store.readPageInkActions(pageID: required(query.id), after: query.after, limit: query.limit ?? 32))
+    case .pageInkAction:
+      guard let rawID = query.elementID, let actionID = UUID(uuidString: rawID) else {
+        throw invalid("invalid_reference", "Нужен UUID исходного штриха листа.")
+      }
+      return try .encode(store.readPageInkAction(pageID: required(query.id), actionID: actionID))
     case .document: return try .encode(store.loadDocument(required(query.id)))
     case .documentState: return try .encode(store.loadDocumentState(required(query.id)))
     case .documentBlock:

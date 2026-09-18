@@ -49,6 +49,11 @@ SQL-снимке. `pageHeader` и `documentHeader` возвращают толь
 `graphic.connection.routing` поддерживает `straight`, `elbow`, `curved`;
 положение, привязки и итоговый путь по-прежнему вычисляет общий граф Core.
 
+`boardElement` и элементы пространственной доски/обложки возвращают обязательный
+типизированный `textStyle` (`fontSize`, `weight`, `red`, `green`, `blue`, `alpha`).
+Стиль можно передать в `updateElement`, изменив только нужное значение; схема
+чтения и записи общая. У элемента листа такого обязательного поля нет.
+
 `nb.observe({target:{kind:'page',id},elementID})` выбирает точный объект,
 независимо от камеры и первых 32 превью. Для документа — `target` и `blockID`.
 Без адреса используется опубликованная среда; превью действительно читает
@@ -122,6 +127,50 @@ undo/redo этим срезом не добавлены. Состояние ус
 по стопке, но запись требует scope конкретной обложки. `moveItem` извлекает
 только выбранного участника через существующего владельца placement; версии
 остальных участников не переписываются.
+
+### Схемы, документы и исходные чернила
+
+| Возможность | Чтение / версия | Общая операция / результат |
+|---|---|---|
+| Связанные фигуры, подписи, стиль, endpoints/bindings | `observe` с `content`, `geometry`, `incoming/outgoing`; `pageElement`/`boardElement` | `insertElement`, `updateElement`, `removeElement`, `reorderElements`; один `ActionResult` на атомарную композицию |
+| Состояние элемента | Адресный элемент и basis владельца | `setElementState` |
+| Один блок документа и его committed state | `document({id,blockID})`, обе content/state версии | `updateBlock`, `setBlockState`; stale basis отклоняется целиком |
+| Структура и преамбула | Явное чтение документа | `insertBlock`, `removeBlock`, `reorderBlocks`, `setPreamble`, `replaceDocument` |
+| Печатный экспорт | Зафиксированный document/contentRevision | `export` → persisted job → `exportStatus`; PDF/TeX/assets с хешами |
+| PAGE pen/eraser источники | `read pageInkActions` → `read pageInkAction`; PAGE content/ink basis | `appendInkStroke`, `convertInkToElement`, затем обычные graphic edits и причинная undo |
+| Board/cover/code ink | `read spatialInk` / `code`; точный physical owner | Те же поддерживаемые ink/graphic команды, не приватный UI handler |
+| Изображения и история | `pageMap`, `regions`, `pageImage`, `attention`, `action`, `delivery` | Точные source/hash/version; saved, received и shown раздельны |
+
+Чтение раскрытых соседей не расширяет mutation scope. Геометрия связи,
+вычисленная из узлов, не переписывает её authored endpoints. Группы, generic
+вращение, новый импорт и OCR не объявляются поддержанными этим SDK.
+
+`pageInkActions` читает до 64 заголовков (по умолчанию 32), без samples и raster
+bytes. Продолжение — обычное `coverage.next`; UUID-порядок каталога не заменяет
+авторский `sequence`. `baseline.present/actionCount` честно отмечает растровый
+источник, не придумывает ему stroke UUID. `pageInkAction` принимает UUID листа
+в `id`, UUID штриха в `elementID`; возвращает ровно один bounded source либо
+`null`. Оба чтения используют живого владельца и прежний read allowance.
+
+```js
+const directory = await nb.read({kind:'pageInkActions',id:args.pageID,limit:16});
+for (const stroke of directory.data.actions) {
+  if (stroke.tool !== 'pen' || !stroke.isActive) continue;
+  const source = await nb.read({kind:'pageInkAction',id:args.pageID,elementID:stroke.id});
+  await emit(source.data); // measurements, not recognized text or final pixels
+}
+```
+
+`isActive` не означает видимость каждого пикселя: последующие eraser actions и
+конверсия меняют показ, не измеренный источник. Для фактического вида нужны
+точные изображения. `pageMap` типизирует реальные `contentPoints/cropPoints`,
+pixel/cell bounds и хеши, без выдуманного поля `region`. Прямое редактирование
+точек существующего контакта и универсальный agent eraser не добавлены.
+
+Экспорт фиксирует исходник документа, не текущий DOM или состояние интерактива.
+Interactive-блок имеет явную печатную заглушку с адресом. Долгая компиляция PDF
+проходит вне writer, а публикация повторно проверяет contentRevision. Сохранённая
+квитанция не является доказательством визуальной композиции на iPad.
 
 ### Настоящий выбор и исторический источник
 

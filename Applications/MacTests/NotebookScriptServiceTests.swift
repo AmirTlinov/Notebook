@@ -206,6 +206,101 @@ final class NotebookScriptServiceTests: XCTestCase {
     await host.shutdown()
   }
 
+  func testAddressedGraphReflowAndUndoCrossTheRealSandboxedSDK() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), run = UUID()
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    let pageID = try XCTUnwrap(owner.store.loadIndex().selectedPageID)
+    var page = try owner.store.loadPage(pageID)
+    let a = AgentElement(id: "a", kind: .graphic, frame: .init(x: 80, y: 80, width: 100, height: 100),
+      source: "", html: "", graphic: .init(label: "A"))
+    let b = AgentElement(id: "b", kind: .graphic, frame: .init(x: 420, y: 80, width: 100, height: 100),
+      source: "", html: "", graphic: .init(label: "B"))
+    let connection = NotebookGraphicConnection(
+      start: .init(point: .zero, binding: .init(elementID: "a")),
+      end: .init(point: .init(x: 100, y: 0), binding: .init(elementID: "b")))
+    let arrow = AgentElement(id: "ab", kind: .graphic, frame: .init(x: 220, y: 130, width: 100, height: 10),
+      source: "", html: "", graphic: .init(shape: .connector, label: "Before", connection: connection))
+    XCTAssertTrue(page.replaceElements([a, b, arrow], actor: UUID()))
+    try owner.store.savePage(page)
+    _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2, code: """
+      const target={kind:'page',id:args.page};
+      const query={target,ids:['ab'],fields:['content','geometry'],expand:['outgoing']};
+      const before=await nb.observe(query);
+      if (!before.coverage.complete) throw new Error('Incomplete three-object graph');
+      const nodes=before.data.objects.map(x=>x.value.content)
+        .filter(x=>x.graphic.shape!=='connector').sort((a,b)=>a.id.localeCompare(b.id));
+      if (nodes.length!==2) throw new Error('The bound endpoints were not addressed');
+      const incoming=await nb.observe({target,ids:[nodes[0].id],expand:['incoming']});
+      const center=nodes.reduce((sum,node)=>sum+node.frame.x+node.frame.width/2,0)/nodes.length;
+      const top=Math.min(...nodes.map(node=>node.frame.y));
+      const stride=Math.max(...nodes.map(node=>node.frame.height))+80;
+      const operations=[{kind:'updateElement',target,id:'ab',values:{graphic:{
+        label:nodes.map(node=>node.id).join(' → '),
+        connection:{bend:Math.max(...nodes.map(node=>node.frame.width))/2,routing:'curved'}
+      }}},...nodes.map((node,index)=>({kind:'updateElement',target,id:node.id,values:{frame:{
+        ...node.frame,x:center-node.frame.width/2,y:top+index*stride
+      }}}))];
+      // Reading a graph grants a basis, not permission to rearrange it. The
+      // earlier label edit must roll back with the later unauthorized move.
+      let rejected;
+      try { await nb.transaction('unscoped',{base:before.basis,summary:'No movement scope',operations}); }
+      catch(error) { rejected=error.code; }
+      const afterRejected=await nb.observe(query);
+      const action={base:before.basis,summary:'Algorithmic graph reflow',additionalOwners:[target],operations};
+      const receipt=await nb.transaction('reflow',action);
+      const changed=await nb.observe({...query,since:before.data.checkpoint});
+      const direct=await nb.page({id:args.page,elementID:'ab'});
+      const undo=await nb.undo('undo-reflow',{actionID:receipt.actionID});
+      const restored=await nb.observe(query);
+      const originalAgain=await nb.transaction('reflow',action);
+      return {before:before.data.objects,rejected,afterRejected:afterRejected.data.objects,
+        incomingIDs:incoming.data.objects.map(x=>x.id),mode:changed.data.mode,
+        changed:changed.data.objects,direct:direct.data,receipt,undo,
+        restored:restored.data.objects,originalAgain};
+      """, arguments: .object(["page": .string(pageID.uuidString)])))
+    let result = try await finish(host, run)
+    XCTAssertEqual(result.string("status"), "completed", "\(result)")
+    let value = try XCTUnwrap(result["result"])
+    XCTAssertEqual(Set(value.array("before").compactMap { $0.string("id") }), ["a", "b", "ab"])
+    XCTAssertEqual(Set(try value["incomingIDs"]?.decode([String].self) ?? []), ["a", "ab"])
+    XCTAssertEqual(value.string("rejected"), "composition_scope")
+    XCTAssertEqual(value["afterRejected"], value["before"])
+    XCTAssertEqual(value.string("mode"), "delta")
+    XCTAssertEqual(Set(value.array("changed").compactMap { $0.string("id") }), ["a", "b", "ab"])
+    for (id, y) in [("a", 80.0), ("b", 260.0)] {
+      let node = try XCTUnwrap(value.array("changed").first { $0.string("id") == id }?["value"]?["content"])
+      XCTAssertEqual(node["frame"], try .encode(PageRect(x: 250, y: y, width: 100, height: 100)))
+    }
+    let beforeArrow = try XCTUnwrap(value.array("before").first { $0.string("id") == "ab" }?["value"])
+    let changedArrow = try XCTUnwrap(value.array("changed").first { $0.string("id") == "ab" }?["value"])
+    let savedArrow = try XCTUnwrap(value["direct"]?["element"])
+    XCTAssertEqual(savedArrow["frame"], try .encode(arrow.frame))
+    XCTAssertEqual(savedArrow["graphic"]?["connection"]?["start"], try .encode(connection.start))
+    XCTAssertEqual(savedArrow["graphic"]?["connection"]?["end"], try .encode(connection.end))
+    XCTAssertEqual(savedArrow["graphic"]?.string("label"), "a → b")
+    XCTAssertEqual(savedArrow["graphic"]?["connection"]?["bend"], .number(50))
+    XCTAssertEqual(changedArrow["content"], savedArrow)
+    XCTAssertEqual(changedArrow["graphicResolution"]?.string("state"), "geometry")
+    XCTAssertEqual(changedArrow["graphicResolution"], value["direct"]?["graphicResolution"])
+    XCTAssertNotEqual(changedArrow["graphicResolution"], beforeArrow["graphicResolution"])
+    XCTAssertNotEqual(changedArrow["graphicResolution"]?["frame"], savedArrow["frame"])
+    XCTAssertEqual(value["restored"], value["before"])
+    XCTAssertEqual(value["receipt"]?["publication"]?.string("saved"), "confirmed")
+    XCTAssertEqual(value["receipt"], value["originalAgain"])
+    XCTAssertNotEqual(value["receipt"]?["actionVersion"], value["undo"]?["actionVersion"])
+    XCTAssertEqual(value["undo"]?["undo"]?["preservedCount"], .number(0))
+    let actionID = try XCTUnwrap(value["receipt"]?.string("actionID").flatMap(UUID.init(uuidString:)))
+    let receipt = try owner.store.collaborationAction(actionID)
+    XCTAssertEqual(receipt.action.operations.map(\.id), ["ab", "a", "b"])
+    XCTAssertTrue((receipt.undo?.restored ?? 0) > 0)
+    XCTAssertEqual(try owner.store.savedActionResult(actionID), value["receipt"])
+    for element in [a, b, arrow] {
+      XCTAssertEqual(try owner.store.readPageElement(pageID: pageID, elementID: element.id), element)
+    }
+    XCTAssertEqual(owner.nativeWrites, 2, "One atomic reflow, one undo, no rejected or replayed write")
+    await host.shutdown()
+  }
+
   func testTrustedMarkupCanCompleteWhileTheUserInterpreterAwaitsTransaction() async throws {
     let owner = try Owner(), host = try await coordinator(owner), id = UUID()
     defer { try? FileManager.default.removeItem(at: owner.store.root) }
@@ -260,6 +355,152 @@ final class NotebookScriptServiceTests: XCTestCase {
     XCTAssertEqual(original["publication"]?.string("saved"), "confirmed")
     XCTAssertNotEqual(original["publication"]?.string("shownOnIPad"), "confirmed")
     XCTAssertEqual(try owner.store.scriptEffect(run, id: actionID).value, original)
+    await host.shutdown()
+  }
+
+  func testDocumentSourceStructureStateAndUndoCrossTheRealSandboxedSDK() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), run = UUID()
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    let boardID = try owner.store.loadIndex().rootBoardID
+    _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2, code: """
+      const origin={tileX:0,tileY:0,localX:0,localY:0};
+      const scene=await nb.board({id:args.board,bounds:{anchor:origin,
+        region:{x:0,y:0,width:1200,height:1000}}});
+      const documentID=await nb.id('document'), target={kind:'document',id:documentID};
+      const created=await nb.transaction('create',{base:scene.basis,summary:'Create a real document',operations:[{
+        kind:'createDocument',target:{kind:'board',id:args.board},id:documentID,values:{
+          title:'Script lifecycle',center:{...origin,localX:700,localY:400},paperSize:'a4',preamble:'',blocks:[
+            {id:'intro',kind:'markdown',source:'# Before'},
+            {id:'counter',kind:'interactive',html:'<button>Count</button>',
+              javaScript:'window.counter = 0;',initialState:{count:0},height:160}
+          ]
+        }
+      }]});
+      const original=await nb.document({id:documentID});
+      const addressed=await nb.document({id:documentID,blockID:'counter'});
+      const source=await nb.transaction('source',{base:addressed.basis,summary:'Edit source and structure',operations:[
+        {kind:'updateBlock',target,id:'intro',values:{source:'# After'}},
+        {kind:'insertBlock',target,id:'appendix',values:{kind:'markdown',source:'**Added**',afterID:'intro'}},
+        {kind:'reorderBlocks',target,values:{ids:['counter','appendix','intro']}},
+        {kind:'setPreamble',target,values:{preamble:'\\\\usepackage{amsmath}'}}
+      ]});
+      const afterSource=await nb.document({id:documentID});
+      const beforeState=await nb.document({id:documentID,blockID:'counter'});
+      const versions=beforeState.basis.owners.find(owner=>owner.target.kind==='document'&&owner.target.id.toLowerCase()===documentID.toLowerCase());
+      if (!versions || !versions.revision || !versions.stateRevision) throw new Error('Missing source/state basis');
+      const state=await nb.transaction('state',{base:beforeState.basis,summary:'Advance the program state',operations:[
+        {kind:'setBlockState',target,id:'counter',values:{state:{count:7}}}
+      ]});
+      const afterState=await nb.document({id:documentID,blockID:'counter'});
+      let stale;
+      try { await nb.transaction('stale',{base:beforeState.basis,summary:'Reject all stale edits',operations:[
+        {kind:'updateBlock',target,id:'intro',values:{source:'Must not be saved'}},
+        {kind:'setBlockState',target,id:'counter',values:{state:{count:99}}}
+      ]}); } catch(error) { stale=error.code; }
+      const afterRejected=await nb.document({id:documentID});
+      const rejectedState=await nb.document({id:documentID,blockID:'counter'});
+      const undoSource=await nb.undo('undo-source',{actionID:source.actionID});
+      const restoredSource=await nb.document({id:documentID});
+      const retainedState=await nb.document({id:documentID,blockID:'counter'});
+      const undoState=await nb.undo('undo-state',{actionID:state.actionID});
+      const finalState=await nb.document({id:documentID,blockID:'counter'});
+      return {documentID,created,source,state,versions,original:original.data,afterSource:afterSource.data,
+        beforeState:beforeState.data,afterState:afterState.data,stale,afterRejected:afterRejected.data,
+        rejectedState:rejectedState.data,undoSource,restoredSource:restoredSource.data,
+        retainedState:retainedState.data,undoState,finalState:finalState.data};
+      """, arguments: .object(["board": .string(boardID.uuidString.lowercased())])))
+    let result = try await finish(host, run)
+    XCTAssertEqual(result.string("status"), "completed", "\(result)")
+    let value = try XCTUnwrap(result["result"])
+    XCTAssertEqual(value["afterSource"]?.array("blocks").compactMap { $0.string("id") }, ["counter", "appendix", "intro"])
+    XCTAssertEqual(value["afterSource"]?.array("blocks").first { $0.string("id") == "intro" }?.string("source"), "# After")
+    XCTAssertEqual(value["afterSource"]?.string("preamble"), "\\usepackage{amsmath}")
+    let appendix = try XCTUnwrap(value["afterSource"]?.array("blocks").first { $0.string("id") == "appendix" })
+    // Document markdown owns source, unlike a prepared page AgentElement.
+    // Its HTML belongs to the live document renderer, not a second saved copy.
+    XCTAssertEqual(appendix.string("kind"), "markdown")
+    XCTAssertEqual(appendix.string("source"), "**Added**")
+    XCTAssertEqual(appendix.string("html"), "")
+    XCTAssertEqual(value["afterState"]?["block"], value["beforeState"]?["block"])
+    XCTAssertEqual(value["afterState"]?["state"], .object(["count": .number(7)]))
+    XCTAssertEqual(value["afterState"]?["contentStamp"], value["beforeState"]?["contentStamp"])
+    XCTAssertNotEqual(value["afterState"]?["stateStamp"], value["beforeState"]?["stateStamp"])
+    XCTAssertNotNil(value["versions"]?.string("revision"))
+    XCTAssertNotNil(value["versions"]?.string("stateRevision"))
+    XCTAssertEqual(value.string("stale"), "revision_conflict")
+    XCTAssertEqual(value["afterRejected"], value["afterSource"])
+    XCTAssertEqual(value["rejectedState"], value["afterState"])
+    XCTAssertEqual(value["restoredSource"]?["blocks"], value["original"]?["blocks"])
+    XCTAssertEqual(value["restoredSource"]?["preamble"], value["original"]?["preamble"])
+    XCTAssertEqual(value["retainedState"]?["state"], .object(["count": .number(7)]))
+    XCTAssertEqual(value["finalState"]?["state"], .object(["count": .number(0)]))
+    for key in ["created", "source", "state", "undoSource", "undoState"] {
+      XCTAssertEqual(value[key]?["publication"]?.string("saved"), "confirmed")
+    }
+    XCTAssertEqual(value["undoSource"]?["undo"]?["preservedCount"], .number(0))
+    XCTAssertEqual(value["undoState"]?["undo"]?["preservedCount"], .number(0))
+    let documentID = try XCTUnwrap(value.string("documentID").flatMap(UUID.init(uuidString:)))
+    let document = try owner.store.loadDocument(documentID)
+    XCTAssertEqual(try owner.store.readItemHeader(documentID)?.kind, .document)
+    XCTAssertEqual(try owner.store.ownerBoardID(of: documentID), boardID)
+    XCTAssertEqual(document.blocks.map(\.id), ["intro", "counter"])
+    XCTAssertEqual(document.blocks.first?.source, "# Before")
+    XCTAssertEqual(document.preamble, "")
+    XCTAssertEqual(try owner.store.loadDocumentState(documentID).value(for: "counter"), .object(["count": .number(0)]))
+    XCTAssertEqual(owner.nativeWrites, 5, "Create, source, state and their two inverses; the stale action saves nothing")
+    await host.shutdown()
+  }
+
+  func testHumanPageInkDiscoveryConversionAndUndoCrossTheRealSDK() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), run = UUID()
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    let pageID = try XCTUnwrap(owner.store.loadIndex().selectedPageID)
+    var page = try owner.store.loadPage(pageID)
+    let stroke = PageInkAction(tool: .pen, samples: [(80.0, 80.0), (180, 80), (180, 180), (80, 180), (80, 80)].enumerated().map { index, point in
+      .init(point: .init(x: point.0, y: point.1), timeOffset: Double(index) / 120,
+        width: 2, opacity: 1, force: 0.5, azimuth: 0, altitude: 1)
+    })
+    let drawing = try PageInkDrawing().appending(stroke)
+    XCTAssertTrue(page.replaceDrawing(try drawing.dataRepresentation(), actor: UUID()))
+    try owner.store.savePage(page)
+    _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2, code: """
+      const target={kind:'page',id:args.page};
+      const directory=await nb.read({kind:'pageInkActions',id:args.page,limit:8});
+      if(!directory.coverage.complete) throw new Error('Incomplete source fixture');
+      const selected=directory.data.actions.find(a=>a.tool==='pen'&&a.isActive);
+      const source=await nb.read({kind:'pageInkAction',id:args.page,elementID:selected.id});
+      const points=source.data.action.samples.map(sample=>sample.point);
+      const x=Math.min(...points.map(p=>p.x)), y=Math.min(...points.map(p=>p.y));
+      const converted=await nb.transaction('convert',{base:source.basis,summary:'Convert discovered source',additionalOwners:[target],operations:[{
+        kind:'convertInkToElement',target,id:'from-human',values:{kind:'graphic',source:'',
+          frame:{x,y,width:Math.max(...points.map(p=>p.x))-x,height:Math.max(...points.map(p=>p.y))-y},
+          graphic:{shape:'rectangle',label:'',style:{stroke:{red:0,green:0,blue:0},strokeWidth:2},
+            representation:'geometry',visible:true,sourceInkIDs:[selected.id]}}
+      }]});
+      const graphic=await nb.page({id:args.page,elementID:'from-human'});
+      const edit=await nb.transaction('label',{base:graphic.basis,summary:'Explain the figure',operations:[{
+        kind:'updateElement',target,id:'from-human',values:{graphic:{label:'Native source'}}
+      }]});
+      const edited=await nb.page({id:args.page,elementID:'from-human'});
+      const undoEdit=await nb.undo('undo-label',{actionID:edit.actionID});
+      const undoConversion=await nb.undo('undo-conversion',{actionID:converted.actionID});
+      const retained=await nb.read({kind:'pageInkAction',id:args.page,elementID:selected.id});
+      const restored=await nb.page({id:args.page,elementID:'from-human'});
+      return {directory:directory.data,source:source.data,converted,edited:edited.data,undoEdit,undoConversion,
+        retained:retained.data,restored:restored.data};
+      """, arguments: .object(["page": .string(pageID.uuidString)])))
+    let result = try await finish(host, run)
+    XCTAssertEqual(result.string("status"), "completed", "\(result)")
+    let value = try XCTUnwrap(result["result"])
+    XCTAssertEqual(value["directory"]?.array("actions").first?.string("id")?.lowercased(), stroke.id.uuidString.lowercased())
+    XCTAssertNil(value["directory"]?.array("actions").first?["samples"])
+    XCTAssertEqual(value["source"]?["action"], value["retained"]?["action"])
+    XCTAssertEqual(try value["source"]?["action"]?.decode(PageInkAction.self), drawing.actions.first)
+    XCTAssertEqual(value["edited"]?["element"]?["graphic"]?.string("label"), "Native source")
+    XCTAssertEqual(value["restored"]?["element"]?["graphic"]?.string("representation"), "ink")
+    XCTAssertEqual(value["converted"]?["publication"]?.string("saved"), "confirmed")
+    XCTAssertEqual(try owner.store.loadPage(pageID).drawingData, page.drawingData)
+    XCTAssertEqual(owner.nativeWrites, 4)
     await host.shutdown()
   }
 
@@ -480,7 +721,14 @@ final class NotebookScriptServiceTests: XCTestCase {
       .latex(id: "math", source: "\\[E=mc^2,\\qquad \\int_0^1 x^2\\,dx=\\frac{1}{3}\\]\n\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}\\num{1234.5}"),
       .interactive(id: interactiveID, html: "<button>+1</button>")
     ])
-    try owner.store.saveDocument(document); try owner.store.saveDocumentState(.init(id: document.id, actor: UUID()))
+    let actor = UUID()
+    var index = try owner.store.loadIndex(), board = try owner.store.loadBoard(items: index.items)
+    let independentPageID = try XCTUnwrap(index.selectedPageID)
+    let item = index.createDocument(title: "Actual PDF", actor: actor, documentID: document.id)
+    XCTAssertNotNil(item)
+    XCTAssertTrue(board.addItem(document.id, to: index.rootBoardID, near: .init(x: 900, y: 450), actor: actor))
+    try owner.store.saveDocumentWorkspaceBundle(index: index, document: document,
+      state: .init(id: document.id, actor: actor), board: board)
     owner.holdPublication = true
     _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2,
       code: "return await nb.export('actual-pdf',{documentID:args.documentID});",
@@ -496,9 +744,21 @@ final class NotebookScriptServiceTests: XCTestCase {
     }
     XCTAssertTrue(owner.publicationAccepted, "Only the test barrier delays a real compiled PDF; no receipt or PDF is fabricated.")
     let another = UUID()
-    _ = try await host.handle(.init(op: .start, runID: another, apiVersion: 2, code: "return 42;"))
+    _ = try await host.handle(.init(op: .start, runID: another, apiVersion: 2, code: """
+      const page=await nb.read({kind:'pageHeader',id:args.page});
+      return await nb.transaction('during-export',{base:page.basis,summary:'Write while PDF publication waits',operations:[
+        {kind:'insertElement',target:{kind:'page',id:args.page},id:'during-export',values:{
+          kind:'markdown',source:'**Writer available**',frame:{x:20,y:20,width:260,height:120}
+        }}
+      ]});
+      """, arguments: .object(["page": .string(independentPageID.uuidString)])))
     let independent = try await finish(host, another)
-    XCTAssertEqual(independent["result"], .number(42))
+    XCTAssertEqual(independent.string("status"), "completed", "\(independent)")
+    XCTAssertEqual(independent["result"]?["publication"]?.string("saved"), "confirmed")
+    let independentElement = try XCTUnwrap(owner.store.readPageElement(pageID: independentPageID, elementID: "during-export"))
+    XCTAssertEqual(independentElement.source, "**Writer available**")
+    XCTAssertTrue(independentElement.html.contains("<strong>Writer available</strong>"))
+    XCTAssertEqual(owner.nativeWrites, 1, "A real native page commit completed before releasing PDF publication")
     owner.releasePublication?.resume(); owner.releasePublication = nil
     var status: JSONValue = .null
     let publicationDeadline = ContinuousClock.now + .seconds(10)
