@@ -338,7 +338,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  private static let currentDatabaseVersion: Int64 = 7
+  static let currentDatabaseVersion: Int64 = 8
 
   func prepareDatabase(initialWorkspaceID: UUID? = nil) throws {
     if currentSQL != nil { guard initialWorkspaceID == nil else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }; return }
@@ -433,27 +433,31 @@ extension NotebookStore {
           after = row[0].text!
         }
       }
-      var pageInkAfter = ""
-      while let row = try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file LIKE 'pages/%' AND r.collection='actions' AND r.address>? ORDER BY r.address LIMIT 1", [.text(pageInkAfter)]).first {
-        let fragment = try JSONDecoder().decode(NotebookStoredFragment.self,from:row[1].blob!)
-        if fragment.value["tool"]?.string == "eraser" { try indexPageElementErasures(fragment,database:database) }
-        pageInkAfter = row[0].text!
-      }
-      var inkAfter = ""
-      while let row = try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file='spatial-ink.json' AND r.collection='actions' AND r.address>? ORDER BY r.address LIMIT 1", [.text(inkAfter)]).first {
-        let address = row[0].text!
-        let fragment = try JSONDecoder().decode(NotebookStoredFragment.self,from:row[1].blob!)
-        if fragment.value["tool"]?.string == "eraser" {
-          try indexElementErasures(readSpatialInkAction(address),address:address,database:database)
+      if admittedVersion < 7 {
+        var pageInkAfter = ""
+        while let row = try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file LIKE 'pages/%' AND r.collection='actions' AND r.address>? ORDER BY r.address LIMIT 1", [.text(pageInkAfter)]).first {
+          let fragment = try JSONDecoder().decode(NotebookStoredFragment.self,from:row[1].blob!)
+          if fragment.value["tool"]?.string == "eraser" { try indexPageElementErasures(fragment,database:database) }
+          pageInkAfter = row[0].text!
         }
-        inkAfter = address
+        var inkAfter = ""
+        while let row = try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file='spatial-ink.json' AND r.collection='actions' AND r.address>? ORDER BY r.address LIMIT 1", [.text(inkAfter)]).first {
+          let address = row[0].text!
+          let fragment = try JSONDecoder().decode(NotebookStoredFragment.self,from:row[1].blob!)
+          if fragment.value["tool"]?.string == "eraser" {
+            try indexElementErasures(readSpatialInkAction(address),address:address,database:database)
+          }
+          inkAfter = address
+        }
       }
+      if admittedVersion < 8 { try rebuildItemLifecycleIndex(database: database) }
       try database.run("PRAGMA user_version=\(Self.currentDatabaseVersion)")
     }
   }
 
   /// Called only inside the bootstrap or admission writer transaction.
   private func prepareCurrentDatabaseSchema(_ database: NotebookSQLConnection) throws {
+    try Self.createItemLifecycleIndex(database)
     try database.run("CREATE TABLE IF NOT EXISTS ink_element_erasures(address TEXT NOT NULL REFERENCES records(address) ON DELETE CASCADE,kind TEXT NOT NULL,owner_id TEXT NOT NULL,element_id TEXT NOT NULL,PRIMARY KEY(address,kind,owner_id,element_id))")
     try database.run("CREATE INDEX IF NOT EXISTS ink_element_erasures_target ON ink_element_erasures(kind,owner_id,element_id,address)")
     try database.run("CREATE TABLE IF NOT EXISTS graphic_sources(address TEXT NOT NULL REFERENCES records(address) ON DELETE CASCADE,owner TEXT NOT NULL,element_id TEXT NOT NULL,stroke_id TEXT NOT NULL,PRIMARY KEY(address,stroke_id))")
@@ -537,8 +541,13 @@ extension NotebookStore {
       try validateChangedOwnership(database: database)
       try refreshBoardFrontier(database: database)
       try refreshReferenceIndex(database: database)
+      try refreshItemLifecycleIndex(database: database)
       if !advancesReadRevision, database.pendingChangeCount > 0 { throw NotebookStorageError.invalidTransaction("local chat changed shared content") }
-      if advancesReadRevision && sqlite3_total_changes64(database.handle) > changesAtStart {
+      // Schema admission may rebuild derived indexes without changing any
+      // accepted content. Only a real publication advances its read cut.
+      let changesReadCut = preparedDatabase == nil
+        ? sqlite3_total_changes64(database.handle) > changesAtStart : database.pendingChangeCount > 0
+      if advancesReadRevision && changesReadCut {
         let revision = try currentReadCursor()
         guard revision < UInt64(Int64.max) else { throw NotebookStorageError.limitExceeded("read_revision") }
         try database.run("UPDATE metadata SET value=? WHERE key='read_revision'", [.text(String(revision + 1))])

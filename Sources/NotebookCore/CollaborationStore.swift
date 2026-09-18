@@ -63,6 +63,16 @@ extension NotebookStore {
     let before = try projection ?? actionSourceProjection(action)
   for expectation in action.expected {
     let actual = try targetContentRevision(target: expectation.target)
+    if let expectedLifecycle = expectation.lifecycleRevision {
+      guard expectation.target.kind == .cover else {
+        throw CollaborationError("invalid_basis", "Основание жизненного цикла принадлежит предмету пространства.", target: expectation.target)
+      }
+      let extent = try readItemLifecycle(expectation.target.id)
+      guard extent?.target == expectation.target, extent?.revision == expectedLifecycle.lowercased() else {
+        throw CollaborationError("revision_conflict", "Содержание предмета изменилось, в том числе вне экрана. Прочитайте itemLifecycle заново.",
+          target: expectation.target, expected: expectedLifecycle, actual: extent?.revision)
+      }
+    }
     if let expectedInk = expectation.inkRevision, try before.inkRevision(of: expectation.target) != expectedInk.lowercased() {
       throw CollaborationError("revision_conflict", "Чернила изменились. Рассмотрите поверхность заново.", target: expectation.target,
         expected: expectedInk, actual: try before.inkRevision(of: expectation.target))

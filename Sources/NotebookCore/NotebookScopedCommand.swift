@@ -119,6 +119,8 @@ extension NotebookStore {
       .text(fragment.address), .text(fragment.file), fragment.parent.map(NotebookSQLValue.text) ?? .null,
       .text(fragment.collection), .text(fragment.member), .integer(Int64(fragment.position)), .text(hash)])
     try updateBoardContribution(address: fragment.address, previous: previousHash, next: hash, database: database)
+    try noteItemLifecycleChange(address: fragment.address, file: fragment.file, collection: fragment.collection,
+      member: fragment.member, previous: previousHash, next: hash, database: database)
     try updateAddressIndexes(fragment, database: database)
     try noteContextHistoryChange(file: fragment.file, database: database)
     try updateSearchIndex(fragment, database: database)
@@ -158,6 +160,8 @@ extension NotebookStore {
           for id in owned { try database.noteOwner(.item, id.uuidString.lowercased()) }
         }
         try updateBoardContribution(address: address, previous: row[4].text, next: nil, database: database)
+        try noteItemLifecycleChange(address: address, file: file, collection: collection,
+          member: member, previous: row[4].text, next: nil, database: database)
         try noteReferenceChange(address, file: file, database: database)
         try noteDocumentSourceDelivery(address: address, file: file, collection: collection, member: member, database: database)
         try database.run("DELETE FROM records WHERE address=?", [.text(address)])

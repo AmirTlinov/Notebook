@@ -27,6 +27,14 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
       const batch=await nb.readMany({queries:[{kind:'pageHeader',id:input.pageID},{kind:'workspaceHeader'}]});
       const workspace:string=batch.data[1].workspaceID;
       const content:number=batch.data[0].contentStamp.counter;
+      const extent=await nb.read({kind:'itemLifecycle',id:input.documentID});
+      if(extent.data) {
+        const revision:string=extent.data.revision;
+        const rows:number=extent.data.bodyRecordCount;
+        const target:'cover'=extent.data.target.kind;
+        const fence:string|undefined=extent.basis.owners[0].lifecycleRevision;
+        await emit({revision,rows,target,fence});
+      }
       const choice=await nb.read({kind:'selection'});
       if(choice.data.status==='known') {
         const generation:number=choice.data.generation;

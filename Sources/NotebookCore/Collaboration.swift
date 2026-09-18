@@ -46,13 +46,15 @@ public struct CollaborationExpectation: Codable, Equatable, Sendable {
   public let stateRevision: String?
   public let sourceRevision: String?
   public let inkRevision: String?
+  public let lifecycleRevision: String?
 
-  public init(target: CollaborationTarget, revision: String, stateRevision: String? = nil, sourceRevision: String? = nil, inkRevision: String? = nil) {
+  public init(target: CollaborationTarget, revision: String, stateRevision: String? = nil, sourceRevision: String? = nil, inkRevision: String? = nil, lifecycleRevision: String? = nil) {
     self.target = target
     self.revision = revision
     self.stateRevision = stateRevision
     self.sourceRevision = sourceRevision
     self.inkRevision = inkRevision
+    self.lifecycleRevision = lifecycleRevision
   }
 }
 

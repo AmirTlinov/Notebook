@@ -14,6 +14,16 @@ extension NotebookStore {
     }
     switch query.kind {
     case .workspaceHeader: targets = [catalogue]
+    case .itemLifecycle:
+      guard data != .null else { return try readBasis(targets: []) }
+      let extent = try data.decode(NotebookItemLifecycle.self)
+      try item(extent.item.id)
+      let base = try readBasis(targets: targets)
+      return .init(workspaceID: base.workspaceID, owners: base.owners.map { owner in
+        .init(target: owner.target, revision: owner.revision, stateRevision: owner.stateRevision,
+          sourceRevision: owner.sourceRevision, inkRevision: owner.inkRevision,
+          lifecycleRevision: owner.target == extent.target ? extent.revision : nil)
+      })
     case .itemHeader, .ownerBoard: if let id = query.id { try item(id) }
     case .itemHeaders: for value in data.array { if let id = value["id"]?.string.flatMap(UUID.init(uuidString:)) { try item(id) } }
     case .page, .pageHeader, .pageElement: add(.page, query.id)

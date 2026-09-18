@@ -505,6 +505,12 @@ extension NotebookSQLScaleTests {
     try fixture.fixture { store, actor, base in
       try fillNotebookPages(store: store, index: base, count: 100_000, actor: actor)
       #expect(try store.loadIndex().isValid)
+      let lifecycle = try store.readTransaction { _ in
+        try store.currentSQL!.limitReads(.init(rows: 80, bytes: 32_768, valueBytes: 8_192, reason: "lifecycle_100000_pages"))
+        return try #require(try store.readItemLifecycle(base.selectedItemID))
+      }
+      #expect(lifecycle.item.pageCount == 100_000)
+      #expect(lifecycle.bodyRecordCount >= 100_000)
       let (intent, page) = try fixture.landing(base, actor: UUID())
       let cursor = try store.currentChangeCursor(), steps = try pageAppendSQLSteps(store: store, index: intent, page: page)
       #expect(steps > 0 && steps < 20_000)

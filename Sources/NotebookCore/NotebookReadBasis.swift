@@ -25,10 +25,10 @@ public struct NotebookReadBasis: Codable, Equatable, Sendable {
         }
         owners[owner.target] = try .init(target: owner.target, revision: component(old.revision, owner.revision)!,
           stateRevision: component(old.stateRevision, owner.stateRevision), sourceRevision: component(old.sourceRevision, owner.sourceRevision),
-          inkRevision: component(old.inkRevision, owner.inkRevision))
+          inkRevision: component(old.inkRevision, owner.inkRevision), lifecycleRevision: component(old.lifecycleRevision, owner.lifecycleRevision))
       } else {
         owners[owner.target] = .init(target: owner.target, revision: owner.revision.lowercased(),
-          stateRevision: owner.stateRevision?.lowercased(), sourceRevision: owner.sourceRevision?.lowercased(), inkRevision: owner.inkRevision?.lowercased())
+          stateRevision: owner.stateRevision?.lowercased(), sourceRevision: owner.sourceRevision?.lowercased(), inkRevision: owner.inkRevision?.lowercased(), lifecycleRevision: owner.lifecycleRevision?.lowercased())
       }
     }
     return .init(workspaceID: workspaceID, owners: owners.values.sorted { ($0.target.key, $0.target.boardID?.uuidString ?? "") < ($1.target.key, $1.target.boardID?.uuidString ?? "") })

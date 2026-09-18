@@ -2,19 +2,20 @@ import { worldPointSchema as point } from "./spatial.js";
 import * as z from "zod/v4";
 
 const boardTarget = z.object({ kind: z.literal("board"), id: z.uuid() }).strict();
+export const coverTargetSchema = z.object({ kind: z.literal("cover"), id: z.uuid(), boardID: z.uuid() }).strict();
 export const targetSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("codeFragment"), id: z.uuid() }).strict(),
   z.object({ kind: z.literal("page"), id: z.uuid() }).strict(),
   z.object({ kind: z.literal("document"), id: z.uuid() }).strict(),
   boardTarget,
-  z.object({ kind: z.literal("cover"), id: z.uuid(), boardID: z.uuid() }).strict(),
+  coverTargetSchema,
   z.object({ kind: z.literal("workspace"), id: z.uuid().describe("rootBoardID") }).strict(),
 ]);
 export type Target = z.infer<typeof targetSchema>;
 const frame = z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive() }).strict();
 
 export const referenceSchema = z.object({ id: z.uuid(), target: targetSchema, elementID: z.string().optional(), region: frame.optional(), worldOrigin: point.optional(), pageIndex: z.number().int().nonnegative().optional(), revision: z.string(), label: z.string().max(1000).default("") }).strict();
-export const expectationSchema = z.object({ target: targetSchema, revision: z.string().min(1), stateRevision:z.string().optional(), sourceRevision:z.string().optional(), inkRevision:z.string().optional().describe("For appendInkStroke: drawingRevision of a page, spatialInkRevision of a board/cover, or inkRevision returned by nb.code.") }).strict();
+export const expectationSchema = z.object({ target: targetSchema, revision: z.string().min(1), stateRevision:z.string().optional(), sourceRevision:z.string().optional(), lifecycleRevision:z.string().regex(/^[a-f0-9]{64}$/).optional().describe("Complete item extent from an explicit itemLifecycle read; covers off-screen content and is not mutation authority."), inkRevision:z.string().optional().describe("For appendInkStroke: drawingRevision of a page, spatialInkRevision of a board/cover, or inkRevision returned by nb.code.") }).strict();
 const source = z.string().max(1_000_000);
 const textStyle = z.object({fontSize:z.number().min(8).max(240),weight:z.number().min(0).max(1),
   red:z.number().min(0).max(1),green:z.number().min(0).max(1),blue:z.number().min(0).max(1),alpha:z.number().min(0).max(1)}).strict();

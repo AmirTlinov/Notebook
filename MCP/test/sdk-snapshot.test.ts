@@ -12,7 +12,7 @@ test('generated output contracts accept actual same-snapshot native content, bas
   const root=await mkdtemp(join(tmpdir(),'notebook-sdk-v2-ipc-'));
   try {
     await writeFixture(root); const store=new NotebookStore(fixtureSocket(root));
-    const queries=[{kind:'workspaceHeader'},{kind:'itemHeaders'},{kind:'itemHeader',id:itemID},
+    const queries=[{kind:'workspaceHeader'},{kind:'itemHeaders'},{kind:'itemHeader',id:itemID},{kind:'itemLifecycle',id:itemID},
       {kind:'pageHeader',id:pageID},{kind:'page',id:pageID},{kind:'notebookDirectory',id:itemID},
       {kind:'boardItem',id:rootBoardID},{kind:'presence'},{kind:'selection'},{kind:'contexts'}];
     for(const query of queries) {

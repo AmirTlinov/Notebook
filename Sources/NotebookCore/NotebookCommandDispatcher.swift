@@ -72,7 +72,7 @@ public struct NotebookReadBounds: Codable, Sendable {
 
 public struct NotebookReadQuery: Codable, Sendable {
   public enum Kind: String, Codable, Sendable {
-    case observation, workspaceHeader, itemHeaders, itemHeader, workingSet, sceneWindow, scenePaintOrder
+    case observation, workspaceHeader, itemHeaders, itemHeader, itemLifecycle, workingSet, sceneWindow, scenePaintOrder
     case page, pageHeader, pageElement, documentHeader, document, documentState, documentBlock, boardItem, boardElement, boardContentRevision, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
     case attentionEvidence, contexts, contextEntries, actions, currentViewReceipt, pageVisionReceipt, targetRenderReceipt
     case renderRequests, delivery, actionSnapshots, runtime, selection, codeFragment, codeFragments
@@ -306,6 +306,7 @@ public struct NotebookCommandDispatcher: Sendable {
     case .workspaceHeader: return try .encode(store.workspaceHeader())
     case .itemHeaders: return try .encode(store.readItemHeaders(after: query.after, limit: query.limit ?? 128))
     case .itemHeader: return try .encode(store.readItemHeader(required(query.id)))
+    case .itemLifecycle: return try .encode(store.readItemLifecycle(required(query.id)))
     case .workingSet:
       let set = try store.readWorkingSet(itemIDs: query.itemIDs ?? [], pageIDs: query.pageIDs ?? [],
         boardIDs: query.boardIDs ?? [], surfaces: query.surfaces ?? [])

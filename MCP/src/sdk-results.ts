@@ -1,5 +1,5 @@
 import * as z from "zod/v4";
-import {expectationSchema, targetSchema, referenceSchema, graphicSchema, operationSchema} from "./actions.js";
+import {expectationSchema, targetSchema, coverTargetSchema, referenceSchema, graphicSchema, operationSchema} from "./actions.js";
 import {worldPointSchema} from "./spatial.js";
 
 const id=z.uuid(), text=z.string(), number=z.number(), json=z.json();
@@ -76,7 +76,7 @@ const exportJob=object({status:z.enum(["missing","queued","running","saved","fai
 const presentation=object({status:text.optional(),id:id.optional(),view:object({deviceID:id,sessionID:id,sequence:number,nonce:id}).optional(),reason:text.optional()});
 const search=object({results:z.array(object({id,target:targetSchema,elementID:text.optional(),title:text,path:z.array(text),preview:text,revision:text,reference:referenceSchema})),total:number});
 export const readDataSchemas = {
-  observation, workspaceHeader:header, itemHeaders:z.array(item), itemHeader:item.nullable(),
+  observation, workspaceHeader:header, itemHeaders:z.array(item), itemHeader:item.nullable(), itemLifecycle:object({item,target:coverTargetSchema,revision:text,bodyRecordCount:number.int().nonnegative()}).nullable(),
   workingSet:object({header,items:z.array(item),boards:z.array(board),pages:z.record(text,page),documents:z.record(text,document),states:z.record(text,documentState),ink}),
   sceneWindow:scene, scenePaintOrder:object({revision:text,entries:z.array(object({kind:text,id:text,zIndex:number})),nextCursor:text.nullable()}),
   page,pageHeader:contentHeader,pageElement,documentHeader:contentHeader,document,documentState,documentBlock,

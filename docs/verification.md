@@ -10367,3 +10367,39 @@ Mac UUID `4E5E7C5C-B83D-3311-A1CE-C5570CFBF009`, manifest
 передан владельцу сетевого среза, пользователь уведомлён там; повторный доступ
 или сброс разрешений здесь не выполнялись. Диагностика рабочего UI с системным
 alert должна остановиться до первого tap, а не полагаться на default handler.
+
+## 18 сентября 2026 — S8: адресное основание полного предмета
+
+В общей ветке поверх `bd7303d` готов read/basis-путь `itemLifecycle`, не весь S8.
+Чтение возвращает заголовок, фактический parent/cover и frozen lifecycle basis без
+декодирования всех страниц. Индекс raw record hashes обновляет единственный
+`writeFragment/removeFragment`; source/state/ink и причинные поля входят в extent.
+У child board дополнительно учитывается raw content identity, без изменения
+исторического смысла cover pixels. Нормальный `itemHeader` не выдаёт это основание.
+
+TDD и независимое ревью выявили и закрыли: незамеченную правку дальнего листа;
+неподдержанный публичный read/утерю lifecycle-компонента при merge; позднее присоединение
+ранее записанных document bodies; ошибочную принадлежность orphan document одноимённой
+тетради; невидимые tombstones child board; повторный проход миграции от начала файла.
+При schema admission обнаружено также ложное продвижение read cursor от новых derived
+rows: теперь admission продвигает его только при реальной shared publication.
+Старые проверки current-schema `4`/unknown-schema `5` заменены обращением к единственному
+владельцу версии. Локальная схема — 8; wire/content, ключи и идентичности не менялись.
+
+Выборочная квитанция: `.build/s8-extent-selected-20260918/verification.json`, PASS.
+Exact source: `7ae2d4a27d27b5f693b6dbf662668b235df55334f9df9fbec3f76932843cca94`.
+Исполнены **50 Core tests / 8 suites**, **62 MCP tests** и generated schemas/types check;
+source-before/source-after совпадают. Core занял 248.849 s, включая подготовку 100000
+настоящих страниц; это не задержка адресного чтения. Lifecycle этой тетради прочитан
+в allowance 80 rows / 32768 bytes / 8192 bytes per value. Native append после100000
+страниц: **6950 SQLite VM steps, 13 changed addresses**, count100001, один новый UUID.
+Отдельная SQL-metadata нагрузка100000 rows: чтение порций256 на началах0/50000/99000
+стало **3862/3869/3869 VM steps** вместо **3868/553868/1092868**. Эта нагрузка проверяет
+алгоритм seek, а не выдаётся за полноценный документ. Повреждённое непрочитанное тело
+в изолированной фикстуре не мешает заголовку и admission7→8; read/delivery cut сохранён.
+Настоящие RED, отдельные compile-only ошибки и область проверки записаны в `red-notes.json`.
+
+В этом срезе **не запускались native/UI runners, не менялась установленная пара**.
+MCP проверялся с изолированным `NOTEBOOK_HOME`. Публичных domain operations по-прежнему20:
+общие delete/append, compact inverse/delivery и causal undo ещё в работе GUI-217.
+S8/S9/S10 и полная физическая приёмка не закрыты.
