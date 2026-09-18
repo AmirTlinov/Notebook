@@ -86,7 +86,9 @@ final class NotebookXPCWorker: NSObject, NotebookScriptBrokerProtocol, @unchecke
     guard let bytes = try? JSONEncoder().encode(request), bytes.count <= 2*1024*1024 else { return .init(code: "resource_limit") }
     return await exchange(deadline: deadline, timeoutCode: "typescript_timeout", unavailableCode: "compiler_unavailable") { remote, reply in
       remote.compileTypeScript(bytes) { data in
-        guard data.count <= 2*1024*1024 else { reply.finish(.init(code: "resource_limit")); return }
+        // Source-map Data and then the result Data are both base64 encoded.
+        // This is only the internal compiler envelope, not an MCP output limit.
+        guard data.count <= 4*1024*1024 else { reply.finish(.init(code: "resource_limit")); return }
         reply.finish((try? JSONDecoder().decode(NotebookWorkerReply.self, from: data)) ?? .init(code: "invalid_worker_reply"))
       }
     }

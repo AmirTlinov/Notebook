@@ -32,6 +32,8 @@ struct NotebookScriptHelpTests {
     let source = try #require(interactive["contract"]?["block"]?.string("javaScript"))
     #expect(source.contains("notebook.ready(Promise.resolve().then(draw))"))
     let transaction = try NotebookScriptAPI.documentation("transaction")
-    #expect(try JSONEncoder().encode(transaction["contract"]?["input"]).count < 24 * 1024)
+    // Same compact-action budget as MCP's public schema contract, including
+    // the newly supported connector routing and Foundation's slash escaping.
+    #expect(try JSONEncoder().encode(transaction["contract"]?["input"]).count < 25 * 1024)
   }
 }

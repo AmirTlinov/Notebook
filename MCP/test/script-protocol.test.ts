@@ -205,9 +205,19 @@ test("two-tool MCP preserves attention statuses and exact run identity across st
       assert.notEqual(result.isError,true,JSON.stringify(result));
       assert.equal((result.structuredContent as any).run_id,id);
     }
-    assert.deepEqual(requests[2],{command:"script",script:{op:"start",runID:id,apiVersion:2,code,arguments:args,afterSequence:0,waitMilliseconds:1000}});
+    assert.deepEqual(requests[2],{command:"script",script:{op:"start",runID:id,apiVersion:2,language:"javascript",code,arguments:args,afterSequence:0,waitMilliseconds:1000}});
     assert.equal(requests[3].script.code,undefined);
     assert.equal(requests[4].script.code,undefined);
+    const typed=await client.callTool({name:"notebook_execute",arguments:{op:"start",run_id:randomUUID(),api_version:2,
+      language:"typescript",code:"const n: number = 2; return n;",args:{typed:true}}});
+    assert.notEqual(typed.isError,true,JSON.stringify(typed));
+    assert.equal(requests.at(-1).script.language,"typescript");
+    assert.equal(requests.at(-1).script.code,"const n: number = 2; return n;");
+    const beforeInvalidLanguage=requests.length;
+    const invalidLanguage=await client.callTool({name:"notebook_execute",arguments:{op:"start",run_id:randomUUID(),api_version:2,
+      language:"python",code:"return 2"}});
+    assert.equal(invalidLanguage.isError,true);
+    assert.equal(requests.length,beforeInvalidLanguage,"An unknown language must not reach native admission as JS");
     // Shapes observed on the actual v6 blind endpoint: the typed operation
     // diagnostic must cross MCP output validation intact on terminal receipts.
     const operation={index:0,kind:"renameItem",target:{kind:"board",id:randomUUID()},id:randomUUID()};

@@ -9908,3 +9908,39 @@ CoreDevice подтвердил installation, normal launch и readback 0.3.82/b
 до восстановления связи нельзя доказать live-read текущего iPad или shownOnIPad.
 Эта диагностика ведётся отдельно, без сброса доверия. GUI-221 — In Review,
 Амиру задана проверка ghost selection и кнопок на установленном build85.
+
+### S6 — TypeScript coordinator и публичный контракт, 18 сентября 01:08 UTC
+
+В общей ветке реализован путь durable TS admission → отдельное compiler XPC
+соединение → прежний QuickJS → SDK/Core. Исходный язык/код/args и compiler/SDK
+pins остаются идентичностью run; retry не перекомпилирует. Подготовка не держит
+writer, отмена закрывает переход к JS, source map убирает служебные строки.
+
+RED: `.build/s6-coordinator-red-20260918`, три настоящих native теста завершились
+`compiler_unavailable`. После реализации:
+`.build/s6-coordinator-green2-20260918/verification.json`, source
+`86c6941eeb1d478ff4036d1b4a7c5e503b184d208c02b2c55e008c4fd7788aa2`,
+5/5 Mac PASS, failures/skips/runtimeWarnings 0. Проверены одинаковая запись JS/TS
+через writer/normalizer, ошибка типа до раннего emit/read, исходная runtime-строка,
+отмена подготовки без позднего JS и одновременные TS/markup/настоящий PDF.
+При retry недоступные executors не помешали получить первоначальный результат.
+
+Actual CLI/QuickJS и Core/Host регрессии: 42 Swift tests PASS; MCP 62/62 PASS.
+Отдельно прошли все семь ресурсных fences CPU/RSS/temp/wall/diagnostic/JS/map:
+тесты сужают пороги внутренним параметром того же CLI-пути, RPC не принимает
+пользовательские limits/paths/config. Проверены завершение реально запущенного
+PID и уборка временного каталога. RSS/CPU наблюдаются выборочно, это не kernel
+high-water измерение. EOF-диагностика ограничена строками исходника. Бюджет
+компактной transaction-схемы в Swift приведён к уже существующему MCP-бюджету
+25 КиБ: 24343 UTF-8 байта / 24611 с Foundation slash escaping, а не регрессия API.
+
+Публичный language transport сначала отверг TS (`Unrecognized key: language`),
+после изменения передаёт точный язык и отвергает неизвестный до IPC. JavaScript —
+документированный default; эвристики и TS→JS fallback нет. Схемы/справка обновлены.
+
+Это **проверка исходников, ещё не установленная S6-возможность**. Установленная
+пара 0.3.82(85) и отдельный UI snapshot 0.3.83(86) содержат лишь ранее подписанную
+compiler-границу. S6 ждёт согласованной установки и installed MCP end-to-end.
+S5 production delivery также открыт: fresh installed API2 работает, но runtime
+остаётся disconnected. Production iPad85 watchdog в Core appearance/CGPath
+записан отдельно владельцем GUI-221; эта запись не объявляет его исправленным.

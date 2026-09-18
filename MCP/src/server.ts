@@ -29,7 +29,7 @@ export const executionOutput = z.union([z.object({
 }).strict(),pendingOutput,error]);
 const cursorFields={after_seq:z.number().int().nonnegative().default(0),wait_ms:z.number().int().min(0).max(4000).default(1000)};
 export const executionInput=z.discriminatedUnion("op",[
-  z.object({op:z.literal("start"),run_id:z.uuid(),api_version:z.literal(2),code:z.string().max(262144),args:z.json().optional(),...cursorFields}).strict(),
+  z.object({op:z.literal("start"),run_id:z.uuid(),api_version:z.literal(2),language:z.enum(["javascript","typescript"]).default("javascript"),code:z.string().max(262144),args:z.json().optional(),...cursorFields}).strict(),
   z.object({op:z.literal("resume"),run_id:z.uuid(),...cursorFields}).strict(),
   z.object({op:z.literal("cancel"),run_id:z.uuid(),...cursorFields}).strict(),
 ]);
@@ -68,7 +68,7 @@ async function response(operation:(deadline:number)=>Promise<{value:Value;images
 export function createServer(socketPath=defaultSocketPath()):McpServer {
   const server=new McpServer({name:"notebook",version});
   server.registerTool("notebook_context",{
-    title:"Read Notebook and discover its JavaScript SDK",
+    title:"Read Notebook and discover its typed SDK",
     description:"Read shared attention, documents, pages, board, revisions, receipts and exact images. API v2 reads return {data,basis,coverage,cursor}; transactions accept base from a read. Use method:'help' only for an unknown contract. args:{topic:'operations'} gives a compact index; topic:'operation/createDocument' (or any operation name) gives one exact schema. transaction gives the complete action schema; interactive includes notebook.ready(promise); execution explains terminal status and output pagination. Other method topics give their schemas and examples. Read methods have the same args as nb methods. render/pageMap/place can prepare derived pictures but never change saved content or the camera.",
     inputSchema:z.object({method:reads.default("observe"),args:z.record(z.string(),z.json()).default({})}).strict(),
     outputSchema:contextOutput,
@@ -85,8 +85,8 @@ export function createServer(socketPath=defaultSocketPath()):McpServer {
     return {value:{status:"ready",value:data},images};
   }));
   server.registerTool("notebook_execute",{
-    title:"Run asynchronous JavaScript against Notebook",
-    description:"One Mac-owned QuickJS program with args, nb, await emit(value), await emitImage(artifact). No Python/Node/files/network/imports. Start requires a UUID run_id, api_version:2, code. Generate a UUID per program and reuse it for retries and resume; a descriptive string is not a valid run_id. Same identity attaches and changed code/args conflicts. resume returns paginated output without replaying code. A whole tool reply has a four-second deadline, including admission and image reads; response_pending returns the same run_id, never cancels accepted writes and does not prove admission. Resume that ID; if still absent, retry the identical start. Every mutation requires a stable key: nb.transaction, undo, point, present, cancelPresentation, export. nb.help(topic) explains exact APIs. One transaction is atomic/undoable; an entire script can save several effects. cancel stops new work and reports already accepted outcomes. Native PDF jobs continue outside script time. Limits: 256 KiB source, 1 MiB args, 128 MiB heap, 5 CPU/30 wall seconds, four SDK calls in flight, 128 effects, 4 MiB output total, 256 KiB/event or result. Resume with after_seq=next_seq while status is queued/running OR has_more=true. Stop only when status is completed/failed/cancelled/interrupted AND has_more=false; running+has_more=false is normal.",
+    title:"Run asynchronous TypeScript or JavaScript against Notebook",
+    description:"One Mac-owned QuickJS program with args, nb, await emit(value), await emitImage(artifact). No Python/Node/files/network/imports. Start requires a UUID run_id, api_version:2, code; language is javascript (default) or explicitly typescript. TypeScript is strictly checked by the bundled pinned compiler before QuickJS, with no TS-to-JS fallback; type errors produce no effects. Original compiler/SDK pins are fixed at admission. Generate a UUID per program and reuse it for retries and resume; a descriptive string is not a valid run_id. Same identity attaches without recompilation and changed language/code/args conflicts. resume returns paginated output without replaying code. A whole tool reply has a four-second deadline, including admission and image reads; response_pending returns the same run_id, never cancels accepted writes and does not prove admission. Resume that ID; if still absent, retry the identical start. Every mutation requires a stable key: nb.transaction, undo, point, present, cancelPresentation, export. nb.help(topic) explains exact APIs. One transaction is atomic/undoable; an entire script can save several effects. cancel stops new work and reports already accepted outcomes. Native PDF jobs continue outside script time. TS preparation has a 10s wall ceiling inside the 30s run budget and uses a separate compiler connection, not the writer queue; see help(execution) for compiler bounds. Limits: 256 KiB source, 1 MiB args, 128 MiB heap, 5 CPU/30 wall seconds, four SDK calls in flight, 128 effects, 4 MiB output total, 256 KiB/event or result. Resume with after_seq=next_seq while status is queued/running OR has_more=true. Stop only when status is completed/failed/cancelled/interrupted AND has_more=false; running+has_more=false is normal.",
     inputSchema:executionInput,outputSchema:executionOutput,
     annotations:{readOnlyHint:false,destructiveHint:true,openWorldHint:false,idempotentHint:true},
   },input=>{
@@ -97,7 +97,7 @@ export function createServer(socketPath=defaultSocketPath()):McpServer {
       const waitMilliseconds=Math.max(0,Math.min(input.wait_ms,Math.floor(deadline-performance.now())-100));
       const request:Value={op:input.op,runID:input.run_id,apiVersion:2,afterSequence:input.after_seq,waitMilliseconds};
       if(input.op==="start") {
-        request.apiVersion=input.api_version;request.code=input.code;request.arguments=input.args??null;
+        request.apiVersion=input.api_version;request.language=input.language;request.code=input.code;request.arguments=input.args??null;
       }
       const value=await runBridge<Value>(socketPath,{command:"script",script:request},{deadline});
       if (value.api_version !== 2) throw new BridgeError({code:"api_version_mismatch",message:"MCP v2 requires the matching Mac helper; update the installed pair without resetting its data."});

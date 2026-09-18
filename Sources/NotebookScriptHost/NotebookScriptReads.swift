@@ -7,7 +7,7 @@ enum NotebookScriptAPI {
     "context", "attention", "code", "search", "reference", "referenceStatus", "action", "render", "pageMap",
     "pageImage", "regions", "place", "exportStatus", "presentation", "wait"]
   static var help: JSONValue { .object([
-    "status": .string("ready"), "api_version": .number(2), "language": .string("ECMAScript / QuickJS 2026-06-04"),
+    "status": .string("ready"), "api_version": .number(2), "language": .string("TypeScript 7.0.2 or ECMAScript / QuickJS 2026-06-04"),
     "limits": .object(["active_runs": .number(1), "queued_runs": .number(8), "source_bytes": .number(262144),
       "arguments_bytes": .number(1048576), "heap_bytes": .number(134217728), "stack_bytes": .number(1048576),
       "cpu_seconds": .number(5), "wall_seconds": .number(30), "tool_reply_seconds": .number(4), "outstanding_calls": .number(4),
@@ -18,7 +18,7 @@ enum NotebookScriptAPI {
       "present(key, {view, steps})", "cancelPresentation(key, {id})", "export(key, {documentID})"].map(JSONValue.string)),
     "utilities": .array(["await nb.id(key)", "await emit(value)", "await emitImage(artifact)", "await nb.wait({milliseconds:100})"].map(JSONValue.string)),
     "read_contract": .string("Reads return Snapshot {data,basis,coverage,cursor}; readMany returns a tuple with per-query coverages from one WAL snapshot. IDs, revisions and continuation cursors come from owners, never inferred from omitted data."),
-    "execution_contract": .string("Async JavaScript with args and nb only. No Node, Python, DOM, require, fetch, filesystem, network, module loader, SQLite or user bytecode. Same run_id+code+args attaches. Changed payload conflicts. Resume never replays source or restores a JS heap. Mac owns the 30s active-run wall deadline, including XPC sandbox launch; script_timeout does not depend on a worker reply."),
+    "execution_contract": .string("Async TypeScript/JavaScript with args, nb, emit and emitImage. language defaults to javascript; typescript is explicitly selected, strictly checked and compiled by pinned CLI before QuickJS, never guessed or retried as JS. No Node, Python, DOM, require, fetch, filesystem, network, imports, user paths/configuration, SQLite or bytecode. Same run_id+language+code+args attaches without recompilation; changed payload conflicts. Resume never replays source or restores a heap. Mac owns the 30s active-run wall deadline including preparation and XPC launch; TS preparation has its own 10s ceiling. Read help('execution') for all compiler limits."),
     "reply_deadline": .string("One MCP reply has four seconds total, including owner admission and images. response_pending includes run_id, original after_seq and admission unknown/confirmed. It never cancels an accepted write. Resume that ID and cursor. If run_missing with after_seq:0, retry the identical start, never a fresh ID. wait_ms is an upper bound from native handler entry, not after admission; the adapter shortens it to leave room for IPC response."),
     "mutation_contract": .string("Every effect requires a stable key. One transaction is atomic and undoable; a whole program may save several effects. Cancellation prevents new effects and reports accepted native outcomes. Native undo preserves later human edits."),
     "images": .string("Image reads return opaque descriptors with exact hashes. emitImage freezes exact pixels in the native output journal; image bytes count toward 4 MiB per run. Up to four image events per resume page. JavaScript receives no file capability."),

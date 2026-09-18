@@ -11,6 +11,18 @@ enum NotebookSandboxedTypeScriptCompiler {
   static let maximumCPUNanoseconds: UInt64 = 5_000_000_000
   static let wallSeconds = 10
 
+  /// Test-only narrowing uses the same real CLI and cleanup path. The data-only
+  /// RPC has no limit/configuration fields and always uses these production defaults.
+  struct Limits: Sendable {
+    var javaScriptBytes = maximumJavaScriptBytes
+    var mapBytes = maximumMapBytes
+    var diagnosticBytes = maximumDiagnosticBytes
+    var temporaryBytes = maximumTemporaryBytes
+    var residentBytes = maximumResidentBytes
+    var cpuNanoseconds = maximumCPUNanoseconds
+    var wall: Duration = .seconds(wallSeconds)
+  }
+
   struct Manifest: Decodable {
     let format: Int; let compilerVersion: String; let sdkVersion: String; let libraries: [String]
   }
@@ -27,7 +39,7 @@ enum NotebookSandboxedTypeScriptCompiler {
   }
 
   /// Internal injection is used only by compiler tests. The RPC has no paths.
-  static func compileSource(_ request: NotebookTypeScriptRequest, contents: URL) async throws -> NotebookTypeScriptResult {
+  static func compileSource(_ request: NotebookTypeScriptRequest, contents: URL, limits: Limits = .init()) async throws -> NotebookTypeScriptResult {
     guard request.source.utf8.count <= maximumSourceBytes else { throw Failure(code: "resource_limit", message: "Исходник TypeScript превышает 256 КиБ.") }
     let resources = contents.appendingPathComponent("Resources/NotebookTypeScript"), executable = contents.appendingPathComponent("Helpers/notebook-typescript")
     guard FileManager.default.isExecutableFile(atPath: executable.path),
@@ -41,7 +53,7 @@ enum NotebookSandboxedTypeScriptCompiler {
       throw Failure(code: "compiler_identity_mismatch", message: "Подготовка не меняет компилятор или SDK уже допущенного run.")
     }
     try Task.checkCancellation()
-    let started = ContinuousClock.now, deadline = started + .seconds(wallSeconds)
+    let started = ContinuousClock.now, deadline = started + limits.wall
     let directory = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("notebook-typescript-\(UUID().uuidString.lowercased())")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -56,7 +68,7 @@ enum NotebookSandboxedTypeScriptCompiler {
       "sourceMap": true, "removeComments": true, "rootDir": directory.path, "outDir": directory.appendingPathComponent("out").path]
     let configuration = try JSONSerialization.data(withJSONObject: ["compilerOptions": options, "files": files], options: [.sortedKeys])
     try configuration.write(to: directory.appendingPathComponent("tsconfig.json"), options: .atomic)
-    let process = Process(), output = Pipe(), capture = DiagnosticBuffer()
+    let process = Process(), output = Pipe(), capture = DiagnosticBuffer(maximum: limits.diagnosticBytes)
     process.executableURL = executable; process.arguments = ["--project", "tsconfig.json", "--pretty", "false"]
     process.currentDirectoryURL = directory
     process.environment = ["HOME": directory.path, "TMPDIR": directory.path, "LANG": "en_US.UTF-8",
@@ -78,8 +90,8 @@ enum NotebookSandboxedTypeScriptCompiler {
         }
         if case .resident(let resident) = usage.memory { peak = max(peak, resident) }
         cpu = max(cpu, usage.cpuNanoseconds ?? 0)
-        guard peak <= maximumResidentBytes, cpu <= maximumCPUNanoseconds,
-          !capture.exceeded, try temporaryBytes(directory) <= maximumTemporaryBytes else {
+        guard peak <= limits.residentBytes, cpu <= limits.cpuNanoseconds,
+          !capture.exceeded, try temporaryBytes(directory) <= limits.temporaryBytes else {
           throw Failure(code: "resource_limit", message: "TypeScript превысил 5 CPU секунд, 512 МиБ памяти, 4 МиБ временных файлов или 64 КиБ диагностики.")
         }
         try await Task.sleep(for: .milliseconds(20))
@@ -91,10 +103,13 @@ enum NotebookSandboxedTypeScriptCompiler {
     let status = await child.waitForExit(), readingFailure = await reader.finish()
     try Task.checkCancellation()
     guard readingFailure == nil, !capture.exceeded else { throw Failure(code: "resource_limit", message: "Не получена ограниченная диагностика TypeScript.") }
-    guard status == 0 else { throw Failure(code: "typescript_diagnostic", message: diagnostic(capture.text, directory: directory)) }
+    guard status == 0 else {
+      throw Failure(code: capture.text.contains("error TS") ? "typescript_diagnostic" : "typescript_failed",
+        message: diagnostic(capture.text, directory: directory, source: request.source))
+    }
     let outputDirectory = directory.appendingPathComponent("out")
-    let javaScript = try boundedFile(outputDirectory.appendingPathComponent("program.js"), maximum: maximumJavaScriptBytes - 64)
-    let map = try boundedFile(outputDirectory.appendingPathComponent("program.js.map"), maximum: maximumMapBytes)
+    let javaScript = try boundedFile(outputDirectory.appendingPathComponent("program.js"), maximum: limits.javaScriptBytes - 64)
+    let map = try boundedFile(outputDirectory.appendingPathComponent("program.js.map"), maximum: limits.mapBytes)
     guard let program = String(data: javaScript, encoding: .utf8) else { throw Failure(code: "typescript_failed", message: "Компилятор не вернул JavaScript.") }
     let prepared = program.replacingOccurrences(of: "//# sourceMappingURL=program.js.map", with: "") + "\nreturn await __notebook_program__();"
     let duration = started.duration(to: .now).components
@@ -102,15 +117,18 @@ enum NotebookSandboxedTypeScriptCompiler {
       wallMilliseconds: Double(duration.seconds)*1000 + Double(duration.attoseconds)/1e15, peakResidentBytes: peak, cpuNanoseconds: cpu)
   }
 
-  static func diagnostic(_ value: String, directory: URL) -> String {
+  static func diagnostic(_ value: String, directory: URL, source: String) -> String {
     // CLI locations refer to one owned wrapper line. Keep type codes and
     // columns, but never expose temporary paths as the user's source address.
     let expression = try! NSRegularExpression(pattern: #"(?:[^\n]*[/\\])?program\.ts\((\d+),(\d+)\)"#)
     var result = value
+    let sourceLines = source.components(separatedBy: "\n")
     for match in expression.matches(in: value, range: NSRange(value.startIndex..., in: value)).reversed() {
       guard let range = Range(match.range, in: result), let lineRange = Range(match.range(at: 1), in: value),
         let columnRange = Range(match.range(at: 2), in: value), let line = Int(value[lineRange]) else { continue }
-      result.replaceSubrange(range, with: "notebook-user.ts(\(max(1,line-1)),\(value[columnRange]))")
+      let originalLine = max(1, min(sourceLines.count, line - 1))
+      let column = line - 1 > sourceLines.count ? String((sourceLines.last?.utf16.count ?? 0) + 1) : String(value[columnRange])
+      result.replaceSubrange(range, with: "notebook-user.ts(\(originalLine),\(column))")
     }
     return String(result.replacingOccurrences(of: directory.path, with: "<compiler>").prefix(4096))
   }
@@ -133,9 +151,11 @@ enum NotebookSandboxedTypeScriptCompiler {
     return total
   }
   private final class DiagnosticBuffer: @unchecked Sendable {
+    let maximum: Int
     private let lock = NSLock(); private var bytes = Data(); private var overflow = false
+    init(maximum: Int) { self.maximum = maximum }
     func append(_ value: Data) { lock.withLock {
-      let left = maximumDiagnosticBytes - bytes.count
+      let left = maximum - bytes.count
       if value.count > left { overflow = true }; bytes.append(value.prefix(left))
     } }
     var text: String { lock.withLock { String(decoding: bytes, as: UTF8.self) } }

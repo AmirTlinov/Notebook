@@ -34,9 +34,9 @@ public struct NotebookScriptRun: Codable, Equatable, Sendable, Identifiable {
   public let fingerprint: String
   public let apiVersion: Int
   public let code: String
-  public var language: NotebookScriptLanguage?
-  public var compilerVersion: String?
-  public var sdkVersion: String?
+  public let language: NotebookScriptLanguage?
+  public let compilerVersion: String?
+  public let sdkVersion: String?
   public let arguments: JSONValue
   public var state: State
   public var lastSequence: Int

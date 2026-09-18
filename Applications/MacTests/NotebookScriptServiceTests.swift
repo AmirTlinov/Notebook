@@ -649,4 +649,117 @@ final class NotebookScriptServiceTests: XCTestCase {
       await host.shutdown()
     }
   }
+  func testTypeScriptTypeFailurePreventsEvenEarlierNativeEffects() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), id = UUID()
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    _ = try await host.handle(.init(op: .start, runID: id, code: """
+      await emit('must not execute');
+      const snapshot = await nb.read({kind:'workspaceHeader'});
+      const wrong: number = 'not a number';
+      return snapshot;
+      """, language: .typescript))
+    let result = try await finish(host, id)
+    XCTAssertEqual(result.string("status"), "failed")
+    XCTAssertEqual(result["error"]?.string("code"), "typescript_diagnostic", "\(result)")
+    XCTAssertTrue(result["error"]?.string("message")?.contains("notebook-user.ts(3,") == true)
+    XCTAssertEqual(result.array("events").count, 0)
+    XCTAssertEqual(result.array("effects").count, 0)
+    XCTAssertEqual(owner.reads, 0); XCTAssertEqual(owner.nativeWrites, 0)
+    await host.shutdown()
+  }
+
+  func testEquivalentTypedAndJavaScriptProgramsUseTheSameDomainWriterAndNeverReplay() async throws {
+    for language in [NotebookScriptLanguage.javascript, .typescript] {
+      let owner = try Owner(), host = try await coordinator(owner), id = UUID()
+      defer { try? FileManager.default.removeItem(at: owner.store.root) }
+      let pageID = try XCTUnwrap(owner.store.loadIndex().selectedPageID)
+      let input = language == .typescript ? "const input = args as {page:string}; const label: string = 'Typed SDK';" : "const input = args; const label = 'Typed SDK';"
+      let code = input + """
+        const s=await nb.page({id:input.page});
+        return await nb.transaction('write',{base:s.basis,summary:'Equivalent program',operations:[
+          {kind:'insertElement',target:{kind:'page',id:input.page},id:'typed-proof',values:{
+            kind:'markdown',source:'# '+label,frame:{x:20,y:20,width:260,height:120}}}
+        ]});
+        """
+      let request = NotebookScriptRequest(op: .start, runID: id, code: code,
+        arguments: .object(["page": .string(pageID.uuidString)]), language: language)
+      _ = try await host.handle(request)
+      let result = try await finish(host, id)
+      XCTAssertEqual(result.string("status"), "completed", "\(result)")
+      XCTAssertEqual(result["result"]?["publication"]?.string("saved"), "confirmed")
+      let element = try XCTUnwrap(owner.store.readPageElement(pageID: pageID, elementID: "typed-proof"))
+      XCTAssertEqual(element.source, "# Typed SDK"); XCTAssertTrue(element.html.contains("Typed SDK"))
+      XCTAssertEqual(owner.nativeWrites, 1)
+      let saved = try XCTUnwrap(owner.store.scriptRun(id))
+      XCTAssertEqual(saved.code, code); XCTAssertEqual(saved.language, language)
+      if language == .typescript { XCTAssertEqual(saved.compilerVersion, "7.0.2"); XCTAssertEqual(saved.sdkVersion?.count, 64) }
+      await host.shutdown()
+      // Unavailable executors must not matter when attaching to an existing run.
+      let restarted = NotebookScriptCoordinator(command: { try await owner.command($0) },
+        persistence: { operation in try await owner.persist(operation) }, workingDirectory: owner.store.root,
+        userServiceName: "unavailable.user.service", markupServiceName: "unavailable.compiler.service")
+      let retry = try await restarted.handle(request)
+      XCTAssertEqual(retry["result"], result["result"]); XCTAssertEqual(owner.nativeWrites, 1)
+      await restarted.shutdown()
+    }
+  }
+
+  func testTypeScriptRuntimeStackNamesTheOriginalSource() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), id = UUID()
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    _ = try await host.handle(.init(op: .start, runID: id,
+      code: "const n: number = 2;\nawait emit(n);\nthrow new Error('original runtime line');", language: .typescript))
+    let result = try await finish(host, id)
+    XCTAssertEqual(result.string("status"), "failed", "\(result)")
+    XCTAssertTrue(result["error"]?.string("message")?.contains("notebook-user.ts:3:") == true, "\(result)")
+    XCTAssertEqual(result.array("events").first?["value"], .number(2))
+    await host.shutdown()
+  }
+
+  func testCancellationDuringTypeScriptPreparationNeverStartsJavaScript() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), id = UUID()
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    // Emit is first at runtime but the entire large typed body must be checked
+    // before any user execution. Unit coverage separately cancels an actual PID.
+    let source = "await emit('must not run'); const values: number[] = ["
+      + String(repeating: "1234,", count: 40_000) + "]; return values.length;"
+    _ = try await host.handle(.init(op: .start, runID: id, code: source, language: .typescript, waitMilliseconds: 0))
+    let deadline = ContinuousClock.now + .seconds(5)
+    while host.worker == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
+    XCTAssertNotNil(host.worker, "Cancellation must exercise the active preparation, not only the queued state")
+    _ = try await host.handle(.init(op: .cancel, runID: id))
+    let cancelled = try await finish(host, id)
+    XCTAssertEqual(cancelled.string("status"), "cancelled", "\(cancelled)")
+    XCTAssertEqual(cancelled["error"]?.string("code"), "run_cancelled")
+    XCTAssertTrue(cancelled.array("events").isEmpty); XCTAssertTrue(cancelled.array("effects").isEmpty)
+    try await Task.sleep(for: .milliseconds(250))
+    let late = try await host.handle(.init(op: .resume, runID: id, waitMilliseconds: 0))
+    XCTAssertEqual(late, cancelled, "A late reply must neither emit nor revive the run")
+    XCTAssertEqual(owner.nativeWrites, 0)
+    await host.shutdown()
+  }
+
+  func testTypeScriptPreparationCoexistsWithMarkupAndPDFConnections() async throws {
+    try await requireRestrictedServiceSignatures()
+    let identity = try XCTUnwrap(NotebookTypeScriptPreparation.bundledIdentity)
+    let name = try service("NotebookMarkupService")
+    let typed = NotebookXPCWorker(serviceName: name) { _ in .init(code: "unexpected_host") }
+    let printer = NotebookXPCWorker(serviceName: name) { _ in .init(code: "unexpected_host") }
+    let parser = NotebookMarkupQueue(serviceName: name)
+    defer { typed.invalidate(); printer.invalidate() }
+    let source = "const values: number[] = [" + String(repeating: "1234,", count: 30_000) + "]; return values.length;"
+    async let compilation = typed.compileTypeScript(.init(id: UUID(), source: source,
+      compilerVersion: identity.compilerVersion, sdkVersion: identity.sdkVersion))
+    async let pdf = printer.compile(.init(id: UUID(), source: "\\documentclass{article}\\begin{document}Independent PDF\\end{document}"))
+    async let markup = parser.normalize(.object(["kind": .string("action"), "preparation": .object([
+      "action": .object(["operations": .array([.object(["values": .object(["source": .string("**Independent markup**")])])])]),
+      "markdownOperations": .array([.number(0)])])]))
+    let (prepared,printed,normalized) = try await (compilation,pdf,markup)
+    XCTAssertNil(prepared.code, prepared.message ?? "TypeScript failure")
+    XCTAssertNotNil(prepared.value)
+    XCTAssertNil(printed.code, printed.message ?? "PDF failure")
+    let document = try JSONDecoder().decode(NotebookCompilerResult.self, from: XCTUnwrap(printed.value))
+    XCTAssertEqual(PDFDocument(data: document.pdf)?.pageCount, 1)
+    XCTAssertTrue(normalized.array("operations").first?["values"]?.string("html")?.contains("<strong>Independent markup</strong>") == true)
+  }
 }

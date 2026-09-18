@@ -12,6 +12,7 @@ public final class NotebookScriptCoordinator {
   let persistence: Persistence
   let markup: NotebookMarkupQueue
   let userServiceName: String
+  let markupServiceName: String
   let workingDirectory: URL
   var initialization: Task<Void, Error>?
   var waiting: [NotebookScriptRun] = []
@@ -33,7 +34,8 @@ public final class NotebookScriptCoordinator {
     userServiceName: String = NotebookScriptServiceNames.user,
     markupServiceName: String = NotebookScriptServiceNames.markup) {
     self.command = command; self.persistence = persistence; self.workingDirectory = workingDirectory
-    self.userServiceName = userServiceName; markup = NotebookMarkupQueue(serviceName: markupServiceName)
+    self.userServiceName = userServiceName; self.markupServiceName = markupServiceName
+    markup = NotebookMarkupQueue(serviceName: markupServiceName)
   }
 
   /// The Mac owner awaits recovery before publishing IPC readiness. Status
@@ -108,7 +110,10 @@ public final class NotebookScriptCoordinator {
         for waiter in waiters { waiter.resume() }
       }
     }
-    let value = try await persistence { try .encode($0.admitScriptRun(request)) }.decode(NotebookScriptRun.self)
+    let identity = request.language == .typescript ? NotebookTypeScriptPreparation.bundledIdentity : nil
+    let value = try await persistence {
+      try .encode($0.admitScriptRun(request, compilerVersion: identity?.compilerVersion, sdkVersion: identity?.sdkVersion))
+    }.decode(NotebookScriptRun.self)
     // Shutdown/cancel may run while the native admission reply is in flight.
     // The durable state, not this earlier queued snapshot, owns execution.
     if closing {
@@ -163,12 +168,37 @@ public final class NotebookScriptCoordinator {
     do {
       let admitted = try await persistence { try .encode($0.setScriptRunState(run.id, state: .running)) }.decode(NotebookScriptRun.self)
       guard admitted.state == .running, !cancelled.contains(run.id), !closing else { throw CancellationError() }
+      var code = admitted.code
+      var sourceMap: NotebookTypeScriptSourceMap?
+      if admitted.language == .typescript {
+        guard let version = admitted.compilerVersion, let sdk = admitted.sdkVersion else {
+          throw CollaborationError("compiler_unavailable", "У допущенной программы нет закреплённого компилятора и SDK.")
+        }
+        // Preparation has its own connection, not the normalization queue or
+        // a native write transaction. The same run cancellation owns both phases.
+        let compiler = NotebookXPCWorker(serviceName: markupServiceName) { _ in .init(code: "host_unavailable") }
+        worker = compiler
+        let reply = await compiler.compileTypeScript(.init(id: run.id, source: admitted.code, compilerVersion: version, sdkVersion: sdk),
+          deadline: min(deadline, .now + .seconds(10)))
+        compiler.invalidate(); worker = nil
+        // A late compiler reply never resurrects a cancelled/shutting-down run.
+        guard active == run.id, !cancelled.contains(run.id), !closing else { throw CancellationError() }
+        if let code = reply.code { throw CollaborationError(code, reply.message ?? code) }
+        guard let bytes = reply.value else { throw CollaborationError("invalid_compiler_reply", "Компилятор не вернул JavaScript.") }
+        let prepared = try JSONDecoder().decode(NotebookTypeScriptResult.self, from: bytes)
+        guard prepared.compilerVersion == version, prepared.sdkVersion == sdk, prepared.javaScript.utf8.count <= 262_144 else {
+          throw CollaborationError("invalid_compiler_reply", "Результат подготовки не соответствует допущенной программе.")
+        }
+        sourceMap = try NotebookTypeScriptSourceMap(data: prepared.sourceMap)
+        code = prepared.javaScript
+      }
+      guard !cancelled.contains(run.id), !closing else { throw CancellationError() }
       let service = NotebookXPCWorker(serviceName: userServiceName) { [weak self] call in
         guard let self else { return .init(code: "owner_unavailable") }
         return await self.host(call)
       }
       worker = service
-      let reply = await service.execute(.init(id: run.id, code: run.code, arguments: try JSONEncoder().encode(run.arguments)), deadline: deadline)
+      let reply = await service.execute(.init(id: run.id, code: code, arguments: try JSONEncoder().encode(admitted.arguments)), deadline: deadline)
       finishedWorkers.insert(run.id)
       // Accepted commits outlive cancellation/disconnection of the worker.
       await drainAcceptedEffects()
@@ -176,7 +206,7 @@ public final class NotebookScriptCoordinator {
       let result = try reply.value.map { try JSONDecoder().decode(JSONValue.self, from: $0) }
       let state: NotebookScriptRun.State = wasCancelled ? .cancelled : reply.code == nil ? .completed : .failed
       let error = wasCancelled ? try JSONValue.encode(NotebookStore.scriptCancellationError)
-        : reply.code.map { JSONValue.object(["code": .string($0), "message": .string(reply.message ?? $0)]) }
+        : reply.code.map { JSONValue.object(["code": .string($0), "message": .string(sourceMap?.map(reply.message ?? $0) ?? reply.message ?? $0)]) }
       _ = try await persistence { try .encode($0.setScriptRunState(run.id, state: state, result: result, error: error)) }
       service.invalidate()
     } catch {
@@ -184,7 +214,7 @@ public final class NotebookScriptCoordinator {
       let state: NotebookScriptRun.State = cancelled.contains(run.id) ? .cancelled : .failed
       _ = try? await persistence { try .encode($0.setScriptRunState(run.id, state: state, error: value)) }
     }
-    worker = nil; active = nil; effectTasks.removeAll(); cancelled.remove(run.id); finishedWorkers.remove(run.id); runningTask = nil; drive()
+    worker?.invalidate(); worker = nil; active = nil; effectTasks.removeAll(); cancelled.remove(run.id); finishedWorkers.remove(run.id); runningTask = nil; drive()
   }
 
   func drainAcceptedEffects() async {
