@@ -25,11 +25,20 @@ final class NotebookActionDeliveryTests: XCTestCase {
     await model.reloadExternalChanges()?.value
     let initial = try XCTUnwrap(model.store.deviceActionReceipts(actionIDs: [action.id]).first)
     XCTAssertEqual(initial.actionVersion, try action.deliveryVersion())
+    try await model.performStoreCommand { store in
+      for _ in 0..<70 {
+        _ = try store.applyCollaborationAction(.init(summary: "Later unrelated history", expected: [
+          .init(target: target, revision: store.targetContentRevision(target: target))], operations: [
+          .init(kind: .setElementState, target: target, id: "delivery", values: ["state": .number(0)])]), actor: actor)
+      }
+    }
     let undo = try await model.performStoreCommand { try $0.undoCollaborationAction(action.id, actor: actor) }
     XCTAssertTrue(undo.revisions.isEmpty)
     XCTAssertNotEqual(try undo.deliveryVersion(), initial.actionVersion)
     await model.reloadExternalChanges()?.value
     await model.refreshCollaborationDetails()
+    XCTAssertEqual(model.collaborationActions.first?.actionVersion, try undo.deliveryVersion(),
+      "The current undo phase must reach the display owner even after 64 newer actions")
     let latest = try XCTUnwrap(model.store.deviceActionReceipts(actionIDs: [action.id]).first)
     XCTAssertEqual(latest.actionVersion, try undo.deliveryVersion())
     XCTAssertGreaterThanOrEqual(latest.receivedAt, try XCTUnwrap(undo.undo).completedAt)

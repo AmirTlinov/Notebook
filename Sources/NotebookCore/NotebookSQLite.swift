@@ -340,7 +340,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 11
+  static let currentDatabaseVersion: Int64 = 12
 
   func prepareDatabase(initialWorkspaceID: UUID? = nil) throws {
     if currentSQL != nil { guard initialWorkspaceID == nil else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }; return }
@@ -427,9 +427,9 @@ extension NotebookStore {
       if admittedVersion == 2 { try migrateStoredBoardPlacements(database: database) }
       // One historical receipt at a time; no whole-history buffer and no
       // rewritten shared content, hashes, identities or replication cursors.
-      // Version 11 adds typed placement evidence to the same receipt-derived
-      // restoration index. Rebuild it from history, without reauthoring records.
-      if admittedVersion < 11 {
+      // Version 12 indexes the current phase's time separately from creation
+      // history. An old action's undo must reenter the bounded live window.
+      if admittedVersion < 12 {
         var after = ""
         while let row = try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file LIKE 'collaboration/actions/%' AND r.parent IS NULL AND r.address>? ORDER BY r.address LIMIT 1", [.text(after)]).first {
           let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: row[1].blob!)
@@ -473,7 +473,11 @@ extension NotebookStore {
     try database.run("CREATE INDEX IF NOT EXISTS graphic_binding_target ON graphic_bindings(owner,target_id)")
     try database.run("CREATE TABLE IF NOT EXISTS action_field_restorations(address TEXT NOT NULL REFERENCES records(address) ON DELETE CASCADE,field TEXT NOT NULL,version TEXT NOT NULL,value BLOB NOT NULL,PRIMARY KEY(address,field))")
     try database.run("CREATE INDEX IF NOT EXISTS action_field_restoration_version ON action_field_restorations(field,version)")
-    try database.run("CREATE TABLE IF NOT EXISTS action_read_models(address TEXT PRIMARY KEY REFERENCES records(address) ON DELETE CASCADE,receipt_hash TEXT NOT NULL,value BLOB NOT NULL)")
+    try database.run("CREATE TABLE IF NOT EXISTS action_read_models(address TEXT PRIMARY KEY REFERENCES records(address) ON DELETE CASCADE,receipt_hash TEXT NOT NULL,value BLOB NOT NULL,phase_at REAL NOT NULL DEFAULT 0)")
+    if try !database.rows("PRAGMA table_info(action_read_models)").contains(where: { $0[1].text == "phase_at" }) {
+      try database.run("ALTER TABLE action_read_models ADD COLUMN phase_at REAL NOT NULL DEFAULT 0")
+    }
+    try database.run("CREATE INDEX IF NOT EXISTS action_phase_time ON action_read_models(phase_at DESC,address DESC)")
     try database.run("CREATE TABLE IF NOT EXISTS file_renames(id TEXT PRIMARY KEY,request BLOB NOT NULL,identity BLOB NOT NULL,completed INTEGER NOT NULL DEFAULT 0)")
     try database.run("CREATE TABLE IF NOT EXISTS code_fragment_files(address TEXT PRIMARY KEY REFERENCES records(address) ON DELETE CASCADE,file_id TEXT NOT NULL,fragment_id TEXT NOT NULL)")
     try database.run("CREATE INDEX IF NOT EXISTS code_fragment_file ON code_fragment_files(file_id,fragment_id)")

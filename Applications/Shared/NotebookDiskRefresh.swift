@@ -19,7 +19,7 @@ struct NotebookDiskRefresh: Sendable {
       try store.acknowledgeReceivedActions(deviceID: receivingDeviceID)
     }
     return try store.readTransaction { store in
-      let actions = try store.actionReadModels(limit: 64)
+      let actions = try store.recentActionPhases(limit: 64)
       let attention: [NotebookAgentFeedbackChange.Subject]?
       do { attention = try store.agentAttentionSubjects(attentionReferences) }
       catch let error as CollaborationError where error.code == "source_conflict" { attention = nil }

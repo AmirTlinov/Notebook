@@ -21,7 +21,7 @@ extension NotebookStore {
   /// A metadata-only undo still has a distinct version and gets a new arrival.
   public func acknowledgeReceivedActions(deviceID: UUID) throws {
     try commandTransaction(readAllowance: .agentCommand) {
-      let actions = try actionReadModels(limit: 64)
+      let actions = try recentActionPhases(limit: 64)
       for action in actions {
         let version = action.actionVersion
         let file = "collaboration/delivery/" + action.id.uuidString.lowercased() + ".json"

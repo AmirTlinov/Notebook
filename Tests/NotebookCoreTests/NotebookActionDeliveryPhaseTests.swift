@@ -60,6 +60,40 @@ struct NotebookActionDeliveryPhaseTests {
     #expect(try f.receipt(undo) == second)
   }
 
+  @Test func undoOfAnOldActionReentersDeliveryWithoutReorderingCreationHistory() throws {
+    let f = try Fixture(); defer { f.clean() }
+    let original = try f.set(1)
+    try f.store.acknowledgeReceivedActions(deviceID: f.device)
+    let old = try f.receipt(original)
+    for _ in 0..<70 { _ = try f.set(1) }
+    #expect(try !f.store.actionReadModels(limit: 64).contains { $0.id == original.id })
+    let undo = try f.store.undoCollaborationAction(original.id, actor: f.actor)
+    try f.store.acknowledgeReceivedActions(deviceID: f.device)
+    let received = try f.receipt(undo)
+    #expect(received.actionVersion == (try undo.deliveryVersion()))
+    #expect(received.actionVersion != old.actionVersion)
+    #expect(!received.displayComplete)
+    #expect(try f.detail(undo)["publication"]?["receivedByIPad"] == .string("confirmed"))
+    #expect(try !f.store.actionReadModels(limit: 64).contains { $0.id == original.id },
+      "Creation-history pagination must not silently become modification order")
+    #expect(try f.store.recentActionPhases(limit: 1).first?.actionVersion == undo.deliveryVersion())
+    let cursor = try f.store.currentChangeCursor(), readCursor = try f.store.currentReadCursor()
+    let workspace = try f.store.workspaceHeader().workspaceID
+    let before = try f.store.storedData("collaboration/actions/" + original.id.uuidString.lowercased() + ".json")
+    // Existing v11 database: rebuild only the derived phase index on admission.
+    try f.store.commandTransaction(advancesReadRevision: false) {
+      try f.store.currentSQL!.run("DROP INDEX action_phase_time")
+      try f.store.currentSQL!.run("ALTER TABLE action_read_models DROP COLUMN phase_at")
+      try f.store.currentSQL!.run("PRAGMA user_version=11")
+    }
+    let reopened = NotebookStore(root: f.store.root)
+    try reopened.prepare()
+    #expect(try reopened.recentActionPhases(limit: 1).first?.actionVersion == undo.deliveryVersion())
+    #expect(try reopened.currentChangeCursor() == cursor && reopened.currentReadCursor() == readCursor)
+    #expect(try reopened.workspaceHeader().workspaceID == workspace)
+    #expect(try reopened.storedData("collaboration/actions/" + original.id.uuidString.lowercased() + ".json") == before)
+  }
+
   @Test func lateOldPhaseCannotOverwriteOrUnionTheCurrentReceipt() throws {
     let f = try Fixture(); defer { f.clean() }
     let initial = try f.set(0)

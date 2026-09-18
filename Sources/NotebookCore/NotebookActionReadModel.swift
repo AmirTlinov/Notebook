@@ -182,8 +182,9 @@ extension NotebookStore {
     try indexFieldRestorations(receipt, address: address, database: database)
     let model = try NotebookActionReadModel(receipt)
     let data = try Self.storageEncoder.encode(model)
-    try database.run("INSERT INTO action_read_models(address,receipt_hash,value) SELECT address,hash,? FROM records WHERE address=? ON CONFLICT(address) DO UPDATE SET receipt_hash=excluded.receipt_hash,value=excluded.value",
-      [.blob(data), .text(address)])
+    let phaseAt = max(receipt.createdAt, receipt.undo?.completedAt ?? receipt.createdAt)
+    try database.run("INSERT INTO action_read_models(address,receipt_hash,value,phase_at) SELECT address,hash,?,? FROM records WHERE address=? ON CONFLICT(address) DO UPDATE SET receipt_hash=excluded.receipt_hash,value=excluded.value,phase_at=excluded.phase_at",
+      [.blob(data), .real(phaseAt.timeIntervalSince1970), .text(address)])
   }
 
   public func actionReadModel(_ id: UUID) throws -> NotebookActionReadModel {
@@ -206,6 +207,20 @@ extension NotebookStore {
         afterTime ?? .null, afterTime ?? .null, afterTime ?? .null, afterFile.map(NotebookSQLValue.text) ?? .null, .integer(Int64(limit))])
       return try rows.map {
         guard let data = $0[0].blob else { throw NotebookStorageError.corruptRecord("action read model") }
+        return try JSONDecoder().decode(NotebookActionReadModel.self, from: data)
+      }
+    }
+  }
+
+  /// Live arrival/display work follows saved phases, not the age of the original
+  /// action. Public creation-history pagination remains actionReadModels.
+  public func recentActionPhases(limit: Int = 64) throws -> [NotebookActionReadModel] {
+    guard (1...128).contains(limit) else { throw NotebookStorageError.limitExceeded("action_page") }
+    return try readTransaction { _ in
+      try currentSQL!.rows("SELECT m.value,m.receipt_hash,r.hash FROM action_read_models m JOIN records r ON r.address=m.address ORDER BY m.phase_at DESC,m.address DESC LIMIT ?", [.integer(Int64(limit))]).map { row in
+        guard row[1].text == row[2].text, let data = row[0].blob else {
+          throw NotebookStorageError.corruptRecord("action phase read model")
+        }
         return try JSONDecoder().decode(NotebookActionReadModel.self, from: data)
       }
     }
