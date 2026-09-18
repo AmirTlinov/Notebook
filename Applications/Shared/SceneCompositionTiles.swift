@@ -853,9 +853,7 @@ final class SceneCompositionTiles {
     let needsSourceScheduling = published?.sourceReceipts.contains { address, receipt in
       guard !receipt.hasCurrentPixels, sourceJobs[address] == nil,
         sourceFailure(address, demand: receipt.demand) == nil else { return false }
-      #if os(iOS)
-        if published?.runtimeOwners.contains(address) == true { return false }
-      #endif
+      if published?.runtimeOwners.contains(address) == true { return false }
       return true
     } ?? false
     let containsNativeProjection = containsNativeProjection(for: request)
@@ -1002,6 +1000,7 @@ final class SceneCompositionTiles {
               self?.published = .init(plan: plan, frame: frame, requestedSources: sources,
                 liveData: liveData, rasters: rasters, liveRasters: liveRasters,
                 geometryID: geometryID, sourceReceipts: receipts, sourceRasters: ownedSources,
+                runtimeOwners: runtimeOwners,
                 tileSources: renderer.tileSources, tilePresenters: tilePresenters)
             #endif
             rasters.removeAll(); liveRasters.removeAll()
@@ -1061,24 +1060,20 @@ final class SceneCompositionTiles {
 
   private static func runtimeOwners(requests: [SceneCompositionRenderer.LiveRasterRequest],
     plan: SceneCompositionPlan, resources: SceneRenderResources) -> Set<SceneSourceAddress> {
-    #if os(iOS)
-      guard resources.profile == .interactive, let root = plan.presentations[.board(plan.rootBoardID)] else { return [] }
-      let candidates = requests.filter { request in
-        // Only the current board mounts input-capable source consumers.
-        // Portal previews are read-only projections: assigning their sources
-        // a runtime owner would suppress the static producer even though no
-        // such runtime can be mounted, leaving the source pending forever.
-        return request.owner.plane.demandsRuntime(source: request.source,
-          origin: request.demand.worldOrigin, in: root)
-      }
-      // Membership expresses real visibility, not an optimistic resource grant.
-      // The existing allocator admits these owners and queues the remainder.
-      return Set(candidates.map {
-        .init(plane: $0.owner.plane, elementID: $0.source.id)
-      })
-    #else
-      return []
-    #endif
+    guard resources.profile == .interactive, let root = plan.presentations[.board(plan.rootBoardID)] else { return [] }
+    let candidates = requests.filter { request in
+      // Only the current board mounts input-capable source consumers.
+      // Portal previews are read-only projections: assigning their sources
+      // a runtime owner would suppress the static producer even though no
+      // such runtime can be mounted, leaving the source pending forever.
+      return request.owner.plane.demandsRuntime(source: request.source,
+        origin: request.demand.worldOrigin, in: root)
+    }
+    // Membership expresses real visibility, not an optimistic resource grant.
+    // The existing allocator admits these owners and queues the remainder.
+    return Set(candidates.map {
+      .init(plane: $0.owner.plane, elementID: $0.source.id)
+    })
   }
 
   /// A working surface is not an optional raster-quality choice. Keep its
@@ -1124,11 +1119,9 @@ final class SceneCompositionTiles {
     for (address, receipt) in receipts.sorted(by: { $0.key.elementID < $1.key.elementID }) {
       guard !receipt.hasCurrentPixels, sourceJobs[address] == nil,
         sourceFailure(address, demand: receipt.demand) == nil else { continue }
-      #if os(iOS)
-        // Its admitted on-screen WebKit is the sole executor of a live
-        // interactive program. Static tiles and passive exports use jobs below.
-        if runtimeOwners.contains(address) { continue }
-      #endif
+      // Its admitted on-screen WebKit is the sole executor of a live
+      // interactive program. Static tiles and passive exports use jobs below.
+      if runtimeOwners.contains(address) { continue }
       guard sourceJobs.count < 32 else { break }
       let id = UUID(), demand = receipt.demand
       let capture = SceneRasterCaptureRequest(policy: demand.policy)
