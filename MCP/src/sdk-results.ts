@@ -44,10 +44,28 @@ const codeFragment=object({id,file,sourceHash:text,utf16Offset:number,text,width
 const code=object({fragment:codeFragment,ink}).nullable();
 const path=z.array(z.union([object({field:object({_0:text})}),object({member:object({_0:text})}),object({order:z.object({})})]));
 const publication=object({saved:z.literal("confirmed"),receivedByIPad:z.enum(["confirmed","awaiting_device"]),shownOnIPad:z.enum(["confirmed","awaiting_display","not_required"]),shownOnIPadReason:text.optional()});
-const changed=object({file:text,path,change:z.enum(["updated","deleted"]),afterDigest:text.nullable(),value:json.optional(),valueOmitted:z.boolean().optional()});
+const changed=z.discriminatedUnion("change",[
+  object({file:text,path,change:z.enum(["updated","deleted"]),afterDigest:text.nullable(),value:json.optional(),valueOmitted:z.boolean().optional()}),
+  z.object({change:z.literal("appendPage"),target:coverTargetSchema,pageID:id,item}).strict(),
+  z.object({change:z.literal("deletedItem"),target:coverTargetSchema,item}).strict(),
+  z.object({change:z.literal("restoreItem"),target:coverTargetSchema,item}).strict(),
+  z.object({change:z.literal("removePage"),target:coverTargetSchema,pageID:id,item:item.optional()}).strict(),
+]);
+const lifecycleChange=z.discriminatedUnion("kind",[
+  object({kind:z.literal("appendPage"),target:coverTargetSchema,pageID:id,beforeItem:item.optional(),afterItem:item}),
+  object({kind:z.literal("deleteItem"),target:coverTargetSchema,beforeItem:item,afterItem:item.optional()}),
+]);
+const lifecycleUndoChange=z.discriminatedUnion("kind",[
+  object({kind:z.literal("restoreItem"),target:coverTargetSchema,item}),
+  object({kind:z.literal("removePage"),target:coverTargetSchema,pageID:id,item:item.optional()}),
+]);
 export const actionResultSchema=z.object({actionID:id,actionVersion:text,summary:text,basis:readBasisSchema,publication,
   changed:z.array(changed),changeCount:number,next:text.optional(),undo:object({restored:number,preservedCount:number,completedAt:number}).optional()}).strict();
-const receipt=object({id,actionVersion:text.optional(),createdAt:number,action:object({summary:text,contextID:id.optional(),references:z.array(referenceSchema),operations:z.array(object({kind:text,target:targetSchema,id:text.optional(),frame:frame.optional()}))}),revisions:z.array(expectationSchema),changes:z.array(object({file:text,path}))});
+const receipt=object({id,actionVersion:text.optional(),createdAt:number,action:object({summary:text,contextID:id.optional(),references:z.array(referenceSchema),operations:z.array(object({kind:text,target:targetSchema,id:text.optional(),frame:frame.optional()}))}),revisions:z.array(expectationSchema),changes:z.array(z.union([object({file:text,path}),changed])),
+  lifecycleChanges:z.array(lifecycleChange).max(512).optional(),
+  undo:object({restored:number,completedAt:number,
+    preserved:z.array(z.union([object({file:text,path}),z.object({target:coverTargetSchema,reason:z.literal("lifecycle_owner_continued")}).strict()])),
+    preservedLifecycle:z.array(coverTargetSchema).max(512).optional(),lifecycleChanges:z.array(lifecycleUndoChange).max(512).optional()}).optional()});
 const details=object({actionVersion:text,receipt:receipt.optional(),publication:publication.optional(),actionID:id.optional(),page:object({section:text,offset:number,total:number,nextOffset:number.nullable(),items:z.array(json)}).optional(),
   pages:z.record(text,object({total:number,nextOffset:number.nullable()})).optional(),continuations:z.array(object({file:text,path,author:text})).optional(),nextActionID:id.nullable().optional()});
 const artifact=object({kind:z.enum(["currentView","target","pageOverview","pageRegion","attention","scriptImage"]),id:id.optional(),contextID:id.optional(),referenceID:id.optional(),regionID:text.optional(),mode:text.optional(),expectedSHA256:text});

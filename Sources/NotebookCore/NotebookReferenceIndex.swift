@@ -134,6 +134,8 @@ extension NotebookStore {
       if let database = currentSQL, database.writable { try refreshReferenceIndex(database: database) }
       return try targets.map { target in
         guard [.board, .cover, .page].contains(target.kind) else { throw CollaborationError("invalid_reference", "Токен проекции принадлежит доске, обложке или листу.") }
+        if target.kind == .board { try requireLiveBoard(target.id) }
+        if target.kind == .page, try ownerItemID(ofPage: target.id) == nil { throw CollaborationError("target_missing", "Лист больше не принадлежит доступной тетради.", target: target) }
         if target.kind == .cover, try ownerBoardID(of: target.id) != target.boardID { throw CollaborationError("target_missing", "Обложка отсутствует на указанной доске.", target: target) }
         let key = Self.referenceOwnerKey(target.kind.rawValue, target.id)
         guard let hash = try currentSQL!.rows("SELECT hash FROM reference_owners WHERE owner_key=?", [.text(key)]).first?[0].text else {

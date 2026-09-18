@@ -58,10 +58,11 @@ extension NotebookStore {
         pageIDs.insert(target.id)
         if let owner = try ownerItemID(ofPage: target.id) { itemIDs.insert(owner) }
       case .document: itemIDs.insert(target.id); documentIDs.insert(target.id)
-      case .board: boardIDs.insert(target.id)
+      case .board:
+        if try isLiveBoard(target.id) { boardIDs.insert(target.id) }
       case .cover:
         itemIDs.insert(target.id)
-        if let board = target.boardID { boardIDs.insert(board) }
+        if let board = target.boardID, try isLiveBoard(board) { boardIDs.insert(board) }
       }
     }
     for target in action.operations.map(\.target) + action.expected.map(\.target)
@@ -113,6 +114,9 @@ extension NotebookStore {
         if operation.kind == .createNotebook, let page = operation.values["pageID"]?.string.flatMap(UUID.init(uuidString:)) {
           pageIDs.insert(page); fullPageIDs.insert(page)
         }
+        if operation.kind == .appendPage, let page = operation.id.flatMap(UUID.init(uuidString:)) {
+          pageIDs.insert(page); fullPageIDs.insert(page)
+        }
         if operation.kind == .createDocument, let id = operation.id.flatMap(UUID.init(uuidString:)) { documentIDs.insert(id) }
         if operation.kind == .createBoard, let id = operation.id.flatMap(UUID.init(uuidString:)) { boardIDs.insert(id) }
         if operation.kind == .stackItems { itemIDs.formUnion(try operation.values["itemIDs"]?.decode([UUID].self) ?? []) }
@@ -123,9 +127,6 @@ extension NotebookStore {
             if operation.kind == .reorderElements {
               let ids = try operation.values["ids"]?.decode([String].self) ?? []
               elementIDs[board, default: []].formUnion(ids)
-              let surface = operation.target.kind == .board ? "element" : "coverElement"
-              let count = try currentSQL!.rows("SELECT count(*) FROM spatial_entries WHERE board_id=? AND kind=? AND (?='element' OR owner_id=?)", [.text(board.uuidString.lowercased()), .text(surface), .text(surface), .text(operation.target.id.uuidString.lowercased())]).first![0].integer!
-              guard count == ids.count else { throw CollaborationError("invalid_operation", "Порядок перечисляет всю выбранную поверхность ровно один раз.") }
             }
           }
         }
@@ -184,6 +185,7 @@ extension NotebookStore {
     // A deleted placement no longer has a live item_owners entry, but its
     // causal tombstone still determines whether an old action owns undo.
     for (board, ids) in placementIDs {
+      guard try isLiveBoard(board) else { continue }
       for id in ids {
         insert(try storedFragments(address: "board.json#/boards/@" + board.uuidString.lowercased()
           + "/board/placements/@" + id.uuidString.lowercased()))
@@ -191,6 +193,7 @@ extension NotebookStore {
     }
     var pending = Array(boardIDs), visited = Set<UUID>()
     while let id = pending.popLast(), visited.insert(id).inserted {
+      guard try isLiveBoard(id) else { continue }
       let address = "board.json#/boards/@" + id.uuidString.lowercased()
       insert(try storedFragments(address: address, descendants: false))
       if let owner = try ownerBoardID(of: id) {
@@ -199,6 +202,7 @@ extension NotebookStore {
       }
     }
     for (board, ids) in elementIDs {
+      guard try isLiveBoard(board) else { continue }
       let address = "board.json#/boards/@" + board.uuidString.lowercased()
       for id in ids {
         let rows = try storedFragments(address: address + "/board/elements/@" + fieldKey([collaborationIdentity(id)]))
@@ -211,7 +215,7 @@ extension NotebookStore {
     }
     if let receiptOperations {
       for operation in receiptOperations where operation.kind == .createBoard {
-        guard let id = operation.id.flatMap(UUID.init(uuidString:)) else { continue }
+        guard let id = operation.id.flatMap(UUID.init(uuidString:)), try isLiveBoard(id) else { continue }
         let address = "board.json#/boards/@" + id.uuidString.lowercased()
         if let child = try currentSQL!.rows("SELECT item_id FROM item_owners WHERE board_id=? ORDER BY item_id LIMIT 1",
           [.text(id.uuidString.lowercased())]).first?[0].text.flatMap(UUID.init(uuidString:)) {
@@ -225,19 +229,33 @@ extension NotebookStore {
     var items: [WorkspaceItem] = []
     for id in itemIDs.sorted(by: { $0.uuidString < $1.uuidString }) {
       guard let item = try readItemHeader(id) else { continue }
-      var pages = item.firstPageID.map { [$0] } ?? []
-      for page in pageIDs where try ownerItemID(ofPage: page) == id && !pages.contains(page) { pages.append(page) }
-      items.append(.init(id: id, kind: item.kind, title: item.title, pageIDs: pages))
+      var pages: [(position: Int64, id: UUID)] = item.firstPageID.map { [(Int64(0), $0)] } ?? []
+      for page in pageIDs where page != item.firstPageID {
+        let address = "workspace.json#/items/@" + id.uuidString.lowercased() + "/pageIDs/@" + page.uuidString.lowercased()
+        if let position = try currentSQL!.rows("SELECT position FROM records WHERE address=?", [.text(address)]).first?[0].integer {
+          pages.append((position, page))
+        }
+      }
+      // Set iteration is not the notebook's order. A reopened action must see
+      // the same bounded authored subset as its original receipt.
+      items.append(.init(id: id, kind: item.kind, title: item.title, pageIDs: pages.sorted { $0.position < $1.position }.map(\.id)))
     }
     if let first = try currentSQL!.rows("SELECT member FROM records WHERE parent='workspace.json#' AND collection='items' ORDER BY position LIMIT 1").first?[0].text.flatMap(UUID.init(uuidString:)),
       !items.contains(where: { $0.id == first }), let item = try readItemHeader(first) { items.insert(item.item, at: 0) }
     guard let first = items.first else { throw NotebookStorageError.corruptRecord("empty workspace") }
     let workspace = try workspaceProjection(items: items, selectedItemID: first.id, selectedPageID: first.pageIDs.first)
     var rows = Array(boardRows.values)
-    for id in boardIDs { try appendBoardCausalFragments(to: &rows, address: "board.json#/boards/@" + id.uuidString.lowercased()) }
+    for id in boardIDs where try isLiveBoard(id) {
+      try appendBoardCausalFragments(to: &rows, address: "board.json#/boards/@" + id.uuidString.lowercased(),
+        additionalElementIDs: elementIDs[id] ?? [])
+    }
     rows += try storedFragments(address: "board.json#", descendants: false)
     var files = ["workspace.json": try JSONValue.encode(workspace), "board.json": try NotebookRecordCodec.decode(rows, root: "board.json#")]
     for id in codeIDs { files[codeFragmentFile(id)] = try storedValue(codeFragmentFile(id)) }
+    // Retired PAGE rows are a replication baseline, not a public command
+    // target. Undo first restores permitted owners; a preserved deletion must
+    // never let an ordinary inverse edit its invisible source indirectly.
+    pageIDs = try Set(pageIDs.filter { try ownerItemID(ofPage: $0) != nil })
     let projectedPageIDs = pageIDs.subtracting(fullPageIDs)
     let pageAddresses = projectedPageIDs.sorted().flatMap { id -> [(String, Bool)] in
       let root = pageFile(id) + "#", ids = (pageElementIDs[id] ?? []).sorted()

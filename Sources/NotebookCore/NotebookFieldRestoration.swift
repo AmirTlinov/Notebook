@@ -26,9 +26,119 @@ extension NotebookStore {
       fields[key] = restoration
     }
     for (key, restoration) in fields {
-      try database.run("INSERT INTO action_field_restorations(address,field,version,value) VALUES(?,?,?,?)",
-        [.text(address), .text(key),
-          .text(restoration.writtenVersion.restorationIdentity), .blob(try Self.storageEncoder.encode(restoration))])
+      try insertFieldRestoration(restoration, key: key, receiptAddress: address, database: database)
+    }
+    try indexLifecycleFieldRestorations(receipt, address: address, database: database)
+  }
+
+  private func insertFieldRestoration(_ restoration: CollaborationFieldRestoration, key: String,
+    receiptAddress: String, database: NotebookSQLConnection) throws {
+    let data = try Self.storageEncoder.encode(restoration)
+    if let existing = try database.rows("SELECT value FROM action_field_restorations WHERE address=? AND field=?",
+      [.text(receiptAddress), .text(key)]).first?[0].blob {
+      guard try JSONDecoder().decode(CollaborationFieldRestoration.self, from: existing) == restoration else {
+        throw NotebookStorageError.invalidTransaction("inconsistent field restoration")
+      }
+      return
+    }
+    try database.run("INSERT INTO action_field_restorations(address,field,version,value) VALUES(?,?,?,?)",
+      [.text(receiptAddress), .text(key), .text(restoration.writtenVersion.restorationIdentity), .blob(data)])
+  }
+
+  /// Lifecycle fields are deliberately absent from the small ordinary patch
+  /// array. Their existing inverse streams attest the same causal restoration
+  /// without putting every page membership in a receipt or a second history.
+  private func indexLifecycleFieldRestorations(_ receipt: CollaborationReceipt, address: String,
+    database: NotebookSQLConnection) throws {
+    let restored = (receipt.undo?.lifecycleChanges ?? []).filter { $0.kind == .restoreItem }
+    guard !restored.isEmpty else { return }
+    guard restored.count <= 512, let original = receipt.lifecycleInverse,
+      let inverse = receipt.undo?.restorationInverse else {
+      throw NotebookStorageError.invalidTransaction("lifecycle restoration evidence")
+    }
+    let targets = Set(restored.map(\.target))
+    guard targets.count == restored.count, restored.allSatisfy({ event in
+      event.target.kind == .cover && event.item?.id == event.target.id
+        && receipt.lifecycleChanges?.contains(where: { $0.kind == .deleteItem && $0.target == event.target }) == true
+        && receipt.undo?.preservedLifecycle?.contains(event.target) != true
+    }) else { throw NotebookStorageError.invalidTransaction("lifecycle restoration scope") }
+
+    // Scalar evidence only, streamed into TEMP. Even a large notebook has no
+    // array of fields or page bodies in the provenance owner.
+    try database.run("CREATE TEMP TABLE IF NOT EXISTS lifecycle_restoration_fields(address TEXT PRIMARY KEY,before_hash TEXT,after_hash TEXT) WITHOUT ROWID")
+    try database.run("DELETE FROM lifecycle_restoration_fields")
+    defer { try? database.run("DELETE FROM lifecycle_restoration_fields") }
+    try visitLifecycleInverse(reference: original, actionID: receipt.id) { change in
+      let row = try readLifecycleInverseFragment(hash: change.beforeHash ?? change.afterHash!, address: change.address)
+      guard row.collection == "collaboration/fields" || row.collection == "board/collaboration/fields"
+        || row.collection == "pageIDs" || row.collection == "board/elements" else { return }
+      try database.run("INSERT INTO lifecycle_restoration_fields VALUES(?,?,?)", [.text(change.address),
+        change.beforeHash.map(NotebookSQLValue.text) ?? .null, change.afterHash.map(NotebookSQLValue.text) ?? .null])
+    }
+
+    func oldSource(_ source: String) throws -> NotebookStoredFragment? {
+      guard let hash = try database.rows("SELECT before_hash FROM lifecycle_restoration_fields WHERE address=?",
+        [.text(source)]).first?[0].text else { return nil }
+      return try readLifecycleInverseFragment(hash: hash, address: source)
+    }
+
+    func fieldPath(_ row: NotebookStoredFragment) throws -> [CollaborationPathComponent]? {
+      let parts = row.member.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+      if row.file == "workspace.json", row.parent == "workspace.json#", row.collection == "collaboration/fields" {
+        if parts == ["items", "order"] { return [.field("collaboration"), .field("fields"), .field(row.member)] }
+        guard parts.count >= 3, parts[0] == "items", let id = UUID(uuidString: parts[1]),
+          targets.contains(where: { $0.id == id }), ["exists", "title", "kind", "pageIDs"].contains(parts[2]) else { return nil }
+        if parts.count == 4, parts[2] == "pageIDs" {
+          guard try oldSource("workspace.json#/items/@" + parts[1] + "/pageIDs/@" + parts[3]) != nil else { return nil }
+        } else if parts.count != 3 { return nil }
+        return [.field("collaboration"), .field("fields"), .field(row.member)]
+      }
+      if row.file == "board.json", row.collection == "board/collaboration/fields",
+        let parent = row.parent, parent.hasPrefix("board.json#/boards/@"),
+        let board = UUID(uuidString: String(parent.dropFirst("board.json#/boards/@".count))),
+        targets.contains(where: { $0.boardID == board }), parts.count >= 2, parts[0] == "elements" {
+        if parts != ["elements", "order"] {
+          // A physical cover source, not its position or a similar ID on a
+          // different surface, defines this lifecycle group's field ownership.
+          guard parts.count >= 3,
+            let source = try oldSource(parent + "/board/elements/@" + parts[1]),
+            let surface = try source.value["surface"]?.decode(SurfaceID.self), surface.kind == .cover,
+            targets.contains(where: { $0.id == surface.ownerID && $0.boardID == board }) else { return nil }
+        }
+        return [.field("boards"), .member(board.uuidString.lowercased()), .field("board"),
+          .field("collaboration"), .field("fields"), .field(row.member)]
+      }
+      return nil
+    }
+
+    try visitLifecycleInverse(reference: inverse, actionID: receipt.id) { change in
+      guard let after = change.afterHash else { return }
+      let row = try readLifecycleInverseFragment(hash: after, address: change.address)
+      guard let path = try fieldPath(row) else { return }
+      let expectedAddress = row.parent! + "/" + row.collection + "/@" + fieldKey([row.member])
+      guard row.address == expectedAddress, row.collections.isEmpty, row.position == 0 else {
+        throw NotebookStorageError.invalidTransaction("lifecycle restoration field identity")
+      }
+      let prior = try database.rows("SELECT before_hash FROM lifecycle_restoration_fields WHERE address=?", [.text(row.address)]).first
+      // An unchanged membership may have kept its old version through deletion.
+      // A field changed inside the original action must instead use that
+      // action's before-image, never its intermediate pre-delete value.
+      let oldHash = prior.map { $0[0].text } ?? change.beforeHash
+      guard let oldHash else { return } // A new field has no earlier owner.
+      let old = try readLifecycleInverseFragment(hash: oldHash, address: row.address)
+      guard old.file == row.file, old.parent == row.parent, old.collection == row.collection,
+        old.member == row.member, old.position == 0, old.collections.isEmpty else {
+        throw NotebookStorageError.invalidTransaction("lifecycle restored field identity")
+      }
+      let written = try row.value.decode(ContentFieldVersion.self), previous = try old.value.decode(ContentFieldVersion.self)
+      guard written.isValid, previous.isValid, written.human,
+        written.stamp != previous.stamp, written.includes(previous) else {
+        throw NotebookStorageError.invalidTransaction("lifecycle restoration field version")
+      }
+      let restoration = CollaborationFieldRestoration(file: row.file, path: path,
+        writtenVersion: written, restoredVersion: previous)
+      try insertFieldRestoration(restoration, key: restorationKey(file: row.file, path: path),
+        receiptAddress: address, database: database)
     }
   }
 

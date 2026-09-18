@@ -49,7 +49,7 @@ extension NotebookStore {
       guard data.count <= 262_144, record.isValid, fragment.file == file, fragment.parent == file + "#",
         fragment.member == record.id.uuidString.lowercased(), fragment.position == 0,
         fragment.address == file + "#/computations/@" + fragment.member, fragment.collections.isEmpty,
-        try ownerItemID(ofPage: record.source.pageID) == record.source.notebookID else {
+        try pageSourceOwnerID(ofPage: record.source.pageID) == record.source.notebookID else {
         throw NotebookStorageError.invalidTransaction("computation address")
       }
     }
@@ -127,7 +127,10 @@ extension NotebookStore {
     try noteReferenceChange(fragment.address, file: fragment.file, database: database)
     try noteDocumentSourceDelivery(address: fragment.address, file: fragment.file,
       collection: fragment.collection, member: fragment.member, database: database)
-    if !Self.localRecord(fragment.file) { try database.recordChange(.init(address: fragment.address, blobHash: hash)) }
+    if !Self.localRecord(fragment.file) {
+      try database.recordActionRecordChange(address: fragment.address, beforeHash: previousHash, afterHash: hash)
+      try database.recordChange(.init(address: fragment.address, blobHash: hash))
+    }
     return true
   }
 
@@ -166,7 +169,10 @@ extension NotebookStore {
         try noteDocumentSourceDelivery(address: address, file: file, collection: collection, member: member, database: database)
         try database.run("DELETE FROM records WHERE address=?", [.text(address)])
         try noteContextHistoryChange(file: file, database: database)
-        if !Self.localRecord(file) { try database.recordChange(.init(address: address, blobHash: nil)) }
+        if !Self.localRecord(file) {
+          try database.recordActionRecordChange(address: address, beforeHash: row[4].text, afterHash: nil)
+          try database.recordChange(.init(address: address, blobHash: nil))
+        }
       }
       if descendants.isEmpty { return }
     }
@@ -306,8 +312,17 @@ extension NotebookStore {
       throw NotebookStorageError.invalidTransaction("board projection")
     }
     return try commandTransaction {
-      try publishProjectionEdits(file: "board.json", before: .encode(before), after: .encode(after))
-      return after
+      var live = Set<UUID>([after.rootBoardID])
+      for id in Set(before.boards.map(\.id) + after.boards.map(\.id)) where id != after.rootBoardID {
+        if try readItemHeader(id)?.kind == .board { live.insert(id) }
+        else if let next = after.boards.first(where: { $0.id == id }), before.boards.first(where: { $0.id == id }) != next {
+          throw CollaborationError("target_missing", "Удалённая доска не принимает локальную правку.", target: .init(kind: .board, id: id))
+        }
+      }
+      let old = BoardHierarchy(rootBoardID: before.rootBoardID, boards: before.boards.filter { live.contains($0.id) }, stamp: before.stamp)
+      let next = BoardHierarchy(rootBoardID: after.rootBoardID, boards: after.boards.filter { live.contains($0.id) }, stamp: after.stamp)
+      try publishProjectionEdits(file: "board.json", before: .encode(old), after: .encode(next))
+      return next
     }
   }
 
@@ -319,8 +334,11 @@ extension NotebookStore {
       Set(pages.map(\.id)).count == pages.count, Set(documents.map(\.id)).count == documents.count,
       Set(states.map(\.id)).count == states.count else { throw NotebookStorageError.invalidTransaction("workspace projection") }
     try commandTransaction {
-      // Membership and content are still one transaction. Admit the new page
-      // address before the sole page writer checks its physical owner.
+      // Membership and content are still one transaction. A new local birth
+      // cannot reuse any retained item or PAGE identity.
+      let oldItems = Set(before.items.map(\.id)), oldPages = Set(before.items.flatMap(\.pageIDs))
+      for item in after.items where !oldItems.contains(item.id) { try requireUnreservedItemID(item.id) }
+      for page in Set(after.items.flatMap(\.pageIDs)).subtracting(oldPages) { try requireUnreservedPageID(page) }
       try publishProjectionEdits(file: "workspace.json", before: .encode(before), after: .encode(after))
       for page in pages { try savePage(page) }
       for document in documents { try saveDocument(document) }
@@ -340,66 +358,97 @@ extension NotebookStore {
   @discardableResult
   public func deleteWorkspaceItem(itemID: UUID, expected: VersionStamp? = nil, actor: UUID) throws -> NotebookWorkspaceHeader {
     try commandTransaction {
-      let header = try workspaceHeader()
-      guard header.itemCount > 1 else { throw NotebookStorageError.invalidTransaction("workspace retains one item") }
-      guard let item = try readItemHeader(itemID), let parent = try readBoardItem(itemID) else { throw CocoaError(.fileNoSuchFile) }
-      if let expected, parent.board.stamp != expected { throw NotebookStorageError.transactionConflict }
-      if item.kind == .board {
-        let address = "board.json#/boards/@" + itemID.uuidString.lowercased()
-        let members = try currentSQL!.rows("SELECT 1 FROM item_owners WHERE board_id=? UNION ALL SELECT 1 FROM records WHERE parent=? AND collection='board/elements' LIMIT 1", [.text(itemID.uuidString.lowercased()), .text(address)])
-        let ink = try readSpatialInk(surfaces: [.board(itemID)])
-        guard members.isEmpty, !ink.containsEditableInk(on: .board(itemID)) else { throw NotebookStoreError.boardContainsContent(itemID) }
-        try removeFragment(address, database: currentSQL!)
-      }
-      var board = parent.board
-      guard board.deleteItem(itemID, actor: actor) else { throw NotebookStorageError.transactionConflict }
-      let old = BoardHierarchy(rootBoardID: header.rootBoardID, boards: [parent], stamp: parent.board.stamp)
-      let next = BoardHierarchy(rootBoardID: header.rootBoardID, boards: [.init(id: parent.id, board: board, portalCamera: parent.portalCamera, portalStamp: parent.portalStamp)], stamp: board.stamp)
-      _ = try saveBoardEdits(before: old, after: next)
-      let nodeAddress = "board.json#/boards/@" + parent.id.uuidString.lowercased()
-      // The UI projection deliberately contains no cover programs. Deletion
-      // still removes every addressed cover source and leaves causal tombstones.
-      while let element = try currentSQL!.rows("SELECT r.address,r.member FROM spatial_entries s JOIN records r ON r.address=s.address WHERE s.kind='coverElement' AND s.board_id=? AND s.owner_id=? ORDER BY s.entry_id LIMIT 1", [.text(parent.id.uuidString.lowercased()), .text(itemID.uuidString.lowercased())]).first {
-        let key = fieldKey(["elements", element[1].text!, "exists"])
-        let address = nodeAddress + "/board/collaboration/fields/@" + fieldKey([key])
-        let previous = try storedFragments(address: address, descendants: false).first?.value.decode(ContentFieldVersion.self)
-        let version = ContentFieldVersion(stamp: board.stamp, human: true, previous: previous)
-        try writeFragment(.init(address: address, file: "board.json", parent: nodeAddress, collection: "board/collaboration/fields", member: key, position: 0, value: try .encode(version), collections: []), database: currentSQL!)
-        try removeFragment(element[0].text!, database: currentSQL!)
-      }
-      let itemAddress = "workspace.json#/items/@" + itemID.uuidString.lowercased()
-      // Enumerate the durable memberships, not the UI's finite projection.
-      // Each body and membership is removed before requesting the next 64.
-      while true {
-        let pages = try currentSQL!.rows("SELECT member,address FROM records WHERE parent=? AND collection='pageIDs' ORDER BY member LIMIT 64", [.text(itemAddress)])
-        if pages.isEmpty { break }
-        for row in pages {
-          guard let id = row[0].text.flatMap(UUID.init(uuidString:)), let address = row[1].text else {
-            throw NotebookStorageError.corruptRecord(itemAddress)
-          }
-          try removeFragment(pageFile(id) + "#", database: currentSQL!)
-          try removeFragment(address, database: currentSQL!)
-        }
-      }
-      try removeFragment(itemAddress, database: currentSQL!)
-      guard let root = try storedFragments(address: "workspace.json#", descendants: false).first,
-        let stamp = header.stamp.advanced(by: actor) else { throw NotebookStorageError.invalidTransaction("workspace clock") }
-      try writeFragment(root.replacing(value: root.value.setting("stamp", try .encode(stamp))), database: currentSQL!)
-      // Removing a member also changes the catalog's visible order. Both
-      // fields belong to this deletion, not the preceding author's version.
-      // Only their clocks are written; unrelated catalog bodies stay unread.
-      for key in [fieldKey(["items", itemID.uuidString.lowercased(), "exists"]), "items/order"] {
-        let address = "workspace.json#/collaboration/fields/@" + fieldKey([key])
-        let oldVersion = try storedFragments(address: address, descendants: false).first?.value.decode(ContentFieldVersion.self)
-        let version = ContentFieldVersion(stamp: stamp, human: true, previous: oldVersion)
-        try writeFragment(.init(address: address, file: "workspace.json", parent: "workspace.json#", collection: "collaboration/fields", member: key, position: 0, value: try .encode(version), collections: []), database: currentSQL!)
-      }
-      try publishRecords(writes: [:], removals: item.kind == .document ? [documentFile(itemID), stateFile(itemID)] : [])
+      try deleteWorkspaceItemContent(itemID: itemID, expected: expected, actor: actor, human: true)
       if let presence = try? loadPresence(), presence.selectedItemID == itemID,
         let replacement = try readItemHeaders(limit: 1).first {
         try savePresence(presence.selecting(itemID: replacement.id, pageID: replacement.firstPageID))
       }
     }
     return try workspaceHeader()
+  }
+
+  /// The admitted writer owns physical deletion. Session selection is a native
+  /// adapter concern, not a content effect or another execution route.
+  func deleteWorkspaceItemContent(itemID: UUID, expected: VersionStamp? = nil, actor: UUID, human: Bool) throws {
+    guard let database = currentSQL, database.writable else { throw NotebookStorageError.readOnlyTransaction }
+    let header = try workspaceHeader()
+    guard header.itemCount > 1 else { throw NotebookStorageError.invalidTransaction("workspace retains one item") }
+    guard let item = try readItemHeader(itemID), let parent = try readBoardItem(itemID) else { throw CocoaError(.fileNoSuchFile) }
+    if let expected, parent.board.stamp != expected { throw NotebookStorageError.transactionConflict }
+    // The physical source index must include writes earlier in this same
+    // command; paint membership deliberately omits hidden/losing graphics.
+    try refreshReferenceIndex(database: currentSQL!)
+    if item.kind == .board {
+      let address = "board.json#/boards/@" + itemID.uuidString.lowercased()
+      let members = try currentSQL!.rows("SELECT 1 FROM item_owners WHERE board_id=? UNION ALL SELECT 1 FROM records WHERE parent=? AND collection='board/elements' LIMIT 1", [.text(itemID.uuidString.lowercased()), .text(address)])
+      let ink = try readSpatialInk(surfaces: [.board(itemID)])
+      guard members.isEmpty, !ink.containsEditableInk(on: .board(itemID)) else { throw NotebookStoreError.boardContainsContent(itemID) }
+      // Keep the one admitted node baseline. Catalogue/placement removal
+      // retires public access without discarding late portal/element sources.
+    }
+    var board = parent.board
+    guard board.deleteItem(itemID, actor: actor) else { throw NotebookStorageError.transactionConflict }
+    board.recordPlacementPreference(from: parent.board, human: human)
+    let old = BoardHierarchy(rootBoardID: header.rootBoardID, boards: [parent], stamp: parent.board.stamp)
+    let next = BoardHierarchy(rootBoardID: header.rootBoardID, boards: [.init(id: parent.id, board: board, portalCamera: parent.portalCamera, portalStamp: parent.portalStamp)], stamp: board.stamp)
+    _ = try saveBoardEdits(before: old, after: next)
+    let nodeAddress = "board.json#/boards/@" + parent.id.uuidString.lowercased()
+    // The UI projection deliberately contains no cover programs. Deletion
+    // still removes every addressed cover source and leaves causal tombstones.
+    let sourceOwner = CollaborationTarget(kind: .cover, id: itemID, boardID: parent.id).key
+    var sourceCursor: (position: Int64, member: String)?
+    while true {
+      let seek = sourceCursor == nil ? "" : " AND (o.position,o.member)>(?,?)"
+      let arguments: [NotebookSQLValue] = [.text(sourceOwner), .text(nodeAddress)]
+        + (sourceCursor.map { [.integer($0.position), .text($0.member)] } ?? [])
+      let sources = try currentSQL!.rows("SELECT r.address,r.member,o.position,o.member FROM reference_element_order o JOIN records r ON r.address=o.address WHERE o.owner_key=? AND r.parent=?" + seek + " ORDER BY o.position,o.member LIMIT 64", arguments)
+      guard let last = sources.last else { break }
+      for element in sources {
+        try currentSQL!.noteActionLifecycleElement(boardID: parent.id, elementID: element[1].text!, itemID: itemID)
+        let key = fieldKey(["elements", element[1].text!, "exists"])
+        let address = nodeAddress + "/board/collaboration/fields/@" + fieldKey([key])
+        let previous = try storedFragments(address: address, descendants: false).first?.value.decode(ContentFieldVersion.self)
+        let version = ContentFieldVersion(stamp: board.stamp, human: human, previous: previous)
+        try writeFragment(.init(address: address, file: "board.json", parent: nodeAddress, collection: "board/collaboration/fields", member: key, position: 0, value: try .encode(version), collections: []), database: currentSQL!)
+        try removeFragment(element[0].text!, database: currentSQL!)
+      }
+      // Removed source-index entries are retired at the ordinary final
+      // refresh. Seek beyond this batch rather than rescanning that prefix.
+      sourceCursor = (last[2].integer!, last[3].text!)
+    }
+    let itemAddress = "workspace.json#/items/@" + itemID.uuidString.lowercased()
+    // Enumerate the durable memberships, not the UI's finite projection.
+    // PAGE owns its admitted baseline after notebook retirement. Only live
+    // membership disappears; delayed page fields still reach the same merger.
+    while true {
+      let pages = try currentSQL!.rows("SELECT member,address FROM records WHERE parent=? AND collection='pageIDs' ORDER BY member LIMIT 64", [.text(itemAddress)])
+      if pages.isEmpty { break }
+      for row in pages {
+        guard let id = row[0].text.flatMap(UUID.init(uuidString:)), let address = row[1].text else {
+          throw NotebookStorageError.corruptRecord(itemAddress)
+        }
+        if item.kind != .notebook {
+          try currentSQL!.noteActionLifecycleFile(pageFile(id), itemID: itemID)
+          try removeFragment(pageFile(id) + "#", database: currentSQL!)
+        }
+        try removeFragment(address, database: currentSQL!)
+      }
+    }
+    try removeFragment(itemAddress, database: currentSQL!)
+    guard let root = try storedFragments(address: "workspace.json#", descendants: false).first,
+      let stamp = header.stamp.advanced(by: actor) else { throw NotebookStorageError.invalidTransaction("workspace clock") }
+    try writeFragment(root.replacing(value: root.value.setting("stamp", try .encode(stamp))), database: currentSQL!)
+    // Removing a member also changes the catalog's visible order. Both
+    // fields belong to this deletion, not the preceding author's version.
+    // Only their clocks are written; unrelated catalog bodies stay unread.
+    for key in [fieldKey(["items", itemID.uuidString.lowercased(), "exists"]), "items/order"] {
+      let address = "workspace.json#/collaboration/fields/@" + fieldKey([key])
+      let oldVersion = try storedFragments(address: address, descendants: false).first?.value.decode(ContentFieldVersion.self)
+      let version = ContentFieldVersion(stamp: stamp, human: human, previous: oldVersion)
+      try writeFragment(.init(address: address, file: "workspace.json", parent: "workspace.json#", collection: "collaboration/fields", member: key, position: 0, value: try .encode(version), collections: []), database: currentSQL!)
+    }
+    if item.kind == .notebook { try refreshRetiredNotebookPages(itemID: itemID) }
+    // Document source/state remain the same admitted typed pair. Their source
+    // edits belong to ordinary field undo, not to lifecycle file replay.
   }
 }

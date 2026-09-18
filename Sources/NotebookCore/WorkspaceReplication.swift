@@ -84,6 +84,23 @@ extension NotebookStore {
         let live = try resolve(existsKey, .bool(old != nil), .bool(next != nil)) == .bool(true)
         if !live {
           differsFromNewest = differsFromNewest || ((oldStamp ?? nextStamp) > nextStamp ? old != nil : next != nil)
+          // Retirement removes catalogue visibility, not the admitted PAGE
+          // source. Fresh snapshots also carry the retained typed order owner.
+          let orderAddress = root + "/pageOrders/@" + id
+          if let orderRow = try incoming.candidate(orderAddress) {
+            let candidateOrder = try orderRow.value.decode(NotebookPageOrderRegister.self)
+            try candidateOrder.validate()
+            let delivered = try incoming.mutation(orderAddress) != nil
+            guard orderRow.parent == root, orderRow.collection == "pageOrders", orderRow.member == id,
+              orderRow.position == 0, orderRow.collections.isEmpty,
+              !delivered || Set(candidateOrder.heads.map(\.valueRoot) + [candidateOrder.visibleRoot]).isSubset(of: declaredOrderRoots) else {
+              throw NotebookStorageError.invalidTransaction("retired page order dependencies")
+            }
+            let prior = try incoming.previous(orderAddress)?.value.decode(NotebookPageOrderRegister.self)
+            let joined = try mergeRetiredNotebookOrder(candidateOrder, previous: prior)
+            try writePageOrder(joined, itemID: uuid)
+            try put(fieldKey(["items", id, "pageIDs"]), joined.fieldVersion)
+          }
           try removeFragment(address, database: database); continue
         }
         guard let selected = old ?? next else { throw NotebookStorageError.invalidTransaction("item payload missing") }
@@ -187,6 +204,13 @@ extension NotebookStore {
     }
     let stamp = differsFromNewest ? frontier.advanced(by: frontier.actor) ?? frontier : frontier
     try writeFragment(nextRoot.replacing(value: nextRoot.value.setting("stamp", .encode(stamp))), database: database)
+    var retiredCursor = ""
+    while true {
+      let rows = try database.rows("SELECT id FROM replication_catalog_items WHERE id>? ORDER BY id LIMIT 64", [.text(retiredCursor)])
+      guard let last = rows.last?[0].text else { break }
+      for row in rows { try refreshRetiredNotebookPages(itemID: UUID(uuidString: row[0].text!)!) }
+      retiredCursor = last
+    }
     try database.run("DELETE FROM replication_catalog_items")
     if try !database.rows("SELECT 1 FROM replication_catalog_fields WHERE allocated=1 LIMIT 1").isEmpty {
       try incoming.validateFieldCount(parent: root, collection: fields, maximum: 1_000_000)

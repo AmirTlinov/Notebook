@@ -9,10 +9,15 @@ extension NotebookStore {
     guard let id = UUID(uuidString: identifier), stateFile(id) == file else {
       throw NotebookStorageError.invalidTransaction("document state owner")
     }
-    // A catalog tombstone owns deletion. Retired state packets cannot recreate
-    // either the document or its journal, regardless of their delivery order.
-    guard try readItemHeader(id)?.kind == .document else {
-      try publishRecords(writes: [:], removals: [file]); return
+    // Catalogue membership owns visibility, not the already admitted source.
+    // Delayed values reach their existing field merger without resurrection.
+    let live = try readItemHeader(id)?.kind == .document
+    let records = NotebookIncomingRecords(store: self, manifestHash: manifestHash)
+    if !live {
+      guard try admitsReplicatedRetiredDocumentPair(itemID: id, records: records) else {
+        try publishRecords(writes: [:], removals: [file]); return
+      }
+      if let mutation = try records.mutation(rootAddress), mutation[0].text == nil { return }
     }
     func fragment(_ address: String, _ hash: String) throws -> NotebookStoredFragment {
       let value = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(hash))

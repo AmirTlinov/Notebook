@@ -10,14 +10,14 @@ import {createServer,executionOutput} from "../src/server.js";
 import {sdkReference,sdkInputs} from "../src/sdk-contracts.js";
 import {operationSchema} from "../src/actions.js";
 
-test("public SDK help covers every method, all 20 operations, native content and all old capabilities",async()=>{
+test("public SDK help covers every method, all 22 operations, native content and all old capabilities",async()=>{
   const source=await readFile(new URL("../../Sources/NotebookScriptWorker/Resources/notebook-sdk.js",import.meta.url),"utf8");
   const names=[...source.matchAll(/\b([A-Za-z]+):\s*(?:read\(|effect\(|topic\s*=>|key\s*=>|\(key, action\))/g)].map(x=>x[1]!);
   for(const name of [...names,"emit","emitImage"]) {
     const method=sdkReference.methods[name]!;
     assert.ok(method?.input&&method.returns&&method.example,"missing discoverable contract: "+name);
   }
-  assert.equal(sdkReference.operations.items.length,20);
+  assert.equal(sdkReference.operations.items.length,22);
   for(const {name,topic} of sdkReference.operations.items) {
     assert.equal(topic,`operation/${name}`);
     assert.ok(sdkReference.operationDetails[name]?.input,"missing operation schema: "+topic);
@@ -28,6 +28,50 @@ test("public SDK help covers every method, all 20 operations, native content and
   assert.equal(old.size,21);
   const bundled=JSON.parse(await readFile(new URL("../../Sources/NotebookScriptHost/Resources/sdk-reference.json",import.meta.url),"utf8"));
   assert.deepEqual(bundled,sdkReference);
+});
+
+test("lifecycle operations accept only a physical cover and their bounded empty payload",()=>{
+  const target={kind:"cover",id:randomUUID(),boardID:randomUUID()};
+  const append={kind:"appendPage",target,id:randomUUID(),values:{}};
+  const remove={kind:"deleteItem",target,values:{}};
+  for(const operation of [append,{kind:"appendPage",target,values:{}},remove]) {
+    assert.equal(operationSchema.safeParse(operation).success,true,JSON.stringify(operation));
+  }
+  const invalid=[
+    {...append,id:"page-name"},{...remove,id:randomUUID()},
+    {...append,values:{pageIDs:[randomUUID()]}},{...append,values:{size:{width:100,height:200}}},
+    {...remove,values:{force:true}},{...append,extra:true},
+  ];
+  for(const operation of [append,remove]) {
+    for(const kind of ["board","workspace","page","document","codeFragment"]) {
+      invalid.push({...operation,target:{kind,id:target.id}} as any);
+    }
+    invalid.push({...operation,target:{kind:"cover",id:target.id}} as any);
+    invalid.push({...operation,target:{...target,pageID:randomUUID()}} as any);
+  }
+  for(const operation of invalid) assert.equal(operationSchema.safeParse(operation).success,false,JSON.stringify(operation));
+});
+
+test("lifecycle help obtains an explicit frozen extent and declares the exact cover without widening scope",async()=>{
+  const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
+  const target={kind:"cover",id:randomUUID(),boardID:randomUUID()};
+  const basis={workspaceID:randomUUID(),owners:[{target,revision:"8@fixture",lifecycleRevision:"a".repeat(64)}]};
+  for(const name of ["appendPage","deleteItem"]) {
+    const detail=sdkReference.operationDetails[name]!;
+    assert.ok(detail?.example,`Missing executable ${name} example`);
+    assert.match(detail.owner!,/itemLifecycle/);
+    const reads:unknown[]=[],actions:any[]=[];
+    await new AsyncFunction("nb","args","emit",detail.example)({
+      read:async(query:unknown)=>{reads.push(query);return {data:{target,item:{id:target.id,kind:"notebook"}},basis};},
+      transaction:async(key:string,action:unknown)=>{actions.push((sdkInputs.transaction!.parse({key,action}) as any).action);return {};},
+    },{itemID:target.id},async()=>{});
+    assert.deepEqual(reads,[{kind:"itemLifecycle",id:target.id}]);
+    assert.deepEqual(actions[0].base,basis);
+    assert.deepEqual(actions[0].additionalOwners,[target]);
+    assert.deepEqual(actions[0].operations,[{kind:name,target,values:{}}]);
+  }
+  assert.match(sdkReference.operationDetails.appendPage!.description,/first page/);
+  assert.match(sdkReference.operationDetails.deleteItem!.description,/explicit.*itemLifecycle/);
 });
 
 test("operation discovery is compact and every exact schema reference resolves locally",()=>{

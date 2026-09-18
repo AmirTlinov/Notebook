@@ -161,14 +161,11 @@ public struct NotebookStore: Sendable {
   }
 
   public func loadBoard(items: [WorkspaceItem]) throws -> BoardHierarchy {
-    let board = try decoder.decode(
-      BoardHierarchy.self,
-      from: storedData(at: boardURL)
-    )
-    guard board.isValid(items: items) else {
-      throw corruptFile(at: boardURL)
+    try readTransaction { _ in
+      let live = try liveBoardItems(items), board = try liveBoardSource(items: live)
+      guard board.isValid(items: live) else { throw corruptFile(at: boardURL) }
+      return board
     }
-    return board
   }
 
   public func loadOrCreateSpatialInk(actor: UUID) throws -> SpatialInkJournal {
@@ -202,6 +199,9 @@ public struct NotebookStore: Sendable {
   }
 
   public func loadPage(_ id: UUID) throws -> PageDocument {
+    if try hasStoredValue("workspace.json"), try ownerItemID(ofPage: id) == nil {
+      throw CocoaError(.fileNoSuchFile)
+    }
     let page = try decoder.decode(
       PageDocument.self,
       from: storedData(at: pageURL(id))
@@ -213,6 +213,7 @@ public struct NotebookStore: Sendable {
   }
 
   public func loadDocument(_ id: UUID) throws -> DocumentDocument {
+    if try hasStoredValue("workspace.json"), try readItemHeader(id)?.kind != .document { throw CocoaError(.fileNoSuchFile) }
     let document = try decoder.decode(
       DocumentDocument.self,
       from: storedData(at: documentURL(id))
@@ -224,6 +225,7 @@ public struct NotebookStore: Sendable {
   }
 
   public func loadDocumentState(_ id: UUID) throws -> DocumentStateJournal {
+    if try hasStoredValue("workspace.json"), try readItemHeader(id)?.kind != .document { throw CocoaError(.fileNoSuchFile) }
     let journal = try decoder.decode(
       DocumentStateJournal.self,
       from: storedData(at: documentStateURL(id))
@@ -286,8 +288,10 @@ public struct NotebookStore: Sendable {
       throw corruptFile(at: boardURL)
     }
     try prepare()
-    try withMutationLock {
-      try publishCollaboration(writes: ["board.json": try .encode(board)])
+    try commandTransaction {
+      let live = try liveBoardItems(items)
+      guard board.isValid(items: live) else { throw corruptFile(at: boardURL) }
+      try publishLiveBoard(board, items: live)
     }
   }
 
@@ -310,6 +314,7 @@ public struct NotebookStore: Sendable {
     guard journal.isValid else { throw corruptFile(at: spatialInkURL) }
     try prepare()
     try withMutationLock {
+      try requireLiveBoardInkChanges(journal)
       try publishCollaboration(writes: ["spatial-ink.json": try .encode(journal)])
     }
   }
@@ -437,8 +442,11 @@ public struct NotebookStore: Sendable {
     guard resolved.isValid, resolvedBoard.isValid(items: resolved.items) else { throw corruptFile(at: boardURL) }
     var writes: [String: JSONValue] = [:]
     if resolved != current { writes["workspace.json"] = try .encode(resolved) }
-    if resolvedBoard != currentBoard { writes["board.json"] = try .encode(resolvedBoard) }
+    let existingItems = Set(current?.items.map(\.id) ?? [])
+    for item in resolved.items where !existingItems.contains(item.id) { try requireUnreservedItemID(item.id) }
     let livePages = Set(resolved.items.flatMap(\.pageIDs))
+    let existingPages = Set(current?.items.flatMap(\.pageIDs) ?? [])
+    for pageID in livePages.subtracting(existingPages) { try requireUnreservedPageID(pageID) }
     let liveDocuments = Set(resolved.items.filter { $0.kind == .document }.map(\.id))
     for var page in pages where livePages.contains(page.id) {
       if (try hasStoredValue(at: pageURL(page.id))) {
@@ -472,10 +480,12 @@ public struct NotebookStore: Sendable {
       throw CollaborationError("dependency_missing", "Публикация каталога требует содержание всех доступных владельцев.")
     }
     let removedPages = Set(current?.items.flatMap(\.pageIDs) ?? []).subtracting(livePages)
-    let removedDocuments = Set(current?.items.filter { $0.kind == .document }.map(\.id) ?? []).subtracting(liveDocuments)
-    let removals = removedPages.map { "pages/\($0.uuidString.lowercased()).json" }
-      + removedDocuments.flatMap { ["documents/\($0.uuidString.lowercased()).json", "document-states/\($0.uuidString.lowercased()).json"] }
+    let retiredNotebookPages = Set((current?.items ?? []).filter {
+      $0.kind == .notebook && resolved.item(id: $0.id) == nil
+    }.flatMap(\.pageIDs))
+    let removals = removedPages.subtracting(retiredNotebookPages).map { "pages/\($0.uuidString.lowercased()).json" }
     try publishCollaboration(writes: writes, removals: removals)
+    if resolvedBoard != currentBoard { try publishLiveBoard(resolvedBoard, items: resolved.items) }
     removePagePreviews(Array(removedPages))
     return (resolved, resolvedBoard)
   }
@@ -484,6 +494,7 @@ public struct NotebookStore: Sendable {
     guard document.isValid else { throw corruptFile(at: documentURL(document.id)) }
     try prepare()
     try withMutationLock {
+      if try hasStoredValue("workspace.json"), try readItemHeader(document.id)?.kind != .document { throw CocoaError(.fileNoSuchFile) }
       try publishCollaboration(writes: [documentFile(document.id): try .encode(document)])
     }
   }
@@ -512,6 +523,7 @@ public struct NotebookStore: Sendable {
     guard state.isValid else { throw corruptFile(at: documentStateURL(state.id)) }
     try prepare()
     try withMutationLock {
+      if try hasStoredValue("workspace.json"), try readItemHeader(state.id)?.kind != .document { throw CocoaError(.fileNoSuchFile) }
       try publishCollaboration(writes: [stateFile(state.id): try .encode(state)])
     }
   }

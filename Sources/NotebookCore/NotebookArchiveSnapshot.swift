@@ -51,7 +51,8 @@ extension NotebookStore {
         }
       }
       try replica.savePresence(presence)
-      for table in ["peer_cursors", "received_transactions", "manifest_order_nodes", "manifest_parts", "manifest_records", "manifests", "change_records", "change_log"] {
+      try Self.prepareLifecycleInverseDependencies(database)
+      for table in ["manifest_inverse_blobs", "manifest_inverse_parts", "manifest_inverse_roots", "manifest_inverse_discovery", "peer_cursors", "received_transactions", "manifest_order_nodes", "manifest_parts", "manifest_records", "manifests", "change_records", "change_log"] {
         try database.run("DELETE FROM \(table)")
       }
       try database.run("DELETE FROM sqlite_sequence WHERE name='change_log'")
@@ -140,6 +141,7 @@ extension NotebookStore {
         }
         lastHash = hash
       }
+      try store.validateStoredLifecycleInverses()
       return try store.archiveContentProof()
     }
   }

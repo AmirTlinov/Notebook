@@ -67,6 +67,8 @@ extension NotebookStore {
           if original.kind == .createNotebook, values["pageID"] == nil {
             values["pageID"] = .string(Self.submissionID(id, suffix: "page:\(index)").uuidString.lowercased())
           }
+        } else if original.kind == .appendPage {
+          identifier = identifier ?? Self.submissionID(id, suffix: "page:\(index)").uuidString.lowercased()
         } else if original.kind == .appendInkStroke {
           identifier = identifier ?? Self.submissionID(id, suffix: "stroke:\(index)").uuidString.lowercased()
         }

@@ -6,6 +6,7 @@ enum NotebookPendingOwner: String {
   case boardPrefix, referenceTouched, referencePending
   case documentProgram, documentOrder
   case graphic, lifecycleFile
+  case actionLifecycleFile, actionLifecycleElement
 }
 
 extension NotebookSQLConnection {

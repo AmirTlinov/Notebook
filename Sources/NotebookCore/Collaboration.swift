@@ -66,6 +66,7 @@ public struct CollaborationOperation: Codable, Equatable, Sendable {
     case insertElement, updateElement, setElementState, removeElement, reorderElements
     case insertBlock, updateBlock, setBlockState, removeBlock, reorderBlocks, setPreamble, replaceDocument
     case createNotebook, createDocument, createBoard, renameItem, moveItem, stackItems
+    case appendPage, deleteItem
   }
   public let kind: Kind
   public let target: CollaborationTarget
@@ -175,6 +176,11 @@ public struct CollaborationUndoResult: Codable, Equatable, Sendable {
   public let completedAt: Date
   public var restorations: [CollaborationFieldRestoration]? = nil
   public var dependencies: [CollaborationPreservedDependency]? = nil
+  public var lifecycleChanges: [NotebookLifecycleUndoChange]? = nil
+  public var preservedLifecycle: [CollaborationTarget]? = nil
+  /// Bounded evidence for the actual inverse writes, not a replay of the
+  /// original action or an unbounded array of membership restorations.
+  public var restorationInverse: NotebookLifecycleInverseReference? = nil
 }
 
 public struct CollaborationPreservedDependency: Codable, Equatable, Sendable {
@@ -206,8 +212,22 @@ public struct CollaborationReceipt: Codable, Equatable, Sendable, Identifiable {
   public var requestFingerprint: String? = nil
   /// Set only by the native command entry point, never a submitted action field.
   public var author: SharedContextEntry.Author? = nil
+  /// Addressed pre-action record evidence; unchanged when this action is undone.
+  public var lifecycleInverse: NotebookLifecycleInverseReference? = nil
+  public var lifecycleChanges: [NotebookLifecycleChange]? = nil
 
   public var summary: String { action.summary }
+
+  /// Original content evidence cannot change when a receipt is relayed or
+  /// completed by undo. An already published undo has its own immutable cut.
+  func hasSameLifecycleIdentity(as other: Self) -> Bool {
+    action == other.action && lifecycleInverse == other.lifecycleInverse
+      && lifecycleChanges == other.lifecycleChanges
+      && (undo == nil || other.undo == nil || (
+        undo?.restorationInverse == other.undo?.restorationInverse
+          && undo?.lifecycleChanges == other.undo?.lifecycleChanges
+          && undo?.preservedLifecycle == other.undo?.preservedLifecycle))
+  }
 }
 
 extension VersionStamp {

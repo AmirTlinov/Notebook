@@ -116,7 +116,12 @@ func creationUndoMixedNotebooksPreservesOnlyAdoptedOwner() throws {
   #expect((undone.undo?.restored ?? 0) > 0)
   #expect(undone.undo?.preserved.isEmpty == false)
   #expect(try f.store.undoCollaborationAction(action.id, actor: f.human) == undone)
-  _ = try f.store.mergeCollaborationContent(delivered)
+  let replayCursor = try f.store.currentChangeCursor()
+  do {
+    _ = try f.store.mergeCollaborationContent(delivered)
+    Issue.record("Retired notebook sources require addressed delivery")
+  } catch let error as CollaborationError { #expect(error.code == "addressed_delivery_required") }
+  #expect(try f.store.currentChangeCursor() == replayCursor)
   #expect(try f.store.loadPage(firstPage).elements[0].state == exact)
   #expect(try f.store.readItemHeader(second) == nil)
   #expect(try !f.store.hasStoredValue(pageFile(secondPage)))
@@ -149,7 +154,12 @@ func creationUndoMixedDocumentsPreservesOnlyAdoptedOwner() throws {
   #expect(try f.store.ownerBoardID(of: second) == nil)
   #expect((undone.undo?.restored ?? 0) > 0)
   #expect(undone.undo?.preserved.isEmpty == false)
-  _ = try f.store.mergeCollaborationContent(delivered)
+  let replayCursor = try f.store.currentChangeCursor()
+  do {
+    _ = try f.store.mergeCollaborationContent(delivered)
+    Issue.record("Retired document sources require addressed delivery")
+  } catch let error as CollaborationError { #expect(error.code == "addressed_delivery_required") }
+  #expect(try f.store.currentChangeCursor() == replayCursor)
   #expect(try f.store.loadDocumentState(first).value(for: "choice") == state.value(for: "choice"))
   #expect(try f.store.readItemHeader(second) == nil)
   #expect(try !f.store.hasStoredValue(documentFile(second)))

@@ -8,13 +8,13 @@ extension NotebookStore {
   /// The maintained row digest is already current inside the publishing command;
   /// only its one fixed-size header contribution needs a content-only projection.
   public func boardContentRevision(_ id: UUID) throws -> String? {
-    try sqlRead { database in
+    return try sqlRead { database in
       let key = id.uuidString.lowercased()
       let address = "board.json#/boards/@" + key
       guard let row = try database.rows("""
         SELECT d.digest,r.hash,b.data FROM records r
         LEFT JOIN board_nodes d ON d.node_id=? LEFT JOIN blobs b ON b.hash=r.hash
-        WHERE r.address=?
+        WHERE r.address=? AND \(Self.liveBoardPredicate)
         """, [.text(key), .text(address)]).first else { return nil }
       guard var digest = row[0].blob, digest.count == 32, let hash = row[1].text, let data = row[2].blob else {
         throw NotebookStorageError.corruptRecord(address)

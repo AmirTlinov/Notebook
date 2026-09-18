@@ -3,34 +3,33 @@ import Foundation
 extension NotebookStore {
   /// Elements, ink and computations have separate causal owners. Receiving a
   /// frame edit must not decode either the drawing or another element.
-  func applyReplicatedPage(file: String, manifestHash: String) throws {
+  func applyReplicatedPage(file: String, manifestHash: String, isSnapshot: Bool = false) throws {
     let records = NotebookIncomingRecords(store: self, manifestHash: manifestHash)
     let database = currentSQL!, root = file + "#"
     guard let id = UUID(uuidString: String(file.dropFirst(6).dropLast(5))), pageFile(id) == file else {
       throw NotebookStorageError.invalidTransaction("page owner")
     }
-    guard try ownerItemID(ofPage: id) != nil else { try removeFragment(root, database: database); return }
     let old = try records.previous(root)
-    guard let next = try records.candidate(root) else { throw NotebookStorageError.invalidTransaction("live page retains content") }
-    func header(_ row: NotebookStoredFragment) throws -> PageDocument {
-      let value = row.value.setting("elements", .array([])).setting("drawingData", try .encode(Data()))
-        .setting("collaboration", .object(["fields": .object([:])]))
-      let page = try value.decode(PageDocument.self)
-      guard page.id == id, page.isValid, row.parent == nil, row.collection.isEmpty, row.member.isEmpty,
-        row.position == 0, row.collections.contains(.init(path: ["drawingData"], kind: .pageInk)),
-        row.collections.contains(.init(path: ["elements"], kind: .array)),
-        row.collections.allSatisfy({ [.init(path: ["drawingData"], kind: .pageInk), .init(path: ["elements"], kind: .array),
-          .init(path: ["collaboration", "fields"], kind: .dictionary), .init(path: ["computations"], kind: .array)].contains($0) }) else {
-        throw NotebookStorageError.corruptRecord(root)
+    let liveOwner = try ownerItemID(ofPage: id)
+    let retired = liveOwner == nil ? try retiredNotebookMembership(ofPage: id) : nil
+    if liveOwner == nil {
+      guard retired != nil else { try removeFragment(root, database: database); return }
+      // A split field-name claim cannot allocate a source. A snapshot or an
+      // atomic native birth has typed order + birth + full PAGE closure, and
+      // receives complete semantic validation before this transaction commits.
+      if old == nil, !isSnapshot {
+        guard try hasRetiredPageBirthClosure(pageID: id, membership: retired!, records: records) else { return }
       }
-      let canonical = try NotebookRecordCodec.encode(.encode(page), file: file).first { $0.address == root }
-      guard canonical == row.replacing(value: row.value, collections: row.collections.filter { $0.path != ["computations"] }) else {
-        throw NotebookStorageError.corruptRecord(root)
-      }
-      return page
+      if let mutation = try records.mutation(root), mutation[0].text == nil { return }
     }
-    let candidate = try header(next), previous = try old.map(header)
+    guard let next = try records.candidate(root) else { throw NotebookStorageError.invalidTransaction("live page retains content") }
+    let candidate = try pageSourceHeader(next, id: id), previous = try old.map { try pageSourceHeader($0, id: id) }
     guard previous == nil || previous?.size == candidate.size else { throw NotebookStorageError.transactionConflict }
+    if old == nil, retired != nil {
+      // The already validated root admits this in-flight baseline's typed
+      // computation owner. Any missing/malformed descendant rolls back it all.
+      try writeFragment(next, database: database)
+    }
     var result = next.value
     let frontier = max(candidate.agentStamp, previous?.agentStamp ?? candidate.agentStamp)
     let drawingRoot = root + "/drawingData"
@@ -89,5 +88,6 @@ extension NotebookStore {
     collections.formUnion(next.collections.map { fieldKey($0.path) })
     let descriptors = Dictionary((old?.collections ?? []) .map { (fieldKey($0.path), $0) } + next.collections.map { (fieldKey($0.path), $0) }, uniquingKeysWith: { _, next in next })
     try writeFragment(next.replacing(value: result, collections: collections.sorted().compactMap { descriptors[$0] }), database: database)
+    if old == nil, retired != nil { try validateStoredPageSource(file: file) }
   }
 }

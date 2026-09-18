@@ -27,6 +27,7 @@ export function sdkDeclarations(contract) {
         case 'array':return s.prefixItems ? '['+s.prefixItems.map(type).join(', ')+']' : '('+type(s.items)+')[]';
         case 'object': {
           const fields=Object.entries(s.properties??{}).map(([key,value])=>JSON.stringify(key)+(s.required?.includes(key)?'':'?')+': '+type(value)+';');
+          if(!fields.length && s.additionalProperties === false) return '{ [key: string]: never; }';
           const open = s.additionalProperties === true || (s.additionalProperties && Object.keys(s.additionalProperties).length === 0);
           if(s.additionalProperties !== false && (!open || !Object.keys(s.properties??{}).length)) fields.push('[key: string]: '+type(s.additionalProperties??true)+';');
           return '{ '+fields.join(' ')+' }';

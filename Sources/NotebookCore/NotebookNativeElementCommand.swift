@@ -84,10 +84,14 @@ extension NotebookStore {
   }
 
   private func spatialElementProjection(boardID: UUID, elementID: String) throws -> BoardHierarchy? {
+    guard try isLiveBoard(boardID) else { return nil }
     let node = "board.json#/boards/@" + boardID.uuidString.lowercased()
     guard try !storedFragments(address: node, descendants: false).isEmpty else { return nil }
     let elementRows = try storedFragments(address: node + "/board/elements/@" + fieldKey([collaborationIdentity(elementID)]))
     guard !elementRows.isEmpty else { return nil }
+    if let surface = try elementRows.first?.value["surface"]?.decode(SurfaceID.self), surface.kind == .cover {
+      guard let item = surface.ownerID, try ownerBoardID(of: item) == boardID else { return nil }
+    }
     var rows = try storedFragments(address: "board.json#", descendants: false)
     rows += try storedFragments(address: node, descendants: false)
     rows += elementRows

@@ -73,6 +73,8 @@ export const operationSchema = z.discriminatedUnion("kind", [
   op("createNotebook", z.object({ title: z.string().max(240).optional(), center: point, pageID: z.uuid().optional() }).strict(), z.uuid().optional()),
   op("createDocument", z.object({ title: z.string().max(240).optional(), center: point, paperSize: z.enum(["a4", "letter"]), preamble: source.optional(), blocks: z.array(block).max(512) }).strict(), z.uuid().optional()),
   op("createBoard", z.object({ title: z.string().max(240).optional(), center: point }).strict(), z.uuid().optional()),
+  op("appendPage", z.object({}).strict(), z.uuid().optional()).extend({target:coverTargetSchema}),
+  op("deleteItem", z.object({}).strict(), null).extend({target:coverTargetSchema}),
   op("renameItem", z.object({ title: z.string().max(240) }).strict(), z.uuid()).extend({
     target: boardTarget.describe("The board currently containing this item, as read({kind:'ownerBoard',id:itemID}) returns. Workspace is an expectation owner, not this operation's target."),
   }),

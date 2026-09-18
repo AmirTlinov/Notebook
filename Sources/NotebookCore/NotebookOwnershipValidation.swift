@@ -16,6 +16,12 @@ extension NotebookStore {
       } else if address.hasPrefix("pages/"), address.hasSuffix(".json#"),
         let page = UUID(uuidString: String(address.dropFirst(6).dropLast(6))) {
         try database.noteOwner(.page, page.uuidString.lowercased())
+      } else if address.hasSuffix(".json#"), address.hasPrefix("documents/") || address.hasPrefix("document-states/") {
+        let prefix = address.hasPrefix("documents/") ? "documents/" : "document-states/"
+        guard let id = UUID(uuidString: String(address.dropFirst(prefix.count).dropLast(6))) else {
+          throw NotebookStorageError.corruptRecord("document source identity")
+        }
+        try database.noteOwner(.item, id.uuidString.lowercased())
       }
     }
     guard try database.hasOwner(.item) || database.hasOwner(.page) || database.hasOwner(.board) || database.hasOwner(.cover) else { return }
@@ -26,6 +32,7 @@ extension NotebookStore {
       guard let itemID = UUID(uuidString: id) else { throw NotebookStorageError.corruptRecord("item identity") }
       let address = "workspace.json#/items/@" + id
       let item = try storedFragments(address: address, descendants: false).first
+      try refreshRetiredNotebookPages(itemID: itemID)
       let owners = try database.rows("""
         SELECT s.board_id,s.address,o.board_id,o.address FROM spatial_entries s
         LEFT JOIN item_owners o ON o.item_id=s.owner_id
@@ -33,16 +40,30 @@ extension NotebookStore {
         """, [.text(id)])
       if item == nil {
         guard owners.isEmpty else { throw NotebookStorageError.corruptRecord("deleted item remains placed: " + id) }
+        if try hasStoredValue(documentFile(itemID)) || hasStoredValue(stateFile(itemID)) {
+          _ = try requireRetiredDocumentBaseline(itemID: itemID)
+        }
+        if try !storedFragments(address: "board.json#/boards/@" + id, descendants: false).isEmpty {
+          _ = try requireRetiredBoardBaseline(itemID: itemID)
+        }
         return
       }
-      guard owners.count == 1, let boardID = owners[0][0].text,
-        try !database.rows("SELECT 1 FROM records WHERE address=?", [.text("board.json#/boards/@" + boardID)]).isEmpty else {
+      guard owners.count == 1, let boardID = owners[0][0].text, let parentID = UUID(uuidString: boardID),
+        try isLiveBoard(parentID) else {
         throw NotebookStorageError.corruptRecord("item requires exactly one live board: " + id)
       }
       guard owners[0][2].text == boardID, owners[0][3].text == owners[0][1].text else {
         throw NotebookStorageError.corruptRecord("item address index: " + id)
       }
       let kind = item?.value["kind"]?.string
+      if kind != WorkspaceItemKind.board.rawValue,
+        try !storedFragments(address: "board.json#/boards/@" + id, descendants: false).isEmpty {
+        throw NotebookStorageError.corruptRecord("board source belongs to another item kind: " + id)
+      }
+      if kind != WorkspaceItemKind.document.rawValue,
+        try hasStoredValue(documentFile(itemID)) || hasStoredValue(stateFile(itemID)) {
+        throw NotebookStorageError.corruptRecord("document pair belongs to another item kind: " + id)
+      }
       if kind == WorkspaceItemKind.notebook.rawValue {
         guard item?.collections.contains(.init(path: ["pageIDs"], kind: .array)) == true,
           try pageCount(in: itemID) > 0 else {
@@ -68,13 +89,19 @@ extension NotebookStore {
         let item = try storedFragments(address: parent, descendants: false).first
         guard item?.value["kind"]?.string == WorkspaceItemKind.notebook.rawValue,
           try hasStoredValue(pageFile(UUID(uuidString: pageID)!)) else { throw NotebookStorageError.corruptRecord("notebook page dependency: " + pageID) }
+      } else if try hasStoredValue(pageFile(UUID(uuidString: pageID)!)) {
+        guard try pageSourceOwnerID(ofPage: UUID(uuidString: pageID)!) != nil else {
+          throw NotebookStorageError.corruptRecord("PAGE has no live or retired notebook owner: " + pageID)
+        }
       }
     }
     try database.visitOwners(.board) { id in
+      guard let boardID = UUID(uuidString: id) else { throw NotebookStorageError.corruptRecord("board identity") }
       let exists = try !database.rows("SELECT 1 FROM records WHERE address=?", [.text("board.json#/boards/@" + id)]).isEmpty
-      if !exists, try !database.rows("SELECT 1 FROM item_owners WHERE board_id=? LIMIT 1", [.text(id)]).isEmpty {
+      if try !isLiveBoard(boardID), try !database.rows("SELECT 1 FROM item_owners WHERE board_id=? LIMIT 1", [.text(id)]).isEmpty {
         throw NotebookStorageError.corruptRecord("removed board still owns items: " + id)
       }
+      if exists, try !isLiveBoard(boardID) { _ = try requireRetiredBoardBaseline(itemID: boardID) }
     }
     try database.visitOwners(.cover) { address in
       let rows = try database.rows("SELECT s.owner_id FROM spatial_entries s LEFT JOIN item_owners o ON o.item_id=s.owner_id AND o.board_id=s.board_id WHERE s.address=? AND s.kind='coverElement' AND o.item_id IS NULL LIMIT 1", [.text(address)])

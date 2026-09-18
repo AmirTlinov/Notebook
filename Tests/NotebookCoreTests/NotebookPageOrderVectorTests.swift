@@ -32,6 +32,30 @@ struct NotebookPageOrderVectorTests {
       UInt8(truncatingIfNeeded: value >> 8), UInt8(truncatingIfNeeded: value)))
   }
 
+  @Test(arguments: [1, 2, 31, 32, 33, 1_023, 1_024, 1_025])
+  func removingASlotMatchesTheCanonicalPackedVector(count: Int) throws {
+    let memory = PageOrderVectorMemory(), pages = (0..<count).map(page)
+    let original = try NotebookPageOrderVector.build(pages, write: memory.write)
+    for position in Set([0, count / 2, count - 1]) {
+      let removed = try NotebookPageOrderVector.remove(at: position, from: original, read: memory.read, write: memory.write)
+      var expected = pages; expected.remove(at: position)
+      #expect(try removed == NotebookPageOrderVector.build(expected, write: memory.write))
+      #expect(try NotebookPageOrderVector.materialize(removed, read: memory.read) == expected)
+      #expect(try NotebookPageOrderVector.materialize(original, read: memory.read) == pages)
+    }
+  }
+
+  @Test func removalNearTheTailDoesNotReadTheNinetyNineThousandPagePrefix() throws {
+    let memory = PageOrderVectorMemory(), pages = (0..<100_000).map(page)
+    let original = try NotebookPageOrderVector.build(pages, write: memory.write)
+    memory.reads.removeAll(); memory.writes.removeAll()
+    let removed = try NotebookPageOrderVector.remove(at: 99_995, from: original, read: memory.read, write: memory.write)
+    #expect(memory.reads.count <= 8 && memory.writes.count <= 8)
+    #expect(Set(memory.reads).count == memory.reads.count)
+    var expected = pages; expected.remove(at: 99_995)
+    #expect(try removed == NotebookPageOrderVector.build(expected, write: memory.write))
+  }
+
   @Test(arguments: [0, 1, 30, 31, 32, 33, 1_022, 1_023, 1_024, 1_025, 32_767, 32_768, 99_999])
   func oneAppendMatchesCanonicalBuildAtEveryPackingBoundary(count: Int) throws {
     let memory = PageOrderVectorMemory(), rebuilt = PageOrderVectorMemory()

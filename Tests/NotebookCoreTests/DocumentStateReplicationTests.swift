@@ -165,8 +165,15 @@ struct DocumentStateReplicationTests {
       try a.saveDocumentState(source)
       try deliver(a.changeJournal(after: 2)[0], a, b, actor)
       #expect(try b.readItemHeader(id) == nil)
-      #expect(try b.hasStoredValue(stateFile(id)) == false)
-      #expect(try b.hasStoredValue(documentFile(id)) == false)
+      #expect(try b.documentSourceOwnerID(id) == id)
+      let accepted = try #require(try addressed(b, id, "body"))
+      let authored = try #require(source.records.first { $0.id == "body" })
+      #expect(accepted.value == .number(1) && accepted.stamp == authored.stamp)
+      #expect(accepted.fieldVersion == authored.fieldVersion,
+        "The existing hidden journal retains the actual accepted human dot")
+      #expect(throws: (any Error).self) { _ = try b.loadDocument(id) }
+      #expect(throws: (any Error).self) { _ = try b.loadDocumentState(id) }
+      #expect(throws: (any Error).self) { _ = try b.readContentHeader(target: .init(kind: .document, id: id)) }
     }
   }
 
@@ -181,8 +188,11 @@ struct DocumentStateReplicationTests {
         let current = try store.loadIndex()
         #expect(current.item(id: id) == nil)
         #expect(try current.merging(original).item(id: id) == nil)
-        #expect(try store.hasStoredValue(documentFile(id)) == false)
-        #expect(try store.hasStoredValue(stateFile(id)) == false)
+        #expect(try store.documentSourceOwnerID(id) == id)
+        try store.commandTransaction { _ = try store.requireRetiredDocumentBaseline(itemID: id) }
+        #expect(throws: (any Error).self) { _ = try store.loadDocument(id) }
+        #expect(throws: (any Error).self) { _ = try store.loadDocumentState(id) }
+        #expect(throws: (any Error).self) { _ = try store.readContentHeader(target: .init(kind: .document, id: id)) }
       }
     }
   }

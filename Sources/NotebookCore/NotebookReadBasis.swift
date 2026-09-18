@@ -46,15 +46,18 @@ public struct NotebookSnapshot: Codable, Sendable {
 }
 
 extension CollaborationOperation {
+  var isLifecycle: Bool { kind == .appendPage || kind == .deleteItem }
   var needsInkExpectation: Bool { [.appendInkStroke, .convertInkToElement].contains(kind) }
   func requiredOwners(workspaceRootID: UUID) -> [CollaborationTarget] {
     var targets = [target]
-    if [.createNotebook, .createDocument, .createBoard, .renameItem].contains(kind) {
+    if [.createNotebook, .createDocument, .createBoard, .renameItem, .appendPage, .deleteItem].contains(kind) {
       targets.append(.init(kind: .workspace, id: workspaceRootID))
     }
+    if kind == .deleteItem, let boardID = target.boardID { targets.append(.init(kind: .board, id: boardID)) }
     return Array(Set(targets))
   }
   var createdOwners: Set<CollaborationTarget> {
+    if kind == .appendPage, let id = id.flatMap(UUID.init(uuidString:)) { return [.init(kind: .page, id: id)] }
     guard let id = id.flatMap(UUID.init(uuidString:)), [.createBoard, .createNotebook, .createDocument].contains(kind) else { return [] }
     var result: Set<CollaborationTarget> = [.init(kind: .cover, id: id, boardID: target.id)]
     switch kind {
@@ -110,6 +113,9 @@ extension NotebookStore {
             throw Self.incompleteBasis(operation.target, component: "ink")
           }
           if operation.kind == .setBlockState, owner?.stateRevision == nil { throw Self.incompleteBasis(operation.target, component: "state") }
+          if operation.kind == .deleteItem, !created.contains(operation.target), owner?.lifecycleRevision == nil {
+            throw Self.incompleteBasis(operation.target, component: "lifecycle")
+          }
           created.formUnion(operation.createdOwners)
         } catch let error as CollaborationError { throw error.atOperation(index, operation) }
       }
@@ -118,7 +124,8 @@ extension NotebookStore {
   }
 
   private static func incompleteBasis(_ target: CollaborationTarget, component: String) -> CollaborationError {
-    let read = target.kind == .workspace ? "nb.read({kind:'workspaceHeader'})"
+    let read = component == "lifecycle" ? "nb.read({kind:'itemLifecycle',id:'\(target.id)'})"
+      : target.kind == .workspace ? "nb.read({kind:'workspaceHeader'})"
       : target.kind == .page ? "nb.read({kind:'pageHeader',id:'\(target.id)'})"
       : target.kind == .document ? "nb.read({kind:'documentHeader',id:'\(target.id)'})"
       : "nb.reference({target:{kind:'\(target.kind.rawValue)',id:'\(target.id)'\(target.boardID.map { ",boardID:'\($0)'" } ?? "")}})"

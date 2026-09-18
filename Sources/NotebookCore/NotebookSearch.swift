@@ -65,6 +65,10 @@ extension NotebookStore {
         condition = "search_fts MATCH ?"; match = "\"" + folded.replacingOccurrences(of: "\"", with: "\"\"") + "\""
       }
       var filter = " FROM " + from + " WHERE " + condition + " AND instr(s.folded,?)>0"
+      // Retained PAGE bytes remain searchable only through live membership.
+      // Apply this before COUNT/LIMIT, not by dropping inaccessible hits later.
+      filter += " AND (s.kind<>'page' OR EXISTS(SELECT 1 FROM records membership JOIN records item ON item.address=membership.parent WHERE membership.file='workspace.json' AND membership.collection='pageIDs' AND membership.member=s.owner_id))"
+      filter += " AND (s.kind<>'document' OR EXISTS(SELECT 1 FROM records item WHERE item.address='workspace.json#/items/@'||s.owner_id))"
       var arguments: [NotebookSQLValue] = [.text(match), .text(folded)]
       if let kinds = filters.kinds {
         filter += " AND s.kind IN (" + Array(repeating: "?", count: kinds.count).joined(separator: ",") + ")"

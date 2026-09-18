@@ -31,8 +31,19 @@ extension NotebookStore {
       let nodeAddress = prefix + component
       after = nodeAddress + "0"; inclusive = true
       let old = try incoming.previous(nodeAddress)
-      guard try boardID == rootBoardID || readItemHeader(boardID)?.kind == .board else {
-        try removeFragment(nodeAddress, database: database); membershipChanged = membershipChanged || old != nil; continue
+      let live = try boardID == rootBoardID || readItemHeader(boardID)?.kind == .board
+      // Snapshot closure also emits absent board roots for retired non-board
+      // IDs. Such a tombstone allocates nothing and must carry no orphan body.
+      if !live, old == nil, try incoming.candidate(nodeAddress) == nil {
+        try incoming.visit(from: nodeAddress + "/", to: nodeAddress + "0") { address in
+          guard try incoming.fragment(address) == nil else {
+            throw NotebookStorageError.invalidTransaction("absent board has an orphan member")
+          }
+        }
+        continue
+      }
+      if !live, try !admitsReplicatedRetiredBoard(itemID: boardID, records: incoming) {
+        throw NotebookStorageError.invalidTransaction("board has no live or admitted retired owner")
       }
       guard let next = try incoming.candidate(nodeAddress) else { throw NotebookStorageError.invalidTransaction("catalog retains board") }
       func node(_ row: NotebookStoredFragment) throws -> BoardNode {
@@ -68,6 +79,9 @@ extension NotebookStore {
           row.address == placementPrefix + row.member, row.position == 0, row.collections.isEmpty,
           placement.heads.allSatisfy({ $0.version.stamp.counter <= stamp.counter }) else { throw NotebookStorageError.corruptRecord(address) }
         var resolved = try stored.map { try $0.value.decode(WorkspacePlacement.self).merging(placement) } ?? placement
+        guard live || resolved.pose == nil else {
+          throw NotebookStorageError.invalidTransaction("retired board cannot receive a live placement")
+        }
         if try readItemHeader(placement.id) == nil, resolved.pose != nil {
           // Preserve the existing catalog-deletion policy using its typed owner.
           var board = BoardDocument(placements: [resolved], elements: [], stamp: stamp, collaboration: nil)

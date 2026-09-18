@@ -99,7 +99,8 @@ extension NotebookStore {
   }
 
   public func readBoardNode(_ id: UUID) throws -> BoardNode? {
-    try storedMember(file: "board.json", collection: "boards", id: id.uuidString)?.decode(BoardNode.self)
+    guard try isLiveBoard(id) else { return nil }
+    return try storedMember(file: "board.json", collection: "boards", id: id.uuidString)?.decode(BoardNode.self)
   }
 
   public func readSpatialInk(surfaces: [SurfaceID]) throws -> SpatialInkJournal {
@@ -110,6 +111,7 @@ extension NotebookStore {
       var addresses = Set<String>()
       for surface in surfaces {
         guard let id = surface.ownerID else { throw NotebookStorageError.invalidTransaction("surface owner") }
+        if surface.kind == .board { try requireLiveBoard(id) }
         addresses.formUnion(try currentSQL!.rows("SELECT address FROM ink_surfaces WHERE kind=? AND owner_id=?", [.text(surface.kind.rawValue), .text(id.uuidString.lowercased())]).compactMap { $0[0].text })
       }
       let actions = try addresses.sorted().map { try readSpatialInkAction($0) }
@@ -251,7 +253,7 @@ extension NotebookStore {
         let target = element.surface.kind == .cover
           ? CollaborationTarget(kind: .cover, id: element.surface.ownerID!, boardID: boardID)
           : CollaborationTarget(kind: .board, id: boardID)
-        guard let layout = try readGraphicResolution(target: target, elementID: element.id).layout else { return }
+        guard let layout = try storedGraphicResolution(target: target, elementID: element.id).layout else { return }
         frame = layout.frame
       } else { frame = .init(x: element.frame.x,y: element.frame.y,width: element.frame.width,height: element.frame.height) }
       let id = element.surface.kind == .cover ? (element.surface.ownerID?.uuidString.lowercased() ?? "") : element.id
@@ -391,6 +393,7 @@ extension NotebookStore {
       Set(pinnedIDs).count == pinnedIDs.count, Set(pinnedElementIDs).count == pinnedElementIDs.count,
       pinnedElementIDs.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 120 }) else { throw NotebookStorageError.limitExceeded("scene_window") }
     return try readTransaction { _ in
+      try requireLiveBoard(boardID)
       let matches = try spatialRows(boardID: boardID, bounds: bounds, limit: limit + 1)
       let address = "board.json#/boards/@" + boardID.uuidString.lowercased()
       var rows = try storedFragments(address: address, descendants: false)
@@ -452,6 +455,8 @@ extension NotebookStore {
   public func readScenePaintOrder(boardID: UUID, coverID: UUID? = nil, bounds: WorkspaceSpatialBounds, after: NotebookScenePaintCursor? = nil, limit: Int = 32) throws -> NotebookScenePaintPage {
     guard (1...32).contains(limit) else { throw NotebookStorageError.limitExceeded("paint_page") }
     return try readTransaction { _ in
+      try requireLiveBoard(boardID)
+      if let coverID, try ownerBoardID(of: coverID) != boardID { throw CocoaError(.fileNoSuchFile) }
       let revision = try currentChangeCursor(), hash = try collaborationHash(["bounds": try JSONValue.encode(bounds), "coverID": coverID.map { .string($0.uuidString.lowercased()) } ?? .null])
       if let after, after.revision != revision || after.boardID != boardID || after.boundsHash != hash { throw NotebookStorageError.transactionConflict }
       let rows = try spatialRows(boardID: boardID, coverID: coverID, bounds: bounds, limit: limit + 1, after: after), included = Array(rows.prefix(limit))
@@ -484,6 +489,15 @@ extension NotebookStore {
   }
 
   public func readSpatialElement(boardID: UUID, elementID: String) throws -> SpatialElement? {
+    guard try isLiveBoard(boardID) else { return nil }
+    guard let element = try storedSpatialElement(boardID: boardID, elementID: elementID) else { return nil }
+    if element.surface.kind == .cover {
+      guard let item = element.surface.ownerID, try ownerBoardID(of: item) == boardID else { return nil }
+    }
+    return element
+  }
+
+  func storedSpatialElement(boardID: UUID, elementID: String) throws -> SpatialElement? {
     let address = "board.json#/boards/@" + boardID.uuidString.lowercased() + "/board/elements/@" + fieldKey([collaborationIdentity(elementID)])
     let rows = try storedFragments(address: address)
     return rows.isEmpty ? nil : try NotebookRecordCodec.decode(rows, root: address).decode(SpatialElement.self)
@@ -493,6 +507,7 @@ extension NotebookStore {
   /// native paint batch may cross no unknown owner; viewport membership or
   /// coincident z values alone cannot establish adjacency.
   public func readSceneElementSuccessors(boardID: UUID, elementIDs: [String]) throws -> [String: String] {
+    try requireLiveBoard(boardID)
     guard elementIDs.count <= 96, Set(elementIDs).count == elementIDs.count,
       elementIDs.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 120 }) else {
       throw NotebookStorageError.limitExceeded("scene_element_successors")
@@ -554,6 +569,7 @@ extension NotebookStore {
 
   public func readBoardNodeHeader(_ id: UUID) throws -> BoardNode? {
     try readTransaction { _ in
+      guard try isLiveBoard(id) else { return nil }
       let address = "board.json#/boards/@" + id.uuidString.lowercased()
       let rows = try storedFragments(address: address, descendants: false)
       return rows.isEmpty ? nil : try NotebookRecordCodec.decode(rows, root: address).decode(BoardNode.self)
@@ -608,11 +624,15 @@ extension NotebookStore {
     }
   }
 
-  func appendBoardCausalFragments(to rows: inout [NotebookStoredFragment], address: String) throws {
-    let members = rows.filter { $0.parent == address && ["board/elements"].contains($0.collection) }
+  func appendBoardCausalFragments(to rows: inout [NotebookStoredFragment], address: String,
+    additionalElementIDs: Set<String> = []) throws {
+    let members = Set(rows.filter { $0.parent == address && $0.collection == "board/elements" }.map(\.member))
+      .union(additionalElementIDs.map(collaborationIdentity))
+    // A requested removal still has a causal owner after its body disappears.
+    // Read that exact tombstone as well as the visible members; never infer
+    // missing ownership from a source-only projection during conditional undo.
     rows += try causalFragments(parent: address, collection: "board/collaboration/fields",
-      memberPrefixes: members.map { fieldKey([$0.collection.replacingOccurrences(of: "board/", with: ""), $0.member]) + "/" },
-      includeKeys: ["elements/order"])
+      memberPrefixes: members.map { fieldKey(["elements", $0]) + "/" }, includeKeys: ["elements/order"])
   }
 }
 
@@ -624,6 +644,7 @@ extension NotebookStore {
 
 extension NotebookStore {
   public func readScenePaintPosition(boardID: UUID, coverID: UUID? = nil, id: WorkspaceSpatialID) throws -> NotebookScenePaintPosition? {
+    guard try isLiveBoard(boardID) else { return nil }
     let key: String, kind: String, address: String?
     switch id {
     case .item(let id): key = id.uuidString; kind = "item"; address = nil

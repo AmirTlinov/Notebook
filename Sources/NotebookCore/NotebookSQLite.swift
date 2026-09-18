@@ -31,6 +31,8 @@ final class NotebookSQLConnection {
   var receivedChange: NotebookDurableChange?
   var pendingChangeCount = 0
   var pendingOwnersPrepared = false
+  var actionRecordCapturesPrepared = false
+  var activeActionRecordCapture: NotebookActionRecordCaptureState?
   private var statements: [String: OpaquePointer] = [:]
   private var readAllowance: NotebookSQLReadAllowance?
   private var remainingReadRows = 0
@@ -338,7 +340,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 8
+  static let currentDatabaseVersion: Int64 = 10
 
   func prepareDatabase(initialWorkspaceID: UUID? = nil) throws {
     if currentSQL != nil { guard initialWorkspaceID == nil else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }; return }
@@ -451,6 +453,7 @@ extension NotebookStore {
         }
       }
       if admittedVersion < 8 { try rebuildItemLifecycleIndex(database: database) }
+      if admittedVersion < 10 { try rebuildRetiredNotebookPageIndex(database: database) }
       try database.run("PRAGMA user_version=\(Self.currentDatabaseVersion)")
     }
   }
@@ -458,6 +461,8 @@ extension NotebookStore {
   /// Called only inside the bootstrap or admission writer transaction.
   private func prepareCurrentDatabaseSchema(_ database: NotebookSQLConnection) throws {
     try Self.createItemLifecycleIndex(database)
+    try Self.createPageBirthReservationIndex(database)
+    try Self.createRetiredNotebookPageIndex(database)
     try database.run("CREATE TABLE IF NOT EXISTS ink_element_erasures(address TEXT NOT NULL REFERENCES records(address) ON DELETE CASCADE,kind TEXT NOT NULL,owner_id TEXT NOT NULL,element_id TEXT NOT NULL,PRIMARY KEY(address,kind,owner_id,element_id))")
     try database.run("CREATE INDEX IF NOT EXISTS ink_element_erasures_target ON ink_element_erasures(kind,owner_id,element_id,address)")
     try database.run("CREATE TABLE IF NOT EXISTS graphic_sources(address TEXT NOT NULL REFERENCES records(address) ON DELETE CASCADE,owner TEXT NOT NULL,element_id TEXT NOT NULL,stroke_id TEXT NOT NULL,PRIMARY KEY(address,stroke_id))")

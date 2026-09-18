@@ -9,7 +9,7 @@ TypeScript/JavaScript или присоединяется к журналу. MCP
 ## Справка и программа
 
 Справку раскрывайте только при неизвестном контракте: в `notebook_context` передайте `{"method":"help"}`. Тема `operations` даёт
-компактный список всех 20 операций. Например,
+компактный список всех 22 операций. Например,
 `{"method":"help","args":{"topic":"operation/createDocument"}}` возвращает
 точную схему одной операции. `transaction` содержит полную схему атомарной записи
 с общими `$defs`, `examples` — примеры, `interactive` — встроенную программу с
@@ -82,9 +82,40 @@ SQL-снимке. `pageHeader` и `documentHeader` возвращают толь
 `basis_conflict`. Автоматического освежения нет. Это предусловие, не разрешение
 на удаление/перемещение, и оно не ослабляет текущую coarse-grained проверку доски.
 
-Это готовый read/basis-путь S8, но не заявление готовности destructive-команд:
-публичный список пока содержит прежние 20 операций. Общие delete/append, компактный
-причинный inverse, доставка и соответствующая отмена завершаются отдельно в S8.
+`appendPage` и `deleteItem` входят в обычную `nb.transaction`: target — точная
+обложка из `itemLifecycle`, base — его основание. Scope требует исходную ссылку
+либо эту обложку в `additionalOwners`. Basis не разрешает запись сам по себе.
+`appendPage` принимает пустой `values`, необязательный UUID нового листа в `id`
+и наследует размер первого листа. Пропущенный UUID устойчиво назначается при
+допуске. `deleteItem` принимает пустой `values`, без `id`. Последний рабочий
+предмет и непустая дочерняя доска не удаляются; рекурсивного удаления нет.
+
+```js
+const item = await nb.read({kind:'itemLifecycle', id:args.itemID});
+if (!item.data) throw new Error('Item is missing');
+await emit(await nb.transaction('delete-item', {
+  summary:'Удалить предмет', base:item.basis,
+  additionalOwners:[item.data.target],
+  operations:[{kind:'deleteItem', target:item.data.target, values:{}}]
+}));
+```
+
+### Покрытие жизненного цикла
+
+| Намерение | Общий доменный путь | Публичная операция |
+|---|---|---|
+| Создать тетрадь, документ, доску | Core create, native workspace publication | `createNotebook`, `createDocument`, `createBoard` |
+| Переименовать | Каталожное поле предмета | `renameItem` |
+| Передвинуть свободный предмет | Placement register | `moveItem` |
+| Достать из стопки | Native `unstackItem`; `moveItem` пока требует свободный предмет | Открытый SDK-пробел S8, не отдельный инструмент |
+| Собрать стопку | Те же placement registers | `stackItems` |
+| Добавить лист в хвост | Native landing / `publishPageAppend` | `appendPage` |
+| Удалить тетрадь, документ, пустую доску | `deleteWorkspaceItemContent` | `deleteItem` |
+| Отменить агентский ход | Причинная отмена Core | `nb.undo` |
+
+Отдельные `deletePage`, `reorderPages`, рекурсивное удаление и generic native
+undo/redo этим срезом не добавлены. Состояние установки, нагрузочные границы и
+непроверенные цепочки отмены указаны в [verification.md](verification.md).
 
 ### Настоящий выбор и исторический источник
 
@@ -403,6 +434,12 @@ receipt, continuations, delivery и snapshots.
 из нативной записи. Чтение текущих продолжений, доставки или показа не может
 превратить успешную запись в ошибку. Исходные тела и before/after остаются
 в Core для idempotency/undo и не повторяются в ответе.
+`changed` дополнительно содержит компактные события `appendPage`, `deletedItem`,
+`restoreItem`, `removePage` с точным владельцем и заголовком, без удалённых тел.
+Undo сообщает реально выполненные группы; сохранённые группы раскрываются в
+`preservedCount` и details с `reason:lifecycle_owner_continued`. Удалённый
+владелец не выдаётся в post-action basis как пригодный к записи. Повтор после
+undo возвращает исходный versioned результат, а не нынешнее состояние базы.
 Сводка показывает до 32 адресов операций, версий и изменений. Для остальных
 используйте `nb.action({actionID,section:'operations',offset:32,pageSize:32})`;
 разделы `operations`, `revisions`, `changes`, `continuations`, `undo`, `snapshots` дают

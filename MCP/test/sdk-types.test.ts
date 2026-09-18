@@ -7,6 +7,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {sdkReference,sdkInputs,sdkOutputs} from '../src/sdk-contracts.js';
 import {executionInput,executionOutput} from '../src/server.js';
+import {actionResultSchema} from '../src/sdk-results.js';
 const run=promisify(execFile);
 
 test('SDK v2 declarations type addressed reads, tuples, bases and results without a second hand-written API',async()=>{
@@ -34,8 +35,43 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
         const target:'cover'=extent.data.target.kind;
         const fence:string|undefined=extent.basis.owners[0].lifecycleRevision;
         await emit({revision,rows,target,fence});
+        const appended=await nb.transaction('append-page',{base:extent.basis,summary:'Append',additionalOwners:[extent.data.target],
+          operations:[{kind:'appendPage',target:extent.data.target,values:{}}]});
+        for(const change of appended.changed) {
+          if(change.change==='appendPage') {
+            const page:string=change.pageID;
+            const total:number=change.item.pageCount;
+            const cover:'cover'=change.target.kind;
+            await emit({page,total,cover});
+          } else if(change.change==='deletedItem' || change.change==='restoreItem') {
+            const title:string=change.item.title;
+            await emit(title);
+          } else if(change.change==='removePage') {
+            const page:string=change.pageID;
+            await emit(page);
+          } else {
+            const file:string=change.file;
+            await emit(file);
+          }
+        }
+        await nb.transaction('delete-item',{base:extent.basis,summary:'Delete',additionalOwners:[extent.data.target],
+          operations:[{kind:'deleteItem',target:extent.data.target,values:{}}]});
+        // @ts-expect-error: lifecycle writes require the physical cover, not a page
+        await nb.transaction('wrong-owner',{base:extent.basis,summary:'Wrong',operations:[{kind:'appendPage',target:{kind:'page',id:input.pageID},values:{}}]});
+        // @ts-expect-error: deleteItem has no second identity
+        await nb.transaction('extra-id',{base:extent.basis,summary:'Wrong',operations:[{kind:'deleteItem',target:extent.data.target,id:input.pageID,values:{}}]});
+        // @ts-expect-error: appendPage cannot replace size or any other catalogue field
+        await nb.transaction('extra-values',{base:extent.basis,summary:'Wrong',operations:[{kind:'appendPage',target:extent.data.target,values:{size:{width:10,height:20}}}]});
       }
       const choice=await nb.read({kind:'selection'});
+      const history=await nb.read({kind:'actions'});
+      for(const receipt of history.data) {
+        for(const target of receipt.undo?.preservedLifecycle??[]) {
+          const kind:'cover'=target.kind;
+          const parent:string=target.boardID;
+          await emit({kind,parent});
+        }
+      }
       if(choice.data.status==='known') {
         const generation:number=choice.data.generation;
         if(choice.data.selection.kind==='element') {
@@ -62,6 +98,26 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
     const compiler=resolve('node_modules/.bin/tsc');
     await run(compiler,['--project',join(root,'tsconfig.json')],{maxBuffer:1024*1024});
   } finally { await rm(root,{recursive:true,force:true}); }
+});
+
+test('ActionResult has discriminated compact lifecycle events and keeps field events intact',()=>{
+  const id='53d0ccbb-dc97-4911-ad2b-1b0f8ce4957d',target={kind:'cover',id,boardID:id};
+  const item={id,kind:'notebook',title:'Saved title',firstPageID:id,pageCount:2};
+  const result={actionID:id,actionVersion:'a'.repeat(64),summary:'Frozen lifecycle',basis:{workspaceID:id,owners:[]},
+    publication:{saved:'confirmed',receivedByIPad:'awaiting_device',shownOnIPad:'awaiting_display'},changeCount:1};
+  const events=[{change:'updated',file:'page.json',path:[],afterDigest:'digest',value:'saved'},
+    {change:'deleted',file:'page.json',path:[],afterDigest:null},
+    {change:'appendPage',target,pageID:id,item},{change:'deletedItem',target,item},
+    {change:'restoreItem',target,item},{change:'removePage',target,pageID:id,item}];
+  for(const change of events) {
+    const parsed=actionResultSchema.safeParse({...result,changed:[change]});
+    assert.equal(parsed.success,true,JSON.stringify(parsed));
+  }
+  for(const change of [
+    {change:'appendPage',target,item},{change:'deletedItem',target},{change:'restoreItem',target},
+    {change:'removePage',target,item},{change:'deleteItem',target,item},
+    {change:'appendPage',target:{kind:'page',id},pageID:id,item},
+  ]) assert.equal(actionResultSchema.safeParse({...result,changed:[change]}).success,false,JSON.stringify(change));
 });
 
 test('every method has a generated output schema and start only accepts v2, defaulting to bounded completion wait',()=>{

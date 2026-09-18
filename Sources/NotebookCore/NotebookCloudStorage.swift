@@ -140,11 +140,25 @@ extension NotebookStore {
         guard let last = hashes.last else { break }
         for hash in hashes { _ = try addBlob(hash) }; after = last
       }
+      try visitLifecycleInverseDependencyHashes(manifestHash: delivery.change.manifestHash) { hash in
+        _ = try addBlob(hash)
+      }
       // An uploaded root already covers its dependency closure. New roots are
       // expanded on disk, not materialized as the notebook's full page vector.
       try db.run("CREATE TEMP TABLE cloud_order_nodes(hash TEXT PRIMARY KEY,expanded INTEGER NOT NULL DEFAULT 0)")
       let manifest = try validatedManifest(delivery.change)
       for root in manifest.pageOrderRoots { try db.run("INSERT OR IGNORE INTO cloud_order_nodes(hash) VALUES(?)", [.text(root)]) }
+      // Locally admitted inverse roots may deliberately omit their already
+      // known children from dependency discovery. A fresh cloud account has
+      // no such proof: the same outbox traversal exports their entire closure.
+      var inverseAfter = ""
+      while true {
+        let roots = try db.rows("SELECT hash FROM manifest_inverse_blobs WHERE manifest_hash=? AND kind=1 AND hash>? ORDER BY hash LIMIT 64",
+          [.text(delivery.change.manifestHash), .text(inverseAfter)]).compactMap { $0[0].text }
+        guard let last = roots.last else { break }
+        for root in roots { try db.run("INSERT OR IGNORE INTO cloud_order_nodes(hash) VALUES(?)", [.text(root)]) }
+        inverseAfter = last
+      }
       while let hash = try db.rows("SELECT hash FROM cloud_order_nodes WHERE expanded=0 ORDER BY hash LIMIT 1").first?[0].text {
         if try addBlob(hash) {
           for child in try readPageOrderNode(hash).children { try db.run("INSERT OR IGNORE INTO cloud_order_nodes(hash) VALUES(?)", [.text(child)]) }

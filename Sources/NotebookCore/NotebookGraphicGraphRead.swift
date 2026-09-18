@@ -33,6 +33,14 @@ extension NotebookStore {
   /// Resolve two addressed endpoints, including off-window and hidden records.
   /// The canonical record stays unchanged; callers receive a derived layout.
   public func readGraphicResolution(target: CollaborationTarget, elementID: String) throws -> NotebookGraphicResolution {
+    if target.kind == .board || target.kind == .cover {
+      try requireLiveBoard(target.boardID ?? target.id)
+      if target.kind == .cover, try ownerBoardID(of: target.id) != target.boardID { throw CocoaError(.fileNoSuchFile) }
+    }
+    return try storedGraphicResolution(target: target, elementID: elementID)
+  }
+
+  func storedGraphicResolution(target: CollaborationTarget, elementID: String) throws -> NotebookGraphicResolution {
     try readTransaction { _ in
       let surface: SurfaceID
       switch target.kind {
@@ -47,7 +55,7 @@ extension NotebookStore {
           guard let value = try readPageElement(pageID: target.id, elementID: id), let payload = value.graphic else { return nil }
           graphic = payload; frame = value.frame; origin = .zero
         } else {
-          guard let value = try readSpatialElement(boardID: target.boardID ?? target.id, elementID: id),
+          guard let value = try storedSpatialElement(boardID: target.boardID ?? target.id, elementID: id),
             value.surface == surface, let payload = value.graphic else { return nil }
           graphic = payload; frame = .init(x: value.frame.x,y: value.frame.y,width: value.frame.width,height: value.frame.height)
           origin = value.worldOrigin ?? .zero

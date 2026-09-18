@@ -1,5 +1,49 @@
 import Foundation
 
+extension NotebookLifecycleChange {
+  var actionResultValue: JSONValue {
+    get throws {
+      guard target.kind == .cover, target.boardID != nil else {
+        throw NotebookStorageError.corruptRecord("lifecycle result cover")
+      }
+      switch kind {
+      case .appendPage:
+        guard let pageID, let item = afterItem, item.id == target.id else {
+          throw NotebookStorageError.corruptRecord("append page result")
+        }
+        return .object(["change": .string("appendPage"), "target": try .encode(target),
+          "pageID": try .encode(pageID), "item": try .encode(item)])
+      case .deleteItem:
+        guard let item = beforeItem, item.id == target.id else {
+          throw NotebookStorageError.corruptRecord("deleted item result")
+        }
+        return .object(["change": .string("deletedItem"), "target": try .encode(target), "item": try .encode(item)])
+      }
+    }
+  }
+}
+
+extension NotebookLifecycleUndoChange {
+  var actionResultValue: JSONValue {
+    get throws {
+      guard target.kind == .cover, target.boardID != nil, item == nil || item?.id == target.id else {
+        throw NotebookStorageError.corruptRecord("lifecycle undo result cover")
+      }
+      var value: [String: JSONValue] = ["change": .string(kind.rawValue), "target": try .encode(target)]
+      switch kind {
+      case .restoreItem:
+        guard let item else { throw NotebookStorageError.corruptRecord("restored item result") }
+        value["item"] = try .encode(item)
+      case .removePage:
+        guard let pageID else { throw NotebookStorageError.corruptRecord("removed page result") }
+        value["pageID"] = try .encode(pageID)
+        if let item { value["item"] = try .encode(item) }
+      }
+      return .object(value)
+    }
+  }
+}
+
 /// Immutable commit evidence. It is written by the same physical writer and
 /// transaction as content and its undo receipt, never reconstructed from a
 /// later projection of the workspace.
@@ -16,7 +60,7 @@ extension NotebookStore {
     if try hasStoredValue(prefix + "result.json") { return }
     let model = try NotebookActionReadModel(receipt)
     let basis = NotebookReadBasis(workspaceID: try workspaceHeader().workspaceID, owners: receipt.revisions)
-    let values = try changed.map { field -> JSONValue in
+    var values = try changed.map { field -> JSONValue in
       var value: [String: JSONValue] = ["file": .string(field.file), "path": try .encode(field.path),
         "change": .string(field.after == nil ? "deleted" : "updated"),
         "afterDigest": try NotebookActionReadModel.Field.digest(field.after, file: field.file, path: field.path).map(JSONValue.string) ?? .null]
@@ -26,16 +70,22 @@ extension NotebookStore {
       }
       return .object(value)
     }
+    if let undo = receipt.undo {
+      values += try (undo.lifecycleChanges ?? []).map { try $0.actionResultValue }
+    } else {
+      values += try (receipt.lifecycleChanges ?? []).map { try $0.actionResultValue }
+    }
     let next = values.count > 32 ? try actionResultCursor(receipt.id, version: version, offset: 32) : nil
     var result: [String: JSONValue] = ["actionID": try .encode(receipt.id), "actionVersion": .string(version),
       "summary": .string(receipt.summary), "basis": try .encode(basis),
       "publication": .object(["saved": .string("confirmed"), "receivedByIPad": .string("awaiting_device"),
-        "shownOnIPad": .string(changed.isEmpty && receipt.revisions.isEmpty ? "not_required" : "awaiting_display")]),
+        "shownOnIPad": .string(values.isEmpty && receipt.revisions.isEmpty ? "not_required" : "awaiting_display")]),
       "changed": .array(Array(values.prefix(32))), "changeCount": .number(Double(values.count))]
     result["next"] = next.map(JSONValue.string)
     if let undo = receipt.undo {
       result["undo"] = .object(["restored": .number(Double(undo.restored)),
-        "preservedCount": .number(Double(undo.preserved.count)), "completedAt": try .encode(undo.completedAt)])
+        "preservedCount": .number(Double(undo.preserved.count + (undo.preservedLifecycle?.count ?? 0))),
+        "completedAt": try .encode(undo.completedAt)])
     }
     var writes: [String: JSONValue] = [prefix + "result.json": .object(result), prefix + "model.json": try .encode(model)]
     for offset in stride(from: 32, to: values.count, by: 32) {
@@ -88,7 +138,15 @@ extension NotebookStore {
   }
 
   func completeScriptAction(_ address: NotebookScriptEffectAddress?, receipt: CollaborationReceipt, method: String) throws -> JSONValue {
-    let result = try scriptActionOutcome(receipt)
+    let result: JSONValue
+    if method == "transaction" {
+      guard let original = try savedActionResult(receipt.id) else {
+        throw CollaborationError("action_version_unavailable", "Исходный результат действия недоступен; версия отмены не подставляется.")
+      }
+      result = original
+    } else {
+      result = try scriptActionOutcome(receipt)
+    }
     if let address {
       var effect = try scriptEffect(address.runID, id: address.effectID)
       guard effect.method == method, effect.state == .committing,

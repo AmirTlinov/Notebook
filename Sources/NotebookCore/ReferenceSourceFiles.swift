@@ -20,6 +20,7 @@ extension NotebookStore {
       guard elementID == nil, let value = try storedValue(file) else { throw referenceMissing(target) }
       return [file: value, "spatial-ink.json": try .encode(readSpatialInk(surfaces: [.codeFragment(target.id)]))]
     case .page:
+      guard try ownerItemID(ofPage: target.id) != nil else { throw referenceMissing(target) }
       let file = "pages/" + suffix
       if let elementID {
         guard let header = try storedFragments(address: file + "#", descendants: false).first,
@@ -29,6 +30,7 @@ extension NotebookStore {
       guard try hasStoredValue(file) else { throw referenceMissing(target) }
       return [file: try .encode(loadPage(target.id))]
     case .document:
+      guard try readItemHeader(target.id)?.kind == .document else { throw referenceMissing(target) }
       let file = "documents/" + suffix, state = "document-states/" + suffix
       if let elementID {
         guard let header = try storedFragments(address: file + "#", descendants: false).first,
@@ -89,8 +91,12 @@ extension NotebookStore {
           workspace["rootBoardID"]?.string.flatMap(UUID.init(uuidString:)) == target.id else { throw referenceMissing(target) }
         value = workspace["stamp"]
       case .codeFragment: value = try storedFragments(address: codeFragmentFile(target.id) + "#", descendants: false).first?.value["stamp"]
-      case .page: value = try storedFragments(address: pageFile(target.id) + "#", descendants: false).first?.value["agentStamp"]
-      case .document: value = try storedFragments(address: documentFile(target.id) + "#", descendants: false).first?.value["contentStamp"]
+      case .page:
+        guard try ownerItemID(ofPage: target.id) != nil else { throw referenceMissing(target) }
+        value = try storedFragments(address: pageFile(target.id) + "#", descendants: false).first?.value["agentStamp"]
+      case .document:
+        guard try readItemHeader(target.id)?.kind == .document else { throw referenceMissing(target) }
+        value = try storedFragments(address: documentFile(target.id) + "#", descendants: false).first?.value["contentStamp"]
       case .board:
         guard let revision = try boardContentRevision(target.id) else { throw referenceMissing(target) }
         return revision

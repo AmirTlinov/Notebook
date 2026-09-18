@@ -53,6 +53,8 @@ public struct NotebookActionReadModel: Codable, Equatable, Sendable, Identifiabl
     public let completedAt: Date
     public let preserved: [Field]
     public let dependencies: [CollaborationPreservedDependency]?
+    public let preservedLifecycle: [CollaborationTarget]?
+    public let lifecycleChanges: [NotebookLifecycleUndoChange]?
   }
 
   public let id: UUID
@@ -63,6 +65,7 @@ public struct NotebookActionReadModel: Codable, Equatable, Sendable, Identifiabl
   public let author: SharedContextEntry.Author?
   public let revisions: [CollaborationExpectation]
   public let changes: [Field]
+  public let lifecycleChanges: [NotebookLifecycleChange]?
   public let undo: Undo?
   public var summary: String { action.summary }
 
@@ -73,8 +76,10 @@ public struct NotebookActionReadModel: Codable, Equatable, Sendable, Identifiabl
     author = receipt.author
     createdAt = receipt.createdAt; requestFingerprint = receipt.requestFingerprint
     revisions = receipt.revisions; changes = try receipt.changes.map(Field.init)
+    lifecycleChanges = receipt.lifecycleChanges
     undo = try receipt.undo.map { try .init(restored: $0.restored, completedAt: $0.completedAt,
-      preserved: $0.preserved.map(Field.init), dependencies:$0.dependencies) }
+      preserved: $0.preserved.map(Field.init), dependencies:$0.dependencies,
+      preservedLifecycle:$0.preservedLifecycle, lifecycleChanges:$0.lifecycleChanges) }
   }
 
   public func continuations(in files: [String: JSONValue]) throws -> [CollaborationContinuation] {

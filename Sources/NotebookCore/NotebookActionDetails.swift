@@ -42,23 +42,26 @@ extension NotebookStore {
       return .object(value)
     }
     let revisions = try receipt.revisions.map(JSONValue.encode)
-    let changes = try receipt.changes.map(Self.fieldAddress)
-    let undo = try (receipt.undo?.preserved.map(Self.fieldAddress) ?? []) + (receipt.undo?.dependencies ?? []).map { dependency in
+    let changes = try receipt.changes.map(Self.fieldAddress) + (receipt.lifecycleChanges ?? []).map { try $0.actionResultValue }
+    let preserved = try (receipt.undo?.preserved.map(Self.fieldAddress) ?? []) + (receipt.undo?.dependencies ?? []).map { dependency in
       var value = try JSONValue.encode(dependency)
       value = value.setting("reason",.string("retained_dependency"))
       return value
-    }
+    } + (receipt.undo?.preservedLifecycle ?? []).map { .object([
+      "target": try .encode($0), "reason": .string("lifecycle_owner_continued")]) }
+    let undo = try preserved + (receipt.undo?.lifecycleChanges ?? []).map { try $0.actionResultValue }
     var projected: [String: JSONValue] = [
       "id": try .encode(receipt.id), "createdAt": try .encode(receipt.createdAt),
       "requestFingerprint": try .encode(receipt.requestFingerprint),
-      "projection": .string("summary"), "changeCount": .number(Double(receipt.changes.count)),
+      "projection": .string("summary"), "changeCount": .number(Double(changes.count)),
       "action": .object(["summary": .string(receipt.summary), "contextID": try .encode(receipt.action.resolvedContextID),
         "references": try .encode(receipt.action.references), "operations": .array(Array(operations.prefix(limit)))]),
       "revisions": .array(Array(revisions.prefix(limit))), "changes": .array(Array(changes.prefix(limit))),
     ]
     if let value = receipt.undo {
       projected["undo"] = .object(["restored": .number(Double(value.restored)), "completedAt": try .encode(value.completedAt),
-        "preserved": .array(Array(undo.prefix(limit))), "preservedCount": .number(Double(undo.count))])
+        "preserved": .array(Array(preserved.prefix(limit))), "preservedCount": .number(Double(preserved.count)),
+        "lifecycleChanges": .array(try (value.lifecycleChanges ?? []).prefix(limit).map(JSONValue.encode))])
     }
     func cursors(_ pages: [(NotebookActionDetailsPage.Section, [JSONValue])]) -> JSONValue {
       .object(Dictionary(uniqueKeysWithValues: pages.map { section, values in
@@ -110,9 +113,9 @@ extension NotebookStore {
     // have no field changes, so the actual revised targets must also be empty.
     let noVisualChangeReason: String?
     if let undo = receipt.undo {
-      noVisualChangeReason = undo.restored == 0 && receipt.revisions.isEmpty ? "undo_without_visual_changes" : nil
+      noVisualChangeReason = undo.restored == 0 && (undo.lifecycleChanges ?? []).isEmpty && receipt.revisions.isEmpty ? "undo_without_visual_changes" : nil
     } else {
-      noVisualChangeReason = receipt.changes.isEmpty && receipt.revisions.isEmpty ? "action_without_visual_changes" : nil
+      noVisualChangeReason = changes.isEmpty && receipt.revisions.isEmpty ? "action_without_visual_changes" : nil
     }
     var publication: [String: JSONValue] = [
       "saved": .string("confirmed"),

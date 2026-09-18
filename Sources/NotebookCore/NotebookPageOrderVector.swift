@@ -134,6 +134,75 @@ enum NotebookPageOrderVector {
     return replacement
   }
 
+  static func remove(at index: Int, from root: String,
+    read: (String) throws -> NotebookPageOrderNode,
+    write: (NotebookPageOrderNode) throws -> String) throws -> String {
+    // A packed vector must shift its suffix after deletion. Keep the immutable
+    // prefix as subtree references, then stream/repack the suffix a leaf at a
+    // time. Neither the page list nor all visited leaf bodies are retained.
+    var reads = 0, bytes = 0, budget = WriteBudget()
+    func load(_ hash: String, height: Int? = nil, count: Int? = nil) throws -> NotebookPageOrderNode {
+      try Task.checkCancellation()
+      guard validPageOrderHash(hash), reads < maximumNodes else { throw NotebookStorageError.limitExceeded("page_order_remove_nodes") }
+      let node = try read(hash), data = try node.canonicalData()
+      guard data.count <= maximumNodeBytes, data.count <= maximumBytes - bytes else {
+        throw NotebookStorageError.limitExceeded("page_order_remove_bytes")
+      }
+      guard pageOrderHash(data) == hash else { throw NotebookStorageError.blobHashMismatch }
+      guard height == nil || node.height == height, count == nil || node.count == count else {
+        throw NotebookStorageError.invalidTransaction("page order child metadata")
+      }
+      reads += 1; bytes += data.count; return node
+    }
+    let original = try load(root); try validateRoot(original)
+    guard index >= 0, index < original.count else { throw NotebookStorageError.invalidTransaction("page order removal index") }
+    let prefixEnd = index / width * width
+    var levels = Array(repeating: [Subtree](), count: maximumHeight + 1), leaf: [UUID] = []
+    func push(_ reference: Subtree) throws {
+      guard reference.height <= maximumHeight else { throw NotebookStorageError.limitExceeded("page_order_pages") }
+      levels[reference.height].append(reference)
+      if levels[reference.height].count == width {
+        let children = levels[reference.height]; levels[reference.height].removeAll(keepingCapacity: true)
+        let height = reference.height + 1, count = children.reduce(0) { $0 + $1.count }
+        let hash = try budget.write(.init(height: height, count: count, children: children.map(\.hash)), using: write)
+        try push(.init(hash: hash, height: height, count: count))
+      }
+    }
+    func flushLeaf() throws {
+      guard !leaf.isEmpty else { return }
+      let count = leaf.count, hash = try budget.write(.init(height: 0, count: count, pages: leaf), using: write)
+      leaf.removeAll(keepingCapacity: true)
+      try push(.init(hash: hash, height: 0, count: count))
+    }
+    func walk(_ reference: Subtree, offset: Int, loaded: NotebookPageOrderNode? = nil) throws {
+      if offset + reference.count <= prefixEnd {
+        try push(reference); return
+      }
+      let node = try loaded ?? load(reference.hash, height: reference.height, count: reference.count)
+      if node.height == 0 {
+        for (position, page) in node.pages.enumerated() where offset + position != index {
+          leaf.append(page)
+          if leaf.count == width { try flushLeaf() }
+        }
+      } else {
+        let stride = capacity(height: node.height - 1)
+        for child in node.children.indices {
+          try walk(subtree(node, at: child), offset: offset + child * stride)
+        }
+      }
+    }
+    try walk(.init(hash: root, height: original.height, count: original.count), offset: 0, loaded: original)
+    try flushLeaf()
+    while let height = levels.firstIndex(where: { !$0.isEmpty }) {
+      let children = levels[height]; levels[height].removeAll(keepingCapacity: true)
+      if children.count == 1, levels.allSatisfy(\.isEmpty) { return children[0].hash }
+      let count = children.reduce(0) { $0 + $1.count }
+      let hash = try budget.write(.init(height: height + 1, count: count, children: children.map(\.hash)), using: write)
+      try push(.init(hash: hash, height: height + 1, count: count))
+    }
+    return try budget.write(.init(height: 0, count: 0), using: write)
+  }
+
   /// Full admission: iterative, globally unique, and bounded before output is
   /// expanded. A repeated nonempty subtree would repeat its UUIDs, so it fails.
   static func materialize(_ root: String, read: (String) throws -> NotebookPageOrderNode) throws -> [UUID] {

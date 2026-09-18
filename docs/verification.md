@@ -10486,3 +10486,52 @@ RED: `.build/gui226-paper-area-red-20260918/` — target.board вместо targ
 выпуска не обходилось. Production-пара остаётся **0.3.90 (93)**; исправление
 в рабочее приложение пока не доставлено. Это не полная приёмка и не завершение
 единого группового редактирования.
+
+## 18 сентября 2026 — S8: общий lifecycle, сохранённые источники и причинная отмена
+
+Интегрированы `appendPage`/`deleteItem` в SDK v2 (22 операции) через прежние
+native owners и очередь Store. Типы, справка и компактные versioned результаты
+генерируются тем же маршрутом. Удаление тетради, документа и пустой доски
+сохраняет допущенный источник для позднего causal merge, но убирает его из
+обычных чтений, ссылок и локальных writes. Undo восстанавливает членство,
+не перезаписывая принятый human source историческим телом. Nested child/parent
+восстанавливаются в owner-order. Source-before/after inverse входит в ту же
+квитанцию и closure доставки; manifest 8, производная DB schema 10.
+
+Неизменные **522 inputs** проверены до/после обоих профилей; SHA-256 файла
+полного hash manifest: `2d78dca6465ded9f77096ab0de5628df8fccca5d6dcba48730f3cb33872ef517`.
+`.build/s8-lifecycle-native-20260918/` содержит
+исходные журналы, hashes и точный manifest переноса 84 Source/Test/MCP файлов
+из изолированного checkout. Чужие 9 GUI-225 Application/docs правок не включены.
+
+- Core lifecycle/replication/read-budget: **168 тестов / 30 suites PASS**, 43.285 s.
+- Capture, source deletion, native append, vector, migration, erasure:
+  **59 тестов / 9 suites PASS**, 249.953 s с созданием настоящего 100k fixture.
+- Append к 100 000 PAGE: **7 542 SQL VM steps, 13 изменённых адресов**;
+  длительность всего fixture не выдаётся за задержку добавления листа.
+- MCP protocol + настоящий native IPC: **16 PASS**; generated SDK types:
+  **3 PASS**; `npm run check` и проверка generated resources — PASS.
+- Проверены повтор до/после undo, immutable actionVersion, stale/неполная basis,
+  повторный UUID, late human PAGE/document/state/board+ink, reopen/fresh peer,
+  отсутствие orphan allocation/ACK, скрытые ссылки и bulk native ink guards.
+
+RED сохранён: первый общий профиль дал 2 ошибки старых index fixtures, которые
+пытались создавать orphan через публичный save. Следующая попытка подтвердила
+отказ уже на raw commit. Проверки теперь требуют rollback этих недопустимых
+cuts и публикацию catalogue/source/state вместе, не ослабляя владельца.
+Первый types запуск имел неверный cwd (`tsc ENOENT`); повтор в MCP прошёл без
+правок кода. Предыдущие реальные RED delete/undo и snapshot-order сохранены
+в `/tmp/notebook-s8-document-board-{first,second,thirdb}-gate.log`.
+
+**S8 ещё In Progress.** Последовательная цепь move/create → delete → undo delete
+→ undo earlier пока консервативно сохраняет восстановленный placement: typed
+receipt provenance нужно довести. Native unstack существует, а public move
+пока требует free item; это оставшийся SDK-пробел, не повод добавлять новый MCP.
+Общий finite read allowance 65 536 rows / 32 MiB / 8 MiB value не увеличивался;
+полный delete/undo 100k PAGE не объявляется допустимым или измеренным PASS.
+
+Это локальное доказательство кода, **не установка и не физическая приёмка**.
+Пара 0.3.90 (93) данного среза не содержит. Ни Xcode/Simulator, ни новая пара
+в этом профиле не запускались; identity, trust, ключи и живые базы не менялись.
+Физические selection/жесты/показ, окончательная цепь undo и согласованный выпуск
+остаются открытыми. Жалоба Амира на вход/выход из тетради не объявлена принятой.

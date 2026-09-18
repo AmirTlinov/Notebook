@@ -11,8 +11,13 @@ extension NotebookStore {
     guard let id = UUID(uuidString: identifier), documentFile(id) == file else {
       throw NotebookStorageError.invalidTransaction("document source owner")
     }
-    guard try readItemHeader(id)?.kind == .document else {
-      try publishRecords(writes: [:], removals: [file]); return
+    let live = try readItemHeader(id)?.kind == .document
+    let records = NotebookIncomingRecords(store: self, manifestHash: manifestHash)
+    if !live {
+      guard try admitsReplicatedRetiredDocumentPair(itemID: id, records: records) else {
+        try publishRecords(writes: [:], removals: [file]); return
+      }
+      if let mutation = try records.mutation(root), mutation[0].text == nil { return }
     }
 
     func incoming(_ address: String, descendants: Bool = false) throws -> [[NotebookSQLValue]] {
@@ -46,21 +51,14 @@ extension NotebookStore {
         return fragment
       }
     }
-    func header(_ fragment: NotebookStoredFragment) throws -> DocumentDocument {
-      let value = try NotebookRecordCodec.decode([fragment], root: root)
-      let document = try value.decode(DocumentDocument.self)
-      guard document.id == id, try NotebookRecordCodec.encode(.encode(document), file: file) == [fragment] else {
-        throw NotebookStorageError.corruptRecord(root)
-      }
-      return document
-    }
     let previousRoot = try boundedStoredFragments([(root, false)], maximumCount: 1,
       maximumBytes: 1_048_576, budget: "document_replication_header").first
     let rootMutation = try incoming(root)
     if let mutation = rootMutation.first, mutation[1].text == nil { throw NotebookStorageError.invalidTransaction("a live document retains its source") }
     let candidateRoot = try fragments(rootMutation, maximumBytes: 1_048_576).first ?? previousRoot
     guard let candidateRoot else { throw NotebookStorageError.corruptRecord(root) }
-    let candidate = try header(candidateRoot), previous = try previousRoot.map(header)
+    let candidate = try documentSourceHeader(candidateRoot, id: id)
+    let previous = try previousRoot.map { try documentSourceHeader($0, id: id) }
     guard previous == nil || previous?.paperSize == candidate.paperSize else { throw NotebookStorageError.transactionConflict }
     let frontier = max(previous?.contentStamp ?? candidate.contentStamp, candidate.contentStamp)
     var differsFromNewest = false, allocatedFields = false

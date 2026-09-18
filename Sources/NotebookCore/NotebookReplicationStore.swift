@@ -41,7 +41,7 @@ extension NotebookStore {
     guard data.count <= 67_108_864 else { throw NotebookStorageError.limitExceeded("change_manifest_part") }
     let manifest = try JSONDecoder().decode(NotebookChangeManifest.self, from: data)
     let workspaceID = try currentSQL!.rows("SELECT value FROM metadata WHERE key='workspace_id'").first?[0].text.flatMap(UUID.init(uuidString:))
-    guard (manifest.format == 4 || manifest.format == 5 || manifest.format == 6 || manifest.format == 7) || (historical && manifest.format == 3) else {
+    guard (manifest.format == 4 || manifest.format == 5 || manifest.format == 6 || manifest.format == 7 || manifest.format == NotebookChangeManifest.currentFormat) || (historical && manifest.format == 3) else {
       throw CollaborationError("placement_peer_upgrade_required", "Сопряжённое устройство передаёт прежний формат изменений. Завершите его обновление; пакет не подтверждён и содержание сохранено.")
     }
     guard manifest.transactionID == change.transactionID, manifest.workspaceID == workspaceID,
@@ -96,7 +96,9 @@ extension NotebookStore {
       }
       let missing = try database.rows("SELECT DISTINCT m.blob_hash FROM manifest_records m LEFT JOIN blobs b ON b.hash=m.blob_hash WHERE m.manifest_hash=? AND m.blob_hash>? AND b.hash IS NULL ORDER BY m.blob_hash LIMIT ?", [.text(change.manifestHash), .text(after ?? ""), .integer(Int64(limit))]).compactMap { $0[0].text }
       if !missing.isEmpty { return missing }
-      return try missingPageOrderBlobs(manifestHash: change.manifestHash, limit: limit)
+      let orderMissing = try missingPageOrderBlobs(manifestHash: change.manifestHash, limit: limit)
+      if !orderMissing.isEmpty { return orderMissing }
+      return try missingLifecycleInverseBlobs(change: change, limit: limit)
     }
   }
 
@@ -118,6 +120,14 @@ extension NotebookStore {
       let cursor = try incomingCursor(source: source)
       guard change.sequence > 0, change.sequence <= UInt64(Int64.max) else { throw NotebookStorageError.invalidTransaction("incoming sequence") }
       if try !deliveryNeedsContent(delivery) {
+        // A snapshot-covered prefix does not carry the old archive's manifests.
+        // A known transaction, however, retains its own admitted receipt and
+        // must not use dedupe to acknowledge corrupt inverse evidence.
+        let known = try !database.rows("SELECT 1 FROM received_transactions WHERE transaction_id=? UNION SELECT 1 FROM change_log WHERE transaction_id=?",
+          [.text(transaction), .text(transaction)]).isEmpty
+        if known, try validatedManifest(change, historical: true).format >= 8 {
+          guard try missingBlobHashes(for: change, limit: 1).isEmpty else { throw NotebookStorageError.blobMissing(change.manifestHash) }
+        }
         if change.sequence > cursor {
           guard delivery.isSnapshot || change.sequence == cursor + 1 else { throw NotebookStorageError.invalidTransaction("noncontiguous incoming cursor") }
           try database.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',?) ON CONFLICT(peer_id,direction) DO UPDATE SET sequence=MAX(sequence,excluded.sequence)", [.text(peer), .integer(Int64(change.sequence))])
@@ -149,7 +159,7 @@ extension NotebookStore {
           return
         }
         if file.hasPrefix("pages/") {
-          try applyReplicatedPage(file: file, manifestHash: change.manifestHash)
+          try applyReplicatedPage(file: file, manifestHash: change.manifestHash, isSnapshot: delivery.isSnapshot)
           return
         }
         if file.hasPrefix("document-states/") {
@@ -197,7 +207,7 @@ extension NotebookStore {
             guard receipt.id == receipt.action.id else { throw NotebookStorageError.invalidTransaction("receipt identity") }
             if let before {
               let previous = try before.decode(CollaborationReceipt.self)
-              guard previous.action == receipt.action else { throw NotebookStorageError.transactionConflict }
+              guard previous.hasSameLifecycleIdentity(as: receipt) else { throw NotebookStorageError.transactionConflict }
               resolved = try .encode(previous.undo == nil ? receipt : previous)
             } else { resolved = value }
           } else if file.hasPrefix("collaboration/delivery/") {

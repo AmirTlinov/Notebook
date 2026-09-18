@@ -86,6 +86,7 @@ extension NotebookStore {
 
   static func compositionSubjects(_ operation: CollaborationOperation, files: [String: JSONValue]) throws -> [CollaborationSubject] {
     switch operation.kind {
+    case .deleteItem: return [.init(target: operation.target)]
     case .moveItem:
       guard let id = operation.id.flatMap(UUID.init(uuidString:)) else { return [] }
       return [.init(target: .init(kind: .cover, id: id, boardID: operation.target.id))]

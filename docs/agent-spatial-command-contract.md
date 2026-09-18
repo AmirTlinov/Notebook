@@ -33,3 +33,30 @@ spans. Повтор команды возвращает прежнюю квит�
 `/tmp/notebook-spatial-action-profile.log` (статус 1) и
 `/tmp/notebook-spatial-action-final-profile.log` (статус 0).
 Профиль не заменяет полный `verify.sh` на объединённых исходниках и приёмку iPad.
+
+## S8: жизненный цикл физического владельца
+
+`appendPage` использует `publishPageAppend`, как native landing; `deleteItem` —
+`deleteWorkspaceItemContent`, как UI. Агентская команда не меняет presence,
+камеру и выбранный лист. Состав удаления берётся у Store, не из paint window.
+Непустая доска и последний рабочий предмет отклоняются до записи.
+
+Lifecycle inverse — ссылка квитанции на неизменные root/parts из существующего
+blob store: упорядоченные `{address,beforeHash?,afterHash?}` связаны с workspace
+и action. First-before capture охватывает содержание всего хода, не результат,
+receipt или контекст. Исходный inverse и inverse восстановления при undo
+входят в обязательные зависимости доставки/snapshot/cloud. Хеши не заменяют
+причинную и доменную проверку восстановления.
+
+Тот же `undoCollaborationAction` сначала проверяет все группы: deletion
+existence, полное placement и notebook membership/order. Зависимые доски
+восстанавливаются раньше детей; чужое продолжение родителя сохраняет всю
+группу. После восстановления членства свежими причинными версиями обычные
+поля условно отменяются прежним владельцем. Сохранённые PAGE/document/state/
+board тела не заменяются из истории: принятая поздняя human-правка остаётся.
+Контракт хранения — [retained sources](spatial-replication-contract.md#s8-сохранённый-источник-не-живой-предмет).
+
+Создание и удаление одного предмета в одном ходе не дают resurrection при
+undo. Отмена append удаляет только ещё принадлежащее ходу рождение; принятый
+человеком лист сохраняется. Полная история undo/redo здесь не добавляется.
+Общий [read allowance](agent-command-read-allowance.md) не увеличен.

@@ -174,44 +174,118 @@ extension NotebookStore {
       try requireIdleInput(for: action.operations.map(\.target))
       let scopeReferences = contextReferences ?? action.references
       try validateCollaborationExpectations(action, projection: before)
-      var after = before
-      var createdTargets = Set<CollaborationTarget>()
-      var inkPointCount = 0
-      for (index, operation) in action.operations.enumerated() {
-        do {
-          if operation.needsInkExpectation {
-            inkPointCount += operation.values["points"]?.array.count ?? 0
-            guard inkPointCount <= 100_000 else { throw invalid("Один ход содержит не более 100000 точек ручки.") }
-            guard createdTargets.contains(operation.target) || action.expected.contains(where: {
-              $0.target == operation.target && $0.inkRevision != nil
-            }) else { throw CollaborationError("revision_required", "Для ручки нужна inkRevision: drawingRevision листа либо spatialInkRevision доски/обложки.", target: operation.target) }
-          }
-          for subject in try Self.compositionSubjects(operation, files: before.files) where !createdTargets.contains(subject.target) {
-            try Self.requireCompositionScope(subject, references: scopeReferences, additionalOwners: action.additionalOwners ?? [], files: before.files)
-          }
-          for target in try before.requiredExpectations(for: operation) {
-            guard createdTargets.contains(target) || action.expected.contains(where: { $0.target == target }) else {
-              throw CollaborationError("revision_required", "Для изменения нужна версия владельца.", target: target)
-            }
-          }
-          if operation.kind == .setBlockState, !action.expected.contains(where: { $0.target == operation.target && $0.stateRevision != nil }) {
-            throw CollaborationError("revision_required", "Для состояния блока нужна stateRevision документа.", target:operation.target)
-          }
-          try after.apply(operation, actor: actor)
-          createdTargets.formUnion(operation.createdOwners)
-        } catch let error as CollaborationError {
-          throw error.atOperation(index, operation)
+      let hasLifecycle = action.operations.contains(where: \.isLifecycle)
+      var initialItems: [UUID: NotebookItemHeader] = [:]
+      if hasLifecycle {
+        for id in Set(action.operations.filter(\.isLifecycle).map { $0.target.id }) {
+          initialItems[id] = try readItemHeader(id)
         }
       }
-      try after.recordFieldChanges(from: before, human: human)
-      try after.validateGraphicBindings(action: action, scope: self)
-      try after.validate(scope: self)
-      let changes = try graphicConversionChanges(action, after: after.files,
-        changes: collaborationDiff(before.files, after.files).filter { !action.ownsInkField($0) })
-      var receipt = CollaborationReceipt(id: action.id, action: action, createdAt: Date(),
-        revisions: [], changes: changes)
+      var after = before, segmentBefore = before, evidenceAfter = before.files
+      var revisedTargets = Set<CollaborationTarget>()
+      var createdTargets = Set<CollaborationTarget>()
+      var inkPointCount = 0
+      func flushSegment() throws {
+        try after.recordFieldChanges(from: segmentBefore, human: human)
+        let delta = collaborationDiff(segmentBefore.files, after.files)
+        for field in delta {
+          if field.path.isEmpty { evidenceAfter[field.file] = field.after }
+          else {
+            evidenceAfter[field.file] = (evidenceAfter[field.file] ?? .object([:]))
+              .setting(at: field.path[...], to: field.after)
+          }
+        }
+        revisedTargets.formUnion(try after.changedTargets(from: segmentBefore))
+        try publishCollaborationEdits(before: segmentBefore.files, after: after.files)
+        segmentBefore = after
+      }
+      func projection(for operations: [CollaborationOperation]) throws -> CollaborationWorkspace {
+        // Scope and original expectations were admitted once above. A barrier
+        // loads only the next ordinary segment, not every future source again.
+        try actionSourceProjection(.init(id: action.id, summary: action.summary, expected: [], operations: operations))
+      }
+      func applyOperations() throws {
+        for (index, operation) in action.operations.enumerated() {
+          do {
+            if operation.needsInkExpectation {
+              inkPointCount += operation.values["points"]?.array.count ?? 0
+              guard inkPointCount <= 100_000 else { throw invalid("Один ход содержит не более 100000 точек ручки.") }
+              guard createdTargets.contains(operation.target) || action.expected.contains(where: {
+                $0.target == operation.target && $0.inkRevision != nil
+              }) else { throw CollaborationError("revision_required", "Для ручки нужна inkRevision: drawingRevision листа либо spatialInkRevision доски/обложки.", target: operation.target) }
+            }
+            for subject in try Self.compositionSubjects(operation, files: before.files) where !createdTargets.contains(subject.target) {
+              try Self.requireCompositionScope(subject, references: scopeReferences, additionalOwners: action.additionalOwners ?? [], files: before.files)
+            }
+            for target in try before.requiredExpectations(for: operation) {
+              guard createdTargets.contains(target) || action.expected.contains(where: { $0.target == target }) else {
+                throw CollaborationError("revision_required", "Для изменения нужна версия владельца.", target: target)
+              }
+            }
+            if operation.kind == .setBlockState, !action.expected.contains(where: { $0.target == operation.target && $0.stateRevision != nil }) {
+              throw CollaborationError("revision_required", "Для состояния блока нужна stateRevision документа.", target: operation.target)
+            }
+            if operation.kind == .deleteItem, !createdTargets.contains(operation.target),
+              !action.expected.contains(where: { $0.target == operation.target && $0.lifecycleRevision != nil }) {
+              throw CollaborationError("revision_required", "Удаление требует полного основания itemLifecycle, включая невидимое содержание.", target: operation.target)
+            }
+            if [.createNotebook, .createDocument, .createBoard].contains(operation.kind),
+              let itemID = operation.id.flatMap(UUID.init(uuidString:)) {
+              try requireUnreservedItemID(itemID)
+            }
+            if operation.kind == .createNotebook, let pageID = operation.values["pageID"]?.string.flatMap(UUID.init(uuidString:)) {
+              try requireUnreservedPageID(pageID)
+            }
+            try validateReorderMembership(operation, before: segmentBefore, after: after)
+            if operation.isLifecycle {
+              try flushSegment()
+              revisedTargets.formUnion(try applyLifecycleOperation(operation, actor: actor, human: human))
+              let following = action.operations.dropFirst(index + 1).prefix { !$0.isLifecycle }
+              after = try projection(for: Array(following)); segmentBefore = after
+            } else { try after.apply(operation, actor: actor) }
+            createdTargets.formUnion(operation.createdOwners)
+          } catch let error as CollaborationError {
+            throw error.atOperation(index, operation)
+          }
+        }
+      }
+      if hasLifecycle {
+        try currentSQL!.withActionRecordCapture(actionID: action.id) {
+          try applyOperations()
+          try flushSegment()
+          after = try projection(for: action.operations)
+          // An intermediate connector can precede its endpoint. Validate only
+          // the completed action, never each lifecycle publication barrier.
+          try after.validateGraphicBindings(action: action, scope: self)
+          try after.validate(scope: self)
+        }
+      } else {
+        try applyOperations()
+        try after.recordFieldChanges(from: before, human: human)
+        try after.validateGraphicBindings(action: action, scope: self)
+        try after.validate(scope: self)
+      }
+      if hasLifecycle { try coalesceCreatedNotebookSources(action, before: before, after: after, evidence: &evidenceAfter) }
+      var changes = try graphicConversionChanges(action, after: after.files,
+        changes: collaborationDiff(before.files, hasLifecycle ? evidenceAfter : after.files).filter { !action.ownsInkField($0) })
+      if hasLifecycle {
+        changes = try changes.filter { try !lifecycleOwns($0, action: action) }
+        for index in changes.indices {
+          let field = changes[index]
+          changes[index].afterVersion = try collaborationFieldVersion(path: field.path) { path in
+            try readCollaborationValue(file: field.file, path: path)
+          }
+        }
+      }
+      var receipt = CollaborationReceipt(id: action.id, action: action, createdAt: Date(), revisions: [], changes: changes)
       receipt.requestFingerprint = requestFingerprint
       receipt.author = human ? .human : .agent
+      if hasLifecycle {
+        receipt.lifecycleChanges = try lifecycleChanges(action, before: initialItems)
+        receipt.lifecycleInverse = try saveLifecycleInverse(actionID: action.id)
+        let targets = try revisedTargets.filter { try targetSurvivesLifecycle($0) }.sorted { $0.key < $1.key }
+        return try finishCollaboration(after: after, receipt: receipt, revisedTargets: targets, changed: changes)
+      }
       return try commitCollaboration(before: before.files, after: after,
         receipt: receipt, revisedTargets: after.changedTargets(from: before))
     }
@@ -227,94 +301,172 @@ extension NotebookStore {
     return try commandTransaction(readAllowance: .agentCommand) {
       var receipt = try loadAction(id)
       if receipt.undo != nil { return receipt }
-      let migratedMove = try receipt.changes.contains(where: usesRetiredPlacementOwner)
-        ? MigratedPlacementUndo(receipt) : nil
-      let before = try actionSourceProjection(receipt.action, receipt: receipt)
       try requireIdleInput(for: receipt.action.operations.map(\.target))
-      var after = before
-      var preserved: [CollaborationFieldChange] = []
-      var restoredFields: [CollaborationFieldChange] = []
-      let protected = try before.protectedCreationChanges(in: receipt, scope: self)
-      var preservedDependencies: [CollaborationPreservedDependency] = []
-      var restored = 0
-      for operation in receipt.action.operations where operation.kind == .appendInkStroke {
-        if try after.undoInk(operation, actor: actor) { restored += 1 }
-      }
-      if let migratedMove {
-        if let inverse = try migratedMove.inverse(in: before) {
-          var tree = try after.hierarchy
-          guard tree.restorePlacement(itemID: migratedMove.itemID, on: migratedMove.boardID, pose: inverse, actor: actor) else {
-            throw invalid("Не удалось записать причинную отмену расположения предмета.")
+      let hasLifecycle = receipt.lifecycleChanges?.isEmpty == false
+      let appended = hasLifecycle ? try prepareAppendedNotebookPageUndo(receipt: receipt) : nil
+      let deleted = hasLifecycle ? try prepareDeletedItemUndo(receipt: receipt, actor: actor) : nil
+      defer { try? deleted?.clear() }
+
+      func publishInverse() throws -> (after: CollaborationWorkspace, targets: [CollaborationTarget], changed: [CollaborationFieldChange]) {
+        // The preflight belongs to the original undo cut. Restore removed
+        // owners before ordinary creation inverses: replacing the last item
+        // never requires an invalid empty catalogue or a fabricated selection.
+        var lifecycle = try publishDeletedItemUndo(deleted)
+        let migratedMove = try receipt.changes.contains(where: usesRetiredPlacementOwner)
+          ? MigratedPlacementUndo(receipt) : nil
+        let before = try actionSourceProjection(receipt.action, receipt: receipt)
+        var after = before
+        var preserved: [CollaborationFieldChange] = []
+        var restoredFields: [CollaborationFieldChange] = []
+        let protected = try before.protectedCreationChanges(in: receipt, scope: self)
+        var preservedDependencies: [CollaborationPreservedDependency] = []
+        var restored = 0
+        for operation in receipt.action.operations where operation.kind == .appendInkStroke {
+          // A later deletion owner preserves the whole cover, including its
+          // hidden ink. Do not run an ordinary inverse behind that decision.
+          if lifecycle.preserved.contains(operation.target) { continue }
+          if try after.undoInk(operation, actor: actor) { restored += 1 }
+        }
+        if let migratedMove {
+          if let inverse = try migratedMove.inverse(in: before) {
+            var tree = try after.hierarchy
+            guard tree.restorePlacement(itemID: migratedMove.itemID, on: migratedMove.boardID, pose: inverse, actor: actor) else {
+              throw invalid("Не удалось записать причинную отмену расположения предмета.")
+            }
+            after.files["board.json"] = try .encode(tree)
+            restored += receipt.changes.count
+          } else { preserved += receipt.changes }
+        }
+        for change in receipt.changes where migratedMove == nil {
+          let current = before.files[change.file]?.value(at: change.path[...])
+          if let address = placementAddress(change.file, change.path) {
+            guard !protected.contains(change), placementIsOwned(current, after: change.after) else {
+              preserved.append(change); continue
+            }
+            let prior = try change.before?.decode(WorkspacePlacement.self)
+            var tree = try after.hierarchy
+            guard tree.restorePlacement(itemID: address.itemID, on: address.boardID, pose: prior?.pose, actor: actor) else {
+              throw invalid("Не удалось записать причинную отмену расположения предмета.")
+            }
+            after.files["board.json"] = try .encode(tree)
+            restored += 1
+            continue
           }
-          after.files["board.json"] = try .encode(tree)
-          restored += receipt.changes.count
-        } else { preserved += receipt.changes }
-      }
-      for change in receipt.changes where migratedMove == nil {
-        let current = before.files[change.file]?.value(at: change.path[...])
-        if let address = placementAddress(change.file, change.path) {
-          guard !protected.contains(change), placementIsOwned(current, after: change.after) else {
-            preserved.append(change); continue
+          let version = collaborationFieldVersion(file: before.files[change.file], path: change.path)
+          let stillOwned = try fieldIsOwned(version, by: change)
+          guard !protected.contains(change),
+            try !graphicConversionIsAdopted(change, receipt: receipt, files: before.files, preserving:&preservedDependencies),
+            stillOwned,
+            collaborationComparable(current, file: change.file, path: change.path) == collaborationComparable(change.after, file: change.file, path: change.path) else {
+            preserved.append(change)
+            continue
           }
-          let prior = try change.before?.decode(WorkspacePlacement.self)
-          var tree = try after.hierarchy
-          guard tree.restorePlacement(itemID: address.itemID, on: address.boardID, pose: prior?.pose, actor: actor) else {
-            throw invalid("Не удалось записать причинную отмену расположения предмета.")
+          if change.file.hasPrefix("document-states/"), change.before == nil, change.path.count == 2,
+            change.path[0] == .field("records"), case .member(let blockID) = change.path[1],
+            let documentID = UUID(uuidString:URL(fileURLWithPath:change.file).deletingPathExtension().lastPathComponent),
+            let document = try? after.files[documentFile(documentID)]?.decode(DocumentDocument.self),
+            let block = document.blocks.first(where: { $0.id == blockID }), let current {
+            after.files[change.file] = after.files[change.file]?.setting(at:change.path[...],to:current.setting("value",block.initialState))
+          } else if let value = after.files[change.file] {
+            if change.file.hasPrefix("document-states/"), change.path.last == .order { continue }
+            after.files[change.file] = value.setting(at: change.path[...], to: change.before)
+          } else if change.path.isEmpty {
+            after.files[change.file] = change.before
+          } else {
+            preserved.append(change)
+            continue
           }
-          after.files["board.json"] = try .encode(tree)
           restored += 1
-          continue
+          restoredFields.append(change)
         }
-        let version = collaborationFieldVersion(file: before.files[change.file], path: change.path)
-        let stillOwned = try fieldIsOwned(version, by: change)
-        guard !protected.contains(change),
-          try !graphicConversionIsAdopted(change, receipt: receipt, files: before.files, preserving:&preservedDependencies),
-          stillOwned,
-          collaborationComparable(current, file: change.file, path: change.path) == collaborationComparable(change.after, file: change.file, path: change.path) else {
-          preserved.append(change)
-          continue
+        try after.restampChanges(from: before, actor: actor)
+        try after.recordFieldChanges(from: before, human: true)
+        // Dependencies of a created item are preserved as a group when a later
+        // hand has adopted any of them; validation is the final ownership gate.
+        try after.validate(scope: self)
+        receipt.undo = CollaborationUndoResult(restored: restored, preserved: preserved, completedAt: Date())
+        receipt.undo?.dependencies = preservedDependencies.isEmpty ? nil : preservedDependencies
+        receipt.undo?.restorations = restoredFields.compactMap { change in
+          guard let prior = change.beforeVersion,
+            let written = collaborationFieldVersion(file: after.files[change.file], path: change.path),
+            written.stamp != collaborationFieldVersion(file: before.files[change.file], path: change.path)?.stamp,
+            written.stamp != prior.stamp else { return nil }
+          return .init(file: change.file, path: change.path, writtenVersion: written, restoredVersion: prior)
         }
-        if change.file.hasPrefix("document-states/"), change.before == nil, change.path.count == 2,
-          change.path[0] == .field("records"), case .member(let blockID) = change.path[1],
-          let documentID = UUID(uuidString:URL(fileURLWithPath:change.file).deletingPathExtension().lastPathComponent),
-          let document = try? after.files[documentFile(documentID)]?.decode(DocumentDocument.self),
-          let block = document.blocks.first(where: { $0.id == blockID }), let current {
-          after.files[change.file] = after.files[change.file]?.setting(at:change.path[...],to:current.setting("value",block.initialState))
-        } else if let value = after.files[change.file] {
-          if change.file.hasPrefix("document-states/"), change.path.last == .order { continue }
-          after.files[change.file] = value.setting(at: change.path[...], to: change.before)
-        } else if change.path.isEmpty {
-          after.files[change.file] = change.before
-        } else {
-          preserved.append(change)
-          continue
+        let changed = collaborationDiff(before.files, after.files)
+        var targets = Set(try after.changedTargets(from: before))
+        try publishCollaborationEdits(before: before.files, after: after.files)
+        if let appended {
+          lifecycle.changes += try publishAppendedNotebookPageUndo(appended, actor: actor)
+          lifecycle.preserved += appended.preserved
         }
-        restored += 1
-        restoredFields.append(change)
+        if hasLifecycle {
+          let ordinary = receipt.undo!
+          receipt.undo = .init(restored: ordinary.restored + lifecycle.changes.count,
+            preserved: ordinary.preserved, completedAt: ordinary.completedAt)
+          receipt.undo?.restorations = ordinary.restorations
+          receipt.undo?.dependencies = ordinary.dependencies
+          receipt.undo?.lifecycleChanges = lifecycle.changes.isEmpty ? nil : lifecycle.changes
+          receipt.undo?.preservedLifecycle = lifecycle.preserved.isEmpty ? nil : lifecycle.preserved
+          for change in lifecycle.changes {
+            targets.insert(change.target)
+            if let board = change.target.boardID { targets.insert(.init(kind: .board, id: board)) }
+          }
+          if !lifecycle.changes.isEmpty {
+            targets.insert(.init(kind: .workspace, id: try workspaceHeader().rootBoardID))
+          }
+          let completed = try actionSourceProjection(receipt.action, receipt: receipt)
+          try completed.validate(scope: self)
+          let surviving = try targets.filter { try targetSurvivesLifecycle($0) }.sorted { $0.key < $1.key }
+          return (completed, surviving, changed)
+        }
+        return (after, targets.sorted { $0.key < $1.key }, changed)
       }
-      try after.restampChanges(from: before, actor: actor)
-      try after.recordFieldChanges(from: before, human: true)
-      // Dependencies of a created item are preserved as a group when a later
-      // hand has adopted any of them; validation is the final ownership gate.
-      try after.validate(scope: self)
-      receipt.undo = CollaborationUndoResult(restored: restored, preserved: preserved, completedAt: Date())
-      receipt.undo?.dependencies = preservedDependencies.isEmpty ? nil : preservedDependencies
-      receipt.undo?.restorations = restoredFields.compactMap { change in
-        guard let prior = change.beforeVersion,
-          let written = collaborationFieldVersion(file: after.files[change.file], path: change.path),
-          written.stamp != collaborationFieldVersion(file: before.files[change.file], path: change.path)?.stamp,
-          written.stamp != prior.stamp else { return nil }
-        return .init(file: change.file, path: change.path, writtenVersion: written, restoredVersion: prior)
+
+      let publication: (after: CollaborationWorkspace, targets: [CollaborationTarget], changed: [CollaborationFieldChange])
+      if hasLifecycle {
+        let captureID = Self.submissionID(receipt.id, suffix: "lifecycle-undo")
+        publication = try currentSQL!.withActionRecordCapture(actionID: captureID) { try publishInverse() }
+        let inverse = try saveLifecycleInverse(actionID: receipt.id, captureID: captureID)
+        receipt.undo?.restorationInverse = inverse
+      } else { publication = try publishInverse() }
+      // Exactly one receipt/result, outside the closed content capture.
+      return try finishCollaboration(after: publication.after, receipt: receipt,
+        revisedTargets: publication.targets, changed: publication.changed)
+    }
+  }
+
+  /// Publish the current content segment without issuing a second action,
+  /// receipt or context. The enclosing command retains atomicity and admission.
+  func publishCollaborationEdits(before: [String: JSONValue], after: [String: JSONValue]) throws {
+    var writes = after.filter { before[$0.key] != $0.value }
+    // The command's catalogue/tree/ink/document/state are addressed projections. Publish only
+    // fields changed from its baseline; unseen SQL members retain their owners.
+    let projected = writes.filter { before[$0.key] != nil
+      && (["workspace.json", "board.json", "spatial-ink.json"].contains($0.key)
+        || $0.key.hasPrefix("pages/") || $0.key.hasPrefix("documents/") || $0.key.hasPrefix("document-states/")) }
+    for file in projected.keys { writes[file] = nil }
+    try publishCollaboration(writes: writes, removals: before.keys.filter { after[$0] == nil })
+    for file in projected.keys.sorted() {
+      if let old = before[file], let next = projected[file] {
+        if file.hasPrefix("documents/") || file.hasPrefix("pages/") {
+          try admitContentCausalFields(file: file, before: old, after: next)
+        }
+        try publishProjectionEdits(file: file, before: old, after: next)
       }
-      return try commitCollaboration(before: before.files, after: after,
-        receipt: receipt, revisedTargets: after.changedTargets(from: before))
     }
   }
 
   private func commitCollaboration(before: [String: JSONValue], after: CollaborationWorkspace,
     receipt: CollaborationReceipt, revisedTargets: [CollaborationTarget]) throws -> CollaborationReceipt {
+    try publishCollaborationEdits(before: before, after: after.files)
+    return try finishCollaboration(after: after, receipt: receipt, revisedTargets: revisedTargets,
+      changed: collaborationDiff(before, after.files))
+  }
+
+  private func finishCollaboration(after: CollaborationWorkspace, receipt: CollaborationReceipt,
+    revisedTargets: [CollaborationTarget], changed: [CollaborationFieldChange]) throws -> CollaborationReceipt {
     var receipt = receipt
-    var writes = after.files.filter { before[$0.key] != $0.value }
     let contextID = receipt.action.resolvedContextID
     let exists = try hasStoredValue(contextFile(contextID))
     if exists, receipt.action.contextID == nil {
@@ -327,32 +479,24 @@ extension NotebookStore {
       if receipt.action.contextID != nil { throw CollaborationError("context_missing", "Контекст хода не найден.") }
       let entry = SharedContextEntry(id: receipt.id, author: receipt.author ?? .agent, references: receipt.action.references, text: receipt.action.summary,
         stamp: .init(counter: 1, actor: receipt.id), createdAt: receipt.createdAt)
-      writes[contextFile(receipt.action.resolvedContextID)] = try .encode(SharedContext(id: receipt.action.resolvedContextID, entries: [entry]))
-    }
-    // The command's catalogue/tree/ink/document/state are addressed projections. Publish only
-    // fields changed from its baseline; unseen SQL members retain their owners.
-    let projected = writes.filter { before[$0.key] != nil
-      && (["workspace.json", "board.json", "spatial-ink.json"].contains($0.key)
-        || $0.key.hasPrefix("pages/") || $0.key.hasPrefix("documents/") || $0.key.hasPrefix("document-states/")) }
-    for file in projected.keys { writes[file] = nil }
-    try publishCollaboration(writes: writes, removals: before.keys.filter { after.files[$0] == nil })
-    for file in projected.keys.sorted() {
-      if let old = before[file], let next = projected[file] {
-        if file.hasPrefix("documents/") || file.hasPrefix("pages/") {
-          try admitContentCausalFields(file: file, before: old, after: next)
-        }
-        try publishProjectionEdits(file: file, before: old, after: next)
-      }
+      try publishCollaboration(writes: [contextFile(contextID): .encode(SharedContext(id: contextID, entries: [entry]))])
     }
     // Addressed publication has updated the complete SQL owner inside this same
     // command. A bounded working set cannot name the unseen board's content.
-    receipt.revisions = try revisedTargets.map {
-      CollaborationExpectation(target: $0, revision: try targetContentRevision(target: $0),
-        stateRevision: try after.stateRevision(of: $0),
-        inkRevision: receipt.action.containsInk ? try after.inkRevision(of: $0) : nil)
+    let lifecycleTargets = Set(receipt.action.operations.filter(\.isLifecycle).map(\.target))
+    receipt.revisions = try revisedTargets.map { target in
+      // A page birth supplies the ready ink owner even when this action did
+      // not draw. Read the completed header, never a stale segment projection.
+      let header = try [.page, .document].contains(target.kind) ? readContentHeader(target: target) : nil
+      let extent = try lifecycleTargets.contains(target) && target.kind == .cover
+        ? readItemLifecycle(target.id)?.revision : nil
+      return CollaborationExpectation(target: target, revision: try targetContentRevision(target: target),
+        stateRevision: try header?.stateStamp?.revision ?? after.stateRevision(of: target),
+        inkRevision: try header?.inkStamp?.revision ?? (receipt.action.containsInk ? after.inkRevision(of: target) : nil),
+        lifecycleRevision: extent)
     }
     try publishCollaboration(writes: [actionFile(receipt.id): try .encode(receipt)])
-    try freezeActionResult(receipt, changed: collaborationDiff(before, after.files))
+    try freezeActionResult(receipt, changed: changed)
     return receipt
   }
 
@@ -380,8 +524,35 @@ extension NotebookStore {
     try CollaborationEnvelope(content: incoming, actions: actions, contexts: contexts, selection: selection).validate()
     try local?.validate()
     try prepare()
-    return try withMutationLock {
+    return try commandTransaction {
       let before = try loadCollaborationContent()
+      if let local { try requireLiveBoardInkChanges(local.ink, removingOmittedActions: false) }
+      // This API represents a live domain cut, not an addressed delivery.
+      // Its value merger omits non-live owners. Refuse any caller-submitted
+      // source that would disappear there, before publishing even metadata.
+      // A before-only source retired by this cut is retained by the publisher
+      // below; an explicit late source must use the native addressed merger.
+      var prospective = before.workspace
+      if let local { prospective = try prospective.merging(local.workspace) }
+      if let incoming { prospective = try prospective.merging(incoming.workspace) }
+      let livePages = Set(prospective.items.flatMap(\.pageIDs))
+      let liveDocuments = Set(prospective.items.filter { $0.kind == .document }.map(\.id))
+      let liveBoards = Set(prospective.items.filter { $0.kind == .board }.map(\.id)).union([prospective.rootBoardID])
+      func requireLosslessLiveCut(_ submitted: CollaborationContent?) throws {
+        guard let submitted else { return }
+        let missing: CollaborationTarget?
+        if let page = submitted.pages.first(where: { !livePages.contains($0.id) }) { missing = .init(kind: .page, id: page.id) }
+        else if let document = submitted.documents.first(where: { !liveDocuments.contains($0.id) }) { missing = .init(kind: .document, id: document.id) }
+        else if let state = submitted.states.first(where: { !liveDocuments.contains($0.id) }) { missing = .init(kind: .document, id: state.id) }
+        else if let board = submitted.hierarchy.boards.first(where: { !liveBoards.contains($0.id) }) { missing = .init(kind: .board, id: board.id) }
+        else { missing = nil }
+        if let missing {
+          throw CollaborationError("addressed_delivery_required",
+            "Срез содержит источник удалённого владельца. Передайте его через адресную доставку; срез и квитанции не приняты.", target: missing)
+        }
+      }
+      try requireLosslessLiveCut(local)
+      try requireLosslessLiveCut(incoming)
       var merged = before
       if let local { try merged.merge(local) }
       if let incoming { try merged.merge(incoming) }
@@ -391,13 +562,25 @@ extension NotebookStore {
         let files = try merged.sourceFiles()
         try CollaborationWorkspace(files: files).validate()
         let old = try before.sourceFiles()
-        writes = files.filter { old[$0.key] != $0.value }
-        removals = old.keys.filter { files[$0] == nil }
+        writes = files.filter { $0.key != "board.json" && old[$0.key] != $0.value }
+        // A live cut omits retired sources by design. That omission is not an
+        // instruction to erase their already admitted merge baseline.
+        let retainedSources = Set(before.workspace.items.filter { merged.workspace.item(id: $0.id) == nil }.flatMap { item in
+          switch item.kind {
+          case .notebook: return item.pageIDs.map(pageFile)
+          case .document: return [documentFile(item.id), stateFile(item.id)]
+          case .board: return []
+          }
+        })
+        removals = old.keys.filter { files[$0] == nil && !retainedSources.contains($0) }
       }
       for incoming in actions {
         if let current = try? loadAction(incoming.id) {
-          guard current.action == incoming.action else { throw CollaborationError("action_id_conflict", "Разные ходы имеют одинаковый ID.") }
+          guard current.hasSameLifecycleIdentity(as: incoming) else { throw CollaborationError("action_id_conflict", "Разные ходы или основания отмены имеют одинаковый ID.") }
           if current.undo != nil || current == incoming { continue }
+        }
+        for reference in [incoming.lifecycleInverse, incoming.undo?.restorationInverse].compactMap({ $0 }) {
+          try visitLifecycleInverse(reference: reference, actionID: incoming.id) { _ in }
         }
         writes[actionFile(incoming.id)] = try .encode(incoming)
       }
@@ -410,6 +593,9 @@ extension NotebookStore {
         writes[contextFile(receipt.action.resolvedContextID)] = try .encode(SharedContext(id: receipt.action.resolvedContextID, entries: [entry]))
       }
       try publishCollaboration(writes: writes, removals: removals)
+      if merged.hierarchy != before.hierarchy {
+        try publishLiveBoard(merged.hierarchy, items: merged.workspace.items)
+      }
       return merged
     }
   }
@@ -509,6 +695,8 @@ struct CollaborationWorkspace {
 
   mutating func apply(_ operation: CollaborationOperation, actor: UUID) throws {
     switch operation.kind {
+    case .appendPage, .deleteItem:
+      throw invalid("Операция жизненного цикла исполняется адресным владельцем, не проекцией содержания.")
     case .appendInkStroke:
       try appendInk(operation, actor: actor)
     case .insertElement, .convertInkToElement, .updateElement, .setElementState, .removeElement, .reorderElements:
@@ -991,6 +1179,9 @@ struct CollaborationWorkspace {
       switch op.kind {
       case .createNotebook:
         if let page = op.values["pageID"]?.string.flatMap(UUID.init(uuidString:)) { own(Address(pageFile(page)), by: id) }
+        for append in receipt.action.operations where append.kind == .appendPage && append.target.id == id {
+          if let page = append.id.flatMap(UUID.init(uuidString:)) { own(Address(pageFile(page)), by: id) }
+        }
       case .createDocument:
         own(Address(documentFile(id)), by: id); own(Address(stateFile(id)), by: id)
       case .createBoard: own(Address("board.json", [.field("boards"), .member(id.uuidString)]), by: id)
@@ -1025,6 +1216,7 @@ struct CollaborationWorkspace {
         let value = current(address)
         if placementAddress(address.file, address.path) != nil,
           !placementIsOwned(value, after: authored(address)) { return true }
+        if address.file.hasPrefix("pages/"), address.path.isEmpty, value != authored(address) { return true }
         if collaborationComparable(value, file: address.file, path: address.path)
           != collaborationComparable(authored(address), file: address.file, path: address.path) { return true }
         // Existence has its own causal owner: a human edit and later return to
@@ -1033,7 +1225,10 @@ struct CollaborationWorkspace {
         let version = collaborationFieldVersion(file: files[address.file], path: address.path)
         return version?.stamp != expected.stamp || version?.human != expected.human
       }) { protected.insert(id) }
-      if op.kind == .createNotebook, try scope.pageCount(in: id) != 1 { protected.insert(id) }
+      if op.kind == .createNotebook {
+        let authoredPages = (owned[id] ?? []).filter { $0.file.hasPrefix("pages/") && $0.path.isEmpty }.count
+        if try scope.pageCount(in: id) != authoredPages { protected.insert(id) }
+      }
       // The command projection contains the authored members, not every later
       // child. One indexed existence query detects outside adoption without
       // materializing an unbounded board or relying on its arbitrary first row.

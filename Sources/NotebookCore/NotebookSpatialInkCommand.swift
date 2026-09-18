@@ -104,6 +104,12 @@ extension NotebookStore {
           throw NotebookStorageError.transactionConflict
         }
         if expected.stateStamp > header.stateStamp {
+          if origin == .contact {
+            for row in try database.rows("SELECT owner_id FROM ink_surfaces WHERE address=? AND kind='board'", [.text(address)]) {
+              guard let board = row[0].text.flatMap(UUID.init(uuidString:)) else { throw NotebookStorageError.corruptRecord(address) }
+              try requireLiveBoard(board)
+            }
+          }
           if origin == .contact, expected.isActive && !header.isActive {
             let surfaces = try database.rows("SELECT kind,owner_id FROM ink_surfaces WHERE address=?", [.text(address)]).map { row -> SurfaceID in
               guard let kind = row[0].text.flatMap(SurfaceKind.init(rawValue:)),
@@ -145,6 +151,52 @@ extension NotebookStore {
       collection: "spans", member: "", position: 0, value: try .encode(spans), collections: [])
   }
 
+  /// Bulk native journals can contain unchanged history on retired boards.
+  /// Only a changed contact needs live admission; immutable spans still pass
+  /// through the shared writer's existing byte-identity check.
+  func requireLiveBoardInkChanges(_ journal: SpatialInkJournal, removingOmittedActions: Bool = true) throws {
+    guard let database = currentSQL, database.writable else { throw NotebookStorageError.readOnlyTransaction }
+    guard try hasStoredValue("workspace.json") else { return }
+    let root = "spatial-ink.json#", ids = Set(journal.actions.map(\.id))
+    func requirePreviousOwners(_ address: String) throws {
+      for row in try database.rows("SELECT owner_id FROM ink_surfaces WHERE address=? AND kind='board'", [.text(address)]) {
+        guard let id = row[0].text.flatMap(UUID.init(uuidString:)) else { throw NotebookStorageError.corruptRecord(address) }
+        try requireLiveBoard(id)
+      }
+    }
+    for action in journal.actions {
+      let address = root + "/actions/@" + action.id.uuidString.lowercased()
+      let previous = try storedFragments(address: address, descendants: false).first
+      if try previous?.value == JSONValue.encode(SpatialInkActionHeader(action)) {
+        let spans = try Self.spatialInkSpans(action.spans, actionAddress: address)
+        let hash = SHA256.hash(data: try Self.storageEncoder.encode(spans)).map { String(format: "%02x", $0) }.joined()
+        if try database.rows("SELECT hash FROM records WHERE address=?", [.text(spans.address)]).first?[0].text == hash { continue }
+      }
+      try requirePreviousOwners(address)
+      for surface in Set(action.spans.map(\.surface)) where surface.kind == .board {
+        guard let id = surface.ownerID else { throw NotebookStorageError.corruptRecord(address) }
+        try requireLiveBoard(id)
+      }
+    }
+    // An additive collaboration merge retains omitted contacts; only the
+    // replacement adapter expresses their physical removal.
+    guard removingOmittedActions else { return }
+    // A full native replacement may omit old contacts. Visit their IDs in
+    // fixed pages; never decode the retained samples just to detect removal.
+    var after = ""
+    while true {
+      let rows = try database.rows("SELECT address,member FROM records WHERE file='spatial-ink.json' AND collection='actions' AND member>? ORDER BY member LIMIT 64", [.text(after)])
+      guard let last = rows.last?[1].text else { break }
+      for row in rows {
+        guard let address = row[0].text, let id = row[1].text.flatMap(UUID.init(uuidString:)) else {
+          throw NotebookStorageError.corruptRecord(root)
+        }
+        if !ids.contains(id) { try requirePreviousOwners(address) }
+      }
+      after = last
+    }
+  }
+
   private func requireSpatialInkOwners(_ surfaces: [SurfaceID], database: NotebookSQLConnection) throws {
     for surface in Set(surfaces) {
       guard let id = surface.ownerID, surface.isValid, surface.kind != .page else {
@@ -152,7 +204,9 @@ extension NotebookStore {
       }
       let address: String
       switch surface.kind {
-      case .board: address = "board.json#/boards/@" + id.uuidString.lowercased()
+      case .board:
+        try requireLiveBoard(id)
+        address = "board.json#/boards/@" + id.uuidString.lowercased()
       case .cover: address = "workspace.json#/items/@" + id.uuidString.lowercased()
       case .codeFragment: address = codeFragmentFile(id) + "#"
       case .page: throw NotebookStorageError.invalidTransaction("page ink owner")

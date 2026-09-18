@@ -7,21 +7,43 @@ import Testing
 struct NotebookItemLifecycleIndexTests {
   typealias Fixture = NotebookItemLifecycleTests.Fixture
 
-  @Test func orphanDocumentDoesNotBecomePartOfANotebookWithTheSameUUID() throws {
+  @Test func crossKindDocumentIsRejectedWithoutCorruptingTheNotebookExtent() throws {
     let f = try Fixture(), before = try #require(try f.store.readItemLifecycle(f.itemID))
-    try f.store.saveDocument(.init(id: f.itemID, actor: f.actor))
-    try f.store.saveDocumentState(.init(id: f.itemID, actor: f.actor))
-    // Existing cover identity remains conservative about source-ID collisions;
-    // this index must not attach foreign document files or corrupt page counts.
+    let document = DocumentDocument(id: f.itemID, actor: f.actor)
+    let state = DocumentStateJournal(id: f.itemID, actor: f.actor)
+    let cursor = try f.store.currentChangeCursor()
+    #expect(throws: CocoaError.self) { try f.store.saveDocument(document) }
+    #expect(throws: CocoaError.self) { try f.store.saveDocumentState(state) }
+    #expect(try f.store.currentChangeCursor() == cursor)
+    // The lower storage writer also rejects the cross-kind pair at commit;
+    // no derived lifecycle contribution may survive its rollback.
+    #expect(throws: (any Error).self) {
+      try f.store.commandTransaction {
+        try f.store.publishCollaboration(writes: [documentFile(f.itemID): try .encode(document),
+          stateFile(f.itemID): try .encode(state)])
+      }
+    }
+    #expect(try f.store.currentChangeCursor() == cursor)
+    #expect(try !f.store.hasStoredValue(documentFile(f.itemID)))
+    #expect(try !f.store.hasStoredValue(stateFile(f.itemID)))
     let after = try #require(try f.store.readItemLifecycle(f.itemID))
     #expect(after.bodyRecordCount == before.bodyRecordCount)
   }
 
-  @Test func previouslyPublishedDocumentBodiesJoinWhenTheirCatalogItemArrives() throws {
+  @Test func documentBodiesJoinTheirCatalogItemInOneNativePublication() throws {
     let f = try Fixture(), id = UUID()
     let document = DocumentDocument(id: id, actor: f.actor, blocks: [.interactive(id: "answer", html: "<button>Choose</button>")])
     let state = DocumentStateJournal(id: id, actor: f.actor)
-    try f.store.saveDocument(document); try f.store.saveDocumentState(state)
+    // Native creation publishes catalogue, source and state together. A
+    // source-only cut cannot mint the missing ownership or a retired baseline.
+    let cursor = try f.store.currentChangeCursor()
+    #expect(throws: (any Error).self) {
+      try f.store.commandTransaction {
+        try f.store.publishCollaboration(writes: [documentFile(id): try .encode(document),
+          stateFile(id): try .encode(state)])
+      }
+    }
+    #expect(try f.store.currentChangeCursor() == cursor)
     let before = try f.store.loadIndex(), treeBefore = try f.store.loadBoard(items: before.items)
     var after = before, treeAfter = treeBefore
     let created = after.createDocument(title: "Arrived later", actor: f.actor, documentID: id)

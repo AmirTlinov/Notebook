@@ -112,7 +112,7 @@ struct InkElementErasureTests {
     let initial = try #require(a.changeJournal(after: 0).first)
     let data = try a.readBlobChunk(hash: initial.manifestHash, offset: 0, maxBytes: 1_048_576)
     let value = try JSONDecoder().decode(JSONValue.self, from: data)
-    #expect(value["format"] == .number(7))
+    #expect(value["format"] == .number(Double(NotebookChangeManifest.currentFormat)))
     let old = try JSONEncoder().encode(value.setting("format", .number(Double(legacyFormat))))
     let hash = SHA256.hash(data: old).map { String(format: "%02x", $0) }.joined()
     try a.stageBlob(data: old, expectedHash: hash)
