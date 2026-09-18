@@ -15,7 +15,7 @@ struct NotebookExportPublicationTests {
     let document = DocumentDocument(id: item.id, actor: actor, blocks: [.markdown(id: "body", source: "Printed")])
     try store.saveDocumentWorkspaceBundle(index: index, document: document,
       state: .init(id: item.id, actor: actor), board: board)
-    return (store, document)
+    return (store, try store.loadDocument(document.id))
   }
   @Test func packageAddressBindsSourceAndAssetsAndPreservesPriorExportBytes() throws {
     let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
@@ -67,5 +67,26 @@ struct NotebookExportPublicationTests {
     let bytes = Data(#"{"documentID":"7E7A0000-0000-4000-8000-000000000040","texPath":"old.tex","pdfPath":"old.pdf","pdfSHA256":"old-hash","byteCount":8,"log":"old"}"#.utf8)
     let receipt = try JSONDecoder().decode(NotebookExportReceipt.self, from: bytes)
     #expect(receipt.texPath == "old.tex" && receipt.assets == nil && receipt.packageSHA256 == nil)
+  }
+  @Test func sourceMapAndSyncTeXAreBoundToTheExactAtomicPrintPackage() throws {
+    let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
+    let source = "header\nPrinted\nend\n", pdf = Data("%PDF-controlled".utf8)
+    let syncTeX = Data([0x1f, 0x8b, 0x08, 0x00])
+    let map = try DocumentPrintSourceMap(document: document, source: source, pdf: pdf,
+      ranges: [.init(blockID: "body", firstLine: 2, lastLine: 2)])
+    let receipt = try store.publishDocumentExport(.init(documentID: document.id,
+      expectedRevision: document.contentStamp.revision, source: source, pdf: pdf, log: "",
+      sourceMap: map, syncTeX: syncTeX))
+    let bytes = try Data(contentsOf: URL(fileURLWithPath: #require(receipt.sourceMap?.path)))
+    #expect(try JSONDecoder().decode(DocumentPrintSourceMap.self, from: bytes) == map)
+    #expect(try Data(contentsOf: URL(fileURLWithPath: #require(receipt.syncTeX?.path))) == syncTeX)
+    #expect(throws: CollaborationError.self) {
+      try store.publishDocumentExport(.init(documentID: document.id, expectedRevision: document.contentStamp.revision,
+        source: source, pdf: Data("%PDF-other".utf8), log: "", sourceMap: map, syncTeX: syncTeX))
+    }
+    #expect(throws: CollaborationError.self) {
+      try store.publishDocumentExport(.init(documentID: document.id, expectedRevision: document.contentStamp.revision,
+        source: source, pdf: pdf, log: "", sourceMap: map))
+    }
   }
 }

@@ -14,6 +14,7 @@ private struct EditingFixture {
       .markdown(id: "other", source: "Другой блок")])
     let index = WorkspaceIndex(items: [.document(id: document.id, title: "Черновик")],
       selectedItemID: document.id, selectedPageID: nil, stamp: .init(counter: 0, actor: actor))
+    _ = try store.loadOrCreateSpatialInk(actor: actor)
     try store.saveDocumentWorkspaceBundle(index: index, document: document,
       state: DocumentStateJournal(id: document.id, actor: actor),
       board: BoardHierarchy.initial(rootBoardID: index.rootBoardID, itemIDs: [document.id], actor: actor))
@@ -106,4 +107,46 @@ func documentDraftSequenceAndDiscardAreDurable() throws {
   try fixture.store.discardDocumentDraft(id)
   try fixture.store.saveDocumentDraft(.init(edit: fixture.edit("Поздний", sequence: 8, sessionID: id)))
   #expect(try fixture.store.documentEditingSessions().isEmpty)
+}
+
+@Test("Правка печатного блока, агент и последовательная отмена используют общий исполнитель после перезапуска")
+func printMappedSourceEditsShareDurableActionUndo() throws {
+  let f = try EditingFixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+  let tex = "preamble\nНачало\n\nДругой блок\n\nend\n", pdf = Data("%PDF-fixture".utf8)
+  let map = try DocumentPrintSourceMap(document: f.document, source: tex, pdf: pdf,
+    ranges: [.init(blockID: "body", firstLine: 2, lastLine: 3), .init(blockID: "other", firstLine: 4, lastLine: 5)])
+  #expect(map.blockID(atGeneratedLine: 1) == nil)
+  #expect(map.blockID(atGeneratedLine: 2) == "body")
+  #expect(map.blockID(atGeneratedLine: 5) == "other")
+  #expect(map.blockID(atGeneratedLine: 6) == nil)
+  let edit = try map.edit(blockID: "body", snapshot: f.document, source: "Человек")
+  let human = try f.store.commitDocumentSource(edit: edit, actor: f.actor)
+  let humanID = try #require(human.actionID)
+  #expect(try f.store.collaborationAction(humanID).author == .human)
+  #expect(try f.store.commitDocumentSource(edit: edit, actor: f.actor).actionID == humanID)
+  let target = CollaborationTarget(kind: .document, id: f.document.id)
+  let agent = try f.store.applyCollaborationAction(.init(summary: "Agent edit", expected: [
+    .init(target: target, revision: f.store.targetContentRevision(target: target))],
+    operations: [.init(kind: .updateBlock, target: target, id: "body", values: ["source": .string("Агент")])]), actor: UUID())
+  let reopened = NotebookStore(root: f.root)
+  _ = try reopened.undoCollaborationAction(agent.id, actor: f.actor)
+  #expect(try reopened.loadDocument(f.document.id).blocks.first?.source == "Человек")
+  _ = try NotebookStore(root: f.root).undoCollaborationAction(humanID, actor: f.actor)
+  #expect(try reopened.loadDocument(f.document.id).blocks.first?.source == "Начало")
+  #expect(try reopened.loadDocument(f.document.id).blocks.last?.source == "Другой блок")
+}
+
+@Test("Старая печатная страница не подменяет основание правки текущим текстом")
+func printSourceMapDoesNotRebaseAStalePageOrAdoptAnABA() throws {
+  let f = try EditingFixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+  let map = try DocumentPrintSourceMap(document: f.document, source: "header\nbody\nother\nend\n", pdf: Data("%PDF".utf8),
+    ranges: [.init(blockID: "body", firstLine: 2, lastLine: 2), .init(blockID: "other", firstLine: 3, lastLine: 3)])
+  var changed = f.document
+  let changedFirst = changed.replaceBlockSource(id: "body", source: "New", actor: f.actor); #expect(changedFirst)
+  let changedBack = changed.replaceBlockSource(id: "body", source: "Начало", actor: f.actor); #expect(changedBack)
+  try f.store.saveDocument(changed)
+  #expect(throws: CollaborationError.self) { try map.edit(blockID: "body", snapshot: changed, source: "Must not rebase") }
+  let edit = try map.edit(blockID: "body", snapshot: f.document, source: "Мой черновик")
+  #expect(try f.store.commitDocumentSource(edit: edit, actor: f.actor).status == .conflict)
+  #expect(try NotebookStore(root: f.root).documentEditingSessions().first?.edit == edit)
 }

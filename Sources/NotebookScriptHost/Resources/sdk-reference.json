@@ -27765,7 +27765,7 @@
                 "$ref": "#/$defs/__schema1"
               },
               "byteCount": {
-                "type": "number"
+                "$ref": "#/$defs/__schema2"
               },
               "log": {
                 "$ref": "#/$defs/__schema1"
@@ -27791,6 +27791,12 @@
                   ],
                   "additionalProperties": {}
                 }
+              },
+              "sourceMap": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "syncTeX": {
+                "$ref": "#/$defs/__schema3"
               }
             },
             "required": [
@@ -27804,7 +27810,7 @@
             "additionalProperties": {}
           },
           "error": {
-            "$ref": "#/$defs/__schema2"
+            "$ref": "#/$defs/__schema4"
           }
         },
         "required": [
@@ -27821,6 +27827,33 @@
             "type": "string"
           },
           "__schema2": {
+            "type": "number"
+          },
+          "__schema3": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "sha256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "byteCount": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "mimeType": {
+                "$ref": "#/$defs/__schema1"
+              }
+            },
+            "required": [
+              "path",
+              "sha256",
+              "byteCount",
+              "mimeType"
+            ],
+            "additionalProperties": {}
+          },
+          "__schema4": {
             "anyOf": [
               {
                 "type": "string"
@@ -27837,7 +27870,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema2"
+                  "$ref": "#/$defs/__schema4"
                 }
               },
               {
@@ -27846,7 +27879,7 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema2"
+                  "$ref": "#/$defs/__schema4"
                 }
               }
             ]
@@ -27870,7 +27903,7 @@
         ],
         "additionalProperties": false
       },
-      "returns": "Snapshot {data,basis,coverage,cursor}. Queued/running/saved/failed/interrupted job; saved receipt contains immutable texPath/pdfPath, PDF sha256, assets with their exact paths and hashes, and packageSHA256 covering TeX, PDF and every image. Keep the whole package to recompile TeX. Historical receipts without package metadata remain readable.",
+      "returns": "Snapshot {data,basis,coverage,cursor}. Queued/running/saved/failed/interrupted job; saved receipt contains immutable texPath/pdfPath, PDF sha256, assets with their exact paths and hashes, sourceMap with generated-TeX line ranges for original block IDs, compressed syncTeX page coordinates, and packageSHA256 covering all files. Maps belong to that exact source/PDF version, not later edits. Keep the whole package to recompile TeX. Historical receipts without package metadata remain readable.",
       "example": "await emit(await nb.exportStatus({jobID:args.jobID}));",
       "output": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -27915,7 +27948,7 @@
                     "$ref": "#/$defs/__schema1"
                   },
                   "byteCount": {
-                    "type": "number"
+                    "$ref": "#/$defs/__schema2"
                   },
                   "log": {
                     "$ref": "#/$defs/__schema1"
@@ -27941,6 +27974,12 @@
                       ],
                       "additionalProperties": {}
                     }
+                  },
+                  "sourceMap": {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  "syncTeX": {
+                    "$ref": "#/$defs/__schema3"
                   }
                 },
                 "required": [
@@ -27954,7 +27993,7 @@
                 "additionalProperties": {}
               },
               "error": {
-                "$ref": "#/$defs/__schema2"
+                "$ref": "#/$defs/__schema4"
               }
             },
             "required": [
@@ -27972,7 +28011,7 @@
                 "maxItems": 1024,
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema3"
+                  "$ref": "#/$defs/__schema5"
                 }
               }
             },
@@ -28018,6 +28057,33 @@
             "type": "string"
           },
           "__schema2": {
+            "type": "number"
+          },
+          "__schema3": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "sha256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "byteCount": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "mimeType": {
+                "$ref": "#/$defs/__schema1"
+              }
+            },
+            "required": [
+              "path",
+              "sha256",
+              "byteCount",
+              "mimeType"
+            ],
+            "additionalProperties": {}
+          },
+          "__schema4": {
             "anyOf": [
               {
                 "type": "string"
@@ -28034,7 +28100,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema2"
+                  "$ref": "#/$defs/__schema4"
                 }
               },
               {
@@ -28043,12 +28109,12 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema2"
+                  "$ref": "#/$defs/__schema4"
                 }
               }
             ]
           },
-          "__schema3": {
+          "__schema5": {
             "type": "object",
             "properties": {
               "target": {
@@ -28188,11 +28254,11 @@
               },
               "lifecycleRevision": {
                 "description": "Complete item extent from an explicit itemLifecycle read; covers off-screen content and is not mutation authority.",
-                "$ref": "#/$defs/__schema4"
+                "$ref": "#/$defs/__schema6"
               },
               "inkRevision": {
                 "description": "For appendInkStroke: drawingRevision of a page, spatialInkRevision of a board/cover, or inkRevision returned by nb.code.",
-                "$ref": "#/$defs/__schema5"
+                "$ref": "#/$defs/__schema7"
               }
             },
             "required": [
@@ -28201,11 +28267,11 @@
             ],
             "additionalProperties": false
           },
-          "__schema4": {
+          "__schema6": {
             "type": "string",
             "pattern": "^[a-f0-9]{64}$"
           },
-          "__schema5": {
+          "__schema7": {
             "type": "string"
           }
         }

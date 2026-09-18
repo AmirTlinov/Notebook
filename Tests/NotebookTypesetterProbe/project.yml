@@ -1,0 +1,40 @@
+name: NotebookTypesetProbe
+options:
+  xcodeVersion: "27.0"
+  deploymentTarget:
+    iOS: "27.0"
+targets:
+  NotebookTypesetProbe:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+      - path: Resources
+        buildPhase: resources
+    dependencies:
+      - framework: ../tectonic/target/aarch64-apple-ios/release/libnotebook_typeset_spike.a
+        embed: false
+      - sdk: CoreFoundation.framework
+      - sdk: CoreGraphics.framework
+      - sdk: CoreText.framework
+      - sdk: Security.framework
+      - sdk: libc++.tbd
+      - sdk: libz.tbd
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        OTHER_LDFLAGS: "$(SRCROOT)/../vcpkg/installed/arm64-ios/lib/libfreetype.a $(SRCROOT)/../vcpkg/installed/arm64-ios/lib/libpng16.a $(SRCROOT)/../vcpkg/installed/arm64-ios/lib/libgraphite2.a $(SRCROOT)/../vcpkg/installed/arm64-ios/lib/libicuuc.a $(SRCROOT)/../vcpkg/installed/arm64-ios/lib/libicudata.a $(SRCROOT)/../vcpkg/installed/arm64-ios/lib/libicui18n.a $(SRCROOT)/../vcpkg/installed/arm64-ios/lib/libbz2.a $(SRCROOT)/../vcpkg/installed/arm64-ios/lib/libbrotlidec.a $(SRCROOT)/../vcpkg/installed/arm64-ios/lib/libbrotlicommon.a"
+        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/../tectonic/target/aarch64-apple-ios/release"
+        SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/Sources/Typeset.h"
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.typeset-probe
+        DEVELOPMENT_TEAM: M94V58FCVP
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: true
+        TARGETED_DEVICE_FAMILY: 2
+        MARKETING_VERSION: 0.1
+        CURRENT_PROJECT_VERSION: 1
+        INFOPLIST_KEY_UILaunchScreen_Generation: true
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+    scheme:
+      gatherCoverageData: false

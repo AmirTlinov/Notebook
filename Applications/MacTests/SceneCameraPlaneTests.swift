@@ -6,6 +6,32 @@ import XCTest
 
 final class SceneCameraPlaneTests: XCTestCase {
   @MainActor
+  func testZoomOutRevealsPreparedContentOutsideTheAnchorViewport() async throws {
+    let container = SceneCameraPlaneView<Int>()
+    let viewport = SpatialPoint(x: 320, y: 256)
+    container.frame = .init(x: 0, y: 0, width: viewport.x, height: viewport.y)
+    let window = NSWindow(contentRect: container.frame, styleMask: .borderless, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false; window.contentView = container; window.orderBack(nil)
+    defer { window.orderOut(nil); window.close() }
+    let button = NSButton(title: "Already prepared", target: nil, action: nil)
+    func content(_ anchor: SessionPresence, _ projection: ScenePlaneProjection) -> AnyView {
+      let point = anchor.camera.worldToScreen(.init(x: 400, y: 0), viewport: viewport)
+      return AnyView(CameraBodyProbe(button: button).frame(width: 80, height: 40)
+        .position(x: point.x, y: point.y).frame(width: viewport.x, height: viewport.y))
+    }
+    let initial = SessionPresence(mode: .board, camera: .init(scale: 1), viewport: viewport)
+    container.update(presence: initial, revision: 0, content: content)
+    container.update(presence: .init(mode: .board, camera: .init(scale: 0.25), viewport: viewport),
+      revision: 0, isCameraActive: true, content: content)
+    container.layoutSubtreeIfNeeded()
+    try await Task.sleep(for: .milliseconds(30))
+    XCTAssertEqual(button.convert(button.bounds, to: nil).midX, 260, accuracy: 1)
+    XCTAssertFalse(button.visibleRect.isEmpty,
+      "Prepared offscreen content must become visible by camera projection alone, not wait for a new publication")
+    XCTAssertEqual(container.contentPublicationCount, 1)
+  }
+
+  @MainActor
   func testRasterTileKeepsItsProjectedFrameAcrossZoomAndPublication() async throws {
     let resources = SceneRenderResources(byteLimit: 32 * 1024 * 1024)
     let source = AgentElement(id: "zoom-tile", kind: .web,

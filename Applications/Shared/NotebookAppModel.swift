@@ -1901,7 +1901,7 @@ final class NotebookAppModel {
   }
 
   @discardableResult
-  func enterBoard(_ boardID: UUID, through parentCamera: SpatialCamera? = nil, settled: Bool = true) -> Bool {
+  func enterBoard(_ boardID: UUID) -> Bool {
     guard !isItemBeingDeleted(boardID), let workspace, let hierarchy = boardHierarchy, let presence else { return false }
     // The accepted catalog owns navigation. A derived image index may still
     // be preparing the newly created portal and cannot veto its identity.
@@ -1909,17 +1909,7 @@ final class NotebookAppModel {
     let boardExists = hierarchy.board(boardID) != nil
     guard item?.kind == .board, boardExists else { return false }
     let portal = hierarchy.portalCamera(boardID) ?? BoardPortalCamera()
-    let camera: SpatialCamera
-    if let parentCamera {
-      guard let center = hierarchy.focusedCenter(of: boardID, in: presence.boardID),
-        let entered = BoardPortalProjection.enteringCamera(from: parentCamera,
-          portalCamera: portal,
-          portalCenter: center, viewport: presence.viewport) else { return false }
-      camera = entered
-    } else {
-      camera = BoardPortalProjection.entryCamera(
-        portalCamera: portal, viewport: presence.viewport)
-    }
+    let camera = BoardPortalProjection.entryCamera(portalCamera: portal, viewport: presence.viewport)
     selectItem(boardID)
     updatePresence(
       SessionPresence(
@@ -1928,51 +1918,47 @@ final class NotebookAppModel {
         camera: camera,
         viewport: presence.viewport
       ),
-      settled: settled
+      settled: true
     )
     return true
   }
 
-  /// Moves ownership to the parent at the one frame where the child and its
-  /// portal are the same projection. The view can then continue zooming out
-  /// without a visual cut.
+  /// Explicit Back stores the child's camera in its parent preview. Zoom never
+  /// transfers navigation ownership.
   @discardableResult
-  func leaveBoard(through passage: BoardPortalProjection.ExitProjection? = nil, settled: Bool = true) -> Bool {
+  func leaveBoard() -> Bool {
     guard var hierarchy = boardHierarchy, let presence,
       let parentID = hierarchy.parentBoardID(of: presence.boardID),
       let center = hierarchy.focusedCenter(of: presence.boardID, in: parentID), center.isValid
     else { return false }
-    let projection = passage ?? BoardPortalProjection.exitingCamera(
-      boundary: presence.camera, centroid: .init(x: presence.viewport.x / 2, y: presence.viewport.y / 2),
-      portalCenter: center, viewport: presence.viewport)
-    guard projection.parentCamera.isValid else { return false }
+    let portalCamera = BoardPortalProjection.portalCamera(from: presence.camera, viewport: presence.viewport)
+    let parentCamera = BoardPortalProjection.parentBoundaryCamera(portalCenter: center, viewport: presence.viewport)
     // A local passage changes only coordinates. When both physical owners are
     // already represented, its normalized camera must reach the very first
     // parent frame, rather than wait for a background metadata comparison.
     let carriesPreparedGeometry = sceneIndex?.board(id: presence.boardID)?.stamp == hierarchy.board(presence.boardID)?.stamp
       && sceneIndex?.board(id: parentID)?.stamp == hierarchy.board(parentID)?.stamp
     if hierarchy.updatePortalCamera(
-      projection.portalCamera,
+      portalCamera,
       for: presence.boardID,
       actor: actorID
     ) {
       persistBoard(hierarchy)
     }
     if carriesPreparedGeometry {
-      scenePortalCameras[presence.boardID] = projection.portalCamera
+      scenePortalCameras[presence.boardID] = portalCamera
     }
     selectItem(presence.boardID)
     updatePresence(
       SessionPresence(
         boardID: parentID,
         mode: .cover,
-        camera: projection.parentCamera,
+        camera: parentCamera,
         viewport: presence.viewport,
         focusedItemID: presence.boardID,
-        openProgress: BoardPortalProjection.openingProgress(camera: projection.parentCamera,
-          portalCenter: center, viewport: presence.viewport)
+        openProgress: 1
       ),
-      settled: settled
+      settled: true
     )
     return true
   }
@@ -2004,7 +1990,7 @@ final class NotebookAppModel {
     if settled {
       resolved = settledPresence(from: presence, viewport: presence.viewport)
     } else {
-      resolved = presence
+      resolved = constrainedPaperPresence(presence)
     }
     let inputOwnerChanged = self.presence?.boardID != resolved.boardID
       || self.presence?.mode != resolved.mode
@@ -2013,8 +1999,8 @@ final class NotebookAppModel {
     else if self.presence?.camera != resolved.camera || self.presence?.viewport != resolved.viewport { cancelElementManipulation() }
     self.presence = resolved
     alignWorkspaceSelection()
-    // A continuous contact can cross a portal without ending. Transfer its
-    // publication barrier with the physical owner, not with each camera frame.
+    // Explicit navigation can change the owner during an active contact. Transfer
+    // its publication barrier with that owner, not with each camera frame.
     if inputIsActive && inputOwnerChanged { publishInputActivity() }
     let phase = settled ? PresencePhase.settled : .active
     presencePhase = phase
@@ -2072,7 +2058,8 @@ final class NotebookAppModel {
       let position = center.addressOffset(x: reading.centerOffset.x, y: reading.centerOffset.y) else {
       return .init(center: center, scale: fit)
     }
-    return .init(center: position, scale: max(SpatialCamera.minimumScale, fit * reading.zoomRatio))
+    return itemGeometry(documentID).readingCamera(
+      .init(center: position, scale: fit * reading.zoomRatio), centeredOn: center, viewport: viewport)
   }
 
   /// Source measurement provides content addresses, never a fabricated landing.
@@ -2293,8 +2280,17 @@ final class NotebookAppModel {
         files.notes.undo(); return
       }
     #endif
-    guard inputGate.permitsNewContact, !inputGate.hasActivePencil,
-      presence?.mode != .document else { return }
+    guard inputGate.permitsNewContact, !inputGate.hasActivePencil else { return }
+    if presence?.mode == .document {
+      guard let owner = presence?.focusedItemID else { return }
+      let restored = collaborationActions.first {
+        $0.author == .human && $0.undo == nil && $0.action.operations.contains {
+          $0.target == CollaborationTarget(kind: .document, id: owner) && $0.kind == .updateBlock
+        }
+      }?.id
+      if let command = pencilUndoHistory.lastCommand(for: owner) ?? restored { undoCollaboration(command) }
+      return
+    }
     if let owner = isPageOpen ? activePage?.id : (presence?.focusedItemID ?? presence?.boardID) {
       let restored = pencilUndoHistory.hasHistory(for: owner) ? nil : collaborationActions.first {
         $0.author == .human && $0.undo == nil && $0.action.operations.contains { $0.target.id == owner && [.convertInkToElement, .insertElement, .updateElement, .removeElement].contains($0.kind) }
@@ -3369,6 +3365,12 @@ final class NotebookAppModel {
     }
     let result: DocumentSourceCommitResult
     do {
+      // The Save button can post its WebKit message before UIKit retires the
+      // same contact. Join that contact and its ordered input publication;
+      // do not bypass the common command executor's human-input barrier.
+      await withCheckedContinuation { continuation in
+        inputGate.performAfterIdle { continuation.resume() }
+      }
       result = try await persistence.submit(publishesChanges: true) { try $0.commitDocumentSource(edit: edit, actor: actor) }
     } catch {
       clearDocumentSavePresentation(sessionID: edit.sessionID)
@@ -3376,6 +3378,7 @@ final class NotebookAppModel {
     }
     documentDraftEpoch &+= 1
     if result.status == .committed {
+      if let actionID = result.actionID { pencilUndoHistory.recordCommand(ownerID: edit.documentID, actionID: actionID) }
       documentEditingSessions.removeAll { $0.id == edit.sessionID }
       if !isStopped, !isItemBeingDeleted(edit.documentID),
         let publication = result.publication, var document = documents[edit.documentID] {
@@ -4497,7 +4500,7 @@ final class NotebookAppModel {
     documentStates = state.states
     documentEditingSessions = state.drafts
     admitDocumentReading(state.reading)
-    presence = state.presence
+    presence = constrainedPaperPresence(state.presence)
     retireGraphicCommands(through: state.header.cursor)
     alignWorkspaceSelection()
     if selectionSession.elements.contains(where: { reference in
@@ -4781,7 +4784,19 @@ final class NotebookAppModel {
   /// semantic mode belong to NotebookSceneState's addressed SQL snapshot; a
   /// bounded display projection cannot revoke a navigation destination.
   private func settledPresence(from presence: SessionPresence, viewport: SpatialPoint) -> SessionPresence {
-    presence.adapted(to: viewport, geometry: itemGeometry(presence.focusedItemID))
+    constrainedPaperPresence(presence.adapted(to: viewport, geometry: itemGeometry(presence.focusedItemID)))
+  }
+
+  private func constrainedPaperPresence(_ presence: SessionPresence) -> SessionPresence {
+    #if os(iOS)
+    guard (presence.mode == .page || presence.mode == .document), presence.openProgress == 1,
+      let id = presence.focusedItemID,
+      let center = boardHierarchy?.board(presence.boardID)?.focusedCenter(of: id) else { return presence }
+    return presence.replacingCamera(itemGeometry(id).readingCamera(presence.camera,
+      centeredOn: center, viewport: presence.viewport))
+    #else
+    return presence
+    #endif
   }
 
   private func makePresenceEnvelope(

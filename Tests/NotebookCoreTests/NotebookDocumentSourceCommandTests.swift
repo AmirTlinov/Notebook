@@ -17,6 +17,7 @@ struct NotebookDocumentSourceCommandTests {
       .markdown(id: blockID + "/child", source: "Independent")])
     let index = WorkspaceIndex(items: [.document(id: document.id, title: "Source edit")],
       selectedItemID: document.id, selectedPageID: nil, stamp: .init(counter: 0, actor: actor))
+    _ = try store.loadOrCreateSpatialInk(actor: actor)
     try store.saveDocumentWorkspaceBundle(index: index, document: document,
       state: .init(id: document.id, actor: actor),
       board: .initial(rootBoardID: index.rootBoardID, itemIDs: [document.id], actor: actor))

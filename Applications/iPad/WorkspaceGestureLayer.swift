@@ -216,8 +216,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       repeatTask?.cancel(); repeatTask = nil
       if !cameraIsActive {
         cameraIsActive = true
-        onCamera(.began(centroid: recognizer.startCentroidValue,
-          isOpeningApproach: recognizer.intent == .magnification && recognizer.isOpeningApproach))
+        onCamera(.began(centroid: recognizer.startCentroidValue))
       }
       onCamera(.changed(scale: recognizer.magnification, velocity: recognizer.magnificationVelocity,
         elapsed: recognizer.gestureElapsed, centroid: recognizer.centroid))

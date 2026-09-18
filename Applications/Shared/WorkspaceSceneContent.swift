@@ -282,6 +282,7 @@ struct WorkspaceItemCoverView: View {
           .allowsHitTesting(false).opacity(portalOverlayOpacity).zIndex(1_000)
       #endif
     }
+    .coordinateSpace(name: NotebookManipulationSpace.material)
     .frame(
       width: geometry.width,
       height: geometry.height

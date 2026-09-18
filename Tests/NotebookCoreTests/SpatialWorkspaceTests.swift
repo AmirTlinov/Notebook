@@ -172,22 +172,25 @@ func clampedPinchStillKeepsItsAnchor() {
   #expect(abs(projected.y - current.y) < 0.000_001)
 }
 
-@Test("Открытый лист одним щипком уменьшается до масштаба всей доски")
-func pagePinchCanReachADeepBoardOverview() {
-  let viewport = SpatialPoint(x: 834, y: 1_194)
-  let fingers = SpatialPoint(x: 417, y: 597)
-  let camera = SpatialCamera(scale: 1)
-
-  let overview = camera.pinched(
-    by: 0.02,
-    from: fingers,
-    to: fingers,
-    viewport: viewport,
-    maximumScale: 1
-  )
-
-  #expect(overview.scale == 0.02)
-  #expect(overview.scale < WorkspaceItemGeometry.notebook.coverScale(viewport: viewport))
+@Test("Уменьшение открытого листа останавливается на целом листе, доска остаётся свободной")
+func paperZoomStopsAtWholeSheet() {
+  for viewport in [SpatialPoint(x: 834, y: 1_194), SpatialPoint(x: 1_194, y: 834)] {
+    for geometry in [WorkspaceItemGeometry.notebook, .document(.a4), .document(.letter)] {
+      let center = WorldPoint(tileX: 91, tileY: -37, localX: 211, localY: 3_900)
+      let raw = SpatialCamera(center: center.offsetBy(x: 12_000, y: -19_000), scale: 0.02)
+      let paper = geometry.readingCamera(raw, centeredOn: center, viewport: viewport)
+      #expect(paper.scale == geometry.fitScale(viewport: viewport))
+      #expect(paper.center == center)
+      #expect(raw.scale == 0.02)
+      let enlarged = geometry.readingCamera(.init(center: center, scale: 3), centeredOn: center, viewport: viewport)
+      #expect(enlarged.scale == 3)
+      #expect(enlarged.center == center)
+      let edge = geometry.readingCamera(.init(center: raw.center, scale: 3), centeredOn: center, viewport: viewport)
+      let offset = center.delta(to: edge.center)
+      #expect(abs(offset.x - max(0, geometry.width / 2 - viewport.x / 6)) < 0.000_001)
+      #expect(abs(offset.y + max(0, geometry.height / 2 - viewport.y / 6)) < 0.000_001)
+    }
+  }
 }
 
 @Test("Угол листа равен восьми физическим миллиметрам")
@@ -196,27 +199,6 @@ func notebookCornerMatchesTheFullSizeIPadSilhouette() {
     WorkspaceItemGeometry.notebook.cornerRadius
       == PhysicalPaper.pointsPerCentimeter * 0.8
   )
-}
-
-@Test("Сила выбора растёт по мере приближения щипка к центру обложки")
-func selectionFieldGrowsTowardCenter() {
-  let cover = SpatialRect(x: 100, y: 100, width: 300, height: 420)
-  let outside = NotebookSelectionField.influence(
-    centroid: SpatialPoint(x: 800, y: 800),
-    cover: cover
-  )
-  let edge = NotebookSelectionField.influence(
-    centroid: SpatialPoint(x: 110, y: 310),
-    cover: cover
-  )
-  let center = NotebookSelectionField.influence(
-    centroid: SpatialPoint(x: 250, y: 310),
-    cover: cover
-  )
-  #expect(outside == 0)
-  #expect(edge > outside)
-  #expect(center > edge)
-  #expect(center == 1)
 }
 
 @Test("Тетрадь принадлежит либо доске, либо одной стопке")

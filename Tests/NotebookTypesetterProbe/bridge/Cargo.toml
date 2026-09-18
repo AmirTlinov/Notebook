@@ -1,0 +1,15 @@
+[package]
+name = "notebook-typeset-spike"
+version = "0.1.0"
+edition = "2021"
+[lib]
+crate-type = ["staticlib", "rlib"]
+[dependencies]
+tectonic = { path = "../tectonic", default-features = false }
+tectonic_bundles = { path = "../tectonic/crates/bundles", default-features = false }
+tectonic_io_base = { path = "../tectonic/crates/io_base" }
+tectonic_status_base = { path = "../tectonic/crates/status_base" }
+libc = "0.2"
+tectonic_errors = { path = "../tectonic/crates/errors" }
+[profile.release]
+lto = "thin"

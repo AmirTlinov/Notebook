@@ -310,29 +310,6 @@ public struct SpatialCamera: Codable, Equatable, Hashable, Sendable {
   }
 }
 
-public enum NotebookSelectionField {
-  /// Elliptical selection strength around a projected cover. This chooses the
-  /// board portal; the fingers remain the sole owner of camera movement.
-  public static func influence(
-    centroid: SpatialPoint,
-    cover: SpatialRect,
-    halo: Double = 1.5
-  ) -> Double {
-    guard halo.isFinite && halo > 1 else { return 0 }
-    let centerX = cover.x + cover.width / 2
-    let centerY = cover.y + cover.height / 2
-    let radiusX = cover.width * halo / 2
-    let radiusY = cover.height * halo / 2
-    let normalized = sqrt(
-      pow((centroid.x - centerX) / radiusX, 2)
-        + pow((centroid.y - centerY) / radiusY, 2)
-    )
-    guard normalized < 1 else { return 0 }
-    let t = 1 - normalized
-    return t * t * (3 - 2 * t)
-  }
-}
-
 public struct FreeItemPlacement: Codable, Equatable, Identifiable, Sendable {
   public var id: UUID { itemID }
 

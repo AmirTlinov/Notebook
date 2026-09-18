@@ -965,6 +965,14 @@ final class NotebookScriptServiceTests: XCTestCase {
     XCTAssertTrue(PDFDocument(data: pdf)?.string?.contains("русский источник") == true,
       "The actual PDF must contain the printed Cyrillic text, not merely a valid PDF header.")
     XCTAssertTrue(try String(contentsOfFile: receipt.texPath, encoding: .utf8).contains("Проверка PDF"))
+    let mapBytes = try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(receipt.sourceMap?.path)))
+    let sourceMap = try JSONDecoder().decode(DocumentPrintSourceMap.self, from: mapBytes)
+    let frozen = try owner.store.loadDocument(document.id)
+    try sourceMap.validate(document: frozen, source: String(contentsOfFile: receipt.texPath, encoding: .utf8), pdf: pdf)
+    XCTAssertEqual(sourceMap.ranges.map(\.blockID), frozen.blocks.map(\.id))
+    let syncTeX = try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(receipt.syncTeX?.path)))
+    XCTAssertGreaterThan(syncTeX.count, 100)
+    XCTAssertTrue(syncTeX.starts(with: [0x1f, 0x8b]), "The source map must accompany actual engine-generated page coordinates")
     let printed = try XCTUnwrap(PDFDocument(data: pdf))
     let pages = (0..<printed.pageCount).compactMap { printed.page(at: $0) }
     XCTAssertTrue((printed.string ?? "").filter { !$0.isWhitespace }.contains(interactiveID),

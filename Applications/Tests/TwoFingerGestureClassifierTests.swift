@@ -313,15 +313,6 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
     )
   }
 
-  func testMagnificationDirectionSurvivesGestureAcquisition() {
-    XCTAssertTrue(
-      TwoFingerIntentArbiter.isOpeningApproach(magnification: 1.05)
-    )
-    XCTAssertFalse(
-      TwoFingerIntentArbiter.isOpeningApproach(magnification: 0.95)
-    )
-  }
-
   func testNoisyHorizontalPageSwipeOwnsTheGestureBeforePinch() {
     let intent = TwoFingerIntentArbiter.resolve(
       defersHorizontalMotionToPageTurn: true,

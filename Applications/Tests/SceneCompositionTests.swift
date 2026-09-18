@@ -196,6 +196,13 @@ final class SceneCompositionTests: XCTestCase {
         pinned: [], displayScale: 2, previous: nil)
       XCTAssertEqual(plan.liveOwners.count, 7)
       XCTAssertFalse(plan.allowsLive(.element("z-vector"), in: .board(boardID)))
+      for item in frame.workset(boardID: boardID).items {
+        let rect = item.geometry.screenFrame(center: item.center, camera: presence.camera, viewport: presence.viewport)
+        if rect.x < presence.viewport.x, rect.y < presence.viewport.y, rect.x + rect.width > 0, rect.y + rect.height > 0 {
+          XCTAssertTrue(plan.allowsLive(.item(item.id), in: .board(boardID)),
+            "Passive labels cannot evict visible paper into camera-dependent tiles")
+        }
+      }
       XCTAssertTrue(plan.meetsRequiredDensity)
       XCTAssertLessThanOrEqual(plan.tiles.count, SceneCompositionPlan.maximumTiles)
       let largest = (plan.tiles.map(\.pixelSize).max() ?? 0) + 2
@@ -953,8 +960,7 @@ final class SceneCompositionTests: XCTestCase {
       let plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
         pinned: [.item(childID)], displayScale: 2, previous: nil)
       let preparedChild = try XCTUnwrap(plan.presentations[.board(childID)])
-      let transferred = try XCTUnwrap(BoardPortalProjection.enteringCamera(from: presence.camera,
-        portalCamera: portalCamera, portalCenter: .zero, viewport: viewport))
+      let transferred = BoardPortalProjection.entryCamera(portalCamera: portalCamera, viewport: viewport)
       let point = WorldPoint(x: 160, y: -45)
       let local = preparedChild.camera.worldToScreen(point, viewport: preparedChild.viewport)
       let center = presence.camera.worldToScreen(.zero, viewport: viewport)
