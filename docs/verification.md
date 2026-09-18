@@ -1,5 +1,38 @@
 # Проверка Notebook
 
+## 19 сентября, 02:09 МСК — GUI-242: ограниченный потоковый импорт
+
+Первый, **не полный**, срез GUI-242: канонический manifest связывает namespace,
+MIME, размеры и SHA частей по 4 MiB. Файлы остаются в прежнем SQLite blob store;
+лимиты source/args и отдельного transport blob не повышены. Mac читает типизированный
+локальный descriptor вне QuickJS. Каждый chunk проходит через существующую FIFO
+очередь записи; между частями продолжаются обычные правки. Есть progress, cancel,
+retry с дедупликацией и холодный status по принятому manifest. FIFO/device/final
+symlink не могут зависнуть при открытии capability. Импорт не публикует сцену.
+
+* Core package + replication: **12 PASS**, `/tmp/gui-242-package-v3.log`.
+  300 MiB логический файл, bounded reads через границу частей, EOF, отсутствующие
+  части, неверные SHA/MIME/пути, idempotence, no journal publication и отказ
+  нерегулярным файлам. Предыдущий v1 compile FAIL исправлен, v2 — 11 PASS.
+* Mac importer: **2 PASS**, без skips/runtime warnings,
+  `.build/gui-242-import-mac-v2/verification.json`; source-before == source-after
+  `94e48164e9c90b24b1cb2440412d331a3b8b30308cd499c081a80b927614c5bf`.
+  Реальный 64 MiB файл из 16 разных частей и >1 MiB JS; небольшая запись принята
+  до завершения импорта в той же очереди, cold status/retry не пишут journal;
+  отмена до чтения не допускает manifest, повтор завершается.
+* Node preparation/bridge/recipes/protocol: **38 PASS**,
+  `/tmp/gui-242-files-v2.log`; отдельная фикстура готовит 300 MiB без Base64,
+  metadata <20 KiB, относительные пути и SHA повторяемы. Финальный pinned TypeScript/SDK check — PASS
+  (`/tmp/gui-242-check-v3.log`), MCP protocol/package/sidecar — **15 PASS**
+  (`/tmp/gui-242-mcp-v3.log`). Check v2 выявил union string/Buffer только в тестовом
+  socket callback; исправлено. После Mac v2 менялись только MCP текст/тесты.
+
+Отдельный native WebKit probe (`.build/gui-242-wk-probe/`) подтвердил custom-scheme
+classic/module/fetch/worker/image в Mac WebKit. Это не app-интеграция и не iPad.
+Публикация ссылки в причинном содержании, dependency closure всех доставок/undo,
+scoped WK adapter и offline-open ещё не реализованы. Установленная пара не менялась.
+GUI-242 остаётся In Progress; принятие импорта не означает shown/received/offline.
+
 ## 19 сентября, 01:45 МСК — GUI-241: фон, закрытие и подтверждённый checkpoint
 
 Checkpoint документа теперь сравнивает точные source/state версии и получает

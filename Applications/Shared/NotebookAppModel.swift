@@ -3604,6 +3604,8 @@ final class NotebookAppModel {
       } catch { agentStartupError = NotebookCodexSidecar.message(error) }
     }
 
+    @ObservationIgnored private var programImporter: NotebookProgramImporter?
+
     private func startCommandServer() throws {
       guard commandServer == nil, let commandSocketURL else { return }
       let server = NotebookIPCServer(socketURL: commandSocketURL) { [weak self] command in
@@ -3629,6 +3631,13 @@ final class NotebookAppModel {
           return .object(["api_version": .number(2), "value": try await coordinator.context(request)])
         }
         throw CollaborationError("invalid_script_request", "Запрос исполнения или контекста отсутствует.")
+      }
+      if command.command == .importProgram {
+        guard let request = command.programImport, let workspaceID = workspaceHeader?.workspaceID else {
+          throw CollaborationError("invalid_program_package", "Запрос импорта отсутствует.")
+        }
+        if programImporter == nil { programImporter = NotebookProgramImporter(persistence: persistence, workspaceID: workspaceID) }
+        return try await programImporter!.handle(request)
       }
       if command.command == .presentation {
         presentationRelay.send = { [weak self] message, peer in
@@ -4775,6 +4784,9 @@ final class NotebookAppModel {
         await chatSubmissionTask?.value
         await chat?.stop()
         let agentStopped = true
+      #endif
+      #if os(macOS)
+        programImporter?.stop()
       #endif
       let programsSaved = await checkpointPrograms(resume: false)
       let inputSaved = await finishPendingInteraction()

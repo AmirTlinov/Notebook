@@ -11,7 +11,7 @@ const environment=getDefaultEnvironment();delete environment.NOTEBOOK_SOCKET;
 const transport=new StdioClientTransport({command:join(dirname(fileURLToPath(import.meta.url)),"../run.sh"),env:environment,stderr:"pipe"});
 try {
   await client.connect(transport);
-  assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute"]);
+  assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute","notebook_import_program"]);
   const help=await client.callTool({name:"notebook_context",arguments:{method:"help",args:{topic:"operations"}}});
   assert.notEqual(help.isError,true,JSON.stringify(help));assert.match(JSON.stringify(help.structuredContent),/"nativeText"/);
   const deadline=Date.now()+30_000;
