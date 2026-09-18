@@ -223,6 +223,29 @@ import XCTest
     }
   }
 
+  func testErasedGeometryCannotSelectItsOldContourOrEmptyInterior() {
+    let surface = SurfaceID.page(UUID()), frame = PageRect(x:100,y:200,width:160,height:100)
+    let graphic = NotebookGraphic(shape:.rectangle,style:.init(strokeWidth:4))
+    let element = AgentElement(id:"ghost",kind:.graphic,frame:frame,source:"",html:"",graphic:graphic)
+    let graph = NotebookGraphicGraph([.init(id:"ghost",graphic:graphic,frame:frame,surface:surface,shown:true)])
+    func cut(_ points: [SpatialPoint]) -> InkElementErasure {
+      .init(target:.init(elementID:"ghost",frame:frame),samples:points.map {
+        .init(point:$0,timeOffset:0,width:20,opacity:1,force:1,azimuth:0,altitude:1)
+      })
+    }
+    let rim = cut([.init(x:100,y:200),.init(x:260,y:200),.init(x:260,y:300),.init(x:100,y:300),.init(x:100,y:200)])
+    func pick(_ point: SpatialPoint, cuts: [InkElementErasure]) -> String? {
+      NotebookAttentionProjection.pickElement(in:[element],graph:graph,erasures:["ghost":cuts],scale:1,
+        viewport:.init(x:834,y:1194),project:{ ($0.id,$0.frame,$0.graphic,point) })?.id
+    }
+    XCTAssertNil(pick(.init(x:180,y:250),cuts:[rim]))
+    XCTAssertNil(pick(.init(x:100,y:250),cuts:[rim]))
+    XCTAssertEqual(pick(.init(x:180,y:250),cuts:[]),"ghost","Undo restores ordinary interior picking")
+    let partial = cut([.init(x:80,y:250),.init(x:130,y:250)])
+    XCTAssertNil(pick(.init(x:100,y:250),cuts:[partial]))
+    XCTAssertEqual(pick(.init(x:260,y:250),cuts:[partial]),"ghost")
+  }
+
   func testHollowSelectionUsesActualPolygonAndKeepsItsChildrenReachable() throws {
     let pageID = UUID(), surface = SurfaceID.page(pageID)
     func element(_ id: String, _ shape: NotebookGraphic.Shape, _ frame: PageRect) -> AgentElement {

@@ -117,6 +117,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
       let dx = layout.axisEnd.x-layout.axisStart.x, dy = layout.axisEnd.y-layout.axisStart.y, length = max(0.001,hypot(dx,dy))
       value.bendPosition = min(1,max(0,(value.bendPosition ?? 0.5)+(dx*translation.x+dy*translation.y)/(length*length)))
       value.bend += (-dy*translation.x+dx*translation.y)/length
+      if value.resolvedRouting == .straight { value.routing = .curved }
       connection = value
     case .vertex(let index):
       guard let originalVertices, originalVertices.indices.contains(index) else { return }

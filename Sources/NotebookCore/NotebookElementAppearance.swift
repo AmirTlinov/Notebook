@@ -1,0 +1,124 @@
+import CoreGraphics
+import Foundation
+
+/// Disposable current-content projection. The measured erase stays in its one
+/// undoable action; it is not a second authored visibility register.
+public struct NotebookElementAppearance {
+  public enum State: String, Codable, Sendable { case intact, partial, erased }
+  public let state: State
+  public let remaining: CGPath
+  public let mask: CGPath
+
+  public init(graphic: NotebookGraphic?, layout: NotebookGraphicLayout?, size: CGSize,
+    erasures: [InkElementErasure]) {
+    mask = Self.erasurePath(erasures, size:size)
+    let paint = graphic.map { NotebookGraphicGeometry.paintPath($0,layout:layout,size:size) }
+      ?? CGPath(rect:CGRect(origin:.zero,size:size),transform:nil)
+    if mask.isEmpty { remaining = paint; state = .intact }
+    else {
+      remaining = paint.subtracting(mask)
+      state = remaining.isEmpty ? .erased : (paint.intersection(mask).isEmpty ? .intact : .partial)
+    }
+  }
+
+  /// Tolerance expands only surviving paint, never the removed original edge.
+  public func contains(_ point: SpatialPoint, tolerance: Double) -> Bool {
+    guard state != .erased else { return false }
+    let p = CGPoint(x:point.x,y:point.y)
+    if mask.contains(p) { return false }
+    return remaining.contains(p) || (tolerance > 0 && remaining.copy(strokingWithWidth:tolerance*2,
+      lineCap:.round,lineJoin:.round,miterLimit:10).contains(p))
+  }
+  public func readProjection() -> JSONValue {
+    .object(["state":.string(state.rawValue),"sourceIsCompleteAppearance":.bool(state == .intact)])
+  }
+
+  /// Exactly the positive-winding triangles that the live renderer erases.
+  public static func erasurePath(_ erasures: [InkElementErasure], size: CGSize) -> CGPath {
+    let path = CGMutablePath()
+    for erasure in erasures {
+      var points: [InkStrokeGeometry.RenderPoint] = []
+      for sample in erasure.samples {
+        let p = erasure.target.localPoint(sample)
+        let next = InkStrokeGeometry.RenderPoint(position:.init(Float(p.x),Float(p.y)),
+          radius:max(Float(sample.width/2),0.25),premultipliedColor:.init(repeating:1))
+        if let last = points.last, InkStrokeGeometry.areCoincident(last,next) { points[points.count-1] = next }
+        else { points.append(next) }
+      }
+      var vertices: [InkStrokeGeometry.Vertex] = []
+      InkStrokeGeometry.appendStrokeVertices(renderPoints:points,to:&vertices)
+      let sx = size.width/erasure.target.frame.width, sy = size.height/erasure.target.frame.height
+      func point(_ p: SIMD2<Float>) -> CGPoint { .init(x:Double(p.x)*sx,y:Double(p.y)*sy) }
+      for i in stride(from:0,to:vertices.count,by:3) {
+        let a = vertices[i].position, b = vertices[i+1].position, c = vertices[i+2].position
+        path.move(to:point(a))
+        for p in (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x) >= 0 ? [b,c] : [c,b] { path.addLine(to:point(p)) }
+        path.closeSubpath()
+      }
+    }
+    return path
+  }
+}
+
+extension NotebookGraphicGeometry {
+  public static func outlinePath(_ graphic: NotebookGraphic, in rect: CGRect) -> CGPath {
+    let path = CGMutablePath()
+    func p(_ value: SpatialPoint) -> CGPoint { .init(x:rect.minX+value.x,y:rect.minY+value.y) }
+    switch graphic.shape {
+    case .ellipse: path.addEllipse(in:rect)
+    case .triangle,.rectangle,.diamond:
+      let curves = polygonCurves(graphic,width:rect.width,height:rect.height)
+      if let first = curves.first { path.move(to:p(first.start)) }
+      for c in curves { path.addCurve(to:p(c.end),control1:p(c.control1),control2:p(c.control2)) }
+      path.closeSubpath()
+    case .plus:
+      path.move(to:.init(x:rect.minX,y:rect.midY)); path.addLine(to:.init(x:rect.maxX,y:rect.midY))
+      path.move(to:.init(x:rect.midX,y:rect.minY)); path.addLine(to:.init(x:rect.midX,y:rect.maxY))
+    case .connector: break
+    }
+    return path
+  }
+  public static func connectionPath(_ layout: NotebookGraphicLayout) -> CGPath {
+    let path = CGMutablePath()
+    func p(_ value: SpatialPoint) -> CGPoint { .init(x:value.x,y:value.y) }
+    if let first = layout.curves.first { path.move(to:p(first.start)) }
+    for c in layout.curves { path.addCurve(to:p(c.end),control1:p(c.control1),control2:p(c.control2)) }
+    return path
+  }
+  /// Same stroke/fill paths as native paint. Labels and foreign HTML/text use
+  /// their content envelope conservatively; partial source is explicitly marked.
+  public static func paintPath(_ graphic: NotebookGraphic, layout: NotebookGraphicLayout?, size: CGSize) -> CGPath {
+    guard graphic.showsGeometry else { return CGMutablePath() }
+    var result: CGPath = CGMutablePath()
+    let width = graphic.style.strokeWidth
+    func add(_ path: CGPath) { result = result.union(path) }
+    func stroke(_ path: CGPath, dashed: Bool = true) {
+      let dash: [CGFloat] = switch (dashed ? graphic.style.dash ?? .solid : .solid) {
+      case .solid: []; case .dashed: [width*4,width*3]; case .dotted: [0,width*3]
+      }
+      let line = dash.isEmpty ? path : path.copy(dashingWithPhase:0,lengths:dash)
+      add(line.copy(strokingWithWidth:width,lineCap:.round,lineJoin:.round,miterLimit:10))
+    }
+    if graphic.shape == .connector, let layout {
+      stroke(connectionPath(layout))
+      for head in layout.heads {
+        let path = CGMutablePath()
+        if let p = head.points.first { path.move(to:.init(x:p.x,y:p.y)) }
+        for p in head.points.dropFirst() { path.addLine(to:.init(x:p.x,y:p.y)) }
+        if head.closed { path.closeSubpath() }
+        if head.filled { add(path) }; stroke(path,dashed:false)
+      }
+    } else {
+      let inset = max(0,min(width/2,min(size.width,size.height)/2-0.01))
+      let path = outlinePath(graphic,in:CGRect(origin:.zero,size:size).insetBy(dx:inset,dy:inset))
+      if graphic.shape != .plus, graphic.style.fill != nil { add(path) }; stroke(path)
+    }
+    if !graphic.label.isEmpty {
+      let center = layout?.label ?? .init(x:size.width/2,y:size.height/2)
+      let lines = graphic.label.split(separator:"\n",omittingEmptySubsequences:false)
+      let w = min(size.width,Double(lines.map(\.count).max() ?? 0)*24), h = min(size.height,Double(lines.count)*30)
+      add(CGPath(rect:.init(x:center.x-w/2,y:center.y-h/2,width:w,height:h),transform:nil))
+    }
+    return result
+  }
+}

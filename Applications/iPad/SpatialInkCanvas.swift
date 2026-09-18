@@ -48,6 +48,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
     context.coordinator.resolveGraphicGraph = { [weak model] cohort, board in
       model?.presentedGraphicGraph(boardID:board,cohort:cohort,preview:false) ?? cohort.frame.index.board(id:board)?.graphicGraph() ?? .init([])
     }
+    context.coordinator.resolveGraphicErasures = { [weak model] cohort, board in
+      model?.elementErasures(on:.board(board),fallback:cohort.liveData.ink) ?? [:]
+    }
     context.coordinator.update(
       view: view, cohort: cohort,
       boardID: boardID,
@@ -76,6 +79,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
     context.coordinator.onElementErasing = { [weak model] in model?.updateElementErasing($0, id: $1) }
     context.coordinator.resolveGraphicGraph = { [weak model] cohort, board in
       model?.presentedGraphicGraph(boardID:board,cohort:cohort,preview:false) ?? cohort.frame.index.board(id:board)?.graphicGraph() ?? .init([])
+    }
+    context.coordinator.resolveGraphicErasures = { [weak model] cohort, board in
+      model?.elementErasures(on:.board(board),fallback:cohort.liveData.ink) ?? [:]
     }
     context.coordinator.update(
       view: view, cohort: cohort,
@@ -111,6 +117,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     var onQuickShape: ((NotebookQuickShapeFit, UUID, WorldPoint, SpatialInkAction) -> Void)?
     var resolveEraserTargets: ((SceneCompositionCohort, UUID) -> [SurfaceID: [InkElementTarget]])?
     var onElementErasing: ([NotebookElementErasing], UUID) -> Void = { _, _ in }
+    var resolveGraphicErasures: ((SceneCompositionCohort, UUID) -> [String: [InkElementErasure]])?
     var resolveGraphicGraph: ((SceneCompositionCohort, UUID) -> NotebookGraphicGraph)?
     private let quickShape = NotebookQuickShapeSession()
     var onWorkingGraphic: (NotebookWorkingGraphic?, UUID) -> Void = { _, _ in }
@@ -151,6 +158,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       let cohort: SceneCompositionCohort?
       let leases: [SpatialInkSurfaceRegistry.ContactLease]
       let graphics: NotebookGraphicGraph
+      let graphicErasures: [String: [InkElementErasure]]
       let eraserTargets: [SurfaceID: [InkElementTarget]]
     }
     private var actionGeometry: ContactGeometry?
@@ -380,6 +388,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         blockedSurfaces: Set(items.filter { isItemBeingDeleted($0.itemID) || surfaceRegistry.isRetired(.cover($0.itemID)) }.map { .cover($0.itemID) }),
         cohort: cohort, leases: leases,
         graphics:cohort.flatMap { cohort in boardSurface.ownerID.flatMap { resolveGraphicGraph?(cohort,$0) } } ?? .init([]),
+        graphicErasures: cohort.flatMap { cohort in boardSurface.ownerID.flatMap { resolveGraphicErasures?(cohort,$0) } } ?? [:],
         eraserTargets: drawingTool == .eraser ? (cohort.flatMap { cohort in boardSurface.ownerID.flatMap { resolveEraserTargets?(cohort, $0) } } ?? [:]) : [:])
       setPencilActionActive(touch.type == .pencil || inputGate.simulatesPencilContacts)
       actionStrokeID = UUID()
@@ -402,7 +411,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
           guard let self, let geometry = actionGeometry else { return fit }
           let scale = geometry.camera.scale, screenOrigin = SpatialPoint(x:fit.frame.x,y:fit.frame.y)
           let origin = geometry.camera.screenToWorld(screenOrigin,viewport:geometry.viewport)
-          let physical = fit.scaled(by:1/scale,frameOrigin:.zero).binding(in:geometry.graphics,surface:boardSurface,origin:origin,tolerance:18/scale)
+          let physical = fit.scaled(by:1/scale,frameOrigin:.zero).binding(in:geometry.graphics,surface:boardSurface,origin:origin,tolerance:18/scale,erasures:geometry.graphicErasures)
           return physical.scaled(by:scale,frameOrigin:screenOrigin)
         }) { [weak self] in
           guard let self, let geometry = actionGeometry, currentSurface == boardSurface,

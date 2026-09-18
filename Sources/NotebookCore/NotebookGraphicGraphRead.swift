@@ -16,9 +16,14 @@ extension PageDocument {
   public func graphicReadProjection() throws -> JSONValue {
     var value = try JSONValue.encode(self)
     let graph = graphicGraph()
+    let cuts = try PageInkDrawing.decode(drawingData).elementErasures
     value = try value.setting("elements",.array(elements.map { element in
-      let raw = try JSONValue.encode(element)
-      return try element.graphic == nil ? raw : raw.setting("graphicResolution",graph.resolve(element.id).readProjection())
+      var raw = try JSONValue.encode(element)
+      let resolution = graph.resolve(element.id), layout = resolution.layout
+      if element.graphic != nil { raw = try raw.setting("graphicResolution",resolution.readProjection()) }
+      let frame = layout?.frame ?? element.frame
+      return raw.setting("appearance",NotebookElementAppearance(graphic:element.graphic,layout:layout,
+        size:.init(width:frame.width,height:frame.height),erasures:cuts[element.id] ?? []).readProjection())
     }))
     return value
   }

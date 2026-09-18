@@ -43,4 +43,23 @@ func graphicAdmissionAtOneHundredThousandElements() throws {
   }
   #expect(counter.steps < 50_000)
   print("GRAPHIC_ADMISSION_SQL owners=100000 admitted=96 vm_steps=\(counter.steps)")
+  let origin = WorldPoint(x:99_999 * 50,y:0)
+  let target = InkElementTarget(elementID:"shape-99999",frame:.init(x:0,y:0,width:24,height:24),worldOrigin:origin)
+  let sample = SpatialInkSample(point:.init(x:12,y:12),worldPoint:origin.offsetBy(x:12,y:12),
+    timeOffset:0,width:60,opacity:1,force:1,azimuth:0,altitude:1)
+  let action = SpatialInkAction(tool:.eraser,spans:[SpatialInkSpan(surface:.board(header.rootBoardID),samples:[sample]).erasingElements([target])],stamp:.init(counter:1,actor:actor))
+  try store.commitSpatialInk(.append(action,journalStamp:action.stamp))
+  counter.steps = 0
+  try store.readTransaction { _ in
+    let db = store.currentSQL!
+    try db.limitReads(.init(rows:30,bytes:20_000,valueBytes:8_000,reason:"Erasure lookup must not read unrelated bodies"))
+    sqlite3_progress_handler(db.handle,1,{ raw in
+      let counter = Unmanaged<Counter>.fromOpaque(raw!).takeUnretainedValue()
+      counter.steps += 1; return counter.steps > 2_000 ? 1 : 0
+    },Unmanaged.passUnretained(counter).toOpaque())
+    defer { sqlite3_progress_handler(db.handle,0,nil,nil) }
+    #expect(try store.readElementErasures(on:.board(header.rootBoardID),elementID:target.elementID).count == 1)
+    #expect(try store.readElementErasures(on:.board(header.rootBoardID),elementID:"shape-0").isEmpty)
+  }
+  print("ELEMENT_ERASURE_SQL owners=100000 vm_steps=\(counter.steps) read_rows_budget=30")
 }

@@ -87,6 +87,8 @@ struct InkElementErasureTests {
     let reopened = NotebookStore(root: b.root)
     #expect(try PageInkDrawing.decode(reopened.loadPage(pageID).drawingData).elementErasures == change.drawing.elementErasures)
     #expect(try reopened.readSpatialInk(surfaces: [surface]).actions.first?.spans == action.spans)
+    #expect(try reopened.readElementErasures(on:.page(pageID),elementID:"circle").count == 1)
+    #expect(try reopened.readElementErasures(on:surface,elementID:"circle").count == 1)
     let before = try a.currentChangeCursor()
     let undo = try page.prepareInkChange(.remove([erase.id]), stamp: .init(counter: 22, actor: actor))
     let removed = page.publishInkChange(undo); #expect(removed)
@@ -97,9 +99,11 @@ struct InkElementErasureTests {
     for record in try a.changeJournal(after: before) { try transfer(record, from: a, to: b, peer: peer) }
     #expect(try PageInkDrawing.decode(reopened.loadPage(pageID).drawingData).elementErasures.isEmpty)
     #expect(try reopened.readSpatialInk(surfaces: [surface]).elementErasures(on: surface).isEmpty)
+    #expect(try reopened.readElementErasures(on:.page(pageID),elementID:"circle").isEmpty)
+    #expect(try reopened.readElementErasures(on:surface,elementID:"circle").isEmpty)
   }
 
-  @Test(arguments:[4,5]) func newManifestFencesOldReadersWithoutDroppingQueuedHistory(legacyFormat: Int) throws {
+  @Test(arguments:[4,5,6]) func newManifestFencesOldReadersWithoutDroppingQueuedHistory(legacyFormat: Int) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let a = NotebookStore(root: root.appendingPathComponent("a")), b = NotebookStore(root: root.appendingPathComponent("b"))
@@ -108,7 +112,7 @@ struct InkElementErasureTests {
     let initial = try #require(a.changeJournal(after: 0).first)
     let data = try a.readBlobChunk(hash: initial.manifestHash, offset: 0, maxBytes: 1_048_576)
     let value = try JSONDecoder().decode(JSONValue.self, from: data)
-    #expect(value["format"] == .number(6))
+    #expect(value["format"] == .number(7))
     let old = try JSONEncoder().encode(value.setting("format", .number(Double(legacyFormat))))
     let hash = SHA256.hash(data: old).map { String(format: "%02x", $0) }.joined()
     try a.stageBlob(data: old, expectedHash: hash)

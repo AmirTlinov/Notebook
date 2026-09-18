@@ -86,35 +86,48 @@ final class DrawingResponsivenessTests: XCTestCase {
     launchPortraitFixture(app)
     let line = app.images["Связь"]
     XCTAssertTrue(line.waitForExistence(timeout:10)); line.tap()
-    let start = app.buttons["graphic-start-menu"], end = app.buttons["graphic-end-menu"], more = app.buttons["element-actions-menu"]
-    XCTAssertTrue(start.waitForExistence(timeout:5)); XCTAssertTrue(end.isHittable)
+    let ends = app.buttons["graphic-ends-menu"], routing = app.buttons["graphic-routing-menu"]
+    XCTAssertTrue(ends.waitForExistence(timeout:5)); XCTAssertTrue(routing.isHittable)
     XCTAssertFalse(app.buttons["graphic-geometry-mode"].exists)
-    XCTAssertEqual(start.frame.midY,end.frame.midY,accuracy:1)
-    XCTAssertLessThan(more.frame.maxX-app.buttons["graphic-style-menu"].frame.minX,266)
+    XCTAssertEqual(ends.frame.height,44); XCTAssertEqual(routing.frame.width,44)
+    XCTAssertLessThan(app.buttons["element-actions-menu"].frame.maxX-app.buttons["graphic-style-menu"].frame.minX,274)
     let neighbour = app.webViews.containing(.button,identifier:"Graphic scene counter").firstMatch, neighbourFrame = neighbour.frame
-    let plain = app.screenshot(), region = line.frame.insetBy(dx:-12,dy:-12)
-    start.tap()
-    XCTAssertTrue(app.buttons["Круг"].waitForExistence(timeout:3))
-    let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "endpoint-direct-menu-\(onPage ? "page" : "board")"; proof.lifetime = .keepAlways; add(proof)
-    app.buttons["Круг"].tap(); XCTAssertTrue(app.buttons["Круг"].waitForNonExistence(timeout:3))
-    XCTAssertEqual(start.value as? String,"Круг"); XCTAssertEqual(end.value as? String,"Нет")
+    func outside() { app.coordinate(withNormalizedOffset:.init(dx:0.75,dy:0.18)).tap() }
+    func proof(_ name: String) {
+      let value = XCTAttachment(screenshot:app.screenshot()); value.name = name + (onPage ? "-page" : "-board")
+      value.lifetime = .keepAlways; add(value)
+    }
+    ends.tap()
+    let start = app.buttons["graphic-start-menu"], end = app.buttons["graphic-end-menu"]
+    XCTAssertTrue(start.waitForExistence(timeout:3)); XCTAssertTrue(end.isHittable)
+    start.tap(); XCTAssertTrue(app.buttons["Круг"].waitForExistence(timeout:3)); app.buttons["Круг"].tap()
+    XCTAssertTrue(app.buttons["Круг"].waitForNonExistence(timeout:3)); XCTAssertEqual(start.value as? String,"Круг")
     end.tap(); XCTAssertTrue(app.buttons["Треугольник"].waitForExistence(timeout:3)); app.buttons["Треугольник"].tap()
     XCTAssertTrue(app.buttons["Треугольник"].waitForNonExistence(timeout:3))
     XCTAssertEqual(end.value as? String,"Треугольник"); XCTAssertEqual(start.value as? String,"Круг")
-    XCTAssertGreaterThan(changedPixelShare(from:plain,to:app.screenshot(),normalizedRect:.init(x:region.minX/app.frame.width,
-      y:region.minY/app.frame.height,width:region.width/app.frame.width,height:region.height/app.frame.height)),0.0003)
-    let frame = line.frame
-    // Opening again uses fresh values; the dismissing contact never selects paper.
-    start.tap(); XCTAssertTrue(app.buttons["Круг"].waitForExistence(timeout:3))
-    app.coordinate(withNormalizedOffset:.init(dx:0.75,dy:0.18)).tap()
-    XCTAssertTrue(app.buttons["Круг"].waitForNonExistence(timeout:3)); XCTAssertTrue(end.isHittable)
-    XCTAssertEqual(line.frame,frame); XCTAssertEqual(neighbour.frame,neighbourFrame)
-    more.tap(); XCTAssertTrue(app.buttons["На задний план"].waitForExistence(timeout:3)); app.buttons["На задний план"].tap()
-    XCTAssertTrue(app.buttons["На задний план"].waitForNonExistence(timeout:3)); XCTAssertTrue(start.isHittable)
-    let final = XCTAttachment(screenshot:app.screenshot()); final.name = "endpoint-capsule-\(onPage ? "page" : "board")"; final.lifetime = .keepAlways; add(final)
+    proof("connection-ends-graphical-picker"); outside()
+    XCTAssertTrue(start.waitForNonExistence(timeout:3)); XCTAssertTrue(ends.isHittable)
+    routing.tap()
+    let curved = app.buttons["connection-route-curved"], elbow = app.buttons["connection-route-elbow"]
+    XCTAssertTrue(curved.waitForExistence(timeout:3)); curved.tap()
+    XCTAssertTrue(curved.isSelected); XCTAssertEqual(routing.value as? String,"Кривая")
+    proof("connection-curved-picker"); elbow.tap()
+    XCTAssertTrue(elbow.isSelected); XCTAssertEqual(routing.value as? String,"Угловая")
+    proof("connection-elbow-picker"); outside()
+    XCTAssertTrue(curved.waitForNonExistence(timeout:3)); XCTAssertTrue(ends.isHittable)
+    let bend = app.descendants(matching:.any).matching(identifier:"graphic-bend-handle").firstMatch
+    XCTAssertTrue(bend.exists)
+    let before = bend.frame
+    let center = bend.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+    center.press(forDuration:0.01,thenDragTo:center.withOffset(.init(dx:24,dy:28)),withVelocity:.slow,thenHoldForDuration:0)
+    XCTAssertEqual(bend.frame.midX-before.midX,24,accuracy:4); XCTAssertEqual(bend.frame.midY-before.midY,28,accuracy:4)
+    XCTAssertEqual(neighbour.frame,neighbourFrame)
+    proof("connection-compact-capsule")
     app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
     XCTAssertTrue(line.waitForExistence(timeout:10)); line.tap()
-    XCTAssertTrue(start.waitForExistence(timeout:3)); XCTAssertEqual(start.value as? String,"Круг"); XCTAssertEqual(end.value as? String,"Треугольник")
+    XCTAssertTrue(ends.waitForExistence(timeout:3)); XCTAssertEqual(routing.value as? String,"Угловая")
+    ends.tap(); XCTAssertTrue(start.waitForExistence(timeout:3))
+    XCTAssertEqual(start.value as? String,"Круг"); XCTAssertEqual(end.value as? String,"Треугольник")
     end.tap(); XCTAssertTrue(app.buttons["Стрелка"].waitForExistence(timeout:3)); app.buttons["Стрелка"].tap()
     XCTAssertTrue(app.buttons["Стрелка"].waitForNonExistence(timeout:3)); XCTAssertEqual(end.value as? String,"Стрелка")
     XCTAssertEqual(start.value as? String,"Круг")

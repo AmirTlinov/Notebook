@@ -120,7 +120,7 @@ extension NotebookStore {
   /// The stored contact already separates its small mutable header from typed
   /// immutable spans. Read those directly: rebuilding a JSONValue tree and
   /// serializing every measurement again is not part of showing its ink.
-  private func readSpatialInkAction(_ address: String) throws -> SpatialInkAction {
+  func readSpatialInkAction(_ address: String) throws -> SpatialInkAction {
     let spansAddress = address + "/spans"
     let rows = try currentSQL!.rows(
       "SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address IN (?,?)",
@@ -172,6 +172,9 @@ extension NotebookStore {
 
   func updateAddressIndexes(_ fragment: NotebookStoredFragment, database: NotebookSQLConnection) throws {
     try noteGraphicIndexChange(fragment, database: database)
+    if fragment.file.hasPrefix("pages/"), fragment.collection == "actions", fragment.value["tool"]?.string == "eraser" {
+      try indexPageElementErasures(fragment,database:database)
+    }
     if (fragment.file.hasPrefix("pages/") && fragment.collection == "elements")
       || (fragment.file == "board.json" && fragment.collection == "board/elements") {
       try database.run("DELETE FROM graphic_sources WHERE address=?", [.text(fragment.address)])
@@ -220,6 +223,7 @@ extension NotebookStore {
     if fragment.file == "spatial-ink.json", fragment.collection == "actions" {
       if try !database.rows("SELECT 1 FROM ink_surfaces WHERE address=? LIMIT 1", [.text(fragment.address)]).isEmpty { return }
       let action = try NotebookRecordCodec.decode(storedFragments(address: fragment.address), root: fragment.address).decode(SpatialInkAction.self)
+      try indexElementErasures(action, address:fragment.address, database:database)
       try database.run("DELETE FROM ink_surfaces WHERE address=?", [.text(fragment.address)])
       for surface in Set(action.spans.map(\.surface)) {
         guard let id = surface.ownerID else { throw NotebookStorageError.corruptRecord(fragment.address) }

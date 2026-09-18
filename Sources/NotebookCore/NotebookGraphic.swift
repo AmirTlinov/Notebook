@@ -63,7 +63,7 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
   static let causalFields = ["shape", "style", "label", "representation", "visible", "sourceInkIDs", "vertices", "cornerRadius"]
   static let allCausalPaths = causalFields.map { [$0] } + NotebookGraphicConnection.causalFields.map { ["connection", $0] }
   var causalPaths: [[String]] {
-    Self.causalFields.filter { ($0 != "vertices" || vertices != nil) && ($0 != "cornerRadius" || cornerRadius != nil) }.map { [$0] } + (connection == nil ? [] : NotebookGraphicConnection.causalFields.filter { $0 != "bendPosition" || connection?.bendPosition != nil }.map { ["connection", $0] })
+    Self.causalFields.filter { ($0 != "vertices" || vertices != nil) && ($0 != "cornerRadius" || cornerRadius != nil) }.map { [$0] } + (connection == nil ? [] : NotebookGraphicConnection.causalFields.filter { ($0 != "bendPosition" || connection?.bendPosition != nil) && ($0 != "routing" || connection?.routing != nil) }.map { ["connection", $0] })
   }
   public var showsGeometry: Bool { visible && representation == .geometry }
   var isValid: Bool {

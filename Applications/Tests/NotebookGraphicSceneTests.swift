@@ -594,7 +594,13 @@ import XCTest
     try await eraseElement(onBoard: true)
   }
 
-  private func eraseElement(onBoard: Bool) async throws {
+  func testPageFullErasureHasNoSelectableGhostAfterReloadAndUndoRestoresIt() async throws {
+    try await eraseElement(onBoard:false,full:true)
+  }
+  func testBoardFullErasureHasNoSelectableGhostAfterReloadAndUndoRestoresIt() async throws {
+    try await eraseElement(onBoard:true,full:true)
+  }
+  private func eraseElement(onBoard: Bool, full: Bool = false) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("element-erasing-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
@@ -643,13 +649,20 @@ import XCTest
       let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
         window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
       }
-      let proof = XCTAttachment(image: image); proof.name = "partial-erase-\(onBoard ? "board" : "page")-\(stage)"
+      let proof = XCTAttachment(image: image); proof.name = "\(full ? "full" : "partial")-erase-\(onBoard ? "board" : "page")-\(stage)"
       proof.lifetime = .keepAlways; add(proof)
     }
     attachment("before")
     let touch = SceneGraphicTouch(window: window), event = SceneGraphicEvent()
-    for i in 0...30 {
-      touch.point = screen(.init(x: 235 + Double(i)*2, y: 510)); touch.sampleTime += 0.01
+    let trace: [CGPoint]
+    if full {
+      let corners = [CGPoint(x:260,y:420),.init(x:480,y:420),.init(x:480,y:600),.init(x:260,y:600),.init(x:260,y:420)]
+      trace = zip(corners,corners.dropFirst()).flatMap { a,b in
+        (0...40).map { i in CGPoint(x:a.x+(b.x-a.x)*Double(i)/40,y:a.y+(b.y-a.y)*Double(i)/40) }
+      }
+    } else { trace = (0...30).map { CGPoint(x:235+Double($0)*2,y:510) } }
+    for (i,point) in trace.enumerated() {
+      touch.point = screen(point); touch.sampleTime += 0.01
       if i == 0 {
         touch.sourceView = window.hitTest(touch.point, with: event)
         receiver.touchesBegan([touch], with: event)
@@ -681,7 +694,12 @@ import XCTest
     }
     let mask = try XCTUnwrap(masks["box"]?.first)
     XCTAssertEqual(mask.target.frame, frame)
-    XCTAssertEqual(mask.target.localPoint(try XCTUnwrap(mask.samples.last)).y, 90, accuracy: 0.001)
+    XCTAssertEqual(mask.target.localPoint(try XCTUnwrap(mask.samples.last)).y, full ? 0 : 90, accuracy: 0.001)
+    let appearance = NotebookElementAppearance(graphic:graphic,layout:nil,size:.init(width:frame.width,height:frame.height),erasures:[mask])
+    XCTAssertEqual(appearance.state,full ? .erased : .partial)
+    XCTAssertFalse(appearance.contains(.init(x:0,y:90),tolerance:12))
+    if full { XCTAssertFalse(appearance.contains(.init(x:110,y:90),tolerance:12)) }
+    else { XCTAssertTrue(appearance.contains(.init(x:220,y:90),tolerance:12)) }
     try await Task.sleep(for: .milliseconds(100)); attachment("saved")
     model.undoLastSurfaceAction()
     let undone = await model.finishPendingPersistence(); XCTAssertTrue(undone)

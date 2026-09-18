@@ -2593,6 +2593,7 @@ final class NotebookAppModel {
       if connection.start != original.start { patch["start"] = try? .encode(connection.start) }
       if connection.end != original.end { patch["end"] = try? .encode(connection.end) }
       if connection.bend != original.bend { patch["bend"] = .number(connection.bend) }
+      if connection.routing != original.routing { patch["routing"] = try? .encode(connection.routing) }
       if connection.bendPosition != original.bendPosition { patch["bendPosition"] = try? .encode(connection.bendPosition) }
       var values: [String:JSONValue] = ["graphic": .object(["connection": .object(patch)])]
       if contact.frame != contact.original {
@@ -2732,6 +2733,18 @@ final class NotebookAppModel {
     var style = original; update(&style)
     guard original != style, let value = try? JSONValue.encode(style) else { return }
     performElementOperation(.updateElement,reference:reference,values:["graphic":.object(["style":value])],summary:"Изменить оформление фигуры")
+  }
+
+  func setGraphicRouting(_ routing: NotebookGraphicConnection.Routing, reference: EditableElementReference) {
+    guard let original = graphicElement(reference)?.connection, original.resolvedRouting != routing else { return }
+    var patch: [String: JSONValue] = ["routing":.string(routing.rawValue)]
+    if routing != .straight && abs(original.bend) < 0.01 {
+      let layout = graphicLayout(reference)
+      let distance = layout.map { hypot($0.axisEnd.x-$0.axisStart.x,$0.axisEnd.y-$0.axisStart.y) } ?? 120
+      patch["bend"] = .number(min(60,max(24,distance*0.2)))
+    }
+    performElementOperation(.updateElement,reference:reference,
+      values:["graphic":.object(["connection":.object(patch)])],summary:"Изменить стиль соединения")
   }
 
   func setGraphicArrowhead(_ head: NotebookGraphicConnection.Arrowhead, terminal: NotebookGraphicConnection.Terminal,

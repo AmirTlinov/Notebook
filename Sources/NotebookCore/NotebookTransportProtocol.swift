@@ -6,7 +6,7 @@ import Foundation
 public enum NotebookTransportLimits {
   // Polygon kinds and normalized corners must not reach a reader that only
   // understands ellipses/rectangles/pluses or silently drops their orientation.
-  public static let protocolVersion = 20
+  public static let protocolVersion = 21
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16

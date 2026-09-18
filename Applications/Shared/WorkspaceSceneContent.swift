@@ -396,7 +396,10 @@ struct SpatialElementContent: View {
   }
 
   var body: some View {
-    content.erased(by: model.elementErasures(on: element.surface, fallback: composition.cohort?.liveData.ink)[element.id] ?? [])
+    let cuts = model.elementErasures(on:element.surface,fallback:composition.cohort?.liveData.ink)[element.id] ?? []
+    let erased = !cuts.isEmpty && NotebookElementAppearance(graphic:nil,layout:nil,
+      size:.init(width:element.frame.width,height:element.frame.height),erasures:cuts).state == .erased
+    content.erased(by:cuts).accessibilityHidden(erased).allowsHitTesting(!erased)
   }
 
   @ViewBuilder private var content: some View {

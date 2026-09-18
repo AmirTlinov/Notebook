@@ -71,7 +71,7 @@ struct PageSurface: View {
               inkIsReady = ready
               publishReadiness(ink: ready, overlay: overlayIsReady)
             }, resolveQuickShape: { fit, scale in
-              fit.binding(in:page.graphicGraph(),surface:.page(page.id),tolerance:18/scale)
+              fit.binding(in:page.graphicGraph(),surface:.page(page.id),tolerance:18/scale,erasures:model.elementErasures(on:.page(page.id)))
             }, onWorkingGraphic: model.updateWorkingGraphic,
             eraserTargets: { model.eraserTargets(pageID: page.id) },
             onElementErasing: model.updateElementErasing

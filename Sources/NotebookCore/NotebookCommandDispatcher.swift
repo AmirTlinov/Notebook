@@ -409,10 +409,16 @@ public struct NotebookCommandDispatcher: Sendable {
   }
 
   private func elementReadProjection(_ element: SpatialElement, boardID: UUID) throws -> JSONValue {
-    let value = try JSONValue.encode(element)
-    guard element.graphic != nil, let owner = element.surface.ownerID else { return value }
-    let target = CollaborationTarget(kind:element.surface.kind == .cover ? .cover : .board,id:owner,boardID:boardID)
-    return try value.setting("graphicResolution",store.readGraphicResolution(target:target,elementID:element.id).readProjection())
+    var value = try JSONValue.encode(element)
+    let layout: NotebookGraphicLayout?
+    if element.graphic != nil, let owner = element.surface.ownerID {
+      let target = CollaborationTarget(kind:element.surface.kind == .cover ? .cover : .board,id:owner,boardID:boardID)
+      let resolution = try store.readGraphicResolution(target:target,elementID:element.id)
+      value = try value.setting("graphicResolution",resolution.readProjection()); layout = resolution.layout
+    } else { layout = nil }
+    let frame = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+    return try value.setting("appearance",NotebookElementAppearance(graphic:element.graphic,layout:layout,
+      size:.init(width:frame.width,height:frame.height),erasures:store.readElementErasures(on:element.surface,elementID:element.id)).readProjection())
   }
 
   private func delivery(_ id: UUID) throws -> JSONValue {

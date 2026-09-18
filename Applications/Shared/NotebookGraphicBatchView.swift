@@ -56,7 +56,11 @@ struct NotebookGraphicBatchView: View {
       .accessibilityRepresentation {
         ZStack(alignment: .topLeading) {
           ForEach(objects.filter { $0.id != editingID }) { object in
+            let cuts = erasures[object.id] ?? []
+            let erased = !cuts.isEmpty && NotebookElementAppearance(graphic:graph.nodes[object.id]?.graphic,layout:object.layout,
+              size:.init(width:object.layout.frame.width,height:object.layout.frame.height),erasures:cuts).state == .erased
             accessibleObject(object)
+              .accessibilityHidden(erased)
               .frame(width: object.frame.width, height: object.frame.height)
               .position(x: object.frame.midX, y: object.frame.midY)
           }

@@ -295,3 +295,27 @@ func connectorAsymmetricBend() throws {
   #expect(abs(layout.frame.x+layout.start.x-100) < 0.0001)
   #expect(abs(layout.frame.x+layout.end.x-300) < 0.0001)
 }
+
+@Test("Connection routing uses one graph for geometry, fields and undo", arguments: [false,true])
+func connectorRoutingRoundTripAndUndo(board: Bool) throws {
+  let f = try ConnectorFixture(board:board); defer { f.clean() }
+  _ = try f.write([f.node("a",x:60),f.node("b",x:400,y:280),f.arrow()])
+  let original = try #require(try f.graphic("ab"))
+  for route in NotebookGraphicConnection.Routing.allCases {
+    let edit = try f.write([f.operation(.updateElement,"ab",["graphic":.object(["connection":.object([
+      "routing":.string(route.rawValue),"bend":.number(40),"bendPosition":.number(0.35)])])])])
+    let value = try #require(try f.graphic("ab")), layout = try #require(f.resolution().layout)
+    #expect(value.connection?.routing == route)
+    #expect(value.connection?.bindings == original.connection?.bindings)
+    if route == .elbow {
+      #expect(layout.curves.count >= 2)
+      for curve in layout.curves { #expect(abs(curve.start.x-curve.end.x) < 0.001 || abs(curve.start.y-curve.end.y) < 0.001) }
+      #expect(layout.hitTest(layout.bend,graphic:value,tolerance:0.1))
+    } else if route == .straight { #expect(layout.curves.count == 1) }
+    let reopened = NotebookStore(root:f.root)
+    let decoded = try reopened.readGraphicResolution(target:f.target,elementID:"ab").layout
+    #expect(decoded == layout)
+    _ = try reopened.undoCollaborationAction(edit.id,actor:f.actor)
+    #expect(try f.graphic("ab") == original)
+  }
+}

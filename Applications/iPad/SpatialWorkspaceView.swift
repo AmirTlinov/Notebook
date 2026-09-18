@@ -746,6 +746,20 @@ struct SpatialWorkspaceView: View {
   private func selectedElement(at point: CGPoint, presence: SessionPresence) -> EditableElementReference? {
     guard let reference = model.selectionSession.editingElement,
       let frame = NotebookAttentionProjection.editingFrame(reference, model: model, presence: presence) else { return nil }
+    let surface: SurfaceID, id: String
+    switch reference {
+    case .page(let pageID,let elementID): surface = .page(pageID); id = elementID
+    case .spatial(_,let elementID):
+      guard let cohort = model.compositionTiles.published, let element = model.presentedElement(reference,cohort:cohort) else { return nil }
+      surface = element.surface; id = elementID
+    }
+    let cuts = model.elementErasures(on:surface)[id] ?? []
+    if !cuts.isEmpty {
+      let scale = max(0.001,presence.camera.scale)
+      let appearance = NotebookElementAppearance(graphic:model.graphicElement(reference),layout:model.graphicLayout(reference),
+        size:.init(width:frame.width/scale,height:frame.height/scale),erasures:cuts)
+      return appearance.contains(.init(x:(point.x-frame.minX)/scale,y:(point.y-frame.minY)/scale),tolerance:12/scale) ? reference : nil
+    }
     guard let graphic = model.graphicElement(reference) else { return frame.contains(point) ? reference : nil }
     // Settled shapes use normal topmost picking, including overlapping links.
     guard model.graphicCommandDrafts[reference] != nil else { return nil }

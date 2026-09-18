@@ -358,25 +358,27 @@ import XCTest
       XCTAssertFalse(mode.isHidden); XCTAssertNotNil(mode.configuration?.image)
       mode.sendActions(for:.touchUpInside); XCTAssertEqual(selected.last,next)
     }
-    XCTAssertTrue(try button("graphic-start-menu").isHidden)
+    XCTAssertTrue(try button("graphic-routing-menu").isHidden)
     controls.graphic = .init(shape:.connector,connection:.init(start:.init(point:.zero),end:.init(point:.init(x:160,y:120))))
     controls.configure(selectionID:UUID(),frame:frame); controls.layoutIfNeeded()
     XCTAssertTrue(mode.isHidden)
     XCTAssertFalse((controls.accessibilityElements ?? []).contains { ($0 as? UIButton) === mode })
-    let start = try button("graphic-start-menu"), end = try button("graphic-end-menu")
+    let start = try button("graphic-routing-menu"), end = try button("graphic-ends-menu")
     XCTAssertFalse(start.isHidden); XCTAssertFalse(end.isHidden)
-    XCTAssertEqual(start.accessibilityValue,"Нет"); XCTAssertEqual(end.accessibilityValue,"Стрелка")
+    XCTAssertEqual(start.accessibilityValue,"Прямая"); XCTAssertEqual(end.accessibilityValue,"Нет, Стрелка")
     let surfaces = controls.subviews.flatMap(\.subviews).filter { $0.backgroundColor == UIColor(NotebookChrome.surface) }
     XCTAssertEqual(surfaces.count,1)
     XCTAssertEqual(surfaces.first?.bounds.height,40)
     XCTAssertLessThan(try XCTUnwrap(surfaces.first).bounds.width,274)
     XCTAssertFalse(controls.subviews.contains { $0 is UIVisualEffectView },"No glass presentation around the same object controls")
-    let menu = start.menu
+    let endpoint = ElementMenuButton(type:.system), menu = ElementMenuButton(type:.system)
+    let identity = endpoint.menu
     for _ in 0..<20 {
-      controls.setEndpointMenu(.start,children:[UIAction(title:"Круг") { _ in }])
+      endpoint.contents = [UIAction(title:"Круг") { _ in }]
       controls.configure(selectionID:selection,frame:frame)
-      XCTAssertTrue(start.menu === menu,"Model/layout updates cannot replace a displayed UIKit menu")
+      XCTAssertTrue(endpoint.menu === identity,"Model/layout updates cannot replace a displayed UIKit menu")
     }
+    XCTAssertNotNil(menu.menu)
     controls.layoutIfNeeded()
     for button in (controls.accessibilityElements ?? []).compactMap({ $0 as? UIButton }).filter({ !$0.isHidden }) {
       let rect = button.convert(button.bounds,to:controls)

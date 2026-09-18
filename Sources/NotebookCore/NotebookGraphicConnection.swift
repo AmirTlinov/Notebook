@@ -3,6 +3,7 @@ import Foundation
 /// Authored intent. Bound endpoints never store copies of the node's position.
 /// Free points belong to the connector's existing element frame / world origin.
 public struct NotebookGraphicConnection: Codable, Equatable, Sendable {
+  public enum Routing: String, Codable, CaseIterable, Sendable { case straight, elbow, curved }
   public enum Terminal: String, Codable, CaseIterable, Sendable { case start, end }
   public enum Arrowhead: String, Codable, CaseIterable, Sendable { case none, arrow, triangle, square, dot, pipe, diamond, inverted, bar }
   public struct Binding: Codable, Equatable, Sendable {
@@ -36,15 +37,17 @@ public struct NotebookGraphicConnection: Codable, Equatable, Sendable {
   public var bend: Double
   /// Position of the held curve point along the endpoint axis; nil is the midpoint.
   public var bendPosition: Double?
+  public var routing: Routing?
+  public var resolvedRouting: Routing { routing ?? (bend == 0 ? .straight : .curved) }
   public var startArrowhead: Arrowhead
   public var endArrowhead: Arrowhead
   public var labelPosition: Double
   public init(start: Endpoint, end: Endpoint, bend: Double = 0,
-    startArrowhead: Arrowhead = .none, endArrowhead: Arrowhead = .arrow, labelPosition: Double = 0.5, bendPosition: Double? = nil) {
-    self.start = start; self.end = end; self.bend = bend; self.bendPosition = bendPosition
+    startArrowhead: Arrowhead = .none, endArrowhead: Arrowhead = .arrow, labelPosition: Double = 0.5, bendPosition: Double? = nil, routing: Routing? = nil) {
+    self.start = start; self.end = end; self.bend = bend; self.bendPosition = bendPosition; self.routing = routing
     self.startArrowhead = startArrowhead; self.endArrowhead = endArrowhead; self.labelPosition = labelPosition
   }
-  static let causalFields = ["start", "end", "bend", "startArrowhead", "endArrowhead", "labelPosition", "bendPosition"]
+  static let causalFields = ["start", "end", "bend", "startArrowhead", "endArrowhead", "labelPosition", "bendPosition", "routing"]
   var isValid: Bool {
     start.isValid && end.isValid && bend.isFinite && abs(bend) <= 1_000_000
       && (bendPosition == nil || (bendPosition!.isFinite && (0...1).contains(bendPosition!)))
@@ -161,7 +164,7 @@ public struct NotebookGraphicGraph: Sendable {
   /// The whole closed node is a binding target; empty bounding-box corners are
   /// not. Prefer the innermost target and retain it at its edge during a drag.
   public func binding(at point: SpatialPoint, origin: WorldPoint = .zero, surface: SurfaceID,
-    excluding id: String? = nil, tolerance: Double, retaining retainedID: String? = nil) -> NotebookGraphicConnection.Binding? {
+    excluding id: String? = nil, tolerance: Double, retaining retainedID: String? = nil, erasures: [String: [InkElementErasure]] = [:]) -> NotebookGraphicConnection.Binding? {
     var candidates: [(node: Node, distance: Double, inside: Bool, point: SpatialPoint)] = []
     for node in nodes.values where node.shown && node.graphic.shape != .connector && node.surface == surface && node.id != id {
       let delta = origin.delta(to:node.origin), frame = node.frame
@@ -169,6 +172,11 @@ public struct NotebookGraphicGraph: Sendable {
       let edge = NotebookGraphicGeometry.outlineDistance(node.graphic,width:frame.width,height:frame.height,x:p.x,y:p.y)
       let inside = NotebookGraphicGeometry.containsInterior(node.graphic,width:frame.width,height:frame.height,x:p.x,y:p.y)
       guard inside || edge <= tolerance*(node.id == retainedID ? 1.5 : 1) else { continue }
+      if let cuts = erasures[node.id], !cuts.isEmpty {
+        let appearance = NotebookElementAppearance(graphic:node.graphic,layout:nil,
+          size:.init(width:frame.width,height:frame.height),erasures:cuts)
+        guard appearance.contains(p,tolerance:tolerance) else { continue }
+      }
       candidates.append((node,edge,inside,p))
     }
     candidates.sort {
@@ -230,7 +238,8 @@ public struct NotebookGraphicGraph: Sendable {
     guard distance > 0.001 else { return .hidden }
     let normal = SpatialPoint(x: -(b.y-a.y)/distance, y: (b.x-a.x)/distance)
     let position = connection.bendPosition ?? 0.5
-    let middle = SpatialPoint(x: a.x+(b.x-a.x)*position + normal.x*connection.bend, y: a.y+(b.y-a.y)*position + normal.y*connection.bend)
+    let bend = connection.resolvedRouting == .straight ? 0 : connection.bend
+    let middle = SpatialPoint(x: a.x+(b.x-a.x)*position + normal.x*bend, y: a.y+(b.y-a.y)*position + normal.y*bend)
     func clipped(_ endpoint: NotebookGraphicConnection.Endpoint, anchor: SpatialPoint, toward: SpatialPoint) -> SpatialPoint {
       guard let binding = endpoint.binding, !binding.isExact,
         let target = nodes[collaborationIdentity(binding.elementID)] else { return anchor }
@@ -258,8 +267,11 @@ public struct NotebookGraphicGraph: Sendable {
       let t = max(0, (-bb + sqrt(discriminant))/(2*aa))
       return .init(x: anchor.x+(toward.x-anchor.x)*t, y: anchor.y+(toward.y-anchor.y)*t)
     }
-    let start = clipped(connection.start, anchor: a, toward: middle)
-    let end = clipped(connection.end, anchor: b, toward: middle)
+    let horizontal = abs(b.x-a.x) >= abs(b.y-a.y)
+    let startToward = connection.resolvedRouting == .elbow ? (horizontal ? SpatialPoint(x:middle.x,y:a.y) : SpatialPoint(x:a.x,y:middle.y)) : middle
+    let endToward = connection.resolvedRouting == .elbow ? (horizontal ? SpatialPoint(x:b.x,y:middle.y) : SpatialPoint(x:middle.x,y:b.y)) : middle
+    let start = clipped(connection.start, anchor: a, toward: startToward)
+    let end = clipped(connection.end, anchor: b, toward: endToward)
     return .geometry(Self.connectionLayout(graphic: graphic, start: start, end: end, middle: middle, axisStart: a, axisEnd: b))
   }
 
@@ -269,8 +281,21 @@ public struct NotebookGraphicGraph: Sendable {
     let dx = end.x-start.x, dy = end.y-start.y
     let cross = dx*(middle.y-start.y)-dy*(middle.x-start.x)
     var curves: [NotebookGraphicLayout.Curve] = []
+    func segment(_ a: SpatialPoint,_ b: SpatialPoint) -> NotebookGraphicLayout.Curve {
+      .init(start:a,control1:.init(x:a.x+(b.x-a.x)/3,y:a.y+(b.y-a.y)/3),
+        control2:.init(x:a.x+(b.x-a.x)*2/3,y:a.y+(b.y-a.y)*2/3),end:b)
+    }
+    if connection.resolvedRouting == .elbow {
+      // The held waypoint remains on the line and follows both axes. Redundant
+      // collinear/zero segments collapse; no second authored points array.
+      let horizontal = abs(axisEnd.x-axisStart.x) >= abs(axisEnd.y-axisStart.y)
+      let points: [SpatialPoint] = horizontal
+        ? [start,.init(x:middle.x,y:start.y),middle,.init(x:end.x,y:middle.y),end]
+        : [start,.init(x:start.x,y:middle.y),middle,.init(x:middle.x,y:end.y),end]
+      for (a,b) in zip(points,points.dropFirst()) where hypot(b.x-a.x,b.y-a.y) > 0.001 { curves.append(segment(a,b)) }
+      if curves.isEmpty { curves = [segment(start,end)] }
     // The circumcircle through start, held bend and end. Split into <=90° cubics.
-    if abs(cross) > 0.001, hypot(dx,dy) > 0.01 {
+    } else if connection.resolvedRouting == .curved, abs(cross) > 0.001, hypot(dx,dy) > 0.01 {
       let mx = middle.x-start.x, my = middle.y-start.y
       let q = dx*dx+dy*dy, r = mx*mx+my*my
       let center = SpatialPoint(x: start.x+(q*my-r*dy)/(2*cross), y: start.y+(dx*r-mx*q)/(2*cross))

@@ -338,7 +338,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  private static let currentDatabaseVersion: Int64 = 6
+  private static let currentDatabaseVersion: Int64 = 7
 
   func prepareDatabase(initialWorkspaceID: UUID? = nil) throws {
     if currentSQL != nil { guard initialWorkspaceID == nil else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }; return }
@@ -425,11 +425,28 @@ extension NotebookStore {
       if admittedVersion == 2 { try migrateStoredBoardPlacements(database: database) }
       // One historical receipt at a time; no whole-history buffer and no
       // rewritten shared content, hashes, identities or replication cursors.
-      var after = ""
-      while let row = try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file LIKE 'collaboration/actions/%' AND r.parent IS NULL AND r.address>? ORDER BY r.address LIMIT 1", [.text(after)]).first {
-        let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: row[1].blob!)
-        try indexActionReadModel(fragment.value.decode(CollaborationReceipt.self), address: fragment.address, database: database)
-        after = row[0].text!
+      if admittedVersion < 6 {
+        var after = ""
+        while let row = try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file LIKE 'collaboration/actions/%' AND r.parent IS NULL AND r.address>? ORDER BY r.address LIMIT 1", [.text(after)]).first {
+          let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: row[1].blob!)
+          try indexActionReadModel(fragment.value.decode(CollaborationReceipt.self), address: fragment.address, database: database)
+          after = row[0].text!
+        }
+      }
+      var pageInkAfter = ""
+      while let row = try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file LIKE 'pages/%' AND r.collection='actions' AND r.address>? ORDER BY r.address LIMIT 1", [.text(pageInkAfter)]).first {
+        let fragment = try JSONDecoder().decode(NotebookStoredFragment.self,from:row[1].blob!)
+        if fragment.value["tool"]?.string == "eraser" { try indexPageElementErasures(fragment,database:database) }
+        pageInkAfter = row[0].text!
+      }
+      var inkAfter = ""
+      while let row = try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file='spatial-ink.json' AND r.collection='actions' AND r.address>? ORDER BY r.address LIMIT 1", [.text(inkAfter)]).first {
+        let address = row[0].text!
+        let fragment = try JSONDecoder().decode(NotebookStoredFragment.self,from:row[1].blob!)
+        if fragment.value["tool"]?.string == "eraser" {
+          try indexElementErasures(readSpatialInkAction(address),address:address,database:database)
+        }
+        inkAfter = address
       }
       try database.run("PRAGMA user_version=\(Self.currentDatabaseVersion)")
     }
@@ -437,6 +454,8 @@ extension NotebookStore {
 
   /// Called only inside the bootstrap or admission writer transaction.
   private func prepareCurrentDatabaseSchema(_ database: NotebookSQLConnection) throws {
+    try database.run("CREATE TABLE IF NOT EXISTS ink_element_erasures(address TEXT NOT NULL REFERENCES records(address) ON DELETE CASCADE,kind TEXT NOT NULL,owner_id TEXT NOT NULL,element_id TEXT NOT NULL,PRIMARY KEY(address,kind,owner_id,element_id))")
+    try database.run("CREATE INDEX IF NOT EXISTS ink_element_erasures_target ON ink_element_erasures(kind,owner_id,element_id,address)")
     try database.run("CREATE TABLE IF NOT EXISTS graphic_sources(address TEXT NOT NULL REFERENCES records(address) ON DELETE CASCADE,owner TEXT NOT NULL,element_id TEXT NOT NULL,stroke_id TEXT NOT NULL,PRIMARY KEY(address,stroke_id))")
     try database.run("CREATE INDEX IF NOT EXISTS graphic_source_owner ON graphic_sources(owner,stroke_id)")
     try database.run("CREATE TABLE IF NOT EXISTS graphic_bindings(address TEXT NOT NULL REFERENCES records(address) ON DELETE CASCADE,owner TEXT NOT NULL,target_id TEXT NOT NULL,terminal TEXT NOT NULL,PRIMARY KEY(address,terminal))")

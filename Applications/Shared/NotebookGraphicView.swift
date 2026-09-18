@@ -69,30 +69,10 @@ struct NotebookGraphicView: View {
       }
   }
   static func path(_ layout: NotebookGraphicLayout) -> Path {
-    var path = Path()
-    if let first = layout.curves.first { path.move(to: first.start.cgPoint) }
-    for curve in layout.curves {
-      path.addCurve(to: curve.end.cgPoint, control1: curve.control1.cgPoint, control2: curve.control2.cgPoint)
-    }
-    return path
+    Path(NotebookGraphicGeometry.connectionPath(layout))
   }
   private static func outline(_ graphic: NotebookGraphic, in rect: CGRect) -> Path {
-    switch graphic.shape {
-    case .ellipse: return Path(ellipseIn:rect)
-    case .rectangle, .triangle, .diamond:
-      let curves = NotebookGraphicGeometry.polygonCurves(graphic,width:rect.width,height:rect.height)
-      var path = Path()
-      func point(_ p: SpatialPoint) -> CGPoint { .init(x:rect.minX+p.x,y:rect.minY+p.y) }
-      if let first = curves.first { path.move(to:point(first.start)) }
-      for curve in curves { path.addCurve(to:point(curve.end),control1:point(curve.control1),control2:point(curve.control2)) }
-      path.closeSubpath(); return path
-    case .plus:
-      var path = Path()
-      path.move(to:.init(x:rect.minX,y:rect.midY)); path.addLine(to:.init(x:rect.maxX,y:rect.midY))
-      path.move(to:.init(x:rect.midX,y:rect.minY)); path.addLine(to:.init(x:rect.midX,y:rect.maxY))
-      return path
-    case .connector: return Path()
-    }
+    Path(NotebookGraphicGeometry.outlinePath(graphic,in:rect))
   }
 }
 

@@ -78,6 +78,9 @@ struct AgentOverlayView: View {
         let interactiveReference = InteractiveElementReference.page(pageID: pageID, elementID: element.id)
         let layout = element.graphic == nil ? nil : graph.resolve(element.id).layout
         let frame = layout?.frame ?? model.elementPresentationFrame(reference, fallback: element.frame)
+        let cuts = erasures[element.id] ?? []
+        let erased = !cuts.isEmpty && NotebookElementAppearance(graphic:element.graphic,layout:layout,
+          size:.init(width:frame.width,height:frame.height),erasures:cuts).state == .erased
         EditableElementContainer(reference: reference, coordinateScale: 1) {
           if let graphic = graph.nodes[element.id]?.graphic {
             NotebookGraphicElementView(graphic: graphic, reference: reference, layout: layout)
@@ -107,6 +110,8 @@ struct AgentOverlayView: View {
         .offset(x: frame.x, y: frame.y)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent-element-\(element.id)")
+        .accessibilityHidden(erased)
+        .allowsHitTesting(!erased)
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
