@@ -38,13 +38,21 @@ import SwiftUI
       let chat = try unwrap(model.chat), peer = try unwrap(chat.computerID)
       try equal(model.deviceRouteTitle(peer), NearbySync.Route.direct.title)
       chat.expanded = true
+      let priorJobs = Set(chat.jobs.map(\.id))
       await chat.create()
-      try await wait(60) { chat.threadID != nil }
-      let thread = try unwrap(chat.threadID)
+      func createdThread() -> String? {
+        for job in chat.jobs where !priorJobs.contains(job.id) {
+          if case .create = job.input.action, case .created(let task) = job.result { return task.id }
+        }
+        return nil
+      }
+      try await wait(60) { createdThread().map { chat.threadID == $0 } == true }
+      let thread = try unwrap(createdThread())
       recordedThread = thread
-      try await wait(60) { chat.conversation?.access?.available.contains(.workspace) == true }
+      try record("task-created", thread: thread)
+      try await wait(60) { chat.conversation?.threadID == thread && chat.conversation?.access?.available.contains(.workspace) == true }
       await chat.setAccess(.workspace, thread: thread)
-      try await wait(30) { chat.jobs.contains { if case .setAccess = $0.input.action { return $0.state == .accepted }; return false } }
+      try await wait(30) { chat.jobs.contains { $0.input.action == .setAccess(threadID: thread, mode: .workspace) && $0.state == .accepted } }
       try record("sending-isolated-check", thread: thread)
       let sent = await chat.sendMessage(threadID: thread, text: """
         This is an isolated acceptance project and a fresh private Notebook workspace. Do not access any other project.
@@ -52,7 +60,7 @@ import SwiftUI
         Then use Notebook MCP notebook_execute to read nb.help('operation/createDocument'), read fresh nb.board({}) basis and create one document titled \(documentTitle) containing the actual check result. Finish with GUI-183-CHECK-PASSED.
         """, context: "")
       try require(sent)
-      let input = try unwrap(chat.jobs.first(where: { if case .send = $0.input.action { return true }; return false })?.input)
+      let input = try unwrap(chat.jobs.first(where: { if case .send = $0.input.action { return $0.input.action.threadID == thread }; return false })?.input)
       recordedCommand = input.id
       try await wait(180) { chat.conversation?.requests.isEmpty == false }
       let pending = try unwrap(chat.conversation?.requests.first)
