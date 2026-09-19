@@ -1,5 +1,36 @@
 # Проверка Notebook
 
+## 19 сентября, 18:29 МСК — GUI-240: единая private пара release124 установлена
+
+Срез `2968a11bac9dbabd577d02fbd1ebda38e4b67381c18c3407d4e691308f60fe92`
+(`f46c536` + acceptance UI test, затем `3a01d1e`) собран из неизменной копии:
+Release Mac и Simulator0.3.121(124), wire33/manifest15. Private Mac cdhash
+`bc4fd3cdf7587cebf89e67f3450edc3fb77ae978`. Обновление V18Mac/V16Simulator → V19
+сохранило побайтно stores/manifests; исходный mixed baseline помечен отдельно,
+не выдан за единую прежнюю сборку. Evidence `.build/gui250-release-v19/`.
+
+- Mac native **18/18 PASS**: graphic rendering, camera planes и три документных
+  regression (pan/insets, prepared scale, CSS viewport). Exact private Mac был
+  остановлен на время runner и восстановлен; production/GUI183 не затронуты.
+- Simulator native **32/34 PASS**: tools15, topbar, program overlay и часть
+  shared/program checks. Toolbar PNG284/1158 осмотрены. Actual UI **2/2 PASS**:
+  one-tap switch через открытые параметры, независимые shape/operation selectors.
+  Native/UI runtime warnings/skips0.
+- Отказ SharedAttention был неверным fixture: после перемещения обложки он
+  загружал addressed scene старой камеры, затем ожидал подписи в новой.
+  Теперь camera устанавливается до SQL reload. Новый Simulator прогон
+  `.build/gui247-printed-feedback-v20` подтвердил SharedAttention7 и
+  feedback lifecycle6/frozen-frame1: **14 PASS**, warnings/skips0.
+- Второй отказ настоящий: canonical PDF больше не рисуется прежним DOM,
+  поэтому JS shimmer не подсвечивает текст. Native замена в работе; её новый
+  pixel regression пока отрицательный, не объявляется исправленной/принятой.
+
+Первоначальная попытка Release native iPad-тестов отвергнута из-за DEBUG-only
+fixture; это не ошибка Release приложения. Native suite собран отдельно в
+Debug bundle `.gui240-native-test`. Оба режима и отрицательные журналы сохранены.
+Physical iPad и сеть не менялись. System/cold/reference/10-repeat/30-minute
+условия GUI-250 открыты; интеграция и локальные PASS не закрывают GUI-240.
+
 ## 19 сентября, 18:05 МСК — GUI-242/250: настоящее открытие и чтение 300 MiB без отправителя
 
 UI-only runner `.build/gui250-received-program-ui-v20` прошёл два сценария на
