@@ -141,6 +141,8 @@ final class InkRasterRenderer: @unchecked Sendable {
         return nil
       }
       encoder.setRenderPipelineState(baseline)
+      var textureRect = SIMD4<Float>(0, 0, 1, 1)
+      encoder.setVertexBytes(&textureRect, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
       encoder.setFragmentTexture(texture, index: 0)
       encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
     }

@@ -1,0 +1,129 @@
+import NotebookCore
+import PencilKit
+import UIKit
+import XCTest
+@testable import Notebook
+
+@MainActor
+final class PageInkProjectionTests: XCTestCase {
+  func testHeldZoomUsesScreenDensityAndKeepsInputAndSourceCoordinates() async throws {
+    let (window, paper) = try makePaper()
+    defer { paper.retireInput(); window.isHidden = true; window.rootViewController = nil }
+    let projection = ScenePlaneProjection(.init(boardID: UUID(), mode: .page,
+      camera: .init(), viewport: .init(x: window.bounds.width, y: window.bounds.height)))
+    paper.inkProjection.observe(projection)
+    paper.inkView.apply(PageInkDrawing(actions: [line()]))
+    try await ready(paper.inkView)
+    let builds = paper.inkView.pageMeshBuildCount, vertices = paper.inkView.committedVertexCount
+    for scale: CGFloat in [1, 2, 4, 8, 3, 1] {
+      paper.transform = .init(scaleX: scale, y: scale)
+      paper.center = .init(x: window.bounds.midX, y: window.bounds.midY)
+      projection.didProject() // Native camera notification, without SwiftUI republishing the page.
+      try await ready(paper.inkView)
+      let canvas = paper.inkView
+      XCTAssertEqual(canvas.drawableSize.width / canvas.bounds.width, scale * window.screen.scale, accuracy: 0.02)
+      XCTAssertEqual(canvas.drawableSize.height / canvas.bounds.height, scale * window.screen.scale, accuracy: 0.02)
+      XCTAssertLessThanOrEqual(canvas.drawableSize.width, window.bounds.width * window.screen.scale + 6)
+      XCTAssertLessThanOrEqual(canvas.drawableSize.height, window.bounds.height * window.screen.scale + 6)
+      XCTAssertEqual(canvas.pageMeshBuildCount, builds)
+      XCTAssertEqual(canvas.committedVertexCount, vertices)
+      XCTAssertEqual(paper.touchView.bounds.size, CGSize(width: 300, height: 300))
+      let point = paper.touchView.convert(CGPoint(x: window.bounds.midX, y: window.bounds.midY), from: window)
+      XCTAssertEqual(point.x, 150, accuracy: 0.001); XCTAssertEqual(point.y, 150, accuracy: 0.001)
+      if scale == 8 {
+        let image = capture(window)
+        let samples = try centerRow(image)
+        let center = samples.count/2
+        XCTAssertLessThan(samples[center], 40, "The original diagonal crosses the crop center")
+        let fringe = samples[(center-40)...(center+40)].filter { $0 > 16 && $0 < 239 }.count
+        XCTAssertLessThanOrEqual(fringe, 4, "Zoom must regenerate edges, not magnify the original MSAA fringe")
+        let proof = XCTAttachment(image: image); proof.name = "own-ink-native-8x-sharp"; proof.lifetime = .keepAlways; add(proof)
+      }
+    }
+  }
+
+  func testZoomedLiveStrokeAndEraserShareTheCroppedProjection() async throws {
+    let (window, paper) = try makePaper()
+    defer { paper.retireInput(); window.isHidden = true; window.rootViewController = nil }
+    paper.transform = .init(scaleX: 8, y: 8)
+    paper.center = .init(x: window.bounds.midX, y: window.bounds.midY)
+    paper.inkProjection.refresh()
+    let pen = ActiveInkStroke(style: .standard)
+    pen.replaceMeasuredTail(from: 0, with: [point(80,150,width:4),point(220,150,width:4)])
+    paper.inkView.displayActiveStroke(pen)
+    paper.inkView.commitActiveStroke()
+    try await ready(paper.inkView)
+    let before = try centerRow(capture(window))
+    XCTAssertLessThan(before[before.count/2], 40)
+    let eraser = ActiveEraserStroke()
+    eraser.replaceMeasuredTail(from:0,with:[point(150,100,width:12),point(150,200,width:12)])
+    paper.inkView.displayActiveEraser(eraser)
+    paper.inkView.commitActiveEraser()
+    try await ready(paper.inkView)
+    let after = try centerRow(capture(window))
+    XCTAssertGreaterThan(after[after.count/2], 240, "The eraser must remove the center in canonical page coordinates")
+    XCTAssertLessThan(after[after.count/2+150], 40, "Ink outside the eraser remains in the same place")
+  }
+
+  func testPreparedPagesKeepMSAAInTileMemoryAndEmptyPagesReleaseBacking() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene), controller = UIViewController()
+    window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let resources = SceneRenderResources(byteLimit: 16 * 1024 * 1024)
+    var pages: [InkCanvasView] = []
+    for _ in 0..<3 {
+      let canvas = InkCanvasView(frame: .zero, resources: resources)
+      controller.view.addSubview(canvas)
+      canvas.projectPage(region: .init(x: 0, y: 0, width: 300, height: 300),
+        sourceSize: .init(width: 300, height: 300), pixelDensity: 2)
+      canvas.apply(PageInkDrawing(actions: [line()]))
+      try await ready(canvas)
+      XCTAssertEqual(canvas.sampleCount, 1, "MTKView must not allocate duplicate MSAA storage")
+      pages.append(canvas)
+    }
+    XCTAssertGreaterThan(resources.reservedBytes, 0)
+    XCTAssertLessThanOrEqual(resources.reservedBytes, resources.byteLimit)
+    for page in pages { page.apply(PageInkDrawing()); try await ready(page) }
+    XCTAssertEqual(resources.reservedBytes, 0, "Empty pages retain routing, not fictitious backing")
+  }
+
+  private func makePaper() throws -> (UIWindow, PaperCanvasContainerView) {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene:scene), controller = UIViewController()
+    window.rootViewController = controller
+    controller.view.backgroundColor = .white
+    let paper = PaperCanvasContainerView(frame:.init(x:0,y:0,width:300,height:300))
+    controller.view.addSubview(paper); window.makeKeyAndVisible(); window.layoutIfNeeded()
+    paper.center = .init(x:window.bounds.midX,y:window.bounds.midY)
+    paper.inkProjection.refresh()
+    return (window,paper)
+  }
+  private func point(_ x:CGFloat,_ y:CGFloat,width:CGFloat=1) -> PKStrokePoint {
+    .init(location:.init(x:x,y:y),timeOffset:0,size:.init(width:width,height:width),opacity:1,force:1,azimuth:0,altitude:.pi/2)
+  }
+  private func line() -> PageInkAction { .init(tool:.pen,points:[point(50,70),point(250,230)]) }
+  private func ready(_ view:InkCanvasView) async throws {
+    let until = ContinuousClock.now + .seconds(5)
+    while !view.isStableFramePresented {
+      if let failure = view.renderFailure { XCTFail("Render failure: \(failure)"); throw failure }
+      guard ContinuousClock.now < until else { throw NSError(domain:"PageInkProjectionTimeout",code:1) }
+      try await Task.sleep(for:.milliseconds(20))
+    }
+    try await Task.sleep(for:.milliseconds(60))
+  }
+  private func capture(_ window:UIWindow) -> UIImage {
+    let format = UIGraphicsImageRendererFormat();format.scale = window.screen.scale;format.opaque = true
+    return UIGraphicsImageRenderer(bounds:window.bounds,format:format).image { _ in
+      window.drawHierarchy(in:window.bounds,afterScreenUpdates:true)
+    }
+  }
+  private func centerRow(_ image:UIImage) throws -> [UInt8] {
+    let cg = try XCTUnwrap(image.cgImage)
+    var bytes = [UInt8](repeating:0,count:cg.width*cg.height*4)
+    let context = try XCTUnwrap(CGContext(data:&bytes,width:cg.width,height:cg.height,bitsPerComponent:8,
+      bytesPerRow:cg.width*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.draw(cg,in:CGRect(x:0,y:0,width:cg.width,height:cg.height))
+    return (0..<cg.width).map { bytes[(cg.height/2*cg.width+$0)*4] }
+  }
+}

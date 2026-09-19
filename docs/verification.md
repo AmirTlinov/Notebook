@@ -114,10 +114,10 @@ environment; later changes do not inherit acceptance automatically.
 
 ## Current recorded state — September 19–20, 2026
 
-- Latest completed installed pair recorded here: **0.3.130 (133)** on Mac and
-  physical iPad, source commit `8d02d946`, wire **37**, content manifest **18**.
+- Latest completed installed pair recorded here: **0.3.131 (134)** on Mac and
+  physical iPad, source commit `3fc651d4`, wire **37**, content manifest **18**.
   Its exact receipt is below.
-- GUI-266's page-gesture/large-selection follow-up is installed and awaits
+- GUI-266's lasso-selection lifecycle follow-up is installed and awaits
   Amir's physical user acceptance; scoped checks are not full acceptance.
 - GUI-240 is **Done by Amir's explicit decision**; its integration is complete.
   Remaining GUI-250 performance/long-session conditions were not declared passed.
@@ -127,6 +127,29 @@ environment; later changes do not inherit acceptance automatically.
 - Documentation translations do not change application behavior. Source-directory
   Markdown belongs to the build inventory, so this documentation revision has a
   different input identity from earlier installed releases.
+
+## GUI-283 — резкость собственных чернил при увеличении страницы
+
+Изолированная ветка `codex/ink-zoom-sharpness` основана на `93328088`, без изменений рабочей ветки параллельной задачи. Канонические координаты и исходные измерения сохранены: `PageInkProjection` следует существующей камере и рисует только видимую область страницы в фактической плотности экранных пикселей, вместо растягивания прежнего Metal-изображения. Перо, ластик и импортированная растровая основа используют согласованное смещение; Mac уведомляет страницу при изменении нативной проекции. Буферы выделяются только для непустых чернил; MSAA на Apple GPU использует временную память плитки, без второй полноэкранной копии.
+
+Окончательная проверка неизменных исходников: **физический iPad 14/14, Mac 8/8**, предупреждений выполнения нет. Проверены масштабы 1–8× и возврат без перестроения исходной геометрии, резкость диагонального края на снимке при 8×, координаты ввода, перо/ластик, сохранённая геометрия и импортированная основа, настоящий pinch, перемещение увеличенной страницы и перелистывание вперёд/назад. Три подготовленные страницы по 600×600 пикселей прошли при общем бюджете резервирования 16 МиБ; после очистки резервы освобождены — это проверка учёта, не измерение RSS. Снимок `own-ink-native-8x-sharp` просмотрен.
+
+Источник SHA-256: `0387f0680b50651a5eba47a0bdd70b6585fbbf7ab2efa6b22750aa91b8b2f1cf`. Свидетельства в рабочем дереве `/Users/amir/.codex/worktrees/ink-zoom-sharpness/Notebook`: `.build/gui283-check-v4/verification.json`, снимки `.build/gui283-images-v4/`. Предыдущие попытки сохранены: v1 — неверное имя модуля в новом тесте Mac; v2 — тест ошибочно использовал исходный масштаб 0,22 вместо 1; v3 — 13/13 и 8/8 до уточнения расхода памяти. Один запуск v4 корректно отказался запускать второй Xcode одновременно с основной задачей.
+
+По явному ответу Амира **только код и проверки**: рабочие Mac/iPad-приложения, их версии, данные и ключи не менялись; использовались изолированные тестовые приложения, без симулятора. Установка, аппаратная проверка Pencil пользователем и длительная приёмка не заявлены. Эта правка не включает экспериментальный тензорный рендерер и не добавляет измерений ускорения.
+
+## GUI-266 follow-up: lasso selection survives scene publication — build 134
+
+Source commit `3fc651d45662975749dc81dd58161cf541309384` is pushed. Immutable input SHA-256: `351d62d13e7ae42797cc0a5f1e72d64644c455d15db47669532f3f2b91862450`. The signed pair retains wire 37 and manifest 18.
+
+- Reproduced the reported Pencil outline without retained selection in the mounted native scene: an older SQL scene cut discarded accepted lasso selection while its ink conversion was still being written. The existing accepted-working-graphic owner now retains it until exact publication; no new selection state or fallback was added.
+- A second, independent `AgentOverlayView` callback cleared the selection from its rendered element list even after the conversion had saved. Its removal leaves reconciliation to the model instead of two competing owners. A captured diagnostic stack identified this callback; temporary logging was removed before the final run.
+
+Final unchanged-source verification: **physical iPad 34/34**, zero failures/skips, runtime warnings empty. The mounted-scene regression blocks the SQL writer, completes lasso through the installed Pencil recognizer, publishes the older scene, then releases persistence and verifies the same selection and geometry survive. It includes 27 pen strokes and a long self-intersecting eraser, preserving the original ink journal. Native coverage also exercises type filters and accepted moves; device UI gestures cover selected-object drag, edge taps, zoom/camera pan and page curl. The retained selection screenshot was inspected. Pencil contacts in the native regression are synthesized on the physical device, not hardware Pencil acceptance. No simulator was used.
+
+Diagnostic runs remain recorded: A corrected a missing notebook pin in the regression setup; B reproduced the original premature deselection; C/D isolated the remaining view-owned reset after the model fix. Final evidence: `.build/gui266-lasso134e/verification.json`, `.build/gui266-followup134/attachments-e/`, `.build/gui266-build134/build.json`. A read-only copy of live page ink was separately selected and saved in isolated stores; it was not a production-content mutation or a live UI acceptance claim.
+
+Mac and physical iPad were updated in place to **0.3.131 (134)** and launched at about **23:05 UTC on September 19**. Amir explicitly authorized interrupting active work; ordinary AppKit shutdown completed without forced termination. Mac store/spaces/registry/activation bytes before relaunch and the iPad workspace registry digest were preserved. Installed versions were read back on both devices. Fresh installed-helper readback at cursor **25774** matched baseline **25753** for the checked page and board data/content/ink revisions. The installed iPad screenshot shows the existing user notebook and ink. Receipt: `.build/gui266-install134/installation.json`. GUI-266 user acceptance, hardware Pencil feel and full performance/long-session acceptance remain open.
 
 ## GUI-266 follow-up: page gesture ownership and large selection — build 133
 

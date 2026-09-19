@@ -238,6 +238,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var baselineTexture: (any MTLTexture)?
   private var baselineReservation: RasterReservation?
   private var baselinePNG: Data?
+  private(set) var pageRenderRegion: CGRect?
+  private var pageSourceSize = CGSize.zero
+  private var pageDrawableReservation: RasterReservation?
+  private var pageAdmittedSize = CGSize.zero
+  private var pageMultisample: (any MTLTexture)?
 
   private var activeInkStroke: ActiveInkStroke?
   private var activeEraserStroke: ActiveEraserStroke?
@@ -362,6 +367,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       cancelPendingPageMesh()
       if spatialHandoffRetains == 0 {
         releaseDrawables()
+        pageDrawableReservation = nil; pageMultisample = nil
         releaseGeometryBuffers()
         spatialTarget?.detach(); spatialTarget = nil
       }
@@ -377,6 +383,47 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       requestFrame()
     }
     schedulePageMeshIfNeeded()
+  }
+
+  /// Page hosts keep canonical input bounds. Only the visible Metal child is
+  /// cropped; its backing follows the actual ancestor projection into pixels.
+  func projectPage(region: CGRect, sourceSize: CGSize, pixelDensity: CGFloat) {
+    guard spatialDrawableScale == nil, !region.isEmpty, !region.isNull else { return }
+    let pixels = CGSize(width: ceil(region.width * pixelDensity), height: ceil(region.height * pixelDensity))
+    guard pixels.width.isFinite, pixels.height.isFinite,
+      (1...16_384).contains(pixels.width), (1...16_384).contains(pixels.height) else { return }
+    guard region != pageRenderRegion || drawableSize != pixels || pageSourceSize != sourceSize else { return }
+    pageRenderRegion = region; pageSourceSize = sourceSize
+    autoResizeDrawable = false
+    frame = region
+    drawableSize = pixels
+    beginStableContentUpdate()
+    requestFrame()
+  }
+
+  private func admitPageDrawable(samples: Int) -> Bool {
+    guard pageRenderRegion != nil else { return true }
+    if pageDrawableReservation != nil, pageAdmittedSize == drawableSize { return true }
+    guard let device else { return false }
+    let width = Int(drawableSize.width), height = Int(drawableSize.height)
+    let color = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: colorPixelFormat,
+      width: width, height: height, mipmapped: false)
+    color.storageMode = .private; color.usage = .renderTarget
+    let drawableBytes = max(device.heapTextureSizeAndAlign(descriptor: color).size,
+      ((width * 4 + 255) / 256) * 256 * height)
+    let msaa = MTLTextureDescriptor()
+    msaa.textureType = .type2DMultisample; msaa.pixelFormat = colorPixelFormat
+    msaa.width = width; msaa.height = height; msaa.sampleCount = samples
+    msaa.usage = .renderTarget
+    msaa.storageMode = device.supportsFamily(.apple1) ? .memoryless : .private
+    let attachmentBytes = samples > 1 && msaa.storageMode != .memoryless
+      ? device.heapTextureSizeAndAlign(descriptor: msaa).size : 0
+    guard let reservation = resources.reserveDerivedBytes(drawableBytes * Self.framesInFlight + attachmentBytes,
+      priority: .input, owner: physicalAdmission) else { renderFailure = .resourceLimit; return false }
+    let attachment = samples > 1 ? device.makeTexture(descriptor: msaa) : nil
+    guard samples == 1 || attachment != nil else { renderFailure = .resourceLimit; return false }
+    pageDrawableReservation = reservation; pageMultisample = attachment; pageAdmittedSize = drawableSize
+    return true
   }
 
   /// The same physical board layer moves between the active scene, its portal
@@ -682,10 +729,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     if spatialDrawableScale != nil, submittedFrameCount > 0 || submittedPresentationCount > 0 { return }
     if presentEmptyContentIfReady() { return }
     let samples = device?.supportsTextureSampleCount(4) == true ? 4 : 1
-    guard admitSpatialDrawable(samples: samples) else { return }
-    // A retained scene canvas owns its explicit MSAA attachment. Asking
-    // MTKView for another implicit attachment would double the allocation.
-    sampleCount = spatialDrawableScale == nil ? samples : 1
+    guard admitSpatialDrawable(samples: samples), admitPageDrawable(samples: samples) else { return }
+    // Page crops and retained scene canvases own their MSAA attachment.
+    // Apple GPUs keep it in tile memory; do not allocate another implicit copy.
+    sampleCount = spatialDrawableScale == nil && pageRenderRegion == nil ? samples : 1
     guard inFlightSemaphore.wait(timeout: .now()) == .success else { return }
     var mustSignal = true
     defer {
@@ -728,6 +775,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       }
     } else {
       guard let pass = currentRenderPassDescriptor, let drawable = currentDrawable else { return }
+      if let pageMultisample {
+        pass.colorAttachments[0].texture = pageMultisample
+        pass.colorAttachments[0].resolveTexture = drawable.texture
+        pass.colorAttachments[0].storeAction = .multisampleResolve
+      }
       passes.append((pass, drawable, nil, nil, visible))
     }
     lastRenderedTileCount = passes.count
@@ -756,6 +808,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       if let baselineTexture, let baselinePipelineState {
         encoder.label = "Imported Notebook Ink Baseline"
         encoder.setRenderPipelineState(baselinePipelineState)
+        var textureRect = SIMD4<Float>(0, 0, 1, 1)
+        if let crop = pageRenderRegion, pageSourceSize.width > 0, pageSourceSize.height > 0 {
+          textureRect = .init(Float(crop.minX/pageSourceSize.width), Float(crop.minY/pageSourceSize.height),
+            Float(crop.width/pageSourceSize.width), Float(crop.height/pageSourceSize.height))
+        }
+        encoder.setVertexBytes(&textureRect, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
         encoder.setFragmentTexture(baselineTexture, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
       }
@@ -776,6 +834,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     let heldGeometry = visible.compactMap { committedBatches[$0.0].buffers[$0.1]?.reservation }
       + (activeBufferReservations[frameSlot].map { [$0] } ?? [])
       + (baselineReservation.map { [$0] } ?? [])
+      + (pageDrawableReservation.map { [$0] } ?? [])
     submittedFrameCount += 1
     let physical = physicalAdmission
     let target = spatialTarget
@@ -865,7 +924,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     encoder.setVertexBytes(&viewportSize, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
     for (batchIndex, chunkIndex) in visible {
       let batch = batches[batchIndex]
-      let transform = batch.mesh.projection.transform(camera: camera, viewport: viewport)
+      var transform = batch.mesh.projection.transform(camera: camera, viewport: viewport)
+      if camera == nil, let crop = pageRenderRegion {
+        transform.z -= Float(crop.minX); transform.w -= Float(crop.minY)
+      }
       if let clip, !batch.mesh.chunks[chunkIndex].intersects(viewport: clip, transform: transform) { continue }
       var affine = InkAffine(transform)
       encoder.setVertexBytes(&affine, length: MemoryLayout<InkAffine>.stride, index: 2)
@@ -877,6 +939,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     }
     if let active {
       var identity = InkAffine()
+      if camera == nil, let crop = pageRenderRegion { identity.x.z = -Float(crop.minX); identity.y.z = -Float(crop.minY) }
       encoder.setVertexBytes(&identity, length: MemoryLayout<InkAffine>.stride, index: 2)
       for chunk in activeMesh.chunks {
         if let clip, !chunk.intersects(viewport: clip, transform: .init(1, 1, 0, 0)) { continue }
@@ -1205,6 +1268,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     isPaused = true
     if sampleCount != 1 { sampleCount = 1 }
     releaseDrawables()
+    pageDrawableReservation = nil; pageMultisample = nil
     spatialTarget?.detach(); spatialTarget = nil
     hasRevealedFirstFrame = false
     CATransaction.begin()
@@ -1374,7 +1438,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     viewport: SpatialPoint, size: CGSize, pixelScale: Float? = nil
   ) throws -> [(Int, Int)] {
     var visible: [(Int, Int)] = []
-    let viewportRect = CGRect(origin: .zero, size: size)
+    let viewportRect = camera == nil ? (pageRenderRegion ?? CGRect(origin: .zero, size: size)) : CGRect(origin: .zero, size: size)
     for batchIndex in batches.indices {
       let mesh = batches[batchIndex].mesh
       let transform = mesh.projection.transform(camera: camera, viewport: viewport)
