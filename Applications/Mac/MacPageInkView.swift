@@ -125,7 +125,7 @@ final class MacPageInkCanvas: NSView {
     let color = actionStyle.color.components
     let action = PageInkAction(tool: actionTool == .pen ? .pen : .eraser,
       color: .init(red: color.red, green: color.green, blue: color.blue), points: points).erasingElements(actionTargets)
-    if actionTool == .pen { ink.commitActiveStroke() } else { ink.commitActiveEraser() }
+    if actionTool == .pen { ink.commitActiveStroke(action) } else { ink.commitActiveEraser(action) }
     unpublished.insert(action.id)
     let accepted = model.acceptDrawingAction(action, pageID: pageID, stamp: stamp)
     pen = nil; eraser = nil; points = []

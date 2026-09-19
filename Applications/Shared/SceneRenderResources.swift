@@ -23,7 +23,7 @@ enum SceneRasterSource: Equatable, Sendable {
       Self.agent(left) == .agent(right) && leftRegion == rightRegion
     case (.document(let leftID, let leftToken), .document(let rightID, let rightToken)):
       leftID == rightID && leftToken == rightToken
-    case (.composition(let left), .composition(let right)): left == right
+    case (.composition(let left), .composition(let right)): left.pixelIdentity == right.pixelIdentity
     default: false
     }
   }
@@ -38,7 +38,7 @@ enum SceneRasterSource: Equatable, Sendable {
     case .agent(let element): .agent(element.id)
     case .agentRegion(let element, _): .agent(element.id)
     case .document(let id, _): .document(id)
-    case .composition(let key): .composition(key)
+    case .composition(let key): .composition(key.pixelIdentity)
     }
   }
 }

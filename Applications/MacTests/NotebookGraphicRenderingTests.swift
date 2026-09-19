@@ -78,6 +78,63 @@ import XCTest
     XCTAssertLessThan(try XCTUnwrap(image.colorAt(x:140,y:140)?.usingColorSpace(.deviceRGB)).redComponent,0.2)
   }
 
+  func testDenseBoardPreviewAndCompositionTilesKeepMainActorResponsive() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let workspace = try store.loadIndex(), before = try store.loadBoard(items: workspace.items)
+    var tree = before
+    _ = tree.moveItem(workspace.selectedItemID, in: header.rootBoardID, to: .init(x: 10000, y: 10000), actor: actor)
+    let frame = PageRect(x: 20, y: 20, width: 160, height: 160)
+    let element = SpatialElement(id: "dense-board-cut", surface: .board(header.rootBoardID), kind: .graphic,
+      frame: .init(x: frame.x, y: frame.y, width: frame.width, height: frame.height), worldOrigin: .zero,
+      source: "", graphic: .init(shape: .rectangle, style: .init(strokeWidth: 2, fill: .black)), stamp: workspace.stamp)
+    XCTAssertTrue(tree.upsertElement(element, in: header.rootBoardID, expected: nil, actor: actor))
+    _ = try store.saveBoardEdits(before: before, after: tree)
+    let samples = (0..<3603).map { index in
+      let angle = Double(index) * 0.31
+      let point = SpatialPoint(x: 80 + cos(angle) * 3, y: 80 + sin(angle) * 3)
+      return SpatialInkSample(point: point, worldPoint: .init(x: point.x, y: point.y), timeOffset: Double(index) / 240,
+        width: 36, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+    }
+    var ink = try store.loadSpatialInk()
+    _ = ink.append(tool: .eraser, spans: [.init(surface: .board(header.rootBoardID), samples: samples,
+      elementTargets: [.init(elementID: element.id, frame: frame, worldOrigin: .zero)])], actor: actor)
+    try store.saveSpatialInk(ink)
+    let current = try store.workspaceHeader()
+    let source = SceneCompositionSource(store: store, revision: current.cursor, workspaceID: current.workspaceID)
+    let presence = SessionPresence(boardID: header.rootBoardID, mode: .board,
+      camera: .init(center: .init(x: 100, y: 100), scale: 1), viewport: .init(x: 200, y: 200))
+    let resources = SceneRenderResources()
+    var maximumGap = Duration.zero, ticks = 0
+    let heartbeat = Task { @MainActor in
+      var previous = ContinuousClock.now
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .milliseconds(10))
+        let now = ContinuousClock.now
+        maximumGap = max(maximumGap, previous.duration(to: now)); previous = now; ticks += 1
+      }
+    }
+    defer { heartbeat.cancel() }
+    let start = ContinuousClock.now
+    let result = try await SceneCompositionRenderer(source: source, resources: resources).render(presence: presence, scale: 1)
+    let tile = try XCTUnwrap(CompositionTile(containing: .init(x: 80, y: 80), level: 0))
+    let key = SceneCompositionTileKey(workspaceID: current.workspaceID, revision: current.cursor, plane: .board(header.rootBoardID),
+      tile: tile, range: .whole(.elements), presentationScale: 1, viewportWidth: 200, viewportHeight: 200, focusedItemID: nil, mode: "board")
+    let raster = try await SceneCompositionRenderer(source: source, resources: resources).renderTile(key: key, presentation: presence)
+    raster.release()
+    try await Task.sleep(for: .milliseconds(20))
+    XCTAssertGreaterThan(ticks, 2)
+    XCTAssertLessThan(maximumGap, .seconds(1), "Dense masks must not enter CPU softmask rendering on MainActor")
+    XCTAssertLessThan(start.duration(to: .now), .seconds(10))
+    let image = try XCTUnwrap(NSBitmapImageRep(data: result.png))
+    XCTAssertGreaterThan(try XCTUnwrap(image.colorAt(x: 80, y: 80)?.usingColorSpace(.deviceRGB)).redComponent, 0.8)
+    XCTAssertLessThan(try XCTUnwrap(image.colorAt(x: 140, y: 140)?.usingColorSpace(.deviceRGB)).redComponent, 0.2)
+    let proof = XCTAttachment(string: "samples=3603; elapsed=\(start.duration(to: .now)); maximumMainActorGap=\(maximumGap); ticks=\(ticks)")
+    proof.name = "dense-board-preview-main-actor"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testRoundEraserTurnLeavesNoPenMiterInSavedPixels() async throws {
     func sample(_ x: Double, _ y: Double, _ width: Double) -> SpatialInkSample {
       .init(point:.init(x:x,y:y),timeOffset:0,width:width,opacity:1,force:1,azimuth:0,altitude:1)

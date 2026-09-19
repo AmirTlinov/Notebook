@@ -261,11 +261,13 @@ enum NotebookPinnedImageRenderer {
       let local = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
       let frame = CGRect(x: delta.x + local.x - region.x, y: delta.y + local.y - region.y,
         width: local.width, height: local.height)
+      let appearance = try await NotebookElementErasureCache.Input(graphic: element.graphic,
+        layout: layout, size: frame.size, erasures: erasures).prepared()
       if let graphic = element.graphic {
         guard graphic.connection == nil || layout != nil else { throw SceneRenderError.snapshotPending("historical_graphic_dependencies") }
-        try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:layout,erasures:erasures), size: frame.size, in: frame)
+        try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:layout,erasures:erasures,appearance:appearance), size: frame.size, in: frame)
       } else if element.kind == .nativeText {
-        try await canvas.drawView(SpatialTextSnapshot(element: element).erased(by: erasures), size: frame.size, in: frame)
+        try await canvas.drawView(SpatialTextSnapshot(element: element).erased(by: erasures, appearance: appearance), size: frame.size, in: frame)
       } else {
         guard let visuals else { throw SceneRenderError.snapshotPending("historical_frame_unavailable") }
         let raster = try visuals.raster(referenceID: reference.id, key: element.id,

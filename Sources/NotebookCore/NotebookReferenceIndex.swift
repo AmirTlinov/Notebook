@@ -128,6 +128,32 @@ extension NotebookStore {
     return binding.identities.first { $0.target == target }?.revision
   }
 
+  /// Pixel reuse has a content identity, not a global SQL read cursor. The
+  /// existing owner digest includes ink tombstones, off-window elements, item
+  /// titles and nested portal contents. Only this board's entry camera is not
+  /// painted on the board itself; a child's camera remains a real dependency.
+  public func scenePaintRevision(target: CollaborationTarget) throws -> String {
+    guard target.kind == .board || target.kind == .cover else {
+      throw NotebookStorageError.invalidTransaction("scene paint owner")
+    }
+    return try readTransaction { _ in
+      let identity = try referenceIdentities(targets: [target])[0]
+      guard target.kind == .board else { return identity.revision }
+      let owner = Self.referenceOwnerKey("board", target.id)
+      let address = Self.referenceBoardAddress(target.id)
+      guard var digest = try currentSQL!.rows("SELECT digest FROM reference_owners WHERE owner_key=?", [.text(owner)]).first?[0].blob,
+        let fragment = try storedFragments(address: address, descendants: false).first,
+        let old = try currentSQL!.rows("SELECT hash FROM reference_contributions WHERE address=? AND owner_key=?",
+          [.text(address), .text(owner)]).first?[0].text else {
+        throw NotebookStorageError.corruptRecord(address)
+      }
+      let content = fragment.value.setting("portalCamera", nil).setting("portalStamp", nil)
+      Self.xorReferenceDigest(&digest, Self.referenceContribution(address, old))
+      Self.xorReferenceDigest(&digest, Self.referenceContribution(address, try collaborationHash(content)))
+      return Self.referenceHash(Data(("scene-paint-v1\n" + owner + "\n").utf8) + digest)
+    }
+  }
+
   public func referenceIdentities(targets: [CollaborationTarget]) throws -> [NotebookReferenceIdentity] {
     guard targets.count <= 512, Set(targets).count == targets.count else { throw NotebookStorageError.limitExceeded("reference_identities") }
     return try readTransaction { _ in

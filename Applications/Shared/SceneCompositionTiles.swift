@@ -38,6 +38,7 @@ enum SceneCompositionPlane: Hashable, Codable, Sendable {
 struct SceneCompositionTileKey: Hashable, Codable, Sendable {
   let workspaceID: UUID
   let revision: UInt64
+  let contentRevision: String?
   let plane: SceneCompositionPlane
   let tile: CompositionTile
   let range: ScenePaintRange
@@ -49,18 +50,32 @@ struct SceneCompositionTileKey: Hashable, Codable, Sendable {
   let pixelSize: Int
   init(workspaceID: UUID, revision: UInt64, plane: SceneCompositionPlane, tile: CompositionTile,
     range: ScenePaintRange, presentationScale: Double, viewportWidth: Double, viewportHeight: Double,
-    focusedItemID: UUID?, mode: String, pixelSize: Int = CompositionTile.pixelSize) {
-    self.workspaceID = workspaceID; self.revision = revision; self.plane = plane; self.tile = tile; self.range = range
+    focusedItemID: UUID?, mode: String, pixelSize: Int = CompositionTile.pixelSize, contentRevision: String? = nil) {
+    self.workspaceID = workspaceID; self.revision = revision; self.contentRevision = contentRevision
+    self.plane = plane; self.tile = tile; self.range = range
     // Only cover/portal painting uses the external camera to choose its content.
     // World-space elements and ink are rasterized in the tile's own basis.
     self.presentationScale = range.layer == .covers ? presentationScale : 1
-    self.viewportWidth = viewportWidth; self.viewportHeight = viewportHeight
-    self.focusedItemID = focusedItemID; self.mode = mode; self.pixelSize = pixelSize
+    self.viewportWidth = range.layer == .covers ? viewportWidth : 0
+    self.viewportHeight = range.layer == .covers ? viewportHeight : 0
+    self.focusedItemID = range.layer == .covers ? focusedItemID : nil
+    self.mode = range.layer == .covers ? mode : ""; self.pixelSize = pixelSize
   }
   func atRevision(_ revision: UInt64) -> Self {
     .init(workspaceID: workspaceID, revision: revision, plane: plane, tile: tile, range: range,
       presentationScale: presentationScale, viewportWidth: viewportWidth, viewportHeight: viewportHeight,
-      focusedItemID: focusedItemID, mode: mode, pixelSize: pixelSize)
+      focusedItemID: focusedItemID, mode: mode, pixelSize: pixelSize, contentRevision: contentRevision)
+  }
+  func withContentRevision(_ content: String?) -> Self {
+    .init(workspaceID: workspaceID, revision: revision, plane: plane, tile: tile, range: range,
+      presentationScale: presentationScale, viewportWidth: viewportWidth, viewportHeight: viewportHeight,
+      focusedItemID: focusedItemID, mode: mode, pixelSize: pixelSize, contentRevision: content)
+  }
+  /// SQL revision remains the read fence. Only the existing bounded pixel pool
+  /// indexes by completed physical content; no retained-cohort cache is needed.
+  var pixelIdentity: Self { contentRevision == nil ? self : atRevision(0) }
+  func hasSamePaintWindow(as other: Self) -> Bool {
+    withContentRevision(nil).atRevision(0) == other.withContentRevision(nil).atRevision(0)
   }
 }
 
@@ -950,9 +965,11 @@ final class SceneCompositionTiles {
             }
             self?.scheduleSources(renderer.receipts(), runtimeOwners: runtimeOwners, presence: presence, frame: frame)
             let cached = selected.filter { resources.image(for: $0.demand.rasterSource, minimumScale: $0.requestedScale) != nil }
-            let invalidatedTiles = Set(previous?.tileSources.compactMap { key, addresses in
-              addresses.isDisjoint(with: changedSources) ? nil : key.atRevision(plan.revision)
-            } ?? [])
+            let invalidatedTiles = Set(plan.tiles.filter { key in
+              previous?.tileSources.contains { oldKey, addresses in
+                oldKey.hasSamePaintWindow(as: key) && !addresses.isDisjoint(with: changedSources)
+              } == true
+            })
             let borrowed = try Self.borrowRasters(plan: plan, requests: cached, previous: previous,
               canCarry: canCarry, resources: resources, invalidatedTiles: invalidatedTiles)
             rasters = borrowed.tiles; liveRasters = borrowed.live
@@ -1387,7 +1404,7 @@ final class SceneCompositionTiles {
         }
       }
       for key in plan.tiles {
-        if !invalidatedTiles.contains(key), canCarry, let previous, let old = previous.rasters[key.atRevision(previous.plan.revision)],
+        if !invalidatedTiles.contains(key), canCarry, let previous, let old = previous.rasters.first(where: { $0.key.hasSamePaintWindow(as: key) })?.value,
           !old.isReleased, let hit = old.retainedCopy() { tiles[key] = hit }
         else if !invalidatedTiles.contains(key), let hit = resources.retainComposition(key, accepts: { receipts in
           receipts.allSatisfy { address, receipt in

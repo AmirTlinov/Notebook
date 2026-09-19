@@ -40,6 +40,19 @@ struct NotebookElementErasing {
     func prepare() -> NotebookElementAppearance {
       .init(graphic:graphic,layout:layout,size:size,erasures:erasures)
     }
+
+    /// CPU snapshots must never rasterize the live overlapping triangle mask
+    /// on MainActor. Cancellation also revokes the worker's unpublished result.
+    func prepared() async throws -> NotebookElementAppearance? {
+      guard !erasures.isEmpty else { return nil }
+      let worker = Task.detached(priority: .userInitiated) {
+        try Task.checkCancellation()
+        let value = prepare()
+        try Task.checkCancellation()
+        return value
+      }
+      return try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+    }
   }
   private struct Address: Hashable { let surface: SurfaceID; let id: String }
   private struct Entry {

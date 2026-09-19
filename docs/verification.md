@@ -13629,3 +13629,51 @@ selection заново опубликована в новом сеансе. Prod
 просмотрен: прежняя страница2/4 с «ПриветПривет». Live content для проверки
 не менялся. Xcode/device окно освобождено после readback; GUI240 согласовал
 следующий краткий Mac UI-only проход перед GUI183.
+
+## GUI-273: блокировка preview, геометрическая рукопись и возврат — 129
+
+Срез 0.3.126(129), wire34/manifest16, от базы `2459e309`. До исправления
+два sample production127 с интервалом около70с показывали главный поток в
+`MacPreviewPublisher → SceneCompositionRenderer → ImageRenderer → CoreGraphics
+softmask/aa_render`. Это подтверждённая CPU-блокировка автоматического preview,
+не доказанная утечка памяти. Найденный в содержании stroke с3603samples —
+характерный тяжёлый вход, но его тождество аргументу зависшего стека не доказано.
+
+Каноническая маска стирания готовится вне MainActor до CPU snapshot; сырые
+тысячи пересекающихся треугольников в этот путь больше не поступают. Page ink
+остаётся измеренной Metal-геометрией после pen-up, durable settle и reopen;
+неизменные действия используют прежние meshes/buffers. Обязательный fixed2x
+bitmap runtime удалён, реальный imported baselinePNG и raster preview/export
+сохранены. Формат чернил и общий tessellator не менялись. Уже ограниченный
+пул composition использует существующий content digest вместо общего SQL
+cursor: собственная камера входа не меняет пиксели доски, вложенная камера,
+изменённые чернила и tombstones меняют. Новый кэш/лимиты не добавлены.
+
+`swift test --filter NotebookScenePaintRevisionTests`: 1/1 PASS. Финальный
+`.build/gui273-verify129c/verification.json`: **17/17 physical iPad +2/2 Mac
+PASS** на неизменном source SHA256
+`4dcd0c3104e9b93cd5eef9ace06e7bcb06ff73f2c3a9eec3af17f7c525799906`.
+Проверены live/settled/cold pixel parity, pen/eraser chronology, undo reuse,
+новый local tail во время подготовки, source cancellation, unmount/remount,
+imported baseline, dense erased page/board, SQL invalidation/warm reuse и
+physical finger double-tap/back/pinch. Первоначальный129a UI-тест стирания
+не применим к physical iPad: он выдаёт finger за Pencil только под simulator
+compile flag. В production gate ничего не ослаблено; симулятор не запускался.
+
+Финальная Mac-регрессия3603samples: preview+tile **0.821144583с**,
+максимальный main-actor heartbeat gap **0.011096834с**,71ticks. SQL
+A→parent→A сохранил2 исходных tile entries, warm publication **0.128906833с**.
+Это измерения конкретных регрессий, не системный FPS и не гарантия задержки
+любой пользовательской доски. Attachments: `.build/gui273-results/{mac,ipad}`.
+
+Signed pair `.build/gui273-build129/build.json` собрана из того же source.
+В19:42UTC129 установлена поверх128 на production Mac и physical iPad:
+normal termination/drain, Mac store/spaces/registry/activation bytes до
+relaunch и iPad registry неизменны; без uninstall/reset/замены ключей.
+`.build/gui273-install129/installation.json`: installed MCP ready23047,
+presence/pageHeader/boardContentRevision data и basis совпали с baseline23040.
+Mac Back показал доску; последующее открытие документа через CUA не подтверждено
+из-за `noWindowsAvailable` у coordinate actions. Отдельный3с sample после
+возврата не содержит прежний softmask stack; это не замена замеру перехода.
+Xcode/device runner освобождён. Аппаратное ощущение Pencil, системные FPS/CPU/GPU,
+десять повторов и30мин совместной работы остаются вне этой scoped проверки.

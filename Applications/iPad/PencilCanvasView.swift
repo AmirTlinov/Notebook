@@ -413,14 +413,14 @@ final class PaperCanvasContainerView: UIView {
     touchView.presentActivePen = { [weak inkView] stroke in
       inkView?.displayActiveStroke(stroke)
     }
-    touchView.commitActivePen = { [weak inkView] in
-      inkView?.commitActiveStroke()
+    touchView.commitActivePen = { [weak inkView] action in
+      inkView?.commitActiveStroke(action)
     }
     touchView.presentActiveEraser = { [weak inkView] stroke in
       inkView?.displayActiveEraser(stroke)
     }
-    touchView.commitActiveEraser = { [weak inkView] in
-      inkView?.commitActiveEraser()
+    touchView.commitActiveEraser = { [weak inkView] action in
+      inkView?.commitActiveEraser(action)
     }
     touchView.clearActiveAction = { [weak inkView] in
       inkView?.clearActiveAction()
@@ -560,9 +560,9 @@ final class PaperInputView: UIView {
   var onDrawingMutation: ((PageInkAction) -> Void)?
   var onActionActivityChange: ((Bool) -> Void)?
   var presentActivePen: ((ActiveInkStroke) -> Void)?
-  var commitActivePen: (() -> Void)?
+  var commitActivePen: ((PageInkAction) -> Void)?
   var presentActiveEraser: ((ActiveEraserStroke) -> Void)?
-  var commitActiveEraser: (() -> Void)?
+  var commitActiveEraser: ((PageInkAction) -> Void)?
   var clearActiveAction: (() -> Void)?
   var resolveQuickShape: (NotebookQuickShapeFit, Double) -> NotebookQuickShapeFit = { fit, _ in fit }
   var onWorkingGraphic: (NotebookWorkingGraphic?, UUID) -> Void = { _, _ in }
@@ -1146,9 +1146,9 @@ final class PaperInputView: UIView {
     let tool = actionTool
     let continuesSequence = actionEndedNormally && tool == .pen && actionPenStyle == penStyle
     if tool?.drawsInk == true, fit == nil {
-      commitActivePen?()
+      commitActivePen?(mutation)
     } else if tool == .eraser {
-      commitActiveEraser?()
+      commitActiveEraser?(mutation)
     }
     let reportedPencilActivity = clearAction(preservingShapeHistory: continuesSequence)
     if continuesSequence, fit == nil {

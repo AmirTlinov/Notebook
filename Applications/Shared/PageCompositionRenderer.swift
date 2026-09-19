@@ -54,13 +54,8 @@ enum PageCompositionRenderer {
       let cuts = erasures[element.id] ?? []
       // Export must not send a dense live triangle mask to ImageRenderer on
       // the main actor. Prepare the same canonical appearance as scene picking.
-      let appearance: NotebookElementAppearance?
-      if !cuts.isEmpty && (element.graphic != nil || element.kind == .nativeText) {
-        let input = NotebookElementErasureCache.Input(graphic:element.graphic,layout:layout,size:frame.size,erasures:cuts)
-        let worker = Task.detached(priority:.utility) { input.prepare() }
-        appearance = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
-        try Task.checkCancellation()
-      } else { appearance = nil }
+      let appearance = try await NotebookElementErasureCache.Input(graphic: element.graphic,
+        layout: layout, size: frame.size, erasures: cuts).prepared()
       if let graphic = element.graphic {
         try await canvas.drawView(NotebookGraphicView(graphic: graphic, layout:layout, erasures:cuts,appearance:appearance), size: frame.size, in: frame)
         continue
