@@ -3,7 +3,16 @@ import NotebookCore
 import NotebookCodex
 @testable import Notebook
 
-private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogueOwner {
+private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogueOwner, NotebookCodexProcessOwner, NotebookCodexVoiceOwner {
+  var processStarts = 0, voiceStarts = 0
+  func startProcess(id: UUID, request: NotebookRunRequest, publish: @escaping @Sendable (NotebookProcessEvent) async throws -> Void) async throws { processStarts += 1; try await publish(.running) }
+  func writeProcess(id: UUID, data: Data) async throws { }
+  func resizeProcess(id: UUID, columns: Int, rows: Int) async throws { }
+  func stopProcess(id: UUID) async throws { }
+  func startVoice(id: UUID, request: NotebookVoiceStart) { voiceStarts += 1 }
+  func stopVoice(id: UUID) { }
+  func voiceState(id: UUID) -> NotebookVoiceState? { nil }
+
   let thread = UUID().uuidString, turn = UUID().uuidString
   var busy = false, unknown = false
   var projectEdits = 0
@@ -97,6 +106,38 @@ final class NotebookCodexSidecarTests: XCTestCase {
     let deadline = ContinuousClock.now + .seconds(8)
     while !(try await predicate()), .now < deadline { try await Task.sleep(for: .milliseconds(50)) }
     let ready = try await predicate(); XCTAssertTrue(ready)
+  }
+
+  func testRevocationBeforeAdmissionRejectsRunAndVoiceButDoesNotUndoAcceptedWork() async throws {
+    try await fixture { store, queue, native, peer in
+      let computer = UUID()
+      let service = NotebookCodexSidecar(persistence: queue, bridge: native, metadata: native,
+        workspaceID: try store.workspaceHeader().workspaceID, computerID: computer, directory: store.root)
+      let actions: [NotebookChatAction] = [
+        .startRun(.init(root: .init(computer: computer, project: "p", root: "/tmp", path: ""), command: "fixture")),
+        .startVoice(.init(threadID: native.thread, sdp: "v=0\r\noffer"))]
+      for action in actions {
+        service.allowDevice(peer)
+        let gate = AdmissionGate()
+        service.accountIdentity = { await gate.wait(); return nil }
+        let input = NotebookChatInput(author: peer, action: action)
+        let receiving = Task { await service.receive(.init(body: .request(.job(input))), peerID: peer) }
+        try await wait { gate.entered }
+        service.revokeDevice(peer); gate.release()
+        _ = await receiving.value
+        XCTAssertNil(try store.chatJob(input.id))
+      }
+      let starts = await native.processStarts, voiceStarts = await native.voiceStarts
+      XCTAssertEqual(starts, 0); XCTAssertEqual(voiceStarts, 0)
+      service.allowDevice(peer); service.accountIdentity = nil
+      let accepted = NotebookChatInput(author: peer, action: actions[0])
+      _ = await service.receive(.init(body: .request(.job(accepted))), peerID: peer)
+      service.revokeDevice(peer)
+      let flushed = await queue.flush(); XCTAssertTrue(flushed)
+      XCTAssertEqual(try store.chatJob(accepted.id)?.state, .accepted)
+      let after = await native.processStarts; XCTAssertEqual(after, 1)
+      await service.stop()
+    }
   }
 
   func testExplicitSteeringBypassesQueuedMessageButKeepsTheExpectedTurn() async throws {
@@ -320,4 +361,11 @@ final class NotebookCodexSidecarTests: XCTestCase {
     }
   }
 
+}
+
+@MainActor private final class AdmissionGate {
+  var entered = false
+  private var continuation: CheckedContinuation<Void, Never>?
+  func wait() async { await withCheckedContinuation { continuation = $0; entered = true } }
+  func release() { continuation?.resume(); continuation = nil }
 }

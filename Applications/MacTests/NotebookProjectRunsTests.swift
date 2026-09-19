@@ -30,6 +30,13 @@ private actor RunOwner: NotebookCodexProcessOwner, NotebookCodexCatalogueOwner {
 }
 
 @MainActor final class NotebookProjectRunsTests: XCTestCase {
+  private func receive(_ service: MacNotebookProjectRuns, _ queue: NotebookPersistenceQueue, _ input: NotebookChatInput) async throws -> NotebookChatJob {
+    let job = try await queue.submit { try $0.saveChatInput(input) }
+    return try await service.receive(job) {
+      try await queue.submit { try $0.advanceChatJob(input.id, from: .saved, to: .attempting) }
+    }
+  }
+
   private func fixture(_ body: (NotebookStore, NotebookPersistenceQueue, RunOwner, NotebookFileAddress, UUID) async throws -> Void) async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -42,16 +49,16 @@ private actor RunOwner: NotebookCodexProcessOwner, NotebookCodexCatalogueOwner {
     try await fixture { store, queue, native, root, author in
       let service = MacNotebookProjectRuns(persistence: queue, executor: native, metadata: native, computer: root.computer)
       let start = NotebookChatInput(author: author, action: .startRun(.init(root: root, command: "read answer")))
-      let accepted = try await service.receive(start); XCTAssertEqual(accepted.result, .run(start.id))
-      _ = try await service.receive(start)
+      let accepted = try await receive(service, queue, start); XCTAssertEqual(accepted.result, .run(start.id))
+      _ = try await receive(service, queue, start)
       let page = try await service.read(.init(root: root)); XCTAssertEqual(String(decoding: page.data, as: UTF8.self), "ready\r\n")
       await native.setUnknownWrite()
       let input = NotebookChatInput(author: author, action: .writeRun(start.id, Data("hello\r".utf8)))
-      let receipt = try await service.receive(input); XCTAssertEqual(receipt.state, .uncertain)
-      _ = try await service.receive(input)
+      let receipt = try await receive(service, queue, input); XCTAssertEqual(receipt.state, .uncertain)
+      _ = try await receive(service, queue, input)
       let cold = MacNotebookProjectRuns(persistence: queue, executor: native, metadata: native, computer: root.computer)
       let recovered = try await cold.read(.init(root: root)); XCTAssertEqual(recovered.record?.phase, .interrupted)
-      _ = try await cold.receive(start); _ = try await cold.receive(input)
+      _ = try await receive(cold, queue, start); _ = try await receive(cold, queue, input)
       let counts = await native.counts(); XCTAssertEqual(counts.0, 1); XCTAssertEqual(counts.1, 1)
       XCTAssertEqual(try store.runRecord(start.id)?.phase, .interrupted)
     }
@@ -60,14 +67,14 @@ private actor RunOwner: NotebookCodexProcessOwner, NotebookCodexCatalogueOwner {
     try await fixture { store, queue, native, root, author in
       let service = MacNotebookProjectRuns(persistence: queue, executor: native, metadata: native, computer: root.computer)
       let start = NotebookChatInput(author: author, action: .startRun(.init(root: root, command: "read answer")))
-      _ = try await service.receive(start)
+      _ = try await receive(service, queue, start)
       let restart = NotebookChatInput(author: author, action: .startRun(.init(root: root, command: "echo finished", replacing: start.id)))
-      _ = try await service.receive(restart); _ = try await service.receive(restart)
+      _ = try await receive(service, queue, restart); _ = try await receive(service, queue, restart)
       let counts = await native.counts(); XCTAssertEqual(counts.0, 2); XCTAssertEqual(counts.2, 1)
       XCTAssertEqual(try store.runRecord(start.id)?.phase, .exited)
       XCTAssertEqual(try store.activeRuns().map(\.id), [restart.id])
       let other = NotebookFileAddress(computer: UUID(), project: root.project, root: root.root, path: "")
-      let rejected = try await service.receive(.init(author: author, action: .startRun(.init(root: other, command: "echo wrong"))))
+      let rejected = try await receive(service, queue, .init(author: author, action: .startRun(.init(root: other, command: "echo wrong"))))
       XCTAssertEqual(rejected.state, .rejected)
       let final = await native.counts(); XCTAssertEqual(final.0, 2)
     }

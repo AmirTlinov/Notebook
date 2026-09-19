@@ -14,6 +14,7 @@ public actor CodexAppServer {
   let runtimeScope: CodexRuntimeScope?
   private var rpc: CodexRPC?
   var accountSession = CodexAccountSession()
+  var accountRead: (id: UUID, task: Task<Void, Error>)?
   private struct Connection: Sendable {
     let rpc: CodexRPC
     let configuration: CodexScopedConfiguration?

@@ -53,6 +53,9 @@ final class NotebookCodexSidecar {
   var authorizePeer: (UUID) -> Bool = { _ in true }
   var prepareThread: ((String) async throws -> Void)?
   var accountIdentity: (() async throws -> String?)?
+  var accountAdmission: (() -> UUID?)?
+  private var peerGenerations: [UUID: UInt64] = [:]
+  private struct Admission { let peer: UUID; let generation: UInt64; let account: UUID? }
   var accountRequest: ((CodexAccountQuery) async throws -> CodexAccountState)?
   private var executing: [String: Task<Void, Never>] = [:]
   private var revokedPeers: Set<UUID> = []
@@ -158,10 +161,38 @@ final class NotebookCodexSidecar {
   }
 
   func revokeDevice(_ peer: UUID) {
-    revokedPeers.insert(peer); subscriptions.removeValue(forKey: peer)
-    Task { try? await persistence.submit { try $0.rejectSavedChatInputs(from: peer) } }
+    revokedPeers.insert(peer); peerGenerations[peer, default: 0] += 1
+    subscriptions.removeValue(forKey: peer)
+    // Register this fence synchronously: earlier attempts keep their right to
+    // finish, but a later admission cannot overtake revocation.
+    persistence.enqueueCommand({ try $0.rejectSavedChatInputs(from: peer) }, completion: { _ in })
   }
-  func allowDevice(_ peer: UUID) { revokedPeers.remove(peer) }
+  func allowDevice(_ peer: UUID) { revokedPeers.remove(peer); peerGenerations[peer, default: 0] += 1 }
+
+  private func authorization(_ peer: UUID) throws -> Admission {
+    guard !stopped, !revokedPeers.contains(peer), authorizePeer(peer) else { throw CodexBridgeError.unavailable }
+    let account = accountAdmission?()
+    guard accountAdmission == nil || account != nil else { throw CodexBridgeError.busy }
+    return .init(peer: peer, generation: peerGenerations[peer, default: 0], account: account)
+  }
+
+  /// One admission cut for chat, processes and voice. Validation and enqueueing
+  /// the durable attempt cannot interleave with MainActor revoke/account change.
+  private func admit(_ input: NotebookChatInput, authorized: Admission, attempt: Bool) async throws -> NotebookChatJob {
+    try await withCheckedThrowingContinuation { continuation in
+      do {
+        let current = try authorization(input.author)
+        guard current.peer == authorized.peer, current.generation == authorized.generation,
+          current.account == authorized.account else { throw CodexBridgeError.unavailable }
+        let computer = computerID
+        persistence.enqueueCommand({ store in
+          let job = try store.saveChatSubmission(input, to: computer)
+          guard attempt, job.state == .saved else { return job }
+          return try store.advanceChatJob(input.id, from: .saved, to: .attempting)
+        }, completion: { continuation.resume(with: $0) })
+      } catch { continuation.resume(throwing: error) }
+    }
+  }
   private func admitAccount() async throws {
     let identity: String
     if let accountIdentity { identity = try await accountIdentity() ?? "signed-out" }
@@ -203,14 +234,26 @@ final class NotebookCodexSidecar {
         } else { throw CodexBridgeError.invalidInput }
 
       case .job(let input):
-        try await admitAccount()
+        let admission = try authorization(peerID)
+        let job: NotebookChatJob
+        if let existing = try await persistence.submit({ try $0.chatJob(input.id) }) {
+          guard existing.input == input else { throw CodexBridgeError.invalidInput }
+          job = existing // Polling a receipt does not refresh or mutate the account.
+        } else {
+          try await admitAccount()
+          job = try await admit(input, authorized: admission, attempt: false)
+        }
+        let begin: @MainActor () async throws -> NotebookChatJob = { [self] in
+          try await admitAccount()
+          return try await admit(input, authorized: admission, attempt: true)
+        }
         if input.action.isVoiceCommand {
           guard let voice else { throw CodexBridgeError.unavailable }
-          reply = .job(try await voice.receive(input))
+          reply = .job(try await voice.receive(job, admit: begin))
         } else if input.action.isRunCommand {
           guard let runs else { throw CodexBridgeError.unavailable }
-          reply = .job(try await runs.receive(input))
-        } else { reply = .job(try await persistence.submit { try $0.saveChatSubmission(input, to: self.computerID) }) }
+          reply = .job(try await runs.receive(job, admit: begin))
+        } else { reply = .job(job) }
       case .catalogue(let cursor, let project): reply = .catalogue(try await metadata.tasks(cursor: cursor, project: project))
       case .models: reply = .models(try await metadata.models())
       case .resources(let thread, let kind, let cursor): reply = .resources(try await metadata.resources(threadID: thread, kind: kind, cursor: cursor))
@@ -255,7 +298,7 @@ final class NotebookCodexSidecar {
     guard !revokedPeers.contains(job.input.author), authorizePeer(job.input.author) else {
       try await persistence.submit { try $0.rejectSavedChatInputs(from: job.input.author) }; return
     }
-    try await admitAccount()
+    let admission = try authorization(job.input.author)
     guard try await persistence.submit({ try $0.chatJob(job.id)?.state }) == .saved else { return }
     if case .renameFile(let request) = job.input.action {
       guard request.address.computer == computerID else { throw CodexBridgeError.invalidInput }
@@ -272,8 +315,8 @@ final class NotebookCodexSidecar {
         if case .send = job.input.action, snapshot.busy || !snapshot.requests.isEmpty { return }
       }
     } catch { return } // No native mutation attempted; saved really means queued.
-    guard !stopped, !revokedPeers.contains(job.input.author), authorizePeer(job.input.author) else { return }
-    _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: .saved, to: .attempting) }
+    try await admitAccount()
+    guard try await admit(job.input, authorized: admission, attempt: true).state == .attempting else { return }
     guard !stopped else { return }
     let result: NotebookChatResult
     do {

@@ -13293,3 +13293,23 @@ workspace `FAAAC405-8EF9-4FB9-9B93-CBD876FA97A4`, content/ink basis, through1312
 и объекты; presence уже от физического iPad. Доказательство:
 `.build/gui259-install118/live-readback.json`. UI-тесты выше относятся к
 изолированному физическому `.native-test`, не к ручной приёмке release118.
+
+## GUI-267 — единый допуск и чтение аккаунта, 19 сентября 2026
+
+В `codex/gui-183-codex-remote` чат, run и voice теперь используют один
+синхронный cut проверки доверия и постановки durable admission в writer.
+Отзыв регистрирует собственный FIFO fence сразу; повторное сопряжение не
+легализует прежний ожидающий запрос. Host fencing учитывает смену аккаунта.
+Опрос уже записанной квитанции больше не читает account, параллельные account
+reads совместно ждут один native запрос и не держат mutation gate.
+
+Проверено без Xcode/device runner: сборка NotebookCodex; компиляция Mac-владельцев
+и typecheck затронутых XCTest; 3 CodexAccountTests PASS. Изолированный probe
+на исходных Sidecar/Runs/Voice: revoke во время account read дал 0 запусков и
+отсутствие принятой записи для run и voice; revoke после admission сохранил
+accepted и ровно 1 запуск. Настоящий подписанный Codex 0.155.0 в пустом временном
+CODEX_HOME: 8 одновременных account/read — 8 успешных ответов, 0 busy. Модель и
+пользовательская авторизация не использовались. Доказательства:
+`.build/gui-183/audit/slice1-*`. Полный XCTest runner и физическая пара этим
+срезом не запускались; слот у GUI240/GUI266. Очередь uncertain остаётся областью
+следующего GUI-268, не объявлена исправленной этими проверками.

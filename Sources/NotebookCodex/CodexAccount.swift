@@ -72,12 +72,10 @@ extension CodexAppServer {
   public func account(_ query: CodexAccountQuery, includeLimits: Bool = true) async throws -> CodexAccountState {
     let rpc = try await connect()
     guard !accountSession.changing else { throw CodexBridgeError.busy }
-    accountSession.changing = true
-    var ownsGate = true
+    var ownsGate: Bool
+    if case .read = query { ownsGate = false } else { ownsGate = true; accountSession.changing = true }
     defer { if ownsGate { accountSession.changing = false } }
-    let identity = accountSession.account, initialized = accountSession.initialized
-    try accountSession.read(await rpc.request("account/read", params: .object(["refreshToken": .bool(false)])))
-    if initialized, identity?.identity != accountSession.account?.identity { invalidateAccountPresentation() }
+    try await refreshAccount(rpc)
     switch query {
     case .read: break
     case .beginLogin(let attempt):
@@ -109,7 +107,7 @@ extension CodexAppServer {
     // Account admission is complete. A slow rate-limit read must not hold the
     // mutation gate or stall independent task controls. Capture its own revision.
     let presentation = accountSession
-    accountSession.changing = false; ownsGate = false
+    if ownsGate { accountSession.changing = false; ownsGate = false }
     let limits: [CodexAccountState.Limit]?
     if includeLimits, presentation.account?.type == "chatgpt" {
       limits = try? CodexAccountSession.limits(await rpc.request("account/rateLimits/read", params: .object([:])))
@@ -118,4 +116,22 @@ extension CodexAppServer {
       requiresSignIn: presentation.requiresSignIn, login: presentation.login,
       limits: limits, message: presentation.message)
   }
+
+  /// Concurrent readers share a native read; only login/logout owns the mutation
+  /// gate. A notification invalidates an older snapshot instead of restoring it.
+  private func refreshAccount(_ rpc: CodexRPC) async throws {
+    if let read = accountRead { try await read.task.value; return }
+    let id = UUID(), revision = accountSession.revision
+    let task = Task {
+      let value = try await rpc.request("account/read", params: .object(["refreshToken": .bool(false)]))
+      guard accountSession.revision == revision else { throw CodexBridgeError.unavailable }
+      let identity = accountSession.account?.identity, initialized = accountSession.initialized
+      try accountSession.read(value)
+      if initialized, identity != accountSession.account?.identity { invalidateAccountPresentation() }
+    }
+    accountRead = (id, task)
+    defer { if accountRead?.id == id { accountRead = nil } }
+    try await task.value
+  }
+
 }

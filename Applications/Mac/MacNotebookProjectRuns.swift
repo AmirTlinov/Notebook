@@ -59,9 +59,9 @@ extension CodexAppServer: NotebookCodexProcessOwner { }
   }
   /// Small terminal inputs need not wait behind an unrelated model turn.
   /// They still use the same durable job states and never repeat an attempt.
-  func receive(_ input: NotebookChatInput) async throws -> NotebookChatJob {
+  func receive(_ job: NotebookChatJob, admit: @MainActor () async throws -> NotebookChatJob) async throws -> NotebookChatJob {
+    let input = job.input
     try await recovery.value
-    let job = try await persistence.submit { try $0.saveChatInput(input) }
     guard input.action.isRunCommand, !job.isTerminal, executing.insert(input.id).inserted else { return job }
     defer { executing.remove(input.id) }
     if job.state == .attempting || job.state == .uncertain {
@@ -73,7 +73,8 @@ extension CodexAppServer: NotebookCodexProcessOwner { }
       }
       return job
     }
-    _ = try await persistence.submit { try $0.advanceChatJob(input.id, from: .saved, to: .attempting) }
+    let admitted = try await admit()
+    guard admitted.state == .attempting else { return admitted }
     var dispatched = false
     do {
       let result: NotebookChatResult

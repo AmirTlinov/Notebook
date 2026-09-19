@@ -8,6 +8,8 @@ import NotebookCodex
 final class NotebookCodexHost {
   private var server: CodexAppServer?
   private var scope: CodexRuntimeScope?
+  private var accountGeneration = UUID()
+  private var changingAccount = false
   private var events: Task<Void, Never>?
   private var routes: [UUID: NotebookCodexSidecar] = [:]
   private var writers: [URL: NotebookPersistenceQueue] = [:]
@@ -44,6 +46,9 @@ final class NotebookCodexHost {
       computerID: computerID, directory: directory, publish: publish)
     route.authorizePeer = authorizePeer
     route.prepareThread = { [server] thread in try await server?.bindWorkspace(workspaceID, threadID: thread) }
+    route.accountAdmission = { [weak self] in
+      guard let self, !changingAccount else { return nil }; return accountGeneration
+    }
     route.accountIdentity = { [server] in
       guard let server else { throw CodexBridgeError.unavailable }
       return try await server.account(.read, includeLimits: false).account?.identity
@@ -74,7 +79,14 @@ final class NotebookCodexHost {
       let installation = try await Task.detached(priority: .userInitiated) { try CodexRuntimeInstallation.discover() }.value
       if server == nil { server = CodexAppServer(installation: installation) }
     }
-    if case .read = query {} else {
+    let mutating: Bool
+    if case .read = query { mutating = false } else { mutating = true }
+    if mutating {
+      guard !changingAccount else { throw CodexBridgeError.busy }
+      changingAccount = true; accountGeneration = UUID()
+    }
+    defer { if mutating { changingAccount = false } }
+    if mutating {
       for writer in writers.values {
         guard try await writer.submit({ try !$0.pendingChatJobs().contains(where: { $0.state == .saved || $0.state == .attempting }) }) else { throw CodexBridgeError.busy }
       }
