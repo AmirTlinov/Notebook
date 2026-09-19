@@ -476,6 +476,43 @@ final class DrawingResponsivenessTests: XCTestCase {
   }
 
   #if targetEnvironment(simulator)
+  func testThreeDimensionalFirstOrbitSelectionPinchAndColdReopenOnBoardAndDocument() throws {
+    continueAfterFailure = false
+    let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "gears-program", withExtension: "json"))
+    for document in [false, true] {
+      let app = XCUIApplication()
+      app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-compiled-program-fixture", "--notebook-simulator-finger-gestures"]
+        + (document ? ["--notebook-document-runtime-fixture"] : [])
+      app.launchEnvironment["NOTEBOOK_COMPILED_PROGRAM_PATH"] = url.path
+      launchPortraitFixture(app)
+      XCTAssertTrue(app.staticTexts["Вращайте · коснитесь колеса"].waitForExistence(timeout: 25))
+      let material = app.webViews.containing(.button, identifier: "Общий вид").firstMatch
+      let original = material.frame
+      let canvas = app.images.matching(identifier: "Зубчатая передача: перетаскивание вращает вид, два пальца изменяют масштаб, касание выбирает колесо. Стрелки вращают вид.").firstMatch
+      XCTAssertTrue(canvas.waitForExistence(timeout: 5)); XCTAssertTrue(canvas.isHittable)
+      canvas.coordinate(withNormalizedOffset: .init(dx: 0.42, dy: 0.55)).press(forDuration: 0.05,
+        thenDragTo: canvas.coordinate(withNormalizedOffset: .init(dx: 0.68, dy: 0.62)))
+      XCTAssertEqual(material.frame.midX, original.midX, accuracy: 4)
+      XCTAssertEqual(material.frame.midY, original.midY, accuracy: 4, "The first orbit must not drag the board")
+      canvas.pinch(withScale: 1.15, velocity: 1)
+      XCTAssertEqual(material.frame.width, original.width, accuracy: 4, "Model pinch must not zoom the board")
+      // Semantic selection uses the same state as raycast, with an accessible alternative.
+      let output = app.switches.matching(NSPredicate(format: "label CONTAINS %@", "Ведомое")).firstMatch
+      if !output.isHittable { material.swipeUp() }
+      XCTAssertTrue(output.waitForExistence(timeout: 5)); output.tap()
+      let note = app.staticTexts["Ведомое: 24 зуба, делительный радиус 24 мм. Вращается в ту же сторону, в 2,5 раза быстрее ведущего."]
+      XCTAssertTrue(note.waitForExistence(timeout: 5))
+      let picture = XCTAttachment(screenshot: app.screenshot()); picture.name = document ? "gears-document-selected" : "gears-board-selected"
+      picture.lifetime = .keepAlways; add(picture)
+      XCUIDevice.shared.orientation = .landscapeLeft
+      XCTAssertTrue(note.waitForExistence(timeout: 5)); XCUIDevice.shared.orientation = .portrait
+      XCUIDevice.shared.press(.home); app.activate(); XCTAssertTrue(note.waitForExistence(timeout: 8))
+      app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+      XCTAssertTrue(note.waitForExistence(timeout: 25), "Cold SQLite retains the chosen physical part")
+      app.terminate()
+    }
+  }
+
   func testDenseSignalFirstTapRotationBackgroundAndColdReopenOnBoardAndDocument() throws {
     continueAfterFailure = false
     let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "signal-program", withExtension: "json"))

@@ -3,11 +3,9 @@
 .science.linear{--paper:#111318;--ink:#e9edf4;--muted:#a6adba;--blue:#70acff;--orange:#ffc565;background:var(--paper)}.science.linear h1{font-weight:500}.science.linear .grid{stroke:#272e3a}.science.linear .control input,.science.linear .scrubber{accent-color:#d1daec}.science.linear button{border-color:#414856}.science.linear button:hover{background:#292e39}.science.linear button.primary{background:#e6eaf2;color:#15171d;border-color:#e6eaf2}.science.linear details{border-color:#303641}.science.linear .matrix input{color:#e9edf4}.science.linear .matrix{border-left:2px solid #737f93;border-right:2px solid #737f93}.science.linear select{background:#111318}.science.linear .preset-bar{display:flex;justify-content:center;flex-wrap:wrap;gap:8px}.science.linear .preset-bar button{border:0;font-size:18px}.science.linear .preset-bar button[aria-pressed=true]{background:#2a3140;color:#fff}
 @media(max-width:700px){.science{padding:24px 18px}.science h1{font-size:28px}.science header p{font-size:18px}.science .insight{font-size:21px}.science .controls{gap:12px}.science .two-plots,.science .explain-grid{grid-template-columns:1fr;gap:16px}.science .matrix-grid{gap:16px}.science .matrix input,.science .matrix button{font-size:20px}.science .equation{font-size:21px}.science .matrix-grid h2{font-size:18px}.science .legend{font-size:16px}.science svg{min-height:220px}.science details .controls{display:grid;grid-template-columns:1fr}.science .control{width:100%}.science.linear .preset-bar{gap:0}.science.linear .preset-bar button{padding:8px 10px;font-size:16px}}
 
-.science .map-figure{max-width:800px;margin:auto}.science.gears .control{max-width:380px}.science.tensor{--blue:#6658d9}
+.science .map-figure{max-width:800px;margin:auto}.science.tensor{--blue:#6658d9}
 
 .science .keyboard-cursor{opacity:0}.science svg:focus-visible .keyboard-cursor{opacity:1}
 @media(max-width:700px){.science svg .axis-label{font-size:26px}.science.sound svg .axis-label,.science.gaussian svg .axis-label{font-size:34px}}
 
 .science .touch:focus:not(:focus-visible),.science .touch[data-pointer-focus]{outline:none}
-
-.science.gears canvas{display:block;width:100%;height:auto;aspect-ratio:90/49}

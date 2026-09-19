@@ -13,11 +13,13 @@ export async function loadScienceExample(id) {
   return {title:example.title,html:html.replace('<!-- source -->',source),css,javaScript:[models,runtime,scene].join('\n'),width:960,height:960};
 }
 
-/** The one asset-backed extension to the same recipe library. Dependencies are author-only. */
+/** Asset-backed recipes use the same author-only compiler and package path. */
 export async function buildScienceProgram(id) {
   const example=scienceExamples.find(e=>e.id===id);
-  if(!example||example.format!=='program')throw new Error('Choose an asset-backed science program: signal');
+  if(!example||example.format!=='program')throw new Error('Choose an asset-backed science program: '+scienceExamples.filter(e=>e.format==='program').map(e=>e.id).join(', '));
   const directory=fileURLToPath(new URL('../../../',import.meta.url));
+  const {buildProgram}=await import('./program-build.mjs');
+  if(id==='gears')return buildProgram({directory,entry:'skills/notebook/assets/science/gears/main.ts',html:'skills/notebook/assets/science/gears/view.html',assets:['node_modules/three/LICENSE']});
   const font='node_modules/@mathjax/mathjax-newcm-font';
   const dynamic=(await readdir(new URL('../../../'+font+'/svg/dynamic/',import.meta.url))).filter(name=>name.endsWith('.js')).sort();
   const assets=['node_modules/mathjax/tex-svg-nofont.js','node_modules/mathjax/a11y/assistive-mml.js',
@@ -31,6 +33,5 @@ export async function buildScienceProgram(id) {
     for(const dependency of Object.keys(pkg.dependencies??{}))await licenses(dependency);
   }
   await licenses('@observablehq/plot');
-  const {buildProgram}=await import('./program-build.mjs');
   return buildProgram({directory,entry:'skills/notebook/assets/science/signal/main.ts',html:'skills/notebook/assets/science/signal/view.html',assets});
 }

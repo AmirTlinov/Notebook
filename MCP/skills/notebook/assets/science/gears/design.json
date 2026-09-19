@@ -1,0 +1,11 @@
+{
+  "units": "mm",
+  "module": 2,
+  "pressureAngleDegrees": 20,
+  "backlash": 0.08,
+  "gears": [
+    {"id":"input","teeth":60,"color":"#cd9c48","label":"Ведущее"},
+    {"id":"idler","teeth":40,"color":"#6c94b4","label":"Промежуточное"},
+    {"id":"output","teeth":24,"color":"#cd7959","label":"Ведомое"}
+  ]
+}

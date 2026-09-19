@@ -11,7 +11,8 @@
     "title": "Одно движение. Три скорости.",
     "source": "https://ciechanow.ski/mechanical-watch/",
     "author": "Bartosz Ciechanowski",
-    "idea": "Раскрыть механизм, сохранив положение и связь деталей."
+    "idea": "Раскрыть механизм, сохранив положение и связь деталей.",
+    "format": "program"
   },
   {
     "id": "linear",

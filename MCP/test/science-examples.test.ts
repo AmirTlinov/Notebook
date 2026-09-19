@@ -20,11 +20,6 @@ test('longitudinal wave preserves particle order and pressure equals negative st
     }
   }
 });
-test('gear mesh ratios, direction and full return agree with tooth counts',()=>{
-  const a=models.gears(.13),b=models.gears(.31),d=b.map((v:number,i:number)=>v-a[i]);
-  near(d[0]*60+d[1]*40,0);near(d[1]*40+d[2]*24,0);
-  models.gears(1).forEach((v:number,i:number)=>near((v-models.gears(0)[i])/(2*Math.PI),[2,-3,5][i]!));
-});
 test('linear model agrees with matrix action, oriented area and singular endpoint',()=>{
   const result=models.transform([1,.8,0,1],1,[1,.5]);near(result.point[0],1.4);near(result.point[1],.5);near(result.determinant,1);
   near(models.transform([1,0,0,0],1,[1,1]).determinant,0);
@@ -59,8 +54,8 @@ test('Bernoulli experiment has reproducible prefixes, exact counts and boundary 
   assert.equal(a.total,a.outcomes.reduce((sum:number,v:number)=>sum+v,0));near(a.frequencies.at(-1),a.total/100);
   assert.equal(models.bernoulli(0,100,3).total,0);assert.equal(models.bernoulli(1,100,3).total,100);assert.equal(models.bernoulli(.5,0,3).total,0);
 });
-test('all seven examples prepare through animation into valid self-contained Notebook programs',async()=>{
-  assert.equal(scienceExamples.filter((e:any)=>!e.format).length,7);
+test('six inline examples prepare through animation into valid self-contained Notebook programs',async()=>{
+  assert.equal(scienceExamples.filter((e:any)=>!e.format).length,6);
   for(const example of scienceExamples.filter((e:any)=>!e.format))for(const kind of ['page','document']) {
     const request=await prepare('animation',{example:example.id,target:{kind,id:randomUUID()},initialState:{phase:.25}},{runID:randomUUID()});
     executionInput.parse(request);const operation=request.args.operations[0];operationSchema.parse(operation);
@@ -110,44 +105,4 @@ test('shared scene runtime keeps frames local, commits controls and restores foc
   play.listeners.click();assert.equal(frames.size,1);lifecycle.dispose();assert.equal(frames.size,0);
   assert.equal(events.has('notebookstate'),false);assert.equal(events.has('visibilitychange'),false);
   app.change({phase:.2});near(drawn,.85);
-});
-
-test('gear camera gestures preserve playback; WebGL depth testing and framing remain enabled',async()=>{
-  const source=await readFile(new URL('../skills/notebook/assets/science/gears.js',import.meta.url),'utf8');
-  let uploaded:Float32Array=new Float32Array(),rotation:number[]=[],frame:number[]=[],depth=false,cleared=0,count=0;
-  const gl:any={DEPTH_TEST:2929,LEQUAL:515,COLOR_BUFFER_BIT:16384,DEPTH_BUFFER_BIT:256,
-    createShader:()=>({}),createProgram:()=>({}),createBuffer:()=>({}),
-    getShaderParameter:()=>true,getProgramParameter:()=>true,
-    getAttribLocation:(_p:any,name:string)=>['position','normal','color'].indexOf(name),getUniformLocation:(_p:any,name:string)=>name,
-    enable:(key:number)=>{if(key===gl.DEPTH_TEST)depth=true},clear:(mask:number)=>cleared=mask,
-    bufferData:(_kind:any,data:Float32Array)=>uploaded=data,uniformMatrix3fv:(_id:any,_t:any,value:number[])=>rotation=value,
-    uniform3f:(_id:any,...value:number[])=>frame=value,drawArrays:(_kind:any,_first:any,value:number)=>count=value};
-  for(const key of ['shaderSource','compileShader','attachShader','linkProgram','deleteShader','useProgram','bindBuffer','enableVertexAttribArray','vertexAttribPointer','depthFunc','clearDepth','clearColor','viewport'])gl[key]=()=>{};
-  const elements=new Map<string,any>();
-  const get=(id:string)=>{if(!elements.has(id))elements.set(id,{clientWidth:900,clientHeight:490,dataset:{},focus(){},getContext:()=>gl,setPointerCapture(){},addEventListener(){}});return elements.get(id)};
-  let state:any,saves=0,stops=0,draw:Function;
-  const app={get state(){return state},change:(patch:any,_commit=true,options:any={})=>{assert.equal(options.pause,false);state={...state,...patch}},save:()=>saves++,stop:()=>stops++};
-  new Function('Science','ScienceModels','devicePixelRatio','ResizeObserver',source)({$:get,mount:(options:any)=>{state={...options.defaults};draw=options.draw;return app}},models,1,class{observe(){}});
-  const el=get('gear-canvas'),initial={...state};
-  let prevented=false;el.onpointerdown({clientX:100,clientY:100,pointerId:1,preventDefault(){prevented=true}});assert.equal(prevented,true);assert.ok('pointerFocus' in el.dataset);
-  el.onpointermove({clientX:150,clientY:140});
-  near(state.yaw,initial.yaw-.3);near(state.tilt,initial.tilt-.2);assert.equal(saves,0);assert.equal(stops,0);
-  el.onpointermove({clientX:50,clientY:60});near(state.yaw,initial.yaw+.3);near(state.tilt,initial.tilt+.2);
-  el.onpointerup();assert.equal(saves,1);
-  const before={...state};el.onpointermove({clientX:200,clientY:200});assert.deepEqual(state,before);
-  for(const key of ['ArrowRight','ArrowDown'])el.onkeydown({key,preventDefault(){}});
-  near(state.yaw,before.yaw-.1);near(state.tilt,before.tilt-.1);assert.ok(!('pointerFocus' in el.dataset));
-  for(const key of ['ArrowLeft','ArrowUp'])el.onkeydown({key,preventDefault(){}});
-  near(state.yaw,before.yaw);near(state.tilt,before.tilt);
-  for(const view of [{yaw:-1.02,tilt:.52,reveal:.3},{yaw:Math.PI/2,tilt:.25,reveal:1},{yaw:-Math.PI/2,tilt:1.3,reveal:0}]){
-    draw!({...state,...view});assert.ok(depth);assert.equal(cleared,gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);assert.ok(count>10000);assert.equal(count,uploaded.length/9);
-    assert.equal(uploaded.length%9,0);assert.equal(rotation.length,9);assert.equal(frame.length,3);
-    for(let i=0;i<uploaded.length;i+=9){
-      const x=uploaded[i]!,y=uploaded[i+1]!,z=uploaded[i+2]!;
-      const u=rotation[0]!*x+rotation[3]!*y+rotation[6]!*z,v=rotation[1]!*x+rotation[4]!*y+rotation[7]!*z,d=rotation[2]!*x+rotation[5]!*y+rotation[8]!*z,p=1250/(1250-d);
-      const sx=450+(u*p-frame[0]!)*frame[2]!,sy=245+(v*p-frame[1]!)*frame[2]!;
-      assert.ok(sx>=0&&sx<=900&&sy>=0&&sy<=490,`clipped vertex ${sx},${sy}`);
-    }
-  }
-  assert.doesNotMatch(source,/faces\.sort|<polygon/);
 });

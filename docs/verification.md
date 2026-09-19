@@ -1,5 +1,55 @@
 # Проверка Notebook
 
+## 19 сентября, 05:20 МСК — GUI-245: offline 3D-механизм и его ресурсный цикл
+
+Прежний inline `gears` заменён одним Three.js 0.186.0/WebGL 2 recipe на общем
+TS/package пути. Собственная Blender-модель: **144 332 треугольника**, две 2K
+текстуры, glTF в метрах, подписи в мм; 60/40/24 зуба с эвольвентными рабочими
+сторонами и упрощёнными корнями. Вращение, делительные контакты и поле скоростей
+используют одну модель. Выбор детали, camera, phase, раскрытие и field сохраняются
+через прежний checkpoint. Старый custom WebGL renderer и его тесты удалены.
+
+Окончательный package **5549f00e5d5e31cbbbec4d5892981c9356bed0bac979b577bbf73813a971ed52**.
+**Mac 2 PASS**, `.build/gui-245-mac-final/verification.json`; **Simulator 3 PASS**,
+`.build/gui-245-sim-final.xcresult` (2 unit + UI обеих поверхностей). Входы до/после
+неизменны: **c409ba292faeec0c1ae783cac0f28d7f3b4e0435f917740636813ee66ad1aea5**.
+Реальный WK загружает модель/текстуры offline, рисует GPU-кадр до ready, сохраняет
+selection/reveal/camera, переживает WEBGL_lose_context/restore в том же renderer,
+не перечитывает assets при resize и освобождает наблюдаемые WebGL buffers.
+Неподвижная сцена не продолжает рисование. Mac XCTest имеет hidden document:
+там принят статический GPU/lifecycle путь, **не непрерывная анимация или видимые
+жесты Mac**. Simulator проверил продвижение анимации и UI: первый orbit, pinch,
+выбор, rotation, Home/return и cold reopen на доске и в документе. Это не Pencil
+на физическом iPad, системный FPS/VRAM или полный performance gate.
+
+Отрицательные native сценарии: повреждённый glTF, missing PNG, реальный retry,
+WebGL 2 unavailable -> явно подписанный статический план, dispose во время двух
+задержанных createImageBitmap -> оба bitmap закрыты, поздний результат не оживает.
+В раннем v1 обнаружены 2 оставшихся GPU buffers после восстановления окружения:
+Three RoomEnvironment.dispose не освобождает instanceMatrix своих InstancedMesh.
+Recipe теперь явно освобождает их; финальный strict zero check PASS. Ранние Mac
+v1–v4 также обнаружили отсутствие GPU draw у offscreen rAF: вместо подделки
+visibility/clock первый и checkpoint кадры теперь рисуются синхронно. Startup ready
+объявлен один раз; local error UI не выдаётся за успешную 3D-модель.
+
+**24 MCP PASS + SDK check**, `/tmp/gui-245-js-final2.log`,
+`/tmp/gui-245-sdk-final2.log`: отношения скоростей/единиц, finite checkpoint,
+реальные glTF/PNG bounds и exact native fixture. Дополнительная адресная проверка
+контуров в `.build/gui-245-mesh-contact.mjs`: 128 фаз двух пар, 4 410 353 сравнений,
+0 пересечений рабочих 2D контуров. Это не CAD-тест допусков всего glTF.
+
+Окончательные exported native screenshots в `.build/gui-245-sim-final-shots/`
+реально просмотрены; после orbit/pinch видны крупные детали и сохранённое ведомое
+колесо, документная формула читаема. Окончательный browser package также осмотрен
+при 834×1194 и 420×900 dark: общий вид целиком, Play/Pause, читаемые параметры и
+узкая локальная прокрутка. Temporary viewport/media overrides и preview servers
+убраны. Reference Mechanical Watch/mainplate просмотрен до моделирования:
+перенесены отношения опор, осей, раскрытия и цветовых ролей, не исходные assets.
+
+Физическая пользовательская пара 116 не изменена. GUI-245 остаётся In Progress:
+полный installed/shared маршрут, видимые Mac-жесты и общая визуальная/performance
+приёмка не заменены этими targeted checks. GUI-246–250 ещё не реализованы.
+
 ## 19 сентября, 04:41 МСК — GUI-240 + GUI-238: объединённый документный runtime
 
 В ветку визуализаций объединён GUI-238 `a1cbfad`: canonical PDF/SyncTeX,

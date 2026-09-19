@@ -77,13 +77,13 @@ final class ProgramAssetTests: XCTestCase {
     let package = NotebookProgramPackage(html: "view.html", css: "style.css", javaScript: "main.js", files: entries.sorted { $0.path < $1.path })
     return Fixture(root: root, store: store, package: package, hash: try store.stageProgramPackage(package))
   }
-  func testSevenScientificRecipesCheckpointTheirExplicitModelThroughTheExistingOwner() async throws {
+  func testSixInlineScientificRecipesCheckpointTheirExplicitModelThroughTheExistingOwner() async throws {
     let bundle = Bundle(for: Self.self)
     func source(_ name: String, _ ext: String) throws -> String {
       try String(contentsOf: XCTUnwrap(bundle.url(forResource: name, withExtension: ext, subdirectory: "science")), encoding: .utf8)
     }
     let shared = try source("models", "js") + "\n" + source("runtime", "js"), css = try source("common", "css")
-    for name in ["sound", "gears", "linear", "gaussian", "astar", "tensor", "probability"] {
+    for name in ["sound", "linear", "gaussian", "astar", "tensor", "probability"] {
       let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
       var ready = false, commits = 0
       let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in commits += 1; return true })
@@ -113,18 +113,23 @@ final class ProgramAssetTests: XCTestCase {
 
   private func compiledFixture(_ name: String = "compiled-program") throws -> Fixture {
     struct Compiled: Decodable { let package: NotebookProgramPackage; let files: [String: String]; let packageHash: String
-      let binaryFiles: [String: String]?; let webResources: [String: String]? }
+      let binaryFiles: [String: String]?; let webResources: [String: String]?; let bundleResources: [String: String]? }
     let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: name, withExtension: "json"))
     let value = try JSONDecoder().decode(Compiled.self, from: Data(contentsOf: url))
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), store = NotebookStore(root: root)
     _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
     for file in value.package.files {
-      XCTAssertEqual(file.parts.count, 1)
       let bytes: Data
       if let source = value.files[file.path] { bytes = Data(source.utf8) }
       else if let source = value.binaryFiles?[file.path] { bytes = try XCTUnwrap(Data(base64Encoded: source)) }
+      else if let resource = value.bundleResources?[file.path] { bytes = try Data(contentsOf: XCTUnwrap(Bundle(for: Self.self).resourceURL).appendingPathComponent(resource)) }
       else { bytes = try Data(contentsOf: XCTUnwrap(Bundle.main.resourceURL).appendingPathComponent("WebResources/" + XCTUnwrap(value.webResources?[file.path]))) }
-      try store.stageBlob(data: bytes, expectedHash: file.parts[0].sha256)
+      var offset = 0
+      for part in file.parts {
+        try store.stageBlob(data: bytes.subdata(in: offset..<(offset + part.byteCount)), expectedHash: part.sha256)
+        offset += part.byteCount
+      }
+      XCTAssertEqual(offset, bytes.count)
     }
     let hash = try store.stageProgramPackage(value.package); XCTAssertEqual(hash, value.packageHash)
     return Fixture(root: root, store: store, package: value.package, hash: hash)
@@ -244,6 +249,151 @@ final class ProgramAssetTests: XCTestCase {
     } catch { XCTFail("Dense signal at \(phase): \(error)") }
   }
 
+  func testThreeDimensionalPackageOwnsOfflineResourcesContextRecoveryAndCheckpoint() async throws {
+    let f = try compiledFixture("gears-program"); defer { f.close() }
+    let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
+    var ready = false
+    let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in true })
+    owner.programStore = f.store
+    let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
+    defer { owner.invalidate(); lease.release(); close() }
+    web.configuration.userContentController.addUserScript(WKUserScript(source: """
+      (()=>{window.gearProbe={draws:0,buffers:0,textures:0,contexts:0,fetches:[]};
+      const get=HTMLCanvasElement.prototype.getContext,seen=new WeakSet();
+      HTMLCanvasElement.prototype.getContext=function(...args){const gl=get.apply(this,args);
+        if(gl&&args[0]==='webgl2'&&!seen.has(gl)){seen.add(gl);gearProbe.contexts++;
+          for(const kind of ['Buffer','Texture']){const created=new Set(),create=gl['create'+kind],remove=gl['delete'+kind],key=kind.toLowerCase()+'s';
+            gl['create'+kind]=function(...args){const r=create.apply(this,args);if(r)created.add(r);gearProbe[key]=created.size;return r};
+            gl['delete'+kind]=function(r){created.delete(r);gearProbe[key]=created.size;return remove.call(this,r)};}
+          for(const name of ['drawElements','drawArrays']){const fn=gl[name];gl[name]=function(...args){gearProbe.draws++;return fn.apply(this,args)}}
+        }return gl;};
+      const fetch=window.fetch;window.fetch=(url,options)=>{gearProbe.fetches.push(String(url));return fetch(url,options)};
+      })();
+      """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+    owner.load(.init(id: "gears", kind: .web, frame: .init(x: 0, y: 0, width: 760, height: 1050), source: "", html: "", programPackage: f.hash),
+      policy: .exact(scale: 1), in: web)
+    try await wait { ready || owner.snapshotFailure != nil }; XCTAssertTrue(ready); XCTAssertNil(owner.snapshotFailure)
+    func js(_ source: String) async throws -> Any? { try await web.evaluateJavaScript(source) }
+    func until(_ source: String) async throws {
+      let deadline = ContinuousClock.now + .seconds(8)
+      while .now < deadline {
+        if try await js(source) as? Bool == true { return }
+        try await Task.sleep(for: .milliseconds(20))
+      }
+      let details = try await js("JSON.stringify({probe:gearProbe,hidden:document.hidden,status:document.getElementById('model-status').textContent,error:document.getElementById('model-error').textContent})")
+      XCTFail("3D condition did not settle: " + source + " · " + String(describing: details))
+    }
+    try await until("gearProbe.draws>0 && document.getElementById('poster').hidden")
+    let buffers = try await js("gearProbe.buffers") as? Int
+    XCTAssertGreaterThan(buffers ?? 0, 100)
+    let idle = try await js("gearProbe.draws") as? Int
+    try await Task.sleep(for: .milliseconds(200))
+    let idleAfter = try await js("gearProbe.draws") as? Int; XCTAssertEqual(idle, idleAfter, "The static scene owns no ongoing animation loop")
+    _ = try await js("document.querySelector('[data-part=output]').click();document.getElementById('reveal').value='.8';document.getElementById('reveal').dispatchEvent(new Event('input'));document.getElementById('front').click();null")
+    let checkpoint = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram", in: web)
+    XCTAssertEqual(checkpoint["selected"], .string("output")); XCTAssertEqual(checkpoint["reveal"], .number(0.8))
+    XCTAssertNotNil(checkpoint["camera"])
+    _ = try await NotebookProgramBridge.lifecycle("resume", controller: "notebookProgram", in: web)
+    _ = try await js("window.lose=document.getElementById('gear-canvas').getContext('webgl2').getExtension('WEBGL_lose_context');lose.loseContext();null")
+    try await until("document.getElementById('model-error').textContent.includes('потерян')")
+    _ = try await js("lose.restoreContext();null")
+    try await until("document.getElementById('model-error').hidden && !document.getElementById('play').disabled")
+    #if os(iOS)
+    _ = try await js("document.getElementById('play').click();null")
+    try await Task.sleep(for: .milliseconds(160))
+    #else
+    // The Mac unit host can remain occluded. Static render/checkpoint must work
+    // there, but a hidden display clock is not evidence of animated FPS.
+    _ = try await js("document.getElementById('phase').value='.42';document.getElementById('phase').dispatchEvent(new Event('input'));null")
+    #endif
+    let playing = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram", in: web)
+    XCTAssertNotEqual(playing["phase"], checkpoint["phase"])
+    XCTAssertEqual(playing["selected"], .string("output")); XCTAssertEqual(playing["camera"], checkpoint["camera"])
+    _ = try await NotebookProgramBridge.lifecycle("resume", controller: "notebookProgram", in: web)
+    let fetches = try await js("gearProbe.fetches.length") as? Int
+    web.frame.size.width = 420
+    try await Task.sleep(for: .milliseconds(150))
+    let afterResize = try await js("gearProbe.fetches.length") as? Int; XCTAssertEqual(fetches, afterResize)
+    let contexts = try await js("gearProbe.contexts") as? Int; XCTAssertEqual(contexts, 1, "Loss/recovery/resize retain one renderer context")
+    _ = try await NotebookProgramBridge.lifecycle("dispose", controller: "notebookProgram", in: web)
+    let disposedBuffers = try await js("gearProbe.buffers") as? Int; XCTAssertEqual(disposedBuffers, 0, "Every loaded geometry and field buffer is released")
+    owner.invalidate(); lease.release()
+
+    // The document owner loads the identical package, not a second 3D renderer implementation.
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "gears", html: "", programPackage: f.hash,
+      initialState: checkpoint, height: 900)])
+    let journal = DocumentStateJournal(id: document.id, actor: UUID())
+    let docOwner = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
+    docOwner.programStore = f.store
+    docOwner.update(document: document, state: journal, selectedPageIndex: 0, capturesSnapshot: false,
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
+    let host = DocumentWebHost(), closeHost = try mount(host); defer { docOwner.invalidate(); closeHost() }
+    docOwner.mount(in: host, physicalSize: .init(width: 595, height: 842), isInteractive: true, priority: .currentPage)
+    try await wait { docOwner.hasCanonicalPixels || docOwner.acquisitionError != nil }
+    XCTAssertTrue(docOwner.hasCanonicalPixels); XCTAssertNil(docOwner.acquisitionError)
+    var saved: JSONValue?
+    docOwner.onStateCheckpoint = { _, value, _, _ in saved = value; return nil }
+    let accepted = await docOwner.checkpointPrograms(resume: true)
+    XCTAssertTrue(accepted); XCTAssertEqual(saved?["selected"], .string("output")); XCTAssertEqual(saved?["reveal"], .number(0.8))
+  }
+
+  func testThreeDimensionalFailuresRetryAndDisposalStayLocal() async throws {
+    let f = try compiledFixture("gears-program"); defer { f.close() }
+    for fault in ["model", "texture", "decode", "unavailable"] {
+      let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
+      var ready = false
+      let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in true })
+      owner.programStore = f.store
+      let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
+      defer { owner.invalidate(); lease.release(); close() }
+      let script = """
+        (()=>{window.fixtureFault='FAULT';window.fixtureErrors=[];window.fixtureDecodes=[];window.fixtureClosed=0;
+          addEventListener('error',e=>fixtureErrors.push(String(e.message)));
+          addEventListener('unhandledrejection',e=>fixtureErrors.push(String(e.reason)));
+          const fetch=window.fetch;let failed=false;
+          window.fetch=(url,options)=>{
+            const path=String(url);if(!failed&&((fixtureFault==='model'&&path.endsWith('.gltf'))||(fixtureFault==='texture'&&path.endsWith('.png')))){
+              failed=true;return Promise.resolve(fixtureFault==='model'?new Response('{}'):new Response('missing',{status:404}));}
+            return fetch(url,options);};
+          const decode=window.createImageBitmap;
+          window.createImageBitmap=(...args)=>decode(...args).then(bitmap=>{const close=bitmap.close.bind(bitmap);bitmap.close=()=>{fixtureClosed++;close()};
+            return fixtureFault==='decode'?new Promise(resolve=>fixtureDecodes.push(()=>resolve(bitmap))):bitmap;});
+          if(fixtureFault==='unavailable'){const get=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,...args){return type==='webgl2'?null:get.call(this,type,...args)};}
+        })();
+        """.replacingOccurrences(of: "FAULT", with: fault)
+      web.configuration.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+      owner.load(.init(id: "failed-gears", kind: .web, frame: .init(x: 0, y: 0, width: 760, height: 1050), source: "", html: "", programPackage: f.hash),
+        policy: .exact(scale: 1), in: web)
+      func until(_ source: String) async throws {
+        let deadline = ContinuousClock.now + .seconds(12)
+        repeat {
+          if (try? await web.evaluateJavaScript(source)) as? Bool == true { return }
+          try await Task.sleep(for: .milliseconds(20))
+        } while .now < deadline
+        XCTFail(fault + ": " + source)
+      }
+      if fault == "decode" {
+        try await until("window.fixtureDecodes?.length===2")
+        _ = try await NotebookProgramBridge.lifecycle("dispose", controller: "notebookProgram", in: web)
+        _ = try await web.evaluateJavaScript("fixtureDecodes.splice(0).forEach(release=>release());null")
+        try await until("fixtureClosed===2")
+        let status = try await web.evaluateJavaScript("document.getElementById('model-status').textContent") as? String
+        XCTAssertEqual(status, "Загрузка локальной модели…", "Late decoded textures must not resurrect the deleted scene")
+      } else {
+        try await wait { ready || owner.snapshotFailure != nil }; XCTAssertTrue(ready, "The explicit local error UI, not a claimed 3D success, is ready")
+        let failure = try await web.evaluateJavaScript("!document.getElementById('model-error').hidden && !document.getElementById('poster').hidden && document.getElementById('play').disabled") as? Bool
+        XCTAssertEqual(failure, true, fault)
+        if fault != "unavailable" {
+          _ = try await web.evaluateJavaScript("document.getElementById('retry').click();null")
+          try await until("document.getElementById('poster').hidden && !document.getElementById('play').disabled")
+          let errors = try await web.evaluateJavaScript("JSON.stringify(fixtureErrors)") as? String
+          XCTAssertEqual(errors, "[]", "Retry must not redeclare NotebookProgram.ready after startup")
+        }
+      }
+      owner.invalidate(); lease.release()
+    }
+  }
+
   private func wav() -> Data {
     var result = Data()
     func string(_ s: String) { result.append(Data(s.utf8)) }
@@ -339,7 +489,9 @@ final class ProgramAssetTests: XCTestCase {
     return { view.removeFromSuperview(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
     #else
     let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: 600, height: 800), styleMask: .borderless, backing: .buffered, defer: false)
-    window.isReleasedWhenClosed = false; window.contentView = view; window.orderBack(nil)
+    window.isReleasedWhenClosed = false; window.contentView = view
+    view.frame = CGRect(x: 0, y: 0, width: 600, height: 800)
+    window.orderBack(nil)
     return { window.orderOut(nil); window.close() }
     #endif
   }

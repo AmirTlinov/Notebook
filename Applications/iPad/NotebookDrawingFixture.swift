@@ -639,26 +639,35 @@
 
     private static func installCompiledProgram(store: NotebookStore) throws -> String {
       struct Compiled: Decodable { let package: NotebookProgramPackage; let files: [String: String]; let packageHash: String
-        let binaryFiles: [String: String]?; let webResources: [String: String]? }
+        let binaryFiles: [String: String]?; let webResources: [String: String]?; let bundleResources: [String: String]? }
+      var fixtureResources: URL?
       var encoded = ProcessInfo.processInfo.environment["NOTEBOOK_COMPILED_PROGRAM"].map { Data($0.utf8) }
       #if targetEnvironment(simulator)
         // The isolated Simulator can read the UI runner's immutable fixture. Do
         // not copy megabytes into launch environment or the production bundle.
         if let path = ProcessInfo.processInfo.environment["NOTEBOOK_COMPILED_PROGRAM_PATH"] {
-          encoded = try Data(contentsOf: URL(fileURLWithPath: path))
+          let url = URL(fileURLWithPath: path)
+          encoded = try Data(contentsOf: url); fixtureResources = url.deletingLastPathComponent()
         }
       #endif
       guard let encoded else { throw NotebookStorageError.invalidTransaction("Compiled fixture source missing") }
       let value = try JSONDecoder().decode(Compiled.self, from: encoded)
       for file in value.package.files {
-        guard file.parts.count == 1 else { throw NotebookStorageError.invalidTransaction("Compiled fixture part missing") }
         let bytes: Data
         if let source = value.files[file.path] { bytes = Data(source.utf8) }
         else if let source = value.binaryFiles?[file.path], let binary = Data(base64Encoded: source) { bytes = binary }
         else if let resource = value.webResources?[file.path], let root = Bundle.main.resourceURL {
           bytes = try Data(contentsOf: root.appendingPathComponent("WebResources/" + resource))
+        } else if let resource = value.bundleResources?[file.path], let fixtureResources {
+          bytes = try Data(contentsOf: fixtureResources.appendingPathComponent(resource))
         } else { throw NotebookStorageError.invalidTransaction("Compiled fixture file missing") }
-        try store.stageBlob(data: bytes, expectedHash: file.parts[0].sha256)
+        var offset = 0
+        for part in file.parts {
+          guard offset + part.byteCount <= bytes.count else { throw NotebookStorageError.invalidTransaction("Compiled fixture part missing") }
+          try store.stageBlob(data: bytes.subdata(in: offset..<(offset + part.byteCount)), expectedHash: part.sha256)
+          offset += part.byteCount
+        }
+        guard offset == bytes.count else { throw NotebookStorageError.invalidTransaction("Compiled fixture size changed") }
       }
       let hash = try store.stageProgramPackage(value.package)
       guard hash == value.packageHash else { throw NotebookStorageError.invalidTransaction("Compiled fixture identity changed") }
