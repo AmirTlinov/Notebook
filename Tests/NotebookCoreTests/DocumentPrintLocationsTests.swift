@@ -11,6 +11,35 @@ final class DocumentPrintLocationsTests: XCTestCase {
     XCTAssertEqual(locations[0].y, 10 * 72 / 72.27, accuracy: 0.000001)
     XCTAssertEqual(locations[0].height, 15 * 72 / 72.27, accuracy: 0.000001)
   }
+  func testProgramRowsExcludeTheShipoutFooterThatInheritsTheirSourceLine() throws {
+    let text = """
+    SyncTeX Version:1
+    Unit:1
+    Magnification:1000
+    {1
+    (1,20:655360,1310720:1966080,655360,0
+    r1,21:655360,1310720:0,655360,0
+    )
+    (1,21:655360,5242880:1966080,655360,0
+    g1,21:700000,5242880
+    )
+    }1
+    {2
+    (1,21:655360,1310720:1966080,655360,0
+    r1,99:655360,1310720:0,655360,0
+    )
+    (2,21:655360,2621440:1966080,655360,0
+    r2,21:655360,2621440:0,655360,0
+    )
+    }2
+    """
+    let result = try DocumentPrintLocations.decode(text,
+      ranges: [.init(blockID: "program", firstLine: 20, lastLine: 21)], programBlockIDs: ["program"])
+    XCTAssertEqual(result.map(\.pageIndex), [0, 1])
+    XCTAssertEqual(result.map(\.generatedLine), [20, 21])
+    XCTAssertEqual(result.reduce(0) { $0 + $1.height }, 20 * 72 / 72.27, accuracy: 0.000001)
+  }
+
   func testAuthoredParagraphOffsetsDoNotTreatInsertedTeXLinesAsSourceLines() {
     let source = "# 😀 Title\n\nFirst.\n\nSecond."
     let second = (source as NSString).range(of: "Second.").location

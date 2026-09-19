@@ -41,6 +41,7 @@
       let lcFixture = ProcessInfo.processInfo.arguments.contains(lcArgument)
       let nativeGraphics = ProcessInfo.processInfo.arguments.contains(nativeGraphicsArgument)
       let nativeGraphicPage = ProcessInfo.processInfo.arguments.contains(nativeGraphicPageArgument)
+      let scientificMaterials = ProcessInfo.processInfo.arguments.contains("--notebook-scientific-materials")
       let materialCount = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix(independentMaterialsArgument) })
         .flatMap { Int($0.dropFirst(independentMaterialsArgument.count)) }
       let startsAtCover = ProcessInfo.processInfo.arguments.contains(
@@ -97,7 +98,7 @@
       } else if ProcessInfo.processInfo.arguments.contains(nestedBoardArgument) {
         fixtureName = "NestedBoardCamera"
       } else if let materialCount {
-        fixtureName = "IndependentMaterials-\(materialCount)"
+        fixtureName = "IndependentMaterials-\(materialCount)" + (scientificMaterials ? "-Science" : "")
       } else if ProcessInfo.processInfo.arguments.contains(mixedWebArgument) {
         fixtureName = "MixedWebCamera"
       } else if ProcessInfo.processInfo.arguments.contains(passiveSVGArgument) {
@@ -225,7 +226,22 @@
           precondition([2, 4, 8].contains(materialCount))
           var board = BoardDocument.initial(itemIDs: [itemID], actor: actor)
           _ = board.moveItem(itemID, to: .init(x: 8_000, y: 8_000), actor: actor)
+          let science: [String] = scientificMaterials ? try ["signal", "gears", "wave"].map { name in
+            guard let path = ProcessInfo.processInfo.environment["NOTEBOOK_SCIENCE_" + name.uppercased()] else {
+              throw NotebookStorageError.invalidTransaction("Scientific fixture source missing")
+            }
+            return try installCompiledProgram(store: store, path: path)
+          } : []
           for offset in 0..<materialCount {
+            if scientificMaterials {
+              let element = SpatialElement(id: String(format: "material-%02d", offset + 1),
+                surface: .board(index.rootBoardID), kind: .web,
+                frame: .init(x: 0, y: 0, width: 600, height: 900),
+                worldOrigin: .init(x: -610 + Double(offset % 2) * 640, y: -920 + Double(offset / 2) * 950),
+                source: "", html: "", programPackage: science[offset % science.count], stamp: .init(counter: 0, actor: actor))
+              _ = board.upsertElement(element, expected: nil, actor: actor)
+              continue
+            }
             let number = offset + 1, program = offset < materialCount / 2
             let slow = materialCount == 8 && offset == 7
             let text = !program && !slow && offset == materialCount - 2
@@ -247,7 +263,7 @@
           try store.saveBoard(.init(rootBoardID: index.rootBoardID,
             boards: [.init(id: index.rootBoardID, board: board)], stamp: board.stamp), items: index.items)
           try store.savePresence(.init(boardID: index.rootBoardID, mode: .board,
-            camera: .init(center: .zero, scale: 1), viewport: .init(x: size.width, y: size.height)))
+            camera: .init(center: .init(x: 0, y: scientificMaterials && materialCount == 2 ? -470 : 0), scale: scientificMaterials ? 0.63 : 1), viewport: .init(x: size.width, y: size.height)))
         } else if ProcessInfo.processInfo.arguments.contains(mixedWebArgument) {
           var board = BoardDocument.initial(itemIDs: [itemID], actor: actor)
           _ = board.moveItem(itemID, to: .init(x: 8_000, y: 8_000), actor: actor)
@@ -637,7 +653,7 @@
       }
     }
 
-    private static func installCompiledProgram(store: NotebookStore) throws -> String {
+    private static func installCompiledProgram(store: NotebookStore, path: String? = nil) throws -> String {
       struct Compiled: Decodable { let package: NotebookProgramPackage; let files: [String: String]; let packageHash: String
         let binaryFiles: [String: String]?; let webResources: [String: String]?; let bundleResources: [String: String]? }
       var fixtureResources: URL?
@@ -645,7 +661,7 @@
       #if targetEnvironment(simulator)
         // The isolated Simulator can read the UI runner's immutable fixture. Do
         // not copy megabytes into launch environment or the production bundle.
-        if let path = ProcessInfo.processInfo.environment["NOTEBOOK_COMPILED_PROGRAM_PATH"] {
+        if let path = path ?? ProcessInfo.processInfo.environment["NOTEBOOK_COMPILED_PROGRAM_PATH"] {
           let url = URL(fileURLWithPath: path)
           encoded = try Data(contentsOf: url); fixtureResources = url.deletingLastPathComponent()
         }

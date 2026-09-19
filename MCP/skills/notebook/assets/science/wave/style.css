@@ -5,3 +5,8 @@ html,body{height:100%;overflow:hidden}.wave{height:100%;overflow:auto;overscroll
 .wave video{display:block;width:100%;max-height:530px;background:#f3f4f8}.wave .media-controls{display:flex;align-items:center;flex-wrap:wrap;gap:12px;font-size:14px;margin:15px 0}.wave .media-controls input{accent-color:var(--blue)}.wave details p{font-size:15px}
 @media(max-width:580px){.wave{padding:20px 16px}.wave h1{font-size:27px}.experiment{grid-template-columns:1fr;gap:16px}.wave .field-view{max-width:380px;margin:auto}.wave .parameters{grid-template-columns:1fr 1fr;gap:14px}.wave .parameters .shapes,.wave .parameters .actions,.wave progress,.wave #status,.wave #failure{grid-column:1/-1}.wave .seed{grid-column:1/-1}.wave .equation{font-size:18px}}
 @media(prefers-color-scheme:dark){.wave{--paper:#17191f;--ink:#e5e8ef;--muted:#a9afbd;color-scheme:dark}.wave button,.wave select,.wave input[type=number]{border-color:#565d6b}.wave button:hover{background:#30343e}.wave details{border-color:#414753}.wave #failure,.wave #media-error{color:#ffad9e}}
+
+/* The numerical field stays 256². Screen-space annotations keep their edge at
+   any viewport/DPR without resampling or changing the scientific solution. */
+.wave .section-line{position:absolute;left:0;right:0;top:50%;border-top:1px dashed #6b7590a0;pointer-events:none}
+.wave #probe-marker{position:absolute;width:14px;height:14px;box-sizing:border-box;border:2px solid #202229;border-radius:50%;box-shadow:0 0 0 2px #ffffffdf;transform:translate(-50%,-50%);pointer-events:none}

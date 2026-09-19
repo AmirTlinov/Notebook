@@ -114,7 +114,7 @@ test("reserves the exact physical program height without typesetting its interna
   assert.equal(JSON.stringify(value), before);
   assert.deepEqual(result.sourceRanges.map(range => range.blockID), [id]);
   assert.doesNotMatch(result.source, /collaboration-counter/);
-  const heights = [...result.source.matchAll(/vrule width0pt height([\d.]+)pt/g)].map(match => Number(match[1]));
+  const heights = [...result.source.matchAll(/vrule width0pt height([\d.]+)bp/g)].map(match => Number(match[1]));
   assert.equal(heights.reduce((a, b) => a+b, 0), 240);
 });
 

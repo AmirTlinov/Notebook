@@ -592,6 +592,44 @@ final class DrawingResponsivenessTests: XCTestCase {
     }
   }
 
+  func testTwoFourEightScientificMaterialsKeepFirstInputAcrossCameraAndColdReopen() throws {
+    continueAfterFailure = false
+    for count in [2, 4, 8] {
+      let app = XCUIApplication()
+      app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
+        "--notebook-independent-materials=\(count)", "--notebook-scientific-materials"]
+      for name in ["signal", "gears", "wave"] {
+        app.launchEnvironment["NOTEBOOK_SCIENCE_" + name.uppercased()] = try XCTUnwrap(Bundle(for: Self.self).url(forResource: name + "-program", withExtension: "json")).path
+      }
+      launchPortraitFixture(app)
+      let impulse = app.buttons.matching(identifier: "К всплеску").firstMatch
+      XCTAssertTrue(impulse.waitForExistence(timeout: 25)); XCTAssertTrue(impulse.isHittable); impulse.tap()
+      XCTAssertTrue(app.staticTexts["61,337 с"].waitForExistence(timeout: 8))
+      let gears = app.webViews.containing(.button, identifier: "Общий вид").firstMatch
+      XCTAssertTrue(gears.waitForExistence(timeout: 25))
+      gears.swipeUp()
+      let output = app.switches.matching(NSPredicate(format: "label CONTAINS %@", "Ведомое")).firstMatch
+      XCTAssertTrue(output.waitForExistence(timeout: 5)); output.tap()
+      let note = app.staticTexts["Ведомое: 24 зуба, делительный радиус 24 мм. Вращается в ту же сторону, в 2,5 раза быстрее ведущего."].firstMatch
+      XCTAssertTrue(note.waitForExistence(timeout: 5))
+      let ready = XCTAttachment(screenshot: app.screenshot()); ready.name = "science-\(count)-first-controls"
+      ready.lifetime = .keepAlways; add(ready)
+      // The narrow empty gutter belongs to the board, not a program scroller.
+      let from = app.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.72))
+      let to = app.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.38))
+      from.press(forDuration: 0.05, thenDragTo: to)
+      let moved = XCTAttachment(screenshot: app.screenshot()); moved.name = "science-\(count)-camera"
+      moved.lifetime = .keepAlways; add(moved)
+      to.press(forDuration: 0.05, thenDragTo: from)
+      XCUIDevice.shared.press(.home); app.activate()
+      XCTAssertTrue(app.staticTexts["61,337 с"].waitForExistence(timeout: 15))
+      app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+      XCTAssertTrue(app.staticTexts["61,337 с"].waitForExistence(timeout: 25))
+      XCTAssertTrue(note.waitForExistence(timeout: 25))
+      app.terminate()
+    }
+  }
+
   func testDenseSignalFirstTapRotationBackgroundAndColdReopenOnBoardAndDocument() throws {
     continueAfterFailure = false
     let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "signal-program", withExtension: "json"))

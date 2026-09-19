@@ -111,13 +111,14 @@ final class ProgramAssetTests: XCTestCase {
     }
   }
 
-  private func compiledFixture(_ name: String = "compiled-program") throws -> Fixture {
+  private func compiledFixture(_ name: String = "compiled-program", store existing: NotebookStore? = nil) throws -> Fixture {
     struct Compiled: Decodable { let package: NotebookProgramPackage; let files: [String: String]; let packageHash: String
       let binaryFiles: [String: String]?; let webResources: [String: String]?; let bundleResources: [String: String]? }
     let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: name, withExtension: "json"))
     let value = try JSONDecoder().decode(Compiled.self, from: Data(contentsOf: url))
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), store = NotebookStore(root: root)
-    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    let root = existing?.root ?? FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = existing ?? NotebookStore(root: root)
+    if existing == nil { _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194)) }
     for file in value.package.files {
       let bytes: Data
       if let source = value.files[file.path] { bytes = Data(source.utf8) }
@@ -496,10 +497,12 @@ final class ProgramAssetTests: XCTestCase {
     func didFinish() { finished = true }
     func didFailWithError(_ error: Error) { self.error = error }
   }
-  private func wait(_ condition: () -> Bool, seconds: Int = 12) async throws {
+  private func wait(_ condition: () -> Bool, seconds: Int = 12, message: () -> String = { "" },
+    file: StaticString = #filePath, line: UInt = #line) async throws {
     let end = ContinuousClock.now + .seconds(seconds)
     while !condition(), .now < end { try await Task.sleep(for: .milliseconds(10)) }
-    XCTAssertTrue(condition(), "Expected the native owner to finish within its existing bounded path")
+    XCTAssertTrue(condition(), "Expected the native owner to finish within its existing bounded path: " + message(), file: file, line: line)
+    if !condition() { throw SceneRenderError.snapshotPending("test_owner_deadline") }
   }
   private final class UnrestrictedWorkerProbe: NSObject, WKURLSchemeHandler {
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
@@ -632,6 +635,88 @@ final class ProgramAssetTests: XCTestCase {
   }
 
   #if os(iOS)
+  func testTwoFourEightScientificMaterialsReclaimOffscreenOwnersAndRecoverAcceptedState() async throws {
+    let signal = try compiledFixture("signal-program"); defer { signal.close() }
+    let gears = try compiledFixture("gears-program", store: signal.store)
+    let wave = try compiledFixture("wave-program", store: signal.store)
+    let packages = [signal, gears, wave]
+    for count in [2, 4, 8] {
+      let document = DocumentDocument(actor: UUID(), blocks: (0..<count).map { i in
+        .interactive(id: "science-\(i)", html: "", programPackage: packages[i % 3].hash, height: 300)
+      })
+      let resources = SceneRenderResources()
+      let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false, programStore: signal.store)
+      defer { fixture.close() }
+      try await wait({ fixture.presents(.paper) }, message: { "count=\(count) " + fixture.diagnostics })
+      for regions in Dictionary(grouping: DocumentRenderRegistry.shared.regions(document: document), by: \.id).values {
+        XCTAssertEqual(regions.reduce(0) { $0 + $1.frame.height }, 300, accuracy: 1/32,
+          "Program fragments must preserve their authored height across printed page numbers")
+      }
+      var states: [String: JSONValue] = [:]
+      for i in 0..<count {
+        let id = "science-\(i)"
+        let region = try XCTUnwrap(DocumentRenderRegistry.shared.regions(document: document).first { $0.id == id })
+        fixture.revealAll()
+        fixture.showPages(current: region.pageIndex, neighbour: region.pageIndex + 1)
+        try await wait({ fixture.presents(.paper) }, message: { fixture.diagnostics + DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: resources) })
+        fixture.reveal(block: id)
+        try await wait({ fixture.web(block: id) != nil && fixture.presents(.block(id)) }, message: { "count=\(count), id=\(id): " + fixture.diagnostics })
+        let web = try XCTUnwrap(fixture.web(block: id)), runtime = try XCTUnwrap(web.navigationDelegate as? DocumentBlockRuntime)
+        let nonce = UUID().uuidString
+        _ = try await web.evaluateJavaScript("window.reuseNonce='\(nonce)'")
+        switch i % 3 {
+        case 0: _ = try await web.evaluateJavaScript("document.getElementById('event').click()")
+        case 1: _ = try await web.evaluateJavaScript("document.querySelector('[data-part=output]').click()")
+        default: _ = try await web.evaluateJavaScript("document.getElementById('recording-tab').click()")
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        let checkpoint = try await runtime.checkpoint(); states[id] = checkpoint
+        await runtime.resume()
+        // A new native scale must not reload modules, textures or the Worker heap.
+        let host = fixture.hosts[0], viewport = try XCTUnwrap(host.superview)
+        let scale = 0.85
+        // Pinch around the visible cut, not the full paper's center. A short
+        // bottom fragment otherwise leaves the viewport and correctly retires.
+        host.transform = CGAffineTransform(translationX: (viewport.bounds.midX-host.center.x)*(1-scale),
+          y: (viewport.bounds.midY-host.center.y)*(1-scale)).scaledBy(x: scale, y: scale)
+        fixture.showPages(current: region.pageIndex, neighbour: region.pageIndex + 1)
+        try await wait({ fixture.presents(.block(id)) }, message: { fixture.diagnostics })
+        let same = try await web.evaluateJavaScript("window.reuseNonce") as? String
+        XCTAssertEqual(same, nonce); XCTAssertTrue(fixture.web(block: id) === web, "count=\(count), id=\(id): " + fixture.diagnostics)
+        fixture.hosts[0].transform = .identity
+        if i == count - 1 {
+          // Deliver the real WebKit recovery callback while this owner is mounted.
+          // This exercises recovery, not an OS jetsam/performance claim.
+          runtime.webViewWebContentProcessDidTerminate(web)
+          try await wait { fixture.web(block: id) != nil && fixture.web(block: id) !== web && fixture.presents(.block(id)) }
+          let restored = try XCTUnwrap(fixture.web(block: id)?.navigationDelegate as? DocumentBlockRuntime)
+          XCTAssertEqual(restored.value, checkpoint)
+        }
+        XCTAssertLessThanOrEqual(resources.activeWebSurfaceCount, resources.maximumWebSurfaces)
+      }
+      if count == 8 {
+        fixture.revealAll()
+        fixture.showPages(current: 1, neighbour: 0)
+        try await wait({ fixture.isPresented }, message: { fixture.diagnostics })
+        let image = try fixture.windowImage()
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "science-eight-programs-second-canonical-page"; attachment.lifetime = .keepAlways; add(attachment)
+      }
+      let first = try XCTUnwrap(DocumentRenderRegistry.shared.regions(document: document).first { $0.id == "science-0" })
+      fixture.revealAll()
+      fixture.showPages(current: first.pageIndex, neighbour: first.pageIndex + 1)
+      try await wait { fixture.presents(.paper) }
+      fixture.reveal(block: "science-0")
+      try await wait { fixture.presents(.block("science-0")) && fixture.web(block: "science-0") != nil }
+      let restored = try XCTUnwrap(fixture.web(block: "science-0")?.navigationDelegate as? DocumentBlockRuntime)
+      XCTAssertEqual(restored.value, states["science-0"])
+      let evidence = XCTAttachment(string: "\(count) actual packages; peak accounted native raster bytes \(resources.peakAccountedBytes); WebKit pool limit \(resources.maximumWebSurfaces). Not total WebKit/GPU memory.")
+      evidence.name = "scientific-materials-\(count)-resources"; evidence.lifetime = .keepAlways; add(evidence)
+      fixture.close()
+      try await wait { resources.activeWebSurfaceCount == 0 && resources.rasterAdmission.pinnedBytes == 0 }
+    }
+  }
+
   func testAuthoredPlotCanvasAndThreeSelectionsBindOnlyToFrozenDocumentRasters() async throws {
     for name in ["signal", "wave", "gears"] {
       let f = try compiledFixture(name + "-program"); defer { f.close() }

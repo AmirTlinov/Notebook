@@ -19,6 +19,7 @@ extension NotebookPrintedDocument {
     guard status == 0 else { throw NotebookTypesetterError("print_locations_decode_failed") }
     data.count = count
     guard let text = String(data: data, encoding: .utf8) else { throw NotebookTypesetterError("print_locations_encoding") }
-    return try DocumentPrintLocations.decode(text, ranges: sourceMap.ranges)
+    return try DocumentPrintLocations.decode(text, ranges: sourceMap.ranges,
+      programBlockIDs: Set(document.blocks.filter { $0.kind == .interactive }.map(\.id)))
   }
 }

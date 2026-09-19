@@ -13,12 +13,15 @@ public struct DocumentPrintLocation: Codable, Equatable, Sendable {
 }
 
 public enum DocumentPrintLocations {
-  public static func decode(_ text: String, ranges: [DocumentPrintSourceRange]) throws -> [DocumentPrintLocation] {
+  public static func decode(_ text: String, ranges: [DocumentPrintSourceRange],
+    programBlockIDs: Set<String> = []) throws -> [DocumentPrintLocation] {
     guard text.utf8.count <= 16*1024*1024, text.hasPrefix("SyncTeX Version:1\n") else { throw invalid() }
     var page = -1, unit = 1.0, magnification = 1000.0, xOffset = 0.0, yOffset = 0.0
     var result: [DocumentPrintLocation] = []
     struct LineBox {
       let x: Double, y: Double, width: Double, height: Double
+      let line: Int
+      let isSource: Bool
       var lines: Set<Int> = []
     }
     var boxes: [LineBox?] = []
@@ -40,7 +43,7 @@ public enum DocumentPrintLocations {
       // inherit the nearest nonempty horizontal box, not an invented glyph size.
       if record.first == "g", page >= 0, let index = boxes.lastIndex(where: { $0 != nil }) {
         let address = record.dropFirst().prefix { $0 != ":" }.split(separator: ",")
-        if address.count >= 2, address[0] == "1", let line = Int(address[1]), let id = block(line),
+        if address.count >= 2, address[0] == "1", let line = Int(address[1]), let id = block(line), !programBlockIDs.contains(id),
           var box = boxes[index], box.lines.insert(line).inserted {
           guard result.count < 524_288 else { throw invalid() }
           result.append(.init(blockID: id, generatedLine: line, pageIndex: page,
@@ -63,9 +66,19 @@ public enum DocumentPrintLocations {
       guard values.allSatisfy({ $0.isFinite && abs($0) <= 1_000_000 }), scale > 0 else { throw invalid() }
       if kind == "(" {
         guard boxes.count < 4096 else { throw invalid() }
-        boxes.append(values[2] > 0 && values[3] > 0 ? .init(x: values[0], y: values[1], width: values[2], height: values[3], lines: [line]) : nil)
+        boxes.append(values[2] > 0 && values[3] > 0 ? .init(x: values[0], y: values[1], width: values[2], height: values[3], line: line, isSource: address[0] == "1", lines: [line]) : nil)
       }
-      guard address[0] == "1", let id = block(line) else { continue }
+      // Generated program rows are full-width hboxes containing a zero-width
+      // height strut. Shipout headers/footers inherit the interrupted source
+      // line too, but are not program rows. Do not include them in its cut.
+      if kind == "r", values[2] == 0, values[3] > 0,
+        let box = boxes.last ?? nil, box.isSource, let id = block(box.line), programBlockIDs.contains(id),
+        abs(box.y-values[1]) < 0.0001, abs(box.height-values[3]) < 0.0001 {
+        guard result.count < 524_288 else { throw invalid() }
+        result.append(.init(blockID: id, generatedLine: box.line, pageIndex: page,
+          x: box.x, y: box.y, width: box.width, height: box.height))
+      }
+      guard address[0] == "1", let id = block(line), !programBlockIDs.contains(id) else { continue }
       if values[2] <= 0 || values[3] <= 0 { continue }
       guard result.count < 524_288 else { throw invalid() }
       result.append(.init(blockID: id, generatedLine: line, pageIndex: page,

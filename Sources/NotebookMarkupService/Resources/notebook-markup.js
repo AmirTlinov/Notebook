@@ -9465,7 +9465,7 @@ ${prefix}${body2}\\par
       if (block.kind === "interactive") {
         const height = (block.height || 320) * programPointScale;
         const rows = ["\\par"];
-        for (let y2 = 0; y2 < height; y2 += 12) rows.push(`\\nointerlineskip\\hbox to\\linewidth{\\vrule width0pt height${Math.min(12, height - y2).toFixed(6)}pt depth0pt\\hfil}\\penalty0`);
+        for (let y2 = 0; y2 < height; y2 += 12) rows.push(`\\nointerlineskip\\hbox to\\linewidth{\\vrule width0pt height${Math.min(12, height - y2).toFixed(6)}bp depth0pt\\hfil}\\penalty0`);
         rows.push("\\par");
         return rows.join("\n");
       }

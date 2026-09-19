@@ -1657,7 +1657,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
 }
 
 @MainActor
-private final class ProgramFixture {
+final class ProgramFixture {
   private(set) var document: DocumentDocument
   let resources: SceneRenderResources
   let activity = PageTurnActivity()
@@ -1667,6 +1667,7 @@ private final class ProgramFixture {
   let window: UIWindow
   private var state: DocumentStateJournal
   private let measurements: DocumentPresentationRecorder?
+  private let programStore: NotebookStore?
   private var linkNavigation: (DocumentLinkDestination) -> Void = { _ in }
   private var selected = 0
   private var interactive: Bool
@@ -1680,7 +1681,13 @@ private final class ProgramFixture {
   var onCheckpoint: (String) async -> Void = { _ in }
   var acceptsCheckpoints = true
   var preparationErrors: [String] = []
-  var diagnostics: String { "ready=\(ready) errors=\(preparationErrors) web=\(resources.activeWebSurfaceCount) queued=\(resources.pendingWebRequestCount) held=\(resources.rasterAdmission.heldBytes) state=\(state.records.map { ($0.id, $0.value) })" }
+  var diagnostics: String {
+    let programs = hosts.flatMap(descendants).compactMap { web -> String? in
+      guard let runtime = web.navigationDelegate as? DocumentBlockRuntime else { return nil }
+      return "\(runtime.block.id):ready=\(runtime.ready),input=\(web.isUserInteractionEnabled),bounds=\(web.bounds),failure=\(String(describing: runtime.failure))"
+    }
+    return "ready=\(ready) errors=\(preparationErrors) web=\(resources.activeWebSurfaceCount) queued=\(resources.pendingWebRequestCount) held=\(resources.rasterAdmission.heldBytes) state=\(state.records.map { ($0.id, $0.value) }) programs=\(programs) regions=\(DocumentRenderRegistry.shared.regions(document: document).map { ($0.id, $0.pageIndex, $0.frame, $0.sourceOffset) })"
+  }
   var currentToken: String { DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndices[selected]) }
   var isPresented: Bool { presents(.page) }
   func presents(_ scope: DocumentPresentationScope) -> Bool {
@@ -1692,8 +1699,9 @@ private final class ProgramFixture {
   }
 
   init(document: DocumentDocument, resources: SceneRenderResources = SceneRenderResources(),
-    measurements: DocumentPresentationRecorder? = nil, interactive: Bool = true, showsNeighbour: Bool = true) throws {
-    self.document = document; self.resources = resources; self.measurements = measurements
+    measurements: DocumentPresentationRecorder? = nil, interactive: Bool = true, showsNeighbour: Bool = true,
+    programStore: NotebookStore? = nil) throws {
+    self.document = document; self.resources = resources; self.measurements = measurements; self.programStore = programStore
     self.interactive = interactive
     if !showsNeighbour { retiredPresentations.insert(1) }
     state = .init(id: document.id, actor: UUID())
@@ -1757,7 +1765,7 @@ private final class ProgramFixture {
           checkpoints.insert(block); checkpointValues[block] = value
           let accepted = state.records.first { $0.id == block }?.valueVersion
           refresh(); return accepted
-        }, measurements: measurements), in: hosts[index], resources: resources)
+        }, measurements: measurements, programStore: programStore), in: hosts[index], resources: resources)
     }
   }
 

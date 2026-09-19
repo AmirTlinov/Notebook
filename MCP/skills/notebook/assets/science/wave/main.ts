@@ -40,8 +40,9 @@ function draw(field:Float32Array,p:Parameters,report?:Frame['report'],partial=fa
   const v=field[y*size+x]!,rgb=palette[Math.round(Math.max(-1,Math.min(1,v))*1024)+1024]!,offset=((size-1-y)*size+x)*4;
   image.data[offset]=rgb[0];image.data[offset+1]=rgb[1];image.data[offset+2]=rgb[2];image.data[offset+3]=255;
  }
- ctx.putImageData(image,0,0);ctx.save();ctx.strokeStyle='#6b7590a0';ctx.lineWidth=.65;ctx.setLineDash([3,4]);ctx.beginPath();ctx.moveTo(0,size/2);ctx.lineTo(size,size/2);ctx.stroke();ctx.restore();
- if(state.probe){ctx.save();ctx.strokeStyle='#202229';ctx.lineWidth=1.5;const x=state.probe.x+.5,y=size-state.probe.y-.5;ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.stroke();ctx.restore();}
+ ctx.putImageData(image,0,0);
+ const marker=get('probe-marker');marker.hidden=!state.probe;
+ if(state.probe){marker.style.left=(state.probe.x+.5)/size*100+'%';marker.style.top=(size-state.probe.y-.5)/size*100+'%';}
  const width=Math.max(280,cut.getBoundingClientRect().width),height=120,dpr=Math.min(devicePixelRatio||1,2);
  if(cut.width!==Math.round(width*dpr)||cut.height!==height*dpr){cut.width=Math.round(width*dpr);cut.height=height*dpr;}
  const c=cutContext;c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,width,height);c.strokeStyle='#aab0bf';c.lineWidth=1;c.beginPath();c.moveTo(28,60);c.lineTo(width-14,60);c.stroke();

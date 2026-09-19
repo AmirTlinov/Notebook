@@ -1,5 +1,59 @@
 # Проверка Notebook
 
+## 19 сентября, 07:20 МСК — GUI-248: 2/4/8 материалов и переход программы через страницу
+
+На прежнем pool/owners проверены настоящие signal/Three gears/wave packages.
+Новый scientific вариант существующей UI fixture открывает 2/4/8 материалов,
+часть вне экрана. Первые control, pan туда/обратно, Home/return и холодное
+открытие сохраняют принятые параметры. Пул не увеличен; при избытке видимых
+материалов очередь остаётся явной, готовые пассивные пиксели не заменяются пустотой.
+Canvas wave marker и линия сечения теперь экранные DOM/CSS overlays, а не
+размытые части научной сетки256²; модель и число отсчётов не изменены.
+
+Найден и исправлен настоящий общий дефект GUI-238: SyncTeX номер страницы
+наследовал строку прерванного program slot. Его footer попадал в bounds блока,
+завышал sourceOffset следующего фрагмента и блокировал установку всего overlay.
+Тот же decoder теперь узнаёт авторские hbox/zero-width strut rows; footer не
+является строкой программы. Высоты задаются в PDF `bp`, не TeX `pt` (убрана
+потеря0.37%). Rendering recipe3 инвалидирует старые производные карты.
+Это исправление владельца карты, не ослабление geometry guard или второй layout.
+
+**Simulator 3 PASS из v9**: два tall-program/page-handoff native сценария и
+2/4/8 UI (`.build/gui-248-sim-v9.xcresult`); ещё **1 native PASS v10**,
+`.build/gui-248-sim-unit-v10.xcresult`: 2/4/8 actual packages внутри документа,
+первый control каждого блока, точная сумма высот300, camera reuse того же heap,
+checkpoint/reclaim/return, callback WebKit termination с восстановлением state.
+После закрытия все WebKit leases и pinned rasters освобождены. Введён именно
+callback delegate, не настоящий OS jetsam. Учтённый peak raster budget:
+25 199 985 / 25 220 286 / 27 795 082 bytes; это **не** полная WebKit/GPU память.
+
+**Mac 3 PASS**, `.build/gui-248-mac-v3/verification.json`: два canonical PDF
+сценария (vector text/links + program composite), Worker/media lifecycle.
+Mac и Simulator v9 source **05b479842f0dac427565e4fca2e8aad441ecb7c0bfde2e36c2bee2a2a0d74e63**;
+окончательный source v10 **16332c6646acb5f05eb2a557fda481bfcbfb7dbb069dc9148d13d82991635d51**
+отличается только test pinch pivot. **Core5 PASS**, `/tmp/gui248-core-v9.log`;
+**MCP21 PASS + generated SDK check**, `/tmp/gui248-js-v9.log`, `/tmp/gui248-sdk-v9.log`.
+Полностью подготовлен собственный `.build/notebook-typesetter-runtime` для
+Mac/Simulator, включая новый compiled markup; shared runtime другой задачи
+не изменён. Физическая пара116 не затронута.
+
+Отказы v2–v6 отделены от результата: page-wide demand пяти live программ
+не укладывается в прежний pool, поэтому проверяется реальный visible cut;
+затем v7 выявил footer bug. В v8 ещё использовался старый generated markup;
+он пересобран вместе с pinned runtime. V9 повторно выявил ошибку fixture:
+масштабирование вокруг центра целой бумаги уводило короткий нижний fragment
+за viewport, после чего owner правильно его освобождал. V10 держит pivot на
+видимом фрагменте и по-прежнему требует тот же WK/nonce, не ослабляя reclaim.
+
+Browser marker/caption, board screenshots2/4/8 и native page2 действительно
+осмотрены. Последний показывает clipping программы и отдельный номер страницы;
+passive cut во время восстановления имеет честный preparation label, не
+квитанцию готовности всех контролов сразу. Exploratory Time Profiler v2
+относится к неудачному тесту и **не принимается** за performance budget.
+Input/main-thread p95, system GPU/frame measurements, Pencil, 10 повторов,
+30 минут и installed shared delivery остаются открыты для интегрированного
+GUI-250. GUI-248 не переводится в Done; следующий срез — GUI-249 export.
+
 ## 19 сентября, 06:45 МСК — GUI-247: точный объект и показанный кадр
 
 В существующем меню материала чата можно выбрать видимую программу и явно

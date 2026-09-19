@@ -190,7 +190,7 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
       // its viewport; sourceOffset addresses each consecutive page fragment.
       const height = (block.height || 320) * programPointScale;
       const rows: string[] = ["\\par"];
-      for (let y = 0; y < height; y += 12) rows.push(`\\nointerlineskip\\hbox to\\linewidth{\\vrule width0pt height${Math.min(12, height-y).toFixed(6)}pt depth0pt\\hfil}\\penalty0`);
+      for (let y = 0; y < height; y += 12) rows.push(`\\nointerlineskip\\hbox to\\linewidth{\\vrule width0pt height${Math.min(12, height-y).toFixed(6)}bp depth0pt\\hfil}\\penalty0`);
       rows.push("\\par"); return rows.join("\n");
     }
     currentMath = math;
