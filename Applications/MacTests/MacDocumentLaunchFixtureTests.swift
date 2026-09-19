@@ -6,6 +6,36 @@ import XCTest
 
 @MainActor
 final class MacDocumentLaunchFixtureTests: XCTestCase {
+  func testReplayedLandingDuringScrollDoesNotPublishAnIntermediateReadingPosition() async throws {
+    let model = MacDocumentLaunchFixture.makeModel()
+    retainNotebookUntilTeardown(model, removing: model.store.root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let document = try XCTUnwrap(model.activeDocument), block = try XCTUnwrap(document.blocks.first)
+    let source = NotebookAppModel.documentPageSourceRevision(document), controller = UUID()
+    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let record = try DocumentLayoutRecord(receipt: ["sourceKey": source, "layoutScope": "source", "layoutCanonical": true,
+      "pageCount": 1, "width": geometry.width, "height": geometry.height,
+      "regions": [["id": block.id, "pageIndex": 0, "x": 20.0, "y": 30.0, "width": 100.0, "height": 100.0, "sourceOffset": 0.0]],
+      "anchors": [], "reading": [[block.id, "1111111111111111", 0, 0, 10, 0, 30.0]]] as NSDictionary,
+      sourceKey: source, blockIDs: [block.id], geometry: geometry)
+    model.acceptDocumentReadingLayout(.init(pageCount: 1, sourceRevision: source, record: record), documentID: document.id)
+    model.bindDocumentPageController(controller, documentID: document.id, source: source)
+    XCTAssertTrue(model.acceptDocumentPageLanding(.init(controllerID: controller, documentID: document.id,
+      sourceRevision: source, revision: 1, pageIndex: 0, requestID: nil)))
+    let original = try XCTUnwrap(model.documentReadingPosition(document.id)), start = try XCTUnwrap(model.presence)
+    for revision in 2...8 {
+      let camera = SpatialCamera(center: start.camera.center.offsetBy(x: 0, y: Double(revision) * 20), scale: start.camera.scale)
+      model.updatePresence(start.replacingCamera(camera), settled: false)
+      XCTAssertTrue(model.acceptDocumentPageLanding(.init(controllerID: controller, documentID: document.id,
+        sourceRevision: source, revision: UInt64(revision), pageIndex: 0, requestID: nil)))
+      XCTAssertEqual(model.documentReadingPosition(document.id), original)
+    }
+    model.updatePresence(try XCTUnwrap(model.presence), settled: true)
+    XCTAssertNotEqual(model.documentReadingPosition(document.id), original)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    XCTAssertEqual(try model.store.readDocumentReadingPosition(document.id), model.documentReadingPosition(document.id))
+  }
+
   func testReplayedDocumentLandingDoesNotInvalidateIdleNavigation() async throws {
     let model = MacDocumentLaunchFixture.makeModel()
     retainNotebookUntilTeardown(model, removing: model.store.root)

@@ -1,5 +1,95 @@
 # Проверка Notebook
 
+## 19 сентября, 16:13 МСК — GUI-248: «Рядом» и «Код» приняты на установленном Mac
+
+V16 immutable source `2f48105d25c6dcea9609d6b722e3cb92f3711a624097af006852a2ef8671a8cc`
+собран и установлен в private stand, stores/manifests сохранены. Во время сборки
+рабочая ветка продолжилась transport fix и test-only setup, поэтому
+`workingTreeUnchanged=false`; неизменность самого source snapshot проверена.
+Этот development artifact не объявлен финальным интегрированным выпуском.
+
+Настоящий Mac UI: открыть точную Sound обложку → «Рядом» → «Код» → «Показать лист».
+**1 PASS**, runtime warnings/skips0; обе window screenshots осмотрены: полная
+высота панели, toolbar сверху, нет горизонтального разделителя через сообщение,
+вертикальная граница только рядом с листом, no-op find/undo скрыты. Пиксели
+интерактивного Sound также видны рядом с исходником. Адрес документа/приложения
+заданы явно, production не затронут. Уточнённый test-only runner собран отдельно
+из одного существующего Mac UI test source, не пересобирает и не заменяет app;
+хеш app до/после одинаковый. Evidence: `.build/gui250-v16-source-pane-ui/`,
+`ui-v2.xcresult`, `provenance.json`, две PNG в `attachments/`.
+
+Прежние13 native Mac tests относятся к pan/prepared-scale/bookmark/account
+срезу до последней визуальной правки разделителя. Это не измерение дрожания:
+повтор CUA scroll остановлен ошибкой ScreenCaptureKit3811 до жеста. Системные
+кадры, p95 и живой scroll остаются открытыми. Xcode передан GUI-259 в16:12:38МСК.
+
+## 19 сентября, 16:02 МСК — GUI-242: ограниченный chunk переполнял JSON frame
+
+Private TLS уже соединяет обе стороны, но повторно обрывается с `frameTooLarge`.
+Foundation JSONEncoder экранировал `/` внутри Base64: chunk184320 байт0xff
+превращался в491522 байта против frame limit262144. Read-only аудит private
+store нашёл реальный blob `bae5dcd2294168324c3f3acf9662ad73568f89ad77d95f2fe8c456ecb27bf65e`
+(768044 байта) с JSON chunks269009–273988 байт до envelope.
+
+`NotebookTransportFraming` теперь не экранирует необязательные slashes;
+обычный JSON, Base64, TLS, лимиты и decoder сохранены. Отрицательная Core
+регрессия воспроизвела ошибку на0xfe/0xff. После правки3 byte-cases и durable
+offer PASS (`.build/gui250-transport-frame-red.log` / `-green.log`).
+Commit `2da169c` отправлен. V16 snapshot был создан до этой правки;
+installed delivery/офлайн не подтверждены.
+
+## 19 сентября, 15:33 МСК — GUI-250/248: Sound lifecycle и новые замечания к Mac
+
+На установленном V14 заново опубликованы штатным private MCP все девять
+научных программ; все девять PNG exports имеют status saved. Каталог адресов и
+hashes: `.build/gui250-live-corpus-v14/catalog.json`. Это текущий e6bc stand,
+не прежняя копия пространства и не доставка в Simulator.
+
+Sound `98001c01-bd25-4112-90fc-591c72667a5c`: настоящий CUA Play/Pause,
+сохранённая human revision1 phase `0.5221666666666686`; после выхода и поиска/
+reopen программа остановлена, та же фаза и public state stamp. Сравнение
+`paused-state.json` / `reopened-state.json` совпало полностью. При fit width96%
+осмотрены частицы, связанная точка давления, подписи и доступные controls.
+Это lifecycle/state сценарий, не frame pacing или reference-quality PASS.
+
+Затем Амир сообщил дрожание документа при scroll и прислал пустую полосу
+«Нет текстовых блоков» в режимах «Рядом»/«Код». Read-only AX установленного V14
+подтвердил toolbar по центру окна, а не сверху. Candidate растягивает source
+pane по высоте, объясняет отсутствие текстового исходника и убирает неработающие
+кнопки. Mac pan settlement сохраняет существующую native projection, не
+переносит весь SwiftUI/WebKit subtree при каждой паузе колеса; readiness replay
+не публикует промежуточные reading positions во время движения. Prepared scale
+остаётся закреплён за прежней камерой до завершения zoom.
+
+Source `932dc150e1ac3e06bced29f39124740fb16f57a2ebd78cc175ddb2723dc4a08e`:
+**13 Mac PASS**, runtime warnings/skips0,
+`.build/gui250-scroll-source-account-native-v2/`. Первый прогон:11 PASS/2 FAIL
+из-за неполного layout fixture (отсутствовал обязательный sourceOffset) и
+игнорирования pixel rounding в начальной позиции SwiftUI marker; production
+checks не ослаблены, точное равенство moving/settled frame сохранено.
+V15 установлен с сохранением stores/identities. Первый UI attempt
+`33a38db4-c35d-4c21-b071-c9c5f11a3ead` не переключил режим: системное окно
+прервало XCTest. Это не результат проверки pane. После обычного перезапуска
+CUA переключил «Рядом», «Код» и «Показать лист»: toolbar сверху, пустое состояние
+занимает всю высоту, неработающие действия отсутствуют. В живом рендере найден
+ещё старый горизонтальный Divider, пересекающий сообщение; следующий candidate
+заменяет его вертикальной границей только в режиме «Рядом». Дрожание пока
+не объявлено устранённым. Driver routing:81 PASS, `.build/gui250-source-pane-route.log`.
+
+Для private Mac/Simulator подготовлена только подмена CloudKit account service:
+два синтетических actor ID и один случайный256-bit pair key принадлежат run.
+Реальные NotebookAccountConnection, device-only Keychain, TLS и доставка остаются
+прежними владельцами; production bundle не принимает этот manifest. Нет доступа
+к пользовательскому iCloud, production workspace или ключам. Native проверки
+охватывают roles/actors, общий credential обеих сторон, стабильность reopen и
+отказ при foreign account/stale key. CLI bootstrap также проверен в новом
+временном каталоге: одинаковый ключ, разные actors, manifests0600. Текущий
+V15 использует эту фикстуру на обеих сторонах. Наблюдается настоящая передача
+blobs в отдельный Simulator, но публичная квитанция Sound в15:51МСК всё ещё
+`receivedByIPad:awaiting_device`, `shownOnIPad:awaiting_display`; доставка и показ
+не объявлены подтверждёнными. Физическая пользовательская пара не изменялась.
+
+
 ## 19 сентября, 15:06 МСК — GUI-250: настоящий Mac control → saved → reopen принят
 
 Private V14 построен без изменения исходников, source

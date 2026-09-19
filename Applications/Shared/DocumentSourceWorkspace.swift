@@ -226,11 +226,15 @@ struct DocumentSourceWorkspace<Paper: View>: View {
             }
           }
         if showing, let document {
-          editor(document).frame(width: width).background(.background)
+          editor(document)
+            .frame(width: width, height: max(0, geometry.size.height - topInset), alignment: .top)
+            .background(.background)
             #if os(iOS)
             .background(NotebookControlRegion(gate: model.inputGate))
             #endif
-            .overlay(alignment: .trailing) { Divider() }.padding(.top, topInset)
+            .overlay(alignment: .trailing) {
+              if mode == .beside { Rectangle().fill(.quaternary).frame(width: 1) }
+            }.padding(.top, topInset)
         }
 
       }
@@ -298,11 +302,13 @@ struct DocumentSourceWorkspace<Paper: View>: View {
           }
         } label: { Label(session.map { $0.field == .preamble ? "Преамбула LaTeX" : "\($0.blockID) · \($0.kind.rawValue)" } ?? "Исходник", systemImage: "doc.text").lineLimit(1) }
         Spacer()
-        Button { find += 1 } label: { Image(systemName: "magnifyingglass") }.accessibilityLabel("Найти в исходнике")
-        Button { revealSelection(document) } label: { Image(systemName: "doc.viewfinder") }.accessibilityLabel("Показать на листе")
-        Button { session?.askAgent() } label: { Image(systemName: "bubble.left.and.text.bubble.right") }
-          .accessibilityLabel("Обсудить выделенный исходник").disabled(session?.canAskAgent != true)
-        Button { session?.undo() } label: { Image(systemName: "arrow.uturn.backward") }.accessibilityLabel("Отменить действие")
+        if let session {
+          Button { find += 1 } label: { Image(systemName: "magnifyingglass") }.accessibilityLabel("Найти в исходнике")
+          Button { revealSelection(document) } label: { Image(systemName: "doc.viewfinder") }.accessibilityLabel("Показать на листе")
+          Button { session.askAgent() } label: { Image(systemName: "bubble.left.and.text.bubble.right") }
+            .accessibilityLabel("Обсудить выделенный исходник").disabled(!session.canAskAgent)
+          Button { session.undo() } label: { Image(systemName: "arrow.uturn.backward") }.accessibilityLabel("Отменить действие")
+        }
       }.padding(14)
       if let session {
         DocumentNativeSourceEditor(session: session, findRequest: find).id(ObjectIdentifier(session))
@@ -312,7 +318,18 @@ struct DocumentSourceWorkspace<Paper: View>: View {
           Spacer()
           if session.conflicted { Button("Сравнить") { comparison = true } }
         }.font(.caption).padding(12)
-      } else { ContentUnavailableView("Нет текстовых блоков", systemImage: "doc.text") }
+      } else {
+        ContentUnavailableView {
+          Label("Нет текстового исходника", systemImage: "doc.text")
+        } description: {
+          Text("Интерактивные блоки не редактируются как текст. Можно добавить текстовый блок или вернуться к листу.")
+        } actions: {
+          Button("Добавить текст") { insert(.markdown, document: document) }
+          Button("Показать лист") { mode = .paper }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("document-source-unavailable")
+      }
       ForEach(diagnostics) { diagnostic in
         Button("Строка \(diagnostic.line): \(diagnostic.message)") {
           if let id = diagnostic.blockID, let block = document.blocks.first(where: { $0.id == id }) {

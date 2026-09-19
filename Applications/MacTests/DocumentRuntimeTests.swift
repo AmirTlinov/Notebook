@@ -105,6 +105,52 @@ final class DocumentRuntimeTests: XCTestCase {
     func updateNSView(_ view: DocumentWebHost, context: Context) {}
   }
 
+  func testStatePublicationDuringCameraContactKeepsThePreparedWebKitScale() async throws {
+    let actor = UUID(), resources = SceneRenderResources(maximumWebSurfaces: 1)
+    let document = DocumentDocument(actor: actor, blocks: [.interactive(id: "control",
+      html: "<input type='range'>", initialState: .number(0), height: 100)])
+    var state = DocumentStateJournal(id: document.id, actor: actor)
+    let geometry = WorkspaceItemGeometry.document(document.paperSize), viewport = SpatialPoint(x: 1100, y: 780)
+    let plane = SceneCameraPlaneView<Int>()
+    plane.frame = .init(x: 0, y: 0, width: viewport.x, height: viewport.y)
+    let window = NSWindow(contentRect: plane.frame, styleMask: .borderless, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false; window.contentView = plane; window.orderBack(nil)
+    defer { plane.uninstall(); window.orderOut(nil); window.close() }
+    var ready = false
+    func web(in view: NSView) -> WKWebView? {
+      (view as? WKWebView) ?? view.subviews.lazy.compactMap { web(in: $0) }.first
+    }
+    func update(scale: Double, revision: Int, active: Bool) {
+      let presence = SessionPresence(mode: .document, camera: .init(scale: scale), viewport: viewport,
+        focusedItemID: document.id, openProgress: 1)
+      plane.update(presence: presence, revision: revision, reanchorsOnRevision: false, isCameraActive: active) { anchor, projection in
+        AnyView(DocumentWebView(document: document, state: state, isInteractive: true,
+          selectedPageIndex: 0, capturesSnapshot: false, onRenderReady: .init { ready = $0 },
+          onPageLayout: { _ in }, onLinkActivation: { _ in nil }, onStateChange: { _, _ in nil }, resources: resources)
+          .environment(\.scenePlaneProjection, projection)
+          .environment(\.macDocumentDisplayScale, anchor.camera.scale)
+          .frame(width: geometry.width * anchor.camera.scale, height: geometry.height * anchor.camera.scale)
+          .frame(width: viewport.x, height: viewport.y))
+      }
+      plane.layoutSubtreeIfNeeded()
+    }
+    update(scale: 0.44, revision: 0, active: false)
+    await waitUntil { ready }
+    let initial = try XCTUnwrap(web(in: plane))
+    XCTAssertTrue(state.commit(blockID: "control", value: .number(1), actor: actor))
+    update(scale: 0.5, revision: 1, active: true)
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertTrue(web(in: plane) === initial)
+    XCTAssertEqual(initial.pageZoom, 0.44, accuracy: 0.0001)
+    XCTAssertEqual(initial.convert(initial.bounds, to: nil).width, geometry.width * 0.5, accuracy: 1,
+      "A state echo during contact must not apply the current camera a second time")
+    update(scale: 0.5, revision: 1, active: false)
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertTrue(web(in: plane) === initial)
+    XCTAssertEqual(initial.pageZoom, 0.5, accuracy: 0.0001)
+    XCTAssertEqual(initial.convert(initial.bounds, to: nil).width, geometry.width * 0.5, accuracy: 1)
+  }
+
   func testProjectedReadingCompositionKeepsWebKitOutOfScaledAncestors() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "control",
       html: "<label>Parameter<input type='range' aria-label='Parameter'></label>", height: 100)])

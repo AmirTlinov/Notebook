@@ -599,7 +599,10 @@ def upgrade(args):
 def document_ui_request(platform, test, document_id, document_title):
     """Validate the public fixture address before loading or touching a stand."""
     suite = "NotebookDocumentAcceptanceUITests/"
-    mac_document = test == "NotebookAcceptanceMacUITests/testPublicScientificDocumentRetainsARealControlEditAfterReopening"
+    mac_document = test in {
+        "NotebookAcceptanceMacUITests/testPublicScientificDocumentRetainsARealControlEditAfterReopening",
+        "NotebookAcceptanceMacUITests/testSourceUnavailableUsesTheWholePaneInBesideAndCodeModes",
+    }
     if not test.startswith(suite) and not mac_document:
         release.require(document_id is None and document_title is None,
                         "Адрес документа допускается только в документном UI-сценарии.")

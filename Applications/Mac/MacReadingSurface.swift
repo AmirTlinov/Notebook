@@ -1,6 +1,16 @@
 import NotebookCore
 import SwiftUI
 
+private struct MacDocumentDisplayScaleKey: EnvironmentKey {
+  static let defaultValue = 1.0
+}
+extension EnvironmentValues {
+  var macDocumentDisplayScale: Double {
+    get { self[MacDocumentDisplayScaleKey.self] }
+    set { self[MacDocumentDisplayScaleKey.self] = newValue }
+  }
+}
+
 /// Reading is the focused material, not a magnified board with its neighbours.
 /// Its scroll/zoom is still the local SessionPresence camera.
 struct MacReadingSurface: View {
@@ -34,6 +44,7 @@ struct MacReadingSurface: View {
               onRenderReady: .init { _ in }, displayProjection: anchor.camera.scale)
           } else if presence.mode == .document, let document = model.documents[id], let state = model.documentStates[id] {
             MacDocumentSurface(document: document, state: state, onLayout: { documentLayout = $0 })
+              .environment(\.macDocumentDisplayScale, anchor.camera.scale)
           } else {
             VStack(spacing: 12) {
               if let error = model.persistenceFailure { Text(error).foregroundStyle(.secondary) }

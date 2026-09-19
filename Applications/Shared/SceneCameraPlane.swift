@@ -521,7 +521,10 @@ final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneA
     hasInstalledLayout = false
     let needsRebase = anchor.map {
       SceneCameraProjection.requiresRebase(anchor: $0, current: presence)
-        || (!isCameraActive && $0.camera != presence.camera)
+        // Ending a wheel pan does not change density. Keep its native
+        // translation instead of relocating the SwiftUI/WebKit subtree at
+        // every pause between wheel samples. Zoom still settles at exact LOD.
+        || (!isCameraActive && $0.camera.scale != presence.camera.scale)
     } ?? true
     if needsRebase || self.revision != revision {
       let previousAnchor = anchor

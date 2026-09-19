@@ -2226,7 +2226,7 @@ final class NotebookAppModel {
         openProgress: presence.openProgress, documentPageIndex: landing.pageIndex,
         selectedItemID: presence.selectedItemID, notebookPageID: presence.notebookPageID), settled: true)
     }
-    rememberDocumentReading()
+    if presencePhase == .settled { rememberDocumentReading() }
     readingSuppressedDocument = nil
     completeDocumentSavePresentation()
     return true

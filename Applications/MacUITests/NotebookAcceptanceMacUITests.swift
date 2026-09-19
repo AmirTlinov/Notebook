@@ -57,6 +57,34 @@ import XCTest
     proof.name = "automatic-devices-status"; proof.lifetime = .keepAlways; add(proof)
   }
 
+  func testSourceUnavailableUsesTheWholePaneInBesideAndCodeModes() throws {
+    continueAfterFailure = false
+    let id = try XCTUnwrap(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_DOCUMENT_ID"].flatMap(UUID.init(uuidString:)))
+    let title = try XCTUnwrap(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_DOCUMENT_TITLE"])
+    try activatePrivateApplication()
+    let cover = application.buttons["workspace-item-" + id.uuidString.lowercased()]
+    if cover.exists { cover.doubleClick() }
+    let window = application.windows[title]
+    XCTAssertTrue(window.waitForExistence(timeout: 15))
+    XCTAssertTrue(window.buttons["mac-workspace-back"].isEnabled, "The exact public document, not its board, must be open")
+    let unavailable = window.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@ OR value BEGINSWITH %@",
+      "Нет текстового исходника", "Нет текстового исходника")).firstMatch
+    for mode in ["Рядом", "Код"] {
+      window.radioButtons[mode].click()
+      let source = window.menuButtons["Исходник"]
+      XCTAssertTrue(source.waitForExistence(timeout: 5))
+      XCTAssertLessThan(source.frame.minY, window.frame.minY + 130,
+        "The source toolbar belongs at the top, not in a short vertically centered strip")
+      XCTAssertTrue(unavailable.exists)
+      XCTAssertTrue(window.buttons["Показать лист"].isHittable)
+      XCTAssertFalse(window.buttons["Найти в исходнике"].exists)
+      let screenshot = XCTAttachment(screenshot: window.screenshot())
+      screenshot.name = "interactive-source-unavailable-" + mode; screenshot.lifetime = .keepAlways; add(screenshot)
+    }
+    window.buttons["Показать лист"].click()
+    XCTAssertFalse(unavailable.exists)
+  }
+
   /// This document is authored through the installed public MCP before the
   /// scenario. No fixture injection or synthetic DOM events stand in for UI.
   func testPublicScientificDocumentRetainsARealControlEditAfterReopening() throws {

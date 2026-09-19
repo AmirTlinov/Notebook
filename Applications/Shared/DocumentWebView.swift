@@ -2517,7 +2517,7 @@ private enum DocumentWebViewFactory {
   }
 
   private struct PlatformDocumentWebView: NSViewRepresentable {
-    @Environment(\.scenePlaneProjection) private var projection
+    @Environment(\.macDocumentDisplayScale) private var projectionScale
     let document: DocumentDocument
     let state: DocumentStateJournal
     let isInteractive: Bool
@@ -2547,7 +2547,9 @@ private enum DocumentWebViewFactory {
       return proposal.replacingUnspecifiedDimensions(by: .init(width: size.width, height: size.height))
     }
     func updateNSView(_ view: DocumentWebHost, context: Context) {
-      view.setProjectionScale(projection?.current.camera.scale ?? 1)
+      // The prepared paper and its host share the anchor's scale. Native
+      // camera motion already projects anchor → current until settlement.
+      view.setProjectionScale(projectionScale)
       context.coordinator.programStore = programStore
       context.coordinator.ownsProgramState = snapshotPixelWidth == nil
       context.coordinator.setProgramsVisible(isVisible)
