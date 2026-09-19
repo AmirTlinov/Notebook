@@ -1131,7 +1131,7 @@ final class SceneCompositionTiles {
       // interactive program. Static tiles and passive exports use jobs below.
       if runtimeOwners.contains(address) { continue }
       guard sourceJobs.count < 32 else { break }
-      let id = UUID(), demand = receipt.demand
+      let id = UUID(), demand = receipt.demand, programSource = lastRequest?.source
       let capture = SceneRasterCaptureRequest(policy: demand.policy)
       let work = Task { @MainActor [weak self, resources] in
         defer { self?.sourceWork[id] = nil }
@@ -1148,7 +1148,7 @@ final class SceneCompositionTiles {
             // program's actual final borrow before starting a raster executor.
             raster = try await resources.prepareRaster(demand.source, requestedScale: demand.minimumScale, region: demand.region,
             executionSource: focus,
-            captureRequest: capture,
+            captureRequest: capture, programStore: await programSource?.programStore(),
             permitsPreparation: { [weak self] in
               guard let self, !stopped, sourceJobs[address]?.id == id else { return false }
               // This address already owns an admitted executor. A transient

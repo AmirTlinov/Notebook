@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; frame-src 'self' data: blob:; form-action 'none'; base-uri 'none'; object-src 'none';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; frame-src 'self' data: blob: notebook-program:; form-action 'none'; base-uri 'none'; object-src 'none';">
   <style>
     :root {
       color-scheme: light;
@@ -210,6 +210,7 @@
   <script src="purify.min.js"></script>
   <script src="document-fragments.js"></script>
   <script src="notebook-program.js"></script>
+  <script src="document-program.js"></script>
   <script src="agent-feedback.js"></script>
   <script src="document-images.js"></script>
   <script src="tex-svg-nofont.js"></script>
@@ -392,43 +393,8 @@
         const csp = "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'; object-src 'none';";
         const html = block.html || '';
         return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}${safeCSS}</style><script>(()=>{
-          const blockID=${safeID}, token=${safeToken};
-          const post=message=>parent.postMessage({...message,blockID,token},'*');
-          const report=(kind,message)=>post({channel:'notebook-diagnostic',kind,message:String(message)});
-          addEventListener('error',e=>report('javascript_error',e.message));
-          addEventListener('unhandledrejection',e=>report('javascript_error',e.reason));
-          const reportFocus=()=>post({channel:'notebook-program-focus',focused:!!document.activeElement?.matches('input,textarea,[contenteditable=true]')});
-          addEventListener('focusin',reportFocus);
-          addEventListener('focusout',()=>queueMicrotask(reportFocus));
-          const program=(${createNotebookProgram.toString()})({state:${safeState},report,
-            onCommit:(state,revision)=>post({channel:'notebook-interactive',state,revision})});
-          window.notebook=program.api;let resuming=Promise.resolve();
-          addEventListener('pagehide',()=>{void program.dispose().catch(()=>{})});
-          addEventListener('message',async event=>{
-            if(event.source!==parent||event.data?.token!==token)return;
-            try {
-              if(event.data.channel==='notebook-suspend'){
-                const state=await program.checkpoint();post({channel:'notebook-program-flushed',requestID:event.data.requestID,state});return;
-              }
-              if(event.data.channel==='notebook-resume'){resuming=program.resume();await resuming;post({channel:'notebook-program-resumed',requestID:event.data.requestID});return;}
-              if(event.data.channel==='notebook-dispose'){await program.dispose();return;}
-              if(event.data.channel==='notebook-navigation-blur'){document.activeElement?.blur();reportFocus();return;}
-              if(event.data.channel!=='notebook-state')return;
-              await resuming;const accepted=await program.apply(event.data.state,event.data.revision);
-              post({channel:'notebook-state-applied',requestID:event.data.requestID,accepted});
-            } catch(error) {
-              post({channel:'notebook-program-error',requestID:event.data.requestID,message:String(error)});
-            }
-          });
-          addEventListener('load',async()=>{
-            await document.fonts.ready;
-            await Promise.all([...document.images].map(image=>image.decode().catch(()=>{})));
-            if(document.body.scrollHeight>innerHeight+1||document.body.scrollWidth>innerWidth+1)report('overflow','Content exceeds its frame');
-            for(const image of document.images)if(!image.naturalWidth)report('load_error','Image failed to load');
-            try{await program.start({requiresReady:${!!(String(block.javaScript || '').trim() || /<script/i.test(html))}});post({channel:'notebook-program-ready'});post({channel:'notebook-program-started'})}
-            catch(error){report('program_ready_error',error)}
-          });
-          addEventListener('DOMContentLoaded',()=>{try{const script=document.createElement('script');script.textContent=${safeScript};document.body.append(script)}catch(error){report('javascript_error',error)}});
+          (${installNotebookDocumentProgram.toString()})({blockID:${safeID},token:${safeToken},state:${safeState},
+            requiresReady:${!!(String(block.javaScript || '').trim() || /<script/i.test(html))},script:${safeScript}},${createNotebookProgram.toString()});
         })()<\/script></head><body>${html}</body></html>`;
       };
 
@@ -518,7 +484,9 @@
           const container=document.createElement('div');container.className='interactive-fragment';
           container.style.visibility='hidden';container.inert=true;
           const frame=document.createElement('iframe');frame.className='interactive-frame';frame.title=block.id;
-          frame.setAttribute('sandbox','allow-scripts');frame.setAttribute('scrolling','no');frame.dataset.blockId=block.id;
+          // A native-minted package has its own non-file origin. Retaining it permits workers,
+          // but cannot expose this file-backed parent or another package's capability.
+          frame.setAttribute('sandbox',block.programPackage?'allow-scripts allow-same-origin':'allow-scripts');frame.setAttribute('scrolling','no');frame.dataset.blockId=block.id;
           let resolve,reject;const started=new Promise((yes,no)=>{resolve=yes;reject=no});
           runtime={container,frame,token,started,resolve,reject,readiness:'unknown',isStarted:false,
             appliedState:stable(state),appliedVersion:payload.stateVersions?.[block.id]??null,revision:'0',cancel:()=>{
@@ -529,7 +497,12 @@
             runtime.isStarted=true;runtime.visible=undefined;positionInteractiveFrames();
             bridge({kind:'programReady',blockID:block.id,blockToken:token});
           },()=>{});
-          frame.srcdoc=interactiveDocument(block,state,token);container.append(frame);interactiveLayer.append(container);
+          if(block.programPackage) {
+            const url=payload.programURLs?.[block.id];
+            if(!url)throw new Error('Program package capability is missing');
+            frame.src=url;
+          } else frame.srcdoc=interactiveDocument(block,state,token);
+          container.append(frame);interactiveLayer.append(container);
         }
         runtime.height=block.height||320;runtime.initialState=block.initialState??{};
         return runtime;

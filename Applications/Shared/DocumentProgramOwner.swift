@@ -172,7 +172,7 @@ final class DocumentProgramOwner {
       let state = record?.value ?? block.initialState
       if runtimes[id] == nil {
         let runtime = DocumentBlockRuntime(documentID: documentID, block: block, sourceVersion: sourceVersion,
-          value: state, stateVersion: record?.valueVersion, width: region.frame.width, resources: resources)
+          value: state, stateVersion: record?.valueVersion, width: region.frame.width, resources: resources, programStore: input.programStore)
         runtime.onChange = { [weak self, weak runtime] in
           guard let self, let runtime, runtimes[id] === runtime else { return }
           reconcile(); onChange()

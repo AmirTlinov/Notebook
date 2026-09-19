@@ -1,6 +1,6 @@
 # Физическое продолжение высокой программы
 
-## Файловый источник программы (GUI-242, незавершённая app-интеграция)
+## Файловый источник программы (GUI-242, development-срез)
 
 У page/board web element и interactive document block есть необязательный
 `programPackage`: SHA-256 канонического `NotebookProgramPackage`. Он атомарен с
@@ -20,8 +20,34 @@ MIME, размеры и ordered SHA частей по 4 MiB; максимум 1 
 работу между частями. Путь descriptor — только доверенная локальная file capability,
 не browser permission и не выбор Notebook store. `ready` означает admitted bytes,
 не публикацию и не показ. Затем `prepare.mjs animation` принимает `programPackage`
-и формирует обычную атомарную transaction без исходных bytes в args. В текущем срезе
-scoped WebKit adapter/рендер ещё в работе; установленный skill не обновлялся.
+и формирует обычную атомарную transaction без исходных bytes в args.
+Установленная release-пара и её skill ещё не обновлялись этим development-срезом.
+
+`NotebookProgramAssets` — один URL adapter при существующем WebKit-владельце,
+не новый runtime. У каждого запуска собственный случайный origin
+`notebook-program://<capability>/`. Доступны только перечисленные package paths;
+ни SHA, ни путь SQLite/файла браузер не выбирает. Native metadata read и поток
+HTML/JS/assets не собирают весь ресурс в String/Data. Wrapper HTML окружает
+поток авторского HTML; CSS и entry JS — обычные относительные ресурсы. GET/HEAD,
+один byte range, MIME, Content-Length/Content-Range/416 и части <=1 MiB принадлежат
+этому же reader. При stop/revoke новые callback и чтение запрещены; смена source
+сразу отзывает capability, изменение state или положения её не меняет.
+
+CSP разрешает только origin этого пакета, необходимые inline bootstrap и
+явно перечисленные data/blob типы. Внешняя сеть, произвольные файлы, формы и
+вложенные frames не разрешены. Та же CSP передаётся response header каждому
+ресурсу, включая worker: одного meta CSP корневого документа недостаточно.
+Максимум 64 одновременных reader; остановка не ждёт больше текущего bounded read.
+
+Spatial runtime, passive raster job и iPad `DocumentBlockRuntime` получают store
+от своего текущего владельца. Mac документ сохраняет прежний iframe/state/lifecycle
+владелец; `document-program.js` — единственный transport adapter для inline и
+файлового child, а `notebook-program.js` по-прежнему владеет публичным API.
+Только child с native-minted package origin получает `allow-same-origin` вместе
+с `allow-scripts`, чтобы Worker сохранил origin; это не origin файлового parent.
+Навигация iframe к file URL запрещена. Inline child остаётся opaque sandbox.
+Независимая текстовая правка сохраняет running child и его capability; замена
+пакета/inline, удаление и закрытие отзывают старый namespace.
 
 ## Исполнитель блока и физические листы на iPad
 

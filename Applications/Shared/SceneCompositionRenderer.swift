@@ -460,7 +460,7 @@ final class SceneCompositionRenderer {
     if webPreparation == nil {
       webPreparation = try await SceneWebRasterPreparation.create(resources: resources, permitsPreparation: permitsPreparation)
     }
-    return try await webPreparation!.prepare(element, requestedScale: requestedScale, region: region, permitsPreparation: permitsPreparation)
+    return try await webPreparation!.prepare(element, requestedScale: requestedScale, region: region, programStore: await self.source.programStore(), permitsPreparation: permitsPreparation)
   }
 
   func finishPreparation() { webPreparation?.close(); webPreparation = nil }

@@ -1,5 +1,54 @@
 # Проверка Notebook
 
+## 19 сентября, 03:03 МСК — GUI-242: scoped WebKit reader на Mac и Simulator
+
+Один `NotebookProgramAssets` обслуживает существующие spatial, document и passive
+raster владельцы: пакет не становится inline JSON/String. Root HTML собирается
+потоком вокруг прежнего bridge, CSS/JS/modules/assets читаются по адресу своей
+публикации. GET/HEAD/206/416 и revoke/stop используют bounded reads <=1 MiB.
+Mac iframe использует тот же вынесенный transport adapter для inline/package;
+CSP каждого ресурса закрывает и worker. File navigation для child запрещена.
+
+* **Mac 8 PASS**, `.build/gui-242-assets-mac-v9/verification.json`.
+* **Собственный iPad Simulator 7 PASS**, `.build/gui-242-assets-sim-v11.xcresult`.
+  Это независимый Simulator `3E0E27D3-C87A-40EB-B875-6D6571DC29D3`, bundle
+  `.gui240-test`; физический iPad и установленные пользовательские контейнеры
+  не затрагивались. Прямое указание Амира разрешает здесь параллельные независимые
+  destinations/derived data, а не общую serial-очередь.
+* На обоих source-before == source-after:
+  `6ed12190e8c3254a432e412e34b0f1aba32ca1e69133a013b03ef6e2885b276b`.
+  Skips и runtime warnings отсутствуют.
+* Настоящий WK исполнил HTML и JS каждый >1 MiB, module import, worker с чтением
+  своей JSON, CSS, SVG, WOFF2 и WAV metadata. Range пересёк границу 4 MiB у
+  логического 300 MiB файла; fixture содержит две уникальные части, это **не**
+  benchmark переноса 300 MiB уникальных bytes. Холодный новый владелец повторно
+  открыл SQLite; проверены native iPad document owner, Mac/document iframe и
+  passive raster с возвратом executor. Ни CDN, ни dev server для assets нет.
+* Root CSP denial подтверждён браузерным событием. Worker читает разрешённую
+  JSON и отвергает data URL; отдельный настоящий WK без CSP читает тот же data
+  URL. Это контроль против ложного успеха из-за CORS, отсутствия сети или
+  неподдержанного Fetch scheme. Parent DOM остаётся недоступен iframe.
+* Native namespace tests: чужой origin/hash, encoded path/query, HEAD, suffix/
+  unsatisfiable/multiple Range, отмена и revoke после первой части без поздних
+  callback. Независимый текст сохраняет capability/heap; package -> inline
+  немедленно отзывает прежний namespace и работает через тот же adapter.
+* Shell JS **18 PASS**, `/tmp/gui-242-shell-tests-v3.log`; общий lifecycle bridge
+  **12 PASS**, `/tmp/gui-242-bridge-tests-v1.log` (он не изменялся).
+
+Отрицательные сигналы: opaque iframe запрещал worker — теперь только native-minted
+package child сохраняет свой отдельный origin; inline child не ослаблен. Тест
+сначала ожидал `ready` вместо реального receipt `declared`; исправлен тест, не
+протокол. Raster fixture путал UIImage points и физические pixels; итог проверяет
+CGImage 600x300 и pixelScale=1. Ожидание worker CSP event оказалось недостоверным
+сигналом; заменено реальным fetch denial с положительным unrestricted control,
+а не снятием CSP. Ранние результаты v1–v10 не объявляются итоговым PASS.
+
+Это завершённый adapter-срез, **GUI-242 и GUI-240 ещё In Progress**. Живая доставка
+и release-пара с новым контрактом, CloudKit, аппаратные метрики и длительный
+совместный сценарий не подтверждены этим прогоном. Release116 другой задачи
+резервирует wire26/manifest9: перед интеграцией/установкой нашего пакета нужно
+объединить его завершённый commit и назначить package wire27/manifest10.
+
 ## 19 сентября, 02:27 МСК — GUI-242: причинная публикация и полная blob-зависимость
 
 `programPackage` включён в прежний причинный source field для page/board/document.

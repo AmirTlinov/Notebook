@@ -55,7 +55,7 @@ enum CurrentViewPreviewWriter {
       } else { surface = .board(boardID: presence.boardID) }
     case .page:
       guard let page, let id = presence.focusedItemID else { throw PreviewError.invalidSurface }
-      let snapshot = try await pageCompositeSnapshot(page, permitsPreparation: { model.permitsBackgroundPreparation })
+      let snapshot = try await pageCompositeSnapshot(page, programStore: model.store, permitsPreparation: { model.permitsBackgroundPreparation })
       png = try await fittedPNG(snapshot.image, viewport: viewport)
       surface = .page(itemID: id, revision: .init(page: page), snapshotPNG_SHA256: snapshot.sha256)
     case .document:
@@ -157,7 +157,7 @@ enum CurrentViewPreviewWriter {
         guard let raw = files["pages/\(target.id.uuidString.lowercased()).json"] else { throw PreviewError.invalidSurface }
         return try raw.decode(PageDocument.self)
       }.value
-      full = try await pageCompositeSnapshot(page, permitsPreparation: { model.permitsBackgroundPreparation })
+      full = try await pageCompositeSnapshot(page, programStore: model.store, permitsPreparation: { model.permitsBackgroundPreparation })
       inkRegions = try await Task.detached(priority: .utility) { try PageVisionRenderer.render(page).regions.map { $0.receipt.contentPoints } }.value
       await PageInkRasterCache.shared.prepare(page)
       guard let ink = PageInkRasterCache.shared.image(for: page) else { throw PreviewError.agentSnapshotPending }
@@ -171,7 +171,7 @@ enum CurrentViewPreviewWriter {
         }
         return (try source.decode(DocumentDocument.self), try state.decode(DocumentStateJournal.self))
       }.value
-      let preparedDocument = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: request.pageIndex)
+      let preparedDocument = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: request.pageIndex, programStore: model.store)
       documentRaster = preparedDocument
       full = try await raster(preparedDocument.image)
       diagnostics = DocumentRenderRegistry.shared.entry(document: document, pageIndex: request.pageIndex)?.diagnostics ?? []
@@ -250,7 +250,7 @@ enum CurrentViewPreviewWriter {
 
   @MainActor
   private static func pageCompositeSnapshot(
-    _ page: PageDocument,
+    _ page: PageDocument, programStore: NotebookStore,
     permitsPreparation: @escaping @MainActor () -> Bool
   ) async throws -> RasterSnapshot {
     let resources = SceneRenderResources.shared
@@ -268,7 +268,7 @@ enum CurrentViewPreviewWriter {
         preparation = try await SceneWebRasterPreparation.create(resources: resources, permitsPreparation: permitsPreparation)
       }
       guard let preparation else { throw PreviewError.agentSnapshotPending }
-      let image = try await preparation.prepare(element, requestedScale: PageVisionRenderer.scale,
+      let image = try await preparation.prepare(element, requestedScale: PageVisionRenderer.scale, programStore: programStore,
         permitsPreparation: permitsPreparation)
       borrowed = image
       return image

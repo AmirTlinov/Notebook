@@ -665,6 +665,10 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private var presentationToken = UUID()
   private let lease: WebSurfaceLease
   private let resources: SceneRenderResources
+  let programAssets = NotebookProgramAssets()
+  var programStore: NotebookStore?
+  private var programLoadTask: Task<Void, Never>?
+  private var packageNavigationURL: URL?
   private var snapshotPolicy: AgentSnapshotPolicy
   private(set) var snapshotFailure: SceneRenderError?
   private var onState: (JSONValue) -> Bool
@@ -1008,6 +1012,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   /// Dismantling ends this owner session. Neither a queued script message nor an
   /// already running WebKit completion may publish into its next owner.
   func invalidate() {
+    programLoadTask?.cancel(); programLoadTask = nil; programAssets.revokeAll(); packageNavigationURL = nil
     checkpointTask?.cancel(); checkpointTask = nil; checkpointID = nil; checkpointedSource = nil
     guard !isInvalidated else { return }
     isInvalidated = true
@@ -1116,6 +1121,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   private func beginLoad(_ element: AgentElement, in webView: WKWebView) {
+    programLoadTask?.cancel(); programLoadTask = nil; programAssets.revokeAll(); packageNavigationURL = nil
     checkpointTask?.cancel(); checkpointTask = nil; checkpointID = nil; checkpointedSource = nil
     readinessGeneration &+= 1
     stateApplicationID = nil; stateApplication?.cancel(); stateApplication = nil
@@ -1138,7 +1144,27 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     publishRenderReadiness(false, token: token)
     publishInteractionReadiness(false, token: token)
     beginPreparationDeadline(token: token)
-    activeNavigation = webView.loadHTMLString(Self.document(for: element, token: token), baseURL: nil)
+    if let hash = element.programPackage {
+      programLoadTask = Task { @MainActor [weak self, weak webView] in
+        guard let self, let webView else { return }
+        do {
+          guard let store = programStore ?? programOwner?.store else { throw SceneRenderError.snapshotPending("program_store") }
+          let package = try await Task.detached(priority: .userInitiated) { try store.readProgramPackage(hash) }.value
+          guard !Task.isCancelled, accepts(token), attachedWebView === webView else { return }
+          let url = programAssets.register(store: store, package: package) { origin in
+            Self.document(for: element, token: token, package: package, origin: origin)
+          }
+          packageNavigationURL = url
+          activeNavigation = webView.load(URLRequest(url: url))
+        } catch {
+          guard !Task.isCancelled, accepts(token) else { return }
+          record(error, kind: "program_asset_error", token: token, source: element)
+        }
+      }
+    } else {
+      let document = Self.document(for: element, token: token)
+      activeNavigation = webView.loadHTMLString(document.before + element.html + document.after, baseURL: nil)
+    }
   }
 
   private func applyCurrentState() {
@@ -1265,9 +1291,11 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     decidePolicyFor navigationAction: WKNavigationAction,
     decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
   ) {
-    let scheme = navigationAction.request.url?.scheme
+    let url = navigationAction.request.url, scheme = url?.scheme
+    let packaged = packageNavigationURL != nil && packageNavigationURL == url && navigationAction.navigationType == .other
+    if packaged { packageNavigationURL = nil }
     decisionHandler(!isInvalidated && !lease.isReleased && attachedWebView === webView
-      && (scheme == nil || scheme == "about") ? .allow : .cancel)
+      && (packaged || scheme == nil || scheme == "about") ? .allow : .cancel)
   }
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -1288,7 +1316,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       """
       await document.fonts.ready;
       await Promise.all([...document.images].map(image => image.decode().catch(() => {})));
-      await window.notebookProgram.start({requiresReady:\(!element.javaScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || element.html.localizedCaseInsensitiveContains("<script"))});
+      await window.notebookProgram.start({requiresReady:\(element.programPackage != nil || !element.javaScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || element.html.localizedCaseInsensitiveContains("<script"))});
       \(frameReadiness)
       for (const image of document.images) if (!image.naturalWidth) window.notebookDiagnostic('load_error', 'Image failed to load');
       if (Math.max(document.body.scrollHeight, document.documentElement.scrollHeight) > innerHeight + 1 || Math.max(document.body.scrollWidth, document.documentElement.scrollWidth) > innerWidth + 1) window.notebookDiagnostic('overflow', 'Content exceeds its frame');
@@ -1508,6 +1536,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     let configuration = WKWebViewConfiguration()
     configuration.userContentController = controller
     configuration.websiteDataStore = .nonPersistent()
+    configuration.setURLSchemeHandler(coordinator.programAssets, forURLScheme: NotebookProgramAssets.scheme)
     configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
     let webView = WKWebView(frame: .zero, configuration: configuration)
     webView.navigationDelegate = coordinator
@@ -1535,7 +1564,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     return webView
   }
 
-  private static func document(for element: AgentElement, token: String) -> String {
+  private static func document(for element: AgentElement, token: String, package: NotebookProgramPackage? = nil, origin: URL? = nil) -> NotebookProgramAssets.Document {
     #if os(iOS)
       let interactionScript = NotebookInteractionDiagnostics.script
     #else
@@ -1546,12 +1575,16 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       with: "<\\/script>",
       options: [.caseInsensitive]
     )
-    return """
+    let policy = origin.map(NotebookProgramAssets.policy) ?? "default-src 'none'; img-src data: blob:; media-src data: blob:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none';"
+    let style = package.flatMap { package in origin.map { NotebookProgramAssets.style(package, origin: $0) } } ?? ""
+    let script = package.flatMap { package in origin.map { NotebookProgramAssets.script(package, origin: $0) } }
+      ?? "<script>const program=document.createElement('script');program.textContent=\(json(.string(element.javaScript)));document.body.append(program);</script>"
+    return .init(before: """
       <!doctype html>
       <html><head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; media-src data: blob:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none';">
+      <meta http-equiv="Content-Security-Policy" content="\(policy)">
       <style>
         :root { color-scheme: light; }
         html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
@@ -1559,6 +1592,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         *, *::before, *::after { box-sizing: border-box; }
         \(element.css)
       </style>
+      \(style)
       <script>
         const notebookLoadToken = '\(token)';
         \(interactionScript)
@@ -1577,10 +1611,10 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         \(AgentWebFingerRegions.script)
       </script>
       </head><body>
-      \(element.html)
-      <script>const program=document.createElement('script');program.textContent=\(json(.string(element.javaScript)));document.body.append(program);</script>
+      """, after: """
+      \(script)
       </body></html>
-      """
+      """)
   }
 
   private static func json(_ value: JSONValue) -> String {

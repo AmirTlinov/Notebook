@@ -27,6 +27,7 @@ struct DocumentPagePresentation {
   let onPreparationFailure: (Error) -> Void
   var onStateCheckpoint: (String, JSONValue, ContentFieldVersion, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
   var measurements: DocumentPresentationRecorder? = nil
+  var programStore: NotebookStore? = nil
   var paperToken: String { DocumentSnapshotCache.paperToken(sourceRevision: document.contentStamp.revision, pageIndex: pageIndex) }
   var token: String { DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndex) }
   /// A full physical page retains the open document even while UIKit has not
@@ -866,6 +867,7 @@ final class DocumentPagePresentationOwner {
   }
 
   private func configure(_ renderer: DocumentWebCoordinator, input: DocumentPagePresentation, page: Int) {
+    renderer.programStore = input.programStore
     renderer.update(document: input.document, state: input.state, selectedPageIndex: page, capturesSnapshot: false,
       onRenderReady: .init { _ in }, onPageLayout: { [weak self] layout in
         self?.entries.values.forEach { $0.input.onPageLayout(layout) }

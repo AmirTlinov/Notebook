@@ -1270,7 +1270,7 @@ final class SceneRenderResources {
   /// it prepared. A large composition can release each source after painting it.
   func prepareRaster(_ element: AgentElement, requestedScale: Double = 2, region: PageRect? = nil,
     executionSource: InteractiveElementReference? = nil,
-    captureRequest: SceneRasterCaptureRequest? = nil,
+    captureRequest: SceneRasterCaptureRequest? = nil, programStore: NotebookStore? = nil,
     permitsPreparation: @MainActor () -> Bool = { true }) async throws -> RasterLease {
     try Task.checkCancellation()
     let policy = captureRequest?.policy ?? region.map { AgentSnapshotPolicy.region($0, scale: requestedScale) }
@@ -1280,7 +1280,7 @@ final class SceneRenderResources {
       permitsPreparation: permitsPreparation)
     defer { preparation.close() }
     return try await preparation.prepare(element, requestedScale: requestedScale, region: region,
-      captureRequest: captureRequest, permitsPreparation: permitsPreparation)
+      captureRequest: captureRequest, programStore: programStore, permitsPreparation: permitsPreparation)
   }
 
 }

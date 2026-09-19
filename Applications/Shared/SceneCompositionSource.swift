@@ -88,6 +88,8 @@ actor SceneCompositionSource {
     origin = .values(index, hierarchy, journal); self.revision = revision; workspaceID = index.generationID
   }
 
+  func programStore() -> NotebookStore? { if case .sql(let store) = origin { store } else { nil } }
+
   func validate() throws {
     try Task.checkCancellation()
     if case .sql(let store) = origin { try checked(store) { _ in () } }
