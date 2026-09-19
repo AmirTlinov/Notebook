@@ -2208,7 +2208,10 @@ final class NotebookAppModel {
     // A is still the actual landing when B superseded its request. A may
     // publish that fact, but cannot clear B or restore an obsolete intent.
     if documentPageSelection?.id == landing.requestID {
-      documentPageSelection = nil; documentPageNavigationStatus = nil
+      // Readiness is replayed into a new native callback after a view update.
+      // Publishing nil over nil here would schedule that same update again.
+      if documentPageSelection != nil { documentPageSelection = nil }
+      if documentPageNavigationStatus != nil { documentPageNavigationStatus = nil }
     }
     if presence.documentPageIndex != landing.pageIndex {
       applyPresence(.init(boardID: presence.boardID, mode: presence.mode,

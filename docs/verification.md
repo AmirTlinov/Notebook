@@ -1,5 +1,69 @@
 # Проверка Notebook
 
+## 19 сентября, 14:49 МСК — GUI-250: idle feedback устранён, найден отдельный browser hit defect
+
+Installed private V13, source
+`91e21c74139a82e413fc9f5e3a746c16720885afc57a709b14e3602bba4bc8d5`,
+`workingTreeUnchanged=true`, сохранил stores/manifests. Тот же статичный документ
+теперь даёт наблюдаемые ps CPU0.6–1.6%, вместо постоянных около100% V12.
+Это scoped idle observation, не p95/FPS/GPU gate. Причина: readiness replay
+изменял SwiftUI state-счётчик, а затем повторно публиковал nil selection/status.
+Счётчик остаётся у прежней поверхности как не-observable reference, модель
+очищает только непустое значение. Native observation regression +5 смежных
+проверок —6 PASS (`.build/gui250-webkit-projection-mac-v7/`), warnings/skips0.
+
+Ввод ещё не принят: CUA click/ArrowRight не дал события. UI attempt
+`0081eca0-8f08-4631-820e-6666c0829c96` не активировал приложение и остановился
+до жеста; его нельзя выдавать за проверку ползунка. ScreenCaptureKit затем
+не смог снять окно; системный UserNotificationCenter недоступен CUA по политике,
+его не обходим. Независимая настоящая WebKit-регрессия
+`.build/gui250-browser-hit-red/mac.xcresult` показала конкретную причину:
+`document.elementFromPoint` возвращает пустой canonical `section.block.interactive`,
+а не iframe. Следующая правка поднимает только интерактивные фрагменты над
+каноническими hit regions, без замены runtime или синтетического ввода.
+
+## 19 сентября, 14:32 МСК — GUI-250: geometry PASS не закрыл живой layout loop
+
+После `498d480` установленный Mac остался непригоден для приёмки ввода.
+CUA выполнил настоящий click, ArrowRight и drag по видимому range при44%,
+затем click/ArrowRight при100%; отдельная программа, опубликованная штатным MCP,
+не получила даже pointerdown (`Input probe: no events`). Её ID
+`f466679f-36a9-4521-a923-f23c5c50ebbf`, package
+`6d2956cac8553d1bbbd177a24110f2789c5fa88b67890dc896ef187c5a32c554`.
+Документ сохраняет модель биений, журнал только наблюдает реальные события.
+Исходный authored документ не заменялся. V9 attempt `415079ab-df7c-4bb3-8d6a-62313b101737`
+не дошёл до range: XCTest потерял открытое menu. Это не новый результат ввода.
+
+На статичном листе обнаружен постоянный CPU около одного ядра. V10
+`c9df66724eea10c652847ed9061e68abae28f24ad49aa8d8485dae17743cc55d`
+с projected reading frame также не исправил проблему: UI attempt
+`78f89e31-c1bb-40b1-b71c-34dfca4df734` не получил event-loop idle за60s и был
+явно прерван. Read-only LLDB stack показывает main thread внутри
+SwiftUI/AppKit fitting и AutoLayout. Это диагностические наблюдения, не system
+performance gate. `sample` завис на symbolication и остановлен; результата нет.
+
+V11 (`6d445dd7442b0ae094110e9158495cf9ba3690a8ffb6400e87bb2f5bb6439926`)
+убирает изменение representable bounds из setFrameSize и сообщает SwiftUI
+нативный размер без WebKit intrinsic fitting. Native **5 PASS**, warnings/skips0
+(`.build/gui250-webkit-projection-mac-v5/`), но installed idle CPU по-прежнему
+около100%, интерактивный слой не готов. V10/V11 upgrades сохранили оба stores и
+manifests; их private Mac процессы остановлены, чтобы не занимать CPU. Debugger
+отключён. Физическая пара не затронута.
+
+V12 (`12a210a8e06b26be95ff252efd102de0c9a50ce50250efa9a3f90b3ca1401a34`)
+с не-observable controller revision прошёл пять native checks, но оставил
+CPU около100%. Read-only LLDB breakpoint подтвердил живой повтор
+`MacDocumentSurface.onRenderReady(true) → acceptDocumentPageLanding`;
+снимок стека — `.build/gui250-control-probe/v12-landing-breakpoint.txt`.
+Кроме счётчика, model повторно публиковал уже пустые selection/status, снова
+инвалидируя SwiftUI. V13 не записывает nil поверх nil. Regression observation
+и прежние пять проверок: **6 PASS**, warnings/skips0, source
+`91e21c74139a82e413fc9f5e3a746c16720885afc57a709b14e3602bba4bc8d5`,
+`.build/gui250-webkit-projection-mac-v7/`. Route **81 PASS**:
+`/tmp/gui250-webkit-ui-route-v2.log`. Установленный повтор ещё впереди.
+V12 private process остановлен, debugger отключён; upgrade сохранил stores и
+manifests. GUI-240/250 не Done; geometry/native PASS не заменяет живой ввод.
+
 ## 19 сентября, 14:00 МСК — GUI-250: WebKit AX исправлен, ввод ещё не принят
 
 Private development v9 собран на неизменном source
