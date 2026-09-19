@@ -106,7 +106,7 @@ extension NotebookStore {
         guard basis == NotebookProgramStateBasis(elementID: rendered.id, metadata: page.collaboration, fallback: page.agentStamp) else { return nil }
         guard let element = page.elements.first(where: { $0.id == rendered.id }),
           element.kind == rendered.kind, element.source == rendered.source, element.html == rendered.html,
-          element.css == rendered.css, element.javaScript == rendered.javaScript,
+          element.css == rendered.css, element.javaScript == rendered.javaScript, element.programPackage == rendered.programPackage,
           element.state == rendered.state else { return nil }
         if element.state == state { return basis }
         guard let stamp = page.agentStamp.advanced(by: actor) else { throw NotebookStorageError.limitExceeded("page clock") }
@@ -121,7 +121,7 @@ extension NotebookStore {
           let board = before.board(target.id), basis == board.programStateBasis(rendered.id),
           var element = board.elements.first,
           element.kind == .web, element.source == rendered.source, element.html == rendered.html,
-          element.css == rendered.css, element.javaScript == rendered.javaScript,
+          element.css == rendered.css, element.javaScript == rendered.javaScript, element.programPackage == rendered.programPackage,
           element.state == rendered.state else { return nil }
         if element.state == state { return basis }
         let expected = element.stamp
@@ -220,7 +220,7 @@ extension NotebookStore {
         var element = before.board(boardID)?.elements.first else { return nil }
       guard element.surface == rendered.surface, element.kind == rendered.kind,
         element.source == rendered.source, element.html == rendered.html,
-        element.css == rendered.css, element.javaScript == rendered.javaScript else {
+        element.css == rendered.css, element.javaScript == rendered.javaScript, element.programPackage == rendered.programPackage else {
         throw CollaborationError("source_conflict", "Сообщение принадлежит прежней программе элемента.")
       }
       guard element.state != state else { return element }

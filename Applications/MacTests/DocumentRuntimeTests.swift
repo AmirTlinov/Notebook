@@ -71,6 +71,69 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertTrue(surface.coordinator.webView === web)
   }
 
+  func testCodeModeStopsTheSameProgramUntilItsCheckpointIsDurable() async throws {
+    let actor = UUID()
+    var document = DocumentDocument(actor: actor, blocks: [.markdown(id: "body", source: "Before"),
+      .interactive(id: "clock", html: "<output></output>", javaScript: """
+      let phase=0,timer;const start=()=>{timer=setInterval(()=>{phase++;document.querySelector('output').textContent=phase},10)};
+      notebook.lifecycle({pause(){clearInterval(timer)},checkpoint(){return {phase}},resume:start,dispose(){clearInterval(timer)}});
+      notebook.ready(Promise.resolve().then(start));
+      """, initialState: .object(["phase": .number(0)]), height: 100)])
+    var state = DocumentStateJournal(id: document.id, actor: actor)
+    let surface = surface(document: document, state: state)
+    defer { surface.close() }
+    surface.coordinator.ownsProgramState = true
+    var entered = false, release = false, refuse = false
+    surface.coordinator.onStateCheckpoint = { id, value, _, _ in
+      if refuse { throw CocoaError(.fileWriteUnknown) }
+      entered = true
+      while !release { try await Task.sleep(for: .milliseconds(5)) }
+      _ = state.commit(blockID: id, value: value, actor: actor)
+      return state.records.first { $0.id == id }?.valueVersion
+    }
+    await waitUntil { surface.coordinator.renderIsReady }
+    let web = try XCTUnwrap(surface.coordinator.webView)
+    func phase() async throws -> Int {
+      let value = try await web.callAsyncJavaScript("return (await notebookRenderer.checkpointPrograms())[0].state.phase;", arguments: [:], in: nil, contentWorld: .page)
+      return try XCTUnwrap(value as? Int)
+    }
+    try await Task.sleep(for: .milliseconds(80))
+    surface.coordinator.setProgramsVisible(false)
+    await waitUntil { entered }
+    surface.coordinator.setProgramsVisible(true) // return while disk is still busy
+    let frozen = try await phase()
+    try await Task.sleep(for: .milliseconds(100))
+    let stillFrozen = try await phase()
+    XCTAssertEqual(frozen, stillFrozen)
+    release = true
+    await waitUntil { state.value(for: "clock") != nil }
+    try await Task.sleep(for: .milliseconds(120))
+    let resumed = try await phase()
+    XCTAssertGreaterThan(resumed, frozen)
+    surface.coordinator.setProgramsVisible(false)
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertTrue(document.replaceBlockSource(id: "body", source: "After", actor: actor))
+    surface.coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
+    await waitUntil { surface.coordinator.renderIsReady }
+    let after = try await phase()
+    try await Task.sleep(for: .milliseconds(100))
+    let unchanged = try await phase()
+    XCTAssertEqual(after, unchanged, "An unrelated source edit cannot start hidden programs")
+    refuse = true
+    surface.coordinator.setProgramsVisible(true)
+    try await Task.sleep(for: .milliseconds(120))
+    let refused = try await phase()
+    XCTAssertEqual(refused, unchanged, "Writer failure cannot resume or reset a frozen heap")
+    refuse = false
+    surface.coordinator.setProgramsVisible(false)
+    surface.coordinator.setProgramsVisible(true)
+    try await Task.sleep(for: .milliseconds(120))
+    let retried = try await phase()
+    XCTAssertGreaterThan(retried, refused)
+    XCTAssertTrue(surface.coordinator.webView === web)
+  }
+
   func testDocumentDismantleKeepsItsBrowserUntilTheWriterAcceptsCheckpoint() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "clock", html: "<output>0.75</output>",
       javaScript: "notebook.lifecycle({checkpoint:()=>({phase:0.75})});notebook.ready(Promise.resolve());",
@@ -113,7 +176,7 @@ final class DocumentRuntimeTests: XCTestCase {
   }
 
   func testRegistryBorrowsLayoutFromLiveSourceThenItsRasterAndReleasesAfterEviction() async throws {
-    let resources = SceneRenderResources(byteLimit: 16 * 1024 * 1024, profile: .headless)
+    let resources = SceneRenderResources(byteLimit: 64 * 1024 * 1024, profile: .headless)
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# Measured source\n\nIts raster retains the same addresses.")])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     let surface = surface(document: document, state: state, resources: resources)
@@ -127,12 +190,12 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertGreaterThan(resources.reservedBytes, 0)
     raster.release()
     await waitUntil { resources.activeWebSurfaceCount == 0 }
-    let replacement = try XCTUnwrap(resources.reserveDerivedBytes(resources.byteLimit, priority: .passive))
+    let replacement = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit, priority: .passive))
     XCTAssertNil(layout)
     XCTAssertNil(DocumentRenderRegistry.shared.entry(document: document, pageIndex: 0))
     XCTAssertEqual(DocumentRenderRegistry.shared.layoutReferenceCount(documentID: document.id), 0,
       "Expired addresses and diagnostics must leave with their measured owner")
-    XCTAssertEqual(resources.reservedBytes, resources.byteLimit)
+    XCTAssertEqual(resources.reservedBytes, resources.passiveByteLimit)
     replacement.release()
     XCTAssertEqual(resources.reservedBytes, 0)
   }

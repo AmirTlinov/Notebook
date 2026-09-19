@@ -92,10 +92,23 @@ import XCTest
     XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 15), .completed)
     app.buttons["Лист"].tap()
     XCTAssertFalse(editor.exists)
+    let slider = app.webViews.sliders.firstMatch
+    XCTAssertTrue(slider.waitForExistence(timeout: 15), app.debugDescription)
+    let before = slider.value as? String
+    XCTAssertTrue(slider.isHittable)
+    slider.coordinate(withNormalizedOffset: .init(dx: 0.3, dy: 0.5)).press(forDuration: 0.05,
+      thenDragTo: slider.coordinate(withNormalizedOffset: .init(dx: 0.7, dy: 0.5)),
+      withVelocity: .slow, thenHoldForDuration: 0)
+    let changed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in slider.value as? String != before }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
+    let programValue = slider.value as? String
     let image = XCTAttachment(screenshot: app.screenshot())
     image.name = "Canonical paper after native source save and causal undo"
     image.lifetime = .keepAlways; add(image)
     app.buttons["Код"].tap()
     XCTAssertEqual(editor.value as? String, original)
+    app.buttons["Лист"].tap()
+    XCTAssertTrue(slider.waitForExistence(timeout: 15))
+    XCTAssertEqual(slider.value as? String, programValue, "Code mode must retain the same live program and control state")
   }
 }

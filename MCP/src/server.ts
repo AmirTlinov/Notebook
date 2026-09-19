@@ -67,6 +67,12 @@ async function response(operation:(deadline:number)=>Promise<{value:Value;images
  * owned by the installed Mac coordinator; no JS eval or store exists here. */
 export function createServer(socketPath=defaultSocketPath()):McpServer {
   const server=new McpServer({name:"notebook",version});
+  server.registerTool("notebook_import_program",{
+    title:"Stage an immutable program package from local Mac files",
+    description:"Trusted Mac file import, outside QuickJS. Prepare a descriptor with the installed program-package.mjs tooling; pass its SHA-256 packageHash and absolute manifestPath. Returns staging/ready/error/cancelled and byte progress; poll status with the same hash. Cancel stops before the next bounded part; retry reuses accepted SHA blobs. A ready import only stages bytes; it does not publish or show a scene. No source bytes or Base64 belong in tool arguments. Files are never exposed to the browser, and this operation cannot select a Notebook store.",
+    inputSchema:z.object({op:z.enum(["start","status","cancel"]),packageHash:z.string().regex(/^[0-9a-f]{64}$/),manifestPath:z.string().min(1).max(4096).optional()}).strict(),
+    annotations:{readOnlyHint:false,destructiveHint:false,openWorldHint:false,idempotentHint:true},
+  },input=>response(async(deadline)=>({value:await runBridge<Value>(socketPath,{command:"importProgram",programImport:input},{deadline})})));
   server.registerTool("notebook_context",{
     title:"Read Notebook and discover its typed SDK",
     description:"Read shared attention, documents, pages, board, revisions, receipts and exact images. API v2 reads return {data,basis,coverage,cursor}; transactions accept base from a read. Use method:'help' only for an unknown contract. args:{topic:'operations'} gives a compact index; topic:'operation/createDocument' (or any operation name) gives one exact schema. transaction gives the complete action schema; interactive includes notebook.ready(promise); execution explains terminal status and output pagination. Other method topics give their schemas and examples. Read methods have the same args as nb methods. render/pageMap/place can prepare derived pictures but never change saved content or the camera.",

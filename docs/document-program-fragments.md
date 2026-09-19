@@ -1,5 +1,65 @@
 # Физическое продолжение высокой программы
 
+## Исходник и приостановленная программа
+
+«Лист → Код» скрывает бумагу, но не закрывает документ. На iPad существующий
+`DocumentProgramOwner` приостанавливает модель и удерживает её WebKit тем же
+механизмом возвратного контекста; на Mac это делает владелец документного iframe.
+Независимая правка текста не пересоздаёт программу. Быстрый возврат к листу ждёт
+подтверждения checkpoint общим писателем; отмена UI-задачи не отменяет эту запись.
+При ошибке записи модель остаётся замороженной, показывает адресный повтор и
+не теряет heap. Только принятый checkpoint разрешает освобождение под давлением
+пула. Возврат без вытеснения продолжает тот же экземпляр, не восстановленную копию.
+
+## Файловый источник программы (GUI-242, development-срез)
+
+У page/board web element и interactive document block есть необязательный
+`programPackage`: SHA-256 канонического `NotebookProgramPackage`. Он атомарен с
+`kind/source/html` в причинном поле `content`, поэтому смена пакета меняет source
+basis и отвергает старый checkpoint. State и геометрия остаются независимыми.
+Inline и package не смешиваются: для package source/html/css/javaScript пусты.
+Update с `programPackage: null` снимает ссылку и может одновременно задать inline.
+
+Один manifest задаёт отсортированные уникальные относительные пути, фиксированные
+MIME, размеры и ordered SHA частей по 4 MiB; максимум 1 MiB metadata, 4096 файлов,
+16384 частей. SHA пакета связывает этот namespace, а не выдаётся за плоскую сумму
+большого файла. Чтение использует прежнее окно <=1 MiB и не собирает файл целиком.
+Части и manifest хранятся в прежнем SQLite SHA store; повтор использует те же bytes.
+
+`prepare.mjs program` хеширует файлы вне QuickJS. `submit.mjs` вызывает типизированный
+`notebook_import_program` на Mac, показывает окончательный status; cancel прекращает
+работу между частями. Путь descriptor — только доверенная локальная file capability,
+не browser permission и не выбор Notebook store. `ready` означает admitted bytes,
+не публикацию и не показ. Затем `prepare.mjs animation` принимает `programPackage`
+и формирует обычную атомарную transaction без исходных bytes в args.
+Установленная release-пара и её skill ещё не обновлялись этим development-срезом.
+
+`NotebookProgramAssets` — один URL adapter при существующем WebKit-владельце,
+не новый runtime. У каждого запуска собственный случайный origin
+`notebook-program://<capability>/`. Доступны только перечисленные package paths;
+ни SHA, ни путь SQLite/файла браузер не выбирает. Native metadata read и поток
+HTML/JS/assets не собирают весь ресурс в String/Data. Wrapper HTML окружает
+поток авторского HTML; CSS и entry JS — обычные относительные ресурсы. GET/HEAD,
+один byte range, MIME, Content-Length/Content-Range/416 и части <=1 MiB принадлежат
+этому же reader. При stop/revoke новые callback и чтение запрещены; смена source
+сразу отзывает capability, изменение state или положения её не меняет.
+
+CSP разрешает только origin этого пакета, необходимые inline bootstrap и
+явно перечисленные data/blob типы. Внешняя сеть, произвольные файлы, формы и
+вложенные frames не разрешены. Та же CSP передаётся response header каждому
+ресурсу, включая worker: одного meta CSP корневого документа недостаточно.
+Максимум 64 одновременных reader; остановка не ждёт больше текущего bounded read.
+
+Spatial runtime, passive raster job и iPad `DocumentBlockRuntime` получают store
+от своего текущего владельца. Mac документ сохраняет прежний iframe/state/lifecycle
+владелец; `document-program.js` — единственный transport adapter для inline и
+файлового child, а `notebook-program.js` по-прежнему владеет публичным API.
+Только child с native-minted package origin получает `allow-same-origin` вместе
+с `allow-scripts`, чтобы Worker сохранил origin; это не origin файлового parent.
+Навигация iframe к file URL запрещена. Inline child остаётся opaque sandbox.
+Независимая текстовая правка сохраняет running child и его capability; замена
+пакета/inline, удаление и закрытие отзывают старый namespace.
+
 ## Исполнитель блока и физические листы на iPad
 
 `DocumentPagePresentationOwner` владеет подготовкой бумаги, композиционными

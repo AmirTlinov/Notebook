@@ -224,8 +224,8 @@ final class SceneCompositionSQLTests: XCTestCase {
       let index = WorkspaceSceneIndex(workspace: state.workspace, hierarchy: state.hierarchy, paperSizes: state.paperSizes)
       let requested = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil })
       let source = SceneCompositionSource(store: store, revision: state.header.cursor, workspaceID: state.header.workspaceID)
-      let frame = try await source.compositionFrame(requested: requested, presence: presence, pinned: [.item(item.id)])
-      XCTAssertNil(frame.returnBoardID, "An invisible parent is not a prerequisite for opening a material")
+      let frame = requested
+      XCTAssertNil(frame.presences[initial.rootBoardID], "An invisible parent is not a prerequisite for opening a material")
       composition.prepare(source: source, presence: presence, frame: requested, pinned: [.item(item.id)], displayScale: 2)
       let deadline = ContinuousClock.now + .seconds(10)
       while composition.isPreparing, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
@@ -447,122 +447,7 @@ final class SceneCompositionSQLTests: XCTestCase {
     XCTAssertEqual(resources.activeWebSurfaceCount, 0)
   }
 
-  @MainActor
-  func testReturnBoundaryReadsCurrentParentOnceAndKeepsTheWholeOldCutWhilePreparationIsDeferred() async throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
-    let actor = UUID(), store = NotebookStore(root: root)
-    let initial = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
-    let beforeWorkspace = try store.loadIndex()
-    let beforeBoard = try store.loadBoard(items: beforeWorkspace.items)
-    var workspace = beforeWorkspace, hierarchy = beforeBoard
-    XCTAssertTrue(hierarchy.moveItem(workspace.selectedItemID, in: initial.rootBoardID,
-      to: .init(x: 100_000, y: 100_000), actor: actor))
-    let portal = try XCTUnwrap(workspace.createBoard(title: "Return", actor: actor))
-    XCTAssertTrue(hierarchy.createBoard(portal.id, in: initial.rootBoardID, near: .zero, actor: actor))
-    let marker = SpatialElement(id: "return-parent-marker", surface: .board(initial.rootBoardID), kind: .nativeText,
-      frame: .init(x: 0, y: 0, width: 120, height: 60), worldOrigin: .init(x: 400, y: 0), source: "Before",
-      stamp: .init(counter: 0, actor: actor))
-    XCTAssertTrue(hierarchy.upsertElement(marker, in: initial.rootBoardID, expected: nil, actor: actor))
-    _ = try store.saveWorkspaceEdits(before: beforeWorkspace, after: workspace,
-      boardBefore: beforeBoard, boardAfter: hierarchy)
-    hierarchy = try store.loadBoard(items: store.loadIndex().items)
-    let inkSurfaces: [SurfaceID] = [.board(initial.rootBoardID), .board(portal.id), .cover(beforeWorkspace.selectedItemID)]
-    var journal = try store.readSpatialInk(surfaces: inkSurfaces)
-    for surface in inkSurfaces {
-      let sample = SpatialInkSample(point: .zero, worldPoint: surface.kind == .board ? .zero : nil,
-        timeOffset: 0, width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)
-      XCTAssertNotNil(journal.append(tool: .pen, spans: [.init(surface: surface, samples: [sample])], actor: actor))
-    }
-    try store.saveSpatialInk(journal)
-    let viewport = SpatialPoint(x: 512, y: 512)
-    let child = SessionPresence(boardID: portal.id, mode: .board, camera: .init(scale: 0.5), viewport: viewport)
-    // The native child window knows only the parent's addressed aperture. Its
-    // truncated metadata cannot stand in for the whole parent's current source.
-    let parentPlacement = try XCTUnwrap(store.readBoardItem(portal.id))
-    let childNode = try XCTUnwrap(store.readBoardNodeHeader(portal.id))
-    let projectedWorkspace = try store.workspaceProjection(items: [portal], selectedItemID: portal.id, selectedPageID: nil)
-    let projectedHierarchy = BoardHierarchy(rootBoardID: initial.rootBoardID,
-      boards: [parentPlacement, childNode], stamp: hierarchy.stamp)
-    let index = WorkspaceSceneIndex(workspace: projectedWorkspace, hierarchy: projectedHierarchy, paperSizes: [:])
-    let requested = WorkspaceSceneFrame(index: index, presence: child, portalCamera: { _ in nil })
-    XCTAssertFalse(requested.workset(boardID: initial.rootBoardID).elements.contains { $0.id == marker.id })
-    func source() throws -> SceneCompositionSource {
-      let header = try store.workspaceHeader()
-      return .init(store: store, revision: header.cursor, workspaceID: header.workspaceID)
-    }
-    let oldSource = try source()
-    let frame = try await oldSource.compositionFrame(requested: requested, presence: child, pinned: [])
-    XCTAssertEqual(frame.returnBoardID, initial.rootBoardID)
-    XCTAssertEqual(frame.workset(boardID: initial.rootBoardID).elements.first { $0.id == marker.id }?.source, "Before")
-    XCTAssertLessThanOrEqual(frame.primitiveCount, 96)
-    let resources = SceneRenderResources(byteLimit: 256 * 1024 * 1024)
-    let coordinator = SceneCompositionTiles(resources: resources)
-    defer { coordinator.removePublishedCoverage() }
-    coordinator.prepare(source: oldSource, presence: child, frame: requested, pinned: [])
-    try await waitForPublication(coordinator, revision: oldSource.revision)
-    let old = try XCTUnwrap(coordinator.published)
-    XCTAssertEqual(old.plan.inkBoardIDs, [initial.rootBoardID, portal.id])
-    XCTAssertEqual(Set(old.liveData.ink.actions.flatMap { $0.spans.map(\.surface) }),
-      [.board(initial.rootBoardID), .board(portal.id)],
-      "Both handoff boards carry exact source ink; an unrelated cover remains outside the addressed payload")
-    XCTAssertTrue(old.plan.allowsLive(.item(portal.id), in: .board(initial.rootBoardID)))
-    XCTAssertLessThanOrEqual(old.plan.liveOwners.count + old.plan.inkBoardIDs.count, 8)
-    XCTAssertEqual(old.requestedSources, requested.sourceIdentity)
-    XCTAssertNotEqual(old.frame.sourceIdentity, requested.sourceIdentity)
 
-    coordinator.prepare(source: oldSource, presence: child, frame: requested, pinned: [])
-    XCTAssertFalse(coordinator.isPreparing, "The derived parent generation cannot cause a preparation feedback loop")
-    XCTAssertTrue(coordinator.published === old)
-
-    let prior = hierarchy
-    var changed = try XCTUnwrap(hierarchy.board(initial.rootBoardID)?.elements.first { $0.id == marker.id })
-    let expected = changed.stamp
-    XCTAssertTrue(changed.update(source: "After", actor: actor))
-    XCTAssertTrue(hierarchy.upsertElement(changed, in: initial.rootBoardID, expected: expected, actor: actor))
-    _ = try store.saveBoardEdits(before: prior, after: hierarchy)
-    let fresh = try source()
-    coordinator.prepare(source: fresh, presence: child, frame: requested, pinned: [], permitsPreparation: { false })
-    let deferredDeadline = ContinuousClock.now + .seconds(3)
-    while coordinator.isPreparing, ContinuousClock.now < deferredDeadline { try await Task.sleep(for: .milliseconds(5)) }
-    XCTAssertFalse(coordinator.isPreparing, "A revoked candidate must complete its bounded cancellation")
-    XCTAssertTrue(coordinator.published === old, "A deferred candidate preserves the whole prior parent and child, not an empty return")
-    XCTAssertEqual(old.frame.workset(boardID: initial.rootBoardID).elements.first { $0.id == marker.id }?.source, "Before")
-    XCTAssertTrue(old.rasters.values.allSatisfy { !$0.isReleased })
-    coordinator.prepare(source: fresh, presence: child, frame: requested, pinned: [])
-    try await waitForPublication(coordinator, revision: fresh.revision)
-    let current = try XCTUnwrap(coordinator.published)
-    XCTAssertEqual(current.frame.workset(boardID: initial.rootBoardID).elements.first { $0.id == marker.id }?.source, "After",
-      "An old complete parent is not a cache substitute for current same-cut surroundings")
-    XCTAssertEqual(current.rasters.count, current.plan.tiles.count)
-    XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, resources.byteLimit)
-    do { try await oldSource.validate(); XCTFail("Old parent pixels cannot acquire a new source receipt") }
-    catch NotebookStorageError.transactionConflict { }
-
-    let basis = try XCTUnwrap(current.liveData.referenceBasis)
-    let surfaces = current.plan.presentations.keys.map { plane -> SurfaceID in
-      switch plane {
-      case .board(let id): .board(id)
-      case .cover(_, let id): .cover(id)
-      }
-    }
-    let unchanged = try surfaces.map { try NotebookReferenceInk(surface: $0, actions: journal.actions) }
-    XCTAssertEqual(try basis.replacing(ink: unchanged), current.liveData.referenceIdentities)
-    let tail = SpatialInkSample(point: .zero, worldPoint: .init(x: 20, y: 30), timeOffset: 0,
-      width: 7, opacity: 1, force: 1, azimuth: 0, altitude: 1)
-    XCTAssertNotNil(journal.append(tool: .pen, spans: [
-      .init(surface: .board(initial.rootBoardID), samples: [tail]),
-      .init(surface: .board(portal.id), samples: [tail])
-    ], actor: actor))
-    let replacement = try surfaces.map { try NotebookReferenceInk(surface: $0, actions: journal.actions) }
-    let predicted = try basis.replacing(ink: replacement)
-    try store.saveSpatialInk(journal)
-    let canonical = try store.referenceIdentities(targets: current.liveData.referenceIdentities.map(\.target))
-    XCTAssertEqual(predicted, canonical,
-      "Both retained boards propagate ink through the real common ancestor, including the child's portal cover")
-    XCTAssertNotEqual(predicted, current.liveData.referenceIdentities)
-    await coordinator.stop()
-  }
 
   @MainActor
   func testLivePayloadIsOneSQLRevisionAndExcludedHumanChangesCarryStaticPixels() async throws {

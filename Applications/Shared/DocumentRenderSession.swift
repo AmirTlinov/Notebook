@@ -116,13 +116,13 @@ final class DocumentSourceSnapshot {
     return layout.blockIDs(on: [page]).intersection(programIDs)
   }
 
-  func preparedPage(_ index: Int, hostID: UUID, in web: WKWebView, lease: WebSurfaceLease,
+  func preparedPage(_ index: Int, hostID: UUID,
     resources: SceneRenderResources, onAdmissionWait: @escaping (Bool) -> Void = { _ in },
     onLayoutChanged: @escaping (DocumentLayoutRecord) -> Void = { _ in }) async throws -> DocumentPreparedPage {
     layoutObservers[hostID] = onLayoutChanged
     ensurePreparation(resources: resources)
     let prepared: DocumentPreparedPage
-    do { prepared = try await preparation!.page(index, hostID: hostID, in: web, lease: lease, onAdmissionWait: onAdmissionWait) }
+    do { prepared = try await preparation!.page(index, hostID: hostID, onAdmissionWait: onAdmissionWait) }
     catch {
       if preparation?.layout != nil { try acceptPreparedLayout() }
       throw error
@@ -166,10 +166,6 @@ final class DocumentSourceSnapshot {
     // A physical WebKit/source retirement ends the observer as well.
     if web != nil { layoutObservers[hostID] = nil }
     preparation?.releasePage(hostID: hostID, in: web)
-  }
-  func completeLayout(in web: WKWebView, lease: WebSurfaceLease) async throws -> DocumentLayoutRecord {
-    guard let preparation else { throw DocumentSessionError.invalidLayout }
-    return try await preparation.completeLayout(in: web, lease: lease)
   }
   func discardIdlePreparation() async { await preparation?.discardIdlePreparation() }
   var pendingPreparationReaderCount: Int { preparation?.pendingReaderCount ?? 0 }

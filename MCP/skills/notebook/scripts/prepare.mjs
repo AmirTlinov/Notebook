@@ -5,6 +5,7 @@ import {resolve,dirname,extname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {makeRecipe,chartSVG} from './recipes.mjs';
 import {loadScienceExample} from './science-examples.mjs';
+import {prepareProgramPackage} from './program-package.mjs';
 
 const maxImageBytes=700_000;
 function size(bytes,mimeType,path) {
@@ -41,7 +42,9 @@ export async function loadImage(path,{fit=false,outputPath}={}) {
 
 export async function prepare(name,input,{baseDirectory='.',outputPath,runID}={}) {
   input=structuredClone(input);
+  if(name==='program') return prepareProgramPackage({...input,directory:resolve(baseDirectory,input.directory??'.')});
   if(name==='animation'&&input.example) {
+    if(input.programPackage!==undefined)throw new Error('Choose an example or a package, not both');
     for(const field of ['html','css','javaScript'])if(input[field]!==undefined||input[`${field}Path`]!==undefined)throw new Error('Choose a named example or source files, not both');
     input={...await loadScienceExample(input.example),...input};
   }
@@ -69,12 +72,12 @@ export async function prepare(name,input,{baseDirectory='.',outputPath,runID}={}
 
 async function main() {
   const [name,inputPath,outputPath,...extra]=process.argv.slice(2);
-  if(!name||!inputPath||!outputPath||extra.length)throw new Error('Usage: node prepare.mjs mindmap|flow|compare|visual|plot|sketch|point|document|animation input.json request.json');
+  if(!name||!inputPath||!outputPath||extra.length)throw new Error('Usage: node prepare.mjs mindmap|flow|compare|visual|plot|sketch|point|document|animation|program input.json request.json');
   // This saved request is the retry identity; preparing again is a new intention.
   const input=JSON.parse(await readFile(inputPath,'utf8'));
   const request=await prepare(name,input,{baseDirectory:dirname(resolve(inputPath)),outputPath:resolve(outputPath)});
   await writeFile(outputPath,JSON.stringify(request),{flag:'wx',mode:0o600});
-  process.stdout.write(JSON.stringify({request:resolve(outputPath),run_id:request.run_id,operations:request.args.operations?.length??0,ids:request.args.ids??{}})+'\n');
+  process.stdout.write(JSON.stringify({request:resolve(outputPath),run_id:request.run_id,operations:request.args?.operations?.length??0,ids:request.args?.ids??{},...(request.packageHash?{packageHash:request.packageHash}:{})})+'\n');
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   main().catch(error=>{process.stderr.write(error.message+'\n');process.exitCode=1;});

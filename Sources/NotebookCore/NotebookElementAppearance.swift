@@ -13,6 +13,11 @@ public struct NotebookElementAppearance: @unchecked Sendable {
 
   public init(graphic: NotebookGraphic?, layout: NotebookGraphicLayout?, size: CGSize,
     erasures: [InkElementErasure]) {
+    if erasures.contains(where: { $0.target.wholeElement }) {
+      mask = CGPath(rect: CGRect(origin: .zero, size: size), transform: nil)
+      remaining = CGMutablePath(); state = .erased
+      return
+    }
     let paint = graphic.map { NotebookGraphicGeometry.paintPath($0,layout:layout,size:size) }
       ?? CGPath(rect:CGRect(origin:.zero,size:size),transform:nil)
     if !erasures.isEmpty && paint.isEmpty {
@@ -41,6 +46,9 @@ public struct NotebookElementAppearance: @unchecked Sendable {
 
   /// Exactly the positive-winding triangles that the live renderer erases.
   public static func erasurePath(_ erasures: [InkElementErasure], size: CGSize) -> CGPath {
+    if erasures.contains(where: { $0.target.wholeElement }) {
+      return CGPath(rect: CGRect(origin: .zero, size: size), transform: nil)
+    }
     // Repeated passes can cover the same small area with tens of thousands of
     // overlapping triangles. Never hand that entire triangle soup to Clipper:
     // normalize bounded batches and union them in balanced levels, retaining
@@ -87,6 +95,9 @@ public struct NotebookElementAppearance: @unchecked Sendable {
   /// Painting does not need CoreGraphics boolean normalization. This linear
   /// path is also the exact live eraser while semantic preparation is pending.
   public static func measuredErasurePath(_ erasures: [InkElementErasure], size: CGSize) -> CGPath {
+    if erasures.contains(where: { $0.target.wholeElement }) {
+      return CGPath(rect: CGRect(origin: .zero, size: size), transform: nil)
+    }
     let path = CGMutablePath()
     forEachErasureTriangle(erasures, size: size) { triangle in
       path.move(to:triangle[0])

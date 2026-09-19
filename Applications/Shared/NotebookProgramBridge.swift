@@ -18,6 +18,32 @@ enum NotebookProgramBridge {
     return source
   }()
 
+  static let documentScript: String = {
+    guard let url = Bundle.main.url(forResource: "document-program", withExtension: "js", subdirectory: "WebResources")
+      ?? Bundle.main.url(forResource: "document-program", withExtension: "js"),
+      let source = try? String(contentsOf: url, encoding: .utf8) else {
+      return "throw new Error('notebook_document_program_bridge_missing');"
+    }
+    return source
+  }()
+
+  @MainActor static func document(block: DocumentBlock, state: JSONValue, token: String,
+    package: NotebookProgramPackage, origin: URL) throws -> NotebookProgramAssets.Document {
+    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+    let configuration: JSONValue = .object(["blockID": .string(block.id), "token": .string(token), "state": state, "requiresReady": .bool(true)])
+    let json = String(decoding: try encoder.encode(configuration), as: UTF8.self).replacingOccurrences(of: "<", with: "\\u003c")
+    return .init(before: """
+      <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+      <meta http-equiv="Content-Security-Policy" content="\(NotebookProgramAssets.policy(origin: origin))">
+      <style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}</style>
+      \(NotebookProgramAssets.style(package, origin: origin))
+      <script>\(script)
+      \(documentScript)
+      installNotebookDocumentProgram(\(json),createNotebookProgram);</script>
+      </head><body>
+      """, after: "\(NotebookProgramAssets.script(package, origin: origin))</body></html>")
+  }
+
   /// A parked WebKit can throttle its timers as well as rAF. The native owner
   /// bounds the lifecycle request independently and ignores a late completion.
   @MainActor

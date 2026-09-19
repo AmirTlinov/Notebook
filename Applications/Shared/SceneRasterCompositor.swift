@@ -293,7 +293,27 @@ final class SceneRasterCompositor {
 
 /// Pixel allocation, blending and PNG encoding run outside the UI actor. This
 /// actor serializes one composition; it is neither a source cache nor a writer.
-private actor CompositionPixels {
+actor CompositionPixels {
+  /// Pure, cancellable pixel work uses the same non-UI execution boundary as
+  /// composition. The caller owns the charged source and destination lifetime.
+  static func makeMipmaps(_ original: CGImage, sizes: [(width: Int, height: Int)]) async throws -> [CGImage] {
+    assert(!Thread.isMainThread, "Mipmap pixel work must not run on the UI thread")
+    let space = original.colorSpace?.model == .rgb ? original.colorSpace : CGColorSpace(name: CGColorSpace.sRGB)
+    guard let space else { throw SceneRenderError.resourceLimit }
+    var previous = original, levels: [CGImage] = []
+    for size in sizes {
+      try Task.checkCancellation()
+      guard let context = CGContext(data: nil, width: size.width, height: size.height,
+        bitsPerComponent: 8, bytesPerRow: ((size.width * 4 + 63) / 64) * 64, space: space,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw SceneRenderError.resourceLimit }
+      context.interpolationQuality = .high; context.setBlendMode(.copy)
+      context.draw(previous, in: CGRect(x: 0, y: 0, width: size.width, height: size.height))
+      guard let level = context.makeImage() else { throw SceneRenderError.resourceLimit }
+      levels.append(level); previous = level
+    }
+    return levels
+  }
+
   private var context: CGContext?
   private var clipDepth = 0
   private let size: CGSize

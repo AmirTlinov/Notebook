@@ -23,6 +23,7 @@ struct DocumentPagePresentation {
   let onPreparationFailure: (Error) -> Void
   var onStateCheckpoint: (String, JSONValue, ContentFieldVersion, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
   var measurements: DocumentPresentationRecorder? = nil
+  var programStore: NotebookStore? = nil
   var paperToken: String { DocumentSnapshotCache.paperToken(sourceRevision: document.contentStamp.revision, pageIndex: pageIndex) }
   var token: String { DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndex) }
   /// A full physical page retains the open document even while UIKit has not
@@ -459,6 +460,7 @@ final class DocumentPagePresentationOwner {
         reason: createsEntry ? "registered" : "current_changed")
     }
     retirePaperAfterDocumentClose()
+    refreshProgramDemand()
     trim(); schedule()
   }
 
@@ -860,6 +862,7 @@ final class DocumentPagePresentationOwner {
   }
 
   private func configure(_ renderer: DocumentWebCoordinator, input: DocumentPagePresentation, page: Int) {
+    renderer.programStore = input.programStore
     renderer.update(document: input.document, state: input.state, selectedPageIndex: page, capturesSnapshot: false,
       onRenderReady: .init { _ in }, onPageLayout: { [weak self] layout in
         self?.entries.values.forEach { $0.input.onPageLayout(layout) }
@@ -903,6 +906,8 @@ final class DocumentPagePresentationOwner {
 
   private func refreshProgramDemand() {
     guard !holdsReturnPaper else { return }
+    let hiddenOpenPaper = current.map { $0.input.retainsOpenDocument && !$0.input.isVisible } == true
+    if hiddenOpenPaper { programOwner.parkForReturn() }
     guard let input = stateOwner?.input ?? entries.values.first?.input, let layout = source?.layout,
       source?.matches(input.document) == true else { return }
     let pages = Set(entries.values.filter(\.requiresPreparation).map { min($0.input.pageIndex, layout.pageCount - 1) })
@@ -915,6 +920,7 @@ final class DocumentPagePresentationOwner {
     programOwner.update(input: input, layout: layout, pages: pages,
       currentPage: current?.input.pageIndex, visibleIDs: visiblePrograms(), preparationPage: preparationDemand?.pageIndex,
       blocked: gestureLocked, contacts: contacts, densities: densities)
+    if !hiddenOpenPaper { programOwner.resumeFromReturn() }
   }
 
   private func installPrograms(on entry: Entry) {
@@ -999,7 +1005,8 @@ final class DocumentPagePresentationOwner {
         let web = runtime.webView else { return nil }
       return .init(blockID: region.id, webView: web,
         rect: .init(x: region.frame.x, y: region.frame.y, width: region.frame.width, height: region.frame.height),
-        sourceOffset: region.sourceOffset, fullSize: web.bounds.size, allowsInteraction: !programOwner.retiringIDs.contains(region.id))
+        sourceOffset: region.sourceOffset, fullSize: web.bounds.size,
+        allowsInteraction: !programOwner.retiringIDs.contains(region.id) && programOwner.pauseFailures[region.id] == nil)
     }
   }
 

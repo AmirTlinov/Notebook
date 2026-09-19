@@ -9266,15 +9266,27 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     const encodedImages = [];
     const tokenPattern = new RegExp(`${imageToken}(\\d+)END`, "g");
     const restoreImages = (value) => value.replace(tokenPattern, (token, index) => encodedImages[Number(index)] ?? token);
+    let markerPrefix = "NOTEBOOKSOURCEOFFSET";
+    while (document.blocks.some((block) => block.source.includes(markerPrefix))) markerPrefix += "X";
     const rendered = document.blocks.map((block) => {
       if (block.kind !== "markdown") return { block, fragment: null, nodes: [], math: [] };
-      const compact = block.source.replace(/data:image\/(?:svg\+xml|png|jpeg)(?:;charset=[^;,\s]+)?;base64,[A-Za-z0-9+/=]+/gi, (value) => {
+      const normalized = replaceMapped(block.source, /\r\n|\r/g, () => "\n");
+      const compact = replaceMapped(normalized.text, /data:image\/(?:svg\+xml|png|jpeg)(?:;charset=[^;,\s]+)?;base64,[A-Za-z0-9+/=]+/gi, (value) => {
         const token = `${imageToken}${encodedImages.length}END`;
         encodedImages.push(value);
         return token;
       });
-      const protectedMath = protectMath(compact);
-      const fragment = parseFragment(f.parse(protectedMath.source, { async: false, gfm: true }));
+      const protectedMath = protectMath(compact.text);
+      const tokens = f.lexer(protectedMath.source, { gfm: true });
+      let cursor = 0;
+      const html = tokens.map((token) => {
+        const start = protectedMath.source.indexOf(token.raw, cursor);
+        if (start < cursor) throw new Error("print_source_map_invalid: Markdown token lost its source");
+        cursor = start + token.raw.length;
+        const offset = normalized.originalOffset(compact.originalOffset(protectedMath.originalOffset(start)));
+        return `<!--${markerPrefix}${offset}-->` + f.parser([token], { gfm: true });
+      }).join("");
+      const fragment = parseFragment(html);
       const nodes = descendants(fragment.childNodes);
       for (const node of nodes) {
         if ("value" in node) node.value = restoreImages(node.value);
@@ -9336,6 +9348,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       return nodes.map(renderNode).join("");
     }
     function renderNode(node) {
+      if (node.nodeName === "#comment" && "data" in node && new RegExp(`^${markerPrefix}\\d+$`).test(node.data)) return `\uE000${node.data}\uE001`;
       if ("value" in node) return renderText(node.value.replace(/\s+/g, " "));
       if (!("tagName" in node)) return "";
       const tag = node.tagName;
@@ -9443,6 +9456,7 @@ ${prefix}${body2}\\par
           return prefix + body2;
       }
     }
+    const mappedOffsets = /* @__PURE__ */ new Map();
     const body = rendered.map(({ block, fragment, math }) => {
       if (block.kind === "tex") return block.source;
       if (block.kind === "latex") {
@@ -9458,6 +9472,18 @@ ${prefix}${body2}\\par
       currentMath = math;
       let text = renderNodes(fragment.childNodes);
       for (const [placeholder, formula] of math) text = text.split(placeholder).join(formula);
+      const offsets = [0];
+      let currentOffset = 0, generatedLine = 0;
+      text = text.replace(new RegExp(`\\uE000${markerPrefix}(\\d+)\\uE001|\\n`, "g"), (value, offset) => {
+        if (offset !== void 0) {
+          currentOffset = Number(offset);
+          offsets[generatedLine] = currentOffset;
+          return "";
+        }
+        offsets[++generatedLine] = currentOffset;
+        return value;
+      });
+      mappedOffsets.set(block.id, offsets);
       return text.trim() ? text : "\\noindent\\mbox{}\\par";
     });
     const supplied = document.preamble.trim();
@@ -9488,10 +9514,23 @@ ${prefix}${body2}\\par
     const parts = [preamble, "\\begin{document}", "\\special{pdf:minorversion 7}"];
     let line = parts.reduce((count, part) => count + newlineCount(part) + 2, 1);
     const sourceRanges = body.map((text, index) => {
-      const firstLine = line;
+      const firstLine = line, block = document.blocks[index];
+      let sourceOffsets;
+      if (block.kind === "markdown") sourceOffsets = mappedOffsets.get(block.id);
+      else {
+        let offset = 0;
+        sourceOffsets = block.kind === "interactive" ? [0] : block.source.split("\n").map((value) => {
+          const start = offset;
+          offset += value.length + 1;
+          return start;
+        });
+      }
+      const count = newlineCount(text) + 2;
+      if (count > 2e5) throw new Error("resource_limit: Print source exceeds 200000 mapped lines per block");
+      sourceOffsets = Array.from({ length: count }, (_2, index2) => sourceOffsets[Math.min(index2, sourceOffsets.length - 1)] ?? 0);
       parts.push(text);
       line += newlineCount(text) + 2;
-      return { blockID: document.blocks[index].id, firstLine, lastLine: line - 1 };
+      return { blockID: block.id, firstLine, lastLine: line - 1, sourceOffsets };
     });
     parts.push("\\end{document}", "");
     return { source: parts.join("\n\n"), assets, sourceRanges };
@@ -9536,15 +9575,36 @@ ${prefix}${body2}\\par
   function renderText(value) {
     return escapeTeX(value);
   }
+  function replaceMapped(source, pattern, replace) {
+    const spans = [];
+    let delta = 0;
+    const text = source.replace(pattern, (value, offset) => {
+      const result = replace(value), start = offset + delta;
+      spans.push({ start, end: start + result.length, sourceStart: offset, sourceEnd: offset + value.length });
+      delta += result.length - value.length;
+      return result;
+    });
+    return { text, originalOffset(offset) {
+      let low = 0, high = spans.length;
+      while (low < high) {
+        const mid = low + high >>> 1;
+        if (spans[mid].start <= offset) low = mid + 1;
+        else high = mid;
+      }
+      const span = spans[low - 1];
+      return !span ? offset : offset < span.end ? span.sourceStart : offset + span.sourceEnd - span.end;
+    } };
+  }
   function protectMath(source) {
     let prefix = "NOTEBOOKTEXMATH";
     while (source.includes(prefix)) prefix += "X";
     const segments = [];
-    return { source: source.replace(/\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$\$[\s\S]+?(?<!\\)\$\$|(?<!\\)\$(?!\$)(?:\\.|[^$\n])+?(?<!\\)\$/g, (formula) => {
+    const mapped = replaceMapped(source, /\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$\$[\s\S]+?(?<!\\)\$\$|(?<!\\)\$(?!\$)(?:\\.|[^$\n])+?(?<!\\)\$/g, (formula) => {
       const placeholder = `${prefix}${segments.length}TOKEN`;
       segments.push([placeholder, formula]);
       return placeholder;
-    }), segments };
+    });
+    return { source: mapped.text, segments, originalOffset: mapped.originalOffset };
   }
   function base64UTF8(value) {
     const bytes = encodeURIComponent(value).replace(/%([0-9A-F]{2})/g, (_2, pair) => String.fromCharCode(parseInt(pair, 16)));

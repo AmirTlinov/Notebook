@@ -36,7 +36,9 @@ public struct NotebookTypesetterError: Error, LocalizedError, Sendable {
       let range = ranges.first { $0.firstLine <= generated && generated <= $0.lastLine }
       let source = range.flatMap { range in document.blocks.first { $0.id == range.blockID }?.source } ?? document.preamble
       let count = source.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
-      let line = min(count, max(1, generated - (range?.firstLine ?? 1) + 1))
+      let offset = range.map { DocumentPrintLocations.sourceOffset(line: generated, range: $0, source: source) }
+      let line = offset.map { (source as NSString).substring(to: $0).reduce(1) { $1 == "\n" ? $0+1 : $0 } }
+        ?? min(count, max(1, generated))
       return .init(blockID: range?.blockID, line: line, message: text.substring(with: match.range(at: 2)))
     }
     return .init(log, diagnostics: diagnostics)

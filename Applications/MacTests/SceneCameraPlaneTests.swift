@@ -21,14 +21,16 @@ final class SceneCameraPlaneTests: XCTestCase {
     }
     let initial = SessionPresence(mode: .board, camera: .init(scale: 1), viewport: viewport)
     container.update(presence: initial, revision: 0, content: content)
+    let installed = container.contentView
     container.update(presence: .init(mode: .board, camera: .init(scale: 0.25), viewport: viewport),
       revision: 0, isCameraActive: true, content: content)
     container.layoutSubtreeIfNeeded()
     try await Task.sleep(for: .milliseconds(30))
     XCTAssertEqual(button.convert(button.bounds, to: nil).midX, 260, accuracy: 1)
     XCTAssertFalse(button.visibleRect.isEmpty,
-      "Prepared offscreen content must become visible by camera projection alone, not wait for a new publication")
-    XCTAssertEqual(container.contentPublicationCount, 1)
+      "Prepared offscreen content becomes visible without waiting for archive or gesture settlement")
+    XCTAssertTrue(container.contentView === installed)
+    XCTAssertEqual(container.contentPublicationCount, 2, "The 4x jump rebases density once, retaining its native host")
   }
 
   @MainActor
@@ -115,10 +117,13 @@ final class SceneCameraPlaneTests: XCTestCase {
     defer { window.orderOut(nil); window.close() }
     let initial = SessionPresence(mode: .board, camera: .init(scale: 0.05), viewport: .init(x: 1194, y: 834))
     var builds = 0
+    var installedAnchor = initial
+    let world = initial.camera.screenToWorld(.init(x: 391, y: 284), viewport: initial.viewport)
     func content(_ anchor: SessionPresence, _ projection: ScenePlaneProjection) -> AnyView {
-      builds += 1
+      builds += 1; installedAnchor = anchor
+      let point = anchor.camera.worldToScreen(world, viewport: anchor.viewport)
       return AnyView(Color.red.frame(width: 30, height: 30)
-        .position(x: 391, y: 284).frame(width: anchor.viewport.x, height: anchor.viewport.y))
+        .position(x: point.x, y: point.y).frame(width: anchor.viewport.x, height: anchor.viewport.y))
     }
     container.update(presence: initial, revision: 1, content: content)
     let host = container.contentView
@@ -128,13 +133,15 @@ final class SceneCameraPlaneTests: XCTestCase {
         viewport: initial.viewport)
       container.update(presence: current, revision: 1, isCameraActive: true, content: content)
       XCTAssertEqual(host.bounds.size, CGSize(width: 1194, height: 834))
-      let screen = host.convert(NSPoint(x: 391, y: 284), to: nil)
-      let expected = SceneCameraProjection(anchor: initial, current: current).project(.init(x: 391, y: 284))
+      let local = installedAnchor.camera.worldToScreen(world, viewport: installedAnchor.viewport)
+      let screen = host.convert(NSPoint(x: local.x, y: local.y), to: nil)
+      let expected = current.camera.worldToScreen(world, viewport: current.viewport)
       XCTAssertEqual(screen.x, expected.x, accuracy: 0.0001)
       XCTAssertEqual(screen.y, 834 - expected.y, accuracy: 0.0001)
     }
-    XCTAssertEqual(builds, 1)
-    XCTAssertEqual(container.contentPublicationCount, 1)
+    XCTAssertGreaterThan(builds, 1)
+    XCTAssertLessThan(builds, 40, "Only bounded density changes rebase, not every sample")
+    XCTAssertEqual(container.contentPublicationCount, builds)
   }
 }
 

@@ -15,7 +15,7 @@ try {
   await writeFixture(root);
   const socket=fixtureSocket(root),server=createServer(socket);
   const [c,s]=InMemoryTransport.createLinkedPair();await server.connect(s);await client.connect(c);
-  assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute"]);
+  assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute","notebook_import_program"]);
   const read=await runBridge<{cursor:string;values:unknown[]}>(socket,{command:"read",queries:[{kind:"workspaceHeader"},{kind:"presence"}]});
   assert.equal(read.values.length,2);
   const absent=await client.callTool({name:"notebook_context",arguments:{method:"help"}});

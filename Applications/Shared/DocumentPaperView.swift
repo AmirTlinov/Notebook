@@ -61,6 +61,10 @@ final class DocumentPaperView: PaperPlatformView {
     paperLayer.contents = raster.image; paperLayer.contentsGravity = .resize
     CATransaction.commit()
   }
+  func clear() {
+    refinement?.cancel(); refinement = nil
+    paperLayer.contents = nil; raster = nil; resources = nil
+  }
   #if os(iOS)
   override func layoutSubviews() { super.layoutSubviews(); refine() }
   #else

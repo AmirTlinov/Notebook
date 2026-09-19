@@ -110,10 +110,11 @@ test('single-finger double tap has one owner; a later mouse double-click still e
 
 // Exercise the actual message builder too: a gesture-only test cannot detect
 // a native receiver rejecting a message with no document identity.
-test('source request carries the installed document, runtime, generation and page',()=>{
+test('source request carries the installed identity and full paper coordinates, not the inset content origin',()=>{
   const messages = [], receipt = {documentID:'doc',runtimeID:'runtime',sourceKey:'source',generation:'7',pageIndex:2};
   const context = vm.createContext({payload:{editable:true,blocks:[{id:'body',kind:'tex'}]},
-    root:{getBoundingClientRect:()=>({left:10,top:20,width:100,height:200}),clientWidth:200,clientHeight:400},
+    viewport:{getBoundingClientRect:()=>({left:10,top:20,width:100,height:200}),clientWidth:200,clientHeight:400},
+    root:{getBoundingClientRect:()=>({left:10,top:50,width:100,height:140}),clientWidth:200,clientHeight:280},
     presentationReceipt:()=>receipt,bridge:message=>messages.push(message)});
   vm.runInContext(shell.slice(shell.indexOf('const beginEditing ='), shell.indexOf('const setEditingEnabled ='))+
     "beginEditing('body',{clientX:35,clientY:50});",context);

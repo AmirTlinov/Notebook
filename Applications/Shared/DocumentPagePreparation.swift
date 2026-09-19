@@ -167,6 +167,7 @@ final class DocumentPagePreparation {
     // either. The same reservation shrinks to the retained source afterwards.
     let bodyBytes = value.pdf.count + value.syncTeX.count + value.source.utf8.count
       + value.assets.reduce(0, { $0 + $1.data.count })
+      + value.sourceMap.ranges.reduce(0, { $0 + ($1.sourceOffsets?.count ?? 0)*MemoryLayout<Int>.stride + 256 })
     guard value.locationDecodeBytes <= 16*1024*1024 else { throw SceneRenderError.resourceLimit }
     let charge = try await resources.acquirePassiveDerivedBytes(bodyBytes + value.locationDecodeBytes*5 + 24*1024*1024) { onAdmissionWait(true) }
     defer { onAdmissionWait(false) }
@@ -196,7 +197,7 @@ final class DocumentPagePreparation {
     var offsets: [String: Double] = [:]
     let byPage = Dictionary(grouping: locations, by: \.pageIndex)
     let order = Dictionary(uniqueKeysWithValues: document.blocks.enumerated().map { ($0.element.id, $0.offset) })
-    let ranges = Dictionary(uniqueKeysWithValues: value.sourceMap.ranges.map { ($0.blockID, $0.firstLine) })
+    let ranges = Dictionary(uniqueKeysWithValues: value.sourceMap.ranges.map { ($0.blockID, $0) })
     for index in 0..<pdf.numberOfPages {
       guard let page = pdf.page(at: index+1) else { throw DocumentSessionError.invalidLayout }
       let box = page.getBoxRect(.mediaBox)
@@ -215,11 +216,13 @@ final class DocumentPagePreparation {
           width: bounds.width*scale, height: bounds.height*scale, sourceOffset: offsets[block.id] ?? 0)
         regions.append(region); offsets[block.id, default: 0] += region.height
         let line = entries.map(\.generatedLine).min() ?? 1
-        let first = ranges[block.id] ?? 1
-        let sourceLines = block.source.split(separator: "\n", omittingEmptySubsequences: false)
-        let local = min(max(0, line-first), max(0, sourceLines.count-1))
-        let offset = sourceLines.prefix(local).reduce(0) { $0 + $1.utf16.count + 1 }
-        let fragment = sourceLines.isEmpty ? "" : String(sourceLines[local])
+        guard let range = ranges[block.id] else { throw DocumentSessionError.invalidLayout }
+        let offset = DocumentPrintLocations.sourceOffset(line: line, range: range, source: block.source)
+        let text = block.source as NSString
+        let tail = NSRange(location: offset, length: text.length-offset)
+        let newline = text.range(of: "\n", range: tail)
+        let fragment = text.substring(with: NSRange(location: offset,
+          length: (newline.location == NSNotFound ? text.length : newline.location)-offset))
         let node = SHA256.hash(data: Data(fragment.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
         // Macro output resolves to the nearest source line, never a fabricated
         // character position in an independently laid-out DOM.
@@ -240,7 +243,7 @@ final class DocumentPagePreparation {
       blockIDs: Set(document.blocks.map(\.id)), geometry: .document(document.paperSize), reservation: charge)
     layout = measured; browserRegions = regions; try onLayoutAccepted(measured)
   }
-  func page(_ requested: Int, hostID: UUID, in web: WKWebView, lease: WebSurfaceLease,
+  func page(_ requested: Int, hostID: UUID,
     onAdmissionWait: @escaping (Bool) -> Void = { _ in }) async throws -> DocumentPreparedPage {
     retainPage(requested, hostID: hostID)
     try await prepare(onAdmissionWait: onAdmissionWait)
@@ -283,9 +286,6 @@ final class DocumentPagePreparation {
   func sourceOffset(blockID: String, pageIndex: Int, x: Double, y: Double) -> Int? {
     let scale = message.paper.widthPoints / message.paper.surfaceWidth
     return printSource?.sourceOffset(blockID: blockID, pageIndex: pageIndex, x: x*scale, y: y*scale)
-  }
-  func completeLayout(in web: WKWebView, lease: WebSurfaceLease) async throws -> DocumentLayoutRecord {
-    try await prepare(onAdmissionWait: { _ in }); guard let layout else { throw DocumentSessionError.invalidLayout }; return layout
   }
   isolated deinit { preparation?.cancel() }
 }

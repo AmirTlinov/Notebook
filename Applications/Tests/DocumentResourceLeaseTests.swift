@@ -80,7 +80,9 @@ final class DocumentResourceLeaseTests: XCTestCase {
     let first = UUID(), second = UUID()
     source.retainPage(2, hostID: first); source.retainPage(2, hostID: second)
     defer { source.releasePage(hostID: first, in: nil); source.releasePage(hostID: second, in: nil) }
-    await waitUntil(timeout: .seconds(4)) { source.retainedPageIndices.contains(2) }
+    let firstPage = try await source.preparedPage(2, hostID: first, resources: resources)
+    let secondPage = try await source.preparedPage(2, hostID: second, resources: resources)
+    XCTAssertTrue(firstPage === secondPage)
     XCTAssertEqual(source.retainedPageIndices, [0, 2])
     XCTAssertEqual(source.compiledPageCount, 2, "Two consumers share one compiled fragment")
     source.releasePage(hostID: first, in: nil)

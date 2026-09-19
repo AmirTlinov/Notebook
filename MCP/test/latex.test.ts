@@ -236,3 +236,17 @@ test("opaque image tokenization preserves literal examples and cannot capture an
   assert.ok(result.source.includes(`\\begin{verbatim}\n<img src='${url}'>`));
   assert.ok(result.source.includes('NOTEBOOKEMBEDDEDIMAGE0END'));
 });
+
+test("maps repeated Markdown paragraphs through math, CRLF and opaque images to authored UTF-16 offsets", () => {
+  const image = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString('base64')}`;
+  const source = `# 😀 Heading\r\n\r\nSame $x^2$.\r\n\r\n![plot](${image})\r\n\r\nSame $x^2$.\r\n\r\nFinal paragraph.\r\n`;
+  const result = documentExport(document([markdown("mapped", source)]));
+  const range = result.sourceRanges[0]!;
+  const lines = result.source.split("\n").slice(range.firstLine-1, range.lastLine);
+  const repeated = lines.flatMap((line, index) => line.includes("Same $x^2$") ? [range.sourceOffsets[index]!] : []);
+  assert.deepEqual(repeated, [source.indexOf("Same"), source.lastIndexOf("Same")]);
+  assert.equal(range.sourceOffsets[lines.findIndex(line => line.includes("Final paragraph"))], source.indexOf("Final paragraph"));
+  assert.equal(range.sourceOffsets.length, range.lastLine-range.firstLine+1);
+  assert.ok(!result.source.includes("NOTEBOOKSOURCEOFFSET"));
+  assert.ok(range.sourceOffsets.every((offset,index) => offset >= 0 && offset <= source.length && (!index || offset >= range.sourceOffsets[index-1]!)));
+});

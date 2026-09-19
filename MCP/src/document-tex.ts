@@ -11,7 +11,7 @@ export interface DocumentExportAsset {
 }
 /** One-based, inclusive lines in the exact generated document.tex, not lines
  * in Markdown. SyncTeX addresses these lines; block IDs never enter TeX. */
-export interface DocumentPrintSourceRange { blockID: string; firstLine: number; lastLine: number }
+export interface DocumentPrintSourceRange { blockID: string; firstLine: number; lastLine: number; sourceOffsets: number[] }
 export interface DocumentExport {
   source: string;
   assets: DocumentExportAsset[];
@@ -37,13 +37,27 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
   const encodedImages: string[] = [];
   const tokenPattern = new RegExp(`${imageToken}(\\d+)END`, "g");
   const restoreImages = (value: string) => value.replace(tokenPattern, (token, index: string) => encodedImages[Number(index)] ?? token);
+  let markerPrefix = "NOTEBOOKSOURCEOFFSET";
+  while (document.blocks.some(block => block.source.includes(markerPrefix))) markerPrefix += "X";
   const rendered = document.blocks.map(block => {
     if (block.kind !== "markdown") return { block, fragment: null, nodes: [] as Node[], math: [] as Array<[string, string]> };
-    const compact = block.source.replace(/data:image\/(?:svg\+xml|png|jpeg)(?:;charset=[^;,\s]+)?;base64,[A-Za-z0-9+/=]+/gi, value => {
+    const normalized = replaceMapped(block.source, /\r\n|\r/g, () => "\n");
+    const compact = replaceMapped(normalized.text, /data:image\/(?:svg\+xml|png|jpeg)(?:;charset=[^;,\s]+)?;base64,[A-Za-z0-9+/=]+/gi, value => {
       const token = `${imageToken}${encodedImages.length}END`; encodedImages.push(value); return token;
     });
-    const protectedMath = protectMath(compact);
-    const fragment = parseFragment(marked.parse(protectedMath.source, { async: false, gfm: true }));
+    const protectedMath = protectMath(compact.text);
+    const tokens = marked.lexer(protectedMath.source, { gfm: true });
+    let cursor = 0;
+    // Top-level Markdown tokens retain the nearest authored paragraph. Keep
+    // one HTML parse so embedded HTML containers/tables retain their semantics.
+    const html = tokens.map(token => {
+      const start = protectedMath.source.indexOf(token.raw, cursor);
+      if (start < cursor) throw new Error("print_source_map_invalid: Markdown token lost its source");
+      cursor = start + token.raw.length;
+      const offset = normalized.originalOffset(compact.originalOffset(protectedMath.originalOffset(start)));
+      return `<!--${markerPrefix}${offset}-->` + marked.parser([token], { gfm: true });
+    }).join("");
+    const fragment = parseFragment(html);
     const nodes = descendants(fragment.childNodes);
     for (const node of nodes) {
       if ("value" in node) node.value = restoreImages(node.value);
@@ -101,6 +115,7 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
   }
   function renderNodes(nodes: Node[]): string { return nodes.map(renderNode).join(""); }
   function renderNode(node: Node): string {
+    if (node.nodeName === "#comment" && "data" in node && new RegExp(`^${markerPrefix}\\d+$`).test(node.data)) return `\uE000${node.data}\uE001`;
     if ("value" in node) return renderText(node.value.replace(/\s+/g, " "));
     if (!("tagName" in node)) return "";
     const tag = node.tagName;
@@ -161,6 +176,7 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
     }
   }
 
+  const mappedOffsets = new Map<string, number[]>();
   const body = rendered.map(({ block, fragment, math }) => {
     if (block.kind === "tex") return block.source;
     if (block.kind === "latex") {
@@ -180,6 +196,13 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
     currentMath = math;
     let text = renderNodes(fragment!.childNodes);
     for (const [placeholder, formula] of math) text = text.split(placeholder).join(formula);
+    const offsets: number[] = [0];
+    let currentOffset = 0, generatedLine = 0;
+    text = text.replace(new RegExp(`\\uE000${markerPrefix}(\\d+)\\uE001|\\n`, "g"), (value, offset: string | undefined) => {
+      if (offset !== undefined) { currentOffset = Number(offset); offsets[generatedLine] = currentOffset; return ""; }
+      offsets[++generatedLine] = currentOffset; return value;
+    });
+    mappedOffsets.set(block.id, offsets);
     return text.trim() ? text : "\\noindent\\mbox{}\\par";
   });
   const supplied = document.preamble.trim();
@@ -209,10 +232,19 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
   // afterwards is ambiguous for repeated paragraphs and raw TeX macros.
   let line = parts.reduce((count, part) => count + newlineCount(part) + 2, 1);
   const sourceRanges = body.map((text, index) => {
-    const firstLine = line;
+    const firstLine = line, block = document.blocks[index]!;
+    let sourceOffsets: number[];
+    if (block.kind === "markdown") sourceOffsets = mappedOffsets.get(block.id)!;
+    else {
+      let offset = 0;
+      sourceOffsets = block.kind === "interactive" ? [0] : block.source.split("\n").map(value => { const start = offset; offset += value.length + 1; return start; });
+    }
+    const count = newlineCount(text) + 2;
+    if (count > 200_000) throw new Error("resource_limit: Print source exceeds 200000 mapped lines per block");
+    sourceOffsets = Array.from({ length: count }, (_, index) => sourceOffsets[Math.min(index, sourceOffsets.length - 1)] ?? 0);
     parts.push(text);
     line += newlineCount(text) + 2;
-    return { blockID: document.blocks[index]!.id, firstLine, lastLine: line - 1 };
+    return { blockID: block.id, firstLine, lastLine: line - 1, sourceOffsets };
   });
   parts.push("\\end{document}", "");
   return { source: parts.join("\n\n"), assets, sourceRanges };
@@ -251,12 +283,28 @@ function escapeTeX(value: string): string {
 }
 function escapeURL(value: string): string { return value.replace(/[{}%#\\]/g, character => `\\${character}`); }
 function renderText(value: string): string { return escapeTeX(value); }
-function protectMath(source: string): { source: string; segments: Array<[string, string]> } {
+function replaceMapped(source: string, pattern: RegExp, replace: (value: string) => string) {
+  const spans: Array<{ start: number; end: number; sourceStart: number; sourceEnd: number }> = [];
+  let delta = 0;
+  const text = source.replace(pattern, (value: string, offset: number) => {
+    const result = replace(value), start = offset + delta;
+    spans.push({ start, end: start + result.length, sourceStart: offset, sourceEnd: offset + value.length });
+    delta += result.length - value.length; return result;
+  });
+  return { text, originalOffset(offset: number): number {
+    let low = 0, high = spans.length;
+    while (low < high) { const mid = (low + high) >>> 1; if (spans[mid]!.start <= offset) low = mid + 1; else high = mid; }
+    const span = spans[low - 1];
+    return !span ? offset : offset < span.end ? span.sourceStart : offset + span.sourceEnd - span.end;
+  } };
+}
+function protectMath(source: string) {
   let prefix = "NOTEBOOKTEXMATH"; while (source.includes(prefix)) prefix += "X";
   const segments: Array<[string, string]> = [];
-  return { source: source.replace(/\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$\$[\s\S]+?(?<!\\)\$\$|(?<!\\)\$(?!\$)(?:\\.|[^$\n])+?(?<!\\)\$/g, formula => {
+  const mapped = replaceMapped(source, /\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$\$[\s\S]+?(?<!\\)\$\$|(?<!\\)\$(?!\$)(?:\\.|[^$\n])+?(?<!\\)\$/g, formula => {
     const placeholder = `${prefix}${segments.length}TOKEN`; segments.push([placeholder, formula]); return placeholder;
-  }), segments };
+  });
+  return { source: mapped.text, segments, originalOffset: mapped.originalOffset };
 }
 function base64UTF8(value: string): string {
   const bytes = encodeURIComponent(value).replace(/%([0-9A-F]{2})/g, (_, pair: string) => String.fromCharCode(parseInt(pair, 16)));

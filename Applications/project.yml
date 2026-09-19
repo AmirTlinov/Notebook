@@ -78,8 +78,8 @@ targets:
         PRODUCT_NAME: Notebook
         OTHER_LDFLAGS: "$(inherited) $(NOTEBOOK_TYPESETTER_RUNTIME)/$(PLATFORM_NAME)/libnotebook_typesetter_runtime.a -liconv -lresolv -framework Security"
         NOTEBOOK_DISPLAY_NAME: Notebook
-        MARKETING_VERSION: 0.3.111
-        CURRENT_PROJECT_VERSION: 114
+        MARKETING_VERSION: 0.3.113
+        CURRENT_PROJECT_VERSION: 116
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: $(NOTEBOOK_IPAD_ENTITLEMENTS)
         DEVELOPMENT_TEAM: M94V58FCVP
@@ -199,9 +199,8 @@ targets:
         CODE_SIGN_ENTITLEMENTS: $(NOTEBOOK_MAC_ENTITLEMENTS)
         PRODUCT_NAME: Notebook
         OTHER_LDFLAGS: "$(inherited) $(NOTEBOOK_TYPESETTER_RUNTIME)/$(PLATFORM_NAME)/libnotebook_typesetter_runtime.a -liconv -lresolv -framework Security"
-        MARKETING_VERSION: 0.3.111
-        CURRENT_PROJECT_VERSION: 114
-
+        MARKETING_VERSION: 0.3.113
+        CURRENT_PROJECT_VERSION: 116
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: M94V58FCVP
         GENERATE_INFOPLIST_FILE: false

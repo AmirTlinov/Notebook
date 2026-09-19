@@ -188,7 +188,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.web(in: 0) != nil }
     let runtime = try XCTUnwrap(fixture.web(in: 0))
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
-    let target = try XCTUnwrap(source.layout?.anchorPages["far"])
+    let target = try XCTUnwrap(source.layout).pageCount - 1
     XCTAssertGreaterThan(target, 3)
     fixture.activity.prepare(target, presentation: .live)
     fixture.showPages(current: 2, neighbour: target); fixture.restorePresentation(1)
@@ -906,11 +906,65 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertEqual(returned, original, "Return attaches the existing DOM; parsing, math, layout and page installation do not run again")
     XCTAssertEqual(source.measurementCount, measurements)
     XCTAssertEqual(source.compiledPageCount, fragments)
-    let editing = try await web.evaluateJavaScript("""
-      document.querySelector('[data-block-id=body]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
-      document.querySelector('textarea').value;
-      """) as? String
-    XCTAssertEqual(editing, document.blocks[0].source, "Return must expose the working source, not just a cached picture")
+    let requested = expectation(description: "Native source is addressed by returned paper")
+    let observer = NotificationCenter.default.addObserver(forName: DocumentSourceRequest.notification, object: nil, queue: .main) { note in
+      guard let request = note.object as? DocumentSourceRequest, request.documentID == document.id else { return }
+      XCTAssertEqual(request.source, document.blocks[0].source)
+      requested.fulfill()
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+    _ = try await web.evaluateJavaScript("""
+      const block=document.querySelector('[data-block-id=body]'), rect=block.getBoundingClientRect();
+      block.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,clientX:rect.left+5,clientY:rect.top+5}));true;
+      """)
+    await fulfillment(of: [requested], timeout: 3)
+
+  }
+
+  func testCodeModeKeepsTheSameFrozenHeapThroughSourceChangesAndDelayedPersistence() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [
+      .markdown(id: "body", source: "# Before"),
+      .interactive(id: "clock", html: "<output></output>", javaScript: """
+        let phase=0,timer;
+        const start=()=>{timer=setInterval(()=>{phase++;document.querySelector('output').textContent=phase},10)};
+        notebook.lifecycle({pause(){clearInterval(timer)},checkpoint(){return {phase}},resume:start,dispose(){clearInterval(timer)}});
+        notebook.ready(Promise.resolve().then(start));
+        """, initialState: .object(["phase": .number(0)]), height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    var held: CheckedContinuation<Void, Never>?
+    defer { held?.resume(); fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "clock") != nil }
+    let web = try XCTUnwrap(fixture.web(block: "clock"))
+    try await Task.sleep(for: .milliseconds(100))
+    fixture.onCheckpoint = { _ in await withCheckedContinuation { held = $0 } }
+    fixture.setVisible(false)
+    try await wait(message: { fixture.diagnostics }) { held != nil }
+    let phase = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    fixture.replaceSource(blockID: "body", source: "# After")
+    fixture.setVisible(true)
+    try await Task.sleep(for: .milliseconds(150))
+    let waiting = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertEqual(waiting, phase, "Returning must await durable persistence, not cancel it")
+    fixture.onCheckpoint = { _ in }; held?.resume(); held = nil
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "clock") === web }
+    try await Task.sleep(for: .milliseconds(100))
+    let resumed = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertGreaterThan(resumed ?? 0, phase ?? 0)
+
+    var attempts = 0
+    fixture.onCheckpoint = { _ in attempts += 1 }; fixture.acceptsCheckpoints = false
+    fixture.setVisible(false)
+    try await wait(message: { fixture.diagnostics }) { attempts > 0 }
+    fixture.setVisible(true)
+    try await wait(message: { fixture.diagnostics }) { fixture.hasProgramAction("clock") }
+    let failed = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    try await Task.sleep(for: .milliseconds(150))
+    let stillFrozen = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertEqual(stillFrozen, failed, "An I/O failure cannot restart an unconfirmed hidden model")
+    fixture.acceptsCheckpoints = true
+    fixture.setVisible(false); fixture.setVisible(true)
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && !fixture.hasProgramAction("clock") }
+    XCTAssertTrue(fixture.web(block: "clock") === web)
   }
 
   func testBackgroundCheckpointFreezesTheModelAndForegroundResumesTheSameHeap() async throws {
@@ -1056,6 +1110,11 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertFalse(fixture.checkpoints.contains("program"), "Rejected state is not permission to destroy the running program")
     first.release(); admitted?.release()
     lifetime.resume(); fixture.restorePresentation(0)
+    try await wait(message: { fixture.diagnostics }) { fixture.hasProgramAction("program") }
+    XCTAssertNotNil(original.superview, "A failed writer retains the frozen heap, not a falsely interactive surface")
+    XCTAssertFalse(original.isUserInteractionEnabled)
+    fixture.acceptsCheckpoints = true
+    try fixture.retryProgram("program")
     try await wait(message: { fixture.diagnostics }) { fixture.web(in: 0) === original && fixture.ready[0] == true }
   }
 
@@ -1574,6 +1633,7 @@ private final class ProgramFixture {
   private var linkNavigation: (DocumentLinkDestination) -> Void = { _ in }
   private var selected = 0
   private var interactive: Bool
+  private var visible = true
   private var retiredPresentations: Set<Int> = []
   private var thumbnailPresentations: Set<Int> = []
   private var pageIndices = [0, 1]
@@ -1624,6 +1684,7 @@ private final class ProgramFixture {
       && coordinator.payload?.renderToken == DocumentSnapshotCache.paperToken(sourceRevision: document.contentStamp.revision, pageIndex: pageIndices[index])
   }
   func select(_ index: Int) { selected = index; refresh() }
+  func setVisible(_ value: Bool) { visible = value; refresh() }
   func setInteractive(_ value: Bool) { interactive = value; refresh() }
   func setThumbnail(_ index: Int) { thumbnailPresentations.insert(index); refresh() }
   func retirePresentation(_ index: Int) {
@@ -1637,7 +1698,7 @@ private final class ProgramFixture {
     for (index, coordinator) in coordinators.enumerated() {
       guard !retiredPresentations.contains(index) else { continue }
       coordinator.update(.init(document: document, state: state, pageIndex: pageIndices[index], isCurrent: selected == index && !thumbnailPresentations.contains(index),
-        isVisible: true, isInteractive: selected == index && interactive && !thumbnailPresentations.contains(index), pageTurnActive: false,
+        isVisible: visible, isInteractive: visible && selected == index && interactive && !thumbnailPresentations.contains(index), pageTurnActive: false,
         onRenderReady: .init(activity: activity) { [weak self] in self?.ready[index] = $0 },
         onPageLayout: { _ in },
         onStateChange: { [weak self] block, value in
@@ -1681,6 +1742,11 @@ private final class ProgramFixture {
   func web(in index: Int) -> WKWebView? { descendants(hosts[index]).first { $0.accessibilityIdentifier?.hasPrefix("document-program-") == true && $0.isUserInteractionEnabled } }
   func web(block: String) -> WKWebView? {
     descendants(hosts[selected]).first { $0.accessibilityIdentifier == "document-program-" + block && $0.isUserInteractionEnabled }
+  }
+  func retryProgram(_ block: String) throws {
+    func buttons(_ view: UIView) -> [UIButton] { (view as? UIButton).map { [$0] } ?? view.subviews.flatMap(buttons) }
+    let button = try XCTUnwrap(buttons(hosts[selected]).first { $0.accessibilityIdentifier == "document-program-retry-" + block && !$0.isHidden })
+    button.sendActions(for: .touchUpInside)
   }
   func hasProgramAction(_ block: String) -> Bool {
     func buttons(_ view: UIView) -> [UIButton] { (view as? UIButton).map { [$0] } ?? view.subviews.flatMap(buttons) }

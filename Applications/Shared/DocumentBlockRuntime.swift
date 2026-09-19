@@ -32,6 +32,9 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   // A separate nonpersistent data store isolates every program. This base URL
   // supplies a secure browser origin without performing a network navigation.
   private let origin = URL(string: "https://document.notebook.invalid/")!
+  private let programAssets = NotebookProgramAssets()
+  private let programStore: NotebookStore?
+  private var packageURL: URL?
   private var initialNavigationPending = false
   private var revision: UInt64 = 0
   private var presentedRevision: UInt64?
@@ -54,9 +57,10 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   }
 
   init(documentID: UUID, block: DocumentBlock, sourceVersion: ContentFieldVersion,
-    value: JSONValue, stateVersion: ContentFieldVersion?, width: Double, resources: SceneRenderResources) {
+    value: JSONValue, stateVersion: ContentFieldVersion?, width: Double, resources: SceneRenderResources, programStore: NotebookStore? = nil) {
     self.documentID = documentID; self.block = block; self.sourceVersion = sourceVersion
     self.value = value; appliedValue = value; observedStateVersion = stateVersion; self.resources = resources
+    self.programStore = programStore
     size = .init(width: width, height: block.height)
     super.init()
   }
@@ -93,14 +97,25 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
         let content = WKUserContentController(); content.add(self, name: "documentProgram")
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent(); configuration.userContentController = content
+        configuration.setURLSchemeHandler(programAssets, forURLScheme: NotebookProgramAssets.scheme)
         let web = WKWebView(frame: .init(origin: .zero, size: size), configuration: configuration)
         web.accessibilityIdentifier = "document-program-" + block.id
         web.isOpaque = false; web.backgroundColor = .clear; web.scrollView.backgroundColor = .clear
         web.scrollView.bounces = false; web.scrollView.contentInsetAdjustmentBehavior = .never
         web.scrollView.pinchGestureRecognizer?.isEnabled = false; web.scrollView.panGestureRecognizer.isEnabled = false
         web.navigationDelegate = self; webView = web; onMount(web, size)
-        initialNavigationPending = true
-        web.loadHTMLString(try html(), baseURL: origin)
+        if let hash = block.programPackage {
+          guard let store = programStore else { throw SceneRenderError.snapshotPending("program_store") }
+          let package = try await Task.detached(priority: .userInitiated) { try store.readProgramPackage(hash) }.value
+          guard !stopped, !Task.isCancelled, startID == request, webView === web else { return }
+          let url = try programAssets.register(store: store, package: package) { try html(package: package, resourceOrigin: $0) }
+          packageURL = url; initialNavigationPending = true
+          web.load(URLRequest(url: url))
+        } else {
+          let document = try html()
+          initialNavigationPending = true
+          web.loadHTMLString(document.before + block.html + document.after, baseURL: origin)
+        }
         readinessDeadline = Task { @MainActor [weak self, weak web] in
           do { try await Task.sleep(for: .seconds(8)) } catch { return }
           guard let self, self.webView === web, !ready, !stopped, failure == nil else { return }
@@ -251,7 +266,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
     let url = navigationAction.request.url
     let initial = self.webView === webView && initialNavigationPending
-      && navigationAction.navigationType == .other && (url == origin || url?.absoluteString == "about:blank")
+      && navigationAction.navigationType == .other && (url == (packageURL ?? origin) || url?.absoluteString == "about:blank")
     if initial { initialNavigationPending = false }
     decisionHandler(initial ? .allow : .cancel)
   }
@@ -269,6 +284,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     releaseSurface(); onFocus(false); onChange()
   }
   private func releaseSurface() {
+    programAssets.revokeAll(); packageURL = nil
     readinessDeadline?.cancel(); readinessDeadline = nil
     initialNavigationPending = false
     webView?.evaluateJavaScript("void documentProgram.dispose().catch(()=>{})", completionHandler: nil)
@@ -286,15 +302,19 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   }
   isolated deinit { startTask?.cancel(); releaseSurface() }
 
-  private func html() throws -> String {
+  private func html(package: NotebookProgramPackage? = nil, resourceOrigin: URL? = nil) throws -> NotebookProgramAssets.Document {
     func encoded<T: Encodable>(_ value: T) throws -> String {
       String(decoding: try JSONEncoder().encode(value), as: UTF8.self).replacingOccurrences(of: "<", with: "\\u003c")
     }
     let css = block.css.replacingOccurrences(of: "</style", with: "<\\/style", options: .caseInsensitive)
-    return """
+    let policy = resourceOrigin.map(NotebookProgramAssets.policy) ?? "default-src 'none';img-src data: blob:;style-src 'unsafe-inline';script-src 'unsafe-inline';font-src data:;media-src data: blob:;connect-src 'none';form-action 'none';base-uri 'none';object-src 'none'"
+    let style = package.flatMap { package in resourceOrigin.map { NotebookProgramAssets.style(package, origin: $0) } } ?? ""
+    let entry = package.flatMap { package in resourceOrigin.map { NotebookProgramAssets.script(package, origin: $0) } } ?? ""
+    let inline = package == nil ? "addEventListener('DOMContentLoaded',()=>{try{const script=document.createElement('script');script.textContent=\(try encoded(block.javaScript));document.body.append(script)}catch(error){post('failure',{message:String(error)})}});" : ""
+    return .init(before: """
     <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none';img-src data: blob:;style-src 'unsafe-inline';script-src 'unsafe-inline';font-src data:;media-src data: blob:;connect-src 'none';form-action 'none';base-uri 'none';object-src 'none'">
-    <style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}\(css)</style><script>(()=>{
+    <meta http-equiv="Content-Security-Policy" content="\(policy)">
+    <style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}\(css)</style>\(style)<script>(()=>{
       \(NotebookProgramBridge.script)
       const runtimeID=\(try encoded(id.uuidString));
       const post=(kind,extra={})=>webkit.messageHandlers.documentProgram.postMessage({runtimeID,kind,...extra});
@@ -312,12 +332,12 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       addEventListener('load',async()=>{try{
         await document.fonts.ready;
         await Promise.all([...document.images].map(image=>image.decode()));
-        const receipt=await documentProgram.start({requiresReady:\(!block.javaScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || block.html.localizedCaseInsensitiveContains("<script"))});
+        const receipt=await documentProgram.start({requiresReady:\(block.programPackage != nil || !block.javaScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || block.html.localizedCaseInsensitiveContains("<script"))});
         post('ready',receipt);
       }catch(error){post('failure',{message:String(error)})}});
-      addEventListener('DOMContentLoaded',()=>{try{const script=document.createElement('script');script.textContent=\(try encoded(block.javaScript));document.body.append(script)}catch(error){post('failure',{message:String(error)})}});
-    })()</script></head><body>\(block.html)</body></html>
-    """
+      \(inline)
+    })()</script></head><body>
+    """, after: "\(entry)</body></html>")
   }
 }
 #endif

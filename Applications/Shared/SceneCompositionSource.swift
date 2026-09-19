@@ -79,7 +79,7 @@ actor SceneCompositionSource {
     case values(WorkspaceSceneIndex, BoardHierarchy, SpatialInkJournal)
   }
   private let origin: Origin
-  private var erasureProjection: (SurfaceID, [String: [InkElementErasure]])?
+  private var erasureProjection: [SurfaceID: [String: [InkElementErasure]]] = [:]
 
   init(store: NotebookStore, revision: UInt64, workspaceID: UUID) {
     origin = .sql(store); self.revision = revision; self.workspaceID = workspaceID
@@ -87,6 +87,8 @@ actor SceneCompositionSource {
   init(index: WorkspaceSceneIndex, hierarchy: BoardHierarchy, journal: SpatialInkJournal, revision: UInt64 = 0) {
     origin = .values(index, hierarchy, journal); self.revision = revision; workspaceID = index.generationID
   }
+
+  func programStore() -> NotebookStore? { if case .sql(let store) = origin { store } else { nil } }
 
   func validate() throws {
     try Task.checkCancellation()
@@ -112,75 +114,6 @@ actor SceneCompositionSource {
     case .sql(let store): try checked(store) { try $0.readBoardNodeHeader(id)?.portalCamera ?? .init() }
     case .values(_, let hierarchy, _): hierarchy.portalCamera(id) ?? .init()
     }
-  }
-
-  /// Board navigation retains its immediate return boundary in the same read
-  /// revision. An opened or focused material cannot expose that boundary:
-  /// preparing its invisible parent would make its ink compete with the paper.
-  /// The ordinary board transition requests the parent before portal exit.
-  func compositionFrame(requested: WorkspaceSceneFrame, presence: SessionPresence,
-    pinned: Set<WorkspaceSpatialID>) throws -> WorkspaceSceneFrame {
-    guard requested.rootBoardID == presence.boardID else { throw NotebookStorageError.transactionConflict }
-    guard presence.mode == .board else { return requested }
-    switch origin {
-    case .values(let index, let hierarchy, _):
-      guard let parentID = index.ownerBoard(itemID: presence.boardID),
-        index.item(id: presence.boardID)?.kind == .board else { return requested }
-      let parentView = SessionPresence(boardID: parentID, mode: .board,
-        camera: .init(scale: BoardPortalProjection.fillScale(viewport: presence.viewport)), viewport: presence.viewport)
-      guard let portal = index.renderedItem(id: presence.boardID, presence: parentView) else {
-        throw SceneRenderError.snapshotPending("return_portal_source")
-      }
-      let returning = SessionPresence(boardID: parentID, mode: .board,
-        camera: BoardPortalProjection.parentBoundaryCamera(portalCenter: portal.center, viewport: presence.viewport),
-        viewport: presence.viewport)
-      return .init(index: index, presence: presence, portalCamera: { hierarchy.portalCamera($0) },
-        pinned: pinned, budget: requested.budget, returnPresence: returning)
-    case .sql(let store):
-      return try checked(store) { store in
-        guard presence.boardID != requested.index.capturedHierarchy.rootBoardID else { return requested }
-        guard let parent = try store.readBoardItem(presence.boardID),
-          try store.readItemHeader(presence.boardID)?.kind == .board else {
-          throw SceneRenderError.snapshotPending("return_portal_source")
-        }
-        let center = parent.board.freeItems.first(where: { $0.itemID == presence.boardID })?.center
-          ?? parent.board.stacks.first(where: { $0.itemIDs.contains(presence.boardID) }).flatMap {
-            WorkspaceItemStackPresentation.boardCenter(of: presence.boardID, in: $0,
-              cameraScale: BoardPortalProjection.fillScale(viewport: presence.viewport), viewport: presence.viewport)
-          }
-        guard let center else { throw SceneRenderError.snapshotPending("return_portal_source") }
-        let returning = SessionPresence(boardID: parent.id, mode: .board,
-          camera: BoardPortalProjection.parentBoundaryCamera(portalCenter: center, viewport: presence.viewport),
-          viewport: presence.viewport)
-        let bounds = Self.returnBounds(returning)
-        let window = try store.readSceneWindow(boardID: parent.id, bounds: bounds,
-          limit: WorkspaceSceneFrame.maximumReturnPrimitives,
-          pinnedIDs: [presence.boardID])
-        var items = Dictionary(uniqueKeysWithValues: requested.index.capturedWorkspace.items.map { ($0.id, $0) })
-        for item in window.items { items[item.id] = item }
-        var nodes = Dictionary(uniqueKeysWithValues: requested.index.capturedHierarchy.boards.map { ($0.id, $0) })
-        for node in window.boards { nodes[node.id] = node }
-        var paper = requested.index.documentPaperSizes
-        paper.merge(window.documentPaper) { _, current in current }
-        let workspace = try store.workspaceProjection(items: items.values.sorted { $0.id < $1.id },
-          selectedItemID: requested.index.capturedWorkspace.selectedItemID,
-          selectedPageID: requested.index.capturedWorkspace.selectedPageID)
-        let hierarchy = BoardHierarchy(rootBoardID: window.header.rootBoardID,
-          boards: nodes.values.sorted { $0.id < $1.id }, stamp: window.header.boardStamp ?? window.header.stamp)
-        let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: paper)
-        return .init(index: index, presence: presence, portalCamera: { hierarchy.portalCamera($0) },
-          pinned: pinned, budget: requested.budget, returnPresence: returning)
-      }
-    }
-  }
-
-  /// The first outward continuation already reveals the parent's surroundings.
-  /// Two viewports of finite coverage absorb that seam in either orientation;
-  /// the regular post-contact request owns further camera travel.
-  static func returnBounds(_ presence: SessionPresence) -> WorkspaceSpatialBounds {
-    .init(origin: presence.camera.screenToWorld(.init(x: -presence.viewport.x / 2, y: -presence.viewport.y / 2), viewport: presence.viewport),
-      width: 2 * presence.viewport.x / presence.camera.scale,
-      height: 2 * presence.viewport.y / presence.camera.scale)
   }
 
   func ink(_ surface: SurfaceID) throws -> SpatialInkJournal {
@@ -247,10 +180,9 @@ actor SceneCompositionSource {
           case .cover(_, let id): return .cover(id)
           }
         }
-        // Returning to the parent reuses this same cohort. Every replaceable
-        // ink path must terminate at their common retained ancestor, not at the
-        // active child (which the parent's ancestry can never reach).
-        let referenceRoot = frame.returnBoardID ?? plan.rootBoardID
+        // Back is explicit navigation. Only the shown board and its visible
+        // descendants own backing; no invisible ancestor competes for pixels.
+        let referenceRoot = plan.rootBoardID
         let basis = try store.referenceBasis(rootBoardID: referenceRoot,
           targets: targets.sorted { $0.key < $1.key }, surfaces: replaceable,
           liveOwners: plan.presentedOwners.map { owner in
@@ -357,10 +289,35 @@ actor SceneCompositionSource {
   }
   func elementErasures(_ element: SpatialElement) throws -> [InkElementErasure] {
     try validate()
-    if erasureProjection?.0 != element.surface {
-      erasureProjection = (element.surface, try ink(element.surface).elementErasures(on: element.surface))
+    return try cachedElementErasures(element)
+  }
+
+  /// Planning must not reload the entire board ink for every camera window.
+  /// The existing target index addresses only the actions that can erase these
+  /// programs. One checked WAL read covers this bounded workset.
+  func wholeErasedElements(_ elements: [SpatialElement]) throws -> Set<String> {
+    let programs = elements.filter { $0.kind == .web }
+    guard !programs.isEmpty else { return [] }
+    func read() throws -> Set<String> {
+      var erased = Set<String>()
+      for element in programs where try cachedElementErasures(element).contains(where: { $0.target.wholeElement }) {
+        erased.insert(element.id)
+      }
+      return erased
     }
-    return erasureProjection?.1[element.id] ?? []
+    if case .sql(let store) = origin { return try checked(store) { _ in try read() } }
+    return try read()
+  }
+
+  private func cachedElementErasures(_ element: SpatialElement) throws -> [InkElementErasure] {
+    if let cached = erasureProjection[element.surface]?[element.id] { return cached }
+    let value: [InkElementErasure]
+    switch origin {
+    case .sql(let store): value = try store.readElementErasures(on: element.surface, elementID: element.id)
+    case .values: value = try ink(element.surface).elementErasures(on: element.surface)[element.id] ?? []
+    }
+    erasureProjection[element.surface, default: [:]][element.id] = value
+    return value
   }
   func graphicLayout(_ element: SpatialElement, boardID: UUID) throws -> NotebookGraphicLayout? {
     guard element.graphic != nil else { return nil }

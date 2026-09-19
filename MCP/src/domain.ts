@@ -62,6 +62,7 @@ export interface AgentElement {
   html: string;
   css: string;
   javaScript: string;
+  programPackage?: string;
   state: JSONValue;
 }
 
@@ -104,6 +105,7 @@ export interface DocumentBlock {
   html: string;
   css: string;
   javaScript: string;
+  programPackage?: string;
   initialState: JSONValue;
   height: number;
 }
@@ -175,6 +177,7 @@ export interface SpatialElement {
   html: string;
   css: string;
   javaScript: string;
+  programPackage?: string;
   state: JSONValue;
   textStyle: NativeTextStyle;
   stamp: VersionStamp;

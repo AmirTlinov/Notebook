@@ -27,7 +27,7 @@ const page=object({format:number,id,size,elements:z.array(element),agentStamp:st
 const pageElement=object({header:contentHeader,element,appearance,graphicResolution:resolution.optional()}).nullable();
 const documentBlock=object({documentID:id,contentStamp:stamp,stateStamp:stamp,sourceVersion:fieldVersion,stateVersion:fieldVersion.optional(),block,state:json.optional()}).nullable();
 const inkSample=object({point,worldPoint:worldPointSchema.optional(),timeOffset:number,width:number,opacity:number,force:number,azimuth:number,altitude:number});
-const inkElementTarget=object({elementID:text,frame,worldOrigin:worldPointSchema.optional()});
+const inkElementTarget=object({elementID:text,frame,worldOrigin:worldPointSchema.optional(),wholeElement:z.boolean().optional()});
 const pageInkMetadata={id,tool:z.enum(["pen","eraser"]),color:object({red:number,green:number,blue:number}),sequence:number,isActive:z.boolean()};
 const pageInkActions=object({header:contentHeader,baseline:object({present:z.boolean(),actionCount:number}),
   actions:z.array(object(pageInkMetadata)),nextActionID:id.optional()});

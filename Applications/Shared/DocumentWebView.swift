@@ -31,7 +31,7 @@ final class DocumentSnapshotCache {
 
     #if os(macOS)
     func prepare(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int,
-      resources: SceneRenderResources = .shared) async throws -> RasterLease {
+      resources: SceneRenderResources = .shared, programStore: NotebookStore? = nil) async throws -> RasterLease {
       let source = SceneRasterSource.document(id: document.id,
         token: Self.token(document: document, state: state, pageIndex: pageIndex))
       let requiredScale = Double(NSScreen.main?.backingScaleFactor ?? 2)
@@ -41,7 +41,8 @@ final class DocumentSnapshotCache {
         return try await producer.retainPreparedSnapshot(pixelWidth: Int(ceil(WorkspaceItemGeometry.document(document.paperSize).width * requiredScale)), force: true)
       }
       let ready = PageTurnReadiness { _ in }
-      let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: ready, onPageLayout: { _ in },  onStateChange: { _, _ in nil })
+      let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: ready, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
+      coordinator.programStore = programStore
       let host = DocumentWebHost()
       let geometry = WorkspaceItemGeometry.document(document.paperSize)
       let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: geometry.width, height: geometry.height),
@@ -116,6 +117,7 @@ struct DocumentPageLayout: Equatable, Sendable {
 }
 
 struct DocumentWebView: View {
+  @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
   @Environment(\.openURL) private var openURL
   @Environment(\.documentPaperVisible) private var paperVisible
   @State private var linkFailure: String?
@@ -156,7 +158,7 @@ struct DocumentWebView: View {
         case .unavailable(let message): linkFailure = message
         }
       }, isCurrent: isCurrent, isVisible: isVisible && paperVisible, isPageTurnActive: isPageTurnActive,
-      onStateCheckpoint: onStateCheckpoint, measurements: measurements
+      onStateCheckpoint: onStateCheckpoint, measurements: measurements, programStore: model?.store
     )
     .accessibilityIdentifier("document-runtime")
     .alert("Ссылка недоступна", isPresented: Binding(get: { linkFailure != nil }, set: { if !$0 { linkFailure = nil } })) {
@@ -168,6 +170,7 @@ struct DocumentWebView: View {
 /// A page preview uses the document renderer once, then owns only its exact
 /// source/page raster. It never competes indefinitely with live curl pages.
 struct DocumentThumbnailView: View {
+  @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
   let document: DocumentDocument
   let state: DocumentStateJournal
   let pageIndex: Int
@@ -178,8 +181,8 @@ struct DocumentThumbnailView: View {
   var body: some View {
     PlatformDocumentWebView(document: document, state: state, isInteractive: false,
       selectedPageIndex: pageIndex, capturesSnapshot: true, onRenderReady: onRenderReady,
-      onPageLayout: { _ in },  onStateChange: { _, _ in nil },
-      resources: resources, snapshotPixelWidth: 256, onPreparationFailure: onFailure, isCurrent: false)
+      onPageLayout: { _ in }, onStateChange: { _, _ in nil },
+      resources: resources, snapshotPixelWidth: 256, onPreparationFailure: onFailure, isCurrent: false, programStore: model?.store)
       .accessibilityHidden(true)
   }
 }
@@ -211,10 +214,10 @@ struct DocumentRuntimePayload {
       pageIndex: pageIndex, programIDs: ids)
   }
 
-  func frame(generation: UInt64) -> DocumentRuntimeFrame {
+  func frame(generation: UInt64, programURLs: [String: String] = [:], programsVisible: Bool = true) -> DocumentRuntimeFrame {
     .init(documentID: documentID, generation: String(generation), sourceKey: source.message.key, stateKey: state.message.key,
       editable: editable, renderToken: renderToken, pageIndex: pageIndex, runtimeID: runtimeID,
-      blockTokens: blockTokens, programMode: programMode)
+      blockTokens: blockTokens, programMode: programMode, programURLs: programURLs, programsVisible: programsVisible)
   }
 }
 
@@ -229,6 +232,8 @@ struct DocumentRuntimeFrame: Encodable {
   let runtimeID: UUID
   let blockTokens: [String: String]
   let programMode: String
+  var programURLs: [String: String] = [:]
+  var programsVisible = true
 }
 
 private struct DocumentPixelPresentation: Equatable, Sendable {
@@ -346,6 +351,9 @@ final class DocumentWebCoordinator: NSObject,
   private let hostID = UUID()
   private var runtimeID = UUID()
   private var blockTokens: [String: String] = [:]
+  let programAssets = NotebookProgramAssets()
+  var programStore: NotebookStore?
+  private var programURLs: [String: (token: String, url: URL)] = [:]
   private var preparationDeadlineTask: Task<Void, Never>?
   private var preparationDeadlineGeneration: UInt64?
   private var preparationAdmissionGeneration: UInt64?
@@ -776,6 +784,7 @@ final class DocumentWebCoordinator: NSObject,
     DocumentRenderRegistry.shared.unmountRenderer(hostID: hostID)
     revokeLiveReceipt()
     preparationDeadlineTask?.cancel(); preparationDeadlineTask = nil
+    programVisibilityTask?.cancel(); programVisibilityTask = nil
     acquisitionID = nil
     acquisitionTask?.cancel(); acquisitionTask = nil
     acceptsInput = false
@@ -873,6 +882,43 @@ final class DocumentWebCoordinator: NSObject,
   private var programCheckpointWrites: [String: ProgramCheckpointWrite] = [:]
   private var programCheckpointTask: Task<Bool, Never>?
   private var programRetirementTask: Task<Void, Never>?
+  private var programVisibilityTask: Task<Void, Never>?
+  private(set) var programsVisible = true
+  private var programResumeBlocked = false
+
+  /// Presentation changes keep the same program owner, but stop its author
+  /// before saving. A rapid return waits for that durable checkpoint.
+  func setProgramsVisible(_ visible: Bool) {
+    guard programsVisible != visible else { return }
+    programsVisible = visible; programResumeBlocked = true
+    reconcileProgramVisibility()
+  }
+
+  private func reconcileProgramVisibility() {
+    guard !isInvalidated, isReady, ownsProgramState, programVisibilityTask == nil else { return }
+    programVisibilityTask = Task { @MainActor [self] in
+      defer { programVisibilityTask = nil }
+      repeat {
+        let visible = programsVisible
+        guard let webView, !isInvalidated else { return }
+        _ = try? await webView.callAsyncJavaScript(
+          "notebookRenderer.setProgramsVisible(visible);return true;",
+          arguments: ["visible": visible], in: nil, contentWorld: .page)
+        guard await checkpointPrograms(resume: false) else {
+          onRenderReady.failed(.init(kind: .preparationFailed,
+            message: "Состояние программы ещё не сохранено. Она приостановлена; повторите запись.",
+            retry: { [weak self] in self?.reconcileProgramVisibility() }))
+          return
+        }
+        if visible, programsVisible {
+          programResumeBlocked = false
+          await resumePrograms()
+          onRenderReady(renderIsReady)
+        }
+        if programsVisible == visible { return }
+      } while !isInvalidated
+    }
+  }
 
   private func persistProgramCheckpoint(_ id: String, value: JSONValue,
     source: ContentFieldVersion, state: ContentFieldVersion?) async throws -> ContentFieldVersion? {
@@ -943,7 +989,7 @@ final class DocumentWebCoordinator: NSObject,
   }
 
   func resumePrograms() async {
-    guard !isInvalidated, isReady, let webView else { return }
+    guard !isInvalidated, isReady, programsVisible, !programResumeBlocked, let webView else { return }
     _ = try? await NotebookProgramBridge.lifecycle("resumePrograms", controller: "notebookRenderer", in: webView)
 
   }
@@ -1000,6 +1046,7 @@ final class DocumentWebCoordinator: NSObject,
   }
 
   private func releaseWebSurface() {
+    programAssets.revokeAll(); programURLs.removeAll()
     cancelPresentationWaiters()
     let retiringWeb = webView
     if frameEvaluationID != nil, let retiringWeb, let borrow = try? surfaceLease?.borrow() {
@@ -1023,6 +1070,7 @@ final class DocumentWebCoordinator: NSObject,
     webView?.configuration.userContentController.removeScriptMessageHandler(forName: "notebook")
     webView?.navigationDelegate = nil
     if let retiringWeb { host?.removeSurface(ownedBy: retiringWeb) }
+    printedView.clear()
     webView = nil
     isReady = false
     frameTaskID = nil; frameTask?.cancel(); frameTask = nil
@@ -1201,6 +1249,9 @@ final class DocumentWebCoordinator: NSObject,
           nextTokens[block.id] = token
         } else { nextTokens[block.id] = UUID().uuidString }
       }
+      for (id, entry) in programURLs where nextTokens[id] != entry.token {
+        programAssets.revoke(entry.url); programURLs[id] = nil
+      }
       blockTokens = nextTokens
       if payload?.source !== nextSource {
         payload?.source.releasePage(hostID: hostID, in: webView)
@@ -1226,6 +1277,7 @@ final class DocumentWebCoordinator: NSObject,
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     guard !isInvalidated, self.webView === webView else { return }
     isReady = true
+    if !programsVisible { reconcileProgramVisibility() }
     recordPreparation(.shellNavigationFinishedAt)
     sendFrameIfReady()
   }
@@ -1241,7 +1293,9 @@ final class DocumentWebCoordinator: NSObject,
     }
     if navigationAction.navigationType == .linkActivated { decisionHandler(.cancel); return }
     decisionHandler(
-      url.isFileURL || url.scheme == "about" ? .allow : .cancel
+      (url.isFileURL && navigationAction.targetFrame?.isMainFrame == true) || url.scheme == "about"
+        || (navigationAction.targetFrame?.isMainFrame == false && navigationAction.navigationType == .other
+          && programURLs.values.contains(where: { $0.url == url })) ? .allow : .cancel
     )
   }
 
@@ -1259,6 +1313,7 @@ final class DocumentWebCoordinator: NSObject,
 
     if kind == "ready" {
       isReady = true
+      if !programsVisible { reconcileProgramVisibility() }
       recordPreparation(.shellReadyMessageAt)
       sendFrameIfReady()
       return
@@ -1437,7 +1492,37 @@ final class DocumentWebCoordinator: NSObject,
 
   private static func sameProgram(_ left: DocumentBlock, _ right: DocumentBlock) -> Bool {
     left.id == right.id && left.kind == right.kind && left.source == right.source && left.html == right.html
-      && left.css == right.css && left.javaScript == right.javaScript
+      && left.css == right.css && left.javaScript == right.javaScript && left.programPackage == right.programPackage
+  }
+
+  private func prepareProgramPackages(_ payload: DocumentRuntimePayload) async throws -> [String: NotebookProgramPackage] {
+    guard payload.programMode != "external" else { return [:] }
+    let visible = payload.source.programIDs(on: payload.pageIndex) ?? payload.source.programIDs
+    let roots = payload.blocks.compactMap { block -> (String, String)? in
+      guard visible.contains(block.id), let hash = block.programPackage, programURLs[block.id] == nil else { return nil }
+      return (block.id, hash)
+    }
+    guard !roots.isEmpty else { return [:] }
+    guard let store = programStore else { throw SceneRenderError.snapshotPending("program_store") }
+    return try await Task.detached(priority: .userInitiated) {
+      try Dictionary(uniqueKeysWithValues: roots.map { (id, hash) in (id, try store.readProgramPackage(hash)) })
+    }.value
+  }
+
+  // Registration and frame submission share one uninterrupted main-actor turn.
+  // A state update while metadata is read cannot seed a new iframe with stale state.
+  private func registerPrograms(_ packages: [String: NotebookProgramPackage], payload: DocumentRuntimePayload) throws -> [String: String] {
+    if let store = programStore {
+      for block in payload.blocks {
+        guard let package = packages[block.id], let token = blockTokens[block.id], programURLs[block.id] == nil else { continue }
+        let url = try programAssets.register(store: store, package: package) { origin in
+          try NotebookProgramBridge.document(block: block, state: payload.states[block.id] ?? block.initialState,
+            token: token, package: package, origin: origin)
+        }
+        programURLs[block.id] = (token, url)
+      }
+    }
+    return programURLs.mapValues { $0.url.absoluteString }
   }
 
   private func sendFrameIfReady() {
@@ -1468,7 +1553,7 @@ final class DocumentWebCoordinator: NSObject,
             self?.preparationAdmissionChanged(waiting, generation: expected)
           }
           admissionChanged(true)
-          let prepared = try await next.source.preparedPage(next.pageIndex, hostID: hostID, in: web, lease: lease,
+          let prepared = try await next.source.preparedPage(next.pageIndex, hostID: hostID,
             resources: resources, onAdmissionWait: admissionChanged, onLayoutChanged: { [weak self, weak source = next.source] layout in
               guard let self, let source, payload?.source === source, hasCanonicalPixels else { return }
               pageCount = layout.pageCount
@@ -1490,11 +1575,12 @@ final class DocumentWebCoordinator: NSObject,
           defer { withExtendedLifetime(source) {} }
           let state = sentStateKey == next.state.message.key ? nil : try await next.state.encodedJSON()
           recordPreparation(.stateEncodedAt, trace: trace)
+          let packages = try await prepareProgramPackages(next)
           guard !Task.isCancelled, !isInvalidated, frameTaskID == taskID, webView === web else { return }
           guard generation == expected else { continue }
           let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
           guard let current = payload else { return }
-          let frame = String(decoding: try encoder.encode(current.frame(generation: expected)), as: UTF8.self)
+          let frame = String(decoding: try encoder.encode(current.frame(generation: expected, programURLs: try registerPrograms(packages, payload: current), programsVisible: programsVisible)), as: UTF8.self)
           recordPreparation(.frameEncodedAt, trace: trace)
           var script = ""
           if let source { script += "await window.notebookRenderer.installPageSource(\(source.json));" }
@@ -1962,6 +2048,7 @@ private enum DocumentWebViewFactory {
     configuration.websiteDataStore = .nonPersistent()
     configuration.userContentController = content
     configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+    configuration.setURLSchemeHandler(coordinator.programAssets, forURLScheme: NotebookProgramAssets.scheme)
 
     let webView = WKWebView(frame: .zero, configuration: configuration)
     coordinator.webView = webView
@@ -2272,6 +2359,7 @@ private enum DocumentWebViewFactory {
     var isPageTurnActive = false
     var onStateCheckpoint: (String, JSONValue, ContentFieldVersion, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
     var measurements: DocumentPresentationRecorder? = nil
+    var programStore: NotebookStore? = nil
     func makeCoordinator() -> DocumentPhysicalPageCoordinator { DocumentPhysicalPageCoordinator() }
     func makeUIView(context: Context) -> DocumentWebHost { DocumentWebHost() }
     func updateUIView(_ view: DocumentWebHost, context: Context) {
@@ -2281,7 +2369,7 @@ private enum DocumentWebViewFactory {
          onStateChange: onStateChange,
           onLinkActivation: onLinkActivation,
         snapshotPixelWidth: snapshotPixelWidth, onPreparationFailure: onPreparationFailure,
-        onStateCheckpoint: onStateCheckpoint, measurements: measurements), in: view, resources: resources)
+        onStateCheckpoint: onStateCheckpoint, measurements: measurements, programStore: programStore), in: view, resources: resources)
     }
     static func dismantleUIView(_ view: DocumentWebHost, coordinator: DocumentPhysicalPageCoordinator) { coordinator.invalidate() }
   }
@@ -2354,7 +2442,8 @@ private enum DocumentWebViewFactory {
     }
     func removeSurface() {
       if let web, web.superview === self { web.removeFromSuperview() }
-      web = nil
+      if let paper, paper.superview === self { paper.removeFromSuperview() }
+      paper = nil; web = nil
     }
     func removeSurface(ownedBy expected: WKWebView) {
       guard web === expected else { return }
@@ -2380,12 +2469,16 @@ private enum DocumentWebViewFactory {
     var isPageTurnActive = false
     var onStateCheckpoint: (String, JSONValue, ContentFieldVersion, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
     var measurements: DocumentPresentationRecorder? = nil
+    var programStore: NotebookStore? = nil
     func makeCoordinator() -> DocumentWebCoordinator {
       DocumentWebCoordinator(resources: resources, onRenderReady: onRenderReady, onPageLayout: onPageLayout,
          onStateChange: onStateChange)
     }
     func makeNSView(context: Context) -> DocumentWebHost { DocumentWebHost() }
     func updateNSView(_ view: DocumentWebHost, context: Context) {
+      context.coordinator.programStore = programStore
+      context.coordinator.ownsProgramState = snapshotPixelWidth == nil
+      context.coordinator.setProgramsVisible(isVisible)
       context.coordinator.onStateCheckpoint = onStateCheckpoint
       context.coordinator.update(document: document, state: state, selectedPageIndex: selectedPageIndex,
         capturesSnapshot: capturesSnapshot, onRenderReady: onRenderReady, onPageLayout: onPageLayout,

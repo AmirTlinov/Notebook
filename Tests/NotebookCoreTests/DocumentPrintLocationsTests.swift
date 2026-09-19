@@ -11,6 +11,14 @@ final class DocumentPrintLocationsTests: XCTestCase {
     XCTAssertEqual(locations[0].y, 10 * 72 / 72.27, accuracy: 0.000001)
     XCTAssertEqual(locations[0].height, 15 * 72 / 72.27, accuracy: 0.000001)
   }
+  func testAuthoredParagraphOffsetsDoNotTreatInsertedTeXLinesAsSourceLines() {
+    let source = "# 😀 Title\n\nFirst.\n\nSecond."
+    let second = (source as NSString).range(of: "Second.").location
+    let range = DocumentPrintSourceRange(blockID: "body", firstLine: 20, lastLine: 26,
+      sourceOffsets: [0, 0, 0, 13, 13, second, second])
+    XCTAssertEqual(DocumentPrintLocations.sourceOffset(line: 26, range: range, source: source), second)
+    XCTAssertEqual(DocumentPrintLocations.generatedLine(sourceOffset: second+3, range: range, source: source), 25)
+  }
   func testImpossiblePageAndNonFiniteScaleAreRejected() {
     XCTAssertThrowsError(try DocumentPrintLocations.decode("SyncTeX Version:1\n{9000\n", ranges: []))
     XCTAssertThrowsError(try DocumentPrintLocations.decode("SyncTeX Version:1\nUnit:nan\n{1\n(1,1:0,0:10,10,0\n", ranges: [.init(blockID: "a", firstLine: 1, lastLine: 1)]))

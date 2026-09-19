@@ -88,9 +88,23 @@ public enum DocumentPrintLocations {
       .min { rank($0) < rank($1) }
   }
   public static func sourceOffset(line: Int, range: DocumentPrintSourceRange, source: String) -> Int {
+    if let offsets = range.sourceOffsets, !offsets.isEmpty {
+      return offsets[min(max(0, line-range.firstLine), offsets.count-1)]
+    }
     let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
     let local = min(max(0, line-range.firstLine), max(0, lines.count-1))
     return lines.prefix(local).reduce(0) { $0 + $1.utf16.count + 1 }
+  }
+  public static func generatedLine(sourceOffset: Int, range: DocumentPrintSourceRange, source: String) -> Int {
+    if let offsets = range.sourceOffsets, !offsets.isEmpty {
+      var low = 0, high = offsets.count
+      while low < high { let mid = low+(high-low)/2; if offsets[mid] <= sourceOffset { low = mid+1 } else { high = mid } }
+      let nearest = offsets[max(0, low-1)]
+      // Choose the start, not trailing structural TeX with the same address.
+      return range.firstLine + (offsets.firstIndex(of: nearest) ?? 0)
+    }
+    let prefix = (source as NSString).substring(to: min(max(0, sourceOffset), source.utf16.count))
+    return range.firstLine + prefix.reduce(0) { $1 == "\n" ? $0+1 : $0 }
   }
   private static func invalid() -> CollaborationError {
     .init("invalid_print_locations", "Печатная карта не соответствует поддерживаемому SyncTeX или превышает предел адресов.")

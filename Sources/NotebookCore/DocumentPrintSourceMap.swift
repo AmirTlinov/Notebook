@@ -7,9 +7,11 @@ public struct DocumentPrintSourceRange: Codable, Equatable, Sendable {
   public let blockID: String
   public let firstLine: Int
   public let lastLine: Int
+  /// Nearest authored paragraph (Markdown) or exact source line (TeX), UTF-16.
+  public let sourceOffsets: [Int]?
 
-  public init(blockID: String, firstLine: Int, lastLine: Int) {
-    self.blockID = blockID; self.firstLine = firstLine; self.lastLine = lastLine
+  public init(blockID: String, firstLine: Int, lastLine: Int, sourceOffsets: [Int]? = nil) {
+    self.blockID = blockID; self.firstLine = firstLine; self.lastLine = lastLine; self.sourceOffsets = sourceOffsets
   }
 }
 
@@ -17,7 +19,7 @@ public struct DocumentPrintSourceRange: Codable, Equatable, Sendable {
 /// Its digest binds the complete causal snapshot: a maximum VersionStamp alone
 /// cannot distinguish every concurrent merge that changes the visible source.
 public struct DocumentPrintSourceMap: Codable, Equatable, Sendable {
-  public static let renderingRecipe = "NotebookCanonicalPrint/1"
+  public static let renderingRecipe = "NotebookCanonicalPrint/2"
 
   public let format: Int
   public let documentID: UUID
@@ -43,10 +45,16 @@ public struct DocumentPrintSourceMap: Codable, Equatable, Sendable {
       ranges.map(\.blockID) == document.blocks.map(\.id) else { throw Self.invalid() }
     let lineCount = source.utf8.reduce(1) { $1 == 10 ? $0 + 1 : $0 }
     var previousEnd = 0
-    for range in ranges {
+    for (range, block) in zip(ranges, document.blocks) {
       guard range.firstLine > previousEnd, range.lastLine >= range.firstLine,
         range.lastLine < lineCount,
         previousEnd == 0 || range.firstLine == previousEnd + 1 else { throw Self.invalid() }
+      if let offsets = range.sourceOffsets {
+        let sourceCount = block.source.utf16.count
+        guard offsets.count == range.lastLine-range.firstLine+1, offsets.count <= 200_000,
+          offsets.allSatisfy({ $0 >= 0 && $0 <= sourceCount }),
+          zip(offsets, offsets.dropFirst()).allSatisfy({ $0 <= $1 }) else { throw Self.invalid() }
+      }
       previousEnd = range.lastLine
     }
   }

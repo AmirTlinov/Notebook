@@ -65,6 +65,37 @@ final class DocumentCanonicalPrintTests: XCTestCase {
     }
   }
 
+  func testMarkdownParagraphMapsToItsAuthoredOffsetNotTheGeneratedTeXLine() async throws {
+    let text = "# Heading\n\nFirst $x^2$.\n\nRepeated paragraph.\n\nRepeated paragraph.\n\nLast paragraph."
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: text)])
+    let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
+    let resources = SceneRenderResources(profile: .interactive)
+    let source = DocumentPrintedSource(artifact: artifact, locations: try artifact.locations(),
+      reservation: try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive)))
+    let offset = (text as NSString).range(of: "Last paragraph").location
+    let reference = try XCTUnwrap(source.reference(blockID: "body", sourceOffset: offset))
+    let region = try XCTUnwrap(reference.region), scale = WorkspaceItemGeometry.document(.a4).width / DocumentPaperSize.a4.widthPoints
+    XCTAssertEqual(source.sourceOffset(blockID: "body", pageIndex: 0,
+      x: (region.x+region.width/2)/scale, y: (region.y+region.height/2)/scale), offset)
+  }
+
+  func testReadingBookmarksUseTheSameAuthoredParagraphOffsetsAsTheEditor() async throws {
+    let text = (0..<70).map { "## Section \($0)\n\nParagraph \($0) with $x^2$. " + String(repeating: "Printed reading positions follow their source. ", count: 7) }.joined(separator: "\n\n")
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: text)])
+    let resources = SceneRenderResources(profile: .interactive)
+    let snapshot = DocumentSourceSnapshot(document)
+    let printed = try await snapshot.printedSource(resources: resources)
+    let layout = try XCTUnwrap(snapshot.layout)
+    let range = try XCTUnwrap(printed.artifact.sourceMap.ranges.first)
+    XCTAssertGreaterThan(layout.pageCount, 3)
+    for segment in layout.reading.segments {
+      let line = try XCTUnwrap(printed.locations.filter { $0.blockID == segment.blockID && $0.pageIndex == segment.pageIndex }.map(\.generatedLine).min())
+      let offset = DocumentPrintLocations.sourceOffset(line: line, range: range, source: text)
+      XCTAssertEqual(segment.textOffset, offset, "A bookmark must not interpret a generated TeX line as a Markdown line")
+    }
+    XCTAssertGreaterThan(Set(layout.reading.segments.map(\.textOffset)).count, 3)
+  }
+
   func testCancellingTheLastSourceReaderReleasesActualAdmissionWithoutAWebKit() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "Лист ждёт памяти.")])
     let resources = SceneRenderResources(profile: .interactive)

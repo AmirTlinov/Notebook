@@ -56,6 +56,8 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
   /// Its existence clock owns removal; its source is still this author's value.
   func retainingValue(_ value: JSONValue?) -> Self { binding(value) }
 
+  var retainedContentValues: [JSONValue] { authoredHeads.compactMap { $0.hasValue ? $0.value : nil } }
+
   /// The ordinary (non-concurrent) version remains a compact clock. Only a
   /// genuine frontier retains values; the visible value alone cannot represent it.
   func resolving(value: JSONValue?, with other: Self, incomingValue: JSONValue?) throws -> (value: JSONValue?, version: Self) {
@@ -277,7 +279,7 @@ func contentFields(_ value: JSONValue) -> [String: JSONValue] {
         result[fieldKey([name, id, "exists"])] = .bool(true)
         var content: [String: JSONValue] = [:]
         for (field, val) in item.object {
-          if ["source", "html", "kind"].contains(field) { content[field] = val }
+          if ["source", "html", "kind", "programPackage"].contains(field) { content[field] = val }
           else if field == "graphic" {
             for (part, value) in val.object {
               if part == "connection" {
@@ -309,7 +311,11 @@ private func rebuildContent(base: JSONValue, fields: [String: JSONValue]) -> JSO
         var object = old.first { $0.memberIdentity == id }?.object ?? [:]
         for (key, val) in fields where key.hasPrefix(memberPrefix) {
           let field = String(key.dropFirst(memberPrefix.count))
-          if field == "content" { for (part, value) in val.object { object[part] = value } }
+          if field == "content" {
+            // Optional package removal belongs to the same atomic source field.
+            object.removeValue(forKey: "programPackage")
+            for (part, value) in val.object { object[part] = value }
+          }
           else if field.hasPrefix("graphic/") {
             let parts = field.dropFirst(8).components(separatedBy: "/").map(CollaborationPathComponent.field)
             object["graphic"] = (object["graphic"] ?? .object([:])).setting(at: parts[...], to: val)

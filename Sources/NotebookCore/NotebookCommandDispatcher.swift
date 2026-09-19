@@ -1,12 +1,13 @@
 import Foundation
 import CryptoKit
 
-/// The wire names domain owners. Neither commands nor reads can select a store or a file path.
+/// The wire names domain owners, never a store. Only the typed local program
+/// import capability accepts source files; browser/QuickJS commands cannot.
 public struct NotebookCommand: Codable, Sendable {
   public enum Kind: String, Codable, Sendable {
     case apply, admitAction, prepareAction, commitAction, undo, action, actions, continuations, search, contexts, point, delivery
     case referenceStatus, referenceStatuses, actionDetails, reference, placement, render, pageVision, read, artifact, publishExport, presentation
-    case script, scriptContext, scriptArtifact
+    case script, scriptContext, scriptArtifact, importProgram
   }
   public var command: Kind
   public var query: String?
@@ -38,11 +39,12 @@ public struct NotebookCommand: Codable, Sendable {
   public var actionPage: NotebookActionDetailsPage?
   public var scriptEffect: NotebookScriptEffectAddress?
   public var readSnapshots: Bool?
+  public var programImport: NotebookProgramImportRequest?
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case command, query, filters, next, limit, action, actionID, target, elementID, reference
     case expectedRevision, region, worldOrigin, pageIndex, placement, contextID
-    case replyTo, references, queries, expectedCursor, artifact, export, presentation, cancel, fingerprint, script, scriptContext, actionPage, scriptEffect, readSnapshots
+    case replyTo, references, queries, expectedCursor, artifact, export, presentation, cancel, fingerprint, script, scriptContext, actionPage, scriptEffect, readSnapshots, programImport
   }
 
   public init(command: Kind) { self.command = command }
@@ -141,7 +143,7 @@ public struct NotebookCommandDispatcher: Sendable {
 
   private func execute(_ request: NotebookCommand) throws -> JSONValue {
     switch request.command {
-    case .script, .scriptContext:
+    case .script, .scriptContext, .importProgram:
       throw invalid("script_owner_unavailable", "Программы обслуживает координатор установленного Mac-помощника.")
     case .scriptArtifact:
       guard let artifact = request.artifact else { throw invalid("invalid_artifact", "Нужен точный адрес изображения.") }

@@ -531,9 +531,10 @@ struct AgentProgramSource: Equatable {
   let html: String
   let css: String
   let javaScript: String
+  let programPackage: String?
   init(_ element: AgentElement) {
     id = element.id; kind = element.kind; source = element.source
-    html = element.html; css = element.css; javaScript = element.javaScript
+    html = element.html; css = element.css; javaScript = element.javaScript; programPackage = element.programPackage
   }
 }
 
@@ -664,6 +665,10 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private var presentationToken = UUID()
   private let lease: WebSurfaceLease
   private let resources: SceneRenderResources
+  let programAssets = NotebookProgramAssets()
+  var programStore: NotebookStore?
+  private var programLoadTask: Task<Void, Never>?
+  private var packageNavigationURL: URL?
   private var snapshotPolicy: AgentSnapshotPolicy
   private(set) var snapshotFailure: SceneRenderError?
   private var onState: (JSONValue) -> Bool
@@ -974,23 +979,29 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
           result.finish(.failure(SceneRenderError.snapshotPending("live_capture_" + element.id)))
         }
         web.takeSnapshot(with: configuration) { [weak self, capture, installation] image, error in
-          defer {
-            deadline.cancel(); capture.finish(); self?.submittedCaptures[capture.id] = nil
+          Task { @MainActor [weak self] in
+            defer {
+              deadline.cancel(); capture.finish(); self?.submittedCaptures[capture.id] = nil
+            }
+            guard let self, accepts(token), !capture.isCancelled, installation.isInstalled,
+              hasLiveSource(element) else { result.finish(.success(nil)); return }
+            if let error { result.finish(.failure(error)); return }
+            guard let image else { result.finish(.failure(SceneRenderError.snapshotPending(element.id))); return }
+            let prepared = await resources.storeWebSnapshot(image, for: policy.rasterSource(for: element), reservation: reservation,
+              permitsPublication: { [weak self] in self?.accepts(token) == true && !capture.isCancelled
+                && installation.isInstalled && self?.hasLiveSource(element) == true })
+            guard accepts(token), !capture.isCancelled, installation.isInstalled, hasLiveSource(element)
+            else { prepared?.release(); result.finish(.success(nil)); return }
+            guard let raster = prepared else { result.finish(.failure(SceneRenderError.resourceLimit)); return }
+            guard raster.pixelScale + 0.000_001 >= policy.minimumScale(for: element) else {
+              raster.release(); result.finish(.failure(SceneRenderError.snapshotPending("live_capture_density_" + element.id))); return
+            }
+            result.finish(.success(raster))
           }
-          guard let self, accepts(token), !capture.isCancelled, installation.isInstalled,
-            hasLiveSource(element) else { result.finish(.success(nil)); return }
-          if let error { result.finish(.failure(error)); return }
-          guard let image else { result.finish(.failure(SceneRenderError.snapshotPending(element.id))); return }
-          guard let raster = resources.storeWebSnapshot(image, for: policy.rasterSource(for: element), reservation: reservation)
-          else { result.finish(.failure(SceneRenderError.resourceLimit)); return }
-          guard raster.pixelScale + 0.000_001 >= policy.minimumScale(for: element) else {
-            raster.release(); result.finish(.failure(SceneRenderError.snapshotPending("live_capture_density_" + element.id))); return
-          }
-          result.finish(.success(raster))
         }
       }
     }, onCancel: {
-      Task { @MainActor in result.finish(.failure(CancellationError())) }
+      Task { @MainActor in capture.cancel(); result.finish(.failure(CancellationError())) }
     })
   }
 
@@ -1007,6 +1018,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   /// Dismantling ends this owner session. Neither a queued script message nor an
   /// already running WebKit completion may publish into its next owner.
   func invalidate() {
+    programLoadTask?.cancel(); programLoadTask = nil; programAssets.revokeAll(); packageNavigationURL = nil
     checkpointTask?.cancel(); checkpointTask = nil; checkpointID = nil; checkpointedSource = nil
     guard !isInvalidated else { return }
     isInvalidated = true
@@ -1115,6 +1127,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   private func beginLoad(_ element: AgentElement, in webView: WKWebView) {
+    programLoadTask?.cancel(); programLoadTask = nil; programAssets.revokeAll(); packageNavigationURL = nil
     checkpointTask?.cancel(); checkpointTask = nil; checkpointID = nil; checkpointedSource = nil
     readinessGeneration &+= 1
     stateApplicationID = nil; stateApplication?.cancel(); stateApplication = nil
@@ -1137,7 +1150,27 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     publishRenderReadiness(false, token: token)
     publishInteractionReadiness(false, token: token)
     beginPreparationDeadline(token: token)
-    activeNavigation = webView.loadHTMLString(Self.document(for: element, token: token), baseURL: nil)
+    if let hash = element.programPackage {
+      programLoadTask = Task { @MainActor [weak self, weak webView] in
+        guard let self, let webView else { return }
+        do {
+          guard let store = programStore ?? programOwner?.store else { throw SceneRenderError.snapshotPending("program_store") }
+          let package = try await Task.detached(priority: .userInitiated) { try store.readProgramPackage(hash) }.value
+          guard !Task.isCancelled, accepts(token), attachedWebView === webView else { return }
+          let url = programAssets.register(store: store, package: package) { origin in
+            Self.document(for: element, token: token, package: package, origin: origin)
+          }
+          packageNavigationURL = url
+          activeNavigation = webView.load(URLRequest(url: url))
+        } catch {
+          guard !Task.isCancelled, accepts(token) else { return }
+          record(error, kind: "program_asset_error", token: token, source: element)
+        }
+      }
+    } else {
+      let document = Self.document(for: element, token: token)
+      activeNavigation = webView.loadHTMLString(document.before + element.html + document.after, baseURL: nil)
+    }
   }
 
   private func applyCurrentState() {
@@ -1264,9 +1297,11 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     decidePolicyFor navigationAction: WKNavigationAction,
     decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
   ) {
-    let scheme = navigationAction.request.url?.scheme
+    let url = navigationAction.request.url, scheme = url?.scheme
+    let packaged = packageNavigationURL != nil && packageNavigationURL == url && navigationAction.navigationType == .other
+    if packaged { packageNavigationURL = nil }
     decisionHandler(!isInvalidated && !lease.isReleased && attachedWebView === webView
-      && (scheme == nil || scheme == "about") ? .allow : .cancel)
+      && (packaged || scheme == nil || scheme == "about") ? .allow : .cancel)
   }
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -1287,7 +1322,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       """
       await document.fonts.ready;
       await Promise.all([...document.images].map(image => image.decode().catch(() => {})));
-      await window.notebookProgram.start({requiresReady:\(!element.javaScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || element.html.localizedCaseInsensitiveContains("<script"))});
+      await window.notebookProgram.start({requiresReady:\(element.programPackage != nil || !element.javaScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || element.html.localizedCaseInsensitiveContains("<script"))});
       \(frameReadiness)
       for (const image of document.images) if (!image.naturalWidth) window.notebookDiagnostic('load_error', 'Image failed to load');
       if (Math.max(document.body.scrollHeight, document.documentElement.scrollHeight) > innerHeight + 1 || Math.max(document.body.scrollWidth, document.documentElement.scrollWidth) > innerWidth + 1) window.notebookDiagnostic('overflow', 'Content exceeds its frame');
@@ -1332,14 +1367,19 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     snapshotInFlight = true
     let capture = holdSubmittedSnapshot(reservation)
     webView.takeSnapshot(with: configuration) { [weak self, capture] image, error in
-      defer { capture.finish(); self?.submittedCaptures[capture.id] = nil }
-      guard let self else { return }
-      if accepts(token) { snapshotInFlight = false; currentCapture = nil }
-      if !capture.isCancelled {
-        completeSnapshot(image, error: error, token: token, element: element, reservation: reservation, policy: policy)
-      }
-      if accepts(token), needsSnapshot, let web = attachedWebView {
-        needsSnapshot = false; captureSnapshot(of: web, token: token)
+      Task { @MainActor [weak self] in
+        defer { capture.finish(); self?.submittedCaptures[capture.id] = nil }
+        guard let self else { return }
+        if !capture.isCancelled {
+          await completeSnapshot(image, error: error, token: token, element: element, reservation: reservation,
+            policy: policy, permitsPublication: { !capture.isCancelled })
+        }
+        if accepts(token) {
+          snapshotInFlight = false; currentCapture = nil
+          if needsSnapshot, let web = attachedWebView {
+            needsSnapshot = false; captureSnapshot(of: web, token: token)
+          }
+        }
       }
     }
   }
@@ -1354,9 +1394,10 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   func completeSnapshot(_ image: AgentSnapshotImage?, error: (any Error)?, token: String,
-    element: AgentElement, reservation: RasterReservation, policy: AgentSnapshotPolicy? = nil) {
+    element: AgentElement, reservation: RasterReservation, policy: AgentSnapshotPolicy? = nil,
+    permitsPublication: @escaping @MainActor () -> Bool = { true }) async {
     defer { reservation.release() }
-    guard accepts(token), let loadedElement,
+    guard permitsPublication(), accepts(token), let loadedElement,
       appliedState == element.state,
       SceneRasterSource.agent(loadedElement) == .agent(element) else { return }
     if let error {
@@ -1364,7 +1405,15 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     } else if let image {
       let capturedPolicy = policy ?? snapshotPolicy
       let source = capturedPolicy.rasterSource(for: element)
-      if resources.storeWebSnapshot(image, for: source, reservation: reservation) != nil {
+      let stillCurrent: @MainActor () -> Bool = { [weak self] in
+        guard permitsPublication(), let self, accepts(token), let current = self.loadedElement else { return false }
+        return appliedState == element.state && SceneRasterSource.agent(current) == .agent(element)
+      }
+      let prepared = await resources.storeWebSnapshot(image, for: source, reservation: reservation,
+        permitsPublication: stillCurrent)
+      guard stillCurrent() else { prepared?.release(); return }
+      if let prepared {
+        defer { prepared.release() }
         // A capture submitted before a density change is a useful fallback,
         // but cannot acknowledge the newer demand. The one queued capture
         // uses the latest policy without reloading the running program.
@@ -1507,6 +1556,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     let configuration = WKWebViewConfiguration()
     configuration.userContentController = controller
     configuration.websiteDataStore = .nonPersistent()
+    configuration.setURLSchemeHandler(coordinator.programAssets, forURLScheme: NotebookProgramAssets.scheme)
     configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
     let webView = WKWebView(frame: .zero, configuration: configuration)
     webView.navigationDelegate = coordinator
@@ -1534,7 +1584,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     return webView
   }
 
-  private static func document(for element: AgentElement, token: String) -> String {
+  private static func document(for element: AgentElement, token: String, package: NotebookProgramPackage? = nil, origin: URL? = nil) -> NotebookProgramAssets.Document {
     #if os(iOS)
       let interactionScript = NotebookInteractionDiagnostics.script
     #else
@@ -1545,12 +1595,16 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       with: "<\\/script>",
       options: [.caseInsensitive]
     )
-    return """
+    let policy = origin.map(NotebookProgramAssets.policy) ?? "default-src 'none'; img-src data: blob:; media-src data: blob:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none';"
+    let style = package.flatMap { package in origin.map { NotebookProgramAssets.style(package, origin: $0) } } ?? ""
+    let script = package.flatMap { package in origin.map { NotebookProgramAssets.script(package, origin: $0) } }
+      ?? "<script>const program=document.createElement('script');program.textContent=\(json(.string(element.javaScript)));document.body.append(program);</script>"
+    return .init(before: """
       <!doctype html>
       <html><head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; media-src data: blob:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none';">
+      <meta http-equiv="Content-Security-Policy" content="\(policy)">
       <style>
         :root { color-scheme: light; }
         html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
@@ -1558,6 +1612,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         *, *::before, *::after { box-sizing: border-box; }
         \(element.css)
       </style>
+      \(style)
       <script>
         const notebookLoadToken = '\(token)';
         \(interactionScript)
@@ -1576,10 +1631,10 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         \(AgentWebFingerRegions.script)
       </script>
       </head><body>
-      \(element.html)
-      <script>const program=document.createElement('script');program.textContent=\(json(.string(element.javaScript)));document.body.append(program);</script>
+      """, after: """
+      \(script)
       </body></html>
-      """
+      """)
   }
 
   private static func json(_ value: JSONValue) -> String {

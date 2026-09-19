@@ -126,17 +126,24 @@ function visual(input,namespace) {
   return {ids:{image:imageID},elements:[{id:imageID,kind:'markdown',source,frame:{x:0,y:0,width,height:height+(input.caption?60:0)}}]};
 }
 function animation(input,namespace) {
-  if(typeof input.html!=='string'||!input.html.trim())throw new Error('Animation needs an HTML/SVG fragment');
-  if(typeof input.javaScript!=='string'||!input.javaScript.trim())throw new Error('Animation needs JavaScript for drawing and controls');
+  let program;
+  if(input.programPackage!==undefined) {
+    if(!/^[a-f0-9]{64}$/.test(input.programPackage))throw new Error('Animation needs a staged package SHA-256');
+    if(['html','css','javaScript'].some(key=>input[key]))throw new Error('Choose a package or inline sources, not both');
+    program={html:'',css:'',javaScript:'',programPackage:input.programPackage};
+  } else {
+    if(typeof input.html!=='string'||!input.html.trim())throw new Error('Animation needs an HTML/SVG fragment');
+    if(typeof input.javaScript!=='string'||!input.javaScript.trim())throw new Error('Animation needs JavaScript for drawing and controls');
+    program={html:input.html,css:input.css??'',javaScript:input.javaScript};
+  }
   const animationID=id(namespace,'animation'),height=positive(input.height??560,'height');
-  const program={html:input.html,css:input.css??'',javaScript:input.javaScript};
   const ids={animation:animationID};
   if(input.target.kind==='document') {
     if(height<48||height>2048)throw new Error('Document animation height must be 48–2048');
     return {ids,operations:[{kind:'insertBlock',target:input.target,id:animationID,
       values:{kind:'interactive',...program,initialState:input.initialState??{},height,...(input.afterID?{afterID:input.afterID}:{})}}]};
   }
-  return {ids,operations:insert([{id:animationID,kind:'web',source:input.title??'',...program,
+  return {ids,operations:insert([{id:animationID,kind:'web',source:input.programPackage?'':input.title??'',...program,
     state:input.initialState??{},frame:{x:0,y:0,width:positive(input.width??760,'width'),height}}],input)};
 }
 function document(input,namespace) {

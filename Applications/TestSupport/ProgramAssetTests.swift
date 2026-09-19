@@ -1,0 +1,299 @@
+import Foundation
+import CryptoKit
+import NotebookCore
+import WebKit
+import XCTest
+#if os(iOS)
+import UIKit
+#else
+import AppKit
+#endif
+@testable import Notebook
+
+@MainActor
+final class ProgramAssetTests: XCTestCase {
+  private struct Fixture {
+    let root: URL
+    let store: NotebookStore
+    let package: NotebookProgramPackage
+    let hash: String
+    func close() { try? FileManager.default.removeItem(at: root) }
+  }
+  private func fixture() throws -> Fixture {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: root)
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    let script = """
+      import {answer} from './module.js';
+      const result=(async()=>{
+        const font=await new FontFace('PackageFixture',"url('./font.woff2')").load();document.fonts.add(font);
+        const data=await (await fetch('./data.json')).json();
+        const response=await fetch('./large.bin',{headers:{Range:'bytes=310378494-310378497'}});
+        const bytes=[...new Uint8Array(await response.arrayBuffer())];
+        const worker=await new Promise((resolve,reject)=>{const w=new Worker(new URL('./worker.js',import.meta.url));
+          w.onmessage=e=>{w.terminate();resolve(e.data)};w.onerror=e=>reject(Error('worker: '+e.message));w.postMessage(answer)});
+        await document.getElementById('picture').decode();
+        const audio=document.getElementById('audio');
+        if(!audio.readyState)await new Promise((resolve,reject)=>{audio.onloadedmetadata=resolve;audio.onerror=()=>reject(Error('audio: '+audio.error?.message));audio.load()});
+        const externalDenied=await new Promise(resolve=>{
+          const timer=setTimeout(()=>resolve(false),1000);
+          addEventListener('securitypolicyviolation',event=>{if(event.effectiveDirective==='connect-src'&&event.blockedURI.startsWith('https://example.com')){
+            clearTimeout(timer);resolve(true)}},{once:true});
+          fetch('https://example.com/notebook-forbidden').catch(()=>{});
+        });
+        let parentIsolated=false;if(parent!==window){try{parent.document.body}catch{parentIsolated=true}}
+        window.packageResult={answer,data:data.value,worker,bytes,status:response.status,parentIsolated,
+          image:document.getElementById('picture').naturalWidth,css:getComputedStyle(document.getElementById('value')).color,
+          duration:audio.duration,font:font.status,externalDenied,restored:notebook.state};
+        document.getElementById('value').textContent='Ready '+answer;
+        return window.packageResult;
+      })();
+      result.catch(error=>window.packageError=String(error));notebook.ready(result);
+      notebook.lifecycle({checkpoint:()=>({...notebook.state,assetAnswer:window.packageResult.answer,parentIsolated:window.packageResult.parentIsolated})});
+      """
+    let files: [String: Data] = [
+      "main.js": Data(("/*" + String(repeating: " ", count: 1_048_577) + "*/\n" + script).utf8),
+      "view.html": Data(("<!--" + String(repeating: " ", count: 1_048_577) + "--><div id='value'>Loading</div><img id='picture' src='./image.svg'><audio id='audio' preload='metadata' src='./sound.wav'></audio>").utf8),
+      "style.css": Data("#value{color:rgb(12,34,56)}".utf8),
+      "module.js": Data("export const answer=42".utf8),
+      "worker.js": Data("onmessage=async e=>{const events=[];addEventListener('securitypolicyviolation',event=>events.push(event.effectiveDirective));let denied=false,external;try{external=await(await fetch('data:text/plain,forbidden')).text()}catch(error){denied=true;external=String(error)};let local;try{local=await(await fetch(new URL('./data.json',location.href))).json()}catch(error){local=String(error)};postMessage({answer:denied?e.data+1:-1,external,local,events})}".utf8),
+      "data.json": Data("{\"value\":44}".utf8),
+      "image.svg": Data("<svg xmlns='http://www.w3.org/2000/svg' width='7' height='5'><rect width='7' height='5' fill='green'/></svg>".utf8),
+      "sound.wav": wav(),
+      "font.woff2": try Data(contentsOf: XCTUnwrap(Bundle(for: Self.self).url(forResource: "mjx-ncm-zero", withExtension: "woff2")))
+    ]
+    func part(_ data: Data) throws -> NotebookProgramPackage.Part {
+      let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+      try store.stageBlob(data: data, expectedHash: hash)
+      return .init(sha256: hash, byteCount: data.count)
+    }
+    var entries = try files.map { path, data in NotebookProgramPackage.File(path: path,
+      mimeType: NotebookProgramPackage.mimeType(for: path), byteCount: Int64(data.count), parts: [try part(data)]) }
+    // A 300 MiB logical asset; two unique 4 MiB parts, not a 300 MiB transfer benchmark.
+    let a = try part(Data(repeating: 29, count: NotebookProgramPackage.partBytes))
+    let b = try part(Data(repeating: 31, count: NotebookProgramPackage.partBytes))
+    entries.append(.init(path: "large.bin", mimeType: "application/octet-stream", byteCount: 300 * 1_048_576,
+      parts: Array(repeating: a, count: 74) + [b]))
+    let package = NotebookProgramPackage(html: "view.html", css: "style.css", javaScript: "main.js", files: entries.sorted { $0.path < $1.path })
+    return Fixture(root: root, store: store, package: package, hash: try store.stageProgramPackage(package))
+  }
+  private func wav() -> Data {
+    var result = Data()
+    func string(_ s: String) { result.append(Data(s.utf8)) }
+    func int(_ n: UInt32, _ bytes: Int) { for shift in 0..<bytes { result.append(UInt8(truncatingIfNeeded: n >> (8 * shift))) } }
+    string("RIFF"); int(36 + 8000, 4); string("WAVEfmt "); int(16, 4); int(1, 2); int(1, 2)
+    int(8000, 4); int(8000, 4); int(1, 2); int(8, 2); string("data"); int(8000, 4)
+    result.append(Data(repeating: 128, count: 8000)); return result
+  }
+  private final class Request: NSObject, WKURLSchemeTask {
+    let request: URLRequest
+    var response: HTTPURLResponse?
+    var bytes = Data(), sizes: [Int] = [], error: Error?, finished = false
+    var onData: () -> Void = { }
+    init(_ url: URL, range: String? = nil, method: String = "GET") {
+      var request = URLRequest(url: url); request.httpMethod = method
+      request.setValue(range, forHTTPHeaderField: "Range"); self.request = request
+    }
+    func didReceive(_ response: URLResponse) { self.response = response as? HTTPURLResponse }
+    func didReceive(_ data: Data) { bytes.append(data); sizes.append(data.count); onData() }
+    func didFinish() { finished = true }
+    func didFailWithError(_ error: Error) { self.error = error }
+  }
+  private func wait(_ condition: () -> Bool, seconds: Int = 12) async throws {
+    let end = ContinuousClock.now + .seconds(seconds)
+    while !condition(), .now < end { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertTrue(condition(), "Expected the native owner to finish within its existing bounded path")
+  }
+  private final class UnrestrictedWorkerProbe: NSObject, WKURLSchemeHandler {
+    func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
+      let url = task.request.url!, worker = url.path == "/probe.js"
+      let source = worker
+        ? "fetch('data:text/plain,allowed').then(r=>r.text()).then(postMessage).catch(e=>postMessage(String(e)))"
+        : "<script>new Worker('probe.js').onmessage=e=>window.probe=e.data;</script>"
+      task.didReceive(HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+        headerFields: ["Content-Type": worker ? "text/javascript" : "text/html", "Access-Control-Allow-Origin": "*"])!)
+      task.didReceive(Data(source.utf8)); task.didFinish()
+    }
+    func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) { }
+  }
+  func testUnrestrictedControlConfirmsWorkerDataFetchIsNotAFalsePositiveFromCORSOrNetwork() async throws {
+    let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
+    config.setURLSchemeHandler(UnrestrictedWorkerProbe(), forURLScheme: NotebookProgramAssets.scheme)
+    let web = WKWebView(frame: .zero, configuration: config), close = try mount(web)
+    defer { web.stopLoading(); close() }
+    web.load(URLRequest(url: URL(string: "notebook-program://control/")!))
+    var result: String?
+    let end = ContinuousClock.now + .seconds(5)
+    while result == nil, .now < end {
+      result = try? await web.evaluateJavaScript("window.probe") as? String
+      if result == nil { try await Task.sleep(for: .milliseconds(20)) }
+    }
+    XCTAssertEqual(result, "allowed", "Production worker data: denial must be CSP, not an unsupported Fetch scheme")
+  }
+
+  func testRangesNamespacesAndRevocationUseBoundedReads() async throws {
+    let f = try fixture(); defer { f.close() }
+    let assets = NotebookProgramAssets(), web = WKWebView()
+    let url = assets.register(store: f.store, package: f.package) { _ in .init(before: "<head></head><body>", after: "</body>") }
+    let file = url.appendingPathComponent("large.bin")
+    let range = Request(file, range: "bytes=310378494-310378497")
+    assets.webView(web, start: range); try await wait { range.finished || range.error != nil }
+    XCTAssertNil(range.error); XCTAssertEqual(range.bytes, Data([29,29,31,31])); XCTAssertEqual(range.response?.statusCode, 206)
+    XCTAssertEqual(range.response?.value(forHTTPHeaderField: "Content-Range"), "bytes 310378494-310378497/314572800")
+    for (header, code) in [("bytes=314572800-",416), ("bytes=0-1,4-5",416), ("bytes=-2",206)] {
+      let task = Request(file, range: header); assets.webView(web, start: task); try await wait { task.finished || task.error != nil }
+      XCTAssertEqual(task.response?.statusCode, code); XCTAssertEqual(task.bytes.count, code == 206 ? 2 : 0)
+    }
+    let head = Request(file, method: "HEAD"); assets.webView(web, start: head); try await wait { head.finished }
+    XCTAssertEqual(head.response?.value(forHTTPHeaderField: "Content-Length"), "314572800"); XCTAssertTrue(head.bytes.isEmpty)
+    for denied in [URL(string: "notebook-program://foreign/large.bin")!, url.appendingPathComponent(f.hash),
+      URL(string: url.absoluteString + "%6dain.js")!, URL(string: url.absoluteString + "main.js?x=1")!] {
+      let task = Request(denied); assets.webView(web, start: task); XCTAssertNotNil(task.error)
+    }
+    let cancelled = Request(file)
+    cancelled.onData = { [weak cancelled] in if let cancelled { assets.webView(web, stop: cancelled) } }
+    assets.webView(web, start: cancelled); try await wait { !cancelled.sizes.isEmpty }
+    try await Task.sleep(for: .milliseconds(80))
+    XCTAssertEqual(cancelled.sizes, [1_048_576]); XCTAssertFalse(cancelled.finished); XCTAssertEqual(assets.activeReadCount, 0)
+    let revoked = Request(file); revoked.onData = { assets.revoke(url) }
+    assets.webView(web, start: revoked); try await wait { !revoked.sizes.isEmpty }
+    try await Task.sleep(for: .milliseconds(80))
+    XCTAssertEqual(revoked.sizes, [1_048_576]); XCTAssertFalse(revoked.finished); XCTAssertEqual(assets.scopeCount, 0)
+    let after = Request(file); assets.webView(web, start: after); XCTAssertNotNil(after.error)
+  }
+
+  private func mount(_ view: PlatformView) throws -> () -> Void {
+    #if os(iOS)
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first { $0.isKeyWindow }
+    let window = UIWindow(windowScene: scene), controller = UIViewController()
+    window.rootViewController = controller; window.makeKeyAndVisible(); controller.view.addSubview(view)
+    view.frame = CGRect(x: 20, y: 20, width: 600, height: 800)
+    return { view.removeFromSuperview(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    #else
+    let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: 600, height: 800), styleMask: .borderless, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false; window.contentView = view; window.orderBack(nil)
+    return { window.orderOut(nil); window.close() }
+    #endif
+  }
+  #if os(iOS)
+  private typealias PlatformView = UIView
+  #else
+  private typealias PlatformView = NSView
+  #endif
+
+  private func assertProgram(_ web: WKWebView) async throws {
+    let value = try await web.evaluateJavaScript("JSON.stringify(window.packageResult || {error:window.packageError})") as? String
+    let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(try XCTUnwrap(value).utf8)) as? [String: Any])
+    XCTAssertEqual(object["answer"] as? Int, 42, value ?? ""); XCTAssertEqual((object["worker"] as? [String: Any])?["answer"] as? Int, 43, value ?? "")
+    let worker = try XCTUnwrap(object["worker"] as? [String: Any])
+    XCTAssertEqual((worker["local"] as? [String: Any])?["value"] as? Int, 44, value ?? "")
+    XCTAssertEqual(object["data"] as? Int, 44); XCTAssertEqual(object["bytes"] as? [Int], [29,29,31,31])
+    XCTAssertEqual(object["image"] as? Int, 7); XCTAssertEqual(object["status"] as? Int, 206)
+    XCTAssertEqual(object["css"] as? String, "rgb(12, 34, 56)"); XCTAssertEqual(object["externalDenied"] as? Bool, true)
+    XCTAssertEqual(object["duration"] as? Double, 1); XCTAssertEqual(object["font"] as? String, "loaded")
+  }
+
+  func testColdBoardPackageRunsModulesWorkerImagesMediaAndRangesOffline() async throws {
+    let f = try fixture(); defer { f.close() }
+    for _ in 0..<2 {
+      let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
+      var ready = false
+      let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in false })
+      // Reopening SQLite, not reusing an in-memory namespace, models a cold owner.
+      coordinator.programStore = NotebookStore(root: f.root)
+      let web = AgentWebCoordinator.makeWebView(coordinator: coordinator), close = try mount(web)
+      defer { coordinator.invalidate(); lease.release(); close() }
+      let source = AgentElement(id: "packaged", kind: .web, frame: .init(x: 0, y: 0, width: 600, height: 800), source: "", html: "", programPackage: f.hash)
+      coordinator.load(source, policy: .exact(scale: 1), in: web)
+      try await wait { ready || coordinator.snapshotFailure != nil }
+      let diagnostic = try? await web.evaluateJavaScript("JSON.stringify({url:location.href,error:window.packageError,result:window.packageResult})")
+      XCTAssertTrue(ready, String(describing: diagnostic)); XCTAssertNil(coordinator.snapshotFailure)
+      try await assertProgram(web)
+      XCTAssertEqual(coordinator.programAssets.scopeCount, 1)
+      coordinator.invalidate(); XCTAssertEqual(coordinator.programAssets.scopeCount, 0); XCTAssertEqual(coordinator.programAssets.activeReadCount, 0)
+    }
+  }
+
+  func testPassiveRasterPreparationReadsTheSamePackageWithoutKeepingAnExecutor() async throws {
+    let f = try fixture(); defer { f.close() }
+    let resources = SceneRenderResources()
+    let source = AgentElement(id: "passive-package", kind: .web, frame: .init(x: 0, y: 0, width: 600, height: 300),
+      source: "", html: "", programPackage: f.hash)
+    let raster = try await resources.prepareRaster(source, requestedScale: 1, programStore: f.store)
+    defer { raster.release() }
+    #if os(iOS)
+    let pixels = try XCTUnwrap(raster.image.cgImage)
+    #else
+    let pixels = try XCTUnwrap(raster.image.cgImage(forProposedRect: nil, context: nil, hints: nil))
+    #endif
+    XCTAssertEqual(pixels.width, 600); XCTAssertEqual(pixels.height, 300); XCTAssertEqual(raster.pixelScale, 1)
+    try await wait { resources.activeWebSurfaceCount == 0 }
+    XCTAssertNotNil(resources.image(for: source, minimumScale: 1))
+  }
+
+  #if os(iOS)
+  func testIPadDocumentBlockPackageUsesItsNativeProgramOwner() async throws {
+    let f = try fixture(); defer { f.close() }
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "asset", html: "", programPackage: f.hash, height: 180)])
+    let block = try XCTUnwrap(document.blocks.first), resources = SceneRenderResources()
+    let runtime = DocumentBlockRuntime(documentID: document.id, block: block, sourceVersion: document.sourceVersion(blockID: block.id),
+      value: .object(["restored": .number(7)]), stateVersion: nil, width: 600, resources: resources, programStore: f.store)
+    let container = UIView(), close = try mount(container)
+    defer { runtime.stop(); close() }
+    runtime.onMount = { web, size in container.addSubview(web); web.frame = .init(origin: .zero, size: size) }
+    runtime.start(priority: .input)
+    try await wait { runtime.ready || runtime.failure != nil }
+    XCTAssertTrue(runtime.ready, String(describing: runtime.failure)); XCTAssertNil(runtime.failure)
+    let web = try XCTUnwrap(runtime.webView); try await assertProgram(web)
+    let restored = try await web.evaluateJavaScript("packageResult.restored.restored") as? Int
+    XCTAssertEqual(restored, 7)
+    runtime.stop(); XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+  }
+  #endif
+
+  func testDocumentIframePackageUsesExistingParentStateAndLifecycleOwner() async throws {
+    let f = try fixture(); defer { f.close() }
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "asset", html: "", programPackage: f.hash, height: 180)])
+    let state = DocumentStateJournal(id: document.id, actor: UUID()), resources = SceneRenderResources()
+    let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
+    coordinator.programStore = f.store
+    let host = DocumentWebHost(), close = try mount(host)
+    defer { coordinator.invalidate(); close() }
+    coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
+    coordinator.mount(in: host, physicalSize: .init(width: 595, height: 842), isInteractive: true, priority: .currentPage)
+    try await wait { coordinator.hasCanonicalPixels || coordinator.acquisitionError != nil }
+    let web = try XCTUnwrap(coordinator.webView, String(describing: coordinator.acquisitionError))
+    let receipt = try await web.evaluateJavaScript("JSON.stringify(notebookRenderer.pageReceipt())")
+    XCTAssertTrue(coordinator.hasCanonicalPixels, String(describing: receipt)); XCTAssertNil(coordinator.acquisitionError)
+    XCTAssertEqual(coordinator.programAssets.scopeCount, 1)
+    // The sandbox prevents the parent from reading child DOM; readiness comes
+    // from the authenticated existing iframe bridge, not a cross-origin bypass.
+    let started = try await web.evaluateJavaScript("notebookRenderer.pageReceipt().programs[0].readiness") as? String
+    XCTAssertEqual(started, "declared", String(describing: receipt))
+    var checkpoint: JSONValue?
+    coordinator.onStateCheckpoint = { _, value, _, _ in checkpoint = value; return nil }
+    let accepted = await coordinator.checkpointPrograms(resume: true)
+    XCTAssertTrue(accepted); XCTAssertEqual(checkpoint?["assetAnswer"], .number(42)); XCTAssertEqual(checkpoint?["parentIsolated"], .bool(true))
+    let iframeURL = try await web.evaluateJavaScript("document.querySelector('iframe').src") as? String
+    var changed = document
+    _ = changed.replaceContent(blocks: [.markdown(id: "other", source: "Independent text")] + document.blocks, actor: UUID())
+    coordinator.update(document: changed, state: state, selectedPageIndex: 0, capturesSnapshot: false,
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
+    try await wait { coordinator.hasCanonicalPixels || coordinator.acquisitionError != nil }
+    XCTAssertTrue(coordinator.hasCanonicalPixels, String(describing: coordinator.acquisitionError))
+    let afterURL = try await web.evaluateJavaScript("document.querySelector('iframe').src") as? String
+    XCTAssertEqual(afterURL, iframeURL, "Independent text retains the same capability and running program")
+    XCTAssertEqual(coordinator.programAssets.scopeCount, 1)
+    _ = changed.replaceContent(blocks: [.interactive(id: "asset", html: "<strong>Inline replacement</strong>")], actor: UUID())
+    coordinator.update(document: changed, state: state, selectedPageIndex: 0, capturesSnapshot: false,
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
+    XCTAssertEqual(coordinator.programAssets.scopeCount, 0, "Replacing package source revokes its namespace immediately")
+    try await wait { coordinator.hasCanonicalPixels || coordinator.acquisitionError != nil }
+    XCTAssertTrue(coordinator.hasCanonicalPixels, String(describing: coordinator.acquisitionError))
+    let inline = try await web.evaluateJavaScript("document.querySelector('iframe').srcdoc.includes('Inline replacement')") as? Bool
+    XCTAssertEqual(inline, true, "The same document adapter also owns the replacement inline program")
+    coordinator.invalidate(); XCTAssertEqual(coordinator.programAssets.scopeCount, 0); XCTAssertEqual(coordinator.programAssets.activeReadCount, 0)
+  }
+}

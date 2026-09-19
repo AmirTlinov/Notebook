@@ -30,10 +30,11 @@ final class DocumentPrintedSource {
     let document = artifact.document
     guard let block = document.blocks.first(where: { $0.id == blockID }),
       let range = artifact.sourceMap.ranges.first(where: { $0.blockID == blockID }) else { return nil }
-    let prefix = (block.source as NSString).substring(to: min(max(0, sourceOffset), block.source.utf16.count))
-    let line = range.firstLine + prefix.reduce(0) { $1 == "\n" ? $0 + 1 : $0 }
-    func rank(_ location: DocumentPrintLocation) -> (Int, Double, Int, Double) {
-      (abs(location.generatedLine-line), location.width*location.height, location.pageIndex, location.y)
+    let line = DocumentPrintLocations.generatedLine(sourceOffset: sourceOffset, range: range, source: block.source)
+    let authored = DocumentPrintLocations.sourceOffset(line: line, range: range, source: block.source)
+    func rank(_ location: DocumentPrintLocation) -> (Int, Int, Double, Int, Double) {
+      let offset = DocumentPrintLocations.sourceOffset(line: location.generatedLine, range: range, source: block.source)
+      return (abs(offset-authored), abs(location.generatedLine-line), location.width*location.height, location.pageIndex, location.y)
     }
     guard let location = locations.lazy.filter({ $0.blockID == blockID }).min(by: { rank($0) < rank($1) }) else { return nil }
     let scale = WorkspaceItemGeometry.document(document.paperSize).width / document.paperSize.widthPoints

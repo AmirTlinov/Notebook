@@ -21,7 +21,7 @@ test('native spatial ink reads retain optional eraser element targets in their o
       stamp:{counter:index+1,actor:appActor},stateStamp:{counter:index+1,actor:appActor},isActive:true,
       spans:[{surface,samples:[{point:{x:20,y:30},...(surface.kind==='board'?{worldPoint:{...origin,localX:20,localY:30}}:{}),
         timeOffset:0,width:8,opacity:1,force:1,azimuth:0,altitude:1}],
-        ...(surface.kind==='codeFragment'?{}:{elementTargets:[{elementID:'cut-element',frame:{x:10,y:20,width:100,height:80},
+        ...(surface.kind==='codeFragment'?{}:{elementTargets:[{elementID:'cut-element',frame:{x:10,y:20,width:100,height:80},wholeElement:true,
           ...(surface.kind==='board'?{worldOrigin:origin}:{})}]})}]}));
     await fixtureControl(root,'ink',{format:1,actions,stamp});
     for(const [index,surface] of surfaces.entries()) {

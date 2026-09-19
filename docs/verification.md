@@ -1,5 +1,77 @@
 # Проверка Notebook
 
+## 19 сентября, 04:17 МСК — GUI-238: интеграция исходника, канонической бумаги и программ
+
+Интеграция основана на `8e51ac2`, GUI-241 до `f692113` и GUI-242 до `20b0266`;
+последующая GUI-243 здесь не включена. Нативный редактор, общие команды/undo и
+один PDF сохранены; старые DOM-пагинация и textarea не возвращены. Программные
+пакеты используют того же владельца, в том числе на канонических страницах.
+Для совместимости новых `tex`-блоков и packages выделены **wire 28 / manifest 11**;
+подмена более старого manifest новым полем отвергается до продвижения курсора.
+
+Исправлены выявленные живым сценарием дефекты:
+- Markdown ↔ бумага теперь связывает настоящий UTF-16 абзац, включая CRLF,
+  повторяющиеся абзацы, emoji, формулы и opaque-изображения; координата double tap
+  относится ко всему установленному листу, а не к смещённому content root.
+  Позиция чтения использует ту же карту исходных абзацев, не служебные TeX-строки.
+- Закрытый native paper освобождает PDF/raster, а не только WebKit; давление
+  общего бюджета действительно снимает последний держатель изображения.
+- «Лист → Код → Лист» сохраняет тот же runtime программы на iPad и Mac.
+  Скрытая модель заморожена, быстрый возврат ждёт durable checkpoint. Ошибка
+  писателя не возобновляет часы и не выбрасывает heap; адресный повтор доступен.
+
+Mac **23/23 PASS**, без skips/runtime warnings:
+`.build/gui238-canonical-mac-build/Logs/Test/Test-NotebookMac-2026.09.19_03-56-55-+0300.xcresult`,
+лог `.build/canonical-engine/integration-mac6.log`. Включены нативный исходник,
+causal undo/черновик/конфликт, A4/Letter/source map, изображения и экспорт того же
+PDF, реальные package assets, сохранение runtime при смене исходника/видимости,
+отложенная и отказанная запись, освобождение памяти. Книга >6 МиБ, 140 блоков,
+35 SVG и 1680 формул: **4.561 с**, 35 страниц, PDF 1 993 592 байта,
+peak accounted derived **39 211 334 байта**. Это отдельная выборка, не p95/RSS/FPS.
+
+Core **18 PASS** (4 XCTest + 14 Swift Testing): `integration-core4.log`;
+два SQLite, холодное чтение `.tex`/packages и строгая manifest-граница.
+JS **29/29 PASS** (`integration-js-final.log`), жесты **7/7 PASS**
+(`browser-contracts-final.log`); MCP typecheck/generated resources PASS.
+Логи находятся в `.build/canonical-engine/`.
+
+Simulator integration1: **32/32 PASS** (native source/print/state, packages и UI).
+Расширенный реальным drag integration2 обнаружил сброс slider 7→3 после Code.
+Integration3: **7/8 PASS**: сброс устранён, проверка отказа I/O обнаружила скрытый
+под замороженной программой retry. Допуск ввода и ready теперь учитывают этот
+отказ. Integration4: **7/9 PASS**; два прежних теста ещё ожидали DOM-heading
+ключ вместо страницы канонического PDF и интерактивный runtime после отказа
+писателя. Проверки приведены к действительным контрактам: независимый дальний
+лист и сохранённый замороженный heap с настоящим нажатием retry. Integration5:
+**6/6 PASS**; `.build/gui238-canonical-simulator-build/Logs/Test/Test-Notebook-2026.09.19_04-12-42-+0300.xcresult`.
+Дополнительная Mac-проверка закладок/канонической бумаги: **6/6 PASS**,
+`integration-mac7.log`, результат `Test-NotebookMac-2026.09.19_04-14-00-+0300.xcresult`
+в том же Mac Logs/Test. Эти наборы не заменяют общую длительную приёмку.
+
+Финальный Simulator integration6: **16/16 PASS**, без skips/runtime warnings:
+шесть canonical print/reading-map проверок, шесть program lifecycle/checkpoint,
+холодное восстановление смыслового места чтения и три настоящих UI-сценария
+(режимы/поворот/ввод/undo/drag slider и возврат без сброса).
+Результат `.build/gui238-canonical-simulator-build/Logs/Test/Test-Notebook-2026.09.19_04-14-53-+0300.xcresult`,
+лог `.build/canonical-engine/integration-sim6.log`.
+Финальные исходники `source_inputs`:
+`f76894f8205a75a259e4fdc97e4cec854927be422cf2feba66b0c692bfa5d28e`;
+инвентарь `.build/canonical-engine/final-source.json`, повторно совпал после прогона.
+Это явные scoped Xcode/Core/JS результаты, не выдуманная квитанция `verify --full`.
+
+Физическая пара и её контейнеры/ключи не менялись; использован только отдельный
+Simulator `47A9B9ED-B2BD-405F-92BA-68407BAE31A3`, bundle
+`com.amirtlinov.notebook.gui238`, по прямому указанию Амира. Портретный рендер
+просмотрен: единая панель, два режима, каноническая бумага и slider x=7.
+Геометрия и работа трёх режимов в горизонтали проверяются XCTest; обрезанный
+headless framebuffer не принят за полную визуальную проверку горизонтали.
+
+Открыты выпуск подписанной пары и production XPC `nb.export`, а также отдельная
+общая приёмка: десять смешанных циклов/30 минут без перезапуска, голос,
+восстановление связи, системные CPU/GPU/память/кадры. Десять отмен TeX из прошлого
+прогона не заменяют эти циклы. GUI-199/205 не закрываются; GUI-238 остаётся
+In Progress до интегрированной приёмки. Исторические архивы не затронуты.
+
 ## 19 сентября, 03:36 МСК — GUI-238 × GUI-241: общий жизненный цикл программ
 
 К печатному срезу `8e51ac2` присоединена история GUI-241 до `f692113`.
@@ -96,6 +168,175 @@ GUI-241 checkpoint ещё требует интеграции.
 pipeline ещё не приняты целиком. Отдельный commit панели пока не сделан:
 она зависит от ещё не завершённого native source workspace в том же рабочем дереве.
 GUI-238 остаётся In Progress; GUI-199/205 этой проверкой не закрываются.
+## 19 сентября, 03:14 МСК — GUI-240: интеграция выпущенной пары 116
+
+В ветку визуализаций объединён завершённый `f638433` из
+`codex/notebook-ipad-reliability`: прежняя реализация held zoom, видимых источников,
+асинхронного mipmap и цельного eraser не заменяется второй. Сохранены GUI-241
+checkpoint/source identity и GUI-242 package store во всех merged raster путях.
+Package-контракт теперь **wire27 / manifest10**, отдельно от выпущенного 26/9;
+история manifest9 читается, попытка объявить package в9 отвергается.
+Установленная пользовательская пара 116 этим merge не обновлялась.
+
+* Core: **38 PASS**, `/tmp/gui-242-release116-core-v1.log` — package admission,
+  dependency closure, replication, inverse/undo и whole-object erasing.
+* Mac: **10 PASS**, `.build/gui-242-release116-mac-v1/verification.json` — assets,
+  importer и document program identities.
+* Отдельный Simulator: **30 PASS**, `.build/gui-242-release116-sim-v1.xcresult` —
+  assets, все AgentWebLeaseTests, независимая текстовая правка и три конфликтовавших
+  PreparedAgentElementViewTests. Оба native прогона неизменны, source SHA
+  `6b4d339fdd6fb0080422c7b40de206fe76a56703bc862939d90ef7101db99012`.
+* MCP: **28 PASS** и pinned SDK check PASS, `/tmp/gui-242-release116-mcp-v5.log`,
+  `/tmp/gui-242-release116-sdk-v4.log`. Первый ручной вызов не создал isolated IPC
+  fixture host; повтор использовал настоящий собранный test host. После native
+  receipt изменён только type-safe test присоединённого gear примера: размеры
+  массивов явно проверяются, strict TypeScript больше не видит undefined/unused.
+  Затем SDK check нашёл stale generated wholeElement return schema: оба штатных
+  ресурса (sdk-reference.json/notebook-sdk.d.ts) регенерированы существующим
+  генератором; isolated IPC test host пересобран перед итоговым MCP v5. Native
+  receipt выше относится к предыдущему source SHA, Swift/UI code не менялся.
+  Первоначальная запись SDK PASS для v3 была преждевременной; v3 завершился stale
+  resource error, правильный завершённый PASS — v4.
+
+GUI-240–243 остаются In Progress. Это scoped интеграционный прогон, не повтор
+полной чужой приёмки 116 и не выпуск/physical/performance acceptance GUI-240.
+
+## 19 сентября, 03:05 МСК — GUI-242: prepare не ждёт FIFO producer
+
+После adapter-среза проверен ещё один локальный file boundary: Node prepare теперь
+открывает файл с O_NONBLOCK/O_NOFOLLOW, затем проверяет regular file. Named pipe
+отвергается до чтения, а не зависает до появления writer. Изменены только prepare
+и его тест; native исходники не менялись. **5 MCP PASS** плюс pinned SDK check,
+`/tmp/gui-242-prepare-fifo.log`, `/tmp/gui-242-prepare-fifo-check.log`.
+
+## 19 сентября, 03:03 МСК — GUI-242: scoped WebKit reader на Mac и Simulator
+
+Один `NotebookProgramAssets` обслуживает существующие spatial, document и passive
+raster владельцы: пакет не становится inline JSON/String. Root HTML собирается
+потоком вокруг прежнего bridge, CSS/JS/modules/assets читаются по адресу своей
+публикации. GET/HEAD/206/416 и revoke/stop используют bounded reads <=1 MiB.
+Mac iframe использует тот же вынесенный transport adapter для inline/package;
+CSP каждого ресурса закрывает и worker. File navigation для child запрещена.
+
+* **Mac 8 PASS**, `.build/gui-242-assets-mac-v9/verification.json`.
+* **Собственный iPad Simulator 7 PASS**, `.build/gui-242-assets-sim-v11.xcresult`.
+  Это независимый Simulator `3E0E27D3-C87A-40EB-B875-6D6571DC29D3`, bundle
+  `.gui240-test`; физический iPad и установленные пользовательские контейнеры
+  не затрагивались. Прямое указание Амира разрешает здесь параллельные независимые
+  destinations/derived data, а не общую serial-очередь.
+* На обоих source-before == source-after:
+  `6ed12190e8c3254a432e412e34b0f1aba32ca1e69133a013b03ef6e2885b276b`.
+  Skips и runtime warnings отсутствуют.
+* Настоящий WK исполнил HTML и JS каждый >1 MiB, module import, worker с чтением
+  своей JSON, CSS, SVG, WOFF2 и WAV metadata. Range пересёк границу 4 MiB у
+  логического 300 MiB файла; fixture содержит две уникальные части, это **не**
+  benchmark переноса 300 MiB уникальных bytes. Холодный новый владелец повторно
+  открыл SQLite; проверены native iPad document owner, Mac/document iframe и
+  passive raster с возвратом executor. Ни CDN, ни dev server для assets нет.
+* Root CSP denial подтверждён браузерным событием. Worker читает разрешённую
+  JSON и отвергает data URL; отдельный настоящий WK без CSP читает тот же data
+  URL. Это контроль против ложного успеха из-за CORS, отсутствия сети или
+  неподдержанного Fetch scheme. Parent DOM остаётся недоступен iframe.
+* Native namespace tests: чужой origin/hash, encoded path/query, HEAD, suffix/
+  unsatisfiable/multiple Range, отмена и revoke после первой части без поздних
+  callback. Независимый текст сохраняет capability/heap; package -> inline
+  немедленно отзывает прежний namespace и работает через тот же adapter.
+* Shell JS **18 PASS**, `/tmp/gui-242-shell-tests-v3.log`; общий lifecycle bridge
+  **12 PASS**, `/tmp/gui-242-bridge-tests-v1.log` (он не изменялся).
+
+Отрицательные сигналы: opaque iframe запрещал worker — теперь только native-minted
+package child сохраняет свой отдельный origin; inline child не ослаблен. Тест
+сначала ожидал `ready` вместо реального receipt `declared`; исправлен тест, не
+протокол. Raster fixture путал UIImage points и физические pixels; итог проверяет
+CGImage 600x300 и pixelScale=1. Ожидание worker CSP event оказалось недостоверным
+сигналом; заменено реальным fetch denial с положительным unrestricted control,
+а не снятием CSP. Ранние результаты v1–v10 не объявляются итоговым PASS.
+
+Это завершённый adapter-срез, **GUI-242 и GUI-240 ещё In Progress**. Живая доставка
+и release-пара с новым контрактом, CloudKit, аппаратные метрики и длительный
+совместный сценарий не подтверждены этим прогоном. Release116 другой задачи
+резервирует wire26/manifest9: перед интеграцией/установкой нашего пакета нужно
+объединить его завершённый commit и назначить package wire27/manifest10.
+
+## 19 сентября, 02:27 МСК — GUI-242: причинная публикация и полная blob-зависимость
+
+`programPackage` включён в прежний причинный source field для page/board/document.
+Один источник — inline либо package; null действительно удаляет ссылку. Native
+checkpoint, live identity и raster identity различают пакеты. Единственный row
+writer отказывает публикации без всех частей. Direct delivery, CloudKit outbox и
+snapshot несут closure текущего источника, inverse/undo и удержанных concurrent
+source heads. Строки в state не превращаются в зависимости. ACK/dedupe не скрывают
+пропажу части. Wire 26 / manifest 9 ограждают пару от прежнего decoder; старые
+исторические manifests остаются читаемыми, но не могут объявлять programPackage.
+
+* Core — **38 PASS**, пять затронутых suites, `/tmp/gui-242-dependencies-v4.log`.
+  Последняя удержанная часть не публикует сцену и не двигает cursor; затем холодный
+  peer читает диапазон через границу частей. Проверены три поверхности, source
+  replacement, старый checkpoint, null → inline, snapshot с прежним пакетом,
+  undo на холодном peer, concurrent heads и попытка smuggle в manifest 8.
+* Native Mac — **5 PASS**, `.build/gui-242-publication-mac-v1/verification.json`.
+  Включены importer и package replacement в native program/raster identities.
+* Собственный iPad Simulator — **3 PASS**,
+  `.build/gui-242-publication-sim-v1.xcresult`: прежняя программа не пишет в новую,
+  origin move не создаёт raster заново, независимая текстовая правка сохраняет
+  program context. Mac/Simulator шли параллельно с разными destinations/derived
+  data, без физического iPad. На обоих source-before == source-after:
+  `3ad8aa347c14d15d5288ac4fc318f76e85e28f67384e235ab73efffb532dbc49`.
+  Skips/runtime warnings отсутствуют; compiler deprecation warnings старых
+  XCTest UIWindow fixtures не являются runtime warnings.
+* MCP — **27 PASS** и pinned SDK check PASS,
+  `/tmp/gui-242-publication-mcp-v2.log`. Проверен именно CLI `prepare program`,
+  затем маленькая animation transaction с package SHA для трёх поверхностей.
+  Последняя правка после native receipt — только тест компактности SDK help.
+
+Отрицательные результаты: v2 Core выявил null вместо отсутствующего optional в
+канонической page projection — исправлен actual update path, v3 пять новых tests
+PASS. Старый inverse test пытался опубликовать отсутствующую restoration root уже
+на отправителе, где штатный indexCapturedFieldRestorations запрещает это. Фикстура
+теперь имеет настоящую root на source и удерживает её именно на peer; native
+validation не ослаблялась, итоговый v4 весь выбранный набор PASS. CLI prepare
+раньше записывал descriptor, затем обращался к отсутствующему args — исправлен и
+проверен запуском процесса. MCP v1: расширенная общая схема занимала 25 845 bytes,
+на 245 bytes больше старого тестового 25 KiB бюджета; предел компактной справки
+явно обновлён до 26 KiB, лимит исполняемых args не менялся.
+
+Это storage/publication/transport-contract срез, **не завершение GUI-242**.
+Scoped WK adapter, показ больших assets и офлайн UI ещё в работе. CloudKit outbox
+проверен локально, живой Apple CloudKit этим проходом не подтверждён. Установленные
+приложения не заменялись; физический iPad115 не понижался. GUI-240/242 не Done.
+
+## 19 сентября, 02:09 МСК — GUI-242: ограниченный потоковый импорт
+
+Первый, **не полный**, срез GUI-242: канонический manifest связывает namespace,
+MIME, размеры и SHA частей по 4 MiB. Файлы остаются в прежнем SQLite blob store;
+лимиты source/args и отдельного transport blob не повышены. Mac читает типизированный
+локальный descriptor вне QuickJS. Каждый chunk проходит через существующую FIFO
+очередь записи; между частями продолжаются обычные правки. Есть progress, cancel,
+retry с дедупликацией и холодный status по принятому manifest. FIFO/device/final
+symlink не могут зависнуть при открытии capability. Импорт не публикует сцену.
+
+* Core package + replication: **12 PASS**, `/tmp/gui-242-package-v3.log`.
+  300 MiB логический файл, bounded reads через границу частей, EOF, отсутствующие
+  части, неверные SHA/MIME/пути, idempotence, no journal publication и отказ
+  нерегулярным файлам. Предыдущий v1 compile FAIL исправлен, v2 — 11 PASS.
+* Mac importer: **2 PASS**, без skips/runtime warnings,
+  `.build/gui-242-import-mac-v2/verification.json`; source-before == source-after
+  `94e48164e9c90b24b1cb2440412d331a3b8b30308cd499c081a80b927614c5bf`.
+  Реальный 64 MiB файл из 16 разных частей и >1 MiB JS; небольшая запись принята
+  до завершения импорта в той же очереди, cold status/retry не пишут journal;
+  отмена до чтения не допускает manifest, повтор завершается.
+* Node preparation/bridge/recipes/protocol: **38 PASS**,
+  `/tmp/gui-242-files-v2.log`; отдельная фикстура готовит 300 MiB без Base64,
+  metadata <20 KiB, относительные пути и SHA повторяемы. Финальный pinned TypeScript/SDK check — PASS
+  (`/tmp/gui-242-check-v3.log`), MCP protocol/package/sidecar — **15 PASS**
+  (`/tmp/gui-242-mcp-v3.log`). Check v2 выявил union string/Buffer только в тестовом
+  socket callback; исправлено. После Mac v2 менялись только MCP текст/тесты.
+
+Отдельный native WebKit probe (`.build/gui-242-wk-probe/`) подтвердил custom-scheme
+classic/module/fetch/worker/image в Mac WebKit. Это не app-интеграция и не iPad.
+Публикация ссылки в причинном содержании, dependency closure всех доставок/undo,
+scoped WK adapter и offline-open ещё не реализованы. Установленная пара не менялась.
+GUI-242 остаётся In Progress; принятие импорта не означает shown/received/offline.
 
 ## 19 сентября, 01:45 МСК — GUI-241: фон, закрытие и подтверждённый checkpoint
 
@@ -283,6 +524,283 @@ runner в успех. Реальный жест и полный GUI-241 оста
 [GUI-240 — владельцы, вертикальные слайсы и приёмка](https://linear.app/main-cluster/document/nauchnye-vizualizacii-notebook-vladelcy-vertikalnye-slajsy-i-priyomka-238d0fc05b6e).
 GUI-240 и GUI-241 остаются In Progress. Этот коммит фиксирует промежуточный
 механизм lifecycle/checkpoint и LC-пример, а не завершение первого слайса или эпика.
+## 19 сентября — GUI-200/255/257: дефекты 115 воспроизведены, исправление 116 проверяется
+
+Снимки и жалоба Амира после установки 115 опровергают принятие прежнего среза
+как законченного UX. GUI-255 снова In Progress; GUI-257 выделяет цельное
+стирание SVG/HTML. Данные рабочего пространства не правились.
+
+На физическом iPad изолированный native-сценарий
+`canvas-ux-cursor-repro2` воспроизвёл отсутствие нового содержимого до lift:
+SQL cursor продвинулся, coverage отвергал старую версию, а перечитывание
+ожидало конца той же камеры. В новой реализации перечитывание принимает
+свежий cut, сохраняя последнюю локальную камеру; Pencil/содержание не теряют
+своей защиты. `canvas-ux-third` и `canvas-ux116-check` подтвердили прогресс
+при продолжающихся camera samples без fingers-up.
+
+В том же физическом маршруте подтверждены: новая SVG/бумага во время held
+zoom, плотность смешанной сцены с тремя программами и двумя SVG, демонтаж
+анимированного WKWebView по рабочему whole-element cut до lift, отсутствие
+boolean geometry для 8192 samples. Снимок `Mixed scene during held zoom`
+просмотрен: текст и тонкие SVG-линии различимы; это не замер FPS.
+Холодный смешанный сценарий: firstVisible 0,555 s, firstShown 1,422 s
+(0,867 s от входа в кадр). Это граница текущего сигнала, не «мгновенная» загрузка.
+
+`canvas-ux116-check`: 96 PASS / 10 FAIL. Среди отказов — старые fixtures,
+требовавшие невидимый parent, проверка UIKit с точностью 0,0001 pt после
+pixel-aligned rebase, неверный direct-touch UI-тест Pencil и реальная лишняя
+перерисовка тёплого растра (учитывался запрошенный минимум, не установленная
+плотность). Причины исправляются, старый receipt не принят. Отдельный процесс
+100 000 совпадающих объектов завершён signal kill без установленной причины;
+этот стресс не объявлен пройденным и не входит в scoped UX acceptance.
+
+Core: 19 тестов в трёх suites PASS (`canvas-ux-core-final.log`), включая
+whole erase, undo/merge и queued manifest 4–8. MCP: native IPC round-trip
+wholeElement PASS (`canvas-ux-mcp.log`); source-only TypeScript PASS.
+Полный TS check имеет прежние ошибки в `test/science-examples.test.ts`, этот
+неизменённый файл не исправлялся в срезе.
+
+Финальный `canvas-ux116-accepted`: **105/105 iPad + 8/8 Mac PASS** на
+неизменных исходниках SHA256
+`3e258c970b171977416e6d03488c34bd6fc9a775b2073072f62d595184f53de4`.
+Физический native Pencil-route (не датчик стилуса) прошёл recognizer →
+model-owned targets → демонтаж двух WKWebView до lift → durable whole action
+→ undo. Реальные UI-сценарии mixed controls и pinch/rotation повторно PASS.
+В предыдущем проходе `canvas-ux116-final-check` iPad также 105 PASS; единственный
+Mac-отказ был старым ожиданием одной публикации при 4x zoom вместо допустимого
+одного LOD-rebase с тем же host. Проверка actual bounds/visible rect сохранена.
+Подписанная Release-пара **0.3.113 (116)** собрана и установлена поверх
+рабочих Mac и физического iPad. `canvas-ux116-build/build.json` и
+`canvas-ux116-install/installation.json` фиксируют точные bundle/source hashes.
+Mac завершён обычным AppKit terminate с дренированием записей. До повторного
+запуска байты Notebook, Notebook.spaces, реестра пространств и activation
+совпадают; реестр пространств iPad также побайтово сохранён. Uninstall,
+восстановления архивов, сброса ключей/контейнеров и записей в доску не было.
+Первоначальный preflight остановился до каких-либо изменений: искал старый
+archive-marker на iPad. Проверка исправлена на существующий реестр пространств,
+фиктивный marker не создавался.
+
+Installed metadata подтвердили 116 на обоих устройствах; запущены Mac PID58807
+и iPad PID10893. Живой установленный Mac MCP получил новую сессию iPad
+`B15076EC-008D-492B-88F9-758FFC129D99`, прежний device
+`5124BDCA-7613-4E48-B09B-928D81A03D4E`, прежнее пространство
+`FAAAC405-8EF9-4FB9-9B93-CBD876FA97A4` и неизменный content/ink basis through1310.
+`observe(includeImage:true)` вернул ready currentView; изображение просмотрено,
+SHA256 `7bd692593b0fc2576a9b472f9855f9286196026849b5e32e7bf1630a5c5aa350`.
+Сохранён сильный отдалённый ракурс пользователя; UI-проверка поворота оставила
+landscape viewport. Это проверка установки/связи/показа, не новый замер жестов
+или стилуса над пользовательским содержимым. Полная системная приёмка
+FPS/CPU/GPU, десять повторов и 30 минут совместной работы не заявляется.
+
+
+## 19 сентября, 02:01 МСК — GUI-200: интеграция и физический iPad 115
+
+По прямому запросу Амира C1–C5 объединены в общей ветке
+`codex/notebook-ipad-reliability` с уже выпущенным `99b70dc` (114): изменения
+холста не откатывают исправления документов, камеры и Mac. Незавершённые
+GUI-238/240 из чужих worktree не включены. Версия — **0.3.112 (115)**.
+
+Итоговый неизменный source
+`cd7e972883d7f99bb08d39650e34f02b1abb48adde7f59b2c870d4b8ba3dcd77`:
+`.build/canvas-release115-release-check/verification.json`, штатный выбранный
+маршрут — **81/81 physical iPad и 8/8 Mac PASS**, без skips/runtime warnings.
+Проверены bounded ink/camera, composition reuse/readiness/priority, async capture
+и cancellation, physical WebViewport, mixed button/slider/text + pan/pinch,
+zoom открытого документа и тетради, Mac scene/camera. Это не полный performance
+проход; соседние задачи по прямому разрешению Амира работали в отдельных
+Simulator. Системные FPS/CPU/GPU, десять повторов и 30 минут не заявлены.
+
+После merge два composition fixtures опирались на старое предпочтение native
+labels перед WebKit. Теперь семь владельцев закрепляются явно: проверяется
+именно общий static band, а не WebKit без смонтированного live consumer.
+Production-очередь/приоритет не ослаблены. Первый широкий physical проход
+`canvas-release115-native` также получил прежний signal kill в 100k coincident
+fixture (он уже зафиксирован на baseline `3f30fb0` выше); причина не установлена.
+Этот отдельный нагрузочный тест не включён в итоговый выбранный маршрут.
+Начальный UI timeout Enable UI Automation разрешён Амиром на самом iPad.
+
+**Граница ввода:** первый mixed physical UI завершился отказом после pan:
+полная экранная клавиатура закрылась, значение осталось 760 вместо следующего
+символа (`canvas-release115-accepted`: 77 PASS / 1 FAIL). Проверка затем прошла
+и с экспериментальным ограничением responder forwarding, и на исходном
+PhysicalWebViewport (`canvas-release115-focus-baseline`), и ещё раз в итоговом
+проходе. В успешном снимке видна compact keyboard bar. Экспериментальные
+24 строки удалены: причинность не доказана, неустойчивый сценарий полной
+экранной клавиатуры не объявлен исправленным. Видео/снимки и неуспешные receipts
+сохранены в `.build/canvas-release-20260919-preflight/`; условие отмечено в GUI-255.
+
+Штатный `build-verified-pair.sh` собрал и проверил подписи обоих Release bundle:
+`.build/canvas-release115-build/build.json`. Установлен **только iPad** поверх
+`com.amirtlinov.notebook.preview` 114, без uninstall/копирования архива/ключей;
+Mac **0.3.111 (114)** не изменён. Core, протокол и NotebookAppModel побайтово
+совпадают с выпущенным 114. iPad binary UUID
+`5FAB2272-1C66-34D2-8760-27CBA9FB798D`, manifest
+`a3986083c36941dc887298ed7a4058e5de019389a7b5653fdf5c76bac500002b`.
+
+Установщик iOS переместил data-container с D6367A69… в 886BEDC7…; проверка
+буквального пути остановила наш orchestration до launch, не повторяла install.
+Оба workspace UUID, размеры/mtime каталога и Notebook.spaces.json сохранены.
+После штатного запуска PID **10372** установленный Mac MCP получил живую
+selection iPad **5124BDCA-7613-4E48-B09B-928D81A03D4E**, прежнее пространство
+**FAAAC405-8EF9-4FB9-9B93-CBD876FA97A4**, прежний frontier **1276** и ready currentView
+открытого документа. Изображение просмотрено; pngSHA256
+`e4762d4184b91ec256bafdc5550a61ccc1e275c0432fb38c2dfcc31792507216`.
+Квитанция установки/запуска/живого чтения —
+`.build/canvas-release115-install/installation.json`. Сопряжение не выполнялось
+заново; историческое содержание не восстанавливалось. GUI-256 по-прежнему
+условно отменён, более широкие условия GUI-200 остаются открытыми.
+
+## 19 сентября, 01:16 МСК — GUI-255 завершён; GUI-256 не требует усложнения
+
+После `c73ebc7` iPad mipmap строится вне MainActor в существующем
+CompositionPixels. В UI остаются WebKit callback и короткая публикация.
+Исходный CGImage/точные pixels сохранены; grant и submitted WebKit borrow
+живут до фактического завершения работы. Перед публикацией повторно проверяются
+source/state, load token, установленный live owner и отмена capture; уход
+источника не превращается в ложный resource-limit. Старый синхронный цикл
+удалён, второй cache/worker pool и увеличенные квоты не добавлены.
+
+Финальные проверки одного неизменного источника
+`38b90e4942c7c08dc88d9f487fc003e818e46e5a11616c1781bd1c8b5fbd870e`:
+
+- Simulator `.build/canvas-plan-20260918/c5-complete.xcresult`: **23/23 PASS**,
+  включая все AgentWebLease, отмену после async yield, source replacement,
+  live DOM/crop/density, source priority, native installation и mixed WebKit
+  pan/pinch: button, slider и text first-responder сохраняют принятый ввод.
+- Mac `.build/canvas-plan-20260918/mac-native/`: **16/16 PASS** штатного
+  `./verify.sh --only --test NotebookMacTests/SceneCameraPlaneTests --test
+  NotebookMacTests/SceneRasterCompositionTests`. Проверены камера, painter
+  order/alpha/clipping, bounded streaming, WebKit lifetime и input cancellation.
+  Оба финальных прохода — без skips и runtime warnings.
+- Предшествующий `c5-accepted.xcresult`: **91 PASS / 1 FAIL** из 92.
+  Composition/Prepared/resource pressure/первый native Pencil и UI прошли;
+  новый cancellation-тест ошибочно запрещал даже штатный initial readiness=false.
+  Исправлена именно эта проверка: запрещён ready=true от отменённых pixels.
+  Повтор всего AgentWebLease — `c5-fence.xcresult`, **20/20 PASS**, затем 23/23
+  выше после дополнительного live-capture fence. Production ради PASS не ослаблен.
+
+Прежние три passive fixtures не вызывали model.start: loadState=loading
+правильно запрещал admission, WebKit даже не создавался. Теперь fixtures
+проходят настоящий startup и проверяют permitsBackgroundPreparation; все три
+прошли в c5-accepted. Priority fixture проверял порядок завершения при двух
+параллельных executors: для проверки очереди явно задан один background slot.
+Квота production осталась прежней. Неуспешные c5-final/targeted сохранены.
+Два ручных unsigned Mac запуска остановились в packaging до тестов; штатный
+signed selective route выше прошёл без изменения упаковки или sandbox.
+
+В финальном Simulator receipt 2048×1536 mipmap + fence заняли **14.36 ms**
+вне main; main task исполнился во время await, весь grant **33,997,696 B**
+оставался учтён, отменённый source не опубликован. Для 301×173 сохранены
+исходные pixels, десять mip levels и единый charged lifetime. Это проверка
+исполнителя/согласованности и локальное время, не системный frame-time.
+
+**GUI-256 — Canceled без новой реализации.** В настоящих tile presenters двух
+нативных плоскостей здоровый источник установлен через **18.68 ms** после
+готовности pixels, пока сосед с 5-секундным ready promise ещё pending.
+Peak accounted **23,464,960 B**; синхронная публикация плоскостей при уточнении
+**0.612 ms**, начальная **10.547 ms**. Уже существующий atomic cohort не ждёт
+готовности всех источников. Условие для дополнительной частичной установки
+не подтверждено; менять согласованность слоёв/receipts ради неё не требуется.
+По той же измеренной причине GUI-255 не заменяет paintID на geometryID и
+не переписывает hosting root: это не подтверждённое узкое место данного среза.
+Warm reuse C3 уже избегает повторного ImageRenderer неизменной композиции.
+
+Приложения рабочих устройств/данные не менялись. Использован Simulator по
+указанию Амира, не физический iPad; Mac — изолированный подписанный test host.
+Снимки и timing receipts: `c5-complete-images/`, `c5-accepted-images/` внутри
+того же evidence каталога. Просмотрены mixed UI и native first-stroke pixels.
+Физические FPS/CPU/GPU, десять повторов и 30 минут не заявлены. Срезы C1–C5
+закончены; более широкие документные/системные условия GUI-200/GUI-199 остаются
+открытыми. Новых Xcode runners после передачи слота в 01:15 МСК нет.
+
+## 19 сентября, 00:32 МСК — GUI-254: ранний demand и видимая очередь
+
+После `692d237` известные источники ограниченного scene workset предъявляются
+прежнему scheduler до native preparation и placeholder pass. Дополнительные
+находки потокового painter присоединяются к той же очереди. Задание владеет
+source identity до publication, а не требует уже опубликованного placeholder.
+Сортировка: видимое без fallback → видимое уточнение → bounded overscan,
+затем расстояние до центра; обязательные live runtime не дублируются.
+Принятые этим же проходом новые pixels гасят собственную dirty notification,
+не вызывая идентичный повторный проход. Квоты WebKit/байтов не увеличены.
+
+Simulator `.build/canvas-plan-20260918/c4.xcresult`: **51/51 PASS**, без skips
+и runtime warnings. Нативное событие первого composition tile подтверждает,
+что background source уже работает; z-visible завершился раньше a-neighbour,
+несмотря на их имена. Уточнение проверки последовательности см. в записи GUI-255.
+Проверены readiness, pending-neighbour, ранняя отмена, source/state changes,
+input barrier, быстрые camera samples, warm return/eviction, ресурсы и mixed
+WebKit pan/pinch с сохранением принятого ввода. Это порядок исполнения и
+затронутые сценарии, не физический frame-time benchmark.
+
+## 19 сентября, 00:28 МСК — GUI-253: reuse готовой композиции
+
+После `493bd2d` preflight заимствует совместимые composition entries из
+существующего SceneRenderResources, а не только из предыдущей когорты.
+Готовность и зависимости хранятся на той же budgeted entry, без удержания
+старой когорты или дополнительного кеша. Placeholder не становится cache hit;
+новый WebKit capture отзывает reuse зависимых записей, не показанные leases.
+Проверка publication order не даёт запоздалому painter вернуть старую запись
+в reusable. Crop, density, painter range и revision сохраняют силу.
+
+Simulator: `c3.xcresult` — **85/85 PASS** (composition, resources, environment).
+`c3-accepted.xcresult` — **3/3 PASS**: A→B→A возвращает те же entryID у native
+и восьми static SVG sources; старая когорта освобождена; pending/new capture,
+revision change и реальное бюджетное eviction не возвращают старые пиксели.
+Document pinch UI прошёл в `c3-final.xcresult`; этот промежуточный bundle
+в целом FAILED из-за слишком короткого ожидания восьми заданий ограниченной
+background-очереди. Диагностика показала шесть ready и два работающих, а не
+resource failure. Финальная проверка ждёт завершения очереди с пределом 10 s,
+не подменяет readiness таймером. Warm-return/bytes receipt сохранён в
+`.build/canvas-plan-20260918/c3-accepted-images/`. Это published boundary,
+не утверждение о scanout или физическом FPS.
+
+## 19 сентября, 00:18 МСК — GUI-252: устойчивые LOD и pixel keys
+
+После `22ea1fd` финальный occupancy probe сохраняет предыдущий LOD; при
+бюджетном coarsening гистерезис не мешает движению к меньшему плану. Растры
+тайлов используют 512/1024/2048 px и не колеблются вниз внутри того же LOD.
+Мировые элементы/чернила исключают continuous camera scale из pixel identity;
+обложки/порталы сохраняют эту зависимость, viewport/state/revision не удалены.
+Crop coverage отделён от density refinement. Source density использует
+полуоктавные ступени; пригодный crop/density сохраняется во время короткого
+жеста, длинный pinch выходит из диапазона 0.6…1.6. Native ink также уточняется
+после выхода из диапазона, без ожидания конца бесконечного жеста.
+
+`c2-final.xcresult` в `.build/canvas-plan-20260918/`: **46/46 PASS** на том же
+Simulator, без skips/runtime warnings. Финальная сетка и keys проверены на
+возвратном pinch 0.99↔1.01; source/state/revision и зависимость портала остаются
+различимыми. Проверены cropped coverage/refinement, delayed WebKit readiness
+при непрерывном pinch, sparse/dense painter, byte pressure, remount, реальные
+UI-жесты mixed controls и passive SVG после rotation. Первый проход выявил
+излишне грубую source-density ступень: таблица получала canonical density 1
+вместо достаточной <1. Исправлен production выбор ступени; проверка не ослаблена.
+Физические FPS и время input→scanout не заявляются.
+
+## 19 сентября, 00:09 МСК — GUI-251: конечный запас native ink, Simulator
+
+По прямому указанию Амира этот срез проверен в **Simulator**, не на физическом
+iPad; рабочая пара и её контейнеры не тронуты. База `87bf916`. Native backing
+использует свободные края 512-pixel pools и ограниченный запас 64 px с каждой
+стороны; refill начинается до края. Covered pan, включая settlement, больше
+не меняет GPU basis. Плотность уточняется только при увеличении масштаба,
+истощение покрытия и resize по-прежнему готовят согласованный successor.
+
+`.build/canvas-plan-20260918/c1-final.xcresult`: **37/37 PASS**, 0 skips,
+0 runtime warnings, iPad Pro 11-inch M5 / iOS 27.0 (24A434). Проверены оба
+направления и ориентации, zoom-out 1%, неизменность drawable/mesh при движении,
+атомарная установка нового basis, удержанный контакт, resize, handoff и первый
+Pencil, смешанный WebKit pan/pinch. Отрицательная регрессия до изменения:
+`c1-before.xcresult` (1 regression fail, 1 UI pass). Первый тест дополнительно
+исправлен: default scale камеры равен 0.22, поэтому pan задаёт scale 1 явно.
+
+Retina 834×1194 использует прежние 4×5 pools, теперь целиком 1024×1280 pt.
+Под 128 MiB настоящих passive rasters первый ввод на больших экранах принят:
+30/35 pools, native reservation 63,408,576 / 73,976,256 bytes, без resource
+failure. Просмотрен снимок resize с прежней линией и новым первым штрихом.
+Артефакты и byte receipts: `.build/canvas-plan-20260918/c1-final-images/`.
+Это доказательство затронутого поведения и учёта памяти, **не измерение
+физических FPS, CPU/GPU или полной плавности**; GUI-200 остаётся в работе.
 
 ## 18 сентября, 23:32 МСК — GUI-238: исходник, общая отмена и точная карта печати; пара113
 

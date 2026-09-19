@@ -27,6 +27,7 @@ final class DocumentProgramOwner {
   private struct Job {
     let id: UUID
     let task: Task<Void, Never>
+    var preservesRuntime = false
   }
   private struct Application {
     let id: UUID
@@ -66,7 +67,7 @@ final class DocumentProgramOwner {
   }
 
   /// Freeze the authored model immediately, even without pool pressure.
-  /// A confirmed return context may keep its heap but never its running clock.
+  /// A hidden source editor or confirmed return context keeps its heap, not its clock.
   func parkForReturn() {
     guard !parkedForReturn, !stopped else { return }
     parkedForReturn = true
@@ -81,7 +82,7 @@ final class DocumentProgramOwner {
   private func offerReturnReclamation(_ id: String, runtime: DocumentBlockRuntime) {
     runtime.offerReturnReclamation { [weak self, weak runtime] in
       guard let self, let runtime, parkedForReturn, runtimes[id] === runtime else { return }
-      if parkedPrograms.contains(id) { retireImmediately(id, runtime: runtime); return }
+      if parkedPrograms.contains(id), pauseFailures[id] == nil { retireImmediately(id, runtime: runtime); return }
       returnEvictions.insert(id)
       if jobs[id] == nil { startCheckpoint(id, runtime: runtime, keepsPicture: false) }
     }
@@ -92,17 +93,27 @@ final class DocumentProgramOwner {
     parkedForReturn = false; returnEvictions.removeAll()
     for (block, runtime) in runtimes {
       runtime.offerReturnReclamation(nil)
-      jobs[block]?.task.cancel()
-      guard parkedPrograms.remove(block) != nil else { continue }
+      // A quick return cannot cancel the durable-write boundary and restart
+      // the clock before that write is accepted.
+      guard jobs[block] == nil, parkedPrograms.remove(block) != nil else { continue }
+      if pauseFailures[block] != nil {
+        startCheckpoint(block, runtime: runtime, keepsPicture: false, keepsRuntime: true)
+        continue
+      }
       let id = UUID()
       let task = Task { @MainActor [weak self, weak runtime] in
         guard let self, let runtime else { return }
         await runtime.resume()
         if jobs[block]?.id == id { jobs[block] = nil; retiringIDs.remove(block) }
-        if !stopped { reconcile(); onChange() }
+        if !stopped, runtimes[block] === runtime {
+          if parkedForReturn { startCheckpoint(block, runtime: runtime, keepsPicture: false, keepsRuntime: true) }
+          else { reconcile() }
+          onChange()
+        }
       }
-      jobs[block] = .init(id: id, task: task)
+      jobs[block] = .init(id: id, task: task, preservesRuntime: true)
     }
+    reconcile(); onChange()
   }
 
   func update(input: DocumentPagePresentation, layout: DocumentLayoutRecord, pages: Set<Int>,
@@ -122,6 +133,7 @@ final class DocumentProgramOwner {
   }
 
   func presents(_ id: String) -> Bool {
+    guard pauseFailures[id] == nil, !retiringIDs.contains(id) else { return false }
     guard let input = context?.input, let block = input.document.blocks.first(where: { $0.id == id }) else { return false }
     if paused(id) != nil { return true }
     guard let runtime = runtimes[id], runtime.sourceVersion == input.document.sourceVersion(blockID: id) else { return false }
@@ -131,7 +143,11 @@ final class DocumentProgramOwner {
 
   func retry(_ id: String) {
     guard retainedIDs.contains(id) else { return }
-    pauseFailures[id] = nil; retirementAttempts[id] = nil; runtimes[id]?.retry()
+    let retryCheckpoint = pauseFailures.removeValue(forKey: id) != nil && parkedPrograms.remove(id) != nil
+    retirementAttempts[id] = nil; runtimes[id]?.retry()
+    if retryCheckpoint, let runtime = runtimes[id], jobs[id] == nil {
+      startCheckpoint(id, runtime: runtime, keepsPicture: false, keepsRuntime: true)
+    }
     reconcile(); onChange()
   }
 
@@ -172,7 +188,7 @@ final class DocumentProgramOwner {
       let state = record?.value ?? block.initialState
       if runtimes[id] == nil {
         let runtime = DocumentBlockRuntime(documentID: documentID, block: block, sourceVersion: sourceVersion,
-          value: state, stateVersion: record?.valueVersion, width: region.frame.width, resources: resources)
+          value: state, stateVersion: record?.valueVersion, width: region.frame.width, resources: resources, programStore: input.programStore)
         runtime.onChange = { [weak self, weak runtime] in
           guard let self, let runtime, runtimes[id] === runtime else { return }
           reconcile(); onChange()
@@ -198,7 +214,7 @@ final class DocumentProgramOwner {
       guard let runtime = runtimes[id] else { continue }
       runtime.requiresStateAcceptance = true
       runtime.start(priority: liveIDs.contains(id) ? .liveProgram : .visible)
-      if !runtime.focused, context.contacts.isEmpty, jobs[id] == nil,
+      if !runtime.focused, context.contacts.isEmpty, jobs[id] == nil, pauseFailures[id] == nil,
         applications[id]?.version != record?.valueVersion || applications[id] == nil {
         apply(state, version: record?.valueVersion, to: runtime)
       }
@@ -217,7 +233,7 @@ final class DocumentProgramOwner {
       }
       let shouldRetire = outside || !liveIDs.contains(id)
       if !shouldRetire || context.blocked || runtime.focused || context.contacts.contains(id) {
-        jobs[id]?.task.cancel()
+        if jobs[id]?.preservesRuntime != true { jobs[id]?.task.cancel() }
         continue
       }
       guard runtime.ready, jobs[id] == nil, pauseFailures[id] == nil else { continue }
@@ -250,7 +266,12 @@ final class DocumentProgramOwner {
         if jobs[block]?.id == id { jobs[block] = nil; retiringIDs.remove(block) }
         if runtimes[block] === runtime {
           runtime.cancelReturnReclamation()
-          if parkedForReturn, parkedPrograms.contains(block) { offerReturnReclamation(block, runtime: runtime) }
+          if parkedForReturn {
+            if parkedPrograms.contains(block) { offerReturnReclamation(block, runtime: runtime) }
+            else if jobs[block] == nil {
+              startCheckpoint(block, runtime: runtime, keepsPicture: false, keepsRuntime: true)
+            }
+          }
         }
         if !stopped { reconcile(); onChange() }
       }
@@ -271,13 +292,24 @@ final class DocumentProgramOwner {
             guard self.previewID != block, !self.liveIDs.contains(block) else { throw SceneRenderError.resourceLimit }
           }
         }
-        guard !stopped, runtimes[block] === runtime, let latest = self.context,
+        guard !stopped, runtimes[block] === runtime else { return }
+        if keepsRuntime {
+          pauseFailures[block] = nil
+          if parkedForReturn, !returnEvictions.contains(block) {
+            parkedPrograms.insert(block)
+          } else if !parkedForReturn {
+            parkedPrograms.remove(block)
+            await runtime.resume()
+          } else { retireImmediately(block, runtime: runtime) }
+          return
+        }
+        guard let latest = self.context,
           !latest.blocked, !latest.contacts.contains(block), !runtime.focused, !liveIDs.contains(block),
           latest.input.document.sourceVersion(blockID: block) == runtime.sourceVersion,
           runtime.value == value, keepsPicture || parkedForReturn || !retainedIDs.contains(block) else {
           await runtime.resume(); return
         }
-        if keepsRuntime, parkedForReturn, !returnEvictions.contains(block) {
+        if parkedForReturn, !returnEvictions.contains(block) {
           parkedPrograms.insert(block)
           return
         }
@@ -291,12 +323,17 @@ final class DocumentProgramOwner {
           if error is NotebookProgramCheckpointError {
             retireImmediately(block, runtime: runtime); return
           }
-          await runtime.resume()
-          if !(error is CancellationError), keepsPicture { pauseFailures[block] = String(describing: error) }
+          if keepsRuntime || parkedForReturn {
+            parkedPrograms.insert(block)
+            pauseFailures[block] = String(describing: error)
+          } else {
+            await runtime.resume()
+            if !(error is CancellationError), keepsPicture { pauseFailures[block] = String(describing: error) }
+          }
         }
       }
     }
-    jobs[block] = .init(id: id, task: task)
+    jobs[block] = .init(id: id, task: task, preservesRuntime: keepsRuntime)
   }
 
   /// Explicit background/close boundary, independent of page raster work.
@@ -332,7 +369,9 @@ final class DocumentProgramOwner {
   }
 
   func resumeAll() async {
-    for (block, runtime) in runtimes where !parkedPrograms.contains(block) { await runtime.resume() }
+    guard !parkedForReturn else { return }
+    for (block, runtime) in runtimes where !parkedPrograms.contains(block)
+      && pauseFailures[block] == nil && jobs[block]?.preservesRuntime != true { await runtime.resume() }
     if !stopped { reconcile(); onChange() }
   }
 

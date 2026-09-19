@@ -13,6 +13,32 @@ struct InkElementErasureTests {
     .init(elementID: "circle", frame: .init(x: 100, y: 100, width: 200, height: 120))
   }
 
+  @Test func wholeObjectEraseIsImmediateUndoableAndSurvivesEncoding() throws {
+    let object = InkElementTarget(elementID: "program", frame: target.frame, wholeElement: true)
+    let action = PageInkAction(tool: .eraser, samples: [sample(100, 160)]).erasingElements([object])
+    let drawing = try PageInkDrawing().appending(action)
+    let decoded = try PageInkDrawing.decode(drawing.dataRepresentation())
+    let cuts = try #require(decoded.elementErasures[object.elementID])
+    let appearance = NotebookElementAppearance(graphic: nil, layout: nil,
+      size: .init(width: 200, height: 120), erasures: cuts)
+    #expect(appearance.state == .erased)
+    #expect(appearance.remaining.isEmpty)
+    #expect(!appearance.contains(.init(x: 199, y: 119), tolerance: 20))
+    #expect(decoded.removing([action.id]).elementErasures.isEmpty)
+    #expect(PageInkAction(tool: .eraser, samples: [sample(20, 20)]).erasingElements([object]).elementTargets?.isEmpty != false)
+    let old = try JSONDecoder().decode(InkElementTarget.self, from: JSONEncoder().encode(target))
+    #expect(!old.wholeElement, "Existing measured cutouts keep their authored meaning")
+  }
+
+  @Test func wholeObjectsRequireSweptContactNotDiagonalBoundingBoxes() {
+    let object = InkElementTarget(elementID: "program", frame: target.frame, wholeElement: true)
+    #expect(!object.intersects([sample(0, 180), sample(180, 0)]))
+    #expect(object.intersects([sample(50, 160), sample(350, 160)]))
+    #expect(!object.intersects([sample(95, 95)]), "Outside the rounded contact corner")
+    #expect(object.intersects([sample(96, 96)]))
+    #expect(object.intersects([sample(100, 94), sample(300, 94)]))
+  }
+
   @Test func sweptEraserRecordsOnlySeenTargetsAndUndoRestoresBothKindsOfPaint() throws {
     let eraser = PageInkAction(tool: .eraser, samples: [sample(50, 160), sample(350, 160)])
       .erasingElements([target, .init(elementID: "far", frame: .init(x: 900, y: 900, width: 20, height: 20))])
@@ -60,7 +86,8 @@ struct InkElementErasureTests {
     #expect(merged.removing([first.actions[0].id]).elementErasures["circle"]?.count == 1)
   }
 
-  @Test func cutoutsSurviveAddressedStorageReplicationReplayAndUndo() throws {
+  @Test(arguments: [false, true]) func cutoutsSurviveAddressedStorageReplicationReplayAndUndo(whole: Bool) throws {
+    let target = InkElementTarget(elementID: self.target.elementID, frame: self.target.frame, wholeElement: whole)
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let a = NotebookStore(root: root.appendingPathComponent("a")), b = NotebookStore(root: root.appendingPathComponent("b"))
@@ -103,7 +130,7 @@ struct InkElementErasureTests {
     #expect(try reopened.readElementErasures(on:surface,elementID:"circle").isEmpty)
   }
 
-  @Test(arguments:[4,5,6]) func newManifestFencesOldReadersWithoutDroppingQueuedHistory(legacyFormat: Int) throws {
+  @Test(arguments:[4,5,6,7,8]) func newManifestFencesOldReadersWithoutDroppingQueuedHistory(legacyFormat: Int) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let a = NotebookStore(root: root.appendingPathComponent("a")), b = NotebookStore(root: root.appendingPathComponent("b"))

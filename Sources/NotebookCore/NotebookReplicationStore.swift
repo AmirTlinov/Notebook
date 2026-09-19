@@ -3,16 +3,20 @@ import CryptoKit
 import Foundation
 
 extension NotebookStore {
-  public func stageBlob(file: URL, expectedHash: String, byteCount: Int64) throws {
+  public func stageBlob(file: URL, expectedHash: String, byteCount: Int64, range: Range<Int64>? = nil) throws {
     guard (0...268_435_456).contains(byteCount), expectedHash.count == 64,
       expectedHash.allSatisfy({ $0.isHexDigit && !$0.isUppercase }) else { throw NotebookStorageError.limitExceeded("blob_too_large") }
+    guard range.map({ $0.lowerBound >= 0 && $0.upperBound - $0.lowerBound == byteCount }) ?? true else {
+      throw NotebookStorageError.invalidTransaction("blob file range")
+    }
     try commandTransaction {
       let database = currentSQL!
       if let size = try database.rows("SELECT length(data) FROM blobs WHERE hash=?", [.text(expectedHash)]).first?[0].integer {
         guard size == byteCount else { throw NotebookStorageError.blobHashMismatch }; return
       }
-      let input = try FileHandle(forReadingFrom: file)
+      let input = try range == nil ? FileHandle(forReadingFrom: file) : NotebookProgramImport.openRegularFile(file)
       defer { try? input.close() }
+      if let range { try input.seek(toOffset: UInt64(range.lowerBound)) }
       try database.run("INSERT INTO blobs(hash,data) VALUES(?,zeroblob(?))", [.text(expectedHash), .integer(byteCount)])
       let rowID = try database.rows("SELECT rowid FROM blobs WHERE hash=?", [.text(expectedHash)]).first![0].integer!
       var blob: OpaquePointer?
@@ -21,14 +25,15 @@ extension NotebookStore {
       }
       defer { sqlite3_blob_close(blob) }
       var hasher = SHA256(), offset: Int64 = 0
-      while let chunk = try input.read(upToCount: 1_048_576), !chunk.isEmpty {
+      while offset < byteCount, let chunk = try input.read(upToCount: Int(min(1_048_576, byteCount - offset))), !chunk.isEmpty {
         try Task.checkCancellation()
         guard Int64(chunk.count) <= byteCount - offset else { throw NotebookStorageError.blobHashMismatch }
         let result = chunk.withUnsafeBytes { sqlite3_blob_write(blob, $0.baseAddress, Int32(chunk.count), Int32(offset)) }
         guard result == SQLITE_OK else { throw NotebookStorageError.invalidTransaction("blob stream write") }
         hasher.update(data: chunk); offset += Int64(chunk.count)
       }
-      guard offset == byteCount,
+      let trailing = range == nil ? try input.read(upToCount: 1) : nil
+      guard offset == byteCount, trailing?.isEmpty != false,
         hasher.finalize().map({ String(format: "%02x", $0) }).joined() == expectedHash else { throw NotebookStorageError.blobHashMismatch }
     }
   }
@@ -41,7 +46,7 @@ extension NotebookStore {
     guard data.count <= 67_108_864 else { throw NotebookStorageError.limitExceeded("change_manifest_part") }
     let manifest = try JSONDecoder().decode(NotebookChangeManifest.self, from: data)
     let workspaceID = try currentSQL!.rows("SELECT value FROM metadata WHERE key='workspace_id'").first?[0].text.flatMap(UUID.init(uuidString:))
-    guard (manifest.format == 4 || manifest.format == 5 || manifest.format == 6 || manifest.format == 7 || manifest.format == NotebookChangeManifest.currentFormat) || (historical && manifest.format == 3) else {
+    guard (manifest.format == 4 || manifest.format == 5 || manifest.format == 6 || manifest.format == 7 || manifest.format == 8 || manifest.format == 9 || manifest.format == 10 || manifest.format == NotebookChangeManifest.currentFormat) || (historical && manifest.format == 3) else {
       throw CollaborationError("placement_peer_upgrade_required", "Сопряжённое устройство передаёт прежний формат изменений. Завершите его обновление; пакет не подтверждён и содержание сохранено.")
     }
     guard manifest.transactionID == change.transactionID, manifest.workspaceID == workspaceID,
@@ -98,7 +103,9 @@ extension NotebookStore {
       if !missing.isEmpty { return missing }
       let orderMissing = try missingPageOrderBlobs(manifestHash: change.manifestHash, limit: limit)
       if !orderMissing.isEmpty { return orderMissing }
-      return try missingLifecycleInverseBlobs(change: change, limit: limit)
+      let inverseMissing = try missingLifecycleInverseBlobs(change: change, limit: limit)
+      if !inverseMissing.isEmpty { return inverseMissing }
+      return try missingProgramBlobs(change: change, limit: limit)
     }
   }
 
@@ -167,7 +174,7 @@ extension NotebookStore {
           return
         }
         if file.hasPrefix("documents/") {
-          try applyReplicatedDocumentSource(file: file, manifestHash: change.manifestHash)
+          try applyReplicatedDocumentSource(file: file, manifestHash: change.manifestHash, manifestFormat: manifest.format)
           return
         }
         // Receipts and archived requests are independent, bounded owners.
