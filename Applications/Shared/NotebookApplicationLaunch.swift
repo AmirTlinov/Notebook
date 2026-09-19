@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Network
 import NotebookCore
 import Observation
@@ -33,6 +34,13 @@ final class NotebookApplicationLaunch {
   }
   private var library: NotebookWorkspaceLibrary { .init(originalRoot: root) }
   var selectedWorkspaceID: UUID? { try? model?.store.storedWorkspaceID() }
+
+  #if os(macOS)
+    let codexHost = NotebookCodexHost()
+    private var retainedModels: [UUID: NotebookAppModel] = [:]
+    private var defaultCommandServer: NotebookIPCServer?
+
+  #endif
 
   private let root: URL
   private let target: NotebookArchiveTarget?
@@ -96,8 +104,7 @@ final class NotebookApplicationLaunch {
         hasNoWorkspace = false
         let store = NotebookStore(root: selectedRoot)
         let fresh = !FileManager.default.fileExists(atPath: store.databaseURL.path)
-        model = try makeModel?(store, pairingActivationID) ?? NotebookAppModel(store: store,
-          allowsCodexRegistration: allowsCodexRegistration, pairingActivationID: pairingActivationID,
+        model = try makeWorkspaceModel(store: store,
           opensDefaultAccountWorkspace: fresh, requiresExistingAccountContent: selectedRoot != root)
         installWorkspaceSelection()
       case .waitingForPair: break
@@ -106,6 +113,50 @@ final class NotebookApplicationLaunch {
       // A committed activation remains on disk; cancellation cannot restore old
       // bytes or publish a model after the calling scene has disappeared.
     } catch { failure = error.localizedDescription }
+  }
+
+  private func makeWorkspaceModel(store: NotebookStore, opensDefaultAccountWorkspace: Bool = false,
+    requiresExistingAccountContent: Bool = false) throws -> NotebookAppModel {
+    if let makeModel { return try makeModel(store, pairingActivationID) }
+    #if os(macOS)
+      let writer: NotebookPersistenceQueue? = codexHost.persistence(for: store)
+      let socketID = SHA256.hash(data: Data(store.root.standardizedFileURL.path.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
+      let socket = NotebookIPC.defaultSocketURL.deletingLastPathComponent().appendingPathComponent(socketID + ".sock")
+      if allowsCodexRegistration, defaultCommandServer == nil {
+        let server = NotebookIPCServer { [weak self] command in
+          guard let model = await self?.model else { throw NotebookTransportError.disconnected }
+          return try await model.executeLocalCommand(command)
+        }
+        try server.start(); defaultCommandServer = server
+      }
+    #else
+      let writer: NotebookPersistenceQueue? = nil
+    #endif
+    #if os(macOS)
+      let model = NotebookAppModel(store: store, commandSocketURL: socket, allowsCodexRegistration: allowsCodexRegistration,
+        pairingActivationID: pairingActivationID, opensDefaultAccountWorkspace: opensDefaultAccountWorkspace,
+        requiresExistingAccountContent: requiresExistingAccountContent, persistenceQueue: writer)
+    #else
+    let model = NotebookAppModel(store: store, allowsCodexRegistration: allowsCodexRegistration,
+      pairingActivationID: pairingActivationID, opensDefaultAccountWorkspace: opensDefaultAccountWorkspace,
+      requiresExistingAccountContent: requiresExistingAccountContent, persistenceQueue: writer)
+    #endif
+    #if os(macOS)
+      model.codexHost = codexHost
+    #endif
+    return model
+  }
+
+  func shutdown() async -> Bool {
+    guard await model?.shutdown() ?? true else { return false }
+    #if os(macOS)
+      if let owner = model?.codexHost, owner !== codexHost { await owner.shutdown() }
+      for retained in retainedModels.values { guard await retained.shutdown() else { return false } }
+      retainedModels.removeAll()
+      await codexHost.shutdown()
+      await defaultCommandServer?.stopAndDrain(); defaultCommandServer = nil
+    #endif
+    return true
   }
 
   private func installWorkspaceSelection() {
@@ -153,14 +204,35 @@ final class NotebookApplicationLaunch {
       } else if let previous {
         guard await previous.finishPendingInteraction() else { throw NotebookTransportError.storageUnavailable }
       }
+      #if os(macOS)
+      if let previous, let currentID {
+        // Closing a workspace removes its view, not the accepted Mac owner.
+        // Keep a bounded set; never evict an owner that is still working.
+        if retainedModels.count >= 7, retainedModels[id] == nil {
+          var evicted = false
+          for (candidate, retained) in retainedModels where !(await codexHost.hasActiveWork(workspace: candidate)) {
+            guard await retained.shutdown() else { throw NotebookTransportError.storageUnavailable }
+            try await codexHost.removeWorkspace(candidate)
+            retainedModels.removeValue(forKey: candidate); evicted = true; break
+          }
+          guard evicted else { throw NotebookTransportError.resourceLimit }
+        }
+        retainedModels[currentID] = previous
+      }
+      #else
       guard await previous?.shutdown() ?? true else { throw NotebookTransportError.storageUnavailable }
+      #endif
       retired = true
       if let previous, automatically, !(try previous.automaticWorkspaceCutIsUnchanged()) { throw SwitchCancellation.acceptedLocalWork }
       let library = NotebookWorkspaceLibrary(originalRoot: root)
       let destination = try await Task.detached { try library.prepare(id) }.value
-      let next = try makeModel?(NotebookStore(root: destination), pairingActivationID) ?? NotebookAppModel(store: NotebookStore(root: destination),
-        allowsCodexRegistration: allowsCodexRegistration, pairingActivationID: pairingActivationID,
+      #if os(macOS)
+      let next = try retainedModels.removeValue(forKey: id) ?? makeWorkspaceModel(store: NotebookStore(root: destination),
         requiresExistingAccountContent: creatingName == nil && destination != root)
+      #else
+      let next = try makeWorkspaceModel(store: NotebookStore(root: destination),
+        requiresExistingAccountContent: creatingName == nil && destination != root)
+      #endif
       next.workspaceName = creatingName ?? workspaceList.first(where: { $0.id == id })?.name
         ?? (try? library.catalog().entries.first(where: { $0.id == id })?.name) ?? "Моё пространство"
       next.publishesWorkspaceName = creatingName != nil || ((try? library.catalog().entries.first(where: { $0.id == id })?.needsNamePublication) ?? false)
@@ -195,8 +267,12 @@ final class NotebookApplicationLaunch {
       guard let previous else { model = nil; hasNoWorkspace = true; return }
       // The source was not changed or merged. Reopen its same owner after an
       // unsuccessful switch instead of leaving a stopped model on screen.
-      model = try? makeModel?(previous.store, pairingActivationID) ?? NotebookAppModel(store: previous.store, allowsCodexRegistration: allowsCodexRegistration,
-        pairingActivationID: pairingActivationID, requiresExistingAccountContent: previous.store.root != root)
+      #if os(macOS)
+      if let previousID = try? previous.store.storedWorkspaceID() { retainedModels.removeValue(forKey: previousID) }
+      model = previous
+      #else
+      model = try? makeWorkspaceModel(store: previous.store, requiresExistingAccountContent: previous.store.root != root)
+      #endif
       installWorkspaceSelection()
       await model?.start(pageSize: NotebookAppModel.defaultPageSize)
     }
@@ -321,6 +397,13 @@ final class NotebookApplicationLaunch {
     isChecking = true; catalogGeneration = UUID(); workspaceError = nil
     defer { finishOperation() }
     do {
+      #if os(macOS)
+        guard !(await codexHost.hasActiveWork(workspace: id)) else { throw NotebookTransportError.resourceLimit }
+        if let retained = retainedModels[id] {
+          guard await retained.shutdown() else { throw NotebookTransportError.storageUnavailable }
+          retainedModels.removeValue(forKey: id)
+        }
+      #endif
       let pending = try library.catalog().pendingCloudDeletion[id]
       guard everywhere || pending == nil else { return }
       let account = pending?.account ?? catalogAccount
@@ -333,6 +416,9 @@ final class NotebookApplicationLaunch {
           await model?.shutdown() ?? true else { throw NotebookTransportError.storageUnavailable }
         model = nil; hasNoWorkspace = true; showsWorkspaces = false
       }
+      #if os(macOS)
+        try await codexHost.removeWorkspace(id)
+      #endif
       if everywhere, let account { try await catalogCloud.deleteSpace(id, account: account) }
       try library.remove(id)
       workspaceList.removeAll { $0.id == id }
@@ -347,10 +433,14 @@ final class NotebookApplicationLaunch {
 
   var allowsCodexRegistration: Bool {
     #if os(macOS)
-      guard !isFixture, case .admitted(let receipt) = activation, receipt.target.role == .mac,
+      guard !isFixture,
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
-        receipt.target.bundleID == Bundle.main.bundleIdentifier,
         root.standardizedFileURL.resolvingSymlinksInPath() == NotebookStore.defaultRoot.standardizedFileURL.resolvingSymlinksInPath() else { return false }
+      switch activation {
+      case .admitted(let receipt): guard receipt.target.role == .mac, receipt.target.bundleID == Bundle.main.bundleIdentifier else { return false }
+      case .unchanged: guard !FileManager.default.fileExists(atPath: NotebookArchiveActivation.controlURL(for: root).path) else { return false }
+      case .waitingForPair: return false
+      }
       let installed = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/Notebook.app")
       return Bundle.main.bundleURL.standardizedFileURL.resolvingSymlinksInPath() == installed.standardizedFileURL.resolvingSymlinksInPath()
     #else

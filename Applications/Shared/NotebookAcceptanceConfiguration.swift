@@ -21,7 +21,7 @@ struct NotebookAcceptanceConfiguration: Codable, Equatable, Sendable {
   let role: Role
   let bundleID: String
   let sourceRevision: String
-  let root: String
+  var root: String
   let socket: String?
   let codexDirectory: String?
   var simulatorContact: String? = nil
@@ -43,10 +43,7 @@ struct NotebookAcceptanceConfiguration: Codable, Equatable, Sendable {
         throw NotebookStorageError.invalidTransaction("simulated contacts are restricted to Simulator")
       #endif
     }
-    let allowedBundle = role == .mac
-      ? bundleID.wholeMatch(of: /com\.amirtlinov\.notebook\.mac\.acceptance\.[0-9a-f]{12}/) != nil
-      : bundleID == "com.amirtlinov.notebook.acceptance"
-    guard enabled, version == 1, allowedBundle, bundle == bundleID,
+    guard enabled, version == 1, bundle == bundleID, Self.isAcceptanceBundle(bundleID, role: role),
       sourceRevision.count == 40, sourceRevision.allSatisfy({ $0.isHexDigit }),
       root.hasPrefix("/"), rootURL.pathComponents.contains(runID.uuidString.lowercased()) else {
       throw NotebookStorageError.invalidTransaction("invalid isolated acceptance launch")
@@ -86,10 +83,11 @@ struct NotebookAcceptanceConfiguration: Codable, Equatable, Sendable {
         ? NotebookApplicationLaunch(failure: "Для изолированного стенда требуется конфигурация запуска.") : nil
     }
     do {
-      guard path.hasPrefix("/"),
-        let size = try FileManager.default.attributesOfItem(atPath: path)[.size] as? Int,
+      let manifest = try Self.manifestURL(path)
+      guard let size = try FileManager.default.attributesOfItem(atPath: manifest.path)[.size] as? Int,
         size > 0, size <= 16_384 else { throw NotebookStorageError.invalidTransaction("invalid acceptance manifest") }
-      let config = try JSONDecoder().decode(Self.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+      var config = try JSONDecoder().decode(Self.self, from: Data(contentsOf: manifest))
+      try config.resolvePortableRoot()
       try config.validate(bundle: bundle.bundleIdentifier, enabled: enabled)
       #if os(macOS)
         guard config.role == .mac else { throw NotebookStorageError.invalidTransaction("acceptance role mismatch") }
@@ -115,10 +113,42 @@ struct NotebookAcceptanceConfiguration: Codable, Equatable, Sendable {
     }
   }
 
+  // Physical device containers have an installation-owned UUID. Portable input
+  // is limited to this run's Documents subtree and is resolved before admission.
+  static func manifestURL(_ path: String, home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)) throws -> URL {
+    if path.hasPrefix("/") { return URL(fileURLWithPath: path) }
+    let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+    guard parts.count == 4, parts[0] == "Documents", parts[1] == "acceptance",
+      UUID(uuidString: String(parts[2])) != nil, parts[3] == "ipad.json" else {
+      throw NotebookStorageError.invalidTransaction("invalid portable acceptance manifest")
+    }
+    return home.appendingPathComponent(path)
+  }
+
+  mutating func resolvePortableRoot(home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)) throws {
+    guard !root.hasPrefix("/") else { return }
+    guard role == .iPad, root == "Documents/acceptance/\(runID.uuidString.lowercased())/store" else {
+      throw NotebookStorageError.invalidTransaction("invalid portable acceptance root")
+    }
+    root = home.appendingPathComponent(root).path
+  }
+
+  static func isAcceptanceBundle(_ bundle: String, role: Role) -> Bool {
+    if role == .mac {
+      return bundle.wholeMatch(of: /com\.amirtlinov\.notebook\.mac\.acceptance\.[0-9a-f]{12}/) != nil
+    }
+    let base = "com.amirtlinov.notebook.acceptance"
+    if bundle == base { return true }
+    guard bundle.hasPrefix(base + ".") else { return false }
+    let suffix = bundle.dropFirst(base.count + 1)
+    return !suffix.isEmpty && suffix.count <= 64 && suffix.allSatisfy { $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "-") }
+  }
+
   static func requiresManifest(bundleID: String?, enabled: Bool) -> Bool {
-    enabled || bundleID == "com.amirtlinov.notebook.mac.acceptance"
-      || bundleID?.hasPrefix("com.amirtlinov.notebook.mac.acceptance.") == true
-      || bundleID == "com.amirtlinov.notebook.acceptance"
+    enabled || bundleID.map { value in
+      ["com.amirtlinov.notebook.acceptance", "com.amirtlinov.notebook.mac.acceptance"]
+        .contains { value == $0 || value.hasPrefix($0 + ".") }
+    } == true
   }
 }
 
@@ -142,7 +172,7 @@ struct NotebookAcceptanceAccountService: NotebookAccountService {
     guard retained.allSatisfy({ $0 == credential }) else { throw NotebookAccountError.invalidDirectory }
     var directory = NotebookAccountDirectory(space: .init(id: config.workspaceID, name: "Acceptance"))
     for (id, platform, name) in [(pair.macActorID, NotebookAccountDirectory.Device.Platform.mac, "Acceptance Mac"),
-      (pair.iPadActorID, .iPad, "Acceptance Simulator")] {
+      (pair.iPadActorID, .iPad, "Acceptance iPad")] {
       let member = id == config.actorID ? device : .init(identity: .init(deviceID: id,
         workspaceID: config.workspaceID, displayName: name), platform: platform, activation: nil)
       try directory.enroll(member, retained: [credential], spaceName: "Acceptance")

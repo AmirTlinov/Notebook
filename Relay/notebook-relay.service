@@ -1,0 +1,32 @@
+[Unit]
+Description=Notebook opaque reverse relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=notebook-relay
+Group=notebook-relay
+ExecStart=/usr/bin/node /opt/notebook-relay/relay.mjs serve /var/lib/notebook-relay/routes.json
+ExecReload=/bin/kill -HUP $MAINPID
+Environment=NOTEBOOK_RELAY_CERT=/etc/notebook-relay/fullchain.pem
+Environment=NOTEBOOK_RELAY_KEY=/etc/notebook-relay/privkey.pem
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+StateDirectory=notebook-relay
+ReadWritePaths=/var/lib/notebook-relay
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=192M
+TasksMax=32
+LimitNOFILE=512
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

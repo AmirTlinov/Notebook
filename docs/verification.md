@@ -2372,6 +2372,277 @@ runner в успех. Реальный жест и полный GUI-241 оста
 [GUI-240 — владельцы, вертикальные слайсы и приёмка](https://linear.app/main-cluster/document/nauchnye-vizualizacii-notebook-vladelcy-vertikalnye-slajsy-i-priyomka-238d0fc05b6e).
 GUI-240 и GUI-241 остаются In Progress. Этот коммит фиксирует промежуточный
 механизм lifecycle/checkpoint и LC-пример, а не завершение первого слайса или эпика.
+## 19 сентября, 17:53 UTC — GUI-183: проверка общего исполнителя с Desktop
+
+Проверена установленная сборка ChatGPT/Codex Desktop `26.915.31945` и её
+официальный бинарник `0.155.0-alpha.9.2`, отдельно от bundled Notebook `0.155.0`.
+Живой Desktop PID `81695` использует собственный stdio App Server PID `81755`.
+Стандартного `~/.codex/app-server-control/app-server-control.sock` нет;
+read-only `app-server daemon version` завершился `No such file or directory`.
+Неизвестные loopback listeners не считались публичным API и не использовались.
+
+На том же бинарнике Desktop в пустом изолированном CODEX_HOME:
+**7/7 проверок общего Unix-WebSocket runtime PASS**. Два клиента получили один
+PID `31880`, присоединились к задаче `01a0baca-a3ee-71a3-a7f1-05d62b011f95`;
+отключение первого не остановило сервер, третий клиент после отключения обоих
+получил тот же threadID. Тестовый контекст записан через `thread/inject_items`,
+без запуска модели и копирования авторизации. Тестовый процесс завершён.
+Это не приёмка активного хода, approvals или самого Desktop UI.
+
+Read-only анализ поставленного Desktop выявил native
+`CODEX_APP_SERVER_USE_LOCAL_DAEMON=1`, но этот путь требует пустых config overrides.
+Обычный local launch всегда добавляет override `codex-app-tools.enabled`
+(как при true, так и при false). Проверка точного поставленного метода выбора
+транспорта с изолированными IO-заглушками: **3/3 PASS** — без overrides выбирается
+WebSocket, с фактическим override остаётся stdio даже при включённом флаге.
+Это проверка условия в коде, не запуск изменённого Desktop. Другой внутренний
+override `CODEX_APP_SERVER_WS_URL` существует, но его поддерживаемый публичный
+контракт не найден; он не внедрялся как production-зависимость Notebook.
+
+GUI-осмотр через CUA запрещён инструментом для `com.openai.codex`; запрет не
+обходился. Живой Desktop, аккаунт, пользовательские задачи, VPN и VPS не менялись.
+Свидетельства: `.build/gui-183/desktop-attach-check/{live-desktop,shared-probe,
+transport-selection,transport-predicate-check}.json`. Итог: общий runtime
+поддерживает несколько клиентов, но штатный совместный путь текущего Desktop
+**не подтверждён и не включается одним найденным флагом**. Не выдавать новую
+Notebook-реализацию daemon за решённое присоединение к активной Desktop-задаче.
+
+## 19 сентября — GUI-183: отдельная ветка, standalone Codex и публичный relay
+
+Ветка `codex/gui-183-codex-remote`, база `85d7d720`; рабочая production-пара не
+заменялась. Финальный app-source SHA-256:
+`f6bc0b83dd8a378d02eb62075eb705cab41ae8ed77ce90ff65f3c57d5e156d59`;
+relay.mjs SHA-256:
+`d97153d43e381bee89e300cb1831cb79cb55d3d5376f8b62c67fff318a1abdd7`. По прямому указанию Амира использован отдельный iPad Simulator
+`B1F70A0C-34FB-44E3-850A-BE1EE225D967`, bundle suffix `.gui183` и отдельный derived data.
+GUI-259 параллельно выпустил production wire 32/manifest 14; эта ветка содержит
+wire 30/manifest 9 своей базы. Перед будущей интеграцией нужно единое новое
+значение протокола и повторная проверка объединённого source, не слепой merge.
+
+Изменён прямой runtime-путь: один app-level Mac host официального App Server,
+per-workspace IPC/пersistence, локальное окно задач и удалённый iPad используют
+один журнал. Закрытие отображения не закрывает принятую задачу. Упакованы официальный
+Codex 0.155.0 и Node 24.21.0, проверены подписи производителей, архивные SHA и inventory.
+Desktop bundle/private Node больше не нужны. Добавлены официальный device-code,
+публичный account/limits/logout, account/revocation fencing и scoped project/create.
+Неподтверждённое подключение к уже работающему daemon Desktop не имитируется:
+foreign writer явно отклоняется, без force-takeover/клона.
+
+Дополнение 13:10 UTC: Амир подтвердил новый официальный device-code. Пустой
+профиль → account/limits → настоящая правка и Python-проверка → прежняя задача
+после перезапуска → logout только этого профиля: **PASS**. Квитанции
+`fresh-login-final.json` + `.auth.json`, task `01a0b9c9-f3d6-7031-8bd4-96c0193e75e8`,
+turn `01a0b9c9-f789-78e2-8940-0c528a53e28c`. Generic standalone receipt сохраняет
+список границ своего режима; sibling auth receipt отдельно подтверждает clean-login.
+Амир отменил требование агентского длительного прогона: проверит его сам.
+Отдельная физическая пара для AWDL/разных сетей разрешена, production не заменяется.
+
+Дополнение 13:57 UTC: исправлены классификация реального AWDL на обоих концах
+и bounded поиск при потере default IP path/живом старом TCP, возврат из сна.
+Новый source SHA-256 `3ce77d4daed0b1f42963796a400977182ae54d3731b292f09b3a28644852c889`.
+`ipad-routes-tests.xcresult`: **22 PASS**, `mac-private-config-tests.xcresult`:
+**6 PASS**, без пропусков/ошибок/runtime warnings. Loopback с ложным nearby hint
+теперь честно остаётся direct. Signed private Mac и physical iPad собраны;
+ключи iPad ограничены собственным bundle, CloudKit entitlements отсутствуют.
+Helpers Mac переподписаны с исходными sandbox entitlements, deep verify PASS.
+Первый physical compile отклонил macOS-only `homeDirectoryForCurrentUser`;
+заменён общим Foundation `NSHomeDirectory`, повтор обеих сборок прошёл.
+
+Подготовлен fresh checkpoint и одноразовое enrollment только отдельной пары
+`com.amirtlinov.notebook[.mac].acceptance.gui183`. Это не проверка автоматического
+CloudKit enrollment и не копия production. Ключи принимает прежний Keychain owner;
+bootstrap удаляется, существующее доверие не заменяется. Untethered DEBUG probe
+в допущенном private приложении включается только явным env, использует уже
+смонтированную модель/контроллер и не зависит от USB/XCTest при уходе из LAN.
+Saved start запрещает автоматический повтор неизвестного исхода. Signed iPad
+установлен отдельно; физический WAN/AWDL PASS пока не заявляется.
+
+Дополнение 14:34 UTC: новый source SHA-256
+`a8ff3577439cf294eaffebb76584d4d8e00ebc0be6000f84f4c7f0dfac6ec0c3`.
+Исправлены выбор пространства по Bonjour TXT при нескольких retained моделях
+одного Mac и retirement старого соединения. Первый усиленный regression обнаружил
+10 ложных ошибок Mac: iPad закрывал старый socket раньше прихода первого
+transient нового канала. Теперь старый socket закрывает Mac, уже приняв выбор;
+поздний callback не меняет статус/ретраи выбранного поколения. Повтор
+`ipad-handover2-tests.xcresult`: **23 PASS**, 0 FAIL/SKIP/runtime warnings;
+включает десять реальных TLS handover с одним command ID и без ложных disconnect.
+Loopback не выдаётся за AWDL. DEBUG local-proof режим использует тот же
+контроллер/агентский маршрут и позволяет отдельно завершить код→проверка→материал
+перед ручной сменой сети; повтор сохранённого старта запрещён.
+
+Дополнение 14:56 UTC — **физический LAN code→check→material PASS**.
+Private Mac `2eac2d5`/source `a8ff3577…`, private iPad `0d07fbc`/source
+`372ad971669244aa2fb0f15abff2cb044a0e43ce738309d6f8da39d79c4b691c`.
+Разница target inputs — только DEBUG iPad acceptance driver: он ждёт receipt
+своего нового create, а не восстановленный thread ID, и загруженный native access.
+Две ранние попытки остановились на этих setup-ожиданиях **до send/агентского хода**;
+их FAILED receipts сохранены, явные новые попытки не переисполняли неизвестный исход.
+
+`physical-local-proof3.json` получен из контейнера физического iPad, phase
+`LAN-PASS`, route `напрямую`. Native task
+`01a0ba29-e29f-7451-953c-965573bd0e20`, turn
+`01a0ba29-ee22-7b62-966f-f99ebba3755b`, command
+`64AB2D0F-245E-4EB0-8ACC-03870A2CCB41`.
+Настоящий `mac/Codex/local-proof.txt` содержит ровно `GUI-183\n`; официальный
+runtime выполнил Python assert с `GUI-183-CHECK-PASSED`. Два exact Notebook MCP
+approval получили allowOnce; повтор каждого и replay send вернули прежний исход.
+Документ `8D27B7BD-1B6E-4FB1-84B1-3FB25BC41EFC` создан через тот же private IPC и
+получен моделью iPad. Это receipt получения, не отдельное утверждение о пикселях
+открытого документа на iPad.
+
+Прямая CUA-проверка **этой же установленной private Mac app**: в списке появилась
+задача iPad; выбран точный task ID, видны живые команды. Окно задач закрыто при
+выполняющемся ходе (14:55:32), iPad подтвердил завершение (14:55:37); Cmd1 вернул
+тот же ID, scroll до конца показал настоящий вывод проверки и итог агента.
+Скриншот читаем, результат не подменён fixture. Первоначальный сбой CUA
+ScreenCaptureKit -3811 устранён сбросом сеанса захвата; приложения не перезапускались.
+Системный Network report показал en0, не AWDL. 30-минутный прогон исключён по решению Амира.
+
+Дополнение 15:24 UTC — физический WAN **не подтверждён**. В попытке
+`d004cc62-deec-4e45-b1cd-f58c3d2613e2` iPad создал task
+`01a0ba32-2607-7333-a75b-fd5b4bd23bea`, send
+`FC12712D-C611-4C34-83A2-1C394C426DBA` принят как turn
+`01a0ba32-3933-7391-af14-2479cc299ab1`. После подключения iPad к hotspot iPhone
+ещё работал интерфейс en11; это не AWDL и не интернет-приёмка. Амир отключил
+USB, отнёс iPad примерно на 15 м и сообщил «Нет соединения». Последний
+подтверждённый канал завершился в 15:08:02; relay tunnel/byte counters не выросли.
+Оба MCP allowOnce присутствуют в журнале Mac, но сами по себе не доказывают
+доставку через WAN. Исходный send не повторялся; pending permission больше
+не утверждается по старому снимку UI. Актуальный receipt iPad пока недоступен
+из-за отсутствующего CoreDevice tunnel.
+
+Амир отдельно проверил `/healthz` на смартфоне: сайт через мобильную сеть
+не открывается. С Mac HTTPS даёт 200 и TLS verify=0; публичный DNS указывает
+A=103.74.92.43, AAAA отсутствует; сертификат Let's Encrypt действителен,
+сервис слушает публичный :443. Mac uplink продолжает получать host tickets
+и ждать клиента; моментный пустой lsof между попытками не означает его остановку.
+Точная причина мобильной недоступности не установлена. Запрошена проверка с VPN
+именно на iPad, сохраняя hotspot. Сеть/VPN Mac, production-пара и ключи не менялись.
+WAN/AWDL переходы остаются открытыми, а не засчитываются по Simulator PASS.
+
+Дополнение 15:38 UTC — по поручению Амира relay перенесён на **92.255.79.47**.
+Исправлена A-запись корня: сначала новый адрес имел только `www`; теперь все
+четыре authoritative NS и публичный Google DNS возвращают новый IP для корня.
+На новом Ubuntu host системный Node 22.22.1 выполнил четыре relay tests: PASS;
+`relay.mjs` сохранил SHA `d97153d4…`. Из Keychain Mac перенесены только хеши
+действующих routing capabilities, без смены route ID/capabilities и без ключей
+пары. Старый VPS недоступен по SSH; его остановка **не подтверждена**.
+Новый HTTPS `/healthz`: 200, peer=92.255.79.47, TLS verify=0. Сертификат Let's Encrypt
+до 18 декабря 2026, certbot.timer включён. Deploy hook теперь допускает первичный
+выпуск до старта сервиса; проверены установка с inactive service и reload
+работающего сервиса без смены PID. Прежние host/client capabilities дают tickets 200;
+Mac сам возобновил host admission в 15:36:09 без перезапуска приложения, App Server,
+сети или VPN. Это проверка нового сервера и Mac uplink, ещё не физический iPad WAN PASS.
+`new-relay-certificate-renewal2.log`: настоящий certbot staging renewal с deploy hook —
+PASS; production-сертификат и PID relay сохранены. Первая dry-run попытка явно
+прервана только на штатной случайной задержке 384 s, повтор запускался с
+`--no-random-sleep-on-renew`, а не выдавался за завершение первой попытки.
+После возврата CoreDevice в 15:39 получен неизменённый iPad receipt
+`physical-wan-progress-returned.json`: исходная попытка закончилась
+`FAILED: Physical pair condition timed out` в 15:09:26, route=disconnected.
+Этот тайм-аут недоступного старого relay не переименовывается в PASS после миграции.
+
+Дополнение 16:36 UTC — Амир подтвердил отключение старого VPS в 15:54.
+Повторный `/healthz` нового сервера: 200, peer=92.255.79.47, TLS verify=0.
+При возврате к private Mac обнаружен feedback документа: readiness увеличивал
+наблюдаемый `@State revision`, а landing публиковал nil поверх nil. Перенесено
+прицельное исправление GUI-240 `7469deaa` (не его остальные изменения reader):
+ненаблюдаемый navigation sequence и отсутствие пустых публикаций в модели,
+вместе с regression десяти повторных landing без invalidation.
+
+Первый неполный перенос только sequence прошёл 14 тестов, но живой запуск
+по-прежнему потреблял около 100% CPU; он **не принят**. Полный перенос:
+app-source SHA-256 `20ac5463804008f17274456d48b82a5ac64cb863041f054d5aacb532c28b2c39`,
+`mac-feedback2-tests.xcresult`: **15 PASS**, 0 FAIL/SKIP/runtime warnings;
+inventory до/после совпал, подпись private Mac deep/strict PASS.
+Только private Mac штатно остановлен/перезапущен с прежними контейнером и ключами.
+`private-mac-feedback2-cpu.json`: шесть коротких CPU-снимков 6.9, 4.7, 0, 2.5, 3, 0%;
+двухсекундный system sample — main thread 1725/1728 samples в ожидании Mach port,
+вместо SwiftUI update loop. Это проверка конкретного feedback, не полный perf/soak.
+`private-feedback2-ipc.json`: чтение за 14.6 ms, прежний workspace и документ
+`8D27B7BD-1B6E-4FB1-84B1-3FB25BC41EFC`, `GUI-183-CHECK-PASSED` сохранён.
+Mac получил новый relay host ticket HTTP 200 в 16:35:47. Старый agent send не
+повторялся. Захват CUA после перезапуска продолжает возвращать ScreenCaptureKit
+-3811: новый визуальный PASS не заявляется. Физический iPad занят независимой
+GUI-266 проверкой; его private bundle не изменён. WAN/AWDL остаются открытыми.
+
+Фактические свидетельства находятся в `.build/gui-183/` этого worktree:
+
+- `swift-final6.log`: 4 Core remote-control и 22 Codex/account/connection/scope — PASS.
+- `mac-final-build10.log`: clean helper build-for-testing, script sandbox **включён**,
+  ad-hoc изолированный Mac bundle; `codesign --verify --deep --strict` PASS.
+  Исходный incremental TeX/image `ditto` не мог перезаписать sandbox outputs;
+  очищался только собственный generated `NotebookMarkupService.xpc`, не runtime
+  источники, production или настройки sandbox.
+- `standalone-receipt.json`: настоящий bundled Codex записал `proof.txt` и выполнил
+  Python assert с `GUI-183-CHECK-PASSED`. Task `01a0b978-ebf7-7192-bedf-17548463f89e`,
+  turn `01a0b978-f010-73a3-885f-167eea29297d`: повтор input ID вернул прежний turn,
+  второй writer отклонён, detach не остановил задачу, после перезапуска прочитана
+  та же история с одним input. Это существующий официальный аккаунт, не clean-login.
+- `device-code-project-proof.log`: пустой отдельный CODEX_HOME — native project
+  create/read/idempotency, start/dedup/cancel входа PASS. С согласия Амира начат
+  настоящий интерактивный вход в другой пустой профиль; подтверждения за 10 минут
+  не было, попытка отменена. Эта первая попытка отменена; новая завершена в 13:10 UTC (см. выше).
+- `ipad-final-tests.xcresult`: 39 PASS, один opt-in relay SKIP без credentials.
+  Тот же relay test отдельно выполнен ниже, а не засчитан по пропуску.
+  Десять настоящих TLS handover сохранили command ID и одно durable исполнение;
+  late stop старого канала не отключил новый. Stop обошёл зависшее чтение файла.
+  Simulator UI account open/code/cancel/dismiss прошёл; снимок формы просмотрен.
+- `ipad-relay-final.xcresult`: 1 PASS через настоящий публичный `https://catocut.com`.
+  Native Network.framework HTTP CONNECT + reverse uplink + прежний inner PSK/TLS.
+  8 MiB доставлены один раз; отзыв закрыл поток. Десять control RTT под bulk:
+  p50 **283.37 ms**, p95 **345.69 ms** (эмпирическая верхняя квантиль десяти samples).
+  RSS с шагом 100 ms: **247.52 → 282.37 MiB**, прирост **34.86 MiB**; включает
+  payload и тестовые stores. Без bulk отдельный carrier proof: p50 около 297 ms,
+  p95 около 303 ms. Это разные короткие прогоны, не контролируемый causal benchmark.
+- `relay-last-tests.log`: 4 Node PASS — scoped opaque relay, неправильный ключ,
+  одноразовые/истёкшие tickets, отзыв/rotation и bounds. Сервис развёрнут на
+  предоставленном сервере, HTTPS healthz готов, systemd/renew hook настроены.
+  Тестовый маршрут отозван после проверки; production devices не подключались.
+
+`mac-final2-tests.xcresult`: **25 PASS**, 0 FAIL/SKIP/runtime warnings. Новый
+opt-in сценарий использовал настоящий Mac presentation → host → durable journal:
+агент изменил файл, выполнил Python assert и создал документ в изолированном
+Notebook через публичный MCP. Только exact `notebook_execute`/`notebook_context`
+approval этого private socket получил allowOnce; разрешения shell/network/global
+не расширялись, ответ с тем же ID повторно не исполнялся. Task
+`01a0b9b8-3149-7472-aa4d-f3e40eb35e53`, turn
+`01a0b9b8-544e-74b1-8c5d-7e0ab1306275`, документ
+`8BC8A293-EFF4-4F1B-89FF-4332859FE2F0`. Подпись runtime проверяется вне MainActor;
+runtime warning первого прогона исчез после исправления этого пути.
+
+Offscreen `NSView.cacheDisplay` снимок SwiftUI оказался неполным и не принят
+как визуальное доказательство окна. Прямая CUA-проверка DEBUG isolated fixture:
+Cmd1 открыл читаемое окно; редактор, проект и кнопки не перекрываются, сообщение
+о запрете запуска не скрыто. AX-ввод точного черновика → закрыть окно → Cmd1
+сохранил строку. CUA keyboard/paste ненадёжны в текущем окружении (paste вернул
+ошибку без изменения текста); использован проверенный AX setValue, сообщение
+не отправлялось. Это проверка компоновки/черновика, не live task UI acceptance.
+После CmdQ инструмент CUA повторно разрешил приложение при getAXState без fixture
+аргумента; показан activation-target-mismatch. После повторного закрытия обнаружено,
+что production-процесс `/Users/amir/Applications/Notebook.app` также отсутствует.
+Владелец GUI-259 подтвердил, что сам его не закрывал, и взял проверку/открытие
+production по полному пути. Установленные bundle/контейнеры не заменялись.
+Это побочный lifecycle-инцидент UI-проверки, не успешная проверка production quit;
+не следует скрывать его за PASS изолированных тестов.
+В 13:05 UTC владелец GUI-259 подтвердил штатное открытие установленного приложения
+по полному пути (PID 50089), MCP ready/cursor 20056 и прежние workspace/board;
+получен presence физического iPad. Bundle/данные при восстановлении не менялись,
+инцидент недоступности IPC закрыт.
+
+`ipad-final-build2.log` и `ipad-final2-tests.xcresult`: финальный затронутый source
+скомпилирован, **39 PASS**, 0 FAIL/runtime warnings, 1 opt-in relay SKIP без env.
+Предыдущий отдельный public relay PASS остаётся отдельным измерением, не повтором
+на этом окончательном source. После него менялись только локальное выключение
+маршрута и cleanup неудавшегося loopback соединения, не framing или byte budgets.
+
+Границы: оба клиента WAN-теста работали на одном Mac через публичный сервер —
+это **не две физические сети**. Метка nearby на loopback в handover-test не
+доказывает AWDL; аппаратный P2P без AP не проверялся. Не выполнены production
+installation acceptance и системные CPU/GPU/frame измерения. Длительную
+совместную работу Амир проверяет сам; это не оставшееся условие агентского прогона. Голос не получал отдельной WAN seamlessness-приёмки. Общая GUI-183
+не считается полностью принятой по этим scoped результатам.
+
 ## 19 сентября — GUI-200/255/257: дефекты 115 воспроизведены, исправление 116 проверяется
 
 Снимки и жалоба Амира после установки 115 опровергают принятие прежнего среза
@@ -16100,3 +16371,182 @@ pageHeader и boardContentRevision data/basis/coverage совпали с пос�
 lock-screen overlay: unlocked postinstall gesture и аппаратный Pencil не
 заявлены. Живое содержание для проверки не изменялось. Xcode/device окно
 освобождено; пользовательская приёмка GUI-266 остаётся открытой.
+## GUI-267 — единый допуск и чтение аккаунта, 19 сентября 2026
+
+В `codex/gui-183-codex-remote` чат, run и voice теперь используют один
+синхронный cut проверки доверия и постановки durable admission в writer.
+Отзыв регистрирует собственный FIFO fence сразу; повторное сопряжение не
+легализует прежний ожидающий запрос. Host fencing учитывает смену аккаунта.
+Опрос уже записанной квитанции больше не читает account, параллельные account
+reads совместно ждут один native запрос и не держат mutation gate.
+
+Проверено без Xcode/device runner: сборка NotebookCodex; компиляция Mac-владельцев
+и typecheck затронутых XCTest; 3 CodexAccountTests PASS. Изолированный probe
+на исходных Sidecar/Runs/Voice: revoke во время account read дал 0 запусков и
+отсутствие принятой записи для run и voice; revoke после admission сохранил
+accepted и ровно 1 запуск. Настоящий подписанный Codex 0.155.0 в пустом временном
+CODEX_HOME: 8 одновременных account/read — 8 успешных ответов, 0 busy. Модель и
+пользовательская авторизация не использовались. Доказательства:
+`.build/gui-183/audit/slice1-*`. Полный XCTest runner и физическая пара этим
+срезом не запускались; слот у GUI240/GUI266. Очередь uncertain остаётся областью
+следующего GUI-268, не объявлена исправленной этими проверками.
+
+## GUI-268 — неизвестный исход не удерживает управление, 19 сентября 2026
+
+Ветка `codex/gui-183-codex-remote`. Reconciliation вынесен из слота исполнения;
+Stop/approval имеют зарезервированную полосу. Явный RPC error сохраняет тип
+отказа и безопасный код, а не превращается в неизвестное принятие.
+Native ID создания сохраняется перед настройкой. Повтор control использует
+исходный input. «Завершить ожидание» сохраняет отдельный исход `unconfirmed`,
+не останавливает процесс и не разрешает повтор, но освобождает admission quota.
+Протокол пары 31 требует совместного обновления, SQLite-данные не пересоздаются.
+
+Прицельный сигнал: 17 NotebookChatStoreTests + 1 RPC rejection test PASS;
+Mac owner sources и три затронутых XCTest файла компилируются. Source-level
+probe настоящего Sidecar: uncertain settings остаётся uncertain, новая read-only
+и Stop accepted; по одному нативному вызову. Повтор Stop через настоящий Mac
+presentation больше не даёт collision. Тестовый creation callback сохраняет ID
+до ошибки setup. Установка и физический жест пока НЕ подтверждены: общий
+Xcode/device слот занят GUI-266; последующая проверка только отдельной Remote Test пары.
+Ни login, ни полный suite, ни production-пара этим изменением не запускались.
+
+## GUI-269 — поколение подключения и общий порядок чтения, 19 сентября 2026
+
+Удалены зависшие attaching entries: отключение отменяет и освобождает попытки,
+а cleanup старой попытки не удаляет новую. Нативная проекция имеет явный generation;
+revision сравнивается внутри него. Sidecar доставляет unavailable текущей подписке.
+Mac теперь проверяет subscription ID, использует тот же merge native windows
+и read-window/cursor rules, что iPad; refresh сохраняет глубину раскрытого каталога.
+Оба клиента дочитывают пропуск после возврата, не меняя native thread и черновик.
+Протокол пары 32; старый клиент явно несовместим, ключи/хранилища не заменяются.
+
+Проверено: 3 общих projection tests PASS, 18 focused state/connection tests PASS.
+Source-level probe настоящего AppServer с изолированным JSONL peer:
+disconnect во время resume → следующий attach ready=true, retainedTasks=0.
+Настоящий Mac presentation source: revision 100 → новый generation/1, busy=false;
+порядок [m1,m2,m3]; две страницы каталога остаются после refresh; Stop collision нет.
+Mac owner module компилируется. Изменения тестовых fixtures передают явный generation,
+не создают произвольное новое поколение при каждом snapshot.
+Физический возврат/жест и installed pair ещё не заявляются: ожидание общего Xcode/device слота.
+
+
+### Физический прицельный сигнал GUI-267–269, 19 сентября 2026, 19:22 UTC
+
+Отдельный Notebook Remote Test, без изменения production-пары: Mac 3/3,
+физический iPad 4/4 native XCTest PASS. Проверены admission/revoke для run/voice,
+uncertain → новый access/Stop, создание с ошибкой дополнительной настройки,
+зарезервированный Stop при потерянном file reply, merge live/history и раскрытый
+каталог, поколение подписки, стабильный адрес permission/Stop после повторного
+нажатия/смены задачи/restart. Квитанции: `.build/gui-183/audit/slice23-{mac,ipad}.xcresult`.
+Это native controller/owner tests на установленном тестовом приложении,
+не ручной жест и не повторная WAN-приёмка. Simulator не использован.
+
+## GUI-270 — вывод не блокирует управление; все разрешения доступны
+
+Один JSONL reader больше не ждёт SQLite для вывода command/exec. У каждого
+из максимум четырёх процессов один mailbox на 512 KiB, включая порцию в записи.
+Переполнение/ошибка сохранения запрашивает Stop ровно один раз и явно сообщает
+неполный вывод; принятый префикс дренируется, команда не повторяется. Native end
+сохраняется после префикса; явное закрытие runtime ждёт drain. Это ограничение
+памяти mailbox, не измерение полного RSS приложения.
+
+Snapshot передаёт все native question IDs и один полный вопрос. Общий Mac/iPad
+picker дочитывает остальные по generation + native ID; обрезанного согласия нет.
+Generation входит в адрес ответа, повтор той же квитанции не исполняет решение
+снова. Протокол пары 33 требует совместного обновления.
+
+Прицельные 9 Core/Codex tests PASS. JSONL control при удержанном writer: 0.000136 s.
+Настоящий подписанный Codex 0.155.0, пустой временный CODEX_HOME, shell без модели:
+Resize + Stop 0.00105 s при writer delay 2 s; после close сохранён terminal event
+и 232 байта принятого вывода. Source-level настоящий Sidecar: четыре вопроса
+по 60 KB раньше давали envelope 241356 bytes (invalid); теперь первая страница
+60741 bytes, все четыре полных вопроса прочитаны, четыре решения при восьми
+доставках. Stale generation отвергается. Артефакты: `.build/gui-183/audit/`:
+`slice4-tests.log`, `native-output-probe.swift`, `approval-probe.swift`.
+Физический picker/жест после этой правки ещё не проверен; ожидается один общий
+Xcode/device слот. Ни login, ни длительная приёмка, ни полный suite не повторялись.
+
+
+## GUI-271 — независимое встроенное подключение и явная внешняя настройка
+
+Startup больше не вызывает глобальную регистрацию MCP. Встроенный native
+start/resume получает workspace endpoint и сохраняет эффективные tool filters
+Codex; disabled notebook даёт точное сообщение, не блокируя каталог/аккаунт.
+Внешняя настройка доступна отдельным действием в меню Codex. Старый `mcp add`,
+стирающий фильтры/таймауты, заменён адресным `config/batchWrite` с expectedVersion
+и readback; второго writer или фоновой repair-службы нет.
+
+Прицельный policy test PASS; 8 существующих scope tests PASS (один отдельный
+старый opt-in тест не запускался). Настоящий подписанный Codex 0.155.0, временный
+CODEX_HOME, изолированный store + настоящий NotebookScriptCoordinator/IPC/MCP:
+встроенный notebook_context/observe выполнен без внешней регистрации и без
+создания config.toml; явный first setup создал адрес; repair сохранил
+`enabled_tools`, `disabled_tools`, timeout 35 s. И внешний, и встроенный runtime
+после repair выдали только notebook_context, без запрещённого notebook_execute;
+оба реально прочитали тот же workspaceID/cursor. При enabled=false каталог
+открылся, подключение задачи отказало без изменения config. Модель, login и
+пользовательские токены не использовались. Доказательство:
+`.build/gui-183/audit/policy-probe.{swift,log}`. Физический UI ожидает общего слота.
+
+GUI-272 не реализуется: 19 сентября Амир явно выбрал оставить диктовку как есть.
+Это не утверждение о публичности её нынешнего private HTTP/JWT-пути; задача
+оставлена в Backlog. Длительную совместную работу Амир проверяет самостоятельно.
+
+
+### Итоговая проверка GUI-270–271, 19 сентября 2026, 19:53 UTC
+
+Private Notebook Remote Test Mac+iPad собраны и установлены тестовым runner,
+production-пара не заменялась. Mac native `testLargeRequestsStayAddressableAndEachDecisionExecutesOnce`
+— 1/1 PASS; физический iPad UI
+`testEveryLargeApprovalIsReachableAndDecidesOnlyItsNativeQuestion` — 1/1 PASS.
+Реальным UI tap выбран четвёртый вопрос из четырёх (по 60 KB), прочитан полный
+его текст/command, затем адресно отклонены все четыре; итоговый счётчик ровно4.
+Скриншот просмотрен, picker и кнопки не перекрыты. Quoting большого payload не
+обрезает вопрос; детали запроса также идут по зарезервированной control-полосе.
+Отдельный Core test проверил этот приоритет и generation-bound control ID.
+Квитанции: `.build/gui-183/audit/slice45-mac.xcresult`,
+`slice45-r2-ipad.xcresult`, `physical-approvals/` и `approval-control-test.log`.
+В обоих итоговых xcresult нет skips, failures и runtime warnings.
+
+Первый UI запуск не дошёл до сценария: acceptance bundle требовал manifest
+раньше явного DEBUG fixture. Порядок запуска теперь как на Mac: только явно
+запрошенный disposable fixture имеет собственный store; обычный private launch
+по-прежнему требует manifest. Это исправлено и проверено повторным физическим
+запуском; первый failure не скрыт (`slice45-ipad.xcresult`). Simulator не использовался.
+
+Новое окно внешней настройки Mac скомпилировано, backend setup/repair реально
+проверен выше. Прямой UI click этой кнопки не подтверждён: Computer Use дважды
+вернул ScreenCaptureKit -3811 до получения UI. Это оставлено отдельной границей,
+а не записано как PASS. Повторного login, WAN-теста и длительного прогона не было.
+GUI-272/диктовка не менялась; GUI-183 не объявляется полной release-приёмкой.
+
+## 19 сентября, 20:52 UTC — GUI-183: слияние в основную ветку
+
+По прямой просьбе Амира ветка `codex/gui-183-codex-remote` (`fdfb6eb7`)
+объединена с основной `codex/notebook-ipad-reliability` (`e9716207`, исходники130).
+Сохранены актуальные редактор/документы, typesetter и account-owned bootstrap
+основной ветки. Старые tex/image helpers, отдельное окно устройств и прямой
+`prepared-trust.json` bootstrap не восстановлены. Физический `prepare-device`
+использует тот же account credential и явный checkout-scoped Mac bundle ID.
+Вместо удалённого общего меню чата iPad — прямой вход в аккаунт Codex в заголовке.
+Объединённый wire-контракт — **37**, manifest содержания остаётся **18**;
+прежние36/33 не объявлены совместимыми, обновляться должна целиком пара.
+
+На неизменных объединённых исполняемых исходниках:
+- Swift **7/7 PASS**: CodexReadProjectionTests и NotebookRemoteControlTests.
+- Mac **3/3 PASS**: изоляция checkout identity, portable physical root и единый
+  acceptance account credential.
+- Физический iPad **1/1 UI PASS**: выбор четвёртого из четырёх больших разрешений
+  и адресная обработка всех четырёх. Скриншот `full-fourth-native-approval`
+  просмотрен: полный запрос4/команда/кнопки читаемы, редактор основной ветки сохранён.
+- Реальный `notebook-acceptance prepare-device` на свежем временном каталоге:
+  одинаковый account credential, portable iPad root, отдельный Mac bundle;
+  прежнего trust bootstrap нет. Каталог удалён после проверки.
+
+Свидетельства: `.build/gui183-merge/native-20260919/verification.json`,
+`core.log`, `portable-bootstrap.json` и `approval-render/` в `.build/gui183-merge`.
+Оба native target собраны; native test bundles отдельны от рабочей пары130.
+Это проверка слияния, **не новый выпуск/установка production**, не WAN и не полная
+приёмка. Прямой UI-клик внешнего MCP setup на Mac по-прежнему не подтверждён
+(GUI-271 In Review); GUI-272/диктовка оставлена как есть по решению Амира.
+Рабочая пара130, её содержимое/ключи, профиль Codex и VPS этим слиянием не менялись.

@@ -4,13 +4,16 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Compact retained eraser sweeps have one interpretation on both devices.
+  // Unified Codex generations/control receipts and the current content renderer.
   // Both applications update together; identities and queued history stay intact.
-  public static let protocolVersion = 36
+  public static let protocolVersion = 37
   public static let maximumFrameBytes = 256 * 1_024
-  public static let maximumChunkBytes = 180 * 1_024
+  public static let maximumChunkBytes = 32 * 1_024
+  public static let maximumQueuedBytes = 1_024 * 1_024
+  public static let maximumUnacknowledgedBytes = 512 * 1_024
+  public static let reservedControlBytes = 256 * 1_024
   public static let maximumUnacknowledgedFrames = 16
-  public static let maximumPendingChanges = 16
+  public static let maximumPendingChanges = 2
   public static let maximumBlobBytes: Int64 = 256 * 1_024 * 1_024
   public static let maximumManifestBytes: Int64 = 64 * 1_024 * 1_024
   public static let maximumConnections = 8
@@ -40,6 +43,7 @@ public enum NotebookTransportTransient: Codable, Equatable, Sendable {
   case inputActivity(NotebookInputActivity)
   case codex(NotebookChatEnvelope)
   case presentation(NotebookPresentationMessage)
+  case relay(NotebookRelayAdvertisement)
 
   public func isValid(from identity: NotebookTransportIdentity) -> Bool {
     switch self {
@@ -48,15 +52,22 @@ public enum NotebookTransportTransient: Codable, Equatable, Sendable {
     case .inputActivity(let value): value.isValid && value.deviceID == identity.deviceID
     case .codex(let value): value.isValid(from: identity.deviceID)
     case .presentation(let value): value.isValid
+    case .relay(let value): value.route?.isValid ?? true
     }
   }
 
   public var priority: Int {
     switch self {
+    case .relay: 2
     case .inputActivity: 0
     case .presence: 1
     case .codex(let envelope):
-      if case .event = envelope.body { 4 } else { 3 }
+      switch envelope.body {
+      case .request(let query) where query.isInteractiveControl: -1
+      case .reply(.job(let job)) where job.input.action.isInteractiveControl: -1
+      case .event, .unavailable: 4
+      default: 3
+      }
     case .presentation: 5
     case .selection: 6
     }
@@ -178,19 +189,22 @@ public enum NotebookTransportFraming {
 public struct NotebookTransportSendWindow: Sendable {
   public private(set) var lastSequence: UInt64 = 0
   public private(set) var unacknowledged: Set<UInt64> = []
+  private var bytes: [UInt64: Int] = [:]
+  public private(set) var unacknowledgedBytes = 0
   public init() {}
   public var hasCapacity: Bool { unacknowledged.count < NotebookTransportLimits.maximumUnacknowledgedFrames }
-  public mutating func reserve() throws -> UInt64 {
-    guard hasCapacity else { throw NotebookTransportError.backpressure }
+  public mutating func reserve(bytes count: Int = 0) throws -> UInt64 {
+    guard count >= 0, count <= NotebookTransportLimits.maximumUnacknowledgedBytes - unacknowledgedBytes, hasCapacity else { throw NotebookTransportError.backpressure }
     guard lastSequence < UInt64.max else { throw NotebookTransportError.invalidSequence }
-    lastSequence += 1; unacknowledged.insert(lastSequence); return lastSequence
+    lastSequence += 1; unacknowledged.insert(lastSequence)
+    bytes[lastSequence] = count; unacknowledgedBytes += count; return lastSequence
   }
   public mutating func acknowledge(_ sequences: [UInt64]) throws {
     guard !sequences.isEmpty, sequences.count <= NotebookTransportLimits.maximumUnacknowledgedFrames,
       Set(sequences).count == sequences.count,
       sequences.allSatisfy({ $0 > 0 && $0 <= lastSequence })
     else { throw NotebookTransportError.invalidAcknowledgement }
-    for sequence in sequences { unacknowledged.remove(sequence) }
+    for sequence in sequences { unacknowledged.remove(sequence); unacknowledgedBytes -= bytes.removeValue(forKey: sequence) ?? 0 }
   }
 }
 
@@ -240,32 +254,49 @@ public enum NotebookTransportAuthentication {
 /// two outstanding blob-control/data slots. Bulk never consumes the last two
 /// transfer credits reserved for contact and camera. Credit is not a SQL ACK.
 public struct NotebookTransportOutgoing: Sendable {
-  private var controls: [NotebookTransportMessage] = []
+  private struct Pending: Sendable {
+    let message: NotebookTransportMessage
+    let bytes: Int
+    init(_ message: NotebookTransportMessage) throws {
+      self.message = message
+      // Include the largest sequence and framing overhead, not just blob bytes.
+      bytes = try JSONEncoder().encode(NotebookTransportPacket(sequence: UInt64.max, message: message)).count + 4
+      guard bytes <= NotebookTransportLimits.maximumFrameBytes else { throw NotebookTransportError.frameTooLarge }
+    }
+  }
+  private var controls: [Pending] = []
   private var credits: Set<UInt64> = []
-  private var transients: [Int: NotebookTransportTransient] = [:]
-  private var offers: [NotebookTransportMessage] = []
-  private var blobs: [NotebookTransportMessage] = []
-  private var requests: [NotebookTransportMessage] = []
+  private var transients: [Int: Pending] = [:]
+  private var offers: [Pending] = []
+  private var blobs: [Pending] = []
+  private var requests: [Pending] = []
   public private(set) var window = NotebookTransportSendWindow()
+  public private(set) var pendingBytes = 0
   public init() {}
   public var pendingCount: Int { controls.count + (credits.isEmpty ? 0 : 1) + transients.count + offers.count + blobs.count + requests.count }
 
   public mutating func enqueue(_ message: NotebookTransportMessage) throws {
-    switch message {
-    case .credit(let values):
+    if case .credit(let values) = message {
       guard !values.isEmpty, values.count <= 16, values.allSatisfy({ $0 > 0 }) else { throw NotebookTransportError.invalidAcknowledgement }
-      credits.formUnion(values)
-      guard credits.count <= 16 else { throw NotebookTransportError.backpressure }
-    case .transient(let transient): transients[transient.priority] = transient
-    case .offer:
-      guard offers.count < 16 else { throw NotebookTransportError.backpressure }; offers.append(message)
-    case .blob:
-      guard blobs.count < 2 else { throw NotebookTransportError.backpressure }; blobs.append(message)
-    case .requestBlob:
-      guard requests.count < 2 else { throw NotebookTransportError.backpressure }; requests.append(message)
-    default:
-      guard message.isControl, controls.count < 20 else { throw NotebookTransportError.backpressure }; controls.append(message)
+      let combined = credits.union(values)
+      guard combined.count <= 16 else { throw NotebookTransportError.backpressure }
+      credits = combined; return
     }
+    let value = try Pending(message)
+    let replaced: Int
+    if case .transient(let transient) = message { replaced = transients[transient.priority]?.bytes ?? 0 } else { replaced = 0 }
+    let control: Bool
+    switch message { case .offer, .blob, .requestBlob: control = false; default: control = true }
+    let limit = NotebookTransportLimits.maximumQueuedBytes - (control ? 0 : NotebookTransportLimits.reservedControlBytes)
+    guard pendingBytes - replaced + value.bytes <= limit else { throw NotebookTransportError.backpressure }
+    switch message {
+    case .transient(let transient): transients[transient.priority] = value
+    case .offer: guard offers.count < 16 else { throw NotebookTransportError.backpressure }; offers.append(value)
+    case .blob: guard blobs.count < 2 else { throw NotebookTransportError.backpressure }; blobs.append(value)
+    case .requestBlob: guard requests.count < 2 else { throw NotebookTransportError.backpressure }; requests.append(value)
+    default: guard message.isControl, controls.count < 20 else { throw NotebookTransportError.backpressure }; controls.append(value)
+    }
+    pendingBytes += value.bytes - replaced
   }
 
   public mutating func acknowledge(_ sequences: [UInt64]) throws { try window.acknowledge(sequences) }
@@ -275,18 +306,22 @@ public struct NotebookTransportOutgoing: Sendable {
       let values = credits.sorted(); credits.removeAll(keepingCapacity: true)
       return NotebookTransportPacket(sequence: 0, message: .credit(values))
     }
-    if !controls.isEmpty { return NotebookTransportPacket(sequence: 0, message: controls.removeFirst()) }
+    if !controls.isEmpty {
+      let value = controls.removeFirst(); pendingBytes -= value.bytes
+      return NotebookTransportPacket(sequence: 0, message: value.message)
+    }
     guard window.hasCapacity else { return nil }
-    if let priority = transients.keys.min(), let transient = transients.removeValue(forKey: priority) {
-      return NotebookTransportPacket(sequence: try window.reserve(), message: .transient(transient))
+    if let priority = transients.keys.min(), let value = transients[priority] {
+      guard value.bytes <= NotebookTransportLimits.maximumUnacknowledgedBytes - window.unacknowledgedBytes else { return nil }
+      transients.removeValue(forKey: priority); pendingBytes -= value.bytes
+      return NotebookTransportPacket(sequence: try window.reserve(bytes: value.bytes), message: value.message)
     }
     guard window.unacknowledged.count < NotebookTransportLimits.maximumUnacknowledgedFrames - 2 else { return nil }
-    let message: NotebookTransportMessage
-    if !requests.isEmpty { message = requests.removeFirst() }
-    else if !blobs.isEmpty { message = blobs.removeFirst() }
-    else if !offers.isEmpty { message = offers.removeFirst() }
-    else { return nil }
-    return NotebookTransportPacket(sequence: try window.reserve(), message: message)
+    guard let value = requests.first ?? blobs.first ?? offers.first else { return nil }
+    guard value.bytes <= NotebookTransportLimits.maximumUnacknowledgedBytes - NotebookTransportLimits.reservedControlBytes - window.unacknowledgedBytes else { return nil }
+    if !requests.isEmpty { requests.removeFirst() } else if !blobs.isEmpty { blobs.removeFirst() } else { offers.removeFirst() }
+    pendingBytes -= value.bytes
+    return NotebookTransportPacket(sequence: try window.reserve(bytes: value.bytes), message: value.message)
   }
 }
 

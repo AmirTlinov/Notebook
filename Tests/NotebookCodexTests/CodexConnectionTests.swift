@@ -25,6 +25,51 @@ private struct RPCFixture {
 
 @Suite("Persistent App Server transport")
 struct CodexConnectionTests {
+  @Test func slowOutputDoesNotDelayAnAlreadyReceivedControlReply() async throws {
+    let fixture = try RPCFixture("""
+      q=read()
+      write({'method':'command/exec/outputDelta','params':{'deltaBase64':'eA=='}})
+      reply(q,{'control':True})
+      sys.stdin.read()
+      """)
+    defer { fixture.remove() }
+    let gate = OutputGate()
+    let output = CodexProcessOutput(publish: { try await gate.publish($0) }, stop: {}, completed: {})
+    let rpc = CodexRPC(channel: fixture.channel)
+    try await rpc.start(onEvent: { frame in
+      if frame["method"] == .string("command/exec/outputDelta") { await output.append(Data([120])) }
+    })
+    let start = ContinuousClock.now
+    #expect(try await rpc.request("account/read", params: .object([:]), timeout: .milliseconds(500))["control"] == .bool(true))
+    print("CONTROL_REPLY_WITH_HELD_OUTPUT", start.duration(to: .now))
+    await output.finish(.exited(0)); await gate.release()
+    await rpc.stop()
+  }
+
+  @Test func outputBudgetIncludesInFlightBytesAndReportsTheUnwrittenTail() async throws {
+    let gate = OutputGate()
+    let output = CodexProcessOutput(publish: { try await gate.publish($0) },
+      stop: { await gate.stopped() }, completed: { await gate.completed() })
+    for _ in 0..<5 { await output.append(Data(repeating: 120, count: 128 * 1024)) }
+    #expect(await output.queuedBytes <= CodexProcessOutput.byteLimit)
+    await output.finish(.exited(0)); await gate.release()
+    let deadline = ContinuousClock.now + .seconds(3)
+    while !(await gate.done), .now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    #expect(await gate.done); #expect(await gate.stops == 1)
+    #expect(await gate.bytes == 512 * 1024)
+    #expect(await gate.failure?.contains("Вывод неполный") == true)
+    #expect(await output.queuedBytes == 0)
+  }
+
+  @Test func receivedRefusalKeepsItsCodeAndIsNotAnUnknownAcceptance() async throws {
+    let fixture = try RPCFixture("q=read()\nwrite({'id':q['id'],'error':{'code':-32602,'message':'private request content'}})\nsys.stdin.read()\n")
+    defer { fixture.remove() }
+    let rpc = CodexRPC(channel: fixture.channel); try await rpc.start()
+    do { _ = try await rpc.request("turn/start", params: .object([:])); Issue.record("Expected refusal") }
+    catch let rejection as CodexRequestRejection { #expect(rejection.code == -32602); #expect(!rejection.localizedDescription.contains("private request content")) }
+    await rpc.stop()
+  }
+
   @Test func failedInitializationReportsOnlyItsStageAndActualExitCode() async throws {
     let fixture = try RPCFixture("read()\nprint('opaque child stderr', file=sys.stderr)\nsys.exit(17)\n", respondsToInitialize: false)
     defer { fixture.remove() }
@@ -156,4 +201,25 @@ struct CodexConnectionTests {
     var decoder = CodexFrames()
     #expect(throws: CodexBridgeError.invalidFrame) { try decoder.append(Data(input.utf8)) }
   }
+}
+
+
+private actor OutputGate {
+  var bytes = 0, stops = 0
+  var failure: String?
+  var done = false
+  private var open = false
+  private var waiter: CheckedContinuation<Void, Never>?
+  func publish(_ event: NotebookProcessEvent) async throws {
+    switch event {
+    case .output(let data):
+      if !open { await withCheckedContinuation { waiter = $0 } }
+      bytes += data.count
+    case .interrupted(let message): failure = message
+    default: break
+    }
+  }
+  func release() { open = true; waiter?.resume(); waiter = nil }
+  func stopped() { stops += 1 }
+  func completed() { done = true }
 }

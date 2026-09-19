@@ -22,8 +22,8 @@ extension CodexAppServer: NotebookCodexVoiceOwner { }
     return await executor.voiceState(id: id) ?? .init(id: id, threadID: request.threadID, phase: .ended,
       error: job.error ?? "Прежнее голосовое соединение завершено. Автоматического звонка нет.")
   }
-  func receive(_ input: NotebookChatInput) async throws -> NotebookChatJob {
-    let job = try await persistence.submit { try $0.saveChatInput(input) }
+  func receive(_ job: NotebookChatJob, admit: @MainActor () async throws -> NotebookChatJob) async throws -> NotebookChatJob {
+    let input = job.input
     guard input.action.isVoiceCommand, !job.isTerminal, executing.insert(input.id).inserted else { return job }
     defer { executing.remove(input.id) }
     if job.state != .saved {
@@ -40,7 +40,8 @@ extension CodexAppServer: NotebookCodexVoiceOwner { }
       if job.state == .attempting { return try await persistence.submit { try $0.advanceChatJob(input.id, from: .attempting, to: .uncertain, error: "Голосовая команда не повторена: её принятие неизвестно.") } }
       return job
     }
-    _ = try await persistence.submit { try $0.advanceChatJob(input.id, from: .saved, to: .attempting) }
+    let admitted = try await admit()
+    guard admitted.state == .attempting else { return admitted }
     do {
       let result: NotebookChatResult
       switch input.action {

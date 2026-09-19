@@ -7,6 +7,62 @@ import XCTest
 
 @MainActor
 final class NotebookTransportSessionTests: XCTestCase {
+  func testPublicRelayKeepsControlResponsiveDuringLargeMaterialAndRevokesTheTunnel() async throws {
+    guard let path = ProcessInfo.processInfo.environment["NOTEBOOK_TEST_RELAY_HOST_FILE"] else { throw XCTSkip("Explicit disposable relay route required") }
+    let route = try JSONDecoder().decode(NotebookRelayRoute.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+    let ready = expectation(description: "Both Notebook sessions authenticated through public relay"); ready.expectedFulfillmentCount = 2
+    let committed = expectation(description: "Large material committed once")
+    func residentBytes() -> UInt64 {
+      var value = mach_task_basic_info(), count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<integer_t>.size)
+      let result = withUnsafeMutablePointer(to: &value) { pointer in
+        pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count) }
+      }
+      return result == KERN_SUCCESS ? UInt64(value.resident_size) : 0
+    }
+    let baseline = residentBytes(); var peak = baseline
+    let memory = Task { @MainActor in
+      while !Task.isCancelled { peak = max(peak, residentBytes()); do { try await Task.sleep(for: .milliseconds(100)) } catch { return } }
+    }
+    let pair = try NotebookTransportTestPair(withChange: true, relay: route, contentBytes: 8 * 1024 * 1024)
+    defer { pair.stop(); memory.cancel() }
+    await pair.clientStorage.setAcknowledgementObserver { committed.fulfill() }
+    pair.onReady = { _, _ in ready.fulfill() }
+    pair.onFailure = { error in XCTFail("Public relay session: \(error)") }
+    try pair.start(); await fulfillment(of: [ready], timeout: 30)
+    var latencies: [Double] = []
+    for _ in 0..<10 {
+      let delivered = expectation(description: "Control crosses the active bulk transfer")
+      let envelope = NotebookChatEnvelope(body: .request(.account(.read)))
+      let began = ContinuousClock.now
+      pair.onTransient = { value, peer in
+        guard case .codex(let received) = value, received.id == envelope.id else { return }
+        if peer.deviceID == pair.clientIdentity.deviceID { pair.server?.sendTransient(.codex(.init(id: received.id, body: .reply(.acknowledged)))) }
+        else {
+          let duration = began.duration(to: .now).components
+          latencies.append(Double(duration.seconds) * 1000 + Double(duration.attoseconds) / 1e15)
+          delivered.fulfill()
+        }
+      }
+      pair.client?.sendTransient(.codex(envelope))
+      await fulfillment(of: [delivered], timeout: 5)
+    }
+    await fulfillment(of: [committed], timeout: 240)
+    let count = await pair.serverStorage.appliedCount, size = await pair.serverStorage.largestStagedBlob
+    XCTAssertEqual(count, 1); XCTAssertEqual(size, 8 * 1024 * 1024)
+    let revoked = expectation(description: "Relay revocation closes active stream")
+    pair.onFailure = nil
+    pair.client?.onStop = { _, _ in revoked.fulfill() }
+    _ = try await NotebookRelayHTTP.request(route, role: "host", action: "revoke", as: NotebookRelayHTTP.Enrollment.self)
+    await fulfillment(of: [revoked], timeout: 10)
+    latencies.sort(); guard latencies.count == 10 else { return XCTFail("Missing control receipts") }
+    let evidence: [String: Any] = ["payloadBytes": 8 * 1024 * 1024, "appliedCount": count,
+      "controlMilliseconds": latencies, "p50Milliseconds": latencies[5], "p95Milliseconds": latencies[9],
+      "baselineResidentBytes": baseline, "peakResidentBytes": peak, "revoked": true,
+      "scope": "Simulator and Mac network stack via public relay; not two physical networks"]
+    let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: evidence, options: [.prettyPrinted, .sortedKeys]), uniformTypeIdentifier: "public.json")
+    attachment.name = "gui183-relay-metrics.json"; attachment.lifetime = .keepAlways; add(attachment)
+  }
+
   func testSelectionAndUnavailableSceneUseTheExistingAuthenticatedTransientLane() async throws {
     let ready = expectation(description: "Both existing TLS peers ready"); ready.expectedFulfillmentCount = 2
     let selected = expectation(description: "Exact selected physical owner delivered")
@@ -103,7 +159,7 @@ final class NotebookTransportSessionTests: XCTestCase {
       case .reply(.job(let job)):
         XCTAssertEqual(value.id, envelope.id)
         XCTAssertEqual(job.input, input); XCTAssertNotEqual(peer.deviceID, input.author); received.fulfill()
-        let state = CodexConversation(threadID: input.action.threadID!, revision: 4, title: "Task", ready: true,
+        let state = CodexConversation(threadID: input.action.threadID!, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 4, title: "Task", ready: true,
           busy: false, activeTurnID: nil, messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:])
         pair.server?.sendTransient(.codex(.init(body: .event(subscriptionID: envelope.id, conversation: state))))
       case .event(let subscription, let state):
@@ -294,17 +350,20 @@ private final class NotebookTransportTestPair {
   private let root = FileManager.default.temporaryDirectory.appendingPathComponent("NotebookTLSLoopback-\(UUID())")
   private let queue = DispatchQueue(label: "Notebook.Tests.TLSLoopback")
   private var listener: NWListener?
+  private var uplink: NotebookRelayUplink?
+  private let relay: NotebookRelayRoute?
   private var reportedFailure = false
   private var isStopped = false
 
   init(wrongSecret: Bool = false, authorized: Bool = true, withChange: Bool = false, holdCommit: Bool = false,
     serverStorage: NotebookTransportMemoryStore? = nil, clientStorage: NotebookTransportMemoryStore? = nil,
-    serverIdentity: NotebookTransportIdentity? = nil, clientIdentity: NotebookTransportIdentity? = nil) throws {
+    serverIdentity: NotebookTransportIdentity? = nil, clientIdentity: NotebookTransportIdentity? = nil, relay: NotebookRelayRoute? = nil, contentBytes: Int = 400_000) throws {
     let workspaceID = serverIdentity?.workspaceID ?? UUID()
     self.serverIdentity = serverIdentity ?? .init(deviceID: UUID(), workspaceID: workspaceID, displayName: "Loopback Mac")
     self.clientIdentity = clientIdentity ?? .init(deviceID: UUID(), workspaceID: workspaceID, displayName: "Loopback iPad")
+    self.relay = relay
     self.wrongSecret = wrongSecret; self.authorized = authorized
-    let content = Data(repeating: 7, count: 400_000), contentHash = Self.digest(content), transactionID = UUID()
+    let content = Data(repeating: 7, count: contentBytes), contentHash = Self.digest(content), transactionID = UUID()
     let manifest = try JSONEncoder().encode(NotebookChangeManifest(transactionID: transactionID, workspaceID: workspaceID,
       records: [.init(address: "pages/test.json", blobHash: contentHash)]))
     let manifestHash = Self.digest(manifest)
@@ -341,8 +400,19 @@ private final class NotebookTransportTestPair {
           do {
             let secret = self.wrongSecret ? Data(repeating: 18, count: 32) : self.secret
             let credential = NotebookPeerCredential(credentialID: self.credentialID, secret: secret, expectedPeer: self.serverIdentity)
-            let connection = NWConnection(host: "127.0.0.1", port: port,
-              using: try NotebookTransportTLS.parameters(keys: [credential.tlsKey], loopback: true))
+            let connection: NWConnection
+            if let route = self.relay {
+              let enrollment = try await NotebookRelayHTTP.request(route, role: "host", action: "enable", as: NotebookRelayHTTP.Enrollment.self)
+              let clientRoute = NotebookRelayRoute(endpoint: route.endpoint, route: route.route, capability: try XCTUnwrap(enrollment.clientCapability))
+              let uplink = NotebookRelayUplink(route: route, port: port); self.uplink = uplink; uplink.start()
+              try await Task.sleep(for: .seconds(2))
+              let ticket = try await NotebookRelayHTTP.ticket(clientRoute, role: "client")
+              connection = NWConnection(host: .init(route.tunnelHost), port: 443,
+                using: try NotebookRelayHTTP.parameters(keys: [credential.tlsKey], route: clientRoute, ticket: ticket))
+            } else {
+              connection = NWConnection(host: "127.0.0.1", port: port,
+                using: try NotebookTransportTLS.parameters(keys: [credential.tlsKey], loopback: true))
+            }
             let session = try NotebookTransportSession(connection: connection, identity: self.clientIdentity, credential: credential,
               storage: self.clientStorage.adapter(), stagingRoot: self.root.appendingPathComponent("client"), queue: self.queue)
             self.client = session; self.configure(session); session.start()
@@ -356,7 +426,7 @@ private final class NotebookTransportTestPair {
   }
 
   func stop() {
-    isStopped = true; listener?.cancel(); listener = nil; server?.stop(); client?.stop()
+    isStopped = true; listener?.cancel(); listener = nil; uplink?.stop(); uplink = nil; server?.stop(); client?.stop()
     try? FileManager.default.removeItem(at: root)
   }
 

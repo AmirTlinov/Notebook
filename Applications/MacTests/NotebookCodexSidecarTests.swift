@@ -4,7 +4,16 @@ import NotebookCore
 import NotebookCodex
 @testable import Notebook
 
-private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogueOwner {
+private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogueOwner, NotebookCodexProcessOwner, NotebookCodexVoiceOwner {
+  var processStarts = 0, voiceStarts = 0
+  func startProcess(id: UUID, request: NotebookRunRequest, publish: @escaping @Sendable (NotebookProcessEvent) async throws -> Void) async throws { processStarts += 1; try await publish(.running) }
+  func writeProcess(id: UUID, data: Data) async throws { }
+  func resizeProcess(id: UUID, columns: Int, rows: Int) async throws { }
+  func stopProcess(id: UUID) async throws { }
+  func startVoice(id: UUID, request: NotebookVoiceStart) { voiceStarts += 1 }
+  func stopVoice(id: UUID) { }
+  func voiceState(id: UUID) -> NotebookVoiceState? { nil }
+
   let thread = UUID().uuidString, turn = UUID().uuidString
   var busy = false, unknown = false
   var projectEdits = 0
@@ -12,12 +21,17 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   var accessMode = CodexAccessMode.workspace
   var model = CodexModelSelection(model: "fixture", effort: "low")
   var modelChanges = 0
+  var pendingRequests: [CodexUserRequest] = []
   var submittedAttachments: [CodexInputAttachment] = []
   var accessChanges = 0
   var sent: [UUID] = [], interrupted: [String] = [], decisions: [CodexUserDecision] = []
   var accepted: [CodexMessage] = []
   var stopIsStale = false
   var needsSignIn = false
+  var slowCreation = false
+  var failsCreationSetup = false
+  func failCreationSetup() { failsCreationSetup = true }
+  func delayCreation() { slowCreation = true }
   func requireSignIn(_ required: Bool) { needsSignIn = required }
   func finishBeforeStop() { stopIsStale = true }
   func configure(busy: Bool = false, unknown: Bool = false) { self.busy = busy; self.unknown = unknown }
@@ -26,8 +40,8 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   func detach(threadID: String) { }
   func close() { }
   func snapshot(threadID: String) -> CodexConversation? {
-    .init(threadID: threadID, revision: 1, title: "Математика", ready: true, busy: busy, activeTurnID: busy ? turn : nil,
-      messages: accepted, requests: [], acceptedMessages: [:], turnStatuses: [:],
+    .init(threadID: threadID, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Математика", ready: true, busy: busy, activeTurnID: busy ? turn : nil,
+      messages: accepted, requests: pendingRequests, acceptedMessages: [:], turnStatuses: [:],
       access: .init(profileID: accessMode.rawValue, approvalPolicy: .string(accessMode.approvalPolicy), available: CodexAccessMode.allCases), model: model)
   }
   func send(threadID: String, clientMessageID: UUID, text: String, context: String?, attachments: [CodexInputAttachment]) throws -> String {
@@ -45,7 +59,7 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
     if stopIsStale { throw CodexBridgeError.staleTurn }
     interrupted.append(turnID)
   }
-  func respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision) { decisions.append(decision) }
+  func respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision) { decisions.append(decision); pendingRequests.removeAll { $0 == request } }
   func setModel(threadID: String, selection: CodexModelSelection) throws {
     modelChanges += 1; model = selection
     if unknown { throw CodexBridgeError.acceptanceUnknown }
@@ -57,6 +71,7 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   }
   func activities(threadIDs: [String]) -> [CodexTaskActivity] { threadIDs.map { .init(id: $0, status: .idle) } }
   func readProject(id: String) -> CodexProject { project ?? .init(id: id, name: "Notebook", roots: ["/tmp"]) }
+  func createProject(name: String, path: String, idempotencyKey: UUID) throws -> CodexProject { .init(id: idempotencyKey.uuidString, name: name, roots: [path]) }
   func updateProject(_ edit: CodexProjectEdit) throws -> CodexProject {
     projectEdits += 1
     let value = CodexProject(id: edit.id, name: edit.name ?? "Notebook", roots: edit.roots ?? ["/tmp"])
@@ -64,14 +79,25 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
     if unknown { throw CodexBridgeError.acceptanceUnknown }
     return value
   }
+  func largeRequests() -> [CodexUserRequest] {
+    pendingRequests = (1...4).map { .init(nativeID: .number(Double($0)),
+      generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!,
+      method: "item/permissions/requestApproval", turnID: turn,
+      parameters: .object(["permissions": .object(["fixture": .string(String(repeating: "x", count: 60_000))])])) }
+    return pendingRequests
+  }
   func models() -> [CodexModelOption] { [.init(id: "fixture", name: "Fixture", efforts: ["low", "high"], defaultEffort: "low")] }
   func resources(threadID: String, kind: CodexResourceKind, cursor: String?) -> CodexResourcePage { .init(resources: []) }
   func projects(cursor: String?) -> CodexProjectPage { .init(projects: [], nextCursor: nil) }
   func tasks(cursor: String?, project: CodexProject?) -> CodexTaskPage { .init(tasks: [.init(id: thread, title: "Математика", cwd: "/tmp")], nextCursor: nil, defaultProviderNeedsSignIn: needsSignIn) }
   func history(threadID: String, cursor: String?) -> CodexHistoryPage { .init(messages: accepted, nextCursor: nil) }
-  func create(directory: URL, title: String, workspaceID: UUID, project: CodexProject?) throws -> CodexTask {
+  func create(directory: URL, title: String, workspaceID: UUID, project: CodexProject?, onCreated: @escaping @Sendable (CodexTask) async throws -> Void) async throws -> CodexTask {
+    if slowCreation { try await Task.sleep(for: .seconds(5)) }
     if needsSignIn { throw CodexBridgeError.signInRequired }
-    return .init(id: thread, title: title, cwd: directory.path)
+    let task = CodexTask(id: thread, title: title, cwd: directory.path)
+    try await onCreated(task)
+    if failsCreationSetup { throw CodexBridgeError.disconnected }
+    return task
   }
 }
 
@@ -116,6 +142,96 @@ final class NotebookCodexSidecarTests: XCTestCase {
     let deadline = ContinuousClock.now + .seconds(8)
     while !(try await predicate()), .now < deadline { try await Task.sleep(for: .milliseconds(50)) }
     let ready = try await predicate(); XCTAssertTrue(ready)
+  }
+
+  func testLargeRequestsStayAddressableAndEachDecisionExecutesOnce() async throws {
+    try await fixture { store, queue, native, peer in
+      let requests = await native.largeRequests()
+      let service = try sidecar(store, queue, native); service.start()
+      let envelope = await service.receive(.init(body: .request(.conversation(threadID: native.thread))), peerID: peer)
+      guard case .reply(.conversation(let value)) = envelope?.body else { return XCTFail("Missing conversation") }
+      XCTAssertEqual(value.requestIDs.count, 4); XCTAssertEqual(value.requests.count, 1)
+      XCTAssertTrue(envelope!.isValid(from: peer))
+      for request in requests {
+        let detail = await service.receive(.init(body: .request(.requestDetails(threadID: native.thread, generation: value.generation, requestID: request.id))), peerID: peer)
+        guard case .reply(.requestDetails(let actual)) = detail?.body else { return XCTFail("Lost full request") }
+        XCTAssertEqual(actual, request); XCTAssertTrue(detail!.isValid(from: peer))
+        let action = NotebookChatAction.respond(threadID: native.thread, request: actual, decision: .decline)
+        let input = NotebookChatInput(id: try XCTUnwrap(action.controlID(author: peer)), author: peer, action: action)
+        for _ in 0..<2 { _ = await service.receive(.init(body: .request(.job(input))), peerID: peer) }
+        try await wait { try await queue.submit { try $0.chatJob(input.id)?.state == .accepted } }
+      }
+      let count = await native.decisions.count
+      XCTAssertEqual(count, 4)
+      let stale = await service.receive(.init(body: .request(.requestDetails(threadID: native.thread, generation: UUID(), requestID: requests[0].id))), peerID: peer)
+      guard case .reply(.failure) = stale?.body else { return XCTFail("Old generation must not approve a new request") }
+      await service.stop()
+    }
+  }
+
+  func testUncertainSettingsCannotStarveNarrowerAccessOrStop() async throws {
+    try await fixture { store, queue, native, peer in
+      let service = try sidecar(store, queue, native)
+      let old = NotebookChatInput(author: peer, action: .setAccess(threadID: native.thread, mode: .full))
+      _ = try store.saveChatInput(old)
+      _ = try store.advanceChatJob(old.id, from: .saved, to: .attempting)
+      _ = try store.advanceChatJob(old.id, from: .attempting, to: .uncertain)
+      let narrow = NotebookChatInput(author: peer, action: .setAccess(threadID: native.thread, mode: .readOnly))
+      let stop = NotebookChatInput(author: peer, action: .stop(threadID: native.thread, turnID: native.turn))
+      _ = await service.receive(.init(body: .request(.job(narrow))), peerID: peer)
+      _ = await service.receive(.init(body: .request(.job(stop))), peerID: peer)
+      service.start()
+      try await wait { try await queue.submit { try $0.chatJob(stop.id)?.state == .accepted && $0.chatJob(narrow.id)?.state == .accepted } }
+      XCTAssertEqual(try store.chatJob(old.id)?.state, .uncertain)
+      let mode = await native.accessMode, stops = await native.counts().1
+      XCTAssertEqual(mode, .readOnly); XCTAssertEqual(stops, 1)
+      await service.stop()
+    }
+  }
+  func testCreatedNativeIDSurvivesFailureOfAdditionalSetup() async throws {
+    try await fixture { store, queue, native, peer in
+      await native.failCreationSetup()
+      let service = try sidecar(store, queue, native)
+      let input = NotebookChatInput(author: peer, action: .create(title: "Task"))
+      _ = await service.receive(.init(body: .request(.job(input))), peerID: peer); service.start()
+      try await wait { try await queue.submit { try $0.chatJob(input.id)?.state == .accepted } }
+      let job = try XCTUnwrap(store.chatJob(input.id))
+      XCTAssertEqual(job.createdTask?.id, native.thread); XCTAssertNotNil(job.error)
+      if case .created(let task) = job.result { XCTAssertEqual(task.id, native.thread) } else { XCTFail("Lost native identity") }
+      await service.stop()
+    }
+  }
+
+  func testRevocationBeforeAdmissionRejectsRunAndVoiceButDoesNotUndoAcceptedWork() async throws {
+    try await fixture { store, queue, native, peer in
+      let computer = UUID()
+      let service = NotebookCodexSidecar(persistence: queue, bridge: native, metadata: native,
+        workspaceID: try store.workspaceHeader().workspaceID, computerID: computer, directory: store.root)
+      let actions: [NotebookChatAction] = [
+        .startRun(.init(root: .init(computer: computer, project: "p", root: "/tmp", path: ""), command: "fixture")),
+        .startVoice(.init(threadID: native.thread, sdp: "v=0\r\noffer"))]
+      for action in actions {
+        service.allowDevice(peer)
+        let gate = AdmissionGate()
+        service.accountIdentity = { await gate.wait(); return nil }
+        let input = NotebookChatInput(author: peer, action: action)
+        let receiving = Task { await service.receive(.init(body: .request(.job(input))), peerID: peer) }
+        try await wait { gate.entered }
+        service.revokeDevice(peer); gate.release()
+        _ = await receiving.value
+        XCTAssertNil(try store.chatJob(input.id))
+      }
+      let starts = await native.processStarts, voiceStarts = await native.voiceStarts
+      XCTAssertEqual(starts, 0); XCTAssertEqual(voiceStarts, 0)
+      service.allowDevice(peer); service.accountIdentity = nil
+      let accepted = NotebookChatInput(author: peer, action: actions[0])
+      _ = await service.receive(.init(body: .request(.job(accepted))), peerID: peer)
+      service.revokeDevice(peer)
+      let flushed = await queue.flush(); XCTAssertTrue(flushed)
+      XCTAssertEqual(try store.chatJob(accepted.id)?.state, .accepted)
+      let after = await native.processStarts; XCTAssertEqual(after, 1)
+      await service.stop()
+    }
   }
 
   func testExplicitSteeringBypassesQueuedMessageButKeepsTheExpectedTurn() async throws {
@@ -300,7 +416,7 @@ final class NotebookCodexSidecarTests: XCTestCase {
       _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
       service.start()
       try await wait { try await queue.submit { try $0.chatJob(input.id)?.state == .rejected } }
-      XCTAssertEqual(try store.chatJob(input.id)?.error, "Войдите в Codex на Mac. Отдельного входа Notebook нет.")
+      XCTAssertEqual(try store.chatJob(input.id)?.error, "Войдите в Codex через настройки аккаунта Notebook.")
       await native.requireSignIn(false)
       _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
       XCTAssertEqual(try store.chatJob(input.id)?.state, .rejected, "Sign-in never silently replays a rejected creation")
@@ -311,4 +427,39 @@ final class NotebookCodexSidecarTests: XCTestCase {
     }
   }
 
+  func testDetachingViewDoesNotStopAnAdmittedTaskAndSlowCreationDoesNotBlockAnotherThread() async throws {
+    try await fixture { store, queue, native, peer in
+      await native.delayCreation()
+      let service = try sidecar(store, queue, native)
+      let create = NotebookChatInput(author: peer, action: .create(title: "slow"))
+      let message = NotebookChatInput(author: peer, action: .send(threadID: native.thread, text: "independent", context: ""))
+      _ = await service.receive(.init(body: .request(.job(create))), peerID: peer)
+      _ = await service.receive(.init(body: .request(.job(message))), peerID: peer)
+      service.start(); service.detachView()
+      try await wait { try await queue.submit { try $0.chatJob(message.id)?.state == .accepted } }
+      XCTAssertEqual(try store.chatJob(create.id)?.state, .attempting)
+      let count = await native.counts(); XCTAssertEqual(count.0, 1)
+      await service.stop()
+    }
+  }
+
+  func testRevocationRejectsSavedInputBeforeItCanSurviveRestart() async throws {
+    try await fixture { store, queue, native, peer in
+      let service = try sidecar(store, queue, native)
+      let message = NotebookChatInput(author: peer, action: .send(threadID: native.thread, text: "must not execute", context: ""))
+      _ = await service.receive(.init(body: .request(.job(message))), peerID: peer)
+      service.authorizePeer = { _ in false }; service.start()
+      try await wait { try await queue.submit { try $0.chatJob(message.id)?.state == .rejected } }
+      let count = await native.counts(); XCTAssertEqual(count.0, 0)
+      await service.stop()
+    }
+  }
+
+}
+
+@MainActor private final class AdmissionGate {
+  var entered = false
+  private var continuation: CheckedContinuation<Void, Never>?
+  func wait() async { await withCheckedContinuation { continuation = $0; entered = true } }
+  func release() { continuation?.resume(); continuation = nil }
 }

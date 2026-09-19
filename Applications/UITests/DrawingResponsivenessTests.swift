@@ -201,6 +201,27 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(app.staticTexts["Inline 123\nSecond line!"].waitForExistence(timeout:10))
   }
 
+  func testEveryLargeApprovalIsReachableAndDecidesOnlyItsNativeQuestion() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-approval-fixture"]
+    launchPortraitFixture(app)
+    let picker = app.buttons["notebook-codex-requests"]
+    XCTAssertTrue(picker.waitForExistence(timeout: 15))
+    picker.tap()
+    app.buttons["Запрос 4 из 4"].tap()
+    XCTAssertTrue(app.staticTexts["echo request-4"].waitForExistence(timeout: 5))
+    let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "full-fourth-native-approval"; proof.lifetime = .keepAlways; add(proof)
+    app.buttons["notebook-approval-decline"].tap()
+    for number in 1...3 {
+      XCTAssertTrue(app.staticTexts["echo request-\(number)"].waitForExistence(timeout: 5))
+      app.buttons["notebook-approval-decline"].tap()
+    }
+    XCTAssertTrue(app.buttons["notebook-approval-decline"].waitForNonExistence(timeout: 5))
+    XCTAssertTrue(app.staticTexts["Обработано запросов: 4"].waitForExistence(timeout: 5))
+    app.terminate()
+  }
+
   func testErasedFiguresKeepOpeningAndPickingResponsive() {
     continueAfterFailure = false
     let app = XCUIApplication()

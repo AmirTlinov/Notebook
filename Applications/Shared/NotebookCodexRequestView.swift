@@ -1,6 +1,56 @@
 import SwiftUI
 import NotebookCore
 
+/// One full, generation-bound question at a time. Other questions stay with
+/// Codex and are fetched by native ID, never stored as a second approval queue.
+struct NotebookCodexRequestsView: View {
+  let conversation: CodexConversation
+  let job: (CodexUserRequest) -> NotebookChatJob?
+  let query: (NotebookChatQuery) async throws -> NotebookChatReply
+  let respond: (CodexUserRequest, CodexUserDecision) async -> Void
+  let maximumHeight: CGFloat
+  @State private var selectedID: String?
+  @State private var detail: CodexUserRequest?
+  @State private var failure: String?
+  @State private var retry = UUID()
+  private var requestID: String? {
+    selectedID.flatMap { conversation.requestIDs.contains($0) ? $0 : nil } ?? conversation.requestIDs.first
+  }
+  private var request: CodexUserRequest? {
+    let value = conversation.requests.first { $0.id == requestID } ?? detail
+    return value?.id == requestID && value?.generation == conversation.generation ? value : nil
+  }
+  var body: some View {
+    if let requestID {
+      VStack(spacing: 4) {
+        if conversation.requestIDs.count > 1 {
+          Picker("Ожидают решения", selection: Binding(get: { requestID }, set: { selectedID = $0 })) {
+            ForEach(Array(conversation.requestIDs.enumerated()), id: \.element) { index, id in
+              Text("Запрос \(index + 1) из \(conversation.requestIDs.count)").tag(id)
+            }
+          }.accessibilityIdentifier("notebook-codex-requests")
+        }
+        if let request {
+          NotebookCodexRequestView(request: request, job: job(request), respond: { await respond(request, $0) }, maximumHeight: maximumHeight)
+            .id(conversation.generation.uuidString + request.id)
+        } else if let failure {
+          Text(failure).font(.caption)
+          Button("Повторить чтение запроса") { retry = UUID() }
+        } else { ProgressView("Читаю полный запрос…") }
+      }
+      .task(id: conversation.generation.uuidString + requestID + retry.uuidString) {
+        failure = nil
+        guard request == nil else { return }
+        do {
+          guard case .requestDetails(let value) = try await query(.requestDetails(threadID: conversation.threadID, generation: conversation.generation, requestID: requestID)),
+            value.id == requestID, value.generation == conversation.generation else { throw NotebookTransportError.invalidAcknowledgement }
+          guard !Task.isCancelled else { return }; detail = value
+        } catch { if !Task.isCancelled { failure = error.localizedDescription } }
+      }
+    }
+  }
+}
+
 struct NotebookCodexRequestView: View {
   struct Questions: Decodable { let questions: [Question] }
   struct Question: Decodable, Identifiable {
@@ -8,8 +58,8 @@ struct NotebookCodexRequestView: View {
     let id: String; let question: String; let options: [Option]?
   }
   let request: CodexUserRequest
-  let threadID: String
-  let chat: NotebookChatController
+  let job: NotebookChatJob?
+  let respond: (CodexUserDecision) async -> Void
   let maximumHeight: CGFloat
   @State private var answers: [String: String] = [:]
   @State private var submitted = false
@@ -78,21 +128,21 @@ struct NotebookCodexRequestView: View {
               }
             }.font(.system(size: 13)).controlSize(.small)
           } else if request.method == "mcpServer/elicitation/request" {
-            Text("Эта форма требует дополнительных данных. Откройте её в Codex на Mac.")
+            Text("Эта форма требует дополнительных данных. Форма этого инструмента пока не поддерживается. Можно отказать или остановить задачу.")
               .font(.caption).foregroundStyle(.secondary)
             Button("Отказать") { decide(.elicitation(.object(["action": .string("decline")]))) }
-          } else { Text("Этот запрос нужно обработать в Codex на Mac.").font(.caption).foregroundStyle(.secondary) }
+          } else { Text("Этот тип запроса пока не поддерживается. Можно остановить задачу.").font(.caption).foregroundStyle(.secondary) }
           if showsDetails {
             Text(parameters).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
               .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
           }
         }
-        if let job = chat.decisionJob(request, threadID: threadID) {
+        if let job {
           Text(job.error ?? (job.state == .accepted ? "Решение принято Codex" : "Решение сохранено · ожидается Codex"))
             .font(.caption).foregroundStyle(.secondary)
         }
       }
-      .disabled(submitted || chat.decisionJob(request, threadID: threadID) != nil)
+      .disabled(submitted || job != nil)
       .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 10)
       .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { contentHeight = $0 }
     }
@@ -121,6 +171,43 @@ struct NotebookCodexRequestView: View {
   }
   private func decide(_ decision: CodexUserDecision) {
     submitted = true
-    Task { await chat.respond(request, decision: decision, threadID: threadID); submitted = false }
+    Task { await respond(decision); submitted = false }
+  }
+}
+
+/// Ending observation is not cancellation or proof that the native action failed.
+struct NotebookCodexUncertainJobsView: View {
+  let jobs: [NotebookChatJob]
+  let finish: (UUID) async -> Void
+  @State private var selected: NotebookChatJob?
+  var body: some View {
+    let uncertain = jobs.filter { $0.state == .uncertain }
+    if !uncertain.isEmpty {
+      Menu("Неизвестный исход · \(uncertain.count)") {
+        ForEach(uncertain) { job in
+          Button(label(job)) { selected = job }
+        }
+      }
+      .font(.caption).accessibilityIdentifier("notebook-codex-uncertain")
+      .confirmationDialog("Завершить ожидание?", isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } })) {
+        if let selected { Button("Завершить ожидание") { Task { await finish(selected.id) }; self.selected = nil } }
+        Button("Продолжить ждать", role: .cancel) { selected = nil }
+      } message: {
+        Text("Это не остановит действие и не означает, что оно не выполнилось. Исход останется неизвестным; автоматического повтора не будет.")
+      }
+    }
+  }
+  private func label(_ job: NotebookChatJob) -> String {
+    let name: String
+    switch job.input.action {
+    case .send(_, let text, _), .steer(_, _, let text, _): name = String(text.prefix(60))
+    case .create: name = "Создание задачи"
+    case .setAccess: name = "Изменение доступа"
+    case .setModel: name = "Изменение модели"
+    case .stop, .stopRun, .stopVoice: name = "Остановка"
+    case .respond: name = "Ответ на разрешение"
+    default: name = "Действие Codex"
+    }
+    return job.input.createdAt.formatted(date: .omitted, time: .shortened) + " · " + name
   }
 }

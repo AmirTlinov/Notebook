@@ -17,8 +17,20 @@ struct NotebookMacApp: App {
       CommandGroup(after: .newItem) {
         Button("Открыть Notebook") { openWindow(id: "workspace"); NSApp.activate() }
           .keyboardShortcut("0", modifiers: .command)
+        Button("Задачи Codex…") { openWindow(id: "codex-tasks"); NSApp.activate() }
+          .keyboardShortcut("1", modifiers: .command)
       }
     }
+    Window("Задачи Codex", id: "codex-tasks") {
+      if let model = lifecycle.launch.model {
+        NotebookMacCodexView(model: model).id(model.workspaceHeader?.workspaceID)
+      } else { Text(lifecycle.launch.message).padding() }
+    }.defaultSize(width: 980, height: 720)
+    Window("Подключение внешнего Codex", id: "codex-integration") {
+      if let model = lifecycle.launch.model {
+        NotebookMacCodexIntegrationView(model: model)
+      } else { Text(lifecycle.launch.message).padding() }
+    }.defaultSize(width: 480, height: 280)
     MenuBarExtra("Notebook", image: "NotebookStatusIcon") {
       Button("Открыть Notebook") { openWindow(id: "workspace"); NSApp.activate() }
       Divider()
@@ -35,7 +47,9 @@ struct NotebookMacApp: App {
           .accessibilityIdentifier("clipboard-paste-open")
           .disabled(model.pasteDestinations.isEmpty)
         Menu("Codex") {
-          Text(model.agentStartupError ?? "Задачи Codex доступны из Notebook на iPad")
+          Button("Задачи Codex…") { openWindow(id: "codex-tasks"); NSApp.activate() }
+          Button("Подключение внешнего Codex…") { openWindow(id: "codex-integration"); NSApp.activate() }
+          if let error = model.agentStartupError { Text(error) }
           Text("Разговор, модель и разрешения принадлежат Codex")
         }
       } else {
@@ -44,6 +58,7 @@ struct NotebookMacApp: App {
           Button("Повторить проверку") { lifecycle.start() }
         }
       }
+      Button("Аккаунт Codex…") { lifecycle.showCodexAccount() }
       Button("Пространства…") { lifecycle.showWorkspaces() }
         .accessibilityIdentifier("workspaces-open")
       Button("Устройства…") { lifecycle.showDevices() }
@@ -67,6 +82,7 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
   let launch: NotebookApplicationLaunch
   @ObservationIgnored var openWorkspace: (() -> Void)?
   private var launchTask: Task<Void, Never>?
+  @ObservationIgnored private var accountWindow: NSWindow?
   @ObservationIgnored private var workspacesWindow: NSWindow?
   @ObservationIgnored private var pasteWindow: NotebookMacPasteWindow?
   private(set) var launchesAtLogin = false
@@ -125,6 +141,20 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
     if let openWorkspace { openWorkspace(); sender.activate(); return false }
     return true
+  }
+
+  func showCodexAccount() {
+    if accountWindow == nil {
+      let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 480, height: 600),
+        styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+      window.title = "Notebook — Codex"; window.isReleasedWhenClosed = false
+      window.contentViewController = NSHostingController(rootView: NotebookCodexAccountView { [weak self] query in
+        guard let self else { throw NotebookTransportError.disconnected }
+        return try await launch.codexHost.account(query)
+      })
+      window.center(); accountWindow = window
+    }
+    accountWindow?.makeKeyAndOrderFront(nil)
   }
 
   func showWorkspaces() {
@@ -187,9 +217,39 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
     Task {
       launchTask?.cancel()
       await launchTask?.value
-      let saved = await launch.model?.shutdown() ?? true
+      if await launch.codexHost.hasActiveWork() {
+        let alert = NSAlert()
+        alert.messageText = "Завершить Notebook и отключить исполнителя?"
+        alert.informativeText = "Активная работа Codex и терминалы могут быть прерваны. Чтобы оставить их работать, закройте только окно. Повторный запуск команд после выхода не выполняется."
+        alert.addButton(withTitle: "Оставить работать"); alert.addButton(withTitle: "Завершить")
+        guard alert.runModal() == .alertSecondButtonReturn else { sender.reply(toApplicationShouldTerminate: false); return }
+      }
+      let saved = await launch.shutdown()
       sender.reply(toApplicationShouldTerminate: saved)
     }
     return .terminateLater
+  }
+}
+
+
+private struct NotebookMacCodexIntegrationView: View {
+  let model: NotebookAppModel
+  @State private var busy = false
+  @State private var message: String?
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text("Codex Desktop / CLI → Notebook").font(.headline)
+      Text("Настроить инструменты Notebook в общем профиле Codex. Это нужно только для работы из внешнего Codex; встроенная панель Notebook работает независимо.")
+      Text("Настройка обновляет адрес MCP, сохраняя ограничения инструментов. Уже открытой внешней задаче может потребоваться повторное подключение MCP.").font(.callout).foregroundStyle(.secondary)
+      if let message { Text(message).textSelection(.enabled) }
+      Button(busy ? "Настраиваю…" : "Настроить внешнее подключение") {
+        busy = true; message = nil
+        Task {
+          defer { busy = false }
+          do { try await model.registerExternalCodexTools(); message = "Подключение настроено. Ограничения общего профиля сохранены." }
+          catch { message = NotebookCodexSidecar.message(error) }
+        }
+      }.disabled(busy).accessibilityIdentifier("notebook-external-codex-setup")
+    }.padding(24).frame(minWidth: 420)
   }
 }

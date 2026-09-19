@@ -21,10 +21,11 @@ protocol NotebookCodexCatalogueOwner: Sendable {
   func resources(threadID: String, kind: CodexResourceKind, cursor: String?) async throws -> CodexResourcePage
   func tasks(cursor: String?, project: CodexProject?) async throws -> CodexTaskPage
   func readProject(id: String) async throws -> CodexProject
+  func createProject(name: String, path: String, idempotencyKey: UUID) async throws -> CodexProject
   func updateProject(_ edit: CodexProjectEdit) async throws -> CodexProject
   func projects(cursor: String?) async throws -> CodexProjectPage
   func history(threadID: String, cursor: String?) async throws -> CodexHistoryPage
-  func create(directory: URL, title: String, workspaceID: UUID, project: CodexProject?) async throws -> CodexTask
+  func create(directory: URL, title: String, workspaceID: UUID, project: CodexProject?, onCreated: @escaping @Sendable (CodexTask) async throws -> Void) async throws -> CodexTask
 }
 extension CodexAppServer: NotebookCodexConversationOwner { }
 extension CodexAppServer: NotebookCodexCatalogueOwner { }
@@ -44,29 +45,65 @@ final class NotebookCodexSidecar {
   private let runs: MacNotebookProjectRuns?
   private let files: MacNotebookProjectFiles
   private var worker: Task<Void, Never>?
-  private var observing: String?
   private var stopped = false
-  private var bridgeEvents: AsyncStream<CodexBridgeEvent>?
-  private var eventWorker: Task<Void, Never>?
   private var publishEvents: Task<Void, Never>?
   private var pendingEvents: [String: CodexConversation] = [:]
   private var subscriptions: [UUID: (id: UUID, thread: String)] = [:]
   private var publish: ((NotebookChatEnvelope, UUID) -> Void)?
-  private var working = false
+  var authorizePeer: (UUID) -> Bool = { _ in true }
+  var prepareThread: ((String) async throws -> Void)?
+  var accountIdentity: (() async throws -> String?)?
+  var accountAdmission: (() -> UUID?)?
+  private var peerGenerations: [UUID: UInt64] = [:]
+  private struct Admission { let peer: UUID; let generation: UInt64; let account: UUID? }
+  var accountRequest: ((CodexAccountQuery) async throws -> CodexAccountState)?
+  private var executing: [String: Task<Void, Never>] = [:]
+  private var reconciling: [UUID: Task<Void, Never>] = [:]
+  private var revokedPeers: Set<UUID> = []
   private var requests: Set<UUID> = []
   private var historyCursors: [UUID: String] = [:]
   private var reconciliationAfter: [UUID: Date] = [:]
 
-  init(persistence: NotebookPersistenceQueue, installation: CodexDesktopInstallation, workspaceID: UUID, computerID: UUID, directory: URL,
-    scope: CodexRuntimeScope? = nil, publish: @escaping (NotebookChatEnvelope, UUID) -> Void) {
+  convenience init(persistence: NotebookPersistenceQueue, server: CodexAppServer, workspaceID: UUID,
+    computerID: UUID, directory: URL, publish: @escaping (NotebookChatEnvelope, UUID) -> Void) {
+    self.init(persistence: persistence, bridge: server, metadata: server,
+      workspaceID: workspaceID, computerID: computerID, directory: directory)
     self.publish = publish
-    files = .init(persistence: persistence)
-    self.persistence = persistence; self.workspaceID = workspaceID; self.computerID = computerID; self.directory = directory
-    let server = CodexAppServer(installation: installation, scope: scope)
-    bridge = server; metadata = server; bridgeEvents = server.events
-    voice = .init(persistence: persistence, executor: server)
-    dictation = .init(executor: server, computer: computerID)
-    runs = .init(persistence: persistence, executor: server, metadata: server, computer: computerID)
+  }
+
+  func attachView(publish: @escaping (NotebookChatEnvelope, UUID) -> Void) { self.publish = publish }
+
+  /// A workspace/window detaches its presentation, not accepted native work.
+  func detachView() {
+    publish = nil; subscriptions.removeAll(); pendingEvents.removeAll()
+    publishEvents?.cancel(); publishEvents = nil
+  }
+
+  func receiveEvent(_ event: CodexBridgeEvent) {
+    guard !stopped else { return }
+    if case .unavailable(let error) = event {
+      publishEvents?.cancel(); publishEvents = nil; pendingEvents.removeAll()
+      for (peer, subscription) in subscriptions {
+        publish?(.init(body: .unavailable(subscriptionID: subscription.id, threadID: subscription.thread, reason: Self.message(error))), peer)
+      }
+      return
+    }
+    guard case .conversation(let state) = event,
+      subscriptions.values.contains(where: { $0.thread == state.threadID }) else { return }
+    pendingEvents[state.threadID] = state
+    if publishEvents == nil {
+      publishEvents = Task { [weak self] in
+        try? await Task.sleep(for: .milliseconds(100))
+        guard let self, !Task.isCancelled else { return }
+        for (peer, subscription) in subscriptions {
+          if let state = pendingEvents[subscription.thread] {
+            let envelope = NotebookChatEnvelope(body: .event(subscriptionID: subscription.id, conversation: Self.transport(state)))
+            if envelope.isValid(from: peer) { publish?(envelope, peer) }
+          }
+        }
+        pendingEvents.removeAll(); publishEvents = nil
+      }
+    }
   }
 
   init(persistence: NotebookPersistenceQueue, bridge: any NotebookCodexConversationOwner,
@@ -81,29 +118,6 @@ final class NotebookCodexSidecar {
 
   func start() {
     guard worker == nil else { return }
-    if let bridgeEvents {
-      eventWorker = Task { [weak self] in
-        for await event in bridgeEvents {
-          guard let self, !Task.isCancelled else { break }
-          if case .conversation(let state) = event {
-            pendingEvents[state.threadID] = state
-            if publishEvents == nil {
-              publishEvents = Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(100))
-                guard let self, !Task.isCancelled else { return }
-                for (peer, subscription) in subscriptions {
-                  if let state = pendingEvents[subscription.thread] {
-                    let envelope = NotebookChatEnvelope(body: .event(subscriptionID: subscription.id, conversation: Self.transport(state)))
-                    if envelope.isValid(from: peer) { publish?(envelope, peer) }
-                  }
-                }
-                pendingEvents.removeAll(); publishEvents = nil
-              }
-            }
-          }
-        }
-      }
-    }
     worker = Task { [weak self] in
       guard let self else { return }
       // Crash recovery never changes attempting back to saved.
@@ -114,23 +128,44 @@ final class NotebookCodexSidecar {
           }
         }
         while !Task.isCancelled {
-          if !working {
-            working = true
-            do {
-              let jobs = try await persistence.submit { try $0.pendingChatJobs() }
-              var waitingThreads = Set<String>()
-              for job in jobs where !Task.isCancelled {
-                if job.input.action.isRunCommand || job.input.action.isVoiceCommand { continue }
-                if case .send(let thread, _, _) = job.input.action, waitingThreads.contains(thread) { continue }
-                try await execute(job)
-                if case .send(let thread, _, _) = job.input.action,
-                  try await persistence.submit({ try $0.chatJob(job.id)?.isTerminal }) != true {
-                  waitingThreads.insert(thread)
+          do {
+            let jobs = try await persistence.submit { try $0.pendingChatJobs() }
+            let pending = Set(jobs.map(\.id))
+            reconciliationAfter = reconciliationAfter.filter { pending.contains($0.key) }
+            historyCursors = historyCursors.filter { pending.contains($0.key) }
+            // Explicit control of the current turn bypasses queued next-turn text.
+            // Preserve journal order within each class and independent thread.
+            let ordered = jobs.enumerated().sorted { left, right in
+              func priority(_ job: NotebookChatJob) -> Int { if case .send = job.input.action { return 1 }; return 0 }
+              let a = priority(left.element), b = priority(right.element)
+              return a == b ? left.offset < right.offset : a < b
+            }.map(\.element)
+            for job in ordered where !Task.isCancelled {
+              if job.input.action.isRunCommand || job.input.action.isVoiceCommand { continue }
+              if job.state == .uncertain || job.state == .attempting {
+                guard reconciling[job.id] == nil, reconciling.count < 2,
+                  reconciliationAfter[job.id, default: .distantPast] <= Date() else { continue }
+                reconciliationAfter[job.id] = Date().addingTimeInterval(15)
+                reconciling[job.id] = Task { [weak self] in
+                  guard let self else { return }
+                  try? await reconcile(job)
+                  reconciling.removeValue(forKey: job.id)
                 }
+                continue
               }
-            } catch { /* The durable queue remains intact; a query reports its state. */ }
-            working = false
-          }
+              let control = job.input.action.isInteractiveControl
+              let key = (job.input.action.threadID ?? job.id.uuidString) + (control ? "/control" : "")
+              guard executing[key] == nil, executing.count < (control ? 10 : 8) else { continue }
+              executing[key] = Task { [weak self] in
+                guard let self else { return }
+                do { try await execute(job) } catch { /* The durable receipt remains authoritative. */ }
+                if let thread = job.input.action.threadID, !subscriptions.values.contains(where: { $0.thread == thread }) {
+                  await bridge.detach(threadID: thread)
+                }
+                executing.removeValue(forKey: key)
+              }
+            }
+          } catch { /* A subsequent read exposes persistent storage failure. */ }
           try await Task.sleep(for: .seconds(1))
         }
       } catch { }
@@ -139,20 +174,73 @@ final class NotebookCodexSidecar {
 
   func stop() async {
     dictation?.stop()
-    stopped = true; files.stop(); worker?.cancel(); eventWorker?.cancel(); publishEvents?.cancel()
+    stopped = true; files.stop(); worker?.cancel(); publishEvents?.cancel()
     subscriptions.removeAll(); pendingEvents.removeAll()
     // Do not cancel a native turn. An in-flight mutation retains its durable attempt.
-    await bridge.close()
     await worker?.value; worker = nil
+    let tasks = Array(executing.values) + Array(reconciling.values)
+    for task in tasks { task.cancel() }
+    for task in tasks { await task.value }
+    executing.removeAll(); reconciling.removeAll()
+  }
+
+  func revokeDevice(_ peer: UUID) {
+    revokedPeers.insert(peer); peerGenerations[peer, default: 0] += 1
+    subscriptions.removeValue(forKey: peer)
+    // Register this fence synchronously: earlier attempts keep their right to
+    // finish, but a later admission cannot overtake revocation.
+    persistence.enqueueCommand({ try $0.rejectSavedChatInputs(from: peer) }, completion: { _ in })
+  }
+  func allowDevice(_ peer: UUID) { revokedPeers.remove(peer); peerGenerations[peer, default: 0] += 1 }
+
+  private func authorization(_ peer: UUID) throws -> Admission {
+    guard !stopped, !revokedPeers.contains(peer), authorizePeer(peer) else { throw CodexBridgeError.unavailable }
+    let account = accountAdmission?()
+    guard accountAdmission == nil || account != nil else { throw CodexBridgeError.busy }
+    return .init(peer: peer, generation: peerGenerations[peer, default: 0], account: account)
+  }
+
+  /// One admission cut for chat, processes and voice. Validation and enqueueing
+  /// the durable attempt cannot interleave with MainActor revoke/account change.
+  private func admit(_ input: NotebookChatInput, authorized: Admission, attempt: Bool) async throws -> NotebookChatJob {
+    try await withCheckedThrowingContinuation { continuation in
+      do {
+        let current = try authorization(input.author)
+        guard current.peer == authorized.peer, current.generation == authorized.generation,
+          current.account == authorized.account else { throw CodexBridgeError.unavailable }
+        let computer = computerID
+        persistence.enqueueCommand({ store in
+          let job = try store.saveChatSubmission(input, to: computer)
+          guard attempt, job.state == .saved else { return job }
+          return try store.advanceChatJob(input.id, from: .saved, to: .attempting)
+        }, completion: { continuation.resume(with: $0) })
+      } catch { continuation.resume(throwing: error) }
+    }
+  }
+  private func admitAccount() async throws {
+    let identity: String
+    if let accountIdentity { identity = try await accountIdentity() ?? "signed-out" }
+    else if let accountRequest { identity = try await accountRequest(.read).account?.identity ?? "signed-out" }
+    else { return } // injected contract owner in native tests
+    _ = try await persistence.submit { try $0.admitCodexAccount(identity) }
   }
 
   func receive(_ envelope: NotebookChatEnvelope, peerID: UUID) async -> NotebookChatEnvelope? {
-    guard !stopped, envelope.isValid(from: peerID), case .request(let query) = envelope.body,
+    guard !stopped, !revokedPeers.contains(peerID), authorizePeer(peerID), envelope.isValid(from: peerID), case .request(let query) = envelope.body,
       requests.count < 8, requests.insert(envelope.id).inserted else { return nil }
     defer { requests.remove(envelope.id) }
     let reply: NotebookChatReply
     do {
       switch query {
+      case .account(let query):
+        guard let accountRequest else { throw CodexBridgeError.unavailable }
+        reply = .account(try await accountRequest(query))
+      case .requestDetails(let thread, let generation, let id):
+        guard let state = await bridge.snapshot(threadID: thread), state.generation == generation,
+          let request = state.requests.first(where: { $0.id == id }) else { throw CodexBridgeError.staleRequest }
+        reply = .requestDetails(request)
+      case .stopWaiting(let id):
+        reply = .job(try await persistence.submit { try $0.stopWaitingForChatJob(id, author: peerID) })
       case .dictation(let query):
         guard let dictation else { throw CodexBridgeError.unavailable }
         reply = .dictation(try dictation.receive(query, peer: peerID))
@@ -176,13 +264,26 @@ final class NotebookCodexSidecar {
         } else { throw CodexBridgeError.invalidInput }
 
       case .job(let input):
+        let admission = try authorization(peerID)
+        let job: NotebookChatJob
+        if let existing = try await persistence.submit({ try $0.chatJob(input.id) }) {
+          guard existing.input == input else { throw CodexBridgeError.invalidInput }
+          job = existing // Polling a receipt does not refresh or mutate the account.
+        } else {
+          try await admitAccount()
+          job = try await admit(input, authorized: admission, attempt: false)
+        }
+        let begin: @MainActor () async throws -> NotebookChatJob = { [self] in
+          try await admitAccount()
+          return try await admit(input, authorized: admission, attempt: true)
+        }
         if input.action.isVoiceCommand {
           guard let voice else { throw CodexBridgeError.unavailable }
-          reply = .job(try await voice.receive(input))
+          reply = .job(try await voice.receive(job, admit: begin))
         } else if input.action.isRunCommand {
           guard let runs else { throw CodexBridgeError.unavailable }
-          reply = .job(try await runs.receive(input))
-        } else { reply = .job(try await persistence.submit { try $0.saveChatInput(input) }) }
+          reply = .job(try await runs.receive(job, admit: begin))
+        } else { reply = .job(job) }
       case .catalogue(let cursor, let project): reply = .catalogue(try await metadata.tasks(cursor: cursor, project: project))
       case .models: reply = .models(try await metadata.models())
       case .resources(let thread, let kind, let cursor): reply = .resources(try await metadata.resources(threadID: thread, kind: kind, cursor: cursor))
@@ -194,12 +295,11 @@ final class NotebookCodexSidecar {
         let page = try await metadata.history(threadID: thread, cursor: cursor)
         reply = .history(.init(messages: CodexMessage.transportPage(page.messages), nextCursor: page.nextCursor))
       case .conversation(let thread):
-        // Queue execution and a view change may not detach one another mid-send.
-        guard !working else { throw CodexBridgeError.busy }
-        working = true; defer { working = false }
         try await observe(thread)
         guard let state = await bridge.snapshot(threadID: thread) else { throw CodexBridgeError.unavailable }
-        subscriptions[peerID] = (envelope.id, thread)
+        let previous = subscriptions.updateValue((envelope.id, thread), forKey: peerID)
+        if let previous, previous.thread != thread, executing[previous.thread] == nil,
+          !subscriptions.values.contains(where: { $0.thread == previous.thread }) { await bridge.detach(threadID: previous.thread) }
         reply = .conversation(Self.transport(state))
       }
     } catch {
@@ -215,17 +315,18 @@ final class NotebookCodexSidecar {
   }
 
   private func observe(_ thread: String) async throws {
-    if let observing, observing != thread { await bridge.detach(threadID: observing) }
-    observing = thread
+    try await prepareThread?(thread)
     try await bridge.attach(threadID: thread)
   }
 
   private func execute(_ job: NotebookChatJob) async throws {
     guard !stopped else { return }
-    if job.state == .uncertain || job.state == .attempting {
-      try await reconcile(job); return
-    }
     guard job.state == .saved else { return }
+    guard !revokedPeers.contains(job.input.author), authorizePeer(job.input.author) else {
+      try await persistence.submit { try $0.rejectSavedChatInputs(from: job.input.author) }; return
+    }
+    let admission = try authorization(job.input.author)
+    guard try await persistence.submit({ try $0.chatJob(job.id)?.state }) == .saved else { return }
     if case .renameFile(let request) = job.input.action {
       guard request.address.computer == computerID else { throw CodexBridgeError.invalidInput }
       let author = job.input.author
@@ -242,8 +343,8 @@ final class NotebookCodexSidecar {
         if case .send = job.input.action, snapshot.busy || !snapshot.requests.isEmpty { return }
       }
     } catch { return } // No native mutation attempted; saved really means queued.
-    guard !stopped else { return }
-    _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: .saved, to: .attempting) }
+    try await admitAccount()
+    guard try await admit(job.input, authorized: admission, attempt: true).state == .attempting else { return }
     guard !stopped else { return }
     let result: NotebookChatResult
     do {
@@ -263,13 +364,16 @@ final class NotebookCodexSidecar {
         guard address.computer == computerID else { throw CodexBridgeError.invalidInput }
         let project = try await metadata.readProject(id: address.project)
         result = .file(try await files.commit(job.id, author: job.input.author, address: address, project: project))
+      case .createProject(let name, let path): result = .project(try await metadata.createProject(name: name, path: path, idempotencyKey: job.id))
       case .updateProject(let edit): result = .project(try await metadata.updateProject(edit))
       case .create(let title, let selectedProject):
         let project: CodexProject?
         if let selectedProject { project = try await metadata.readProject(id: selectedProject.id) } else { project = nil }
         let target = project?.roots.first.map { URL(fileURLWithPath: $0) } ?? directory
         if project == nil { try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true) }
-        result = .created(try await metadata.create(directory: target, title: title, workspaceID: workspaceID, project: project))
+        result = .created(try await metadata.create(directory: target, title: title, workspaceID: workspaceID, project: project) { [persistence] task in
+          try await persistence.submit { try $0.recordCreatedChatTask(job.id, task: task) }
+        })
       case .send(let thread, let text, let context):
         result = .turn(try await bridge.send(threadID: thread, clientMessageID: job.id, text: text, context: context, attachments: attachments))
       case .steer(let thread, let turn, let text, let context):
@@ -282,6 +386,12 @@ final class NotebookCodexSidecar {
     } catch {
       // These local checks fail before native dispatch. A turn that finished on
       // the Mac is a definite stale Stop, not an indefinitely unknown acceptance.
+      if case .create = job.input.action,
+        let task = try await persistence.submit({ try $0.chatJob(job.id)?.createdTask }) {
+        _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: .attempting, to: .accepted,
+          result: .created(task), error: "Задача создана. Дополнительная настройка не завершена: " + Self.message(error)) }
+        return
+      }
       let code = error as? CodexBridgeError
       let fileRejected: Bool
       if case .saveFile = job.input.action { fileRejected = try await persistence.submit { try $0.fileCommit(job.id) == nil } }
@@ -289,18 +399,14 @@ final class NotebookCodexSidecar {
         let unprepared = try await persistence.submit { try $0.fileRename(job.id) == nil }
         fileRejected = error is MacNotebookProjectFiles.RenameRejected || unprepared
       } else { fileRejected = false }
-      let accessRejected: Bool
-      switch job.input.action {
-      case .setAccess, .setModel, .compact: accessRejected = code == .requestRejected
-      default: accessRejected = false
-      }
-      let rejected = accessRejected || fileRejected || code == .staleTurn || code == .staleRequest || code == .unsupportedRequest || code == .invalidInput || code == .signInRequired
+      let rejected = error is CodexRequestRejection || fileRejected || code == .externalOwnerUnavailable || code == .staleTurn || code == .staleRequest || code == .unsupportedRequest || code == .invalidInput || code == .signInRequired
       // busy/unavailable are guaranteed pre-dispatch by send(). Other failures
       // remain uncertain, including success whose native reply was lost.
       let retryable: Bool
       if job.input.action.message != nil {
-        retryable = (error as? CodexBridgeError) == .busy || (error as? CodexBridgeError) == .unavailable
-      } else { retryable = false }
+        retryable = code == .busy || code == .unavailable
+      } else if case .respond = job.input.action { retryable = code == .busy }
+      else { retryable = false }
       _ = try await persistence.submit {
         try $0.advanceChatJob(job.id, from: .attempting, to: rejected ? .rejected : (retryable ? .saved : .uncertain), error: Self.message(error))
       }
@@ -312,9 +418,19 @@ final class NotebookCodexSidecar {
   }
 
   private func reconcile(_ job: NotebookChatJob) async throws {
+    guard try await persistence.submit({ try $0.chatJob(job.id)?.state }) == job.state else { return }
+    if let task = job.createdTask {
+      _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted,
+        result: .created(task), error: "Задача создана до обрыва. Дополнительная настройка не подтверждена; состояние проверяется при открытии.") }
+      return
+    }
+    if case .createProject(let name, let path) = job.input.action {
+      // Only this public API explicitly guarantees idempotent creation by key.
+      let project = try await metadata.createProject(name: name, path: path, idempotencyKey: job.id)
+      _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .project(project)) }
+      return
+    }
     if case .setModel(let thread, let selection) = job.input.action {
-      guard reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
-      reconciliationAfter[job.id] = Date().addingTimeInterval(15)
       try await observe(thread)
       if await bridge.snapshot(threadID: thread)?.model == selection {
         _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .acknowledged) }
@@ -322,8 +438,6 @@ final class NotebookCodexSidecar {
       return // Never repeat a settings write after an unknown response.
     }
     if case .setAccess(let thread, let mode) = job.input.action {
-      guard reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
-      reconciliationAfter[job.id] = Date().addingTimeInterval(15)
       try await observe(thread)
       if await bridge.snapshot(threadID: thread)?.access?.mode == mode {
         _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .acknowledged) }
@@ -331,7 +445,7 @@ final class NotebookCodexSidecar {
       return
     }
     if case .renameFile(let request) = job.input.action {
-      guard request.address.computer == computerID, reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
+      guard request.address.computer == computerID else { return }
       reconciliationAfter[job.id] = Date().addingTimeInterval(5)
       let project = try await metadata.readProject(id: request.address.project)
       if let result = try await files.reconcileRename(job.id, project: project) {
@@ -340,7 +454,7 @@ final class NotebookCodexSidecar {
       return
     }
     if case .saveFile(let address) = job.input.action {
-      guard address.computer == computerID, reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
+      guard address.computer == computerID else { return }
       reconciliationAfter[job.id] = Date().addingTimeInterval(5)
       let project = try await metadata.readProject(id: address.project)
       if let result = try await files.reconcile(job.id, project: project) {
@@ -349,8 +463,6 @@ final class NotebookCodexSidecar {
       return
     }
     if case .updateProject(let edit) = job.input.action {
-      guard reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
-      reconciliationAfter[job.id] = Date().addingTimeInterval(15)
       let project = try await metadata.readProject(id: edit.id)
       if edit.matches(project) {
         _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .project(project)) }
@@ -358,9 +470,7 @@ final class NotebookCodexSidecar {
       }
       return // Observation can confirm the requested state; it never repeats an edit over newer work.
     }
-    guard let (thread, _, _) = job.input.action.message,
-      reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
-    reconciliationAfter[job.id] = Date().addingTimeInterval(15)
+    guard let (thread, _, _) = job.input.action.message else { return }
     do {
       let page = try await metadata.history(threadID: thread, cursor: historyCursors[job.id])
       if let message = page.messages.first(where: { $0.clientID == job.id.uuidString.lowercased() }) {
@@ -374,12 +484,22 @@ final class NotebookCodexSidecar {
   }
 
   private static func transport(_ state: CodexConversation) -> CodexConversation {
-    let messages = CodexMessage.transportPage(Array(state.messages.suffix(32)))
-    let ids = Set(messages.compactMap(\.clientID)), turns = Set(messages.map(\.turnID))
-    return .init(threadID: state.threadID, revision: state.revision, title: state.title,
-      ready: state.ready, busy: state.busy, activeTurnID: state.activeTurnID, messages: messages,
-      requests: state.requests, acceptedMessages: state.acceptedMessages.filter { ids.contains($0.key) },
-      turnStatuses: state.turnStatuses.filter { turns.contains($0.key) || $0.key == state.activeTurnID }, access: state.access, model: state.model, contextUsage: state.contextUsage)
+    // One complete question is immediately actionable; the remaining native
+    // IDs are addressable without packing all permissions into one envelope.
+    var budget = 72 * 1024
+    while true {
+      let messages = CodexMessage.transportPage(Array(state.messages.suffix(32)), byteBudget: budget)
+      let ids = Set(messages.compactMap(\.clientID)), turns = Set(messages.map(\.turnID))
+      let value = CodexConversation(threadID: state.threadID, generation: state.generation, revision: state.revision, title: state.title,
+        ready: state.ready, busy: state.busy, activeTurnID: state.activeTurnID, messages: messages,
+        requests: Array(state.requests.prefix(1)), requestIDs: state.requests.map(\.id),
+        acceptedMessages: state.acceptedMessages.filter { ids.contains($0.key) },
+        turnStatuses: state.turnStatuses.filter { turns.contains($0.key) || $0.key == state.activeTurnID },
+        access: state.access, model: state.model, contextUsage: state.contextUsage)
+      // Count encoded bytes (escaping included), reserving envelope overhead.
+      if ((try? JSONEncoder().encode(value).count) ?? Int.max) <= 180 * 1024 || budget <= 2048 { return value }
+      budget /= 2
+    }
   }
 
   nonisolated static func message(_ error: Error) -> String {
@@ -389,9 +509,8 @@ final class NotebookCodexSidecar {
     }
     guard let bridge = error as? CodexBridgeError else { return String(error.localizedDescription.prefix(2048)) }
     switch bridge {
-    case .requestRejected: return "Codex отклонил запрос. Проверьте доступные настройки этой задачи на Mac."
-    case .signInRequired: return "Войдите в Codex на Mac. Отдельного входа Notebook нет."
-    case .notInstalled: return "Установите Codex на сопряжённом Mac."
+    case .signInRequired: return "Войдите в Codex через настройки аккаунта Notebook."
+    case .notInstalled: return "Официальный runtime Codex отсутствует. Переустановите актуальный Notebook на Mac."
     case .incompatibleVersion: return "Версия Codex несовместима с проверенным протоколом Notebook."
     case .busy: return "Задача занята; сообщение остаётся в очереди."
     case .acceptanceUnknown: return "Принятие сообщения проверяется. Повторно оно не отправляется."

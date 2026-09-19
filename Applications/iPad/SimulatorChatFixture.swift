@@ -9,9 +9,12 @@ import NotebookCore
     let dictation = ProcessInfo.processInfo.arguments.contains("--notebook-dictation-fixture")
     let compact = dictation || ProcessInfo.processInfo.arguments.contains("--notebook-compact-chat-fixture")
     guard compact || ProcessInfo.processInfo.arguments.contains("--notebook-chat-sync-fixture") else { return nil }
+    let generation = UUID()
     let peer = UUID(uuidString: "7E7A1000-0000-4000-8000-000000000099")!
     let turn = "7e7a1000-0000-4000-8000-000000000077"
     let task = CodexTask(id: "7e7a1000-0000-4000-8000-000000000088", title: "Непрерывный разговор", cwd: "/fixture", projectID: "fixture")
+    var accountLogin: CodexAccountState.Login?
+    let accountRevision = UUID()
     var running = !dictation, subscription: UUID?
     var recordingID = UUID(), receivedAudio = 0
     var deliveredReply = false, admissions = Set<UUID>(), submittedMessages: [CodexMessage] = []
@@ -24,7 +27,7 @@ import NotebookCore
       text: "Добавь диктовку рядом с разговором.", attachments: ["code_image.png"])
     let fullReply = (1...16).map { "Объяснение формулы, часть \($0). Материал остаётся в этой же переписке." }.joined(separator: "\n\n")
     func conversation() -> CodexConversation {
-      .init(threadID: task.id, revision: revision, title: task.title, ready: true, busy: running,
+      .init(threadID: task.id, generation: generation, revision: revision, title: task.title, ready: true, busy: running,
         activeTurnID: running ? turn : nil, messages: recent + [user] + (deliveredReply ? [.init(id: "compact-reply", turnID: turn, clientID: nil, role: .assistant, text: fullReply, phase: "final_answer")] : running ? [] : [.init(id: "stopped", turnID: turn, clientID: nil, role: .assistant, text: "Ответ остановлен.")]) + submittedMessages,
         requests: [], acceptedMessages: [:], turnStatuses: [turn: running ? "inProgress" : deliveredReply ? "completed" : "interrupted"], model: selection, contextUsage: .init(used: 193000, window: 258000))
     }
@@ -34,6 +37,13 @@ import NotebookCore
       guard destination == peer, case .request(let query) = envelope.body else { return }
       let reply: NotebookChatReply
       switch query {
+      case .account(let action):
+        switch action {
+        case .beginLogin: accountLogin = .init(id: UUID().uuidString, verificationURL: URL(string: "https://auth.openai.com/codex/device")!, userCode: "TEST-183")
+        case .cancelLogin: accountLogin = nil
+        default: break
+        }
+        reply = .account(.init(revision: accountRevision, account: nil, requiresSignIn: true, login: accountLogin))
       case .dictation(let action):
         guard dictation else { reply = .failure("Outside dictation gesture scenario"); break }
         let state: NotebookDictationState

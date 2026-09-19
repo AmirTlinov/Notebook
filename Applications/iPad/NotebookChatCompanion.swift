@@ -61,7 +61,9 @@ struct NotebookCompanion: View {
                 .accessibilityIdentifier("notebook-companion-task")
             }
             if let conversation = chat.conversation, let request = conversation.requests.first {
-              NotebookCodexRequestView(request: request, threadID: conversation.threadID, chat: chat, maximumHeight: 160)
+              NotebookCodexRequestView(request: request, job: chat.decisionJob(request, threadID: conversation.threadID), respond: { decision in
+                await chat.respond(request, decision: decision, threadID: conversation.threadID)
+              }, maximumHeight: 160)
                 .id(request.id)
             }
             if let error = chat.voice.error {

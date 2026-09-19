@@ -3,7 +3,7 @@ import NotebookCore
 import NotebookCodex
 
 extension Proof {
-  static func exerciseComposer(_ bridge: CodexAppServer, installation: CodexDesktopInstallation, receipt: String) async throws {
+  static func exerciseComposer(_ bridge: CodexAppServer, installation: CodexRuntimeInstallation, receipt: String) async throws {
     guard !FileManager.default.fileExists(atPath: receipt) else { throw CocoaError(.fileWriteFileExists) }
     let options = try await bridge.models()
     guard let option = options.first(where: { $0.efforts.contains("low") }), options.count > 1 else { throw CodexBridgeError.invalidResponse }
@@ -11,7 +11,7 @@ extension Proof {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
     let file = directory.appendingPathComponent("example.txt")
     try Data("Notebook composer".utf8).write(to: file)
-    let task = try await bridge.create(directory: directory, title: "Notebook — проверка панели ввода", workspaceID: UUID())
+    let task = try await bridge.create(directory: directory, title: "Notebook — проверка панели ввода", workspaceID: UUID()) { _ in }
     print("Disposable composer task \(task.id)")
     do {
       try await bridge.attach(threadID: task.id)

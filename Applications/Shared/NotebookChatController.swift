@@ -3,8 +3,8 @@ import Foundation
 import Observation
 import NotebookCore
 
-/// The panel owns only selection, draft and display. The sole outstanding query
-/// can be replaced in the transient lane; mutations survive in SQLite by ID.
+/// The panel owns only selection, draft and display. One normal query and one reserved human control
+/// use separate bounded transient slots; mutations survive in SQLite by ID.
 @MainActor @Observable
 final class NotebookChatController {
   enum BrowserMode: String, CaseIterable { case chats = "Чаты", projects = "Проекты" }
@@ -72,8 +72,9 @@ final class NotebookChatController {
   @ObservationIgnored private var loaded = false
   @ObservationIgnored private var stopped = false
   @ObservationIgnored private var loop: Task<Void, Never>?
-  @ObservationIgnored private var pending: (NotebookChatEnvelope, CheckedContinuation<NotebookChatReply, Error>)?
-  @ObservationIgnored private var retry: Task<Void, Never>?
+  @ObservationIgnored private var pending: [UUID: (NotebookChatEnvelope, CheckedContinuation<NotebookChatReply, Error>)] = [:]
+  @ObservationIgnored private var retries: [UUID: Task<Void, Never>] = [:]
+  @ObservationIgnored private var interactiveRequest = false
   @ObservationIgnored private var directQueries: [(NotebookChatQuery, UUID, CheckedContinuation<NotebookChatReply, Error>)] = []
   @ObservationIgnored private let wake = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
   @ObservationIgnored private var ticker: Task<Void, Never>?
@@ -94,7 +95,6 @@ final class NotebookChatController {
   @ObservationIgnored private var nextCatchUp = ContinuousClock.now
   @ObservationIgnored private var nextProjects = ContinuousClock.now
   @ObservationIgnored private var conversationSubscription: UUID?
-  @ObservationIgnored private var subscriptionRevision: Int?
   @ObservationIgnored private var nextConversation = ContinuousClock.now
   @ObservationIgnored private var offeredJobs = Set<UUID>()
   @ObservationIgnored private var savingInput: NotebookChatInput?
@@ -181,8 +181,7 @@ final class NotebookChatController {
     await runs.stop()
     stopped = true; ticker?.cancel(); wake.continuation.finish()
     cancelQueries()
-    loop?.cancel(); retry?.cancel()
-    pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
+    loop?.cancel()
     await files.stop()
     await loop?.value; loop = nil
   }
@@ -216,8 +215,10 @@ final class NotebookChatController {
     for scope in catalogues.keys { catalogues[scope]?.loading = false }
     catchUpRead?.cancel(); catchUpRead = nil
     for (_, _, continuation) in directQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
-    directQueries.removeAll(); queries.removeAll(); retry?.cancel()
-    pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
+    directQueries.removeAll(); queries.removeAll()
+    for task in retries.values { task.cancel() }; retries.removeAll()
+    let cancelled = pending; pending.removeAll()
+    for (_, completion) in cancelled.values { completion.resume(throwing: NotebookTransportError.disconnected) }
   }
   func chooseComputer(_ id: UUID, firstConnection: Bool = false) async {
     guard loaded, !stopped, !switchingComputer, !saving, savingInput == nil, !files.notes.contactActive,
@@ -244,7 +245,7 @@ final class NotebookChatController {
       transcriptGeneration = UUID(); catchUpBoundary = nil
       conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; projects = []; catalogues = [:]; activities = [:]
       projectCursor = nil; projectPages = 1; nextProjectPage = false; offeredJobs.removeAll(); selectedTask = nil; expandedProjects = []; browserMode = .chats
-      conversationSubscription = nil; subscriptionRevision = nil; nextConversation = .now; continuationUnavailable = false
+      conversationSubscription = nil; nextConversation = .now; continuationUnavailable = false
       browsesChats = threadID == nil
       jobs = restored.jobs
       await files.installWindow(restored.window, document: restored.document)
@@ -258,9 +259,14 @@ final class NotebookChatController {
       guard subscription == conversationSubscription, value.threadID == threadID else { return }
       acceptConversation(value); return
     }
-    guard pending?.0.id == envelope.id, case .reply(let reply) = envelope.body else { return }
-    let completion = pending?.1; pending = nil; retry?.cancel(); retry = nil
-    completion?.resume(returning: reply)
+    if case .unavailable(let subscription, let thread, let reason) = envelope.body {
+      guard subscription == conversationSubscription, thread == threadID else { return }
+      suspendTranscript(); conversation = nil; continuationUnavailable = true; error = reason
+      nextConversation = .now; return
+    }
+    guard case .reply(let reply) = envelope.body, let (_, completion) = pending.removeValue(forKey: envelope.id) else { return }
+    retries.removeValue(forKey: envelope.id)?.cancel()
+    completion.resume(returning: reply)
   }
 
   /// Refresh only the loaded catalogue window. Publish a complete read so a
@@ -282,20 +288,16 @@ final class NotebookChatController {
         }
       }
       do {
-        var cursor = cursor, result: [CodexTask] = [], pages = 0, needsSignIn = false, seen = Set<String>()
+        var read = CodexReadWindow<CodexTask>(cursor: cursor), needsSignIn = false
         repeat {
-          guard case .catalogue(let page) = try await directQuery(.catalogue(cursor: cursor, project: project)), page.nextCursor == nil || page.nextCursor != cursor else { throw NotebookTransportError.invalidAcknowledgement }
+          guard case .catalogue(let page) = try await directQuery(.catalogue(cursor: read.cursor, project: project)) else { throw NotebookTransportError.invalidAcknowledgement }
           guard !Task.isCancelled, catalogueGeneration == generation, catalogues[scope] != nil,
             project == nil || projects.first(where: { $0.id == project?.id })?.roots == project?.roots else { return }
-          result += page.tasks.filter { task in !result.contains { $0.id == task.id } }
-          cursor = page.nextCursor; pages += 1; needsSignIn = page.defaultProviderNeedsSignIn
-          if let cursor, !seen.insert(cursor).inserted { throw NotebookTransportError.invalidAcknowledgement }
-        } while cursor != nil && (result.isEmpty || (!next && pages < window.pages))
-        if next {
-          let known = Set(window.tasks.map(\.id))
-          catalogues[scope]?.tasks = window.tasks + result.filter { !known.contains($0.id) }; catalogues[scope]?.pages = window.pages + pages
-        } else { catalogues[scope]?.tasks = result; catalogues[scope]?.pages = pages }
-        catalogues[scope]?.cursor = cursor; catalogues[scope]?.loaded = true; catalogues[scope]?.error = nil
+          try read.append(page.tasks, next: page.nextCursor); needsSignIn = page.defaultProviderNeedsSignIn
+        } while read.needsPage(refreshing: !next, loadedPages: window.pages)
+        catalogues[scope]?.tasks = next ? CodexReadWindow.appending(window.tasks, read.items) : read.items
+        catalogues[scope]?.pages = next ? window.pages + read.pages : read.pages
+        catalogues[scope]?.cursor = read.cursor; catalogues[scope]?.loaded = true; catalogues[scope]?.error = nil
         defaultProviderNeedsSignIn = needsSignIn; error = nil
         let known = Set(catalogues.values.flatMap { $0.tasks.map(\.id) })
         activities = activities.filter { known.contains($0.key) }
@@ -318,19 +320,19 @@ final class NotebookChatController {
         }
       }
       do {
-        var cursor = cursor, result: [CodexProject] = [], pages = 0
+        var read = CodexReadWindow<CodexProject>(cursor: cursor)
         repeat {
-          guard case .projects(let page) = try await directQuery(.projects(cursor: cursor)), page.nextCursor == nil || page.nextCursor != cursor else { throw NotebookTransportError.invalidAcknowledgement }
+          guard case .projects(let page) = try await directQuery(.projects(cursor: read.cursor)) else { throw NotebookTransportError.invalidAcknowledgement }
           guard !Task.isCancelled, catalogueGeneration == generation else { return }
-          result += page.projects.filter { project in !result.contains { $0.id == project.id } }
-          cursor = page.nextCursor; pages += 1
-        } while !next && pages < projectPages && cursor != nil
+          try read.append(page.projects, next: page.nextCursor)
+        } while read.needsPage(refreshing: !next, loadedPages: projectPages)
+        let result = read.items, pages = read.pages, cursor = read.cursor
         for project in result {
           if let previous = projects.first(where: { $0.id == project.id }), previous.roots != project.roots {
             catalogues.removeValue(forKey: .project(project.id))
           }
         }
-        if next { projects += result.filter { project in !projects.contains { $0.id == project.id } }; projectPages += pages }
+        if next { projects = CodexReadWindow.appending(projects, result); projectPages += pages }
         else { projects = result; projectPages = pages }
         projectCursor = cursor; error = nil
         let retained = Set(projects.map(\.id))
@@ -527,12 +529,16 @@ final class NotebookChatController {
     saving = true; defer { saving = false }
     let computer = peer
     let controlID = messageID ?? action.controlID(author: author)
+    let author = author
     if savingInput == nil, let controlID {
       do {
-        if let previous = try await persistence.submit({ try $0.chatJob(controlID) }) {
-          let destination = try await persistence.submit { try $0.chatDestination(controlID) }
-          guard destination == computer, previous.input.action == action else {
-            error = "Для этого запроса уже сохранено другое решение. Повторно оно не отправляется."; return false
+        if let previous = try await persistence.submit({ store in
+          if action.controlID(author: author) != nil { return try store.savedChatControl(action, author: author, computer: computer) }
+          return try store.chatJob(controlID)
+        }) {
+          guard previous.input.action == action,
+            try await persistence.submit({ try $0.chatDestination(controlID) }) == computer else {
+            error = "Для этого запроса уже сохранено другое решение."; return false
           }
           try await refreshJobs(); return true
         }
@@ -545,7 +551,10 @@ final class NotebookChatController {
     savingInput = input
     do {
       _ = try await persistence.submit { try $0.saveChatSubmission(input, to: computer) }
-      try await refreshJobs(); savingInput = nil; error = nil; return true
+      try await refreshJobs(); savingInput = nil; error = nil
+      if action.isInteractiveControl, connected, computer == peer,
+        let reply = try? await directQuery(.job(input)) { try await accept(reply, for: .job(input), computer: computer) }
+      return true
     } catch {
       // A lost local commit acknowledgement also keeps the same message ID.
       if let recovered = try? await persistence.submit({ try $0.chatJob(input.id) }), recovered.input == input {
@@ -582,6 +591,15 @@ final class NotebookChatController {
       return true
     }
   }
+  func stopWaiting(_ id: UUID) async {
+    let computer = peer
+    do {
+      guard case .job(let job) = try await directQuery(.stopWaiting(id)), peer == computer else { return }
+      _ = try await persistence.submit { try $0.receiveChatReceipt(job) }
+      try await refreshJobs(); error = job.error
+    } catch { self.error = error.localizedDescription }
+  }
+
   func refreshFileJobs() async { try? await refreshJobs(); wake.continuation.yield(()) }
   func fileQuery(_ query: NotebookFileQuery) async throws -> NotebookFileReply {
     guard query.isValid, case .file(let reply) = try await directQuery(.file(query)) else { throw NotebookTransportError.invalidAcknowledgement }
@@ -590,7 +608,15 @@ final class NotebookChatController {
   func directQuery(_ query: NotebookChatQuery) async throws -> NotebookChatReply {
     let endsVoice: Bool
     if case .job(let input) = query, case .stopVoice = input.action { endsVoice = true } else { endsVoice = false }
-    guard connected, !stopped, (!switchingComputer || endsVoice), let computer = peer, directQueries.count < 8 else { throw NotebookTransportError.disconnected }
+    guard connected, !stopped, (!switchingComputer || endsVoice), let computer = peer else { throw NotebookTransportError.disconnected }
+    if query.isInteractiveControl {
+      guard !interactiveRequest else { throw NotebookTransportError.backpressure }
+      interactiveRequest = true; defer { interactiveRequest = false }
+      let reply = try await request(query)
+      if case .failure(let message) = reply { throw NotebookPersistenceQueue.Failure(message: message) }
+      return reply
+    }
+    guard directQueries.count < 8 else { throw NotebookTransportError.backpressure }
     return try await withCheckedThrowingContinuation { continuation in
       directQueries.append((query, computer, continuation)); wake.continuation.yield(())
     }
@@ -619,27 +645,34 @@ final class NotebookChatController {
     queries.append(query); wake.continuation.yield(()); return true
   }
   private func request(_ query: NotebookChatQuery) async throws -> NotebookChatReply {
-    guard pending == nil, connected, let peer else { throw NotebookTransportError.disconnected }
+    // One bounded normal request plus one reserved human-control request.
+    // A file chunk or lost read reply cannot head-of-line block Cancel/Approval.
+    while pending.count >= (query.isInteractiveControl ? 2 : 1), connected, !stopped {
+      try await Task.sleep(for: .milliseconds(25))
+    }
+    guard connected, !stopped, let peer else { throw NotebookTransportError.disconnected }
     let envelope = NotebookChatEnvelope(body: .request(query))
-    if case .conversation = query { conversationSubscription = envelope.id; subscriptionRevision = nil }
+    if case .conversation = query { conversationSubscription = envelope.id }
     let reply: NotebookChatReply = try await withCheckedThrowingContinuation { continuation in
-      pending = (envelope, continuation)
-      retry = Task { [weak self] in
+      pending[envelope.id] = (envelope, continuation)
+      retries[envelope.id] = Task { [weak self] in
         for _ in 0..<8 {
-          guard !Task.isCancelled, let self, self.pending?.0.id == envelope.id else { return }
+          guard !Task.isCancelled, let self, self.pending[envelope.id] != nil else { return }
           self.send(envelope, peer)
           do { try await Task.sleep(for: .seconds(2)) } catch { return }
         }
-        guard let self, self.pending?.0.id == envelope.id else { return }
-        self.pending = nil; continuation.resume(throwing: NotebookTransportError.disconnected)
+        guard let self, self.pending[envelope.id] != nil else { return }
+        self.pending.removeValue(forKey: envelope.id); self.retries.removeValue(forKey: envelope.id)
+        continuation.resume(throwing: NotebookTransportError.disconnected)
       }
     }
     guard self.peer == peer else { throw NotebookTransportError.disconnected }
     return reply
   }
   private func acceptConversation(_ value: CodexConversation) {
-    guard subscriptionRevision == nil || value.revision >= subscriptionRevision! else { return }
-    subscriptionRevision = value.revision; conversation = value; continuationUnavailable = false; error = nil
+    guard value.succeeds(conversation) else { return }
+    if let conversation, conversation.generation != value.generation { suspendTranscript() }
+    conversation = value; continuationUnavailable = false; error = nil
     mergeMessages(value.messages, preferIncoming: true)
     if readPosition == nil || expanded || voice.activeID != nil { markRepliesRead() }
     refreshCompanionReplies()
@@ -696,23 +729,8 @@ final class NotebookChatController {
     }
   }
 
-  /// Both sources are chronological native windows. Insert missing runs beside
-  /// their shared IDs; an older prefix in a live window must not become a tail.
   private func mergeMessages(_ incoming: [CodexMessage], preferIncoming: Bool, before boundary: String? = nil) {
-    let known = Set(messages.map(\.id)), updates = Dictionary(incoming.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-    var before: [String: [CodexMessage]] = [:], pending: [CodexMessage] = [], lastShared: String?, seen = Set<String>()
-    for item in incoming where seen.insert(item.id).inserted {
-      if known.contains(item.id) { before[item.id] = pending; pending = []; lastShared = item.id }
-      else { pending.append(item) }
-    }
-    var result: [CodexMessage] = []
-    for item in messages {
-      if lastShared == nil, item.id == boundary { result += pending; pending = [] }
-      result += before[item.id] ?? []
-      result.append(preferIncoming ? updates[item.id] ?? item : item)
-      if item.id == lastShared { result += pending; pending = [] }
-    }
-    messages = result + pending
+    messages = CodexTranscript.merging(messages, incoming, preferIncoming: preferIncoming, before: boundary)
   }
 
   private func accept(_ reply: NotebookChatReply, for query: NotebookChatQuery, computer: UUID?) async throws {

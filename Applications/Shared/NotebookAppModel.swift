@@ -997,7 +997,9 @@ final class NotebookAppModel {
         && ($0.publicationCursor.map { (workspaceHeader?.cursor ?? 0) < $0 } ?? true) }
   }
   #if os(macOS)
+    @ObservationIgnored var codexHost: NotebookCodexHost?
     @ObservationIgnored private var codexSidecar: NotebookCodexSidecar?
+    private(set) var localCodexEvent: NotebookChatEnvelope?
     private(set) var agentStartupError: String?
     @ObservationIgnored private var commandServer: NotebookIPCServer?
     @ObservationIgnored private var scriptCoordinator: NotebookScriptCoordinator?
@@ -1024,6 +1026,7 @@ final class NotebookAppModel {
     opensDefaultAccountWorkspace: Bool = false,
     requiresExistingAccountContent: Bool = false,
     acceptance: NotebookAcceptanceConfiguration? = nil,
+    persistenceQueue: NotebookPersistenceQueue? = nil,
     preparePageInk: @escaping PageInkPreparation = { page, mutation, stamp in
       try await Task.detached(priority: .userInitiated) {
         try page.prepareInkChange(mutation, stamp: stamp)
@@ -1050,7 +1053,7 @@ final class NotebookAppModel {
       inputGate = NotebookInputGate(simulatesPencilContacts: acceptance?.simulatorContact == "pencil")
     #endif
     self.preparePageInk = preparePageInk
-    persistence = NotebookPersistenceQueue(store: store)
+    persistence = persistenceQueue ?? NotebookPersistenceQueue(store: store)
     compositionTiles = SceneCompositionTiles()
     #if os(iOS)
       inputFrameMonitor = InputFrameMonitor(root: store.root)
@@ -1198,10 +1201,10 @@ final class NotebookAppModel {
       let role = NearbySync.Role.macListener
       let name = Host.current().localizedName ?? "Mac"
     #endif
-    let connection = NearbySync(role: role,
-      identity: .init(deviceID: actorID, workspaceID: workspaceID, displayName: name),
-      storage: storage, stagingRoot: store.root.appendingPathComponent("transfer-staging", isDirectory: true),
-      trustStore: NotebookKeychainDeviceStore(activationID: pairingActivationID, service: pairingService))
+    let identity = NotebookTransportIdentity(deviceID: actorID, workspaceID: workspaceID, displayName: name)
+    let trust = NotebookKeychainDeviceStore(activationID: pairingActivationID, service: pairingService)
+    let connection = NearbySync(role: role, identity: identity,
+      storage: storage, stagingRoot: store.root.appendingPathComponent("transfer-staging", isDirectory: true), trustStore: trust)
     connection.onStateChange = { [weak self] state in
       self?.connectionState = state
       self?.pairedPeers = self?.sync?.pairedPeers ?? []
@@ -1211,7 +1214,14 @@ final class NotebookAppModel {
       self?.chat?.updateComputers(self?.pairedPeers ?? [])
       #endif
     }
-    connection.onConnect = { [weak self] peer, generation in self?.peerConnected(peer, generation: generation) }
+    #if os(macOS)
+    connection.onDeviceRevoked = { [weak self] id in self?.codexSidecar?.revokeDevice(id) }
+    #endif
+    connection.onConnect = { [weak self] peer, generation in self?.peerConnected(peer, generation: generation)
+      #if os(macOS)
+      self?.codexSidecar?.allowDevice(peer.deviceID)
+      #endif
+    }
     connection.onDisconnect = { [weak self] peer, generation in self?.peerDisconnected(peerID: peer, generation: generation) }
     connection.onTransient = { [weak self] value, peer, generation in
       self?.receivePeerTransient(value, peerID: peer, generation: generation)
@@ -1308,6 +1318,11 @@ final class NotebookAppModel {
 
   private(set) var knownDevices: [NotebookTransportIdentity] = []
   private(set) var blockedDeviceIDs: Set<UUID> = []
+  func deviceRouteTitle(_ id: UUID) -> String? { sync?.routeTitle(for: id) }
+  func remoteAccessEnabled(_ id: UUID) -> Bool { sync?.remoteEnabled(for: id) ?? false }
+  func configureRemoteAccess(_ id: UUID, route: NotebookRelayRoute?) async throws {
+    guard let sync else { throw NotebookTransportError.disconnected }; try await sync.configureRelay(for: id, route: route)
+  }
   func deviceIsConnected(_ id: UUID) -> Bool { peerGenerations[id] != nil }
   func deviceConnectsAutomatically(_ id: UUID) -> Bool { !blockedDeviceIDs.contains(id) }
   var canChangeDeviceConnections: Bool {
@@ -1362,7 +1377,7 @@ final class NotebookAppModel {
     }
   }
 
-  func refreshDeviceConnection() { accountConnection?.refresh() }
+  func refreshDeviceConnection() { accountConnection?.refresh(); sync?.resumeDiscovery() }
 
   private func startAccountConnection(_ connection: NearbySync) async {
     let service: any NotebookAccountService
@@ -1513,13 +1528,14 @@ final class NotebookAppModel {
       #endif
       #if os(iOS)
         #if DEBUG
+        let approvalFixture = try await NotebookApprovalFixture.make(persistence: persistence, author: actorID, directory: store.root)
         #if targetEnvironment(simulator)
         let syncFixture = try await SimulatorChatFixture.make(persistence: persistence, author: actorID)
         #else
         let syncFixture: NotebookChatController? = nil
         #endif
         let terminalFixture = try await NotebookTerminalFixture.make(persistence: persistence, author: actorID, directory: store.root)
-        let fixtureChat = syncFixture ?? terminalFixture
+        let fixtureChat = approvalFixture ?? syncFixture ?? terminalFixture
         #else
         let fixtureChat: NotebookChatController? = nil
         #endif
@@ -3803,6 +3819,43 @@ final class NotebookAppModel {
       previewPublisher = publisher
     }
 
+    /// Local presentation uses the same journal/owner directly, never a loopback transport.
+    func localCodexQuery(_ query: NotebookChatQuery, requestID: UUID = UUID()) async throws -> NotebookChatReply {
+      if codexSidecar == nil { await startCodexSidecar() }
+      guard let codexSidecar else { throw NotebookPersistenceQueue.Failure(message: agentStartupError ?? "Codex недоступен") }
+      guard let envelope = await codexSidecar.receive(.init(id: requestID, body: .request(query)), peerID: actorID),
+        case .reply(let reply) = envelope.body else { throw NotebookTransportError.disconnected }
+      if case .failure(let message) = reply { throw NotebookPersistenceQueue.Failure(message: message) }
+      return reply
+    }
+    func localCodexPanel() async throws -> NotebookChatPanelState {
+      let author = actorID
+      return try await persistence.submit { try $0.chatPanel(author: author, computer: author) }
+    }
+    func saveLocalCodexPanel(_ state: NotebookChatPanelState) {
+      let author = actorID
+      persistence.enqueue(publishesChanges: false) { try $0.saveChatPanel(state, author: author); return false }
+    }
+    func localCodexControl(_ action: NotebookChatAction) async throws -> NotebookChatJob? {
+        let author = actorID
+        return try await persistence.submit { try $0.savedChatControl(action, author: author, computer: author) }
+    }
+
+    func localCodexJobs() async throws -> [NotebookChatJob] {
+      let author = actorID
+      return try await persistence.submit { try $0.routedChatJobs(author: author, computer: author) }
+    }
+
+    /// Deliberate external integration, never a prerequisite for opening a task.
+    func registerExternalCodexTools() async throws {
+      guard allowsCodexRegistration, acceptance == nil else {
+        throw NotebookPersistenceQueue.Failure(message: "Тестовая или неактивированная сборка не меняет общие инструменты Codex. Откройте установленный Notebook.")
+      }
+      let installation = try await Task.detached { try CodexRuntimeInstallation.discover() }.value
+      guard let entry = Bundle.main.resourceURL?.appendingPathComponent("NotebookTools/dist/index.mjs") else { throw CodexBridgeError.notInstalled }
+      try await installation.registerNotebookTools(entry: entry, socket: NotebookIPC.defaultSocketURL)
+    }
+
     private func startCodexSidecar() async {
       guard codexSidecar == nil, let workspaceID = workspaceHeader?.workspaceID else { return }
       do {
@@ -3810,7 +3863,7 @@ final class NotebookAppModel {
           agentStartupError = "Запуск Codex из этого архива закрыт до безопасной активации пары. Действующие инструменты Notebook не перенаправлены."
           return
         }
-        let installation = try CodexDesktopInstallation.discover()
+        let installation = try await Task.detached(priority: .userInitiated) { try CodexRuntimeInstallation.discover() }.value
         guard let entry = Bundle.main.resourceURL?.appendingPathComponent("NotebookTools/dist/index.mjs"),
           let commandSocketURL else { throw CodexBridgeError.notInstalled }
         let directory: URL
@@ -3821,14 +3874,21 @@ final class NotebookAppModel {
             attributes: [.posixPermissions: 0o700])
           scope = try CodexRuntimeScope(directory: directory, toolsEntry: entry, socket: commandSocketURL)
         } else {
-          try await installation.registerNotebookTools(entry: entry, socket: commandSocketURL)
           directory = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Notebook/Codex", isDirectory: true)
           scope = nil
         }
-        let sidecar = NotebookCodexSidecar(persistence: persistence, installation: installation,
-          workspaceID: workspaceID, computerID: actorID, directory: directory, scope: scope) { [weak self] envelope, peer in
-            self?.sync?.sendTransient(.codex(envelope), to: peer)
+        let host = codexHost ?? NotebookCodexHost()
+        codexHost = host
+        let sidecar = try await host.workspace(store: store, persistence: persistence, installation: installation,
+          workspaceID: workspaceID, computerID: actorID, directory: directory, scope: scope, entry: entry, socket: commandSocketURL,
+          authorizePeer: { [weak self] peer in
+            guard let self else { return false }
+            return peer == self.actorID || self.sync?.pairedPeers.contains(where: { $0.deviceID == peer }) == true
+          }) { [weak self] envelope, peer in
+            guard let self else { return }
+            if peer == actorID { localCodexEvent = envelope }
+            else { sync?.sendTransient(.codex(envelope), to: peer) }
           }
         codexSidecar = sidecar; sidecar.start(); agentStartupError = nil
       } catch { agentStartupError = NotebookCodexSidecar.message(error) }
@@ -3922,6 +3982,7 @@ final class NotebookAppModel {
   func receivePeerTransient(_ message: NotebookTransportTransient, peerID: UUID, generation: UUID) {
     guard !isClosing, peerGenerations[peerID] == generation else { return }
     switch message {
+    case .relay: break // Routing credentials terminate at NearbySync.
     case .selection(let value):
       #if os(macOS)
         guard value.deviceID == peerID, value.isValid else { return }
@@ -5121,7 +5182,7 @@ final class NotebookAppModel {
       sync = nil
       #if os(macOS)
         await commandServer?.stopAndDrain(); commandServer = nil
-        await codexSidecar?.stop(); codexSidecar = nil
+        codexSidecar?.detachView(); codexSidecar = nil
         await scriptCoordinator?.shutdown(); scriptCoordinator = nil
         let agentStopped = true
         await previewPublisher?.stop()

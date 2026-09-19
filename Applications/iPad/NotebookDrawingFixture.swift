@@ -808,3 +808,61 @@
     }
   }
 #endif
+
+#if DEBUG
+/// Physical UI fixture: the real chat controller/outbox and full approval view;
+/// only the remote native producer is bounded and synthetic. No live workspace.
+@MainActor enum NotebookApprovalFixture {
+  static func make(persistence: NotebookPersistenceQueue, author: UUID, directory: URL) async throws -> NotebookChatController? {
+    guard ProcessInfo.processInfo.arguments.contains(NotebookDrawingFixture.launchArgument),
+      ProcessInfo.processInfo.arguments.contains("--notebook-approval-fixture") else { return nil }
+    let peer = UUID(), generation = UUID(), task = CodexTask(id: UUID().uuidString, title: "Четыре разрешения", cwd: "/fixture")
+    let native = NotebookStore(root: directory.appendingPathComponent("approval-peer"))
+    _ = try native.initializeWorkspace(actor: peer, pageSize: .init(width: 834, height: 1194))
+    var requests = (1...4).map { number in CodexUserRequest(nativeID: .number(Double(number)), generation: generation,
+      method: "item/commandExecution/requestApproval", turnID: "turn", parameters: .object([
+        "command": .string("echo request-\(number)"), "reason": .string("Полный запрос \(number)"),
+        "detail": .string(String(repeating: "x", count: 60000))])) }
+    var decisions = 0, subscription: UUID?
+    func conversation() -> CodexConversation {
+      .init(threadID: task.id, generation: generation, revision: decisions + 1, title: task.title,
+        ready: true, busy: !requests.isEmpty, activeTurnID: requests.isEmpty ? nil : "turn",
+        messages: [.init(id: "count", turnID: "turn", clientID: nil, role: .assistant, text: "Обработано запросов: \(decisions)")],
+        requests: Array(requests.prefix(1)), requestIDs: requests.map(\.id), acceptedMessages: [:], turnStatuses: [:])
+    }
+    weak var receiver: NotebookChatController?
+    let chat = NotebookChatController(persistence: persistence, author: author) { envelope, destination in
+      guard destination == peer, case .request(let query) = envelope.body else { return }
+      let reply: NotebookChatReply
+      do {
+        switch query {
+        case .catalogue: reply = .catalogue(.init(tasks: [task], nextCursor: nil))
+        case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
+        case .models: reply = .models([])
+        case .activity: reply = .activity([.init(id: task.id, status: requests.isEmpty ? .idle : .waitingForInput)])
+        case .history: reply = .history(.init(messages: conversation().messages, nextCursor: nil))
+        case .conversation: subscription = envelope.id; reply = .conversation(conversation())
+        case .requestDetails(let thread, let epoch, let id):
+          guard thread == task.id, epoch == generation, let request = requests.first(where: { $0.id == id }) else { throw NotebookTransportError.invalidAcknowledgement }
+          reply = .requestDetails(request)
+        case .job(let input):
+          var job = try native.saveChatInput(input)
+          if job.state == .saved {
+            guard case .respond(let thread, let request, _) = input.action, thread == task.id,
+              requests.contains(request) else { throw NotebookTransportError.invalidAcknowledgement }
+            _ = try native.advanceChatJob(input.id, from: .saved, to: .attempting)
+            decisions += 1; requests.removeAll { $0 == request }
+            job = try native.advanceChatJob(input.id, from: .attempting, to: .accepted, result: .acknowledged)
+          }
+          if let subscription { receiver?.receive(.init(body: .event(subscriptionID: subscription, conversation: conversation())), peerID: peer) }
+          reply = .job(job)
+        default: reply = .failure("Outside the approval gesture fixture")
+        }
+      } catch { reply = .failure(error.localizedDescription) }
+      receiver?.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
+    }
+    receiver = chat; await chat.start(); await chat.connect(peer); chat.select(task); chat.expanded = true
+    return chat
+  }
+}
+#endif

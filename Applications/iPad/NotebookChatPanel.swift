@@ -16,6 +16,7 @@ struct NotebookChatPanel: View {
   let endInteraction: () -> Void
   @GestureState private var moving = false
   @GestureState private var resizing = false
+  @State private var showsCodexAccount = false
   @State private var editingProject: CodexProject?
   @State private var terminalDrag: NotebookTerminalSplit?
   @State private var terminalFraction: Double?
@@ -96,6 +97,15 @@ struct NotebookChatPanel: View {
     .background(NotebookControlRegion(gate: model.inputGate))
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("notebook-chat-panel")
+    .sheet(isPresented: $showsCodexAccount) {
+      let computer = chat.computerID
+      NotebookCodexAccountView { query in
+        guard chat.computerID == computer, case .account(let state) = try await chat.directQuery(.account(query)) else {
+          throw NotebookTransportError.disconnected
+        }
+        return state
+      }.id(computer)
+    }
     .sheet(item: $editingProject) { NotebookProjectSettings(project: $0, chat: chat) }
     .onChange(of: scenePhase) {
       if scenePhase == .background { chat.voice.connectionLost() }
@@ -134,6 +144,9 @@ struct NotebookChatPanel: View {
 
   private var header: some View {
     HStack(spacing: 0) {
+      Button("Аккаунт Codex", systemImage: "person.crop.circle") { showsCodexAccount = true }
+        .labelStyle(.iconOnly).frame(width: 44, height: 44)
+        .accessibilityIdentifier("codex-account-open")
       Button {
         chat.browsesChats.toggle()
       } label: {
@@ -201,9 +214,12 @@ struct NotebookChatPanel: View {
         })
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("notebook-chat-transcript")
-      if let conversation = chat.conversation, let request = conversation.requests.first {
-        NotebookCodexRequestView(request: request, threadID: conversation.threadID, chat: chat, maximumHeight: min(300, height * 0.45))
-          .id(request.id).padding(.horizontal, 12).padding(.bottom, 8)
+      if let conversation = chat.conversation {
+        NotebookCodexRequestsView(conversation: conversation,
+          job: { chat.decisionJob($0, threadID: conversation.threadID) }, query: { try await chat.directQuery($0) },
+          respond: { await chat.respond($0, decision: $1, threadID: conversation.threadID) },
+          maximumHeight: min(300, height * 0.45))
+          .padding(.horizontal, 12).padding(.bottom, 8)
       }
       if !chat.pendingMessages.isEmpty { outbox }
     }
@@ -234,6 +250,7 @@ struct NotebookChatPanel: View {
 
   private var composer: some View {
     VStack(alignment: .leading, spacing: 8) {
+      NotebookCodexUncertainJobsView(jobs: chat.jobs, finish: chat.stopWaiting)
       NotebookVoiceControls(voice: chat.voice)
       if let thread = chat.threadID, case let count = model.laserContext.count(scope:.init(computer:chat.computerID,thread:thread)), count > 0 {
         HStack {

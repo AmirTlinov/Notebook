@@ -232,6 +232,7 @@ def build(args):
     runtime = release.prepare_typesetter_runtime(snapshot, release.release_commands(evidence), "iphonesimulator", stage=ROOT / ".build/notebook-typesetter-runtime")
     release.prepare_typesetter_runtime(snapshot, release.release_commands(evidence), "macosx", stage=runtime)
     typescript_runtime = release.prepare_typescript_runtime(snapshot, release.release_commands(evidence))
+    release.prepare_codex_runtime(snapshot, release.release_commands(evidence))
     run(["xcodegen", "generate", "--spec", "project.yml"], cwd=snapshot / "Applications", output=evidence / "project.log")
     for platform, scheme, destination in (("ipad", "NotebookAcceptance", "platform=iOS Simulator,id=" + args.simulator),
                                            ("mac", "NotebookMacAcceptance", "platform=macOS,arch=arm64")):

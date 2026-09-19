@@ -44,6 +44,7 @@ enum NotebookTransportTLS {
       sec_protocol_options_add_pre_shared_key(tls.securityProtocolOptions, dispatchData(key.secret), dispatchData(Data(key.identity.utf8)))
     }
     let tcp = NWProtocolTCP.Options(); tcp.noDelay = true
+    tcp.enableKeepalive = true; tcp.keepaliveIdle = 10; tcp.keepaliveInterval = 3; tcp.keepaliveCount = 2
     let parameters = NWParameters(tls: tls, tcp: tcp)
     parameters.includePeerToPeer = !loopback
     if loopback { parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any) }
@@ -79,6 +80,13 @@ struct NotebookPeerDiscovery: Equatable {
     let epoch = generation.uuidString.replacingOccurrences(of: "-", with: "").prefix(12).lowercased()
     return "notebook-v\(NotebookTransportLimits.protocolVersion)-\(deviceID)-\(epoch)"
   }
+  static func metadata(workspaceID: UUID) -> NWTXTRecord {
+    NWTXTRecord(["workspace": workspaceID.uuidString.lowercased()])
+  }
+  static func matches(_ metadata: NWBrowser.Result.Metadata, workspaceID: UUID) -> Bool {
+    guard case .bonjour(let record) = metadata, let value = record["workspace"] else { return false }
+    return UUID(uuidString: value) == workspaceID
+  }
   init?(serviceName: String) {
     guard serviceName.hasPrefix("notebook-v") else { return nil }
     let suffix = serviceName.dropFirst("notebook-v".count)
@@ -108,6 +116,23 @@ struct NotebookPeerDiscovery: Equatable {
 @MainActor
 final class NearbySync {
   enum Role { case macListener, iPadConnector }
+  enum Route: Int { case direct, nearby, relay
+    var title: String { switch self { case .direct: "напрямую"; case .nearby: "рядом"; case .relay: "через интернет" } }
+  }
+  private var sessionRoutes: [UUID: Route] = [:]
+  private var relayTasks: [UUID: Task<Void, Never>] = [:]
+  private var uplinks: [UUID: NotebookRelayUplink] = [:]
+  private var discoveryStop: Task<Void, Never>?
+  private var pathMonitor: NWPathMonitor?
+  private var networkChange: Task<Void, Never>?
+  private var reconnectFailures = 0
+  private var pathEpoch: UInt64 = 0
+  private var sessionEpochs: [UUID: UInt64] = [:]
+  private var nearbySearchAllowed = true
+  var onDeviceRevoked: ((UUID) -> Void)?
+  func routeTitle(for peer: UUID) -> String? { currentGeneration[peer].flatMap { sessionRoutes[$0]?.title } }
+  func remoteEnabled(for peer: UUID) -> Bool { trust.relays?[peer] != nil }
+
   var onStateChange: ((NotebookConnectionState) -> Void)?
   var onConnect: ((NotebookTransportIdentity, UUID) -> Void)?
   var onDisconnect: ((UUID, UUID) -> Void)?
@@ -174,6 +199,19 @@ final class NearbySync {
         }
       }
       isStarted = true
+      let monitor = NWPathMonitor(); pathMonitor = monitor
+      monitor.pathUpdateHandler = { [weak self] _ in
+        Task { @MainActor in
+          guard let self, self.isStarted else { return }
+          self.networkChange?.cancel()
+          self.networkChange = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            guard let self, self.isStarted else { return }
+            self.networkPathChanged()
+          }
+        }
+      }
+      monitor.start(queue: queue)
       refreshDiscovery()
     }
     startup = (id, task)
@@ -202,6 +240,10 @@ final class NearbySync {
   func stop() {
     lifetime = UUID(); startup?.task.cancel(); startup = nil
     isStarted = false; retryTask?.cancel(); retryTask = nil
+    discoveryStop?.cancel(); discoveryStop = nil; networkChange?.cancel(); networkChange = nil
+    pathMonitor?.cancel(); pathMonitor = nil
+    for task in relayTasks.values { task.cancel() }; relayTasks.removeAll()
+    for uplink in uplinks.values { uplink.stop() }; uplinks.removeAll(); sessionRoutes.removeAll(); sessionEpochs.removeAll()
     listener?.cancel(); listener = nil; browser?.cancel(); browser = nil
     endpointByPeer.removeAll(); suspendedPeers.removeAll()
     for session in Array(sessions.values) { session.stop() }
@@ -230,6 +272,10 @@ final class NearbySync {
       state.account = account
       for device in devices {
         if let index = state.records.firstIndex(where: { $0.identity.deviceID == device.identity.deviceID }) {
+          if state.records[index].credentialID != device.credentialID || state.records[index].secret != device.secret {
+            state.relays?.removeValue(forKey: device.identity.deviceID)
+            state.relayClients?.removeValue(forKey: device.identity.deviceID)
+          }
           state.records[index] = device
         } else { state.records.append(device) }
       }
@@ -244,7 +290,7 @@ final class NearbySync {
         for session in Array(sessions.values) where session.expectedPeerID == device.identity.deviceID
           || session.peerIdentity?.deviceID == device.identity.deviceID { session.stop() }
       }
-      refreshDiscovery()
+      if role == .macListener { refreshListener() } else { refreshDiscovery() }
       connectDiscoveredPeers()
     }
     onStateChange?(.waiting)
@@ -256,6 +302,9 @@ final class NearbySync {
     guard isStarted else { throw NotebookTransportError.disconnected }
     if !allowed {
       suspendedPeers.insert(id)
+      onDeviceRevoked?(id)
+      relayTasks[id]?.cancel(); relayTasks.removeValue(forKey: id)
+      uplinks[id]?.stop(); uplinks.removeValue(forKey: id)
       for session in Array(sessions.values) where session.expectedPeerID == id || session.peerIdentity?.deviceID == id { session.stop() }
     }
     try await updateTrust { state in
@@ -263,9 +312,13 @@ final class NearbySync {
       if allowed { state.blocked.remove(id) } else { state.blocked.insert(id) }
       return state
     }
+    if !allowed, role == .macListener, let route = trust.relays?[id] {
+      _ = try? await NotebookRelayHTTP.request(route, role: "host", action: "revoke", as: NotebookRelayHTTP.Enrollment.self)
+      try await updateTrust { state in var state = state; state.relays?.removeValue(forKey: id); state.relayClients?.removeValue(forKey: id); return state }
+    }
     suspendedPeers.remove(id)
     onStateChange?(.waiting)
-    refreshDiscovery()
+    if role == .macListener { refreshListener() } else { refreshDiscovery() }
   }
 
   func notifyDurableChanges() { for session in sessions.values where session.isReady { session.notifyDurableChanges() } }
@@ -275,21 +328,37 @@ final class NearbySync {
   }
   func sendTransient(_ value: NotebookTransportTransient, to peerID: UUID? = nil) {
     guard value.isValid(from: identity) else { return }
-    for session in sessions.values where session.isReady && (peerID == nil || session.peerIdentity?.deviceID == peerID) { session.sendTransient(value) }
+    for session in sessions.values where session.isReady && session.peerIdentity.map({ currentGeneration[$0.deviceID] == session.generation }) == true && (peerID == nil || session.peerIdentity?.deviceID == peerID) { session.sendTransient(value) }
   }
 
-  private func refreshDiscovery() {
+  /// Foreground after sleep may not change the default IP path. Permit one
+  /// bounded discovery window without churning a healthy authenticated channel.
+  func resumeDiscovery() {
+    guard currentGeneration.isEmpty else { return }
+    networkPathChanged()
+  }
+
+  /// A debounced system path event opens a new candidate epoch without retiring
+  /// the selected authenticated channel. The connector commits handover on ready.
+  func networkPathChanged() {
+    guard isStarted else { return }
+    reconnectFailures = 0; pathEpoch &+= 1; nearbySearchAllowed = true
+    if role == .iPadConnector { browser?.cancel(); browser = nil; discoveryStop?.cancel() }
+    refreshDiscovery(); connectDiscoveredPeers(); connectRelayPeers()
+  }
+
+  private func refreshDiscovery(peerToPeer: Bool = false) {
     guard isStarted else { return }
     switch role {
-    case .macListener: refreshListener()
+    case .macListener: if listener == nil { refreshListener() } else { refreshUplinks() }
     case .iPadConnector:
       if trusted.isEmpty {
         browser?.cancel(); browser = nil; endpointByPeer.removeAll(); return
       }
       guard browser == nil, !trusted.isEmpty else { return }
       let parameters = NWParameters.tcp
-      parameters.includePeerToPeer = true
-      let browser = NWBrowser(for: .bonjour(type: "_notebook._tcp", domain: nil), using: parameters)
+      parameters.includePeerToPeer = peerToPeer
+      let browser = NWBrowser(for: .bonjourWithTXTRecord(type: "_notebook._tcp", domain: nil), using: parameters)
       self.browser = browser
       browser.browseResultsChangedHandler = { [weak self, weak browser] results, _ in
         Task { @MainActor in
@@ -301,6 +370,9 @@ final class NearbySync {
             guard case .service(let name, _, _, _) = result.endpoint,
               let peer = NotebookPeerDiscovery(serviceName: name), allowed.contains(peer.deviceID) else { continue }
             guard peer.isCompatible else { incompatiblePeers.insert(peer.deviceID); continue }
+            // Retained workspaces share this Mac's device identity. Select the
+            // workspace before TLS, rather than whichever listener sorts first.
+            guard NotebookPeerDiscovery.matches(result.metadata, workspaceID: self.identity.workspaceID) else { continue }
             if endpoints[peer.deviceID] == nil { endpoints[peer.deviceID] = result.endpoint }
           }
           // A changed advertisement is evidence of external progress. Repeated
@@ -316,16 +388,30 @@ final class NearbySync {
           guard let self, let browser, self.browser === browser, self.isStarted else { return }
           switch state {
           case .waiting(let error), .failed(let error): self.report(error)
-          case .ready: self.logger.info("Nearby discovery ready with peer-to-peer interfaces")
+          case .ready: self.logger.info("Trusted device discovery ready")
           default: break
           }
         }
       }
       browser.start(queue: queue)
+      discoveryStop?.cancel()
+      guard peerToPeer || nearbySearchAllowed else { connectRelayPeers(); return }
+      discoveryStop = Task { [weak self, weak browser] in
+        do { try await Task.sleep(for: .seconds(peerToPeer ? 12 : 4)) } catch { return }
+        guard let self, let browser, self.browser === browser else { return }
+        browser.cancel(); self.browser = nil
+        let hasCurrentDirectPath = self.currentGeneration.values.contains {
+          self.sessionEpochs[$0] == self.pathEpoch && self.sessionRoutes[$0] != .relay
+        }
+        if !peerToPeer, !hasCurrentDirectPath, self.nearbySearchAllowed { self.nearbySearchAllowed = false; self.refreshDiscovery(peerToPeer: true) }
+        else if peerToPeer { self.refreshDiscovery() }
+        self.connectRelayPeers()
+      }
     }
   }
 
   private func refreshListener() {
+    for uplink in uplinks.values { uplink.stop() }; uplinks.removeAll()
     listener?.cancel(); listener = nil
     guard isStarted, role == .macListener else { return }
     let keys = trusted.map(\.tlsKey)
@@ -333,14 +419,21 @@ final class NearbySync {
     do {
       let listener = try NWListener(using: NotebookTransportTLS.parameters(keys: keys))
       self.listener = listener
-      listener.service = .init(name: NotebookPeerDiscovery.serviceName(deviceID: identity.deviceID, generation: discoveryGeneration), type: "_notebook._tcp")
+      listener.service = .init(name: NotebookPeerDiscovery.serviceName(deviceID: identity.deviceID, generation: discoveryGeneration),
+        type: "_notebook._tcp", txtRecord: NotebookPeerDiscovery.metadata(workspaceID: identity.workspaceID))
       listener.newConnectionHandler = { [weak self, weak listener] connection in
         Task { @MainActor in
           guard let self, let listener, self.listener === listener, self.isStarted, self.sessions.count < 8 else { connection.cancel(); return }
-          self.addSession(connection: connection, credential: nil)
+          let isLoopback: Bool
+          if case .hostPort(let host, _) = connection.endpoint { isLoopback = String(describing: host) == "127.0.0.1" || String(describing: host) == "::1" }
+          else { isLoopback = false }
+          self.addSession(connection: connection, credential: nil, route: isLoopback ? .relay : .direct)
         }
       }
       listener.stateUpdateHandler = { [weak self, weak listener] state in
+        if case .ready = state { Task { @MainActor in
+          guard let self, let listener, self.listener === listener else { return }; self.refreshUplinks()
+        } }
         if case .failed(let error) = state {
           Task { @MainActor in guard let self, let listener, self.listener === listener else { return }; self.report(error) }
         }
@@ -353,11 +446,90 @@ final class NearbySync {
     guard isStarted, role == .iPadConnector else { return }
     for (deviceID, endpoint) in endpointByPeer where sessions.count < 8 {
       guard !suspendedPeers.contains(deviceID) else { continue }
-      guard !sessions.values.contains(where: { $0.expectedPeerID == deviceID || $0.peerIdentity?.deviceID == deviceID }) else { continue }
+      guard !sessions.values.contains(where: { ($0.expectedPeerID == deviceID || $0.peerIdentity?.deviceID == deviceID) && sessionRoutes[$0.generation] != .relay && sessionEpochs[$0.generation] == pathEpoch }) else { continue }
       guard let peer = trusted.first(where: { $0.identity.deviceID == deviceID }) else { continue }
       let credential = NotebookPeerCredential(credentialID: peer.credentialID, secret: peer.secret, expectedPeer: peer.identity)
       do { addSession(connection: NWConnection(to: endpoint, using: try NotebookTransportTLS.parameters(keys: [credential.tlsKey])), credential: credential) }
       catch { report(error) }
+    }
+  }
+
+  func configureRelay(for peerID: UUID, route: NotebookRelayRoute?) async throws {
+    guard isStarted, role == .macListener, let peer = trusted.first(where: { $0.identity.deviceID == peerID }) else {
+      throw NotebookTransportError.authenticationRequired
+    }
+    let previousRoute = trust.relays?[peerID]
+    let client: NotebookRelayRoute?
+    if let route {
+      guard route.isValid, !(trust.relays ?? [:]).contains(where: { $0.key != peerID && $0.value.route == route.route && $0.value.endpoint == route.endpoint }) else { throw NotebookTransportError.authenticationRequired }
+      let value = try await NotebookRelayHTTP.request(route, role: "host", action: "enable", as: NotebookRelayHTTP.Enrollment.self)
+      guard let token = value.clientCapability else { throw NotebookTransportError.authenticationRequired }
+      client = .init(endpoint: route.endpoint, route: route.route, capability: token)
+      guard client?.isValid == true else { throw NotebookTransportError.authenticationRequired }
+    } else { client = nil }
+    try await updateTrust { state in
+      guard state.records.contains(peer), !state.blocked.contains(peerID) else { throw NotebookTransportError.authenticationRequired }
+      var state = state
+      if state.relays == nil { state.relays = [:] }; if state.relayClients == nil { state.relayClients = [:] }
+      state.relays?[peerID] = route; state.relayClients?[peerID] = client
+      return state
+    }
+    uplinks[peerID]?.stop(); uplinks.removeValue(forKey: peerID); refreshUplinks()
+    sendTransient(.relay(.init(credentialID: peer.credentialID, route: client)), to: peerID)
+    // Local shutdown/Keychain removal does not depend on internet reachability.
+    // A replaced route loses server-side access too; never revoke the newly enabled route.
+    if let old = previousRoute, route?.route != old.route || route?.endpoint != old.endpoint {
+      _ = try? await NotebookRelayHTTP.request(old, role: "host", action: "revoke", as: NotebookRelayHTTP.Enrollment.self)
+    }
+  }
+
+  private func receiveRelay(_ value: NotebookRelayAdvertisement, from peerID: UUID, generation: UUID) {
+    guard role == .iPadConnector, let peer = trusted.first(where: { $0.identity.deviceID == peerID }),
+      peer.credentialID == value.credentialID, value.route?.isValid != false else { return }
+    Task { [weak self] in
+      guard let self else { return }
+      do {
+        try await updateTrust { state in
+          guard self.currentGeneration[peerID] == generation, state.records.contains(peer), !state.blocked.contains(peerID) else { throw NotebookTransportError.authenticationRequired }
+          var state = state; if state.relays == nil { state.relays = [:] }; state.relays?[peerID] = value.route; return state
+        }
+        if value.route == nil {
+          relayTasks[peerID]?.cancel(); relayTasks.removeValue(forKey: peerID)
+          for session in Array(sessions.values) where session.peerIdentity?.deviceID == peerID && sessionRoutes[session.generation] == .relay { session.stop() }
+        }
+      } catch { report(error) }
+    }
+  }
+
+  private func refreshUplinks() {
+    guard isStarted, role == .macListener, let port = listener?.port, port != .any else { return }
+    for peer in trusted where !suspendedPeers.contains(peer.identity.deviceID) {
+      let id = peer.identity.deviceID
+      guard uplinks[id] == nil, let route = trust.relays?[id] else { continue }
+      let uplink = NotebookRelayUplink(route: route, port: port); uplinks[id] = uplink; uplink.start()
+    }
+  }
+
+  private func connectRelayPeers() {
+    guard isStarted, role == .iPadConnector else { return }
+    for peer in trusted where sessions.count < 8 {
+      let id = peer.identity.deviceID
+      guard (currentGeneration[id].flatMap { sessionEpochs[$0] } ?? UInt64.max) != pathEpoch, !suspendedPeers.contains(id), relayTasks[id] == nil,
+        !sessions.values.contains(where: { $0.expectedPeerID == id && sessionRoutes[$0.generation] == .relay && sessionEpochs[$0.generation] == pathEpoch }),
+        let route = trust.relays?[id] else { continue }
+      let epoch = lifetime
+      relayTasks[id] = Task { [weak self] in
+        guard let self else { return }
+        defer { if self.lifetime == epoch { self.relayTasks.removeValue(forKey: id) } }
+        do {
+          let ticket = try await NotebookRelayHTTP.ticket(route, role: "client")
+          guard !Task.isCancelled, self.lifetime == epoch, (self.currentGeneration[id].flatMap { self.sessionEpochs[$0] } ?? UInt64.max) != self.pathEpoch,
+            self.trusted.contains(peer), !self.suspendedPeers.contains(id) else { return }
+          let credential = NotebookPeerCredential(credentialID: peer.credentialID, secret: peer.secret, expectedPeer: peer.identity)
+          let parameters = try NotebookRelayHTTP.parameters(keys: [credential.tlsKey], route: route, ticket: ticket)
+          self.addSession(connection: NWConnection(host: .init(route.tunnelHost), port: 443, using: parameters), credential: credential, route: .relay)
+        } catch { if !Task.isCancelled, self.lifetime == epoch { self.scheduleReconnect() } }
+      }
     }
   }
 
@@ -381,26 +553,64 @@ final class NearbySync {
     return true
   }
 
-  private func addSession(connection: NWConnection, credential: NotebookPeerCredential?) {
+  func addSession(connection: NWConnection, credential: NotebookPeerCredential?, route: Route = .direct) {
     do {
       let session = try NotebookTransportSession(connection: connection, identity: identity, credential: credential,
         storage: storage, stagingRoot: stagingRoot, queue: queue)
       let generation = session.generation
-      sessions[generation] = session
+      let pathReport = connection.startDataTransferReport(), logger = self.logger
+      sessions[generation] = session; sessionRoutes[generation] = route; sessionEpochs[generation] = pathEpoch
       session.resolveCredential = { [weak self] hello in guard let self else { throw NotebookTransportError.disconnected }; return try self.resolve(hello) }
       session.onAuthenticated = { [weak self] peer, credential in
         guard let self, self.sessions[generation] != nil else { throw NotebookTransportError.disconnected }
         return try self.authenticate(peer, credential: credential, generation: generation)
       }
+      let select: (NotebookTransportIdentity) -> Void = { [weak self] peer in
+        guard let self, self.sessions[generation]?.isReady == true else { return }
+        let old = self.currentGeneration.updateValue(generation, forKey: peer.deviceID)
+        self.reconnectFailures = 0
+        if self.sessionRoutes[generation] != .relay { self.browser?.cancel(); self.browser = nil; self.discoveryStop?.cancel() }
+        // Mac retires the old socket only after the connector's first selected
+        // transient arrived here. Closing it on iPad first races EOF against
+        // that message on another socket and falsely disconnects the Mac UI.
+        if self.role == .macListener, let old, old != generation { self.sessions[old]?.stop() }
+        self.onStateChange?(.connected(peer)); self.onConnect?(peer, generation)
+        if self.role == .macListener, let credential = self.trusted.first(where: { $0.identity.deviceID == peer.deviceID }) {
+          self.sendTransient(.relay(.init(credentialID: credential.credentialID, route: self.trust.relayClients?[peer.deviceID])), to: peer.deviceID)
+        }
+      }
       session.onReady = { [weak self] peer in
         guard let self, self.sessions[generation] != nil else { return }
-        let old = self.currentGeneration.updateValue(generation, forKey: peer.deviceID)
-        if let old, old != generation { self.sessions[old]?.stop() }
-        self.onStateChange?(.connected(peer)); self.onConnect?(peer, generation)
+        // Bonjour may omit an interface and an accepted Mac socket has no
+        // discovery hint. Classify the resolved, established path on both ends,
+        // never all available interfaces or includePeerToPeer.
+        let selectedRoute: Route = route == .relay ? .relay
+          : [connection.currentPath?.localEndpoint, connection.currentPath?.remoteEndpoint]
+              .contains(where: { $0?.interface?.name == "awdl0" }) ? .nearby : .direct
+        self.sessionRoutes[generation] = selectedRoute
+        pathReport.collect(queue: self.queue) { report in
+          for path in report.pathReports {
+            logger.info("Authenticated transport generation=\(generation.uuidString, privacy: .public) interface=\(path.interface.name, privacy: .public) sentPackets=\(path.sentIPPacketCount) receivedPackets=\(path.receivedIPPacketCount)")
+          }
+        }
+        if let previous = self.currentGeneration[peer.deviceID], previous != generation {
+          // The connector alone chooses the route. Mac parks an authenticated
+          // candidate until its first selected transient: an idle old TCP socket
+          // must not veto a connector that has already left that network.
+          if self.role == .macListener { return }
+          if let selected = self.sessionRoutes[previous], self.sessionEpochs[previous] == self.sessionEpochs[generation], selected.rawValue <= selectedRoute.rawValue {
+            self.sessions[generation]?.stop(); return
+          }
+        }
+        select(peer)
       }
       session.onTransient = { [weak self] value, peer in
-        guard let self, self.currentGeneration[peer.deviceID] == generation else { return }
-        self.onTransient?(value, peer.deviceID, generation)
+        guard let self, self.sessions[generation]?.isReady == true else { return }
+        if self.role == .macListener, self.currentGeneration[peer.deviceID] != generation { select(peer) }
+        guard self.currentGeneration[peer.deviceID] == generation else { return }
+        if case .relay(let advertisement) = value {
+          self.receiveRelay(advertisement, from: peer.deviceID, generation: generation)
+        } else { self.onTransient?(value, peer.deviceID, generation) }
       }
       session.onDurableChange = { [weak self] change, peer in
         guard let self, self.currentGeneration[peer.deviceID] == generation else { return }
@@ -408,18 +618,23 @@ final class NearbySync {
       }
       session.onStop = { [weak self] peer, error in
         guard let self else { return }
-        self.sessions.removeValue(forKey: generation)
-        if let peer {
-          if self.currentGeneration[peer.deviceID] == generation { self.currentGeneration.removeValue(forKey: peer.deviceID) }
+        let peerID = peer?.deviceID ?? credential?.expectedPeer.deviceID
+        let selected = peerID.flatMap { self.currentGeneration[$0] }
+        let hasReplacement = selected != nil && selected != generation
+        self.sessions.removeValue(forKey: generation); self.sessionRoutes.removeValue(forKey: generation); self.sessionEpochs.removeValue(forKey: generation)
+        if let peer, self.currentGeneration[peer.deviceID] == generation {
+          self.currentGeneration.removeValue(forKey: peer.deviceID)
           self.onDisconnect?(peer.deviceID, generation)
         }
-        if let error { self.report(error) }
-        if let error, NotebookPeerDiscovery.upgradeMessage(for: error) != nil,
+        if let error, !hasReplacement { self.report(error) }
+        if let error, !hasReplacement, NotebookPeerDiscovery.upgradeMessage(for: error) != nil,
           let deviceID = peer?.deviceID ?? credential?.expectedPeer.deviceID {
           self.suspendedPeers.insert(deviceID)
         }
         if error == nil, self.currentGeneration.isEmpty { self.onStateChange?(.waiting) }
-        self.scheduleReconnect()
+        // A retired socket's goodbye is expected. It cannot publish failure,
+        // suspend the new owner or restart discovery under a healthy channel.
+        if !hasReplacement { self.scheduleReconnect() }
       }
       session.start()
     } catch { connection.cancel(); report(error) }
@@ -428,8 +643,10 @@ final class NearbySync {
   private func scheduleReconnect() {
     guard isStarted, role == .iPadConnector, retryTask == nil else { return }
     retryTask = Task { [weak self] in
-      do { try await Task.sleep(for: .seconds(2)) } catch { return }
-      guard let self else { return }; self.retryTask = nil; self.connectDiscoveredPeers()
+      do { try await Task.sleep(for: .seconds(Double(1 << min(5, self?.reconnectFailures ?? 1)))) } catch { return }
+      guard let self else { return }; self.retryTask = nil
+      self.reconnectFailures += 1
+      self.refreshDiscovery(); self.connectDiscoveredPeers(); self.connectRelayPeers()
     }
   }
   private func report(_ error: Error) {
@@ -560,13 +777,13 @@ final class NotebookTransportSession {
   func notifyDurableChanges() {
     guard isReady, !isStopped else { return }
     shouldReadJournal = true
-    guard offerTask == nil, offeredChanges.count < 16 else { return }
+    guard offerTask == nil, offeredChanges.count < NotebookTransportLimits.maximumPendingChanges else { return }
     offerTask = Task { [weak self] in
       guard let self else { return }
       do {
-        while self.shouldReadJournal, !self.isStopped, self.offeredChanges.count < 16 {
+        while self.shouldReadJournal, !self.isStopped, self.offeredChanges.count < NotebookTransportLimits.maximumPendingChanges {
           self.shouldReadJournal = false
-          let capacity = 16 - self.offeredChanges.count
+          let capacity = NotebookTransportLimits.maximumPendingChanges - self.offeredChanges.count
           let cursor = self.offeredCursor
           let changes = try await self.storage.changes(cursor, capacity)
           guard !self.isStopped, !Task.isCancelled else { return }

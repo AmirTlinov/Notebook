@@ -41,6 +41,50 @@ struct NotebookChatStoreTests {
     .init(id: id, author: author, action: .send(threadID: "00000000-0000-0000-0000-000000000001", text: text, context: ""), createdAt: Date(timeIntervalSince1970: 100))
   }
 
+  @Test func approvalDetailsUseTheControlLaneAndDecisionsAreGenerationBound() {
+    let author = UUID(), first = UUID(), second = UUID()
+    let read = NotebookChatQuery.requestDetails(threadID: "thread", generation: first, requestID: "1")
+    #expect(read.isInteractiveControl)
+    func action(_ generation: UUID) -> NotebookChatAction {
+      .respond(threadID: "thread", request: .init(nativeID: .number(1), generation: generation,
+        method: "item/commandExecution/requestApproval", turnID: "turn", parameters: .object([:])), decision: .decline)
+    }
+    #expect(action(first).controlID(author: author) == action(first).controlID(author: author))
+    #expect(action(first).controlID(author: author) != action(second).controlID(author: author))
+  }
+
+  @Test func endingUnknownObservationPreservesOutcomeAndFreesAdmissionWithoutReplay() throws {
+    try fixture { store, author in
+      let message = input(author)
+      _ = try store.saveChatInput(message)
+      _ = try store.advanceChatJob(message.id, from: .saved, to: .attempting)
+      _ = try store.advanceChatJob(message.id, from: .attempting, to: .uncertain)
+      #expect(throws: (any Error).self) { try store.stopWaitingForChatJob(message.id, author: UUID()) }
+      let finished = try store.stopWaitingForChatJob(message.id, author: author)
+      #expect(finished.state == .unconfirmed && finished.isTerminal && finished.result == nil)
+      #expect(try store.pendingChatJobs().isEmpty)
+      #expect(try store.saveChatInput(message) == finished)
+      #expect(try store.stopWaitingForChatJob(message.id, author: author) == finished)
+      #expect(throws: (any Error).self) { try store.advanceChatJob(message.id, from: .unconfirmed, to: .saved) }
+    }
+  }
+  @Test func nativeCreationCheckpointAndControlPayloadSurviveReopening() throws {
+    try fixture { store, author in
+      let creation = NotebookChatInput(author: author, action: .create(title: "Task"))
+      _ = try store.saveChatInput(creation)
+      _ = try store.advanceChatJob(creation.id, from: .saved, to: .attempting)
+      let task = CodexTask(id: UUID().uuidString, title: "Codex", cwd: "/tmp")
+      try store.recordCreatedChatTask(creation.id, task: task)
+      _ = try store.advanceChatJob(creation.id, from: .attempting, to: .uncertain)
+      let reopened = NotebookStore(root: store.root)
+      #expect(try reopened.chatJob(creation.id)?.createdTask == task)
+      let action = NotebookChatAction.stop(threadID: UUID().uuidString, turnID: UUID().uuidString)
+      let control = NotebookChatInput(id: action.controlID(author: author)!, author: author, action: action)
+      _ = try store.saveChatInput(control, to: author)
+      #expect(try reopened.savedChatControl(action, author: author, computer: author)?.input == control)
+    }
+  }
+
   @Test func attachmentsCommitWithTheirMessageAndCannotClearANewerSelection() throws {
     try fixture { store, author in
       let thread = UUID().uuidString, computer = UUID()
@@ -103,7 +147,7 @@ struct NotebookChatStoreTests {
     }
   }
   @Test func conversationEventsCannotCoalesceAwayADeliveryReply() throws {
-    let state = CodexConversation(threadID: UUID().uuidString, revision: 1, title: "Task", ready: true, busy: false, activeTurnID: nil,
+    let state = CodexConversation(threadID: UUID().uuidString, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Task", ready: true, busy: false, activeTurnID: nil,
       messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:])
     let event = NotebookTransportTransient.codex(.init(body: .event(subscriptionID: UUID(), conversation: state)))
     let response = NotebookTransportTransient.codex(.init(body: .reply(.conversation(state))))

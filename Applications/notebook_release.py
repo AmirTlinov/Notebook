@@ -464,6 +464,13 @@ def prepare_typesetter_runtime(source, command, platform, stage=None):
     return stage
 
 
+def prepare_codex_runtime(source, command):
+    stage = Path(source) / ".build/notebook-codex-runtime"
+    command("codex-resources", [sys.executable, "-B", Path(source) / "Applications/prepare_notebook_codex.py",
+        "--stage", stage], cwd=source, timeout=1800)
+    return stage
+
+
 def prepare_typescript_runtime(source, command, stage_root=None):
     output = command("typescript-resources", [sys.executable, "-B", Path(source) / "Applications/prepare_notebook_typescript.py",
         "--prepare", "--stage-root", Path(stage_root or Path(source) / ".build/notebook-typescript-runtime").resolve()],
@@ -509,6 +516,7 @@ def restrict_test_script_services(app, source, command, *, bundle_identifier, si
 
 def build_mac(snapshot, evidence, command, typesetter_runtime):
     typescript_runtime = prepare_typescript_runtime(snapshot, command)
+    prepare_codex_runtime(snapshot, command)
     entitlements = evidence / "mac.entitlements"
     entitlements.write_bytes(plistlib.dumps({"com.apple.security.get-task-allow": True, **cloud_entitlements(mac=True)}))
     command("build-mac", ["/usr/bin/xcrun", "xcodebuild", "-project",

@@ -83,8 +83,8 @@ public struct CodexMessage: Codable, Equatable, Sendable, Identifiable {
 extension CodexMessage {
   /// Keep every item in this page. Only display text is shortened; native IDs and
   /// the continuation cursor remain authoritative, and the UI names the excerpt.
-  public static func transportPage(_ messages: [CodexMessage]) -> [CodexMessage] {
-    let budget = max(256, 72 * 1024 / max(1, messages.count))
+  public static func transportPage(_ messages: [CodexMessage], byteBudget: Int = 72 * 1024) -> [CodexMessage] {
+    let budget = max(64, byteBudget / max(1, messages.count))
     func prefix(_ text: String, bytes: Int) -> String {
       if text.utf8.count <= bytes { return text }
       let data = Data(text.utf8.prefix(bytes))
@@ -112,16 +112,19 @@ extension CodexMessage {
 public struct CodexUserRequest: Codable, Equatable, Sendable, Identifiable {
   // Request IDs are native JSON-RPC string OR integer IDs, not newly assigned UUIDs.
   public let nativeID: JSONValue
+  /// Absent only in historical journal receipts; live requests carry their producer generation.
+  public let generation: UUID?
   public let method: String
   public let turnID: String
   public let parameters: JSONValue
   public var id: String { (try? String(data: JSONEncoder().encode(nativeID), encoding: .utf8)) ?? "" }
-  public init(nativeID: JSONValue, method: String, turnID: String, parameters: JSONValue) { self.nativeID = nativeID; self.method = method; self.turnID = turnID; self.parameters = parameters }
+  public init(nativeID: JSONValue, generation: UUID? = nil, method: String, turnID: String, parameters: JSONValue) { self.generation = generation; self.nativeID = nativeID; self.method = method; self.turnID = turnID; self.parameters = parameters }
 
 }
 
 public struct CodexConversation: Codable, Equatable, Sendable {
   public let threadID: String
+  public let generation: UUID
   public let revision: Int
   public let title: String
   public let ready: Bool
@@ -129,13 +132,14 @@ public struct CodexConversation: Codable, Equatable, Sendable {
   public let activeTurnID: String?
   public let messages: [CodexMessage]
   public let requests: [CodexUserRequest]
+  public let requestIDs: [String]
   /// Native user items with a real turn ID, never an optimistic local composer item.
   public let acceptedMessages: [String: String]
   public let turnStatuses: [String: String]
   public let access: CodexAccess?
   public let model: CodexModelSelection?
   public let contextUsage: CodexContextUsage?
-  public init(threadID: String, revision: Int, title: String, ready: Bool, busy: Bool, activeTurnID: String?, messages: [CodexMessage], requests: [CodexUserRequest], acceptedMessages: [String: String], turnStatuses: [String: String], access: CodexAccess? = nil, model: CodexModelSelection? = nil, contextUsage: CodexContextUsage? = nil) { self.threadID = threadID; self.revision = revision; self.title = title; self.ready = ready; self.busy = busy; self.activeTurnID = activeTurnID; self.messages = messages; self.requests = requests; self.acceptedMessages = acceptedMessages; self.turnStatuses = turnStatuses; self.access = access; self.model = model; self.contextUsage = contextUsage }
+  public init(threadID: String, generation: UUID, revision: Int, title: String, ready: Bool, busy: Bool, activeTurnID: String?, messages: [CodexMessage], requests: [CodexUserRequest], requestIDs: [String]? = nil, acceptedMessages: [String: String], turnStatuses: [String: String], access: CodexAccess? = nil, model: CodexModelSelection? = nil, contextUsage: CodexContextUsage? = nil) { self.threadID = threadID; self.generation = generation; self.revision = revision; self.title = title; self.ready = ready; self.busy = busy; self.activeTurnID = activeTurnID; self.messages = messages; self.requests = requests; self.requestIDs = requestIDs ?? requests.map(\.id); self.acceptedMessages = acceptedMessages; self.turnStatuses = turnStatuses; self.access = access; self.model = model; self.contextUsage = contextUsage }
 
 }
 
@@ -157,6 +161,7 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
   case send(threadID: String, text: String, context: String)
   case steer(threadID: String, turnID: String, text: String, context: String)
   case create(title: String, project: CodexProject? = nil)
+  case createProject(name: String, path: String)
   case updateProject(CodexProjectEdit)
   case setAccess(threadID: String, mode: CodexAccessMode)
   case setModel(threadID: String, selection: CodexModelSelection)
@@ -173,8 +178,12 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
   public var threadID: String? {
     switch self {
     case .send(let id, _, _), .steer(let id, _, _, _), .stop(let id, _), .respond(let id, _, _), .setAccess(let id, _), .setModel(let id, _), .compact(let id): id
-    case .create, .updateProject, .saveFile, .renameFile, .startRun, .writeRun, .stopRun, .startVoice, .stopVoice: nil
+    case .create, .createProject, .updateProject, .saveFile, .renameFile, .startRun, .writeRun, .stopRun, .startVoice, .stopVoice: nil
     }
+  }
+
+  public var isInteractiveControl: Bool {
+    switch self { case .stop, .respond, .stopRun, .stopVoice, .steer: true; default: false }
   }
 
   public var isVoiceCommand: Bool { switch self { case .startVoice, .stopVoice: true; default: false } }
@@ -194,14 +203,15 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
   /// tapping Stop again cannot mint another delivery of that same control.
   /// Text messages and task creation remain independent human submissions.
   public func controlID(author: UUID) -> UUID? {
-    let address: [String]
+    var address: [String]
     switch self {
     case .stop(let thread, let turn): address = ["stop", thread.lowercased(), turn.lowercased()]
     case .respond(let thread, let request, _):
       address = ["respond", thread.lowercased(), request.turnID.lowercased(), request.method, request.id]
+      if let generation = request.generation { address.append(generation.uuidString.lowercased()) }
     case .stopVoice(let id): address = ["stopVoice", id.uuidString.lowercased()]
     case .stopRun(let id): address = ["stopRun", id.uuidString.lowercased()]
-    case .send, .steer, .create, .updateProject, .setAccess, .setModel, .compact, .saveFile, .renameFile, .startRun, .writeRun, .startVoice: return nil
+    case .send, .steer, .create, .createProject, .updateProject, .setAccess, .setModel, .compact, .saveFile, .renameFile, .startRun, .writeRun, .startVoice: return nil
     }
     var data = Data()
     for part in ["NotebookChatControl/1", author.uuidString.lowercased()] + address {
@@ -237,6 +247,7 @@ public struct NotebookChatInput: Codable, Equatable, Sendable, Identifiable {
     case .steer(_, let turn, let text, let context):
       return UUID(uuidString: turn) != nil && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.utf8.count <= 32768 && context.utf8.count <= 32768
     case .create(let title, let project): return !title.isEmpty && title.utf8.count <= 256 && (project == nil || (project!.id.utf8.count <= 256 && !project!.id.isEmpty && project!.roots.count <= 32 && project!.roots.allSatisfy { $0.hasPrefix("/") && $0.utf8.count <= 4096 }))
+    case .createProject(let name, let path): return CodexProjectEdit(id: "new", name: name, roots: [path]).isValid
     case .updateProject(let edit): return edit.isValid
     case .setModel(_, let selection): return selection.isValid
     case .setAccess, .compact: return true
@@ -262,21 +273,25 @@ public enum NotebookChatResult: Codable, Equatable, Sendable {
 }
 
 public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
-  public enum State: String, Codable, Sendable { case saved, attempting, uncertain, accepted, rejected }
+  public enum State: String, Codable, Sendable { case saved, attempting, uncertain, unconfirmed, accepted, rejected }
   public let input: NotebookChatInput
   public let state: State
   public let result: NotebookChatResult?
+  public let createdTask: CodexTask?
   public let error: String?
   public let revision: Int
   public var id: UUID { input.id }
 
-  public init(input: NotebookChatInput, state: State = .saved, result: NotebookChatResult? = nil, error: String? = nil, revision: Int = 0) {
-    self.input = input; self.state = state; self.result = result; self.error = error; self.revision = revision
+  public init(input: NotebookChatInput, state: State = .saved, result: NotebookChatResult? = nil, error: String? = nil, revision: Int = 0, createdTask: CodexTask? = nil) {
+    self.createdTask = createdTask; self.input = input; self.state = state; self.result = result; self.error = error; self.revision = revision
   }
-  public var isTerminal: Bool { state == .accepted || state == .rejected }
+  public var isTerminal: Bool { state == .accepted || state == .rejected || state == .unconfirmed }
   public var isValid: Bool {
     guard input.isValid, revision >= 0, (error?.utf8.count ?? 0) <= 4096,
       (state == .accepted) == (result != nil) else { return false }
+    if let createdTask {
+      guard case .create = input.action, UUID(uuidString: createdTask.id) != nil else { return false }
+    }
     guard let result else { return true }
     switch (input.action, result) {
     case (.renameFile(let request), .renamed(let result)): return request == result && result.isValid
@@ -285,6 +300,7 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
     case (.stopVoice, .acknowledged): return true
     case (.startRun, .run(let id)): return id == input.id
     case (.writeRun, .acknowledged), (.stopRun, .acknowledged): return true
+    case (.createProject(let name, let path), .project(let project)): return !project.id.isEmpty && project.name == name && project.roots == [path]
     case (.updateProject(let edit), .project(let project)): return edit.matches(project)
     case (.create, .created(let task)): return UUID(uuidString: task.id) != nil && task.title.utf8.count <= 1024
     case (.send, .turn(let id)), (.steer, .turn(let id)): return UUID(uuidString: id) != nil
@@ -295,6 +311,10 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
 }
 
 public enum NotebookChatQuery: Codable, Equatable, Sendable {
+  public var isInteractiveControl: Bool { switch self { case .job(let input): input.action.isInteractiveControl; case .stopWaiting, .requestDetails: true; default: false } }
+  case account(CodexAccountQuery)
+  case stopWaiting(UUID)
+  case requestDetails(threadID: String, generation: UUID, requestID: String)
   case dictation(NotebookDictationQuery)
   case job(NotebookChatInput)
   case file(NotebookFileQuery)
@@ -311,6 +331,8 @@ public enum NotebookChatQuery: Codable, Equatable, Sendable {
 }
 
 public enum NotebookChatReply: Codable, Equatable, Sendable {
+  case requestDetails(CodexUserRequest)
+  case account(CodexAccountState)
   case dictation(NotebookDictationState)
   case models([CodexModelOption]), resources(CodexResourcePage)
   case projects(CodexProjectPage), activity([CodexTaskActivity])
@@ -323,10 +345,10 @@ public enum NotebookChatReply: Codable, Equatable, Sendable {
   case acknowledged
 }
 
-/// Only one outstanding request per iPad uses the coalesced low-priority lane.
+/// One normal request and one urgent control use separate coalesced lanes per iPad.
 /// Retransmission reuses the request ID and the durable mutation's original ID.
 public struct NotebookChatEnvelope: Codable, Equatable, Sendable {
-  public enum Body: Codable, Equatable, Sendable { case request(NotebookChatQuery), reply(NotebookChatReply), event(subscriptionID: UUID, conversation: CodexConversation) }
+  public enum Body: Codable, Equatable, Sendable { case request(NotebookChatQuery), reply(NotebookChatReply), event(subscriptionID: UUID, conversation: CodexConversation), unavailable(subscriptionID: UUID, threadID: String, reason: String) }
   public let id: UUID
   public let body: Body
 

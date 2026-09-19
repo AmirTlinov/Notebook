@@ -12,6 +12,13 @@ private actor VoiceOwner: NotebookCodexVoiceOwner {
   func counts() -> (Int, Int) { (starts, stops) }
 }
 @MainActor final class NotebookVoiceTests: XCTestCase {
+  private func receive(_ service: MacNotebookVoice, _ queue: NotebookPersistenceQueue, _ input: NotebookChatInput) async throws -> NotebookChatJob {
+    let job = try await queue.submit { try $0.saveChatInput(input) }
+    return try await service.receive(job) {
+      try await queue.submit { try $0.advanceChatJob(input.id, from: .saved, to: .attempting) }
+    }
+  }
+
   func testVoiceHasOneJournalIdentityAndCannotBeReadOrStoppedByAnotherPeer() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -20,16 +27,16 @@ private actor VoiceOwner: NotebookCodexVoiceOwner {
     let owner = VoiceOwner(), service = MacNotebookVoice(persistence: queue, executor: VoiceOwner())
     let actual = MacNotebookVoice(persistence: queue, executor: owner)
     let start = NotebookChatInput(author: author, action: .startVoice(.init(threadID: UUID().uuidString, sdp: "v=0\r\noffer")))
-    _ = try await actual.receive(start); _ = try await actual.receive(start)
+    _ = try await receive(actual, queue, start); _ = try await receive(actual, queue, start)
     do { _ = try await actual.state(start.id, peer: UUID()); XCTFail("Another peer may not see SDP") } catch { }
-    let wrong = try await actual.receive(.init(author: UUID(), action: .stopVoice(start.id)))
+    let wrong = try await receive(actual, queue, .init(author: UUID(), action: .stopVoice(start.id)))
     XCTAssertEqual(wrong.state, .rejected)
     let stop = NotebookChatInput(author: author, action: .stopVoice(start.id))
-    _ = try await actual.receive(stop); _ = try await actual.receive(stop)
+    _ = try await receive(actual, queue, stop); _ = try await receive(actual, queue, stop)
     let counts = await owner.counts(); XCTAssertEqual(counts.0, 1); XCTAssertEqual(counts.1, 1)
     let ended = try await actual.state(start.id, peer: author); XCTAssertEqual(ended.phase, .ended); XCTAssertNil(ended.sdp)
     let cold = try await service.state(start.id, peer: author); XCTAssertEqual(cold.phase, .ended)
-    _ = try await service.receive(start)
+    _ = try await receive(service, queue, start)
     let final = await owner.counts(); XCTAssertEqual(final.0, 1)
   }
 }

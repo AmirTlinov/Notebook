@@ -1,37 +1,52 @@
-import AppKit
 import Foundation
-import NotebookCore
 import Security
 
-public struct CodexDesktopInstallation: Sendable {
-  public let application: URL
-  let binary: URL
+/// Official, signed executables. No Desktop bundle, copied account or private Node.
+public struct CodexRuntimeInstallation: Sendable {
+  public let binary: URL
+  public let node: URL
 
-  @MainActor public static func discover() throws -> Self {
-    guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex") else {
-      throw CodexBridgeError.notInstalled
-    }
-    return try Self(application: app)
+  public static func discover() throws -> Self {
+    let home = FileManager.default.homeDirectoryForCurrentUser
+    let bundled = Bundle.main.resourceURL?.appendingPathComponent("CodexRuntime", isDirectory: true)
+    let binary = ([bundled?.appendingPathComponent("codex/bin/codex"),
+      home.appendingPathComponent(".local/bin/codex"),
+      URL(fileURLWithPath: "/opt/homebrew/bin/codex"), URL(fileURLWithPath: "/usr/local/bin/codex")]
+      .compactMap { $0 }).first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    let node = ([bundled?.appendingPathComponent("node")].compactMap { $0 }
+      + (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").filter { $0.hasPrefix("/") }
+        .map { URL(fileURLWithPath: String($0)).appendingPathComponent("node") })
+      .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    guard let binary, let node else { throw CodexBridgeError.notInstalled }
+    let installation = Self(binary: binary.resolvingSymlinksInPath(), node: node.resolvingSymlinksInPath())
+    try installation.validate()
+    return installation
   }
 
-  init(application: URL) throws {
-    guard let bundle = Bundle(url: application), bundle.bundleIdentifier == "com.openai.codex" else {
+  public init(binary: URL, node: URL) {
+    self.binary = binary.resolvingSymlinksInPath(); self.node = node.resolvingSymlinksInPath()
+  }
+
+  func validateVersion() async throws {
+    let output = try await Self.configuration(binary: binary, arguments: ["--version"])
+    guard output.status == 0, String(decoding: output.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == "codex-cli 0.155.0" else {
       throw CodexBridgeError.incompatibleVersion
     }
-    let binary = application.appendingPathComponent("Contents/Resources/codex")
-    guard FileManager.default.isExecutableFile(atPath: binary.path) else { throw CodexBridgeError.notInstalled }
-    self.application = application; self.binary = binary
   }
 
   func validate() throws {
-    _ = try Self(application: application)
+    try Self.validate(binary, identifier: "codex", team: "2DC432GLL2")
+    try Self.validate(node, identifier: "node", team: "HX7739G8FX")
+  }
+
+  private static func validate(_ url: URL, identifier: String, team: String) throws {
+    guard url.isFileURL, FileManager.default.isExecutableFile(atPath: url.path) else { throw CodexBridgeError.notInstalled }
     var code: SecStaticCode?, requirement: SecRequirement?
-    let identity = "anchor apple generic and identifier \"com.openai.codex\" and certificate leaf[subject.OU] = \"2DC432GLL2\""
-    guard SecStaticCodeCreateWithPath(application as CFURL, [], &code) == errSecSuccess,
+    let identity = "anchor apple generic and identifier \"\(identifier)\" and certificate leaf[subject.OU] = \"\(team)\""
+    guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess,
       SecRequirementCreateWithString(identity as CFString, [], &requirement) == errSecSuccess,
       let code, let requirement, SecStaticCodeCheckValidity(code, [], requirement) == errSecSuccess else {
       throw CodexBridgeError.unsafeEndpoint
     }
   }
-
 }

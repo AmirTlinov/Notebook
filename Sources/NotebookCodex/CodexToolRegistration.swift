@@ -1,44 +1,51 @@
 import Foundation
 import NotebookCore
 
-extension CodexDesktopInstallation {
-  /// Registration belongs to Codex's config writer. Call only after the app's
-  /// pair-activation admission; a development archive must not redirect live tools.
+extension CodexRuntimeInstallation {
+  /// Only explicit external Desktop/CLI setup calls this writer. The built-in
+  /// runtime uses workspace configuration and never edits the user's profile.
   public func registerNotebookTools(entry: URL, socket: URL) async throws {
     try validate()
-    let node = application.appendingPathComponent("Contents/Resources/cua_node/bin/node")
-    guard FileManager.default.isExecutableFile(atPath: node.path),
-      FileManager.default.fileExists(atPath: entry.path), socket.isFileURL else { throw CodexBridgeError.notInstalled }
-    let current = try await Self.configuration(binary: binary, arguments: ["mcp", "get", "notebook", "--json"])
-    if current.status == 0 {
-      let value = try JSONDecoder().decode(JSONValue.self, from: current.data)
-      // Explicit user restrictions are never removed by automatic maintenance.
-      guard value["enabled"] == .bool(true),
-        value["enabled_tools"] == nil || value["enabled_tools"] == .null,
-        value["disabled_tools"] == nil || value["disabled_tools"] == .null else { throw CodexBridgeError.unsupportedRequest }
-      if value["transport"]?["command"] == .string(node.path),
-        value["transport"]?["args"] == .array([.string(entry.path)]),
-        value["transport"]?["env"]?["NOTEBOOK_SOCKET"] == .string(socket.path) { return }
-    } else {
-      // A failed read is not proof that registration is absent. Only a valid
-      // catalogue can authorize first installation without overwriting settings.
-      let listing = try await Self.configuration(binary: binary, arguments: ["mcp", "list", "--json"])
-      guard listing.status == 0,
-        let entries = try JSONDecoder().decode(JSONValue.self, from: listing.data).array,
-        entries.allSatisfy({ $0["name"]?.string != nil }),
-        !entries.contains(where: { $0["name"] == .string("notebook") }) else { throw CodexBridgeError.unavailable }
-    }
-    let saved = try await Self.configuration(binary: binary, arguments: ["mcp", "add", "notebook",
-      "--env", "NOTEBOOK_SOCKET=\(socket.path)", "--", node.path, entry.path])
-    guard saved.status == 0 else { throw CodexBridgeError.unavailable }
-    let readback = try await Self.configuration(binary: binary, arguments: ["mcp", "get", "notebook", "--json"])
-    let value = try JSONDecoder().decode(JSONValue.self, from: readback.data)
-    guard readback.status == 0, value["transport"]?["command"] == .string(node.path),
-      value["transport"]?["args"] == .array([.string(entry.path)]),
-      value["transport"]?["env"]?["NOTEBOOK_SOCKET"] == .string(socket.path) else { throw CodexBridgeError.invalidResponse }
+    guard FileManager.default.fileExists(atPath: entry.path), socket.isFileURL else { throw CodexBridgeError.notInstalled }
+    let rpc = CodexRPC(channel: try CodexChannel.appServer(binary: binary,
+      directory: FileManager.default.homeDirectoryForCurrentUser))
+    do {
+      try await rpc.start()
+      let before = try await rpc.request("config/read", params: .object(["includeLayers": .bool(true)]))
+      let current = before["config"]?["mcp_servers"]?["notebook"]
+      try CodexNotebookToolPolicy.requireEnabled(current)
+      guard current?["url"] == nil || current?["url"] == .null else {
+        throw CodexNotebookToolPolicy.externalTransport
+      }
+      let endpoint: [String: JSONValue] = ["command": .string(node.path),
+        "args": .array([.string(entry.path)]), "env.NOTEBOOK_SOCKET": .string(socket.path)]
+      if current?["command"] == endpoint["command"], current?["args"] == endpoint["args"],
+        current?["env"]?["NOTEBOOK_SOCKET"] == endpoint["env.NOTEBOOK_SOCKET"] {
+        await rpc.stop(); return
+      }
+      guard let user = before["layers"]?.array?.first(where: {
+        $0["name"]?["type"] == .string("user") && ($0["name"]?["profile"] == nil || $0["name"]?["profile"] == .null)
+      }), let path = user["name"]?["file"]?.string, let version = user["version"]?.string else {
+        throw CodexBridgeError.invalidResponse
+      }
+      // Targeted, version-checked edits preserve filters, timeouts and all other
+      // preferences. `mcp add` replaces the whole entry, so it is not a repair API.
+      _ = try await rpc.request("config/batchWrite", params: .object([
+        "filePath": .string(path), "expectedVersion": .string(version),
+        "edits": .array(endpoint.keys.sorted().map { key in .object([
+          "keyPath": .string("mcp_servers.notebook." + key), "value": endpoint[key]!,
+          "mergeStrategy": .string("replace")]) })]))
+      let after = try await rpc.request("config/read", params: .object(["includeLayers": .bool(false)]))
+      let actual = after["config"]?["mcp_servers"]?["notebook"]
+      guard actual?["command"] == endpoint["command"], actual?["args"] == endpoint["args"],
+        actual?["env"]?["NOTEBOOK_SOCKET"] == endpoint["env.NOTEBOOK_SOCKET"] else {
+        throw CodexNotebookToolPolicy.overriddenConfiguration
+      }
+      await rpc.stop()
+    } catch { await rpc.stop(); throw error }
   }
 
-  private static func configuration(binary: URL, arguments: [String]) async throws -> (status: Int32, data: Data) {
+  static func configuration(binary: URL, arguments: [String]) async throws -> (status: Int32, data: Data) {
     try await Task.detached(priority: .utility) {
       let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-codex-config-" + UUID().uuidString)
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -62,5 +69,31 @@ extension CodexDesktopInstallation {
       guard data.count <= 65536 else { throw CodexBridgeError.historyLimit }
       return (process.terminationStatus, data)
     }.value
+  }
+}
+
+/// Codex remains the policy owner. Replacing only the endpoint must not widen
+/// a user's tool policy, even when the external integration is not installed.
+enum CodexNotebookToolPolicy: Error, LocalizedError {
+  case disabled, externalTransport, overriddenConfiguration
+  var errorDescription: String? {
+    switch self {
+    case .disabled: "Notebook отключён в конфигурации Codex (mcp_servers.notebook.enabled=false). Включите его в настройках Codex, если хотите разрешить интеграцию. Настройки не изменены."
+    case .externalTransport: "Имя notebook уже занято сетевым MCP-сервером. Измените эту запись в конфигурации Codex явно; Notebook её не заменяет."
+    case .overriddenConfiguration: "Адрес Notebook перекрыт другим слоем конфигурации Codex. Проверьте настройки профиля или администратора; повторной записи нет."
+    }
+  }
+  static func requireEnabled(_ entry: JSONValue?) throws {
+    if entry?["enabled"] == .bool(false) { throw Self.disabled }
+  }
+  static func scoped(_ endpoint: JSONValue, inheriting effective: JSONValue) throws -> JSONValue {
+    guard let config = effective["config"]?.object, let endpoint = endpoint.object else { throw CodexBridgeError.invalidResponse }
+    let inherited = config["mcp_servers"]?["notebook"]
+    try requireEnabled(inherited)
+    var result = inherited?.object ?? [:]
+    // Do not forward another transport's credentials or working directory.
+    for key in ["url", "bearer_token_env_var", "http_headers", "env_http_headers", "env_vars", "cwd"] { result.removeValue(forKey: key) }
+    for (key, value) in endpoint { result[key] = value }
+    return .object(result)
   }
 }

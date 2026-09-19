@@ -6,8 +6,8 @@ import NotebookCore
 @main struct NotebookAcceptance {
   static func main() throws {
     let args = CommandLine.arguments
-    guard args.count == 6, args[1] == "prepare" else {
-      throw failure("usage: notebook-acceptance prepare NEW_RUN_DIRECTORY SOURCE_SHA SIMULATOR_APP_CONTAINER MAC_BUNDLE_ID")
+    guard args.count == 6, ["prepare", "prepare-device"].contains(args[1]) else {
+      throw failure("usage: notebook-acceptance prepare|prepare-device NEW_RUN_DIRECTORY SOURCE_SHA SIMULATOR_APP_CONTAINER|PRIVATE_BUNDLE_SUFFIX MAC_BUNDLE_ID")
     }
     guard args[5].wholeMatch(of: /com\.amirtlinov\.notebook\.mac\.acceptance\.[0-9a-f]{12}/) != nil else {
       throw failure("Mac bundle must identify one isolated checkout")
@@ -18,12 +18,23 @@ import NotebookCore
       args[3].allSatisfy({ $0.isHexDigit }), !FileManager.default.fileExists(atPath: directory.path) else {
       throw failure("run directory must be new and end in a lowercase UUID; source SHA is required")
     }
-    let container = URL(fileURLWithPath: args[4], isDirectory: true).standardizedFileURL.resolvingSymlinksInPath()
-    let metadata = try Data(contentsOf: container.appendingPathComponent(".com.apple.mobile_container_manager.metadata.plist"))
-    guard let object = try PropertyListSerialization.propertyList(from: metadata, format: nil) as? [String: Any],
-      object["MCMMetadataIdentifier"] as? String == "com.amirtlinov.notebook.acceptance",
-      container.pathComponents.contains("CoreSimulator") else {
-      throw failure("destination is not the installed acceptance Simulator container")
+    let physical = args[1] == "prepare-device"
+    let suffix = physical ? args[4] : ""
+    guard !physical || (!suffix.isEmpty && suffix.count <= 64 && suffix.allSatisfy { $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "-") }) else {
+      throw failure("physical acceptance requires a private bundle suffix")
+    }
+    let container: URL
+    if physical {
+      // This is an upload payload, not a live device container or archive.
+      container = directory.appendingPathComponent("ipad-payload", isDirectory: true)
+    } else {
+      container = URL(fileURLWithPath: args[4], isDirectory: true).standardizedFileURL.resolvingSymlinksInPath()
+      let metadata = try Data(contentsOf: container.appendingPathComponent(".com.apple.mobile_container_manager.metadata.plist"))
+      guard let object = try PropertyListSerialization.propertyList(from: metadata, format: nil) as? [String: Any],
+        object["MCMMetadataIdentifier"] as? String == "com.amirtlinov.notebook.acceptance",
+        container.pathComponents.contains("CoreSimulator") else {
+        throw failure("destination is not the installed acceptance Simulator container")
+      }
     }
     let workspaceID = UUID(), seedActor = UUID(), macActor = UUID(), iPadActor = UUID()
     let initial = WorkspaceIndex.initial(actor: seedActor, pageSize: .init(width: 834, height: 1194))
@@ -36,7 +47,7 @@ import NotebookCore
     try checkpoint.validate()
     let macRoot = directory.appendingPathComponent("mac", isDirectory: true)
     let iPadRoot = container.appendingPathComponent("Documents/acceptance/\(runID.uuidString.lowercased())/store", isDirectory: true)
-    guard !FileManager.default.fileExists(atPath: iPadRoot.path) else { throw failure("Simulator run already exists") }
+    guard !FileManager.default.fileExists(atPath: iPadRoot.path) else { throw failure("acceptance run already exists") }
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     let macReceipt = try NotebookStore(root: macRoot).installCheckpoint(checkpoint)
     let iPadReceipt = try NotebookStore(root: iPadRoot).installCheckpoint(checkpoint)
@@ -52,14 +63,14 @@ import NotebookCore
       "credentialID": credential.id.uuidString, "secret": credential.secret.base64EncodedString()]
     func manifest(role: String, actor: UUID, bundle: String, root: URL) -> [String: Any] {
       var result: [String: Any] = ["version": 1, "runID": runID.uuidString, "workspaceID": workspaceID.uuidString,
-        "actorID": actor.uuidString, "role": role, "bundleID": bundle, "sourceRevision": args[3], "root": root.path, "pair": pair]
+        "actorID": actor.uuidString, "role": role, "bundleID": bundle, "sourceRevision": args[3], "root": physical && role == "iPad" ? "Documents/acceptance/\(runID.uuidString.lowercased())/store" : root.path, "pair": pair]
       if role == "mac" { result["socket"] = socket; result["codexDirectory"] = root.appendingPathComponent("Codex").path }
       return result
     }
     let macManifest = directory.appendingPathComponent("mac.json")
     let iPadManifest = iPadRoot.deletingLastPathComponent().appendingPathComponent("ipad.json")
     try write(manifest(role: "mac", actor: macActor, bundle: args[5], root: macRoot), to: macManifest)
-    try write(manifest(role: "iPad", actor: iPadActor, bundle: "com.amirtlinov.notebook.acceptance", root: iPadRoot), to: iPadManifest)
+    try write(manifest(role: "iPad", actor: iPadActor, bundle: "com.amirtlinov.notebook.acceptance" + (physical ? "." + suffix : ""), root: iPadRoot), to: iPadManifest)
     let result: [String: Any] = ["runID": runID.uuidString.lowercased(), "workspaceID": workspaceID.uuidString,
       "sourceRevision": args[3], "macManifest": macManifest.path, "iPadManifest": iPadManifest.path,
       "socket": socket, "checkpointSHA256": macReceipt.checkpointSHA256]

@@ -76,7 +76,7 @@ final class NotebookChatPanelTests: XCTestCase {
       .init(id: "progress", turnID: "turn", clientID: nil, role: .assistant, text: "Проверяю рисунок на доске", phase: "commentary"),
       .init(id: "tool", turnID: "turn", clientID: nil, role: .assistant, text: "Читаю доску", activity: .init(kind: .tool, status: "inProgress", detail: "notebook_read_board"))]
     func conversation(busy: Bool) -> CodexConversation {
-      .init(threadID: "task", revision: 1, title: "Рисунок", ready: true, busy: busy, activeTurnID: busy ? "turn" : nil,
+      .init(threadID: "task", generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Рисунок", ready: true, busy: busy, activeTurnID: busy ? "turn" : nil,
         messages: messages, requests: [], acceptedMessages: [:], turnStatuses: [:])
     }
     let work = NotebookChatWorkStatus(conversation: conversation(busy: true), connected: true)
@@ -221,11 +221,11 @@ final class NotebookChatPanelTests: XCTestCase {
         receiver?.receive(.init(id: envelope.id, body: .reply(.history(.init(messages: messages, nextCursor: nil)))), peerID: peer); return
       }
       if case .conversation(let thread) = query {
-        let request = CodexUserRequest(nativeID: .number(4), method: "mcpServer/elicitation/request", turnID: "turn", parameters: .object([
+        let request = CodexUserRequest(nativeID: .number(4), generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, method: "mcpServer/elicitation/request", turnID: "turn", parameters: .object([
           "mode": .string("form"), "serverName": .string("notebook"),
           "requestedSchema": .object(["type": .string("object"), "properties": .object([:])]),
           "_meta": .object(["codex_approval_kind": .string("mcp_tool_call"), "tool_title": .string("Прочитать выбранный участок доски"), "persist": .array([.string("session"), .string("always")])])]))
-        let value = CodexConversation(threadID: thread, revision: 1, title: "Обсуждение рисунка", ready: true, busy: true, activeTurnID: "turn", messages: messages, requests: [request], acceptedMessages: [:], turnStatuses: [:],
+        let value = CodexConversation(threadID: thread, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Обсуждение рисунка", ready: true, busy: true, activeTurnID: "turn", messages: messages, requests: [request], acceptedMessages: [:], turnStatuses: [:],
           access: .init(profileID: CodexAccessMode.workspace.rawValue, approvalPolicy: .string("on-request"), available: CodexAccessMode.allCases), model: .init(model: "fixture", effort: "high"), contextUsage: .init(used: 193000, window: 258000))
         receiver?.receive(.init(id: envelope.id, body: .reply(.conversation(value))), peerID: peer); return
       }
