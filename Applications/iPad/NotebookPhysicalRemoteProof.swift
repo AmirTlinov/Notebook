@@ -7,13 +7,15 @@ import SwiftUI
 /// with a private, admitted pair only. A saved start prevents automatic replay.
 @MainActor enum NotebookPhysicalRemoteProof {
   static func runIfRequested(_ model: NotebookAppModel, phaseChanged: (String) -> Void) async {
-    guard ProcessInfo.processInfo.environment["NOTEBOOK_RUN_REMOTE_PROOF"] == "1",
+    guard let mode = ProcessInfo.processInfo.environment["NOTEBOOK_RUN_REMOTE_PROOF"], ["1", "local"].contains(mode),
       let config = model.acceptance, config.role == .iPad else { return }
+    let localOnly = mode == "local"
     #if targetEnvironment(simulator)
-      phaseChanged("Physical device required")
-      return
-    #else
-    let progress = config.rootURL.deletingLastPathComponent().appendingPathComponent("progress.json")
+      guard localOnly else { phaseChanged("Physical device required"); return }
+    #endif
+    let progress = config.rootURL.deletingLastPathComponent().appendingPathComponent(localOnly ? "local-proof.json" : "progress.json")
+    let fileName = localOnly ? "local-proof.txt" : "proof.txt"
+    let documentTitle = localOnly ? "GUI-183 local proof" : "GUI-183 physical proof"
     guard !FileManager.default.fileExists(atPath: progress.path) else { return }
     var recordedThread: String?, recordedCommand: UUID?, recordedTurn: String?
     var observations: [[String: String]] = []
@@ -37,21 +39,25 @@ import SwiftUI
       await chat.create()
       try await wait(60) { chat.threadID != nil }
       let thread = try unwrap(chat.threadID)
+      recordedThread = thread
       await chat.setAccess(.workspace, thread: thread)
       try await wait(30) { chat.jobs.contains { if case .setAccess = $0.input.action { return $0.state == .accepted }; return false } }
       let sent = await chat.sendMessage(threadID: thread, text: """
         This is an isolated acceptance project and a fresh private Notebook workspace. Do not access any other project.
-        Create proof.txt containing exactly GUI-183 plus a newline. Run /usr/bin/python3 -c 'from pathlib import Path; assert Path("proof.txt").read_text() == "GUI-183\\n"; print("GUI-183-CHECK-PASSED")'.
-        Then use Notebook MCP notebook_execute to read nb.help('operation/createDocument'), read fresh nb.board({}) basis and create one document titled GUI-183 physical proof containing the actual check result. Finish with GUI-183-CHECK-PASSED.
+        Create \(fileName) containing exactly GUI-183 plus a newline. Run /usr/bin/python3 -c 'from pathlib import Path; assert Path("\(fileName)").read_text() == "GUI-183\\n"; print("GUI-183-CHECK-PASSED")'.
+        Then use Notebook MCP notebook_execute to read nb.help('operation/createDocument'), read fresh nb.board({}) basis and create one document titled \(documentTitle) containing the actual check result. Finish with GUI-183-CHECK-PASSED.
         """, context: "")
       try require(sent)
       let input = try unwrap(chat.jobs.first(where: { if case .send = $0.input.action { return true }; return false })?.input)
+      recordedCommand = input.id
       try await wait(180) { chat.conversation?.requests.isEmpty == false }
       let pending = try unwrap(chat.conversation?.requests.first)
-      try record("switch-to-relay-with-pending-approval", thread: thread, command: input.id)
-      try await wait(300) { chat.connected && model.deviceRouteTitle(peer) == NearbySync.Route.relay.title }
-      try equal(chat.threadID, thread)
-      try await wait(30) { chat.conversation?.requests.contains { $0.id == pending.id } == true }
+      if !localOnly {
+        try record("switch-to-relay-with-pending-approval", thread: thread, command: input.id)
+        try await wait(300) { chat.connected && model.deviceRouteTitle(peer) == NearbySync.Route.relay.title }
+        try equal(chat.threadID, thread)
+        try await wait(30) { chat.conversation?.requests.contains { $0.id == pending.id } == true }
+      }
       var answered = Set<String>()
       let deadline = ContinuousClock.now + .seconds(180)
       while .now < deadline {
@@ -73,10 +79,11 @@ import SwiftUI
       let turn = try unwrap(chat.conversation?.acceptedMessages[input.id.uuidString.lowercased()])
       recordedTurn = turn
       try equal(chat.conversation?.turnStatuses[turn], "completed")
-      try await wait(30) { model.workspace?.items.contains { $0.kind == .document && $0.title == "GUI-183 physical proof" } == true }
+      try await wait(30) { model.workspace?.items.contains { $0.kind == .document && $0.title == documentTitle } == true }
       let replay = try await chat.directQuery(.job(input))
       guard case .job(let job) = replay else { throw NotebookTransportError.invalidAcknowledgement }
       try equal(job.id, input.id); try equal(job.result, .turn(turn))
+      if localOnly { try record("LAN-PASS", thread: thread, command: input.id); return }
       try record("relay-PASS-switch-to-nearby", thread: thread, command: input.id)
       try await wait(300) { chat.connected && model.deviceRouteTitle(peer) == NearbySync.Route.nearby.title }
       try equal(chat.threadID, thread)
@@ -93,7 +100,6 @@ import SwiftUI
       // Failure neither resubmits an uncertain command nor stops accepted Mac work.
       return
     }
-    #endif
   }
 
   private static func wait(_ seconds: Double, until condition: () -> Bool) async throws {
@@ -116,6 +122,7 @@ import SwiftUI
     case "relay-PASS-switch-to-nearby": "Интернет ✓. Вернитесь к Mac; Wi-Fi включён, но без общей сети"
     case "nearby-PASS-restore-LAN": "Nearby ✓. Верните обычную Wi-Fi сеть"
     case "PASS": "Готово: одна задача через LAN → интернет → nearby → LAN"
+    case "LAN-PASS": "Локальная сеть ✓: код, проверка и материал в одной задаче"
     default: phase
     }
   }

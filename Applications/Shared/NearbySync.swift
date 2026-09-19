@@ -80,6 +80,13 @@ struct NotebookPeerDiscovery: Equatable {
     let epoch = generation.uuidString.replacingOccurrences(of: "-", with: "").prefix(12).lowercased()
     return "notebook-v\(NotebookTransportLimits.protocolVersion)-\(deviceID)-\(epoch)"
   }
+  static func metadata(workspaceID: UUID) -> NWTXTRecord {
+    NWTXTRecord(["workspace": workspaceID.uuidString.lowercased()])
+  }
+  static func matches(_ metadata: NWBrowser.Result.Metadata, workspaceID: UUID) -> Bool {
+    guard case .bonjour(let record) = metadata, let value = record["workspace"] else { return false }
+    return UUID(uuidString: value) == workspaceID
+  }
   init?(serviceName: String) {
     guard serviceName.hasPrefix("notebook-v") else { return nil }
     let suffix = serviceName.dropFirst("notebook-v".count)
@@ -351,7 +358,7 @@ final class NearbySync {
       guard browser == nil, !trusted.isEmpty else { return }
       let parameters = NWParameters.tcp
       parameters.includePeerToPeer = peerToPeer
-      let browser = NWBrowser(for: .bonjour(type: "_notebook._tcp", domain: nil), using: parameters)
+      let browser = NWBrowser(for: .bonjourWithTXTRecord(type: "_notebook._tcp", domain: nil), using: parameters)
       self.browser = browser
       browser.browseResultsChangedHandler = { [weak self, weak browser] results, _ in
         Task { @MainActor in
@@ -363,6 +370,9 @@ final class NearbySync {
             guard case .service(let name, _, _, _) = result.endpoint,
               let peer = NotebookPeerDiscovery(serviceName: name), allowed.contains(peer.deviceID) else { continue }
             guard peer.isCompatible else { incompatiblePeers.insert(peer.deviceID); continue }
+            // Retained workspaces share this Mac's device identity. Select the
+            // workspace before TLS, rather than whichever listener sorts first.
+            guard NotebookPeerDiscovery.matches(result.metadata, workspaceID: self.identity.workspaceID) else { continue }
             if endpoints[peer.deviceID] == nil { endpoints[peer.deviceID] = result.endpoint }
           }
           // A changed advertisement is evidence of external progress. Repeated
@@ -409,7 +419,8 @@ final class NearbySync {
     do {
       let listener = try NWListener(using: NotebookTransportTLS.parameters(keys: keys))
       self.listener = listener
-      listener.service = .init(name: NotebookPeerDiscovery.serviceName(deviceID: identity.deviceID, generation: discoveryGeneration), type: "_notebook._tcp")
+      listener.service = .init(name: NotebookPeerDiscovery.serviceName(deviceID: identity.deviceID, generation: discoveryGeneration),
+        type: "_notebook._tcp", txtRecord: NotebookPeerDiscovery.metadata(workspaceID: identity.workspaceID))
       listener.newConnectionHandler = { [weak self, weak listener] connection in
         Task { @MainActor in
           guard let self, let listener, self.listener === listener, self.isStarted, self.sessions.count < 8 else { connection.cancel(); return }
@@ -559,7 +570,10 @@ final class NearbySync {
         let old = self.currentGeneration.updateValue(generation, forKey: peer.deviceID)
         self.reconnectFailures = 0
         if self.sessionRoutes[generation] != .relay { self.browser?.cancel(); self.browser = nil; self.discoveryStop?.cancel() }
-        if let old, old != generation { self.sessions[old]?.stop() }
+        // Mac retires the old socket only after the connector's first selected
+        // transient arrived here. Closing it on iPad first races EOF against
+        // that message on another socket and falsely disconnects the Mac UI.
+        if self.role == .macListener, let old, old != generation { self.sessions[old]?.stop() }
         self.onStateChange?(.connected(peer)); self.onConnect?(peer, generation)
         if self.role == .macListener, let credential = self.trusted.first(where: { $0.identity.deviceID == peer.deviceID }) {
           self.sendTransient(.relay(.init(credentialID: credential.credentialID, route: self.trust.relayClients?[peer.deviceID])), to: peer.deviceID)
@@ -604,18 +618,23 @@ final class NearbySync {
       }
       session.onStop = { [weak self] peer, error in
         guard let self else { return }
+        let peerID = peer?.deviceID ?? credential?.expectedPeer.deviceID
+        let selected = peerID.flatMap { self.currentGeneration[$0] }
+        let hasReplacement = selected != nil && selected != generation
         self.sessions.removeValue(forKey: generation); self.sessionRoutes.removeValue(forKey: generation); self.sessionEpochs.removeValue(forKey: generation)
         if let peer, self.currentGeneration[peer.deviceID] == generation {
           self.currentGeneration.removeValue(forKey: peer.deviceID)
           self.onDisconnect?(peer.deviceID, generation)
         }
-        if let error { self.report(error) }
-        if let error, NotebookPeerDiscovery.upgradeMessage(for: error) != nil,
+        if let error, !hasReplacement { self.report(error) }
+        if let error, !hasReplacement, NotebookPeerDiscovery.upgradeMessage(for: error) != nil,
           let deviceID = peer?.deviceID ?? credential?.expectedPeer.deviceID {
           self.suspendedPeers.insert(deviceID)
         }
         if error == nil, self.currentGeneration.isEmpty { self.onStateChange?(.waiting) }
-        self.scheduleReconnect()
+        // A retired socket's goodbye is expected. It cannot publish failure,
+        // suspend the new owner or restart discovery under a healthy channel.
+        if !hasReplacement { self.scheduleReconnect() }
       }
       session.start()
     } catch { connection.cancel(); report(error) }

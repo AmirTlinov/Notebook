@@ -42,6 +42,9 @@ final class NearbySyncTests: XCTestCase {
     let journal = NotebookStore(root: root.appendingPathComponent("journal"))
     _ = try journal.initializeWorkspace(actor: macID, pageSize: .init(width: 100, height: 100))
     var receipts = 0, executed = 0, disconnected = 0, generations = Set<UUID>()
+    var retiredFailures = 0
+    let stateChanged: (NotebookConnectionState) -> Void = { if case .failed = $0 { retiredFailures += 1 } }
+    pad.onStateChange = stateChanged; mac.onStateChange = stateChanged
     pad.onConnect = { _, generation in
       generations.insert(generation)
       pad.sendTransient(.codex(.init(body: .request(.job(input)))), to: macID)
@@ -79,6 +82,7 @@ final class NearbySyncTests: XCTestCase {
       XCTAssertEqual(mac.routeTitle(for: padID), NearbySync.Route.direct.title, "A nearby discovery hint cannot turn loopback into AWDL")
     }
     XCTAssertEqual(executed, 1); XCTAssertEqual(generations.count, 11)
+    XCTAssertEqual(retiredFailures, 0, "An old goodbye must not report the replacement channel as failed")
     XCTAssertEqual(disconnected, 0, "A retired generation cannot disconnect the new selected route")
     XCTAssertEqual(try journal.recentChatJobs(author: padID).count, 1)
   }
@@ -231,6 +235,15 @@ final class NearbySyncTests: XCTestCase {
     XCTAssertFalse(old.isCompatible)
     XCTAssertNil(NotebookPeerDiscovery(serviceName: "notebook-v10-not-an-identity"))
     XCTAssertNil(NotebookPeerDiscovery(serviceName: "unrelated-\(id)"))
+  }
+
+  func testDiscoverySelectsWorkspaceWhenOneMacRetainsMultipleListeners() {
+    let selected = UUID(), background = UUID()
+    XCTAssertTrue(NotebookPeerDiscovery.matches(.bonjour(NotebookPeerDiscovery.metadata(workspaceID: selected)), workspaceID: selected))
+    XCTAssertFalse(NotebookPeerDiscovery.matches(.bonjour(NotebookPeerDiscovery.metadata(workspaceID: background)), workspaceID: selected))
+    XCTAssertFalse(NotebookPeerDiscovery.matches(.bonjour(NWTXTRecord()), workspaceID: selected))
+    XCTAssertFalse(NotebookPeerDiscovery.matches(.bonjour(NWTXTRecord(["workspace": "invalid"])), workspaceID: selected))
+    XCTAssertFalse(NotebookPeerDiscovery.matches(.none, workspaceID: selected))
   }
 
   func testUpgradeAndCheckpointFailuresAreNotReportedAsNetworkErrors() {
