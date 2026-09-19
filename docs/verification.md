@@ -1,5 +1,37 @@
 # Проверка Notebook
 
+## 19 сентября, 18:05 МСК — GUI-242/250: настоящее открытие и чтение 300 MiB без отправителя
+
+UI-only runner `.build/gui250-received-program-ui-v20` прошёл два сценария на
+установленном private Simulator V16 (`2f48105d…`). Поиск адресует точную обложку;
+контакт получает пространственный gesture layer, а не accessibility container.
+Прежний `app.buttons` давал type mismatch, затем `.any.isHittable` ложно отвергал
+видимую бумагу. Теперь обычный double tap по её реальному видимому frame приводит
+к свежему native installation receipt и проверяемому тексту работающей программы.
+
+- Sound: cold open → видимый рисунок/управление, исходная сохранённая фаза;
+  native installed **3398 ms**, canonicalPrint1456ms. Actual action receipt
+  исходного создания всё ещё `shownOnIPad:awaiting_display`: последующие human
+  revisions не выдаются за исходную actionVersion. Native pixels проверены отдельно.
+- Ресурс300MiB: paired private Mac PID75500 остановлен до cold launch Simulator;
+  на экране «Проверено104байта; ресурс314572800байт. Все4диапазона совпали».
+  Native installed **3086ms**, canonicalPrint1465ms. После сценария тот же V18
+  Mac восстановлен. Глобальная сеть/CloudKit settings/physical iPad не менялись;
+  это автономное чтение доставленного пакета без paired sender, не airplane mode.
+- Каждый UI: **1PASS**, failures/skips/runtime warnings0. Оба PNG осмотрены.
+  Evidence: `sound.xcresult`, `large-offline.xcresult`, их summary/attachments,
+  `offline-scope.json`, `sender-restored.json` внутри указанного v20-каталога.
+
+Исходники интегрированы с native tools release124 (`d32248d`, `f46c536`),
+объединённый decoder имеет wire33/manifest15, читает записанные4–14; packages
+до10 и TeX до11 по-прежнему отвергаются. Сохранён root SwiftUI tool-popover.
+Core77 + targeted9 PASS; MCP154 + pinned typecheck/generated SDK PASS.
+Узкая панель дополнена собственной прокручиваемой строкой полноразмерных tools;
+её native-проверка и новая единая private-пара ещё в работе.
+
+Performance-бюджет cold≤500ms **не выполнен**. Интегрированный Release/native/UI,
+seven-reference/system/10-repeat/30-minute gates ещё открыты; GUI-240 не Done.
+
 ## 19 сентября, 17:44 МСК — GUI-250: Simulator UI opening не принят
 
 Test-only Simulator bundle собран, installed V16 и контейнер сохранены.

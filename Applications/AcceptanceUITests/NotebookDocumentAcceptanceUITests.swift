@@ -116,9 +116,14 @@ private struct DocumentInstallationHistory {
     // A title hit addresses the cover. Open the actual located document with
     // its ordinary gesture; body preparation is timed from this open request.
     let coverID = "workspace-item-" + (try expectedDocumentID).uuidString.lowercased()
-    let cover = app.buttons[coverID]
+    let cover = app.descendants(matching: .any).matching(identifier: coverID).firstMatch
     XCTAssertTrue(cover.waitForExistence(timeout: 10), app.debugDescription)
-    XCTAssertTrue(cover.isHittable); cover.doubleTap()
+    // This is an accessibility container; the spatial gesture layer owns the
+    // physical contact. Address its visible paper, not XCTest's button hit test.
+    let visible = cover.frame.intersection(app.frame)
+    XCTAssertGreaterThan(visible.width, 80); XCTAssertGreaterThan(visible.height, 80)
+    app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+      dx: visible.midX-app.frame.minX, dy: visible.midY-app.frame.minY)).doubleTap()
   }
 
   private func installed(after priorID: UUID? = nil, pageIndex: Int? = nil, timeout: TimeInterval = 30) throws -> Installation {
@@ -224,6 +229,22 @@ private struct DocumentInstallationHistory {
     XCTAssertLessThan(after.width, before.width * 0.98,
       "The scene must actually zoom out; merely delivering a pair of contacts is insufficient")
     XCTAssertEqual(after.width / before.width, after.height / before.height, accuracy: 0.002)
+    try systemTrace?.ended(app)
+  }
+
+  func testReceivedProgramColdOpeningShowsItsComputedResult() throws {
+    executionTimeAllowance = 120
+    let expected = try XCTUnwrap(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_PROGRAM_RESULT"],
+      "Supply visible output from the publicly authored program, not a readiness placeholder")
+    try launch(); closeDocument(); try terminate()
+    try launch(); try searchForDocument()
+    let first = try installed(pageIndex: 0)
+    try attach(first, name: "received-program-cold-installation")
+    let result = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@",
+      expected, expected)).firstMatch
+    XCTAssertTrue(result.waitForExistence(timeout: 20), app.debugDescription)
+    XCTAssertTrue(result.isHittable)
+    screenshot("received-program-computed-result")
     try systemTrace?.ended(app)
   }
 
