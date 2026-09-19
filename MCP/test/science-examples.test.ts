@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {readFile} from 'node:fs/promises';
+import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {runInNewContext} from 'node:vm';
 import {parseFragment} from 'parse5';
@@ -109,4 +111,34 @@ test('shared scene runtime keeps frames local, commits controls and restores foc
   play.listeners.click();assert.equal(frames.size,1);lifecycle.dispose();assert.equal(frames.size,0);
   assert.equal(events.has('notebookstate'),false);assert.equal(events.has('visibilitychange'),false);
   app.change({phase:.2});near(drawn,.85);
+});
+
+
+test('science gallery opens every inline and asset-backed example through its existing preview',async()=>{
+  const {startSciencePreview}=await import(new URL('../skills/notebook/scripts/science-preview.mjs',import.meta.url).href);
+  const directory=await mkdtemp(join(tmpdir(),'notebook-science-preview-'));
+  let preview:any;
+  try {
+    preview=await startSciencePreview(directory);
+    const gallery=await readFile(preview.path,'utf8');
+    assert.equal(preview.examples.length,scienceExamples.length);
+    assert.equal((gallery.match(/<iframe /g)??[]).length,scienceExamples.length);
+    for(const example of preview.examples) {
+      assert.ok(gallery.includes(example.url));
+      if(example.format==='program') {
+        const response=await fetch(example.url),html=await response.text();
+        assert.equal(response.status,200);assert.match(example.url,/^http:\/\/127\.0\.0\.1:/);
+        assert.equal(example.identity.packageHash.length,64);
+        assert.ok(html.includes(example.identity.packageHash));
+        assert.match(html,/createNotebookProgram/);
+        assert.equal((await fetch(example.url+'main.js')).status,200);
+      } else {
+        const html=await readFile(join(directory,example.url),'utf8');
+        assert.ok(html.includes(example.title));assert.match(html,/createNotebookProgram/);
+        assert.match(html,/ScienceModels/);
+      }
+    }
+  } finally {await preview?.close();await rm(directory,{recursive:true,force:true});}
+  for(const example of preview?.examples??[])if(example.format==='program')
+    await assert.rejects(fetch(example.url),/fetch failed/);
 });
