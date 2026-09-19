@@ -29,6 +29,10 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let page = PageRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
     let pixels = try XCTUnwrap(DocumentPagePresentationOwner.capturePresented(documentID: document.id, pageIndex: 0,
       token: fixture.currentToken, region: page, resources: fixture.resources, blockID: "probe"))
+    let model = try XCTUnwrap(pixels.presentation?.program)
+    XCTAssertEqual(model.blockID, "probe")
+    XCTAssertEqual(model.sourceVersion, document.sourceVersion(blockID: "probe"))
+    XCTAssertEqual(model.state, .object(["phase": .number(0.5)]))
     let selected = try XCTUnwrap(pixels.semanticSelection)
     XCTAssertEqual(selected.model["phase"], .number(0.5))
     XCTAssertEqual(selected.anchor.x, (region.x + region.width / 2) / page.width, accuracy: 0.001)
@@ -37,6 +41,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     try await wait(message: { fixture.diagnostics }) { web.isUserInteractionEnabled }
     let current = try await web.evaluateJavaScript("Array.from(document.querySelector('canvas').getContext('2d').getImageData(20,20,1,1).data)") as? [Int]
     XCTAssertEqual(current, [255, 0, 0, 255])
+    XCTAssertEqual(pixels.presentation?.program, model, "Resuming the live heap cannot change the captured model")
     let png = try await pixels.png(), image = try XCTUnwrap(UIImage(data: png))
     XCTAssertGreaterThan(try bluePixels(image), 100, "Send copied the blue native page before the same heap resumed red")
     let shot = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
@@ -1462,7 +1467,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     attachment.name = "document-attention-current-blue-program"; attachment.lifetime = .keepAlways; add(attachment)
     let physical = WorkspaceItemGeometry.document(document.paperSize)
     let frozen = try XCTUnwrap(DocumentPagePresentationOwner.capturePresented(documentID: document.id, pageIndex: 0,
-      token: fixture.currentToken, region: .init(x: 0, y: 0, width: physical.width, height: physical.height), resources: fixture.resources))
+      token: fixture.currentToken, region: .init(x: 0, y: 0, width: physical.width, height: physical.height), resources: fixture.resources, blockID: "program"))
     let provenance = try XCTUnwrap(frozen.presentation)
     #if targetEnvironment(simulator)
       XCTAssertEqual(provenance.device, .iOSSimulator)
@@ -1470,6 +1475,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
       XCTAssertEqual(provenance.device, .iPad)
     #endif
     XCTAssertLessThan(abs(provenance.capturedAt - Date().timeIntervalSince1970), 2)
+    XCTAssertNil(provenance.program, "A running uncommitted frame cannot certify a reproducible checkpoint")
     _ = try await web.evaluateJavaScript("document.querySelector('#swatch').style.background='#ff0000';true")
     let encodedLater = try await frozen.png()
     XCTAssertEqual(frozen.presentation, provenance)

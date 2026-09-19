@@ -102,21 +102,47 @@ public struct NotebookExportOptions: Codable, Equatable, Sendable {
       throw CollaborationError("invalid_export_cut", "Выбранный момент должен совпадать с immutable cut.")
     }
     if let source = cut.presented {
-      guard attention?.contextID == source.requestID, attention?.referenceID == source.id,
-        pixelWidth == nil || pixelWidth == source.image?.pixelWidth else {
-        throw CollaborationError("export_presentation_mismatch", "Показанный PNG сохраняет точную выбранную область в её исходном разрешении; увеличить его нельзя.")
+      guard attention?.contextID == source.requestID, attention?.referenceID == source.id else {
+        throw CollaborationError("export_presentation_mismatch", "Attention не совпадает с захваченным моментом.")
+      }
+      if format == .png {
+        guard pixelWidth == nil || pixelWidth == source.image?.pixelWidth else {
+          throw CollaborationError("export_presentation_mismatch", "Показанный PNG сохраняет точную выбранную область в её исходном разрешении; увеличить его нельзя.")
+        }
+      } else {
+        guard let program = source.image?.presentation?.program,
+          let block = cut.document.blocks.first(where: { $0.id == program.blockID && $0.kind == .interactive }),
+          program.blockID == source.reference.elementID,
+          program.sourceVersion == cut.document.sourceVersion(blockID: block.id),
+          program.state == (cut.state.value(for: block.id) ?? block.initialState) else {
+          throw CollaborationError("export_presentation_model_unavailable", "Для этого формата явно остановите программу и отправьте её attention: нужен checkpoint той же модели/source, связанный с показанными пикселями.")
+        }
+        if format == .pdf || format == .package || format == .mp4 {
+          // Whole-document/page formats must not label another running model
+          // as presented just because the selected program was checkpointed.
+          guard cut.document.blocks.filter({ $0.kind == .interactive }).allSatisfy({ $0.id == program.blockID }) else {
+            throw CollaborationError("export_presentation_model_unavailable", "Документ содержит другие программы без выбранного frozen checkpoint. Экспортируйте выбранный блок как SVG/HTML либо весь документ как saved.")
+          }
+        }
+        guard blockID == nil || blockID == program.blockID else {
+          throw CollaborationError("export_presentation_mismatch", "Экспортируемая программа не совпадает с выбранным кадром.")
+        }
       }
     }
   }
   public func validate() throws {
     if selectedMoment == .presented {
-      guard format == .png, attention != nil, pageIndex == nil, blockID == nil, video == nil,
-        pixelWidth == nil || (128...4096).contains(pixelWidth!) else {
-        throw CollaborationError("invalid_export", "Показанный момент требует PNG и attention:{contextID,referenceID}; область и разрешение задаёт настоящий capture. Для воспроизводимого model/PDF/video экспорта выберите saved.")
+      guard attention != nil else { throw CollaborationError("invalid_export", "Показанный момент требует attention:{contextID,referenceID}.") }
+      if format == .png {
+        guard pageIndex == nil, blockID == nil, video == nil,
+          pixelWidth == nil || (1...4096).contains(pixelWidth!) else {
+          throw CollaborationError("invalid_export", "Показанный PNG сохраняет исходный capture; область задаёт attention, не pageIndex/blockID.")
+        }
+        return
       }
-      return
+    } else {
+      guard attention == nil else { throw CollaborationError("invalid_export", "Attention относится к явно выбранному presented моменту.") }
     }
-    guard attention == nil else { throw CollaborationError("invalid_export", "Attention относится к явно выбранному presented моменту.") }
     guard format == .mp4 || video == nil else { throw CollaborationError("invalid_export", "Диапазон времени относится только к MP4.") }
     switch format {
     case .mp4:

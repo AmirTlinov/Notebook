@@ -33,7 +33,7 @@ import PDFKit
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-export-" + jobID.uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     defer { try? FileManager.default.removeItem(at: directory) }
-    if let image = cut.presented?.image {
+    if options.format == .png, let image = cut.presented?.image {
       let file = try await stage(image.png, path: "document.png", directory: directory, persistence: persistence)
       return .init(cut: cut, source: "", artifact: file,
         log: "Exact submitted presentation crop; original pixels/extent; no WebKit, checkpoint, rescale or cache read", options: options, jobID: jobID)
@@ -56,7 +56,7 @@ import PDFKit
       }
       let html = try NotebookStandaloneExport.document(block: block, state: state.value(for: block.id) ?? block.initialState)
       let file = try await stage(html, path: "document.html", directory: directory, persistence: persistence)
-      return .init(cut: cut, source: "", artifact: file, log: "Standalone NotebookProgram/1: saved state, isolated offline iframe", options: options, jobID: jobID)
+      return .init(cut: cut, source: "", artifact: file, log: "Standalone NotebookProgram/1: immutable cut state, isolated offline iframe", options: options, jobID: jobID)
     }
     let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
     if options.format == .mp4 {

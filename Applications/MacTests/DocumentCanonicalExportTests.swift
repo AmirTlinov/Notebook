@@ -43,6 +43,72 @@ import WebKit
     XCTAssertEqual(receipt.options.selectedMoment, .presented)
   }
 
+  func testPresentedFrozenModelUsesTheSameExporterAcrossFormats() async throws {
+    let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)), actor = UUID()
+    _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    defer { try? FileManager.default.removeItem(at: store.root) }
+    var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
+    let item = try XCTUnwrap(index.createDocument(title: "Frozen model", actor: actor))
+    XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
+    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.markdown(id: "heading", source: "# Bound frozen model"),
+      .interactive(id: "model", html: "<canvas style='width:100%;height:180px'></canvas>", javaScript: """
+        const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
+        notebook.lifecycle({pause(){},checkpoint(){throw Error('Export cannot checkpoint the live scene')}});
+        notebook.exportFrame(({format,state,time,pixelRatio})=>{
+          if(state.phase!==.25)throw Error('Wrong captured checkpoint');
+          if(format==='svg')return '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="180"><text x="20" y="40">Frozen phase '+state.phase+'</text></svg>';
+          if(format!=='raster')throw Error('Unexpected format');
+          const r=canvas.getBoundingClientRect();canvas.width=Math.round(r.width*pixelRatio);canvas.height=Math.round(r.height*pixelRatio);
+          ctx.fillStyle=(state.phase+(time||0))%1<.5?'#ee0000':'#0000ee';ctx.fillRect(0,0,canvas.width,canvas.height);
+          if(notebook.commit({phase:99}))throw Error('Export cannot commit');return null;
+        },{timeline:true});notebook.ready(Promise.resolve());
+        """, initialState: .object(["phase": .number(0)]), height: 180)])
+    var state = DocumentStateJournal(id: item.id, actor: actor)
+    XCTAssertTrue(state.commit(blockID: "model", value: .object(["phase": .number(0.25)]), actor: actor))
+    try store.saveDocumentWorkspaceBundle(index: index, document: document, state: state, board: board)
+    let saved = try store.loadDocument(item.id), target = CollaborationTarget(kind: .document, id: item.id)
+    let reference = CollaborationReference(target: target, elementID: "model", region: .init(x: 1, y: 1, width: 1, height: 1), pageIndex: 0,
+      revision: try store.referenceRevision(target: target, elementID: "model"))
+    let context = try store.appendContext(references: [reference], author: .human, actor: actor, select: true)
+    let png = try XCTUnwrap(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="))
+    // Transport fixture only. The native iPad owner establishes this binding in DocumentProgramOwnerTests.
+    let image = try AgentPinnedImage(referenceID: reference.id, sourceRevision: reference.revision, region: reference.region!, worldOrigin: nil,
+      pageIndex: 0, pixelWidth: 1, pixelHeight: 1, pixelsPerPoint: 1, png: png,
+      sha256: SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined(),
+      presentation: .init(device: .iOSSimulator, program: .init(blockID: "model", sourceVersion: saved.sourceVersion(blockID: "model"), state: state.value(for: "model")!)))
+    let source = try AgentPinnedSource.capture(requestID: context.id, reference: reference, files: store.referenceSourceFiles(target: target)).withVisual(image)
+    try store.saveAttentionEvidence([source], contextID: context.id)
+    let cursor = try store.currentChangeCursor()
+    for format in [NotebookExportOptions.Format.pdf, .svg, .html, .package, .mp4] {
+      let options = NotebookExportOptions(format: format, pixelWidth: format == .mp4 ? 640 : nil,
+        blockID: [.svg, .html, .mp4].contains(format) ? "model" : nil,
+        video: format == .mp4 ? .init(start: 0, end: 1, framesPerSecond: 4) : nil,
+        moment: .presented, attention: .init(contextID: context.id, referenceID: reference.id))
+      let cut = try store.readDocumentExportCut(documentID: item.id, options: options)
+      let receipt: NotebookExportReceipt
+      do { receipt = try await DocumentCanonicalExport.publish(cut: cut, options: options, jobID: UUID(), store: store, persistence: NotebookPersistenceQueue(store: store)) }
+      catch { XCTFail("Presented \(format): \(error)"); return }
+      XCTAssertEqual(receipt.options.selectedMoment, .presented)
+      XCTAssertEqual(receipt.cutSHA256, try cut.sha256)
+      let url = URL(fileURLWithPath: receipt.artifact.path)
+      let retained = try JSONDecoder().decode(NotebookExportCut.self, from: Data(contentsOf: URL(fileURLWithPath: receipt.cut.path)))
+      XCTAssertEqual(retained.presented, source)
+      switch format {
+      case .pdf: XCTAssertTrue(PDFDocument(url: url)?.string?.contains("Bound frozen model") == true)
+      case .svg: XCTAssertTrue(try String(contentsOf: url, encoding: .utf8).contains("Frozen phase 0.25"))
+      case .html: XCTAssertTrue(try String(contentsOf: url, encoding: .utf8).contains("0.25"))
+      case .package:
+        let portable = try JSONDecoder().decode(NotebookPortableDocument.self, from: Data(contentsOf: url)); XCTAssertEqual(portable.cut, cut)
+      case .mp4:
+        let asset = AVURLAsset(url: url), duration = try await asset.load(.duration)
+        XCTAssertEqual(duration.seconds, 1, accuracy: 0.001)
+      case .png: XCTFail("PNG has a distinct exact-pixel assertion")
+      }
+      XCTAssertEqual(try store.loadDocument(item.id), saved); XCTAssertEqual(try store.loadDocumentState(item.id), state)
+      XCTAssertEqual(try store.currentChangeCursor(), cursor)
+    }
+  }
+
   func testVideoUsesExplicitSavedTimelineAndDecodesTheRequestedFrames() async throws {
     let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
     let actor = UUID(); _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))

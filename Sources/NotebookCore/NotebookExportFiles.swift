@@ -54,7 +54,7 @@ extension NotebookStore {
   public func prepareDocumentExport(_ publication: NotebookExportPublication) throws -> NotebookPreparedExport {
     guard currentSQL == nil else { throw NotebookStorageError.invalidTransaction("Export preparation must precede SQL admission") }
     try publication.options.validate(cut: publication.cut)
-    if let image = publication.cut.presented?.image {
+    if publication.options.format == .png, let image = publication.cut.presented?.image {
       guard publication.artifact.sha256 == image.sha256, publication.artifact.file.byteCount == image.png.count else {
         throw CollaborationError("export_presentation_mismatch", "Presented export публикует исходные пиксели, не поздний повторный render.")
       }

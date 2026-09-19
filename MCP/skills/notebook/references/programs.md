@@ -295,8 +295,21 @@ provenance различает iPad/Simulator, содержит captureID/time и
 hash в cut. Обычный source_pixels/cache без provenance не считается показанным.
 Export не запускает WebKit, не checkpoint-ит и не меняет live scene. Изменившийся
 source/state, недоставленный capture или старое evidence без provenance — явная
-ошибка; PNG не заменяется поздней отрисовкой. Остальные форматы пока используют
-saved model, а не мнимое восстановление произвольного показанного heap.
+ошибка; PNG не заменяется поздней отрисовкой.
+
+Для SVG/HTML/PDF/пакета/видео сначала явно останови выбранную программу кнопкой
+attention и отправь её. Native capture связывает тот же кадр с blockID,
+sourceVersion и принятым checkpoint; обычный running frame такого подтверждения
+не имеет. `moment:'presented'` с тем же attention использует этот model через
+прежний изолированный exportFrame, а не восстанавливает произвольный JS heap.
+SVG/HTML требуют совпадающий blockID. PDF/пакет и каноническая страница MP4
+допускаются, только когда в документе нет других интерактивных блоков без такого
+подтверждения; иначе используй saved или экспорт выбранного блока. Статическая
+бумага остаётся канонической, полное source/state фиксируется при admission.
+Для MP4 time — явное смещение от captured model. Это воспроизведение выбранной
+модели, не обещание побайтового совпадения со screenshot. Export не выполняет
+новый checkpoint и не перематывает live runtime; все обычные stale/cancel fences
+и требования author exportFrame сохраняются.
 
 Каждый экспортируемый saved interactive block явно регистрирует:
 

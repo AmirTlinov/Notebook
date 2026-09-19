@@ -7,10 +7,23 @@ import CryptoKit
 public struct AgentPinnedImage: Codable, Equatable, Sendable {
   public struct Presentation: Codable, Equatable, Sendable {
     public enum Device: String, Codable, Sendable { case iPad, iOSSimulator }
+    /// Only an explicitly paused, checkpointed native program can supply this.
+    /// Author model data remains untrusted; this binds its identity to capture,
+    /// not a promise that arbitrary author code is deterministic.
+    public struct Program: Codable, Equatable, Sendable {
+      public let blockID: String
+      public let sourceVersion: ContentFieldVersion
+      public let state: JSONValue
+      public init(blockID: String, sourceVersion: ContentFieldVersion, state: JSONValue) {
+        self.blockID = blockID; self.sourceVersion = sourceVersion; self.state = state
+      }
+    }
+    public let program: Program?
     public let captureID: UUID
     public let capturedAt: TimeInterval
     public let device: Device
-    public init(captureID: UUID = UUID(), capturedAt: TimeInterval = Date().timeIntervalSince1970, device: Device) {
+    public init(captureID: UUID = UUID(), capturedAt: TimeInterval = Date().timeIntervalSince1970, device: Device, program: Program? = nil) {
+      self.program = program
       self.captureID = captureID; self.capturedAt = capturedAt; self.device = device
     }
   }
@@ -53,8 +66,14 @@ public struct AgentPinnedImage: Codable, Equatable, Sendable {
     }
     guard dimension(16) == pixelWidth, dimension(20) == pixelHeight,
       SHA256.hash(data: png).map({ String(format: "%02x", $0) }).joined() == sha256 else { throw invalid() }
+    if let program = presentation?.program {
+      guard !program.blockID.isEmpty, program.blockID.utf8.count <= 120,
+        program.sourceVersion.isValid, program.state.isValid,
+        try JSONEncoder().encode(program.state).count <= 1_048_576 else { throw invalid() }
+    }
     if let reference {
-      guard reference.id == referenceID, reference.revision == sourceRevision,
+      guard presentation?.program.map({ $0.blockID == reference.elementID }) ?? true,
+        reference.id == referenceID, reference.revision == sourceRevision,
         reference.region == region, reference.worldOrigin == worldOrigin, reference.pageIndex == pageIndex else { throw invalid() }
     }
   }

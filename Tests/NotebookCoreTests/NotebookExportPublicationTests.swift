@@ -19,7 +19,7 @@ struct NotebookExportPublicationTests {
   private func publish(_ store: NotebookStore, _ publication: NotebookExportPublication) throws -> NotebookExportReceipt {
     try store.publishDocumentExport(store.prepareDocumentExport(publication))
   }
-  private func fixture() throws -> (NotebookStore, DocumentDocument) {
+  private func fixture(blocks: [DocumentBlock] = [.markdown(id: "body", source: "Printed")]) throws -> (NotebookStore, DocumentDocument) {
     let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("notebook-print-package-\(UUID())"))
     _ = try store.loadOrCreate(actor: UUID(), pageSize: .init(width: 834, height: 1194))
     let actor = UUID()
@@ -28,7 +28,7 @@ struct NotebookExportPublicationTests {
     let item = try #require(created)
     let added = board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor)
     #expect(added)
-    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.markdown(id: "body", source: "Printed")])
+    let document = DocumentDocument(id: item.id, actor: actor, blocks: blocks)
     try store.saveDocumentWorkspaceBundle(index: index, document: document,
       state: .init(id: item.id, actor: actor), board: board)
     return (store, try store.loadDocument(document.id))
@@ -71,6 +71,54 @@ struct NotebookExportPublicationTests {
     #expect(throws: CollaborationError.self) { try store.readDocumentExportCut(documentID: document.id, options: options) }
     #expect(throws: CollaborationError.self) { try store.publishDocumentExport(queued) }
     #expect(try Data(contentsOf: URL(fileURLWithPath: receipt.artifact.path)) == png)
+  }
+
+  @Test func presentedModelRequiresTheExactExplicitCheckpointAndNeverLabelsOtherProgramsShown() throws {
+    let (store, document) = try fixture(blocks: [.interactive(id: "model", html: "<p>Selected</p>", initialState: .object(["phase": .number(0.5)]))])
+    defer { try? FileManager.default.removeItem(at: store.root) }
+    let state = try store.loadDocumentState(document.id), value = document.blocks[0].initialState
+    let target = CollaborationTarget(kind: .document, id: document.id)
+    let reference = CollaborationReference(target: target, elementID: "model", region: .init(x: 1, y: 1, width: 1, height: 1), pageIndex: 0,
+      revision: try store.referenceRevision(target: target, elementID: "model"))
+    let context = try store.appendContext(references: [reference], author: .human, actor: UUID(), select: true)
+    let png = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="))
+    func cut(_ program: AgentPinnedImage.Presentation.Program?) throws -> NotebookExportCut {
+      let image = try AgentPinnedImage(referenceID: reference.id, sourceRevision: reference.revision, region: reference.region!, worldOrigin: nil,
+        pageIndex: 0, pixelWidth: 1, pixelHeight: 1, pixelsPerPoint: 1, png: png,
+        sha256: SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined(), presentation: .init(device: .iOSSimulator, program: program))
+      let source = try AgentPinnedSource.capture(requestID: context.id, reference: reference, files: store.referenceSourceFiles(target: target)).withVisual(image)
+      return try .init(document: document, state: state, presented: source)
+    }
+    func options(_ format: NotebookExportOptions.Format, blockID: String? = nil) -> NotebookExportOptions {
+      .init(format: format, pixelWidth: format == .mp4 ? 640 : nil, blockID: blockID,
+        video: format == .mp4 ? .init(start: 0, end: 1, framesPerSecond: 4) : nil,
+        moment: .presented, attention: .init(contextID: context.id, referenceID: reference.id))
+    }
+    let selected = try cut(.init(blockID: "model", sourceVersion: document.sourceVersion(blockID: "model"), state: value))
+    for format in [NotebookExportOptions.Format.svg, .html, .mp4, .pdf, .package] {
+      let option = options(format, blockID: [.svg, .html, .mp4].contains(format) ? "model" : nil)
+      try option.validate(cut: selected)
+      #expect(throws: CollaborationError.self) { try option.validate(cut: cut(nil)) }
+      #expect(throws: CollaborationError.self) { try option.validate(cut: cut(.init(blockID: "model", sourceVersion: document.sourceVersion(blockID: "model"), state: .null))) }
+      let other = DocumentDocument(actor: UUID(), blocks: document.blocks)
+      #expect(throws: CollaborationError.self) { try option.validate(cut: cut(.init(blockID: "model", sourceVersion: other.sourceVersion(blockID: "model"), state: value))) }
+    }
+    #expect(throws: CollaborationError.self) { try options(.svg, blockID: "different").validate(cut: selected) }
+    #expect(throws: CollaborationError.self) { try cut(.init(blockID: "different", sourceVersion: document.sourceVersion(blockID: "model"), state: value)) }
+    // A static checkpoint is not an assertion that an unrelated program was shown.
+    var mixed = document
+    let appended = mixed.replaceContent(blocks: document.blocks + [.interactive(id: "running", html: "<p>Other model</p>")], actor: UUID())
+    #expect(appended)
+    let mixedCut = try NotebookExportCut(document: mixed, state: state, presented: selected.presented)
+    try options(.html, blockID: "model").validate(cut: mixedCut)
+    for format in [NotebookExportOptions.Format.pdf, .package, .mp4] {
+      #expect(throws: CollaborationError.self) { try options(format, blockID: format == .mp4 ? "model" : nil).validate(cut: mixedCut) }
+    }
+    try store.saveAttentionEvidence([selected.presented!], contextID: context.id)
+    #expect(try store.readDocumentExportCut(documentID: document.id, options: options(.pdf)).presented == selected.presented)
+    var advanced = state; let changed = advanced.commit(blockID: "model", value: .object(["phase": .number(0.75)]), actor: UUID()); #expect(changed)
+    try store.saveDocumentState(advanced)
+    #expect(throws: CollaborationError.self) { try store.readDocumentExportCut(documentID: document.id, options: options(.pdf)) }
   }
 
   @Test func packageAddressBindsSourceAndAssetsAndPreservesPriorExportBytes() throws {

@@ -1,5 +1,40 @@
 # Проверка Notebook
 
+## 19 сентября, 10:17 МСК — GUI-249: frozen model связан с настоящим capture
+
+Native document owner добавляет optional program proof только при явной
+attention pause: тот же sourceVersion, принятый checkpoint, frozen runtime и
+пересечение выбранной области с установленной программой. Running frame по-прежнему
+даёт только pixels, не воспроизводимую модель. Resume не меняет captured state.
+
+Presented SVG/HTML/PDF/package/MP4 используют прежний isolated export owner с
+этой моделью; export не делает нового checkpoint, commit или live seek. Exact
+PNG остаётся исходными байтами. Whole-document/page PDF/package/video отказывают
+при других interactive blocks без frozen proof; selected SVG/HTML допустимы.
+Это не выдаёт saved соседей за shown и не обещает восстановить произвольный heap.
+Static paper фиксируется полным source/state cut при admission; прежний CAS,
+immutable evidence, streaming, cancellation и artifact publication сохранены.
+
+**Core20 PASS**, `/tmp/gui249-frozen-model-core-v1.log`: все пять model formats,
+missing/wrong source/state/block proof, multi-program refusal, stale admission,
+старый exact PNG и artifact preservation. **Mac2 PASS**,
+`.build/gui249-frozen-model-mac-v1/verification.json`, source
+`c87bf0ad942d2cc00bff6fab2ab3be4d3cab113efd3cc792473bc88a14e8cade`:
+настоящий native publication PDF/SVG/HTML/package/MP4 от fixture evidence, phase
+0.25, preserved cut/source/state/cursor, MP4 duration, прежний exact PNG.
+Fixture не объявляется настоящим захватом: **Simulator2 PASS**,
+`.build/gui249-frozen-model-sim-v2.xcresult`, final source
+`78ef9f51ae025985bfa876f21f69429c14c07f92ff85d20b47527b3279df210d`:
+реальный document capture blue phase0.5 связан с checkpoint; runtime затем red
+phase0.75, evidence неизменно. Running capture с явно указанным blockID не
+получает model proof. Разница с Mac source — только усиление этого негативного
+Simulator assertion. Оба native runs: warnings0/skips0. **SDK3 PASS** и generated
+check PASS (`/tmp/gui249-frozen-model-js-v1.log`).
+
+Это законченный проверенный development-срез, не full GUI-249/250 acceptance.
+Далее — точная isolated Release пара, installed/public route и системные
+измерения. Пользовательская физическая пара не менялась.
+
 ## 19 сентября, 10:04 МСК — GUI-249: точный presented PNG из настоящего capture
 
 `nb.export(...,{format:'png',moment:'presented',attention:{contextID,referenceID}})`

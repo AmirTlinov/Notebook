@@ -228,10 +228,19 @@ final class DocumentPagePresentationOwner {
     #else
       let device = AgentPinnedImage.Presentation.Device.iPad
     #endif
+    let program: AgentPinnedImage.Presentation.Program?
+    if let blockID, let runtime = owner.programOwner.runtimes[blockID],
+      runtime.attentionPauseID != nil, runtime.hasFrozenFrame,
+      runtime.sourceVersion == entry.input.document.sourceVersion(blockID: blockID),
+      runtime.value == (entry.input.state.value(for: blockID) ?? runtime.block.initialState),
+      let placement = owner.placements(on: entry).first(where: { $0.blockID == blockID }),
+      placement.rect.intersects(CGRect(x: region.x, y: region.y, width: region.width, height: region.height)) {
+      program = .init(blockID: blockID, sourceVersion: runtime.sourceVersion, state: runtime.value)
+    } else { program = nil }
     let pixels = try NotebookSubmittedPixels.capture(view: host,
       physicalSize: owner.physicalSize(entry.input), region: region, resources: resources,
       semanticSelection: owner.semanticSelection(on: entry, blockID: blockID, region: region),
-      presentation: .init(device: device))
+      presentation: .init(device: device, program: program))
     guard owner.current?.id == entry.id, entry.input.token == token, !owner.gestureLocked,
       owner.mountedID == entry.id, owner.isInstalled(entry) else { return nil }
     return pixels
