@@ -222,9 +222,16 @@ final class DocumentPagePresentationOwner {
       owner.mountedID == entry.id, let host = entry.host, host.window != nil, !host.hasSnapshot,
       owner.paper.hasCanonicalPixels, !owner.gestureLocked,
       owner.programsReady(on: pageIndex, scope: .region(region)), owner.isInstalled(entry) else { return nil }
+    guard host.window?.windowScene?.activationState == .foregroundActive else { return nil }
+    #if targetEnvironment(simulator)
+      let device = AgentPinnedImage.Presentation.Device.iOSSimulator
+    #else
+      let device = AgentPinnedImage.Presentation.Device.iPad
+    #endif
     let pixels = try NotebookSubmittedPixels.capture(view: host,
       physicalSize: owner.physicalSize(entry.input), region: region, resources: resources,
-      semanticSelection: owner.semanticSelection(on: entry, blockID: blockID, region: region))
+      semanticSelection: owner.semanticSelection(on: entry, blockID: blockID, region: region),
+      presentation: .init(device: device))
     guard owner.current?.id == entry.id, entry.input.token == token, !owner.gestureLocked,
       owner.mountedID == entry.id, owner.isInstalled(entry) else { return nil }
     return pixels

@@ -53,7 +53,12 @@ public final class NotebookPreparedExport: Sendable {
 extension NotebookStore {
   public func prepareDocumentExport(_ publication: NotebookExportPublication) throws -> NotebookPreparedExport {
     guard currentSQL == nil else { throw NotebookStorageError.invalidTransaction("Export preparation must precede SQL admission") }
-    try publication.options.validate()
+    try publication.options.validate(cut: publication.cut)
+    if let image = publication.cut.presented?.image {
+      guard publication.artifact.sha256 == image.sha256, publication.artifact.file.byteCount == image.png.count else {
+        throw CollaborationError("export_presentation_mismatch", "Presented export публикует исходные пиксели, не поздний повторный render.")
+      }
+    }
     let cutData = try publication.cut.canonicalData(), assets = publication.assets
     let addressed = [publication.artifact] + assets + (publication.syncTeX.map { [$0] } ?? [])
     guard cutData.count <= 8*1024*1024, publication.source.utf8.count <= 4*1024*1024,
@@ -121,7 +126,7 @@ extension NotebookStore {
             guard bytes.starts(with: prefix) else { throw CollaborationError("invalid_artifact", "Файл не соответствует формату экспорта.") }
             if item.file.mimeType == "image/png" {
               guard bytes.count >= 24, bytes[12..<16] == Data("IHDR".utf8),
-                bytes[16..<20].reduce(0, { ($0 << 8) | Int($1) }) == (publication.options.pixelWidth ?? 1600) else {
+                bytes[16..<20].reduce(0, { ($0 << 8) | Int($1) }) == (publication.cut.presented?.image?.pixelWidth ?? publication.options.pixelWidth ?? 1600) else {
                 throw CollaborationError("invalid_artifact", "PNG не соответствует запрошенному разрешению.")
               }
             }
@@ -180,6 +185,11 @@ extension NotebookStore {
       if let id = publication.jobID, let saved = try scriptExportJob(id), saved["status"] == .string("saved"),
         let receipt = saved["receipt"] { return try receipt.decode(NotebookExportReceipt.self) }
       if let id = publication.jobID, try scriptExportJob(id)?["status"]?.string == "cancelled" { throw CancellationError() }
+      if let source = publication.cut.presented {
+        guard try attentionEvidence(contextID: source.requestID, referenceID: source.id) == source else {
+          throw CollaborationError("export_presentation_unavailable", "Показанный cut не принадлежит закреплённому вниманию.")
+        }
+      }
       guard try loadDocument(publication.documentID) == publication.cut.document,
         try loadDocumentState(publication.documentID) == publication.cut.state else {
         throw CollaborationError("revision_conflict", "Исходник или состояние изменились во время экспорта.")
@@ -191,7 +201,7 @@ extension NotebookStore {
       if let id = publication.jobID {
         try saveScriptExportJob(id, value: .object(["status": .string("saved"), "jobID": .string(id.uuidString.lowercased()),
           "contentRevision": .string(publication.expectedRevision), "stateRevision": .string(publication.cut.state.stamp.revision),
-          "cutSHA256": .string(receipt.cutSHA256), "moment": .string("saved"), "options": try .encode(publication.options), "receipt": try .encode(receipt)]))
+          "cutSHA256": .string(receipt.cutSHA256), "moment": .string(publication.options.selectedMoment.rawValue), "options": try .encode(publication.options), "receipt": try .encode(receipt)]))
       }
       return receipt
     }

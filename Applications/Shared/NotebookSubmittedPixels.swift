@@ -11,6 +11,7 @@ import UIKit
 /// neither WebKit nor a cache lookup can replace the retained native image.
 @MainActor
 final class NotebookSubmittedPixels {
+  let presentation: AgentPinnedImage.Presentation?
   let region: PageRect
   let semanticSelection: ProgramSemanticSelection?
   let pixelScale: Double
@@ -18,7 +19,8 @@ final class NotebookSubmittedPixels {
   private let reservation: RasterReservation
   private var retainedRaster: RasterLease?
 
-  private init(region: PageRect, pixelScale: Double, image: CGImage, reservation: RasterReservation, semanticSelection: ProgramSemanticSelection?) {
+  private init(region: PageRect, pixelScale: Double, image: CGImage, reservation: RasterReservation, semanticSelection: ProgramSemanticSelection?, presentation: AgentPinnedImage.Presentation?) {
+    self.presentation = presentation;
     self.semanticSelection = semanticSelection
     self.region = region; self.pixelScale = pixelScale; self.image = image; self.reservation = reservation
   }
@@ -47,7 +49,7 @@ final class NotebookSubmittedPixels {
   /// proves that the requested crop belongs to the currently visible subtree.
   /// It does not flush layout, await a newer DOM frame, or draw other layers.
   static func capture(view: UIView, physicalSize: CGSize, region: PageRect,
-    resources: SceneRenderResources, sourceOrigin: CGPoint = .zero, semanticSelection: ProgramSemanticSelection? = nil) throws -> NotebookSubmittedPixels? {
+    resources: SceneRenderResources, sourceOrigin: CGPoint = .zero, semanticSelection: ProgramSemanticSelection? = nil, presentation: AgentPinnedImage.Presentation? = nil) throws -> NotebookSubmittedPixels? {
     let source = CGRect(origin: sourceOrigin, size: physicalSize)
     let crop = CGRect(x: region.x, y: region.y, width: region.width, height: region.height)
     guard [source.minX, source.minY, source.width, source.height, crop.minX, crop.minY, crop.width, crop.height].allSatisfy(\.isFinite),
@@ -82,7 +84,7 @@ final class NotebookSubmittedPixels {
     guard succeeded, let image = pixels.cgImage else {
       reservation.release(); throw SceneRenderError.snapshotPending("submitted_native_pixels_unavailable")
     }
-    return .init(region: region, pixelScale: scale, image: image, reservation: reservation, semanticSelection: semanticSelection)
+    return .init(region: region, pixelScale: scale, image: image, reservation: reservation, semanticSelection: semanticSelection, presentation: presentation)
   }
 
   func retainRaster(source: SceneRasterSource, resources: SceneRenderResources) throws -> RasterLease {

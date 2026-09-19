@@ -9,18 +9,16 @@ extension NotebookScriptCoordinator {
       throw CollaborationError("export_limit", "Нужен documentID; на Mac одновременно собираются до двух экспортов.")
     }
     var optionFields: [String: JSONValue] = ["format": arguments["format"] ?? .string("pdf")]
-    for key in ["pageIndex", "pixelWidth", "blockID", "video"] { optionFields[key] = arguments[key] }
+    for key in ["pageIndex", "pixelWidth", "blockID", "video", "moment", "attention"] { optionFields[key] = arguments[key] }
     let options = try JSONValue.object(optionFields).decode(NotebookExportOptions.self)
     try options.validate()
     exportAdmissions += 1
     defer { exportAdmissions -= 1 }
-    let cut = try await persistence { store in try store.readTransaction {
-      try .encode(NotebookExportCut(document: $0.loadDocument(documentID), state: $0.loadDocumentState(documentID)))
-    } }.decode(NotebookExportCut.self)
+    let cut = try await persistence { try .encode($0.readDocumentExportCut(documentID: documentID, options: options)) }.decode(NotebookExportCut.self)
     let document = cut.document, cutHash = try cut.sha256
     let accepted = JSONValue.object(["status": .string("queued"), "jobID": .string(id.uuidString.lowercased()),
       "documentID": .string(documentID.uuidString.lowercased()), "contentRevision": .string(document.contentStamp.revision),
-      "stateRevision": .string(cut.state.stamp.revision), "cutSHA256": .string(cutHash), "moment": .string("saved"), "options": try .encode(options)])
+      "stateRevision": .string(cut.state.stamp.revision), "cutSHA256": .string(cutHash), "moment": .string(options.selectedMoment.rawValue), "options": try .encode(options)])
     _ = try await persistence { try $0.saveScriptExportJob(id, value: accepted); return .null }
     exportTasks[id] = Task { [self] in
       do {

@@ -2,8 +2,19 @@ import Foundation
 import CryptoKit
 
 /// Final regional pixels of the immutable source considered by one question.
-/// This is source evidence, not a certificate that the iPad presented a frame.
+/// Source evidence by default. Only the installed presentation owner can add
+/// capture provenance; a regenerated or cached source image has none.
 public struct AgentPinnedImage: Codable, Equatable, Sendable {
+  public struct Presentation: Codable, Equatable, Sendable {
+    public enum Device: String, Codable, Sendable { case iPad, iOSSimulator }
+    public let captureID: UUID
+    public let capturedAt: TimeInterval
+    public let device: Device
+    public init(captureID: UUID = UUID(), capturedAt: TimeInterval = Date().timeIntervalSince1970, device: Device) {
+      self.captureID = captureID; self.capturedAt = capturedAt; self.device = device
+    }
+  }
+  public let presentation: Presentation?
   public let referenceID: UUID
   public let sourceRevision: String
   public let region: PageRect
@@ -17,7 +28,8 @@ public struct AgentPinnedImage: Codable, Equatable, Sendable {
 
   public init(referenceID: UUID, sourceRevision: String, region: PageRect,
     worldOrigin: WorldPoint?, pageIndex: Int?, pixelWidth: Int, pixelHeight: Int,
-    pixelsPerPoint: Double, png: Data, sha256: String) throws {
+    pixelsPerPoint: Double, png: Data, sha256: String, presentation: Presentation? = nil) throws {
+    self.presentation = presentation;
     self.referenceID = referenceID; self.sourceRevision = sourceRevision
     self.region = region; self.worldOrigin = worldOrigin; self.pageIndex = pageIndex
     self.pixelWidth = pixelWidth; self.pixelHeight = pixelHeight
@@ -26,7 +38,8 @@ public struct AgentPinnedImage: Codable, Equatable, Sendable {
   }
 
   public func validate(reference: CollaborationReference? = nil) throws {
-    guard (33...2_097_152).contains(png.count), (1...4096).contains(pixelWidth), (1...4096).contains(pixelHeight),
+    guard presentation.map({ $0.capturedAt.isFinite && $0.capturedAt > 0 }) ?? true,
+      (33...2_097_152).contains(png.count), (1...4096).contains(pixelWidth), (1...4096).contains(pixelHeight),
       pixelWidth <= 4_000_000 / pixelHeight,
       pixelsPerPoint.isFinite, pixelsPerPoint > 0,
       region.x.isFinite, region.y.isFinite, region.width.isFinite, region.height.isFinite,

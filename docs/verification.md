@@ -1,5 +1,44 @@
 # Проверка Notebook
 
+## 19 сентября, 10:04 МСК — GUI-249: точный presented PNG из настоящего capture
+
+`nb.export(...,{format:'png',moment:'presented',attention:{contextID,referenceID}})`
+публикует неизменные PNG bytes выбранной области. Native installed document
+owner добавляет captureID/time/platform только при foreground capture текущей
+готовой поверхности; iPad и Simulator различаются. Cached/regenerated source
+pixels такой provenance не получают. Existing attention/context delivery
+переносит те же pixels/provenance; нового transport/executor нет.
+
+Один WAL cut связывает source/state + exact immutable attention. Export не
+запускает WebKit/typesetter, не checkpoint-ит/перематывает live, не читает cache,
+не увеличивает/снижает разрешение. Optional pixelWidth только подтверждает actual
+capture extent. Native publication проверяет исходный PNG hash/length, matching
+attention и прежний source/state CAS; status/restart сохраняют moment=presented.
+Старое evidence без provenance и попытка назвать saved cut показанным — отказ.
+
+**Core19 PASS**, `/tmp/gui249-presented-core-v2.log`: native provenance required,
+exact bytes, cut identity, extent refusal, stale admission/publication, prior
+artifact preservation, прежняя source evidence/semantic validation.
+**Mac2 PASS**, `.build/gui249-presented-mac-v1/verification.json`, source
+`32ecf7cfda9d7890a6639cc617ec46efbfe08e17b3b5de3d5791bd26b08622a0`:
+экспорт fixture evidence сохраняет bytes/state и число WebKit; saved PNG также
+работает. Это не поддельное доказательство захвата iPad: capture проверен отдельно.
+**Simulator4 PASS**, `.build/gui249-presented-sim-v2.xcresult`: реальный установленный
+document owner замораживает blue frame, поздний DOM red не меняет отправленный
+PNG/captureID; hidden/detached/clipped отказы и один resource owner. Финальный
+source `f63b4c4357e65ae6f0e1a5d10530d93385be413cc3d1c2abc574b3d84bb78965`
+отличается от Mac-квитанции только удалением ошибочного лишнего аргумента в
+`#if os(iOS)` raster-transfer call (первый Simulator build честно не прошёл).
+**SDK3 PASS**, `/tmp/gui249-presented-js-types.log`, generated check PASS.
+Попытка sdk-snapshot integration не запускала проверки: отсутствовал изолированный
+IPC test host; она не входит в PASS и не является installed MCP acceptance.
+
+Presented пока сознательно PNG crop: другие форматы используют saved model,
+а не притворяются восстановлением произвольного показанного heap. Расширение
+paused model/PDF и installed/shared/system GUI-250 ещё впереди; GUI-249/240 не Done.
+Физическая пара не изменена.
+
+
 ## 19 сентября, 09:53 МСК — GUI-249: Plot и MathJax остаются векторными внутри PDF
 
 PDF использует тот же canonical layout и потоковый Quartz compositor. Автор

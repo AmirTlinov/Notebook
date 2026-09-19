@@ -1463,8 +1463,16 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let physical = WorkspaceItemGeometry.document(document.paperSize)
     let frozen = try XCTUnwrap(DocumentPagePresentationOwner.capturePresented(documentID: document.id, pageIndex: 0,
       token: fixture.currentToken, region: .init(x: 0, y: 0, width: physical.width, height: physical.height), resources: fixture.resources))
+    let provenance = try XCTUnwrap(frozen.presentation)
+    #if targetEnvironment(simulator)
+      XCTAssertEqual(provenance.device, .iOSSimulator)
+    #else
+      XCTAssertEqual(provenance.device, .iPad)
+    #endif
+    XCTAssertLessThan(abs(provenance.capturedAt - Date().timeIntervalSince1970), 2)
     _ = try await web.evaluateJavaScript("document.querySelector('#swatch').style.background='#ff0000';true")
     let encodedLater = try await frozen.png()
+    XCTAssertEqual(frozen.presentation, provenance)
     XCTAssertGreaterThan(try bluePixels(try XCTUnwrap(UIImage(data: encodedLater))), 100,
       "Encoding after a later DOM change retains the blue native frame frozen synchronously before that change")
     let wrongPage = try await DocumentPagePresentationOwner.captureCurrent(documentID: document.id, pageIndex: 1,

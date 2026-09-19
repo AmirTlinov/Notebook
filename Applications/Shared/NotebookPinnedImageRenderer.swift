@@ -236,6 +236,7 @@ enum NotebookPinnedImageRenderer {
       throw SceneRenderError.resourceLimit
     }
     let png: Data
+    var presentation: AgentPinnedImage.Presentation?
     switch reference.target.kind {
     case .page:
       guard let page, page.id == reference.target.id, reference.worldOrigin == nil else {
@@ -256,7 +257,7 @@ enum NotebookPinnedImageRenderer {
         region.y + region.height <= geometry.height else { throw SceneRenderError.snapshotPending("document_region") }
       if let submitted = try visuals.submittedRegion(referenceID: reference.id) {
         guard submitted.region == region else { throw SceneRenderError.snapshotPending("historical_region_unavailable") }
-        png = try await submitted.png()
+        png = try await submitted.png(); presentation = submitted.presentation
         break
       }
       let source = SceneRasterSource.document(id: document.id,
@@ -269,7 +270,7 @@ enum NotebookPinnedImageRenderer {
     case .board, .cover:
       if let submitted = try visuals?.submittedRegion(referenceID: reference.id) {
         guard submitted.region == region else { throw SceneRenderError.snapshotPending("historical_region_unavailable") }
-        png = try await submitted.png()
+        png = try await submitted.png(); presentation = submitted.presentation
         break
       }
       guard let element, element.id == reference.elementID,
@@ -315,7 +316,7 @@ enum NotebookPinnedImageRenderer {
     let hash = SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined()
     let result = try AgentPinnedImage(referenceID: reference.id, sourceRevision: reference.revision,
       region: region, worldOrigin: reference.worldOrigin, pageIndex: reference.pageIndex,
-      pixelWidth: Int(width), pixelHeight: Int(height), pixelsPerPoint: scale, png: png, sha256: hash)
+      pixelWidth: Int(width), pixelHeight: Int(height), pixelsPerPoint: scale, png: png, sha256: hash, presentation: presentation)
     try result.validate(reference: reference)
     return result
   }

@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import CryptoKit
 import NotebookCore
 import PDFKit
 import XCTest
@@ -7,6 +8,41 @@ import WebKit
 @testable import Notebook
 
 @MainActor final class DocumentCanonicalExportTests: XCTestCase {
+  func testPresentedPNGPublishesTheFrozenPixelsWithoutExecutingOrChangingTheDocument() async throws {
+    let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)), actor = UUID()
+    _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    defer { try? FileManager.default.removeItem(at: store.root) }
+    var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
+    let item = try XCTUnwrap(index.createDocument(title: "Presented cut", actor: actor))
+    XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
+    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.interactive(id: "model", html: "<p>Later frame</p>",
+      javaScript: "throw Error('Presented pixels must not execute the author again')", height: 200)])
+    try store.saveDocumentWorkspaceBundle(index: index, document: document, state: .init(id: item.id, actor: actor), board: board)
+    let target = CollaborationTarget(kind: .document, id: item.id), files = try store.referenceSourceFiles(target: target)
+    let reference = CollaborationReference(target: target, elementID: "model", region: .init(x: 20, y: 80, width: 128, height: 80), pageIndex: 0,
+      revision: try store.referenceRevision(target: target, elementID: "model"))
+    let context = try store.appendContext(references: [reference], author: .human, actor: actor, select: true)
+    let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 256, pixelsHigh: 160, bitsPerSample: 8, samplesPerPixel: 4,
+      hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+    for y in 0..<160 { for x in 0..<256 { bitmap.setColor(.red, atX: x, y: y) } }
+    let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+    // Fixture evidence only; actual native capture/provenance is tested on Simulator.
+    let image = try AgentPinnedImage(referenceID: reference.id, sourceRevision: reference.revision, region: reference.region!, worldOrigin: nil,
+      pageIndex: 0, pixelWidth: 256, pixelHeight: 160, pixelsPerPoint: 2, png: png,
+      sha256: SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined(), presentation: .init(device: .iOSSimulator))
+    let source = try AgentPinnedSource.capture(requestID: context.id, reference: reference, files: files).withVisual(image)
+    try store.saveAttentionEvidence([source], contextID: context.id)
+    let options = NotebookExportOptions(format: .png, moment: .presented, attention: .init(contextID: context.id, referenceID: reference.id))
+    let cut = try store.readDocumentExportCut(documentID: item.id, options: options), surfaces = SceneRenderResources.shared.activeWebSurfaceCount
+    let changes = try store.currentChangeCursor()
+    let receipt = try await DocumentCanonicalExport.publish(cut: cut, options: options, jobID: UUID(), store: store, persistence: NotebookPersistenceQueue(store: store))
+    XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: receipt.artifact.path)), png)
+    XCTAssertEqual(SceneRenderResources.shared.activeWebSurfaceCount, surfaces)
+    XCTAssertEqual(try store.currentChangeCursor(), changes)
+    XCTAssertEqual(try store.loadDocument(item.id), cut.document); XCTAssertEqual(try store.loadDocumentState(item.id), cut.state)
+    XCTAssertEqual(receipt.options.selectedMoment, .presented)
+  }
+
   func testVideoUsesExplicitSavedTimelineAndDecodesTheRequestedFrames() async throws {
     let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
     let actor = UUID(); _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))

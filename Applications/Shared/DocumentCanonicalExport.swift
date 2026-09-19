@@ -25,7 +25,7 @@ import PDFKit
 
   static func publication(cut: NotebookExportCut, options: NotebookExportOptions = .init(), jobID: UUID, store: NotebookStore, persistence: NotebookPersistenceQueue) async throws -> NotebookExportPublication {
     try Task.checkCancellation()
-    try options.validate()
+    try options.validate(cut: cut)
     let document = cut.document, state = cut.state
     // A saved export never borrows an uncommitted live frame with an equal
     // journal token, and never checkpoints or rewinds the user's executor.
@@ -33,6 +33,11 @@ import PDFKit
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-export-" + jobID.uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     defer { try? FileManager.default.removeItem(at: directory) }
+    if let image = cut.presented?.image {
+      let file = try await stage(image.png, path: "document.png", directory: directory, persistence: persistence)
+      return .init(cut: cut, source: "", artifact: file,
+        log: "Exact submitted presentation crop; original pixels/extent; no WebKit, checkpoint, rescale or cache read", options: options, jobID: jobID)
+    }
     if options.format == .package {
       let prepare = Task.detached(priority: .utility) {
         let packages = try Set(document.blocks.compactMap(\.programPackage)).sorted().map { hash in

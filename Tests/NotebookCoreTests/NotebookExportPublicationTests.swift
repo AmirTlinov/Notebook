@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Testing
 @testable import NotebookCore
 
@@ -32,6 +33,46 @@ struct NotebookExportPublicationTests {
       state: .init(id: item.id, actor: actor), board: board)
     return (store, try store.loadDocument(document.id))
   }
+  @Test func presentedCutRequiresExactNativeProvenanceAndPublishesOnlyThosePixels() throws {
+    let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
+    let target = CollaborationTarget(kind: .document, id: document.id)
+    let files = try store.referenceSourceFiles(target: target)
+    let region = PageRect(x: 1, y: 1, width: 1, height: 1)
+    let png = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="))
+    func captured(_ provenance: AgentPinnedImage.Presentation?) throws -> NotebookExportOptions {
+      let reference = CollaborationReference(target: target, elementID: "body", region: region, pageIndex: 0,
+        revision: try store.referenceRevision(target: target, elementID: "body"))
+      let context = try store.appendContext(references: [reference], author: .human, actor: UUID(), select: true)
+      let image = try AgentPinnedImage(referenceID: reference.id, sourceRevision: reference.revision,
+        region: region, worldOrigin: nil, pageIndex: 0, pixelWidth: 1, pixelHeight: 1, pixelsPerPoint: 1,
+        png: png, sha256: SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined(), presentation: provenance)
+      let source = try AgentPinnedSource.capture(requestID: context.id, reference: reference, files: files).withVisual(image)
+      try store.saveAttentionEvidence([source], contextID: context.id)
+      return .init(format: .png, moment: .presented, attention: .init(contextID: context.id, referenceID: reference.id))
+    }
+    let cache = try captured(nil)
+    #expect(throws: CollaborationError.self) { try store.readDocumentExportCut(documentID: document.id, options: cache) }
+    let provenance = AgentPinnedImage.Presentation(device: .iOSSimulator), options = try captured(provenance)
+    let cut = try store.readDocumentExportCut(documentID: document.id, options: options), job = UUID()
+    #expect(cut.presented?.image?.presentation == provenance)
+    #expect((try cut.sha256) != (try NotebookExportCut(document: document, state: cut.state).sha256))
+    #expect(throws: CollaborationError.self) { try NotebookExportOptions(format: .png, pixelWidth: 1600, moment: .presented, attention: options.attention).validate(cut: cut) }
+    #expect(throws: CollaborationError.self) { try NotebookExportOptions(format: .png).validate(cut: cut) }
+    let file = try stageExportFixture(png, path: "document.png", store: store)
+    let publication = NotebookExportPublication(cut: cut, source: "", artifact: file, log: "", options: options, jobID: job)
+    let receipt = try publish(store, publication)
+    #expect(try Data(contentsOf: URL(fileURLWithPath: receipt.artifact.path)) == png)
+    #expect(try store.scriptExportJob(job)?["moment"] == .string("presented"))
+    #expect(try JSONDecoder().decode(NotebookExportCut.self, from: Data(contentsOf: URL(fileURLWithPath: receipt.cut.path))) == cut)
+    var otherBytes = png; otherBytes.append(0)
+    #expect(throws: CollaborationError.self) { try store.prepareDocumentExport(.init(cut: cut, source: "", artifact: stageExportFixture(otherBytes, path: "document.png", store: store), log: "", options: options)) }
+    let queued = try store.prepareDocumentExport(.init(cut: cut, source: "", artifact: file, log: "", options: options))
+    var changed = document; let didChange = changed.replaceBlockSource(id: "body", source: "New source", actor: UUID()); #expect(didChange); try store.saveDocument(changed)
+    #expect(throws: CollaborationError.self) { try store.readDocumentExportCut(documentID: document.id, options: options) }
+    #expect(throws: CollaborationError.self) { try store.publishDocumentExport(queued) }
+    #expect(try Data(contentsOf: URL(fileURLWithPath: receipt.artifact.path)) == png)
+  }
+
   @Test func packageAddressBindsSourceAndAssetsAndPreservesPriorExportBytes() throws {
     let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
     let pdf = Data("%PDF-controlled-final".utf8), image = Data("%PDF-controlled-image".utf8)

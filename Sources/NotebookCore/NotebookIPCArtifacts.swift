@@ -38,14 +38,22 @@ public struct NotebookRuntimeStatus: Codable, Sendable {
 public struct NotebookExportCut: Codable, Equatable, Sendable {
   public let document: DocumentDocument
   public let state: DocumentStateJournal
-  public init(document: DocumentDocument, state: DocumentStateJournal) throws {
+  public let presented: AgentPinnedSource?
+  public init(document: DocumentDocument, state: DocumentStateJournal, presented: AgentPinnedSource? = nil) throws {
     guard document.isValid, state.isValid, document.id == state.id else {
       throw CollaborationError("invalid_export_cut", "Исходник и состояние принадлежат одному документу.")
     }
-    self.document = document; self.state = state
+    if let presented {
+      try presented.validate()
+      guard presented.reference.target.kind == .document, presented.reference.target.id == document.id,
+        presented.image?.presentation != nil else {
+        throw CollaborationError("export_presentation_unavailable", "Нужны сохранённые пиксели настоящего показанного фрагмента документа, не новый render или cache.")
+      }
+    }
+    self.document = document; self.state = state; self.presented = presented
   }
   public func canonicalData() throws -> Data {
-    _ = try Self(document: document, state: state)
+    _ = try Self(document: document, state: state, presented: presented)
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     return try encoder.encode(self)
   }
@@ -56,6 +64,15 @@ public struct NotebookExportCut: Codable, Equatable, Sendable {
 
 public struct NotebookExportOptions: Codable, Equatable, Sendable {
   public enum Format: String, Codable, Sendable { case pdf, png, svg, html, package, mp4 }
+  public enum Moment: String, Codable, Sendable { case saved, presented }
+  public struct Attention: Codable, Equatable, Sendable {
+    public let contextID: UUID
+    public let referenceID: UUID
+    public init(contextID: UUID, referenceID: UUID) { self.contextID = contextID; self.referenceID = referenceID }
+  }
+  public let moment: Moment?
+  public let attention: Attention?
+  public var selectedMoment: Moment { moment ?? .saved }
   public let format: Format
   public let pageIndex: Int?
   public let pixelWidth: Int?
@@ -75,10 +92,31 @@ public struct NotebookExportOptions: Codable, Equatable, Sendable {
       }
     }
   }
-  public init(format: Format = .pdf, pageIndex: Int? = nil, pixelWidth: Int? = nil, blockID: String? = nil, video: Video? = nil) {
+  public init(format: Format = .pdf, pageIndex: Int? = nil, pixelWidth: Int? = nil, blockID: String? = nil, video: Video? = nil, moment: Moment? = nil, attention: Attention? = nil) {
+    self.moment = moment; self.attention = attention
     self.video = video; self.format = format; self.pageIndex = pageIndex; self.pixelWidth = pixelWidth; self.blockID = blockID
   }
+  public func validate(cut: NotebookExportCut) throws {
+    try validate()
+    guard (cut.presented == nil) == (selectedMoment == .saved) else {
+      throw CollaborationError("invalid_export_cut", "Выбранный момент должен совпадать с immutable cut.")
+    }
+    if let source = cut.presented {
+      guard attention?.contextID == source.requestID, attention?.referenceID == source.id,
+        pixelWidth == nil || pixelWidth == source.image?.pixelWidth else {
+        throw CollaborationError("export_presentation_mismatch", "Показанный PNG сохраняет точную выбранную область в её исходном разрешении; увеличить его нельзя.")
+      }
+    }
+  }
   public func validate() throws {
+    if selectedMoment == .presented {
+      guard format == .png, attention != nil, pageIndex == nil, blockID == nil, video == nil,
+        pixelWidth == nil || (128...4096).contains(pixelWidth!) else {
+        throw CollaborationError("invalid_export", "Показанный момент требует PNG и attention:{contextID,referenceID}; область и разрешение задаёт настоящий capture. Для воспроизводимого model/PDF/video экспорта выберите saved.")
+      }
+      return
+    }
+    guard attention == nil else { throw CollaborationError("invalid_export", "Attention относится к явно выбранному presented моменту.") }
     guard format == .mp4 || video == nil else { throw CollaborationError("invalid_export", "Диапазон времени относится только к MP4.") }
     switch format {
     case .mp4:

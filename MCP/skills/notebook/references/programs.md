@@ -279,7 +279,26 @@ state старым checkpoint и не позволяет поздней отме
 страницу, format=svg + blockID — авторский векторный результат. Status/cancel
 используют тот же jobID. Ошибка не публикует неполный файл.
 
-Каждый экспортируемый interactive block явно регистрирует:
+По умолчанию выбирается `moment:'saved'`: воспроизводимый immutable source/state.
+Для **реально показанного** фрагмента документа выбери и отправь attention на
+настоящей поверхности iPad/Simulator, затем вызови:
+
+```js
+await nb.export('shown', {documentID, format:'png', moment:'presented',
+  attention:{contextID,referenceID}});
+```
+
+Это исходные bytes выбранной области, а не вся страница. Width/height берутся
+из capture; pixelWidth можно лишь подтвердить равным исходному, не увеличить.
+Не передавай pageIndex/blockID — область уже адресована attention. Native capture
+provenance различает iPad/Simulator, содержит captureID/time и связан с exact PNG
+hash в cut. Обычный source_pixels/cache без provenance не считается показанным.
+Export не запускает WebKit, не checkpoint-ит и не меняет live scene. Изменившийся
+source/state, недоставленный capture или старое evidence без provenance — явная
+ошибка; PNG не заменяется поздней отрисовкой. Остальные форматы пока используют
+saved model, а не мнимое восстановление произвольного показанного heap.
+
+Каждый экспортируемый saved interactive block явно регистрирует:
 
 ```js
 notebook.exportFrame(async ({format,state,pixelRatio,signal}) => {
