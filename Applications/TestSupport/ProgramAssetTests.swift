@@ -146,7 +146,7 @@ final class ProgramAssetTests: XCTestCase {
     let cut = try NotebookExportCut(document: document, state: state)
     let publication = try await DocumentCanonicalExport.publication(cut: cut, jobID: UUID(), store: f.store, persistence: NotebookPersistenceQueue(store: f.store))
     XCTAssertEqual(publication.cut, cut)
-    let pdfBytes = try readExportBytes(publication.pdf, store: f.store)
+    let pdfBytes = try readExportBytes(publication.artifact, store: f.store)
     XCTAssertTrue(pdfBytes.starts(with: Data("%PDF-".utf8))); XCTAssertGreaterThan(pdfBytes.count, 4000)
     let attachment = XCTAttachment(data: pdfBytes, uniformTypeIdentifier: "com.adobe.pdf")
     attachment.name = "compiled-offline-program-saved-pdf"; attachment.lifetime = .keepAlways; add(attachment)

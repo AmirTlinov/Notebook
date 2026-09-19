@@ -321,7 +321,7 @@ extension NotebookStore {
       var active = try storedValue("local/script-export-active.json")?.decode([UUID].self) ?? []
       active.removeAll { $0 == id }
       if ["queued", "running"].contains(value["status"]?.string ?? "") { active.append(id) }
-      guard active.count <= 2 else { throw CollaborationError("export_limit", "На Mac собираются до двух PDF.") }
+      guard active.count <= 2 else { throw CollaborationError("export_limit", "На Mac собираются до двух экспортов.") }
       try publishRecords(writes: ["local/script-exports/\(id.uuidString.lowercased()).json": value])
       try publishRecords(writes: ["local/script-export-active.json": try .encode(active)])
     }

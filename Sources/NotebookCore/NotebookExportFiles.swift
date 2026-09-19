@@ -53,11 +53,13 @@ public final class NotebookPreparedExport: Sendable {
 extension NotebookStore {
   public func prepareDocumentExport(_ publication: NotebookExportPublication) throws -> NotebookPreparedExport {
     guard currentSQL == nil else { throw NotebookStorageError.invalidTransaction("Export preparation must precede SQL admission") }
+    try publication.options.validate()
     let cutData = try publication.cut.canonicalData(), assets = publication.assets
-    let addressed = [publication.pdf] + assets + (publication.syncTeX.map { [$0] } ?? [])
+    let addressed = [publication.artifact] + assets + (publication.syncTeX.map { [$0] } ?? [])
     guard cutData.count <= 8*1024*1024, publication.source.utf8.count <= 4*1024*1024,
       publication.log.utf8.count <= 32_000, assets.count <= 128,
-      publication.pdf.file.path == "document.pdf",
+      publication.artifact.file.path == "document." + publication.options.format.rawValue,
+      publication.options.format == .pdf || (assets.isEmpty && publication.source.isEmpty && publication.sourceMap == nil && publication.syncTeX == nil),
       assets.enumerated().allSatisfy({ $0.element.file.path == "notebook-image-\($0.offset).pdf" }),
       addressed.reduce(0, { $0 + $1.file.parts.count }) <= 16_384 else {
       throw CollaborationError("invalid_artifact", "Недопустимый печатный пакет.")
@@ -67,10 +69,11 @@ extension NotebookStore {
     guard try encoder.encode(addressed).count <= NotebookProgramPackage.maximumManifestBytes else {
       throw CollaborationError("invalid_artifact", "Описание экспортных файлов превышает 1 МиБ.")
     }
-    var metadata = [("document.cut.json", cutData), ("document.tex", Data(publication.source.utf8))]
+    var metadata = [("document.cut.json", cutData), ("export.options.json", try encoder.encode(publication.options))]
+    if publication.options.format == .pdf { metadata.append(("document.tex", Data(publication.source.utf8))) }
     if let map = publication.sourceMap, let syncTeX = publication.syncTeX {
       guard syncTeX.file.path == "document.synctex.gz" else { throw CollaborationError("invalid_artifact", "Неверный адрес карты страниц.") }
-      try map.validate(document: publication.cut.document, source: publication.source, pdfSHA256: publication.pdf.sha256)
+      try map.validate(document: publication.cut.document, source: publication.source, pdfSHA256: publication.artifact.sha256)
       let encoded = try encoder.encode(map)
       guard encoded.count <= 1_048_576 else { throw CollaborationError("invalid_artifact", "Карта блоков превышает 1 МиБ.") }
       metadata.append(("document.source-map.json", encoded))
@@ -100,8 +103,19 @@ extension NotebookStore {
           let bytes = try readProgramFile(item.file, offset: offset, maxBytes: 1_048_576)
           guard !bytes.isEmpty else { throw NotebookStorageError.blobHashMismatch }
           if offset == 0 {
-            let prefix = item.file.mimeType == "application/pdf" ? Data("%PDF-".utf8) : Data([0x1f, 0x8b])
+            let prefix: Data
+            switch item.file.mimeType {
+            case "application/pdf": prefix = Data("%PDF-".utf8)
+            case "image/png": prefix = Data([137,80,78,71,13,10,26,10])
+            default: prefix = Data([0x1f, 0x8b])
+            }
             guard bytes.starts(with: prefix) else { throw CollaborationError("invalid_artifact", "Файл не соответствует формату экспорта.") }
+            if item.file.mimeType == "image/png" {
+              guard bytes.count >= 24, bytes[12..<16] == Data("IHDR".utf8),
+                bytes[16..<20].reduce(0, { ($0 << 8) | Int($1) }) == (publication.options.pixelWidth ?? 1600) else {
+                throw CollaborationError("invalid_artifact", "PNG не соответствует запрошенному разрешению.")
+              }
+            }
           }
           digest.update(data: bytes); try output.write(contentsOf: bytes); offset += Int64(bytes.count)
         }
@@ -132,9 +146,9 @@ extension NotebookStore {
       }
       let cut = artifact("document.cut.json")!
       let receipt = NotebookExportReceipt(cutSHA256: cut.sha256, stateRevision: publication.cut.state.stamp.revision,
-        cut: cut, documentID: publication.documentID, texPath: destination.appendingPathComponent("document.tex").path,
-        pdfPath: destination.appendingPathComponent("document.pdf").path, pdfSHA256: publication.pdf.sha256,
-        byteCount: Int(publication.pdf.file.byteCount), log: publication.log, packageSHA256: hash,
+        cut: cut, documentID: publication.documentID, options: publication.options,
+        artifact: artifact(publication.artifact.file.path)!, source: artifact("document.tex"),
+        log: publication.log, packageSHA256: hash,
         assets: assets.compactMap { artifact($0.file.path) }, sourceMap: artifact("document.source-map.json"), syncTeX: artifact("document.synctex.gz"))
       try Task.checkCancellation()
       return NotebookPreparedExport(root: root, staging: staging, destination: destination, publication: publication, receipt: receipt)
@@ -159,7 +173,7 @@ extension NotebookStore {
       if let id = publication.jobID {
         try saveScriptExportJob(id, value: .object(["status": .string("saved"), "jobID": .string(id.uuidString.lowercased()),
           "contentRevision": .string(publication.expectedRevision), "stateRevision": .string(publication.cut.state.stamp.revision),
-          "cutSHA256": .string(receipt.cutSHA256), "moment": .string("saved"), "receipt": try .encode(receipt)]))
+          "cutSHA256": .string(receipt.cutSHA256), "moment": .string("saved"), "options": try .encode(publication.options), "receipt": try .encode(receipt)]))
       }
       return receipt
     }

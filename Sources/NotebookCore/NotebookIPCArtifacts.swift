@@ -54,23 +54,44 @@ public struct NotebookExportCut: Codable, Equatable, Sendable {
   } }
 }
 
+public struct NotebookExportOptions: Codable, Equatable, Sendable {
+  public enum Format: String, Codable, Sendable { case pdf, png }
+  public let format: Format
+  public let pageIndex: Int?
+  public let pixelWidth: Int?
+  public init(format: Format = .pdf, pageIndex: Int? = nil, pixelWidth: Int? = nil) {
+    self.format = format; self.pageIndex = pageIndex; self.pixelWidth = pixelWidth
+  }
+  public func validate() throws {
+    switch format {
+    case .pdf:
+      guard pageIndex == nil, pixelWidth == nil else { throw CollaborationError("invalid_export", "PDF сохраняет весь физический документ; размер пикселей относится к PNG.") }
+    case .png:
+      guard (0..<10_000).contains(pageIndex ?? 0), (128...4096).contains(pixelWidth ?? 1600) else {
+        throw CollaborationError("invalid_export", "PNG требует номер страницы >=0 и ширину от 128 до 4096 пикселей; ресурсный бюджет проверяется отдельно.")
+      }
+    }
+  }
+}
+
 public struct NotebookExportPublication: Codable, Sendable {
   public let jobID: UUID?
   public let cut: NotebookExportCut
   public var documentID: UUID { cut.document.id }
   public var expectedRevision: String { cut.document.contentStamp.revision }
   public let source: String
-  public let pdf: NotebookExportFile
+  public let options: NotebookExportOptions
+  public let artifact: NotebookExportFile
   public let log: String
   public let assets: [NotebookExportFile]
   public let sourceMap: DocumentPrintSourceMap?
   public let syncTeX: NotebookExportFile?
-  public init(cut: NotebookExportCut, source: String, pdf: NotebookExportFile, log: String, jobID: UUID? = nil,
+  public init(cut: NotebookExportCut, source: String, artifact: NotebookExportFile, log: String, options: NotebookExportOptions = .init(), jobID: UUID? = nil,
     assets: [NotebookExportFile] = [], sourceMap: DocumentPrintSourceMap? = nil, syncTeX: NotebookExportFile? = nil) {
     self.assets = assets
     self.sourceMap = sourceMap; self.syncTeX = syncTeX
     self.jobID = jobID
-    self.cut = cut; self.source = source; self.pdf = pdf; self.log = log
+    self.cut = cut; self.source = source; self.artifact = artifact; self.options = options; self.log = log
   }
 }
 
@@ -79,10 +100,9 @@ public struct NotebookExportReceipt: Codable, Sendable {
   public let stateRevision: String
   public let cut: NotebookArtifact
   public let documentID: UUID
-  public let texPath: String
-  public let pdfPath: String
-  public let pdfSHA256: String
-  public let byteCount: Int
+  public let options: NotebookExportOptions
+  public let artifact: NotebookArtifact
+  public let source: NotebookArtifact?
   public let log: String
   public let packageSHA256: String?
   public let assets: [NotebookArtifact]?

@@ -70,10 +70,10 @@ final class NotebookScriptServiceTests: XCTestCase {
     return NotebookScriptCoordinator(command: { try await owner.command($0) },
       persistence: { operation in try await owner.persist(operation) },
       workingDirectory: owner.store.root.appendingPathComponent("derived/script-runtime"),
-      canonicalExport: { cut, id in
+      canonicalExport: { cut, options, id in
         owner.exportCuts.append(cut)
         if owner.holdExportRender { await withCheckedContinuation { owner.releaseExportRender = $0 } }
-        let publication = try await DocumentCanonicalExport.publication(cut: cut, jobID: id, store: owner.store, persistence: owner.persistence)
+        let publication = try await DocumentCanonicalExport.publication(cut: cut, options: options, jobID: id, store: owner.store, persistence: owner.persistence)
         let prepared = try await Task.detached { try owner.store.prepareDocumentExport(publication) }.value
         if owner.holdPublication {
           owner.publicationAccepted = true
@@ -947,6 +947,49 @@ final class NotebookScriptServiceTests: XCTestCase {
     await host.shutdown()
   }
 
+  func testSDKPNGExportsTheCanonicalMixedPageAtRequestedResolution() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), run = UUID(), actor = UUID()
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    var index = try owner.store.loadIndex(), board = try owner.store.loadBoard(items: index.items)
+    let item = try XCTUnwrap(index.createDocument(title: "Image export", actor: actor))
+    XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
+    let document = DocumentDocument(id: item.id, actor: actor, blocks: [
+      .markdown(id: "heading", source: "# Canonical image\n\nAn offline mixed page with $x^2$ and vector SVG.\n\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"240\" height=\"60\"><path d=\"M10 40 Q120 -20 230 40\" fill=\"none\" stroke=\"#2466af\" stroke-width=\"3\"/></svg>"),
+      .interactive(id: "program", html: "<div style='width:100%;height:100px;background:rgb(255,0,0)'></div>", height: 100)])
+    try owner.store.saveDocumentWorkspaceBundle(index: index, document: document, state: .init(id: item.id, actor: actor), board: board)
+    _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2,
+      code: "return await nb.export('png',{documentID:args.documentID,format:'png',pageIndex:0,pixelWidth:1600});",
+      arguments: .object(["documentID": .string(item.id.uuidString)])))
+    let accepted = try await finish(host, run), jobID = try XCTUnwrap(accepted["result"]?.string("jobID"))
+    var status: JSONValue = .null
+    let deadline = ContinuousClock.now + .seconds(20)
+    repeat {
+      status = try await host.context(.init(method: "exportStatus", arguments: .object(["jobID": .string(jobID)])))
+      if ["saved", "failed"].contains(status["data"]?.string("status") ?? "") { break }
+      try await Task.sleep(for: .milliseconds(20))
+    } while ContinuousClock.now < deadline
+    XCTAssertEqual(status["data"]?.string("status"), "saved", "\(status)")
+    let receipt = try XCTUnwrap(status["data"]?["receipt"]).decode(NotebookExportReceipt.self)
+    XCTAssertEqual(receipt.options, .init(format: .png, pageIndex: 0, pixelWidth: 1600))
+    XCTAssertEqual(receipt.artifact.mimeType, "image/png"); XCTAssertNil(receipt.source); XCTAssertNil(receipt.sourceMap)
+    let bytes = try Data(contentsOf: URL(fileURLWithPath: receipt.artifact.path))
+    let bitmap = try XCTUnwrap(NSBitmapImageRep(data: bytes))
+    XCTAssertEqual(bitmap.pixelsWide, 1600)
+    var inkAboveProgram = 0
+    for y in stride(from: 100, to: 400, by: 4) {
+      for x in stride(from: 150, to: 1450, by: 4) {
+        if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), max(color.redComponent, color.greenComponent, color.blueComponent) < 0.6 { inkAboveProgram += 1 }
+      }
+    }
+    XCTAssertGreaterThan(inkAboveProgram, 80, "An opaque WebKit background must not erase the PDF heading/formula")
+    XCTAssertEqual(bitmap.pixelsHigh, Int(ceil(1600*document.paperSize.heightPoints/document.paperSize.widthPoints)))
+    let attachment = XCTAttachment(data: bytes, uniformTypeIdentifier: "public.png")
+    attachment.name = "canonical-mixed-page-1600px"; attachment.lifetime = .keepAlways; add(attachment)
+    let unchanged = try owner.store.loadDocumentState(item.id)
+    XCTAssertEqual(unchanged, owner.exportCuts.first?.state, "Image export did not checkpoint or rewrite the user's state")
+    await host.shutdown()
+  }
+
   func testSDKCancellationWinsBeforeTheFinalExportFenceAndNeverReplays() async throws {
     let owner = try Owner(), host = try await coordinator(owner), run = UUID(), actor = UUID()
     defer { owner.releasePublication?.resume(); try? FileManager.default.removeItem(at: owner.store.root) }
@@ -1043,19 +1086,19 @@ final class NotebookScriptServiceTests: XCTestCase {
     } while status["data"]?.string("status") != "saved" && ContinuousClock.now < publicationDeadline
     XCTAssertEqual(status["data"]?.string("status"), "saved", "\(status)")
     let receipt = try XCTUnwrap(status["data"]?["receipt"]).decode(NotebookExportReceipt.self)
-    let pdf = try Data(contentsOf: URL(fileURLWithPath: receipt.pdfPath))
+    let pdf = try Data(contentsOf: URL(fileURLWithPath: receipt.artifact.path))
     XCTAssertTrue(pdf.starts(with: Data("%PDF".utf8)))
     let exportedPDF = XCTAttachment(data: pdf, uniformTypeIdentifier: "com.adobe.pdf")
     exportedPDF.name = "export-html-svg-links-final-pdf"; exportedPDF.lifetime = .keepAlways; add(exportedPDF)
     XCTAssertGreaterThan(pdf.count, 1000)
-    XCTAssertEqual(pdf.count, receipt.byteCount)
+    XCTAssertEqual(pdf.count, receipt.artifact.byteCount)
     XCTAssertTrue(PDFDocument(data: pdf)?.string?.contains("русский источник") == true,
       "The actual PDF must contain the printed Cyrillic text, not merely a valid PDF header.")
-    XCTAssertTrue(try String(contentsOfFile: receipt.texPath, encoding: .utf8).contains("Проверка PDF"))
+    XCTAssertTrue(try String(contentsOfFile: receipt.source!.path, encoding: .utf8).contains("Проверка PDF"))
     let mapBytes = try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(receipt.sourceMap?.path)))
     let sourceMap = try JSONDecoder().decode(DocumentPrintSourceMap.self, from: mapBytes)
     let frozen = try owner.store.loadDocument(document.id)
-    try sourceMap.validate(document: frozen, source: String(contentsOfFile: receipt.texPath, encoding: .utf8), pdf: pdf)
+    try sourceMap.validate(document: frozen, source: String(contentsOfFile: receipt.source!.path, encoding: .utf8), pdf: pdf)
     XCTAssertEqual(sourceMap.ranges.map(\.blockID), frozen.blocks.map(\.id))
     let syncTeX = try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(receipt.syncTeX?.path)))
     XCTAssertGreaterThan(syncTeX.count, 100)

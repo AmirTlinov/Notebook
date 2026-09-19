@@ -2,6 +2,8 @@
 import AppKit
 import CoreGraphics
 import Darwin
+import ImageIO
+import UniformTypeIdentifiers
 import NotebookCore
 import NotebookTypesetter
 import PDFKit
@@ -10,8 +12,8 @@ import PDFKit
 /// rectangles are frozen as images; all typeset text, paths and links remain
 /// vector PDF, at their already installed physical coordinates.
 @MainActor enum DocumentCanonicalExport {
-  static func publish(cut: NotebookExportCut, jobID: UUID, store: NotebookStore, persistence: NotebookPersistenceQueue) async throws -> NotebookExportReceipt {
-    let publication = try await publication(cut: cut, jobID: jobID, store: store, persistence: persistence)
+  static func publish(cut: NotebookExportCut, options: NotebookExportOptions = .init(), jobID: UUID, store: NotebookStore, persistence: NotebookPersistenceQueue) async throws -> NotebookExportReceipt {
+    let publication = try await publication(cut: cut, options: options, jobID: jobID, store: store, persistence: persistence)
     let preparation = Task.detached(priority: .utility) { try store.prepareDocumentExport(publication) }
     let prepared = try await withTaskCancellationHandler { try await preparation.value } onCancel: { preparation.cancel() }
     try Task.checkCancellation()
@@ -20,8 +22,9 @@ import PDFKit
     return try await persistence.submit { try $0.publishDocumentExport(prepared) }
   }
 
-  static func publication(cut: NotebookExportCut, jobID: UUID, store: NotebookStore, persistence: NotebookPersistenceQueue) async throws -> NotebookExportPublication {
+  static func publication(cut: NotebookExportCut, options: NotebookExportOptions = .init(), jobID: UUID, store: NotebookStore, persistence: NotebookPersistenceQueue) async throws -> NotebookExportPublication {
     try Task.checkCancellation()
+    try options.validate()
     let document = cut.document, state = cut.state
     // A saved export never borrows an uncommitted live frame with an equal
     // journal token, and never checkpoints or rewinds the user's executor.
@@ -30,6 +33,31 @@ import PDFKit
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-export-" + jobID.uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     defer { try? FileManager.default.removeItem(at: directory) }
+    if options.format == .png {
+      let pageIndex = options.pageIndex ?? 0, width = options.pixelWidth ?? 1600
+      let pages = try await Task.detached {
+        guard let provider = CGDataProvider(data: artifact.pdf as CFData), let pdf = CGPDFDocument(provider) else { throw SceneRenderError.resourceLimit }
+        return pdf.numberOfPages
+      }.value
+      guard pageIndex < pages else { throw CollaborationError("export_page_missing", "Такой страницы нет в принятом печатном макете.") }
+      let raster = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: pageIndex,
+        programStore: store, isolationID: jobID, pixelWidth: width)
+      defer { raster.release() }
+      var rect = CGRect(origin: .zero, size: raster.image.size)
+      guard let image = raster.image.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { throw SceneRenderError.resourceLimit }
+      guard image.width == width else { throw SceneRenderError.snapshotPending("export_pixel_extent") }
+      let url = directory.appendingPathComponent("document.png")
+      let encode = Task.detached(priority: .utility) {
+        try Task.checkCancellation()
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { throw SceneRenderError.resourceLimit }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { throw SceneRenderError.snapshotPending("export_png_encoding") }
+        try Task.checkCancellation()
+      }
+      try await withTaskCancellationHandler { try await encode.value } onCancel: { encode.cancel() }
+      let file = try await stage(url, path: "document.png", persistence: persistence)
+      return .init(cut: cut, source: "", artifact: file, log: artifact.log, options: options, jobID: jobID)
+    }
     let pdfURL = directory.appendingPathComponent("document.pdf")
     if !programs.isEmpty {
       let composer = try await PrintedPDFComposer.open(artifact.pdf, outputURL: pdfURL)
@@ -60,7 +88,7 @@ import PDFKit
     }
     let syncTeX = try await stage(artifact.syncTeX, path: "document.synctex.gz", directory: directory, persistence: persistence)
     let map = try DocumentPrintSourceMap(document: document, source: artifact.source, pdfSHA256: pdf.sha256, ranges: artifact.sourceMap.ranges)
-    return .init(cut: cut, source: artifact.source, pdf: pdf, log: artifact.log, jobID: jobID,
+    return .init(cut: cut, source: artifact.source, artifact: pdf, log: artifact.log, options: options, jobID: jobID,
       assets: assets, sourceMap: map, syncTeX: syncTeX)
   }
 

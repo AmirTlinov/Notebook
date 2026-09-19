@@ -15,11 +15,33 @@ import XCTest
     let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
     let publication = try await DocumentCanonicalExport.publication(cut: .init(document: document,
       state: .init(id: document.id, actor: UUID())), jobID: UUID(), store: store, persistence: persistence)
-    let pdfBytes = try readExportBytes(publication.pdf, store: store)
+    let pdfBytes = try readExportBytes(publication.artifact, store: store)
     XCTAssertEqual(pdfBytes, artifact.pdf)
     XCTAssertEqual(publication.source, artifact.source)
     XCTAssertEqual(try readExportBytes(XCTUnwrap(publication.syncTeX), store: store), artifact.syncTeX)
     XCTAssertTrue(try DocumentPrintNavigation.read(pdfBytes).links.contains { $0.href == "https://example.com" })
+  }
+
+  func testStaticPNGKeepsCanonicalInkAndRejectsAMissingPage() async throws {
+    let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    defer { try? FileManager.default.removeItem(at: store.root) }
+    let persistence = NotebookPersistenceQueue(store: store)
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "text", source: "# Static image\n\nA real paper with $x^2$.")])
+    let cut = try NotebookExportCut(document: document, state: .init(id: document.id, actor: UUID()))
+    let publication = try await DocumentCanonicalExport.publication(cut: cut, options: .init(format: .png, pixelWidth: 800),
+      jobID: UUID(), store: store, persistence: persistence)
+    let bitmap = try XCTUnwrap(NSBitmapImageRep(data: readExportBytes(publication.artifact, store: store)))
+    XCTAssertEqual(bitmap.pixelsWide, 800)
+    var dark = 0
+    for y in stride(from: 50, to: 220, by: 3) { for x in stride(from: 70, to: 730, by: 3) {
+      if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), color.redComponent < 0.6 { dark += 1 }
+    } }
+    XCTAssertGreaterThan(dark, 40, "An empty program overlay cannot hide the typeset page")
+    do {
+      _ = try await DocumentCanonicalExport.publication(cut: cut, options: .init(format: .png, pageIndex: 9999), jobID: UUID(), store: store, persistence: persistence)
+      XCTFail("A missing page cannot be silently clamped")
+    } catch let error as CollaborationError { XCTAssertEqual(error.code, "export_page_missing") }
   }
 
   func testProgramExportFreezesOnlyItsRegionAndKeepsVectorTextAndLinks() async throws {
@@ -41,7 +63,7 @@ import XCTest
     let source = SceneRasterSource.document(id: document.id, token: DocumentSnapshotCache.token(document: document, state: state, pageIndex: 0))
     XCTAssertTrue(SceneRenderResources.shared.store(laterImage, for: source))
     let publication = try await DocumentCanonicalExport.publication(cut: .init(document: document, state: state), jobID: UUID(), store: store, persistence: persistence)
-    let pdfBytes = try readExportBytes(publication.pdf, store: store)
+    let pdfBytes = try readExportBytes(publication.artifact, store: store)
     XCTAssertEqual(publication.cut.state, state)
     XCTAssertTrue(SceneRenderResources.shared.image(for: source) === laterImage, "Saved export does not replace the live cache")
     let pdf = try XCTUnwrap(PDFDocument(data: pdfBytes)), page = try XCTUnwrap(pdf.page(at: 0))
@@ -99,17 +121,17 @@ import XCTest
     let file = try await DocumentCanonicalExport.stage(outputURL, path: "document.pdf", persistence: persistence)
     XCTAssertGreaterThan(file.file.byteCount, 32*1024*1024)
     XCTAssertGreaterThan(file.file.parts.count, 8)
-    let publication = NotebookExportPublication(cut: cut, source: "Large PDF", pdf: file, log: "", jobID: UUID())
+    let publication = NotebookExportPublication(cut: cut, source: "Large PDF", artifact: file, log: "", jobID: UUID())
     XCTAssertLessThan(try JSONEncoder().encode(publication).count, 16_384, "No PDF base64 in the publication")
     let prepared = try await Task.detached { try store.prepareDocumentExport(publication) }.value
     let receipt = try await persistence.submit { try $0.publishDocumentExport(prepared) }
-    XCTAssertEqual(receipt.byteCount, Int(file.file.byteCount)); XCTAssertEqual(receipt.pdfSHA256, file.sha256)
-    let reopened = try XCTUnwrap(PDFDocument(url: URL(fileURLWithPath: receipt.pdfPath)))
+    XCTAssertEqual(receipt.artifact.byteCount, Int(file.file.byteCount)); XCTAssertEqual(receipt.artifact.sha256, file.sha256)
+    let reopened = try XCTUnwrap(PDFDocument(url: URL(fileURLWithPath: receipt.artifact.path)))
     XCTAssertEqual(reopened.pageCount, 12)
     XCTAssertNotNil(reopened.page(at: 11)?.thumbnail(of: .init(width: 128, height: 128), for: .mediaBox))
-    let actual = try await Task.detached { try NotebookExportFile.inspect(URL(fileURLWithPath: receipt.pdfPath), path: "document.pdf") }.value
+    let actual = try await Task.detached { try NotebookExportFile.inspect(URL(fileURLWithPath: receipt.artifact.path), path: "document.pdf") }.value
     XCTAssertEqual(actual, file)
-    print("GUI249 streamed Quartz PDF: \(receipt.byteCount) bytes; \(file.file.parts.count) parts; metadata \(try JSONEncoder().encode(publication).count) bytes")
+    print("GUI249 streamed Quartz PDF: \(receipt.artifact.byteCount) bytes; \(file.file.parts.count) parts; metadata \(try JSONEncoder().encode(publication).count) bytes")
   }
 
 }

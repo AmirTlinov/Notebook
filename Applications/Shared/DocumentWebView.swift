@@ -31,10 +31,11 @@ final class DocumentSnapshotCache {
 
     #if os(macOS)
     func prepare(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int,
-      resources: SceneRenderResources = .shared, programStore: NotebookStore? = nil, isolationID: UUID? = nil) async throws -> RasterLease {
+      resources: SceneRenderResources = .shared, programStore: NotebookStore? = nil, isolationID: UUID? = nil, pixelWidth: Int? = nil) async throws -> RasterLease {
       let source = SceneRasterSource.document(id: document.id,
         token: Self.token(document: document, state: state, pageIndex: pageIndex))
-      let requiredScale = Double(NSScreen.main?.backingScaleFactor ?? 2)
+      let geometry = WorkspaceItemGeometry.document(document.paperSize)
+      let requiredScale = pixelWidth.map { Double($0) / geometry.width } ?? Double(NSScreen.main?.backingScaleFactor ?? 2)
       if isolationID == nil, let lease = resources.retainRaster(for: source, minimumScale: requiredScale) { return lease }
       if isolationID == nil, let producer = DocumentRenderRegistry.shared.rasterProducer(documentID: document.id,
         token: Self.token(document: document, state: state, pageIndex: pageIndex), resources: resources, excluding: UUID()) {
@@ -44,7 +45,6 @@ final class DocumentSnapshotCache {
       let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: ready, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
       coordinator.programStore = programStore; coordinator.exportSnapshotID = isolationID
       let host = DocumentWebHost()
-      let geometry = WorkspaceItemGeometry.document(document.paperSize)
       let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: geometry.width, height: geometry.height),
         styleMask: .borderless, backing: .buffered, defer: false)
       window.isReleasedWhenClosed = false; window.contentView = host; window.orderBack(nil)
@@ -60,7 +60,7 @@ final class DocumentSnapshotCache {
         // This one reader returns its exact canonical capture; cache presence
         // and a second automatic capture are not completion notifications.
         return try await coordinator.retainPreparedSnapshot(
-          pixelWidth: Int(ceil(geometry.width * requiredScale)), force: true,
+          pixelWidth: pixelWidth ?? Int(ceil(geometry.width * requiredScale)), force: true,
           waitsForRasterAdmission: true)
       } onCancel: {
         Task { @MainActor in coordinator.invalidate() }

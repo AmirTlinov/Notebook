@@ -27789,6 +27789,23 @@
             "type": "string",
             "format": "uuid",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "pdf",
+              "png"
+            ]
+          },
+          "pageIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9999
+          },
+          "pixelWidth": {
+            "type": "integer",
+            "minimum": 128,
+            "maximum": 4096
           }
         },
         "required": [
@@ -27797,7 +27814,7 @@
         ],
         "additionalProperties": false
       },
-      "returns": "{status:queued,jobID,documentID,contentRevision,stateRevision,cutSHA256,moment:'saved'}. Queue acceptance reads source and state in one WAL snapshot. The native canonical print owner renders that immutable saved cut in isolation, never a later uncommitted live frame. Two admitted jobs; pinned embedded offline typesetter, same layout as paper. Source/formulas/SVG remain vector where possible; program regions are composited by the existing renderer with their local packages. Source or state changes before publication fail revision_conflict without replacing prior artifacts. TeX <=4 MiB. Composed PDF/assets stream through immutable 4 MiB parts and 1 MiB verification windows; only metadata crosses IPC. The V2 descriptor is <=1 MiB / 16384 parts, not a PDF byte limit.",
+      "returns": "{status:queued,jobID,documentID,contentRevision,stateRevision,cutSHA256,moment:'saved',options}. PDF (default) keeps all pages vector; PNG exports one canonical page (pageIndex default 0, pixelWidth default 1600) including its isolated saved program frame. No silent downsampling: insufficient raster budget is an error. Queue acceptance reads source and state in one WAL snapshot. The native canonical print owner renders that immutable saved cut in isolation, never a later uncommitted live frame. Two admitted jobs; pinned embedded offline typesetter, same layout as paper. Source/formulas/SVG remain vector where possible; program regions are composited by the existing renderer with their local packages. Source or state changes before publication fail revision_conflict without replacing prior artifacts. TeX <=4 MiB. Composed PDF/assets stream through immutable 4 MiB parts and 1 MiB verification windows; only metadata crosses IPC. The V2 descriptor is <=1 MiB / 16384 parts, not a PDF byte limit.",
       "example": "await emit(await nb.export('pdf',{documentID:args.documentID}));",
       "old": [
         "notebook_export_document"
@@ -27837,6 +27854,9 @@
             "type": "string",
             "const": "saved"
           },
+          "options": {
+            "$ref": "#/$defs/__schema2"
+          },
           "receipt": {
             "type": "object",
             "properties": {
@@ -27847,22 +27867,19 @@
                 "$ref": "#/$defs/__schema1"
               },
               "cut": {
-                "$ref": "#/$defs/__schema2"
+                "$ref": "#/$defs/__schema4"
               },
               "documentID": {
                 "$ref": "#/$defs/__schema0"
               },
-              "pdfPath": {
-                "$ref": "#/$defs/__schema1"
+              "options": {
+                "$ref": "#/$defs/__schema2"
               },
-              "texPath": {
-                "$ref": "#/$defs/__schema1"
+              "artifact": {
+                "$ref": "#/$defs/__schema4"
               },
-              "pdfSHA256": {
-                "$ref": "#/$defs/__schema1"
-              },
-              "byteCount": {
-                "$ref": "#/$defs/__schema3"
+              "source": {
+                "$ref": "#/$defs/__schema4"
               },
               "log": {
                 "$ref": "#/$defs/__schema1"
@@ -27890,10 +27907,10 @@
                 }
               },
               "sourceMap": {
-                "$ref": "#/$defs/__schema2"
+                "$ref": "#/$defs/__schema4"
               },
               "syncTeX": {
-                "$ref": "#/$defs/__schema2"
+                "$ref": "#/$defs/__schema4"
               }
             },
             "required": [
@@ -27901,16 +27918,14 @@
               "stateRevision",
               "cut",
               "documentID",
-              "pdfPath",
-              "texPath",
-              "pdfSHA256",
-              "byteCount",
+              "options",
+              "artifact",
               "log"
             ],
             "additionalProperties": {}
           },
           "error": {
-            "$ref": "#/$defs/__schema4"
+            "$ref": "#/$defs/__schema5"
           }
         },
         "required": [
@@ -27927,6 +27942,31 @@
             "type": "string"
           },
           "__schema2": {
+            "type": "object",
+            "properties": {
+              "format": {
+                "type": "string",
+                "enum": [
+                  "pdf",
+                  "png"
+                ]
+              },
+              "pageIndex": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "pixelWidth": {
+                "$ref": "#/$defs/__schema3"
+              }
+            },
+            "required": [
+              "format"
+            ],
+            "additionalProperties": {}
+          },
+          "__schema3": {
+            "type": "number"
+          },
+          "__schema4": {
             "type": "object",
             "properties": {
               "path": {
@@ -27950,10 +27990,7 @@
             ],
             "additionalProperties": {}
           },
-          "__schema3": {
-            "type": "number"
-          },
-          "__schema4": {
+          "__schema5": {
             "anyOf": [
               {
                 "type": "string"
@@ -27970,7 +28007,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema4"
+                  "$ref": "#/$defs/__schema5"
                 }
               },
               {
@@ -27979,7 +28016,7 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema4"
+                  "$ref": "#/$defs/__schema5"
                 }
               }
             ]
@@ -28046,6 +28083,9 @@
             "type": "string",
             "const": "saved"
           },
+          "options": {
+            "$ref": "#/$defs/__schema2"
+          },
           "receipt": {
             "type": "object",
             "properties": {
@@ -28056,22 +28096,19 @@
                 "$ref": "#/$defs/__schema1"
               },
               "cut": {
-                "$ref": "#/$defs/__schema2"
+                "$ref": "#/$defs/__schema4"
               },
               "documentID": {
                 "$ref": "#/$defs/__schema0"
               },
-              "pdfPath": {
-                "$ref": "#/$defs/__schema1"
+              "options": {
+                "$ref": "#/$defs/__schema2"
               },
-              "texPath": {
-                "$ref": "#/$defs/__schema1"
+              "artifact": {
+                "$ref": "#/$defs/__schema4"
               },
-              "pdfSHA256": {
-                "$ref": "#/$defs/__schema1"
-              },
-              "byteCount": {
-                "$ref": "#/$defs/__schema3"
+              "source": {
+                "$ref": "#/$defs/__schema4"
               },
               "log": {
                 "$ref": "#/$defs/__schema1"
@@ -28099,10 +28136,10 @@
                 }
               },
               "sourceMap": {
-                "$ref": "#/$defs/__schema2"
+                "$ref": "#/$defs/__schema4"
               },
               "syncTeX": {
-                "$ref": "#/$defs/__schema2"
+                "$ref": "#/$defs/__schema4"
               }
             },
             "required": [
@@ -28110,16 +28147,14 @@
               "stateRevision",
               "cut",
               "documentID",
-              "pdfPath",
-              "texPath",
-              "pdfSHA256",
-              "byteCount",
+              "options",
+              "artifact",
               "log"
             ],
             "additionalProperties": {}
           },
           "error": {
-            "$ref": "#/$defs/__schema4"
+            "$ref": "#/$defs/__schema5"
           }
         },
         "required": [
@@ -28136,6 +28171,31 @@
             "type": "string"
           },
           "__schema2": {
+            "type": "object",
+            "properties": {
+              "format": {
+                "type": "string",
+                "enum": [
+                  "pdf",
+                  "png"
+                ]
+              },
+              "pageIndex": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "pixelWidth": {
+                "$ref": "#/$defs/__schema3"
+              }
+            },
+            "required": [
+              "format"
+            ],
+            "additionalProperties": {}
+          },
+          "__schema3": {
+            "type": "number"
+          },
+          "__schema4": {
             "type": "object",
             "properties": {
               "path": {
@@ -28159,10 +28219,7 @@
             ],
             "additionalProperties": {}
           },
-          "__schema3": {
-            "type": "number"
-          },
-          "__schema4": {
+          "__schema5": {
             "anyOf": [
               {
                 "type": "string"
@@ -28179,7 +28236,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema4"
+                  "$ref": "#/$defs/__schema5"
                 }
               },
               {
@@ -28188,7 +28245,7 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema4"
+                  "$ref": "#/$defs/__schema5"
                 }
               }
             ]
@@ -28212,7 +28269,7 @@
         ],
         "additionalProperties": false
       },
-      "returns": "Snapshot {data,basis,coverage,cursor}. Queued/running/saved/failed/interrupted/cancelled job. Saved receipt names the exact cutSHA256/stateRevision and immutable document.cut.json, texPath/pdfPath, PDF SHA, assets, sourceMap and syncTeX. packageSHA256 binds all files including the source/state cut. Status never re-executes or relabels an old cut as current.",
+      "returns": "Snapshot {data,basis,coverage,cursor}. Queued/running/saved/failed/interrupted/cancelled job. Saved receipt names the exact cutSHA256/stateRevision and immutable document.cut.json, options and primary artifact {path,sha256,byteCount,mimeType}; PDF also returns source, assets, sourceMap and syncTeX. packageSHA256 binds all files including the source/state cut. Status never re-executes or relabels an old cut as current.",
       "example": "await emit(await nb.exportStatus({jobID:args.jobID}));",
       "output": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -28252,6 +28309,9 @@
                 "type": "string",
                 "const": "saved"
               },
+              "options": {
+                "$ref": "#/$defs/__schema2"
+              },
               "receipt": {
                 "type": "object",
                 "properties": {
@@ -28262,22 +28322,19 @@
                     "$ref": "#/$defs/__schema1"
                   },
                   "cut": {
-                    "$ref": "#/$defs/__schema2"
+                    "$ref": "#/$defs/__schema4"
                   },
                   "documentID": {
                     "$ref": "#/$defs/__schema0"
                   },
-                  "pdfPath": {
-                    "$ref": "#/$defs/__schema1"
+                  "options": {
+                    "$ref": "#/$defs/__schema2"
                   },
-                  "texPath": {
-                    "$ref": "#/$defs/__schema1"
+                  "artifact": {
+                    "$ref": "#/$defs/__schema4"
                   },
-                  "pdfSHA256": {
-                    "$ref": "#/$defs/__schema1"
-                  },
-                  "byteCount": {
-                    "$ref": "#/$defs/__schema3"
+                  "source": {
+                    "$ref": "#/$defs/__schema4"
                   },
                   "log": {
                     "$ref": "#/$defs/__schema1"
@@ -28305,10 +28362,10 @@
                     }
                   },
                   "sourceMap": {
-                    "$ref": "#/$defs/__schema2"
+                    "$ref": "#/$defs/__schema4"
                   },
                   "syncTeX": {
-                    "$ref": "#/$defs/__schema2"
+                    "$ref": "#/$defs/__schema4"
                   }
                 },
                 "required": [
@@ -28316,16 +28373,14 @@
                   "stateRevision",
                   "cut",
                   "documentID",
-                  "pdfPath",
-                  "texPath",
-                  "pdfSHA256",
-                  "byteCount",
+                  "options",
+                  "artifact",
                   "log"
                 ],
                 "additionalProperties": {}
               },
               "error": {
-                "$ref": "#/$defs/__schema4"
+                "$ref": "#/$defs/__schema5"
               }
             },
             "required": [
@@ -28343,7 +28398,7 @@
                 "maxItems": 1024,
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema5"
+                  "$ref": "#/$defs/__schema6"
                 }
               }
             },
@@ -28391,6 +28446,31 @@
           "__schema2": {
             "type": "object",
             "properties": {
+              "format": {
+                "type": "string",
+                "enum": [
+                  "pdf",
+                  "png"
+                ]
+              },
+              "pageIndex": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "pixelWidth": {
+                "$ref": "#/$defs/__schema3"
+              }
+            },
+            "required": [
+              "format"
+            ],
+            "additionalProperties": {}
+          },
+          "__schema3": {
+            "type": "number"
+          },
+          "__schema4": {
+            "type": "object",
+            "properties": {
               "path": {
                 "$ref": "#/$defs/__schema1"
               },
@@ -28412,10 +28492,7 @@
             ],
             "additionalProperties": {}
           },
-          "__schema3": {
-            "type": "number"
-          },
-          "__schema4": {
+          "__schema5": {
             "anyOf": [
               {
                 "type": "string"
@@ -28432,7 +28509,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema4"
+                  "$ref": "#/$defs/__schema5"
                 }
               },
               {
@@ -28441,12 +28518,12 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema4"
+                  "$ref": "#/$defs/__schema5"
                 }
               }
             ]
           },
-          "__schema5": {
+          "__schema6": {
             "type": "object",
             "properties": {
               "target": {
@@ -28586,11 +28663,11 @@
               },
               "lifecycleRevision": {
                 "description": "Complete item extent from an explicit itemLifecycle read; covers off-screen content and is not mutation authority.",
-                "$ref": "#/$defs/__schema6"
+                "$ref": "#/$defs/__schema7"
               },
               "inkRevision": {
                 "description": "For appendInkStroke: drawingRevision of a page, spatialInkRevision of a board/cover, or inkRevision returned by nb.code.",
-                "$ref": "#/$defs/__schema7"
+                "$ref": "#/$defs/__schema8"
               }
             },
             "required": [
@@ -28599,11 +28676,11 @@
             ],
             "additionalProperties": false
           },
-          "__schema6": {
+          "__schema7": {
             "type": "string",
             "pattern": "^[a-f0-9]{64}$"
           },
-          "__schema7": {
+          "__schema8": {
             "type": "string"
           }
         }

@@ -59,6 +59,9 @@ struct DocumentPrintedPage {
   /// source addresses, page count or the ready PDF used for export.
   func image(width pixels: Int, overlay: CGImage? = nil) async throws -> CGImage {
     let data = artifact.pdf, pageIndex = pageIndex, aspect = height / width
+    let programs = Set(artifact.document.blocks.filter { $0.kind == .interactive }.map(\.id))
+    let regions = source.locations.filter { $0.pageIndex == pageIndex && programs.contains($0.blockID) }
+      .map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) }
     let task = Task.detached(priority: .userInitiated) {
       try Task.checkCancellation()
       let h = max(1, Int(ceil(Double(pixels) * aspect)))
@@ -75,7 +78,18 @@ struct DocumentPrintedPage {
       context.saveGState(); context.scaleBy(x: rect.width, y: rect.height)
       context.concatenate(page.getDrawingTransform(.mediaBox, rect: CGRect(x: 0, y: 0, width: 1, height: 1), rotate: 0, preserveAspectRatio: false))
       context.drawPDFPage(page); context.restoreGState()
-      if let overlay { context.draw(overlay, in: rect) }
+      if let overlay, !regions.isEmpty {
+        // A WebKit snapshot can have an opaque white background even though
+        // the mounted overlay is transparent. Only program rectangles belong
+        // to it; paper/text/formulas remain the canonical PDF's responsibility.
+        let box = page.getBoxRect(.mediaBox)
+        context.saveGState()
+        let clips = regions.map { region in CGRect(x: region.minX/box.width*rect.width,
+          y: (box.height-region.maxY)/box.height*rect.height, width: region.width/box.width*rect.width,
+          height: region.height/box.height*rect.height) }
+        context.clip(to: clips)
+        context.draw(overlay, in: rect); context.restoreGState()
+      }
       try Task.checkCancellation()
       guard let image = context.makeImage() else { throw SceneRenderError.resourceLimit }
       return image

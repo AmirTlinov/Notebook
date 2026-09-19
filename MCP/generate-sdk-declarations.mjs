@@ -60,7 +60,7 @@ export function sdkDeclarations(contract) {
     if(name === 'help') args='topic?: string';
     if(name === 'id') args='key: string';
     if(name === 'transaction') args='key: string, action: transactionInput["action"]';
-    if(['undo','point','present','cancelPresentation','export'].includes(name)) args='key: string, args: Omit<'+name+'Input, "key">';
+    if(['undo','point','present','cancelPresentation','export','cancelExport'].includes(name)) args='key: string, args: Omit<'+name+'Input, "key">';
     if(['observe','board','context','presentation'].includes(name)) args='args?: '+name+'Input';
     output.push(name+'('+args+'): Promise<'+name+'Output>;');
   }

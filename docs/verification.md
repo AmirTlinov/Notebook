@@ -1,5 +1,45 @@
 # Проверка Notebook
 
+## 19 сентября, 08:08 МСК — GUI-249: PNG canonical page и исправление composite
+
+В existing export добавлен format=png, pageIndex (default0), pixelWidth
+(default1600, 128…4096 с прежним ресурсным допуском). Выход имеет точный extent;
+несуществующая страница отклоняется, не подменяется ближайшей. PNG идёт через
+тот же cut/V2/preparation/cancel/CAS owner. Единый receipt возвращает artifact
+и options; PDF-only texPath/pdfPath/pdfSHA256 удалены, PDF получает source artifact.
+Options входят в package hash; header PNG проверяется до publication. Сигнатура
+cancelExport в TS generator исправлена: два аргумента, как у настоящего SDK.
+
+**Визуальная проверка нашла реальный дефект после первого зелёного Mac7**:
+непрозрачный белый фон WebKit snapshot закрывал весь underlying PDF. На PNG был
+красный program rectangle, но не было заголовка/формулы/SVG. Исправлен единственный
+`DocumentPrintedPage.image`: overlay рисуется только в canonical program bounds,
+остальное остаётся PDF; пустой набор программ не рисует overlay вообще. Это не
+ослабление тестов или искусственный прозрачный фон. Добавлена проверка печатных
+пикселей вне программы. После исправления изображение действительно просмотрено:
+1600×2263, читаемые heading/text/x², синяя SVG-кривая, красная программа и footer.
+Файл: `.build/gui249-png-preview-v2/3C311AE9-9A77-4094-A87D-0F51A24C40A2.png`.
+
+**Mac7 PASS**, `.build/gui249-images-mac-v2/verification.json`, source
+**0459b9954255bba7bc2dcc4e2f723db95cab73ef6aa632ee08bc324e56c86fd8**:
+actual XPC PNG и PDF, cancel, >32 MiB Quartz PDF, saved isolation, compiled assets.
+**Mac2 PASS**, `.build/gui249-images-mac-v3/verification.json`, final source
+**9c393f1958eb174c04308d2387d2625e48056078e7fc3fab4ea8350fc351d688**:
+mixed1600px + static800px PNG, ink outside program, nonexistent page error.
+Production delta после v2 — только empty-program guard, плюс дополнительные тесты.
+**Core18 PASS**, `/tmp/gui249-images-core-v2.log`, options/extent/type/package hash
+и прежние source/state/cancel/atomic receipt регрессии. **MCP20 PASS+SDK check**,
+`/tmp/gui249-images-js-v2.log`. **Simulator1 PASS**,
+`.build/gui249-images-sim-v1.xcresult`, final source: tall lifecycle/page reclaim
+после общего composite fix. Mac и Simulator выполнены параллельно, физическая
+пара не затронута. Начальный TS test поймал забытый cancelExport в generator;
+обновлена декларация, а не заменён рабочий двухаргументный SDK.
+
+Это не SVG/presented export и не portable/video acceptance. Высокое PNG
+разрешение не создаёт новых деталей в авторских низкоразрешённых Canvas/media;
+author-controlled target-resolution rendering ещё предстоит проверить.
+GUI-249 и GUI-250 остаются незавершёнными.
+
 ## 19 сентября, 07:56 МСК — GUI-249: durable cancelExport
 
 Публичный keyed SDK `nb.cancelExport(key,{jobID})` отменяет принятый job независимо

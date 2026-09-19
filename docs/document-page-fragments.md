@@ -126,8 +126,19 @@ CAS/move/receipt commit. Binary IPC `publishExport` удалён: нет PDF/bas
 даже если вычисление поздно ответило или проигнорировало Task cancellation.
 Если saved уже прошёл writer fence, возвращается этот неизменный receipt.
 Status/retry/restart не оживляют cancelled job. Повтор
-проверяет существующий файл потоково. Пока доступны PDF; presented/PNG/SVG,
-portable и video относятся к незавершённой части GUI-249.
+проверяет существующий файл потоково.
+
+`nb.export(key,{documentID,format:'png',pageIndex:0,pixelWidth:1600})` сохраняет
+одну canonical страницу, включая программные области, через ту же publication.
+PDF остаётся форматом по умолчанию. PNG имеет запрошенную ширину без тихого
+уменьшения при нехватке бюджета; отсутствующая страница — export_page_missing,
+не clamp к последней. В квитанции единый `artifact {path,sha256,byteCount,mimeType}`,
+`options`, а у PDF также `source`, assets/maps. PDF-only поля путей удалены.
+Options входят в hash пакета: одинаковые пиксели разных страниц не стирают
+смысл выбора. При смешанной растеризации WebKit владеет только прямоугольниками
+программ из canonical map; его непрозрачный snapshot background не перекрывает
+PDF текст, формулы и SVG. Это тот же `DocumentPrintedPage`, не второй макет.
+Presented/SVG, portable и video пока относятся к незавершённой части GUI-249.
 
 Растр для агента подтверждает точные token, поколение и эпоху установки.
 Квитанция ready означает готовность артефакта, а не shown на iPad. Ключ нового

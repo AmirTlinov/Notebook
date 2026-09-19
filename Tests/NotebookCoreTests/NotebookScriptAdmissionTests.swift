@@ -133,14 +133,14 @@ struct NotebookScriptAdmissionTests {
     let id = UUID()
     try store.saveScriptExportJob(id, value: .object(["status": .string("queued"), "jobID": .string(id.uuidString)]))
     let publication = NotebookExportPublication(cut: try .init(document: store.loadDocument(document.id), state: store.loadDocumentState(document.id)),
-      source: "trusted source", pdf: try stageExportFixture(Data("%PDF-proof".utf8), store: store), log: "", jobID: id)
+      source: "trusted source", artifact: try stageExportFixture(Data("%PDF-proof".utf8), store: store), log: "", jobID: id)
     let receipt = try store.publishDocumentExport(store.prepareDocumentExport(publication))
     let lost = UUID()
     try store.saveScriptExportJob(lost, value: .object(["status": .string("queued"), "jobID": .string(lost.uuidString)]))
     let reopened = NotebookStore(root: store.root)
     try reopened.interruptUnfinishedScriptExports()
     #expect(try reopened.scriptExportJob(id)?["status"] == .string("saved"))
-    #expect(try reopened.scriptExportJob(id)?["receipt"]?["pdfSHA256"] == .string(receipt.pdfSHA256))
+    #expect(try reopened.scriptExportJob(id)?["receipt"]?["artifact"]?["sha256"] == .string(receipt.artifact.sha256))
     #expect(try reopened.scriptExportJob(lost)?["status"] == .string("interrupted"))
   }
 
