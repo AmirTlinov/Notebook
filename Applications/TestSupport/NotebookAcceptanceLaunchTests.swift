@@ -3,12 +3,13 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookAcceptanceLaunchTests: XCTestCase {
-  private func configuration(root: URL? = nil, socket: String? = nil) -> NotebookAcceptanceConfiguration {
+  private func configuration(root: URL? = nil, socket: String? = nil,
+    bundle: String = "com.amirtlinov.notebook.mac.acceptance.012345abcdef") -> NotebookAcceptanceConfiguration {
     let run = UUID()
     let root = root ?? FileManager.default.temporaryDirectory
       .appendingPathComponent("notebook-acceptance-tests/\(run.uuidString.lowercased())/mac", isDirectory: true)
     return .init(version: 1, runID: run, workspaceID: UUID(), actorID: UUID(), role: .mac,
-      bundleID: "com.amirtlinov.notebook.mac.acceptance", sourceRevision: String(repeating: "a", count: 40),
+      bundleID: bundle, sourceRevision: String(repeating: "a", count: 40),
       root: root.path, socket: socket ?? "/tmp/notebook-acceptance-\(run.uuidString.lowercased())/bridge.sock",
       codexDirectory: root.appendingPathComponent("Codex").path)
   }
@@ -21,9 +22,20 @@ import XCTest
     XCTAssertFalse(FileManager.default.fileExists(atPath: value.root), "Admission does not create or open storage")
   }
 
+  func testDistinctCheckoutBundlesCannotAdmitEachOthersManifest() throws {
+    let value = configuration()
+    XCTAssertThrowsError(try value.validate(bundle: "com.amirtlinov.notebook.mac.acceptance.abcdef012345", enabled: true))
+    for bundle in ["com.amirtlinov.notebook.mac.acceptance", "com.amirtlinov.notebook.mac.acceptance.bad",
+      "com.amirtlinov.notebook.mac.acceptance.012345ABCDEF", "com.amirtlinov.notebook.mac.acceptance.012345abcdef.extra"] {
+      let invalid = configuration(bundle: bundle)
+      XCTAssertThrowsError(try invalid.validate(bundle: bundle, enabled: true))
+      XCTAssertTrue(NotebookAcceptanceConfiguration.requiresManifest(bundleID: bundle, enabled: false))
+    }
+  }
+
   func testAcceptanceBundleRequiresManifestEvenIfBuildFlagIsMissing() {
     XCTAssertTrue(NotebookAcceptanceConfiguration.requiresManifest(bundleID: "com.amirtlinov.notebook.acceptance", enabled: false))
-    XCTAssertTrue(NotebookAcceptanceConfiguration.requiresManifest(bundleID: "com.amirtlinov.notebook.mac.acceptance", enabled: false))
+    XCTAssertTrue(NotebookAcceptanceConfiguration.requiresManifest(bundleID: "com.amirtlinov.notebook.mac.acceptance.012345abcdef", enabled: false))
     XCTAssertTrue(NotebookAcceptanceConfiguration.requiresManifest(bundleID: "unexpected", enabled: true))
     XCTAssertFalse(NotebookAcceptanceConfiguration.requiresManifest(bundleID: "com.amirtlinov.notebook.preview", enabled: false))
   }

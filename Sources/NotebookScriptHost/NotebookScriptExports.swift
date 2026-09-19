@@ -5,34 +5,40 @@ import NotebookScriptProtocol
 extension NotebookScriptCoordinator {
   func startExport(id: UUID, arguments: JSONValue) async throws -> JSONValue {
     if let previous = try await persistence({ try $0.scriptExportJob(id) ?? .null }).optionalValue { return previous }
-    guard exportTasks.count < 2, let documentID = arguments.string("documentID").flatMap(UUID.init(uuidString:)) else {
-      throw CollaborationError("export_limit", "Нужен documentID; на Mac одновременно собираются до двух PDF.")
+    guard exportTasks.count + exportAdmissions < 2, let documentID = arguments.string("documentID").flatMap(UUID.init(uuidString:)) else {
+      throw CollaborationError("export_limit", "Нужен documentID; на Mac одновременно собираются до двух экспортов.")
     }
-    let document = try await persistence { try .encode($0.loadDocument(documentID)) }.decode(DocumentDocument.self)
+    var optionFields: [String: JSONValue] = ["format": arguments["format"] ?? .string("pdf")]
+    for key in ["pageIndex", "pixelWidth", "blockID", "video", "moment", "attention"] { optionFields[key] = arguments[key] }
+    let options = try JSONValue.object(optionFields).decode(NotebookExportOptions.self)
+    try options.validate()
+    exportAdmissions += 1
+    defer { exportAdmissions -= 1 }
+    let cut = try await persistence { try .encode($0.readDocumentExportCut(documentID: documentID, options: options)) }.decode(NotebookExportCut.self)
+    let document = cut.document, cutHash = try cut.sha256
     let accepted = JSONValue.object(["status": .string("queued"), "jobID": .string(id.uuidString.lowercased()),
-      "documentID": .string(documentID.uuidString.lowercased()), "contentRevision": .string(document.contentStamp.revision)])
+      "documentID": .string(documentID.uuidString.lowercased()), "contentRevision": .string(document.contentStamp.revision),
+      "stateRevision": .string(cut.state.stamp.revision), "cutSHA256": .string(cutHash), "moment": .string(options.selectedMoment.rawValue), "options": try .encode(options)])
     _ = try await persistence { try $0.saveScriptExportJob(id, value: accepted); return .null }
     exportTasks[id] = Task { [self] in
       do {
+        try Task.checkCancellation()
         var running = accepted.fields; running["status"] = .string("running")
         let started = JSONValue.object(running)
         _ = try await persistence { try $0.saveScriptExportJob(id, value: started); return .null }
-        let result = try await markup.normalize(.object(["kind": .string("documentTeX"), "document": try .encode(document)]))
-        guard let source = result.string("source") else { throw CollaborationError("normalization_failed", "Нет печатного исходника.") }
-        let assets = try (result["assets"] ?? .array([])).decode([NotebookCompilerAsset].self)
-        let ranges = try (result["sourceRanges"] ?? .null).decode([DocumentPrintSourceRange].self)
-        let compiled = try await markup.compile(id: id, source: source, assets: assets)
-        let sourceMap = try DocumentPrintSourceMap(document: document, source: source, pdf: compiled.pdf, ranges: ranges)
-        let publication = NotebookExportPublication(documentID: document.id, expectedRevision: document.contentStamp.revision,
-          source: source, pdf: compiled.pdf, log: compiled.log, jobID: id,
-          assets: compiled.assets.map { .init(name: $0.name, data: $0.data) }, sourceMap: sourceMap, syncTeX: compiled.syncTeX)
-        let receipt = try await send(["command": .string("publishExport"), "export": try .encode(publication)])
-        let saved = JSONValue.object(["status": .string("saved"), "jobID": .string(id.uuidString.lowercased()),
-          "contentRevision": .string(document.contentStamp.revision), "receipt": receipt])
-        _ = try await persistence { try $0.saveScriptExportJob(id, value: saved); return .null }
+        let receipt = try await canonicalExport(cut, options, id)
+        guard receipt.cutSHA256 == cutHash else {
+          throw CollaborationError("invalid_export_cut", "Renderer вернул другой срез.")
+        }
+        // The native publication owner already committed artifacts and receipt
+        // together. A second write here could regress saved to failed on reply loss.
       } catch {
-        let failure = JSONValue.object(["status": .string("failed"), "jobID": .string(id.uuidString.lowercased()), "error": Self.error(error)])
-        _ = try? await persistence { try $0.saveScriptExportJob(id, value: failure); return .null }
+        var fields = accepted.fields; fields["status"] = .string("failed"); fields["error"] = Self.error(error)
+        let failure = JSONValue.object(fields)
+        _ = try? await persistence {
+          if !["saved", "cancelled"].contains(try $0.scriptExportJob(id)?.string("status") ?? "") { try $0.saveScriptExportJob(id, value: failure) }
+          return .null
+        }
       }
       exportTasks.removeValue(forKey: id)
     }

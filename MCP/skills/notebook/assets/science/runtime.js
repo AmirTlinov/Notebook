@@ -17,8 +17,8 @@ var Science = (() => {
   function point(event,svgElement) {
     return new DOMPoint(event.clientX,event.clientY).matrixTransform(svgElement.getScreenCTM().inverse());
   }
-  function mount({defaults,ranges={},normalize=v=>v,draw,tick}) {
-    let state,playing=false,frame=0,last=null;
+  function mount({defaults,ranges={},normalize=v=>v,draw,tick,seek}) {
+    let state,playing=false,frame=0,last=null,suspended=false,disposed=false;
     const sanitize=value=>{
       const next={...structuredClone(defaults),...value};
       for(const [key,[min,max]] of Object.entries(ranges))next[key]=clamp(Number.isFinite(next[key])?next[key]:defaults[key],min,max);
@@ -32,24 +32,36 @@ var Science = (() => {
       if($('play')){$('play').textContent=playing?'Пауза':'Пуск';$('play').setAttribute('aria-pressed',String(playing));}
       draw(state);
     }
-    const save=()=>notebook.commit(structuredClone(state));
+    const save=()=>!suspended&&!disposed&&notebook.commit(structuredClone(state));
     function stop(commit=false){playing=false;last=null;cancelAnimationFrame(frame);if(commit)save();}
-    function change(patch,commit=true,{pause=true}={}){if(pause)stop();state=sanitize({...state,...patch});render();if(commit)save();}
+    function change(patch,commit=true,{pause=true}={}){if(suspended||disposed)return;if(pause)stop();state=sanitize({...state,...patch});render();if(commit)save();}
     function step(now){
-      if(!playing)return;
+      if(!playing||suspended||disposed)return;
       if(last!==null){const next=tick(state,Math.min(now-last,100));if(next===null){stop(true);render();return;}state=sanitize({...state,...next});}
       last=now;render();frame=requestAnimationFrame(step);
     }
-    function restore(){stop();state=sanitize(notebook.state??{});render(true);}
+    function restore(){if(disposed||suspended)return;stop();state=sanitize(notebook.state??{});render(true);}
     for(const el of document.querySelectorAll('[data-key]')) {
       el.addEventListener('input',()=>change({[el.dataset.key]:el.type==='range'||el.type==='number'?Number(el.value):el.value},false,{pause:el.dataset.pause!=='false'}));
       el.addEventListener('change',()=>{el.value=state[el.dataset.key];save();});
     }
     if($('play'))$('play').addEventListener('click',()=>{
+      if(suspended||disposed)return;
       if(playing){stop(true);render();}else if(tick){playing=true;last=null;render();frame=requestAnimationFrame(step);}
     });
     addEventListener('notebookstate',restore);
-    document.addEventListener('visibilitychange',()=>{if(document.hidden){stop();render();}});
+    const visibility=()=>{if(document.hidden&&!disposed){stop();render();}};
+    document.addEventListener('visibilitychange',visibility);
+    notebook.exportFrame(({format,state:saved,time})=>{
+      if(format!=='raster')throw new Error('program_export_unavailable');
+      stop();state=sanitize(saved??{});if(time!==undefined)state=sanitize({...state,...seek(state,time)});render(true);return null;
+    },{timeline:typeof seek==='function'});
+    notebook.lifecycle({
+      pause(){suspended=true;stop();render();},
+      checkpoint(){return structuredClone(state);},
+      resume(){suspended=false;render(true);},
+      dispose(){stop();disposed=true;removeEventListener('notebookstate',restore);document.removeEventListener('visibilitychange',visibility);}
+    });
     notebook.ready(Promise.resolve().then(restore));
     return {get state(){return state},change,render,save,stop};
   }

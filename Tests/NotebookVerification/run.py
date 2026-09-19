@@ -123,12 +123,54 @@ class SelectionTests(unittest.TestCase):
             with self.assertRaises(release.ReleaseError):
                 acceptance.validate_simulator_entitlements(invalid)
 
+    def test_worker_reseal_requires_the_exact_attested_mac_bundle_before_any_signing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / "Notebook.app"
+            (app / "Contents").mkdir(parents=True)
+            (app / "Contents/Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": acceptance.MAC_BUNDLE}))
+            command = Mock()
+            with self.assertRaisesRegex(release.ReleaseError, "Mac bundle"):
+                release.restrict_test_script_services(app, ROOT, command, bundle_identifier=release.MAC_BUNDLE + ".acceptance")
+            command.assert_not_called()
+            with self.assertRaisesRegex(release.ReleaseError, "ровно два"):
+                release.restrict_test_script_services(app, ROOT, command, bundle_identifier=acceptance.MAC_BUNDLE)
+            command.assert_not_called()
+
+    def test_acceptance_locks_actual_devices_not_all_xcode_runners(self):
+        simulator = str(uuid.uuid4())
+        built = {"simulator": {"udid": simulator}, "macApp": "/private/Notebook.app"}
+        value = {"build": "/private/build"}
+        args = SimpleNamespace(command="ui", run=Path("/private/run"), platform="mac")
+        with patch.object(acceptance, "read", side_effect=[value, built] * 3), \
+             patch.object(acceptance, "info", return_value={"CFBundleIdentifier": acceptance.MAC_BUNDLE}):
+            self.assertEqual(acceptance.lock_names(args), [acceptance.MAC_BUNDLE])
+            args.platform = "ipad"
+            self.assertEqual(acceptance.lock_names(args), ["simulator-" + simulator])
+            args.command = "upgrade"
+            self.assertEqual(acceptance.lock_names(args), sorted([acceptance.MAC_BUNDLE, "simulator-" + simulator]))
+        self.assertNotIn(acceptance.MAC_BUNDLE, acceptance.lock_names(SimpleNamespace(command="build")))
+
+    def test_mac_acceptance_identity_is_stable_per_canonical_checkout_and_not_shared(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first"; first.mkdir()
+            alias = root / "alias"; alias.symlink_to(first, target_is_directory=True)
+            bundle = acceptance.mac_bundle_for(first)
+            self.assertRegex(bundle, r"^com\.amirtlinov\.notebook\.mac\.acceptance\.[0-9a-f]{12}$")
+            self.assertEqual(bundle, acceptance.mac_bundle_for(alias))
+            self.assertNotEqual(bundle, acceptance.mac_bundle_for(root / "second"))
+        project = (ROOT / "Applications/project.yml").read_text()
+        self.assertIn("com.amirtlinov.notebook.mac$(NOTEBOOK_MAC_BUNDLE_SUFFIX)", project)
+        self.assertIn("com.amirtlinov.notebook.mac$(NOTEBOOK_MAC_BUNDLE_SUFFIX).uitests", project)
+        self.assertEqual(acceptance.MAC_BUNDLE, acceptance.mac_bundle_for(ROOT))
+
     def test_acceptance_mac_has_its_own_stable_apple_identity(self):
         display = ("Identifier=" + acceptance.MAC_BUNDLE + "\nTeamIdentifier=" + release.TEAM
                    + "\nAuthority=Apple Development: Test Developer\nCDHash=" + "a" * 40 + "\n")
         signer, identity = acceptance.mac_acceptance_signer(display)
         self.assertEqual(signer, "Apple Development: Test Developer")
         self.assertEqual(identity["identifier"], acceptance.MAC_BUNDLE)
+        self.assertEqual(acceptance.SCRIPT_BUNDLE_SUFFIX, ".acceptance-runtime-" + identity["team"].lower())
         for invalid in (display + "Signature=adhoc\n",
                         display.replace(acceptance.MAC_BUNDLE, release.MAC_BUNDLE),
                         display.replace(release.TEAM, "OTHERTEAM"),
@@ -364,21 +406,19 @@ class SelectionTests(unittest.TestCase):
         self.assertFalse(plan["unclassified"])
 
     def test_document_markup_does_not_run_ui_gestures(self):
-        self.change("Applications/WebResources/document-fragments.js")
+        self.change("Applications/WebResources/document-shell.html")
         plan = verify.make_plan(self.root)
         self.assertEqual(plan["profiles"], ["document-web"])
         self.assertFalse(any(s.startswith("NotebookUITests") for s in plan["checks"]["ipad"]))
 
     def test_each_browser_contract_selects_web_boundaries_not_all_documents(self):
-        paths = ["Tests/NotebookDocumentAcceptance/test_common_shell_startup.mjs",
-                 "Tests/NotebookDocumentAcceptance/test_document_images.mjs",
-                 "Tests/NotebookDocumentAcceptance/test_link_activation.mjs"]
+        paths = ["Tests/NotebookDocumentAcceptance/test_link_activation.mjs"]
         for path in paths:
             with self.subTest(path=path):
                 self.assertEqual(verify.owners(path), ["document-web"])
         plan = verify.make_plan(self.root, profiles=["document-web"], only=True)
         self.assertEqual(plan["checks"]["commands"], ["document-browser"])
-        for suite in ("DocumentShellPreparationTests", "DocumentImageReadinessTests", "DocumentLinkActivationTests"):
+        for suite in ("DocumentShellPreparationTests", "DocumentPrintImageTests", "DocumentLinkActivationTests"):
             self.assertIn("NotebookTests/" + suite, plan["checks"]["ipad"])
         self.assertEqual(verify.owners("Tests/NotebookDocumentAcceptance/test_system_trace.py"), ["acceptance-bootstrap"])
 
@@ -389,8 +429,8 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(plan["checks"]["commands"], ["document-browser"])
         self.assertEqual(plan["checks"]["core"], [])
         self.assertEqual(plan["checks"]["mac"], ["NotebookMacTests/DocumentRuntimeTests"])
-        self.assertEqual(plan["checks"]["ipad"], ["NotebookTests/DocumentImageReadinessTests",
-            "NotebookTests/DocumentLinkActivationTests", "NotebookTests/DocumentShellPreparationTests"])
+        self.assertEqual(plan["checks"]["ipad"], ["NotebookTests/DocumentLinkActivationTests",
+            "NotebookTests/DocumentPrintImageTests", "NotebookTests/DocumentShellPreparationTests"])
         scenario = verify.UI + "testDocumentLinksOpenTheMeasuredDistantPageAndReturnToContents"
         self.assertIn(scenario, verify.make_plan(self.root, tests=[scenario])["checks"]["ipad"])
 
@@ -436,12 +476,10 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("Applications/Shared/NotebookPageAddress.swift", plan["unclassified"])
         self.assertNotIn("NotebookTests/NotebookPageAddressTests", plan["checks"]["ipad"])
 
-    def test_browser_contract_runner_executes_all_three_files_and_refuses_any_failure(self):
+    def test_browser_contract_runner_executes_the_shipped_listener_and_refuses_any_failure(self):
         for path in ("Sources/Fixture.swift", "MCP/fixture.ts", "docs/fixture.md"):
             self.change(path, "source inventory fixture\n")
-        paths = ["Tests/NotebookDocumentAcceptance/test_common_shell_startup.mjs",
-                 "Tests/NotebookDocumentAcceptance/test_document_images.mjs",
-                 "Tests/NotebookDocumentAcceptance/test_link_activation.mjs"]
+        paths = ["Tests/NotebookDocumentAcceptance/test_link_activation.mjs"]
         plan = {"unclassified": [], "manualSelection": True,
                 "checks": {"core": [], "mac": [], "ipad": [], "commands": ["document-browser"]}}
         for failed in (None, *paths):
@@ -465,7 +503,7 @@ class SelectionTests(unittest.TestCase):
                 self.assertEqual(commands[0]["argv"], ["node", "--test", *(str(self.root / path) for path in paths)])
                 self.assertEqual(commands[0]["exitCode"] == 0, failed is None)
                 output = (evidence / "document-browser.stdout.log").read_text()
-                for index in range(3): self.assertIn("required-contract-" + str(index), output)
+                for index in range(len(paths)): self.assertIn("required-contract-" + str(index), output)
                 if failed is None:
                     verify.validate_selected(self.root, evidence, receipt)
                     relocated = self.root / ".build/identical-source"
@@ -625,8 +663,7 @@ class SelectionTests(unittest.TestCase):
                 with patch.object(release, "release_commands", return_value=command), \
                      patch.object(release, "source_inputs", return_value={"source": "fixture"}), \
                      patch.object(release, "read_toolchain", return_value={"toolchain": "fixture"}), \
-                     patch.object(release, "prepare_tex_runtime", return_value=self.root / "tex"), \
-                     patch.object(release, "prepare_image_runtime", return_value=self.root / "images"), \
+                     patch.object(release, "prepare_typesetter_runtime", return_value=self.root / "typesetter"), \
                      patch.object(release, "prepare_typescript_runtime", return_value=self.root / "typescript"), \
                      self.assertRaises(BuildReached):
                     verify.run_selected(self.root, plan, evidence)
@@ -638,7 +675,7 @@ class SelectionTests(unittest.TestCase):
                 self.assertEqual(dependency[2]["cwd"], self.root / "MCP")
                 self.assertEqual("mcp-test" in labels, bool(commands))
                 build = next(item[1] for item in calls if item[0] == "mac-build-for-testing")
-                self.assertIn("NOTEBOOK_IMAGE_RUNTIME=" + str(self.root / "images"), build)
+                self.assertIn("NOTEBOOK_TYPESETTER_RUNTIME=" + str(self.root / "typesetter"), build)
                 self.assertIn("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(self.root / "typescript"), build)
 
     def test_submitted_pixel_owner_selects_native_display_and_immutable_attention_contracts(self):

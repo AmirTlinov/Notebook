@@ -824,6 +824,7 @@ struct CollaborationWorkspace {
       var value: [String: JSONValue] = ["id": .string(id), "kind": .string(kind), "frame": frame,
         "source": source, "html": op.values["html"] ?? source, "css": op.values["css"] ?? .string(""),
         "javaScript": op.values["javaScript"] ?? .string(""), "state": op.values["state"] ?? .object([:])]
+      if let package = op.values["programPackage"], package != .null { value["programPackage"] = package }
       if kind == "graphic" {
         guard let raw = op.values["graphic"] else { throw invalid("Нужна нативная геометрия.") }
         let graphic = try raw.decode(NotebookGraphic.self)
@@ -847,14 +848,14 @@ struct CollaborationWorkspace {
           try surface.decode(SurfaceID.self) == (op.target.kind == .cover ? .cover(op.target.id) : .board(op.target.id)) else { throw missing(op.target) }
       }
       let allowed = op.kind == .setElementState ? Set(["state"])
-        : Set(["frame", "source", "html", "css", "javaScript", "graphic"]
+        : Set(["frame", "source", "html", "css", "javaScript", "programPackage", "graphic"]
           + (op.target.kind == .page ? [] : ["worldOrigin", "textStyle"]))
       guard !op.values.isEmpty, Set(op.values.keys).isSubset(of: allowed) else { throw invalid("Поля изменения принадлежат выбранной операции.") }
       for (key, value) in op.values {
         if key == "graphic" {
           guard let raw = elements[index]["graphic"] else { throw invalid("Элемент не содержит геометрии.") }
           elements[index] = try elements[index].setting(key, .encode(raw.decode(NotebookGraphic.self).applying(value)))
-        } else { elements[index] = elements[index].setting(key, value) }
+        } else { elements[index] = elements[index].setting(key, key == "programPackage" && value == .null ? nil : value) }
       }
     case .removeElement:
       guard let index else { throw missing(op.target) }
@@ -893,21 +894,21 @@ struct CollaborationWorkspace {
   mutating func editDocument(_ op: CollaborationOperation, actor: UUID) throws {
     guard op.target.kind == .document, let value = files[documentFile(op.target.id)] else { throw missing(op.target) }
     var blocks = value["blocks"]!.array
-    let index = op.id.flatMap { id in blocks.firstIndex { $0["id"]?.string == id } }
+    let index = op.id.flatMap { id in blocks.firstIndex { $0.memberIdentity == collaborationIdentity(id) } }
     var next = value
     switch op.kind {
     case .insertBlock:
       guard index == nil, let id = op.id else { throw invalid("Новый блок получает свободный ID.") }
       let block = try completeBlock(op.values.merging(["id": .string(id)]) { _, new in new })
       if let afterID = op.values["afterID"]?.string {
-        guard let anchor = blocks.firstIndex(where: { $0["id"]?.string == afterID }) else { throw invalid("Опорный блок найден в этом документе.") }
+        guard let anchor = blocks.firstIndex(where: { $0.memberIdentity == collaborationIdentity(afterID) }) else { throw invalid("Опорный блок найден в этом документе.") }
         blocks.insert(block, at: anchor + 1)
       } else { blocks.append(block) }
     case .updateBlock:
       guard let index else { throw missing(op.target) }
-      let allowed: Set<String> = ["source", "html", "css", "javaScript", "height"]
+      let allowed: Set<String> = ["source", "html", "css", "javaScript", "programPackage", "height"]
       guard !op.values.isEmpty, Set(op.values.keys).isSubset(of: allowed) else { throw invalid("Обновление меняет исходник и оформление блока.") }
-      for (key, field) in op.values { blocks[index] = blocks[index].setting(key, field) }
+      for (key, field) in op.values { blocks[index] = blocks[index].setting(key, key == "programPackage" && field == .null ? nil : field) }
       if blocks[index]["kind"]?.string == "interactive" {
         if let html = op.values["html"] ?? op.values["source"] {
           blocks[index] = blocks[index].setting("source", html).setting("html", html)
@@ -1294,12 +1295,14 @@ private func advancing(_ value: JSONValue, key: String, actor: UUID) throws -> J
 }
 private func completeBlock(_ fields: [String: JSONValue]) throws -> JSONValue {
   guard let id = fields["id"]?.string, !id.isEmpty, id.count <= 120,
-    let kind = fields["kind"]?.string, ["markdown", "latex", "interactive"].contains(kind) else { throw invalid("Блок имеет устойчивый ID и вид содержания.") }
+    let kind = fields["kind"]?.string, ["markdown", "latex", "tex", "interactive"].contains(kind) else { throw invalid("Блок имеет устойчивый ID и вид содержания.") }
   let source = fields["source"] ?? fields["html"] ?? .string("")
-  return .object(["id": .string(id), "kind": .string(kind), "source": source,
+  var value: [String: JSONValue] = ["id": .string(id), "kind": .string(kind), "source": source,
     "html": kind == "interactive" ? (fields["html"] ?? source) : .string(""),
     "css": fields["css"] ?? .string(""), "javaScript": fields["javaScript"] ?? .string(""),
-    "initialState": fields["initialState"] ?? .object([:]), "height": fields["height"] ?? .number(320)])
+    "initialState": fields["initialState"] ?? .object([:]), "height": fields["height"] ?? .number(320)]
+  if let package = fields["programPackage"], package != .null { value["programPackage"] = package }
+  return .object(value)
 }
 private func reordered(_ items: [JSONValue], values: [String: JSONValue]) throws -> [JSONValue] {
   guard let ids = values["ids"]?.array.compactMap(\.string), ids.count == items.count,
@@ -1561,7 +1564,7 @@ func collaborationCausalFieldPath(_ path: [CollaborationPathComponent]) -> [Coll
     case .member(let id):
       parts.append(collaborationIdentity(id))
       if local.count > 2, case .field(let field) = local[2] {
-        parts.append(collection != "items" && ["source", "html", "kind"].contains(field) ? "content" : field)
+        parts.append(collection != "items" && ["source", "html", "kind", "programPackage"].contains(field) ? "content" : field)
         if field == "graphic", local.count > 3, case .field(let part) = local[3] {
           parts.append(part)
           if part == "connection", local.count > 4, case .field(let property) = local[4] { parts.append(property) }

@@ -148,7 +148,7 @@ final class AgentWebLeaseTests: XCTestCase {
     defer { coordinator.invalidate(); lease.release(); web.removeFromSuperview(); window.isHidden = true; window.rootViewController = nil }
     let source = AgentElement(id: UUID().uuidString, kind: .web,
       frame: .init(x: 0, y: 0, width: 160, height: 120), source: "Current DOM",
-      html: "<div id='surface' style='position:absolute;inset:0;background:lime'></div><script>window.contextWitness=42</script>")
+      html: "<div id='surface' style='position:absolute;inset:0;background:lime'></div><script>window.contextWitness=42;notebook.ready(Promise.resolve())</script>")
     let focus = InteractiveElementReference.board(boardID: UUID(), elementID: source.id)
     coordinator.bindPresentation(to: focus)
     coordinator.load(source, policy: .exact(scale: 2), in: web)

@@ -43,6 +43,72 @@ struct NotebookDocumentStateCommandTests {
     return publication
   }
 
+  @Test func detachedCheckpointReturnsItsExactCausalReceiptAndCannotWriteAnOldBasis() throws {
+    try fixture { store, actor, id in
+      let source = try sourceVersion(store, id)
+      let first = try #require(try store.checkpointDocumentState(documentID: id, blockID: "body", value: .number(0.25),
+        sourceVersion: source, stateVersion: nil, actor: actor))
+      #expect(try store.readDocumentBlock(documentID: id, blockID: "body")?.stateVersion == first)
+      let cursor = try store.currentChangeCursor()
+      #expect(try store.checkpointDocumentState(documentID: id, blockID: "body", value: .number(0.5),
+        sourceVersion: source, stateVersion: nil, actor: actor) == nil)
+      #expect(try store.currentChangeCursor() == cursor)
+      #expect(try store.checkpointDocumentState(documentID: id, blockID: "body", value: .number(0.25),
+        sourceVersion: source, stateVersion: first, actor: actor) == first)
+      #expect(try store.currentChangeCursor() == cursor)
+    }
+  }
+
+  @Test func checkpointRequiresTheObservedStateAndAllowsOnlyItsExactRetry() throws {
+    try fixture { store, actor, id in
+      var state = try store.loadDocumentState(id)
+      let initial = try command(&state, value: .number(1), actor: actor, store: store)
+      _ = try store.commitDocumentState(initial)
+      let basis = initial.record.valueVersion
+      var checkpointState = state
+      let proposal = try command(&checkpointState, value: .number(4), actor: actor, store: store)
+      let checkpoint = NotebookDocumentStateCommand(documentID: id, record: proposal.record,
+        journalStamp: proposal.journalStamp, expectedSourceVersion: proposal.expectedSourceVersion,
+        stateCondition: .matching(basis))
+      // A different block is not this executor's causal state.
+      _ = try store.commitDocumentState(command(&state, block: "a", value: .number(9), actor: UUID(), store: store))
+      let accepted = try store.commitDocumentState(checkpoint)
+      #expect(try committed(accepted).record == checkpoint.record)
+      let cursor = try store.currentChangeCursor()
+      #expect(try store.commitDocumentState(checkpoint) == accepted)
+      #expect(try store.currentChangeCursor() == cursor)
+      // The bytes return to the checkpoint value, but their author is newer.
+      state = try store.loadDocumentState(id)
+      _ = try store.commitDocumentState(command(&state, value: .number(7), actor: actor, store: store))
+      _ = try store.commitDocumentState(command(&state, value: .number(4), actor: actor, store: store))
+      let before = try store.loadDocumentState(id), beforeCursor = try store.currentChangeCursor()
+      #expect(try store.commitDocumentState(checkpoint) == .stateChanged(documentID: id,
+        currentStateVersion: before.records.first(where: { $0.id == "body" })?.valueVersion))
+      #expect(try store.loadDocumentState(id) == before)
+      #expect(try store.currentChangeCursor() == beforeCursor)
+    }
+  }
+
+  @Test func initialCheckpointCannotAdoptAnUnobservedFirstValue() throws {
+    try fixture { store, actor, id in
+      var state = try store.loadDocumentState(id)
+      let first = try command(&state, value: .number(1), actor: actor, store: store)
+      _ = try store.commitDocumentState(first)
+      let late = NotebookDocumentStateCommand(documentID: id, record: first.record,
+        journalStamp: first.journalStamp, expectedSourceVersion: first.expectedSourceVersion,
+        stateCondition: .matching(nil))
+      // Exact retry is permitted, but a different model from an initial heap is not.
+      #expect(try store.commitDocumentState(late) == first.expectedResult)
+      let changed = try command(&state, value: .number(2), actor: actor, store: store)
+      let stale = NotebookDocumentStateCommand(documentID: id, record: changed.record,
+        journalStamp: changed.journalStamp, expectedSourceVersion: changed.expectedSourceVersion,
+        stateCondition: .matching(nil))
+      let cursor = try store.currentChangeCursor()
+      #expect(try store.commitDocumentState(stale) == .stateChanged(documentID: id, currentStateVersion: first.record.valueVersion))
+      #expect(try store.currentChangeCursor() == cursor)
+    }
+  }
+
   @Test func oneBlockAmongOneHundredThousandRetiredValuesDoesNotReadOrRenumberThem() throws {
     try fixture { store, actor, id in
       let file = stateFile(id), rootAddress = file + "#", clock = VersionStamp(counter: 100_000, actor: actor)

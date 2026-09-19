@@ -8,6 +8,7 @@ private struct CameraGestureSnapshot {
 }
 
 struct SpatialWorkspaceView: View {
+  var backRequest: UInt64 = 0
   @Environment(\.scenePhase) private var scenePhase
   @Environment(\.displayScale) private var displayScale
   @Environment(NotebookAppModel.self) private var model
@@ -334,6 +335,16 @@ struct SpatialWorkspaceView: View {
           })
         }
       }
+      .onChange(of: backRequest) { _, _ in
+        model.cancelRequestedNavigation()
+        referencePageResolution.cancel()
+        if !model.returnPlaces.isEmpty { model.requestReturnToPlace() }
+        else if presence.mode == .board { leaveBoard(viewport: viewport) }
+        else {
+          animateSettlement(to: .init(boardID: presence.boardID, mode: .board,
+            camera: .init(center: presence.camera.center, scale: model.itemGeometry(presence.focusedItemID).coverScale(viewport: viewport)), viewport: viewport), duration: 0.3)
+        }
+      }
       .onChange(of: scenePhase) { _, phase in
         if phase != .active {
           model.cancelRequestedNavigation(reason: "scene_phase_not_active")
@@ -510,16 +521,6 @@ struct SpatialWorkspaceView: View {
     NotebookNavigationView(presence: presence,
       documentPageCount: presence.focusedItemID.flatMap { id in
         model.documents[id].flatMap { documentPageLayouts[id]?.pageCount(for: NotebookAppModel.documentPageSourceRevision($0)) }
-      },
-      onBack: {
-        model.cancelRequestedNavigation()
-        referencePageResolution.cancel()
-        if !model.returnPlaces.isEmpty { model.requestReturnToPlace() }
-        else if presence.mode == .board { leaveBoard(viewport: viewport) }
-        else {
-          animateSettlement(to: .init(boardID: presence.boardID, mode: .board,
-            camera: .init(center: presence.camera.center, scale: model.itemGeometry(presence.focusedItemID).coverScale(viewport: viewport)), viewport: viewport), duration: 0.3)
-        }
       })
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
       .padding(.leading, 18).padding(.top, 18).zIndex(10_000)
@@ -1567,7 +1568,6 @@ private struct WorkspaceSceneItem: View {
         onLinkActivation: { activation in
           model.activateDocumentLink(activation)
         },
-        onSourceChange: { edit in try await model.commitDocumentSource(edit: edit) },
         onStateChange: { blockID, value in
           model.commitDocumentState(
             documentID: document.id,
@@ -1576,14 +1576,11 @@ private struct WorkspaceSceneItem: View {
             sourceVersion: document.sourceVersion(blockID: blockID)
           )
         },
-        drafts: model.documentEditingSessions.filter { $0.edit.documentID == document.id },
-        onDraftChange: model.saveDocumentDraft,
-        onDraftDiscard: model.discardDocumentDraft,
         isCurrent: isCurrent,
         isVisible: isVisible,
-        onStateCheckpoint: { blockID, value, sourceVersion in
+        onStateCheckpoint: { blockID, value, sourceVersion, stateVersion in
           try await model.checkpointDocumentState(documentID: document.id, blockID: blockID,
-            value: value, sourceVersion: sourceVersion)
+            value: value, sourceVersion: sourceVersion, stateVersion: stateVersion)
         }, measurements: model.documentMeasurements
       )
     )

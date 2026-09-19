@@ -4,9 +4,9 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Whole-object eraser targets must not be interpreted as partial masks.
+  // Full TeX blocks, whole-object erasing and program packages share one decoder.
   // Both applications update together; identities and queued history stay intact.
-  public static let protocolVersion = 26
+  public static let protocolVersion = 28
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16

@@ -47,12 +47,35 @@ fn convert(data: &[u8]) -> Result<Vec<u8>, String> {
     if data.is_empty() || data.len() > MAX_BYTES { return Err("SVG exceeds 8 MiB".into()); }
     validate_svg(data)?;
     let mut options = usvg::Options::default();
-    // Only OS-distributed fonts are available. Do not call load_system_fonts(),
-    // which would also search the user's and network font directories.
-    options.fontdb_mut().load_fonts_dir("/System/Library/Fonts");
-    options.fontdb_mut().set_serif_family("Times New Roman");
-    options.fontdb_mut().set_sans_serif_family("Arial");
-    options.fontdb_mut().set_monospace_family("Courier New");
+    #[cfg(not(target_os = "wasi"))] {
+        // Only OS-distributed fonts, never private or network font folders.
+        options.fontdb_mut().load_fonts_dir("/System/Library/Fonts");
+        options.fontdb_mut().set_serif_family("Times New Roman");
+        options.fontdb_mut().set_sans_serif_family("Arial");
+        options.fontdb_mut().set_monospace_family("Courier New");
+    }
+    #[cfg(target_os = "wasi")] {
+        load_bundle_fonts(options.fontdb_mut())?;
+        let select = usvg::FontResolver::default_font_selector();
+        options.font_resolver.select_font = Box::new(move |font, database| materialize_font(select(font, database)?, database));
+        options.font_resolver.select_fallback = Box::new(move |character, excluded, database| {
+            let base = database.face(*excluded.first()?)?.clone();
+            let candidates: Vec<_> = database.faces().filter(|f| !excluded.contains(&f.id) &&
+                f.style == base.style && f.weight == base.weight && f.stretch == base.stretch).cloned().collect();
+            for face in candidates {
+                let bytes = match &face.source {
+                    usvg::fontdb::Source::File(path) => std::fs::read(path).ok(),
+                    _ => database.with_face_data(face.id, |data, _| data.to_vec()),
+                };
+                if let Some(bytes) = bytes {
+                    if ttf_parser::Face::parse(&bytes, face.index).ok().and_then(|f| f.glyph_index(character)).is_some() {
+                        return materialize_font(face.id, database);
+                    }
+                }
+            }
+            None
+        });
+    }
     let denied = Arc::new(AtomicBool::new(false));
     let denied_external = denied.clone();
     options.image_href_resolver.resolve_string = Box::new(move |_, _| {
@@ -88,6 +111,49 @@ fn convert(data: &[u8]) -> Result<Vec<u8>, String> {
     if !warnings.is_empty() { return Err(format!("export_svg_unsupported: {}", warnings.join("; "))); }
     if pdf.len() > MAX_BYTES { return Err("SVG PDF exceeds 8 MiB".into()); }
     Ok(pdf)
+}
+
+#[cfg(target_os = "wasi")]
+fn materialize_font(id: usvg::fontdb::ID, database: &mut Arc<usvg::fontdb::Database>) -> Option<usvg::fontdb::ID> {
+    let mut face = database.face(id)?.clone();
+    if let usvg::fontdb::Source::File(path) = &face.source {
+        // WASI has no mmap. Load only the selected face, through the bounded
+        // virtual filesystem; never silently drop text after mmap fails.
+        face.source = usvg::fontdb::Source::Binary(Arc::new(std::fs::read(path).ok()?));
+        let database = Arc::make_mut(database); database.remove_face(id);
+        Some(database.push_face_info(face))
+    } else { Some(id) }
+}
+
+#[cfg(target_os = "wasi")]
+fn load_bundle_fonts(database: &mut usvg::fontdb::Database) -> Result<(), String> {
+    use usvg::fontdb::{FaceInfo, ID, Source, Language, Style, Weight, Stretch};
+    let index = std::fs::read_to_string("/fonts/notebook-fonts.tsv").map_err(|e| e.to_string())?;
+    for line in index.lines() {
+        let fields: Vec<_> = line.split('\t').collect();
+        if fields.len() != 9 { return Err("Invalid pinned font metadata".into()); }
+        let stretch = match fields[6] { "1" => Stretch::UltraCondensed, "2" => Stretch::ExtraCondensed,
+            "3" => Stretch::Condensed, "4" => Stretch::SemiCondensed, "6" => Stretch::SemiExpanded,
+            "7" => Stretch::Expanded, "8" => Stretch::ExtraExpanded, "9" => Stretch::UltraExpanded, _ => Stretch::Normal };
+        database.push_face_info(FaceInfo { id: ID::dummy(), source: Source::File(format!("/fonts/{}", fields[0]).into()), index: 0,
+            families: fields[2].split('|').map(|v| (v.into(), Language::English_UnitedStates)).collect(),
+            post_script_name: fields[1].into(), weight: Weight(fields[5].parse().map_err(|_| "Invalid font weight")?),
+            style: match fields[7] { "italic" => Style::Italic, "oblique" => Style::Oblique, _ => Style::Normal },
+            stretch, monospaced: fields[8] == "1" });
+    }
+    database.set_serif_family("Libertinus Serif"); database.set_sans_serif_family("Libertinus Sans"); database.set_monospace_family("Libertinus Mono");
+    Ok(())
+}
+
+#[cfg(target_os = "wasi")]
+#[unsafe(no_mangle)]
+pub extern "C" fn notebook_image_compile() -> i32 {
+    let _ = log::set_logger(&DIAGNOSTICS); log::set_max_level(log::LevelFilter::Warn);
+    let result = (|| {
+        let input = std::fs::read("/input/image.svg").map_err(|e| e.to_string())?;
+        std::fs::write("/output/image.pdf", convert(&input)?).map_err(|e| e.to_string())
+    })();
+    match result { Ok(()) => 0, Err(e) => { eprintln!("{e}"); 1 } }
 }
 
 fn main() {

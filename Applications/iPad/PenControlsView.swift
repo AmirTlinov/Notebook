@@ -3,13 +3,15 @@ import SwiftUI
 struct PenControlsView: View {
   @Environment(NotebookAppModel.self) private var model
   @State private var settingsTool: DrawingTool?
+  var embedded = false
 
   var body: some View {
     HStack(spacing: 0) {
       tool("pencil.tip", title: "Ручка", id: "pen-controls-toggle", drawingTool: .pen)
       tool("eraser.fill", title: "Ластик", id: "drawing-tool-eraser", drawingTool: .eraser)
     }
-    .notebookBar()
+    .font(NotebookChrome.iconFont).buttonStyle(.plain)
+    .background { if !embedded { NotebookSurface(radius: NotebookChrome.barHeight / 2).padding(.vertical, 2) } }
   }
 
   private var settings: some View {

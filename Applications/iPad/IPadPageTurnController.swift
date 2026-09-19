@@ -219,8 +219,8 @@ final class IPadPageTurnController: UIViewController,
       if isViewLoaded {
         if replacesDocument { replaceOwnerPages() }
         else {
-          // A source revision changes page readiness, not the person's mounted
-          // textarea. The same paper measures the new source beside that DOM.
+          // A source revision changes page readiness, not the window's native
+          // editing session. Existing paper stays until its replacement is ready.
           readyPages.removeAll()
           refreshRenderedPages()
         }

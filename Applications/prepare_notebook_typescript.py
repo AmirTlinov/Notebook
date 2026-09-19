@@ -7,7 +7,7 @@ bundle-internal relative symlink provides discovery; it grants no extra path.
 """
 import argparse, hashlib, json, os, shutil
 from pathlib import Path
-from prepare_notebook_images import macho
+from notebook_macho import macho
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / 'Sources/NotebookMarkupService/TypeScriptResources.lock.json'
@@ -29,7 +29,7 @@ def outputs(lock):
     paths={BINARY,DISCOVERY,RESOURCES,RESOURCES+'/manifest.json',RESOURCES+'/notebook-sdk.d.ts'}
     paths.update(RESOURCES+'/'+name for name in lock['resources'])
     for name in tuple(paths):
-        paths.update(str(p) for p in Path(name).parents if str(p) not in ('.','Resources','Helpers'))
+        paths.update(str(p) for p in Path(name).parents if str(p) not in ('.','Resources'))
     return ''.join('$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/'+p+'\n' for p in sorted(paths))
 def check(stage, *, signed=False):
     stage=Path(stage);lock=json.loads(LOCK.read_text());expected=identity(lock)

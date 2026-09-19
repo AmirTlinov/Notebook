@@ -116,7 +116,7 @@ final class DocumentLinkActivationTests: XCTestCase {
     init(model: NotebookAppModel, document: DocumentDocument, state: DocumentStateJournal) throws {
       self.model = model
       coordinator = DocumentWebCoordinator(resources: SceneRenderResources(), onRenderReady: .init { _ in },
-        onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+        onPageLayout: { _ in },  onStateChange: { _, _ in nil })
       let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
       previousKeyWindow = scene.windows.first { $0.isKeyWindow }
       window = UIWindow(windowScene: scene)
@@ -126,7 +126,7 @@ final class DocumentLinkActivationTests: XCTestCase {
       controller.view.addSubview(host); window.makeKeyAndVisible()
       coordinator.externallyHostedPrograms = true
       coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-        onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed },
+        onRenderReady: .init { _ in }, onPageLayout: { _ in },
         onStateChange: { _, _ in nil }, onLinkActivation: { [weak self] in self?.received = $0 })
       coordinator.mount(in: host, physicalSize: .init(width: geometry.width, height: geometry.height),
         isInteractive: true, priority: .currentPage)

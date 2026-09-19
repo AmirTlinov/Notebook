@@ -32,13 +32,26 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   // A separate nonpersistent data store isolates every program. This base URL
   // supplies a secure browser origin without performing a network navigation.
   private let origin = URL(string: "https://document.notebook.invalid/")!
+  private let programAssets = NotebookProgramAssets()
+  private let programStore: NotebookStore?
+  private var packageURL: URL?
   private var initialNavigationPending = false
   private var revision: UInt64 = 0
   private var presentedRevision: UInt64?
   private var appliedValue: JSONValue
   private var observedStateVersion: ContentFieldVersion?
+  private var checkpointSelection: ProgramSemanticSelection?
+  private var checkpointWasCaptured = false
+  private var checkpointFrozen = false
+  var attentionPauseID: UUID? {
+    didSet { webView?.isUserInteractionEnabled = attentionPauseID == nil }
+  }
+  var hasFrozenFrame: Bool { checkpointFrozen && checkpointWasCaptured }
+  var frozenSemanticSelection: ProgramSemanticSelection? { checkpointWasCaptured ? checkpointSelection : nil }
+  private var checkpointTask: Task<JSONValue, Error>?
   var onChange: () -> Void = { }
   var onStateChange: (JSONValue) -> ContentFieldVersion? = { _ in nil }
+  var onStateCheckpoint: (JSONValue, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _ in nil }
   var requiresStateAcceptance = true
   var onFocus: (Bool) -> Void = { _ in }
   var onLink: (String) -> Void = { _ in }
@@ -52,9 +65,10 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   }
 
   init(documentID: UUID, block: DocumentBlock, sourceVersion: ContentFieldVersion,
-    value: JSONValue, stateVersion: ContentFieldVersion?, width: Double, resources: SceneRenderResources) {
+    value: JSONValue, stateVersion: ContentFieldVersion?, width: Double, resources: SceneRenderResources, programStore: NotebookStore? = nil) {
     self.documentID = documentID; self.block = block; self.sourceVersion = sourceVersion
     self.value = value; appliedValue = value; observedStateVersion = stateVersion; self.resources = resources
+    self.programStore = programStore
     size = .init(width: width, height: block.height)
     super.init()
   }
@@ -91,14 +105,25 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
         let content = WKUserContentController(); content.add(self, name: "documentProgram")
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent(); configuration.userContentController = content
+        configuration.setURLSchemeHandler(programAssets, forURLScheme: NotebookProgramAssets.scheme)
         let web = WKWebView(frame: .init(origin: .zero, size: size), configuration: configuration)
         web.accessibilityIdentifier = "document-program-" + block.id
         web.isOpaque = false; web.backgroundColor = .clear; web.scrollView.backgroundColor = .clear
         web.scrollView.bounces = false; web.scrollView.contentInsetAdjustmentBehavior = .never
         web.scrollView.pinchGestureRecognizer?.isEnabled = false; web.scrollView.panGestureRecognizer.isEnabled = false
         web.navigationDelegate = self; webView = web; onMount(web, size)
-        initialNavigationPending = true
-        web.loadHTMLString(try html(), baseURL: origin)
+        if let hash = block.programPackage {
+          guard let store = programStore else { throw SceneRenderError.snapshotPending("program_store") }
+          let package = try await Task.detached(priority: .userInitiated) { try store.readProgramPackage(hash) }.value
+          guard !stopped, !Task.isCancelled, startID == request, webView === web else { return }
+          let url = try programAssets.register(store: store, package: package) { try html(package: package, resourceOrigin: $0) }
+          packageURL = url; initialNavigationPending = true
+          web.load(URLRequest(url: url))
+        } else {
+          let document = try html()
+          initialNavigationPending = true
+          web.loadHTMLString(document.before + block.html + document.after, baseURL: origin)
+        }
         readinessDeadline = Task { @MainActor [weak self, weak web] in
           do { try await Task.sleep(for: .seconds(8)) } catch { return }
           guard let self, self.webView === web, !ready, !stopped, failure == nil else { return }
@@ -122,19 +147,31 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   }
 
   func apply(_ next: JSONValue, stateVersion: ContentFieldVersion?) async throws {
-    guard !stopped, let stateVersion, stateVersion != observedStateVersion else { return }
+    // Persistence publishes the checkpoint back through the document owner.
+    // Let that same transaction accept its value before deciding whether this
+    // is a newer external edit that must release the held frame.
+    if let checkpointTask { _ = try? await checkpointTask.value }
+    guard !Task.isCancelled, !stopped, let stateVersion, stateVersion != observedStateVersion else { return }
     if let observedStateVersion,
       observedStateVersion.includes(stateVersion), !stateVersion.includes(observedStateVersion) { return }
     if next == appliedValue { observedStateVersion = stateVersion; return }
+    if attentionPauseID != nil {
+      await resume()
+      guard !Task.isCancelled, !stopped, stateVersion != observedStateVersion else { return }
+      if let observedStateVersion,
+        observedStateVersion.includes(stateVersion), !stateVersion.includes(observedStateVersion) { return }
+    }
     guard ready, let webView, let lease else { return }
     let borrow = try lease.borrow(); defer { borrow.release() }
     let data = try JSONEncoder().encode(next)
     let argument = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
-    let expectedRevision = revision
+    let expectedRevision = revision, basis = observedStateVersion
     let accepted = try await webView.callAsyncJavaScript("return await window.documentProgram.apply(value,revision);", arguments: ["value": argument, "revision": String(expectedRevision)], in: nil, contentWorld: .page)
     // A later accepted native commit wins even if WebKit's reply to the older
     // state application arrives after that commit's message.
-    if accepted as? Bool == true, !stopped, self.webView === webView, revision == expectedRevision {
+    if accepted as? Bool == true, !stopped, self.webView === webView, revision == expectedRevision,
+      observedStateVersion == basis {
+      checkpointSelection = nil; checkpointWasCaptured = false; checkpointFrozen = false; attentionPauseID = nil
       value = next; appliedValue = next; observedStateVersion = stateVersion
       presentedRevision = revision; onChange()
     }
@@ -143,15 +180,37 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   /// Suspends new commits before reading the exact explicit state. The caller
   /// must confirm persistence and window identity before allowing retirement.
   func checkpoint() async throws -> JSONValue {
+    if let checkpointTask { return try await checkpointTask.value }
+    let task = Task { @MainActor [self] in try await persistCheckpoint() }
+    checkpointTask = task
+    defer { checkpointTask = nil }
+    return try await task.value
+  }
+
+  private func persistCheckpoint() async throws -> JSONValue {
     guard ready, !focused, let webView, let lease else { throw CancellationError() }
     let borrow = try lease.borrow(); defer { borrow.release() }
-    let raw = try await webView.evaluateJavaScript("documentProgram.suspend()")
-    let data = try JSONSerialization.data(withJSONObject: raw ?? NSNull(), options: [.fragmentsAllowed])
-    return try JSONDecoder().decode(JSONValue.self, from: data)
+    let basis = observedStateVersion, expectedRevision = revision
+    let next = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "documentProgram", in: webView)
+    guard !stopped, self.webView === webView, !Task.isCancelled,
+      observedStateVersion == basis, revision == expectedRevision else { throw CancellationError() }
+    guard let accepted = try await onStateCheckpoint(next, basis) else {
+      throw NotebookProgramCheckpointError.superseded
+    }
+    guard !stopped, self.webView === webView, !Task.isCancelled, revision == expectedRevision,
+      observedStateVersion == basis || observedStateVersion == accepted else { throw CancellationError() }
+    let selected = await NotebookProgramBridge.semanticSelection(controller: "documentProgram", in: webView)
+    guard !stopped, self.webView === webView, !Task.isCancelled, revision == expectedRevision,
+      observedStateVersion == basis || observedStateVersion == accepted else { throw CancellationError() }
+    checkpointSelection = selected; checkpointWasCaptured = false; checkpointFrozen = true
+    value = next; appliedValue = next; observedStateVersion = accepted
+    return next
   }
 
   func resume() async {
-    _ = try? await webView?.evaluateJavaScript("documentProgram.resume()")
+    checkpointSelection = nil; checkpointWasCaptured = false; checkpointFrozen = false; attentionPauseID = nil
+    if let webView { _ = try? await NotebookProgramBridge.lifecycle("resume", controller: "documentProgram", in: webView) }
+    onChange()
   }
 
   func blur() async { _ = try? await webView?.evaluateJavaScript("document.activeElement?.blur();true") }
@@ -184,7 +243,10 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
         let cg = image.cgImage else { throw CancellationError() }
       let normalized = UIImage(cgImage: cg, scale: Double(cg.width) / size.width, orientation: .up)
       let source = SceneRasterSource.document(id: documentID, token: "program:\(block.id):\(id):\(operation)")
-      guard let raster = resources.storeAndRetain(normalized, for: source, reservation: reservation) else { throw SceneRenderError.resourceLimit }
+      guard let raster = resources.storeAndRetain(normalized, for: source, reservation: reservation,
+        semanticSelection: checkpointSelection?.mapped(from: .init(x: 0, y: 0, width: size.width, height: size.height),
+          into: .init(x: 0, y: sourceOffset, width: size.width, height: height))) else { throw SceneRenderError.resourceLimit }
+      if checkpointFrozen { checkpointWasCaptured = true }
       return raster
     }
     captureTask = task; captureID = operation
@@ -233,7 +295,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
     let url = navigationAction.request.url
     let initial = self.webView === webView && initialNavigationPending
-      && navigationAction.navigationType == .other && (url == origin || url?.absoluteString == "about:blank")
+      && navigationAction.navigationType == .other && (url == (packageURL ?? origin) || url?.absoluteString == "about:blank")
     if initial { initialNavigationPending = false }
     decisionHandler(initial ? .allow : .cancel)
   }
@@ -243,7 +305,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     ready = false; failure = nil; revision = 0; presentedRevision = nil; releaseSurface(); start(priority: .input)
   }
 
-  func stop() { stopped = true; startTask?.cancel(); startTask = nil; startID = nil; releaseSurface() }
+  func stop() { stopped = true; checkpointTask?.cancel(); checkpointTask = nil; startTask?.cancel(); startTask = nil; startID = nil; releaseSurface() }
   private func fail(_ error: Error) {
     failure = error; ready = false; focused = false; presentedRevision = nil
     // A failed program keeps its accepted explicit state, not a broken slot
@@ -251,8 +313,11 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     releaseSurface(); onFocus(false); onChange()
   }
   private func releaseSurface() {
+    checkpointSelection = nil; checkpointWasCaptured = false; checkpointFrozen = false; attentionPauseID = nil
+    programAssets.revokeAll(); packageURL = nil
     readinessDeadline?.cancel(); readinessDeadline = nil
     initialNavigationPending = false
+    webView?.evaluateJavaScript("void documentProgram.dispose().catch(()=>{})", completionHandler: nil)
     webView?.stopLoading(); webView?.navigationDelegate = nil
     webView?.configuration.userContentController.removeScriptMessageHandler(forName: "documentProgram")
     if let webView {
@@ -267,31 +332,42 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   }
   isolated deinit { startTask?.cancel(); releaseSurface() }
 
-  private func html() throws -> String {
+  private func html(package: NotebookProgramPackage? = nil, resourceOrigin: URL? = nil) throws -> NotebookProgramAssets.Document {
     func encoded<T: Encodable>(_ value: T) throws -> String {
       String(decoding: try JSONEncoder().encode(value), as: UTF8.self).replacingOccurrences(of: "<", with: "\\u003c")
     }
     let css = block.css.replacingOccurrences(of: "</style", with: "<\\/style", options: .caseInsensitive)
-    return """
+    let policy = resourceOrigin.map(NotebookProgramAssets.policy) ?? "default-src 'none';img-src data: blob:;style-src 'unsafe-inline';script-src 'unsafe-inline';font-src data:;media-src data: blob:;connect-src 'none';form-action 'none';base-uri 'none';object-src 'none'"
+    let style = package.flatMap { package in resourceOrigin.map { NotebookProgramAssets.style(package, origin: $0) } } ?? ""
+    let entry = package.flatMap { package in resourceOrigin.map { NotebookProgramAssets.script(package, origin: $0) } } ?? ""
+    let inline = package == nil ? "addEventListener('DOMContentLoaded',()=>{try{const script=document.createElement('script');script.textContent=\(try encoded(block.javaScript));document.body.append(script)}catch(error){post('failure',{message:String(error)})}});" : ""
+    return .init(before: """
     <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none';img-src data: blob:;style-src 'unsafe-inline';script-src 'unsafe-inline';font-src data:;media-src data: blob:;connect-src 'none';form-action 'none';base-uri 'none';object-src 'none'">
-    <style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}\(css)</style><script>(()=>{
-      const runtimeID=\(try encoded(id.uuidString));let value=\(try encoded(value)),suspended=false,declaredReady=null,revision=0n;
+    <meta http-equiv="Content-Security-Policy" content="\(policy)">
+    <style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}\(css)</style>\(style)<script>(()=>{
+      \(NotebookProgramBridge.script)
+      const runtimeID=\(try encoded(id.uuidString));
       const post=(kind,extra={})=>webkit.messageHandlers.documentProgram.postMessage({runtimeID,kind,...extra});
-      const stable=value=>JSON.stringify(value,(_,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);
       const painted=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      const present=async expected=>{await painted();if(revision===expected)post('presented',{revision:String(expected)})};
+      const present=async expected=>{await painted();if(documentProgram.revision===expected)post('presented',{revision:expected})};
       const focus=()=>post('focus',{value:!!document.activeElement?.matches('input,textarea,[contenteditable=true]')});
       addEventListener('focusin',focus);addEventListener('focusout',()=>queueMicrotask(focus));
       addEventListener('click',event=>{const link=event.target.closest('a[href]');if(!link)return;event.preventDefault();post('link',{href:link.getAttribute('href'),userActivated:event.isTrusted})});
       addEventListener('error',event=>post('failure',{message:String(event.error || event.message)}));
       addEventListener('unhandledrejection',event=>post('failure',{message:String(event.reason)}));
-      window.notebook=Object.freeze({get state(){return value},commit(next){if(suspended||stable(next)===stable(value))return false;value=next;revision++;post('state',{value});present(revision);return true},ready(promise){declaredReady=Promise.resolve(promise);return declaredReady}});
-      window.documentProgram=Object.freeze({async apply(next,expected){if(String(revision)!==expected)return false;if(stable(value)!==stable(next)){value=next;dispatchEvent(new CustomEvent('notebookstate',{detail:value}))}await painted();return String(revision)===expected},suspend(){suspended=true;return value},resume(){suspended=false;return true}});
-      addEventListener('load',async()=>{try{await document.fonts.ready;await Promise.all([...document.images].map(image=>image.decode().catch(()=>{})));await declaredReady;await painted();post('ready',{revision:String(revision)})}catch(error){post('failure',{message:String(error)})}});
-      addEventListener('DOMContentLoaded',()=>{try{const script=document.createElement('script');script.textContent=\(try encoded(block.javaScript));document.body.append(script)}catch(error){post('failure',{message:String(error)})}});
-    })()</script></head><body>\(block.html)</body></html>
-    """
+      window.documentProgram=createNotebookProgram({state:\(try encoded(value)),paint:painted,
+        onCommit:(value,revision)=>{post('state',{value,revision});present(revision)},
+        report:(kind,message)=>{if(!['program_lifecycle_error','program_semantic_unavailable'].includes(kind))post('failure',{message:kind+': '+message})}});
+      window.notebook=documentProgram.api;
+      addEventListener('load',async()=>{try{
+        await document.fonts.ready;
+        await Promise.all([...document.images].map(image=>image.decode()));
+        const receipt=await documentProgram.start({requiresReady:\(block.programPackage != nil || !block.javaScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || block.html.localizedCaseInsensitiveContains("<script"))});
+        post('ready',receipt);
+      }catch(error){post('failure',{message:String(error)})}});
+      \(inline)
+    })()</script></head><body>
+    """, after: "\(entry)</body></html>")
   }
 }
 #endif

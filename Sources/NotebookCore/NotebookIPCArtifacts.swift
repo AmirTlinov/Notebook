@@ -33,37 +33,167 @@ public struct NotebookRuntimeStatus: Codable, Sendable {
   }
 }
 
-public struct NotebookExportAsset: Codable, Sendable {
-  public let name: String
-  public let data: Data
-  public init(name: String, data: Data) { self.name = name; self.data = data }
+/// One accepted source/state/assets identity. Program package hashes belong to
+/// the document; their immutable namespaces cannot drift during rendering.
+public struct NotebookExportCut: Codable, Equatable, Sendable {
+  public let document: DocumentDocument
+  public let state: DocumentStateJournal
+  public let presented: AgentPinnedSource?
+  public init(document: DocumentDocument, state: DocumentStateJournal, presented: AgentPinnedSource? = nil) throws {
+    guard document.isValid, state.isValid, document.id == state.id else {
+      throw CollaborationError("invalid_export_cut", "Исходник и состояние принадлежат одному документу.")
+    }
+    if let presented {
+      try presented.validate()
+      guard presented.reference.target.kind == .document, presented.reference.target.id == document.id,
+        presented.image?.presentation != nil else {
+        throw CollaborationError("export_presentation_unavailable", "Нужны сохранённые пиксели настоящего показанного фрагмента документа, не новый render или cache.")
+      }
+    }
+    self.document = document; self.state = state; self.presented = presented
+  }
+  public func canonicalData() throws -> Data {
+    _ = try Self(document: document, state: state, presented: presented)
+    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    return try encoder.encode(self)
+  }
+  public var sha256: String { get throws {
+    SHA256.hash(data: try canonicalData()).map { String(format: "%02x", $0) }.joined()
+  } }
+}
+
+public struct NotebookExportOptions: Codable, Equatable, Sendable {
+  public enum Format: String, Codable, Sendable { case pdf, png, svg, html, package, mp4 }
+  public enum Moment: String, Codable, Sendable { case saved, presented }
+  public struct Attention: Codable, Equatable, Sendable {
+    public let contextID: UUID
+    public let referenceID: UUID
+    public init(contextID: UUID, referenceID: UUID) { self.contextID = contextID; self.referenceID = referenceID }
+  }
+  public let moment: Moment?
+  public let attention: Attention?
+  public var selectedMoment: Moment { moment ?? .saved }
+  public let format: Format
+  public let pageIndex: Int?
+  public let pixelWidth: Int?
+  public let blockID: String?
+  public let video: Video?
+  public struct Video: Codable, Equatable, Sendable {
+    public let start: Double
+    public let end: Double
+    public let framesPerSecond: Int
+    public init(start: Double, end: Double, framesPerSecond: Int) { self.start = start; self.end = end; self.framesPerSecond = framesPerSecond }
+    public var frameCount: Int { Int(((end-start)*Double(framesPerSecond)).rounded()) }
+    public func validate() throws {
+      let frames = (end-start)*Double(framesPerSecond)
+      guard start.isFinite, end.isFinite, start >= 0, end > start, (1...60).contains(framesPerSecond),
+        frames.isFinite, frames >= 1, frames <= 3600, abs(frames-frames.rounded()) < 0.000001 else {
+        throw CollaborationError("invalid_export", "Видео требует start>=0, end>start, FPS 1…60 и целое число кадров 1…3600 в полуоткрытом диапазоне [start,end).")
+      }
+    }
+  }
+  public init(format: Format = .pdf, pageIndex: Int? = nil, pixelWidth: Int? = nil, blockID: String? = nil, video: Video? = nil, moment: Moment? = nil, attention: Attention? = nil) {
+    self.moment = moment; self.attention = attention
+    self.video = video; self.format = format; self.pageIndex = pageIndex; self.pixelWidth = pixelWidth; self.blockID = blockID
+  }
+  public func validate(cut: NotebookExportCut) throws {
+    try validate()
+    guard (cut.presented == nil) == (selectedMoment == .saved) else {
+      throw CollaborationError("invalid_export_cut", "Выбранный момент должен совпадать с immutable cut.")
+    }
+    if let source = cut.presented {
+      guard attention?.contextID == source.requestID, attention?.referenceID == source.id else {
+        throw CollaborationError("export_presentation_mismatch", "Attention не совпадает с захваченным моментом.")
+      }
+      if format == .png {
+        guard pixelWidth == nil || pixelWidth == source.image?.pixelWidth else {
+          throw CollaborationError("export_presentation_mismatch", "Показанный PNG сохраняет точную выбранную область в её исходном разрешении; увеличить его нельзя.")
+        }
+      } else {
+        guard let program = source.image?.presentation?.program,
+          let block = cut.document.blocks.first(where: { $0.id == program.blockID && $0.kind == .interactive }),
+          program.blockID == source.reference.elementID,
+          program.sourceVersion == cut.document.sourceVersion(blockID: block.id),
+          program.state == (cut.state.value(for: block.id) ?? block.initialState) else {
+          throw CollaborationError("export_presentation_model_unavailable", "Для этого формата явно остановите программу и отправьте её attention: нужен checkpoint той же модели/source, связанный с показанными пикселями.")
+        }
+        if format == .pdf || format == .package || format == .mp4 {
+          // Whole-document/page formats must not label another running model
+          // as presented just because the selected program was checkpointed.
+          guard cut.document.blocks.filter({ $0.kind == .interactive }).allSatisfy({ $0.id == program.blockID }) else {
+            throw CollaborationError("export_presentation_model_unavailable", "Документ содержит другие программы без выбранного frozen checkpoint. Экспортируйте выбранный блок как SVG/HTML либо весь документ как saved.")
+          }
+        }
+        guard blockID == nil || blockID == program.blockID else {
+          throw CollaborationError("export_presentation_mismatch", "Экспортируемая программа не совпадает с выбранным кадром.")
+        }
+      }
+    }
+  }
+  public func validate() throws {
+    if selectedMoment == .presented {
+      guard attention != nil else { throw CollaborationError("invalid_export", "Показанный момент требует attention:{contextID,referenceID}.") }
+      if format == .png {
+        guard pageIndex == nil, blockID == nil, video == nil,
+          pixelWidth == nil || (1...4096).contains(pixelWidth!) else {
+          throw CollaborationError("invalid_export", "Показанный PNG сохраняет исходный capture; область задаёт attention, не pageIndex/blockID.")
+        }
+        return
+      }
+    } else {
+      guard attention == nil else { throw CollaborationError("invalid_export", "Attention относится к явно выбранному presented моменту.") }
+    }
+    guard format == .mp4 || video == nil else { throw CollaborationError("invalid_export", "Диапазон времени относится только к MP4.") }
+    switch format {
+    case .mp4:
+      guard let video, let pixelWidth, pixelWidth.isMultiple(of: 2), (128...4096).contains(pixelWidth),
+        let blockID, !blockID.isEmpty, blockID.utf8.count <= 120, (0..<10_000).contains(pageIndex ?? 0) else {
+        throw CollaborationError("invalid_export", "MP4 требует программу, диапазон/FPS и чётную ширину 128…4096; высота выводится из канонического листа и дополняется до чётной.")
+      }
+      try video.validate()
+    case .pdf, .package:
+      guard pageIndex == nil, pixelWidth == nil, blockID == nil else { throw CollaborationError("invalid_export", "PDF/пакет сохраняют весь документ; выбор блока и пиксельный размер здесь не задаются.") }
+    case .svg, .html:
+      guard let blockID, !blockID.isEmpty, blockID.utf8.count <= 120, pageIndex == nil, pixelWidth == nil else {
+        throw CollaborationError("invalid_export", "SVG/HTML требуют ID программы; пиксельный размер не задаётся.")
+      }
+    case .png:
+      guard blockID == nil, (0..<10_000).contains(pageIndex ?? 0), (128...4096).contains(pixelWidth ?? 1600) else {
+        throw CollaborationError("invalid_export", "PNG требует номер страницы >=0 и ширину от 128 до 4096 пикселей; ресурсный бюджет проверяется отдельно.")
+      }
+    }
+  }
 }
 
 public struct NotebookExportPublication: Codable, Sendable {
   public let jobID: UUID?
-  public let documentID: UUID
-  public let expectedRevision: String
+  public let cut: NotebookExportCut
+  public var documentID: UUID { cut.document.id }
+  public var expectedRevision: String { cut.document.contentStamp.revision }
   public let source: String
-  public let pdf: Data
+  public let options: NotebookExportOptions
+  public let artifact: NotebookExportFile
   public let log: String
-  public let assets: [NotebookExportAsset]?
+  public let assets: [NotebookExportFile]
   public let sourceMap: DocumentPrintSourceMap?
-  public let syncTeX: Data?
-  public init(documentID: UUID, expectedRevision: String, source: String, pdf: Data, log: String, jobID: UUID? = nil,
-    assets: [NotebookExportAsset] = [], sourceMap: DocumentPrintSourceMap? = nil, syncTeX: Data? = nil) {
+  public let syncTeX: NotebookExportFile?
+  public init(cut: NotebookExportCut, source: String, artifact: NotebookExportFile, log: String, options: NotebookExportOptions = .init(), jobID: UUID? = nil,
+    assets: [NotebookExportFile] = [], sourceMap: DocumentPrintSourceMap? = nil, syncTeX: NotebookExportFile? = nil) {
     self.assets = assets
     self.sourceMap = sourceMap; self.syncTeX = syncTeX
     self.jobID = jobID
-    self.documentID = documentID; self.expectedRevision = expectedRevision; self.source = source; self.pdf = pdf; self.log = log
+    self.cut = cut; self.source = source; self.artifact = artifact; self.options = options; self.log = log
   }
 }
 
 public struct NotebookExportReceipt: Codable, Sendable {
+  public let cutSHA256: String
+  public let stateRevision: String
+  public let cut: NotebookArtifact
   public let documentID: UUID
-  public let texPath: String
-  public let pdfPath: String
-  public let pdfSHA256: String
-  public let byteCount: Int
+  public let options: NotebookExportOptions
+  public let artifact: NotebookArtifact
+  public let source: NotebookArtifact?
   public let log: String
   public let packageSHA256: String?
   public let assets: [NotebookArtifact]?
@@ -173,110 +303,6 @@ extension NotebookStore {
       }
     }
     return .init(path: url.path, sha256: request.expectedSHA256, byteCount: bytes.count, mimeType: "image/png")
-  }
-
-  public func publishDocumentExport(_ publication: NotebookExportPublication) throws -> NotebookExportReceipt {
-    // Decode/render/hash/write preparation never holds a SQL transaction. Only
-    // revision admission, atomic installation and the durable receipt use the writer.
-    let prepared = try prepareDocumentExport(publication)
-    defer { try? FileManager.default.removeItem(at: prepared.staging) }
-    return try commandTransaction(advancesReadRevision: false, readAllowance: .agentCommand) {
-      if let id = publication.jobID, let saved = try scriptExportJob(id), saved["status"] == .string("saved"),
-        let receipt = saved["receipt"] { return try receipt.decode(NotebookExportReceipt.self) }
-      let document = try loadDocument(publication.documentID)
-      guard document.contentStamp.revision == publication.expectedRevision,
-        prepared.document.map({ $0 == document }) ?? true else {
-        throw CollaborationError("revision_conflict", "Документ изменился во время печати.")
-      }
-      if !prepared.alreadyInstalled {
-        try FileManager.default.moveItem(at: prepared.staging, to: prepared.destination)
-      }
-      let receipt = prepared.receipt
-      if let id = publication.jobID {
-        try saveScriptExportJob(id, value: .object(["status": .string("saved"), "jobID": .string(id.uuidString.lowercased()),
-          "contentRevision": .string(publication.expectedRevision), "receipt": try .encode(receipt)]))
-      }
-      return receipt
-    }
-  }
-
-  private func prepareDocumentExport(_ publication: NotebookExportPublication) throws ->
-    (staging: URL, destination: URL, alreadyInstalled: Bool, receipt: NotebookExportReceipt, document: DocumentDocument?) {
-    guard currentSQL == nil else { throw NotebookStorageError.invalidTransaction("Export preparation must precede SQL admission") }
-    let assets = publication.assets ?? []
-    let assetBytes = assets.reduce(0) { $0 + $1.data.count }
-    guard publication.source.utf8.count <= 4*1024*1024,
-      publication.pdf.count <= 16*1024*1024, publication.pdf.starts(with: Data("%PDF-".utf8)),
-      publication.log.utf8.count <= 32_000, assets.count <= 128,
-      Set(assets.map(\.name)).count == assets.count, assetBytes <= 8*1024*1024,
-      assetBytes + publication.pdf.count <= 17*1024*1024,
-      assets.enumerated().allSatisfy({ index, asset in
-        asset.name == "notebook-image-\(index).pdf" && asset.data.starts(with: Data("%PDF-".utf8))
-      }) else { throw CollaborationError("invalid_artifact", "Недопустимый или слишком большой печатный пакет.") }
-    var files = [("document.tex", Data(publication.source.utf8)), ("document.pdf", publication.pdf)]
-      + assets.map { ($0.name, $0.data) }
-    let snapshot: DocumentDocument?
-    if let map = publication.sourceMap, let syncTeX = publication.syncTeX {
-      guard syncTeX.count <= 4*1024*1024, syncTeX.starts(with: [0x1f, 0x8b]) else {
-        throw CollaborationError("invalid_artifact", "Недопустимая или слишком большая карта печатных страниц.")
-      }
-      let document = try loadDocument(publication.documentID)
-      try map.validate(document: document, source: publication.source, pdf: publication.pdf)
-      let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-      let encoded = try encoder.encode(map)
-      guard encoded.count <= 1024*1024 else { throw CollaborationError("invalid_artifact", "Карта блоков превышает 1 МиБ.") }
-      files += [("document.source-map.json", encoded), ("document.synctex.gz", syncTeX)]
-      snapshot = document
-    } else {
-      guard publication.sourceMap == nil, publication.syncTeX == nil else {
-        throw CollaborationError("invalid_artifact", "Карта блоков и карта страниц публикуются вместе.")
-      }
-      snapshot = nil
-    }
-    // Length-framed names and content hashes bind the entire package, including
-    // TeX sources that happen to compile to identical PDF pixels.
-    var digest = SHA256()
-    for (name, data) in files {
-      let nameData = Data(name.utf8)
-      var length = UInt64(nameData.count).bigEndian
-      withUnsafeBytes(of: &length) { digest.update(data: Data($0)) }
-      digest.update(data: nameData)
-      var size = UInt64(data.count).bigEndian
-      withUnsafeBytes(of: &size) { digest.update(data: Data($0)) }
-      digest.update(data: Data(SHA256.hash(data: data)))
-    }
-    let hash = digest.finalize().map { String(format: "%02x", $0) }.joined()
-    let directory = root.appendingPathComponent("exports", isDirectory: true)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    let destination = directory.appendingPathComponent(publication.documentID.uuidString.lowercased() + "-" + hash, isDirectory: true)
-    let alreadyInstalled = FileManager.default.fileExists(atPath: destination.path)
-    // The serial writer owns this directory even before entering SQL. Verify
-    // an existing immutable package here, so repeated publication never reads
-    // or compares megabytes while a database transaction is open.
-    if alreadyInstalled {
-      for (name, data) in files {
-        guard try Data(contentsOf: destination.appendingPathComponent(name)) == data else {
-          throw CollaborationError("invalid_artifact", "Сохранённый печатный пакет не соответствует своему отпечатку.")
-        }
-      }
-    }
-    let staging = directory.appendingPathComponent(".pending-" + UUID().uuidString.lowercased(), isDirectory: true)
-    try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-    do { for (name, data) in files { try data.write(to: staging.appendingPathComponent(name), options: .atomic) } }
-    catch { try? FileManager.default.removeItem(at: staging); throw error }
-    func artifact(_ name: String, type: String) -> NotebookArtifact? {
-      files.first { $0.0 == name }.map { .init(path: destination.appendingPathComponent(name).path,
-        sha256: artifactHash($0.1), byteCount: $0.1.count, mimeType: type) }
-    }
-    let receipt = NotebookExportReceipt(documentID: publication.documentID,
-      texPath: destination.appendingPathComponent("document.tex").path,
-      pdfPath: destination.appendingPathComponent("document.pdf").path,
-      pdfSHA256: artifactHash(publication.pdf), byteCount: publication.pdf.count, log: publication.log,
-      packageSHA256: hash, assets: assets.map { .init(path: destination.appendingPathComponent($0.name).path,
-        sha256: artifactHash($0.data), byteCount: $0.data.count, mimeType: "application/pdf") },
-      sourceMap: artifact("document.source-map.json", type: "application/json"),
-      syncTeX: artifact("document.synctex.gz", type: "application/gzip"))
-    return (staging, destination, alreadyInstalled, receipt, snapshot)
   }
 
   private func artifactID(_ id: UUID?) throws -> UUID {

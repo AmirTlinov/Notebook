@@ -58,6 +58,12 @@ struct NotebookAttentionSelection: Sendable {
   }
 
   @MainActor
+  func resumePrograms() { visuals?.resumePrograms() }
+
+  @MainActor
+  var hasFrozenProgram: Bool { visuals?.attentionPause?.isCurrent() == true }
+
+  @MainActor
   func freezingSubmissionVisuals() -> Self {
     var frozen = self
     frozen.visuals = visuals?.freezingForSubmission()
@@ -179,6 +185,7 @@ struct NotebookAttentionSelection: Sendable {
     }
     var images: [UUID: AgentPinnedImage] = [:]
     var unavailable: [UUID: String] = [:]
+    var semantics: [UUID: ProgramSemanticSelection] = [:]
     var totalBytes = 0
     for reference in references {
       try Task.checkCancellation()
@@ -193,10 +200,11 @@ struct NotebookAttentionSelection: Sendable {
           continue
         }
         images[reference.id] = image; totalBytes += image.png.count
+        semantics[reference.id] = visuals?.semanticSelection(reference: reference, spatialElement: element)
       } catch let error as SceneRenderError {
         unavailable[reference.id] = error.description
       }
     }
-    return .init(images: images, unavailable: unavailable)
+    return .init(images: images, unavailable: unavailable, semanticSelections: semantics)
   }
 }

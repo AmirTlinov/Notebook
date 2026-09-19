@@ -4,6 +4,16 @@ import Testing
 
 @Suite("Persistent document pictures name their rendering recipe")
 struct DocumentRenderRecipeTests {
+  private func publish(_ document: DocumentDocument, in store: NotebookStore, state: DocumentStateJournal? = nil) throws {
+    let actor = document.contentStamp.actor
+    let index = WorkspaceIndex(items: [.document(id: document.id, title: "Print recipe")],
+      selectedItemID: document.id, selectedPageID: nil, stamp: .init(counter: 0, actor: actor))
+    _ = try store.loadOrCreateSpatialInk(actor: actor)
+    try store.saveDocumentWorkspaceBundle(index: index, document: document,
+      state: state ?? .init(id: document.id, actor: actor),
+      board: .initial(rootBoardID: index.rootBoardID, itemIDs: [document.id], actor: actor))
+  }
+
   private func requestID(_ key: JSONValue) throws -> UUID {
     let hex = Array(try collaborationHash(key))
     let value = String(hex[0..<8]) + "-" + String(hex[8..<12]) + "-4" + String(hex[13..<16])
@@ -11,14 +21,14 @@ struct DocumentRenderRecipeTests {
     return try #require(UUID(uuidString: value))
   }
 
-  @Test(arguments: ["error", "ready"], [nil, "NotebookDocumentFragments/2", "NotebookDocumentFragments/3", "NotebookDocumentFragments/4"] as [String?])
+  @Test(arguments: ["error", "ready"], [nil, "NotebookDocumentFragments/2", "NotebookDocumentFragments/3", "NotebookDocumentFragments/4", "NotebookDocumentFragments/5"] as [String?])
   func anotherRecipeCannotReuseOrEraseThePreviousResult(status: String, previousRenderer: String?) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-render-recipe-\(UUID())")
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), actor = UUID()
     let document = DocumentDocument(actor: actor, blocks: [.markdown(id: "formula", source: "$x^2+y^2=z^2$")])
     let state = DocumentStateJournal(id: document.id, actor: actor)
-    try store.saveDocument(document); try store.saveDocumentState(state)
+    try publish(document, in: store, state: state)
     let acceptedDocument = try store.loadDocument(document.id), acceptedState = try store.loadDocumentState(document.id)
     let target = CollaborationTarget(kind: .document, id: document.id)
     let revision = try store.referenceRevision(target: target)
@@ -37,7 +47,7 @@ struct DocumentRenderRecipeTests {
     #expect(throws: CollaborationError.self) { try previous.requireCurrentRenderingRecipe() }
     try current.requireCurrentRenderingRecipe()
     #expect(current.id != previous.id)
-    #expect(current.id == (try requestID(originalKey.setting("renderer", .string("NotebookDocumentFragments/5")))))
+    #expect(current.id == (try requestID(originalKey.setting("renderer", .string(DocumentPrintSourceMap.renderingRecipe)))))
     #expect(current.sourceRevision == previous.sourceRevision)
     #expect(!FileManager.default.fileExists(atPath: store.targetReceiptURL(current.id).path))
     #expect(try Data(contentsOf: store.targetReceiptURL(previous.id)) == previousBytes)
@@ -62,8 +72,7 @@ struct DocumentRenderRecipeTests {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-render-page-\(UUID())")
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "Measured book")])
-    try store.saveDocument(document)
-    try store.saveDocumentState(.init(id: document.id, actor: UUID()))
+    try publish(document, in: store)
     let target = CollaborationTarget(kind: .document, id: document.id)
     let first = try store.requestTargetRender(target: target, expectedRevision: document.contentStamp.revision)
     let distant = try store.requestTargetRender(target: target, expectedRevision: document.contentStamp.revision, pageIndex: 37)
@@ -77,7 +86,11 @@ struct DocumentRenderRecipeTests {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-render-ink-\(UUID())")
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), page = PageDocument(size: .init(width: 100, height: 100), actor: UUID())
-    try store.savePage(page)
+    let actor = page.agentStamp.actor, item = WorkspaceItem.notebook(title: "Page", pageIDs: [page.id])
+    let index = WorkspaceIndex(items: [item], selectedItemID: item.id, selectedPageID: page.id, stamp: .init(counter: 0, actor: actor))
+    _ = try store.loadOrCreateSpatialInk(actor: actor)
+    try store.saveWorkspaceBundle(index: index, page: page,
+      board: .initial(rootBoardID: index.rootBoardID, itemIDs: [item.id], actor: actor))
     let target = CollaborationTarget(kind: .page, id: page.id), source = try store.referenceRevision(target: .init(kind: .page, id: page.id))
     let key: JSONValue = .object(["target": try .encode(target), "source": .string(source),
       "region": .null, "origin": .null, "page": .number(0)])
@@ -92,7 +105,7 @@ struct DocumentRenderRecipeTests {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-render-baseline-\(UUID())")
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "$x^2$")])
-    try store.saveDocument(document); try store.saveDocumentState(.init(id: document.id, actor: UUID()))
+    try publish(document, in: store)
     let target = CollaborationTarget(kind: .document, id: document.id), region = PageRect(x: 20, y: 20, width: 200, height: 120)
     let revision = try store.referenceRevision(target: target)
     let reference = CollaborationReference(target: target, region: region, pageIndex: 0, revision: revision)

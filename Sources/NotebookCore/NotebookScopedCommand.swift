@@ -14,6 +14,7 @@ extension NotebookStore {
   @discardableResult
   func writeFragment(_ fragment: NotebookStoredFragment, data suppliedData: Data? = nil, hash suppliedHash: String? = nil,
     database: NotebookSQLConnection) throws -> Bool {
+    for hash in try programPackageHashes(in: fragment) { try validateProgramPackageClosure(hash) }
     let data = try suppliedData ?? Self.storageEncoder.encode(fragment)
     let hash = try suppliedHash ?? database.putBlob(data)
     if suppliedHash != nil { _ = try database.putBlob(data) }

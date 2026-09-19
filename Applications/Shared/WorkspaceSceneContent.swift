@@ -453,6 +453,7 @@ func agentElementSnapshotSource(_ element: SpatialElement) -> AgentElement {
     html: element.html,
     css: element.css,
     javaScript: element.javaScript,
+    programPackage: element.programPackage,
     state: element.state
   )
 }

@@ -138,7 +138,9 @@ extension NotebookStore {
         let hash = row[0].text!, kind = row[1].integer!
         guard try present(hash) else { missing.append(hash); if missing.count == limit { return try finish(missing) }; continue }
         if kind == 0 {
-          for root in try lifecycleInverseOrderRoots(readLifecycleInverseFragment(hash: hash)) { try dependency(root, kind: 1) }
+          let fragment = try readLifecycleInverseFragment(hash: hash)
+          for root in try lifecycleInverseOrderRoots(fragment) { try dependency(root, kind: 1) }
+          try noteProgramDependencies(manifestHash: manifest, fragment: fragment)
         } else {
           let node = try readPageOrderNode(hash)
           orderBytes += Int64(try node.canonicalData().count)

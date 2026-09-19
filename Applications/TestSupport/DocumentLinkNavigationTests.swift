@@ -47,51 +47,18 @@ final class DocumentLinkNavigationTests: XCTestCase {
     ] { XCTAssertThrowsError(try layout(anchors: anchors)) }
   }
 
-  func testCanonicalPrefixCanOnlyGrowWithoutMovingAcceptedGeometryOrAddresses() throws {
-    let geometry = WorkspaceItemGeometry.document(.a4)
-    func record(complete: Bool, x: Double = 20, anchor: Int = 0, offset: Int = 0) throws -> DocumentLayoutRecord {
-      let regions: [[String: Any]] = (0..<(complete ? 2 : 1)).map { page in
-        ["id": "body", "pageIndex": page, "x": page == 0 ? x : 20, "y": 30.0,
-          "width": 100.0, "height": 40.0, "sourceOffset": Double(page * 40)]
-      }
-      let reading: [[Any]] = [["body", "0123456789abcdef", offset, 0, 10, 0, 30.0]]
-      let receipt: [String: Any] = ["sourceKey": "source", "layoutScope": complete ? "source" : "source-prefix",
-        "layoutCanonical": true, "pageCount": complete ? 2 : 1, "width": geometry.width, "height": geometry.height,
-        "regions": regions, "anchors": [["name": "first", "pageIndex": anchor]], "reading": reading]
-      let browser = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONSerialization.data(withJSONObject: receipt)) as? NSDictionary)
-      return try DocumentLayoutRecord(receipt: browser,
-        sourceKey: "source", blockIDs: ["body"], geometry: geometry)
-    }
-    let prefix = try record(complete: false)
-    XCTAssertFalse(prefix.isComplete)
-    for invalid in [try record(complete: true, x: 21), try record(complete: true, anchor: 1),
-      try record(complete: true, offset: 1)] {
-      XCTAssertThrowsError(try prefix.acceptExtension(invalid))
-      XCTAssertFalse(prefix.isComplete); XCTAssertEqual(prefix.pageCount, 1)
-    }
-    try prefix.acceptExtension(record(complete: true))
-    XCTAssertTrue(prefix.isComplete); XCTAssertEqual(prefix.pageCount, 2)
-    XCTAssertEqual(prefix.destination(for: "#first"), .page(0))
-    XCTAssertThrowsError(try prefix.acceptExtension(record(complete: false)))
-  }
-
-  func testSourceMeasurementRetainsEncodedNamedAndGeneratedLinkDestinationsWithoutFullDOM() async throws {
+  func testPrintedLinksComeFromTheSamePDFAndKeepTheirPhysicalDestinations() async throws {
     let surface = try surface(book())
     defer { surface.close() }
     try await ready(surface.coordinator)
     let source = try XCTUnwrap(surface.coordinator.payload?.source), layout = try XCTUnwrap(source.layout)
-    let far = try XCTUnwrap(layout.anchorPages["раздел:β"])
+    let far = try XCTUnwrap(layout.regions.first { $0.id == "far" }?.pageIndex)
     XCTAssertGreaterThan(far, 0)
-    XCTAssertEqual(layout.destination(for: "#%D1%80%D0%B0%D0%B7%D0%B4%D0%B5%D0%BB%3A%CE%B2"), .page(far))
-    XCTAssertEqual(layout.anchorPages["named"], far)
-    XCTAssertNotNil(layout.anchorPages["generated-heading"])
-    XCTAssertNotNil(layout.anchorPages["generated-heading-1"])
-    XCTAssertEqual(layout.anchorPages["dup"], 0, "Duplicate author IDs keep their first DOM destination")
-    let web = try XCTUnwrap(surface.coordinator.webView)
-    await source.discardIdlePreparation()
-    let value = try await evaluate("return String(document.querySelectorAll('.document-layout-preparation').length);", web)
-    XCTAssertEqual(value, "0")
-    XCTAssertEqual(source.preparationCount, 1)
+    let printed = try await source.printedSource(resources: SceneRenderResources.shared)
+    let links = try DocumentPrintNavigation.read(printed.artifact.pdf).links
+    XCTAssertTrue(links.contains { $0.page == 0 && layout.destination(for: $0.href) == .page(far) })
+    XCTAssertTrue(links.contains { $0.page == far && layout.destination(for: $0.href) == .page(0) })
+    XCTAssertEqual(source.measurementCount, 1)
   }
 
   func testMeasuredReadingAddressKeepsTheSameTextAfterPrecedingSourceInsertion() async throws {
@@ -100,8 +67,10 @@ final class DocumentLinkNavigationTests: XCTestCase {
     defer { first.close() }
     try await ready(first.coordinator)
     let oldLayout = try XCTUnwrap(first.coordinator.payload?.source.layout)
-    let page = try XCTUnwrap(oldLayout.anchorPages["раздел:β"])
-    let anchor = try XCTUnwrap(oldLayout.reading.anchor(page: page, blockOrder: document.blocks.map(\.id)))
+    let far = try XCTUnwrap(oldLayout.regions.first { $0.id == "far" })
+    let page = far.pageIndex
+    let anchor = try XCTUnwrap(oldLayout.reading.anchor(page: page, blockOrder: document.blocks.map(\.id), y: far.frame.y))
+    XCTAssertEqual(anchor.blockID, "far")
     XCTAssertFalse(anchor.nodeID.isEmpty)
     let originalBody = try XCTUnwrap(document.blocks.first { $0.id == "body" }).source
     XCTAssertTrue(document.replaceBlockSource(id: "body", source:
@@ -120,18 +89,6 @@ final class DocumentLinkNavigationTests: XCTestCase {
     XCTAssertEqual(layout.reading.page(for: anchor, survivingBlockOrder: document.blocks.map(\.id), regions: layout.regions), restoredPage)
   }
 
-  func testRepeatedHeadingsAllocateTheirAddressesWithLinearWork() async throws {
-    let surface = try surface(DocumentDocument(actor: UUID(), blocks: [.markdown(id: "headings", source:
-      String(repeating: "## Repeated heading\n\nA short paragraph.\n\n", count: 80))]))
-    defer { surface.close() }
-    try await ready(surface.coordinator)
-    let anchors = try XCTUnwrap(surface.coordinator.payload?.source.layout?.anchorPages)
-    XCTAssertEqual(anchors.count, 80)
-    for index in 0..<80 { XCTAssertNotNil(anchors[index == 0 ? "repeated-heading" : "repeated-heading-\(index)"]) }
-    let probes = try await evaluate("return String(notebookRenderer.pageReceipt().work.headingAddressProbes);", try XCTUnwrap(surface.coordinator.webView))
-    XCTAssertEqual(probes, "80", "Repeated headings must not scan every earlier suffix again")
-  }
-
   func testOnlyTheCurrentCanonicalFragmentCanRequestNavigation() async throws {
     let surface = try surface(book())
     defer { surface.close() }
@@ -142,7 +99,7 @@ final class DocumentLinkNavigationTests: XCTestCase {
     let raw = try await evaluate("document.querySelector('#document a[href]').click(); return JSON.stringify(notebookRenderer.presentationReceipt());", web)
     let deadline = ContinuousClock.now + .seconds(1)
     while destinations.isEmpty, .now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-    XCTAssertEqual(destinations, [.page(try XCTUnwrap(coordinator.payload?.source.layout?.anchorPages["раздел:β"]))])
+    XCTAssertEqual(destinations, [.page(try XCTUnwrap(coordinator.payload?.source.layout?.regions.first { $0.id == "far" }?.pageIndex))])
     var message = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]); message["kind"] = "link"; message["href"] = "#contents"; message["activationSequence"] = "2"
     for field in ["sourceKey", "stateKey", "runtimeID", "generation", "renderToken", "pageIndex", "presentationEpoch"] {
       var stale = message; stale[field] = "stale"; coordinator.receive(body: stale, from: web)
@@ -179,9 +136,9 @@ final class DocumentLinkNavigationTests: XCTestCase {
 
   private func surface(_ document: DocumentDocument) throws -> Surface {
     let coordinator = DocumentWebCoordinator(resources: SceneRenderResources(), onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
     coordinator.update(document: document, state: .init(id: document.id, actor: UUID()), selectedPageIndex: 0,
-      capturesSnapshot: false, onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      capturesSnapshot: false, onRenderReady: .init { _ in }, onPageLayout: { _ in },  onStateChange: { _, _ in nil })
     let host = DocumentWebHost(), size = WorkspaceItemGeometry.document(document.paperSize)
     #if os(iOS)
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)

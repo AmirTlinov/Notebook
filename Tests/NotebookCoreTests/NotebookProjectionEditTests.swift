@@ -52,7 +52,11 @@ struct NotebookProjectionEditTests {
       #expect(board.isValid(items: durable.items))
       #expect(board.portalCamera(childID) == camera.portalCamera(childID))
       let cursor = try store.currentChangeCursor()
-      _ = try store.saveWorkspaceEdits(before: before, after: after, boardBefore: boardBefore, boardAfter: boardAfter, pages: pages)
+      // This raw native command has no immutable action identity. Replaying a
+      // birth is refused; action-ID retries are covered by identity retirement.
+      #expect(throws: NotebookStorageError.invalidTransaction("item birth UUID is already reserved")) {
+        _ = try store.saveWorkspaceEdits(before: before, after: after, boardBefore: boardBefore, boardAfter: boardAfter, pages: pages)
+      }
       #expect(try store.currentChangeCursor() == cursor)
     }
   }

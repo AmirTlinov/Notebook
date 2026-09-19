@@ -28,6 +28,8 @@
     static let historyArgument = "--notebook-history-performance-fixture"
     static let pointerArgument = "--notebook-pointer-fixture"
     static let passiveSVGArgument = "--notebook-passive-svg-fixture"
+    static let packageArgument = "--notebook-compiled-program-fixture"
+    static let lcArgument = "--notebook-lc-fixture"
     static let mixedWebArgument = "--notebook-mixed-web-fixture"
     static let independentMaterialsArgument = "--notebook-independent-materials="
     static let nativeGraphicsArgument = "--notebook-native-graphics-fixture"
@@ -35,8 +37,11 @@
 
     static func makeModel() -> NotebookAppModel {
       let fileManager = FileManager.default
+      let packageFixture = ProcessInfo.processInfo.arguments.contains(packageArgument)
+      let lcFixture = ProcessInfo.processInfo.arguments.contains(lcArgument)
       let nativeGraphics = ProcessInfo.processInfo.arguments.contains(nativeGraphicsArgument)
       let nativeGraphicPage = ProcessInfo.processInfo.arguments.contains(nativeGraphicPageArgument)
+      let scientificMaterials = ProcessInfo.processInfo.arguments.contains("--notebook-scientific-materials")
       let materialCount = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix(independentMaterialsArgument) })
         .flatMap { Int($0.dropFirst(independentMaterialsArgument.count)) }
       let startsAtCover = ProcessInfo.processInfo.arguments.contains(
@@ -75,7 +80,11 @@
       let fixtureName: String
       // The full route reads this gesture's durable result after other UI
       // scenarios. Their fresh default fixture must not replace that evidence.
-      if ProcessInfo.processInfo.arguments.contains(pageTurnContentArgument) {
+      if packageFixture {
+        fixtureName = startsInDocument ? "CompiledDocument" : "CompiledBoard"
+      } else if lcFixture {
+        fixtureName = startsInDocument ? "LCDocument" : "LCBoard"
+      } else if ProcessInfo.processInfo.arguments.contains(pageTurnContentArgument) {
         fixtureName = "PageTurnContent"
       } else if nativeGraphics {
         fixtureName = (nativeGraphicPage ? "NativeGraphicPage" : "NativeGraphicBoard")
@@ -89,7 +98,7 @@
       } else if ProcessInfo.processInfo.arguments.contains(nestedBoardArgument) {
         fixtureName = "NestedBoardCamera"
       } else if let materialCount {
-        fixtureName = "IndependentMaterials-\(materialCount)"
+        fixtureName = "IndependentMaterials-\(materialCount)" + (scientificMaterials ? "-Science" : "")
       } else if ProcessInfo.processInfo.arguments.contains(mixedWebArgument) {
         fixtureName = "MixedWebCamera"
       } else if ProcessInfo.processInfo.arguments.contains(passiveSVGArgument) {
@@ -184,7 +193,20 @@
             ] : [])
         )
         try store.savePage(page)
-        if ProcessInfo.processInfo.arguments.contains(nestedBoardArgument) {
+        let packageHash = packageFixture ? try installCompiledProgram(store: store) : nil
+        if (lcFixture || packageFixture) && !startsInDocument {
+          var board = BoardDocument.initial(itemIDs: [itemID], actor: actor)
+          _ = board.moveItem(itemID, to: .init(x: 8_000, y: 8_000), actor: actor)
+          let program = SpatialElement(id: "lc", surface: .board(index.rootBoardID), kind: .web,
+            frame: .init(x: 0, y: 0, width: 760, height: 720), worldOrigin: .init(x: -380, y: -420),
+            source: packageFixture ? "" : "Идеальный LC-контур", html: packageFixture ? "" : try lcSource("html"), css: packageFixture ? "" : try lcSource("css"),
+            javaScript: packageFixture ? "" : try lcSource("js"), programPackage: packageHash, stamp: .init(counter: 0, actor: actor))
+          _ = board.upsertElement(program, expected: nil, actor: actor)
+          try store.saveBoard(.init(rootBoardID: index.rootBoardID,
+            boards: [.init(id: index.rootBoardID, board: board)], stamp: board.stamp), items: index.items)
+          try store.savePresence(.init(boardID: index.rootBoardID, mode: .board,
+            camera: .init(center: .zero, scale: 1), viewport: .init(x: size.width, y: size.height)))
+        } else if ProcessInfo.processInfo.arguments.contains(nestedBoardArgument) {
           let childID = UUID(uuidString: "7E7A1000-0000-4000-8000-00000000000D")!
           let stamp = VersionStamp(counter: 0, actor: actor)
           index = WorkspaceIndex(items: index.items + [.board(id: childID, title: "Вложенная доска")],
@@ -204,7 +226,22 @@
           precondition([2, 4, 8].contains(materialCount))
           var board = BoardDocument.initial(itemIDs: [itemID], actor: actor)
           _ = board.moveItem(itemID, to: .init(x: 8_000, y: 8_000), actor: actor)
+          let science: [String] = scientificMaterials ? try ["signal", "gears", "wave"].map { name in
+            guard let path = ProcessInfo.processInfo.environment["NOTEBOOK_SCIENCE_" + name.uppercased()] else {
+              throw NotebookStorageError.invalidTransaction("Scientific fixture source missing")
+            }
+            return try installCompiledProgram(store: store, path: path)
+          } : []
           for offset in 0..<materialCount {
+            if scientificMaterials {
+              let element = SpatialElement(id: String(format: "material-%02d", offset + 1),
+                surface: .board(index.rootBoardID), kind: .web,
+                frame: .init(x: 0, y: 0, width: 600, height: 900),
+                worldOrigin: .init(x: -610 + Double(offset % 2) * 640, y: -920 + Double(offset / 2) * 950),
+                source: "", html: "", programPackage: science[offset % science.count], stamp: .init(counter: 0, actor: actor))
+              _ = board.upsertElement(element, expected: nil, actor: actor)
+              continue
+            }
             let number = offset + 1, program = offset < materialCount / 2
             let slow = materialCount == 8 && offset == 7
             let text = !program && !slow && offset == materialCount - 2
@@ -218,7 +255,7 @@
                 : "<svg xmlns='http://www.w3.org/2000/svg' role='img' aria-label='Material \(number)' viewBox='0 0 170 170'><rect width='170' height='170' fill='#def0df'/><path d='M15 150L85 15L155 150Z' fill='#23784c'/></svg>",
               css: program ? "body{padding:12px;background:#e7efff}button{width:140px;height:60px}output{display:block;margin-top:20px}" : "",
               javaScript: program
-                ? "document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});draw()};function draw(){document.querySelector('output').textContent='Program \(number) count '+notebook.state.count}addEventListener('notebookstate',draw);draw()"
+                ? "document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});draw()};function draw(){document.querySelector('output').textContent='Program \(number) count '+notebook.state.count}addEventListener('notebookstate',draw);draw();notebook.ready(Promise.resolve())"
                 : (slow ? "notebook.ready(new Promise(resolve=>setTimeout(resolve,6000)))" : ""),
               state: .object(["count": .number(0)]), stamp: .init(counter: 0, actor: actor))
             _ = board.upsertElement(element, expected: nil, actor: actor)
@@ -226,7 +263,7 @@
           try store.saveBoard(.init(rootBoardID: index.rootBoardID,
             boards: [.init(id: index.rootBoardID, board: board)], stamp: board.stamp), items: index.items)
           try store.savePresence(.init(boardID: index.rootBoardID, mode: .board,
-            camera: .init(center: .zero, scale: 1), viewport: .init(x: size.width, y: size.height)))
+            camera: .init(center: .init(x: 0, y: scientificMaterials && materialCount == 2 ? -470 : 0), scale: scientificMaterials ? 0.63 : 1), viewport: .init(x: size.width, y: size.height)))
         } else if ProcessInfo.processInfo.arguments.contains(mixedWebArgument) {
           var board = BoardDocument.initial(itemIDs: [itemID], actor: actor)
           _ = board.moveItem(itemID, to: .init(x: 8_000, y: 8_000), actor: actor)
@@ -260,7 +297,7 @@
               frame: .init(x: 0, y: 0, width: 240, height: 200), worldOrigin: .init(x: 100, y: 80),
               source: "Controls", html: "<button aria-label='SVG scene counter'>Add</button><output id='count'>Count 0</output><input aria-label='SVG scene slider' type='range' value='20'>",
               css: "body{background:#eef4fc;padding:15px}button,input{display:block;width:180px;height:48px}",
-              javaScript: "document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});draw()};function draw(){document.getElementById('count').textContent='Count '+notebook.state.count}addEventListener('notebookstate',draw);draw()",
+              javaScript: "document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});draw()};function draw(){document.getElementById('count').textContent='Count '+notebook.state.count}addEventListener('notebookstate',draw);draw();notebook.ready(Promise.resolve())",
               state: .object(["count": .number(0)]), stamp: .init(counter: 0, actor: actor))
           ] { _ = board.upsertElement(element, expected: nil, actor: actor) }
           try store.saveBoard(.init(rootBoardID: index.rootBoardID,
@@ -282,7 +319,12 @@
             id: documentID,
             actor: actor,
             paperSize: ProcessInfo.processInfo.arguments.contains(documentLetterArgument) ? .letter : .a4,
-            blocks: ProcessInfo.processInfo.arguments.contains(documentLinksArgument)
+            blocks: packageFixture ? [
+              .interactive(id: "compiled", html: "", programPackage: packageHash, height: 600)
+            ] : lcFixture ? [
+              .interactive(id: "lc", html: try lcSource("html"), css: try lcSource("css"),
+                javaScript: try lcSource("js"), height: 720)
+            ] : ProcessInfo.processInfo.arguments.contains(documentLinksArgument)
               ? [
                 .markdown(id: "contents", source: "<h1 id='contents'>Оглавление проверки</h1><p><a href='#глава:предел'>К дальней главе</a></p><p><a href='#missing'>Отсутствующий раздел</a></p>"),
                 .markdown(id: "body", source: String(repeating: "Промежуточный текст занимает настоящие листы и не является целью ссылки.\n\n", count: 120)),
@@ -310,7 +352,7 @@
                 id: "square",
                 html: "<label for='x'>x = <output id='value'>3</output></label><input id='x' type='range' min='0' max='10' value='3'><p>x² = <strong id='square'>9</strong></p>",
                 css: "body{font:22px -apple-system;padding:18px}input{width:100%}",
-                javaScript: "const x=document.querySelector('#x');const value=document.querySelector('#value');const square=document.querySelector('#square');x.addEventListener('input',()=>{value.textContent=x.value;square.textContent=Number(x.value)**2;notebook.commit({x:Number(x.value)})});",
+                javaScript: "const x=document.querySelector('#x');const value=document.querySelector('#value');const square=document.querySelector('#square');x.addEventListener('input',()=>{value.textContent=x.value;square.textContent=Number(x.value)**2;notebook.commit({x:Number(x.value)})});notebook.ready(Promise.resolve())",
                 initialState: .object(["x": .number(3)]),
                 height: 190
               ),
@@ -611,6 +653,52 @@
       }
     }
 
+    private static func installCompiledProgram(store: NotebookStore, path: String? = nil) throws -> String {
+      struct Compiled: Decodable { let package: NotebookProgramPackage; let files: [String: String]; let packageHash: String
+        let binaryFiles: [String: String]?; let webResources: [String: String]?; let bundleResources: [String: String]? }
+      var fixtureResources: URL?
+      var encoded = ProcessInfo.processInfo.environment["NOTEBOOK_COMPILED_PROGRAM"].map { Data($0.utf8) }
+      #if targetEnvironment(simulator)
+        // The isolated Simulator can read the UI runner's immutable fixture. Do
+        // not copy megabytes into launch environment or the production bundle.
+        if let path = path ?? ProcessInfo.processInfo.environment["NOTEBOOK_COMPILED_PROGRAM_PATH"] {
+          let url = URL(fileURLWithPath: path)
+          encoded = try Data(contentsOf: url); fixtureResources = url.deletingLastPathComponent()
+        }
+      #endif
+      guard let encoded else { throw NotebookStorageError.invalidTransaction("Compiled fixture source missing") }
+      let value = try JSONDecoder().decode(Compiled.self, from: encoded)
+      for file in value.package.files {
+        let bytes: Data
+        if let source = value.files[file.path] { bytes = Data(source.utf8) }
+        else if let source = value.binaryFiles?[file.path], let binary = Data(base64Encoded: source) { bytes = binary }
+        else if let resource = value.webResources?[file.path], let root = Bundle.main.resourceURL {
+          bytes = try Data(contentsOf: root.appendingPathComponent("WebResources/" + resource))
+        } else if let resource = value.bundleResources?[file.path], let fixtureResources {
+          bytes = try Data(contentsOf: fixtureResources.appendingPathComponent(resource))
+        } else { throw NotebookStorageError.invalidTransaction("Compiled fixture file missing") }
+        var offset = 0
+        for part in file.parts {
+          guard offset + part.byteCount <= bytes.count else { throw NotebookStorageError.invalidTransaction("Compiled fixture part missing") }
+          try store.stageBlob(data: bytes.subdata(in: offset..<(offset + part.byteCount)), expectedHash: part.sha256)
+          offset += part.byteCount
+        }
+        guard offset == bytes.count else { throw NotebookStorageError.invalidTransaction("Compiled fixture size changed") }
+      }
+      let hash = try store.stageProgramPackage(value.package)
+      guard hash == value.packageHash else { throw NotebookStorageError.invalidTransaction("Compiled fixture identity changed") }
+      return hash
+    }
+
+    // The UI runner supplies the shipped recipe bytes. No second example or
+    // test-only lifecycle implementation is embedded in the application.
+    private static func lcSource(_ suffix: String) throws -> String {
+      guard let source = ProcessInfo.processInfo.environment["NOTEBOOK_LC_" + suffix.uppercased()], !source.isEmpty else {
+        throw NotebookStorageError.invalidTransaction("LC fixture source missing: " + suffix)
+      }
+      return source
+    }
+
     private static func installGraphics(store: NotebookStore, index: WorkspaceIndex, pageID: UUID,
       actor: UUID, onPage: Bool) throws {
       _ = try store.loadOrCreateSpatialInk(actor: actor)
@@ -630,7 +718,7 @@
         "frame": try .encode(PageRect(x: onPage ? 420 : 0, y: onPage ? 250 : 0, width: 280, height: 220)),
         "html": .string("<button aria-label='Graphic scene counter'>Add</button><output id='count'></output><input aria-label='Graphic scene draft' value='seed'><p id='runtime'></p>"),
         "css": .string("body{padding:15px;background:#edf4fc}button,input{display:block;width:240px;height:44px;margin-bottom:12px}output{display:block}p{font-size:12px}"),
-        "javaScript": .string("document.querySelector('#runtime').textContent='Runtime '+Date.now()+'-'+Math.random();document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});draw()};function draw(){document.querySelector('#count').textContent='Count '+notebook.state.count}addEventListener('notebookstate',draw);draw()"),
+        "javaScript": .string("document.querySelector('#runtime').textContent='Runtime '+Date.now()+'-'+Math.random();document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});draw()};function draw(){document.querySelector('#count').textContent='Count '+notebook.state.count}addEventListener('notebookstate',draw);draw();notebook.ready(Promise.resolve())"),
         "state": .object(["count": .number(0)])]
       if !onPage {
         node["worldOrigin"] = try .encode(WorldPoint(x: -340, y: -260))

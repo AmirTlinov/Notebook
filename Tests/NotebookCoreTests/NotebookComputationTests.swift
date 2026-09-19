@@ -353,7 +353,7 @@ struct NotebookComputationTests {
     }
   }
 
-  @Test func deletingTheNotebookRemovesItsComputationsAndCannotPublishALateCandidate() throws {
+  @Test func deletingTheNotebookRetiresItsComputationsAndCannotPublishALateCandidate() throws {
     try fixture { store, actor, notebook, page in
       var workspace = try store.loadIndex(), board = try store.loadBoard(items: workspace.items)
       let created = workspace.createNotebook(title: "Retained", actor: actor, pageSize: .init(width: 834, height: 1194))
@@ -362,12 +362,13 @@ struct NotebookComputationTests {
       #expect(placed); try store.saveWorkspaceBundle(index: workspace, page: remaining.page, board: board)
       let record = try activate(store, actor, notebook, page).computation
       let input = try begin(record, store: store, actor: actor)
+      let retained = try store.storedFragments(address: pageFile(page) + "#")
       try store.deleteWorkspaceItem(itemID: notebook, actor: actor)
       let cursor = try store.currentChangeCursor()
       #expect(throws: CocoaError.self) { try store.readComputation(pageID: page, id: record.id) }
-      #expect(throws: NotebookStorageError.transactionConflict) { try store.publishComputationRecognition(input.preparing(output()), actor: actor) }
+      #expect(throws: CocoaError.self) { try store.publishComputationRecognition(input.preparing(output()), actor: actor) }
       #expect(try store.currentChangeCursor() == cursor)
-      #expect(try store.storedFragments(address: pageFile(page) + "#").isEmpty)
+      #expect(try store.storedFragments(address: pageFile(page) + "#") == retained)
     }
   }
 

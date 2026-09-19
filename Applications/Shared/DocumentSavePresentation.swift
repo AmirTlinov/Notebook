@@ -7,6 +7,7 @@ struct DocumentSavePresentation: Equatable {
   let sessionID: UUID
   let documentID: UUID
   let blockID: String
+  var isPreamble = false
   var phase: Phase
   var source: String?
 }

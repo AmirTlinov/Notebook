@@ -346,6 +346,7 @@ dependencies = [
  "krilla",
  "krilla-svg",
  "log",
+ "ttf-parser",
  "usvg",
 ]
 

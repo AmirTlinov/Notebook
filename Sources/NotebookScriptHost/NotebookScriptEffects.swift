@@ -122,9 +122,13 @@ extension NotebookScriptCoordinator {
         guard let presentationID = args["id"] else { throw CollaborationError("invalid_presentation", "Нужен ID показа.") }
         result = try await send(["command": .string("presentation"), "actionID": presentationID, "cancel": .bool(true)])
       case "export": result = try await startExport(id: id, arguments: args)
+      case "cancelExport":
+        guard let jobID = args.string("jobID").flatMap(UUID.init(uuidString:)) else { throw CollaborationError("invalid_export", "Нужен jobID.") }
+        result = try await persistence { try $0.cancelScriptExport(jobID, effect: .init(runID: runID, effectID: id)) }
+        if result.string("status") == "cancelled" { exportTasks[jobID]?.cancel() }
       default: throw CollaborationError("unknown_effect", "Неизвестное изменение.")
       }
-      if ["transaction", "undo"].contains(effect.method) { return result }
+      if ["transaction", "undo", "cancelExport"].contains(effect.method) { return result }
       effect.state = .saved; effect.value = result; effect.error = nil
       let saved = effect
       _ = try await persistence { try $0.saveScriptEffect(runID, effect: saved); return .null }

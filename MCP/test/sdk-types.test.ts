@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFile,mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join,resolve} from 'node:path';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {sdkReference,sdkInputs,sdkOutputs} from '../src/sdk-contracts.js';
@@ -34,9 +35,15 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
       const appearance:'intact'|'partial'|'erased'=s.data.appearance.state;
       const sourceIsPixels:boolean=s.data.appearance.sourceIsCompleteAppearance;
       const d=await nb.document({id:input.documentID,blockID:'one'});
-      if(d.data) { const kind:'markdown'|'latex'|'interactive'=d.data.block.kind; await emit(kind); }
+      if(d.data) { const kind:'markdown'|'latex'|'tex'|'interactive'=d.data.block.kind; await emit(kind); }
+      await nb.export('png',{documentID:input.documentID,format:'png',pageIndex:0,pixelWidth:1600});
+      await nb.export('shown',{documentID:input.documentID,format:'png',moment:'presented',attention:{contextID:input.documentID,referenceID:input.documentID}});
+      await nb.export('portable',{documentID:input.documentID,format:'package'});
+      await nb.export('html',{documentID:input.documentID,format:'html',blockID:'sound'});
+      await nb.export('svg',{documentID:input.documentID,format:'svg',blockID:'signal'});
+      await nb.cancelExport('cancel-image',{jobID:input.documentID});
       const printed=await nb.exportStatus({jobID:input.documentID});
-      for(const map of [printed.data.receipt?.sourceMap,printed.data.receipt?.syncTeX]) {
+      for(const map of [printed.data.receipt?.artifact,printed.data.receipt?.source,printed.data.receipt?.cut,printed.data.receipt?.sourceMap,printed.data.receipt?.syncTeX]) {
         if(map) {
           const path:string=map.path, hash:string=map.sha256, bytes:number=map.byteCount, mime:string=map.mimeType;
           await emit({path,hash,bytes,mime});
@@ -186,7 +193,7 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
       const wrong:number=d.data?.block.kind;
     }`);
     await writeFile(join(root,'tsconfig.json'),JSON.stringify({compilerOptions:{strict:true,noEmit:true,noEmitOnError:true,skipLibCheck:false,lib:['ES2023'],types:[],target:'ES2023',module:'esnext'},files:['notebook-sdk.d.ts','script.ts']}));
-    const compiler=resolve('node_modules/.bin/tsc');
+    const compiler=fileURLToPath(new URL('../node_modules/.bin/tsc',import.meta.url));
     await run(compiler,['--project',join(root,'tsconfig.json')],{maxBuffer:1024*1024});
   } finally { await rm(root,{recursive:true,force:true}); }
 });

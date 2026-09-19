@@ -9252,7 +9252,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
   }
 
   // src/document-tex.ts
-  function documentExport(document) {
+  function documentExport(document, programPointScale = 0.75) {
+    if (!Number.isFinite(programPointScale) || programPointScale <= 0 || programPointScale > 10) throw new Error("invalid_program_scale");
     const assets = [];
     const images = /* @__PURE__ */ new Map();
     const anchors = /* @__PURE__ */ new Set();
@@ -9260,11 +9261,38 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     let imageBytes = 0;
     let currentMath = [];
     const restoreMath = (value) => currentMath.reduce((text, [placeholder, formula]) => text.split(placeholder).join(formula), value);
+    let imageToken = "NOTEBOOKEMBEDDEDIMAGE";
+    while (document.blocks.some((block) => block.source.includes(imageToken))) imageToken += "X";
+    const encodedImages = [];
+    const tokenPattern = new RegExp(`${imageToken}(\\d+)END`, "g");
+    const restoreImages = (value) => value.replace(tokenPattern, (token, index) => encodedImages[Number(index)] ?? token);
+    let markerPrefix = "NOTEBOOKSOURCEOFFSET";
+    while (document.blocks.some((block) => block.source.includes(markerPrefix))) markerPrefix += "X";
     const rendered = document.blocks.map((block) => {
       if (block.kind !== "markdown") return { block, fragment: null, nodes: [], math: [] };
-      const protectedMath = protectMath(block.source);
-      const fragment = parseFragment(f.parse(protectedMath.source, { async: false, gfm: true }));
-      return { block, fragment, nodes: descendants(fragment.childNodes), math: protectedMath.segments };
+      const normalized = replaceMapped(block.source, /\r\n|\r/g, () => "\n");
+      const compact = replaceMapped(normalized.text, /data:image\/(?:svg\+xml|png|jpeg)(?:;charset=[^;,\s]+)?;base64,[A-Za-z0-9+/=]+/gi, (value) => {
+        const token = `${imageToken}${encodedImages.length}END`;
+        encodedImages.push(value);
+        return token;
+      });
+      const protectedMath = protectMath(compact.text);
+      const tokens = f.lexer(protectedMath.source, { gfm: true });
+      let cursor = 0;
+      const html = tokens.map((token) => {
+        const start = protectedMath.source.indexOf(token.raw, cursor);
+        if (start < cursor) throw new Error("print_source_map_invalid: Markdown token lost its source");
+        cursor = start + token.raw.length;
+        const offset = normalized.originalOffset(compact.originalOffset(protectedMath.originalOffset(start)));
+        return `<!--${markerPrefix}${offset}-->` + f.parser([token], { gfm: true });
+      }).join("");
+      const fragment = parseFragment(html);
+      const nodes = descendants(fragment.childNodes);
+      for (const node of nodes) {
+        if ("value" in node) node.value = restoreImages(node.value);
+        if ("attrs" in node) for (const attr of node.attrs) attr.value = restoreImages(attr.value);
+      }
+      return { block, fragment, nodes, math: protectedMath.segments.map(([token, value]) => [token, restoreImages(value)]) };
     });
     for (const { nodes } of rendered) for (const node of nodes) {
       if (!("tagName" in node)) continue;
@@ -9320,6 +9348,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       return nodes.map(renderNode).join("");
     }
     function renderNode(node) {
+      if (node.nodeName === "#comment" && "data" in node && new RegExp(`^${markerPrefix}\\d+$`).test(node.data)) return `\uE000${node.data}\uE001`;
       if ("value" in node) return renderText(node.value.replace(/\s+/g, " "));
       if (!("tagName" in node)) return "";
       const tag = node.tagName;
@@ -9427,27 +9456,41 @@ ${prefix}${body2}\\par
           return prefix + body2;
       }
     }
+    const mappedOffsets = /* @__PURE__ */ new Map();
     const body = rendered.map(({ block, fragment, math }) => {
-      if (block.kind === "latex") return block.source;
-      if (block.kind === "interactive") return [
-        "\\begin{center}",
-        "\\fcolorbox{black!18}{black!2}{%",
-        "\\begin{minipage}{0.88\\linewidth}",
-        `\\textbf{\u0418\u043D\u0442\u0435\u0440\u0430\u043A\u0442\u0438\u0432\u043D\u044B\u0439 \u044D\u043B\u0435\u043C\u0435\u043D\u0442:} \\texttt{${Array.from(block.id, escapeTeX).join("\\allowbreak{}")}}\\par`,
-        "\u041E\u0442\u043A\u0440\u043E\u0439\u0442\u0435 \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442 \u0432 Notebook, \u0447\u0442\u043E\u0431\u044B \u0438\u0441\u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u044C \u044D\u0442\u043E\u0442 \u044D\u043B\u0435\u043C\u0435\u043D\u0442.",
-        "\\end{minipage}}",
-        "\\end{center}"
-      ].join("\n");
+      if (block.kind === "tex") return block.source;
+      if (block.kind === "latex") {
+        return /^\s*(\$\$|\\\[|\\begin\s*\{(?:equation|align|alignat|gather|multline|flalign)\*?\})/.test(block.source) ? block.source : `\\[${block.source}\\]`;
+      }
+      if (block.kind === "interactive") {
+        const height = (block.height || 320) * programPointScale;
+        const rows = ["\\par"];
+        for (let y2 = 0; y2 < height; y2 += 12) rows.push(`\\nointerlineskip\\hbox to\\linewidth{\\vrule width0pt height${Math.min(12, height - y2).toFixed(6)}bp depth0pt\\hfil}\\penalty0`);
+        rows.push("\\par");
+        return rows.join("\n");
+      }
       currentMath = math;
       let text = renderNodes(fragment.childNodes);
       for (const [placeholder, formula] of math) text = text.split(placeholder).join(formula);
-      return text;
+      const offsets = [0];
+      let currentOffset = 0, generatedLine = 0;
+      text = text.replace(new RegExp(`\\uE000${markerPrefix}(\\d+)\\uE001|\\n`, "g"), (value, offset) => {
+        if (offset !== void 0) {
+          currentOffset = Number(offset);
+          offsets[generatedLine] = currentOffset;
+          return "";
+        }
+        offsets[++generatedLine] = currentOffset;
+        return value;
+      });
+      mappedOffsets.set(block.id, offsets);
+      return text.trim() ? text : "\\noindent\\mbox{}\\par";
     });
     const supplied = document.preamble.trim();
     let preamble = /\\documentclass(?:\[[^\]]*\])?\{/.test(supplied) ? supplied : [
       "\\documentclass[12pt]{article}",
       "\\usepackage{fontspec}",
-      "\\setmainfont{Georgia}",
+      "\\setmainfont{Libertinus Serif}",
       supplied
     ].filter(Boolean).join("\n");
     if (/\\(?:begin|end)\s*\{document\}/.test(preamble)) throw new Error("preamble \u0437\u0430\u0434\u0430\u0451\u0442 \u043A\u043B\u0430\u0441\u0441 \u0438 \u043F\u0430\u043A\u0435\u0442\u044B; begin/end document \u043F\u0440\u0438\u043D\u0430\u0434\u043B\u0435\u0436\u0430\u0442 \u044D\u043A\u0441\u043F\u043E\u0440\u0442\u0451\u0440\u0443.");
@@ -9471,10 +9514,23 @@ ${prefix}${body2}\\par
     const parts = [preamble, "\\begin{document}", "\\special{pdf:minorversion 7}"];
     let line = parts.reduce((count, part) => count + newlineCount(part) + 2, 1);
     const sourceRanges = body.map((text, index) => {
-      const firstLine = line;
+      const firstLine = line, block = document.blocks[index];
+      let sourceOffsets;
+      if (block.kind === "markdown") sourceOffsets = mappedOffsets.get(block.id);
+      else {
+        let offset = 0;
+        sourceOffsets = block.kind === "interactive" ? [0] : block.source.split("\n").map((value) => {
+          const start = offset;
+          offset += value.length + 1;
+          return start;
+        });
+      }
+      const count = newlineCount(text) + 2;
+      if (count > 2e5) throw new Error("resource_limit: Print source exceeds 200000 mapped lines per block");
+      sourceOffsets = Array.from({ length: count }, (_2, index2) => sourceOffsets[Math.min(index2, sourceOffsets.length - 1)] ?? 0);
       parts.push(text);
       line += newlineCount(text) + 2;
-      return { blockID: document.blocks[index].id, firstLine, lastLine: line - 1 };
+      return { blockID: block.id, firstLine, lastLine: line - 1, sourceOffsets };
     });
     parts.push("\\end{document}", "");
     return { source: parts.join("\n\n"), assets, sourceRanges };
@@ -9519,15 +9575,36 @@ ${prefix}${body2}\\par
   function renderText(value) {
     return escapeTeX(value);
   }
+  function replaceMapped(source, pattern, replace) {
+    const spans = [];
+    let delta = 0;
+    const text = source.replace(pattern, (value, offset) => {
+      const result = replace(value), start = offset + delta;
+      spans.push({ start, end: start + result.length, sourceStart: offset, sourceEnd: offset + value.length });
+      delta += result.length - value.length;
+      return result;
+    });
+    return { text, originalOffset(offset) {
+      let low = 0, high = spans.length;
+      while (low < high) {
+        const mid = low + high >>> 1;
+        if (spans[mid].start <= offset) low = mid + 1;
+        else high = mid;
+      }
+      const span = spans[low - 1];
+      return !span ? offset : offset < span.end ? span.sourceStart : offset + span.sourceEnd - span.end;
+    } };
+  }
   function protectMath(source) {
     let prefix = "NOTEBOOKTEXMATH";
     while (source.includes(prefix)) prefix += "X";
     const segments = [];
-    return { source: source.replace(/\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$\$[\s\S]+?(?<!\\)\$\$|(?<!\\)\$(?!\$)(?:\\.|[^$\n])+?(?<!\\)\$/g, (formula) => {
+    const mapped = replaceMapped(source, /\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$\$[\s\S]+?(?<!\\)\$\$|(?<!\\)\$(?!\$)(?:\\.|[^$\n])+?(?<!\\)\$/g, (formula) => {
       const placeholder = `${prefix}${segments.length}TOKEN`;
       segments.push([placeholder, formula]);
       return placeholder;
-    }), segments };
+    });
+    return { source: mapped.text, segments, originalOffset: mapped.originalOffset };
   }
   function base64UTF8(value) {
     const bytes = encodeURIComponent(value).replace(/%([0-9A-F]{2})/g, (_2, pair) => String.fromCharCode(parseInt(pair, 16)));
@@ -9542,7 +9619,7 @@ ${prefix}${body2}\\par
 
   // src/markup.ts
   function notebookMarkup(request) {
-    if (request.kind === "documentTeX") return documentExport(request.document);
+    if (request.kind === "documentTeX") return documentExport(request.document, request.programPointScale);
     if (request.kind !== "action") throw new Error("invalid_markup_request");
     const { action, markdownOperations } = request.preparation;
     for (const index of markdownOperations) {

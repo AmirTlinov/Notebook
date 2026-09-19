@@ -7,9 +7,11 @@ public struct DocumentPrintSourceRange: Codable, Equatable, Sendable {
   public let blockID: String
   public let firstLine: Int
   public let lastLine: Int
+  /// Nearest authored paragraph (Markdown) or exact source line (TeX), UTF-16.
+  public let sourceOffsets: [Int]?
 
-  public init(blockID: String, firstLine: Int, lastLine: Int) {
-    self.blockID = blockID; self.firstLine = firstLine; self.lastLine = lastLine
+  public init(blockID: String, firstLine: Int, lastLine: Int, sourceOffsets: [Int]? = nil) {
+    self.blockID = blockID; self.firstLine = firstLine; self.lastLine = lastLine; self.sourceOffsets = sourceOffsets
   }
 }
 
@@ -17,6 +19,8 @@ public struct DocumentPrintSourceRange: Codable, Equatable, Sendable {
 /// Its digest binds the complete causal snapshot: a maximum VersionStamp alone
 /// cannot distinguish every concurrent merge that changes the visible source.
 public struct DocumentPrintSourceMap: Codable, Equatable, Sendable {
+  public static let renderingRecipe = "NotebookCanonicalPrint/3"
+
   public let format: Int
   public let documentID: UUID
   public let documentRevision: String
@@ -26,25 +30,41 @@ public struct DocumentPrintSourceMap: Codable, Equatable, Sendable {
   public let ranges: [DocumentPrintSourceRange]
 
   public init(document: DocumentDocument, source: String, pdf: Data, ranges: [DocumentPrintSourceRange]) throws {
+    try self.init(document: document, source: source, pdfSHA256: Self.digest(pdf), ranges: ranges)
+  }
+
+  /// Streaming export validates the file bytes separately, without rebuilding a
+  /// whole PDF Data merely to bind its source map.
+  public init(document: DocumentDocument, source: String, pdfSHA256: String, ranges: [DocumentPrintSourceRange]) throws {
     format = 1; documentID = document.id; documentRevision = document.contentStamp.revision
     documentSHA256 = try Self.documentDigest(document)
-    sourceSHA256 = Self.digest(Data(source.utf8)); pdfSHA256 = Self.digest(pdf)
+    sourceSHA256 = Self.digest(Data(source.utf8)); self.pdfSHA256 = pdfSHA256
     self.ranges = ranges
-    try validate(document: document, source: source, pdf: pdf)
+    try validate(document: document, source: source, pdfSHA256: pdfSHA256)
   }
 
   public func validate(document: DocumentDocument, source: String, pdf: Data) throws {
-    guard source.utf8.count <= 4 * 1024 * 1024, pdf.count <= 16 * 1024 * 1024,
+    try validate(document: document, source: source, pdfSHA256: Self.digest(pdf))
+  }
+
+  public func validate(document: DocumentDocument, source: String, pdfSHA256: String) throws {
+    guard source.utf8.count <= 4 * 1024 * 1024, NotebookProgramPackage.validHash(pdfSHA256),
       format == 1, documentID == document.id, documentRevision == document.contentStamp.revision,
       documentSHA256 == (try Self.documentDigest(document)), sourceSHA256 == Self.digest(Data(source.utf8)),
-      pdfSHA256 == Self.digest(pdf),
+      self.pdfSHA256 == pdfSHA256,
       ranges.map(\.blockID) == document.blocks.map(\.id) else { throw Self.invalid() }
     let lineCount = source.utf8.reduce(1) { $1 == 10 ? $0 + 1 : $0 }
     var previousEnd = 0
-    for range in ranges {
+    for (range, block) in zip(ranges, document.blocks) {
       guard range.firstLine > previousEnd, range.lastLine >= range.firstLine,
         range.lastLine < lineCount,
         previousEnd == 0 || range.firstLine == previousEnd + 1 else { throw Self.invalid() }
+      if let offsets = range.sourceOffsets {
+        let sourceCount = block.source.utf16.count
+        guard offsets.count == range.lastLine-range.firstLine+1, offsets.count <= 200_000,
+          offsets.allSatisfy({ $0 >= 0 && $0 <= sourceCount }),
+          zip(offsets, offsets.dropFirst()).allSatisfy({ $0 <= $1 }) else { throw Self.invalid() }
+      }
       previousEnd = range.lastLine
     }
   }

@@ -24,6 +24,23 @@ struct AgentPinnedSourceTests {
     #expect(available.image == image)
     #expect(available.reference == source.reference)
     #expect(source.payload["visual"] == nil, "Adding image metadata cannot alter the original value")
+    let semantic = try JSONValue.object(["objectID": .string("gear-a"), "label": .string("Gear"),
+      "anchor": .object(["x": .number(0.5), "y": .number(0.5)]), "values": .array([]),
+      "model": .object(["phase": .number(0.25)])]).decode(ProgramSemanticSelection.self)
+    let bound = try available.withProgramSemanticSelection(semantic)
+    #expect(bound.payload["programSemantic"]?["imageSHA256"]?.string == image.sha256)
+    #expect(bound.payload["programSemantic"]?["selection"]?["model"]?["phase"] == .number(0.25))
+    #expect(try unavailable.withProgramSemanticSelection(semantic).payload["programSemantic"]?["status"]?.string == "unavailable")
+    #expect(throws: CollaborationError.self) { try bound.withVisual(nil) }
+    #expect(semantic.mapped(from: .init(x: 10, y: 20, width: 100, height: 200),
+      into: .init(x: 60, y: 120, width: 50, height: 100))?.anchor.x == 0)
+    #expect(semantic.mapped(from: .init(x: 10, y: 20, width: 100, height: 200),
+      into: .init(x: 0, y: 0, width: 5, height: 5)) == nil, "No data outside the selected crop")
+    var wrong = bound.payload.object
+    wrong["programSemantic"] = .object(["status": .string("frozen_selection"), "sourceRevision": .string("later")])
+    let forged = AgentPinnedSource(id: bound.id, requestID: bound.requestID, reference: bound.reference, payload: .object(wrong), image: image)
+    #expect(throws: CollaborationError.self) { try forged.validate() }
+
   }
 
   @Test(arguments: ["counter/a~b", "ABCDEF00-1234-4ABC-8DEF-1234567890AB"])

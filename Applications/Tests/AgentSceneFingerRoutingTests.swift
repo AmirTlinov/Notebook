@@ -29,11 +29,11 @@ final class AgentSceneFingerRoutingTests: XCTestCase {
     let svg = "<svg width='240' height='160'><path d='M10 140L120 10L230 140' stroke='navy' fill='none'/></svg>"
     let cases: [(String, String, AgentWebFingerInput)] = [
       (svg, "", .scene),
-      (svg, "function fit(){document.querySelector('svg').style.width='240px'}fit();addEventListener('resize',fit)", .scene),
+      (svg, "function fit(){document.querySelector('svg').style.width='240px'}fit();addEventListener('resize',fit);notebook.ready(Promise.resolve())", .scene),
       ("<input type='range' style='width:200px;height:100px;margin:0'>", "", .input),
       ("<svg width='240' height='160' onclick='window.clicked=true'><rect width='200' height='100'/></svg>", "", .input),
-      (svg, "document.querySelector('svg').addEventListener('pointermove',()=>{});", .input),
-      (svg + "<script>document.body.addEventListener('click',()=>{});document.currentScript.remove()</script>", "", .input),
+      (svg, "document.querySelector('svg').addEventListener('pointermove',()=>{});notebook.ready(Promise.resolve());", .input),
+      (svg + "<script>document.body.addEventListener('click',()=>{});notebook.ready(Promise.resolve());document.currentScript.remove()</script>", "", .input),
       ("<a href='#destination'>" + svg + "</a>", "", .link),
       ("<svg width='240' height='160' xmlns:xlink='http://www.w3.org/1999/xlink'><a xlink:href='#destination'><rect width='200' height='100'/></a></svg>", "", .link),
       ("<svg width='240' height='160'><animate attributeName='opacity' begin='click' to='0' dur='1s'/></svg>", "", .input),

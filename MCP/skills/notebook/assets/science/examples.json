@@ -11,7 +11,8 @@
     "title": "Одно движение. Три скорости.",
     "source": "https://ciechanow.ski/mechanical-watch/",
     "author": "Bartosz Ciechanowski",
-    "idea": "Раскрыть механизм, сохранив положение и связь деталей."
+    "idea": "Раскрыть механизм, сохранив положение и связь деталей.",
+    "format": "program"
   },
   {
     "id": "linear",
@@ -47,5 +48,17 @@
     "source": "https://seeing-theory.brown.edu/basic-probability/index.html",
     "author": "Seeing Theory",
     "idea": "От наблюдаемого опыта перейти к закономерности и формуле."
+  },
+  {
+    "id": "signal",
+    "title": "Не потерять короткое событие",
+    "format": "program",
+    "idea": "Сохранить экстремумы 100k отсчётов и связать выбранное окно с исходными данными и формулой."
+  },
+  {
+    "id": "wave",
+    "title": "Волна помнит границу.",
+    "format": "program",
+    "idea": "Численная мембрана 256×256: cancellable worker, инвариант, аналитическая мода и запись внешнего расчёта."
   }
 ]

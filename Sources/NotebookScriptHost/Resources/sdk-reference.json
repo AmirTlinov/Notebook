@@ -753,6 +753,7 @@
                                   "enum": [
                                     "markdown",
                                     "latex",
+                                    "tex",
                                     "interactive"
                                   ]
                                 },
@@ -4746,6 +4747,7 @@
                 "enum": [
                   "markdown",
                   "latex",
+                  "tex",
                   "interactive"
                 ]
               },
@@ -5877,6 +5879,9 @@
               },
               "worldOrigin": {
                 "$ref": "#/$defs/__schema25"
+              },
+              "wholeElement": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -9109,6 +9114,7 @@
                 "enum": [
                   "markdown",
                   "latex",
+                  "tex",
                   "interactive"
                 ]
               },
@@ -10240,6 +10246,9 @@
               },
               "worldOrigin": {
                 "$ref": "#/$defs/__schema25"
+              },
+              "wholeElement": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -13393,6 +13402,7 @@
                 "enum": [
                   "markdown",
                   "latex",
+                  "tex",
                   "interactive"
                 ]
               },
@@ -14825,6 +14835,9 @@
                                             },
                                             "worldOrigin": {
                                               "$ref": "#/$defs/__schema5"
+                                            },
+                                            "wholeElement": {
+                                              "type": "boolean"
                                             }
                                           },
                                           "required": [
@@ -21310,14 +21323,17 @@
                             "javaScript": {
                               "$ref": "#/$defs/__schema12"
                             },
-                            "state": {
+                            "programPackage": {
                               "$ref": "#/$defs/__schema31"
+                            },
+                            "state": {
+                              "$ref": "#/$defs/__schema33"
                             },
                             "worldOrigin": {
                               "$ref": "#/$defs/__schema8"
                             },
                             "textStyle": {
-                              "$ref": "#/$defs/__schema32"
+                              "$ref": "#/$defs/__schema34"
                             }
                           },
                           "required": [
@@ -21418,6 +21434,9 @@
                             "javaScript": {
                               "$ref": "#/$defs/__schema12"
                             },
+                            "programPackage": {
+                              "$ref": "#/$defs/__schema31"
+                            },
                             "graphic": {
                               "type": "object",
                               "properties": {
@@ -21482,7 +21501,7 @@
                               "$ref": "#/$defs/__schema8"
                             },
                             "textStyle": {
-                              "$ref": "#/$defs/__schema32"
+                              "$ref": "#/$defs/__schema34"
                             }
                           },
                           "additionalProperties": false
@@ -21515,7 +21534,7 @@
                           "type": "object",
                           "properties": {
                             "state": {
-                              "$ref": "#/$defs/__schema33"
+                              "$ref": "#/$defs/__schema35"
                             }
                           },
                           "required": [
@@ -21579,7 +21598,7 @@
                               "maxItems": 512,
                               "type": "array",
                               "items": {
-                                "$ref": "#/$defs/__schema34"
+                                "$ref": "#/$defs/__schema36"
                               }
                             }
                           },
@@ -21619,6 +21638,7 @@
                               "enum": [
                                 "markdown",
                                 "latex",
+                                "tex",
                                 "interactive"
                               ]
                             },
@@ -21634,8 +21654,11 @@
                             "javaScript": {
                               "$ref": "#/$defs/__schema12"
                             },
+                            "programPackage": {
+                              "$ref": "#/$defs/__schema31"
+                            },
                             "initialState": {
-                              "$ref": "#/$defs/__schema35"
+                              "$ref": "#/$defs/__schema37"
                             },
                             "height": {
                               "type": "number",
@@ -21690,6 +21713,9 @@
                             "javaScript": {
                               "$ref": "#/$defs/__schema12"
                             },
+                            "programPackage": {
+                              "$ref": "#/$defs/__schema31"
+                            },
                             "height": {
                               "type": "number",
                               "minimum": 48,
@@ -21726,7 +21752,7 @@
                           "type": "object",
                           "properties": {
                             "state": {
-                              "$ref": "#/$defs/__schema36"
+                              "$ref": "#/$defs/__schema38"
                             }
                           },
                           "required": [
@@ -21790,7 +21816,7 @@
                               "maxItems": 512,
                               "type": "array",
                               "items": {
-                                "$ref": "#/$defs/__schema37"
+                                "$ref": "#/$defs/__schema39"
                               }
                             }
                           },
@@ -21857,7 +21883,7 @@
                               "maxItems": 512,
                               "type": "array",
                               "items": {
-                                "$ref": "#/$defs/__schema38"
+                                "$ref": "#/$defs/__schema40"
                               }
                             }
                           },
@@ -21958,7 +21984,7 @@
                               "maxItems": 512,
                               "type": "array",
                               "items": {
-                                "$ref": "#/$defs/__schema38"
+                                "$ref": "#/$defs/__schema40"
                               }
                             }
                           },
@@ -22159,7 +22185,7 @@
                               "maxItems": 5,
                               "type": "array",
                               "items": {
-                                "$ref": "#/$defs/__schema40"
+                                "$ref": "#/$defs/__schema42"
                               }
                             }
                           },
@@ -22180,7 +22206,7 @@
                 }
               },
               "contextID": {
-                "$ref": "#/$defs/__schema41"
+                "$ref": "#/$defs/__schema43"
               },
               "additionalOwners": {
                 "type": "array",
@@ -22198,7 +22224,7 @@
                 "type": "object",
                 "properties": {
                   "id": {
-                    "$ref": "#/$defs/__schema41"
+                    "$ref": "#/$defs/__schema43"
                   },
                   "target": {
                     "$ref": "#/$defs/__schema0"
@@ -22238,13 +22264,13 @@
             "type": "object",
             "properties": {
               "workspaceID": {
-                "$ref": "#/$defs/__schema41"
+                "$ref": "#/$defs/__schema43"
               },
               "owners": {
                 "maxItems": 1024,
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema42"
+                  "$ref": "#/$defs/__schema44"
                 }
               }
             },
@@ -22874,6 +22900,21 @@
           "__schema31": {
             "anyOf": [
               {
+                "$ref": "#/$defs/__schema32"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline."
+          },
+          "__schema32": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "__schema33": {
+            "anyOf": [
+              {
                 "type": "string"
               },
               {
@@ -22888,7 +22929,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema31"
+                  "$ref": "#/$defs/__schema33"
                 }
               },
               {
@@ -22897,12 +22938,12 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema31"
+                  "$ref": "#/$defs/__schema33"
                 }
               }
             ]
           },
-          "__schema32": {
+          "__schema34": {
             "type": "object",
             "properties": {
               "fontSize": {
@@ -22946,40 +22987,6 @@
             ],
             "additionalProperties": false
           },
-          "__schema33": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              },
-              {
-                "type": "array",
-                "items": {
-                  "$ref": "#/$defs/__schema33"
-                }
-              },
-              {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "$ref": "#/$defs/__schema33"
-                }
-              }
-            ]
-          },
-          "__schema34": {
-            "type": "string"
-          },
           "__schema35": {
             "anyOf": [
               {
@@ -23012,6 +23019,9 @@
             ]
           },
           "__schema36": {
+            "type": "string"
+          },
+          "__schema37": {
             "anyOf": [
               {
                 "type": "string"
@@ -23028,7 +23038,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema36"
+                  "$ref": "#/$defs/__schema37"
                 }
               },
               {
@@ -23037,15 +23047,46 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema36"
+                  "$ref": "#/$defs/__schema37"
                 }
               }
             ]
           },
-          "__schema37": {
+          "__schema38": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema38"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema38"
+                }
+              }
+            ]
+          },
+          "__schema39": {
             "type": "string"
           },
-          "__schema38": {
+          "__schema40": {
             "oneOf": [
               {
                 "type": "object",
@@ -23059,7 +23100,8 @@
                     "type": "string",
                     "enum": [
                       "markdown",
-                      "latex"
+                      "latex",
+                      "tex"
                     ]
                   },
                   "source": {
@@ -23094,8 +23136,11 @@
                   "javaScript": {
                     "$ref": "#/$defs/__schema12"
                   },
+                  "programPackage": {
+                    "$ref": "#/$defs/__schema31"
+                  },
                   "initialState": {
-                    "$ref": "#/$defs/__schema39"
+                    "$ref": "#/$defs/__schema41"
                   },
                   "height": {
                     "type": "number",
@@ -23112,7 +23157,7 @@
               }
             ]
           },
-          "__schema39": {
+          "__schema41": {
             "anyOf": [
               {
                 "type": "string"
@@ -23129,7 +23174,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema39"
+                  "$ref": "#/$defs/__schema41"
                 }
               },
               {
@@ -23138,22 +23183,22 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema39"
+                  "$ref": "#/$defs/__schema41"
                 }
               }
             ]
           },
-          "__schema40": {
-            "type": "string",
-            "format": "uuid",
-            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-          },
-          "__schema41": {
-            "type": "string",
-            "format": "uuid",
-            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-          },
           "__schema42": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema43": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema44": {
             "type": "object",
             "properties": {
               "target": {
@@ -23171,11 +23216,11 @@
               },
               "lifecycleRevision": {
                 "description": "Complete item extent from an explicit itemLifecycle read; covers off-screen content and is not mutation authority.",
-                "$ref": "#/$defs/__schema43"
+                "$ref": "#/$defs/__schema45"
               },
               "inkRevision": {
                 "description": "For appendInkStroke: drawingRevision of a page, spatialInkRevision of a board/cover, or inkRevision returned by nb.code.",
-                "$ref": "#/$defs/__schema44"
+                "$ref": "#/$defs/__schema46"
               }
             },
             "required": [
@@ -23184,11 +23229,11 @@
             ],
             "additionalProperties": false
           },
-          "__schema43": {
+          "__schema45": {
             "type": "string",
             "pattern": "^[a-f0-9]{64}$"
           },
-          "__schema44": {
+          "__schema46": {
             "type": "string"
           }
         }
@@ -23692,14 +23737,17 @@
                       "javaScript": {
                         "$ref": "#/$defs/__schema16"
                       },
-                      "state": {
+                      "programPackage": {
                         "$ref": "#/$defs/__schema34"
+                      },
+                      "state": {
+                        "$ref": "#/$defs/__schema36"
                       },
                       "worldOrigin": {
                         "$ref": "#/$defs/__schema7"
                       },
                       "textStyle": {
-                        "$ref": "#/$defs/__schema35"
+                        "$ref": "#/$defs/__schema37"
                       }
                     },
                     "required": [
@@ -23800,6 +23848,9 @@
                       "javaScript": {
                         "$ref": "#/$defs/__schema16"
                       },
+                      "programPackage": {
+                        "$ref": "#/$defs/__schema34"
+                      },
                       "graphic": {
                         "type": "object",
                         "properties": {
@@ -23864,7 +23915,7 @@
                         "$ref": "#/$defs/__schema7"
                       },
                       "textStyle": {
-                        "$ref": "#/$defs/__schema35"
+                        "$ref": "#/$defs/__schema37"
                       }
                     },
                     "additionalProperties": false
@@ -23897,7 +23948,7 @@
                     "type": "object",
                     "properties": {
                       "state": {
-                        "$ref": "#/$defs/__schema36"
+                        "$ref": "#/$defs/__schema38"
                       }
                     },
                     "required": [
@@ -23961,7 +24012,7 @@
                         "maxItems": 512,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema37"
+                          "$ref": "#/$defs/__schema39"
                         }
                       }
                     },
@@ -24001,6 +24052,7 @@
                         "enum": [
                           "markdown",
                           "latex",
+                          "tex",
                           "interactive"
                         ]
                       },
@@ -24016,8 +24068,11 @@
                       "javaScript": {
                         "$ref": "#/$defs/__schema16"
                       },
+                      "programPackage": {
+                        "$ref": "#/$defs/__schema34"
+                      },
                       "initialState": {
-                        "$ref": "#/$defs/__schema38"
+                        "$ref": "#/$defs/__schema40"
                       },
                       "height": {
                         "type": "number",
@@ -24072,6 +24127,9 @@
                       "javaScript": {
                         "$ref": "#/$defs/__schema16"
                       },
+                      "programPackage": {
+                        "$ref": "#/$defs/__schema34"
+                      },
                       "height": {
                         "type": "number",
                         "minimum": 48,
@@ -24108,7 +24166,7 @@
                     "type": "object",
                     "properties": {
                       "state": {
-                        "$ref": "#/$defs/__schema39"
+                        "$ref": "#/$defs/__schema41"
                       }
                     },
                     "required": [
@@ -24172,7 +24230,7 @@
                         "maxItems": 512,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema40"
+                          "$ref": "#/$defs/__schema42"
                         }
                       }
                     },
@@ -24239,7 +24297,7 @@
                         "maxItems": 512,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema41"
+                          "$ref": "#/$defs/__schema43"
                         }
                       }
                     },
@@ -24340,7 +24398,7 @@
                         "maxItems": 512,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema41"
+                          "$ref": "#/$defs/__schema43"
                         }
                       }
                     },
@@ -24541,7 +24599,7 @@
                         "maxItems": 5,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema43"
+                          "$ref": "#/$defs/__schema45"
                         }
                       }
                     },
@@ -24928,6 +24986,21 @@
           "__schema34": {
             "anyOf": [
               {
+                "$ref": "#/$defs/__schema35"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline."
+          },
+          "__schema35": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "__schema36": {
+            "anyOf": [
+              {
                 "type": "string"
               },
               {
@@ -24942,7 +25015,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema34"
+                  "$ref": "#/$defs/__schema36"
                 }
               },
               {
@@ -24951,12 +25024,12 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema34"
+                  "$ref": "#/$defs/__schema36"
                 }
               }
             ]
           },
-          "__schema35": {
+          "__schema37": {
             "type": "object",
             "properties": {
               "fontSize": {
@@ -25000,40 +25073,6 @@
             ],
             "additionalProperties": false
           },
-          "__schema36": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              },
-              {
-                "type": "array",
-                "items": {
-                  "$ref": "#/$defs/__schema36"
-                }
-              },
-              {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "$ref": "#/$defs/__schema36"
-                }
-              }
-            ]
-          },
-          "__schema37": {
-            "type": "string"
-          },
           "__schema38": {
             "anyOf": [
               {
@@ -25066,6 +25105,9 @@
             ]
           },
           "__schema39": {
+            "type": "string"
+          },
+          "__schema40": {
             "anyOf": [
               {
                 "type": "string"
@@ -25082,7 +25124,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema39"
+                  "$ref": "#/$defs/__schema40"
                 }
               },
               {
@@ -25091,15 +25133,46 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema39"
+                  "$ref": "#/$defs/__schema40"
                 }
               }
             ]
           },
-          "__schema40": {
+          "__schema41": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema41"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema41"
+                }
+              }
+            ]
+          },
+          "__schema42": {
             "type": "string"
           },
-          "__schema41": {
+          "__schema43": {
             "oneOf": [
               {
                 "type": "object",
@@ -25113,7 +25186,8 @@
                     "type": "string",
                     "enum": [
                       "markdown",
-                      "latex"
+                      "latex",
+                      "tex"
                     ]
                   },
                   "source": {
@@ -25148,8 +25222,11 @@
                   "javaScript": {
                     "$ref": "#/$defs/__schema16"
                   },
+                  "programPackage": {
+                    "$ref": "#/$defs/__schema34"
+                  },
                   "initialState": {
-                    "$ref": "#/$defs/__schema42"
+                    "$ref": "#/$defs/__schema44"
                   },
                   "height": {
                     "type": "number",
@@ -25166,7 +25243,7 @@
               }
             ]
           },
-          "__schema42": {
+          "__schema44": {
             "anyOf": [
               {
                 "type": "string"
@@ -25183,7 +25260,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema42"
+                  "$ref": "#/$defs/__schema44"
                 }
               },
               {
@@ -25192,12 +25269,12 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema42"
+                  "$ref": "#/$defs/__schema44"
                 }
               }
             ]
           },
-          "__schema43": {
+          "__schema45": {
             "type": "string",
             "format": "uuid",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
@@ -27703,24 +27780,107 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "properties": {
+          "moment": {
+            "type": "string",
+            "enum": [
+              "saved",
+              "presented"
+            ]
+          },
+          "attention": {
+            "type": "object",
+            "properties": {
+              "contextID": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "referenceID": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            "required": [
+              "contextID",
+              "referenceID"
+            ],
+            "additionalProperties": false
+          },
+          "video": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "number",
+                "minimum": 0
+              },
+              "end": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "framesPerSecond": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 60
+              }
+            },
+            "required": [
+              "start",
+              "end",
+              "framesPerSecond"
+            ],
+            "additionalProperties": false
+          },
           "key": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 120
+            "maxLength": 120,
+            "$ref": "#/$defs/__schema1"
           },
           "documentID": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "format": {
             "type": "string",
-            "format": "uuid",
-            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            "enum": [
+              "pdf",
+              "png",
+              "svg",
+              "html",
+              "package",
+              "mp4"
+            ]
+          },
+          "blockID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "$ref": "#/$defs/__schema1"
+          },
+          "pageIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9999
+          },
+          "pixelWidth": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4096
           }
         },
         "required": [
           "key",
           "documentID"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema1": {
+            "type": "string"
+          }
+        }
       },
-      "returns": "{status:queued,jobID,documentID,contentRevision}; job continues outside JS time in the markup App Sandbox, with at most two compiler slots and 120 seconds each. Pinned Tectonic 0.16.9 and the full offline TeX 2022 distribution support custom preambles/packages, including TikZ and siunitx. Embedded SVG (including inline SVG), PNG and JPEG are included; valid internal anchors and HTTP/HTTPS/mailto links remain active in the PDF. Missing internal links are visibly marked. No user-cache, external user-file or network image access. TeX <=4 MiB; at most 128 images, <=16 MiB combined source images and <=8 MiB prepared images; PDF <=16 MiB, PDF plus prepared images <=17 MiB. The native owner verifies the document revision before atomically publishing the complete package.",
+      "returns": "{status:queued,jobID,documentID,contentRevision,stateRevision,cutSHA256,moment:'saved'|'presented',options}. Presented moment requires attention:{contextID,referenceID} from an immutable submitted document selection. Only pixels certified by its installed native presentation owner are accepted, never regenerated evidence/cache. PNG exports that exact crop at its native extent; omit pixelWidth (or match it exactly), no pageIndex/blockID/upscale. Missing, historical-without-provenance or stale evidence is an explicit error. Other formats require an explicitly paused checkpoint bound by that same capture to the selected block/source/state, not an arbitrary running heap. SVG/HTML export that block; whole-document PDF/package and canonical-page MP4 refuse other interactive blocks without captured checkpoints. They reproduce the bound model, not exact screenshot bytes. MP4 requires blockID, even pixelWidth and video:{start,end,framesPerSecond}; 1..60 FPS, integral 1..3600 frames in [start,end). It renders the chosen canonical page (pageIndex default 0, height padded white to even), H.264 without audio. The isolated author must register exportFrame(callback,{timeline:true}), rendering each explicit time from the same saved model/seed; no wall-clock capture or live rewind. Package exports the whole document as an immutable portable directory: copy its entire artifact parent directory and run submit.mjs document.package to stage original V2 parts and create one document without executing author code. HTML requires an inline blockID and opens offline in a sandbox without installing or changing Notebook; packaged modules require a portable export. SVG requires blockID and author notebook.exportFrame, returning a self-contained passive vector for the exact saved state in an isolated executor; it never silently embeds a PNG. PDF (default) keeps all pages vector; PNG exports one canonical page (pageIndex default 0, pixelWidth default 1600) including its isolated saved program frame. No silent downsampling: insufficient raster budget is an error. Queue acceptance reads source and state in one WAL snapshot. The native canonical print owner renders that immutable saved cut in isolation, never a later uncommitted live frame. Two admitted jobs; pinned embedded offline typesetter, same layout as paper. Source/formulas/SVG remain vector where possible; program regions are composited by the existing renderer with their local packages. Source or state changes before publication fail revision_conflict without replacing prior artifacts. TeX <=4 MiB. Composed PDF/assets stream through immutable 4 MiB parts and 1 MiB verification windows; only metadata crosses IPC. The V2 descriptor is <=1 MiB / 16384 parts, not a PDF byte limit.",
       "example": "await emit(await nb.export('pdf',{documentID:args.documentID}));",
       "old": [
         "notebook_export_document"
@@ -27737,7 +27897,8 @@
               "running",
               "saved",
               "failed",
-              "interrupted"
+              "interrupted",
+              "cancelled"
             ]
           },
           "jobID": {
@@ -27749,23 +27910,45 @@
           "contentRevision": {
             "$ref": "#/$defs/__schema1"
           },
+          "stateRevision": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "cutSHA256": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "moment": {
+            "type": "string",
+            "enum": [
+              "saved",
+              "presented"
+            ]
+          },
+          "options": {
+            "$ref": "#/$defs/__schema2"
+          },
           "receipt": {
             "type": "object",
             "properties": {
+              "cutSHA256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "stateRevision": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "cut": {
+                "$ref": "#/$defs/__schema4"
+              },
               "documentID": {
                 "$ref": "#/$defs/__schema0"
               },
-              "pdfPath": {
-                "$ref": "#/$defs/__schema1"
-              },
-              "texPath": {
-                "$ref": "#/$defs/__schema1"
-              },
-              "pdfSHA256": {
-                "$ref": "#/$defs/__schema1"
-              },
-              "byteCount": {
+              "options": {
                 "$ref": "#/$defs/__schema2"
+              },
+              "artifact": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "source": {
+                "$ref": "#/$defs/__schema4"
               },
               "log": {
                 "$ref": "#/$defs/__schema1"
@@ -27793,24 +27976,25 @@
                 }
               },
               "sourceMap": {
-                "$ref": "#/$defs/__schema3"
+                "$ref": "#/$defs/__schema4"
               },
               "syncTeX": {
-                "$ref": "#/$defs/__schema3"
+                "$ref": "#/$defs/__schema4"
               }
             },
             "required": [
+              "cutSHA256",
+              "stateRevision",
+              "cut",
               "documentID",
-              "pdfPath",
-              "texPath",
-              "pdfSHA256",
-              "byteCount",
+              "options",
+              "artifact",
               "log"
             ],
             "additionalProperties": {}
           },
           "error": {
-            "$ref": "#/$defs/__schema4"
+            "$ref": "#/$defs/__schema5"
           }
         },
         "required": [
@@ -27827,9 +28011,81 @@
             "type": "string"
           },
           "__schema2": {
-            "type": "number"
+            "type": "object",
+            "properties": {
+              "moment": {
+                "type": "string",
+                "enum": [
+                  "saved",
+                  "presented"
+                ]
+              },
+              "attention": {
+                "type": "object",
+                "properties": {
+                  "contextID": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "referenceID": {
+                    "$ref": "#/$defs/__schema0"
+                  }
+                },
+                "required": [
+                  "contextID",
+                  "referenceID"
+                ],
+                "additionalProperties": {}
+              },
+              "video": {
+                "type": "object",
+                "properties": {
+                  "start": {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  "end": {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  "framesPerSecond": {
+                    "$ref": "#/$defs/__schema3"
+                  }
+                },
+                "required": [
+                  "start",
+                  "end",
+                  "framesPerSecond"
+                ],
+                "additionalProperties": {}
+              },
+              "format": {
+                "type": "string",
+                "enum": [
+                  "pdf",
+                  "png",
+                  "svg",
+                  "html",
+                  "package",
+                  "mp4"
+                ]
+              },
+              "blockID": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "pageIndex": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "pixelWidth": {
+                "$ref": "#/$defs/__schema3"
+              }
+            },
+            "required": [
+              "format"
+            ],
+            "additionalProperties": {}
           },
           "__schema3": {
+            "type": "number"
+          },
+          "__schema4": {
             "type": "object",
             "properties": {
               "path": {
@@ -27839,7 +28095,7 @@
                 "$ref": "#/$defs/__schema1"
               },
               "byteCount": {
-                "$ref": "#/$defs/__schema2"
+                "$ref": "#/$defs/__schema3"
               },
               "mimeType": {
                 "$ref": "#/$defs/__schema1"
@@ -27853,7 +28109,7 @@
             ],
             "additionalProperties": {}
           },
-          "__schema4": {
+          "__schema5": {
             "anyOf": [
               {
                 "type": "string"
@@ -27870,7 +28126,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema4"
+                  "$ref": "#/$defs/__schema5"
                 }
               },
               {
@@ -27879,7 +28135,289 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema4"
+                  "$ref": "#/$defs/__schema5"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "cancelExport": {
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "jobID": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "key",
+          "jobID"
+        ],
+        "additionalProperties": false
+      },
+      "returns": "Durably cancels the explicitly named unfinished export, without altering previous artifacts or the live scene. Returns cancelled or the existing terminal job (saved wins after its final writer fence). Same key attaches to its receipt; exportStatus never restarts it.",
+      "example": "await emit(await nb.cancelExport('stop-pdf',{jobID:args.jobID}));",
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "queued",
+              "running",
+              "saved",
+              "failed",
+              "interrupted",
+              "cancelled"
+            ]
+          },
+          "jobID": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "documentID": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "contentRevision": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "stateRevision": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "cutSHA256": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "moment": {
+            "type": "string",
+            "enum": [
+              "saved",
+              "presented"
+            ]
+          },
+          "options": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "receipt": {
+            "type": "object",
+            "properties": {
+              "cutSHA256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "stateRevision": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "cut": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "documentID": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "options": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "artifact": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "source": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "log": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "packageSHA256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "assets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "$ref": "#/$defs/__schema1"
+                    },
+                    "sha256": {
+                      "$ref": "#/$defs/__schema1"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "sha256"
+                  ],
+                  "additionalProperties": {}
+                }
+              },
+              "sourceMap": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "syncTeX": {
+                "$ref": "#/$defs/__schema4"
+              }
+            },
+            "required": [
+              "cutSHA256",
+              "stateRevision",
+              "cut",
+              "documentID",
+              "options",
+              "artifact",
+              "log"
+            ],
+            "additionalProperties": {}
+          },
+          "error": {
+            "$ref": "#/$defs/__schema5"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": {},
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema1": {
+            "type": "string"
+          },
+          "__schema2": {
+            "type": "object",
+            "properties": {
+              "moment": {
+                "type": "string",
+                "enum": [
+                  "saved",
+                  "presented"
+                ]
+              },
+              "attention": {
+                "type": "object",
+                "properties": {
+                  "contextID": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "referenceID": {
+                    "$ref": "#/$defs/__schema0"
+                  }
+                },
+                "required": [
+                  "contextID",
+                  "referenceID"
+                ],
+                "additionalProperties": {}
+              },
+              "video": {
+                "type": "object",
+                "properties": {
+                  "start": {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  "end": {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  "framesPerSecond": {
+                    "$ref": "#/$defs/__schema3"
+                  }
+                },
+                "required": [
+                  "start",
+                  "end",
+                  "framesPerSecond"
+                ],
+                "additionalProperties": {}
+              },
+              "format": {
+                "type": "string",
+                "enum": [
+                  "pdf",
+                  "png",
+                  "svg",
+                  "html",
+                  "package",
+                  "mp4"
+                ]
+              },
+              "blockID": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "pageIndex": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "pixelWidth": {
+                "$ref": "#/$defs/__schema3"
+              }
+            },
+            "required": [
+              "format"
+            ],
+            "additionalProperties": {}
+          },
+          "__schema3": {
+            "type": "number"
+          },
+          "__schema4": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "sha256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "byteCount": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "mimeType": {
+                "$ref": "#/$defs/__schema1"
+              }
+            },
+            "required": [
+              "path",
+              "sha256",
+              "byteCount",
+              "mimeType"
+            ],
+            "additionalProperties": {}
+          },
+          "__schema5": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema5"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema5"
                 }
               }
             ]
@@ -27903,7 +28441,7 @@
         ],
         "additionalProperties": false
       },
-      "returns": "Snapshot {data,basis,coverage,cursor}. Queued/running/saved/failed/interrupted job; saved receipt contains immutable texPath/pdfPath, PDF sha256, assets with their exact paths and hashes, sourceMap with generated-TeX line ranges for original block IDs, compressed syncTeX page coordinates, and packageSHA256 covering all files. Maps belong to that exact source/PDF version, not later edits. Keep the whole package to recompile TeX. Historical receipts without package metadata remain readable.",
+      "returns": "Snapshot {data,basis,coverage,cursor}. Queued/running/saved/failed/interrupted/cancelled job. Saved receipt names the exact cutSHA256/stateRevision and immutable document.cut.json, options and primary artifact {path,sha256,byteCount,mimeType}; PDF also returns source, assets, sourceMap and syncTeX. packageSHA256 binds all files including the source/state cut. Status never re-executes or relabels an old cut as current.",
       "example": "await emit(await nb.exportStatus({jobID:args.jobID}));",
       "output": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -27920,7 +28458,8 @@
                   "running",
                   "saved",
                   "failed",
-                  "interrupted"
+                  "interrupted",
+                  "cancelled"
                 ]
               },
               "jobID": {
@@ -27932,23 +28471,45 @@
               "contentRevision": {
                 "$ref": "#/$defs/__schema1"
               },
+              "stateRevision": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "cutSHA256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "moment": {
+                "type": "string",
+                "enum": [
+                  "saved",
+                  "presented"
+                ]
+              },
+              "options": {
+                "$ref": "#/$defs/__schema2"
+              },
               "receipt": {
                 "type": "object",
                 "properties": {
+                  "cutSHA256": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "stateRevision": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "cut": {
+                    "$ref": "#/$defs/__schema4"
+                  },
                   "documentID": {
                     "$ref": "#/$defs/__schema0"
                   },
-                  "pdfPath": {
-                    "$ref": "#/$defs/__schema1"
-                  },
-                  "texPath": {
-                    "$ref": "#/$defs/__schema1"
-                  },
-                  "pdfSHA256": {
-                    "$ref": "#/$defs/__schema1"
-                  },
-                  "byteCount": {
+                  "options": {
                     "$ref": "#/$defs/__schema2"
+                  },
+                  "artifact": {
+                    "$ref": "#/$defs/__schema4"
+                  },
+                  "source": {
+                    "$ref": "#/$defs/__schema4"
                   },
                   "log": {
                     "$ref": "#/$defs/__schema1"
@@ -27976,24 +28537,25 @@
                     }
                   },
                   "sourceMap": {
-                    "$ref": "#/$defs/__schema3"
+                    "$ref": "#/$defs/__schema4"
                   },
                   "syncTeX": {
-                    "$ref": "#/$defs/__schema3"
+                    "$ref": "#/$defs/__schema4"
                   }
                 },
                 "required": [
+                  "cutSHA256",
+                  "stateRevision",
+                  "cut",
                   "documentID",
-                  "pdfPath",
-                  "texPath",
-                  "pdfSHA256",
-                  "byteCount",
+                  "options",
+                  "artifact",
                   "log"
                 ],
                 "additionalProperties": {}
               },
               "error": {
-                "$ref": "#/$defs/__schema4"
+                "$ref": "#/$defs/__schema5"
               }
             },
             "required": [
@@ -28011,7 +28573,7 @@
                 "maxItems": 1024,
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema5"
+                  "$ref": "#/$defs/__schema6"
                 }
               }
             },
@@ -28057,9 +28619,81 @@
             "type": "string"
           },
           "__schema2": {
-            "type": "number"
+            "type": "object",
+            "properties": {
+              "moment": {
+                "type": "string",
+                "enum": [
+                  "saved",
+                  "presented"
+                ]
+              },
+              "attention": {
+                "type": "object",
+                "properties": {
+                  "contextID": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "referenceID": {
+                    "$ref": "#/$defs/__schema0"
+                  }
+                },
+                "required": [
+                  "contextID",
+                  "referenceID"
+                ],
+                "additionalProperties": {}
+              },
+              "video": {
+                "type": "object",
+                "properties": {
+                  "start": {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  "end": {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  "framesPerSecond": {
+                    "$ref": "#/$defs/__schema3"
+                  }
+                },
+                "required": [
+                  "start",
+                  "end",
+                  "framesPerSecond"
+                ],
+                "additionalProperties": {}
+              },
+              "format": {
+                "type": "string",
+                "enum": [
+                  "pdf",
+                  "png",
+                  "svg",
+                  "html",
+                  "package",
+                  "mp4"
+                ]
+              },
+              "blockID": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "pageIndex": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "pixelWidth": {
+                "$ref": "#/$defs/__schema3"
+              }
+            },
+            "required": [
+              "format"
+            ],
+            "additionalProperties": {}
           },
           "__schema3": {
+            "type": "number"
+          },
+          "__schema4": {
             "type": "object",
             "properties": {
               "path": {
@@ -28069,7 +28703,7 @@
                 "$ref": "#/$defs/__schema1"
               },
               "byteCount": {
-                "$ref": "#/$defs/__schema2"
+                "$ref": "#/$defs/__schema3"
               },
               "mimeType": {
                 "$ref": "#/$defs/__schema1"
@@ -28083,7 +28717,7 @@
             ],
             "additionalProperties": {}
           },
-          "__schema4": {
+          "__schema5": {
             "anyOf": [
               {
                 "type": "string"
@@ -28100,7 +28734,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema4"
+                  "$ref": "#/$defs/__schema5"
                 }
               },
               {
@@ -28109,12 +28743,12 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema4"
+                  "$ref": "#/$defs/__schema5"
                 }
               }
             ]
           },
-          "__schema5": {
+          "__schema6": {
             "type": "object",
             "properties": {
               "target": {
@@ -28254,11 +28888,11 @@
               },
               "lifecycleRevision": {
                 "description": "Complete item extent from an explicit itemLifecycle read; covers off-screen content and is not mutation authority.",
-                "$ref": "#/$defs/__schema6"
+                "$ref": "#/$defs/__schema7"
               },
               "inkRevision": {
                 "description": "For appendInkStroke: drawingRevision of a page, spatialInkRevision of a board/cover, or inkRevision returned by nb.code.",
-                "$ref": "#/$defs/__schema7"
+                "$ref": "#/$defs/__schema8"
               }
             },
             "required": [
@@ -28267,11 +28901,11 @@
             ],
             "additionalProperties": false
           },
-          "__schema6": {
+          "__schema7": {
             "type": "string",
             "pattern": "^[a-f0-9]{64}$"
           },
-          "__schema7": {
+          "__schema8": {
             "type": "string"
           }
         }
@@ -28971,6 +29605,7 @@
                             "enum": [
                               "markdown",
                               "latex",
+                              "tex",
                               "interactive"
                             ]
                           },
@@ -30788,6 +31423,7 @@
                       "enum": [
                         "markdown",
                         "latex",
+                        "tex",
                         "interactive"
                       ]
                     },
@@ -31005,6 +31641,9 @@
                               },
                               "worldOrigin": {
                                 "$ref": "#/$defs/__schema18"
+                              },
+                              "wholeElement": {
+                                "type": "boolean"
                               }
                             },
                             "required": [
@@ -34657,6 +35296,9 @@
                       },
                       "worldOrigin": {
                         "$ref": "#/$defs/__schema3"
+                      },
+                      "wholeElement": {
+                        "type": "boolean"
                       }
                     },
                     "required": [
@@ -34964,6 +35606,7 @@
                 "enum": [
                   "markdown",
                   "latex",
+                  "tex",
                   "interactive"
                 ]
               },
@@ -35204,6 +35847,7 @@
                   "enum": [
                     "markdown",
                     "latex",
+                    "tex",
                     "interactive"
                   ]
                 },
@@ -37764,6 +38408,9 @@
                           },
                           "worldOrigin": {
                             "$ref": "#/$defs/__schema2"
+                          },
+                          "wholeElement": {
+                            "type": "boolean"
                           }
                         },
                         "required": [
@@ -41882,6 +42529,9 @@
                                   },
                                   "worldOrigin": {
                                     "$ref": "#/$defs/__schema4"
+                                  },
+                                  "wholeElement": {
+                                    "type": "boolean"
                                   }
                                 },
                                 "required": [
@@ -43746,8 +44396,19 @@
               "javaScript": {
                 "$ref": "#/$defs/__schema0"
               },
+              "programPackage": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema6"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline."
+              },
               "state": {
-                "$ref": "#/$defs/__schema6"
+                "$ref": "#/$defs/__schema7"
               },
               "worldOrigin": {
                 "type": "object",
@@ -43984,6 +44645,10 @@
             "additionalProperties": false
           },
           "__schema6": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "__schema7": {
             "anyOf": [
               {
                 "type": "string"
@@ -44000,7 +44665,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema6"
+                  "$ref": "#/$defs/__schema7"
                 }
               },
               {
@@ -44009,7 +44674,7 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema6"
+                  "$ref": "#/$defs/__schema7"
                 }
               }
             ]
@@ -44700,6 +45365,17 @@
               "javaScript": {
                 "$ref": "#/$defs/__schema0"
               },
+              "programPackage": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline."
+              },
               "graphic": {
                 "type": "object",
                 "properties": {
@@ -44718,7 +45394,7 @@
                     "type": "object",
                     "properties": {
                       "stroke": {
-                        "$ref": "#/$defs/__schema1"
+                        "$ref": "#/$defs/__schema2"
                       },
                       "strokeWidth": {
                         "type": "number",
@@ -44726,7 +45402,7 @@
                         "maximum": 1000000
                       },
                       "fill": {
-                        "$ref": "#/$defs/__schema1"
+                        "$ref": "#/$defs/__schema2"
                       },
                       "dash": {
                         "type": "string",
@@ -44776,7 +45452,7 @@
                         "maxItems": 4,
                         "type": "array",
                         "items": {
-                          "$ref": "#/$defs/__schema2"
+                          "$ref": "#/$defs/__schema3"
                         }
                       },
                       {
@@ -44788,10 +45464,10 @@
                     "type": "object",
                     "properties": {
                       "start": {
-                        "$ref": "#/$defs/__schema3"
+                        "$ref": "#/$defs/__schema4"
                       },
                       "end": {
-                        "$ref": "#/$defs/__schema3"
+                        "$ref": "#/$defs/__schema4"
                       },
                       "bend": {
                         "type": "number",
@@ -44799,10 +45475,10 @@
                         "maximum": 1000000
                       },
                       "startArrowhead": {
-                        "$ref": "#/$defs/__schema4"
+                        "$ref": "#/$defs/__schema5"
                       },
                       "endArrowhead": {
-                        "$ref": "#/$defs/__schema4"
+                        "$ref": "#/$defs/__schema5"
                       },
                       "routing": {
                         "type": "string",
@@ -44947,6 +45623,10 @@
             "maxLength": 1000000
           },
           "__schema1": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "__schema2": {
             "type": "object",
             "properties": {
               "red": {
@@ -44972,7 +45652,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema2": {
+          "__schema3": {
             "type": "object",
             "properties": {
               "x": {
@@ -44992,7 +45672,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema3": {
+          "__schema4": {
             "type": "object",
             "properties": {
               "point": {
@@ -45064,7 +45744,7 @@
             ],
             "additionalProperties": false
           },
-          "__schema4": {
+          "__schema5": {
             "type": "string",
             "enum": [
               "none",
@@ -45773,6 +46453,7 @@
                 "enum": [
                   "markdown",
                   "latex",
+                  "tex",
                   "interactive"
                 ]
               },
@@ -45788,8 +46469,19 @@
               "javaScript": {
                 "$ref": "#/$defs/__schema0"
               },
+              "programPackage": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline."
+              },
               "initialState": {
-                "$ref": "#/$defs/__schema1"
+                "$ref": "#/$defs/__schema2"
               },
               "height": {
                 "type": "number",
@@ -45819,6 +46511,10 @@
             "maxLength": 1000000
           },
           "__schema1": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "__schema2": {
             "anyOf": [
               {
                 "type": "string"
@@ -45835,7 +46531,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema1"
+                  "$ref": "#/$defs/__schema2"
                 }
               },
               {
@@ -45844,7 +46540,7 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema1"
+                  "$ref": "#/$defs/__schema2"
                 }
               }
             ]
@@ -46013,6 +46709,17 @@
               "javaScript": {
                 "$ref": "#/$defs/__schema0"
               },
+              "programPackage": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline."
+              },
               "height": {
                 "type": "number",
                 "minimum": 48,
@@ -46033,6 +46740,10 @@
           "__schema0": {
             "type": "string",
             "maxLength": 1000000
+          },
+          "__schema1": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
           }
         }
       },
@@ -46918,7 +47629,8 @@
                     "type": "string",
                     "enum": [
                       "markdown",
-                      "latex"
+                      "latex",
+                      "tex"
                     ]
                   },
                   "source": {
@@ -46953,8 +47665,19 @@
                   "javaScript": {
                     "$ref": "#/$defs/__schema0"
                   },
+                  "programPackage": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/__schema2"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline."
+                  },
                   "initialState": {
-                    "$ref": "#/$defs/__schema2"
+                    "$ref": "#/$defs/__schema3"
                   },
                   "height": {
                     "type": "number",
@@ -46972,6 +47695,10 @@
             ]
           },
           "__schema2": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "__schema3": {
             "anyOf": [
               {
                 "type": "string"
@@ -46988,7 +47715,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema2"
+                  "$ref": "#/$defs/__schema3"
                 }
               },
               {
@@ -46997,7 +47724,7 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema2"
+                  "$ref": "#/$defs/__schema3"
                 }
               }
             ]
@@ -47445,7 +48172,8 @@
                     "type": "string",
                     "enum": [
                       "markdown",
-                      "latex"
+                      "latex",
+                      "tex"
                     ]
                   },
                   "source": {
@@ -47480,8 +48208,19 @@
                   "javaScript": {
                     "$ref": "#/$defs/__schema0"
                   },
+                  "programPackage": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/__schema2"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline."
+                  },
                   "initialState": {
-                    "$ref": "#/$defs/__schema2"
+                    "$ref": "#/$defs/__schema3"
                   },
                   "height": {
                     "type": "number",
@@ -47499,6 +48238,10 @@
             ]
           },
           "__schema2": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "__schema3": {
             "anyOf": [
               {
                 "type": "string"
@@ -47515,7 +48258,7 @@
               {
                 "type": "array",
                 "items": {
-                  "$ref": "#/$defs/__schema2"
+                  "$ref": "#/$defs/__schema3"
                 }
               },
               {
@@ -47524,7 +48267,7 @@
                   "type": "string"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema2"
+                  "$ref": "#/$defs/__schema3"
                 }
               }
             ]
@@ -48326,9 +49069,10 @@
     "example": "const terminal = [\"completed\",\"failed\",\"cancelled\",\"interrupted\"];\nfor (;;) {\n  if (reply.status === 'error') throw new Error(reply.message);\n  for (const event of reply.events) await consume(event);\n  if (terminal.includes(reply.status) && reply.has_more === false) return reply;\n  reply = await callNotebookExecute({op:'resume',run_id:reply.run_id,after_seq:reply.next_seq,wait_ms:1000});\n}"
   },
   "interactive": {
-    "description": "Embedded document programs have DOM plus notebook.state, notebook.commit(next) and notebook.ready(promise). These are separate from the universal executor's nb API.",
-    "readiness": "Call notebook.ready(promise) while installing the program; resolve it only after the initial drawing and any asynchronous setup are complete. ready marks initial presentation readiness, not the end of future interaction. A program with no declaration produces program_completion_unknown when rendered.",
+    "description": "Embedded spatial and document programs share NotebookProgram/1: DOM plus notebook.state, notebook.commit(next), notebook.ready(promise), notebook.lifecycle(hooks). These are separate from the universal executor's nb API.",
+    "readiness": "Call notebook.ready(promise) while installing the program; resolve it only after the initial drawing and any asynchronous setup are complete. ready marks initial presentation readiness, not the end of future interaction. JavaScript without a declaration fails locally with program_completion_unknown; rejected or hung ready never counts as ready. Static markup does not need a declaration.",
     "state": "notebook.commit(next) publishes complete JSON state; redraw locally after a click. Listen for the notebookstate event to redraw remote or restored state. This local commit is not itself a durable-save receipt.",
+    "lifecycle": "Register once with {pause, checkpoint, resume, dispose} functions. pause stops your clocks/worker/audio before checkpoint returns complete JSON parameters/playhead/seed for the shown model. The native owner confirms its writer before retirement. Failed checkpoints leave the runtime available for resume/retry. Async pause/checkpoint/resume receive {signal}; abort and late completion cannot publish. Each operation has a 4s budget; do not commit on every frame. dispose releases author resources. This is not a heap snapshot or a global timer scheduler.",
     "requiredArgs": {
       "documentID": "Read the document UUID from Notebook first."
     },

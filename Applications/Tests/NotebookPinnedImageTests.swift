@@ -1,10 +1,97 @@
 import NotebookCore
 import SwiftUI
 import UIKit
+import WebKit
 import XCTest
 @testable import Notebook
 
 final class NotebookPinnedImageTests: XCTestCase {
+  @MainActor
+  func testExplicitProgramFreezeBindsSemanticObjectToSendPixelsAndResumesAfterSend() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    var page = try XCTUnwrap(model.activePage)
+    let source = AgentElement(id: "semantic-wave", kind: .web, frame: .init(x: 0, y: 0, width: 240, height: 120),
+      source: "Wave probe", html: "<canvas id='field' width='240' height='120' style='display:block;width:100%;height:100%'></canvas>", javaScript: """
+      let phase=0;const canvas=document.getElementById('field'),ctx=canvas.getContext('2d');
+      const draw=color=>{ctx.fillStyle=color;ctx.fillRect(0,0,240,120)};draw('green');
+      notebook.lifecycle({pause:()=>{phase=.5;draw('red')},checkpoint:()=>({phase}),
+        resume:()=>{phase=.75;draw('blue')}});
+      notebook.semantic(()=>({objectID:'node:12:8',label:'Probe',anchor:{x:.5,y:.5},
+        values:[{label:'u',value:2,unit:'mm'}],model:{phase}}));
+      notebook.ready(Promise.resolve());
+      """, state: .object(["phase": .number(0)]))
+    page.replaceElements([source], actor: model.actorID)
+    try model.store.savePage(page); await model.reloadExternalChanges()?.value
+    let resources = SceneRenderResources.shared, lease = try await resources.acquireWebSurface(priority: .input)
+    var ready = false
+    let owner = AgentWebCoordinator(lease: lease, resources: resources, snapshotPolicy: .display(scale: 2),
+      onInteractionReady: { ready = $0 }, onState: { _ in true })
+    owner.programOwner = model
+    let focus = InteractiveElementReference.page(pageID: page.id, elementID: source.id)
+    owner.bindPresentation(to: focus)
+    let web = AgentWebCoordinator.makeWebView(coordinator: owner)
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+    let previous = scene.keyWindow, window = UIWindow(windowScene: scene)
+    window.frame = .init(x: 0, y: 0, width: 240, height: 120)
+    let host = UIViewController(); window.rootViewController = host; window.makeKeyAndVisible()
+    host.view.addSubview(web); web.frame = host.view.bounds; window.layoutIfNeeded()
+    defer { owner.invalidate(); lease.release(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    owner.load(source, basis: page.programStateBasis(source.id), in: web)
+    var deadline = ContinuousClock.now + .seconds(10)
+    while !ready, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertTrue(ready)
+    let fragment = NotebookAttentionSelection.Fragment(target: .init(kind: .page, id: page.id),
+      elementID: source.id, region: source.frame, worldOrigin: nil, pageIndex: nil, label: "Wave")
+    model.publishHumanContext(NotebookAttentionSelection(fragments: [fragment], workspace: try XCTUnwrap(model.workspace),
+      hierarchy: try XCTUnwrap(model.boardHierarchy), ink: try XCTUnwrap(model.spatialInk), pages: model.pages,
+      documents: model.documents, states: model.documentStates))
+    await model.finishPendingPersistence()
+    deadline = ContinuousClock.now + .seconds(5)
+    while model.agentQuestion == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertTrue(model.canFreezeProgramForAttention)
+    await model.freezeProgramForAttention(); await model.finishPendingPersistence()
+    deadline = ContinuousClock.now + .seconds(5)
+    while model.selectionSession.isResolvingContext, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertNil(model.agentRequestError)
+    XCTAssertFalse(web.isUserInteractionEnabled)
+    let question = try XCTUnwrap(model.agentQuestion), reference = try XCTUnwrap(question.references.first)
+    let chat = try XCTUnwrap(model.chat)
+    let captured = model.captureChatSubmissionContext(chat)
+    _ = try await captured.prepare()
+    let evidence = try XCTUnwrap(model.store.attentionEvidence(contextID: question.contextID, referenceID: reference.id))
+    XCTAssertEqual(evidence.payload["programSemantic"]?["status"], .string("frozen_selection"))
+    XCTAssertEqual(evidence.payload["programSemantic"]?["selection"]?["objectID"], .string("node:12:8"))
+    XCTAssertEqual(evidence.payload["programSemantic"]?["selection"]?["model"]?["phase"], .number(0.5))
+    let image = try XCTUnwrap(evidence.image); try image.validate(reference: reference)
+    let red = try pixel(image.png, x: image.pixelWidth / 2, y: image.pixelHeight / 2)
+    XCTAssertGreaterThan(red[0], 240); XCTAssertLessThan(red[2], 15)
+    try await Task.sleep(for: .milliseconds(100))
+    let color = try await web.evaluateJavaScript("Array.from(document.getElementById('field').getContext('2d').getImageData(120,60,1,1).data)") as? [Int]
+    XCTAssertEqual(color, [0, 0, 255, 255], "Send resumes this same owner only after fixing the red frame")
+    XCTAssertTrue(web.isUserInteractionEnabled)
+    XCTAssertEqual(try model.store.attentionEvidence(contextID: question.contextID, referenceID: reference.id), evidence)
+    await model.freezeProgramForAttention(); await model.finishPendingPersistence()
+    deadline = ContinuousClock.now + .seconds(5)
+    while model.selectionSession.isResolvingContext, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertFalse(web.isUserInteractionEnabled)
+    var editedPage = try model.store.loadPage(page.id)
+    let newer = try XCTUnwrap(editedPage.elements.first).updating(state: .object(["phase": .number(0.9)]))
+    editedPage.replaceElements([newer], actor: model.actorID)
+    try model.store.savePage(editedPage); await model.reloadExternalChanges()?.value
+    owner.load(newer, basis: editedPage.programStateBasis(source.id), in: web)
+    deadline = ContinuousClock.now + .seconds(5)
+    while !owner.hasLiveSource(newer), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertTrue(owner.hasLiveSource(newer)); XCTAssertTrue(web.isUserInteractionEnabled)
+    let updatedPhase = try await web.evaluateJavaScript("notebook.state.phase") as? Double
+    XCTAssertEqual(updatedPhase, 0.9, "A newer accepted state resumes the old hold instead of being lost to suspended apply")
+    XCTAssertEqual(try model.store.attentionEvidence(contextID: question.contextID, referenceID: reference.id), evidence)
+    let attachment = XCTAttachment(data: image.png, uniformTypeIdentifier: "public.png")
+    attachment.name = "semantic-send-frozen-red-frame"; attachment.lifetime = .keepAlways; add(attachment)
+  }
+
   @MainActor
   func testAreaCrossingPaperEdgeKeepsItsPageAndMixedElements() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

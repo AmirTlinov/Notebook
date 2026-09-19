@@ -2,8 +2,32 @@ import Foundation
 import CryptoKit
 
 /// Final regional pixels of the immutable source considered by one question.
-/// This is source evidence, not a certificate that the iPad presented a frame.
+/// Source evidence by default. Only the installed presentation owner can add
+/// capture provenance; a regenerated or cached source image has none.
 public struct AgentPinnedImage: Codable, Equatable, Sendable {
+  public struct Presentation: Codable, Equatable, Sendable {
+    public enum Device: String, Codable, Sendable { case iPad, iOSSimulator }
+    /// Only an explicitly paused, checkpointed native program can supply this.
+    /// Author model data remains untrusted; this binds its identity to capture,
+    /// not a promise that arbitrary author code is deterministic.
+    public struct Program: Codable, Equatable, Sendable {
+      public let blockID: String
+      public let sourceVersion: ContentFieldVersion
+      public let state: JSONValue
+      public init(blockID: String, sourceVersion: ContentFieldVersion, state: JSONValue) {
+        self.blockID = blockID; self.sourceVersion = sourceVersion; self.state = state
+      }
+    }
+    public let program: Program?
+    public let captureID: UUID
+    public let capturedAt: TimeInterval
+    public let device: Device
+    public init(captureID: UUID = UUID(), capturedAt: TimeInterval = Date().timeIntervalSince1970, device: Device, program: Program? = nil) {
+      self.program = program
+      self.captureID = captureID; self.capturedAt = capturedAt; self.device = device
+    }
+  }
+  public let presentation: Presentation?
   public let referenceID: UUID
   public let sourceRevision: String
   public let region: PageRect
@@ -17,7 +41,8 @@ public struct AgentPinnedImage: Codable, Equatable, Sendable {
 
   public init(referenceID: UUID, sourceRevision: String, region: PageRect,
     worldOrigin: WorldPoint?, pageIndex: Int?, pixelWidth: Int, pixelHeight: Int,
-    pixelsPerPoint: Double, png: Data, sha256: String) throws {
+    pixelsPerPoint: Double, png: Data, sha256: String, presentation: Presentation? = nil) throws {
+    self.presentation = presentation;
     self.referenceID = referenceID; self.sourceRevision = sourceRevision
     self.region = region; self.worldOrigin = worldOrigin; self.pageIndex = pageIndex
     self.pixelWidth = pixelWidth; self.pixelHeight = pixelHeight
@@ -26,7 +51,8 @@ public struct AgentPinnedImage: Codable, Equatable, Sendable {
   }
 
   public func validate(reference: CollaborationReference? = nil) throws {
-    guard (33...2_097_152).contains(png.count), (1...4096).contains(pixelWidth), (1...4096).contains(pixelHeight),
+    guard presentation.map({ $0.capturedAt.isFinite && $0.capturedAt > 0 }) ?? true,
+      (33...2_097_152).contains(png.count), (1...4096).contains(pixelWidth), (1...4096).contains(pixelHeight),
       pixelWidth <= 4_000_000 / pixelHeight,
       pixelsPerPoint.isFinite, pixelsPerPoint > 0,
       region.x.isFinite, region.y.isFinite, region.width.isFinite, region.height.isFinite,
@@ -40,8 +66,14 @@ public struct AgentPinnedImage: Codable, Equatable, Sendable {
     }
     guard dimension(16) == pixelWidth, dimension(20) == pixelHeight,
       SHA256.hash(data: png).map({ String(format: "%02x", $0) }).joined() == sha256 else { throw invalid() }
+    if let program = presentation?.program {
+      guard !program.blockID.isEmpty, program.blockID.utf8.count <= 120,
+        program.sourceVersion.isValid, program.state.isValid,
+        try JSONEncoder().encode(program.state).count <= 1_048_576 else { throw invalid() }
+    }
     if let reference {
-      guard reference.id == referenceID, reference.revision == sourceRevision,
+      guard presentation?.program.map({ $0.blockID == reference.elementID }) ?? true,
+        reference.id == referenceID, reference.revision == sourceRevision,
         reference.region == region, reference.worldOrigin == worldOrigin, reference.pageIndex == pageIndex else { throw invalid() }
     }
   }

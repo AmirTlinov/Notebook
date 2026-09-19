@@ -20,8 +20,16 @@ private struct PageVisionRequestFixture {
 @Test("Карта читает только явно названный лист и повторяет тот же запрос после перезапуска")
 func pageVisionRequestHasAnAddressedSource() throws {
   let fixture = PageVisionRequestFixture(); defer { fixture.remove() }
-  let page = try fixture.page(), store = fixture.store
-  for url in [store.indexURL, store.boardURL, store.spatialInkURL, store.pageURL(UUID())] {
+  let store = fixture.store
+  let (index, pages) = try store.loadOrCreate(actor: fixture.actor, pageSize: .init(width: 100, height: 100))
+  let pageID = try #require(index.selectedPageID)
+  let page = try #require(pages[pageID])
+  // Liveness metadata is required; unrelated catalogue body decoding is not.
+  try store.commandTransaction {
+    try store.currentSQL!.run("UPDATE blobs SET data=? WHERE hash=(SELECT hash FROM records WHERE address='workspace.json#')",
+      [.blob(Data("unrelated damaged catalogue body".utf8))])
+  }
+  for url in [store.boardURL, store.spatialInkURL, store.pageURL(UUID())] {
     try fixture.store.fixtureWrite(Data("unrelated damaged source".utf8), to: url)
   }
   let first = try store.requestPageVision(pageID: page.id, expectedRevision: page.drawingStamp.revision)

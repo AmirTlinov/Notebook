@@ -7,7 +7,26 @@ final class DocumentProgramIdentityTests: XCTestCase {
   private func update(_ coordinator: DocumentWebCoordinator, document: DocumentDocument, state: DocumentStateJournal,
     pageIndex: Int = 0) {
     coordinator.update(document: document, state: state, selectedPageIndex: pageIndex, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onRenderReady: .init { _ in }, onPageLayout: { _ in },  onStateChange: { _, _ in nil })
+  }
+
+  func testPackageReplacementInvalidatesProgramAndRasterIdentityWithoutChangingPlacement() throws {
+    let actor = UUID(), first = String(repeating: "a", count: 64), second = String(repeating: "b", count: 64)
+    let a = AgentElement(id: "p", kind: .web, frame: .init(x: 0, y: 0, width: 100, height: 100), source: "", html: "", programPackage: first)
+    let b = AgentElement(id: "p", kind: .web, frame: a.frame, source: "", html: "", programPackage: second)
+    XCTAssertNotEqual(AgentProgramSource(a), AgentProgramSource(b))
+    XCTAssertNotEqual(SceneRasterSource.agent(a), .agent(b))
+    XCTAssertEqual(SceneRasterSource.agent(a), .agent(a.updating(frame: .init(x: 80, y: 70, width: 100, height: 100))))
+    var document = DocumentDocument(actor: actor, blocks: [.interactive(id: "p", html: "", programPackage: first)])
+    let state = DocumentStateJournal(id: document.id, actor: actor)
+    let coordinator = DocumentWebCoordinator(onRenderReady: .init { _ in }, onPageLayout: { _ in },
+      onStateChange: { _, _ in nil })
+    defer { coordinator.invalidate() }
+    update(coordinator, document: document, state: state)
+    let before = try XCTUnwrap(coordinator.payload?.blockTokens["p"])
+    XCTAssertTrue(document.replaceContent(blocks: [.interactive(id: "p", html: "", programPackage: second)], actor: actor))
+    update(coordinator, document: document, state: state)
+    XCTAssertNotEqual(coordinator.payload?.blockTokens["p"], before)
   }
 
   func testStateAndPageChangesKeepEveryProgramAtTheMaximumDocumentSize() throws {
@@ -16,7 +35,7 @@ final class DocumentProgramIdentityTests: XCTestCase {
     })
     var state = DocumentStateJournal(id: document.id, actor: UUID())
     let coordinator = DocumentWebCoordinator(onRenderReady: .init { _ in }, onPageLayout: { _ in },
-      onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+       onStateChange: { _, _ in nil })
     defer { coordinator.invalidate() }
     update(coordinator, document: document, state: state)
     let first = try XCTUnwrap(coordinator.payload)
@@ -38,7 +57,7 @@ final class DocumentProgramIdentityTests: XCTestCase {
     var document = DocumentDocument(actor: actor, blocks: (0..<12).map { .markdown(id: "block-\($0)", source: "Source \($0)") })
     let state = DocumentStateJournal(id: document.id, actor: actor)
     let coordinator = DocumentWebCoordinator(onRenderReady: .init { _ in }, onPageLayout: { _ in },
-      onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+       onStateChange: { _, _ in nil })
     defer { coordinator.invalidate() }
     update(coordinator, document: document, state: state)
     let first = try XCTUnwrap(coordinator.payload?.blockTokens)

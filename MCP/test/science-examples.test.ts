@@ -20,11 +20,6 @@ test('longitudinal wave preserves particle order and pressure equals negative st
     }
   }
 });
-test('gear mesh ratios, direction and full return agree with tooth counts',()=>{
-  const a=models.gears(.13),b=models.gears(.31),d=b.map((v:number,i:number)=>v-a[i]);
-  near(d[0]*60+d[1]*40,0);near(d[1]*40+d[2]*24,0);
-  models.gears(1).forEach((v:number,i:number)=>near((v-models.gears(0)[i])/(2*Math.PI),[2,-3,5][i]));
-});
 test('linear model agrees with matrix action, oriented area and singular endpoint',()=>{
   const result=models.transform([1,.8,0,1],1,[1,.5]);near(result.point[0],1.4);near(result.point[1],.5);near(result.determinant,1);
   near(models.transform([1,0,0,0],1,[1,1]).determinant,0);
@@ -38,9 +33,9 @@ test('GP posterior interpolates noiseless data and remains finite with duplicate
   for(const p of models.gaussianProcess([],xs,1,.2)){near(p.mean,0);near(p.variance,1);}
 });
 test('A* agrees with breadth-first shortest paths, including an unreachable target',()=>{
-  function bfs(w:number,h:number,walls:number[],start:number,goal:number){const blocked=new Set(walls),seen=new Set([start]),q=[[start,0]];for(let i=0;i<q.length;i++){
-    const [n,d]=q[i];if(n===goal)return d;const x=n%w,y=Math.floor(n/w);
-    for(const [a,b] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]]){if(a<0||a>=w||b<0||b>=h)continue;const v=b*w+a;if(!blocked.has(v)&&!seen.has(v)){seen.add(v);q.push([v,d+1]);}}
+  function bfs(w:number,h:number,walls:number[],start:number,goal:number){const blocked=new Set(walls),seen=new Set([start]);const q:Array<[number,number]>=[[start,0]];for(let i=0;i<q.length;i++){
+    const [n,d]=q[i]!;if(n===goal)return d;const x=n%w,y=Math.floor(n/w);
+    for(const [a,b] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]] as const){if(a<0||a>=w||b<0||b>=h)continue;const v=b*w+a;if(!blocked.has(v)&&!seen.has(v)){seen.add(v);q.push([v,d+1]);}}
   }return null;}
   for(let seed=0;seed<12;seed++){const w=9,h=7,walls=Array.from({length:w*h},(_,i)=>i).filter(i=>i!==0&&i!==w*h-1&&(i*17+seed*13)%11<3);
     const frames=models.astar(w,h,walls,0,w*h-1),last=frames.at(-1);assert.equal(last.cost,bfs(w,h,walls,0,w*h-1));
@@ -59,9 +54,9 @@ test('Bernoulli experiment has reproducible prefixes, exact counts and boundary 
   assert.equal(a.total,a.outcomes.reduce((sum:number,v:number)=>sum+v,0));near(a.frequencies.at(-1),a.total/100);
   assert.equal(models.bernoulli(0,100,3).total,0);assert.equal(models.bernoulli(1,100,3).total,100);assert.equal(models.bernoulli(.5,0,3).total,0);
 });
-test('all seven examples prepare through animation into valid self-contained Notebook programs',async()=>{
-  assert.equal(scienceExamples.length,7);
-  for(const example of scienceExamples)for(const kind of ['page','document']) {
+test('six inline examples prepare through animation into valid self-contained Notebook programs',async()=>{
+  assert.equal(scienceExamples.filter((e:any)=>!e.format).length,6);
+  for(const example of scienceExamples.filter((e:any)=>!e.format))for(const kind of ['page','document']) {
     const request=await prepare('animation',{example:example.id,target:{kind,id:randomUUID()},initialState:{phase:.25}},{runID:randomUUID()});
     executionInput.parse(request);const operation=request.args.operations[0];operationSchema.parse(operation);
     const program=operation.values;assert.ok(program.javaScript.includes('ScienceModels'));assert.ok(program.html.includes(example.source));assert.ok(Buffer.byteLength(JSON.stringify(request))<200_000);
@@ -81,13 +76,13 @@ test('shared scene runtime keeps frames local, commits controls and restores foc
     addEventListener(key:string,fn:Function){this.listeners[key]=fn},setAttribute(){}});
   const input=element({type:'range',dataset:{key:'phase'}}),live=element({type:'range',dataset:{key:'yaw',pause:'false'}}),play=element(),output=element();
   const elements=new Map([['phase',input],['play',play],['phase-value',output]]);
-  let state:any={phase:.2},sequence=0,ready:Promise<unknown>|undefined,drawn:any;
+  let state:any={phase:.2},sequence=0,ready:Promise<unknown>|undefined,drawn:any,lifecycle:any,exportFrame:any,timeline=false;
   const document={activeElement:null as any,hidden:false,getElementById:(id:string)=>elements.get(id),
-    querySelectorAll:()=>[input,live],addEventListener:(name:string,fn:Function)=>events.set(name,fn)};
-  const notebook={get state(){return state},commit:(value:any)=>{state=value;commits.push(value)},ready:(promise:Promise<unknown>)=>ready=promise};
-  const Science=new Function('document','notebook','requestAnimationFrame','cancelAnimationFrame','addEventListener',source+';return Science;')(document,notebook,
-    (fn:Function)=>{frames.set(++sequence,fn);return sequence},(id:number)=>frames.delete(id),(name:string,fn:Function)=>events.set(name,fn));
-  const app=Science.mount({defaults:{phase:0,yaw:0},ranges:{phase:[0,1]},draw:(s:any)=>drawn=s.phase,tick:(s:any,dt:number)=>({phase:s.phase+dt/1000})});
+    querySelectorAll:()=>[input,live],addEventListener:(name:string,fn:Function)=>events.set(name,fn),removeEventListener:(name:string)=>events.delete(name)};
+  const notebook={exportFrame:(callback:any,options:any)=>{exportFrame=callback;timeline=options.timeline},get state(){return state},commit:(value:any)=>{state=value;commits.push(value)},ready:(promise:Promise<unknown>)=>ready=promise,lifecycle:(hooks:any)=>lifecycle=hooks};
+  const Science=new Function('document','notebook','requestAnimationFrame','cancelAnimationFrame','addEventListener','removeEventListener',source+';return Science;')(document,notebook,
+    (fn:Function)=>{frames.set(++sequence,fn);return sequence},(id:number)=>frames.delete(id),(name:string,fn:Function)=>events.set(name,fn),(name:string)=>events.delete(name));
+  const app=Science.mount({defaults:{phase:0,yaw:0},ranges:{phase:[0,1]},draw:(s:any)=>drawn=s.phase,tick:(s:any,dt:number)=>({phase:s.phase+dt/1000}),seek:(s:any,time:number)=>({phase:s.phase+time})});
   await ready;assert.equal(drawn,.2);
   play.listeners.click();
   const tick=(time:number)=>{const [id,fn]=[...frames][0]!;frames.delete(id);fn(time)};
@@ -100,42 +95,18 @@ test('shared scene runtime keeps frames local, commits controls and restores foc
   input.listeners.change();assert.equal(Number(input.value),1);assert.equal(commits.length,2);
   play.listeners.click();state={phase:.75};events.get('notebookstate')!();
   assert.equal(frames.size,0);assert.equal(drawn,.75);assert.equal(Number(input.value),.75);assert.equal(play.textContent,'Пуск');
-});
-
-test('gear camera gestures preserve playback; WebGL depth testing and framing remain enabled',async()=>{
-  const source=await readFile(new URL('../skills/notebook/assets/science/gears.js',import.meta.url),'utf8');
-  let uploaded:Float32Array=new Float32Array(),rotation:number[]=[],frame:number[]=[],depth=false,cleared=0,count=0;
-  const gl:any={DEPTH_TEST:2929,LEQUAL:515,COLOR_BUFFER_BIT:16384,DEPTH_BUFFER_BIT:256,
-    createShader:()=>({}),createProgram:()=>({}),createBuffer:()=>({}),
-    getShaderParameter:()=>true,getProgramParameter:()=>true,
-    getAttribLocation:(_p:any,name:string)=>['position','normal','color'].indexOf(name),getUniformLocation:(_p:any,name:string)=>name,
-    enable:(key:number)=>{if(key===gl.DEPTH_TEST)depth=true},clear:(mask:number)=>cleared=mask,
-    bufferData:(_kind:any,data:Float32Array)=>uploaded=data,uniformMatrix3fv:(_id:any,_t:any,value:number[])=>rotation=value,
-    uniform3f:(_id:any,...value:number[])=>frame=value,drawArrays:(_kind:any,_first:any,value:number)=>count=value};
-  for(const key of ['shaderSource','compileShader','attachShader','linkProgram','deleteShader','useProgram','bindBuffer','enableVertexAttribArray','vertexAttribPointer','depthFunc','clearDepth','clearColor','viewport'])gl[key]=()=>{};
-  const elements=new Map<string,any>();
-  const get=(id:string)=>{if(!elements.has(id))elements.set(id,{clientWidth:900,clientHeight:490,dataset:{},focus(){},getContext:()=>gl,setPointerCapture(){},addEventListener(){}});return elements.get(id)};
-  let state:any,saves=0,stops=0,draw:Function;
-  const app={get state(){return state},change:(patch:any,commit=true,options:any={})=>{assert.equal(options.pause,false);state={...state,...patch}},save:()=>saves++,stop:()=>stops++};
-  new Function('Science','ScienceModels','devicePixelRatio','ResizeObserver',source)({$:get,mount:(options:any)=>{state={...options.defaults};draw=options.draw;return app}},models,1,class{observe(){}});
-  const el=get('gear-canvas'),initial={...state};
-  let prevented=false;el.onpointerdown({clientX:100,clientY:100,pointerId:1,preventDefault(){prevented=true}});assert.equal(prevented,true);assert.ok('pointerFocus' in el.dataset);
-  el.onpointermove({clientX:150,clientY:140});
-  near(state.yaw,initial.yaw-.3);near(state.tilt,initial.tilt-.2);assert.equal(saves,0);assert.equal(stops,0);
-  el.onpointermove({clientX:50,clientY:60});near(state.yaw,initial.yaw+.3);near(state.tilt,initial.tilt+.2);
-  el.onpointerup();assert.equal(saves,1);
-  const before={...state};el.onpointermove({clientX:200,clientY:200});assert.deepEqual(state,before);
-  for(const key of ['ArrowRight','ArrowDown'])el.onkeydown({key,preventDefault(){}});
-  near(state.yaw,before.yaw-.1);near(state.tilt,before.tilt-.1);assert.ok(!('pointerFocus' in el.dataset));
-  for(const key of ['ArrowLeft','ArrowUp'])el.onkeydown({key,preventDefault(){}});
-  near(state.yaw,before.yaw);near(state.tilt,before.tilt);
-  for(const view of [{yaw:-1.02,tilt:.52,reveal:.3},{yaw:Math.PI/2,tilt:.25,reveal:1},{yaw:-Math.PI/2,tilt:1.3,reveal:0}]){
-    draw!({...state,...view});assert.ok(depth);assert.equal(cleared,gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);assert.ok(count>10000);assert.equal(count,uploaded.length/9);
-    for(let i=0;i<uploaded.length;i+=9){
-      const [x,y,z]=uploaded.slice(i,i+3),u=rotation[0]*x+rotation[3]*y+rotation[6]*z,v=rotation[1]*x+rotation[4]*y+rotation[7]*z,d=rotation[2]*x+rotation[5]*y+rotation[8]*z,p=1250/(1250-d);
-      const sx=450+(u*p-frame[0])*frame[2],sy=245+(v*p-frame[1])*frame[2];
-      assert.ok(sx>=0&&sx<=900&&sy>=0&&sy<=490,`clipped vertex ${sx},${sy}`);
-    }
-  }
-  assert.doesNotMatch(source,/faces\.sort|<polygon/);
+  play.listeners.click();tick(300);tick(400);near(drawn,.85);
+  const beforeCheckpoint=commits.length;
+  lifecycle.pause();assert.equal(frames.size,0);near(lifecycle.checkpoint().phase,.85);
+  app.change({phase:.1});play.listeners.click();assert.equal(frames.size,0);near(drawn,.85);
+  assert.equal(commits.length,beforeCheckpoint,'owner checkpoint, not a second optimistic commit');
+  const checkpoint=lifecycle.checkpoint();checkpoint.phase=0;near(lifecycle.checkpoint().phase,.85);
+  lifecycle.resume();assert.equal(frames.size,0);near(drawn,.85);
+  const beforeExport=commits.length;lifecycle.pause();assert.equal(timeline,true);
+  assert.equal(exportFrame({format:'raster',state:{phase:.25},time:.5}),null);near(drawn,.75);assert.equal(commits.length,beforeExport);
+  exportFrame({format:'raster',state:{phase:.25},time:0});near(drawn,.25);assert.equal(frames.size,0);
+  lifecycle.resume();app.change({phase:.85},false);
+  play.listeners.click();assert.equal(frames.size,1);lifecycle.dispose();assert.equal(frames.size,0);
+  assert.equal(events.has('notebookstate'),false);assert.equal(events.has('visibilitychange'),false);
+  app.change({phase:.2});near(drawn,.85);
 });

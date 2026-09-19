@@ -1,10 +1,35 @@
 import Foundation
 
 extension NotebookStore {
+  static let documentProgramReplicationBytes: Int64 = 16_777_216
+
+  /// Dependency discovery and the source merger admit the same incoming program
+  /// subtree before either decodes its first body. Lengths never materialize blobs.
+  func incomingDocumentProgramRecords(_ address: String, manifestHash: String) throws -> [[NotebookSQLValue]] {
+    let database = currentSQL!
+    let point = try database.rows("""
+      SELECT r.address,r.blob_hash,length(b.data) FROM manifest_records r LEFT JOIN blobs b ON b.hash=r.blob_hash
+      WHERE r.manifest_hash=? AND r.address=?
+      """, [.text(manifestHash), .text(address)])
+    let children = try database.rows("""
+      SELECT r.address,r.blob_hash,length(b.data) FROM manifest_records r LEFT JOIN blobs b ON b.hash=r.blob_hash
+      WHERE r.manifest_hash=? AND r.address>=? AND r.address<? ORDER BY r.address LIMIT 4097
+      """, [.text(manifestHash), .text(address + "/"), .text(address + "0")])
+    let rows = point + children
+    guard rows.count <= 4096 else { throw NotebookStorageError.limitExceeded("document_replication_block") }
+    var remaining = Self.documentProgramReplicationBytes
+    for row in rows where row[1].text != nil {
+      guard let bytes = row[2].integer else { throw NotebookStorageError.blobMissing(row[1].text!) }
+      guard bytes <= remaining else { throw NotebookStorageError.limitExceeded("document_replication_block") }
+      remaining -= bytes
+    }
+    return rows
+  }
+
   /// The document's field merger works on one program at a time. SQL retains
   /// the incoming address set; retired field clocks and unrequested programs
   /// never become a second, reconstructed DocumentDocument in memory.
-  func applyReplicatedDocumentSource(file: String, manifestHash: String) throws {
+  func applyReplicatedDocumentSource(file: String, manifestHash: String, manifestFormat: Int) throws {
     let database = currentSQL!, root = file + "#", blockPrefix = root + "/blocks/@"
     let fieldPrefix = root + "/collaboration/fields/@"
     let identifier = String(file.dropFirst("documents/".count).dropLast(5))
@@ -20,16 +45,9 @@ extension NotebookStore {
       if let mutation = try records.mutation(root), mutation[0].text == nil { return }
     }
 
-    func incoming(_ address: String, descendants: Bool = false) throws -> [[NotebookSQLValue]] {
-      let point = try database.rows("SELECT address,blob_hash FROM manifest_records WHERE manifest_hash=? AND address=?",
+    func incoming(_ address: String) throws -> [[NotebookSQLValue]] {
+      try database.rows("SELECT address,blob_hash FROM manifest_records WHERE manifest_hash=? AND address=?",
         [.text(manifestHash), .text(address)])
-      guard descendants else { return point }
-      let children = try database.rows("""
-        SELECT address,blob_hash FROM manifest_records WHERE manifest_hash=? AND address>=? AND address<?
-        ORDER BY address LIMIT 4097
-        """, [.text(manifestHash), .text(address + "/"), .text(address + "0")])
-      guard point.count + children.count <= 4096 else { throw NotebookStorageError.limitExceeded("document_replication_block") }
-      return point + children
     }
     func fragments(_ mutations: [[NotebookSQLValue]], maximumBytes: Int64) throws -> [NotebookStoredFragment] {
       var remaining = maximumBytes
@@ -47,6 +65,9 @@ extension NotebookStore {
         let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(hash))
         guard fragment.address == row[0].text, fragment.file == file, fragment.position >= 0, fragment.value.isValid else {
           throw NotebookStorageError.invalidTransaction("document source fragment identity")
+        }
+        if fragment.collection == "blocks", fragment.value["kind"] == .string("tex"), manifestFormat < 11 {
+          throw NotebookStorageError.invalidTransaction("full TeX source requires manifest format 11")
         }
         return fragment
       }
@@ -69,8 +90,8 @@ extension NotebookStore {
       if let mutation = changes.first, mutation[1].text == nil { throw NotebookStorageError.invalidTransaction("causal document fields are retained") }
       // A causal frontier can retain actual conflicting source, not only a
       // small clock. It shares the addressed program's existing byte bound.
-      let row = try fragments(changes, maximumBytes: 16_777_216).first
-        ?? boundedStoredFragments([(address, false)], maximumCount: 1, maximumBytes: 16_777_216,
+      let row = try fragments(changes, maximumBytes: Self.documentProgramReplicationBytes).first
+        ?? boundedStoredFragments([(address, false)], maximumCount: 1, maximumBytes: Self.documentProgramReplicationBytes,
           budget: "document_replication_field").first
       if let row {
         let version = try row.value.decode(ContentFieldVersion.self)
@@ -156,9 +177,9 @@ extension NotebookStore {
         guard !member.isEmpty, member.utf16.count <= 120, collaborationIdentity(member) == member,
           fieldKey([member]) == escapedID else { throw NotebookStorageError.invalidTransaction("document block address") }
         let oldRows = try boundedStoredFragments([(address, true)], maximumCount: 4096,
-          maximumBytes: 16_777_216, budget: "document_replication_block")
-        let mutations = try incoming(address, descendants: true)
-        let received = try fragments(mutations, maximumBytes: 16_777_216)
+          maximumBytes: Self.documentProgramReplicationBytes, budget: "document_replication_block")
+        let mutations = try incomingDocumentProgramRecords(address, manifestHash: manifestHash)
+        let received = try fragments(mutations, maximumBytes: Self.documentProgramReplicationBytes)
         let declaresProgram = mutations.contains { $0[0].text == address }
         guard mutations.isEmpty || declaresProgram else { throw NotebookStorageError.invalidTransaction("document program declaration missing") }
         let changed = Dictionary(uniqueKeysWithValues: (declaresProgram ? received : oldRows).map { ($0.address, $0) })
@@ -256,7 +277,7 @@ extension NotebookStore {
       for (position, member) in order.enumerated() {
         let address = blockPrefix + fieldKey([member])
         let fragment = try boundedStoredFragments([(address, false)], maximumCount: 1,
-          maximumBytes: 16_777_216, budget: "document_replication_block").first!
+          maximumBytes: Self.documentProgramReplicationBytes, budget: "document_replication_block").first!
         guard fragment.position != position else { continue }
         try writeFragment(fragment.replacing(value: fragment.value, position: position), database: database)
       }
