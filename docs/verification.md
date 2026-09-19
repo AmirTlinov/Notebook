@@ -1,5 +1,41 @@
 # Проверка Notebook
 
+## 19 сентября, 09:13 МСК — GUI-249: переносимый документ без исполнения при импорте
+
+format=package публикует NotebookPortable/1: точный cut + исходные V2 manifests
++ уникальные `blob-<sha>` в одном атомарном каталоге. Целый каталог переносится;
+`submit.mjs document.package` использует прежний native importer, затем одну
+createDocument транзакцию, со стабильными retry/run/document IDs. Нет npm,
+сборки больших файлов, Base64/asset bytes в IPC, второго хранилища или renderer.
+Импорт сохраняет значения моделей (включая явный null), но не чужие clocks,
+selection или камеру. Код запускается только при явном открытии. Авторский
+inline/source layout транслируется в строгие варианты прежнего SDK, не в
+новый формат редактирования. Deadline recovery возобновляет тот же run и
+дренирует queued/running/output; не повторяет принятые действия.
+
+**Mac3 PASS**, `.build/gui249-portable-mac-v2/verification.json`, source
+**8297a76cb89e5dcdac2b0390eb51da5bd0d374ca897874b20898dd4aff2fa588**:
+настоящий signal package экспортирован и перенесён в отдельный store через
+NotebookProgramImporter.partPaths. Все файлы/parts/hash совпадают; экспорт
+не изменяет source/state, импорт bytes не открывает WebKit и не меняет index.
+После явного открытия реальная offline программа показывает sample37125 и
+восстанавливает center37.125. Прежний 64 МиБ file import, FIFO responsiveness,
+cancel/retry/cold status также PASS. **Core13 PASS**,
+`/tmp/gui249-portable-core-v1.log`: каталог с **36 МиБ уникальных байтов**
+(9 разных 4 МиБ частей), полный SHA, missing closure, prior artifact и CAS/cancel.
+**JS7 PASS + generated check**, `/tmp/gui249-portable-js-final.log`: один typed
+createDocument, no code execution, null state, bad metadata/symlink, cancel,
+response_pending/retry/resume. Это transport-boundary JS test, не установленный
+end-to-end MCP импорт. **Simulator1 PASS**,
+`.build/gui249-portable-sim-v1.xcresult`: compiled package offline + checkpoint
+в обоих владельцах; source a20fe433b645838770f05a564ce028f3c2c6413aa7a3099899a0fb7ae2b1e5b5,
+от финального native tree отличается только исправлением UUID в JS test fixture.
+Первый strict-schema JS check выявил некорректный test target='root'; исправлен
+на UUID без ослабления схемы. Mac и Simulator независимы; физическая пара цела.
+
+Не закрыты: presented cut, deterministic video, интегрированный installed/shared
+маршрут GUI-250 и системные измерения. GUI-249/240 не Done.
+
 ## 19 сентября, 08:53 МСК — GUI-249: автономный offline HTML
 
 format=html + blockID публикует выбранную inline программу с точным saved state

@@ -54,15 +54,17 @@ final class NotebookProgramImporter {
           try NotebookProgramImport.read(file: URL(fileURLWithPath: path), expectedHash: hash)
         }.value
         job.totalBytes = descriptor.package.files.reduce(0) { $0 + $1.byteCount }
-        let sources = Dictionary(uniqueKeysWithValues: descriptor.sources.map { ($0.path, $0.sourcePath) })
+        let sources = Dictionary(uniqueKeysWithValues: descriptor.sources.map { ($0.path, $0) })
         for file in descriptor.package.files {
-          let source = URL(fileURLWithPath: sources[file.path]!)
+          let source = sources[file.path]!
           var offset: Int64 = 0
-          for part in file.parts {
+          for (index, part) in file.parts.enumerated() {
             try Task.checkCancellation()
-            let range = offset..<(offset + Int64(part.byteCount))
+            let start = source.partPaths == nil ? offset : 0
+            let url = URL(fileURLWithPath: source.partPaths?[index] ?? source.sourcePath!)
+            let range = start..<(start + Int64(part.byteCount))
             try await persistence.submit { store in
-              try store.stageBlob(file: source, expectedHash: part.sha256, byteCount: Int64(part.byteCount), range: range)
+              try store.stageBlob(file: url, expectedHash: part.sha256, byteCount: Int64(part.byteCount), range: range)
             }
             offset = range.upperBound; job.stagedBytes += Int64(part.byteCount)
             // Native contacts and small edits keep their position in the same

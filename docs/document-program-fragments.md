@@ -296,3 +296,25 @@ raster entry не меняет уже удержанное значение. Anc
 и reference revision. Без доказанной остановки/готового capture/valid callback
 возвращается unavailable, даже если визуальный Send-снимок есть. Semantic
 payload не расширяет область существующего `RequestGrant` и не обходит CAS.
+
+## Переносимый экспорт документа (GUI-249)
+
+`nb.export(key, {documentID, format:'package'})` использует тот же immutable
+source/state cut и writer/CAS/cancel, но не запускает программы и typesetter.
+`receipt.artifact` указывает на `document.package` (`NotebookPortable/1`).
+**Копируется весь содержащий его каталог**, не только этот JSON: файлы
+`blob-<sha256>` — уникальные исходные V2 части до 4 МиБ; больших собранных копий
+assets и Base64 в metadata нет. Метаданные среза/manifest ограничены 8 МиБ,
+адресный publication — прежними 1 МиБ/16384 parts. Ресурсы потоково проверяются
+по размерам/SHA до атомарной публикации; неполная closure не получает saved.
+
+Штатная операция `node scripts/submit.mjs /absolute/directory/document.package`
+сначала вызывает прежний `notebook_import_program`, затем одну обычную
+`createDocument` транзакцию в текущем пространстве. Импортёр принимает либо
+исходный целый файл, либо явно адресованные части; у чтения и допуска байтов
+один владелец. Пути частей выводятся только из SHA рядом с manifest. Повтор
+использует те же package/run/document identities; при потере ответа — resume,
+не новая транзакция. Сохранённые значения блоков, включая JSON null, заменяют
+initialState, причинные clocks старого пространства не импортируются.
+Авторский код остаётся данными до явного открытия; камера/selection не меняются.
+Это перенос новой копии документа, не восстановление исторического архива.

@@ -189,6 +189,48 @@ struct NotebookExportPublicationTests {
     #expect(try Data(contentsOf: URL(fileURLWithPath: saved.artifact.path)) == Data("%PDF-cancel-race".utf8))
   }
 
+  @Test func portableDirectoryStreamsUniquePartsAndRejectsAnIncompleteClosure() throws {
+    let (store, original) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
+    let main = try stageExportFixture(Data("throw Error('Not executed by export/import')".utf8), path: "main.js", store: store)
+    var parts: [NotebookProgramPackage.Part] = []
+    // Nine distinct physical 4 MiB payloads, not one repeated logical blob.
+    for value in 1...9 {
+      let bytes = Data(repeating: UInt8(value), count: NotebookProgramPackage.partBytes)
+      parts += try stageExportFixture(bytes, path: "data.bin", store: store).file.parts
+    }
+    let package = NotebookProgramPackage(javaScript: "main.js", files: [
+      .init(path: "data.bin", mimeType: "application/octet-stream", byteCount: Int64(9 * NotebookProgramPackage.partBytes), parts: parts), main.file])
+    let hash = try store.stageProgramPackage(package)
+    let document = DocumentDocument(id: original.id, actor: UUID(), blocks: [.interactive(id: "scene", html: "", programPackage: hash, height: 800)])
+    try store.saveDocument(document)
+    let cut = try NotebookExportCut(document: store.loadDocument(document.id), state: store.loadDocumentState(document.id))
+    let portable = NotebookPortableDocument(cut: cut, packages: [.init(sha256: hash, value: package)])
+    let assets = try portable.blobs(), data = try portable.data(), manifest = try stageExportFixture(data, path: "document.package", store: store)
+    let options = NotebookExportOptions(format: .package)
+    let receipt = try publish(store, .init(cut: cut, source: "", artifact: manifest, log: "", options: options, assets: assets))
+    do {
+      #expect(receipt.assets == nil)
+      #expect(receipt.cutSHA256 == (try cut.sha256))
+      #expect(assets.reduce(Int64(0), { $0 + $1.file.byteCount }) > 32*1024*1024)
+      let path = URL(fileURLWithPath: receipt.artifact.path), directory = path.deletingLastPathComponent()
+      #expect(try JSONDecoder().decode(NotebookPortableDocument.self, from: Data(contentsOf: path)).cut == cut)
+      for asset in assets {
+        #expect(try NotebookExportFile.inspect(directory.appendingPathComponent(asset.file.path), path: asset.file.path) == asset)
+      }
+      let sources = package.files.map { file in NotebookProgramImport.Source(path: file.path,
+        partPaths: file.parts.map { directory.appendingPathComponent("blob-" + $0.sha256).path }) }
+      try NotebookProgramImport(packageHash: hash, package: package, sources: sources).validate(expectedHash: hash)
+      #expect(throws: NotebookStorageError.self) {
+        try NotebookProgramImport(packageHash: hash, package: package, sources: [.init(path: "data.bin", partPaths: []), sources[1]]).validate(expectedHash: hash)
+      }
+      #expect(throws: CollaborationError.self) {
+        try publish(store, .init(cut: cut, source: "", artifact: manifest, log: "", options: options, assets: Array(assets.dropLast())))
+      }
+      #expect(try Data(contentsOf: path) == data)
+    }
+    #expect(throws: CollaborationError.self) { try NotebookPortableDocument(cut: cut, packages: []).data() }
+  }
+
   @Test func pngOptionsBindPageIdentityAndRejectWrongExtentOrFormat() throws {
     let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
     let cut = try NotebookExportCut(document: document, state: store.loadDocumentState(document.id))

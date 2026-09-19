@@ -137,6 +137,74 @@ final class ProgramAssetTests: XCTestCase {
   }
 
   #if os(macOS)
+  func testPortableDirectoryImportsRealScientificResourcesWithoutExecutingBeforeOpen() async throws {
+    let f = try compiledFixture("signal-program"); defer { f.close() }
+    let actor = UUID()
+    var index = try f.store.loadIndex(), board = try f.store.loadBoard(items: index.items)
+    let item = try XCTUnwrap(index.createDocument(title: "Portable signal", actor: actor))
+    XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
+    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.markdown(id: "title", source: "# Portable exact signal"),
+      .interactive(id: "signal", html: "", programPackage: f.hash, height: 1000)])
+    var state = DocumentStateJournal(id: item.id, actor: actor)
+    XCTAssertTrue(state.commit(blockID: "signal", value: .object(["center": .number(37.125), "span": .number(0.05), "sample": .number(37125)]), actor: actor))
+    try f.store.saveDocumentWorkspaceBundle(index: index, document: document, state: state, board: board)
+    let cut = try f.store.readTransaction { try NotebookExportCut(document: $0.loadDocument(item.id), state: $0.loadDocumentState(item.id)) }
+    let surfaces = SceneRenderResources.shared.activeWebSurfaceCount, before = try f.store.currentChangeCursor()
+    let receipt = try await DocumentCanonicalExport.publish(cut: cut, options: .init(format: .package), jobID: UUID(), store: f.store, persistence: NotebookPersistenceQueue(store: f.store))
+    XCTAssertEqual(SceneRenderResources.shared.activeWebSurfaceCount, surfaces)
+    XCTAssertEqual(try f.store.currentChangeCursor(), before, "Export has no content or state effects")
+    let path = URL(fileURLWithPath: receipt.artifact.path), directory = path.deletingLastPathComponent()
+    let portable = try JSONDecoder().decode(NotebookPortableDocument.self, from: Data(contentsOf: path))
+    XCTAssertEqual(portable.cut, cut); XCTAssertEqual(portable.packages.first?.sha256, f.hash)
+    let importedRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: importedRoot) }
+    let store = NotebookStore(root: importedRoot)
+    let workspace = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let importer = NotebookProgramImporter(persistence: NotebookPersistenceQueue(store: store), workspaceID: workspace.workspaceID)
+    defer { importer.stop() }
+    let initialIndex = try store.loadIndex()
+    for package in portable.packages {
+      let descriptor = NotebookProgramImport(packageHash: package.sha256, package: package.value, sources: package.value.files.map { file in
+        .init(path: file.path, partPaths: file.parts.map { directory.appendingPathComponent("blob-" + $0.sha256).path })
+      })
+      let manifest = importedRoot.appendingPathComponent("import.json")
+      try JSONEncoder().encode(descriptor).write(to: manifest)
+      var progress = try await importer.handle(.init(op: .start, packageHash: package.sha256, manifestPath: manifest.path))
+      let deadline = ContinuousClock.now + .seconds(20)
+      while progress["status"] == .string("staging"), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10)); progress = try await importer.handle(.init(op: .status, packageHash: package.sha256))
+      }
+      XCTAssertEqual(progress["status"], .string("ready"), "\(progress)")
+      XCTAssertEqual(try store.readProgramPackage(package.sha256), package.value)
+      for file in package.value.files {
+        var offset: Int64 = 0
+        while offset < file.byteCount {
+          let bytes = try store.readProgramFile(file, offset: offset, maxBytes: 1_048_576)
+          XCTAssertEqual(bytes, try f.store.readProgramFile(file, offset: offset, maxBytes: 1_048_576))
+          offset += Int64(bytes.count)
+        }
+      }
+    }
+    XCTAssertEqual(try store.loadIndex(), initialIndex, "Staging alone cannot publish, select or render")
+    XCTAssertEqual(SceneRenderResources.shared.activeWebSurfaceCount, surfaces)
+    // Only the explicit open below obtains a WebKit owner and executes the
+    // unchanged asset program against the imported, saved scientific state.
+    let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
+    var ready = false, commits = 0
+    let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in commits += 1; return true })
+    owner.programStore = store
+    let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
+    defer { owner.invalidate(); lease.release(); close() }
+    owner.load(.init(id: "signal", kind: .web, frame: .init(x: 0, y: 0, width: 760, height: 1050), source: "", html: "", programPackage: f.hash,
+      state: try XCTUnwrap(portable.cut.state.value(for: "signal"))), policy: .exact(scale: 1), in: web)
+    try await wait { ready || owner.snapshotFailure != nil }
+    XCTAssertTrue(ready); XCTAssertNil(owner.snapshotFailure); XCTAssertEqual(commits, 0)
+    let caption = try await web.evaluateJavaScript("document.getElementById('detail-caption').textContent") as? String
+    XCTAssertTrue(caption?.contains("37125") == true, caption ?? "missing")
+    let restored = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram", in: web)
+    XCTAssertEqual(restored["sample"], .number(37125)); XCTAssertEqual(restored["center"], .number(37.125))
+  }
+
   func testSignalExportsTheExactSavedSampleWindowAsOfflineVectors() async throws {
     let f = try compiledFixture("signal-program"); defer { f.close() }
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "signal", html: "", programPackage: f.hash, height: 1000)])

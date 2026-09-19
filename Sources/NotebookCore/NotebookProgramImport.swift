@@ -10,8 +10,10 @@ public struct NotebookProgramImport: Codable, Sendable {
   public let sources: [Source]
   public struct Source: Codable, Sendable {
     public let path: String
-    public let sourcePath: String
-    public init(path: String, sourcePath: String) { self.path = path; self.sourcePath = sourcePath }
+    public let sourcePath: String?
+    public let partPaths: [String]?
+    public init(path: String, sourcePath: String) { self.path = path; self.sourcePath = sourcePath; self.partPaths = nil }
+    public init(path: String, partPaths: [String]) { self.path = path; self.sourcePath = nil; self.partPaths = partPaths }
   }
   public init(packageHash: String, package: NotebookProgramPackage, sources: [Source]) {
     self.packageHash = packageHash; self.package = package; self.sources = sources
@@ -20,7 +22,12 @@ public struct NotebookProgramImport: Codable, Sendable {
   public func validate(expectedHash: String) throws {
     guard packageHash == expectedHash, try package.sha256 == expectedHash,
       sources.count == package.files.count, Set(sources.map(\.path)) == Set(package.files.map(\.path)),
-      sources.allSatisfy({ $0.sourcePath.hasPrefix("/") && !$0.sourcePath.contains("\0") && $0.sourcePath.utf8.count <= 4096 }) else {
+      sources.allSatisfy({ source in
+        let paths: [String]
+        if let path = source.sourcePath { guard source.partPaths == nil else { return false }; paths = [path] }
+        else { guard let parts = source.partPaths, parts.count == package.files.first(where: { $0.path == source.path })?.parts.count else { return false }; paths = parts }
+        return paths.allSatisfy { $0.hasPrefix("/") && !$0.contains("\0") && $0.utf8.count <= 4096 }
+      }) else {
       throw NotebookStorageError.invalidTransaction("program import descriptor")
     }
   }

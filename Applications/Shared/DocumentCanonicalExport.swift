@@ -32,6 +32,18 @@ import PDFKit
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-export-" + jobID.uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     defer { try? FileManager.default.removeItem(at: directory) }
+    if options.format == .package {
+      let prepare = Task.detached(priority: .utility) {
+        let packages = try Set(document.blocks.compactMap(\.programPackage)).sorted().map { hash in
+          try NotebookPortableDocument.Package(sha256: hash, value: store.readProgramPackage(hash))
+        }
+        let portable = NotebookPortableDocument(cut: cut, packages: packages)
+        return (try portable.data(), try portable.blobs())
+      }
+      let (data, assets) = try await withTaskCancellationHandler { try await prepare.value } onCancel: { prepare.cancel() }
+      let file = try await stage(data, path: "document.package", directory: directory, persistence: persistence)
+      return .init(cut: cut, source: "", artifact: file, log: "NotebookPortable/1: copy the entire directory; submit document.package to import", options: options, jobID: jobID, assets: assets)
+    }
     if options.format == .html {
       guard let block = document.blocks.first(where: { $0.id == options.blockID && $0.kind == .interactive }) else {
         throw CollaborationError("export_block_missing", "HTML экспортирует явно выбранную программу.")
