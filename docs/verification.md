@@ -63,6 +63,35 @@ Loopback не выдаётся за AWDL. DEBUG local-proof режим испо�
 контроллер/агентский маршрут и позволяет отдельно завершить код→проверка→материал
 перед ручной сменой сети; повтор сохранённого старта запрещён.
 
+Дополнение 14:56 UTC — **физический LAN code→check→material PASS**.
+Private Mac `2eac2d5`/source `a8ff3577…`, private iPad `0d07fbc`/source
+`372ad971669244aa2fb0f15abff2cb044a0e43ce738309d6f8da39d79c4b691c`.
+Разница target inputs — только DEBUG iPad acceptance driver: он ждёт receipt
+своего нового create, а не восстановленный thread ID, и загруженный native access.
+Две ранние попытки остановились на этих setup-ожиданиях **до send/агентского хода**;
+их FAILED receipts сохранены, явные новые попытки не переисполняли неизвестный исход.
+
+`physical-local-proof3.json` получен из контейнера физического iPad, phase
+`LAN-PASS`, route `напрямую`. Native task
+`01a0ba29-e29f-7451-953c-965573bd0e20`, turn
+`01a0ba29-ee22-7b62-966f-f99ebba3755b`, command
+`64AB2D0F-245E-4EB0-8ACC-03870A2CCB41`.
+Настоящий `mac/Codex/local-proof.txt` содержит ровно `GUI-183\n`; официальный
+runtime выполнил Python assert с `GUI-183-CHECK-PASSED`. Два exact Notebook MCP
+approval получили allowOnce; повтор каждого и replay send вернули прежний исход.
+Документ `8D27B7BD-1B6E-4FB1-84B1-3FB25BC41EFC` создан через тот же private IPC и
+получен моделью iPad. Это receipt получения, не отдельное утверждение о пикселях
+открытого документа на iPad.
+
+Прямая CUA-проверка **этой же установленной private Mac app**: в списке появилась
+задача iPad; выбран точный task ID, видны живые команды. Окно задач закрыто при
+выполняющемся ходе (14:55:32), iPad подтвердил завершение (14:55:37); Cmd1 вернул
+тот же ID, scroll до конца показал настоящий вывод проверки и итог агента.
+Скриншот читаем, результат не подменён fixture. Первоначальный сбой CUA
+ScreenCaptureKit -3811 устранён сбросом сеанса захвата; приложения не перезапускались.
+Системный Network report показал en0, не AWDL. Аппаратные WAN/nearby переходы
+ещё требуют переключения сети пользователем; 30-минутный прогон исключён по его решению.
+
 Фактические свидетельства находятся в `.build/gui-183/` этого worktree:
 
 - `swift-final6.log`: 4 Core remote-control и 22 Codex/account/connection/scope — PASS.
