@@ -13532,3 +13532,46 @@ iPad actor (ink stamp5 неизменен). Это не заявляется п�
 страницу1/4 существующей тетради; тестового текста в live content не создавали.
 Xcode runner и физический iPad после readback переданы GUI240; GUI183 уведомлён
 об очереди.
+
+
+## GUI-266: Aa и прямые clipboard-действия — 127
+
+По следующему замечанию Амира панель сокращена до четырёх иконок: Aa,
+вырезать, копировать, вставить. Aa объединяет native menu шрифта, bold/italic,
+highlight и ссылки; многоточие и отдельные форматирующие кнопки удалены.
+В126 нажатия Aa/многоточия не были покрыты UI-сценарием: панель лежала прямо
+в UIWindow, вне responder/presentation chain контроллера. Эта ошибка исправлена
+через SwiftUI-owned UIViewRepresentable host. Не занятая панелью область
+возвращает nil из hitTest; существующий input gate исключает только реальные
+bounds панели. TextKit остаётся единственным владельцем выделения и clipboard,
+а координатор — размещения/удаления панели и актуального меню.
+
+Промежуточный physical127a: **4/4 tests PASS**, включая фактическое нажатие Aa,
+submenu шрифта, форматирование, link, повторное выделение/перенос и прямые
+copy/cut/paste с проверкой результата текста. Runtime UIKit выдал2 предупреждения:
+добавление subview прямо в UIHostingController.view не поддерживается. Этот
+промежуточный путь удалён, квитанция выпуска на нём не получалась. 127b:
+**4/4 PASS без runtime warnings** с поддерживаемым UIViewRepresentable host.
+При визуальном просмотре замечено дублирование clipboard в keyboard assistant;
+его группы отключены у редактора. Финальный127c дополнительно проверяет
+сохранённый выбор шрифта после повторного открытия текста.
+
+Финальный `.build/gui266-text127c/verification.json`: **4/4 physical iPad PASS**
+(2 native typography + 2 UI), без skips/runtime warnings. Source SHA256
+`5a571ed7c267d586fa155ea6f4d479ee5ea6c91ac510e2511c14b25f970de115`.
+Aa открывает меню, шрифт меняется и сохраняется, четыре отметки стиля остаются
+после save/drag/reopen. Прямые copy → cut → paste дают ожидаемый текст, а
+внешний tap завершает ввод. Финальный screenshot
+`gui266-text127c-images/0AE99AB9-5292-4FBC-9C5F-D99783EE26AC.png` просмотрен:
+четыре иконки около выделения, без дублирования clipboard над клавиатурой.
+Это scoped physical UI, не аппаратная Pencil/performance/full acceptance.
+Signed `.build/gui266-build127/build.json` построен из того же source SHA256.
+В18:18UTC пара **0.3.124(127)** установлена поверх126 на production Mac и
+physical iPad. `.build/gui266-install127/installation.json`: normal terminate
+Mac PID33546, store/spaces/registry/activation bytes неизменны до relaunch,
+iPad registry совпал, uninstall/reset/key replacement не выполнялись.
+Installed MCP ready22139: presence, page header, board revision и их basis
+совпали с baseline22133; selection заново опубликована в текущем сеансе.
+Версии прочитаны с обоих устройств; свежий physical screenshot127 просмотрен:
+существующая страница2/4 и её текст сохранены. Live content для тестов не менялся.
+Xcode/device слот после readback освобождён.
