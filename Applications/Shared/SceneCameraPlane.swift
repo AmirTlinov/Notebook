@@ -36,6 +36,11 @@ struct SceneCameraProjection: Equatable {
 
   static func requiresRebase(anchor: SessionPresence, current: SessionPresence) -> Bool {
     guard anchor.boardID == current.boardID, anchor.viewport == current.viewport else { return true }
+    // Native vector/text batches must not become an indefinitely magnified
+    // texture while the fingers remain down. Rebase at a bounded LOD boundary,
+    // not on each sample; canonical WebKit bounds and identity stay unchanged.
+    let ratio = current.camera.scale / anchor.camera.scale
+    if ratio > sqrt(2.0) || ratio < 1 / sqrt(2.0) { return true }
     let x = anchor.camera.center.tileX.subtractingReportingOverflow(current.camera.center.tileX)
     let y = anchor.camera.center.tileY.subtractingReportingOverflow(current.camera.center.tileY)
     guard !x.overflow, !y.overflow, x.partialValue > -4096, x.partialValue < 4096,

@@ -220,8 +220,6 @@ struct SceneCompositionPlan: Sendable {
       if let itemID = plane.coverID,
         let item = frame.worksets[plane.boardID]?.items.first(where: { $0.id == itemID }) {
         area = .init(origin: .zero, width: item.geometry.width, height: item.geometry.height)
-      } else if plane == .board(frame.returnBoardID ?? rootBoardID), frame.returnBoardID != nil {
-        area = SceneCompositionSource.returnBounds(view)
       } else {
         area = .init(origin: view.camera.screenToWorld(.init(x: -96, y: -96), viewport: view.viewport),
           width: (view.viewport.x + 192) / view.camera.scale, height: (view.viewport.y + 192) / view.camera.scale)
@@ -291,7 +289,6 @@ struct SceneCompositionPlan: Sendable {
     pinned: Set<WorkspaceSpatialID>, displayScale: Double, previous: Self?) async throws -> Self {
     var pinned = pinned
     if let id = presence.focusedItemID { pinned.insert(.item(id)) }
-    if frame.returnBoardID != nil { pinned.insert(.item(presence.boardID)) }
     guard displayScale.isFinite, displayScale > 0, frame.rootBoardID == presence.boardID else { throw SceneRenderError.resourceLimit }
     var candidates: [(plane: SceneCompositionPlane, id: WorkspaceSpatialID, pinned: Bool, runtime: Bool, visiblePaper: Bool)] = []
     let boardIDs = [presence.boardID] + frame.worksets.keys.filter { $0 != presence.boardID }.sorted { $0.uuidString < $1.uuidString }
@@ -307,7 +304,11 @@ struct SceneCompositionPlan: Sendable {
           && rect.x + rect.width > 0 && rect.y + rect.height > 0
         candidates.append((.board(boardID), .item(item.id), pinned.contains(.item(item.id)), false, visiblePaper))
       }
+      let erased = try await source.wholeErasedElements(workset.elements)
       for element in workset.elements {
+        if erased.contains(element.id) {
+          pinned.remove(.element(element.id)); continue
+        }
         let plane = SceneCompositionPlane.board(boardID)
         let runtime = element.kind == .web && plane.demandsRuntime(source: agentElementSnapshotSource(element),
           origin: SceneSourceCapture.origin(element: element, plane: plane, frame: frame), in: presence)
@@ -317,7 +318,11 @@ struct SceneCompositionPlan: Sendable {
     // A pin on cover contents pins its physical carrier, then its local element.
     for (itemID, workset) in frame.covers {
       guard let boardID = frame.worksets.first(where: { $0.value.items.contains(where: { $0.id == itemID }) })?.key else { continue }
+      let erased = try await source.wholeErasedElements(workset.elements)
       for element in workset.elements where element.graphic != nil || pinned.contains(.element(element.id)) {
+        if erased.contains(element.id) {
+          pinned.remove(.element(element.id)); continue
+        }
         let isPinned = pinned.contains(.element(element.id))
         candidates.append((.cover(boardID: boardID, itemID: itemID), .element(element.id), isPinned, false, false))
         if isPinned, let index = candidates.firstIndex(where: { $0.id == .item(itemID) }) { candidates[index].pinned = true }
@@ -371,7 +376,7 @@ struct SceneCompositionPlan: Sendable {
   }
 
   /// Removing an optional host or native run puts its exact painter positions
-  /// back into a static range. Mandatory pins, their carriers and the return aperture
+  /// back into a static range. Mandatory pins and their visible carriers
   /// survive every reassembly; source values are never discarded as a shortcut.
   func demoting(_ owner: SceneCompositionLiveOwner, presence: SessionPresence,
     frame: WorkspaceSceneFrame, displayScale: Double) throws -> Self? {
@@ -441,7 +446,6 @@ struct SceneCompositionPlan: Sendable {
     // A child projection exists only inside a retained live portal. Other
     // portals are recursively flattened by the same static cover renderer.
     var includedBoards: Set<UUID> = [presence.boardID]
-    if let parent = frame.returnBoardID { includedBoards.insert(parent) }
     var changed = true
     while changed {
       changed = false
@@ -474,8 +478,7 @@ struct SceneCompositionPlan: Sendable {
       let plane = SceneCompositionPlane.board(boardID)
       presentations[plane] = view
       let margin = 96.0
-      bounds[plane] = boardID == frame.returnBoardID ? SceneCompositionSource.returnBounds(view)
-        : .init(origin: view.camera.screenToWorld(.init(x: -margin, y: -margin), viewport: view.viewport),
+      bounds[plane] = .init(origin: view.camera.screenToWorld(.init(x: -margin, y: -margin), viewport: view.viewport),
           width: (view.viewport.x + 2 * margin) / view.camera.scale, height: (view.viewport.y + 2 * margin) / view.camera.scale)
       density[plane] = (frame.pixelScales[boardID] ?? view.camera.scale) * displayScale
       for owner in owners where owner.plane == plane {
@@ -619,7 +622,7 @@ final class SceneCompositionCohort {
 
   func containsSourceWindows(presence: SessionPresence, frame: WorkspaceSceneFrame, displayScale: Double,
     refinesDetails: Bool = true) -> Bool {
-    for (address, receipt) in sourceReceipts where receipt.demand.region != nil {
+    for (address, receipt) in sourceReceipts {
       guard let view = address.plane.boardID == presence.boardID ? presence : frame.presences[address.plane.boardID],
         receipt.coversVisibleWindow(in: view,
           pixelDensity: (frame.pixelScales[address.plane.boardID] ?? view.camera.scale) * displayScale,
@@ -881,7 +884,7 @@ final class SceneCompositionTiles {
     if dirtySources.isEmpty, !needsSourceScheduling, containsNativeProjection, let plan = published?.plan,
       published?.containsSourceWindows(presence: presence, frame: frame, displayScale: displayScale,
         refinesDetails: request.refinesDetails) == true,
-      (!request.refinesDetails || published?.requestedSources == sources),
+      published?.requestedSources == sources,
       plan.revision == source.revision, plan.workspaceID == source.workspaceID,
       Self.covers(plan, presence: presence, pinned: pinned, refinesDetails: request.refinesDetails) { return }
     cancelPreparation()
@@ -905,9 +908,6 @@ final class SceneCompositionTiles {
         permitsPreparation: { [weak self] in self?.requestID == id && permitsPreparation() })
       defer { renderer.finishPreparation() }
       do {
-        try Task.checkCancellation()
-        guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
-        let frame = try await source.compositionFrame(requested: frame, presence: presence, pinned: pinned)
         try Task.checkCancellation()
         guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
         var plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
@@ -943,7 +943,7 @@ final class SceneCompositionTiles {
             guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
             let selected = requests.filter { plan.liveOwners.contains($0.owner) }
             let runtimeOwners = Self.runtimeOwners(requests: selected, plan: plan, resources: resources)
-            renderer.discoverSources(plan: plan, frame: frame, displayScale: displayScale)
+            try await renderer.discoverSources(plan: plan, frame: frame, displayScale: displayScale)
             renderer.onSourceDemand = { [weak self, weak renderer] in
               guard let self, requestID == id, let renderer else { return }
               scheduleSources(renderer.receipts(), runtimeOwners: runtimeOwners, presence: presence, frame: frame)
@@ -1238,15 +1238,8 @@ final class SceneCompositionTiles {
   private func containsNativeProjection(for request: Request) -> Bool {
     #if os(iOS)
       guard let published else { return false }
-      // SQL extends a child's addressed request with its immediate return
-      // boundary. The unchanged request does not contain that parent, but its
-      // completed frame does. Comparing against the truncated request made
-      // every repeated update rebuild the same parent and its native ink.
-      let reusesSource = published.requestedSources == request.frame.sourceIdentity
-        && published.plan.revision == request.source.revision
-        && published.frame.presences[request.presence.boardID]?.viewport == request.presence.viewport
       return published.nativeInk.containsProjectionWindows(presence: request.presence,
-        frame: reusesSource ? published.frame : request.frame, refinesDetails: request.refinesDetails)
+        frame: request.frame, refinesDetails: request.refinesDetails)
     #else
       return true
     #endif
@@ -1467,11 +1460,10 @@ final class SceneCompositionTiles {
     let plane = SceneCompositionPlane.board(presence.boardID)
     guard plan.rootBoardID == presence.boardID, let basis = plan.presentations[plane],
       basis.mode == presence.mode, basis.focusedItemID == presence.focusedItemID, basis.viewport == presence.viewport,
-      // During a camera contact, only missing spatial coverage needs work.
-      // Density and live-owner refinement follow settlement, so a pinch within
-      // an already painted area projects the same pixels instead of recapturing.
+      // Reuse covered pixels within one bounded LOD. A held pinch still
+      // requests density when magnification would exceed that window.
       (refinesDetails ? ((0.6...1).contains(presence.camera.scale / basis.camera.scale) && plan.meetsRequiredDensity)
-        : (0.6...1.6).contains(presence.camera.scale / basis.camera.scale)),
+        : (0.6...sqrt(2.0)).contains(presence.camera.scale / basis.camera.scale)),
       pinned.allSatisfy({ pin in plan.presentedOwners.contains { $0.id == pin } }), let tiles = plan.coverage[plane]?.tiles,
       let first = tiles.first, let last = tiles.last else { return false }
     let visible = WorkspaceSpatialBounds(origin: presence.camera.screenToWorld(.zero, viewport: presence.viewport),

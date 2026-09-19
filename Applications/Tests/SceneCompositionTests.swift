@@ -195,6 +195,20 @@ final class SceneCompositionTests: XCTestCase {
   }
 
   @MainActor
+  func testWholeSourcePixelsAlsoRequireZoomDensityDuringContact() throws {
+    let fixture = Fixture(count: 1, side: 200)
+    let element = agentElementSnapshotSource(try XCTUnwrap(fixture.elements.first))
+    let receipt = SceneSourceReceipt(demand: .init(source: element, minimumScale: 1, worldOrigin: .zero),
+      installedSource: element, installedScale: 1, status: .ready)
+    XCTAssertTrue(receipt.coversVisibleWindow(in: fixture.presence, pixelDensity: 1, refinesDetails: true))
+    XCTAssertFalse(receipt.coversVisibleWindow(in: fixture.presence, pixelDensity: 2, refinesDetails: false),
+      "A full image is spatial coverage, not an unlimited-density zoom texture")
+    let sharp = SceneSourceReceipt(demand: receipt.demand, installedSource: element, installedScale: 2, status: .ready)
+    XCTAssertTrue(sharp.coversVisibleWindow(in: fixture.presence, pixelDensity: 2, refinesDetails: true),
+      "Reuse the actual sharper pixels, not merely the original request's lower minimum")
+  }
+
+  @MainActor
   func testCroppedSourceSeparatesCoverageFromGestureDensity() throws {
     let fixture = Fixture(count: 1, side: 5000)
     let element = try XCTUnwrap(fixture.hierarchy.boards[0].board.elements.first)
@@ -929,141 +943,9 @@ final class SceneCompositionTests: XCTestCase {
     XCTAssertEqual(request.snapshotAdditionalBytes, budget.capture - budget.resident)
   }
 
-  @MainActor
-  func testReturnWindowAndEveryPhysicalBoardInkShareTheBudgetWithoutEvictingTheApertureOrPins() async throws {
-    let actor = UUID(), stamp = VersionStamp(counter: 0, actor: actor)
-    let childID = UUID(), grandchildID = UUID()
-    let childItem = WorkspaceItem.board(id: childID, title: "Child")
-    let grandchildItem = WorkspaceItem.board(id: grandchildID, title: "Grandchild")
-    let workspace = WorkspaceIndex(items: [childItem, grandchildItem], selectedItemID: childID,
-      selectedPageID: nil, stamp: stamp)
-    func elements(_ prefix: String, boardID: UUID) -> [SpatialElement] {
-      (0..<120).map { offset in
-        .init(id: "\(prefix)-\(offset)", surface: .board(boardID), kind: .nativeText,
-          frame: .init(x: 0, y: 0, width: 48, height: 48),
-          worldOrigin: .init(x: Double(offset % 10) * 80 - 400, y: Double(offset / 10) * 80 - 400),
-          source: "\(prefix) \(offset)", stamp: stamp)
-      }
-    }
-    let hierarchy = BoardHierarchy(rootBoardID: workspace.rootBoardID, boards: [
-      .init(id: workspace.rootBoardID, board: .init(freeItems: [
-        .init(itemID: childID, center: .zero, zIndex: 0, stamp: stamp)
-      ], elements: elements("parent", boardID: workspace.rootBoardID), stamp: stamp)),
-      .init(id: childID, board: .init(freeItems: [
-        .init(itemID: grandchildID, center: .init(x: 160, y: 0), zIndex: 0, stamp: stamp)
-      ], elements: elements("child", boardID: childID), stamp: stamp)),
-      .init(id: grandchildID, board: .init(freeItems: [], stamp: stamp))
-    ], stamp: stamp)
-    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
-    let presence = SessionPresence(boardID: childID, mode: .board,
-      camera: .init(scale: 0.5), viewport: .init(x: 512, y: 512))
-    let pins: Set<WorkspaceSpatialID> = [.element("child-119")]
-    let requested = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in .init() }, pinned: pins)
-    let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: .init(stamp: stamp))
-    let frame = try await source.compositionFrame(requested: requested, presence: presence, pinned: pins)
-    let parent = frame.workset(boardID: workspace.rootBoardID)
-    let parentCoverCount = parent.items.reduce(0) { count, item in
-      let cover = frame.covers[item.id]
-      return count + (cover?.elements.count ?? 0) + (cover?.aggregates.count ?? 0)
-    }
-    XCTAssertLessThanOrEqual(parent.items.count + parent.elements.count + parent.aggregates.count + parentCoverCount, 24)
-    XCTAssertLessThanOrEqual(frame.primitiveCount, 96)
-    XCTAssertTrue(parent.items.contains { $0.id == childID })
-    XCTAssertTrue(frame.workset(boardID: childID).elements.contains { $0.id == "child-119" })
-    let plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
-      pinned: pins, displayScale: 2, previous: nil)
-    XCTAssertTrue(plan.inkBoardIDs.isSuperset(of: [workspace.rootBoardID, childID]))
-    XCTAssertTrue(plan.allowsLive(.item(childID), in: .board(workspace.rootBoardID)))
-    for pin in pins { XCTAssertTrue(plan.allowsLive(pin, in: .board(childID))) }
-    if plan.allowsLive(.item(grandchildID), in: .board(childID)) {
-      XCTAssertTrue(plan.inkBoardIDs.contains(grandchildID))
-    } else {
-      let entry = try XCTUnwrap(index.paintEntry(id: .item(grandchildID), boardID: childID))
-      XCTAssertEqual(plan.bands.filter { $0.plane == .board(childID) && $0.range.contains(entry) }.count, 1,
-        "An unpinned portal that cannot fit as another native owner remains whole in the static painter")
-    }
-    XCTAssertLessThanOrEqual(plan.liveOwners.count + plan.inkBoardIDs.count, 8)
-    XCTAssertLessThanOrEqual(plan.tiles.count, 32)
-    XCTAssertLessThanOrEqual(plan.primitiveCount, 96)
-    XCTAssertFalse(plan.bands.contains { $0.range.layer == .ink }, "Each included board has exactly one physical ink owner")
-    let returning = try XCTUnwrap(plan.presentations[.board(workspace.rootBoardID)])
-    let bounds = SceneCompositionSource.returnBounds(returning)
-    let outward = SessionPresence(boardID: returning.boardID, mode: .board,
-      camera: .init(center: returning.camera.center, scale: returning.camera.scale * 0.75), viewport: returning.viewport)
-    let visible = WorkspaceSpatialBounds(origin: outward.camera.screenToWorld(.zero, viewport: outward.viewport),
-      width: outward.viewport.x / outward.camera.scale, height: outward.viewport.y / outward.camera.scale)
-    XCTAssertTrue(bounds.contains(visible), "The continued pinch already reveals the parent's surrounding pixels")
-    var coarsest = plan, reductions = 0
-    while let next = try coarsest.coarseningCoverage(presence: presence, frame: frame, displayScale: 2) {
-      XCTAssertLessThan(next.tiles.count, coarsest.tiles.count)
-      coarsest = next; reductions += 1
-    }
-    XCTAssertLessThanOrEqual(reductions, SceneCompositionPlan.maximumTiles)
-    XCTAssertEqual(coarsest.tiles.count, coarsest.bands.count,
-      "Every painter range can reach one whole centred tile, not four permanent origin quadrants")
-    XCTAssertEqual(coarsest.bands.map(\.id), plan.bands.map(\.id))
-    XCTAssertEqual(coarsest.bands.map(\.rank), plan.bands.map(\.rank))
-    XCTAssertEqual(coarsest.liveOwners, plan.liveOwners)
-    XCTAssertEqual(coarsest.inkBoardIDs, plan.inkBoardIDs)
-    let returned = try XCTUnwrap(coarsest.coverage[.board(workspace.rootBoardID)]?.tiles.first)
-    XCTAssertTrue(returned.bounds.contains(bounds), "Lower static density cannot crop the return aperture or its surrounding source")
-  }
 
-  @MainActor
-  func testSettledChildPublicationRetainsTheCompleteParentReturnDuringAnActiveContact() async throws {
-    let actor = UUID(), stamp = VersionStamp(counter: 0, actor: actor), childID = UUID()
-    let portal = WorkspaceItem.board(id: childID, title: "Return boundary")
-    let portalCamera = BoardPortalCamera(center: .init(x: 120, y: -70), scale: 0.8)
-    let workspace = WorkspaceIndex(items: [portal], selectedItemID: childID,
-      selectedPageID: nil, stamp: stamp)
-    let hierarchy = BoardHierarchy(rootBoardID: workspace.rootBoardID, boards: [
-      .init(id: workspace.rootBoardID, board: .init(freeItems: [
-        .init(itemID: childID, center: .zero, zIndex: 0, stamp: stamp)
-      ], stamp: stamp)),
-      .init(id: childID, board: .init(freeItems: [], stamp: stamp),
-        portalCamera: portalCamera)
-    ], stamp: stamp)
-    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
-    let viewport = SpatialPoint(x: 512, y: 512)
-    let parent = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
-      camera: BoardPortalProjection.parentBoundaryCamera(portalCenter: .zero, viewport: viewport),
-      viewport: viewport)
-    let child = SessionPresence(boardID: childID, mode: .board,
-      camera: BoardPortalProjection.entryCamera(portalCamera: portalCamera, viewport: viewport),
-      viewport: viewport)
-    let source = SceneCompositionSource(index: index, hierarchy: hierarchy,
-      journal: .init(stamp: stamp))
-    func frame(_ presence: SessionPresence) -> WorkspaceSceneFrame {
-      .init(index: index, presence: presence, portalCamera: { hierarchy.portalCamera($0) })
-    }
-    let resources = SceneRenderResources(byteLimit: 256 * 1024 * 1024)
-    let coordinator = SceneCompositionTiles(resources: resources)
-    defer { coordinator.removePublishedCoverage() }
-    coordinator.prepare(source: source, presence: parent, frame: frame(parent), pinned: [])
-    try await waitUntil { coordinator.published != nil || coordinator.failure != nil }
-    let entered = try XCTUnwrap(coordinator.published, coordinator.failure ?? "")
-    XCTAssertNotNil(entered.plan.presentations[.board(childID)])
-    XCTAssertTrue(entered.rasters.values.allSatisfy { !$0.isReleased })
 
-    coordinator.prepare(source: source, presence: child, frame: frame(child), pinned: [])
-    try await waitUntil { coordinator.published?.plan.rootBoardID == childID || coordinator.failure != nil }
-    let settled = try XCTUnwrap(coordinator.published, coordinator.failure ?? "")
-    XCTAssertEqual(settled.plan.rootBoardID, childID,
-      "Wait for the actual child publication, not an arbitrary 40 ms after entry")
-    XCTAssertFalse(settled === entered)
 
-    // The outgoing camera belongs to the fingers. Background work cannot rescue
-    // missing return pixels before lift and must not publish a partial scene.
-    coordinator.prepare(source: source, presence: parent, frame: frame(parent), pinned: [],
-      permitsPreparation: { false })
-    try await waitUntil { !coordinator.isPreparing }
-    let duringContact = try XCTUnwrap(coordinator.published)
-    XCTAssertNotNil(duringContact.plan.presentations[.board(parent.boardID)],
-      "A settled child must not discard the completed physical return boundary")
-    XCTAssertEqual(duringContact.rasters.count, duringContact.plan.tiles.count)
-    XCTAssertTrue(duringContact.rasters.values.allSatisfy { !$0.isReleased })
-    XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, resources.byteLimit)
-  }
 
   @MainActor
   func testAdmittedSourceSurvivesInputPauseAndPublishesOnlyAfterTheBarrierOpens() async throws {

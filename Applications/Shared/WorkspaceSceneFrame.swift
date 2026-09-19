@@ -4,10 +4,8 @@ import SwiftUI
 /// One finite description accounts for all board projections in this frame.
 /// A child portal consumes the root's remaining budget, never another full one.
 struct WorkspaceSceneFrame {
-  static let maximumReturnPrimitives = 24
   let index: WorkspaceSceneIndex
   let rootBoardID: UUID
-  let returnBoardID: UUID?
   let worksets: [UUID: WorkspaceSceneWorkset]
   let covers: [UUID: WorkspaceSceneWorkset]
   let presences: [UUID: SessionPresence]
@@ -36,13 +34,12 @@ struct WorkspaceSceneFrame {
 
   init(index: WorkspaceSceneIndex, presence: SessionPresence,
     portalCamera: (UUID) -> BoardPortalCamera?, pinned: Set<WorkspaceSpatialID> = [],
-    budget: Int = WorkspaceSceneIndex.detailLimit, returnPresence: SessionPresence? = nil) {
+    budget: Int = WorkspaceSceneIndex.detailLimit) {
     self.index = index
     var pinned = pinned
     if let id = presence.focusedItemID { pinned.insert(.item(id)) }
     precondition(budget > pinned.count)
     rootBoardID = presence.boardID
-    returnBoardID = returnPresence?.boardID
     self.budget = budget
     struct Pending {
       let presence: SessionPresence
@@ -55,10 +52,6 @@ struct WorkspaceSceneFrame {
     var pixelScales: [UUID: Double] = [:]
     var queue = [Pending(presence: presence, pixelScale: presence.camera.scale,
       passes: WorkspaceSceneProjection.portalPasses)]
-    if let returnPresence {
-      precondition(returnPresence.boardID != presence.boardID)
-      queue.append(.init(presence: returnPresence, pixelScale: returnPresence.camera.scale, passes: 0))
-    }
     var remaining = budget
     var visits = 0
     var cursor = 0
@@ -66,9 +59,6 @@ struct WorkspaceSceneFrame {
       let next = queue[cursor]
       cursor += 1
       guard sets[next.presence.boardID] == nil else { continue }
-      let isReturn = next.presence.boardID == returnBoardID
-      // The return portal is the aperture of the already shown child, never a
-      // flattened replacement. Its one parent window shares this frame's cap.
       // A pinned nested cover belongs to its child's physical board. Dropping
       // that pin at a portal made the byte planner flatten the very source the
       // attention capture had retained; the compositor correctly refused it.
@@ -79,11 +69,9 @@ struct WorkspaceSceneFrame {
         }
       })
       let pins: Set<WorkspaceSpatialID> = next.presence.boardID == rootBoardID ? pinned
-        : (isReturn ? [.item(rootBoardID)] : childPins)
+        : childPins
       let peers = queue.count - cursor + 1
-      let returnBudget = min(Self.maximumReturnPrimitives, max(1, budget / 4))
-      let reservedReturn = !isReturn && returnBoardID.map({ sets[$0] == nil }) == true ? returnBudget : 0
-      let allowance = isReturn ? min(returnBudget, remaining) : max(0, remaining - reservedReturn)
+      let allowance = remaining
       guard allowance > pins.count else { continue }
       let available = max(1, min(allowance, remaining / peers) - pins.count)
       var workset = index.workset(presence: next.presence, pinned: pins,
@@ -100,7 +88,7 @@ struct WorkspaceSceneFrame {
       let used = workset.items.count + workset.elements.count + workset.aggregates.count
       guard used <= allowance else { continue }
       remaining -= used
-      var returnRemaining = isReturn ? max(0, returnBudget - used) : max(0, remaining - reservedReturn)
+      var coverRemaining = remaining
       sets[next.presence.boardID] = workset
       presences[next.presence.boardID] = next.presence
       pixelScales[next.presence.boardID] = next.pixelScale
@@ -117,20 +105,20 @@ struct WorkspaceSceneFrame {
           let left = protectedCovers.contains($0.id), right = protectedCovers.contains($1.id)
           return left == right ? $0.zIndex < $1.zIndex : left
         }
-      for (offset, item) in coverItems.enumerated() where remaining > 0 && returnRemaining > 0 {
+      for (offset, item) in coverItems.enumerated() where remaining > 0 && coverRemaining > 0 {
         let coverPins = pins.filter { id in
           guard case .element(let elementID) = id else { return false }
           return index.element(id: elementID, boardID: next.presence.boardID)?.surface == .cover(item.id)
         }
-        let available = max(1, min(remaining, returnRemaining) / (coverItems.count - offset + queue.count - cursor + 1) - coverPins.count)
+        let available = max(1, min(remaining, coverRemaining) / (coverItems.count - offset + queue.count - cursor + 1) - coverPins.count)
         let cover = index.coverWorkset(item: item, presence: next.presence,
           pixelScale: next.pixelScale, limit: available, pinned: coverPins)
         let used = cover.elements.count + cover.aggregates.count
-        guard used <= remaining, used <= returnRemaining else { continue }
+        guard used <= remaining, used <= coverRemaining else { continue }
         covers[item.id] = cover
         visits += cover.visitedNodes
         remaining -= used
-        returnRemaining -= used
+        coverRemaining -= used
       }
       guard next.passes > 0,
         WorkspaceSceneProjection.showsPortal(pixelScale: next.pixelScale, remainingPasses: next.passes)

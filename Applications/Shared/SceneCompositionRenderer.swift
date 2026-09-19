@@ -40,7 +40,7 @@ final class SceneCompositionRenderer {
       raster.source.agentElement.map { SceneRasterSource.agent($0) == .agent(source) } == true ? raster : nil
     }
     let density: Double = if !window.refinesDetails, let previous,
-      (0.6...1.6).contains(density / previous.pixelScale) { previous.pixelScale }
+      (0.6...sqrt(2.0)).contains(density / previous.pixelScale) { previous.pixelScale }
       else { pow(2, ceil(log2(density) * 2) / 2) }
     var region = SceneSourceCapture.region(element: element, plane: plane,
       presence: view, frame: window.frame, density: density)
@@ -56,7 +56,7 @@ final class SceneCompositionRenderer {
   func sourcesOutsideCoverage(of previous: SceneCompositionCohort?) async throws -> Set<SceneSourceAddress> {
     guard let previous, let window = sourcePresentation else { return [] }
     var changed = Set<SceneSourceAddress>()
-    for (address, receipt) in previous.sourceReceipts where receipt.demand.region != nil {
+    for (address, receipt) in previous.sourceReceipts {
       guard let element = try await source.element(address.elementID, boardID: address.plane.boardID) else { continue }
       let scale = (window.frame.pixelScales[address.plane.boardID] ?? 1) * window.displayScale
       if demand(for: element, plane: address.plane, density: scale) != receipt.demand { changed.insert(address) }
@@ -95,10 +95,12 @@ final class SceneCompositionRenderer {
 
   /// Start the addressed, bounded workset before native preparation or a
   /// placeholder pass. Deeper painter discoveries join the same scheduler.
-  func discoverSources(plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double) {
+  func discoverSources(plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double) async throws {
     for plane in plan.presentations.keys {
       let workset = plane.coverID.flatMap { frame.covers[$0] } ?? frame.worksets[plane.boardID]
+      let erased = try await source.wholeErasedElements(workset?.elements ?? [])
       for element in workset?.elements ?? [] where element.kind != .nativeText && element.kind != .graphic {
+        if erased.contains(element.id) { continue }
         let address = SceneSourceAddress(plane: plane, elementID: element.id)
         let demand = demand(for: element, plane: plane,
           density: (frame.pixelScales[plane.boardID] ?? 1) * displayScale)
@@ -372,6 +374,7 @@ final class SceneCompositionRenderer {
     graphicLayout: NotebookGraphicLayout? = nil) async throws {
     try checkPreparation()
     let erasures = try await source.elementErasures(element)
+    guard !erasures.contains(where: { $0.target.wholeElement }) else { return }
     if let graphic = element.graphic {
       if graphic.showsGeometry {
         let size = graphicLayout?.frame ?? .init(x:0,y:0,width:element.frame.width,height:element.frame.height)

@@ -71,11 +71,21 @@ final class SpatialInkCameraPresentationTests: XCTestCase {
         let control = controls[offset]
         let actual = control.convert(.init(x: control.bounds.midX, y: control.bounds.midY), to: controller.view)
         let expected = current.camera.worldToScreen(worlds[offset], viewport: current.viewport)
-        XCTAssertEqual(actual.x, expected.x, accuracy: 0.0001)
-        XCTAssertEqual(actual.y, expected.y, accuracy: 0.0001)
+        // A density rebase lays out UIKit controls on the physical pixel grid.
+        // World/ink coordinates above remain exact; native edges may snap.
+        XCTAssertEqual(actual.x, expected.x, accuracy: 1 / fixture.window.screen.scale)
+        XCTAssertEqual(actual.y, expected.y, accuracy: 1 / fixture.window.screen.scale)
         XCTAssertEqual(eventProjections[offset].current, current)
         controller.update(presence: initial, revision: 0, reanchorsOnRevision: false,
-          isCameraActive: true) { _, _ in XCTFail("A stale camera sample cannot replace the physical source"); return AnyView(EmptyView()) }
+          isCameraActive: true) { anchor, current in
+            // A bounded density rebase may republish layout, never the stale
+            // configuration's camera or a new native control identity.
+            eventProjections[offset] = current
+            let point = anchor.camera.worldToScreen(worlds[offset], viewport: anchor.viewport)
+            return AnyView(CameraProjectionProbeControl(button: controls[offset])
+              .frame(width: 20, height: 20).position(x: point.x, y: point.y)
+              .frame(width: anchor.viewport.x, height: anchor.viewport.y))
+          }
       }
       fixture.update(camera: initial.camera)
       fixture.assertWorldGeometry(camera: current.camera)
@@ -83,7 +93,8 @@ final class SpatialInkCameraPresentationTests: XCTestCase {
     }
     XCTAssertEqual(fixture.owner.canvas.spatialCamera, basis)
     XCTAssertEqual(fixture.owner.canvas.drawableRequestCount, requests)
-    XCTAssertTrue(controllers.allSatisfy { $0.contentPublicationCount == 1 })
+    XCTAssertTrue(controllers.allSatisfy { $0.contentPublicationCount > 1 && $0.contentPublicationCount < 10 },
+      "A multi-LOD pinch refines native paint, but not on every camera sample")
     let last = try XCTUnwrap(projection.current(for: fixture.boardID))
     let held = try XCTUnwrap(fixture.registry.acquireContact(on: fixture.surface, in: fixture.mount))
     let moved = SessionPresence(boardID: fixture.boardID, mode: .board,

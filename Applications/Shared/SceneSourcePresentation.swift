@@ -98,12 +98,17 @@ struct SceneSourceReceipt: Sendable {
   var installedRegion: PageRect? = nil
 
   func coversVisibleWindow(in presence: SessionPresence, pixelDensity: Double, refinesDetails: Bool) -> Bool {
+    // A whole-source capture has a density contract too. An uncropped low-LOD
+    // image cannot stay "covered" as the fingers enlarge it indefinitely.
+    let allowance = refinesDetails ? 1.0 : sqrt(2.0)
+    let availableScale = hasCurrentPixels ? installedScale : demand.minimumScale
+    guard availableScale * allowance + 0.000_001 >= pixelDensity else { return false }
     guard let crop = demand.region else { return true }
     guard let origin = demand.worldOrigin else { return false }
     let visible = SceneSourceCapture.visibleRect(source: demand.source, origin: origin, presence: presence)
     if visible.isNull || visible.isEmpty { return true }
     return CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height).contains(visible)
-      && (!refinesDetails || demand.minimumScale + 0.000_001 >= pixelDensity)
+      && (!refinesDetails || availableScale + 0.000_001 >= pixelDensity)
   }
 
   var hasCurrentPixels: Bool {

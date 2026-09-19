@@ -100,12 +100,11 @@ final class RasterLease {
     #else
     var result = retainedImage?.cgImage(forProposedRect: nil, context: nil, hints: nil)
     #endif
-    // Nearest level in log2 space bounds either downsampling or enlargement
-    // by sqrt(2), rather than undersampling a high-frequency source by almost 2.
-    let boundary = sqrt(2.0)
+    // Never magnify a lower mip when sharper admitted pixels already exist.
+    // Thin lines and text must not lose samples merely to select a nearer LOD.
     for level in mipmaps {
-      guard Double(level.width) >= pixelSize.width / boundary,
-        Double(level.height) >= pixelSize.height / boundary else { break }
+      guard Double(level.width) >= pixelSize.width,
+        Double(level.height) >= pixelSize.height else { break }
       result = level
     }
     return result
