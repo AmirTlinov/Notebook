@@ -1,156 +1,9 @@
 import Foundation
+import CoreGraphics
+import CryptoKit
 import NotebookCore
+import NotebookTypesetter
 import WebKit
-
-/// Tracks charges without retaining their buffers or changing their lifetime.
-/// A failed attempt uses the actual released subset to distinguish its own
-/// cleanup from newly available capacity elsewhere in the scene.
-@MainActor
-private final class DocumentPreparationCharges {
-  final class WeakCharge {
-    weak var value: RasterReservation?
-    init(_ value: RasterReservation) { self.value = value }
-  }
-  @MainActor struct Sample {
-    fileprivate let charge: WeakCharge
-    let bytes: Int
-    var releasedBytes: Int { bytes - (charge.value.flatMap { $0.isReleased ? nil : $0.byteCount } ?? 0) }
-  }
-  private var charges: [WeakCharge] = []
-  private var recoveryCapacity: RasterReservation?
-  var onAdmissionWait: (Bool) -> Void = { _ in }
-  var waitsForAdmission = false {
-    didSet { if oldValue != waitsForAdmission { onAdmissionWait(waitsForAdmission) } }
-  }
-
-  func adoptRecovery(_ reservation: RasterReservation) {
-    precondition(recoveryCapacity == nil && !reservation.isReleased)
-    recoveryCapacity = reservation; track(reservation)
-  }
-
-  func releaseRecovery() { recoveryCapacity?.release(); recoveryCapacity = nil }
-
-  func consumeRecovery(_ bytes: Int, resources: SceneRenderResources) throws -> RasterReservation? {
-    guard let capacity = recoveryCapacity else { return nil }
-    if bytes > capacity.byteCount,
-      !resources.resizePassiveDerivedReservation(capacity, to: bytes) {
-      throw DocumentPreparationAdmission.Deferred(additionalBytes: bytes - capacity.byteCount, charges: snapshot())
-    }
-    if capacity.byteCount == bytes { recoveryCapacity = nil; return capacity }
-    guard let part = resources.splitPassiveDerivedReservation(capacity, bytes: bytes) else {
-      throw SceneRenderError.resourceLimit
-    }
-    track(part)
-    return part
-  }
-
-  func transferRecovery(to reservation: RasterReservation, upTo bytes: Int, resources: SceneRenderResources) {
-    guard bytes > 0, let capacity = recoveryCapacity else { return }
-    precondition(resources.transferPassiveDerivedReservation(capacity, to: reservation,
-      bytes: min(bytes, capacity.byteCount)))
-    if capacity.isReleased { recoveryCapacity = nil }
-  }
-  func track(_ reservation: RasterReservation) {
-    charges.removeAll { $0.value == nil || $0.value?.isReleased == true }
-    if !charges.contains(where: { $0.value === reservation }) { charges.append(WeakCharge(reservation)) }
-  }
-  func snapshot() -> [Sample] {
-    charges.compactMap { charge in
-      guard let value = charge.value, !value.isReleased else { return nil }
-      return Sample(charge: charge, bytes: value.byteCount)
-    }
-  }
-}
-
-@MainActor
-private enum DocumentPreparationAdmission {
-  struct Deferred: Error, @unchecked Sendable {
-    let additionalBytes: Int
-    let charges: [DocumentPreparationCharges.Sample]
-    @MainActor var recoveryBytes: Int { additionalBytes + charges.reduce(0) { $0 + max(0, $1.releasedBytes) } }
-  }
-
-  static func reserve(_ bytes: Int, stage: String, message: DocumentSourceMessage,
-    page: Int?, resources: SceneRenderResources, waitsForAdmission: Bool = true,
-    charges: DocumentPreparationCharges? = nil, onAdmissionWait: (Bool) -> Void = { _ in }) async throws -> RasterReservation {
-    if let reservation = try charges?.consumeRecovery(bytes, resources: resources) {
-      resources.observeDocumentReservation(reservation, documentID: message.documentID,
-        sourceKey: message.key, page: page, purpose: stage)
-      return reservation
-    }
-    if !waitsForAdmission {
-      return try reserveMaterialized(bytes, stage: stage, message: message, page: page,
-        resources: resources, charges: charges)
-    }
-    let before = resources.lastRasterRefusal?.generation
-    defer { charges?.waitsForAdmission = false; onAdmissionWait(false) }
-    let reservation = try await resources.acquirePassiveDerivedBytes(bytes) {
-      charges?.waitsForAdmission = true; onAdmissionWait(true)
-      report(stage, kind: "pool_refusal", requested: bytes, limit: nil, message: message, page: page,
-        resources: resources, refusal: resources.lastRasterRefusal.flatMap { $0.generation != before ? $0 : nil })
-    }
-    charges?.track(reservation)
-    resources.observeDocumentReservation(reservation, documentID: message.documentID,
-      sourceKey: message.key, page: page, purpose: stage)
-    return reservation
-  }
-
-  static func reserveMaterialized(_ bytes: Int, stage: String, message: DocumentSourceMessage,
-    page: Int?, resources: SceneRenderResources, charges: DocumentPreparationCharges?) throws -> RasterReservation {
-    if let reservation = try charges?.consumeRecovery(bytes, resources: resources) {
-      resources.observeDocumentReservation(reservation, documentID: message.documentID,
-        sourceKey: message.key, page: page, purpose: stage)
-      return reservation
-    }
-    let before = resources.lastRasterRefusal?.generation
-    guard let reservation = resources.reserveDerivedBytes(bytes, priority: .passive) else {
-      report(stage, kind: "pool_refusal", requested: bytes, limit: nil, message: message, page: page,
-        resources: resources, refusal: resources.lastRasterRefusal.flatMap { $0.generation != before ? $0 : nil })
-      if let charges { throw Deferred(additionalBytes: bytes, charges: charges.snapshot()) }
-      throw SceneRenderError.resourceLimit
-    }
-    charges?.track(reservation)
-    resources.observeDocumentReservation(reservation, documentID: message.documentID,
-      sourceKey: message.key, page: page, purpose: stage)
-    return reservation
-  }
-
-  static func transfer(_ reservation: RasterReservation, to bytes: Int, stage: String,
-    message: DocumentSourceMessage, page: Int?, resources: SceneRenderResources,
-    charges: DocumentPreparationCharges) throws {
-    charges.transferRecovery(to: reservation, upTo: max(0, bytes - reservation.byteCount), resources: resources)
-    let additional = max(0, bytes - reservation.byteCount), before = resources.lastRasterRefusal?.generation
-    guard resources.resizePassiveDerivedReservation(reservation, to: bytes) else {
-      report(stage, kind: "pool_refusal", requested: additional, limit: nil, message: message, page: page,
-        resources: resources, refusal: resources.lastRasterRefusal.flatMap { $0.generation != before ? $0 : nil })
-      throw Deferred(additionalBytes: additional, charges: charges.snapshot())
-    }
-    resources.observeDocumentReservation(reservation, documentID: message.documentID,
-      sourceKey: message.key, page: page, purpose: stage)
-  }
-
-  static func require(_ bytes: Int, atMost limit: Int, stage: String, message: DocumentSourceMessage,
-    page: Int?, resources: SceneRenderResources) throws {
-    guard bytes <= limit else {
-      report(stage, kind: "value_limit", requested: bytes, limit: limit, message: message, page: page,
-        resources: resources, refusal: nil)
-      throw SceneRenderError.resourceLimit
-    }
-  }
-
-  private static func report(_ stage: String, kind: String, requested: Int, limit: Int?,
-    message: DocumentSourceMessage, page: Int?, resources: SceneRenderResources, refusal: SceneRasterRefusal?) {
-    guard NotebookNavigationObservation.enabled else { return }
-    var fields = resources.documentAllocationObservation()
-    fields["sourceKey"] = .string(message.key); fields["phase"] = .string(stage)
-    fields["kind"] = .string(kind); fields["page"] = page.map { .number(Double($0)) } ?? .null
-    fields["requestedBytes"] = .number(Double(requested))
-    fields["valueLimit"] = limit.map { .number(Double($0)) } ?? .null
-    fields["refusalGeneration"] = refusal.map { .string(String($0.generation)) } ?? .null
-    NotebookNavigationObservation.recordDocument("document_preparation_admission_refused",
-      ownerID: UUID(uuidString: message.key) ?? message.documentID, documentID: message.documentID, fields: fields)
-  }
-}
 
 struct DocumentBrowserRegion: Codable, Sendable {
   let id: String
@@ -183,49 +36,6 @@ struct DocumentPageFragment: Codable, Sendable {
   let utf8Bytes: Int
 }
 
-private struct DocumentSourceManifest: Encodable, Sendable {
-  let key: String
-  let documentID: UUID
-  let paper: DocumentPaperLayout
-  let blockCount: Int
-}
-private struct DocumentSourceBlockBatch: Encodable, Sendable {
-  let offset: Int
-  let blocks: [DocumentBlock]
-}
-
-private struct DocumentPreparedLayout: Decodable {
-  let sourceKey: String
-  let pageCount: Int
-  let diagnostics: [DocumentBrowserDiagnostic]
-  let mathStyles: String
-  let indexedNodes: Int
-  let indexedEdges: Int
-  let preparationPhasesMS: [String: Double]?
-}
-
-struct DocumentPacketDescriptor: Decodable {
-  let sourceKey: String
-  let pageIndex: Int?
-  let utf8Bytes: Int
-
-  static func decode(_ json: String, sourceKey: String, pageIndex: Int?, maximumBytes: Int) throws -> Self {
-    guard json.utf8.count <= 512 else { throw DocumentSessionError.invalidLayout }
-    let value = try JSONDecoder().decode(Self.self, from: Data(json.utf8))
-    guard value.sourceKey == sourceKey, value.pageIndex == pageIndex,
-      value.utf8Bytes > 0, value.utf8Bytes <= maximumBytes else { throw DocumentSessionError.invalidLayout }
-    return value
-  }
-}
-
-private struct DocumentPageSource: Encodable, Sendable {
-  let source: DocumentSourceMessage
-  var pageCount: Int
-  var layoutComplete: Bool
-  let diagnostics: [DocumentBrowserDiagnostic]
-  let mathStyles: String
-  let fragment: DocumentPageFragment
-}
 
 @MainActor
 final class DocumentPageMessage {
@@ -238,737 +48,244 @@ final class DocumentPageMessage {
 @MainActor
 final class DocumentPreparedPage {
   let fragment: DocumentPageFragment
-  private let envelope: DocumentPageSource
-  private let encodingBudget: Int
+  let printed: DocumentPrintedPage
+  private let source: DocumentSourceMessage
+  private let pageCount: Int
   private let reservation: RasterReservation
-  private let mathStyleReservation: RasterReservation
-  private let layout: DocumentLayoutRecord
-  fileprivate init(envelope: DocumentPageSource, layout: DocumentLayoutRecord, encodingBudget: Int, reservation: RasterReservation, mathStyleReservation: RasterReservation) {
-    fragment = envelope.fragment; self.envelope = envelope; self.encodingBudget = encodingBudget; self.reservation = reservation
-    self.mathStyleReservation = mathStyleReservation
-    self.layout = layout
+  init(fragment: DocumentPageFragment, printed: DocumentPrintedPage, source: DocumentSourceMessage,
+    pageCount: Int, reservation: RasterReservation) {
+    self.fragment = fragment; self.printed = printed; self.source = source
+    self.pageCount = pageCount; self.reservation = reservation
   }
-  /// The snapshot keeps one DOM fragment, not one full source encoding per
-  /// historical page. Only the physical host's current bridge message is encoded.
   func encodedMessage(resources: SceneRenderResources, onAdmissionWait: (Bool) -> Void = { _ in }) async throws -> DocumentPageMessage {
-    // The bound belongs to this page, not every source block in the book.
-    // Twice the browser JSON bounds Swift's slash escaping.
-    // Both encoder output and the submitted script stay charged until callback.
-    try DocumentPreparationAdmission.require(encodingBudget, atMost: 40 * 1024 * 1024,
-      stage: "page_encoding_bound", message: envelope.source, page: fragment.pageIndex, resources: resources)
-    let reservation = try await DocumentPreparationAdmission.reserve(encodingBudget * 2,
-      stage: "page_encoding", message: envelope.source, page: fragment.pageIndex, resources: resources, onAdmissionWait: onAdmissionWait)
+    struct Envelope: Encodable {
+      let source: DocumentSourceMessage; let fragment: DocumentPageFragment; let pageCount: Int
+      let layoutComplete = true; let diagnostics: [DocumentBrowserDiagnostic] = []
+    }
+    func jsonByteBound(_ value: JSONValue) -> Int {
+      switch value {
+      case .null, .bool: 5
+      case .number: 32
+      case .string(let string): string.utf8.count*6+2
+      case .array(let values): values.reduce(2) { $0 + jsonByteBound($1) + 1 }
+      case .object(let values): values.reduce(2) { $0 + $1.key.utf8.count*6 + jsonByteBound($1.value) + 4 }
+      }
+    }
+    let bytes = source.blocks.reduce(fragment.utf8Bytes + 16_384) { $0 + $1.source.utf8.count + $1.html.utf8.count + $1.css.utf8.count + $1.javaScript.utf8.count
+      + jsonByteBound($1.initialState) + 1024 }
+    let versionBytes = source.sourceVersions.values.reduce(0) { $0 + $1.observed.count*80 + 512 }
+    let admittedBytes = bytes + versionBytes
+    guard admittedBytes <= 16*1024*1024 else { throw SceneRenderError.resourceLimit }
+    let charge = try await resources.acquirePassiveDerivedBytes(admittedBytes*4) { onAdmissionWait(true) }
+    defer { onAdmissionWait(false) }
     do {
-      var envelope = envelope
-      envelope.pageCount = layout.pageCount
-      envelope.layoutComplete = layout.isComplete
-      let current = envelope
-      let json = try await Task.detached(priority: .userInitiated) {
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-        return String(decoding: try encoder.encode(current), as: UTF8.self)
-      }.value
+      let value = Envelope(source: source, fragment: fragment, pageCount: pageCount)
+      let json = try await Task.detached { try canonicalDocumentJSON(value) }.value
       try Task.checkCancellation()
-      try DocumentPreparationAdmission.require(json.utf8.count, atMost: encodingBudget,
-        stage: "page_encoded_size", message: envelope.source, page: fragment.pageIndex, resources: resources)
-      return DocumentPageMessage(json: json, reservation: reservation)
-    } catch { reservation.release(); throw error }
+      guard json.utf8.count <= admittedBytes*2 else { throw SceneRenderError.resourceLimit }
+      return .init(json: json, reservation: charge)
+    } catch { charge.release(); throw error }
   }
   isolated deinit { reservation.release() }
 }
 
-/// The canonical source layout and its passive DOM index are distinct from the
-/// bounded physical fragments currently needed by mounted page hosts.
-@MainActor
-private final class DocumentPreparedSource {
-  var layout: DocumentLayoutRecord
-  let measured: DocumentPreparedLayout
-  let blocks: [String: DocumentBlock]
-  let bodyBytes: [String: Int]
-  let sourceBytes: Int
-  let allBodyBytes: Int
-  let diagnosticsBytes: Int
-  let mathStyleReservation: RasterReservation
-  let indexReservation: RasterReservation
-
-  init(layout: DocumentLayoutRecord, measured: DocumentPreparedLayout, blocks: [String: DocumentBlock],
-    bodyBytes: [String: Int], sourceBytes: Int, diagnosticsBytes: Int,
-    mathStyleReservation: RasterReservation, indexReservation: RasterReservation) {
-    self.layout = layout; self.measured = measured; self.blocks = blocks; self.bodyBytes = bodyBytes
-    self.sourceBytes = sourceBytes; allBodyBytes = bodyBytes.values.reduce(0, +); self.diagnosticsBytes = diagnosticsBytes
-    self.mathStyleReservation = mathStyleReservation; self.indexReservation = indexReservation
-  }
-}
-
-/// One source owner measures once on an existing physical WebKit and serves
-/// individually admitted pages. It does not retain traversal history or a fifth
-/// WebKit when its measurement host leaves the mounted window.
+/// One immutable PDF layout, not an independently paginated DOM. Mounted pages
+/// retain only their local hit regions; no WebKit is borrowed for typesetting.
 @MainActor
 final class DocumentPagePreparation {
-  private final class WeakOwner {
-    weak var value: DocumentPagePreparation?
-    init(_ value: DocumentPagePreparation) { self.value = value }
-  }
-  private static var producers: [ObjectIdentifier: WeakOwner] = [:]
-  private struct FragmentMismatch: Error { let detail: String }
-  private final class ReaderSurface {
-    weak var web: WKWebView?
-    weak var lease: WebSurfaceLease?
-    init(web: WKWebView, lease: WebSurfaceLease) { self.web = web; self.lease = lease }
-  }
-  private struct Waiter {
-    let pageIndex: Int
-    let ordinal: UInt64
-    let hostID: UUID
-    let surface: ReaderSurface
-    let onAdmissionWait: (Bool) -> Void
-    let continuation: CheckedContinuation<DocumentPreparedPage, Error>
-  }
   private let message: DocumentSourceMessage
+  private let document: DocumentDocument
   private let resources: SceneRenderResources
-  private var task: Task<Void, Never>?
-  private var admissionRetry: Task<Void, Never>?
-  private var admissionRetryID: UUID?
-  private let charges = DocumentPreparationCharges()
-  private var retirement: Task<Void, Never>?
-  private var error: Error?
-  private var waiters: [UUID: Waiter] = [:]
-  private var demand: [UUID: Int] = [:]
-  private var nextOrdinal: UInt64 = 0
-  private var pageErrors: [Int: Error] = [:]
-  private var idleReclaimer: UUID?
-  private let reclamationID = UUID()
-  private var admissionObserver: NSObjectProtocol?
-  private var deferredPrefetchAdmission: SceneRasterAdmission?
+  private var preparation: Task<Void, Error>?
+  private var printSource: DocumentPrintedSource?
+  private var artifact: NotebookPrintedDocument? { printSource?.artifact }
   private var pages: [Int: DocumentPreparedPage] = [:]
-  private var measured: DocumentPreparedSource?
+  private var demand: [UUID: Int] = [:]
+  private var readers: Set<UUID> = []
+  private var error: Error?
+  private var locations: [DocumentPrintLocation] = []
+  private var navigation: DocumentPrintNavigation?
+  private var browserRegions: [DocumentBrowserRegion] = []
+  private var pdf: CGPDFDocument?
   private(set) var layout: DocumentLayoutRecord?
-  private var deliveredPage = false
-  private var presentedPage: Int?
-  private var layoutReaders: [UUID: CheckedContinuation<DocumentLayoutRecord, Error>] = [:]
-  var onLayoutAccepted: (DocumentLayoutRecord) throws -> Void = { _ in }
-  private weak var web: WKWebView?
-  private weak var lease: WebSurfaceLease?
-  private var retiring = false
   private(set) var measurementCount = 0
   private(set) var compiledPageCount = 0
-  // Durations describe actual source work, including scheduling and IPC waits.
-  // They do not participate in readiness, admission, or page selection.
   private(set) var preparationPhasesMS: [String: Double] = [:]
-  private var firstFragmentMeasurement = 0
-  private(set) var lastLayoutMismatch: String?
-  var pendingReaderCount: Int { waiters.count }
-  var preparedSourceBlockCount: Int { measured?.blocks.count ?? 0 }
+  var onLayoutAccepted: (DocumentLayoutRecord) throws -> Void = { _ in }
+  var pendingReaderCount: Int { readers.count }
+  var preparedSourceBlockCount: Int { artifact == nil ? 0 : document.blocks.count }
   var retainedPageIndices: Set<Int> { Set(pages.keys) }
   var failed: Bool { error != nil }
+  var lastLayoutMismatch: String? { nil }
 
-  /// The tail has no right to delay installation of the already prepared page.
-  /// Its owner is released by the ordinary canonical-pixel receipt, not a timer.
-  func didPresentPage(_ page: Int) { presentedPage = page; start() }
-
-  func completeLayout(in web: WKWebView, lease: WebSurfaceLease) async throws -> DocumentLayoutRecord {
-    if let layout, layout.isComplete { return layout }
-    if let error { throw error }
-    await retirement?.value
-    try Task.checkCancellation()
-    if let layout, layout.isComplete { return layout }
-    if self.web == nil { self.web = web; self.lease = lease }
-    let id = UUID()
-    return try await withTaskCancellationHandler {
-      try await withCheckedThrowingContinuation { continuation in
-        layoutReaders[id] = continuation; start()
-      }
-    } onCancel: {
-      Task { @MainActor [weak self] in self?.layoutReaders.removeValue(forKey: id)?.resume(throwing: CancellationError()) }
-    }
+  init(document: DocumentDocument, message: DocumentSourceMessage, resources: SceneRenderResources) {
+    self.document = document; self.message = message; self.resources = resources
   }
-
-  private var needsCompletion: Bool {
-    !layoutReaders.isEmpty && layout?.isComplete != true && !retiring && error == nil
-  }
-
-  private var nextLayoutPage: Int? {
-    guard layout?.isComplete != true, !retiring, error == nil, !demand.isEmpty else { return nil }
-    let requested = max(demand.values.max() ?? 0, presentedPage.map { $0 + 2 } ?? 0)
-    return requested >= (layout?.pageCount ?? 0) ? requested : nil
-  }
-
-  private func accept(_ value: DocumentPreparedSource) throws {
-    if let layout {
-      do { try layout.acceptExtension(value.layout) }
-      catch {
-        lastLayoutMismatch = "prefix pages=\(layout.pageCount)/\(value.layout.pageCount); old=\(Array(layout.regions.prefix(3))); new=\(Array(value.layout.regions.prefix(3)))"
-        throw error
-      }
-      value.layout = layout
-    } else { layout = value.layout }
-    measured = value
-    try onLayoutAccepted(value.layout)
-    if value.layout.isComplete {
-      let readers = layoutReaders.values; layoutReaders.removeAll()
-      for reader in readers { reader.resume(returning: value.layout) }
-    }
-  }
-
-  private func observeProducer(_ stage: String, reason: String) {
-    guard NotebookNavigationObservation.enabled else { return }
-    NotebookNavigationObservation.recordDocument(stage,
-      ownerID: UUID(uuidString: message.key) ?? message.documentID, documentID: message.documentID,
-      fields: ["sourceKey": .string(message.key), "reason": .string(reason),
-        "measurementCount": .number(Double(measurementCount)), "measured": .bool(measured != nil),
-        "waiters": .number(Double(waiters.count)), "demandCount": .number(Double(demand.count)),
-        "preparedPages": .array(pages.keys.sorted().prefix(32).map { .number(Double($0)) }),
-        "webID": web.map { .string(String(describing: ObjectIdentifier($0))) } ?? .null,
-        "taskActive": .bool(task != nil), "retiring": .bool(retirement != nil)])
-  }
-
-  init(message: DocumentSourceMessage, resources: SceneRenderResources) {
-    self.message = message; self.resources = resources
-    charges.onAdmissionWait = { [weak self] waiting in
-      guard let self else { return }
-      for waiter in Array(waiters.values) { waiter.onAdmissionWait(waiting) }
-    }
-    idleReclaimer = resources.registerReclamationOwner { [weak self] in
-      guard let self, task == nil, admissionRetry == nil, retirement == nil,
-        waiters.isEmpty, let measured else { return [] }
-      return [.init(id: reclamationID, bytes: measured.indexReservation.byteCount, rasterCount: 0,
-        value: .canonicalLayout, distance: demand.isEmpty ? 1 : 0,
-        restorationMilliseconds: preparationPhasesMS["nativeSourceMeasurement"] ?? 1_000,
-        release: { [weak self] in self?.reclaimIdle() })]
-    }
-    admissionObserver = NotificationCenter.default.addObserver(forName: SceneRenderResources.didGainRasterAdmission,
-      object: resources, queue: .main) { [weak self] _ in
-        MainActor.assumeIsolated { self?.admissionImproved() }
-      }
-  }
-
-  private func reclaimIdle() -> Task<Void, Never>? {
-    guard task == nil, admissionRetry == nil, waiters.isEmpty else { return nil }
-    pages.removeAll(); deferredPrefetchAdmission = nil
-    retireProducer(reason: "idle_resource_reclamation")
-    return retirement
-  }
-
-  private func admissionImproved() {
-    guard let attempted = deferredPrefetchAdmission, admissionImproved(since: attempted),
-      task == nil, retirement == nil, measured != nil else { return }
-    deferredPrefetchAdmission = nil
-    start()
-  }
-
-  private func admissionImproved(since previous: SceneRasterAdmission) -> Bool {
-    let current = resources.rasterAdmission
-    // The notification is deferred: our own failed packet can release its
-    // staging allocation before that notification arrives. Compare actual
-    // capacity after cleanup, not the notification generation.
-    return current.byteLimit - current.heldBytes > previous.byteLimit - previous.heldBytes
-      || current.passiveByteLimit - current.pinnedBytes - current.passiveReservedBytes
-        > previous.passiveByteLimit - previous.pinnedBytes - previous.passiveReservedBytes
-      || current.countLimit - current.pinnedCount - current.reservedCount
-        > previous.countLimit - previous.pinnedCount - previous.reservedCount
-  }
-
-  func retainPage(_ pageIndex: Int, hostID: UUID) {
-    demand[hostID] = max(0, pageIndex)
-    trimPages()
-    if measured != nil { start() }
-  }
-
+  func retainPage(_ index: Int, hostID: UUID) { demand[hostID] = max(0, index); trim() }
   func releasePage(hostID: UUID, in web: WKWebView?) {
-    demand[hostID] = nil
-    for (id, waiter) in Array(waiters) where waiter.hostID == hostID {
-      waiters[id] = nil; waiter.continuation.resume(throwing: CancellationError())
-    }
-    trimPages()
-    if let web, self.web === web { retireProducer(reason: "measurement_web_released") }
-    if demand.isEmpty {
-      presentedPage = nil
-      cancelAdmissionRetry()
-      pages.removeAll()
-      if waiters.isEmpty { task?.cancel(); retireProducer(reason: "last_page_demand_released") }
-      let readers = layoutReaders.values; layoutReaders.removeAll()
-      for reader in readers { reader.resume(throwing: CancellationError()) }
-    }
+    demand[hostID] = nil; trim()
+    cancelUnownedPreparation()
   }
-
-  /// The idle measured DOM is disposable under pressure. Accepted geometry is
-  /// retained by its readers; a later measurement must agree with it exactly.
+  private func trim() {
+    let retained = Set(demand.values.map { min($0, max(0, (layout?.pageCount ?? 1)-1)) })
+    pages = pages.filter { retained.contains($0.key) }
+  }
+  func retryPage(_ index: Int) { error = nil; if artifact == nil { preparation = nil } }
   func discardIdlePreparation() async {
-    pages.removeAll()
-    retireProducer(reason: "explicit_idle_preparation_discard")
-    await retirement?.value
-    pages.removeAll()
+    guard readers.isEmpty, demand.isEmpty else { return }
+    preparation?.cancel(); preparation = nil; pages.removeAll(); printSource = nil; pdf = nil
+    locations.removeAll(); browserRegions.removeAll(); navigation = nil
   }
-
-  func page(_ requested: Int, hostID: UUID, in web: WKWebView, lease: WebSurfaceLease,
-    onAdmissionWait: @escaping (Bool) -> Void = { _ in }) async throws -> DocumentPreparedPage {
-    try Task.checkCancellation()
-    retainPage(requested, hostID: hostID)
-    if let page = cachedPage(requested) { start(); return page }
+  private func prepare(onAdmissionWait: @escaping (Bool) -> Void) async throws {
+    if artifact != nil { return }
     if let error { throw error }
-    if let error = pageErrors[resolvedPage(requested)] { throw error }
-    // Retiring a producer drains its actual browser callbacks before the same
-    // admitted WebKit can become another source's measurement host.
-    await retirement?.value
+    if preparation == nil {
+      measurementCount += 1
+      preparation = Task { try await loadPrint(onAdmissionWait: onAdmissionWait) }
+    }
+    let id = UUID(), task = preparation!
+    readers.insert(id)
+    onAdmissionWait(true); defer { onAdmissionWait(false); releaseReader(id) }
+    do {
+      try await withTaskCancellationHandler {
+        try Task.checkCancellation(); try await task.value; try Task.checkCancellation()
+      } onCancel: { Task { @MainActor [weak self] in self?.releaseReader(id) } }
+    }
+    catch { if !(error is CancellationError) { self.error = error }; throw error }
+  }
+  private func releaseReader(_ id: UUID) {
+    readers.remove(id); cancelUnownedPreparation()
+  }
+  private func cancelUnownedPreparation() {
+    if demand.isEmpty, readers.isEmpty { preparation?.cancel(); preparation = nil }
+  }
+  private func loadPrint(onAdmissionWait: @escaping (Bool) -> Void) async throws {
+    let start = ContinuousClock.now
+    let value = try await DocumentCanonicalPrint.store.artifact(for: document)
     try Task.checkCancellation()
-    if let page = cachedPage(requested) { start(); return page }
-    if self.web == nil || self.lease?.isReleased != false {
-      self.web = web; self.lease = lease; retiring = false
-    }
-    let id = UUID()
-    return try await withTaskCancellationHandler {
-      try await withCheckedThrowingContinuation { continuation in
-        guard !Task.isCancelled else { continuation.resume(throwing: CancellationError()); return }
-        nextOrdinal &+= 1
-        waiters[id] = Waiter(pageIndex: max(0, requested), ordinal: nextOrdinal, hostID: hostID,
-          surface: ReaderSurface(web: web, lease: lease), onAdmissionWait: onAdmissionWait, continuation: continuation)
-        onAdmissionWait(charges.waitsForAdmission)
-        start()
-      }
-    } onCancel: {
-      Task { @MainActor [weak self] in self?.cancelWaiter(id) }
-    }
-  }
-
-  private func cachedPage(_ requested: Int) -> DocumentPreparedPage? {
-    pages[resolvedPage(requested)]
-  }
-
-  private func resolvedPage(_ requested: Int) -> Int {
-    guard let layout, layout.isComplete else { return max(0, requested) }
-    return min(max(0, requested), layout.pageCount - 1)
-  }
-
-  private var neededPages: Set<Int> {
-    guard let layout else { return [] }
-    // The scene's page plan already includes its neighbours. A producer serves
-    // exact consumers; extending each demand again multiplies the working set.
-    return Set(demand.values.map { resolvedPage($0) }.filter { $0 < layout.pageCount })
-  }
-
-  private func trimPages() {
-    let needed = neededPages
-    pages = pages.filter { needed.contains($0.key) }
-  }
-
-  private var hasReaders: Bool { !waiters.isEmpty || !layoutReaders.isEmpty || !demand.isEmpty }
-
-  private func cancelWaiter(_ id: UUID) {
-    waiters.removeValue(forKey: id)?.continuation.resume(throwing: CancellationError())
-    if !hasReaders { cancelAdmissionRetry() }
-    if waiters.isEmpty, demand.isEmpty { task?.cancel(); retireProducer(reason: "last_waiter_cancelled") }
-  }
-
-  private func start() {
-    guard task == nil, admissionRetry == nil, retirement == nil,
-      !waiters.isEmpty || needsCompletion || nextLayoutPage != nil || (!neededPages.subtracting(pages.keys).subtracting(pageErrors.keys).isEmpty
-        && deferredPrefetchAdmission.map { admissionImproved(since: $0) } != false),
-      let web, let lease, !lease.isReleased else { return }
-    let borrow: WebSurfaceBorrow
-    do { borrow = try lease.borrow() }
-    catch { fail(error); return }
-    task = Task { @MainActor [weak self] in
-      defer { borrow.release() }
-      guard let self else { return }
-      defer { charges.releaseRecovery() }
-      do {
-        if measured == nil {
-          let identity = ObjectIdentifier(web)
-          if let previous = Self.producers[identity]?.value, previous !== self {
-            previous.retireProducer(reason: "measurement_web_assigned_to_another_source")
-            await previous.retirement?.value
-          }
-          try Task.checkCancellation()
-          Self.producers = Self.producers.filter { $0.value.value != nil }
-          Self.producers[identity] = WeakOwner(self)
-          // Publish one accepted measurement's diagnostics together with its
-          // count. A concurrent reader cannot pair a new partial measurement
-          // with the previous accepted measurement's identity or first fragment.
-          var measuredPhasesMS: [String: Double] = [:]
-          let measurementStarted = ProcessInfo.processInfo.systemUptime
-          let firstPage = waiters.values.min(by: { $0.ordinal < $1.ordinal })?.pageIndex ?? 0
-          let value = try await Self.measure(message: message,
-            throughPage: needsCompletion || layout?.isComplete == true ? nil : max(firstPage, (layout?.pageCount ?? 1) - 1),
-            in: web, resources: resources, charges: charges)
-          measuredPhasesMS["nativeSourceMeasurement"] = (ProcessInfo.processInfo.systemUptime - measurementStarted) * 1_000
-          for (name, duration) in value.measured.preparationPhasesMS ?? [:]
-            where name.utf8.count <= 80 && duration.isFinite && duration >= 0 {
-            measuredPhasesMS["browser_" + name] = duration
-          }
-          try accept(value); measurementCount += 1
-          preparationPhasesMS = measuredPhasesMS
-          observeProducer("document_source_measured", reason: "canonical_measurement_accepted")
-        }
-        while !Task.isCancelled, let measured {
-          // Foreground readers always precede speculative neighbours. Resolve a
-          // page immediately; no other fragment stands between it and its host.
-          for (id, waiter) in Array(waiters) {
-            if let page = cachedPage(waiter.pageIndex) {
-              deliveredPage = true
-              waiters[id] = nil; waiter.onAdmissionWait(false); waiter.continuation.resume(returning: page)
-            }
-          }
-          let requested = waiters.values.min(by: { $0.ordinal < $1.ordinal }).map { resolvedPage($0.pageIndex) }
-          let neighbor = !retiring ? neededPages.subtracting(pages.keys).subtracting(pageErrors.keys).sorted().first : nil
-          let missingPage = requested.flatMap { $0 >= measured.layout.pageCount ? $0 : nil }
-          if !measured.layout.isComplete, missingPage != nil || (requested == nil && (needsCompletion || nextLayoutPage != nil)) {
-            // The hand and its bounded next-page window extend the existing
-            // flow. Only an explicit navigation/index reader asks for its end.
-            let through = missingPage ?? (needsCompletion ? nil : nextLayoutPage)
-            let extended = try await Self.measure(message: message, throughPage: through,
-              extending: measured, in: web, resources: resources, charges: charges)
-            try accept(extended)
-            observeProducer("document_source_extended", reason: through == nil ? "requested_navigation_index" : "requested_page_window")
-            continue
-          }
-          guard let index = requested ?? neighbor else { break }
-          guard index < measured.layout.pageCount else { break }
-          let page: DocumentPreparedPage
-          let fragmentStarted = ProcessInfo.processInfo.systemUptime
-          do { page = try await Self.compile(index, message: message, prepared: measured, in: web, resources: resources,
-            waitsForAdmission: requested != nil, charges: charges) }
-          catch {
-            _ = try? await Self.evaluate("window.notebookRenderer.discardPreparedPacket(key, index); return 'discarded';",
-              arguments: ["key": message.key, "index": index], in: web)
-            if let mismatch = error as? FragmentMismatch { lastLayoutMismatch = mismatch.detail }
-            if error is CancellationError { throw error }
-            if requested != nil {
-              if error is DocumentPreparationAdmission.Deferred || (error as? SceneRenderError) == .resourceLimit { throw error }
-              let failure = error is FragmentMismatch ? DocumentSessionError.inconsistentLayout : error
-              pageErrors[index] = failure
-              for (id, waiter) in Array(waiters) where resolvedPage(waiter.pageIndex) == index {
-                waiters[id] = nil; waiter.continuation.resume(throwing: failure)
-              }
-              continue
-            }
-            // Speculative work cannot turn an already usable page into an
-            // error. Remember a deterministic page error for its future reader;
-            // admission failure remains retryable on the next actual demand.
-            if error is DocumentPreparationAdmission.Deferred || (error as? SceneRenderError) == .resourceLimit { deferredPrefetchAdmission = resources.rasterAdmission }
-            else { pageErrors[index] = error }
-            break
-          }
-          if firstFragmentMeasurement != measurementCount {
-            firstFragmentMeasurement = measurementCount
-            preparationPhasesMS["nativeFirstFragment"] = (ProcessInfo.processInfo.systemUptime - fragmentStarted) * 1_000
-          }
-          try Task.checkCancellation()
-          compiledPageCount += 1
-          pages[index] = page
-          for (id, waiter) in Array(waiters) where resolvedPage(waiter.pageIndex) == index {
-            deliveredPage = true
-            waiters[id] = nil; waiter.onAdmissionWait(false); waiter.continuation.resume(returning: page)
-          }
-          trimPages()
-          await Task.yield()
-        }
-        if Task.isCancelled, !retiring { fail(CancellationError()) }
-      } catch {
-        _ = try? await Self.evaluate("window.notebookRenderer.finishSourcePreparation(key); return 'finished';",
-          arguments: ["key": message.key], in: web)
-        measured = nil
-        if !deliveredPage { layout = nil }
-        charges.releaseRecovery()
-        // A shown page still owns its navigation tail and retained neighbours.
-        // Resolving its first packet must not turn subsequent byte pressure
-        // into a permanent error of the immutable source.
-        if let deferred = error as? DocumentPreparationAdmission.Deferred, !Task.isCancelled, hasReaders {
-          waitForReleasedCapacity(deferred)
-        } else if !Task.isCancelled || !retiring { fail(error) }
-      }
-      task = nil
-      // A canonical-pixel callback may add the bounded next-page demand while
-      // this task is unwinding. Serve that demand without another UI event.
-      if measured != nil { start() }
-    }
-  }
-
-  private func cancelAdmissionRetry() {
-    admissionRetryID = nil; admissionRetry?.cancel(); admissionRetry = nil
-    charges.releaseRecovery(); charges.waitsForAdmission = false
-  }
-
-  func retryPage(_ index: Int) {
-    let page = layout.map { min(max(0, index), $0.pageCount - 1) } ?? max(0, index)
-    pageErrors[page] = nil
-  }
-
-  private func waitForReleasedCapacity(_ deferred: DocumentPreparationAdmission.Deferred) {
-    let bytes = max(1, deferred.recoveryBytes), identity = UUID()
-    admissionRetryID = identity
-    charges.waitsForAdmission = true
-    // Recreating our released working set plus the full failed allocation (or
-    // full resize growth, never only the shortage) must fit. Our own cleanup
-    // cannot satisfy this gate; a concurrent external release is not lost.
-    admissionRetry = Task { @MainActor [weak self] in
-      guard let self else { return }
-      do {
-        let capacity = try await resources.acquirePassiveDerivedBytes(bytes)
-        guard !Task.isCancelled, admissionRetryID == identity, hasReaders else {
-          capacity.release(); return
-        }
-        charges.adoptRecovery(capacity); charges.waitsForAdmission = false
-        admissionRetry = nil; admissionRetryID = nil
-        start()
-      } catch {
-        guard admissionRetryID == identity else { return }
-        admissionRetry = nil; admissionRetryID = nil; charges.waitsForAdmission = false
-        if !(error is CancellationError) { fail(error) }
-      }
-    }
-  }
-
-  private func fail(_ error: Error) {
-    if !(error is CancellationError) { self.error = error }
-    let pending = waiters.values; waiters.removeAll()
-    for waiter in pending { waiter.continuation.resume(throwing: error) }
-    let readers = layoutReaders.values; layoutReaders.removeAll()
-    for reader in readers { reader.resume(throwing: error) }
-  }
-
-  /// Capture the cleanup borrow synchronously, before the physical host returns
-  /// its lease. The cleanup task can then wait for another reader's page packet.
-  private func retireProducer(reason: String) {
-    guard retirement == nil, let web else { return }
-    cancelAdmissionRetry()
-    observeProducer("document_source_retire_requested", reason: reason)
-    retiring = true
-    // Existing readers share this actual measurement. Drain their required
-    // fragments on its borrowed WebKit; retirement suppresses only prefetch.
-    // A request still waiting for bytes has submitted no such browser work and
-    // can transfer to an already admitted surviving reader immediately.
-    if waiters.isEmpty || charges.waitsForAdmission { task?.cancel() }
-    let borrow = try? lease?.borrow()
-    let preceding = task
-    retirement = Task { @MainActor [self] in
-      defer { borrow?.release() }
-      await preceding?.value
-      _ = try? await Self.evaluate("window.notebookRenderer.finishSourcePreparation(key); return 'finished';",
-        arguments: ["key": message.key], in: web)
-      measured = nil
-      if Self.producers[ObjectIdentifier(web)]?.value === self { Self.producers[ObjectIdentifier(web)] = nil }
-      self.web = nil; lease = nil; retiring = false; retirement = nil
-      observeProducer("document_source_retired", reason: reason)
-      adoptRemainingReader()
-    }
-  }
-
-  /// A physical measurement host can leave while another reader is already
-  /// suspended on the same source. Drain the retired producer first, then move
-  /// the unfinished demand to that reader's own still-admitted WebKit.
-  private func adoptRemainingReader() {
-    for (id, waiter) in waiters.sorted(by: { $0.value.ordinal < $1.value.ordinal }) {
-      guard let web = waiter.surface.web, let lease = waiter.surface.lease, !lease.isReleased else {
-        waiters[id] = nil; demand[waiter.hostID] = nil
-        waiter.continuation.resume(throwing: CancellationError())
-        continue
-      }
-      self.web = web; self.lease = lease
-      start()
-      break
-    }
-  }
-
-  isolated deinit {
-    if let idleReclaimer { resources.unregisterReclamationOwner(idleReclaimer) }
-    if let admissionObserver { NotificationCenter.default.removeObserver(admissionObserver) }
-    task?.cancel(); admissionRetry?.cancel()
-    for waiter in waiters.values { waiter.continuation.resume(throwing: CancellationError()) }
-    for reader in layoutReaders.values { reader.resume(throwing: CancellationError()) }
-    // Normally the last mounted demand retires the producer. This path also
-    // covers an abandoned source snapshot retained only by diagnostic readers.
-    if let web, retirement == nil {
-      let borrow = try? lease?.borrow()
-      let retained = measured
-      web.callAsyncJavaScript("window.notebookRenderer.finishSourcePreparation(key); return true;",
-        arguments: ["key": message.key], in: nil, in: .page) { _ in
-          borrow?.release(); withExtendedLifetime(retained) {}
-        }
-    }
-  }
-
-  private static func evaluate(_ script: String, arguments: [String: Any], in web: WKWebView) async throws -> String {
-    try await withCheckedThrowingContinuation { continuation in
-      web.callAsyncJavaScript(script, arguments: arguments, in: nil, in: .page) { result in
-        switch result {
-        case .success(let value):
-          if let string = value as? String { continuation.resume(returning: string) }
-          else { continuation.resume(throwing: DocumentSessionError.invalidLayout) }
-        case .failure(let error): continuation.resume(throwing: error)
-        }
-      }
-    }
-  }
-
-  private static func measure(message: DocumentSourceMessage, throughPage: Int?, extending previous: DocumentPreparedSource? = nil, in web: WKWebView,
-    resources: SceneRenderResources, charges: DocumentPreparationCharges) async throws -> DocumentPreparedSource {
-    let geometry = WorkspaceItemGeometry.document(message.paper.kind)
-    var sourceBytes = previous?.sourceBytes ?? 0
-    var loadedBlockCount = previous?.blocks.count ?? 0
-    let initialBytes = sourceBytes
-    let (raw, layoutPacket) = try await readPacket(preparing: { staging in
-      let page = throughPage.map { $0 as Any } ?? NSNull()
-      var announced: String
-      if previous != nil {
-        announced = try await evaluate("return JSON.stringify(await notebookRenderer.extendSourcePreparation(key, page));",
-          arguments: ["key": message.key, "page": page], in: web)
-      } else {
-        let manifest = DocumentSourceManifest(key: message.key, documentID: message.documentID,
-          paper: message.paper, blockCount: message.blocks.count)
-        let json = try canonicalDocumentJSON(manifest)
-        sourceBytes = json.utf8.count
-        announced = try await evaluate("return JSON.stringify(await notebookRenderer.beginSourcePreparation(JSON.parse(source), page));",
-          arguments: ["source": json, "page": page], in: web)
-      }
-      while let request = try JSONSerialization.jsonObject(with: Data(announced.utf8)) as? [String: Any],
-        let offset = request["nextBlockIndex"] as? Int {
-        try Task.checkCancellation()
-        guard request["sourceKey"] as? String == message.key, offset == loadedBlockCount,
-          offset >= 0, offset < message.blocks.count else { throw DocumentSessionError.invalidLayout }
-        let end = min(message.blocks.count, offset + (throughPage == nil ? 4 : 1))
-        let batch = DocumentSourceBlockBatch(offset: offset, blocks: Array(message.blocks[offset..<end]))
-        // Only the demanded blocks are encoded. No full-book string or second
-        // JSON tree is constructed before the first readable/editable page.
-        let json = try await Task.detached(priority: .userInitiated) { try canonicalDocumentJSON(batch) }.value
-        try Task.checkCancellation()
-        try DocumentPreparationAdmission.require(json.utf8.count, atMost: 16 * 1024 * 1024,
-          stage: "source_block_batch", message: message, page: nil, resources: resources)
-        sourceBytes += json.utf8.count
-        try DocumentPreparationAdmission.transfer(staging, to: 512 * 3 + (sourceBytes - initialBytes) * 2,
-          stage: "source_block_transfer", message: message, page: nil, resources: resources, charges: charges)
-        announced = try await evaluate("return JSON.stringify(await notebookRenderer.extendSourcePreparation(key, page, JSON.parse(batch)));",
-          arguments: ["key": message.key, "page": page, "batch": json], in: web)
-        loadedBlockCount = end
-      }
-      return announced
-    }, sourceKey: message.key, pageIndex: nil, maximumBytes: 16 * 1024 * 1024,
-      message: message, in: web, resources: resources, charges: charges)
-    // Keep every materialized-stage charge alive through browser cleanup if
-    // a later synchronous growth is refused. No index or packet waits uncharged.
-    var heldCharges = [layoutPacket]
+    // Admit decoding scratch and bounded PDF navigation before materializing
+    // either. The same reservation shrinks to the retained source afterwards.
+    let bodyBytes = value.pdf.count + value.syncTeX.count + value.source.utf8.count
+      + value.assets.reduce(0, { $0 + $1.data.count })
+      + value.sourceMap.ranges.reduce(0, { $0 + ($1.sourceOffsets?.count ?? 0)*MemoryLayout<Int>.stride + 256 })
+    guard value.locationDecodeBytes <= 16*1024*1024 else { throw SceneRenderError.resourceLimit }
+    let charge = try await resources.acquirePassiveDerivedBytes(bodyBytes + value.locationDecodeBytes*5 + 24*1024*1024) { onAdmissionWait(true) }
+    defer { onAdmissionWait(false) }
     do {
-      guard let receipt = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? NSDictionary else { throw DocumentSessionError.invalidLayout }
-      let loadedBlocks = message.blocks.prefix(loadedBlockCount)
-      let blocks = Dictionary(uniqueKeysWithValues: loadedBlocks.map { ($0.id, $0) }), blockIDs = Set(blocks.keys)
-      let bodyBytes = Dictionary(uniqueKeysWithValues: loadedBlocks.map { block in
-        (block.id, block.source.utf8.count + block.html.utf8.count + block.css.utf8.count + block.javaScript.utf8.count)
-      })
-      guard bodyBytes.values.reduce(0, +) <= sourceBytes else { throw DocumentSessionError.invalidLayout }
-      let layout = try DocumentLayoutRecord(receipt: receipt, sourceKey: message.key, blockIDs: blockIDs,
-        geometry: geometry, reservation: layoutPacket)
-      let measured = try JSONDecoder().decode(DocumentPreparedLayout.self, from: Data(raw.utf8))
-      guard measured.sourceKey == message.key, measured.pageCount == layout.pageCount,
-        (1...4096).contains(layout.pageCount), (0...262144).contains(measured.indexedNodes),
-        (0...524288).contains(measured.indexedEdges) else { throw DocumentSessionError.invalidLayout }
-      let diagnosticsBytes = try JSONEncoder().encode(measured.diagnostics).count
-      let mathStyleBytes = measured.mathStyles.utf8.count
-      try DocumentPreparationAdmission.require(diagnosticsBytes, atMost: 64 * 1024,
-        stage: "diagnostics_size", message: message, page: nil, resources: resources)
-      try DocumentPreparationAdmission.require(mathStyleBytes, atMost: 128 * 1024,
-        stage: "math_style_size", message: message, page: nil, resources: resources)
-      let mathStyleReservation = try DocumentPreparationAdmission.reserveMaterialized(max(1, mathStyleBytes),
-        stage: "math_style", message: message, page: nil, resources: resources, charges: charges)
-      heldCharges.append(mathStyleReservation)
-      let indexBytes = max(1, sourceBytes * 2 + measured.indexedNodes * 128 + measured.indexedEdges * 64)
-      let indexReservation: RasterReservation
-      if let previous {
-        // The same DOM grows; it is not a second full-source allocation.
-        indexReservation = previous.indexReservation
-        try DocumentPreparationAdmission.transfer(indexReservation, to: indexBytes, stage: "source_index",
-          message: message, page: nil, resources: resources, charges: charges)
-      } else {
-        indexReservation = try DocumentPreparationAdmission.reserveMaterialized(indexBytes,
-          stage: "source_index", message: message, page: nil, resources: resources, charges: charges)
+      let worker = Task.detached {
+        (try value.locations(), try DocumentPrintNavigation.read(value.pdf))
       }
-      heldCharges.append(indexReservation)
-      try DocumentPreparationAdmission.transfer(layoutPacket, to: raw.utf8.count * 3, stage: "source_packet",
-        message: message, page: nil, resources: resources, charges: charges)
-      return DocumentPreparedSource(layout: layout, measured: measured, blocks: blocks, bodyBytes: bodyBytes,
-        sourceBytes: sourceBytes, diagnosticsBytes: diagnosticsBytes,
-        mathStyleReservation: mathStyleReservation, indexReservation: indexReservation)
-    } catch {
-      _ = try? await evaluate("window.notebookRenderer.finishSourcePreparation(key); return 'finished';",
-        arguments: ["key": message.key], in: web)
-      withExtendedLifetime(heldCharges) {}
-      throw error
-    }
-  }
-
-  private static func compile(_ pageIndex: Int, message: DocumentSourceMessage, prepared: DocumentPreparedSource,
-    in web: WKWebView, resources: SceneRenderResources, waitsForAdmission: Bool,
-    charges: DocumentPreparationCharges) async throws -> DocumentPreparedPage {
-    let (json, staging) = try await readPacket(
-      preparing: { _ in try await evaluate("return JSON.stringify(window.notebookRenderer.preparePagePacket(key, index));",
-        arguments: ["key": message.key, "index": pageIndex], in: web) }, sourceKey: message.key, pageIndex: pageIndex,
-      maximumBytes: 8 * 1024 * 1024, message: message, in: web, resources: resources,
-      waitsForAdmission: waitsForAdmission, charges: charges)
-    var transferred = false
-    defer { if !transferred { staging.release() } }
-    let fragment = try JSONDecoder().decode(DocumentPageFragment.self, from: Data(json.utf8))
-    let blocks = prepared.blocks, layout = prepared.layout
-    guard fragment.format == 1, fragment.sourceKey == message.key, fragment.pageIndex == pageIndex,
-      fragment.utf8Bytes == fragment.html.utf8.count, fragment.utf8Bytes <= 4 * 1024 * 1024,
-      fragment.nodeCount <= 16_384, fragment.contentTop.isFinite, fragment.contentBottom.isFinite,
-      fragment.contentTop >= 0, fragment.contentBottom >= fragment.contentTop, fragment.contentBottom <= fragment.height,
-      Set(fragment.blockIDs).count == fragment.blockIDs.count,
-      fragment.blockIDs.allSatisfy({ blocks[$0] != nil }),
-      Set(fragment.regions.map(\.id)) == Set(fragment.blockIDs) else { throw DocumentSessionError.invalidLayout }
-    var fragmentReceipt = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] ?? [:]
-    fragmentReceipt["layoutScope"] = "page"
-    fragmentReceipt["layoutCanonical"] = true; fragmentReceipt["pageCount"] = layout.pageCount
-    let physical = try DocumentLayoutRecord(receipt: fragmentReceipt as NSDictionary, sourceKey: message.key,
-      blockIDs: Set(blocks.keys), geometry: WorkspaceItemGeometry.document(message.paper.kind))
-    guard layout.matches(physical, pageIndex: pageIndex) else {
-      throw FragmentMismatch(detail: "compiled page=\(pageIndex); pages=\(layout.pageCount)/\(physical.pageCount); old=\(Array(layout.regions.filter { $0.pageIndex == pageIndex }.prefix(3))); new=\(Array(physical.regions.prefix(3)))")
-    }
-    let source = DocumentSourceMessage(key: message.key, documentID: message.documentID, paper: message.paper,
-      blocks: fragment.blockIDs.compactMap { blocks[$0] },
-      sourceVersions: Dictionary(uniqueKeysWithValues: fragment.blockIDs.compactMap { id in message.sourceVersions[id].map { (id, $0) } }))
-    let envelope = DocumentPageSource(source: source, pageCount: layout.pageCount, layoutComplete: layout.isComplete,
-      diagnostics: prepared.measured.diagnostics, mathStyles: prepared.measured.mathStyles, fragment: fragment)
-    let retainedBytes = max(1, json.utf8.count)
-    try DocumentPreparationAdmission.transfer(staging, to: retainedBytes, stage: "retained_page",
-      message: message, page: pageIndex, resources: resources, charges: charges)
-    transferred = true
-    let pageSourceBytes = prepared.sourceBytes - prepared.allBodyBytes
-      + fragment.blockIDs.reduce(0) { $0 + (prepared.bodyBytes[$1] ?? 0) }
-    return DocumentPreparedPage(envelope: envelope, layout: layout,
-      encodingBudget: pageSourceBytes + json.utf8.count * 2 + prepared.diagnosticsBytes + prepared.measured.mathStyles.utf8.count * 6 + 256,
-      reservation: staging, mathStyleReservation: prepared.mathStyleReservation)
-  }
-
-  /// The browser first freezes one bounded packet and announces its byte count.
-  /// Admission precedes transfer; the same source/page and exact UTF-8 length
-  /// must come back. No maximum-size buffer occupies the pool between pages.
-  private static func readPacket(preparing prepare: (RasterReservation) async throws -> String,
-    sourceKey: String, pageIndex: Int?, maximumBytes: Int,
-    message: DocumentSourceMessage, in web: WKWebView, resources: SceneRenderResources,
-    waitsForAdmission: Bool = true, charges: DocumentPreparationCharges) async throws -> (String, RasterReservation) {
-    let staging = try await DocumentPreparationAdmission.reserve(512 * 3,
-      stage: pageIndex == nil ? "source_announcement" : "page_announcement",
-      message: message, page: pageIndex, resources: resources, waitsForAdmission: waitsForAdmission, charges: charges)
-    var transferred = false
-    defer { if !transferred { staging.release() } }
-    do {
-      let raw = try await prepare(staging)
+      let (addresses, navigation) = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
       try Task.checkCancellation()
-      let descriptor = try DocumentPacketDescriptor.decode(raw, sourceKey: sourceKey, pageIndex: pageIndex, maximumBytes: maximumBytes)
-      // The input/measurement backing remains charged through measurement.
-      // Page packets transfer the same charge instead of release + async admit.
-      try DocumentPreparationAdmission.transfer(staging, to: max(staging.byteCount, descriptor.utf8Bytes * 3),
-        stage: pageIndex == nil ? "source_packet" : "page_packet", message: message, page: pageIndex,
-        resources: resources, charges: charges)
-      let json = try await evaluate("return window.notebookRenderer.readPreparedPacket(key, index);",
-        arguments: ["key": sourceKey, "index": pageIndex.map { $0 as Any } ?? NSNull()], in: web)
-      try Task.checkCancellation()
-      guard json.utf8.count == descriptor.utf8Bytes else { throw DocumentSessionError.invalidLayout }
-      transferred = true
-      return (json, staging)
-    } catch {
-      _ = try? await evaluate(pageIndex == nil
-        ? "window.notebookRenderer.finishSourcePreparation(key); return 'discarded';"
-        : "window.notebookRenderer.discardPreparedPacket(key, index); return 'discarded';",
-        arguments: ["key": sourceKey, "index": pageIndex.map { $0 as Any } ?? NSNull()], in: web)
-      throw error
-    }
+      guard let provider = CGDataProvider(data: value.pdf as CFData), let pdf = CGPDFDocument(provider),
+        (1...4096).contains(pdf.numberOfPages) else { throw DocumentSessionError.invalidLayout }
+      try installLayout(value, pdf: pdf, locations: addresses)
+      let cost = bodyBytes + addresses.count*128 + navigation.pageText.reduce(0, { $0 + $1.utf8.count*2 })
+        + navigation.links.reduce(0, { $0 + $1.href.utf8.count*2 + 256 })
+      guard resources.resizePassiveDerivedReservation(charge, to: max(1, cost)) else { throw SceneRenderError.resourceLimit }
+      printSource = DocumentPrintedSource(artifact: value, locations: addresses, reservation: charge)
+      self.pdf = pdf; locations = addresses; self.navigation = navigation
+      let elapsed = start.duration(to: .now).components
+      preparationPhasesMS["canonicalPrint"] = Double(elapsed.seconds)*1000 + Double(elapsed.attoseconds)/1e15
+      preparation = nil
+    } catch { charge.release(); throw error }
   }
+  private func installLayout(_ value: NotebookPrintedDocument, pdf: CGPDFDocument, locations: [DocumentPrintLocation]) throws {
+    let width = message.paper.surfaceWidth, height = message.paper.surfaceHeight
+    let scale = width / message.paper.widthPoints
+    var regions: [DocumentBrowserRegion] = [], reading: [[Any]] = []
+    var offsets: [String: Double] = [:]
+    let byPage = Dictionary(grouping: locations, by: \.pageIndex)
+    let order = Dictionary(uniqueKeysWithValues: document.blocks.enumerated().map { ($0.element.id, $0.offset) })
+    let ranges = Dictionary(uniqueKeysWithValues: value.sourceMap.ranges.map { ($0.blockID, $0) })
+    for index in 0..<pdf.numberOfPages {
+      guard let page = pdf.page(at: index+1) else { throw DocumentSessionError.invalidLayout }
+      let box = page.getBoxRect(.mediaBox)
+      guard abs(box.width-message.paper.widthPoints) < 0.1, abs(box.height-message.paper.heightPoints) < 0.1 else {
+        throw NotebookTypesetterError("Размер печатной страницы не совпадает с выбранным A4/Letter.")
+      }
+      let groups = Dictionary(grouping: byPage[index] ?? [], by: \.blockID)
+      for id in groups.keys.sorted(by: { order[$0, default: 0] < order[$1, default: 0] }) {
+        guard let ordinal = order[id], let entries = groups[id] else { continue }
+        let block = document.blocks[ordinal]
+        var bounds = CGRect.null
+        for entry in entries { bounds = bounds.union(CGRect(x: entry.x, y: entry.y, width: entry.width, height: entry.height)) }
+        bounds = bounds.intersection(CGRect(origin: .zero, size: box.size))
+        guard !bounds.isNull, bounds.width > 0, bounds.height > 0 else { continue }
+        let region = DocumentBrowserRegion(id: block.id, pageIndex: index, x: bounds.minX*scale, y: bounds.minY*scale,
+          width: bounds.width*scale, height: bounds.height*scale, sourceOffset: offsets[block.id] ?? 0)
+        regions.append(region); offsets[block.id, default: 0] += region.height
+        let line = entries.map(\.generatedLine).min() ?? 1
+        guard let range = ranges[block.id] else { throw DocumentSessionError.invalidLayout }
+        let offset = DocumentPrintLocations.sourceOffset(line: line, range: range, source: block.source)
+        let text = block.source as NSString
+        let tail = NSRange(location: offset, length: text.length-offset)
+        let newline = text.range(of: "\n", range: tail)
+        let fragment = text.substring(with: NSRange(location: offset,
+          length: (newline.location == NSNotFound ? text.length : newline.location)-offset))
+        let node = SHA256.hash(data: Data(fragment.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+        // Macro output resolves to the nearest source line, never a fabricated
+        // character position in an independently laid-out DOM.
+        reading.append([block.id, node, offset, 0, max(1, fragment.utf16.count), index, region.y])
+      }
+    }
+    // Empty editable blocks still have an addressable paper entry.
+    if regions.isEmpty, let block = document.blocks.first {
+      regions = [.init(id: block.id, pageIndex: 0, x: message.paper.marginPoints*scale,
+        y: message.paper.marginPoints*scale, width: width-2*message.paper.marginPoints*scale, height: 24*scale, sourceOffset: 0)]
+    }
+    let receipt: NSDictionary = ["sourceKey": message.key, "layoutScope": "source", "layoutCanonical": true,
+      "pageCount": pdf.numberOfPages, "width": width, "height": height, "anchors": (0..<pdf.numberOfPages).map { ["name": "notebook-print-page-\($0)", "pageIndex": $0] as [String: Any] }, "reading": reading,
+      "regions": regions.map { ["id": $0.id, "pageIndex": $0.pageIndex, "x": $0.x, "y": $0.y,
+        "width": $0.width, "height": $0.height, "sourceOffset": $0.sourceOffset] as [String: Any] }]
+    guard let charge = resources.reserveDerivedBytes(regions.count*384 + reading.count*128 + 4096, priority: .passive) else { throw SceneRenderError.resourceLimit }
+    let measured = try DocumentLayoutRecord(receipt: receipt, sourceKey: message.key,
+      blockIDs: Set(document.blocks.map(\.id)), geometry: .document(document.paperSize), reservation: charge)
+    layout = measured; browserRegions = regions; try onLayoutAccepted(measured)
+  }
+  func page(_ requested: Int, hostID: UUID,
+    onAdmissionWait: @escaping (Bool) -> Void = { _ in }) async throws -> DocumentPreparedPage {
+    retainPage(requested, hostID: hostID)
+    try await prepare(onAdmissionWait: onAdmissionWait)
+    guard artifact != nil, let layout else { throw DocumentSessionError.invalidLayout }
+    let index = min(max(0, requested), layout.pageCount-1)
+    if let cached = pages[index] { return cached }
+    let regions = browserRegions.filter { $0.pageIndex == index }, ids = Set(regions.map(\.id))
+    let blocks = document.blocks.filter { ids.contains($0.id) }
+    func escape(_ value: String) -> String { value.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "\"", with: "&quot;").replacingOccurrences(of: "<", with: "&lt;") }
+    var html = regions.map { region in
+      let block = blocks.first { $0.id == region.id }!
+      let accessibility = block.kind == .interactive ? "" : " role=\"button\" tabindex=\"0\" aria-label=\"Исходник: \(escape(String(block.source.prefix(80))))\""
+      return "<section class=\"block \(block.kind == .interactive ? "interactive" : "editable")\" data-block-id=\"\(escape(region.id))\" data-kind=\"\(block.kind.rawValue)\"\(accessibility) style=\"position:absolute;left:\(region.x)px;top:\(region.y)px;width:\(region.width)px;height:\(region.height)px;margin:0\"></section>"
+    }.joined()
+    let scale = message.paper.surfaceWidth / message.paper.widthPoints
+    for link in navigation?.links.filter({ $0.page == index }) ?? [] {
+      let box = link.rect
+      html += "<a href=\"\(escape(link.href))\" aria-label=\"Открыть ссылку\" style=\"position:absolute;left:\(box.minX*scale)px;top:\(box.minY*scale)px;width:\(box.width*scale)px;height:\(box.height*scale)px;z-index:2\"></a>"
+    }
+    if let text = navigation?.pageText[index] {
+      html += "<div role=\"article\" style=\"position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);pointer-events:none\">\(escape(text))</div>"
+    }
+    let charge = try await resources.acquirePassiveDerivedBytes(html.utf8.count + regions.count*256 + 4096) { onAdmissionWait(true) }
+    defer { onAdmissionWait(false) }
+    let fragment = DocumentPageFragment(format: 1, sourceKey: message.key, pageIndex: index,
+      width: message.paper.surfaceWidth, height: message.paper.surfaceHeight, contentTop: 0,
+      contentBottom: message.paper.surfaceHeight, blockIDs: blocks.map(\.id), regions: regions, html: html,
+      nodeCount: regions.count, utf8Bytes: html.utf8.count)
+    let printed = DocumentPrintedPage(source: printSource!, pageIndex: index, width: message.paper.widthPoints, height: message.paper.heightPoints)
+    let local = DocumentSourceMessage(key: message.key, documentID: message.documentID, paper: message.paper,
+      blocks: blocks, sourceVersions: message.sourceVersions.filter { ids.contains($0.key) })
+    let page = DocumentPreparedPage(fragment: fragment, printed: printed, source: local, pageCount: layout.pageCount, reservation: charge)
+    pages[index] = page; compiledPageCount += 1; trim(); return page
+  }
+  func printedSource() async throws -> DocumentPrintedSource {
+    try await prepare(onAdmissionWait: { _ in })
+    guard let printSource else { throw DocumentSessionError.invalidLayout }
+    return printSource
+  }
+  func sourceOffset(blockID: String, pageIndex: Int, x: Double, y: Double) -> Int? {
+    let scale = message.paper.widthPoints / message.paper.surfaceWidth
+    return printSource?.sourceOffset(blockID: blockID, pageIndex: pageIndex, x: x*scale, y: y*scale)
+  }
+  isolated deinit { preparation?.cancel() }
 }

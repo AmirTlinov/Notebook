@@ -3,6 +3,9 @@ import Foundation
 /// An edit keeps the exact field the person started from, independently of
 /// later document pagination, state commits and the current selection.
 public struct DocumentSourceEdit: Codable, Equatable, Sendable {
+  public enum Field: String, Codable, Sendable { case content, preamble }
+  public let field: Field?
+  public var isPreamble: Bool { field == .preamble }
   public let sessionID: UUID
   public let documentID: UUID
   public let blockID: String
@@ -12,7 +15,8 @@ public struct DocumentSourceEdit: Codable, Equatable, Sendable {
   public let sequence: UInt64
 
   public init(sessionID: UUID, documentID: UUID, blockID: String, baseSource: String,
-    baseVersion: ContentFieldVersion, source: String, sequence: UInt64) {
+    baseVersion: ContentFieldVersion, source: String, sequence: UInt64, field: Field = .content) {
+    self.field = field == .content ? nil : field
     self.sessionID = sessionID; self.documentID = documentID; self.blockID = blockID
     self.baseSource = baseSource; self.baseVersion = baseVersion; self.source = source; self.sequence = sequence
   }
@@ -27,13 +31,14 @@ public struct DocumentEditingSession: Codable, Equatable, Sendable, Identifiable
   public let isComposing: Bool
   public let scrollTop: Double?
   public let phase: Phase
+  public let committedResult: DocumentSourceCommitResult?
 
   public var isUnfinished: Bool { ![Phase.committed, .discarded].contains(phase) }
 
   public init(edit: DocumentSourceEdit, selectionStart: Int = 0, selectionEnd: Int = 0,
-    isComposing: Bool = false, scrollTop: Double? = nil, phase: Phase = .editing) {
+    isComposing: Bool = false, scrollTop: Double? = nil, phase: Phase = .editing, committedResult: DocumentSourceCommitResult? = nil) {
     self.edit = edit; self.selectionStart = selectionStart; self.selectionEnd = selectionEnd
-    self.isComposing = isComposing; self.scrollTop = scrollTop; self.phase = phase
+    self.isComposing = isComposing; self.scrollTop = scrollTop; self.phase = phase; self.committedResult = committedResult
   }
 
   fileprivate func replacingPhase(_ phase: Phase) -> Self {
@@ -42,7 +47,7 @@ public struct DocumentEditingSession: Codable, Equatable, Sendable, Identifiable
 
   fileprivate func validate() throws {
     guard !edit.blockID.isEmpty, edit.blockID.utf16.count <= 120,
-      edit.source.utf16.count <= DocumentBlock.maximumSourceLength,
+      edit.source.utf16.count <= (edit.isPreamble ? DocumentDocument.maximumPreambleLength : DocumentBlock.maximumSourceLength),
       edit.baseSource.utf16.count <= DocumentBlock.maximumSourceLength,
       edit.sequence <= VersionStamp.maximumCounter,
       edit.baseVersion.stamp.counter <= VersionStamp.maximumCounter,
@@ -55,13 +60,14 @@ public struct DocumentEditingSession: Codable, Equatable, Sendable, Identifiable
   }
 }
 
-public struct DocumentSourceCommitResult: Equatable, Sendable {
+public struct DocumentSourceCommitResult: Codable, Equatable, Sendable {
   public enum Status: String, Codable, Sendable { case committed, conflict, targetMissing }
   public let status: Status
   public let publication: DocumentBlockSourcePublication?
   public let actionID: UUID?
-  public init(status: Status, publication: DocumentBlockSourcePublication?, actionID: UUID? = nil) {
-    self.status = status; self.publication = publication; self.actionID = actionID
+  public let preamblePublication: DocumentPreamblePublication?
+  public init(status: Status, publication: DocumentBlockSourcePublication?, actionID: UUID? = nil, preamblePublication: DocumentPreamblePublication? = nil) {
+    self.status = status; self.publication = publication; self.actionID = actionID; self.preamblePublication = preamblePublication
   }
 }
 
@@ -73,6 +79,21 @@ extension DocumentDocument {
 }
 
 extension NotebookStore {
+  /// Native insertion uses the same action executor and causal undo as agents.
+  /// It appends at the current order inside the transaction, never replaces a
+  /// stale copy of the whole document just to introduce one empty source block.
+  public func insertDocumentSource(documentID: UUID, kind: DocumentBlockKind, actor: UUID) throws -> (receipt: CollaborationReceipt, document: DocumentDocument, blockID: String) {
+    guard kind != .interactive else { throw CollaborationError("invalid_source_kind", "Живая программа сохраняет своего владельца.") }
+    return try commandTransaction(readAllowance: .agentCommand) {
+      let target = CollaborationTarget(kind: .document, id: documentID), id = UUID().uuidString.lowercased()
+      let action = CollaborationAction(summary: "Добавление исходника документа",
+        expected: [.init(target: target, revision: try targetContentRevision(target: target))],
+        operations: [.init(kind: .insertBlock, target: target, id: id, values: ["kind": .string(kind.rawValue), "source": .string("")])])
+      let receipt = try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: nil, human: true)
+      return (receipt, try loadDocument(documentID), id)
+    }
+  }
+
   private func documentDraftPath(_ id: UUID) -> String { "document-drafts/\(id.uuidString.lowercased()).json" }
 
   private func readDocumentEditingSession(_ id: UUID) throws -> DocumentEditingSession? {
@@ -123,9 +144,10 @@ extension NotebookStore {
         try validateDocumentSessionIdentity(edit, previous.edit)
         if previous.phase == .committed {
           guard previous.edit == edit else { throw CollaborationError("stale_draft", "Завершённый сеанс нельзя использовать для другого текста.") }
-          return .init(status: .committed, publication: try documentSourceForEdit(edit).flatMap {
-            DocumentBlockSourcePublication(document: $0, blockID: edit.blockID)
-          }, actionID: try collaborationActionIfPresent(edit.sessionID)?.id)
+          guard let accepted = previous.committedResult else {
+            throw CollaborationError("edit_receipt_unavailable", "Сохранение уже выполнено. Прочитайте текущий исходник перед следующей правкой.")
+          }
+          return accepted
         }
         guard previous.phase != .discarded, edit.sequence >= previous.edit.sequence else {
           throw CollaborationError("stale_draft", "Этот вариант черновика уже завершён или продолжен.")
@@ -134,30 +156,34 @@ extension NotebookStore {
       let before = try documentSourceForEdit(edit)
       var document = before
       let block = document?.blocks.first
+      let currentSource = edit.isPreamble ? document?.preamble : block?.source
+      let currentVersion = edit.isPreamble ? document?.preambleVersion : document?.sourceVersion(blockID: edit.blockID)
       let status: DocumentSourceCommitResult.Status
-      if block == nil { status = .targetMissing }
-      else if block?.source != edit.baseSource || document?.sourceVersion(blockID: edit.blockID) != edit.baseVersion {
+      if currentSource == nil { status = .targetMissing }
+      else if currentSource != edit.baseSource || currentVersion != edit.baseVersion {
         status = .conflict
       } else { status = .committed }
       var actionID: UUID?
-      if status == .committed, let block, block.source != edit.source {
+      if status == .committed, currentSource != edit.source {
         let target = CollaborationTarget(kind: .document, id: edit.documentID)
         // The addressed field CAS above and this owner expectation are in the
         // same transaction. Changes in other blocks do not invalidate a draft.
         let action = CollaborationAction(id: edit.sessionID, summary: "Изменение текста документа",
           expected: [.init(target: target, revision: try targetContentRevision(target: target))],
-          operations: [.init(kind: .updateBlock, target: target, id: block.id, values: ["source": .string(edit.source)])])
+          operations: [edit.isPreamble ? .init(kind: .setPreamble, target: target, values: ["preamble": .string(edit.source)]) : .init(kind: .updateBlock, target: target, id: edit.blockID, values: ["source": .string(edit.source)])])
         actionID = try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: nil, human: true).id
         document = try documentSourceForEdit(edit)
       }
       let phase: DocumentEditingSession.Phase = status == .committed ? .committed : status == .conflict ? .conflict : .targetMissing
+      let result = DocumentSourceCommitResult(status: status, publication: edit.isPreamble ? nil : document.flatMap {
+        DocumentBlockSourcePublication(document: $0, blockID: edit.blockID)
+      }, actionID: actionID, preamblePublication: edit.isPreamble ? document.map(DocumentPreamblePublication.init) : nil)
       let draft = DocumentEditingSession(edit: edit,
         selectionStart: min(previous?.selectionStart ?? 0, edit.source.utf16.count),
-        selectionEnd: min(previous?.selectionEnd ?? 0, edit.source.utf16.count), scrollTop: previous?.scrollTop, phase: phase)
+        selectionEnd: min(previous?.selectionEnd ?? 0, edit.source.utf16.count), scrollTop: previous?.scrollTop,
+        phase: phase, committedResult: status == .committed ? result : nil)
       try publishCollaboration(writes: [documentDraftPath(edit.sessionID): try .encode(draft)])
-      return .init(status: status, publication: document.flatMap {
-        DocumentBlockSourcePublication(document: $0, blockID: edit.blockID)
-      }, actionID: actionID)
+      return result
     }
   }
 
@@ -168,8 +194,8 @@ extension NotebookStore {
     guard try readItemHeader(edit.documentID)?.kind == .document else { return nil }
     let file = documentFile(edit.documentID), root = file + "#"
     let id = collaborationIdentity(edit.blockID), address = root + "/blocks/@" + fieldKey([id])
-    let fields = ["preamble", "blocks/order"] + DocumentBlock.causalFieldKeys(id: id)
-    let addresses = [(root, false), (address, true)] + fields.map {
+    let fields = ["preamble", "blocks/order"] + (edit.isPreamble ? [] : DocumentBlock.causalFieldKeys(id: id))
+    let addresses = [(root, false)] + (edit.isPreamble ? [] : [(address, true)]) + fields.map {
       (root + "/collaboration/fields/@" + fieldKey([$0]), false)
     }
     let rows = try boundedStoredFragments(addresses, maximumCount: 4_096,
@@ -189,7 +215,7 @@ extension NotebookStore {
 
   private func validateDocumentSessionIdentity(_ next: DocumentSourceEdit, _ previous: DocumentSourceEdit) throws {
     guard next.sessionID == previous.sessionID, next.documentID == previous.documentID,
-      next.blockID == previous.blockID, next.baseSource == previous.baseSource, next.baseVersion == previous.baseVersion else {
+      next.blockID == previous.blockID, next.field == previous.field, next.baseSource == previous.baseSource, next.baseVersion == previous.baseVersion else {
       throw CollaborationError("draft_owner_mismatch", "Сеанс редактирования не меняет исходного владельца и его версию.")
     }
   }

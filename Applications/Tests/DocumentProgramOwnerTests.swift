@@ -1,4 +1,5 @@
 import NotebookCore
+import SwiftUI
 import UIKit
 import WebKit
 import XCTest
@@ -6,28 +7,157 @@ import XCTest
 
 @MainActor
 final class DocumentProgramOwnerTests: XCTestCase {
-  func testAgentFeedbackRoutesThroughTheInstalledPaperOwnerWithoutRecreatingAProgram() async throws {
+  func testShippedSoundOpeningReportsPaperNavigationAndProgramReadinessSeparately() async throws {
+    func source(_ name: String, _ ext: String) throws -> String {
+      try String(contentsOf: XCTUnwrap(Bundle(for: Self.self).url(forResource: name, withExtension: ext, subdirectory: "science")), encoding: .utf8)
+    }
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "sound", html: try source("sound", "html"),
+      css: try source("common", "css"), javaScript: try ["models", "runtime", "sound"].map { try source($0, "js") }.joined(separator: "\n"), height: 800)])
+    // The second open reuses canonical print artifacts, not a program or heap.
+    for attempt in 0..<2 {
+      let recorder = DocumentPresentationRecorder(enabled: true)
+      recorder.request(documentID: document.id, pageIndex: 0, cause: .open)
+      let start = ProcessInfo.processInfo.systemUptime
+      let fixture = try ProgramFixture(document: document, measurements: recorder, showsNeighbour: false)
+      defer { fixture.close() }
+      func program(_ view: UIView) -> WKWebView? {
+        if let web = view as? WKWebView, web.accessibilityIdentifier == "document-program-sound" { return web }
+        return view.subviews.lazy.compactMap(program).first
+      }
+      var phases: [String: Double] = [:]
+      let deadline = ContinuousClock.now + .seconds(15)
+      while ContinuousClock.now < deadline {
+        let elapsed = (ProcessInfo.processInfo.systemUptime-start)*1000
+        if fixture.installedPaper != nil, phases["paper"] == nil { phases["paper"] = elapsed }
+        if let web = program(fixture.hosts[0]) {
+          if phases["programAttached"] == nil { phases["programAttached"] = elapsed }
+          if web.url != nil, !web.isLoading, phases["navigationFinished"] == nil { phases["navigationFinished"] = elapsed }
+          if (web.navigationDelegate as? DocumentBlockRuntime)?.ready == true, phases["programReady"] == nil { phases["programReady"] = elapsed }
+        }
+        if fixture.isPresented { phases["installed"] = elapsed; break }
+        try await Task.sleep(for: .milliseconds(5))
+      }
+      XCTAssertTrue(fixture.isPresented, fixture.diagnostics)
+      let web = try XCTUnwrap(fixture.web(block: "sound"))
+      let proof: [String: Any] = ["attempt": attempt, "observationIntervalMS": 5, "nativeMS": phases,
+        "scope": "native window; second open has cached paper, not a cold app process"]
+      let data = try JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys])
+      let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+      attachment.name = "sound-opening-stages-\(attempt)"; attachment.lifetime = .keepAlways; add(attachment)
+      let paper = XCTAttachment(data: try JSONEncoder().encode(recorder.records), uniformTypeIdentifier: "public.json")
+      paper.name = "sound-opening-paper-\(attempt)"; paper.lifetime = .keepAlways; add(paper)
+      let preparation = try XCTUnwrap(recorder.records.last?.pagePreparationPhasesMS)
+      let shellReady = try XCTUnwrap([preparation["shellReadyMessageAt"], preparation["shellNavigationFinishedAt"]].compactMap { $0 }.min())
+      XCTAssertLessThan(try XCTUnwrap(preparation["preparedPageStartAt"]), shellReady,
+        "Canonical print must not wait for the independent browser shell")
+      XCTAssertGreaterThanOrEqual(try XCTUnwrap(preparation["frameEvaluationStartAt"]), shellReady,
+        "Submitting JS still requires the current shell")
+      XCTAssertTrue(web.isUserInteractionEnabled)
+      fixture.close()
+      try await wait(message: { fixture.diagnostics }) { fixture.resources.activeWebSurfaceCount == 0 }
+    }
+  }
+
+  func testFrozenObjectIsBoundToPresentedDocumentPixelsAndNotTheResumedPage() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [
+      .markdown(id: "heading", source: "# Exact selected frame"),
+      .interactive(id: "probe", html: "<canvas width='600' height='180' style='display:block;width:100%;height:180px'></canvas>", javaScript: """
+        let phase=0;const ctx=document.querySelector('canvas').getContext('2d');
+        const draw=c=>{ctx.fillStyle=c;ctx.fillRect(0,0,600,180)};draw('green');
+        notebook.lifecycle({pause:()=>{phase=.5;draw('blue')},checkpoint:()=>({phase}),resume:()=>{phase=.75;draw('red')}});
+        notebook.semantic(()=>({objectID:'probe',label:'Selected node',anchor:{x:.5,y:.5},values:[],model:{phase}}));
+        notebook.ready(Promise.resolve());
+      """, height: 180)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "probe") != nil }
+    let web = try XCTUnwrap(fixture.web(block: "probe"))
+    let paused = try await DocumentPagePresentationOwner.pauseForAttention(documentID: document.id, blockID: "probe", resources: fixture.resources)
+    defer { paused.release() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented }
+    XCTAssertTrue(paused.isCurrent()); XCTAssertFalse(web.isUserInteractionEnabled)
+    let region = try XCTUnwrap(DocumentRenderRegistry.shared.regions(document: document).first { $0.id == "probe" }?.frame)
+    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let page = PageRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
+    let pixels = try XCTUnwrap(DocumentPagePresentationOwner.capturePresented(documentID: document.id, pageIndex: 0,
+      token: fixture.currentToken, region: page, resources: fixture.resources, blockID: "probe"))
+    let model = try XCTUnwrap(pixels.presentation?.program)
+    XCTAssertEqual(model.blockID, "probe")
+    XCTAssertEqual(model.sourceVersion, document.sourceVersion(blockID: "probe"))
+    XCTAssertEqual(model.state, .object(["phase": .number(0.5)]))
+    let selected = try XCTUnwrap(pixels.semanticSelection)
+    XCTAssertEqual(selected.model["phase"], .number(0.5))
+    XCTAssertEqual(selected.anchor.x, (region.x + region.width / 2) / page.width, accuracy: 0.001)
+    XCTAssertEqual(selected.anchor.y, (region.y + region.height / 2) / page.height, accuracy: 0.001)
+    paused.release()
+    try await wait(message: { fixture.diagnostics }) { web.isUserInteractionEnabled }
+    let current = try await web.evaluateJavaScript("Array.from(document.querySelector('canvas').getContext('2d').getImageData(20,20,1,1).data)") as? [Int]
+    XCTAssertEqual(current, [255, 0, 0, 255])
+    XCTAssertEqual(pixels.presentation?.program, model, "Resuming the live heap cannot change the captured model")
+    let png = try await pixels.png(), image = try XCTUnwrap(UIImage(data: png))
+    XCTAssertGreaterThan(try bluePixels(image), 100, "Send copied the blue native page before the same heap resumed red")
+    let shot = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+    shot.name = "document-frozen-semantic-blue-frame"; shot.lifetime = .keepAlways; add(shot)
+  }
+
+  func testAgentFeedbackBorrowsInstalledPaperInkWithoutRecreatingAProgram() async throws {
     let document = DocumentDocument(actor:UUID(),blocks:[.markdown(id:"words",source:"# Видимый результат\n\nТекст остаётся текстом."),
       .interactive(id:"program",html:"<button onclick='this.dataset.clicked=1'>Не прерывать</button>",height:100)])
     let fixture = try ProgramFixture(document:document,showsNeighbour:false)
-    defer { DocumentRenderRegistry.shared.setAgentFeedback([]); fixture.close() }
+    defer { fixture.close() }
     try await wait(message:{ fixture.diagnostics }) { fixture.isPresented && fixture.web(block:"program") != nil }
-    let paper = try XCTUnwrap(fixture.paper(in:0)), program = try XCTUnwrap(fixture.web(block:"program"))
+    let web = try XCTUnwrap(fixture.paper(in:0)), program = try XCTUnwrap(fixture.web(block:"program"))
+    let paper = try XCTUnwrap(fixture.installedPaper,
+      "The installed paper owner, not the distinct WebKit coordinator ID, supplies the mask")
+    let region = try XCTUnwrap(DocumentRenderRegistry.shared.regions(document:document).first { $0.id == "words" })
+    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let host = fixture.hosts[0], scale = host.bounds.width/geometry.width
     let target = CollaborationTarget(kind:.document,id:document.id)
     let subject = NotebookAgentFeedbackChange.Subject(reference:.init(target:target,elementID:"words",revision:"fixture"),
       expected:.init(target:target,revision:"fixture"))
-    DocumentRenderRegistry.shared.setAgentFeedback([.init(subject:subject,startedAt:Date(),endsAt:Date().addingTimeInterval(2.4),isAttention:false)])
-    try await Task.sleep(for:.milliseconds(120))
-    let marked = try await paper.evaluateJavaScript("document.querySelectorAll('[data-nb-feedback-ink]').length") as? Int
-    XCTAssertGreaterThan(marked ?? 0,0,"The paper installation ID is distinct from the WebKit coordinator ID")
-    XCTAssertTrue(fixture.web(block:"program") === program)
+    let rect = CGRect(x:region.frame.x*scale,y:region.frame.y*scale,width:region.frame.width*scale,height:region.frame.height*scale)
+    let surface = NotebookAgentFeedbackSurface(rect:rect,scale:scale,paper:paper,
+      paperOrigin:.init(x:-region.frame.x,y:-region.frame.y),clipRect:rect)
+    let start = Date(), episode = NotebookAgentFeedback.Episode(subject:subject,startedAt:start,
+      endsAt:start.addingTimeInterval(2.4),isAttention:false)
+    let overlay = UIHostingController(rootView:AnyView(EmptyView()))
+    let container = try XCTUnwrap(fixture.window.rootViewController)
+    container.addChild(overlay); container.view.addSubview(overlay.view); overlay.didMove(toParent:container)
+    overlay.view.backgroundColor = .clear; overlay.view.isUserInteractionEnabled = false
+    overlay.view.frame = host.frame
+    defer { overlay.willMove(toParent:nil); overlay.view.removeFromSuperview(); overlay.removeFromParent() }
+    func screen(_ age: Double, reduced: Bool = false) async throws -> UIImage {
+      overlay.rootView = AnyView(NotebookAgentFeedbackMaterial(surface:surface,episode:episode,
+        date:start.addingTimeInterval(age),reduceMotion:reduced)
+        .frame(width:host.bounds.width,height:host.bounds.height,alignment:.topLeading).ignoresSafeArea())
+      try await Task.sleep(for:.milliseconds(80)); overlay.view.layoutIfNeeded()
+      return UIGraphicsImageRenderer(bounds:host.frame).image { _ in
+        container.view.drawHierarchy(in:container.view.bounds,afterScreenUpdates:true)
+      }
+    }
+    let dimensions = XCTAttachment(string:"paper=\(paper.page.width)x\(paper.page.height) mask=\(paper.image.width)x\(paper.image.height) region=\(region.frame) host=\(host.frame) overlay=\(overlay.view.frame) scale=\(scale)")
+    dimensions.name="paper-feedback-geometry"; dimensions.lifetime = .keepAlways; add(dimensions)
+    let before = try await screen(-1)
+    let plain = try await fixture.captureCurrent(); defer { plain.release() }
+    let lit = try await screen(0.6)
+    XCTAssertNotEqual(before.pngData(),lit.pngData(),"Shimmer must alter the actual printed ink, not an empty DOM")
+    XCTAssertTrue(fixture.installedPaper === paper)
+    XCTAssertTrue(fixture.paper(in:0) === web && fixture.web(block:"program") === program)
+    let canonical = try await fixture.captureCurrent(); defer { canonical.release() }
+    XCTAssertEqual(plain.image.pngData(),canonical.image.pngData(),"The sibling material cannot enter canonical paper pixels")
+    let expired = try await screen(3)
+    XCTAssertEqual(before.pngData(),expired.pngData())
+    let stillA = try await screen(0.4,reduced:true), stillB = try await screen(1.4,reduced:true)
+    XCTAssertEqual(stillA.pngData(),stillB.pngData())
+    XCTAssertNotEqual(before.pngData(),stillA.pngData(),"Reduce Motion must still accent the printed text")
+    for (name,image) in [("paper-feedback-before",before),("paper-feedback-ink",lit),("paper-feedback-expired",expired)] {
+      let attachment = XCTAttachment(image:image); attachment.name=name; attachment.lifetime = .keepAlways; add(attachment)
+    }
     _ = try await program.evaluateJavaScript("document.querySelector('button').click()")
     let clicked = try await program.evaluateJavaScript("document.querySelector('button').dataset.clicked") as? String
     XCTAssertEqual(clicked,"1")
-    DocumentRenderRegistry.shared.setAgentFeedback([])
-    try await Task.sleep(for:.milliseconds(50))
-    let remaining = try await paper.evaluateJavaScript("document.querySelectorAll('[data-nb-feedback-ink]').length") as? Int
-    XCTAssertEqual(remaining,0)
+    fixture.retirePresentation(0)
+    XCTAssertNil(fixture.installedPaper,"A detached page cannot lend a feedback mask")
   }
 
   func testSavingIndependentTextKeepsTheProgramContextAndItsUnsavedDOM() async throws {
@@ -39,7 +169,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
           notebook.commit({count:notebook.state.count+1});
           document.querySelector('output').textContent=String(notebook.state.count);
         };
-        """, initialState: .object(["count": .number(3)]), height: 100)])
+      notebook.ready(Promise.resolve());
+      """, initialState: .object(["count": .number(3)]), height: 100)])
     let fixture = try ProgramFixture(document: document, showsNeighbour: false)
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "counter") != nil }
@@ -68,7 +199,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
         const render=()=>document.querySelector('output').textContent=String(notebook.state.count);
         document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});render()};
         addEventListener('notebookstate',render);
-        """, initialState: .object(["count": .number(0)]), height: 100),
+      notebook.ready(Promise.resolve());
+      """, initialState: .object(["count": .number(0)]), height: 100),
       .markdown(id: "text", source: String(repeating: "Independent physical paper stays measured and installed.\n\n", count: 160)),
       .interactive(id: "far", html: "<button>Far control</button>", height: 100)])
     let fixture = try ProgramFixture(document: document)
@@ -140,12 +272,22 @@ final class DocumentProgramOwnerTests: XCTestCase {
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) }
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
+    // Canonical layout is demand-driven. A far link asks its existing source
+    // owner for the remaining index; waiting alone does not schedule that work.
+    let paper = try XCTUnwrap(fixture.paper(in: 0))
+    let renderer = try XCTUnwrap(paper.navigationDelegate as? DocumentWebCoordinator)
+    // The native paper may be mounted before its source receipt authorizes links.
+    try await wait(message: { fixture.diagnostics }) { renderer.currentLinkOrigin != nil }
+    renderer.resolveLink("#bad", origin: try XCTUnwrap(renderer.currentLinkOrigin)) { _ in }
     try await wait(message: { fixture.diagnostics }) { source.layout?.isComplete == true }
     let layout = try XCTUnwrap(source.layout)
     let target = try XCTUnwrap(layout.regions.first { $0.id == "bad" }?.pageIndex)
     XCTAssertGreaterThan(target, 1)
     fixture.showPages(current: 0, neighbour: target); fixture.restorePresentation(1)
-    try await wait(message: { fixture.diagnostics }) { !fixture.preparationErrors.isEmpty }
+    try await wait(message: {
+      "target=\(target) \(fixture.diagnostics)\n" +
+        DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: fixture.resources)
+    }) { !fixture.preparationErrors.isEmpty }
     XCTAssertNotEqual(fixture.ready[1], true, "A failed program cannot yield a complete curl picture")
     fixture.activity.prepare(target, presentation: .live)
     let demand = try XCTUnwrap(fixture.activity.preparationDemand)
@@ -164,7 +306,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
   func testIndependentLandingDoesNotJoinAnInvisibleProgramsCheckpoint() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [
       .interactive(id: "program", html: "<button>Count</button>", css: "",
-        javaScript: "notebook.commit({count:7})", initialState: .null, height: 200),
+        javaScript: "notebook.commit({count:7});notebook.ready(Promise.resolve());", initialState: .null, height: 200),
       .markdown(id: "body", source: String(repeating: "An independent paper does not wait for an invisible program's disk acknowledgement.\n\n", count: 200) + "\n\n# Far")
     ])
     let fixture = try ProgramFixture(document: document, showsNeighbour: false)
@@ -176,7 +318,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.web(in: 0) != nil }
     let runtime = try XCTUnwrap(fixture.web(in: 0))
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
-    let target = try XCTUnwrap(source.layout?.anchorPages["far"])
+    let target = try XCTUnwrap(source.layout).pageCount - 1
     XCTAssertGreaterThan(target, 3)
     fixture.activity.prepare(target, presentation: .live)
     fixture.showPages(current: 2, neighbour: target); fixture.restorePresentation(1)
@@ -280,8 +422,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
     fixture.window.rootViewController!.view.addSubview(thumbnail)
     thumbnailCoordinator.update(.init(document: document, state: .init(id: document.id, actor: UUID()),
       pageIndex: target, isCurrent: false, isVisible: true, isInteractive: false, pageTurnActive: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed },
-      onStateChange: { _, _ in nil }, drafts: [], onDraftChange: { _ in }, onDraftDiscard: { _ in },
+      onRenderReady: .init { _ in }, onPageLayout: { _ in },
+      onStateChange: { _, _ in nil },
       onLinkActivation: { _ in }, snapshotPixelWidth: 256,
       onPreparationFailure: { error in XCTFail("Thumbnail preparation: \(error)") }), in: thumbnail, resources: fixture.resources)
     try await wait(message: { fixture.diagnostics }) { thumbnail.hasSnapshot }
@@ -525,14 +667,14 @@ final class DocumentProgramOwnerTests: XCTestCase {
     // Hold a real second admitted WebKit. The passive owner must queue through
     // SceneRenderResources, rather than a manufactured renderer-ready callback.
     let blocker = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
     let blockerHost = DocumentWebHost()
     fixture.window.rootViewController?.view.addSubview(blockerHost)
     blockerHost.frame = .init(x: 720, y: 0, width: 240, height: 340)
     let blockerDocument = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "blocker", source: "# Another active paper")])
     blocker.update(document: blockerDocument, state: .init(id: blockerDocument.id, actor: UUID()),
       selectedPageIndex: 0, capturesSnapshot: false, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
     let geometry = WorkspaceItemGeometry.document(blockerDocument.paperSize)
     blocker.mount(in: blockerHost, physicalSize: .init(width: geometry.width, height: geometry.height),
       isInteractive: true, priority: .currentPage)
@@ -695,7 +837,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
           notebook.commit({count:(notebook.state.count||0)+1});
           document.querySelector('output').textContent=String(notebook.state.count);
         };
-        """, initialState: .object(["count": .number(0)]), height: 90)])
+      notebook.ready(Promise.resolve());
+      """, initialState: .object(["count": .number(0)]), height: 90)])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.web(block: "counter") != nil }
@@ -893,16 +1036,161 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertEqual(returned, original, "Return attaches the existing DOM; parsing, math, layout and page installation do not run again")
     XCTAssertEqual(source.measurementCount, measurements)
     XCTAssertEqual(source.compiledPageCount, fragments)
-    let editing = try await web.evaluateJavaScript("""
-      document.querySelector('[data-block-id=body]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
-      document.querySelector('textarea').value;
-      """) as? String
-    XCTAssertEqual(editing, document.blocks[0].source, "Return must expose the working source, not just a cached picture")
+    let requested = expectation(description: "Native source is addressed by returned paper")
+    let observer = NotificationCenter.default.addObserver(forName: DocumentSourceRequest.notification, object: nil, queue: .main) { note in
+      guard let request = note.object as? DocumentSourceRequest, request.documentID == document.id else { return }
+      XCTAssertEqual(request.source, document.blocks[0].source)
+      requested.fulfill()
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+    _ = try await web.evaluateJavaScript("""
+      const block=document.querySelector('[data-block-id=body]'), rect=block.getBoundingClientRect();
+      block.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,clientX:rect.left+5,clientY:rect.top+5}));true;
+      """)
+    await fulfillment(of: [requested], timeout: 3)
+
+  }
+
+  func testCodeModeKeepsTheSameFrozenHeapThroughSourceChangesAndDelayedPersistence() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [
+      .markdown(id: "body", source: "# Before"),
+      .interactive(id: "clock", html: "<output></output>", javaScript: """
+        let phase=0,timer;
+        const start=()=>{timer=setInterval(()=>{phase++;document.querySelector('output').textContent=phase},10)};
+        notebook.lifecycle({pause(){clearInterval(timer)},checkpoint(){return {phase}},resume:start,dispose(){clearInterval(timer)}});
+        notebook.ready(Promise.resolve().then(start));
+        """, initialState: .object(["phase": .number(0)]), height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    var held: CheckedContinuation<Void, Never>?
+    defer { held?.resume(); fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "clock") != nil }
+    let web = try XCTUnwrap(fixture.web(block: "clock"))
+    try await Task.sleep(for: .milliseconds(100))
+    fixture.onCheckpoint = { _ in await withCheckedContinuation { held = $0 } }
+    fixture.setVisible(false)
+    try await wait(message: { fixture.diagnostics }) { held != nil }
+    let phase = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    fixture.replaceSource(blockID: "body", source: "# After")
+    fixture.setVisible(true)
+    try await Task.sleep(for: .milliseconds(150))
+    let waiting = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertEqual(waiting, phase, "Returning must await durable persistence, not cancel it")
+    fixture.onCheckpoint = { _ in }; held?.resume(); held = nil
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "clock") === web }
+    try await Task.sleep(for: .milliseconds(100))
+    let resumed = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertGreaterThan(resumed ?? 0, phase ?? 0)
+
+    var attempts = 0
+    fixture.onCheckpoint = { _ in attempts += 1 }; fixture.acceptsCheckpoints = false
+    fixture.setVisible(false)
+    try await wait(message: { fixture.diagnostics }) { attempts > 0 }
+    fixture.setVisible(true)
+    try await wait(message: { fixture.diagnostics }) { fixture.hasProgramAction("clock") }
+    let failed = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    try await Task.sleep(for: .milliseconds(150))
+    let stillFrozen = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertEqual(stillFrozen, failed, "An I/O failure cannot restart an unconfirmed hidden model")
+    fixture.acceptsCheckpoints = true
+    fixture.setVisible(false); fixture.setVisible(true)
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && !fixture.hasProgramAction("clock") }
+    XCTAssertTrue(fixture.web(block: "clock") === web)
+  }
+
+  func testBackgroundCheckpointFreezesTheModelAndForegroundResumesTheSameHeap() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "clock",
+      html: "<output></output>", javaScript: """
+        let phase=0,timer;
+        const tick=()=>{phase++;document.querySelector('output').textContent=phase};
+        const start=()=>{timer=setInterval(tick,10)};
+        notebook.lifecycle({pause(){clearInterval(timer)},checkpoint(){return {phase}},resume:start,dispose(){clearInterval(timer)}});
+        notebook.ready(Promise.resolve().then(start));
+        """, initialState: .object(["phase": .number(0)]), height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "clock") != nil }
+    let web = try XCTUnwrap(fixture.web(block: "clock"))
+    try await Task.sleep(for: .milliseconds(100))
+    let saved = await DocumentPagePresentationOwner.checkpointPrograms(documentID: document.id, resources: fixture.resources, resume: false)
+    XCTAssertTrue(saved)
+    let phase = fixture.number("clock", field: "phase")
+    XCTAssertGreaterThan(phase, 0)
+    try await Task.sleep(for: .milliseconds(100))
+    let frozen = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertEqual(frozen, phase)
+    await DocumentPagePresentationOwner.resumePrograms(resources: fixture.resources)
+    try await Task.sleep(for: .milliseconds(100))
+    let resumed = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertGreaterThan(resumed ?? 0, phase)
+    XCTAssertTrue(fixture.web(block: "clock") === web)
+  }
+
+  func testClosingAnObsoleteProgramDoesNotPinItsSupersededHeap() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "clock", html: "<output>old</output>",
+      javaScript: "notebook.lifecycle({checkpoint:()=>({phase:0.25})});notebook.ready(Promise.resolve());",
+      initialState: .object(["phase": .number(0)]), height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "clock") != nil }
+    fixture.onCheckpoint = { [weak fixture] _ in fixture?.replaceState(blockID: "clock", value: .object(["phase": .number(0.75)])) }
+    fixture.close()
+    try await wait(message: { fixture.diagnostics }) { fixture.resources.activeWebSurfaceCount == 0 }
+    XCTAssertEqual(fixture.number("clock", field: "phase"), 0.75)
+    XCTAssertNil(fixture.checkpointValues["clock"], "The superseded heap must not overwrite its successor")
+  }
+
+  func testClosingDocumentRetainsAnUnacceptedModelUntilExplicitRetry() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "clock",
+      html: "<output>0.625</output>", javaScript: """
+        notebook.lifecycle({checkpoint:()=>({phase:0.625})});notebook.ready(Promise.resolve());
+        """, initialState: .object(["phase": .number(0)]), height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "clock") != nil }
+    var attempts = 0
+    fixture.onCheckpoint = { _ in attempts += 1 }
+    fixture.acceptsCheckpoints = false
+    fixture.close()
+    try await wait(message: { fixture.diagnostics }) { attempts == 1 }
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertGreaterThan(fixture.resources.activeWebSurfaceCount, 0, "Dismantling is not permission to discard unsaved author state")
+    XCTAssertNil(fixture.checkpointValues["clock"])
+    fixture.acceptsCheckpoints = true
+    DocumentPagePresentationOwner.retryRetiringPrograms(resources: fixture.resources)
+    try await wait(message: { fixture.diagnostics }) { fixture.resources.activeWebSurfaceCount == 0 }
+    XCTAssertEqual(fixture.checkpointValues["clock"], .object(["phase": .number(0.625)]))
+    XCTAssertEqual(fixture.resources.rasterAdmission.pinnedBytes, 0)
+  }
+
+  func testReturnProgramFreezesItsModelWithoutWaitingForPoolPressure() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
+      html: "<output>0</output>", javaScript: """
+        let phase=0,timer=setInterval(()=>{phase++;document.querySelector('output').textContent=phase},10);
+        notebook.lifecycle({pause(){clearInterval(timer)},checkpoint(){return {phase}},resume(){},dispose(){clearInterval(timer)}});
+        notebook.ready(Promise.resolve());
+        """, initialState: .object(["phase": .number(0)]), height: 100)])
+    let resources = SceneRenderResources(maximumWebSurfaces: 6)
+    let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: resources)
+    let lifetime = owner.retainOpenDocument()
+    defer { fixture.close(); lifetime.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "program") != nil }
+    let original = try XCTUnwrap(fixture.web(block: "program"))
+    try await Task.sleep(for: .milliseconds(100))
+    lifetime.parkForReturn(); fixture.retirePresentation(0)
+    try await wait(message: { fixture.diagnostics }) { fixture.checkpoints.contains("program") }
+    let frozen = try await original.evaluateJavaScript("document.querySelector('output').textContent") as? String
+    try await Task.sleep(for: .milliseconds(200))
+    let later = try await original.evaluateJavaScript("document.querySelector('output').textContent") as? String
+    XCTAssertEqual(later, frozen)
+    XCTAssertEqual(fixture.number("program", field: "phase"), Double(frozen ?? ""))
+    lifetime.resume(); fixture.restorePresentation(0)
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "program") === original }
   }
 
   func testReturnProgramsYieldTheirExistingPoolSlotsAfterCheckpointWhenForegroundNeedsThem() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
-      html: "<button>Retained return program</button>", javaScript: "notebook.commit({count:1})",
+      html: "<button>Retained return program</button>", javaScript: "notebook.commit({count:1});notebook.ready(Promise.resolve());",
       initialState: .object(["count": .number(0)]), height: 100)])
     let resources = SceneRenderResources(maximumWebSurfaces: 3)
     let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
@@ -929,7 +1217,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
 
   func testRefusedReturnCheckpointDoesNotBlockReclaimingAnotherIdleSurface() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
-      html: "<button>Unsaved return program</button>", javaScript: "notebook.commit({count:1})",
+      html: "<button>Unsaved return program</button>", javaScript: "notebook.commit({count:1});notebook.ready(Promise.resolve());",
       initialState: .object(["count": .number(0)]), height: 100)])
     let resources = SceneRenderResources(maximumWebSurfaces: 3)
     let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
@@ -952,6 +1240,11 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertFalse(fixture.checkpoints.contains("program"), "Rejected state is not permission to destroy the running program")
     first.release(); admitted?.release()
     lifetime.resume(); fixture.restorePresentation(0)
+    try await wait(message: { fixture.diagnostics }) { fixture.hasProgramAction("program") }
+    XCTAssertNotNil(original.superview, "A failed writer retains the frozen heap, not a falsely interactive surface")
+    XCTAssertFalse(original.isUserInteractionEnabled)
+    fixture.acceptsCheckpoints = true
+    try fixture.retryProgram("program")
     try await wait(message: { fixture.diagnostics }) { fixture.web(in: 0) === original && fixture.ready[0] == true }
   }
 
@@ -1127,6 +1420,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
       addEventListener('message',event=>{if(event.data==='increment'){count++;report();}if(event.data==='probe')report();});
       setInterval(()=>{ticks++;},40);
       notebook.commit({...notebook.state,nonce,count,mounts:(notebook.state.mounts||0)+1});
+      notebook.ready(Promise.resolve());
       """, initialState: .object(["count": .number(0)]), height: 2048)])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
@@ -1174,7 +1468,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
 
   func testNeverReadyNeighborDoesNotSwitchOrDisableTheCurrentProgram() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [
-      .interactive(id: "current", html: "<button>Ready control</button>", css: "", javaScript: "notebook.commit({started:true})", initialState: .null, height: 1400),
+      .interactive(id: "current", html: "<button>Ready control</button>", css: "", javaScript: "notebook.commit({started:true});notebook.ready(Promise.resolve());", initialState: .null, height: 1400),
       .interactive(id: "delayed", html: "<button>Waiting control</button>", css: "", javaScript: "notebook.ready(new Promise(()=>{}))", initialState: .null, height: 200)
     ])
     let fixture = try ProgramFixture(document: document)
@@ -1197,6 +1491,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
       let count=notebook.state.count||0;const nonce=crypto.randomUUID();
       notebook.commit({...notebook.state,count,nonce,mounts:(notebook.state.mounts||0)+1});
       addEventListener('message',event=>{if(event.data==='increment')notebook.commit({...notebook.state,count:++count});});
+      notebook.ready(Promise.resolve());
       """, initialState: .object(["count": .number(0)]), height: 2000)
     }
     let document = DocumentDocument(actor: UUID(), blocks: [program("program"), program("middle"), program("last")])
@@ -1224,58 +1519,10 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertLessThanOrEqual(fixture.resources.activeWebSurfaceCount, 4)
   }
 
-  func testViewRecreationAndNewSourceKeepTheComposingEditorAndItsSelection() async throws {
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# Original text"),
-      .markdown(id: "other", source: "A separate block")])
-    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
-    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
-    let lifetime = owner.retainOpenDocument()
-    defer { fixture.close(); lifetime.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled }
-    let web = try XCTUnwrap(fixture.paper(in: 0))
-    _ = try await web.evaluateJavaScript("""
-      document.querySelector('#document .editable').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
-      window.originalEditor=document.querySelector('textarea');originalEditor.value='A composing draft stays here';
-      originalEditor.setSelectionRange(2,11);originalEditor.dispatchEvent(new Event('compositionstart'));
-      originalEditor.dispatchEvent(new Event('input'));true
-      """)
-    fixture.replaceSource(blockID: "other", source: "A changed independent block")
-    await owner.observePendingPresentationWork()
-    fixture.retirePresentation(0)
-    await owner.observePendingPresentationWork()
-    fixture.restorePresentation(0)
-    try await wait(message: { fixture.diagnostics }) { fixture.paper(in: 0) === web && fixture.hosts[0].isUserInteractionEnabled }
-    let unchanged = try await web.evaluateJavaScript("originalEditor===document.querySelector('textarea')&&document.activeElement===originalEditor&&notebookRenderer.editingDraft().isComposing&&originalEditor.value==='A composing draft stays here'&&originalEditor.selectionStart===2&&originalEditor.selectionEnd===11")
-    XCTAssertEqual(unchanged as? Bool, true)
-    _ = try await web.evaluateJavaScript("originalEditor.dispatchEvent(new Event('compositionend'));true")
-  }
-
-  func testAnOpenSourceEditorKeepsItsDOMWhilePassiveWorkAndCameraSizeChange() async throws {
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
-      (0..<60).map { "Paragraph \($0). " + String(repeating: "The editor owns this accepted draft. ", count: 10) }.joined(separator: "\n\n"))])
-    let fixture = try ProgramFixture(document: document)
-    defer { fixture.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.ready[1] == true && fixture.hosts[0].isUserInteractionEnabled }
-    let web = try XCTUnwrap(fixture.paper(in: 0))
-    _ = try await web.evaluateJavaScript("""
-      document.querySelector('#document .editable').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
-      window.originalEditor=document.querySelector('textarea');originalEditor.value='An accepted unfinished draft';
-      originalEditor.dispatchEvent(new Event('input',{bubbles:true}));true
-      """)
-    fixture.hosts[0].frame.size.width += 0.15
-    fixture.hosts[0].setNeedsLayout(); fixture.hosts[0].layoutIfNeeded()
-    try await Task.sleep(for: .milliseconds(250))
-    let survived = try await web.evaluateJavaScript("originalEditor===document.querySelector('textarea')&&originalEditor.value==='An accepted unfinished draft'")
-    XCTAssertEqual(survived as? Bool, true)
-    XCTAssertTrue(fixture.paper(in: 0) === web)
-    XCTAssertTrue(fixture.hosts[0].isUserInteractionEnabled)
-    XCTAssertLessThanOrEqual(fixture.resources.activeWebSurfaceCount, 4)
-  }
-
   func testAttentionCapturesLivePixelsEvenWhenProgramChangesWithoutAStateCommit() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
       html: "<div id='swatch' style='height:200px;background:#ff0000'></div>", css: "",
-      javaScript: "addEventListener('message',event=>{if(event.data==='blue'){document.querySelector('#swatch').style.background='#0000ff';requestAnimationFrame(()=>window.postMessage('blue-ready','*'));}});",
+      javaScript: "addEventListener('message',event=>{if(event.data==='blue'){document.querySelector('#swatch').style.background='#0000ff';requestAnimationFrame(()=>window.postMessage('blue-ready','*'));}});;notebook.ready(Promise.resolve());",
       initialState: .null, height: 200)])
     let fixture = try ProgramFixture(document: document)
     fixture.showPages(current: 0, neighbour: 0)
@@ -1308,9 +1555,18 @@ final class DocumentProgramOwnerTests: XCTestCase {
     attachment.name = "document-attention-current-blue-program"; attachment.lifetime = .keepAlways; add(attachment)
     let physical = WorkspaceItemGeometry.document(document.paperSize)
     let frozen = try XCTUnwrap(DocumentPagePresentationOwner.capturePresented(documentID: document.id, pageIndex: 0,
-      token: fixture.currentToken, region: .init(x: 0, y: 0, width: physical.width, height: physical.height), resources: fixture.resources))
+      token: fixture.currentToken, region: .init(x: 0, y: 0, width: physical.width, height: physical.height), resources: fixture.resources, blockID: "program"))
+    let provenance = try XCTUnwrap(frozen.presentation)
+    #if targetEnvironment(simulator)
+      XCTAssertEqual(provenance.device, .iOSSimulator)
+    #else
+      XCTAssertEqual(provenance.device, .iPad)
+    #endif
+    XCTAssertLessThan(abs(provenance.capturedAt - Date().timeIntervalSince1970), 2)
+    XCTAssertNil(provenance.program, "A running uncommitted frame cannot certify a reproducible checkpoint")
     _ = try await web.evaluateJavaScript("document.querySelector('#swatch').style.background='#ff0000';true")
     let encodedLater = try await frozen.png()
+    XCTAssertEqual(frozen.presentation, provenance)
     XCTAssertGreaterThan(try bluePixels(try XCTUnwrap(UIImage(data: encodedLater))), 100,
       "Encoding after a later DOM change retains the blue native frame frozen synchronously before that change")
     let wrongPage = try await DocumentPagePresentationOwner.captureCurrent(documentID: document.id, pageIndex: 1,
@@ -1333,6 +1589,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
         if(event.data==='focus'){document.querySelector('input').focus();notebook.commit({...notebook.state,focused:true});}
         if(event.data==='increment')notebook.commit({...notebook.state,count:(notebook.state.count||0)+1});
       });
+      notebook.ready(Promise.resolve());
       """, initialState: .object(["count": .number(0)]), height: 2000)])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
@@ -1373,7 +1630,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
   func testAnOffscreenProgramReleasesItsExecutorAfterWritingEvenWhenNoRasterCanBeAdmitted() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: (0..<4).map { index in
       .interactive(id: "program-\(index)", html: "<button>Control \(index)</button>",
-        javaScript: "notebook.commit({accepted:1})", height: 100)
+        javaScript: "notebook.commit({accepted:1});notebook.ready(Promise.resolve());", height: 100)
     })
     let resources = SceneRenderResources(maximumRasterCount: 0)
     let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
@@ -1399,7 +1656,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
         const render=()=>document.querySelector('#value').textContent=String(notebook.state.count||0);
         document.querySelector('button').onclick=()=>{notebook.commit({...notebook.state,count:(notebook.state.count||0)+1});render()};
         notebook.commit({...notebook.state,mounts:(notebook.state.mounts||0)+1});render();
-        """, initialState: .object(["count": .number(0)]), height: 90)
+      notebook.ready(Promise.resolve());
+      """, initialState: .object(["count": .number(0)]), height: 90)
     })
     let fixture = try ProgramFixture(document: document, showsNeighbour: false)
     defer { fixture.close() }
@@ -1501,7 +1759,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
 }
 
 @MainActor
-private final class ProgramFixture {
+final class ProgramFixture {
   private(set) var document: DocumentDocument
   let resources: SceneRenderResources
   let activity = PageTurnActivity()
@@ -1511,9 +1769,11 @@ private final class ProgramFixture {
   let window: UIWindow
   private var state: DocumentStateJournal
   private let measurements: DocumentPresentationRecorder?
+  private let programStore: NotebookStore?
   private var linkNavigation: (DocumentLinkDestination) -> Void = { _ in }
   private var selected = 0
   private var interactive: Bool
+  private var visible = true
   private var retiredPresentations: Set<Int> = []
   private var thumbnailPresentations: Set<Int> = []
   private var pageIndices = [0, 1]
@@ -1523,9 +1783,18 @@ private final class ProgramFixture {
   var onCheckpoint: (String) async -> Void = { _ in }
   var acceptsCheckpoints = true
   var preparationErrors: [String] = []
-  var diagnostics: String { "ready=\(ready) errors=\(preparationErrors) web=\(resources.activeWebSurfaceCount) queued=\(resources.pendingWebRequestCount) held=\(resources.rasterAdmission.heldBytes) state=\(state.records.map { ($0.id, $0.value) })" }
+  var diagnostics: String {
+    let programs = hosts.flatMap(descendants).compactMap { web -> String? in
+      guard let runtime = web.navigationDelegate as? DocumentBlockRuntime else { return nil }
+      return "\(runtime.block.id):ready=\(runtime.ready),input=\(web.isUserInteractionEnabled),bounds=\(web.bounds),failure=\(String(describing: runtime.failure))"
+    }
+    return "ready=\(ready) errors=\(preparationErrors) web=\(resources.activeWebSurfaceCount) queued=\(resources.pendingWebRequestCount) held=\(resources.rasterAdmission.heldBytes) state=\(state.records.map { ($0.id, $0.value) }) programs=\(programs) regions=\(DocumentRenderRegistry.shared.regions(document: document).map { ($0.id, $0.pageIndex, $0.frame, $0.sourceOffset) })"
+  }
   var currentToken: String { DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndices[selected]) }
   var isPresented: Bool { presents(.page) }
+  var installedPaper: DocumentPaperRaster? {
+    DocumentRenderRegistry.shared.installedPaper(document:document,state:state,pageIndex:pageIndices[selected])
+  }
   func presents(_ scope: DocumentPresentationScope) -> Bool {
     DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: pageIndices[selected], scope: scope)
   }
@@ -1535,8 +1804,9 @@ private final class ProgramFixture {
   }
 
   init(document: DocumentDocument, resources: SceneRenderResources = SceneRenderResources(),
-    measurements: DocumentPresentationRecorder? = nil, interactive: Bool = true, showsNeighbour: Bool = true) throws {
-    self.document = document; self.resources = resources; self.measurements = measurements
+    measurements: DocumentPresentationRecorder? = nil, interactive: Bool = true, showsNeighbour: Bool = true,
+    programStore: NotebookStore? = nil) throws {
+    self.document = document; self.resources = resources; self.measurements = measurements; self.programStore = programStore
     self.interactive = interactive
     if !showsNeighbour { retiredPresentations.insert(1) }
     state = .init(id: document.id, actor: UUID())
@@ -1564,6 +1834,7 @@ private final class ProgramFixture {
       && coordinator.payload?.renderToken == DocumentSnapshotCache.paperToken(sourceRevision: document.contentStamp.revision, pageIndex: pageIndices[index])
   }
   func select(_ index: Int) { selected = index; refresh() }
+  func setVisible(_ value: Bool) { visible = value; refresh() }
   func setInteractive(_ value: Bool) { interactive = value; refresh() }
   func setThumbnail(_ index: Int) { thumbnailPresentations.insert(index); refresh() }
   func retirePresentation(_ index: Int) {
@@ -1577,24 +1848,29 @@ private final class ProgramFixture {
     for (index, coordinator) in coordinators.enumerated() {
       guard !retiredPresentations.contains(index) else { continue }
       coordinator.update(.init(document: document, state: state, pageIndex: pageIndices[index], isCurrent: selected == index && !thumbnailPresentations.contains(index),
-        isVisible: true, isInteractive: selected == index && interactive && !thumbnailPresentations.contains(index), pageTurnActive: false,
+        isVisible: visible, isInteractive: visible && selected == index && interactive && !thumbnailPresentations.contains(index), pageTurnActive: false,
         onRenderReady: .init(activity: activity) { [weak self] in self?.ready[index] = $0 },
-        onPageLayout: { _ in }, onSourceChange: { _ in .committed },
+        onPageLayout: { _ in },
         onStateChange: { [weak self] block, value in
           guard let self else { return nil }
           _ = state.commit(blockID: block, value: value, actor: actor)
           let accepted = state.records.first { $0.id == block }?.valueVersion
           refresh(); return accepted
-        }, drafts: [], onDraftChange: { _ in }, onDraftDiscard: { _ in }, onLinkActivation: { [weak self] in self?.linkNavigation($0.destination) },
+        },    onLinkActivation: { [weak self] in self?.linkNavigation($0.destination) },
         snapshotPixelWidth: thumbnailPresentations.contains(index) ? 256 : nil, onPreparationFailure: { [weak self] error in
           self?.preparationErrors.append("page \(index): \(error)")
         },
-        onStateCheckpoint: { [weak self] block, value, version in
-          guard let self, document.sourceVersion(blockID: block) == version, self.value(block) == value else { return false }
+        onStateCheckpoint: { [weak self] block, value, version, stateVersion in
+          guard let self else { return nil }
           await onCheckpoint(block)
-          guard acceptsCheckpoints else { return false }
-          checkpoints.insert(block); checkpointValues[block] = value; return true
-        }, measurements: measurements), in: hosts[index], resources: resources)
+          guard acceptsCheckpoints else { throw SceneRenderError.snapshotPending("test_writer_unavailable") }
+          guard document.sourceVersion(blockID: block) == version,
+            state.records.first(where: { $0.id == block })?.valueVersion == stateVersion else { return nil }
+          _ = state.commit(blockID: block, value: value, actor: actor)
+          checkpoints.insert(block); checkpointValues[block] = value
+          let accepted = state.records.first { $0.id == block }?.valueVersion
+          refresh(); return accepted
+        }, measurements: measurements, programStore: programStore), in: hosts[index], resources: resources)
     }
   }
 
@@ -1616,6 +1892,11 @@ private final class ProgramFixture {
   func web(in index: Int) -> WKWebView? { descendants(hosts[index]).first { $0.accessibilityIdentifier?.hasPrefix("document-program-") == true && $0.isUserInteractionEnabled } }
   func web(block: String) -> WKWebView? {
     descendants(hosts[selected]).first { $0.accessibilityIdentifier == "document-program-" + block && $0.isUserInteractionEnabled }
+  }
+  func retryProgram(_ block: String) throws {
+    func buttons(_ view: UIView) -> [UIButton] { (view as? UIButton).map { [$0] } ?? view.subviews.flatMap(buttons) }
+    let button = try XCTUnwrap(buttons(hosts[selected]).first { $0.accessibilityIdentifier == "document-program-retry-" + block && !$0.isHidden })
+    button.sendActions(for: .touchUpInside)
   }
   func hasProgramAction(_ block: String) -> Bool {
     func buttons(_ view: UIView) -> [UIButton] { (view as? UIButton).map { [$0] } ?? view.subviews.flatMap(buttons) }
@@ -1685,6 +1966,7 @@ private final class ProgramFixture {
     throw SceneRenderError.snapshotPending("test_current_document_capture")
   }
   func close() {
+    retiredPresentations = Set(coordinators.indices)
     coordinators.forEach { $0.invalidate() }; window.isHidden = true; window.rootViewController = nil
   }
 }

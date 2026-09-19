@@ -48,7 +48,7 @@ test("maps repeated, empty and raw TeX blocks to exact generated source lines wi
   assert.deepEqual(result.sourceRanges.map(range => range.blockID), blocks.map(block => block.id));
   const mapped = result.sourceRanges.map(range => lines.slice(range.firstLine - 1, range.lastLine).join("\n"));
   assert.match(mapped[0]!, /Repeated paragraph\./);
-  assert.equal(mapped[1]!.trim(), "");
+  assert.equal(mapped[1]!.trim(), "\\noindent\\mbox{}\\par", "An empty editable block retains a physical source address");
   assert.equal(mapped[2]!.trim(), blocks[2]!.source);
   assert.equal(mapped[0], mapped[3]);
   assert.ok(!result.source.includes(blocks[2]!.id));
@@ -67,7 +67,7 @@ test("turns Markdown prose and exact LaTeX blocks into one TeX artifact", () => 
     latex("proof", "\\begin{align}y &= x^2\\end{align}"),
   ]));
 
-  assert.match(source, /\\setmainfont\{Georgia\}/);
+  assert.match(source, /\\setmainfont\{Libertinus Serif\}/);
   assert.match(source, /\\geometry\{a4paper,margin=25mm\}/);
   assert.match(source, /\\section\{Привет\}/);
   assert.match(source, /\$x_1\$/);
@@ -107,17 +107,38 @@ test("keeps document boundaries owned by the exporter", () => {
   );
 });
 
-test("wraps an interactive block address without dropping characters or interpreting TeX", () => {
-  const id = "collaboration-counter-1d13a2ed-6e64-4ff6-b973-aa1b28bc328e_%{x}\\end";
-  const value = document([{ ...markdown(id, ""), kind: "interactive" }]);
-  const before = JSON.stringify(value), source = documentTeX(value);
+test("reserves the exact physical program height without typesetting its internal ID", () => {
+  const id = "collaboration-counter_%{x}\\end";
+  const value = document([{ ...markdown(id, ""), kind: "interactive", height: 320 }]);
+  const before = JSON.stringify(value), result = documentExport(value, 0.75);
   assert.equal(JSON.stringify(value), before);
-  assert.ok(source.includes(Array.from("collaboration-counter-").join("\\allowbreak{}")));
-  assert.ok(source.includes("\\_\\allowbreak{}\\%\\allowbreak{}\\{\\allowbreak{}x\\allowbreak{}\\}"));
-  assert.ok(source.includes("\\textbackslash{}\\allowbreak{}e\\allowbreak{}n\\allowbreak{}d"));
-  assert.equal((source.match(/\\allowbreak\{\}/g) ?? []).length, Array.from(id).length - 1);
-  assert.doesNotMatch(source, /\\texttt\{collaboration-counter-/);
+  assert.deepEqual(result.sourceRanges.map(range => range.blockID), [id]);
+  assert.match(result.source, /% Notebook interactive block: "collaboration-counter/);
+  assert.doesNotMatch(result.source.split("\n").filter(line => !line.startsWith("%")).join("\n"), /collaboration-counter/);
+  const heights = [...result.source.matchAll(/vrule width0pt height([\d.]+)bp/g)].map(match => Number(match[1]));
+  assert.equal(heights.reduce((a, b) => a+b, 0), 240);
 });
+
+test("shows real inline program code in compiled LaTeX comments without making it TeX input", () => {
+  const block = { ...markdown('sound\n\\input{hidden}', ""), kind: "interactive" as const, height: 320,
+    html: '<button>Start</button>\r\n^^M\\input{hidden}', css: 'button { color: red; }\0',
+    javaScript: 'const phase = 0;\nnotebook.ready(Promise.resolve());', initialState: { phase: 0 } };
+  const result = documentExport(document([block]));
+  assert.match(result.source, /% HTML\n% <button>Start<\/button>\n% \\u005e\\u005eM\\input\{hidden\}/);
+  assert.match(result.source, /% JavaScript\n% const phase = 0;\n% notebook.ready/);
+  assert.ok(!result.source.includes('\0'));
+  const executable = result.source.split("\n").filter(line => !line.startsWith("%")).join("\n");
+  assert.doesNotMatch(executable, /Start|notebook.ready|input\{hidden\}/);
+  assert.equal(result.sourceRanges[0]!.blockID, block.id);
+});
+
+test("names the immutable package in LaTeX instead of inventing inline source", () => {
+  const hash = "a".repeat(64);
+  const result = documentExport(document([{ ...markdown("gears", ""), kind: "interactive", programPackage: hash }]));
+  assert.ok(result.source.includes(`% Package SHA-256: ${hash}`));
+  assert.doesNotMatch(result.source, /% HTML\n/);
+});
+
 
 test("preserves HTML SVGs and real internal/external link destinations instead of flattening tags", async () => {
   const { documentExport } = await import("../src/document-tex.js");
@@ -225,4 +246,28 @@ test("implicit heading anchors use the visible formula source, never parser plac
   const result = documentTeX(document([markdown("formula-heading", '# Value $x_1$\n\n[Return](#value-x_1)')]));
   assert.match(result, /\\hyperlink\{/);
   assert.doesNotMatch(result, /недоступная ссылка|NOTEBOOKTEXMATH/);
+});
+
+test("opaque image tokenization preserves literal examples and cannot capture an authored token", () => {
+  const data = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"/>').toString("base64");
+  const url = `data:image/svg+xml;base64,${data}`;
+  const result = documentExport(document([markdown("sample", `NOTEBOOKEMBEDDEDIMAGE0END\n\n\`\`\`html\n<img src='${url}'>\n\`\`\`\n\n![Actual](${url})`)]));
+  assert.equal(result.assets.length, 1);
+  assert.equal(result.assets[0]!.data, data);
+  assert.ok(result.source.includes(`\\begin{verbatim}\n<img src='${url}'>`));
+  assert.ok(result.source.includes('NOTEBOOKEMBEDDEDIMAGE0END'));
+});
+
+test("maps repeated Markdown paragraphs through math, CRLF and opaque images to authored UTF-16 offsets", () => {
+  const image = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString('base64')}`;
+  const source = `# 😀 Heading\r\n\r\nSame $x^2$.\r\n\r\n![plot](${image})\r\n\r\nSame $x^2$.\r\n\r\nFinal paragraph.\r\n`;
+  const result = documentExport(document([markdown("mapped", source)]));
+  const range = result.sourceRanges[0]!;
+  const lines = result.source.split("\n").slice(range.firstLine-1, range.lastLine);
+  const repeated = lines.flatMap((line, index) => line.includes("Same $x^2$") ? [range.sourceOffsets[index]!] : []);
+  assert.deepEqual(repeated, [source.indexOf("Same"), source.lastIndexOf("Same")]);
+  assert.equal(range.sourceOffsets[lines.findIndex(line => line.includes("Final paragraph"))], source.indexOf("Final paragraph"));
+  assert.equal(range.sourceOffsets.length, range.lastLine-range.firstLine+1);
+  assert.ok(!result.source.includes("NOTEBOOKSOURCEOFFSET"));
+  assert.ok(range.sourceOffsets.every((offset,index) => offset >= 0 && offset <= source.length && (!index || offset >= range.sourceOffsets[index-1]!)));
 });

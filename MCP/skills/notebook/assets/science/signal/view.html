@@ -1,0 +1,41 @@
+<script>
+window.MathJax = {
+  startup: {typeset: false},
+  loader: {load: ['a11y/assistive-mml']},
+  output: {fontPath: new URL('node_modules/@mathjax/%%FONT%%-font', document.baseURI).href},
+  options: {enableMenu: false, menuOptions: {settings: {enrich: false, speech: false, braille: false, assistiveMml: true}}},
+  svg: {fontCache: 'local'}
+};
+</script>
+<script src="node_modules/mathjax/tex-svg-nofont.js"></script>
+<main class="science signal" tabindex="0" aria-label="Исследование сигнала, прокручиваемая область">
+  <header>
+    <p class="eyebrow">100 000 отсчётов · 100 секунд</p>
+    <h1>Не потерять короткое событие</h1>
+    <p>Один всплеск длится всего 3 мс. На общем виде сохранены минимум и максимум каждого интервала — не каждый сотый отсчёт.</p>
+  </header>
+  <figure class="overview-figure" aria-labelledby="overview-caption">
+    <canvas id="overview" role="slider" tabindex="0" aria-label="Положение окна в записи" aria-valuemin="0" aria-valuemax="100"></canvas>
+    <figcaption id="overview-caption"><span>Вся запись · min–max, 100 отсчётов на интервал</span><span class="window-key">Выбранное окно</span></figcaption>
+  </figure>
+  <div class="signal-controls">
+    <label class="control">Центр окна <output id="center-value" for="center"></output><input id="center" type="range" min="0" max="100" step=".001" value="50"></label>
+    <label class="span-control" for="span">Длительность<select id="span"><option value="4">4 с</option><option value="1">1 с</option><option value="0.2">200 мс</option><option value="0.05">50 мс</option></select></label>
+    <button id="event" type="button">К всплеску</button>
+  </div>
+  <figure class="detail-figure" aria-labelledby="detail-title">
+    <h2 id="detail-title">Окно без прореживания</h2>
+    <div id="detail" role="figure" tabindex="0" aria-label="Исходные отсчёты выбранного окна; стрелки выбирают отсчёт" aria-describedby="detail-caption" aria-keyshortcuts="ArrowLeft ArrowRight Home End"></div>
+    <figcaption id="detail-caption" aria-live="polite"></figcaption>
+  </figure>
+  <p id="signal-error" role="alert" hidden></p>
+  <button id="retry" type="button" hidden>Повторить загрузку окна</button>
+  <div class="equation-box"><div id="formula" aria-label="Минимум и максимум сигнала в выбранном окне"></div></div>
+  <p class="note">Синтетический затухающий сигнал с шумом и добавленным импульсом. Формула и график используют одни и те же исходные отсчёты.</p>
+  <details>
+    <summary>Данные и допущения</summary>
+    <p>Частота дискретизации — 1000 Гц; амплитуда — в условных единицах. Шум воспроизводим: seed 20260919. Всплеск добавлен к отсчётам 61337–61339; это учебный сигнал, не измерение прибора.</p>
+    <p>Обзор хранит границы амплитуды, но не порядок значений внутри интервала 100 мс. В детали соединены все исходные отсчёты выбранного окна. При изменении размера данные не генерируются заново.</p>
+    <p class="source">Собственный рецепт Notebook: Canvas 2D, Observable Plot 0.6.17 и MathJax 4.1.3. Библиотеки, SVG-глифы и данные включены в пакет; сеть не нужна.</p>
+  </details>
+</main>

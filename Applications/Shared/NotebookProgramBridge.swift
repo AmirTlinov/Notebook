@@ -1,0 +1,113 @@
+import Foundation
+import NotebookCore
+import WebKit
+
+/// A writer refusal for an obsolete causal basis is not an I/O failure. The
+/// old heap has no remaining publication rights and need not pin a closing UI.
+enum NotebookProgramCheckpointError: Error { case superseded }
+
+/// A selected frame borrows the existing paused owner, never another executor.
+/// Its lifetime belongs to the current attention's retained visual sources.
+@MainActor
+final class NotebookProgramAttentionPause {
+  let value: JSONValue
+  let isCurrent: @MainActor () -> Bool
+  private var continuation: (@MainActor @Sendable () async -> Void)?
+  init(value: JSONValue, isCurrent: @escaping @MainActor () -> Bool,
+    resume: @escaping @MainActor @Sendable () async -> Void) {
+    self.value = value; self.isCurrent = isCurrent; continuation = resume
+  }
+  func release() {
+    guard let resume = continuation else { return }; continuation = nil
+    Task { @MainActor in await resume() }
+  }
+  isolated deinit {
+    if let resume = continuation { Task { @MainActor in await resume() } }
+  }
+}
+
+/// One source for the public browser API; transport remains with each surface.
+enum NotebookProgramBridge {
+  static let script: String = {
+    guard let url = Bundle.main.url(forResource: "notebook-program", withExtension: "js", subdirectory: "WebResources")
+      ?? Bundle.main.url(forResource: "notebook-program", withExtension: "js"),
+      let source = try? String(contentsOf: url, encoding: .utf8) else {
+      // Missing resources must fail preparation, never install a different API.
+      return "throw new Error('notebook_program_bridge_missing');"
+    }
+    return source
+  }()
+
+  static let documentScript: String = {
+    guard let url = Bundle.main.url(forResource: "document-program", withExtension: "js", subdirectory: "WebResources")
+      ?? Bundle.main.url(forResource: "document-program", withExtension: "js"),
+      let source = try? String(contentsOf: url, encoding: .utf8) else {
+      return "throw new Error('notebook_document_program_bridge_missing');"
+    }
+    return source
+  }()
+
+  @MainActor static func document(block: DocumentBlock, state: JSONValue, token: String,
+    package: NotebookProgramPackage, origin: URL) throws -> NotebookProgramAssets.Document {
+    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+    let configuration: JSONValue = .object(["blockID": .string(block.id), "token": .string(token), "state": state, "requiresReady": .bool(true)])
+    let json = String(decoding: try encoder.encode(configuration), as: UTF8.self).replacingOccurrences(of: "<", with: "\\u003c")
+    return .init(before: """
+      <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+      <meta http-equiv="Content-Security-Policy" content="\(NotebookProgramAssets.policy(origin: origin))">
+      <style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}</style>
+      \(NotebookProgramAssets.style(package, origin: origin))
+      <script>\(script)
+      \(documentScript)
+      installNotebookDocumentProgram(\(json),createNotebookProgram);</script>
+      </head><body>
+      """, after: "\(NotebookProgramAssets.script(package, origin: origin))</body></html>")
+  }
+
+  @MainActor
+  static func semanticSelection(controller: String, in web: WKWebView) async -> ProgramSemanticSelection? {
+    guard let value = try? await lifecycle("semanticSelection", controller: controller, in: web), value != .null,
+      let selected = try? value.decode(ProgramSemanticSelection.self),
+      (try? selected.validate()) != nil else { return nil }
+    return selected
+  }
+
+  /// A parked WebKit can throttle its timers as well as rAF. The native owner
+  /// bounds the lifecycle request independently and ignores a late completion.
+  @MainActor
+  static func lifecycle(_ operation: String, controller: String, argument: JSONValue = .null, in web: WKWebView) async throws -> JSONValue {
+    let encoded = String(decoding: try JSONEncoder().encode(argument), as: UTF8.self)
+    return try await withCheckedThrowingContinuation { continuation in
+      var completed = false
+      let deadline = Task { @MainActor in
+        do { try await Task.sleep(for: .milliseconds(4500)) } catch { return }
+        guard !completed else { return }; completed = true
+        continuation.resume(throwing: SceneRenderError.snapshotPending("program_\(operation)_timeout"))
+      }
+      // WebKit's localized exception hides the author's reason. Carry a bounded
+      // diagnostic through the same bridge so public jobs can explain refusal.
+      web.callAsyncJavaScript("""
+        try { return {ok:true,value:(await window[controller][operation](JSON.parse(argument)))??null}; }
+        catch(error) { return {ok:false,message:String(error).slice(0,1024)}; }
+        """,
+        arguments: ["controller": controller, "operation": operation, "argument": encoded], in: nil, in: .page) { result in
+        guard !completed else { return }; completed = true; deadline.cancel()
+        switch result {
+        case .success(let value):
+          do {
+            let data = try JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed])
+            let reply = try JSONDecoder().decode(JSONValue.self, from: data)
+            if reply["ok"] == .bool(false), case .string(let message) = reply["message"] {
+              throw CollaborationError("program_runtime_error", "\(operation): \(message)")
+            }
+            guard reply["ok"] == .bool(true), let value = reply["value"] else {
+              throw CollaborationError("program_runtime_error", "\(operation): invalid lifecycle reply")
+            }
+            continuation.resume(returning: value)
+          } catch { continuation.resume(throwing: error) }
+        case .failure(let error): continuation.resume(throwing: error)
+        }
+      }
+    }
+  }
+}

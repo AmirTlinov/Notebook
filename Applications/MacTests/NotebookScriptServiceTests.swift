@@ -2,6 +2,8 @@ import Foundation
 import AppKit
 import NotebookCore
 import NotebookScriptProtocol
+import NotebookTypesetter
+@testable import Notebook
 import PDFKit
 import Security
 import XCTest
@@ -14,6 +16,7 @@ final class NotebookScriptServiceTests: XCTestCase {
   private static var checkedSandboxSignatures = false
   @MainActor private final class Owner {
     let store: NotebookStore
+    let persistence: NotebookPersistenceQueue
     var commitAccepted = false
     var holdCommit = false
     var releaseCommit: CheckedContinuation<Void, Never>?
@@ -26,8 +29,12 @@ final class NotebookScriptServiceTests: XCTestCase {
     var loseWriteReplies = false
     var nativeWrites = 0
     var reads = 0
+    var holdExportRender = false
+    var exportCuts: [NotebookExportCut] = []
+    var releaseExportRender: CheckedContinuation<Void, Never>?
     init(root: URL? = nil) throws {
       store = NotebookStore(root: root ?? FileManager.default.temporaryDirectory.appendingPathComponent("notebook-xpc-contract-\(UUID())"))
+      persistence = NotebookPersistenceQueue(store: store)
       _ = try store.loadOrCreate(actor: UUID(), pageSize: .init(width: 834, height: 1194))
       _ = try store.loadOrCreateSpatialInk(actor: UUID())
     }
@@ -36,10 +43,6 @@ final class NotebookScriptServiceTests: XCTestCase {
       if request.command == .commitAction, holdCommit {
         commitAccepted = true
         await withCheckedContinuation { releaseCommit = $0 }
-      }
-      if request.command == .publishExport, holdPublication {
-        publicationAccepted = true
-        await withCheckedContinuation { releasePublication = $0 }
       }
       let result = try NotebookCommandDispatcher(store: store).handle(request)
       if request.command == .commitAction || request.command == .undo {
@@ -67,6 +70,17 @@ final class NotebookScriptServiceTests: XCTestCase {
     return NotebookScriptCoordinator(command: { try await owner.command($0) },
       persistence: { operation in try await owner.persist(operation) },
       workingDirectory: owner.store.root.appendingPathComponent("derived/script-runtime"),
+      canonicalExport: { cut, options, id in
+        owner.exportCuts.append(cut)
+        if owner.holdExportRender { await withCheckedContinuation { owner.releaseExportRender = $0 } }
+        let publication = try await DocumentCanonicalExport.publication(cut: cut, options: options, jobID: id, store: owner.store, persistence: owner.persistence)
+        let prepared = try await Task.detached { try owner.store.prepareDocumentExport(publication) }.value
+        if owner.holdPublication {
+          owner.publicationAccepted = true
+          await withCheckedContinuation { owner.releasePublication = $0 }
+        }
+        return try await owner.persistence.submit { try $0.publishDocumentExport(prepared) }
+      },
       userServiceName: try service("NotebookScriptService"), markupServiceName: try service("NotebookMarkupService"))
   }
 
@@ -84,10 +98,6 @@ final class NotebookScriptServiceTests: XCTestCase {
     let entries: [(URL, [String: Bool])] = [
       (root.appendingPathComponent("NotebookScriptService.xpc"), ["com.apple.security.app-sandbox": true]),
       (root.appendingPathComponent("NotebookMarkupService.xpc"), ["com.apple.security.app-sandbox": true]),
-      (root.appendingPathComponent("NotebookMarkupService.xpc/Contents/Helpers/tectonic"),
-        ["com.apple.security.app-sandbox": true, "com.apple.security.inherit": true]),
-      (root.appendingPathComponent("NotebookMarkupService.xpc/Contents/Helpers/notebook-image-compiler"),
-        ["com.apple.security.app-sandbox": true, "com.apple.security.inherit": true]),
       (root.appendingPathComponent("NotebookMarkupService.xpc/Contents/Helpers/notebook-typescript"),
         ["com.apple.security.app-sandbox": true, "com.apple.security.inherit": true]),
     ]
@@ -895,6 +905,126 @@ final class NotebookScriptServiceTests: XCTestCase {
     await host.shutdown()
   }
 
+  func testExportFreezesStateAtAdmissionAndRejectsALaterEditWithoutReplay() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), run = UUID(), actor = UUID()
+    defer { owner.releaseExportRender?.resume(); try? FileManager.default.removeItem(at: owner.store.root) }
+    let document = DocumentDocument(actor: actor, blocks: [.markdown(id: "text", source: "Immutable source")])
+    var index = try owner.store.loadIndex(), board = try owner.store.loadBoard(items: index.items)
+    XCTAssertNotNil(index.createDocument(title: "State cut", actor: actor, documentID: document.id))
+    XCTAssertTrue(board.addItem(document.id, to: index.rootBoardID, near: .zero, actor: actor))
+    var state = DocumentStateJournal(id: document.id, actor: actor)
+    XCTAssertTrue(state.commit(blockID: "text", value: .number(1), actor: actor))
+    try owner.store.saveDocumentWorkspaceBundle(index: index, document: document, state: state, board: board)
+    owner.holdExportRender = true
+    _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2,
+      code: "return await nb.export('cut',{documentID:args.documentID});",
+      arguments: .object(["documentID": .string(document.id.uuidString)])))
+    let result = try await finish(host, run), job = try XCTUnwrap(result["result"]?.string("jobID"))
+    let deadline = ContinuousClock.now + .seconds(12)
+    while owner.releaseExportRender == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    XCTAssertNotNil(owner.releaseExportRender)
+    let accepted = try XCTUnwrap(owner.exportCuts.first)
+    XCTAssertEqual(accepted.state, state)
+    XCTAssertEqual(result["result"]?.string("cutSHA256"), try accepted.sha256)
+    XCTAssertTrue(state.commit(blockID: "text", value: .number(2), actor: actor))
+    try owner.store.saveDocumentState(state)
+    owner.releaseExportRender?.resume(); owner.releaseExportRender = nil
+    var status: JSONValue = .null
+    let finished = ContinuousClock.now + .seconds(20)
+    repeat {
+      status = try await host.context(.init(method: "exportStatus", arguments: .object(["jobID": .string(job)])))
+      if status["data"]?.string("status") == "failed" { break }
+      try await Task.sleep(for: .milliseconds(20))
+    } while ContinuousClock.now < finished
+    XCTAssertEqual(status["data"]?.string("status"), "failed", "\(status)")
+    XCTAssertEqual(status["data"]?["error"]?.string("code"), "revision_conflict")
+    XCTAssertEqual(status["data"]?.string("cutSHA256"), try accepted.sha256)
+    XCTAssertEqual(status["data"]?.string("stateRevision"), accepted.state.stamp.revision)
+    let repeated = try await host.context(.init(method: "exportStatus", arguments: .object(["jobID": .string(job)])))
+    XCTAssertEqual(repeated["data"], status["data"]); XCTAssertEqual(owner.exportCuts.count, 1)
+    XCTAssertEqual(try owner.store.loadDocumentState(document.id), state)
+    XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: owner.store.root.appendingPathComponent("exports").path).isEmpty)
+    await host.shutdown()
+  }
+
+  func testSDKPNGExportsTheCanonicalMixedPageAtRequestedResolution() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), run = UUID(), actor = UUID()
+    defer { try? FileManager.default.removeItem(at: owner.store.root) }
+    var index = try owner.store.loadIndex(), board = try owner.store.loadBoard(items: index.items)
+    let item = try XCTUnwrap(index.createDocument(title: "Image export", actor: actor))
+    XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
+    let document = DocumentDocument(id: item.id, actor: actor, blocks: [
+      .markdown(id: "heading", source: "# Canonical image\n\nAn offline mixed page with $x^2$ and vector SVG.\n\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"240\" height=\"60\"><path d=\"M10 40 Q120 -20 230 40\" fill=\"none\" stroke=\"#2466af\" stroke-width=\"3\"/></svg>"),
+      .interactive(id: "program", html: "<div style='width:100%;height:100px;background:rgb(255,0,0)'></div>", javaScript: "notebook.ready(Promise.resolve());notebook.exportFrame(()=>null)", height: 100)])
+    try owner.store.saveDocumentWorkspaceBundle(index: index, document: document, state: .init(id: item.id, actor: actor), board: board)
+    _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2,
+      code: "return await nb.export('png',{documentID:args.documentID,format:'png',pageIndex:0,pixelWidth:1600});",
+      arguments: .object(["documentID": .string(item.id.uuidString)])))
+    let accepted = try await finish(host, run), jobID = try XCTUnwrap(accepted["result"]?.string("jobID"))
+    var status: JSONValue = .null
+    let deadline = ContinuousClock.now + .seconds(20)
+    repeat {
+      status = try await host.context(.init(method: "exportStatus", arguments: .object(["jobID": .string(jobID)])))
+      if ["saved", "failed"].contains(status["data"]?.string("status") ?? "") { break }
+      try await Task.sleep(for: .milliseconds(20))
+    } while ContinuousClock.now < deadline
+    XCTAssertEqual(status["data"]?.string("status"), "saved", "\(status)")
+    let receipt = try XCTUnwrap(status["data"]?["receipt"]).decode(NotebookExportReceipt.self)
+    XCTAssertEqual(receipt.options, .init(format: .png, pageIndex: 0, pixelWidth: 1600))
+    XCTAssertEqual(receipt.artifact.mimeType, "image/png"); XCTAssertNil(receipt.source); XCTAssertNil(receipt.sourceMap)
+    let bytes = try Data(contentsOf: URL(fileURLWithPath: receipt.artifact.path))
+    let bitmap = try XCTUnwrap(NSBitmapImageRep(data: bytes))
+    XCTAssertEqual(bitmap.pixelsWide, 1600)
+    var inkAboveProgram = 0
+    for y in stride(from: 100, to: 400, by: 4) {
+      for x in stride(from: 150, to: 1450, by: 4) {
+        if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), max(color.redComponent, color.greenComponent, color.blueComponent) < 0.6 { inkAboveProgram += 1 }
+      }
+    }
+    XCTAssertGreaterThan(inkAboveProgram, 80, "An opaque WebKit background must not erase the PDF heading/formula")
+    XCTAssertEqual(bitmap.pixelsHigh, Int(ceil(1600*document.paperSize.heightPoints/document.paperSize.widthPoints)))
+    let attachment = XCTAttachment(data: bytes, uniformTypeIdentifier: "public.png")
+    attachment.name = "canonical-mixed-page-1600px"; attachment.lifetime = .keepAlways; add(attachment)
+    let unchanged = try owner.store.loadDocumentState(item.id)
+    XCTAssertEqual(unchanged, owner.exportCuts.first?.state, "Image export did not checkpoint or rewrite the user's state")
+    await host.shutdown()
+  }
+
+  func testSDKCancellationWinsBeforeTheFinalExportFenceAndNeverReplays() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), run = UUID(), actor = UUID()
+    defer { owner.releasePublication?.resume(); try? FileManager.default.removeItem(at: owner.store.root) }
+    var index = try owner.store.loadIndex(), board = try owner.store.loadBoard(items: index.items)
+    let item = try XCTUnwrap(index.createDocument(title: "Cancel a real PDF", actor: actor))
+    XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
+    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.markdown(id: "text", source: "An actual rendered PDF")])
+    try owner.store.saveDocumentWorkspaceBundle(index: index, document: document, state: .init(id: item.id, actor: actor), board: board)
+    owner.holdPublication = true
+    _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2,
+      code: "return await nb.export('pdf',{documentID:args.documentID});", arguments: .object(["documentID": .string(item.id.uuidString)])))
+    let result = try await finish(host, run), jobID = try XCTUnwrap(result["result"]?.string("jobID"))
+    let deadline = ContinuousClock.now + .seconds(20)
+    while !owner.publicationAccepted, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    XCTAssertTrue(owner.publicationAccepted, "A real streamed PDF is prepared before cancellation")
+    let cancelRun = UUID()
+    _ = try await host.handle(.init(op: .start, runID: cancelRun, apiVersion: 2,
+      code: "const first=await nb.cancelExport('stop',{jobID:args.jobID});const repeated=await nb.cancelExport('stop',{jobID:args.jobID});return {first,repeated};",
+      arguments: .object(["jobID": .string(jobID)])))
+    let cancelled = try await finish(host, cancelRun)
+    XCTAssertEqual(cancelled.string("status"), "completed", "\(cancelled)")
+    XCTAssertEqual(cancelled["result"]?["first"]?.string("status"), "cancelled")
+    XCTAssertEqual(cancelled["result"]?["first"], cancelled["result"]?["repeated"])
+    owner.releasePublication?.resume(); owner.releasePublication = nil
+    let released = ContinuousClock.now + .seconds(5)
+    while !host.exportTasks.isEmpty, ContinuousClock.now < released { try await Task.sleep(for: .milliseconds(20)) }
+    XCTAssertTrue(host.exportTasks.isEmpty)
+    let status = try await host.context(.init(method: "exportStatus", arguments: .object(["jobID": .string(jobID)])))
+    XCTAssertEqual(status["data"]?.string("status"), "cancelled"); XCTAssertEqual(owner.exportCuts.count, 1)
+    XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: owner.store.root.appendingPathComponent("exports").path).isEmpty)
+    let resumed = try await host.handle(.init(op: .resume, runID: cancelRun))
+    XCTAssertEqual(resumed["result"], cancelled["result"])
+    await host.shutdown()
+  }
+
   func testActualPDFJobOutlivesItsUserRunAndPublishesThroughTheNativeOwner() async throws {
     let owner = try Owner(), host = try await coordinator(owner), run = UUID()
     defer { owner.releasePublication?.resume(); try? FileManager.default.removeItem(at: owner.store.root) }
@@ -956,27 +1086,27 @@ final class NotebookScriptServiceTests: XCTestCase {
     } while status["data"]?.string("status") != "saved" && ContinuousClock.now < publicationDeadline
     XCTAssertEqual(status["data"]?.string("status"), "saved", "\(status)")
     let receipt = try XCTUnwrap(status["data"]?["receipt"]).decode(NotebookExportReceipt.self)
-    let pdf = try Data(contentsOf: URL(fileURLWithPath: receipt.pdfPath))
+    let pdf = try Data(contentsOf: URL(fileURLWithPath: receipt.artifact.path))
     XCTAssertTrue(pdf.starts(with: Data("%PDF".utf8)))
     let exportedPDF = XCTAttachment(data: pdf, uniformTypeIdentifier: "com.adobe.pdf")
     exportedPDF.name = "export-html-svg-links-final-pdf"; exportedPDF.lifetime = .keepAlways; add(exportedPDF)
     XCTAssertGreaterThan(pdf.count, 1000)
-    XCTAssertEqual(pdf.count, receipt.byteCount)
+    XCTAssertEqual(pdf.count, receipt.artifact.byteCount)
     XCTAssertTrue(PDFDocument(data: pdf)?.string?.contains("русский источник") == true,
       "The actual PDF must contain the printed Cyrillic text, not merely a valid PDF header.")
-    XCTAssertTrue(try String(contentsOfFile: receipt.texPath, encoding: .utf8).contains("Проверка PDF"))
+    XCTAssertTrue(try String(contentsOfFile: receipt.source!.path, encoding: .utf8).contains("Проверка PDF"))
     let mapBytes = try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(receipt.sourceMap?.path)))
     let sourceMap = try JSONDecoder().decode(DocumentPrintSourceMap.self, from: mapBytes)
     let frozen = try owner.store.loadDocument(document.id)
-    try sourceMap.validate(document: frozen, source: String(contentsOfFile: receipt.texPath, encoding: .utf8), pdf: pdf)
+    try sourceMap.validate(document: frozen, source: String(contentsOfFile: receipt.source!.path, encoding: .utf8), pdf: pdf)
     XCTAssertEqual(sourceMap.ranges.map(\.blockID), frozen.blocks.map(\.id))
     let syncTeX = try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(receipt.syncTeX?.path)))
     XCTAssertGreaterThan(syncTeX.count, 100)
     XCTAssertTrue(syncTeX.starts(with: [0x1f, 0x8b]), "The source map must accompany actual engine-generated page coordinates")
     let printed = try XCTUnwrap(PDFDocument(data: pdf))
     let pages = (0..<printed.pageCount).compactMap { printed.page(at: $0) }
-    XCTAssertTrue((printed.string ?? "").filter { !$0.isWhitespace }.contains(interactiveID),
-      "The complete interactive address must survive wrapping in the actual PDF")
+    XCTAssertFalse((printed.string ?? "").contains(interactiveID),
+      "A live program is frozen in its own print region, not replaced by its internal ID")
     for page in pages {
       let paper = page.bounds(for: .mediaBox)
       for index in 0..<page.numberOfCharacters {
@@ -1004,42 +1134,6 @@ final class NotebookScriptServiceTests: XCTestCase {
     }, "A substantial red SVG rectangle must be visible in the final compiled PDF.")
     XCTAssertFalse(receipt.log.contains("Missing character"))
     await host.shutdown()
-  }
-
-  func testActualCompilerCannotReadOutsideItsSandboxAndUserServiceRejectsCompilation() async throws {
-    try await requireRestrictedServiceSignatures()
-    let owner = try Owner(root: FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".notebook-xpc-sandbox-canary-\(UUID())", isDirectory: true))
-    defer { try? FileManager.default.removeItem(at: owner.store.root) }
-    let canary = owner.store.root.appendingPathComponent("compiler-outside-canary.tex")
-    let marker = "NB_OUTSIDE_CANARY_READ_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-    try Data("\\typeout{\(marker)}".utf8).write(to: canary)
-    let source = "\\documentclass{article}\n\\begin{document}\nProbe.\\input{\(canary.path)}\n\\end{document}"
-    let compiler = NotebookXPCWorker(serviceName: try service("NotebookMarkupService")) { _ in .init(code: "unexpected_host") }
-    let result = await compiler.compile(.init(id: UUID(), source: source))
-    XCTAssertEqual(result.code, "export_failed", "Actual signed child must be denied by App Sandbox: \(String(describing: result.message))")
-    XCTAssertNil(result.value)
-    XCTAssertTrue(result.message?.contains(canary.lastPathComponent) == true,
-      "The native compiler must report its attempted access to this exact outside file.")
-    XCTAssertFalse(result.message?.contains(marker) == true, "TeX must never read the host's harmless canary.")
-    XCTAssertEqual(try String(contentsOf: canary, encoding: .utf8), "\\typeout{\(marker)}")
-    compiler.invalidate()
-    for body in ["<foreignObject width='20' height='20'><div xmlns='http://www.w3.org/1999/xhtml'>Must not vanish</div></foreignObject>",
-      "<style>@import url(https://example.org/print.css);</style>", "<image href='\(canary.absoluteString)'/>"] {
-      let svg = "<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'>\(body)</svg>"
-      // Production owns one XPC connection per compiler job. Each negative
-      // sample must cross that real boundary, not reuse a completed lease.
-      let imageCompiler = NotebookXPCWorker(serviceName: try service("NotebookMarkupService")) { _ in .init(code: "unexpected_host") }
-      let rejectedImage = await imageCompiler.compile(.init(id: UUID(), source: "\\documentclass{article}\\begin{document}Image\\end{document}",
-        assets: [.init(name: "notebook-image-0.pdf", mediaType: .svg, data: Data(svg.utf8))]))
-      imageCompiler.invalidate()
-      XCTAssertEqual(rejectedImage.code, "export_image_invalid", "Unsupported or external SVG content must fail explicitly: \(String(describing: rejectedImage.message))")
-      XCTAssertNil(rejectedImage.value, "A missing image must never be published as a successful PDF.")
-    }
-    let user = NotebookXPCWorker(serviceName: try service("NotebookScriptService")) { _ in .init(code: "unexpected_host") }
-    let rejected = await user.compile(.init(id: UUID(), source: "ignored"))
-    user.invalidate()
-    XCTAssertEqual(rejected.code, "compiler_unavailable")
   }
 
   func testPinnedTypeScriptCLICompilesInsideTheSignedSandboxBeforePublicAdmission() async throws {
@@ -1231,22 +1325,20 @@ final class NotebookScriptServiceTests: XCTestCase {
     let identity = try XCTUnwrap(NotebookTypeScriptPreparation.bundledIdentity)
     let name = try service("NotebookMarkupService")
     let typed = NotebookXPCWorker(serviceName: name) { _ in .init(code: "unexpected_host") }
-    let printer = NotebookXPCWorker(serviceName: name) { _ in .init(code: "unexpected_host") }
+    let printer = NotebookTypesetter(resources: Bundle.main.resourceURL!.appendingPathComponent("NotebookTypesetter"))
     let parser = NotebookMarkupQueue(serviceName: name)
-    defer { typed.invalidate(); printer.invalidate() }
+    defer { typed.invalidate() }
     let source = "const values: number[] = [" + String(repeating: "1234,", count: 30_000) + "]; return values.length;"
     async let compilation = typed.compileTypeScript(.init(id: UUID(), source: source,
       compilerVersion: identity.compilerVersion, sdkVersion: identity.sdkVersion))
-    async let pdf = printer.compile(.init(id: UUID(), source: "\\documentclass{article}\\begin{document}Independent PDF\\end{document}"))
+    async let pdf = printer.compile(DocumentDocument(actor: UUID(), blocks: [.init(id: "body", kind: .tex, source: "Independent PDF")]))
     async let markup = parser.normalize(.object(["kind": .string("action"), "preparation": .object([
       "action": .object(["operations": .array([.object(["values": .object(["source": .string("**Independent markup**")])])])]),
       "markdownOperations": .array([.number(0)])])]))
     let (prepared,printed,normalized) = try await (compilation,pdf,markup)
     XCTAssertNil(prepared.code, prepared.message ?? "TypeScript failure")
     XCTAssertNotNil(prepared.value)
-    XCTAssertNil(printed.code, printed.message ?? "PDF failure")
-    let document = try JSONDecoder().decode(NotebookCompilerResult.self, from: XCTUnwrap(printed.value))
-    XCTAssertEqual(PDFDocument(data: document.pdf)?.pageCount, 1)
+    XCTAssertEqual(PDFDocument(data: printed.pdf)?.pageCount, 1)
     XCTAssertTrue(normalized.array("operations").first?["values"]?.string("html")?.contains("<strong>Independent markup</strong>") == true)
   }
 }

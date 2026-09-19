@@ -4,9 +4,9 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Rich text, line patterns and one-shot image attachments share one interpretation.
+  // Program packages, full TeX and rich text share one integrated interpretation.
   // Both applications update together; identities and queued history stay intact.
-  public static let protocolVersion = 34
+  public static let protocolVersion = 35
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16
@@ -136,7 +136,9 @@ public struct NotebookTransportPacket: Codable, Equatable, Sendable {
 
 public enum NotebookTransportFraming {
   public static func encode(_ packet: NotebookTransportPacket) throws -> Data {
-    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+    // Base64 already bounds binary expansion to 4/3. Optional slash escaping
+    // would double an allowed all-0xff chunk beyond the fixed frame budget.
+    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     let payload = try encoder.encode(packet)
     guard !payload.isEmpty, payload.count <= NotebookTransportLimits.maximumFrameBytes - 4 else {
       throw NotebookTransportError.frameTooLarge

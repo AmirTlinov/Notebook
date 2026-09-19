@@ -1,3 +1,4 @@
+$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers
 $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/lib.d.ts
 $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/notebook-typescript
 $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTypeScript

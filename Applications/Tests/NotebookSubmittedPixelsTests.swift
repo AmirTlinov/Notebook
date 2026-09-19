@@ -14,6 +14,7 @@ final class NotebookSubmittedPixelsTests: XCTestCase {
     web.superview?.addSubview(other)
     var frozen: NotebookSubmittedPixels? = try XCTUnwrap(NotebookSubmittedPixels.capture(view: web,
       physicalSize: .init(width: 128, height: 128), region: .init(x: 8, y: 8, width: 32, height: 32), resources: resources))
+    XCTAssertNil(frozen?.presentation, "A raw subtree/cache capture alone cannot certify a presented document")
     XCTAssertGreaterThan(resources.reservedBytes, 0)
     _ = try await web.evaluateJavaScript("document.body.style.background='#0000ff';true")
     let png = try await XCTUnwrap(frozen).png()

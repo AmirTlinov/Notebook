@@ -1,6 +1,7 @@
 (() => {
   const {$,fmt,text,path,svg,mount}=Science;
   const app=mount({defaults:{phase:.08,amplitude:.13,wavelength:2},ranges:{phase:[0,1],amplitude:[0,.18],wavelength:[1.5,3]},
+    seek:(s,seconds)=>({phase:(s.phase+seconds/6)%1}),
     tick:(s,dt)=>({phase:(s.phase+dt/6000)%1}),draw(s){
       const X=q=>90+110*q,base=205,selected=ScienceModels.wave(3,s.phase,s.amplitude,s.wavelength);
       let body='<defs><radialGradient id="sound-dot"><stop offset="0" stop-color="#fafbfe"/><stop offset=".45" stop-color="#a1abc0"/><stop offset="1" stop-color="#65718b"/></radialGradient></defs>';

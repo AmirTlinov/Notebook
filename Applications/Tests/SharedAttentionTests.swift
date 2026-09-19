@@ -169,14 +169,16 @@ final class SharedAttentionTests: XCTestCase {
             "localX": .number(Double(index) * 150), "localY": .number(0)])])
       })
     _ = try model.store.applyCollaborationAction(action, actor: UUID())
-    await model.reloadExternalChanges()?.value
-    await model.finishPendingPersistence()
-    try await waitForScene(model)
-    await model.refreshCollaborationDetails()
     var presence = SessionPresence(boardID: boardID, mode: .board,
       camera: .init(center: .init(x: 100, y: 0), scale: 1), viewport: .init(x: 834, y: 1194))
     presence = presence.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
     model.updatePresence(presence, settled: true)
+    // The scene is an addressed camera window, not an eager whole-board copy.
+    // Read this camera before asserting which two captions it can present.
+    await model.reloadExternalChanges()?.value
+    await model.finishPendingPersistence()
+    try await waitForScene(model)
+    await model.refreshCollaborationDetails()
     let index = try XCTUnwrap(model.sceneIndex)
     let overview = index.workset(presence: presence, limit: 1)
     XCTAssertFalse(overview.aggregates.isEmpty)

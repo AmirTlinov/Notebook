@@ -22,7 +22,7 @@ public enum JSONValue: Codable, Equatable, Sendable {
     try JSONDecoder().decode(type, from: JSONEncoder().encode(self))
   }
 
-  var isValid: Bool {
+  public var isValid: Bool {
     switch self {
     case .null, .bool, .string:
       true

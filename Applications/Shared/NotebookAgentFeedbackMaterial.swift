@@ -10,6 +10,8 @@ struct NotebookAgentFeedbackSurface {
   var text: SpatialElement?
   var ink: Path?
   var raster: RasterLease?
+  var paper: DocumentPaperRaster?
+  var paperOrigin: CGPoint = .zero
   var isSurface = false
   var erasures: [InkElementErasure] = []
   var clipRect: CGRect?
@@ -42,16 +44,24 @@ struct NotebookAgentFeedbackMaterial: View {
         .white, Color(red:0.89,green:0.82,blue:0.94), .white])
         .opacity(strength * 0.64).mask { mask(.fillMask) }
         .blendMode(surface.isSurface ? .multiply : .normal)
-      LinearGradient(stops: [
-        .init(color:.clear,location:0), .init(color:Color.black.opacity(0.24),location:0.23),
-        .init(color:.white.opacity(0.92),location:0.55), .init(color:Color(red:0.73,green:0.85,blue:1),location:0.67),
-        .init(color:.clear,location:1)
-      ], startPoint:.init(x: -1 + phase * 3, y:0), endPoint:.init(x: phase * 3, y:0.3))
+      inkGradient
         .opacity(strength).mask { mask(.inkMask) }
     }
     .frame(width:surface.rect.width, height:surface.rect.height)
     .position(x:surface.rect.midX,y:surface.rect.midY)
     .allowsHitTesting(false).accessibilityHidden(true)
+  }
+
+  private var inkGradient: LinearGradient {
+    if reduceMotion || episode.isAttention {
+      return LinearGradient(colors:[.white.opacity(0.65),Color(red:0.73,green:0.85,blue:1)],
+        startPoint:.leading,endPoint:.trailing)
+    }
+    return LinearGradient(stops: [
+        .init(color:.clear,location:0), .init(color:Color.black.opacity(0.24),location:0.23),
+        .init(color:.white.opacity(0.92),location:0.55), .init(color:Color(red:0.73,green:0.85,blue:1),location:0.67),
+        .init(color:.clear,location:1)
+      ], startPoint:.init(x: -1 + phase * 3, y:0), endPoint:.init(x: phase * 3, y:0.3))
   }
 
   private func mask(_ layer: NotebookGraphicView.PaintLayer) -> some View {
@@ -89,7 +99,18 @@ struct NotebookAgentFeedbackMaterial: View {
       if surface.isSurface, layer != .inkMask {
         context.fill(Path(CGRect(origin:.zero,size:localSize)),with:.color(.white))
       } else if layer != .fillMask {
-        if let text = surface.text {
+        if let paper = surface.paper {
+          // Invert the actual printed pixels before converting luminance to
+          // alpha: white paper is transparent, letters/contours are the mask.
+          // Borrowing this raster retains its existing resource reservation.
+          if layer != .content { context.addFilter(.luminanceToAlpha) }
+          let geometry = WorkspaceItemGeometry.document(paper.page.artifact.document.paperSize)
+          context.drawLayer { ink in
+            if layer != .content { ink.addFilter(.colorInvert()) }
+            ink.draw(Image(decorative:paper.image,scale:1),
+              in:CGRect(origin:surface.paperOrigin,size:.init(width:geometry.width,height:geometry.height)))
+          }
+        } else if let text = surface.text {
           context.draw(SpatialTextSnapshot.text(text,mask:layer != .content), in:CGRect(origin:.zero,size:localSize))
         } else if let ink = surface.ink { context.fill(ink,with:.color(.white)) }
         else if let raster = surface.raster, !raster.isReleased, let image = raster.sampledImage(for:surface.rect.size) {

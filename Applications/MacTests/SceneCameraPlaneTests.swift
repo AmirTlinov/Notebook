@@ -6,6 +6,74 @@ import XCTest
 
 final class SceneCameraPlaneTests: XCTestCase {
   @MainActor
+  func testSplitPaneResizeKeepsOneCameraScaleInEitherSwiftUILayoutOrder() {
+    let plane = SceneCameraPlaneView<Int>()
+    plane.frame = .init(x: 0, y: 0, width: 1100, height: 728)
+    let window = NSWindow(contentRect: plane.frame, styleMask: .borderless, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false; window.contentView = plane; window.orderBack(nil)
+    defer { plane.uninstall(); window.orderOut(nil); window.close() }
+    let marker = NSView()
+    let item = UUID()
+    func update(width: Double, scale: Double = 0.96, active: Bool = false) {
+      let presence = SessionPresence(mode: .document, camera: .init(scale: scale),
+        viewport: .init(x: width, y: 728), focusedItemID: item, openProgress: 1)
+      plane.update(presence: presence, revision: 0, reanchorsOnRevision: false, isCameraActive: active) { anchor, _ in
+        AnyView(CameraGeometryProbe(view: marker)
+          .frame(width: 100 * anchor.camera.scale, height: 100 * anchor.camera.scale)
+          .frame(width: anchor.viewport.x, height: anchor.viewport.y))
+      }
+    }
+    update(width: 1100)
+    for updateFirst in [true, false] {
+      for width in [572.0, 1100.0, 572.0, 1100.0] {
+        if updateFirst { update(width: width) }
+        plane.setFrameSize(.init(width: width, height: 728))
+        if !updateFirst { update(width: width) }
+        plane.layoutSubtreeIfNeeded()
+        let displayed = marker.convert(marker.bounds, to: nil)
+        XCTAssertEqual(displayed.width, 96, accuracy: 1)
+        XCTAssertEqual(displayed.height, 96, accuracy: 1)
+        XCTAssertEqual(plane.bounds.size, plane.frame.size,
+          "Pane width must not become an additional horizontal zoom")
+      }
+    }
+    update(width: 1100, scale: 1.1, active: true)
+    plane.setFrameSize(.init(width: 900, height: 728))
+    let displayed = marker.convert(marker.bounds, to: nil)
+    XCTAssertEqual(displayed.width, 110, accuracy: 1)
+    XCTAssertEqual(displayed.height, 110, accuracy: 1)
+  }
+
+  @MainActor
+  func testWheelPanSettlementKeepsThePreparedPaperAndItsNativeProjection() {
+    let container = SceneCameraPlaneView<Int>(), viewport = SpatialPoint(x: 1100, y: 780)
+    container.frame = .init(x: 0, y: 0, width: viewport.x, height: viewport.y)
+    let window = NSWindow(contentRect: container.frame, styleMask: .borderless, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false; window.contentView = container; window.orderBack(nil)
+    defer { container.uninstall(); window.orderOut(nil); window.close() }
+    let marker = NSButton(title: "Paper marker", target: nil, action: nil)
+    let world = WorldPoint(x: 140, y: 60)
+    func content(_ anchor: SessionPresence, _ projection: ScenePlaneProjection) -> AnyView {
+      let point = anchor.camera.worldToScreen(world, viewport: viewport)
+      return AnyView(CameraBodyProbe(button: marker).frame(width: 40, height: 40)
+        .position(x: point.x, y: point.y).frame(width: viewport.x, height: viewport.y))
+    }
+    let initial = SessionPresence(mode: .document, camera: .init(scale: 0.96), viewport: viewport, focusedItemID: UUID(), openProgress: 1)
+    container.update(presence: initial, revision: 0, reanchorsOnRevision: false, content: content)
+    container.layoutSubtreeIfNeeded()
+    for offset in [20.0, 63.0, 90.0, 151.0, 220.0, 164.0, 37.0] {
+      let next = initial.replacingCamera(.init(center: .init(x: 0, y: offset), scale: 0.96))
+      container.update(presence: next, revision: 0, reanchorsOnRevision: false, isCameraActive: true, content: content)
+      let moving = marker.convert(marker.bounds, to: nil)
+      container.update(presence: next, revision: 0, reanchorsOnRevision: false, isCameraActive: false, content: content)
+      XCTAssertEqual(marker.convert(marker.bounds, to: nil), moving, "Wheel settlement cannot relocate the physical paper")
+      let expected = next.camera.worldToScreen(world, viewport: viewport)
+      XCTAssertEqual(moving.midY, viewport.y - expected.y, accuracy: 1, "SwiftUI rounds the initial marker to screen pixels")
+      XCTAssertEqual(container.contentPublicationCount, 1, "A pan does not change the prepared body or WebKit viewport")
+    }
+  }
+
+  @MainActor
   func testZoomOutRevealsPreparedContentOutsideTheAnchorViewport() async throws {
     let container = SceneCameraPlaneView<Int>()
     let viewport = SpatialPoint(x: 320, y: 256)
@@ -143,6 +211,12 @@ final class SceneCameraPlaneTests: XCTestCase {
     XCTAssertLessThan(builds, 40, "Only bounded density changes rebase, not every sample")
     XCTAssertEqual(container.contentPublicationCount, builds)
   }
+}
+
+private struct CameraGeometryProbe: NSViewRepresentable {
+  let view: NSView
+  func makeNSView(context: Context) -> NSView { view }
+  func updateNSView(_ view: NSView, context: Context) {}
 }
 
 private struct CameraBodyProbe: NSViewRepresentable {

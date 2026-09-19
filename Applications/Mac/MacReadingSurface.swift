@@ -1,6 +1,16 @@
 import NotebookCore
 import SwiftUI
 
+private struct MacDocumentDisplayScaleKey: EnvironmentKey {
+  static let defaultValue = 1.0
+}
+extension EnvironmentValues {
+  var macDocumentDisplayScale: Double {
+    get { self[MacDocumentDisplayScaleKey.self] }
+    set { self[MacDocumentDisplayScaleKey.self] = newValue }
+  }
+}
+
 /// Reading is the focused material, not a magnified board with its neighbours.
 /// Its scroll/zoom is still the local SessionPresence camera.
 struct MacReadingSurface: View {
@@ -25,12 +35,16 @@ struct MacReadingSurface: View {
         reanchorsOnRevision: false, isCameraActive: model.presencePhase == .active,
         hitRegions: { anchor in [paperFrame(center: center, geometry: geometry, presence: anchor)] }) { anchor in
         let frame = paperFrame(center: center, geometry: geometry, presence: anchor)
+        // WebKit owns document projection through pageZoom. Supply its native
+        // host in screen points rather than applying a second ancestor scale.
+        let projectedDocument = presence.mode == .document
         Group {
           if presence.mode == .page, let page = model.activePage {
             PageSurface(page: page, isCurrent: true, isInteractive: true, isVisible: true,
               onRenderReady: .init { _ in }, displayProjection: anchor.camera.scale)
           } else if presence.mode == .document, let document = model.documents[id], let state = model.documentStates[id] {
             MacDocumentSurface(document: document, state: state, onLayout: { documentLayout = $0 })
+              .environment(\.macDocumentDisplayScale, anchor.camera.scale)
           } else {
             VStack(spacing: 12) {
               if let error = model.persistenceFailure { Text(error).foregroundStyle(.secondary) }
@@ -38,11 +52,12 @@ struct MacReadingSurface: View {
             }
           }
         }
-        .frame(width: geometry.width, height: geometry.height)
+        .frame(width: projectedDocument ? frame.width : geometry.width,
+          height: projectedDocument ? frame.height : geometry.height)
         .background(.white)
         .clipShape(RoundedRectangle(cornerRadius: geometry.cornerRadius))
         .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
-        .scaleEffect(anchor.camera.scale)
+        .scaleEffect(projectedDocument ? 1 : anchor.camera.scale)
         .frame(width: frame.width, height: frame.height)
         .position(x: frame.midX, y: frame.midY)
         .environment(model).environment(\.sceneComposition, .init(nil))
@@ -61,11 +76,17 @@ struct MacReadingSurface: View {
 
 enum MacReadingCamera {
   enum Fit { case width, page, actual }
-  static let margin = 24.0
+  static let horizontalMargin = 24.0
+
+  private static func available(_ viewport: SpatialPoint) -> SpatialPoint {
+    // A reader has side gutters, not a footer outside the physical paper.
+    .init(x: max(1, viewport.x - horizontalMargin * 2), y: viewport.y)
+  }
 
   static func fitted(center: WorldPoint, geometry: WorkspaceItemGeometry, viewport: SpatialPoint, fit: Fit) -> SpatialCamera {
-    let width = max(1, viewport.x - margin * 2) / geometry.width
-    let height = max(1, viewport.y - margin * 2) / geometry.height
+    let space = available(viewport)
+    let width = space.x / geometry.width
+    let height = space.y / geometry.height
     let scale: Double = switch fit {
     case .width: width
     case .page: min(width, height)
@@ -75,12 +96,12 @@ enum MacReadingCamera {
   }
 
   static func top(_ camera: SpatialCamera, center: WorldPoint, geometry: WorkspaceItemGeometry, viewport: SpatialPoint) -> SpatialCamera {
-    let y = max(0, geometry.height / 2 - (viewport.y / 2 - margin) / camera.scale)
+    let y = max(0, geometry.height / 2 - viewport.y / (2 * camera.scale))
     return .init(center: center.offsetBy(x: center.delta(to: camera.center).x, y: -y), scale: camera.scale)
   }
 
   static func constrained(_ camera: SpatialCamera, center: WorldPoint, geometry: WorkspaceItemGeometry, viewport: SpatialPoint) -> SpatialCamera {
-    geometry.readingCamera(camera, centeredOn: center, viewport: viewport, margin: margin, maximumScale: 8)
+    geometry.readingCamera(camera, centeredOn: center, viewport: available(viewport), maximumScale: 8)
   }
 }
 

@@ -9,6 +9,7 @@ let package = Package(
     .macOS(.v27),
   ],
   products: [
+    .library(name: "NotebookTypesetter", targets: ["NotebookTypesetter"]),
     .library(name: "NotebookCore", targets: ["NotebookCore"]),
     .library(name: "NotebookCodex", targets: ["NotebookCodex"]),
     .library(name: "NotebookScriptHost", targets: ["NotebookScriptHost"]),
@@ -21,6 +22,8 @@ let package = Package(
   ],
   targets: [
     .systemLibrary(name: "CSQLite", pkgConfig: "sqlite3"),
+    .target(name: "CNotebookTypesetter", publicHeadersPath: "include", linkerSettings: [.linkedLibrary("z")]),
+    .target(name: "NotebookTypesetter", dependencies: ["NotebookCore", "CNotebookTypesetter", "CQuickJS"]),
     .target(name: "NotebookCore", dependencies: ["CSQLite"]),
     .target(name: "NotebookCodex", dependencies: ["NotebookCore"]),
     .target(name: "CQuickJS", path: "Sources/CQuickJS",

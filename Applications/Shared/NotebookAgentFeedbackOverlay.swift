@@ -14,7 +14,7 @@ struct NotebookAgentFeedbackOverlay: View {
       let reference = episode.subject.reference
       if reference.target.kind == .document, reference.elementID == nil, reference.region == nil,
         let document = model.documents[reference.target.id] {
-        subjects = document.blocks.filter { $0.kind == .interactive }.map { block in
+        subjects = document.blocks.map { block in
           .init(reference:.init(target:reference.target,elementID:block.id,revision:reference.revision),expected:episode.subject.expected)
         }
       }
@@ -40,28 +40,11 @@ struct NotebookAgentFeedbackOverlay: View {
     .task(id:model.presentationPlayer.stage?.id) {
       await model.prepareAgentAttention(model.presentationPlayer.stage)
     }
-    .onChange(of:model.agentFeedback.episodes) { _, _ in
-      model.publishAgentDocumentFeedback()
-    }
-    .onDisappear { model.agentFeedback.stop(); DocumentRenderRegistry.shared.setAgentFeedback([]) }
+    .onDisappear { model.agentFeedback.stop() }
   }
 }
 
 extension NotebookAppModel {
-  func publishAgentDocumentFeedback() {
-    guard let presence else { DocumentRenderRegistry.shared.setAgentFeedback([]); return }
-    let current = agentFeedback.episodes.values.filter { episode in
-      let subject = episode.subject, reference = subject.reference
-      guard reference.target.kind == .document, reference.elementID != nil || reference.region == nil,
-        agentFeedbackRevisionIsCurrent(subject),
-        presence.mode == .document, presence.focusedItemID == reference.target.id,
-        let document = documents[reference.target.id], let state = documentStates[document.id] else { return false }
-      return DocumentRenderRegistry.shared.hasLiveSurface(document:document,state:state,pageIndex:presence.documentPageIndex,
-        scope:reference.elementID.map(DocumentPresentationScope.block) ?? .page)
-    }
-    DocumentRenderRegistry.shared.setAgentFeedback(Array(current))
-  }
-
   func agentFeedbackRevisionIsCurrent(_ subject: NotebookAgentFeedbackChange.Subject) -> Bool {
     let expected = subject.expected
     return collaborationRevision(expected.target) == expected.revision
@@ -75,7 +58,7 @@ extension NotebookAppModel {
     guard permitsScenePreparation, presencePhase == .settled, presence == visible,
       let cohort, cohort.isPaintInstalled, cohort.frame.index.generationID == sceneIndex?.generationID else { return }
     let subjects = agentFeedback.pendingSubjects + agentFeedback.attention + agentFeedback.episodes.values.map(\.subject)
-    guard !subjects.isEmpty else { DocumentRenderRegistry.shared.setAgentFeedback([]); return }
+    guard !subjects.isEmpty else { return }
     let viewport = CGRect(x:0,y:0,width:visible.viewport.x,height:visible.viewport.y)
     var ready = Set<String>(), offscreen = Set<String>()
     for subject in subjects {
@@ -108,7 +91,6 @@ extension NotebookAppModel {
     agentFeedback.presented(ready:ready,offscreen:offscreen)
     if let stageID = agentFeedback.attentionID, !agentFeedback.attention.isEmpty,
       agentFeedback.attention.allSatisfy({ ready.contains($0.key) }) { presentationPlayer.rendered(stageID,material:.attention) }
-    publishAgentDocumentFeedback()
     #endif
   }
 }

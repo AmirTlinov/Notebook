@@ -6,8 +6,14 @@ import NotebookCodex
 
 /// Changes launch dependencies only. Content, transport, rendering and agent
 /// execution remain the production owners; no receipts or ready states are seeded.
-struct NotebookAcceptanceConfiguration: Codable, Equatable {
-  enum Role: String, Codable { case mac, iPad }
+struct NotebookAcceptanceConfiguration: Codable, Equatable, Sendable {
+  enum Role: String, Codable, Sendable { case mac, iPad }
+  struct Pair: Codable, Equatable, Sendable {
+    let macActorID: UUID
+    let iPadActorID: UUID
+    let credentialID: UUID
+    let secret: Data
+  }
   let version: Int
   let runID: UUID
   let workspaceID: UUID
@@ -19,6 +25,7 @@ struct NotebookAcceptanceConfiguration: Codable, Equatable {
   let socket: String?
   let codexDirectory: String?
   var simulatorContact: String? = nil
+  var pair: Pair? = nil
 
   static let environmentKey = "NOTEBOOK_ACCEPTANCE_MANIFEST"
   var rootURL: URL { URL(fileURLWithPath: root, isDirectory: true) }
@@ -36,11 +43,19 @@ struct NotebookAcceptanceConfiguration: Codable, Equatable {
         throw NotebookStorageError.invalidTransaction("simulated contacts are restricted to Simulator")
       #endif
     }
-    let expected = role == .mac ? "com.amirtlinov.notebook.mac.acceptance" : "com.amirtlinov.notebook.acceptance"
-    guard enabled, version == 1, bundle == expected, bundleID == expected,
+    let allowedBundle = role == .mac
+      ? bundleID.wholeMatch(of: /com\.amirtlinov\.notebook\.mac\.acceptance\.[0-9a-f]{12}/) != nil
+      : bundleID == "com.amirtlinov.notebook.acceptance"
+    guard enabled, version == 1, allowedBundle, bundle == bundleID,
       sourceRevision.count == 40, sourceRevision.allSatisfy({ $0.isHexDigit }),
       root.hasPrefix("/"), rootURL.pathComponents.contains(runID.uuidString.lowercased()) else {
       throw NotebookStorageError.invalidTransaction("invalid isolated acceptance launch")
+    }
+    if let pair {
+      guard pair.macActorID != pair.iPadActorID, pair.secret.count == 32,
+        actorID == (role == .mac ? pair.macActorID : pair.iPadActorID) else {
+        throw NotebookStorageError.invalidTransaction("acceptance pair identity mismatch")
+      }
     }
     let actual = rootURL.standardizedFileURL.resolvingSymlinksInPath().path
     let production = productionRoot.standardizedFileURL.resolvingSymlinksInPath().path
@@ -102,6 +117,39 @@ struct NotebookAcceptanceConfiguration: Codable, Equatable {
 
   static func requiresManifest(bundleID: String?, enabled: Bool) -> Bool {
     enabled || bundleID == "com.amirtlinov.notebook.mac.acceptance"
+      || bundleID?.hasPrefix("com.amirtlinov.notebook.mac.acceptance.") == true
       || bundleID == "com.amirtlinov.notebook.acceptance"
   }
+}
+
+/// Substitutes only the unavailable CloudKit account directory in the isolated
+/// stand. The normal account connection, Keychain, TLS and delivery still run.
+/// These credentials cannot be admitted by a production bundle or another run.
+struct NotebookAcceptanceAccountService: NotebookAccountService {
+  let configuration: NotebookAcceptanceConfiguration
+  let pair: NotebookAcceptanceConfiguration.Pair
+
+  func exchange(device: NotebookAccountDirectory.Device, boundAccount: String?,
+    retained: [NotebookAccountDirectory.Pair], spaceName: String, publishName: Bool) async throws -> NotebookAccountSnapshot {
+    let config = configuration, account = "acceptance:" + config.runID.uuidString.lowercased()
+    try config.validate(bundle: config.bundleID, enabled: true)
+    guard config.pair == pair, device.identity.deviceID == config.actorID,
+      device.identity.workspaceID == config.workspaceID, device.activation == nil,
+      device.platform.rawValue == config.role.rawValue,
+      boundAccount == nil || boundAccount == account else { throw NotebookAccountError.changed }
+    let credential = NotebookAccountDirectory.Pair(id: pair.credentialID, workspaceID: config.workspaceID,
+      first: pair.macActorID, second: pair.iPadActorID, secret: pair.secret)
+    guard retained.allSatisfy({ $0 == credential }) else { throw NotebookAccountError.invalidDirectory }
+    var directory = NotebookAccountDirectory(space: .init(id: config.workspaceID, name: "Acceptance"))
+    for (id, platform, name) in [(pair.macActorID, NotebookAccountDirectory.Device.Platform.mac, "Acceptance Mac"),
+      (pair.iPadActorID, .iPad, "Acceptance Simulator")] {
+      let member = id == config.actorID ? device : .init(identity: .init(deviceID: id,
+        workspaceID: config.workspaceID, displayName: name), platform: platform, activation: nil)
+      try directory.enroll(member, retained: [credential], spaceName: "Acceptance")
+    }
+    return .init(account: account, directory: directory)
+  }
+  func initialWorkspace(proposed: UUID) async throws -> UUID { configuration.workspaceID }
+  func observe(changed: @escaping @Sendable (Bool) async -> Void) async throws {}
+  func stop() async {}
 }

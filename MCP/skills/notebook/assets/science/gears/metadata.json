@@ -1,0 +1,17 @@
+{
+  "triangles": 144332,
+  "textures": [
+    {
+      "path": "machined.png",
+      "width": 2048,
+      "height": 2048
+    },
+    {
+      "path": "roughness.png",
+      "width": 2048,
+      "height": 2048
+    }
+  ],
+  "units": "mm",
+  "blender": "5.1.0"
+}

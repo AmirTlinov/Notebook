@@ -19,7 +19,7 @@ const item=object({id,kind:z.enum(["notebook","document","board"]),title:text,fi
 const header=object({workspaceID:id,rootBoardID:id,stamp,itemCount:number,cursor:number,selectedItemID:id.optional(),selectedPageID:id.optional(),boardRevision:text.optional(),boardStamp:stamp.optional(),spatialInkStamp:stamp.optional()});
 const contentHeader=object({target:targetSchema,contentStamp:stamp,stateStamp:stamp.optional(),inkStamp:stamp.optional(),size:size.optional()});
 const fieldVersion=object({stamp,human:z.boolean(),observed:z.record(text,number)});
-const block=object({id:text,kind:z.enum(["markdown","latex","interactive"]),source:text,html:text,css:text,javaScript:text,initialState:json,height:number});
+const block=object({id:text,kind:z.enum(["markdown","latex","tex","interactive"]),source:text,html:text,css:text,javaScript:text,initialState:json,height:number});
 const state=object({id:text,value:json,stamp});
 const document=object({format:number,id,paperSize:z.enum(["a4","letter"]),preamble:text,blocks:z.array(block),contentStamp:stamp});
 const documentState=object({format:number,id,records:z.array(state),stamp});
@@ -107,7 +107,8 @@ const observation=object({mode:z.enum(["snapshot","delta"]).optional(),status:te
   containers:z.array(item).optional(),checkpoint:text.optional(),presence:presence.nullable().optional(),presenceGeneration:text.optional(),selection:selection.optional(),context:contexts.optional(),visual:object({status:text,receipt:viewReceipt.optional(),artifact:artifact.optional()}).optional()});
 const runtime=object({status:text,updatedAt:number}).nullable();
 const printMapArtifact=object({path:text,sha256:text,byteCount:number,mimeType:text});
-const exportJob=object({status:z.enum(["missing","queued","running","saved","failed","interrupted"]),jobID:id.optional(),documentID:id.optional(),contentRevision:text.optional(),receipt:object({documentID:id,pdfPath:text,texPath:text,pdfSHA256:text,byteCount:number,log:text,packageSHA256:text.optional(),assets:z.array(object({path:text,sha256:text})).optional(),sourceMap:printMapArtifact.optional(),syncTeX:printMapArtifact.optional()}).optional(),error:json.optional()});
+const exportOptions=object({moment:z.enum(["saved","presented"]).optional(),attention:object({contextID:id,referenceID:id}).optional(),video:object({start:number,end:number,framesPerSecond:number}).optional(),format:z.enum(["pdf","png","svg","html","package","mp4"]),blockID:text.optional(),pageIndex:number.optional(),pixelWidth:number.optional()});
+const exportJob=object({status:z.enum(["missing","queued","running","saved","failed","interrupted","cancelled"]),jobID:id.optional(),documentID:id.optional(),contentRevision:text.optional(),stateRevision:text.optional(),cutSHA256:text.optional(),moment:z.enum(["saved","presented"]).optional(),options:exportOptions.optional(),receipt:object({cutSHA256:text,stateRevision:text,cut:printMapArtifact,documentID:id,options:exportOptions,artifact:printMapArtifact,source:printMapArtifact.optional(),log:text,packageSHA256:text.optional(),assets:z.array(object({path:text,sha256:text})).optional(),sourceMap:printMapArtifact.optional(),syncTeX:printMapArtifact.optional()}).optional(),error:json.optional()});
 const presentation=object({status:text.optional(),id:id.optional(),view:object({deviceID:id,sessionID:id,sequence:number,nonce:id}).optional(),reason:text.optional()});
 const search=object({results:z.array(object({id,target:targetSchema,elementID:text.optional(),title:text,path:z.array(text),preview:text,revision:text,reference:referenceSchema})),total:number});
 export const readDataSchemas = {
@@ -131,5 +132,5 @@ export const methodDataSchemas = {
   place:object({status:z.enum(["ready","snapshot_pending","placement_unavailable"]),target:targetSchema,placements:z.array(object({id:text,frame,worldOrigin:worldPointSchema.optional()})),moves:z.array(operationSchema),contextID:id.optional(),additionalOwners:z.array(targetSchema),sourceRevision:text,suggestion:text.optional(),renderRequest:renderRequest.optional()}),
   exportStatus:exportJob,presentation,
 };
-export const effectResultSchemas = {transaction:actionResultSchema,undo:actionResultSchema,point:object({id,entry}),present:presentation,cancelPresentation:presentation,export:exportJob,
+export const effectResultSchemas = {transaction:actionResultSchema,undo:actionResultSchema,point:object({id,entry}),present:presentation,cancelPresentation:presentation,export:exportJob,cancelExport:exportJob,
   wait:z.null(),id,emit:object({sequence:number,kind:text,value:json,createdAt:number}),emitImage:object({sequence:number,kind:text,value:artifact,createdAt:number}),help:object({api_version:z.literal(2),topic:text.optional(),contract:json.optional()})};

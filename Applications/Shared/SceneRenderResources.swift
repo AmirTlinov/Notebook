@@ -18,7 +18,7 @@ enum SceneRasterSource: Equatable, Sendable {
       left.id == right.id && left.kind == right.kind
         && left.frame.width == right.frame.width && left.frame.height == right.frame.height
         && left.source == right.source && left.html == right.html
-        && left.css == right.css && left.javaScript == right.javaScript && left.state == right.state
+        && left.css == right.css && left.javaScript == right.javaScript && left.programPackage == right.programPackage && left.state == right.state
     case (.agentRegion(let left, let leftRegion), .agentRegion(let right, let rightRegion)):
       Self.agent(left) == .agent(right) && leftRegion == rightRegion
     case (.document(let leftID, let leftToken), .document(let rightID, let rightToken)):
@@ -81,6 +81,7 @@ final class RasterLease {
   let source: SceneRasterSource
   let pixelScale: Double
   let accountedByteCount: Int
+  let semanticSelection: ProgramSemanticSelection?
   let entryID: UUID
   private var resources: SceneRenderResources?
   private var retainedImage: AgentSnapshotImage?
@@ -116,9 +117,9 @@ final class RasterLease {
     return retainedImage
   }
   fileprivate init(source: SceneRasterSource, pixelScale: Double, image: AgentSnapshotImage,
-    mipmaps: [CGImage], byteCount: Int, entryID: UUID, resources: SceneRenderResources) {
+    mipmaps: [CGImage], byteCount: Int, entryID: UUID, semanticSelection: ProgramSemanticSelection?, resources: SceneRenderResources) {
     self.source = source; self.pixelScale = pixelScale; retainedImage = image; accountedByteCount = byteCount
-    self.mipmaps = mipmaps
+    self.mipmaps = mipmaps; self.semanticSelection = semanticSelection
     self.entryID = entryID; self.resources = resources
   }
   func retainedCopy() -> RasterLease? {
@@ -468,6 +469,7 @@ final class SceneRenderResources {
     let pixelScale: Double
     let cost: Int
     let documentLayout: DocumentLayoutRecord?
+    let semanticSelection: ProgramSemanticSelection?
     // Publication order is immutable; borrowing an old receipt only changes
     // its eviction access, never which equal-density pixels are current.
     let publication: UInt64
@@ -579,7 +581,7 @@ final class SceneRenderResources {
     guard var entry = entries[id] else { return nil }
     accessClock &+= 1; entry.access = accessClock; entry.retains += 1; entries[id] = entry
     return RasterLease(source: entry.source, pixelScale: entry.pixelScale, image: entry.image,
-      mipmaps: entry.mipmaps, byteCount: entry.cost, entryID: id, resources: self)
+      mipmaps: entry.mipmaps, byteCount: entry.cost, entryID: id, semanticSelection: entry.semanticSelection, resources: self)
   }
 
   func compositionReceipts(for raster: RasterLease) -> [SceneSourceAddress: SceneSourceReceipt]? {
@@ -873,7 +875,7 @@ final class SceneRenderResources {
   /// NPOT images need explicit levels on renderers that ignore trilinear mipmaps.
   /// This keeps the original exact pixels and adds about a third, not POT padding.
   func storeWebSnapshot(_ image: AgentSnapshotImage, for source: SceneRasterSource,
-    reservation: RasterReservation, permitsPublication: @MainActor () -> Bool = { true }) async -> RasterLease? {
+    reservation: RasterReservation, semanticSelection: ProgramSemanticSelection? = nil, permitsPublication: @MainActor () -> Bool = { true }) async -> RasterLease? {
     guard !Task.isCancelled, permitsPublication() else { return nil }
     #if os(iOS)
     guard !reservation.isReleased, reservation.resources === self,
@@ -889,24 +891,24 @@ final class SceneRenderResources {
     }
     guard let levels = try? await CompositionPixels.makeMipmaps(original, sizes: sizes),
       !Task.isCancelled, permitsPublication() else { return nil }
-    return storeAndRetain(image, for: source, reservation: reservation, mipmaps: levels)
+    return storeAndRetain(image, for: source, reservation: reservation, mipmaps: levels, semanticSelection: semanticSelection)
     #else
-    return storeAndRetain(image, for: source, reservation: reservation)
+    return storeAndRetain(image, for: source, reservation: reservation, semanticSelection: semanticSelection)
     #endif
   }
 
   /// An observed live frame must retain the entry just captured. A cache lookup
   /// could select an older higher-density image of the same program/state.
   func storeAndRetain(_ image: AgentSnapshotImage, for source: SceneRasterSource,
-    reservation: RasterReservation, documentLayout: DocumentLayoutRecord? = nil, mipmaps: [CGImage] = []) -> RasterLease? {
-    guard let id = installRaster(image, for: source, reservation: reservation, documentLayout: documentLayout, retaining: true, mipmaps: mipmaps),
+    reservation: RasterReservation, documentLayout: DocumentLayoutRecord? = nil, mipmaps: [CGImage] = [], semanticSelection: ProgramSemanticSelection? = nil) -> RasterLease? {
+    guard let id = installRaster(image, for: source, reservation: reservation, documentLayout: documentLayout, retaining: true, mipmaps: mipmaps, semanticSelection: semanticSelection),
       let entry = entries[id] else { return nil }
     return RasterLease(source: entry.source, pixelScale: entry.pixelScale, image: entry.image,
-      mipmaps: entry.mipmaps, byteCount: entry.cost, entryID: id, resources: self)
+      mipmaps: entry.mipmaps, byteCount: entry.cost, entryID: id, semanticSelection: entry.semanticSelection, resources: self)
   }
 
   private func installRaster(_ image: AgentSnapshotImage, for source: SceneRasterSource,
-    reservation: RasterReservation?, documentLayout: DocumentLayoutRecord?, retaining: Bool = false, mipmaps: [CGImage] = []) -> UUID? {
+    reservation: RasterReservation?, documentLayout: DocumentLayoutRecord?, retaining: Bool = false, mipmaps: [CGImage] = [], semanticSelection: ProgramSemanticSelection? = nil) -> UUID? {
     guard let raster = Self.rasterDescription(image, source: source, mipmaps: mipmaps) else { return nil }
     let previous = rasterAdmission
     if let reservation {
@@ -934,7 +936,7 @@ final class SceneRenderResources {
     accessClock &+= 1
     let id = UUID()
     entries[id] = RasterEntry(source: source, image: image, mipmaps: mipmaps, pixelScale: raster.scale,
-      cost: raster.cost, documentLayout: documentLayout, publication: accessClock, access: accessClock, retains: retaining ? 1 : 0)
+      cost: raster.cost, documentLayout: documentLayout, semanticSelection: semanticSelection, publication: accessClock, access: accessClock, retains: retaining ? 1 : 0)
     rasterOwners[source.owner, default: []].append(id)
     residentBytes += raster.cost; rasterCount = entries.count
     scheduleAdmissionNotification(previous)
@@ -1297,7 +1299,7 @@ final class SceneRenderResources {
   /// it prepared. A large composition can release each source after painting it.
   func prepareRaster(_ element: AgentElement, requestedScale: Double = 2, region: PageRect? = nil,
     executionSource: InteractiveElementReference? = nil,
-    captureRequest: SceneRasterCaptureRequest? = nil,
+    captureRequest: SceneRasterCaptureRequest? = nil, programStore: NotebookStore? = nil,
     permitsPreparation: @MainActor () -> Bool = { true }) async throws -> RasterLease {
     try Task.checkCancellation()
     let policy = captureRequest?.policy ?? region.map { AgentSnapshotPolicy.region($0, scale: requestedScale) }
@@ -1307,7 +1309,7 @@ final class SceneRenderResources {
       permitsPreparation: permitsPreparation)
     defer { preparation.close() }
     return try await preparation.prepare(element, requestedScale: requestedScale, region: region,
-      captureRequest: captureRequest, permitsPreparation: permitsPreparation)
+      captureRequest: captureRequest, programStore: programStore, permitsPreparation: permitsPreparation)
   }
 
 }

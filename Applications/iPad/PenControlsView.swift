@@ -16,6 +16,7 @@ struct PenControlsView: View {
     let index = panel == .color ? count-1 : displayedTools.firstIndex(of:model.drawingTool) ?? 0
     return .init(x:(Double(index)+0.5)/Double(count),y:1)
   }
+  var embedded = false
 
   var body: some View {
     HStack(spacing:0) {
@@ -41,7 +42,8 @@ struct PenControlsView: View {
       .accessibilityLabel("Основной цвет").accessibilityValue(model.drawingColor.name)
       .accessibilityIdentifier("drawing-primary-color")
     }
-    .notebookBar()
+    .font(NotebookChrome.iconFont).buttonStyle(.plain)
+    .background { if !embedded { NotebookSurface(radius: NotebookChrome.barHeight / 2).padding(.vertical, 2) } }
     .anchorPreference(key:NotebookToolPanelPreference.self,value:.bounds) { toolbar in
       panel == nil ? nil : .init(toolbar:toolbar,anchor:settingsAnchor,
         content:AnyView(settings.environment(model)),dismiss:{ panel = nil })

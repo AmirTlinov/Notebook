@@ -66,6 +66,7 @@ export interface AgentElement {
   html: string;
   css: string;
   javaScript: string;
+  programPackage?: string;
   state: JSONValue;
 }
 
@@ -98,7 +99,7 @@ export interface WorkspaceProjection {
   stamp: VersionStamp;
 }
 
-export type DocumentBlockKind = "markdown" | "latex" | "interactive";
+export type DocumentBlockKind = "markdown" | "latex" | "tex" | "interactive";
 export type DocumentPaperSize = "a4" | "letter";
 
 export interface DocumentBlock {
@@ -108,6 +109,7 @@ export interface DocumentBlock {
   html: string;
   css: string;
   javaScript: string;
+  programPackage?: string;
   initialState: JSONValue;
   height: number;
 }
@@ -179,6 +181,7 @@ export interface SpatialElement {
   html: string;
   css: string;
   javaScript: string;
+  programPackage?: string;
   state: JSONValue;
   textStyle: NativeTextStyle;
   stamp: VersionStamp;

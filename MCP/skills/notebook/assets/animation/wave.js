@@ -52,6 +52,12 @@
     $(key).addEventListener('change', save);
   }
   $('speed').addEventListener('change', event => { state.speed = Number(event.target.value); previous = null; draw(); save(); });
+  notebook.lifecycle({
+    pause: () => { stop(); draw(); },
+    checkpoint: () => ({...state}),
+    resume: () => { draw(); },
+    dispose: stop
+  });
   addEventListener('notebookstate', restore);
   document.addEventListener('visibilitychange', () => { if (document.hidden) { stop(); draw(); } });
   notebook.ready(Promise.resolve().then(restore));

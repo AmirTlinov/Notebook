@@ -72,6 +72,48 @@ struct DocumentSourceReplicationTests {
     return counter.steps
   }
 
+  @Test func fullTeXHasOneNewManifestBoundaryAndSurvivesColdDelivery() throws {
+    try fixture { a, b, actor, id in
+      var source = try a.loadDocument(id)
+      let inserted = source.replaceContent(blocks: source.blocks + [.init(id: "tex-source", kind: .tex, source: "\\section{Exact}\nA macro source.")], actor: actor)
+      #expect(inserted)
+      let before = try a.currentChangeCursor()
+      try a.saveMergedDocument(source)
+      let change = try #require(a.changeJournal(after: before).first)
+      let bytes = try a.readBlobChunk(hash: change.manifestHash, offset: 0, maxBytes: change.byteCount)
+      let original = try JSONDecoder().decode(JSONValue.self, from: bytes)
+      #expect(original["format"] == .number(17))
+      #expect(NotebookTransportLimits.protocolVersion == 35)
+      let oldBytes = try NotebookStore.storageEncoder.encode(original.setting("format", .number(10)))
+      let hash = NotebookProgramPackage.hash(oldBytes)
+      try a.stageBlob(data: oldBytes, expectedHash: hash)
+      let old = NotebookDurableChange(sequence: change.sequence, transactionID: change.transactionID, manifestHash: hash, byteCount: oldBytes.count)
+      try stage(old, a, b)
+      let cursor = try b.peerCursor(peerID: actor, direction: .incoming)
+      #expect(throws: NotebookStorageError.self) { try b.applyRemoteChange(old, peerID: actor) }
+      #expect(try b.peerCursor(peerID: actor, direction: .incoming) == cursor)
+      try deliver(change, a, b, actor)
+      let cold = NotebookStore(root: b.root)
+      #expect(try cold.loadDocument(id).blocks.first { $0.id == "tex-source" } == source.blocks.last)
+    }
+  }
+
+  @Test(arguments: [15, 16])
+  func queuedPreIntegrationManifestsStillDeliverSource(format: Int) throws {
+    try fixture { a, b, actor, id in
+      let change = try changedSource(a, id, actor: actor, source: "<button>Queued</button>")
+      let bytes = try a.readBlobChunk(hash: change.manifestHash, offset: 0, maxBytes: change.byteCount)
+      let manifest = try JSONDecoder().decode(JSONValue.self, from: bytes)
+      let queuedBytes = try NotebookStore.storageEncoder.encode(manifest.setting("format", .number(Double(format))))
+      let hash = NotebookProgramPackage.hash(queuedBytes)
+      try a.stageBlob(data: queuedBytes, expectedHash: hash)
+      let queued = NotebookDurableChange(sequence: change.sequence, transactionID: change.transactionID,
+        manifestHash: hash, byteCount: queuedBytes.count)
+      try deliver(queued, a, b, actor)
+      #expect(try NotebookStore(root: b.root).loadDocument(id).blocks.first { $0.id == selected }?.html == "<button>Queued</button>")
+    }
+  }
+
   @Test func oneProgramDoesNotDecodeRetiredFieldsOrAnotherProgram() throws {
     try fixture { a, b, actor, id in
       let file = documentFile(id), root = file + "#", historyActor = UUID()
@@ -330,6 +372,9 @@ struct DocumentSourceReplicationTests {
         let bytes = try NotebookStore.storageEncoder.encode(manifest)
         return NotebookDurableChange(sequence: 3, transactionID: manifest.transactionID,
           manifestHash: try b.currentSQL!.putBlob(bytes), byteCount: bytes.count)
+      }
+      #expect(throws: NotebookStorageError.limitExceeded("document_replication_block")) {
+        try b.missingBlobHashes(for: packet)
       }
       #expect(throws: NotebookStorageError.limitExceeded("document_replication_block")) {
         try b.applyRemoteChange(packet, peerID: peer)

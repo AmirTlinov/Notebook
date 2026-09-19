@@ -128,7 +128,7 @@ final class DocumentPresentationWaitTests: XCTestCase {
 
   private func makeRenderer() -> (DocumentWebCoordinator, DocumentDocument) {
     let renderer = DocumentWebCoordinator(resources: SceneRenderResources(), onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# Ready from a native receipt")])
     update(renderer, document: document)
     return (renderer, document)
@@ -137,7 +137,7 @@ final class DocumentPresentationWaitTests: XCTestCase {
   private func update(_ renderer: DocumentWebCoordinator, document: DocumentDocument) {
     renderer.update(document: document, state: .init(id: document.id, actor: UUID()),
       selectedPageIndex: 0, capturesSnapshot: false, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
   }
 
   private func subscribed(_ renderer: DocumentWebCoordinator, count: Int = 1) async throws {

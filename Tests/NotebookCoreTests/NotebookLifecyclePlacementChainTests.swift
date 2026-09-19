@@ -118,7 +118,7 @@ struct NotebookLifecyclePlacementChainTests {
       #expect(try receiptHashes(reopened) == rawReceipts,
         "Migration may rebuild disposable proof rows, never rewrite either immutable receipt")
       let schema = try reopened.sqlRead { try $0.rows("PRAGMA user_version").first?[0].integer }
-      #expect(schema == 11)
+      #expect(schema == 12)
       let proofs = try reopened.sqlRead { try $0.rows("SELECT COUNT(*) FROM action_field_restorations WHERE field LIKE 'placement:%'").first?[0].integer ?? 0 }
       #expect(proofs > 0, "Existing v10 receipts must rebuild their authenticated full-placement proof during admission")
     } else { reopened = try f.reopened(freshPeer: mode == "fresh-peer") }

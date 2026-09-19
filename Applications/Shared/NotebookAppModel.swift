@@ -220,6 +220,7 @@ final class NotebookAppModel {
     }
   }
   private(set) var documentEditingSessions: [DocumentEditingSession] = []
+  @ObservationIgnored weak var documentSourceEditor: DocumentSourceEditorSession?
   private(set) var documentReadingPositions: [UUID: DocumentReadingPosition] = [:]
   @ObservationIgnored private var documentReadingLayout: (id: UUID, stamp: VersionStamp, record: DocumentLayoutRecord)?
   @ObservationIgnored private var readingRestoreDocument: UUID?
@@ -951,6 +952,7 @@ final class NotebookAppModel {
   @ObservationIgnored private var scenePresentationOwners: [ObjectIdentifier: WeakScenePresentationOwner] = [:]
   @ObservationIgnored private var documentShellPreparation: DocumentShellPreparation?
   private var preparationIsForeground = true
+  @ObservationIgnored private var programBoundaryTask: Task<Bool, Never>?
   @ObservationIgnored private var shutdownTask: Task<Bool, Never>?
   @ObservationIgnored private var inputSequence: UInt64 = 0
   private(set) var inputIsActive = false
@@ -1341,7 +1343,14 @@ final class NotebookAppModel {
   func refreshDeviceConnection() { accountConnection?.refresh() }
 
   private func startAccountConnection(_ connection: NearbySync) async {
-    guard acceptance == nil else { return }
+    let service: any NotebookAccountService
+    if let acceptance {
+      guard let pair = acceptance.pair else { return }
+      service = NotebookAcceptanceAccountService(configuration: acceptance, pair: pair)
+    } else {
+      guard let cloudSync else { return }
+      service = NotebookAccountCloud(cloud: cloudSync)
+    }
     #if os(iOS)
       let platform = NotebookAccountDirectory.Device.Platform.iPad
     #else
@@ -1355,9 +1364,9 @@ final class NotebookAppModel {
       connectionState = .failed("Не удалось проверить настройки устройств. Локальное сохранение доступно.")
       return
     }
-    guard !isClosing, let cloudSync else { return }
+    guard !isClosing else { return }
     let account = NotebookAccountConnection(
-      device: .init(identity: connection.identity, platform: platform, activation: pairingActivationID), sync: connection, service: NotebookAccountCloud(cloud: cloudSync), initialBoundAccount: bound, spaceName: workspaceName, publishName: publishesWorkspaceName,
+      device: .init(identity: connection.identity, platform: platform, activation: pairingActivationID), sync: connection, service: service, initialBoundAccount: bound, spaceName: workspaceName, publishName: publishesWorkspaceName,
       workspaceDeleted: { [weak self] in self?.workspaceDeleted?() },
       shouldOpenDefault: { [weak self] in
         await self?.mayAutomaticallySwitchWorkspace() ?? false
@@ -2262,7 +2271,10 @@ final class NotebookAppModel {
     // A is still the actual landing when B superseded its request. A may
     // publish that fact, but cannot clear B or restore an obsolete intent.
     if documentPageSelection?.id == landing.requestID {
-      documentPageSelection = nil; documentPageNavigationStatus = nil
+      // Readiness is replayed into a new native callback after a view update.
+      // Publishing nil over nil here would schedule that same update again.
+      if documentPageSelection != nil { documentPageSelection = nil }
+      if documentPageNavigationStatus != nil { documentPageNavigationStatus = nil }
     }
     if presence.documentPageIndex != landing.pageIndex {
       applyPresence(.init(boardID: presence.boardID, mode: presence.mode,
@@ -2270,7 +2282,7 @@ final class NotebookAppModel {
         openProgress: presence.openProgress, documentPageIndex: landing.pageIndex,
         selectedItemID: presence.selectedItemID, notebookPageID: presence.notebookPageID), settled: true)
     }
-    rememberDocumentReading()
+    if presencePhase == .settled { rememberDocumentReading() }
     readingSuppressedDocument = nil
     completeDocumentSavePresentation()
     return true
@@ -2341,7 +2353,7 @@ final class NotebookAppModel {
       guard let owner = presence?.focusedItemID else { return }
       let restored = collaborationActions.first {
         $0.author == .human && $0.undo == nil && $0.action.operations.contains {
-          $0.target == CollaborationTarget(kind: .document, id: owner) && $0.kind == .updateBlock
+          $0.target == CollaborationTarget(kind: .document, id: owner) && [.updateBlock, .setPreamble].contains($0.kind)
         }
       }?.id
       if let command = pencilUndoHistory.lastCommand(for: owner) ?? restored { undoCollaboration(command) }
@@ -2733,6 +2745,7 @@ final class NotebookAppModel {
   @discardableResult
   private func replaceSelection(_ target: NotebookSelectionSession.Target?,
     persistsDeselection: Bool = true) -> UUID {
+    for (_, retained) in pinnedAttentionSelections { retained.resumePrograms() }
     let removesContext = !hasRestoredAgentQuestion || selectionSession.context != nil || selectionSession.isResolvingContext
     hasRestoredAgentQuestion = true
     referenceHighlightTask?.cancel(); referenceHighlightTask = nil
@@ -3418,6 +3431,41 @@ final class NotebookAppModel {
     }
   }
 
+  func programStateBasis(focus: InteractiveElementReference, rendered: AgentElement) -> NotebookProgramStateBasis? {
+    switch focus {
+    case .page(let pageID, let elementID):
+      guard elementID == rendered.id, let page = pages[pageID],
+        page.elements.first(where: { $0.id == elementID }) == rendered else { return nil }
+      return page.programStateBasis(elementID)
+    case .board(let boardID, let elementID):
+      guard elementID == rendered.id, let board = boardHierarchy?.board(boardID),
+        let source = board.elements.first(where: { $0.id == elementID }),
+        AgentProgramSource(agentElementSnapshotSource(source)) == AgentProgramSource(rendered),
+        source.state == rendered.state else { return nil }
+      return board.programStateBasis(elementID)
+    }
+  }
+
+  func checkpointProgramState(focus: InteractiveElementReference, rendered: AgentElement, value: JSONValue, basis: NotebookProgramStateBasis) async throws -> NotebookProgramStateBasis? {
+    guard !isStopped else { return nil }
+    let target: CollaborationTarget
+    switch focus {
+    case .page(let pageID, let elementID):
+      guard elementID == rendered.id, !isPageBeingDeleted(pageID) else { return nil }
+      target = .init(kind: .page, id: pageID)
+    case .board(let boardID, let elementID):
+      guard elementID == rendered.id else { return nil }
+      target = .init(kind: .board, id: boardID)
+    }
+    let actor = actorID
+    collaborationReadEpoch &+= 1; collaborationContentEpoch &+= 1
+    let accepted = try await persistence.submit(publishesChanges: true) { store in
+      try store.checkpointProgramState(target: target, rendered: rendered, state: value, basis: basis, actor: actor)
+    }
+    if accepted != nil { reloadExternalChanges() }
+    return accepted
+  }
+
   @discardableResult
   func commitElementState(pageID: UUID, elementID: String, state: JSONValue) -> Bool {
     guard !isPageBeingDeleted(pageID), var page = pages[pageID] else { return false }
@@ -3474,6 +3522,40 @@ final class NotebookAppModel {
     return true
   }
 
+  func insertDocumentSource(documentID: UUID, kind: DocumentBlockKind) async throws -> DocumentSourceRequest {
+    guard shutdownPhase == .running, !isItemBeingDeleted(documentID) else { throw CancellationError() }
+    let actor = actorID
+    await withCheckedContinuation { continuation in inputGate.performAfterIdle { continuation.resume() } }
+    let inserted = try await persistence.submit(publishesChanges: true) {
+      try $0.insertDocumentSource(documentID: documentID, kind: kind, actor: actor)
+    }
+    pencilUndoHistory.recordCommand(ownerID: documentID, actionID: inserted.receipt.id)
+    if var current = documents[documentID] { _ = current.merge(inserted.document); documents[documentID] = current }
+    else { documents[documentID] = inserted.document }
+    reloadExternalChanges()
+    return .init(documentID: documentID, block: inserted.document.blocks.first { $0.id == inserted.blockID }!,
+      version: inserted.document.sourceVersion(blockID: inserted.blockID), offset: 0)
+  }
+
+  func selectSourceForAgent(documentID: UUID, blockID: String, version: ContentFieldVersion, range: NSRange) {
+    guard let workspace, let hierarchy = boardHierarchy, let ink = spatialInk,
+      let document = documents[documentID], let block = document.blocks.first(where: { $0.id == blockID }),
+      document.sourceVersion(blockID: blockID) == version,
+      range.location >= 0, range.length > 0, NSMaxRange(range) <= block.source.utf16.count else { return }
+    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let selection = NotebookAttentionSelection(fragments: [.init(target: .init(kind: .document, id: documentID),
+      elementID: blockID, region: .init(x: 0, y: 0, width: geometry.width, height: geometry.height),
+      worldOrigin: nil, pageIndex: nil, label: "Исходник · " + blockID)], workspace: workspace, hierarchy: hierarchy,
+      ink: ink, pages: pages, documents: [documentID: document], states: documentStates)
+    let selected = (block.source as NSString).substring(with: range)
+    publishHumanContext(selection, text: "Выделенный исходник (UTF-16: \(range.location)..<\(NSMaxRange(range))):\n" + selected)
+    #if os(iOS)
+    chat?.expanded = true; chat?.browsesChats = false
+    #else
+    showCue("Выделенный исходник добавлен в контекст Codex")
+    #endif
+  }
+
   func saveDocumentDraft(_ draft: DocumentEditingSession) {
     guard !isItemBeingDeleted(draft.edit.documentID) else { return }
     if let previous = documentEditingSessions.first(where: { $0.id == draft.id }),
@@ -3490,7 +3572,7 @@ final class NotebookAppModel {
     enqueueStoreWrite { try $0.discardDocumentDraft(sessionID) }
   }
 
-  func commitDocumentSource(edit: DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status {
+  func commitDocumentSource(edit: DocumentSourceEdit, onCommit: ((DocumentSourceCommitResult) -> Void)? = nil) async throws -> DocumentSourceCommitResult.Status {
     guard shutdownPhase == .running else {
       throw NotebookPersistenceQueue.Failure(message: "Notebook завершает работу; новый исходник не принят.")
     }
@@ -3500,7 +3582,7 @@ final class NotebookAppModel {
     let actor = actorID
     if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
     documentSavePresentation = .init(sessionID: edit.sessionID, documentID: edit.documentID,
-      blockID: edit.blockID, phase: .saving, source: edit.source)
+      blockID: edit.blockID, isPreamble: edit.isPreamble, phase: .saving, source: edit.source)
     documentSaveObserver = DocumentRenderRegistry.shared.observeLive(documentID: edit.documentID) { [weak self] in
       // The native publication can occur during representable update. Its
       // actual attachment is checked again after that update, never polled.
@@ -3528,6 +3610,10 @@ final class NotebookAppModel {
         _ = document.mergeSource(publication)
         documents[document.id] = document
       }
+      if !isStopped, !isItemBeingDeleted(edit.documentID),
+        let publication = result.preamblePublication, var document = documents[edit.documentID] {
+        _ = document.mergeSource(publication); documents[document.id] = document
+      }
       if documentSavePresentation?.sessionID == edit.sessionID {
         documentSavePresentation?.phase = .saved
         completeDocumentSavePresentation()
@@ -3541,6 +3627,7 @@ final class NotebookAppModel {
         selectionStart: current?.selectionStart ?? 0, selectionEnd: current?.selectionEnd ?? 0,
         isComposing: current?.isComposing ?? false, scrollTop: current?.scrollTop, phase: phase))
     }
+    onCommit?(result)
     return result.status
   }
 
@@ -3552,12 +3639,19 @@ final class NotebookAppModel {
   }
 
   private func completeDocumentSavePresentation() {
-    guard let saved = documentSavePresentation, saved.phase == .saved,
+    guard let saved = documentSavePresentation, saved.phase == .saved else { return }
+    if let document = documents[saved.documentID],
+      (saved.isPreamble ? document.preamble : document.blocks.first(where: { $0.id == saved.blockID })?.source) != saved.source {
+      // Undo or a newer author's source superseded this pending presentation.
+      // It can no longer install, so it must not leave an endless save cue.
+      clearDocumentSavePresentation(sessionID: saved.sessionID); return
+    }
+    guard
       let presence, presence.mode == .document, presence.focusedItemID == saved.documentID,
       presence.openProgress >= 0.999, presencePhase == .settled,
       readingRestoreTarget?.id != saved.documentID, readingRestoreDocument != saved.documentID,
       let document = documents[saved.documentID], let state = documentStates[saved.documentID],
-      document.blocks.first(where: { $0.id == saved.blockID })?.source == saved.source,
+      (saved.isPreamble ? document.preamble : document.blocks.first(where: { $0.id == saved.blockID })?.source) == saved.source,
       DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: presence.documentPageIndex, scope: .paper) else { return }
     documentSavePresentation?.phase = .installed
     documentSavePresentation?.source = nil
@@ -3590,26 +3684,45 @@ final class NotebookAppModel {
     return record.valueVersion
   }
 
-  /// A runtime may retire only after its last accepted state crossed the sole
-  /// writer. The optimistic SwiftUI echo is not a persistence acknowledgement.
+  /// Checkpoint admission compares the executor's causal basis before changing
+  /// the model, and again inside the sole writer. A delayed animation cannot
+  /// adopt a newer human state just because SwiftUI has not echoed it yet.
   func checkpointDocumentState(documentID: UUID, blockID: String, value: JSONValue,
-    sourceVersion: ContentFieldVersion) async throws -> Bool {
+    sourceVersion: ContentFieldVersion, stateVersion: ContentFieldVersion?) async throws -> ContentFieldVersion? {
+    guard value.isValid else { throw NotebookStorageError.invalidTransaction("document checkpoint value") }
+    guard !isStopped, !isItemBeingDeleted(documentID) else { return nil }
+    if documents[documentID] == nil || documentStates[documentID] == nil {
+      let actor = actorID
+      let accepted = try await persistence.submit(publishesChanges: true) { store in
+        try store.checkpointDocumentState(documentID: documentID, blockID: blockID, value: value,
+          sourceVersion: sourceVersion, stateVersion: stateVersion, actor: actor)
+      }
+      if accepted != nil { reloadExternalChanges() }
+      return accepted
+    }
     guard !isStopped, !isItemBeingDeleted(documentID),
       let document = documents[documentID], document.sourceVersion(blockID: blockID) == sourceVersion,
-      let block = document.blocks.first(where: { $0.id == blockID }),
-      let journal = documentStates[documentID] else { return false }
-    let record = journal.records.first { $0.id == blockID }
-    let stateVersion = record?.valueVersion
-    guard (record?.value ?? block.initialState) == value else { return false }
+      let block = document.blocks.first(where: { $0.id == blockID && $0.kind == .interactive }),
+      var journal = documentStates[documentID],
+      journal.records.first(where: { $0.id == blockID })?.valueVersion == stateVersion else { return nil }
+    if journal.commit(blockID: blockID, value: value, actor: actorID) {
+      let record = journal.records.first { $0.id == blockID }!
+      let command = NotebookDocumentStateCommand(documentID: documentID, record: record,
+        journalStamp: journal.stamp, expectedSourceVersion: sourceVersion, stateCondition: .matching(stateVersion))
+      documentStates[documentID] = journal
+      persistence.enqueue(owner: .documentState(documentID)) { try $0.commitDocumentState(command) != command.expectedResult }
+    }
+    guard let record = journal.records.first(where: { $0.id == blockID }), record.value == value else {
+      throw NotebookStorageError.invalidTransaction("document checkpoint admission")
+    }
     let stored = try await persistence.submit { try $0.readDocumentBlock(documentID: documentID, blockID: blockID) }
     try Task.checkCancellation()
     guard !isStopped, !isItemBeingDeleted(documentID), let stored,
       stored.block == block, stored.sourceVersion == sourceVersion,
-      stored.stateVersion == stateVersion, (stored.state ?? stored.block.initialState) == value,
+      stored.stateVersion == record.valueVersion, stored.state == value,
       documents[documentID]?.sourceVersion(blockID: blockID) == sourceVersion,
-      documents[documentID]?.blocks.first(where: { $0.id == blockID }) == block,
-      documentStates[documentID]?.records.first(where: { $0.id == blockID }) == record else { return false }
-    return true
+      documentStates[documentID]?.records.first(where: { $0.id == blockID }) == record else { return nil }
+    return record.valueVersion
   }
 
   // A camera contact owns its coordinates, not the old content cursor. The
@@ -3720,6 +3833,8 @@ final class NotebookAppModel {
       } catch { agentStartupError = NotebookCodexSidecar.message(error) }
     }
 
+    @ObservationIgnored private var programImporter: NotebookProgramImporter?
+
     private func startCommandServer() throws {
       guard commandServer == nil, let commandSocketURL else { return }
       let server = NotebookIPCServer(socketURL: commandSocketURL) { [weak self] command in
@@ -3745,6 +3860,13 @@ final class NotebookAppModel {
           return .object(["api_version": .number(2), "value": try await coordinator.context(request)])
         }
         throw CollaborationError("invalid_script_request", "Запрос исполнения или контекста отсутствует.")
+      }
+      if command.command == .importProgram {
+        guard let request = command.programImport, let workspaceID = workspaceHeader?.workspaceID else {
+          throw CollaborationError("invalid_program_package", "Запрос импорта отсутствует.")
+        }
+        if programImporter == nil { programImporter = NotebookProgramImporter(persistence: persistence, workspaceID: workspaceID) }
+        return try await programImporter!.handle(request)
       }
       if command.command == .presentation {
         presentationRelay.send = { [weak self] message, peer in
@@ -3787,7 +3909,10 @@ final class NotebookAppModel {
       }, persistence: { operation in
         try await persistence.submit(publishesChanges: false, operation)
       }, workingDirectory: store.root.appendingPathComponent("derived/script-runtime", isDirectory: true),
-        userServiceName: userService, markupServiceName: markupService)
+        canonicalExport: { [weak self] cut, options, id in
+          guard let self else { throw CancellationError() }
+          return try await DocumentCanonicalExport.publish(cut: cut, options: options, jobID: id, store: self.store, persistence: persistence)
+        }, userServiceName: userService, markupServiceName: markupService)
       scriptCoordinator = coordinator
       return coordinator
     }
@@ -3863,7 +3988,93 @@ final class NotebookAppModel {
     }
   }
 
-  func publishHumanContext(_ selection: NotebookAttentionSelection, target: NotebookSelectionSession.Target = .context) {
+  #if os(iOS)
+  func selectProgramForAttention(_ choice: NotebookAttentionProjection.ProgramChoice) {
+    guard let selected = NotebookAttentionProjection.captureProgram(choice, model: self) else {
+      agentRequestError = "Программа переместилась или ещё не показана. Выберите её снова."
+      return
+    }
+    publishHumanContext(selected)
+  }
+
+  var canFreezeProgramForAttention: Bool {
+    guard let refs = agentQuestion?.references, refs.count == 1, let ref = refs.first,
+      let id = ref.elementID, ref.region != nil else { return false }
+    switch ref.target.kind {
+    case .document: return documents[ref.target.id]?.blocks.first(where: { $0.id == id })?.kind == .interactive
+    case .page: return pages[ref.target.id]?.elements.first(where: { $0.id == id })?.kind == .web
+    case .board, .cover:
+      return boardHierarchy?.board(ref.target.boardID ?? ref.target.id)?.elements.first(where: { $0.id == id })?.kind == .web
+    default: return false
+    }
+  }
+
+  var hasFrozenProgramForAttention: Bool {
+    guard let question = agentQuestion else { return false }
+    return pinnedAttentionSelections.first { $0.0 == question.contextID }?.1.hasFrozenProgram == true
+  }
+
+  /// Explicitly stop one selected model outside the pointing contact. Rebind
+  /// its accepted state, then Send still copies the actual native pixels.
+  func freezeProgramForAttention() async {
+    guard canFreezeProgramForAttention, !selectionSession.isResolvingContext,
+      let reference = agentQuestion?.references.first, let id = reference.elementID, let region = reference.region else { return }
+    let generation = selectionSession.id
+    selectionSession.isResolvingContext = true
+    defer { if selectionSession.id == generation { selectionSession.isResolvingContext = false } }
+    var pause: NotebookProgramAttentionPause?
+    do {
+      let revision = try await persistence.submit(publishesChanges: false) {
+        try $0.referenceRevision(target: reference.target, elementID: id)
+      }
+      guard revision == reference.revision, selectionSession.id == generation else { throw CancellationError() }
+      let acceptsState: (JSONValue) -> Bool
+      switch reference.target.kind {
+      case .document:
+        guard let document = documents[reference.target.id],
+          let block = document.blocks.first(where: { $0.id == id }) else { throw CancellationError() }
+        let sourceVersion = document.sourceVersion(blockID: id)
+        acceptsState = { value in
+          self.documents[document.id]?.sourceVersion(blockID: id) == sourceVersion
+            && self.documents[document.id]?.blocks.first(where: { $0.id == id }) == block
+            && self.documentStates[document.id]?.records.first(where: { $0.id == id })?.value == value
+        }
+        pause = try await DocumentPagePresentationOwner.pauseForAttention(documentID: reference.target.id, blockID: id)
+      case .page:
+        guard let element = pages[reference.target.id]?.elements.first(where: { $0.id == id }) else { throw CancellationError() }
+        acceptsState = { value in self.pages[reference.target.id]?.elements.first(where: { $0.id == id }) == element.updating(state: value) }
+        pause = try await AgentWebCoordinator.pauseForAttention(focus: .page(pageID: reference.target.id, elementID: id), element: element, model: self)
+      case .board, .cover:
+        let board = reference.target.boardID ?? reference.target.id
+        guard let element = boardHierarchy?.board(board)?.elements.first(where: { $0.id == id }) else { throw CancellationError() }
+        acceptsState = { value in
+          guard let current = self.boardHierarchy?.board(board)?.elements.first(where: { $0.id == id }) else { return false }
+          return current.frame == element.frame && current.worldOrigin == element.worldOrigin && current.surface == element.surface
+            && agentElementSnapshotSource(current) == agentElementSnapshotSource(element).updating(state: value)
+        }
+        pause = try await AgentWebCoordinator.pauseForAttention(focus: .board(boardID: board, elementID: id), element: agentElementSnapshotSource(element), model: self)
+      default: throw CancellationError()
+      }
+      await reloadExternalChanges()?.value
+      guard selectionSession.id == generation, let pause, pause.isCurrent(), acceptsState(pause.value),
+        let workspace, let hierarchy = boardHierarchy, let ink = spatialInk else { throw CancellationError() }
+      let fragment = NotebookAttentionSelection.Fragment(target: reference.target, elementID: id, region: region,
+        worldOrigin: reference.worldOrigin, pageIndex: reference.pageIndex, label: reference.label)
+      let visuals = NotebookFrozenVisualSources.capture(fragments: [fragment], hierarchy: hierarchy,
+        pages: pages, documents: documents, states: documentStates,
+        elementErasures: { self.elementErasures(on: $0)[$1] ?? [] }, capturesLivePrograms: true)
+      visuals.attentionPause = pause
+      let selection = NotebookAttentionSelection(fragments: [fragment], workspace: workspace, hierarchy: hierarchy,
+        ink: ink, pages: pages, documents: documents, states: documentStates, visuals: visuals)
+      publishHumanContext(selection)
+    } catch {
+      pause?.release()
+      if selectionSession.id == generation { agentRequestError = "Не удалось связать объект с кадром. Укажите готовую программу снова." }
+    }
+  }
+  #endif
+
+  func publishHumanContext(_ selection: NotebookAttentionSelection, target: NotebookSelectionSession.Target = .context, text: String? = nil) {
     let actor = actorID
     let generation = replaceSelection(target, persistsDeselection: false)
     selectionSession.isResolvingContext = true
@@ -3871,7 +4082,7 @@ final class NotebookAppModel {
       do {
         let sealed = try selection.seal(in: store)
         let context = try store.appendContext(references: sealed.references, author: .human, actor: actor,
-          select: true, sourceWorkspaceID: sealed.workspaceID)
+          text: text, select: true, sourceWorkspaceID: sealed.workspaceID)
         return (context, sealed)
       } catch {
         // A rejected new source must not reopen the previous choice on restart.
@@ -4003,6 +4214,7 @@ final class NotebookAppModel {
       let question = agentQuestion
       let retainedSource = question.flatMap { q in pinnedAttentionSelections.first { $0.0 == q.contextID }?.1 }
       let retained = retainedSource?.freezingSubmissionVisuals()
+      retainedSource?.resumePrograms()
       let capturedPresence = presence, capturedWorkspace = workspaceHeader?.workspaceID
       let capturedFile = chat.files.window.isOpen ? chat.files.document : nil
       return .init(attachments: chat.attachments) { [self] in
@@ -4015,6 +4227,7 @@ final class NotebookAppModel {
             let sources = try question.references.map { reference in
               try AgentPinnedSource.capture(requestID: question.contextID, reference: reference, files: files)
                 .withVisual(visual?.images[reference.id], unavailable: visual?.unavailable[reference.id] ?? "source_pixels_unavailable")
+                .withProgramSemanticSelection(visual?.semanticSelections[reference.id])
             }
             try store.saveAttentionEvidence(sources, contextID: question.contextID)
           }
@@ -4256,7 +4469,13 @@ final class NotebookAppModel {
       }
       guard await finishPendingInteraction(boundary: .acceptedInput, continuing: isCurrent) else { return false }
       guard !Task.isCancelled, !isStopped, isCurrent() else { return false }
-      if !inputGate.isActive { return true }
+      if !inputGate.isActive {
+        guard await checkpointPrograms(resume: true) else {
+          showCue("Не удалось сохранить состояние программы"); return false
+        }
+        if inputGate.isActive { continue }
+        return !Task.isCancelled && !isStopped && isCurrent()
+      }
     }
     return false
   }
@@ -4528,9 +4747,30 @@ final class NotebookAppModel {
     #endif
   }
 
+  private func checkpointPrograms(resume: Bool) async -> Bool {
+    let spatial = Task { @MainActor in await AgentWebCoordinator.checkpointPrograms(ownedBy: self, resume: resume) }
+    let document = Task { @MainActor in await DocumentRenderRegistry.shared.checkpointPrograms(resume: resume) }
+    let spatialSaved = await spatial.value, documentSaved = await document.value
+    return spatialSaved && documentSaved
+  }
+
+  func finishProgramBoundary() async -> Bool { await programBoundaryTask?.value ?? true }
+
   func setPreparationForeground(_ foreground: Bool) {
     guard preparationIsForeground != foreground else { return }
     preparationIsForeground = foreground
+    let prior = programBoundaryTask
+    programBoundaryTask = Task { @MainActor [weak self] in
+      _ = await prior?.value
+      guard let self, !isStopped else { return true }
+      if foreground {
+        await AgentWebCoordinator.resumePrograms(ownedBy: self)
+        await DocumentRenderRegistry.shared.resumePrograms(); return true
+      }
+      let saved = await checkpointPrograms(resume: false)
+      if !saved { showCue("Не удалось сохранить состояние программы") }
+      return saved
+    }
     if !foreground { agentFeedback.stop() }
     if foreground { documentShellPreparation?.allowPreparationAfterForeground() }
     else {
@@ -4761,6 +5001,8 @@ final class NotebookAppModel {
   }
 
   func retryPendingPersistence() {
+    AgentWebCoordinator.retryRetirements(ownedBy: self)
+    DocumentRenderRegistry.shared.retryRetiringPrograms()
     acceptedPageInkFailure = nil
     startAcceptedPageInkPreparation()
     persistence.retry()
@@ -4783,8 +5025,7 @@ final class NotebookAppModel {
       observeNavigation("page_input_finish_end", fields: trace)
       guard !Task.isCancelled, continuing() else { return false }
       if presencePhase == .active, let presence { updatePresence(presence, settled: true) }
-      if let documentID = presence?.focusedItemID, documents[documentID] != nil,
-        !(await DocumentRenderRegistry.shared.finishEditing(documentID: documentID)) { return false }
+      await documentSourceEditor?.checkpoint()
       guard await finishPendingPersistence(boundary: boundary, continuing: continuing) else { return false }
       // The await itself is not a contact boundary: a later Pencil may have
       // started or even lifted while the preceding publication was draining.
@@ -4875,11 +5116,15 @@ final class NotebookAppModel {
         await chat?.stop()
         let agentStopped = true
       #endif
+      #if os(macOS)
+        programImporter?.stop()
+      #endif
+      let programsSaved = await checkpointPrograms(resume: false)
       let inputSaved = await finishPendingInteraction()
       // A failed quit keeps admission closed but leaves the same writer and
       // refresh owner available to the explicit repair/retry action. Terminal
       // teardown would otherwise make publicationFailure impossible to clear.
-      guard agentStopped && inputSaved else { return false }
+      guard agentStopped && inputSaved && programsSaved else { return false }
       if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
       documentSaveObserver = nil
       #if os(iOS)

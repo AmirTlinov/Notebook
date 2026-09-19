@@ -207,18 +207,18 @@ func agentInkEnvelopeCarriesContentAndUndo() throws {
   let f = try AgentInkFixture(); defer { f.clean() }
   let remoteRoot = f.root.appendingPathComponent("peer")
   let remote = NotebookStore(root: remoteRoot)
-  let before = try f.store.collaborationContent()
-  try remote.publishRecords(writes: before.sourceFiles())
+  try remote.prepareEmptyWorkspace(workspaceID: f.store.workspaceHeader().workspaceID)
+  try receiveFixtureChanges(from: f.store, to: remote, peerID: f.human)
 
   let action = try f.action([f.stroke(f.page), f.stroke(f.board)])
   let receipt = try f.store.applyCollaborationAction(action, actor: f.agent)
-  let after = try f.store.collaborationContent()
-  _ = try remote.receiveCollaboration(.init(content: after.publication(since: before), actions: [receipt]))
+  try receiveFixtureChanges(from: f.store, to: remote, peerID: f.human)
   #expect(try remote.loadPage(f.page.id) == f.store.loadPage(f.page.id))
   #expect(try remote.loadSpatialInk() == f.store.loadSpatialInk())
   #expect(try remote.collaborationAction(action.id) == receipt)
   let undo = try f.store.undoCollaborationAction(action.id, actor: f.agent)
-  _ = try remote.receiveCollaboration(.init(content: f.store.collaborationContent().publication(since: after), actions: [undo]))
+  try receiveFixtureChanges(from: f.store, to: remote, peerID: f.human)
+  #expect(try remote.collaborationAction(undo.id) == undo)
   #expect(try PageInkDrawing.decode(remote.loadPage(f.page.id).drawingData).isEmpty)
   #expect(try remote.loadSpatialInk().actions.allSatisfy { !$0.isActive })
 }

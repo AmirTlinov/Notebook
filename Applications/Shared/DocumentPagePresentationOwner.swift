@@ -17,16 +17,13 @@ struct DocumentPagePresentation {
   let pageTurnActive: Bool
   let onRenderReady: PageTurnReadiness
   let onPageLayout: (DocumentPageLayout) -> Void
-  let onSourceChange: (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status
   let onStateChange: (String, JSONValue) -> ContentFieldVersion?
-  let drafts: [DocumentEditingSession]
-  let onDraftChange: (DocumentEditingSession) -> Void
-  let onDraftDiscard: (UUID) -> Void
   let onLinkActivation: (DocumentLinkActivation) -> Void
   let snapshotPixelWidth: Int?
   let onPreparationFailure: (Error) -> Void
-  var onStateCheckpoint: (String, JSONValue, ContentFieldVersion) async throws -> Bool = { _, _, _ in false }
+  var onStateCheckpoint: (String, JSONValue, ContentFieldVersion, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
   var measurements: DocumentPresentationRecorder? = nil
+  var programStore: NotebookStore? = nil
   var paperToken: String { DocumentSnapshotCache.paperToken(sourceRevision: document.contentStamp.revision, pageIndex: pageIndex) }
   var token: String { DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndex) }
   /// A full physical page retains the open document even while UIKit has not
@@ -56,6 +53,7 @@ final class DocumentPagePresentationOwner {
   private struct Key: Hashable { let documentID: UUID; let resources: ObjectIdentifier }
   private final class WeakOwner {
     weak var value: DocumentPagePresentationOwner?
+    var closingValue: DocumentPagePresentationOwner?
     init(_ value: DocumentPagePresentationOwner) { self.value = value }
   }
   @MainActor private final class Entry {
@@ -132,6 +130,7 @@ final class DocumentPagePresentationOwner {
     func cameraDidChange() { owner?.refreshVisiblePrograms() }
     isolated deinit { close() }
   }
+  private var closingPrograms: Task<Void, Never>?
   private var openDocuments = 0
   private var returnDocuments = 0
   func retainOpenDocument() -> OpenDocument { OpenDocument(self) }
@@ -142,6 +141,59 @@ final class DocumentPagePresentationOwner {
     let owner = DocumentPagePresentationOwner(documentID: documentID, resources: resources)
     owners[key] = WeakOwner(owner)
     return owner
+  }
+
+  static func retryRetiringPrograms(resources: SceneRenderResources = .shared) {
+    for entry in Array(owners.values) {
+      if let owner = entry.closingValue, owner.resources === resources { owner.stop() }
+    }
+  }
+
+  static func checkpointPrograms(documentID: UUID? = nil, resources: SceneRenderResources = .shared, resume: Bool) async -> Bool {
+    let current = owners.values.compactMap(\.value).filter {
+      !$0.stopped && $0.resources === resources && (documentID == nil || $0.documentID == documentID)
+    }
+    let tasks = current.map { owner in Task { @MainActor in await owner.programOwner.checkpointAll(resume: resume) } }
+    var accepted = true
+    for task in tasks { if !(await task.value) { accepted = false } }
+    return accepted
+  }
+
+  static func pauseForAttention(documentID: UUID, blockID: String, resources: SceneRenderResources = .shared) async throws -> NotebookProgramAttentionPause {
+    guard let owner = owners[Key(documentID: documentID, resources: ObjectIdentifier(resources))]?.value,
+      let runtime = owner.programOwner.runtimes[blockID], runtime.ready,
+      let web = runtime.webView, SceneSourceVisibility.isVisible(web) else {
+      throw SceneRenderError.snapshotPending("document_attention_owner")
+    }
+    let attentionID = UUID(); runtime.attentionPauseID = attentionID
+    await runtime.blur()
+    let value: JSONValue
+    do {
+      value = try await runtime.checkpoint()
+      let raster = try await runtime.capture(sourceOffset: 0, height: runtime.block.height,
+        pixelWidth: max(1, Int(ceil(runtime.blockWidth * 2))))
+      raster.release()
+      guard owner.programOwner.runtimes[blockID] === runtime, runtime.value == value else { throw CancellationError() }
+      runtime.onChange()
+    } catch {
+      if runtime.attentionPauseID == attentionID { await runtime.resume() }
+      throw error
+    }
+    return .init(value: value, isCurrent: { [weak owner, weak runtime] in
+      guard let runtime else { return false }
+      return owner?.programOwner.runtimes[blockID] === runtime && runtime.value == value
+        && runtime.attentionPauseID == attentionID && runtime.hasFrozenFrame
+    }, resume: { [weak owner, weak runtime] in
+      guard let runtime, owner?.programOwner.runtimes[blockID] === runtime, runtime.value == value,
+        runtime.attentionPauseID == attentionID else { return }
+      await runtime.resume()
+    })
+  }
+
+  static func resumePrograms(resources: SceneRenderResources = .shared) async {
+    for owner in owners.values.compactMap(\.value) where !owner.stopped && owner.resources === resources {
+      await owner.programOwner.resumeAll()
+    }
   }
 
   static func presentationDiagnostic(documentID: UUID, resources: SceneRenderResources) -> String {
@@ -157,21 +209,38 @@ final class DocumentPagePresentationOwner {
     let entries = owner.entries.values.map { entry in
       "\(entry.id):page=\(entry.input.pageIndex),current=\(entry.input.isCurrent),host=\(entry.host.map { String(describing: ObjectIdentifier($0)) } ?? "nil"),window=\(entry.host?.window != nil)"
     }.sorted()
-    return "current=\(String(describing: owner.current?.id)) mounted=\(String(describing: owner.mountedID)) entries=\(entries) paperPage=\(String(describing: owner.paper.payload?.pageIndex)) canonical=\(owner.paper.hasCanonicalPixels) paper=\(path(owner.paper.webView)) paperToken=\(owner.paper.payload?.renderToken ?? "nil") currentToken=\(owner.current?.input.token ?? "nil") work=\(String(describing: owner.workID)) needsWork=\(owner.needsWork) passivePage=\(String(describing: owner.passive?.payload?.pageIndex)) gesture=\(owner.gestureLocked) focused=\(owner.programOwner.hasFocus) terminal=\(owner.terminalFailures.keys.sorted()) pressure=\(owner.failures.keys.sorted())"
+    return "current=\(String(describing: owner.current?.id)) mounted=\(String(describing: owner.mountedID)) entries=\(entries) paperPage=\(String(describing: owner.paper.payload?.pageIndex)) canonical=\(owner.paper.hasCanonicalPixels) paper=\(path(owner.paper.webView)) paperToken=\(owner.paper.payload?.renderToken ?? "nil") currentToken=\(owner.current?.input.token ?? "nil") work=\(String(describing: owner.workID)) needsWork=\(owner.needsWork) passivePage=\(String(describing: owner.passive?.payload?.pageIndex)) passiveStage=\(owner.passiveStage) passiveCanonical=\(owner.passive?.hasCanonicalPixels == true) passiveError=\(String(describing: owner.passive?.acquisitionError)) passiveView=\(path(owner.passive?.webView)) pictures=\(owner.pictures.mapValues { "\($0.raster.image.cgImage?.width ?? 0)x\($0.raster.image.cgImage?.height ?? 0)" }) admission=\(owner.resources.rasterAdmission) pendingReaders=\(owner.source?.pendingPreparationReaderCount ?? 0) gesture=\(owner.gestureLocked) focused=\(owner.programOwner.hasFocus) terminal=\(owner.terminalFailures.keys.sorted()) pressure=\(owner.failures.keys.sorted())"
   }
 
   /// Submission freezes the installed native paper and all clipped program
   /// surfaces together before yielding the main actor. It does not wait for a
   /// neighboring snapshot or ask a program to render a later frame.
   static func capturePresented(documentID: UUID, pageIndex: Int, token: String, region: PageRect,
-    resources: SceneRenderResources = .shared) throws -> NotebookSubmittedPixels? {
+    resources: SceneRenderResources = .shared, blockID: String? = nil) throws -> NotebookSubmittedPixels? {
     guard let owner = owners[Key(documentID: documentID, resources: ObjectIdentifier(resources))]?.value,
       let entry = owner.current, entry.input.pageIndex == pageIndex, entry.input.token == token,
       owner.mountedID == entry.id, let host = entry.host, host.window != nil, !host.hasSnapshot,
       owner.paper.hasCanonicalPixels, !owner.gestureLocked,
       owner.programsReady(on: pageIndex, scope: .region(region)), owner.isInstalled(entry) else { return nil }
+    guard host.window?.windowScene?.activationState == .foregroundActive else { return nil }
+    #if targetEnvironment(simulator)
+      let device = AgentPinnedImage.Presentation.Device.iOSSimulator
+    #else
+      let device = AgentPinnedImage.Presentation.Device.iPad
+    #endif
+    let program: AgentPinnedImage.Presentation.Program?
+    if let blockID, let runtime = owner.programOwner.runtimes[blockID],
+      runtime.attentionPauseID != nil, runtime.hasFrozenFrame,
+      runtime.sourceVersion == entry.input.document.sourceVersion(blockID: blockID),
+      runtime.value == (entry.input.state.value(for: blockID) ?? runtime.block.initialState),
+      let placement = owner.placements(on: entry).first(where: { $0.blockID == blockID }),
+      placement.rect.intersects(CGRect(x: region.x, y: region.y, width: region.width, height: region.height)) {
+      program = .init(blockID: blockID, sourceVersion: runtime.sourceVersion, state: runtime.value)
+    } else { program = nil }
     let pixels = try NotebookSubmittedPixels.capture(view: host,
-      physicalSize: owner.physicalSize(entry.input), region: region, resources: resources)
+      physicalSize: owner.physicalSize(entry.input), region: region, resources: resources,
+      semanticSelection: owner.semanticSelection(on: entry, blockID: blockID, region: region),
+      presentation: .init(device: device, program: program))
     guard owner.current?.id == entry.id, entry.input.token == token, !owner.gestureLocked,
       owner.mountedID == entry.id, owner.isInstalled(entry) else { return nil }
     return pixels
@@ -310,7 +379,7 @@ final class DocumentPagePresentationOwner {
 
   private func makePaper() -> DocumentWebCoordinator {
     let renderer = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .targetMissing }, onStateChange: { _, _ in nil })
+      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
     bindPaper(renderer)
     return renderer
   }
@@ -439,6 +508,7 @@ final class DocumentPagePresentationOwner {
         reason: createsEntry ? "registered" : "current_changed")
     }
     retirePaperAfterDocumentClose()
+    refreshProgramDemand()
     trim(); schedule()
   }
 
@@ -517,10 +587,10 @@ final class DocumentPagePresentationOwner {
     // Program state and its paint receipt belong to each retained runtime;
     // independent state changes never send another frame through the paper.
     let matches = current?.id == id && paper.payload?.pageIndex == input.pageIndex
-      && (paper.payload?.source.matches(input.document) == true || paper.isPresentingEditor)
+      && paper.payload?.source.matches(input.document) == true
     if matches, contacts.isEmpty {
-      paper.updateInteractionCallbacks(onSourceChange: input.onSourceChange, onDraftChange: input.onDraftChange,
-        onDraftDiscard: input.onDraftDiscard, onLinkActivation: input.onLinkActivation)
+      paper.updateInteractionCallbacks(
+         onLinkActivation: input.onLinkActivation)
     }
     paper.updateInputAdmission(in: host,
       isInteractive: matches && input.isVisible && input.isInteractive)
@@ -640,10 +710,8 @@ final class DocumentPagePresentationOwner {
     if paper.payload?.pageIndex != input.pageIndex, !gestureLocked {
       await programOwner.blurFocused()
     }
-    if current != nil, (mountedID != entry.id || paper.payload?.renderToken != input.paperToken || !paper.hasCanonicalPixels),
-      !(paper.isPresentingEditor && mountedID == entry.id && paper.payload?.source.matches(input.document) == true) {
+    if current != nil, (mountedID != entry.id || paper.payload?.renderToken != input.paperToken || !paper.hasCanonicalPixels) {
       guard !inputLocked else { return }
-      if paper.isPresentingEditor, paper.payload?.pageIndex != input.pageIndex { await paper.flushEditingDraft() }
       // Only a deliberate physical navigation changes this paper viewport.
       // Programs live above it, and a state echo never disables their input.
       if mountedID != entry.id, let old = mountedID.flatMap({ entries[$0] }) {
@@ -701,7 +769,7 @@ final class DocumentPagePresentationOwner {
         // same runtime. A replaced/failed renderer cannot keep a departed one.
         paperTransfer = nil
       }
-      try await paper.awaitPresentation(token: input.paperToken, allowsEditor: true)
+      try await paper.awaitPresentation(token: input.paperToken)
     } else if current == nil, source == nil {
       let renderer = passiveRenderer(in: host, input: input)
       configure(renderer, input: input, page: input.pageIndex)
@@ -842,11 +910,12 @@ final class DocumentPagePresentationOwner {
   }
 
   private func configure(_ renderer: DocumentWebCoordinator, input: DocumentPagePresentation, page: Int) {
+    renderer.programStore = input.programStore
     renderer.update(document: input.document, state: input.state, selectedPageIndex: page, capturesSnapshot: false,
       onRenderReady: .init { _ in }, onPageLayout: { [weak self] layout in
         self?.entries.values.forEach { $0.input.onPageLayout(layout) }
-      }, onSourceChange: input.onSourceChange, onStateChange: { _, _ in nil }, drafts: input.drafts,
-      onDraftChange: input.onDraftChange, onDraftDiscard: input.onDraftDiscard,
+      },  onStateChange: { _, _ in nil },
+      paperPreparationPixelWidth: input.snapshotPixelWidth ?? 1024,
       onLinkActivation: input.onLinkActivation,
       preparationRequestID: input.measurements?.preparationRequestID(documentID: documentID, pageIndex: page, token: input.token))
     if source !== renderer.payload?.source {
@@ -886,6 +955,8 @@ final class DocumentPagePresentationOwner {
 
   private func refreshProgramDemand() {
     guard !holdsReturnPaper else { return }
+    let hiddenOpenPaper = current.map { $0.input.retainsOpenDocument && !$0.input.isVisible } == true
+    if hiddenOpenPaper { programOwner.parkForReturn() }
     guard let input = stateOwner?.input ?? entries.values.first?.input, let layout = source?.layout,
       source?.matches(input.document) == true else { return }
     let pages = Set(entries.values.filter(\.requiresPreparation).map { min($0.input.pageIndex, layout.pageCount - 1) })
@@ -898,6 +969,7 @@ final class DocumentPagePresentationOwner {
     programOwner.update(input: input, layout: layout, pages: pages,
       currentPage: current?.input.pageIndex, visibleIDs: visiblePrograms(), preparationPage: preparationDemand?.pageIndex,
       blocked: gestureLocked, contacts: contacts, densities: densities)
+    if !hiddenOpenPaper { programOwner.resumeFromReturn() }
   }
 
   private func installPrograms(on entry: Entry) {
@@ -949,7 +1021,7 @@ final class DocumentPagePresentationOwner {
       }
     DocumentRenderRegistry.shared.publishLive(documentID: documentID, token: installedToken,
       pageIndex: entry.input.pageIndex, hostID: installationID, generation: installationGeneration,
-      feedback: { [weak self] episodes in self?.paper.setAgentFeedback(episodes) }, isAttached: isInstalled)
+      paper: { [weak self] in self?.paper.installedPaper }, isAttached: isInstalled)
     if let measurements = entry.input.measurements, measurements.enabled {
       if NotebookNavigationObservation.enabled {
         observe("document_content_published", entryID: entry.id, page: entry.input.pageIndex,
@@ -982,7 +1054,8 @@ final class DocumentPagePresentationOwner {
         let web = runtime.webView else { return nil }
       return .init(blockID: region.id, webView: web,
         rect: .init(x: region.frame.x, y: region.frame.y, width: region.frame.width, height: region.frame.height),
-        sourceOffset: region.sourceOffset, fullSize: web.bounds.size, allowsInteraction: !programOwner.retiringIDs.contains(region.id))
+        sourceOffset: region.sourceOffset, fullSize: web.bounds.size,
+        allowsInteraction: !programOwner.retiringIDs.contains(region.id) && programOwner.pauseFailures[region.id] == nil)
     }
   }
 
@@ -997,6 +1070,24 @@ final class DocumentPagePresentationOwner {
         rect: .init(x: region.frame.x, y: region.frame.y, width: region.frame.width, height: region.frame.height),
         sourceOffset: region.sourceOffset, fullSize: .init(width: region.frame.width, height: block.height))
     }
+  }
+
+  private func semanticSelection(on entry: Entry, blockID: String?, region: PageRect) -> ProgramSemanticSelection? {
+    guard let blockID else { return nil }
+    if let runtime = programOwner.runtimes[blockID],
+      let selection = runtime.frozenSemanticSelection,
+      let placement = placements(on: entry).first(where: { $0.blockID == blockID }) {
+      return selection.mapped(from: .init(x: placement.rect.minX,
+        y: placement.rect.minY - placement.sourceOffset,
+        width: placement.fullSize.width, height: placement.fullSize.height), into: region)
+    }
+    guard let placement = passivePlacements(on: entry).first(where: { $0.blockID == blockID }),
+      let selection = placement.raster.semanticSelection else { return nil }
+    // Only the installed immutable passive raster can bind author data to Send.
+    // A running WebKit, even with equal source/state, cannot supply this evidence.
+    return selection.mapped(from: .init(x: placement.rect.minX,
+      y: placement.rect.minY - placement.sourceOffset,
+      width: placement.fullSize.width, height: placement.fullSize.height), into: region)
   }
 
   private func isInstalled(_ entry: Entry) -> Bool {
@@ -1226,6 +1317,25 @@ final class DocumentPagePresentationOwner {
     }) { schedule() }
   }
   private func stop() {
+    guard !stopped, closingPrograms == nil else { return }
+    guard !programOwner.runtimes.isEmpty else { finishStop(); return }
+    let key = Key(documentID: documentID, resources: ObjectIdentifier(resources))
+    Self.owners[key]?.closingValue = self
+    closingPrograms = Task { @MainActor [self] in
+      let saved = await programOwner.checkpointAll(resume: false)
+      closingPrograms = nil
+      if entries.isEmpty && openDocuments == 0 {
+        if saved { finishStop() }
+        // Failed persistence retains the same owner and admits explicit retry.
+      } else {
+        await programOwner.resumeAll()
+        Self.owners[key]?.closingValue = nil
+        schedule()
+      }
+    }
+  }
+
+  private func finishStop() {
     observe("document_owner_stop", reason: "document_and_presentations_closed")
     stopped = true; work?.cancel(); work = nil; captureTail?.cancel(); captureTail = nil
     paper?.invalidate(); passive?.invalidate(); programOwner.stop()

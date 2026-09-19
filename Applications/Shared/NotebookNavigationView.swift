@@ -5,8 +5,6 @@ struct NotebookNavigationView: View {
   @Environment(NotebookAppModel.self) private var model
   let presence: SessionPresence
   let documentPageCount: Int?
-  let onBack: () -> Void
-  @State private var showsSearch = false
   @State private var showsPages = false
   @State private var pageWindow = 0
   @State private var savedText: String?
@@ -22,42 +20,9 @@ struct NotebookNavigationView: View {
   private var pageCounterLabel: String {
     presence.mode == .document && documentPageCount == nil ? "Страница \(pageIndex + 1), число страниц уточняется" : "Страница \(pageIndex + 1) из \(pageCount)"
   }
-  private var path: [String] {
-    var names: [String] = [], id: UUID? = presence.boardID, seen: Set<UUID> = []
-    while let current = id, seen.insert(current).inserted {
-      names.insert(model.workspace?.items.first { $0.id == current }?.title ?? "Пространство", at: 0)
-      id = model.boardHierarchy?.ownerBoardID(of: current)
-    }
-    if let item { names.append(item.title) }
-    return names
-  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      HStack(spacing: 0) {
-        if !model.returnPlaces.isEmpty || presence.mode != .board || presence.boardID != model.workspace?.rootBoardID {
-          Button(action: onBack) { Image(systemName: "chevron.left").frame(width: 44, height: 44).contentShape(Rectangle()) }
-            .accessibilityLabel(model.returnPlaces.isEmpty ? "Назад" : "Вернуться к прежнему месту")
-            .accessibilityIdentifier("leave-nested-board")
-        }
-        VStack(alignment: .leading, spacing: 2) {
-          if path.count > 1 { Text(path.dropLast().joined(separator: " › ")).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
-          if let open = model.openWorkspaceLibrary {
-            Button { open(.spaces) } label: {
-              HStack(spacing: 5) {
-                Text(presence.mode == .board && presence.boardID == model.workspace?.rootBoardID
-                  ? model.workspaceName : path.last ?? model.workspaceName).lineLimit(1)
-                Image(systemName: "chevron.down").font(.caption2)
-              }.font(.system(size: 14, weight: .medium))
-            }.buttonStyle(.plain).accessibilityLabel("Пространства").accessibilityIdentifier("workspaces-open")
-          } else { Text(path.last ?? "Пространство").font(.system(size:14,weight:.medium)).lineLimit(1) }
-        }.padding(.leading, 8).frame(maxWidth: 200, alignment: .leading)
-        if let destination = model.pasteDestination { NotebookActionsMenu(destination:destination) }
-        Button { showsSearch = true } label: { Image(systemName: "magnifyingglass").frame(width: 44, height: 44).contentShape(Rectangle()) }
-          .accessibilityLabel("Найти мысль").accessibilityIdentifier("notebook-search")
-          .keyboardShortcut("f", modifiers: .command)
-      }
-      .notebookBar()
       Spacer(minLength: 0)
       if presence.mode == .page || presence.mode == .document {
         if let save = model.documentSavePresentation, save.documentID == presence.focusedItemID,
@@ -114,7 +79,6 @@ struct NotebookNavigationView: View {
           .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 18).padding(.bottom, 18)
       }
     }
-    .sheet(isPresented: $showsSearch) { NotebookSearchView() }
     .sheet(isPresented: Binding(get: { savedText != nil }, set: { if !$0 { savedText = nil } })) {
       NavigationStack {
         ScrollView { Text(savedText ?? "").font(.body.monospaced()).textSelection(.enabled)

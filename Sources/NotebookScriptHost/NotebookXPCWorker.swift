@@ -69,18 +69,6 @@ final class NotebookXPCWorker: NSObject, NotebookScriptBrokerProtocol, @unchecke
   func cancel(_ id: UUID) {
     stop(.init(code: "run_cancelled", message: NotebookStore.scriptCancellationError.message), cancelling: id)
   }
-  func compile(_ request: NotebookCompilerRequest,
-    deadline: ContinuousClock.Instant = .now + .seconds(120)) async -> NotebookWorkerReply {
-    guard let bytes = try? JSONEncoder().encode(request), bytes.count <= 32*1024*1024 else {
-      return .init(code: "resource_limit", message: "Печатный исходник превышает допустимый размер.")
-    }
-    return await exchange(deadline: deadline, timeoutCode: "export_timeout", unavailableCode: "compiler_unavailable") { remote, reply in
-      remote.compile(bytes) { data in
-        guard data.count <= 32*1024*1024 else { reply.finish(.init(code: "resource_limit")); return }
-        reply.finish((try? JSONDecoder().decode(NotebookWorkerReply.self, from: data)) ?? .init(code: "invalid_worker_reply"))
-      }
-    }
-  }
   func compileTypeScript(_ request: NotebookTypeScriptRequest,
     deadline: ContinuousClock.Instant = .now + .seconds(10)) async -> NotebookWorkerReply {
     guard let bytes = try? JSONEncoder().encode(request), bytes.count <= 2*1024*1024 else { return .init(code: "resource_limit") }
@@ -202,18 +190,4 @@ actor NotebookMarkupQueue {
     return try await task.value
   }
 
-  /// Export is a distinct persisted job and connection. Waiting for its PDF
-  /// does not hold the normalization tail or a user script's wall budget.
-  func compile(id: UUID, source: String, assets: [NotebookCompilerAsset] = []) async throws -> NotebookCompilerResult {
-    let worker = NotebookXPCWorker(serviceName: serviceName) { _ in .init(code: "host_unavailable") }
-    defer { worker.invalidate() }
-    let reply = await worker.compile(.init(id: id, source: source, assets: assets))
-    if let code = reply.code { throw CollaborationError(code, reply.message ?? "Экспорт не завершился.") }
-    guard let value = reply.value else { throw CollaborationError("export_failed", "Нет результата компиляции.") }
-    let result = try JSONDecoder().decode(NotebookCompilerResult.self, from: value)
-    guard result.pdf.count <= 16*1024*1024, result.pdf.starts(with: Data("%PDF-".utf8)) else {
-      throw CollaborationError("invalid_artifact", "Компилятор не вернул допустимый PDF.")
-    }
-    return result
-  }
 }

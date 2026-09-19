@@ -88,7 +88,7 @@ final class SceneWebRasterPreparation {
   }
 
   func prepare(_ element: AgentElement, requestedScale: Double, region: PageRect? = nil,
-    captureRequest: SceneRasterCaptureRequest? = nil,
+    captureRequest: SceneRasterCaptureRequest? = nil, programStore: NotebookStore? = nil,
     permitsPreparation: @MainActor () -> Bool) async throws -> RasterLease {
     precondition(job == nil, "A raster executor runs exactly one job at a time")
     guard !isClosed else { throw CancellationError() }
@@ -112,6 +112,7 @@ final class SceneWebRasterPreparation {
           place(element, policy: policy)
           // The coordinator owns the versioned render/capture deadline and its
           // actual ready/error events. There is no second overall stage timer.
+          coordinator.programStore = programStore
           coordinator.loadRasterJob(element, policy: policy, in: web)
         }
       } onCancel: {

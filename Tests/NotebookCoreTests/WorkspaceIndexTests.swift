@@ -314,12 +314,13 @@ func storeDeletesOneCompleteNotebookBundle() throws {
 
   #expect(try store.loadIndex() == index)
   #expect(try store.loadBoard(items: index.items) == board)
-  #expect(try !store.hasStoredValue(at: pageURL))
+  #expect(try store.hasStoredValue(at: pageURL))
+  #expect(throws: CocoaError.self) { try store.loadPage(created.page.id) }
 
   #expect(throws: CocoaError.self) {
     try store.savePage(created.page)
   }
-  #expect(try !store.hasStoredValue(at: pageURL))
+  #expect(try store.hasStoredValue(at: pageURL))
 }
 
 @Test("Удаление выбранной тетради выбирает ближайшую живую тетрадь")

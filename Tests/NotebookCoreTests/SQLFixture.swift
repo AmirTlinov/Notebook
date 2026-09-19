@@ -31,3 +31,24 @@ extension NotebookStore {
     }
   }
 }
+
+/// Use the same addressed admission as devices, including lifecycle inverse
+/// blobs. A value-only CollaborationContent copy cannot transport that proof.
+func receiveFixtureChanges(_ delivery: NotebookReplicationDelivery, from source: NotebookStore, to destination: NotebookStore) throws {
+  while true {
+    let hashes = try destination.missingBlobHashes(for:delivery.change)
+    if hashes.isEmpty { break }
+    for hash in hashes {
+      let size = try source.blobSize(hash:hash)
+      var bytes = Data()
+      while Int64(bytes.count) < size { bytes += try source.readBlobChunk(hash:hash,offset:Int64(bytes.count),maxBytes:1_048_576) }
+      try destination.stageBlob(data:bytes,expectedHash:hash)
+    }
+  }
+  try destination.applyDelivery(delivery)
+}
+func receiveFixtureChanges(from source: NotebookStore, to destination: NotebookStore, peerID: UUID) throws {
+  for change in try source.changeJournal(after:0) {
+    try receiveFixtureChanges(.init(source:.init(deviceID:peerID,generation:peerID),change:change),from:source,to:destination)
+  }
+}

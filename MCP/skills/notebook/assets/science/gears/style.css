@@ -1,0 +1,17 @@
+@import '../common.css';
+html,body{height:100%;overflow:hidden}.gears{height:100%;overflow:auto;overscroll-behavior:contain;padding-top:26px}
+.gears h1{font-size:34px}.gears header{margin-bottom:10px}.gears header p{font-size:17px;line-height:1.5;max-width:690px;color:var(--muted)}
+.gears .model{position:relative;margin:0}.gears canvas{display:block;width:100%;height:370px;touch-action:none;cursor:grab}.gears canvas:active{cursor:grabbing}
+.gears #model-status{position:absolute;bottom:0;left:8px;margin:0;color:var(--muted);font-size:13px;pointer-events:none}
+.gears .controls{gap:16px;align-items:center;margin:18px 0}.gears .controls .control{flex:1;min-width:130px;font-size:15px}.gears button{font-size:15px;white-space:nowrap}
+.gear-roles{display:flex;gap:0;border-top:1px solid #e3e5eb;border-bottom:1px solid #e3e5eb;margin:20px 0 12px}
+.gear-roles button{background:none;flex:1;border:none;border-bottom:3px solid transparent;border-radius:0;text-align:left;white-space:normal;padding:12px 10px;color:var(--muted);font-size:14px}
+.gear-roles button strong{display:block;font-size:27px;font-weight:500;color:var(--ink);line-height:1.4}.gear-roles button span{font-size:17px}
+.gear-roles button[data-part=input]{--role:#b78328}.gear-roles button[data-part=idler]{--role:#5384aa}.gear-roles button[data-part=output]{--role:#bc6446}
+.gear-roles button[aria-pressed=true]{border-bottom-color:var(--role);color:var(--role)}.gears .note{font-size:15px;min-height:42px}
+.gears .field{font-size:15px;white-space:nowrap}.gears .field input{accent-color:#5462bd;width:18px;height:18px;vertical-align:middle}.gears .equation{font-size:20px;margin:16px 0}
+.gears details p{font-size:15px}.gears #model-error{color:#ad3422}.gears output{float:right;color:var(--muted)}
+@media(max-width:540px){.gears{padding:20px 16px}.gears h1{font-size:26px}.gears canvas{height:300px}.gears .controls{flex-wrap:wrap;gap:10px}.gears .controls .control{flex-basis:50%}.gear-roles button{font-size:12px;padding:10px 5px}.gears .equation{font-size:17px}}
+@media(prefers-color-scheme:dark){.gears{--paper:#17191f;--ink:#e5e8ef;--muted:#a9afbd;color-scheme:dark}.gears button:hover{background:#30343e}.gears button{border-color:#565d6b}.gear-roles,.gears details{border-color:#414753}.gears #model-error{color:#ffad9e}}
+
+.gears #poster{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:var(--paper)}.gears #poster[hidden]{display:none}

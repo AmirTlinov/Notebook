@@ -123,19 +123,37 @@ struct NotebookScriptAdmissionTests {
   @Test func publicationReceiptAndExportJobCommitTogetherAcrossRestart() throws {
     let (store, _) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "text", source: "Printed")])
-    try store.saveDocument(document); try store.saveDocumentState(.init(id: document.id, actor: UUID()))
+    let actor = UUID()
+    var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
+    let created = index.createDocument(title: "Export receipt", actor: actor, documentID: document.id)
+    #expect(created != nil)
+    let added = board.addItem(document.id, to: index.rootBoardID, near: .zero, actor: actor); #expect(added)
+    try store.saveDocumentWorkspaceBundle(index: index, document: document,
+      state: .init(id: document.id, actor: actor), board: board)
     let id = UUID()
     try store.saveScriptExportJob(id, value: .object(["status": .string("queued"), "jobID": .string(id.uuidString)]))
-    let publication = NotebookExportPublication(documentID: document.id, expectedRevision: document.contentStamp.revision,
-      source: "trusted source", pdf: Data("%PDF-proof".utf8), log: "", jobID: id)
-    let receipt = try store.publishDocumentExport(publication)
+    let publication = NotebookExportPublication(cut: try .init(document: store.loadDocument(document.id), state: store.loadDocumentState(document.id)),
+      source: "trusted source", artifact: try stageExportFixture(Data("%PDF-proof".utf8), store: store), log: "", jobID: id)
+    let receipt = try store.publishDocumentExport(store.prepareDocumentExport(publication))
     let lost = UUID()
-    try store.saveScriptExportJob(lost, value: .object(["status": .string("queued"), "jobID": .string(lost.uuidString)]))
+    let options: JSONValue = try .encode(NotebookExportOptions(format: .mp4, pixelWidth: 640, blockID: "model", video: .init(start: 0.25, end: 1.25, framesPerSecond: 30)))
+    let cutHash = try publication.cut.sha256
+    try store.saveScriptExportJob(lost, value: .object(["status": .string("queued"), "jobID": .string(lost.uuidString),
+      "cutSHA256": .string(cutHash), "contentRevision": .string(publication.expectedRevision), "stateRevision": .string(publication.cut.state.stamp.revision),
+      "moment": .string("saved"), "options": options]))
     let reopened = NotebookStore(root: store.root)
     try reopened.interruptUnfinishedScriptExports()
     #expect(try reopened.scriptExportJob(id)?["status"] == .string("saved"))
-    #expect(try reopened.scriptExportJob(id)?["receipt"]?["pdfSHA256"] == .string(receipt.pdfSHA256))
-    #expect(try reopened.scriptExportJob(lost)?["status"] == .string("interrupted"))
+    #expect(try reopened.scriptExportJob(id)?["receipt"]?["artifact"]?["sha256"] == .string(receipt.artifact.sha256))
+    let interrupted = try reopened.scriptExportJob(lost)
+    #expect(interrupted?["status"] == .string("interrupted"))
+    #expect(interrupted?["cutSHA256"] == .string(cutHash))
+    #expect(interrupted?["contentRevision"] == .string(publication.expectedRevision))
+    #expect(interrupted?["stateRevision"] == .string(publication.cut.state.stamp.revision))
+    #expect(interrupted?["moment"] == .string("saved"))
+    #expect(interrupted?["options"] == options)
+    try reopened.interruptUnfinishedScriptExports()
+    #expect(try reopened.scriptExportJob(lost) == interrupted)
   }
 
   @Test func emittedPixelsSurvivePreviewReplacementAndResumePagesHaveFourImages() throws {

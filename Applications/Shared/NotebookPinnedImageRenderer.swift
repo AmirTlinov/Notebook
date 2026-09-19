@@ -6,6 +6,7 @@ import SwiftUI
 struct NotebookPinnedImages: Sendable {
   let images: [UUID: AgentPinnedImage]
   let unavailable: [UUID: String]
+  let semanticSelections: [UUID: ProgramSemanticSelection]
 }
 
 /// A completed contact may retain ready pixels, but it never starts a program
@@ -15,6 +16,8 @@ struct NotebookPinnedImages: Sendable {
 final class NotebookFrozenVisualSources {
   private typealias Capture = @MainActor () throws -> RasterLease?
   private typealias RegionalCapture = @MainActor () throws -> NotebookSubmittedPixels?
+  var attentionPause: NotebookProgramAttentionPause?
+  func resumePrograms() { attentionPause?.release(); attentionPause = nil }
   private var rasters: [UUID: [String: RasterLease]]
   private let liveCaptures: [UUID: [String: Capture]]
   private let regionalCaptures: [UUID: RegionalCapture]
@@ -106,7 +109,7 @@ final class NotebookFrozenVisualSources {
           let token = DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndex)
           regionalCaptures[fragment.id] = {
             try DocumentPagePresentationOwner.capturePresented(documentID: document.id, pageIndex: pageIndex,
-              token: token, region: fragment.region, resources: resources)
+              token: token, region: fragment.region, resources: resources, blockID: fragment.elementID)
           }
         }
         #endif
@@ -127,12 +130,12 @@ final class NotebookFrozenVisualSources {
         guard let id = fragment.elementID, let boardID,
           let element = hierarchy.board(boardID)?.elements.first(where: { $0.id == id }),
           element.kind != .nativeText && element.kind != .graphic else { continue }
-        if let installedSources {
+        do {
           let plane: SceneCompositionPlane = fragment.target.kind == .cover
             ? .cover(boardID: boardID, itemID: fragment.target.id) : .board(boardID)
           #if os(iOS)
           if capturesLivePrograms, element.kind == .web,
-            liveSourceAddresses.contains(.init(plane: plane, elementID: id)), admits(fragment.id, id) {
+            (installedSources == nil || liveSourceAddresses.contains(.init(plane: plane, elementID: id))), admits(fragment.id, id) {
             let focus = InteractiveElementReference.board(boardID: boardID, elementID: id)
             let source = agentElementSnapshotSource(element)
             let delta = (fragment.worldOrigin ?? .zero).delta(to: element.worldOrigin ?? .zero)
@@ -145,6 +148,10 @@ final class NotebookFrozenVisualSources {
             }
           }
           #endif
+        }
+        if let installedSources {
+          let plane: SceneCompositionPlane = fragment.target.kind == .cover
+            ? .cover(boardID: boardID, itemID: fragment.target.id) : .board(boardID)
           guard admits(fragment.id, id), let installed = installedSources[.init(plane: plane, elementID: id)],
             let actual = installed.source.agentElement,
             SceneRasterSource.agent(actual) == .agent(agentElementSnapshotSource(element)),
@@ -157,6 +164,24 @@ final class NotebookFrozenVisualSources {
       }
     }
     return .init(rasters: rasters, liveCaptures: captures, regionalCaptures: regionalCaptures,graphicLayouts:graphics,elementMasks:masks)
+  }
+
+  func semanticSelection(reference: CollaborationReference, spatialElement: SpatialElement?) -> ProgramSemanticSelection? {
+    if let submitted = submittedRegions[reference.id] { return submitted.semanticSelection }
+    guard let id = reference.elementID, let raster = rasters[reference.id]?[id],
+      !raster.isReleased, failures[reference.id]?[id] == nil,
+      let selection = raster.semanticSelection, let element = raster.source.agentElement,
+      let region = reference.region else { return nil }
+    if [.board, .cover].contains(reference.target.kind) {
+      guard let spatialElement, spatialElement.id == id else { return nil }
+      let delta = (reference.worldOrigin ?? .zero).delta(to: spatialElement.worldOrigin ?? .zero)
+      let frame = PageRect(x: spatialElement.frame.x + delta.x, y: spatialElement.frame.y + delta.y,
+        width: spatialElement.frame.width, height: spatialElement.frame.height)
+      let crop = raster.source.captureRegion ?? .init(x: 0, y: 0, width: frame.width, height: frame.height)
+      return selection.mapped(from: .init(x: frame.x + crop.x, y: frame.y + crop.y, width: crop.width, height: crop.height), into: region)
+    }
+    let crop = raster.source.captureRegion ?? .init(x: 0, y: 0, width: element.frame.width, height: element.frame.height)
+    return selection.mapped(from: .init(x: element.frame.x + crop.x, y: element.frame.y + crop.y, width: crop.width, height: crop.height), into: region)
   }
 
   func erasures(referenceID: UUID) -> [InkElementErasure] { elementMasks[referenceID] ?? [] }
@@ -211,6 +236,7 @@ enum NotebookPinnedImageRenderer {
       throw SceneRenderError.resourceLimit
     }
     let png: Data
+    var presentation: AgentPinnedImage.Presentation?
     switch reference.target.kind {
     case .page:
       guard let page, page.id == reference.target.id, reference.worldOrigin == nil else {
@@ -231,7 +257,7 @@ enum NotebookPinnedImageRenderer {
         region.y + region.height <= geometry.height else { throw SceneRenderError.snapshotPending("document_region") }
       if let submitted = try visuals.submittedRegion(referenceID: reference.id) {
         guard submitted.region == region else { throw SceneRenderError.snapshotPending("historical_region_unavailable") }
-        png = try await submitted.png()
+        png = try await submitted.png(); presentation = submitted.presentation
         break
       }
       let source = SceneRasterSource.document(id: document.id,
@@ -244,7 +270,7 @@ enum NotebookPinnedImageRenderer {
     case .board, .cover:
       if let submitted = try visuals?.submittedRegion(referenceID: reference.id) {
         guard submitted.region == region else { throw SceneRenderError.snapshotPending("historical_region_unavailable") }
-        png = try await submitted.png()
+        png = try await submitted.png(); presentation = submitted.presentation
         break
       }
       guard let element, element.id == reference.elementID,
@@ -290,7 +316,7 @@ enum NotebookPinnedImageRenderer {
     let hash = SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined()
     let result = try AgentPinnedImage(referenceID: reference.id, sourceRevision: reference.revision,
       region: region, worldOrigin: reference.worldOrigin, pageIndex: reference.pageIndex,
-      pixelWidth: Int(width), pixelHeight: Int(height), pixelsPerPoint: scale, png: png, sha256: hash)
+      pixelWidth: Int(width), pixelHeight: Int(height), pixelsPerPoint: scale, png: png, sha256: hash, presentation: presentation)
     try result.validate(reference: reference)
     return result
   }

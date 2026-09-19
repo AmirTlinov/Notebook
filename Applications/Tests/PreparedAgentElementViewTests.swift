@@ -29,6 +29,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
         const input=document.getElementById('text');
         addEventListener('notebookstate',()=>{if(input.value!==notebook.state)input.value=notebook.state});
         window.enter=value=>{input.value=value;notebook.commit(value)};
+        notebook.ready(Promise.resolve());
         """, state: .string(""))
     coordinator.load(original, policy: .exact(scale: 1), in: web)
     try await waitUntil("The real program is installed") { ready }
@@ -46,11 +47,11 @@ final class PreparedAgentElementViewTests: XCTestCase {
     XCTAssertEqual(selection, "text:2:5", "A local echo must not rewrite a focused field")
 
     _ = try await web.evaluateJavaScript("""
-      window.actualApply=window.notebookApplyState;
-      window.notebookApplyState=async(value,revision)=>{
+      window.actualProgram=window.notebookProgram;
+      window.notebookProgram={...window.actualProgram,apply:async(value,revision)=>{
         await new Promise(resolve=>window.releaseApply=resolve);
-        return window.actualApply(value,revision);
-      };true;
+        return window.actualProgram.apply(value,revision);
+      }};true;
       """)
     let obsolete = echoed.updating(state: .string("obsolete native application"))
     coordinator.load(obsolete, in: web)
@@ -69,7 +70,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let current = original.updating(state: .string("accepted newest"))
     coordinator.load(current, in: web)
     try await waitUntil("The latest accepted value is installed without replay") { ready && coordinator.hasLiveSource(current) }
-    _ = try await web.evaluateJavaScript("window.notebookApplyState=window.actualApply;true")
+    _ = try await web.evaluateJavaScript("window.notebookProgram=window.actualProgram;true")
     let remote = current.updating(state: .string("new independent state"))
     coordinator.load(remote, in: web)
     try await waitUntil("A genuinely later external state still applies") { ready && coordinator.hasLiveSource(remote) }
@@ -215,7 +216,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
         frame: .init(x: 0, y: 0, width: 160, height: 120), worldOrigin: .zero,
         source: "Capture debt survives a native consumer remount",
         html: "<svg width='160' height='120'><rect x='20' y='20' width='120' height='80' fill='red'/></svg>",
-        javaScript: "const paint=()=>document.querySelector('rect').setAttribute('fill',notebook.state===1?'blue':'red');paint();window.addEventListener('notebookstate',paint);",
+        javaScript: "const paint=()=>document.querySelector('rect').setAttribute('fill',notebook.state===1?'blue':'red');paint();window.addEventListener('notebookstate',paint);notebook.ready(Promise.resolve());",
         state: state, stamp: .init(counter: 0, actor: model.actorID))
       XCTAssertTrue(after.upsertElement(value, in: boardID,
         expected: before.board(boardID)?.elements.first(where: { $0.id == id })?.stamp, actor: model.actorID))
@@ -389,14 +390,16 @@ final class PreparedAgentElementViewTests: XCTestCase {
     defer { original.release() }
     XCTAssertEqual(original.source.agentElement, healthy)
     let rejected = try await saveProgram(rejects: true)
-    try await waitUntil("The actual public readiness Promise rejects and its hidden WK retires") {
-      resources.diagnostics(for: [rejected]).contains { $0.kind == "render_error" }
+    try await waitUntil("The actual public readiness Promise rejects and its hidden WK retires", diagnostic: {
+      "diagnostics=\(resources.diagnostics(for: [rejected])), active=\(resources.webActivity(for: activityReference)), mounted=\(self.webViews(in: window).count), basis=\(String(describing: model.programStateBasis(focus: activityReference, rendered: rejected)))"
+    }) {
+      resources.diagnostics(for: [rejected]).contains { $0.kind == "program_ready_error" }
         && self.webViews(in: window).isEmpty && resources.webActivity(for: activityReference).activeLeaseCount == 0
     }
     try await waitUntil("The composition owner publishes the exact source's terminal failure instead of pending forever") {
       guard let receipt = model.compositionTiles.published?.sourceReceipts[address],
         receipt.demand.source == rejected else { return false }
-      if case .failed(let diagnostic) = receipt.status { return diagnostic.contains("render_error") }
+      if case .failed(let diagnostic) = receipt.status { return diagnostic.contains("program_ready_error") }
       return false
     }
     XCTAssertFalse(model.compositionTiles.published?.sourceReceipts[address]?.hasCurrentPixels == true)
@@ -568,11 +571,12 @@ final class PreparedAgentElementViewTests: XCTestCase {
         source: "State application can fail after the program is live",
         html: "<button id='control'>Working control</button><svg width='160' height='80'><rect width='160' height='80' fill='red'/></svg>",
         javaScript: """
-          const apply = window.notebookApplyState;
-          window.notebookApplyState = (value, revision) => {
+          const original = window.notebookProgram;
+          window.notebookProgram = {...original, apply: (value, revision) => {
             if (value.fail) throw new Error('Native state application failed after readiness');
-            return apply(value, revision);
-          };
+            return original.apply(value, revision);
+          }};
+          notebook.ready(Promise.resolve());
           """, state: .object(["fail": .bool(fails)]), stamp: .init(counter: 0, actor: model.actorID))
       XCTAssertTrue(after.upsertElement(value, in: boardID,
         expected: before.board(boardID)?.elements.first(where: { $0.id == id })?.stamp, actor: model.actorID))
@@ -595,7 +599,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let original = try XCTUnwrap(model.compositionTiles.published?.sourceRasters[address]?.retainedCopy())
     defer { original.release() }
     let failed = try await saveState(fails: true)
-    let beforeFailureDOM = try? await web.evaluateJavaScript("JSON.stringify({state:window.notebook.state,apply:String(window.notebookApplyState)})")
+    let beforeFailureDOM = try? await web.evaluateJavaScript("JSON.stringify({state:window.notebook.state,apply:String(window.notebookProgram.apply)})")
     try await waitUntil("The real JS state application fails in the previously ready runtime and retires it", diagnostic: {
       let current = self.webViews(in: window).first?.navigationDelegate as? AgentWebCoordinator
       return "before=\(navigation), current=\(String(describing: current?.loadToken)), old-live-healthy=\(coordinator?.hasLiveSource(healthy) == true), old-live-failed=\(coordinator?.hasLiveSource(failed) == true), new-live-failed=\(current?.hasLiveSource(failed) == true), "
@@ -881,7 +885,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
         source: "Program \(index)", html: """
           <button id="control" onclick="window.notebook.commit({click:++window.clicks})">Ready control \(index)</button>
           <textarea aria-label="Editor \(index)"></textarea>
-          <script>window.clicks=0; window.runtimeIdentity=crypto.randomUUID();</script>
+          <script>window.clicks=0; window.runtimeIdentity=String(Math.random());notebook.ready(Promise.resolve());</script>
           """)
     }
     let viewport = PageProgramViewport()
@@ -935,7 +939,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
       html: """
         <button id="control" onclick="window.notebook.commit({click:1})">Inline control</button>
         <textarea aria-label="Inline editor" oninput="window.notebook.commit({text:this.value})"></textarea>
-        <script>window.inlineContext = 42;</script>
+        <script>window.inlineContext = 42;notebook.ready(Promise.resolve());</script>
         """, javaScript: "")
     let focus = InteractiveElementReference.board(boardID: UUID(), elementID: source.id)
     var ready = false, values: [JSONValue] = []
@@ -1106,8 +1110,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
       return value
     }
     func content(current: Bool = true, input: Bool) -> AnyView {
-      AnyView(PageSurface(page: page, isCurrent: current, isInteractive: input,
-        isVisible: true, onRenderReady: .init { _ in }).environment(model))
+      AnyView(LivePageFixture(pageID: page.id, current: current, input: input).environment(model))
     }
     let host = try SurfaceHost(content: content(input: true))
     defer { host.close() }
@@ -1131,6 +1134,126 @@ final class PreparedAgentElementViewTests: XCTestCase {
     try await waitUntil("A neighboring page releases its runtime and keeps only prepared pixels") {
       self.webViews(in: host.controller.view).isEmpty
     }
+  }
+
+  @MainActor
+  func testBackgroundCheckpointsIndependentProgramsWithoutRestartingFailedHiddenModels() async throws {
+    let model = makeModel()
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let sources = ["hung-a", "healthy", "hung-b"].map { id in
+      AgentElement(id: id, kind: .web, frame: .init(x: 0, y: 0, width: 200, height: 100),
+        source: id, html: "<output>7</output>", javaScript: """
+          window.resumes=0;
+          notebook.lifecycle({pause:()=>{},checkpoint:()=>\(id == "healthy" ? "({phase:7})" : "new Promise(()=>{})"),
+            resume:()=>{window.resumes++}});
+          notebook.ready(Promise.resolve());
+          """, state: .object(["phase": .number(0)]))
+    }
+    var page = try XCTUnwrap(model.activePage)
+    page.replaceElements(sources, actor: model.actorID)
+    try model.store.savePage(page); await model.reloadExternalChanges()?.value
+    let resources = SceneRenderResources(maximumWebSurfaces: 4)
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let host = UIViewController(); window.rootViewController = host; window.makeKeyAndVisible()
+    var surfaces: [(AgentWebCoordinator, WKWebView, WebSurfaceLease)] = []
+    defer {
+      for (owner, web, lease) in surfaces { owner.invalidate(); lease.release(); web.removeFromSuperview() }
+      window.isHidden = true; window.rootViewController = nil
+    }
+    for (index, source) in sources.enumerated() {
+      let lease = try await resources.acquireWebSurface(priority: .liveProgram)
+      let owner = AgentWebCoordinator(lease: lease, resources: resources, onRenderReady: { _ in }, onState: { _ in true })
+      owner.programOwner = model
+      let web = AgentWebCoordinator.makeWebView(coordinator: owner)
+      host.view.addSubview(web); web.frame = .init(x: 30, y: 100 + index * 130, width: 200, height: 100)
+      surfaces.append((owner, web, lease))
+      owner.bindPresentation(to: .page(pageID: page.id, elementID: source.id))
+      owner.load(source, basis: page.programStateBasis(source.id), in: web)
+    }
+    try await waitUntil("All three actual programs are ready") {
+      zip(surfaces, sources).allSatisfy { $0.0.0.hasLiveSource($0.1) }
+    }
+    let started = ContinuousClock.now
+    let boundary = Task { @MainActor in await AgentWebCoordinator.checkpointPrograms(ownedBy: model, resume: false) }
+    try await Task.sleep(for: .milliseconds(700))
+    XCTAssertEqual(try model.store.loadPage(page.id).elements.first { $0.id == "healthy" }?.state,
+      .object(["phase": .number(7)]), "A healthy model is written without waiting for a hung neighbour")
+    let saved = await boundary.value
+    XCTAssertFalse(saved, "Hung authors cannot be certified as saved")
+    XCTAssertLessThan(started.duration(to: .now), .seconds(7), "Two independent deadlines do not add together")
+    for (_, web, _) in surfaces {
+      let resumes = try await web.evaluateJavaScript("window.resumes") as? Int
+      XCTAssertEqual(resumes, 0, "A failed hidden checkpoint cannot restart its model")
+    }
+  }
+
+  @MainActor
+  func testRetiringPageProgramWritesItsFrozenModelAndRestoresThatMoment() async throws {
+    let model = makeModel()
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let source = AgentElement(id: "checkpoint-model", kind: .web,
+      frame: .init(x: 20, y: 20, width: 240, height: 120), source: "Checkpoint model",
+      html: "<button onclick='play()'>Play</button><output></output>", javaScript: """
+        let phase=notebook.state.phase, frame=0;
+        const draw=()=>document.querySelector('output').textContent=String(phase);
+        const tick=()=>{phase++;draw();frame=requestAnimationFrame(tick)};
+        window.play=()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(tick)};
+        notebook.lifecycle({pause:()=>{cancelAnimationFrame(frame);draw()},
+          checkpoint:()=>({phase}),resume:draw,dispose:()=>cancelAnimationFrame(frame)});
+        addEventListener('notebookstate',()=>{phase=notebook.state.phase;draw()});
+        notebook.ready(Promise.resolve().then(draw));
+        """, state: .object(["phase": .number(0)]))
+    var page = try XCTUnwrap(model.activePage)
+    page.replaceElements([source], actor: model.actorID)
+    try model.store.savePage(page); await model.reloadExternalChanges()?.value
+    let initialStamp = try XCTUnwrap(model.pages[page.id]).agentStamp
+    model.interactiveElementFocus = .page(pageID: page.id, elementID: source.id)
+    func content(current: Bool) -> AnyView {
+      AnyView(LivePageFixture(pageID: page.id, current: current, input: current).environment(model))
+    }
+    let host = try SurfaceHost(content: content(current: true))
+    defer { host.close() }
+    try await waitUntil("The same physical program is ready") {
+      guard let web = self.webViews(in: host.controller.view).first,
+        let owner = web.navigationDelegate as? AgentWebCoordinator else { return false }
+      return owner.hasLiveSource(source)
+    }
+    let running = try XCTUnwrap(webViews(in: host.controller.view).first)
+    _ = try await running.evaluateJavaScript("document.querySelector('button').click();true")
+    try await Task.sleep(for: .milliseconds(120))
+    XCTAssertEqual(model.pages[page.id]?.agentStamp, initialStamp, "rAF never becomes a writer loop")
+    // The foreground notification can arrive before the background task gets
+    // its first turn. It still drains pause/save before resuming this heap.
+    model.setPreparationForeground(false); model.setPreparationForeground(true)
+    let backgroundSaved = await model.finishProgramBoundary()
+    XCTAssertTrue(backgroundSaved)
+    let background = try XCTUnwrap(try model.store.loadPage(page.id).elements.first { $0.id == source.id })
+    guard case .number(let stoppedPhase) = background.state["phase"] else { return XCTFail("Missing stopped phase") }
+    XCTAssertGreaterThan(stoppedPhase, 0)
+    let shownAfterForeground = try await running.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertEqual(shownAfterForeground, stoppedPhase)
+    _ = try await running.evaluateJavaScript("document.querySelector('button').click();true")
+    try await Task.sleep(for: .milliseconds(100))
+    host.controller.rootView = content(current: false)
+    try await waitUntil("A durable checkpoint precedes release of this actual program") {
+      self.webViews(in: host.controller.view).isEmpty
+    }
+    let saved = try XCTUnwrap(try model.store.loadPage(page.id).elements.first { $0.id == source.id })
+    guard case .number(let phase) = saved.state["phase"] else { return XCTFail("The model phase must be explicit") }
+    XCTAssertGreaterThan(phase, 0)
+    host.controller.rootView = content(current: true)
+    try await waitUntil("Return installs the saved model without inventing a newer moment", diagnostic: {
+      let webs = self.webViews(in: host.controller.view)
+      return "webs=\(webs.count) delegates=\(webs.map { String(describing: $0.navigationDelegate) }) oldDelegate=\(String(describing: running.navigationDelegate)) active=\(SceneRenderResources.shared.activeWebSurfaceCount) pending=\(SceneRenderResources.shared.pendingWebRequestCount) model=\(String(describing: model.pages[page.id]?.elements.first { $0.id == source.id }?.state)) saved=\(saved.state)"
+    }) {
+      guard let web = self.webViews(in: host.controller.view).first,
+        let owner = web.navigationDelegate as? AgentWebCoordinator else { return false }
+      return owner.hasLiveSource(saved)
+    }
+    let returned = try XCTUnwrap(webViews(in: host.controller.view).first)
+    XCTAssertFalse(returned === running)
+    let shown = try await returned.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertEqual(shown, phase)
   }
 
   @MainActor
@@ -1238,6 +1361,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
         let tick = 0;
         window.notebook.commit({owner: '\(id)', tick});
         setInterval(() => window.notebook.commit({owner: '\(id)', tick: ++tick}), 30);
+        notebook.ready(Promise.resolve());
         """ : "")
   }
 
@@ -1324,6 +1448,21 @@ final class PreparedAgentElementViewTests: XCTestCase {
       XCTFail(message)
       throw NSError(domain: "PreparedAgentElementViewTests", code: 1,
         userInfo: [NSLocalizedDescriptionKey: message])
+    }
+  }
+}
+
+// Like the actual page host, this fixture observes the current model projection
+// instead of keeping an initial PageDocument after its program writes state.
+private struct LivePageFixture: View {
+  @Environment(NotebookAppModel.self) private var model
+  let pageID: UUID
+  let current: Bool
+  let input: Bool
+  var body: some View {
+    if let page = model.pages[pageID] {
+      PageSurface(page: page, isCurrent: current, isInteractive: input,
+        isVisible: true, onRenderReady: .init { _ in })
     }
   }
 }

@@ -57,7 +57,7 @@ import XCTest
     let element = AgentElement(id: "pencil-over-chart", kind: .web,
       frame: .init(x: page.size.width * 0.2, y: page.size.height * 0.2, width: page.size.width * 0.6, height: page.size.height * 0.6),
       source: "chart", html: "<button>Graph control</button>",
-      css: "html,body,button{margin:0;width:100%;height:100%;background:#eef}", javaScript: "window.chartReady=true")
+      css: "html,body,button{margin:0;width:100%;height:100%;background:#eef}", javaScript: "window.chartReady=true;notebook.ready(Promise.resolve())")
     page.replaceElements([element], actor: model.actorID)
     try model.store.savePage(page); await model.reloadExternalChanges()?.value
     let camera = model.presence?.camera

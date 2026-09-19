@@ -15,7 +15,7 @@ public enum NotebookIPC {
     guard data.count <= maximumFrameBytes,
       let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
       Set(object.keys).isSubset(of: allowed) else {
-      throw CollaborationError("invalid_command", "Команда содержит только типизированные поля Notebook; пути и корень не принимаются.")
+      throw CollaborationError("invalid_command", "Команда содержит только типизированные поля Notebook; выбор хранилища не допускается.")
     }
     do { return try JSONDecoder().decode(NotebookCommand.self, from: data) }
     catch { throw CollaborationError("invalid_command", "Команда не соответствует протоколу Notebook.") }

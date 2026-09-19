@@ -244,7 +244,7 @@ final class BoardElementProjectionTests: XCTestCase {
       <svg width="100%" height="100%" viewBox="0 0 \(width) \(height)">
       <rect width="\(width)" height="\(height)" fill="#e4eff8" stroke="#185481" stroke-width="8"/>
       <circle cx="\(width * 0.75)" cy="\(height * 0.25)" r="14" fill="#bb241e"/></svg>
-      """, css: "svg{display:block}", javaScript: "document.body.dataset.testID='\(id)'", stamp: .init(counter: 0, actor: UUID()))
+      """, css: "svg{display:block}", javaScript: "document.body.dataset.testID='\(id)';notebook.ready(Promise.resolve())", stamp: .init(counter: 0, actor: UUID()))
   }
 
   @MainActor

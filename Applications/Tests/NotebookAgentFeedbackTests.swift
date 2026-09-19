@@ -1,7 +1,6 @@
 import NotebookCore
 import SwiftUI
 import UIKit
-import WebKit
 import XCTest
 @testable import Notebook
 
@@ -153,48 +152,4 @@ import XCTest
     let stillA = try await render(0.4,reduced:true), stillB = try await render(1.4,reduced:true)
     XCTAssertEqual(stillA.pngData(),stillB.pngData())
   }
-  func testWebMaterialPreservesDOMAndCanonicalSnapshot() async throws {
-    let url = try XCTUnwrap(Bundle.main.url(forResource:"agent-feedback",withExtension:"js",subdirectory:"WebResources"))
-    let script = try String(contentsOf:url,encoding:.utf8)
-    let web = WKWebView(frame:.init(x:0,y:0,width:600,height:500))
-    let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
-    let controller = UIViewController(); controller.view.addSubview(web)
-    window.rootViewController = controller; window.makeKeyAndVisible()
-    defer { web.stopLoading(); window.isHidden = true; window.rootViewController = nil }
-    web.loadHTMLString("""
-      <meta name="viewport" content="width=device-width,initial-scale=1"><style>
-      body{background:white;color:black;font:24px Georgia} .block{position:relative}svg{width:300px;height:80px}
-      </style><div id="document"><section class="block" data-block-id="words"><h1>Живое объяснение</h1>
-      <p>Текст <b>остаётся</b> текстом.</p><svg viewBox="0 0 300 80"><path d="M0 40 Q100 0 290 40" fill="none" stroke="black" stroke-width="3"/></svg></section>
-      <section class="block interactive" data-block-id="program"><button id="button" onclick="this.dataset.clicks=String(+(this.dataset.clicks||0)+1)">Кнопка</button></section></div>
-      <script>\(script)</script><script>window.originalButton=document.getElementById('button');window.feedbackReady=true</script>
-      """,baseURL:nil)
-    let deadline = ContinuousClock.now + .seconds(5)
-    while (try? await web.evaluateJavaScript("window.feedbackReady===true") as? Bool) != true,
-      ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(20)) }
-    let geometry = try await web.evaluateJavaScript("document.querySelector('#document').getBoundingClientRect().height") as? Double
-    func snapshot() async throws -> UIImage {
-      try await withCheckedThrowingContinuation { continuation in
-        web.takeSnapshot(with:nil) { image,error in
-          if let image { continuation.resume(returning:image) } else { continuation.resume(throwing:error ?? NSError(domain:"snapshot",code:1)) }
-        }
-      }
-    }
-    let plain = try await snapshot()
-    _ = try await web.evaluateJavaScript("window.notebookAgentFeedback.update([{start:Date.now()-1000,end:Date.now()+2000,attention:false}])")
-    let sameButton = try await web.evaluateJavaScript("document.getElementById('button')===window.originalButton") as? Bool
-    XCTAssertEqual(sameButton,true)
-    let sameGeometry = try await web.evaluateJavaScript("document.querySelector('#document').getBoundingClientRect().height") as? Double
-    XCTAssertEqual(sameGeometry,geometry)
-    _ = try await web.evaluateJavaScript("document.getElementById('button').click()")
-    let clicks = try await web.evaluateJavaScript("document.getElementById('button').dataset.clicks") as? String
-    XCTAssertEqual(clicks,"1")
-    _ = try await web.evaluateJavaScript("window.notebookAgentFeedback.suspend()")
-    let canonical = try await snapshot()
-    XCTAssertEqual(plain.pngData(),canonical.pngData(),"Transient feedback cannot enter a content snapshot")
-    _ = try await web.evaluateJavaScript("window.notebookAgentFeedback.resume();window.notebookAgentFeedback.clear()")
-    let remnants = try await web.evaluateJavaScript("document.querySelectorAll('[data-nb-feedback-ink],[data-nb-feedback-surface],linearGradient[id^=nb-feedback]').length") as? Int
-    XCTAssertEqual(remnants,0)
-  }
-
 }

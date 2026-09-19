@@ -82,6 +82,7 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
   public let html: String
   public let css: String
   public let javaScript: String
+  public let programPackage: String?
   public let state: JSONValue
   public let graphic: NotebookGraphic?
   public let textStyle: NativeTextStyle?
@@ -94,6 +95,7 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
     html: String,
     css: String = "",
     javaScript: String = "",
+    programPackage: String? = nil,
     state: JSONValue = .object([:]),
     graphic: NotebookGraphic? = nil,
     textStyle: NativeTextStyle? = nil
@@ -106,6 +108,7 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
     self.html = html
     self.css = css
     self.javaScript = javaScript
+    self.programPackage = programPackage
     self.state = state
     self.graphic = graphic
     self.textStyle = textStyle
@@ -120,6 +123,7 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
       html: html,
       css: css,
       javaScript: javaScript,
+      programPackage: programPackage,
       state: state,
       graphic: graphic, textStyle: textStyle
     )
@@ -134,6 +138,7 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
       html: html,
       css: css,
       javaScript: javaScript,
+      programPackage: programPackage,
       state: state,
       graphic: graphic, textStyle: textStyle
     )
@@ -224,6 +229,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
         !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
           && $0.frame.isContained(in: size)
           && $0.state.isValid
+          && NotebookProgramPackage.validSourceReference($0.programPackage, isProgram: $0.kind == .web, source: $0.source, html: $0.html, css: $0.css, javaScript: $0.javaScript)
           && ($0.textStyle?.isValid(for:$0.source) ?? true)
           && ($0.kind == .nativeText || $0.textStyle == nil)
           && ($0.kind == .graphic ? $0.graphic?.isValid == true : $0.graphic == nil)

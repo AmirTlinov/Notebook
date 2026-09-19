@@ -1,0 +1,146 @@
+{
+  "packageHash": "70bae2cc4beff1e31f249409ea790b0b165f3e16e1c75fa131e58a067a5236ec",
+  "package": {
+    "css": "main.css",
+    "files": [
+      {
+        "byteCount": 454,
+        "mimeType": "image/svg+xml",
+        "parts": [
+          {
+            "byteCount": 454,
+            "sha256": "c803b7bff136ca9acddd97ac117bb704c10c3d54f1008a64273d8160fee51fcc"
+          }
+        ],
+        "path": "asset-c803b7bff136ca9acddd97ac117bb704c10c3d54f1008a64273d8160fee51fcc.svg"
+      },
+      {
+        "byteCount": 171,
+        "mimeType": "text/javascript",
+        "parts": [
+          {
+            "byteCount": 171,
+            "sha256": "0ed3a2cc86b0909a3e49de790c6987f7cbb97001956c73fb61ebe072d6a61c61"
+          }
+        ],
+        "path": "chunk-EYL6K66V.js"
+      },
+      {
+        "byteCount": 336,
+        "mimeType": "application/json",
+        "parts": [
+          {
+            "byteCount": 336,
+            "sha256": "1fd0932b2685143b0ba0705930f4cec56fa133d96a45596229eb61606c09cbf0"
+          }
+        ],
+        "path": "chunk-EYL6K66V.js.map"
+      },
+      {
+        "byteCount": 711,
+        "mimeType": "text/css",
+        "parts": [
+          {
+            "byteCount": 711,
+            "sha256": "7f97ca2da798e987ec9ec72af0bbf178a2618eafed9144ac71a82bdab904bf4d"
+          }
+        ],
+        "path": "main.css"
+      },
+      {
+        "byteCount": 1062,
+        "mimeType": "application/json",
+        "parts": [
+          {
+            "byteCount": 1062,
+            "sha256": "7c6f404e9ced00a4e48124c0c780cb33f8f72a98ffd4b7eb8fa076a0a18984e5"
+          }
+        ],
+        "path": "main.css.map"
+      },
+      {
+        "byteCount": 1847,
+        "mimeType": "text/javascript",
+        "parts": [
+          {
+            "byteCount": 1847,
+            "sha256": "c724534dc819d046eee6684593c28093d008410e035a3c31decb5b5a207c1bea"
+          }
+        ],
+        "path": "main.js"
+      },
+      {
+        "byteCount": 3272,
+        "mimeType": "application/json",
+        "parts": [
+          {
+            "byteCount": 3272,
+            "sha256": "8bd294511eb890e3b09154ccac13d17cbff8549ffa7febac04166917df65b338"
+          }
+        ],
+        "path": "main.js.map"
+      },
+      {
+        "byteCount": 1432,
+        "mimeType": "application/json",
+        "parts": [
+          {
+            "byteCount": 1432,
+            "sha256": "77e5490a8ddd21f4948a452341a5a394bc012c0a1bfd7aabe62a22d3bc5e7750"
+          }
+        ],
+        "path": "notebook-build.json"
+      },
+      {
+        "byteCount": 368,
+        "mimeType": "text/html",
+        "parts": [
+          {
+            "byteCount": 368,
+            "sha256": "c4627d7439f1a69d4c705100929f9562278d2ab4f400cec07ad4720ce4ba4bab"
+          }
+        ],
+        "path": "view.html"
+      },
+      {
+        "byteCount": 190,
+        "mimeType": "text/javascript",
+        "parts": [
+          {
+            "byteCount": 190,
+            "sha256": "0f96ffc5dca62515000c1c74c787920e29c763292ded498088d49cf23d50f4a8"
+          }
+        ],
+        "path": "worker-square.js"
+      },
+      {
+        "byteCount": 356,
+        "mimeType": "application/json",
+        "parts": [
+          {
+            "byteCount": 356,
+            "sha256": "8520e6dc40e9e600736dfc4e667b2e63786d8a64bf3539360654bc1320576c92"
+          }
+        ],
+        "path": "worker-square.js.map"
+      }
+    ],
+    "format": 1,
+    "html": "view.html",
+    "javaScript": "main.js",
+    "module": true
+  },
+  "files": {
+    "asset-c803b7bff136ca9acddd97ac117bb704c10c3d54f1008a64273d8160fee51fcc.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 400 320\"><g fill=\"none\" stroke=\"#777\"><path d=\"M30 280H370M200 300V20\"/></g><path d=\"M50 55Q200 505 350 55\" fill=\"none\" stroke=\"#336fce\" stroke-width=\"3\"/><g font-family=\"sans-serif\" font-size=\"16\" fill=\"#555\"><text x=\"365\" y=\"302\">x</text><text x=\"215\" y=\"25\">y</text><text x=\"178\" y=\"302\">0</text><text x=\"342\" y=\"302\">3</text><text x=\"45\" y=\"302\">−3</text><text x=\"174\" y=\"61\">9</text></g></svg>\n",
+    "chunk-EYL6K66V.js": "// model.ts\nvar square = (x) => x * x;\nvar position = (x, y) => [200 + x * 50, 280 - y * 25];\n\nexport {\n  square,\n  position\n};\n//# sourceMappingURL=chunk-EYL6K66V.js.map\n",
+    "chunk-EYL6K66V.js.map": "{\n  \"version\": 3,\n  \"sources\": [\"../../model.ts\"],\n  \"sourcesContent\": [\"export const square=(x:number):number=>x*x;\\nexport const position=(x:number,y:number):[number,number]=>[200+x*50,280-y*25];\\n\"],\n  \"mappings\": \";AAAO,IAAM,SAAO,CAAC,MAAkB,IAAE;AAClC,IAAM,WAAS,CAAC,GAAS,MAA2B,CAAC,MAAI,IAAE,IAAG,MAAI,IAAE,EAAE;\",\n  \"names\": []\n}\n",
+    "main.css": "/* style.css */\nbody {\n  padding: 24px;\n  color: #20201e;\n  background: white;\n  font:\n    20px/1.4 -apple-system,\n    BlinkMacSystemFont,\n    sans-serif;\n}\nmain {\n  max-width: 440px;\n  margin: auto;\n}\nh1 {\n  font-size: 28px;\n  font-weight: 500;\n  margin: 0 0 8px;\n}\nsvg {\n  display: block;\n  width: 100%;\n  height: auto;\n}\noutput {\n  display: block;\n  font-size: 26px;\n  font-variant-numeric: tabular-nums;\n  margin: 12px 0;\n}\nbutton {\n  font: inherit;\n  min-height: 48px;\n  padding: 8px 18px;\n  border: 1px solid #999;\n  border-radius: 8px;\n  background: white;\n  color: inherit;\n}\nbutton:focus-visible {\n  outline: 3px solid #336fce;\n}\nbutton:disabled {\n  color: #777;\n}\n/*# sourceMappingURL=main.css.map */\n",
+    "main.css.map": "{\n  \"version\": 3,\n  \"sources\": [\"../../style.css\"],\n  \"sourcesContent\": [\"body{padding:24px;color:#20201e;background:white;font:20px/1.4 -apple-system,BlinkMacSystemFont,sans-serif}main{max-width:440px;margin:auto}h1{font-size:28px;font-weight:500;margin:0 0 8px}svg{display:block;width:100%;height:auto}output{display:block;font-size:26px;font-variant-numeric:tabular-nums;margin:12px 0}button{font:inherit;min-height:48px;padding:8px 18px;border:1px solid #999;border-radius:8px;background:white;color:inherit}button:focus-visible{outline:3px solid #336fce}button:disabled{color:#777}\\n\"],\n  \"mappings\": \";AAAA;AAAK,WAAQ;AAAK,SAAM;AAAQ,cAAW;AAAM;AAAA,IAAK,IAAI,CAAC,IAAI,aAAa;AAAA,IAAC,kBAAkB;AAAA,IAAC;AAAU;AAAC;AAAK,aAAU;AAAM,UAAO;AAAI;AAAC;AAAG,aAAU;AAAK,eAAY;AAAI,UAAO,EAAE,EAAE;AAAG;AAAC;AAAI,WAAQ;AAAM,SAAM;AAAK,UAAO;AAAI;AAAC;AAAO,WAAQ;AAAM,aAAU;AAAK,wBAAqB;AAAa,UAAO,KAAK;AAAC;AAAC;AAAO,QAAK;AAAQ,cAAW;AAAK,WAAQ,IAAI;AAAK,UAAO,IAAI,MAAM;AAAK,iBAAc;AAAI,cAAW;AAAM,SAAM;AAAO;AAAC,MAAM;AAAe,WAAQ,IAAI,MAAM;AAAO;AAAC,MAAM;AAAU,SAAM;AAAI;\",\n  \"names\": []\n}\n",
+    "main.js": "import {\n  position\n} from \"./chunk-EYL6K66V.js\";\n\n// notebook-file-url:curve.svg\nvar curve_default = new URL(\"./asset-c803b7bff136ca9acddd97ac117bb704c10c3d54f1008a64273d8160fee51fcc.svg\", import.meta.url).href;\n\n// main.ts\nvar initial = notebook.state;\nvar x = initial?.x ?? 2;\nvar pending = Promise.resolve();\nvar paused = false;\nvar button = document.querySelector(\"#next\");\nvar output = document.querySelector(\"#value\");\nvar point = document.querySelector(\"#point\");\ndocument.querySelector(\"#curve\").setAttribute(\"href\", curve_default);\nvar worker = new Worker(new URL(\"./worker-square.js\", import.meta.url), { type: \"module\" });\nfunction draw(commit = false) {\n  button.disabled = true;\n  return pending = new Promise((resolve, reject) => {\n    worker.onerror = (event) => reject(new Error(event.message));\n    worker.onmessage = (event) => {\n      const y = event.data, [cx, cy] = position(x, y);\n      point.setAttribute(\"cx\", String(cx));\n      point.setAttribute(\"cy\", String(cy));\n      output.textContent = `${x < 0 ? `(\\u2212${-x})` : x}\\xB2 = ${y}`;\n      button.disabled = paused;\n      if (commit) notebook.commit({ x });\n      resolve();\n    };\n    worker.postMessage(x);\n  });\n}\nbutton.onclick = () => {\n  x = x >= 3 ? -3 : x + 1;\n  void draw(true);\n};\naddEventListener(\"notebookstate\", () => {\n  x = notebook.state.x;\n  void draw();\n});\nnotebook.lifecycle({\n  pause: async () => {\n    paused = true;\n    button.disabled = true;\n    await pending;\n  },\n  checkpoint: () => ({ x }),\n  resume: () => {\n    paused = false;\n    button.disabled = false;\n  },\n  dispose: () => worker.terminate()\n});\nnotebook.ready(draw());\nnotebook.exportFrame(async ({ format, state }) => {\n  if (format !== \"raster\") throw Error(\"program_export_unavailable\");\n  x = state?.x ?? 2;\n  await draw();\n  return null;\n});\n//# sourceMappingURL=main.js.map\n",
+    "main.js.map": "{\n  \"version\": 3,\n  \"sources\": [\"notebook-file-url:curve.svg\", \"../../main.ts\"],\n  \"sourcesContent\": [\"export default new URL(\\\"./asset-c803b7bff136ca9acddd97ac117bb704c10c3d54f1008a64273d8160fee51fcc.svg\\\",import.meta.url).href\", \"import './style.css';\\nimport curve from './curve.svg';\\nimport {position} from './model';\\nconst initial=notebook.state as {x?:number}|null;\\nlet x=initial?.x??2,pending:Promise<void>=Promise.resolve(),paused=false;\\nconst button=document.querySelector<HTMLButtonElement>('#next')!;\\nconst output=document.querySelector<HTMLOutputElement>('#value')!;\\nconst point=document.querySelector<SVGCircleElement>('#point')!;\\ndocument.querySelector('#curve')!.setAttribute('href',curve);\\nconst worker=new Worker(new URL('./worker-square.js',import.meta.url),{type:'module'});\\nfunction draw(commit=false):Promise<void>{\\n  button.disabled=true;\\n  return pending=new Promise((resolve,reject)=>{\\n    worker.onerror=event=>reject(new Error(event.message));\\n    worker.onmessage=(event:MessageEvent<number>)=>{\\n      const y=event.data,[cx,cy]=position(x,y);\\n      point.setAttribute('cx',String(cx));point.setAttribute('cy',String(cy));\\n      output.textContent=`${x<0?`(\\u2212${-x})`:x}\\u00B2 = ${y}`;button.disabled=paused;\\n      if(commit)notebook.commit({x});resolve();\\n    };\\n    worker.postMessage(x);\\n  });\\n}\\nbutton.onclick=()=>{x=x>=3?-3:x+1;void draw(true)};\\naddEventListener('notebookstate',()=>{x=(notebook.state as {x:number}).x;void draw()});\\nnotebook.lifecycle({pause:async()=>{paused=true;button.disabled=true;await pending},checkpoint:()=>({x}),\\n  resume:()=>{paused=false;button.disabled=false},dispose:()=>worker.terminate()});\\nnotebook.ready(draw());\\n\\nnotebook.exportFrame(async ({format,state})=>{if(format!=='raster')throw Error('program_export_unavailable');x=(state as {x:number})?.x??2;await draw();return null;});\\n\"],\n  \"mappings\": \";;;;;AAAA,IAAO,gBAAQ,IAAI,IAAI,gFAA+E,YAAY,GAAG,EAAE;;;ACGvH,IAAM,UAAQ,SAAS;AACvB,IAAI,IAAE,SAAS,KAAG;AAAlB,IAAoB,UAAsB,QAAQ,QAAQ;AAA1D,IAA4D,SAAO;AACnE,IAAM,SAAO,SAAS,cAAiC,OAAO;AAC9D,IAAM,SAAO,SAAS,cAAiC,QAAQ;AAC/D,IAAM,QAAM,SAAS,cAAgC,QAAQ;AAC7D,SAAS,cAAc,QAAQ,EAAG,aAAa,QAAO,aAAK;AAC3D,IAAM,SAAO,IAAI,OAAO,IAAI,IAAI,sBAAqB,YAAY,GAAG,GAAE,EAAC,MAAK,SAAQ,CAAC;AACrF,SAAS,KAAK,SAAO,OAAoB;AACvC,SAAO,WAAS;AAChB,SAAO,UAAQ,IAAI,QAAQ,CAAC,SAAQ,WAAS;AAC3C,WAAO,UAAQ,WAAO,OAAO,IAAI,MAAM,MAAM,OAAO,CAAC;AACrD,WAAO,YAAU,CAAC,UAA6B;AAC7C,YAAM,IAAE,MAAM,MAAK,CAAC,IAAG,EAAE,IAAE,SAAS,GAAE,CAAC;AACvC,YAAM,aAAa,MAAK,OAAO,EAAE,CAAC;AAAE,YAAM,aAAa,MAAK,OAAO,EAAE,CAAC;AACtE,aAAO,cAAY,GAAG,IAAE,IAAE,UAAK,CAAC,CAAC,MAAI,CAAC,UAAO,CAAC;AAAG,aAAO,WAAS;AACjE,UAAG,OAAO,UAAS,OAAO,EAAC,EAAC,CAAC;AAAE,cAAQ;AAAA,IACzC;AACA,WAAO,YAAY,CAAC;AAAA,EACtB,CAAC;AACH;AACA,OAAO,UAAQ,MAAI;AAAC,MAAE,KAAG,IAAE,KAAG,IAAE;AAAE,OAAK,KAAK,IAAI;AAAC;AACjD,iBAAiB,iBAAgB,MAAI;AAAC,MAAG,SAAS,MAAqB;AAAE,OAAK,KAAK;AAAC,CAAC;AACrF,SAAS,UAAU;AAAA,EAAC,OAAM,YAAS;AAAC,aAAO;AAAK,WAAO,WAAS;AAAK,UAAM;AAAA,EAAO;AAAA,EAAE,YAAW,OAAK,EAAC,EAAC;AAAA,EACpG,QAAO,MAAI;AAAC,aAAO;AAAM,WAAO,WAAS;AAAA,EAAK;AAAA,EAAE,SAAQ,MAAI,OAAO,UAAU;AAAC,CAAC;AACjF,SAAS,MAAM,KAAK,CAAC;AAErB,SAAS,YAAY,OAAO,EAAC,QAAO,MAAK,MAAI;AAAC,MAAG,WAAS,SAAS,OAAM,MAAM,4BAA4B;AAAE,MAAG,OAAsB,KAAG;AAAE,QAAM,KAAK;AAAE,SAAO;AAAK,CAAC;\",\n  \"names\": []\n}\n",
+    "notebook-build.json": "{\"assets\":[],\"bridge\":\"3f30c6a77059d9a05254a3e7ac6e60a5f20f1c7ed0b4349bbe6a12f9d0e7d449\",\"builder\":\"6d39ec5f4f39b2d258adf2a480b9656ab42f7f953227994b139a8df015fea5e7\",\"compiler\":{\"allowImportingTsExtensions\":true,\"allowJs\":true,\"composite\":false,\"incremental\":false,\"lib\":[\"es2022\",\"dom\",\"dom.iterable\"],\"module\":\"esnext\",\"moduleDetection\":\"force\",\"moduleResolution\":\"bundler\",\"noEmit\":true,\"resolveJsonModule\":true,\"strict\":true,\"target\":\"es2022\",\"types\":[]},\"entry\":\"main.ts\",\"esbuild\":\"0.28.2\",\"format\":1,\"html\":\"view.html\",\"inputs\":[{\"bytes\":454,\"path\":\"curve.svg\",\"sha256\":\"c803b7bff136ca9acddd97ac117bb704c10c3d54f1008a64273d8160fee51fcc\"},{\"bytes\":1612,\"path\":\"main.ts\",\"sha256\":\"fb8a7cfb2905223953f1463e99b9a2ebeb7a37724822e807abb3f795dcb9c3eb\"},{\"bytes\":124,\"path\":\"model.ts\",\"sha256\":\"14a6c3d9b3bc637761458ffc639f81d595800a2eb3bb7dd92db22513579ba45d\"},{\"bytes\":165,\"path\":\"square.ts\",\"sha256\":\"b719ab6355e7ba36b2665a0f87fd44da9c9ad7c4a5dc7dc1d4e4bd5535a319f0\"},{\"bytes\":513,\"path\":\"style.css\",\"sha256\":\"f5b419489bca552c68a15947878d30a57afcdef34886da3050308ad11d20487d\"},{\"bytes\":368,\"path\":\"view.html\",\"sha256\":\"c4627d7439f1a69d4c705100929f9562278d2ab4f400cec07ad4720ce4ba4bab\"}],\"key\":\"0f9e3e148cc2041d9227742da62e5e1b83209cb2f1a9eae43f92e464126ef330\",\"target\":\"es2022\",\"tsconfig\":null,\"types\":\"12c34d2f8d78b823654795780fd1b0f998fc1c5303a07ce364d276a03b07d006\",\"typescript\":\"7.0.2\",\"workers\":{\"worker-square\":\"square.ts\"}}",
+    "view.html": "<main><h1>Квадрат числа</h1><svg viewBox=\"0 0 400 320\" role=\"img\" aria-label=\"Парабола y равен x в квадрате\"><image id=\"curve\" width=\"400\" height=\"320\"/><circle id=\"point\" r=\"7\" fill=\"#c34b31\" stroke=\"white\" stroke-width=\"2\"/></svg><output id=\"value\" aria-live=\"polite\"></output><button id=\"next\">Увеличить x</button></main>\n",
+    "worker-square.js": "import {\n  square\n} from \"./chunk-EYL6K66V.js\";\n\n// square.ts\nvar scope = self;\nscope.onmessage = (event) => scope.postMessage(square(event.data));\n//# sourceMappingURL=worker-square.js.map\n",
+    "worker-square.js.map": "{\n  \"version\": 3,\n  \"sources\": [\"../../square.ts\"],\n  \"sourcesContent\": [\"import {square} from './model';\\nconst scope=self as DedicatedWorkerGlobalScope;\\nscope.onmessage=(event:MessageEvent<number>)=>scope.postMessage(square(event.data));\\n\"],\n  \"mappings\": \";;;;;AACA,IAAM,QAAM;AACZ,MAAM,YAAU,CAAC,UAA6B,MAAM,YAAY,OAAO,MAAM,IAAI,CAAC;\",\n  \"names\": []\n}\n"
+  }
+}

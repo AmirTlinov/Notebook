@@ -13,10 +13,6 @@ var ScienceModels = (() => {
     return {matrix:m, point:[m[0]*vector[0]+m[1]*vector[1], m[2]*vector[0]+m[3]*vector[1]],
       determinant:m[0]*m[3]-m[1]*m[2]};
   }
-  function gears(phase) {
-    // 60:40:24 teeth; two input turns make every marked wheel return exactly.
-    return [tau*2*phase, -tau*3*phase + Math.PI/40, tau*5*phase];
-  }
   const kernel = (x, y, length) => Math.exp(-0.5*((x-y)/length)**2);
   function cholesky(a) {
     const n=a.length, l=Array.from({length:n},()=>Array(n).fill(0));
@@ -77,5 +73,5 @@ var ScienceModels = (() => {
     }
     return {outcomes,frequencies,total};
   }
-  return {tau,wave,transform,gears,kernel,gaussianProcess,multiply,astar,bernoulli};
+  return {tau,wave,transform,kernel,gaussianProcess,multiply,astar,bernoulli};
 })();

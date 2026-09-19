@@ -175,6 +175,14 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
     }
   }
 
+  func applicationDidResignActive(_ notification: Notification) {
+    launch.model?.setPreparationForeground(false)
+  }
+
+  func applicationDidBecomeActive(_ notification: Notification) {
+    launch.model?.setPreparationForeground(true)
+  }
+
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     Task {
       launchTask?.cancel()

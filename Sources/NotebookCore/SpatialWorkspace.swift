@@ -580,6 +580,7 @@ public struct SpatialElement: Codable, Equatable, Identifiable, Sendable {
   public private(set) var html: String
   public private(set) var css: String
   public private(set) var javaScript: String
+  public private(set) var programPackage: String?
   public private(set) var state: JSONValue
   public private(set) var textStyle: NativeTextStyle
   public private(set) var graphic: NotebookGraphic?
@@ -595,6 +596,7 @@ public struct SpatialElement: Codable, Equatable, Identifiable, Sendable {
     html: String = "",
     css: String = "",
     javaScript: String = "",
+    programPackage: String? = nil,
     state: JSONValue = .object([:]),
     textStyle: NativeTextStyle = .standard,
     graphic: NotebookGraphic? = nil,
@@ -610,6 +612,7 @@ public struct SpatialElement: Codable, Equatable, Identifiable, Sendable {
     self.html = html
     self.css = css
     self.javaScript = javaScript
+    self.programPackage = programPackage
     self.state = state
     self.textStyle = textStyle
     self.graphic = graphic
@@ -645,6 +648,7 @@ public struct SpatialElement: Codable, Equatable, Identifiable, Sendable {
     !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       && surface.isValid && surface.kind != .page
       && frame.isValid && state.isValid && textStyle.isValid(for:source)
+      && NotebookProgramPackage.validSourceReference(programPackage, isProgram: kind == .web, source: source, html: html, css: css, javaScript: javaScript)
       && (kind == .graphic ? graphic?.isValid == true : graphic == nil)
       && (surface.kind == .board
         ? worldOrigin?.isValid == true

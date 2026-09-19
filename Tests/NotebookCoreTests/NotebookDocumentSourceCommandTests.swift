@@ -131,6 +131,20 @@ struct NotebookDocumentSourceCommandTests {
       let result = try store.commitDocumentSource(edit: edit(replacement, blockID: id.lowercased()), actor: actor)
       #expect(result.status == .committed && result.publication?.block.id == id)
       #expect(try store.loadDocument(document.id).sourceVersion(blockID: id).human)
+      let target = CollaborationTarget(kind: .document, id: document.id)
+      let before = try store.currentChangeCursor()
+      #expect(throws: CollaborationError.self) {
+        try store.applyCollaborationAction(.init(summary: "Duplicate UUID spelling",
+          expected: [.init(target: target, revision: store.targetContentRevision(target: target))],
+          operations: [.init(kind: .insertBlock, target: target, id: id.lowercased(), values: ["kind": .string("markdown"), "source": .string("Duplicate")])]), actor: actor)
+      }
+      #expect(try store.currentChangeCursor() == before)
+      let removal = try store.applyCollaborationAction(.init(summary: "Remove the same owner",
+        expected: [.init(target: target, revision: store.targetContentRevision(target: target))],
+        operations: [.init(kind: .removeBlock, target: target, id: id.lowercased())]), actor: actor)
+      #expect(try store.loadDocument(document.id).blocks.isEmpty)
+      _ = try store.undoCollaborationAction(removal.id, actor: actor)
+      #expect(try store.loadDocument(document.id).blocks.first?.id == id)
     }
   }
 

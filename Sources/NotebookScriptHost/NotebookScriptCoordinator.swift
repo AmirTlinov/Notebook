@@ -8,6 +8,8 @@ import NotebookScriptProtocol
 public final class NotebookScriptCoordinator {
   public typealias Command = @Sendable (NotebookCommand) async throws -> JSONValue
   public typealias Persistence = @Sendable (@escaping @Sendable (NotebookStore) throws -> JSONValue) async throws -> JSONValue
+  public typealias CanonicalExport = @MainActor (NotebookExportCut, NotebookExportOptions, UUID) async throws -> NotebookExportReceipt
+  let canonicalExport: CanonicalExport
   let command: Command
   let persistence: Persistence
   let markup: NotebookMarkupQueue
@@ -26,6 +28,7 @@ public final class NotebookScriptCoordinator {
   var inFlightEffects = 0
   var effectDrainWaiters: [CheckedContinuation<Void, Never>] = []
   var exportTasks: [UUID: Task<Void, Never>] = [:]
+  var exportAdmissions = 0
   var closing = false
   private var admissions = 0
   private var admissionWaiters: [CheckedContinuation<Void, Never>] = []
@@ -52,8 +55,10 @@ public final class NotebookScriptCoordinator {
   var completionWaiters: [UUID: [UUID: RunCompletionWaiter]] = [:]
 
   public init(command: @escaping Command, persistence: @escaping Persistence, workingDirectory: URL,
+    canonicalExport: @escaping CanonicalExport = { _, _, _ in throw CollaborationError("print_owner_unavailable", "Владелец печатного макета недоступен.") },
     userServiceName: String = NotebookScriptServiceNames.user,
     markupServiceName: String = NotebookScriptServiceNames.markup) {
+    self.canonicalExport = canonicalExport
     self.command = command; self.persistence = persistence; self.workingDirectory = workingDirectory
     self.userServiceName = userServiceName; self.markupServiceName = markupServiceName
     markup = NotebookMarkupQueue(serviceName: markupServiceName)
@@ -317,7 +322,7 @@ public final class NotebookScriptCoordinator {
       case "id":
         guard let key = arguments.string("key"), !key.isEmpty, key.utf8.count <= 120 else { throw CollaborationError("invalid_key", "id получает непустой key до 120 байт.") }
         value = .string(NotebookStore.submissionID(call.runID, suffix: "id:" + key).uuidString.lowercased())
-      case "transaction", "undo", "point", "present", "cancelPresentation", "export":
+      case "transaction", "undo", "point", "present", "cancelPresentation", "export", "cancelExport":
         // Own this accepted wire call before even the async effect method can
         // suspend; no coroutine/admission reply gap may escape terminal drain.
         beginEffectCall()

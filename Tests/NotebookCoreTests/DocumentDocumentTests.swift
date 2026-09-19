@@ -323,10 +323,11 @@ func storePublishesAndDeletesDocumentBundle() throws {
     documentIDs: [removed.id]
   )
 
-  #expect(try !store.hasStoredValue(at: store.documentURL(item.id)))
-  #expect(!FileManager.default.fileExists(
-    atPath: store.documentStateURL(item.id).path
-  ))
+  // Retirement hides the owner, retaining its source for causal undo.
+  #expect(try store.hasStoredValue(at: store.documentURL(item.id)))
+  #expect(try store.hasStoredValue(at: store.documentStateURL(item.id)))
+  #expect(throws: CocoaError.self) { try store.loadDocument(item.id) }
+  #expect(throws: CocoaError.self) { try store.loadDocumentState(item.id) }
 }
 
 @Test("Одна публикация одновременно добавляет и удаляет без осиротевших файлов")

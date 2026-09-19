@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; frame-src 'self' data: blob:; form-action 'none'; base-uri 'none'; object-src 'none';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; frame-src 'self' data: blob: notebook-program:; form-action 'none'; base-uri 'none'; object-src 'none';">
   <style>
     :root {
       color-scheme: light;
@@ -14,12 +14,6 @@
       --page-width: 595px;
       --page-height: 842px;
       --page-radius: 3.4px;
-      --page-margin: 71px;
-      --page-gap: 24px;
-      --content-width: 453px;
-      --content-height: 700px;
-      --column-gap: 166px;
-      --body-font-size: 12px;
     }
     * { box-sizing: border-box; }
     html, body {
@@ -32,7 +26,6 @@
     body {
       color: var(--ink);
       font-family: Georgia, "Times New Roman", serif;
-      font-size: var(--body-font-size);
       line-height: 1.2083333333;
       -webkit-font-smoothing: antialiased;
       -webkit-text-size-adjust: 100%;
@@ -63,53 +56,11 @@
       height: var(--page-height);
       overflow: hidden;
       border-radius: var(--page-radius);
-      background: var(--paper);
+      background: transparent;
     }
     #document { position:absolute; z-index:1; margin:0; padding:0; }
-    .document-flow {
-      position: absolute;
-      z-index: 1;
-      top: var(--page-margin);
-      left: var(--page-margin);
-      width: var(--content-width);
-      height: var(--content-height);
-      margin: 0;
-      padding: 0;
-      column-width: var(--content-width);
-      column-gap: var(--column-gap);
-      column-fill: auto;
-      overflow: visible;
-    }
-    .block { position: relative; margin: 0 0 .75em; }
-    .block.interactive, .block.latex, pre { break-inside: avoid-column; }
     .block.editable { border-radius: .45rem; touch-action: manipulation; }
     .block.editable:active { background: rgba(23, 23, 19, .018); }
-    /* The 12-point article scale also used by the default TeX export:
-       body 12/14.5, section 17.28/22, subsection 14.4/18 points. */
-    h1, h2, h3, h4, h5, h6 {
-      font-weight: 700;
-      letter-spacing: normal;
-      margin: 1.25em 0 .5em;
-      break-after: avoid-column;
-    }
-    h1 { font-size: 1.44em; line-height: 1.2731481481; }
-    h2 { font-size: 1.2em; line-height: 1.25; }
-    h3, h4, h5, h6 { font-size: 1em; line-height: 1.2083333333; }
-    .document-content > .block:first-child > :first-child { margin-top: 0; }
-    p, ul, ol, blockquote, pre, table { margin: 0 0 .5em; }
-    ul, ol { padding-left: 1.45em; }
-    blockquote { margin-left: 0; padding-left: 1em; color: var(--muted); border-left: 2px solid rgba(23,23,19,.14); }
-    code { font-family: ui-monospace, "SFMono-Regular", monospace; font-size: .86em; }
-    :not(pre) > code { padding: .12em .32em; background: rgba(23,23,19,.055); border-radius: .28em; }
-    pre { overflow-x: auto; padding: 1em; background: rgba(23,23,19,.045); border-radius: .55em; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { padding: .45em .6em; text-align: left; border-bottom: 1px solid rgba(23,23,19,.11); }
-    a { color: inherit; text-decoration-thickness: .06em; text-underline-offset: .14em; }
-    img, svg { max-width: 100%; }
-    /* A heading and its standalone illustration form one reading unit. */
-    .document-illustration-lead { break-inside: avoid-column; }
-    .document-illustration-lead > :is(img,svg) { display: block; }
-    .latex { overflow-x: auto; padding: .2em 0; text-align: center; }
     .interactive-frame {
       display: block;
       width: 100%;
@@ -121,97 +72,15 @@
     .interactive-fragment {
       position: absolute;
       overflow: hidden;
-    }
-    .source-editor {
-      position: absolute;
-      display: block;
-      min-height: 9rem;
-      resize: none;
-      overflow: auto;
-      margin: 0;
-      padding: .8rem .9rem;
-      border: 0;
-      border-radius: .55rem;
-      outline: 2px solid rgba(46, 104, 255, .24);
-      outline-offset: 0;
-      background: #fff;
-      color: var(--ink);
-      font: 500 .86em/1.55 ui-monospace, "SFMono-Regular", monospace;
-      caret-color: #1e65f3;
-      box-shadow: 0 .6rem 2rem rgba(30, 42, 68, .08);
-      -webkit-user-select: text;
-      user-select: text;
-      touch-action: manipulation;
-      pointer-events: auto;
-    }
-    .source-editor-toolbar {
-      position: absolute;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      min-height: 52px;
-      padding: 4px;
-      box-sizing: border-box;
-      border-radius: 10px;
-      background: #fff;
-      box-shadow: 0 2px 12px #18243a16;
-      z-index: 3;
-      font: 13px -apple-system, sans-serif;
-    }
-    .source-editor-status { flex: 1; color: #424d60; }
-    .source-editor-toolbar button {
-      min-width: 44px;
-      min-height: 44px;
-      padding: 0 12px;
-      border: 0;
-      border-radius: 8px;
-      color: #174da8;
-      background: #edf3ff;
-      font: 600 15px -apple-system, sans-serif;
-      touch-action: manipulation;
-    }
-    .source-editor-toolbar button[data-editor-action="save"] { color: #fff; background: #2165db; }
-    .source-editor-toolbar button:disabled { opacity: .5; }
-    #editor-layer {
-      position: absolute;
-      inset: 0;
+      /* Canonical paper keeps its source/link hit regions below live controls. */
       z-index: 2;
-      pointer-events: auto;
     }
-    #editor-layer:empty { display: none; }
-    .empty-hint { color: var(--muted); font-style: italic; }
+
     ::selection { background: var(--selection); }
     ::-webkit-scrollbar { width: 0; height: 0; }
   </style>
-  <style id="document-math-styles"></style>
-  <script>
-    window.MathJax = {
-      startup: { typeset: false },
-      loader: { load: ['a11y/assistive-mml'] },
-      output: { fontPath: new URL('fonts/%%FONT%%-font', location.href).href },
-      // Native screen readers consume local MathML; the page renderer owns
-      // a complete offline frame, including the mathematical glyphs.
-      options: {
-        enableMenu: false,
-        menuOptions: { settings: {
-          enrich: false, speech: false, braille: false, assistiveMml: true
-        } }
-      },
-      tex: {
-        inlineMath: [['$', '$'], ['\\(', '\\)']],
-        displayMath: [['$$', '$$'], ['\\[', '\\]']],
-        processEscapes: true,
-        processEnvironments: true
-      },
-      svg: { fontCache: 'local' }
-    };
-  </script>
-  <script src="marked.umd.js"></script>
-  <script src="purify.min.js"></script>
-  <script src="document-fragments.js"></script>
-  <script src="agent-feedback.js"></script>
-  <script src="document-images.js"></script>
-  <script src="tex-svg-nofont.js"></script>
+  <script src="notebook-program.js"></script>
+  <script src="document-program.js"></script>
 </head>
 <body>
   <div id="page-viewport" aria-label="Страницы документа">
@@ -220,7 +89,6 @@
         <div id="page-backgrounds"></div>
         <main id="document" class="document-content" aria-label="Содержимое документа"></main>
         <div id="interactive-layer"></div>
-        <div id="editor-layer"></div>
       </div>
     </div>
   </div>
@@ -232,7 +100,6 @@
       const stage = document.getElementById('page-stage');
       const track = document.getElementById('page-track');
       const backgrounds = document.getElementById('page-backgrounds');
-      const editorLayer = document.getElementById('editor-layer');
       const interactiveLayer = document.getElementById('interactive-layer');
       const interactiveFrames = new Map();
       let payload = null;
@@ -263,17 +130,10 @@
         // Reading FontFaceSet.status/size or geometry here could itself force
         // style/layout. Only document lifecycle flags are sampled before waits.
         observation.states[name] = {documentHidden: document.hidden ? 1 : 0,
-          documentReadyState: ['loading','interactive','complete'].indexOf(document.readyState),
-          sourcePreparationConnected: sourcePreparation?.host.isConnected ? 1 : 0};
+          documentReadyState: ['loading','interactive','complete'].indexOf(document.readyState)};
       };
-      let sourcePreparation = null;
-      let editingBlockID = null;
       let presentationEpoch = 0n;
       let presentationIsRendering = true;
-      let activeEditorFinish = null;
-      let activeEditorLayout = null;
-      let activeEditor = null;
-      const finishedSessionIDs = new Set();
       let lastTouchTap = null;
 
       const bridge = (message) => {
@@ -281,14 +141,13 @@
         if (handler) handler.postMessage({ ...message, runtimeID: message.runtimeID ?? payload?.runtimeID });
       };
 
-      // Source layout and the pixels currently covering it have different
-      // owners. An editor never becomes a canonical-source screenshot merely
-      // because the underlying block still has the same signature.
+      // Native paper and its transparent interaction layer publish the same
+      // immutable source; a pending generation is never a canonical screenshot.
       const presentationReceipt = () => payload && ({
         documentID:payload.documentID,runtimeID:payload.runtimeID,generation:payload.generation,
         sourceKey:payload.sourceKey,stateKey:payload.stateKey,renderToken:payload.renderToken,
         pageIndex:currentPageIndex(),presentationEpoch:String(presentationEpoch),
-        presentationKind:editingBlockID ? 'editor' : presentationIsRendering || !layoutCanonical ? 'preparing' : 'canonical'
+        presentationKind:presentationIsRendering || !layoutCanonical ? 'preparing' : 'canonical'
       });
       const presentationChanged = () => {
         if(presentationEpoch === 18446744073709551615n)throw new Error('Document presentation epoch exhausted');
@@ -336,12 +195,6 @@
         style.setProperty('--page-width', `${pageWidth}px`);
         style.setProperty('--page-height', `${pageHeight}px`);
         style.setProperty('--page-radius', `${pageWidth * paper.cornerRadiusRatio}px`);
-        style.setProperty('--page-margin', `${margin}px`);
-        style.setProperty('--page-gap', `${gap}px`);
-        style.setProperty('--content-width', `${contentWidth}px`);
-        style.setProperty('--content-height', `${contentHeight}px`);
-        style.setProperty('--column-gap', `${columnGap}px`);
-        style.setProperty('--body-font-size', `${12 * scale}px`);
         track.style.top = `${top}px`;
         track.style.left = `${side}px`;
         // Page curl only changes placement of the same physical page.
@@ -391,51 +244,90 @@
         const csp = "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'; object-src 'none';";
         const html = block.html || '';
         return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}${safeCSS}</style><script>(()=>{
-          const blockID=${safeID}, token=${safeToken};
-          const post=message=>parent.postMessage({...message,blockID,token},'*');
-          const report=(kind,message)=>post({channel:'notebook-diagnostic',kind,message:String(message)});
-          addEventListener('error',e=>report('javascript_error',e.message));
-          addEventListener('unhandledrejection',e=>report('javascript_error',e.reason));
-          let value=${safeState},suspended=false;
-          const stable=value=>JSON.stringify(value,(_,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);
-          let declaredReady=null;
-          const reportFocus=()=>post({channel:'notebook-program-focus',focused:!!document.activeElement?.matches('input,textarea,[contenteditable=true]')});
-          addEventListener('focusin',reportFocus);
-          addEventListener('focusout',()=>queueMicrotask(reportFocus));
-          window.notebook=Object.freeze({
-            get state(){return value},
-            commit(next){if(suspended||stable(value)===stable(next))return false;value=next;post({channel:'notebook-interactive',state:next});return true},
-            ready(promise){declaredReady=Promise.resolve(promise);declaredReady.then(()=>post({channel:'notebook-program-ready'}),error=>report('program_ready_error',error));return declaredReady}
-          });
-          addEventListener('message',event=>{
-            if(event.source!==parent||event.data?.token!==token)return;
-            if(event.data.channel==='notebook-suspend'){
-              suspended=true;post({channel:'notebook-program-flushed',requestID:event.data.requestID,state:value});return;
-            }
-            if(event.data.channel==='notebook-resume'){suspended=false;return;}
-            if(event.data.channel==='notebook-navigation-blur'){document.activeElement?.blur();reportFocus();return;}
-            if(event.data.channel!=='notebook-state')return;
-            const next=event.data.state;
-            if(stable(value)!==stable(next)){value=next;dispatchEvent(new CustomEvent('notebookstate',{detail:value}))}
-            post({channel:'notebook-state-applied',requestID:event.data.requestID});
-          });
-          addEventListener('load',async()=>{
-            await document.fonts.ready;
-            await Promise.all([...document.images].map(image=>image.decode().catch(()=>{})));
-            if(document.body.scrollHeight>innerHeight+1||document.body.scrollWidth>innerWidth+1)report('overflow','Content exceeds its frame');
-            for(const image of document.images)if(!image.naturalWidth)report('load_error','Image failed to load');
-            try{await declaredReady;post({channel:'notebook-program-started'})}
-            catch(error){report('program_ready_error',error)}
-          });
-          addEventListener('DOMContentLoaded',()=>{try{const script=document.createElement('script');script.textContent=${safeScript};document.body.append(script)}catch(error){report('javascript_error',error)}});
+          (${installNotebookDocumentProgram.toString()})({blockID:${safeID},token:${safeToken},state:${safeState},
+            requiresReady:${!!(String(block.javaScript || '').trim() || /<script/i.test(html))},script:${safeScript}},${createNotebookProgram.toString()});
         })()<\/script></head><body>${html}</body></html>`;
+      };
+
+      // Requests belong to the existing iframe, not to a second runtime or
+      // global animation clock. Hidden-page and close fences share one pause.
+      const programRequest = (runtime, channel, argument = null) => {
+        if(channel==='notebook-suspend' && runtime.checkpointRequest)return runtime.checkpointRequest;
+        const requestID=crypto.randomUUID();runtime.lifecycleRequests??=new Map();
+        const request=new Promise((resolve,reject)=>{
+          const timer=setTimeout(()=>{runtime.lifecycleRequests.delete(requestID);reject(new Error('program_lifecycle_timeout'));},4200);
+          runtime.lifecycleRequests.set(requestID,{resolve:value=>{clearTimeout(timer);resolve(value)},reject:error=>{clearTimeout(timer);reject(error)}});
+          runtime.frame.contentWindow.postMessage({channel,token:runtime.token,requestID,argument},'*');
+        });
+        if(channel==='notebook-suspend') {
+          runtime.checkpointRequest=request;
+          request.finally(()=>{if(runtime.checkpointRequest===request)runtime.checkpointRequest=null}).catch(()=>{});
+        }
+        return request;
+      };
+      const freezeProgram = async (blockID,runtime) => {
+        const stateVersion=runtime.appliedVersion;
+        const state=await programRequest(runtime,'notebook-suspend');
+        runtime.appliedState=stable(state);
+        return {blockID,token:runtime.token,state,stateVersion};
+      };
+      let programsSuspended = false, programsVisible = true;
+      const checkpointPrograms = async () => {
+        programsSuspended = true;
+        return Promise.all([...interactiveFrames].filter(([,runtime])=>runtime.isStarted)
+        .map(async ([blockID,runtime])=>{try{return await freezeProgram(blockID,runtime)}
+          catch(error){return {blockID,token:runtime.token,error:String(error)}}}));
+      };
+      const exportProgram = async (request) => {
+        const runtime=interactiveFrames.get(request?.blockID);
+        if(!runtime?.isStarted)throw new Error('program_export_not_ready');
+        return await programRequest(runtime,'notebook-export',request);
+      };
+      const resumePrograms = async () => {
+        if(!programsVisible)return true;
+        programsSuspended = false;
+        await Promise.all([...interactiveFrames.values()].filter(runtime=>runtime.isStarted && runtime.visible)
+          .map(runtime=>programRequest(runtime,'notebook-resume')));
+        await applyInteractiveState();return true;
+      };
+      const acknowledgeProgramCheckpoint = (blockID,token,state,basis,version) => {
+        const runtime=interactiveFrames.get(blockID);
+        if(runtime?.token!==token || runtime.appliedState!==stable(state)
+          || stable(runtime.appliedVersion)!==stable(basis))return;
+        runtime.appliedVersion=version;
+        const current=payload.stateVersions?.[blockID]??null;
+        if(stable(current)===stable(basis) || stable(current)===stable(version)) {
+          payload.states[blockID]=state;
+          (payload.stateVersions??={})[blockID]=version;
+        }
+      };
+      const acknowledgeProgramState = (blockID,token,revision,version) => {
+        const runtime=interactiveFrames.get(blockID);
+        if(runtime?.token===token && runtime.revision===revision)runtime.appliedVersion=version;
       };
 
       const positionInteractiveFrames = () => {
         for (const [blockID, runtime] of interactiveFrames) {
           const fragment = measuredRegions.find(region => region.id === blockID && region.pageIndex === currentPageIndex());
-          runtime.container.style.visibility = fragment ? 'visible' : 'hidden';
-          runtime.container.inert = !fragment;
+          runtime.container.style.visibility = fragment && programsVisible ? 'visible' : 'hidden';
+          runtime.container.inert = !fragment || !programsVisible;
+          const visible=!!fragment && programsVisible;
+          if(runtime.isStarted && runtime.visible!==visible) {
+            if(visible) {
+              runtime.retirementID=null;
+              if(!programsSuspended)programRequest(runtime,'notebook-resume').then(()=>applyInteractiveState()).catch(error=>diagnostic('program_lifecycle_error',error,blockID));
+            }
+            if(!visible || (programsSuspended && runtime.visible===undefined)) {
+              const requestID=crypto.randomUUID();runtime.retirementID=requestID;
+              freezeProgram(blockID,runtime).then(checkpoint=>{
+                if((runtime.visible && !programsSuspended) || runtime.retirementID!==requestID)return;
+                bridge({kind:'programCheckpoint',blockID,blockToken:runtime.token,
+                  value:checkpoint.state,stateVersion:checkpoint.stateVersion});
+                // Keep the context until the native writer acknowledges it.
+              }).catch(error=>diagnostic('program_lifecycle_error',error,blockID));
+            }
+          }
+          runtime.visible=visible;
           if (!fragment) continue;
           // A multi-column union is neither one page nor the program viewport.
           // Move the same full-height iframe behind its measured physical cut.
@@ -446,22 +338,41 @@
         }
       };
 
+      const setProgramsVisible = visible => {
+        programsVisible=!!visible;
+        // Native save/resume serializes returns; positioning cannot bypass it.
+        if(!programsVisible)programsSuspended=true;
+        positionInteractiveFrames();
+      };
+
       // A program belongs to the mounted document runtime, not to a page cut.
       // Its native owner can show passive page pixels without another script.
       const ensureInteractiveFrame = (block, state, token) => {
         let runtime=interactiveFrames.get(block.id);
-        if(runtime && runtime.token!==token){runtime.container.remove();runtime.cancel();interactiveFrames.delete(block.id);runtime=null;}
+        if(runtime && runtime.token!==token){runtime.cancel();runtime.container.remove();interactiveFrames.delete(block.id);runtime=null;}
         if(!runtime) {
           const container=document.createElement('div');container.className='interactive-fragment';
           container.style.visibility='hidden';container.inert=true;
           const frame=document.createElement('iframe');frame.className='interactive-frame';frame.title=block.id;
-          frame.setAttribute('sandbox','allow-scripts');frame.setAttribute('scrolling','no');frame.dataset.blockId=block.id;
+          // A native-minted package has its own non-file origin. Retaining it permits workers,
+          // but cannot expose this file-backed parent or another package's capability.
+          frame.setAttribute('sandbox',block.programPackage?'allow-scripts allow-same-origin':'allow-scripts');frame.setAttribute('scrolling','no');frame.dataset.blockId=block.id;
           let resolve,reject;const started=new Promise((yes,no)=>{resolve=yes;reject=no});
           runtime={container,frame,token,started,resolve,reject,readiness:'unknown',isStarted:false,
-            appliedState:stable(state),cancel:()=>reject(new Error('Interactive surface was superseded'))};
+            appliedState:stable(state),appliedVersion:payload.stateVersions?.[block.id]??null,revision:'0',cancel:()=>{
+              for(const request of runtime.lifecycleRequests?.values()||[])request.reject(new Error('Interactive surface was superseded'));
+              runtime.lifecycleRequests?.clear();frame.contentWindow?.postMessage({channel:'notebook-dispose',token},'*');reject(new Error('Interactive surface was superseded'))}};
           interactiveFrames.set(block.id,runtime);
-          started.then(()=>{runtime.isStarted=true;bridge({kind:'programReady',blockID:block.id,blockToken:token});},()=>{});
-          frame.srcdoc=interactiveDocument(block,state,token);container.append(frame);interactiveLayer.append(container);
+          started.then(()=>{
+            runtime.isStarted=true;runtime.visible=undefined;positionInteractiveFrames();
+            bridge({kind:'programReady',blockID:block.id,blockToken:token});
+          },()=>{});
+          if(block.programPackage) {
+            const url=payload.programURLs?.[block.id];
+            if(!url)throw new Error('Program package capability is missing');
+            frame.src=url;
+          } else frame.srcdoc=interactiveDocument(block,state,token);
+          container.append(frame);interactiveLayer.append(container);
         }
         runtime.height=block.height||320;runtime.initialState=block.initialState??{};
         return runtime;
@@ -476,266 +387,25 @@
         const blocks=new Map((payload.blocks||[]).filter(block=>block.kind==='interactive').map(block=>[block.id,block]));
         for(const [blockID,runtime] of interactiveFrames) {
           if(runtime.token!==payload.blockTokens?.[blockID]) {
-            runtime.container.remove();runtime.cancel();interactiveFrames.delete(blockID);
+            runtime.cancel();runtime.container.remove();interactiveFrames.delete(blockID);
           }
         }
         for(const [blockID,block] of blocks)if(visible.has(blockID))
           ensureInteractiveFrame(block,stateFor(block),payload.blockTokens?.[blockID]);
         positionInteractiveFrames();
         await Promise.all([...interactiveFrames].filter(([id])=>visible.has(id)).map(([,runtime])=>runtime.started));
-        if(payload.programMode==='headless')for(const [blockID,runtime] of interactiveFrames)if(visible.has(blockID)) {
-          if(runtime.readiness!=='declared' && blocks.get(blockID)?.javaScript)
-            diagnostic('program_completion_unknown','This is a captured frame. The program has not declared completion with notebook.ready(promise).',blockID);
-        }
       };
 
       const applyInteractiveState = async () => {
-        await Promise.all([...interactiveFrames].map(([blockID,runtime])=>new Promise(resolve=>{
+        await Promise.all([...interactiveFrames].filter(([,runtime])=>runtime.visible).map(([blockID,runtime])=>new Promise((resolve,reject)=>{
           const nextState=Object.prototype.hasOwnProperty.call(payload.states,blockID)?payload.states[blockID]:runtime.initialState;
-          const stateKey=stable(nextState);
-          if(runtime.appliedState===stateKey){resolve();return}
-          const requestID=crypto.randomUUID(); runtime.stateRequestID=requestID; runtime.stateApplied=resolve;
-          runtime.appliedState=stateKey;
+          const stateKey=stable(nextState),nextVersion=payload.stateVersions?.[blockID]??null;
+          if(runtime.appliedState===stateKey){runtime.appliedVersion=nextVersion;resolve();return}
+          const requestID=crypto.randomUUID(); runtime.stateRequestID=requestID; runtime.stateRejected=reject;
+          runtime.stateApplied=accepted=>{if(accepted){runtime.appliedState=stateKey;runtime.appliedVersion=nextVersion}resolve()};
           runtime.frame.contentWindow.postMessage({channel:'notebook-state',token:runtime.token,
-            requestID,state:nextState},'*');
+            requestID,state:nextState,revision:runtime.revision},'*');
         })));
-      };
-
-      const createBlock = (block) => {
-        const section = document.createElement('section');
-        section.className = `block ${block.kind === 'interactive' ? 'interactive' : 'editable'}`;
-        section.dataset.blockId = block.id;
-        section.dataset.kind = block.kind;
-
-        if (block.kind === 'interactive') {
-          section.dataset.height = String(block.height || 320);
-          section.style.height = `${block.height || 320}px`;
-        } else if (block.kind === 'latex') {
-          section.classList.add('latex');
-          const source = block.source || '';
-          const ownsDisplayMath = /^\s*(\$\$|\\\[|\\begin\s*\{(?:equation|align|alignat|gather|multline|flalign)\*?\})/.test(source);
-          section.textContent = ownsDisplayMath ? source : `\\[${source}\\]`;
-        } else {
-          const source = block.source || '';
-          const html = source ? marked.parse(source)
-            : '<p class="empty-hint">Дважды коснитесь, чтобы начать писать.</p>';
-          const content = DOMPurify.sanitize(html, {
-            RETURN_DOM_FRAGMENT: true,
-            USE_PROFILES: { html: true, svg: true, svgFilters: true },
-            FORBID_TAGS: ['script', 'iframe', 'object', 'embed'],
-            FORBID_ATTR: ['style', 'onerror', 'onload']
-          });
-          // Set policy while the sanitized fragment is still inert. The hidden
-          // measurement source must not add every far illustration to the
-          // document load event (and therefore document.fonts.ready). Intrinsic
-          // geometry and displayed pages still explicitly await real decode.
-          for (const image of content.querySelectorAll('img')) image.loading = 'lazy';
-          section.append(content);
-        }
-        return section;
-      };
-
-      const typeset = async (nodes, report = diagnostic) => {
-        if (nodes.length === 0) return;
-        work.typesetPasses += 1;
-        try {
-          await window.MathJax?.startup?.promise;
-          if (typeof window.MathJax?.typesetPromise !== 'function') {
-            throw new Error('MathJax runtime did not finish loading');
-          }
-          await MathJax.typesetPromise(nodes);
-          for (const node of nodes) {
-            if (node.classList.contains('latex')) {
-              if (!node.querySelector('mjx-container')) {
-                throw new Error(`LaTeX block ${node.dataset.blockId} stayed unrendered`);
-              }
-            }
-            node.dataset.mathState = 'rendered';
-          }
-        } catch (error) {
-          for (const node of nodes) node.dataset.mathState = 'error';
-          for (const node of nodes) report('latex_error', error, node.dataset.blockId);
-        }
-      };
-
-      // One canonical flow grows forwards. A requested page is published only
-      // with two trailing columns of lookahead (or the source ends). WebKit
-      // can adjust the penultimate column's fragment box when appending a
-      // sibling; neither trailing column is an accepted prefix. Far blocks have no DOM,
-      // typesetting or image decode on the first-page critical path.
-      const beginSourcePreparation = async (source, throughPage = null) => {
-        const dimensions=viewport.getBoundingClientRect();
-        if(sourcePreparation)throw new Error('document_source_preparation_busy');
-        if(!source?.key || !Number.isSafeInteger(source.blockCount) || source.blockCount<0 || !dimensions
-          || ![dimensions.width,dimensions.height].every(value=>Number.isFinite(value)&&value>0))
-          throw new Error('document_source_preparation_invalid');
-        if(!payload)configurePaper(source,0);
-        const host=document.createElement('div'),flow=document.createElement('main');
-        const paper=source.paper,scale=Math.min(paper.surfaceWidth/paper.widthPoints,paper.surfaceHeight/paper.heightPoints);
-        const width=paper.widthPoints*scale,height=paper.heightPoints*scale,margin=paper.marginPoints*scale;
-        const gap=Math.max(18,Math.min(30,22*scale)),stride=width+gap;
-        host.className='document-layout-preparation';host.setAttribute('aria-hidden','true');host.inert=true;
-        Object.assign(host.style,{position:'absolute',left:'0',top:'0',visibility:'hidden',width:`${width}px`,height:`${height}px`,
-          pointerEvents:'none',fontSize:`${12*scale}px`});
-        for(const [name,value] of Object.entries({'page-margin':margin,'content-width':width-2*margin,
-          'content-height':height-2*margin,'column-gap':2*margin+gap}))host.style.setProperty('--'+name,`${value}px`);
-        flow.className='document-content document-flow';
-        sourcePreparation={key:source.key,source,host,flow,cursor:0,pendingBlocks:[],cancelled:false,diagnostics:[],
-          width,height,margin,gap,stride,advancing:false};
-        work.sourceInstalls+=1;
-        return extendSourcePreparation(source.key,throughPage);
-      };
-
-      const extendSourcePreparation = async (key, throughPage = null, batch = null) => {
-        const preparation=sourcePreparation;
-        if(!preparation || preparation.key!==key || preparation.cancelled || preparation.advancing
-          || preparation.pendingPage || (throughPage!==null && (!Number.isInteger(throughPage)||throughPage<0)))
-          throw new Error('document_source_preparation_not_ready');
-        if(batch!==null) {
-          if(batch.offset!==preparation.cursor || preparation.pendingBlocks.length || !Array.isArray(batch.blocks)
-            || !batch.blocks.length || batch.offset+batch.blocks.length>preparation.source.blockCount)
-            throw new Error('document_source_block_address_invalid');
-          preparation.pendingBlocks=batch.blocks;
-        }
-        preparation.advancing=true;
-        const {source,host,flow,width,height,margin,gap,stride}=preparation;
-        const preparationPhasesMS={};let phaseStarted=performance.now();
-        const phase=name=>{const now=performance.now();preparationPhasesMS[name]=(preparationPhasesMS[name]||0)+now-phaseStarted;phaseStarted=now;};
-        try {
-          // Startup may change table metrics, even for a math-free first page.
-          await window.MathJax?.startup?.promise;phase('runtimeStartup');
-          if(preparation.cancelled)throw new Error('document_source_preparation_cancelled');
-          document.body.append(host);host.append(flow);
-          const contentWidth=width-2*margin,columnGap=2*margin+gap;
-          const countPages=()=>Math.max(1,Math.round((Math.max(contentWidth,flow.scrollWidth)+columnGap)/(contentWidth+columnGap)));
-          let pageCount=countPages();
-          while(preparation.cursor<source.blockCount && (throughPage===null || pageCount<throughPage+3)) {
-            if(!preparation.pendingBlocks.length) {
-              // Ask for the next addressed block only when the accepted page
-              // needs it. Neither unread text nor programs cross this boundary.
-              flow.remove();preparation.advancing=false;
-              return {sourceKey:key,nextBlockIndex:preparation.cursor};
-            }
-            // Small forward batches yield at actual runtime/image callbacks.
-            // No far markup is parsed merely to discover a first-page anchor.
-            const nodes=[];
-            const end=preparation.cursor+Math.min(preparation.pendingBlocks.length,throughPage===null?4:1);
-            while(preparation.cursor<end) {
-              const node=createBlock(preparation.pendingBlocks.shift());preparation.cursor+=1;
-              for(const image of node.querySelectorAll(':is(h1,h2,h3,h4,h5,h6) + :is(img,svg)')) {
-                const heading=image.previousElementSibling,lead=document.createElement('div');
-                lead.className='document-illustration-lead';heading.before(lead);lead.append(heading,image);
-              }
-              flow.append(node);nodes.push(node);
-            }
-            phase('sourceDOM');
-            await typeset(nodes.filter(node=>node.dataset.kind!=='interactive'),
-              (kind,message,blockID)=>preparation.diagnostics.push({kind,message:String(message),blockID}));
-            phase('typesetting');
-            const observation = preparationObservation?.sourceKey === source.key ? preparationObservation : null;
-            observeBrowserState(observation, 'fonts_before');
-            const fontGetterStart = observation ? performance.now() : 0;
-            const fontsReady = document.fonts.ready;
-            const fontAwaitStart = observation ? performance.now() : 0;
-            await fontsReady;
-            if (observation) {
-              preparationPhasesMS.fontsReadyGetter = (preparationPhasesMS.fontsReadyGetter || 0) + fontAwaitStart - fontGetterStart;
-              preparationPhasesMS.fontsReadyAwait = (preparationPhasesMS.fontsReadyAwait || 0) + performance.now() - fontAwaitStart;
-              observeBrowserState(observation, 'fonts_after');
-            }
-            phase('fontsReady');
-            for(const node of nodes) {
-              const phases=await notebookDocumentImages.waitForGeometry(node,()=>preparation.cancelled);
-              for(const [name,ms] of Object.entries(phases))preparationPhasesMS[name]=(preparationPhasesMS[name]||0)+ms;
-            }
-            phase('imageDecode');
-            if(preparation.cancelled)throw new Error('document_source_preparation_cancelled');
-            pageCount=countPages();
-            if(pageCount>4096)throw new Error('document_layout_page_budget');
-          }
-          const complete=preparation.cursor===source.blockCount;
-          if(complete) {
-            // Automatic addresses are a navigation index, not a paint barrier.
-            // Only the complete flow can reserve every explicit author ID.
-            const headingIDs=new Set([...flow.querySelectorAll('[id],a[name]')].flatMap(node=>[node.id,node.getAttribute('name')]).filter(Boolean));
-            const nextHeadingSuffix=new Map();
-            for(const heading of flow.querySelectorAll('h1,h2,h3,h4,h5,h6'))if(!heading.id) {
-              const stem=heading.textContent.trim().toLowerCase().replace(/[^\p{L}\p{N}\p{M}_\s-]/gu,'').replace(/\s/g,'-')||'section';
-              let suffix=nextHeadingSuffix.get(stem)||0,id=suffix?stem+'-'+suffix:stem;
-              work.headingAddressProbes+=1;
-              while(headingIDs.has(id)){id=stem+'-'+(++suffix);work.headingAddressProbes+=1;}
-              heading.id=id;headingIDs.add(id);nextHeadingSuffix.set(stem,suffix+1);
-            }
-          }
-          work.layoutPasses+=1;work.regionMeasurements+=1;
-          const origin=host.getBoundingClientRect(),regions=[];
-          for(const node of flow.children) {
-            let sourceOffset=0;
-            for(const rect of node.getClientRects()) {
-              const localX=rect.x-origin.x,pageIndex=Math.max(0,Math.floor(localX/stride));
-              const x=Math.max(0,localX-pageIndex*stride),y=Math.max(0,rect.y-origin.y);
-              const result={id:node.dataset.blockId,pageIndex,x,y,width:Math.min(rect.width,width-x),
-                height:Math.min(rect.height,height-y),sourceOffset};sourceOffset+=rect.height;
-              if(result.width>0&&result.height>0) {
-                if(regions.length>=65536)throw new Error('document_layout_region_budget');
-                regions.push(result);
-              }
-            }
-          }
-          const mathStyles=flow.querySelector('mjx-container')?MathJax.startup.adaptor.cssText(MathJax.svgStylesheet()):'';
-          if(new TextEncoder().encode(mathStyles).length>128*1024)throw new Error('document_math_style_budget');
-          const flowRect=flow.getBoundingClientRect();phase('canonicalGeometry');
-          const compiler=await notebookDocumentFragments.create(flow,{sourceKey:key,pageCount,width,height,stride,
-            contentTop:flowRect.y-origin.y,contentBottom:flowRect.bottom-origin.y,
-            originX:origin.x,originY:origin.y,regions},()=>preparation.cancelled);
-          phase('fragmentIndex');Object.assign(preparationPhasesMS,compiler.preparationPhasesMS);
-          const acceptedCount=complete?pageCount:Math.min(throughPage+1,pageCount-2);
-          const receipt={sourceKey:key,layoutScope:complete?'source':'source-prefix',layoutCanonical:true,width,height,
-            pageCount:acceptedCount,regions:regions.filter(value=>value.pageIndex<acceptedCount),
-            anchors:compiler.anchors.filter(value=>value.pageIndex<acceptedCount),
-            reading:compiler.reading.filter(value=>value[5]<acceptedCount),indexedNodes:compiler.indexedNodes,
-            indexedEdges:compiler.indexedEdges,diagnostics:preparation.diagnostics,mathStyles,preparationPhasesMS};
-          const layoutJSON=JSON.stringify(receipt),layoutBytes=new TextEncoder().encode(layoutJSON).length;
-          if(layoutBytes>16*1024*1024)throw new Error('document_layout_packet_budget');
-          flow.remove();
-          Object.assign(preparation,{receipt,compiler,layoutJSON,pendingPage:null,advancing:false});
-          return {sourceKey:key,pageIndex:null,utf8Bytes:layoutBytes};
-        } catch(error){finishSourcePreparation(key);throw error;}
-      };
-
-      const preparePagePacket = (key,pageIndex) => {
-        const preparation=sourcePreparation;
-        if(!preparation || preparation.key!==key || !preparation.receipt || preparation.cancelled
-          || !Number.isInteger(pageIndex) || pageIndex<0 || pageIndex>=preparation.receipt.pageCount) {
-          throw new Error('document_source_preparation_not_ready');
-        }
-        // Announcing a packet pins those exact bytes until the native reader
-        // admits them. A second request cannot silently replace unread content.
-        if(preparation.pendingPage)throw new Error('document_fragment_packet_unread');
-        const json=JSON.stringify(preparation.compiler.compile(pageIndex));
-        const utf8Bytes=new TextEncoder().encode(json).length;
-        if(utf8Bytes>8*1024*1024)throw new Error('document_fragment_packet_budget');
-        preparation.pendingPage={pageIndex,json};
-        return {sourceKey:key,pageIndex,utf8Bytes};
-      };
-      const readPreparedPacket = (key,pageIndex) => {
-        const preparation=sourcePreparation;
-        if(!preparation || preparation.key!==key || preparation.cancelled)throw new Error('document_source_preparation_not_ready');
-        if(pageIndex===null && preparation.layoutJSON)return preparation.layoutJSON;
-        if(!Number.isInteger(pageIndex) || preparation.pendingPage?.pageIndex!==pageIndex)throw new Error('document_fragment_packet_not_ready');
-        const json=preparation.pendingPage.json;preparation.pendingPage=null;
-        return json;
-      };
-      const discardPreparedPacket = (key,pageIndex) => {
-        const preparation=sourcePreparation;
-        if(preparation?.key===key && preparation.pendingPage?.pageIndex===pageIndex)preparation.pendingPage=null;
-      };
-      const finishSourcePreparation = key => {
-        const preparation=sourcePreparation;
-        if(!preparation || preparation.key!==key)return;
-        preparation.cancelled=true;
-        if(window.MathJax?.typesetClear)MathJax.typesetClear([preparation.flow]);
-        preparation.host.remove();sourcePreparation=null;
       };
 
       const installPhysicalFragment = (job, fragmentDOM) => {
@@ -750,18 +420,9 @@
         const origin=fragment.pageIndex*pageLayout.stride;
         Object.assign(root.style,{left:`${origin}px`,top:`${fragment.contentTop}px`,width:`${fragment.width}px`,
           height:`${fragment.contentBottom-fragment.contentTop}px`,overflow:'hidden'});
-        // Durability alone cannot dismiss the saved text. Retire its overlay
-        // only as the exact saved source is installed by the ordinary renderer.
-        if(activeEditor?.canFinishFor(job.source))activeEditor.finishSavedPresentation();
-        const oldEditor=editingBlockID && [...root.children].find(node=>node.dataset.blockId===editingBlockID);
-        let keptEditor=false;
         for(const node of [...fragmentDOM.children]) {
           node.style.top=`${parseFloat(node.style.top)-fragment.contentTop}px`;
-          if(oldEditor && node.dataset.blockId===editingBlockID) {
-            node.replaceWith(oldEditor);keptEditor=true;
-          }
         }
-        if(oldEditor&&!keptEditor)fragmentDOM.append(oldEditor);
         root.replaceChildren(...fragmentDOM.childNodes);
         let sheet=backgrounds.firstElementChild;
         if(!sheet){sheet=document.createElement('section');backgrounds.append(sheet)}
@@ -772,11 +433,10 @@
         track.style.width=`${fragment.width+origin}px`;backgrounds.style.height=`${fragment.height}px`;
         stage.style.width=`${fragment.width}px`;
         measuredRegions=fragment.regions;
-        layoutCanonical=!oldEditor;
+        layoutCanonical=true;
         installedSourceKey=payload.sourceKey;
       };
 
-      let activeImagePreparation = null;
       let requiredFrame = null;
       let retiredPresentation = null;
       let activeProgramPreparation = null;
@@ -788,14 +448,11 @@
           throw new Error('document_frame_requirement_invalid');
         if(requiredFrame?.runtimeID===frame.runtimeID && BigInt(frame.generation)<BigInt(requiredFrame.generation))return;
         requiredFrame={runtimeID:frame.runtimeID,generation:frame.generation};
-        if(activeImagePreparation && !frameIsRequired(activeImagePreparation.job.frame))
-          activeImagePreparation.controller.abort();
         if(activeProgramPreparation && !frameIsRequired(activeProgramPreparation.frame))
           activeProgramPreparation.controller.abort();
       };
       // Program readiness/state replies are logical subscriptions. Cancelling a
       // frame stops its wait; a retained program can serve the next generation.
-      // Image decode uses its own drain barrier and is never raced this way.
       const waitForProgram = (promise, signal) => new Promise((resolve,reject)=>{
         const abort=()=>{signal.removeEventListener('abort',abort);reject(new DOMException('Document frame superseded','AbortError'))};
         Promise.resolve(promise).then(value=>{signal.removeEventListener('abort',abort);resolve(value)},
@@ -806,12 +463,11 @@
       const retirePresentation = runtimeID => {
         retiredPresentation=runtimeID;
         if(pendingFrame?.frame.runtimeID===runtimeID)pendingFrame=null;
-        if(activeImagePreparation?.job.frame.runtimeID===runtimeID)activeImagePreparation.controller.abort();
         if(activeProgramPreparation?.frame.runtimeID===runtimeID)activeProgramPreparation.controller.abort();
         // An unstarted program has never admitted native input. End its actual
         // browsing context so an unresolved ready promise cannot retain a slot.
         if(payload?.runtimeID===runtimeID)for(const [id,runtime] of interactiveFrames)if(!runtime.isStarted) {
-          runtime.container.remove();runtime.cancel();interactiveFrames.delete(id);
+          runtime.cancel();runtime.container.remove();interactiveFrames.delete(id);
         }
       };
       const renderFrame = async (job) => {
@@ -831,37 +487,20 @@
         const modeChanged = payload?.programMode !== job.frame.programMode;
         let fragmentDOM = null;
         if (fragmentChanged) {
-          // A detached element still belongs to the active document. Template
-          // contents have an inert owner document, where img.decode may reject.
+          // Text and images are already in the canonical PDF. This DOM owns
+          // only hit regions, links and independently hosted live programs.
           fragmentDOM=document.createElement('div');fragmentDOM.innerHTML=job.fragment.html;
           mark('fragmentDOM');
-          const attempt={job,controller:new AbortController(),fragmentDOM};
-          activeImagePreparation=attempt;
-          try {
-            await notebookDocumentImages.waitForPixels(fragmentDOM,attempt.controller.signal);
-            mark('images');
-            // Newer source/state/page work replaces the pending requirement,
-            // never the pixels of this older frame after a delayed decode.
-            if(activeImagePreparation!==attempt || attempt.controller.signal.aborted || pendingFrame || !frameIsRequired(attempt.job.frame)) return;
-            job=attempt.job; // A mounted host may have changed editing authority while pixels were pending.
-          } finally {
-            if(activeImagePreparation===attempt)activeImagePreparation=null;
-          }
         }
         if (pendingFrame || !frameIsRequired(job.frame)) return;
         currentFrame = job;
-        payload = {...job.source,...job.frame,states:{...localStates}};
+        payload = {...job.source,...job.frame,states:{...localStates},stateVersions:job.state.versions||{}};
+        programsVisible=job.frame.programsVisible!==false;
         presentationIsRendering = true;
         presentationChanged();
         bridge({kind:'renderStarted',documentID:payload.documentID,renderToken:payload.renderToken,
           sourceKey:payload.sourceKey,stateKey:payload.stateKey,generation:payload.generation});
         if(fragmentChanged){
-          // The physical page owns its immutable mathematical styles. They
-          // cannot affect the next passive source measurement, nor mutate the
-          // MathJax stylesheet/cache that produced that source.
-          const style=document.getElementById('document-math-styles');
-          const css=`@scope (#document) {${job.mathStyles}}`;
-          if(style.textContent!==css)style.textContent=css;
           runtimeDiagnostics=job.diagnostics.slice();installPhysicalFragment(job,fragmentDOM);
         }
         else setPageIndex(payload.pageIndex);
@@ -872,8 +511,6 @@
         if(fragmentChanged || previousPage !== currentPageIndex() || modeChanged){
           await waitForProgram(prepareInteractiveFrames(),dependency.controller.signal);
           if(!frameIsRequired(job.frame))return;
-          activeEditorLayout?.();
-          restoreEditor();
         }
         mark('programs');
         if(stateChanged || sourceChanged || previousPage !== currentPageIndex()){
@@ -924,11 +561,9 @@
       const installPageSource = async page => {
         if(page?.fragment?.sourceKey!==page?.source?.key || page.fragment.format!==1
           || !Number.isInteger(page.pageCount) || page.pageCount<=page.fragment.pageIndex
-          || typeof page.mathStyles!=='string'
           || page.source.blocks.some(block=>!page.fragment.blockIDs.includes(block.id))) {
           throw new Error('document_page_source_invalid');
         }
-        await MathJax.startup.promise;
         sourceSnapshot=page;
       };
       const applyState = state => { stateSnapshot = state; };
@@ -938,7 +573,6 @@
         if(!Number.isInteger(count)||count<1||count>4096)throw new Error('document_layout_page_budget');
         const extend=job=>job?.source.key===key?{...job,pageCount:count,layoutComplete:true}:job;
         sourceSnapshot=extend(sourceSnapshot);pendingFrame=extend(pendingFrame);currentFrame=extend(currentFrame);
-        if(activeImagePreparation)activeImagePreparation.job=extend(activeImagePreparation.job);
         if(installedSourceKey===key && pageLayout) {
           pageLayout.pageCount=count;
           backgrounds.firstElementChild?.setAttribute('aria-label',`Страница ${currentPageIndex()+1} из ${count}`);
@@ -948,7 +582,6 @@
         pendingFrame = job;
         // Abort only further submissions; the owner retains one template and
         // waits for every already-submitted decode before taking the latest job.
-        activeImagePreparation?.controller.abort();
         if (!renderTask) {
           renderTask = (async () => {
             while (pendingFrame) {
@@ -976,198 +609,51 @@
         return enqueueFrame({...sourceSnapshot,state:stateSnapshot,frame,refreshSource:false});
       };
       const refreshSourcePresentation = () => {
-        const latest = pendingFrame || activeImagePreparation?.job || currentFrame;
+        const latest = pendingFrame || currentFrame;
         if(latest)enqueueFrame({...latest,refreshSource:true});
       };
 
-      const beginEditing = (blockID, restored = null) => {
-        if (!payload?.editable || editingBlockID) return;
+      const beginEditing = (blockID, event) => {
+        if (!payload?.editable) return;
         const block = payload.blocks.find(candidate => candidate.id === blockID);
         if (!block || block.kind === 'interactive') return;
-        const section = [...root.children].find(node => node.dataset.blockId === blockID);
-        if (!section) return;
-        editingBlockID = blockID;
-        presentationChanged();
-        const minimumHeight = 144;
-        const toolbarHeight = 52;
-        let editorTop = pageLayout.margin;
-        const editor = document.createElement('textarea');
-        editor.className = 'source-editor';
-        editor.value = restored?.edit.source ?? block.source ?? '';
-        const edit = restored?.edit || {sessionID:crypto.randomUUID(),documentID:payload.documentID,blockID,
-          baseSource:block.source || '',baseVersion:payload.sourceVersions[blockID],source:editor.value,sequence:0};
-        let sequence = edit.sequence, composing = false, waitingForCommit = false, committed = false, lastDraft = restored;
-        const reportDraft = () => {
-          if(waitingForCommit||committed)return lastDraft;
-          if(lastDraft?.edit.source===editor.value && lastDraft.selectionStart===editor.selectionStart
-            && lastDraft.selectionEnd===editor.selectionEnd && lastDraft.isComposing===composing
-            && (lastDraft.scrollTop||0)===editor.scrollTop)return lastDraft;
-          sequence += 1;
-          lastDraft={
-            edit:{...edit,source:editor.value,sequence},selectionStart:editor.selectionStart,selectionEnd:editor.selectionEnd,
-            isComposing:composing,scrollTop:editor.scrollTop,phase:'editing'};
-          bridge({kind:'draft',documentID:edit.documentID,blockID,session:lastDraft});
-          return lastDraft;
-        };
-        editor.addEventListener('compositionstart',()=>{composing=true;reportDraft()});
-        editor.addEventListener('compositionend',()=>{composing=false;reportDraft()});
-        editor.addEventListener('input',reportDraft);
-        editor.addEventListener('select',reportDraft);
-        editor.addEventListener('scroll',reportDraft);
-        editor.setAttribute('aria-label', 'Исходный Markdown или LaTeX');
-        editor.setAttribute('autocomplete', 'off');
-        editor.setAttribute('autocorrect', 'off');
-        editor.setAttribute('autocapitalize', 'none');
-        editor.setAttribute('spellcheck', 'false');
-        editor.setAttribute('autofocus', '');
-        editor.setAttribute('inputmode', 'text');
-        section.style.visibility = 'hidden';
-        editorLayer.append(editor);
-        const toolbar = document.createElement('div');
-        toolbar.className = 'source-editor-toolbar';
-        toolbar.setAttribute('role', 'group');
-        toolbar.setAttribute('aria-label', 'Редактирование исходника');
-        const status = document.createElement('span');
-        status.className = 'source-editor-status'; status.setAttribute('role', 'status');
-        const cancelButton = document.createElement('button');
-        cancelButton.type = 'button'; cancelButton.textContent = 'Отменить';
-        cancelButton.dataset.editorAction = 'cancel';
-        const saveButton = document.createElement('button');
-        saveButton.type = 'button'; saveButton.textContent = 'Сохранить';
-        saveButton.dataset.editorAction = 'save';
-        toolbar.append(status, cancelButton, saveButton);
-        editorLayer.append(toolbar);
-        const fitEditor = () => {
-          const scrollTop=editor.scrollTop;
-          const available = Math.max(
-            minimumHeight,
-            pageLayout.pageHeight - pageLayout.margin - editorTop
-          );
-          editor.style.height = '1px';
-          editor.style.height = `${Math.min(
-            available,
-            Math.max(minimumHeight, editor.scrollHeight + 4)
-          )}px`;
-          editor.scrollTop=scrollTop;
-        };
-        const positionEditor = () => {
-          const sectionRect = section.getBoundingClientRect();
-          const trackRect = track.getBoundingClientRect();
-          const page = currentPageIndex();
-          editorTop = Math.max(
-            pageLayout.margin + toolbarHeight,
-            Math.min(
-              sectionRect.top - trackRect.top,
-              pageLayout.pageHeight - pageLayout.margin - minimumHeight
-            )
-          );
-          editor.style.left = `${page * pageLayout.stride + pageLayout.margin}px`;
-          editor.style.top = `${editorTop}px`;
-          editor.style.width = `${pageLayout.contentWidth}px`;
-          toolbar.style.left = editor.style.left;
-          toolbar.style.top = `${editorTop - toolbarHeight}px`;
-          toolbar.style.width = editor.style.width;
-          fitEditor();
-        };
-        positionEditor();
-        activeEditorLayout = positionEditor;
-        editor.addEventListener('input', fitEditor);
-        const focusEditor = () => {
-          editor.focus({ preventScroll: true });
-        };
-        editor.addEventListener('pointerdown', focusEditor);
-        editor.addEventListener('click', focusEditor);
-        editor.addEventListener('touchend', focusEditor);
-        // iPadOS will show the software keyboard only when focus is claimed
-        // inside the double-tap event itself. Deferring this call even by one
-        // task leaves a visible editor with no keyboard.
-        if(!restored)editor.focus({ preventScroll: true });
-        editor.setSelectionRange(restored?.selectionStart ?? editor.value.length, restored?.selectionEnd ?? editor.value.length);
-        editor.scrollTop=restored?.scrollTop||0;
-        if(!restored)reportDraft();
-
-        const close = () => {
-          editor.remove(); toolbar.remove(); section.style.visibility='';
-          editingBlockID=null; activeEditorFinish=null; activeEditorLayout=null; activeEditor=null;
-          presentationIsRendering=true;
-          presentationChanged();
-        };
-        const finish = commit => {
-          if(waitingForCommit||committed||composing)return;
-          if(!commit){
-            finishedSessionIDs.add(edit.sessionID.toLowerCase());
-            bridge({kind:'discardDraft',documentID:edit.documentID,blockID,sessionID:edit.sessionID});
-            close(); refreshSourcePresentation(); return;
-          }
-          reportDraft(); waitingForCommit=true; editor.readOnly=true;
-          saveButton.disabled = true; cancelButton.disabled = true;
-          status.textContent='Сохранение…';
-          bridge({kind:'source',documentID:edit.documentID,blockID,edit:{...edit,source:editor.value,sequence}});
-        };
-        activeEditor = {sessionID:edit.sessionID,reportDraft,
-          canFinishFor:source=>committed && source?.blocks.some(block=>block.id===blockID && block.source===editor.value),
-          finishSavedPresentation:close,suspend:()=>{
-          const draft=reportDraft(); editor.readOnly=true; editor.blur(); close(); return draft;
-        },complete:(result)=>{
-          if(result.sequence!==sequence)return;
-          waitingForCommit=false;editor.readOnly=false;
-          saveButton.disabled = false; cancelButton.disabled = false;
-          if(result.status==='committed'){
-            committed=true;editor.readOnly=true;saveButton.disabled=true;cancelButton.disabled=true;
-            status.textContent='Сохранено. Обновляем страницу…';
-            finishedSessionIDs.add(edit.sessionID.toLowerCase());
-            if(activeEditor.canFinishFor(currentFrame?.source))refreshSourcePresentation();
-          }else{
-            status.textContent=result.status==='conflict'?'Исходник изменился. Ваш черновик сохранён.'
-              :result.status==='targetMissing'?'Блок удалён. Ваш черновик сохранён.':'Не удалось сохранить. Черновик остаётся здесь.';
-          }
-        }};
-        saveButton.addEventListener('click', () => finish(true));
-        cancelButton.addEventListener('click', () => finish(false));
-        activeEditorFinish = finish;
-        editor.addEventListener('keydown', event => {
-          if (event.key === 'Escape') { event.preventDefault(); finish(false); }
-          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-            event.preventDefault(); finish(true);
-          }
-        });
+        const rect = viewport.getBoundingClientRect();
+        bridge({kind:'requestSource', ...presentationReceipt(), blockID,
+          x:(event.clientX-rect.left)*viewport.clientWidth/rect.width,
+          y:(event.clientY-rect.top)*viewport.clientHeight/rect.height});
       };
 
-      const restoreEditor = () => {
-        if(!payload?.editable||editingBlockID)return;
-        const draft=(payload.drafts||[]).find(draft=>draft.edit.documentID===payload.documentID
-          && !['committed','discarded'].includes(draft.phase) && !finishedSessionIDs.has(draft.edit.sessionID.toLowerCase())
-          && blockRegions().some(region=>region.id===draft.edit.blockID&&region.pageIndex===currentPageIndex()));
-        if(draft)beginEditing(draft.edit.blockID,draft);
-      };
-
-      const setEditingEnabled = (enabled, drafts = []) => {
-        // Editing authority belongs to the host, not to a source job that may
-        // have been queued before UIKit handed this ready page to the person.
-        const updating = job => job && {...job,frame:{...job.frame,editable:enabled,
-          drafts:enabled ? drafts : job.frame.drafts}};
+      const setEditingEnabled = enabled => {
+        const updating = job => job && {...job,frame:{...job.frame,editable:enabled}};
         pendingFrame=updating(pendingFrame);currentFrame=updating(currentFrame);
-        if(activeImagePreparation)activeImagePreparation.job=updating(activeImagePreparation.job);
-        if(!payload)return null;
-        if(!enabled){
-          const draft=activeEditor?.suspend() || null;
-          payload.editable=false;
-          if(draft)refreshSourcePresentation();
-          return draft;
-        }
-        payload.editable=true;payload.drafts=drafts;restoreEditor();return null;
+        if(payload)payload.editable=enabled;
       };
 
       let linkActivationSequence = 0;
       root.addEventListener('click', event => {
         const link=event.target.closest('a[href]');
+        // VoiceOver/keyboard activation has no pointer coordinates. Ordinary
+        // finger clicks still require the completed double-tap path below.
+        const section = event.target.closest('.block.editable');
+        if (!link && section && event.isTrusted && event.detail === 0) {
+          const box = section.getBoundingClientRect();
+          beginEditing(section.dataset.blockId, {clientX:box.left+box.width/2,clientY:box.top+box.height/2});
+          return;
+        }
         if(!link || !root.contains(link))return;
         // Never scroll or navigate the leased WebKit: it owns exactly one
         // physical cut. The native presence owner opens the measured target.
         event.preventDefault();lastTouchTap=null;
-        if(!payload || !layoutCanonical || editingBlockID || presentationIsRendering)return;
+        if(!payload || !layoutCanonical || presentationIsRendering)return;
         bridge({kind:'link',...presentationReceipt(),href:link.getAttribute('href'),
           activationSequence:String(++linkActivationSequence),userActivated:event.isTrusted});
+      });
+      root.addEventListener('keydown', event => {
+        const section = event.target.closest('.block.editable');
+        if (!section || !['Enter', ' '].includes(event.key)) return;
+        event.preventDefault();
+        const box = section.getBoundingClientRect();
+        beginEditing(section.dataset.blockId, {clientX:box.left+box.width/2,clientY:box.top+box.height/2});
       });
       // Touch editing is admitted only by two completed single-finger taps.
       // Native paper gestures can deliver two nearby releases (or cancel one
@@ -1203,10 +689,7 @@
         event.preventDefault();
         if (editingPointerType === 'touch') return;
         const section = event.target.closest('.block.editable');
-        if (section) beginEditing(section.dataset.blockId);
-      });
-      editorLayer.addEventListener('pointerdown', event => {
-        if (event.target === editorLayer) activeEditorFinish?.(true);
+        if (section) beginEditing(section.dataset.blockId, event);
       });
       addEventListener('pointerup', event => {
         if (event.pointerType !== 'touch') return;
@@ -1232,12 +715,11 @@
           && Math.hypot(tap.x - lastTouchTap.x, tap.y - lastTouchTap.y) <= 28) {
           event.preventDefault();
           lastTouchTap = null;
-          beginEditing(tap.blockID);
+          beginEditing(tap.blockID, event);
         } else {
           lastTouchTap = tap;
         }
       });
-      addEventListener('pagehide', () => activeEditor?.reportDraft());
       addEventListener('message', event => {
         const message=event.data;
         if(!payload||!message?.channel?.startsWith('notebook-'))return;
@@ -1249,45 +731,43 @@
           runtime.focused=message.focused===true;
           bridge({kind:'programFocus',blockID,blockToken:runtime.token,focused:message.focused===true});return;
         }
-        if(message.channel==='notebook-program-flushed'){
-          if(message.requestID===runtime.retirementID)runtime.flushed?.(message.state);return;
+        if(message.channel==='notebook-program-exported'){
+          const request=runtime.lifecycleRequests?.get(message.requestID);
+          runtime.lifecycleRequests?.delete(message.requestID);request?.resolve(message.result);return;
         }
-        if(message.channel==='notebook-diagnostic'){diagnostic(message.kind,message.message,blockID);return}
+        if(message.channel==='notebook-program-flushed'||message.channel==='notebook-program-resumed'){
+          const request=runtime.lifecycleRequests?.get(message.requestID);
+          runtime.lifecycleRequests?.delete(message.requestID);request?.resolve(message.state??true);return;
+        }
+        if(message.channel==='notebook-diagnostic'){diagnostic(message.kind,message.message,blockID);if(message.kind==='program_ready_error'||message.kind==='javascript_error')runtime.reject(new Error(message.message));return}
         if(message.channel==='notebook-program-started'){runtime.resolve();return}
         if(message.channel==='notebook-program-ready'){runtime.readiness='declared';return}
-        if(message.channel==='notebook-state-applied'){if(message.requestID===runtime.stateRequestID)runtime.stateApplied?.();return}
+        if(message.channel==='notebook-state-applied'){if(message.requestID===runtime.stateRequestID)runtime.stateApplied?.(message.accepted);return}
+        if(message.channel==='notebook-program-error'){
+          const request=runtime.lifecycleRequests?.get(message.requestID);
+          runtime.lifecycleRequests?.delete(message.requestID);request?.reject(new Error(message.message));
+          if(message.requestID===runtime.stateRequestID)runtime.stateRejected?.(new Error(message.message));
+          else if(message.requestID===runtime.retirementID)diagnostic('program_lifecycle_error',message.message,blockID);return;
+        }
         if(message.channel!=='notebook-interactive')return;
-        payload.states[blockID]=message.state;
+        payload.states[blockID]=message.state;runtime.revision=message.revision;
         runtime.appliedState=stable(message.state);
-        bridge({kind:'state',documentID:payload.documentID,blockID,blockToken:runtime.token,value:message.state});
+        bridge({kind:'state',documentID:payload.documentID,blockID,blockToken:runtime.token,value:message.state,revision:message.revision});
       });
       addEventListener('dragstart', event => event.preventDefault());
       window.notebookRenderer = {
-        beginSourcePreparation, extendSourcePreparation, preparePagePacket, readPreparedPacket, discardPreparedPacket, finishSourcePreparation,
         installPageSource, acceptSourceExtent,
         blurPrograms:()=>{for(const runtime of interactiveFrames.values())if(runtime.focused)
           runtime.frame.contentWindow.postMessage({channel:'notebook-navigation-blur',token:runtime.token},'*');return true;},
-        applyState,
+        applyState, checkpointPrograms, resumePrograms, exportProgram, setProgramsVisible, acknowledgeProgramState, acknowledgeProgramCheckpoint,
         presentPage, requireFrame, retirePresentation, observePreparation, observedPageReceipt,
         setPageIndex,
         pageReceipt,
         presentationReceipt,
-        setEditingEnabled,
-        editingDraft:()=>activeEditor?.reportDraft()||null,
-        completeSourceEdit: result => {if(activeEditor?.sessionID.toLowerCase()===result.sessionID.toLowerCase())activeEditor.complete(result)}
+        setEditingEnabled
       };
       bridge({ kind: 'ready' });
-      // A body-free shell may finish common startup before a document exists.
-      // This acknowledges the actual shared promise, never page/pixel readiness.
-      Promise.resolve().then(async () => {
-        if (!MathJax?.startup?.promise) throw new Error('common_document_runtime_missing');
-        await MathJax.startup.promise;
-        if (typeof MathJax.typesetPromise !== 'function') throw new Error('common_document_math_runtime_missing');
-        bridge({ kind: 'commonRuntimeReady' });
-      }).catch(error => {
-        diagnostic('common_runtime_error', error);
-        bridge({ kind: 'commonRuntimeFailed' });
-      });
+      bridge({ kind: 'commonRuntimeReady' });
     })();
   </script>
 </body>

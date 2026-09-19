@@ -278,7 +278,7 @@ final class MacPreviewPublisher {
         defer { documentRaster?.release() }
         if let document = content.1, let state = content.2 {
           documentRaster = try await DocumentSnapshotCache.shared.prepare(document: document, state: state,
-            pageIndex: presence.documentPageIndex)
+            pageIndex: presence.documentPageIndex, programStore: model.store)
         }
         guard started, !Task.isCancelled, model.permitsBackgroundPreparation, makeCurrentViewKey() == key else {
           throw PreviewPublicationError.sourceChanged

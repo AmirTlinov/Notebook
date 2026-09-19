@@ -50,7 +50,7 @@ struct NotebookPublicProtocolTests {
   func failedOperationHasItsOwnAddressAndRollsBackEarlierOperations(projectionFailure: Bool) throws {
     let f = try Fixture(); defer { f.clean() }
     let run = UUID()
-    _ = try f.store.admitScriptRun(.init(op: .start, runID: run, apiVersion: 1, code: "atomic protocol proof"))
+    _ = try f.store.admitScriptRun(.init(op: .start, runID: run, apiVersion: 2, code: "atomic protocol proof"))
     _ = try f.store.setScriptRunState(run, state: .running)
     var effect = try f.store.admitScriptEffect(run, key: "atomic", method: "transaction", arguments: .object([:]))
     effect.state = .committing; try f.store.saveScriptEffect(run, effect: effect)

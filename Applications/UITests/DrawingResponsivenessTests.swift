@@ -617,6 +617,289 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.terminate()
   }
 
+  func testCompiledTypeScriptPackageFirstTapAndColdReopenOnBoardAndDocument() throws {
+    continueAfterFailure = false
+    let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "compiled-program", withExtension: "json"))
+    for document in [false, true] {
+      let app = XCUIApplication()
+      app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-compiled-program-fixture",
+        "--notebook-simulator-finger-gestures"] + (document ? ["--notebook-document-runtime-fixture"] : [])
+      app.launchEnvironment["NOTEBOOK_COMPILED_PROGRAM"] = try String(contentsOf: url, encoding: .utf8)
+      launchPortraitFixture(app)
+      XCTAssertTrue(app.staticTexts["2² = 4"].waitForExistence(timeout: 15))
+      let button = app.buttons["Увеличить x"]
+      XCTAssertTrue(button.waitForExistence(timeout: 5)); button.tap()
+      XCTAssertTrue(app.staticTexts["3² = 9"].waitForExistence(timeout: 5), "The first tap reaches the compiled module and Worker")
+      let picture = XCTAttachment(screenshot: app.screenshot())
+      picture.name = document ? "compiled-document-worker-result" : "compiled-board-worker-result"
+      picture.lifetime = .keepAlways; add(picture)
+      XCUIDevice.shared.press(.home); app.activate()
+      XCTAssertTrue(button.waitForExistence(timeout: 5)); XCTAssertTrue(app.staticTexts["3² = 9"].exists)
+      app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+      XCTAssertTrue(app.staticTexts["3² = 9"].waitForExistence(timeout: 15), "Cold SQLite restores the package and its checkpoint, without a dev server")
+      button.tap(); XCTAssertTrue(app.staticTexts["(−3)² = 9"].waitForExistence(timeout: 5))
+      app.terminate()
+    }
+  }
+
+  #if targetEnvironment(simulator)
+  func testSelectedWaveCanFreezeForDiscussionAndResumeWhenContextIsCleared() throws {
+    continueAfterFailure = false
+    let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "wave-program", withExtension: "json"))
+    for document in [false, true] {
+      let app = XCUIApplication()
+      app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-compiled-program-fixture", "--notebook-simulator-finger-gestures"]
+        + (document ? ["--notebook-document-runtime-fixture"] : [])
+      app.launchEnvironment["NOTEBOOK_COMPILED_PROGRAM_PATH"] = url.path
+      launchPortraitFixture(app)
+      let mode = app.switches["Проверочная мода"]
+      XCTAssertTrue(mode.waitForExistence(timeout: 20)); mode.tap()
+      XCTAssertTrue(app.staticTexts["Показанный результат: t = 0,650 с · c = 1,00 м/с · проверочная мода."].waitForExistence(timeout: 12))
+      let field = app.images["Смещение мембраны: синий — вниз, оранжевый — вверх, светлый — ноль"]
+      XCTAssertTrue(field.waitForExistence(timeout: 5)); field.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.35)).tap()
+      app.buttons["notebook-context-add"].tap()
+      let program = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "notebook-context-program-")).firstMatch
+      XCTAssertTrue(program.waitForExistence(timeout: 3)); program.tap()
+      let count = app.buttons["notebook-context-count"]
+      XCTAssertTrue(count.waitForExistence(timeout: 5)); count.tap()
+      let freeze = app.buttons["notebook-context-freeze-program"]
+      XCTAssertTrue(freeze.waitForExistence(timeout: 3)); freeze.tap()
+      let paused = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !mode.isEnabled }, object: nil)
+      XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 8), .completed)
+      let picture = XCTAttachment(screenshot: app.screenshot()); picture.name = document ? "wave-document-frozen-selection" : "wave-board-frozen-selection"
+      picture.lifetime = .keepAlways; add(picture)
+      count.tap(); app.buttons["notebook-context-clear"].tap()
+      let resumed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in mode.isEnabled }, object: nil)
+      XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 5), .completed)
+      XCTAssertTrue(count.waitForNonExistence(timeout: 3)); app.terminate()
+    }
+  }
+
+  func testWaveFirstControlMediaSeekAndColdReopenOnBothSurfaces() throws {
+    continueAfterFailure = false
+    let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "wave-program", withExtension: "json"))
+    for document in [false, true] {
+      let app = XCUIApplication()
+      app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-compiled-program-fixture", "--notebook-simulator-finger-gestures"]
+        + (document ? ["--notebook-document-runtime-fixture"] : [])
+      app.launchEnvironment["NOTEBOOK_COMPILED_PROGRAM_PATH"] = url.path
+      launchPortraitFixture(app)
+      let mode = app.switches["Проверочная мода"]
+      XCTAssertTrue(mode.waitForExistence(timeout: 20)); mode.tap()
+      let result = app.staticTexts["Показанный результат: t = 0,650 с · c = 1,00 м/с · проверочная мода."]
+      XCTAssertTrue(result.waitForExistence(timeout: 15))
+      let picture = XCTAttachment(screenshot: app.screenshot()); picture.name = document ? "wave-document-mode" : "wave-board-mode"
+      picture.lifetime = .keepAlways; add(picture)
+      let material = app.webViews.containing(.staticText, identifier: "Волна помнит границу.").firstMatch
+      let original = material.frame
+      material.swipeUp()
+      let modelNote = app.buttons["Модель, точность и происхождение"]
+      if !modelNote.isHittable { material.swipeUp() }
+      XCTAssertTrue(modelNote.isHittable, "Local scrolling exposes the complete plot and its explanation")
+      XCTAssertEqual(material.frame.midX, original.midX, accuracy: 4)
+      XCTAssertEqual(material.frame.midY, original.midY, accuracy: 4, "Local scrolling must not pan the board")
+      let plot = XCTAttachment(screenshot: app.screenshot()); plot.name = document ? "wave-document-plot" : "wave-board-plot"
+      plot.lifetime = .keepAlways; add(plot)
+      material.swipeDown()
+      let recording = app.switches["Запись эксперимента"]
+      if !recording.isHittable { material.swipeDown() }
+      recording.tap()
+      let play = app.buttons["Воспроизвести запись"]
+      if !play.isHittable { material.swipeUp() }
+      XCTAssertTrue(play.waitForExistence(timeout: 12)); play.tap()
+      let pause = app.buttons["Пауза записи"]; XCTAssertTrue(pause.waitForExistence(timeout: 5)); pause.tap()
+      let seek = app.sliders["Момент записи"]
+      if !seek.isHittable { material.swipeUp() }
+      XCTAssertTrue(seek.waitForExistence(timeout: 5)); seek.coordinate(withNormalizedOffset: .init(dx: 0.4, dy: 0.5)).tap()
+      let playhead = try XCTUnwrap(seek.value as? String)
+      XCUIDevice.shared.press(.home); app.activate()
+      XCTAssertTrue(play.waitForExistence(timeout: 8), "Background return must not autoplay")
+      app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+      if !seek.isHittable { app.webViews.containing(.staticText, identifier: "Волна помнит границу.").firstMatch.swipeUp() }
+      XCTAssertTrue(seek.waitForExistence(timeout: 15)); XCTAssertEqual(seek.value as? String, playhead, "Cold SQLite restores the video playhead")
+      XCTAssertTrue(play.exists)
+      app.terminate()
+    }
+  }
+
+  func testThreeDimensionalFirstOrbitSelectionPinchAndColdReopenOnBoardAndDocument() throws {
+    continueAfterFailure = false
+    let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "gears-program", withExtension: "json"))
+    for document in [false, true] {
+      let app = XCUIApplication()
+      app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-compiled-program-fixture", "--notebook-simulator-finger-gestures"]
+        + (document ? ["--notebook-document-runtime-fixture"] : [])
+      app.launchEnvironment["NOTEBOOK_COMPILED_PROGRAM_PATH"] = url.path
+      launchPortraitFixture(app)
+      XCTAssertTrue(app.staticTexts["Вращайте · коснитесь колеса"].waitForExistence(timeout: 25))
+      let material = app.webViews.containing(.button, identifier: "Общий вид").firstMatch
+      let original = material.frame
+      let canvas = app.images.matching(identifier: "Зубчатая передача: перетаскивание вращает вид, два пальца изменяют масштаб, касание выбирает колесо. Стрелки вращают вид.").firstMatch
+      XCTAssertTrue(canvas.waitForExistence(timeout: 5)); XCTAssertTrue(canvas.isHittable)
+      canvas.coordinate(withNormalizedOffset: .init(dx: 0.42, dy: 0.55)).press(forDuration: 0.05,
+        thenDragTo: canvas.coordinate(withNormalizedOffset: .init(dx: 0.68, dy: 0.62)))
+      XCTAssertEqual(material.frame.midX, original.midX, accuracy: 4)
+      XCTAssertEqual(material.frame.midY, original.midY, accuracy: 4, "The first orbit must not drag the board")
+      canvas.pinch(withScale: 1.15, velocity: 1)
+      XCTAssertEqual(material.frame.width, original.width, accuracy: 4, "Model pinch must not zoom the board")
+      // Semantic selection uses the same state as raycast, with an accessible alternative.
+      let output = app.switches.matching(NSPredicate(format: "label CONTAINS %@", "Ведомое")).firstMatch
+      if !output.isHittable { material.swipeUp() }
+      XCTAssertTrue(output.waitForExistence(timeout: 5)); output.tap()
+      let note = app.staticTexts["Ведомое: 24 зуба, делительный радиус 24 мм. Вращается в ту же сторону, в 2,5 раза быстрее ведущего."]
+      XCTAssertTrue(note.waitForExistence(timeout: 5))
+      let picture = XCTAttachment(screenshot: app.screenshot()); picture.name = document ? "gears-document-selected" : "gears-board-selected"
+      picture.lifetime = .keepAlways; add(picture)
+      XCUIDevice.shared.orientation = .landscapeLeft
+      XCTAssertTrue(note.waitForExistence(timeout: 5)); XCUIDevice.shared.orientation = .portrait
+      XCUIDevice.shared.press(.home); app.activate(); XCTAssertTrue(note.waitForExistence(timeout: 8))
+      app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+      XCTAssertTrue(note.waitForExistence(timeout: 25), "Cold SQLite retains the chosen physical part")
+      app.terminate()
+    }
+  }
+
+  func testTwoFourEightScientificMaterialsKeepFirstInputAcrossCameraAndColdReopen() throws {
+    continueAfterFailure = false
+    for count in [2, 4, 8] {
+      let app = XCUIApplication()
+      app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
+        "--notebook-independent-materials=\(count)", "--notebook-scientific-materials"]
+      for name in ["signal", "gears", "wave"] {
+        app.launchEnvironment["NOTEBOOK_SCIENCE_" + name.uppercased()] = try XCTUnwrap(Bundle(for: Self.self).url(forResource: name + "-program", withExtension: "json")).path
+      }
+      launchPortraitFixture(app)
+      let impulse = app.buttons.matching(identifier: "К всплеску").firstMatch
+      XCTAssertTrue(impulse.waitForExistence(timeout: 25)); XCTAssertTrue(impulse.isHittable); impulse.tap()
+      XCTAssertTrue(app.staticTexts["61,337 с"].waitForExistence(timeout: 8))
+      let gears = app.webViews.containing(.button, identifier: "Общий вид").firstMatch
+      XCTAssertTrue(gears.waitForExistence(timeout: 25))
+      gears.swipeUp()
+      let output = app.switches.matching(NSPredicate(format: "label CONTAINS %@", "Ведомое")).firstMatch
+      XCTAssertTrue(output.waitForExistence(timeout: 5)); output.tap()
+      let note = app.staticTexts["Ведомое: 24 зуба, делительный радиус 24 мм. Вращается в ту же сторону, в 2,5 раза быстрее ведущего."].firstMatch
+      XCTAssertTrue(note.waitForExistence(timeout: 5))
+      let ready = XCTAttachment(screenshot: app.screenshot()); ready.name = "science-\(count)-first-controls"
+      ready.lifetime = .keepAlways; add(ready)
+      // The narrow empty gutter belongs to the board, not a program scroller.
+      let from = app.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.72))
+      let to = app.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.38))
+      from.press(forDuration: 0.05, thenDragTo: to)
+      let moved = XCTAttachment(screenshot: app.screenshot()); moved.name = "science-\(count)-camera"
+      moved.lifetime = .keepAlways; add(moved)
+      to.press(forDuration: 0.05, thenDragTo: from)
+      XCUIDevice.shared.press(.home); app.activate()
+      XCTAssertTrue(app.staticTexts["61,337 с"].waitForExistence(timeout: 15))
+      app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+      XCTAssertTrue(app.staticTexts["61,337 с"].waitForExistence(timeout: 25))
+      XCTAssertTrue(note.waitForExistence(timeout: 25))
+      app.terminate()
+    }
+  }
+
+  func testDenseSignalFirstTapRotationBackgroundAndColdReopenOnBoardAndDocument() throws {
+    continueAfterFailure = false
+    let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "signal-program", withExtension: "json"))
+    for document in [false, true] {
+      let app = XCUIApplication()
+      app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-compiled-program-fixture",
+        "--notebook-simulator-finger-gestures"] + (document ? ["--notebook-document-runtime-fixture"] : [])
+      app.launchEnvironment["NOTEBOOK_COMPILED_PROGRAM_PATH"] = url.path
+      launchPortraitFixture(app)
+      let impulse = app.buttons["К всплеску"]
+      XCTAssertTrue(impulse.waitForExistence(timeout: 20)); impulse.tap()
+      XCTAssertTrue(app.staticTexts["61,337 с"].waitForExistence(timeout: 8))
+      let material = app.webViews.containing(.button, identifier: "К всплеску").firstMatch
+      let originalFrame = material.frame
+      material.swipeUp()
+      let note = app.staticTexts["Синтетический затухающий сигнал с шумом и добавленным импульсом. Формула и график используют одни и те же исходные отсчёты."]
+      let scrolled = XCTAttachment(screenshot: app.screenshot()); scrolled.name = document ? "signal-document-formula" : "signal-board-formula"
+      scrolled.lifetime = .keepAlways; add(scrolled)
+      XCTAssertTrue(note.waitForExistence(timeout: 5)); XCTAssertTrue(note.isHittable, "The formula and its explanation must be reachable inside a short fragment")
+      XCTAssertEqual(material.frame.midX, originalFrame.midX, accuracy: 4)
+      XCTAssertEqual(material.frame.midY, originalFrame.midY, accuracy: 4, "Reading the scene must not pan the board")
+      let picture = XCTAttachment(screenshot: app.screenshot())
+      picture.name = document ? "signal-document-impulse" : "signal-board-impulse"
+      picture.lifetime = .keepAlways; add(picture)
+      material.swipeDown()
+      XCUIDevice.shared.orientation = .landscapeLeft
+      XCTAssertTrue(app.staticTexts["61,337 с"].waitForExistence(timeout: 5))
+      XCUIDevice.shared.orientation = .portrait
+      XCUIDevice.shared.press(.home); app.activate()
+      XCTAssertTrue(app.staticTexts["61,337 с"].waitForExistence(timeout: 8))
+      app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+      XCTAssertTrue(app.staticTexts["61,337 с"].waitForExistence(timeout: 20), "Cold SQLite preserves the selected raw data window")
+      app.terminate()
+    }
+  }
+  #endif
+
+  func testLCFirstGestureParametersBackgroundAndColdReopenOnBoardAndDocument() throws {
+    continueAfterFailure = false
+    for document in [false, true] {
+      let app = XCUIApplication()
+      app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-lc-fixture",
+        "--notebook-simulator-finger-gestures"] + (document ? ["--notebook-document-runtime-fixture"] : [])
+      for suffix in ["html", "css", "js"] {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "lc", withExtension: suffix, subdirectory: "animation"))
+        app.launchEnvironment["NOTEBOOK_LC_" + suffix.uppercased()] = try String(contentsOf: url, encoding: .utf8)
+      }
+      launchPortraitFixture(app)
+      let next = app.buttons["Вперёд на четверть периода"], phase = app.sliders["Фаза"]
+      XCTAssertTrue(next.waitForExistence(timeout: 10)); XCTAssertTrue(phase.exists)
+      let zero = try XCTUnwrap(phase.value as? String)
+      next.tap()
+      let quarter = try XCTUnwrap(phase.value as? String)
+      XCTAssertNotEqual(quarter, zero, "The first physical contact changes the model, not only focus")
+      let proof = XCTAttachment(screenshot: app.screenshot())
+      proof.name = document ? "LC-document-first-quarter" : "LC-board-first-quarter"
+      proof.lifetime = .keepAlways; add(proof)
+      let material = app.webViews.containing(.slider, identifier: "Фаза").firstMatch
+      let originalFrame = material.frame
+      let parameters = ["L", "C", "U"].map { prefix in
+        app.sliders.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+      }
+      var changedParameters: [String] = []
+      for (parameter, position) in zip(parameters, [90.0 / 190, 15.0 / 90, 4.0 / 9]) {
+        XCTAssertTrue(parameter.exists)
+        let previous = parameter.value as? String
+        // WebKit has no AX scrubber endpoints. Start on the actual thumb,
+        // whose initial position follows the published min/max/value.
+        let inset = 12 / parameter.frame.width
+        parameter.coordinate(withNormalizedOffset: .init(dx: inset + position * (1 - 2 * inset), dy: 0.5))
+          .press(forDuration: 0.01, thenDragTo: parameter.coordinate(withNormalizedOffset: .init(dx: 0.8, dy: 0.5)))
+        let changed = try XCTUnwrap(parameter.value as? String)
+        XCTAssertNotEqual(changed, previous); changedParameters.append(changed)
+      }
+      XCTAssertEqual(material.frame, originalFrame, "Parameter contacts do not move the camera or material")
+      app.switches["Пуск"].tap()
+      XCTAssertTrue(app.switches["Пауза"].waitForExistence(timeout: 2))
+      let moving = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in phase.value as? String != quarter }, object: nil)
+      XCTAssertEqual(XCTWaiter.wait(for: [moving], timeout: 3), .completed)
+      XCUIDevice.shared.press(.home)
+      app.activate()
+      XCTAssertTrue(app.switches["Пуск"].waitForExistence(timeout: 5), "Background freezes the model before the OS suspends its browser")
+      let frozen = try XCTUnwrap(phase.value as? String)
+      XCTAssertEqual(parameters.compactMap { $0.value as? String }, changedParameters)
+      app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+      XCTAssertTrue(phase.waitForExistence(timeout: 10))
+      XCTAssertEqual(phase.value as? String, frozen, "A cold process restores the final animated moment, not the previous button commit")
+      XCTAssertEqual(parameters.compactMap { $0.value as? String }, changedParameters)
+      let restored = XCTAttachment(screenshot: app.screenshot())
+      restored.name = document ? "LC-document-cold-restored" : "LC-board-cold-restored"
+      restored.lifetime = .keepAlways; add(restored)
+      app.buttons["Начало"].tap(); XCTAssertEqual(phase.value as? String, zero)
+      phase.coordinate(withNormalizedOffset: .init(dx: 12 / phase.frame.width, dy: 0.5)).press(forDuration: 0.01,
+        thenDragTo: phase.coordinate(withNormalizedOffset: .init(dx: 0.8, dy: 0.5)))
+      XCTAssertNotEqual(phase.value as? String, zero)
+      app.buttons["Начало"].tap(); XCTAssertEqual(phase.value as? String, zero)
+      app.buttons["Назад на четверть периода"].tap()
+      XCTAssertNotEqual(phase.value as? String, zero)
+      next.tap(); XCTAssertEqual(phase.value as? String, zero)
+      app.terminate()
+    }
+  }
+
   func testIndependentMaterialsKeepFirstInputAndStateAfterColdReopening() {
     continueAfterFailure = false
     for count in [2, 4, 8] {
@@ -2285,64 +2568,23 @@ final class DrawingResponsivenessTests: XCTestCase {
   func testDocumentTextOpensMarkdownEditorOnDoubleTap() async throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
-    try await Task.sleep(for: .milliseconds(350))
     let app = XCUIApplication()
-    app.launchArguments = [
-      "--notebook-drawing-responsiveness-fixture",
-      "--notebook-document-runtime-fixture",
-    ]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-document-runtime-fixture"]
     launchPortraitFixture(app)
-
-    // HTML page regions are siblings of the continuous text flow in WebKit's
-    // accessibility tree. The UIKit shell owns the actual current document.
-    let firstPage = app.otherElements["page-turn-page-0"].firstMatch
-    XCTAssertTrue(firstPage.waitForExistence(timeout: 8))
-    let heading = firstPage.staticTexts["Живая математика"].firstMatch
-    XCTAssertTrue(
-      heading.waitForExistence(timeout: 8),
-      "Markdown должен стать читаемым текстом текущей страницы WebKit"
-    )
-    XCTAssertTrue(heading.isHittable, "Читаемый Markdown должен принимать касание")
-    heading.doubleTap()
-
-    let editor = app.textViews["Исходный Markdown или LaTeX"].firstMatch
-    XCTAssertTrue(
-      editor.waitForExistence(timeout: 5),
-      "Двойное касание должно заменить блок одним редактором исходника"
-    )
-    // WKWebView honours the person's double tap, while XCUITest does not pass
-    // that activation token to a textarea created during the same event. A
-    // direct automation tap gives the synthesized keyboard the same focus a
-    // real touch already has.
-    editor.tap()
-    XCTAssertTrue(
-      app.keyboards.firstMatch.waitForExistence(timeout: 5),
-      "Редактор должен получить клавиатуру до синтезированного ввода"
-    )
-    editor.typeText("\n\nНовая строка\n\n")
-
-    if (editor.value as? String)?.contains("Новая строка") != true {
-      let hierarchy = XCTAttachment(string: app.debugDescription)
-      hierarchy.name = "Document editor after keyboard input"
-      hierarchy.lifetime = .keepAlways
-      add(hierarchy)
-    }
-    XCTAssertTrue(
-      (editor.value as? String)?.contains("Новая строка") == true,
-      "Редактор должен принимать Markdown с экранной клавиатуры"
-    )
-    let save = app.buttons["Сохранить"].firstMatch
-    XCTAssertTrue(save.isHittable, "Клавиатура не должна закрывать сохранение")
-    save.tap()
-    XCTAssertTrue(firstPage.staticTexts["Новая строка"].firstMatch.waitForExistence(timeout: 12),
-      "Сохранённый текст должен появиться на этой бумаге без закрытия документа")
-    XCTAssertFalse(editor.exists, "Редактор завершается установкой сохранённого источника")
-    let finished = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-      !app.otherElements["document-save-status"].exists
-    }, object: nil)
-    XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 5), .completed)
-    let savedImage = XCTAttachment(screenshot: app.screenshot())
-    savedImage.name = "document-after-physical-save"; savedImage.lifetime = .keepAlways; add(savedImage)
+    let sourceRegion = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Исходник: # Живая математика")).firstMatch
+    XCTAssertTrue(sourceRegion.waitForExistence(timeout: 20), app.debugDescription)
+    sourceRegion.doubleTap()
+    let editor = app.textViews["document-source-editor"].firstMatch
+    XCTAssertTrue(editor.waitForExistence(timeout: 8), app.debugDescription)
+    XCTAssertTrue((editor.value as? String)?.contains("Живая математика") == true)
+    editor.tap(); editor.typeText("\n\nНовая строка\n\n")
+    XCTAssertTrue(app.staticTexts["Сохранено"].waitForExistence(timeout: 15))
+    app.buttons["Лист"].tap()
+    XCTAssertFalse(editor.exists)
+    app.buttons["Код"].tap()
+    XCTAssertTrue((editor.value as? String)?.contains("Новая строка") == true)
+    let image = XCTAttachment(screenshot: app.screenshot()); image.name = "Native source after paper double tap"
+    image.lifetime = .keepAlways; add(image)
   }
 
   func testDocumentRuntimeRendersMarkdownLatexAndInteractiveContent() async throws {

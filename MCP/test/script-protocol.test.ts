@@ -81,8 +81,9 @@ test("lifecycle help obtains an explicit frozen extent and declares the exact co
 test("operation discovery is compact and every exact schema reference resolves locally",()=>{
   const bytes=(value:unknown)=>Buffer.byteLength(JSON.stringify(value));
   assert.ok(bytes(sdkReference.operations)<6*1024,"The operation index must not repeat full schemas");
-  // Keep the v2 action input compact as authored geometry fields grow.
-  assert.ok(bytes(sdkReference.methods.transaction!.input)<25*1024,"Atomic action help must remain compact");
+  // Package references plus native paths/freehand add shared typed definitions.
+  // Keep the complete 22-operation schema below 28 KiB; never inline targets.
+  assert.ok(bytes(sdkReference.methods.transaction!.input)<28*1024,"Atomic action help must remain compact");
   const targetReferences=new Set<string>();
   const collectTargets=(value:any):void=>{
     if(!value||typeof value!=="object")return;
@@ -215,7 +216,7 @@ test("documented resume loop waits for a terminal run and drains every remaining
 
 // Synthetic IPC replies isolate SDK output-schema and envelope validation.
 // Native writes, receipts and sandboxing are exercised by Core/Mac XPC tests.
-test("two-tool MCP preserves attention statuses and exact run identity across start/resume/cancel",async()=>{
+test("MCP preserves attention statuses and exact run identity across start/resume/cancel",async()=>{
   const root=await mkdtemp(join(tmpdir(),"notebook-script-protocol-")),path=join(root,"bridge.sock"),requests:any[]=[];
   let attentionStatus="source_pixels";
   let effects:any[]=[];
@@ -239,7 +240,7 @@ test("two-tool MCP preserves attention statuses and exact run identity across st
     await chmod(root,0o700);await new Promise<void>(resolve=>native.listen(path,resolve));await chmod(path,0o600);
     const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);await client.connect(clientTransport);
-    assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute"]);
+    assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute","notebook_import_program"]);
     for(const status of ["source_pixels","source_pixels_unavailable"]) {
       attentionStatus=status;
       const result=await client.callTool({name:"notebook_context",arguments:{method:"attention",args:{contextID:randomUUID(),referenceID:randomUUID()}}});

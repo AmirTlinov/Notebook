@@ -521,7 +521,10 @@ final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneA
     hasInstalledLayout = false
     let needsRebase = anchor.map {
       SceneCameraProjection.requiresRebase(anchor: $0, current: presence)
-        || (!isCameraActive && $0.camera != presence.camera)
+        // Ending a wheel pan does not change density. Keep its native
+        // translation instead of relocating the SwiftUI/WebKit subtree at
+        // every pause between wheel samples. Zoom still settles at exact LOD.
+        || (!isCameraActive && $0.camera.scale != presence.camera.scale)
     } ?? true
     if needsRebase || self.revision != revision {
       let previousAnchor = anchor
@@ -540,16 +543,31 @@ final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneA
       }
       contentPublicationCount += 1
     }
-    guard let anchor else { return }
     projection?.update(presence)
-    let matrix = SceneCameraProjection(anchor: anchor, current: presence)
-    // AppKit's bounds transform also supplies exact native event conversion;
-    // a layer-only transform would leave hit testing in the old camera.
-    bounds = CGRect(x: -matrix.translation.x / matrix.scale,
-      y: -matrix.translation.y / matrix.scale,
-      width: presence.viewport.x / matrix.scale, height: presence.viewport.y / matrix.scale)
+    applyCameraProjection()
     cameraProjectionCount += 1
     hasInstalledLayout = true
+  }
+
+  override func setFrameSize(_ newSize: NSSize) {
+    super.setFrameSize(newSize)
+    // SwiftUI may resize the native frame after updateNSView. AppKit preserves
+    // an explicit bounds transform while resizing, which otherwise stretches
+    // split-pane paper on one axis and retains that distortion after return.
+    CATransaction.begin(); CATransaction.setDisableActions(true)
+    applyCameraProjection()
+    CATransaction.commit()
+  }
+
+  private func applyCameraProjection() {
+    guard let anchor, let current = projection?.current, frame.width > 0, frame.height > 0 else { return }
+    let matrix = SceneCameraProjection(anchor: anchor, current: current)
+    // Only the camera scales content. The physical frame, not a proposed
+    // SwiftUI viewport, determines the native bounds at this layout stage.
+    let projected = CGRect(x: -matrix.translation.x / matrix.scale,
+      y: -matrix.translation.y / matrix.scale,
+      width: frame.width / matrix.scale, height: frame.height / matrix.scale)
+    if bounds != projected { bounds = projected }
   }
 
   override func viewDidMoveToWindow() {
