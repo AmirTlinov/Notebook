@@ -2,12 +2,13 @@
 export const sampleRate = 1000, count = 100_000, binSize = 100, seed = 20260919;
 export const impulseIndex = 61_337;
 export const spans = [.05, .2, 1, 4] as const;
-export type Selection = {center: number; span: number};
+export type Selection = {center: number; span: number; sample: number | null};
 export function selection(value: unknown): Selection {
   const input = value as Partial<Selection> | null;
   const span = spans.includes(input?.span as typeof spans[number]) ? input!.span! : 4;
   const center = typeof input?.center === 'number' && Number.isFinite(input.center) ? input.center : 50;
-  return {center: Math.max(span / 2, Math.min(count / sampleRate - span / 2, center)), span};
+  const sample = typeof input?.sample === "number" && Number.isInteger(input.sample) && input.sample >= 0 && input.sample < count ? input.sample : null;
+  return {sample, center: Math.max(span / 2, Math.min(count / sampleRate - span / 2, center)), span};
 }
 export function sampleWindow(state: Selection) {
   const length = Math.round(state.span * sampleRate);

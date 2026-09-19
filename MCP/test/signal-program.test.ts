@@ -18,7 +18,7 @@ test('dense signal source and min-max bins reproduce every sample and retain the
   assert.ok(samples[impulseIndex+1]!>2);assert.ok(Math.max(...Array.from(samples).filter((_,i)=>i%100===0))<1.5);
 });
 test('selection clamps by source sample indices and never depends on viewport',()=>{
-  assert.deepEqual(selection({center:NaN,span:9}),{center:50,span:4});
+  assert.deepEqual(selection({center:NaN,span:9}),{sample:null,center:50,span:4});
   for(const center of [-Infinity,-5,0,61.337,100,200])for(const span of [.05,.2,1,4]){
     const state=selection({center,span}),window=sampleWindow(state);
     assert.ok(window.start>=0&&window.end<=count);assert.equal(window.length,span*1000);

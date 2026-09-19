@@ -6,6 +6,43 @@ import XCTest
 
 @MainActor
 final class DocumentProgramOwnerTests: XCTestCase {
+  func testFrozenObjectIsBoundToPresentedDocumentPixelsAndNotTheResumedPage() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [
+      .markdown(id: "heading", source: "# Exact selected frame"),
+      .interactive(id: "probe", html: "<canvas width='600' height='180' style='display:block;width:100%;height:180px'></canvas>", javaScript: """
+        let phase=0;const ctx=document.querySelector('canvas').getContext('2d');
+        const draw=c=>{ctx.fillStyle=c;ctx.fillRect(0,0,600,180)};draw('green');
+        notebook.lifecycle({pause:()=>{phase=.5;draw('blue')},checkpoint:()=>({phase}),resume:()=>{phase=.75;draw('red')}});
+        notebook.semantic(()=>({objectID:'probe',label:'Selected node',anchor:{x:.5,y:.5},values:[],model:{phase}}));
+        notebook.ready(Promise.resolve());
+      """, height: 180)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "probe") != nil }
+    let web = try XCTUnwrap(fixture.web(block: "probe"))
+    let paused = try await DocumentPagePresentationOwner.pauseForAttention(documentID: document.id, blockID: "probe", resources: fixture.resources)
+    defer { paused.release() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented }
+    XCTAssertTrue(paused.isCurrent()); XCTAssertFalse(web.isUserInteractionEnabled)
+    let region = try XCTUnwrap(DocumentRenderRegistry.shared.regions(document: document).first { $0.id == "probe" }?.frame)
+    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let page = PageRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
+    let pixels = try XCTUnwrap(DocumentPagePresentationOwner.capturePresented(documentID: document.id, pageIndex: 0,
+      token: fixture.currentToken, region: page, resources: fixture.resources, blockID: "probe"))
+    let selected = try XCTUnwrap(pixels.semanticSelection)
+    XCTAssertEqual(selected.model["phase"], .number(0.5))
+    XCTAssertEqual(selected.anchor.x, (region.x + region.width / 2) / page.width, accuracy: 0.001)
+    XCTAssertEqual(selected.anchor.y, (region.y + region.height / 2) / page.height, accuracy: 0.001)
+    paused.release()
+    try await wait(message: { fixture.diagnostics }) { web.isUserInteractionEnabled }
+    let current = try await web.evaluateJavaScript("Array.from(document.querySelector('canvas').getContext('2d').getImageData(20,20,1,1).data)") as? [Int]
+    XCTAssertEqual(current, [255, 0, 0, 255])
+    let png = try await pixels.png(), image = try XCTUnwrap(UIImage(data: png))
+    XCTAssertGreaterThan(try bluePixels(image), 100, "Send copied the blue native page before the same heap resumed red")
+    let shot = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+    shot.name = "document-frozen-semantic-blue-frame"; shot.lifetime = .keepAlways; add(shot)
+  }
+
   func testAgentFeedbackRoutesThroughTheInstalledPaperOwnerWithoutRecreatingAProgram() async throws {
     let document = DocumentDocument(actor:UUID(),blocks:[.markdown(id:"words",source:"# Видимый результат\n\nТекст остаётся текстом."),
       .interactive(id:"program",html:"<button onclick='this.dataset.clicked=1'>Не прерывать</button>",height:100)])

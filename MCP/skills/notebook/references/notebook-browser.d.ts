@@ -6,11 +6,23 @@ interface NotebookProgramLifecycle {
   resume?(context: {signal: AbortSignal}): void | Promise<void>;
   dispose?(): void | Promise<void>;
 }
+/** Untrusted author data. Anchor is a point in the current viewport, normalized 0…1.
+ * Return only the current selected object; null means no selected visible object. */
+interface NotebookSemanticSelection {
+  objectID: string;
+  label: string;
+  anchor: {x: number; y: number};
+  values: {label: string; value: number; unit: string}[];
+  model: NotebookJSON;
+}
 declare const notebook: {
   readonly version: 'NotebookProgram/1';
   readonly state: NotebookJSON;
   /** Local admission only, not a durable-save receipt. False while suspended/disposed or unchanged. */
   commit(value: NotebookJSON): boolean;
   ready<T>(completion: PromiseLike<T> | T): Promise<T>;
+  /** Called synchronously after pause/checkpoint, before the native frozen raster.
+   * At most 4096 UTF-16 units; never return a Promise or mutate the scene here. */
+  semantic(selection: () => NotebookSemanticSelection | null): void;
   lifecycle(hooks: NotebookProgramLifecycle): void;
 };

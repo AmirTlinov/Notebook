@@ -68,8 +68,12 @@ function drawDetail() {
     x:{domain:[desired.from,desired.to],label:'Время, с',ticks:width < 450 ? 4 : 6,tickFormat:(value: number) => value.toFixed(state.span < 1 ? 3 : 1)},
     y:{domain:[-1.5,3],label:'Амплитуда, усл. ед.',grid:true,ticks:4},
     marks:[Plot.ruleY([0],{stroke:c.muted,strokeOpacity:.4}),Plot.lineY(data.values,{x:(_,i) => (data!.start + i) / sampleRate,stroke:c.blue,strokeWidth:1.6,clip:true}),
+      ...(state.sample!==null && state.sample>=data.start && state.sample<data.start+data.values.length
+        ? [Plot.dot([{x:state.sample/sampleRate,y:data.values[state.sample-data.start]!}],{x:'x',y:'y',r:5,fill:c.orange})] : []),
       ...(state.span <= .05 ? [Plot.dotY(data.values,{x:(_,i) => (data!.start + i) / sampleRate,r:2,fill:c.blue})] : [])]}));
   get('detail-caption').textContent = `${format(desired.from)}–${format(desired.to)} с · ${desired.length.toLocaleString('ru-RU')} исходных отсчётов · без прореживания`;
+  if(state.sample!==null&&state.sample>=data.start&&state.sample<data.start+data.values.length)
+    get('detail-caption').textContent+=` · Выбран № ${state.sample}: t = ${format(state.sample/sampleRate)} с, u = ${data.values[state.sample-data.start]!.toFixed(4)} усл. ед.`;
   detail.removeAttribute('data-pending');detail.removeAttribute('aria-busy');
 }
 function updateFormula() {
@@ -150,6 +154,33 @@ canvas.addEventListener('keydown',event => {
   const center = event.key === 'Home' ? 0 : event.key === 'End' ? count / sampleRate : event.key === 'ArrowLeft' ? state.center - step : event.key === 'ArrowRight' ? state.center + step : undefined;
   if (center !== undefined) {event.preventDefault();change({center},true);}
 },{signal:events.signal});
+detail.addEventListener('click',event=>{
+  if(!active()||!data)return;
+  const desired=sampleWindow(state);if(data.start!==desired.start||data.values.length!==desired.length)return;
+  const rect=detail.getBoundingClientRect(),right=rect.width<450?30:12;
+  const u=(event.clientX-rect.left-44)/(rect.width-44-right);if(u<0||u>1)return;
+  state={...state,sample:data.start+Math.round(u*(data.values.length-1))};drawDetail();notebook.commit({...state});
+},{signal:events.signal});
+detail.addEventListener('keydown',event=>{
+  if(!active()||!data)return;
+  const desired=sampleWindow(state);if(data.start!==desired.start||data.values.length!==desired.length)return;
+  const current=state.sample??data.start,step=event.shiftKey?10:1;
+  const sample=event.key==='Home'?data.start:event.key==='End'?desired.end-1:event.key==='ArrowLeft'?current-step:event.key==='ArrowRight'?current+step:undefined;
+  if(sample===undefined)return;event.preventDefault();
+  state={...state,sample:Math.max(data.start,Math.min(desired.end-1,sample))};drawDetail();notebook.commit({...state});
+},{signal:events.signal});
+notebook.semantic(()=>{
+  if(disposed||!data||state.sample===null)return null;
+  const desired=sampleWindow(state),offset=state.sample-data.start;
+  if(data.start!==desired.start||data.values.length!==desired.length||offset<0||offset>=data.values.length||detail.hasAttribute('data-pending'))return null;
+  const value=data.values[offset]!,rect=detail.getBoundingClientRect(),right=rect.width<450?30:12;
+  const x=(rect.left+44+offset/(data.values.length-1)*(rect.width-44-right))/innerWidth;
+  const y=(rect.top+210-(value+1.5)/4.5*188)/innerHeight;
+  if(x<0||x>1||y<0||y>1)return null;
+  return {objectID:'sample:'+state.sample,label:'Отсчёт '+state.sample,anchor:{x,y},
+    values:[{label:'Время',value:state.sample/sampleRate,unit:'s'},{label:'Амплитуда',value,unit:'arbitrary'}],
+    model:{index:state.sample,sampleRate,dataSHA256:metadata.sha256,window:{...state}}};
+});
 theme.addEventListener('change',onResize,{signal:events.signal});
 addEventListener('notebookstate',() => {state = selection(notebook.state);if (active()) {syncControls();drawOverview();void loadWindow().catch(showFailure);}},{signal:events.signal});
 function pause() {suspended = true;wanted = false;formulaWanted = false;request?.abort();cancelAnimationFrame(frame);frame = 0;syncControls();}

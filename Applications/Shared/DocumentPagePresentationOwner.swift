@@ -159,6 +159,37 @@ final class DocumentPagePresentationOwner {
     return accepted
   }
 
+  static func pauseForAttention(documentID: UUID, blockID: String, resources: SceneRenderResources = .shared) async throws -> NotebookProgramAttentionPause {
+    guard let owner = owners[Key(documentID: documentID, resources: ObjectIdentifier(resources))]?.value,
+      let runtime = owner.programOwner.runtimes[blockID], runtime.ready,
+      let web = runtime.webView, SceneSourceVisibility.isVisible(web) else {
+      throw SceneRenderError.snapshotPending("document_attention_owner")
+    }
+    let attentionID = UUID(); runtime.attentionPauseID = attentionID
+    await runtime.blur()
+    let value: JSONValue
+    do {
+      value = try await runtime.checkpoint()
+      let raster = try await runtime.capture(sourceOffset: 0, height: runtime.block.height,
+        pixelWidth: max(1, Int(ceil(runtime.blockWidth * 2))))
+      raster.release()
+      guard owner.programOwner.runtimes[blockID] === runtime, runtime.value == value else { throw CancellationError() }
+      runtime.onChange()
+    } catch {
+      if runtime.attentionPauseID == attentionID { await runtime.resume() }
+      throw error
+    }
+    return .init(value: value, isCurrent: { [weak owner, weak runtime] in
+      guard let runtime else { return false }
+      return owner?.programOwner.runtimes[blockID] === runtime && runtime.value == value
+        && runtime.attentionPauseID == attentionID && runtime.hasFrozenFrame
+    }, resume: { [weak owner, weak runtime] in
+      guard let runtime, owner?.programOwner.runtimes[blockID] === runtime, runtime.value == value,
+        runtime.attentionPauseID == attentionID else { return }
+      await runtime.resume()
+    })
+  }
+
   static func resumePrograms(resources: SceneRenderResources = .shared) async {
     for owner in owners.values.compactMap(\.value) where !owner.stopped && owner.resources === resources {
       await owner.programOwner.resumeAll()
@@ -185,14 +216,15 @@ final class DocumentPagePresentationOwner {
   /// surfaces together before yielding the main actor. It does not wait for a
   /// neighboring snapshot or ask a program to render a later frame.
   static func capturePresented(documentID: UUID, pageIndex: Int, token: String, region: PageRect,
-    resources: SceneRenderResources = .shared) throws -> NotebookSubmittedPixels? {
+    resources: SceneRenderResources = .shared, blockID: String? = nil) throws -> NotebookSubmittedPixels? {
     guard let owner = owners[Key(documentID: documentID, resources: ObjectIdentifier(resources))]?.value,
       let entry = owner.current, entry.input.pageIndex == pageIndex, entry.input.token == token,
       owner.mountedID == entry.id, let host = entry.host, host.window != nil, !host.hasSnapshot,
       owner.paper.hasCanonicalPixels, !owner.gestureLocked,
       owner.programsReady(on: pageIndex, scope: .region(region)), owner.isInstalled(entry) else { return nil }
     let pixels = try NotebookSubmittedPixels.capture(view: host,
-      physicalSize: owner.physicalSize(entry.input), region: region, resources: resources)
+      physicalSize: owner.physicalSize(entry.input), region: region, resources: resources,
+      semanticSelection: owner.semanticSelection(on: entry, blockID: blockID, region: region))
     guard owner.current?.id == entry.id, entry.input.token == token, !owner.gestureLocked,
       owner.mountedID == entry.id, owner.isInstalled(entry) else { return nil }
     return pixels
@@ -1021,6 +1053,24 @@ final class DocumentPagePresentationOwner {
         rect: .init(x: region.frame.x, y: region.frame.y, width: region.frame.width, height: region.frame.height),
         sourceOffset: region.sourceOffset, fullSize: .init(width: region.frame.width, height: block.height))
     }
+  }
+
+  private func semanticSelection(on entry: Entry, blockID: String?, region: PageRect) -> ProgramSemanticSelection? {
+    guard let blockID else { return nil }
+    if let runtime = programOwner.runtimes[blockID],
+      let selection = runtime.frozenSemanticSelection,
+      let placement = placements(on: entry).first(where: { $0.blockID == blockID }) {
+      return selection.mapped(from: .init(x: placement.rect.minX,
+        y: placement.rect.minY - placement.sourceOffset,
+        width: placement.fullSize.width, height: placement.fullSize.height), into: region)
+    }
+    guard let placement = passivePlacements(on: entry).first(where: { $0.blockID == blockID }),
+      let selection = placement.raster.semanticSelection else { return nil }
+    // Only the installed immutable passive raster can bind author data to Send.
+    // A running WebKit, even with equal source/state, cannot supply this evidence.
+    return selection.mapped(from: .init(x: placement.rect.minX,
+      y: placement.rect.minY - placement.sourceOffset,
+      width: placement.fullSize.width, height: placement.fullSize.height), into: region)
   }
 
   private func isInstalled(_ entry: Entry) -> Bool {

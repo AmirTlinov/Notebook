@@ -40,6 +40,14 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   private var presentedRevision: UInt64?
   private var appliedValue: JSONValue
   private var observedStateVersion: ContentFieldVersion?
+  private var checkpointSelection: ProgramSemanticSelection?
+  private var checkpointWasCaptured = false
+  private var checkpointFrozen = false
+  var attentionPauseID: UUID? {
+    didSet { webView?.isUserInteractionEnabled = attentionPauseID == nil }
+  }
+  var hasFrozenFrame: Bool { checkpointFrozen && checkpointWasCaptured }
+  var frozenSemanticSelection: ProgramSemanticSelection? { checkpointWasCaptured ? checkpointSelection : nil }
   private var checkpointTask: Task<JSONValue, Error>?
   var onChange: () -> Void = { }
   var onStateChange: (JSONValue) -> ContentFieldVersion? = { _ in nil }
@@ -139,19 +147,31 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   }
 
   func apply(_ next: JSONValue, stateVersion: ContentFieldVersion?) async throws {
-    guard !stopped, let stateVersion, stateVersion != observedStateVersion else { return }
+    // Persistence publishes the checkpoint back through the document owner.
+    // Let that same transaction accept its value before deciding whether this
+    // is a newer external edit that must release the held frame.
+    if let checkpointTask { _ = try? await checkpointTask.value }
+    guard !Task.isCancelled, !stopped, let stateVersion, stateVersion != observedStateVersion else { return }
     if let observedStateVersion,
       observedStateVersion.includes(stateVersion), !stateVersion.includes(observedStateVersion) { return }
     if next == appliedValue { observedStateVersion = stateVersion; return }
+    if attentionPauseID != nil {
+      await resume()
+      guard !Task.isCancelled, !stopped, stateVersion != observedStateVersion else { return }
+      if let observedStateVersion,
+        observedStateVersion.includes(stateVersion), !stateVersion.includes(observedStateVersion) { return }
+    }
     guard ready, let webView, let lease else { return }
     let borrow = try lease.borrow(); defer { borrow.release() }
     let data = try JSONEncoder().encode(next)
     let argument = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
-    let expectedRevision = revision
+    let expectedRevision = revision, basis = observedStateVersion
     let accepted = try await webView.callAsyncJavaScript("return await window.documentProgram.apply(value,revision);", arguments: ["value": argument, "revision": String(expectedRevision)], in: nil, contentWorld: .page)
     // A later accepted native commit wins even if WebKit's reply to the older
     // state application arrives after that commit's message.
-    if accepted as? Bool == true, !stopped, self.webView === webView, revision == expectedRevision {
+    if accepted as? Bool == true, !stopped, self.webView === webView, revision == expectedRevision,
+      observedStateVersion == basis {
+      checkpointSelection = nil; checkpointWasCaptured = false; checkpointFrozen = false; attentionPauseID = nil
       value = next; appliedValue = next; observedStateVersion = stateVersion
       presentedRevision = revision; onChange()
     }
@@ -179,12 +199,18 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     }
     guard !stopped, self.webView === webView, !Task.isCancelled, revision == expectedRevision,
       observedStateVersion == basis || observedStateVersion == accepted else { throw CancellationError() }
+    let selected = await NotebookProgramBridge.semanticSelection(controller: "documentProgram", in: webView)
+    guard !stopped, self.webView === webView, !Task.isCancelled, revision == expectedRevision,
+      observedStateVersion == basis || observedStateVersion == accepted else { throw CancellationError() }
+    checkpointSelection = selected; checkpointWasCaptured = false; checkpointFrozen = true
     value = next; appliedValue = next; observedStateVersion = accepted
     return next
   }
 
   func resume() async {
+    checkpointSelection = nil; checkpointWasCaptured = false; checkpointFrozen = false; attentionPauseID = nil
     if let webView { _ = try? await NotebookProgramBridge.lifecycle("resume", controller: "documentProgram", in: webView) }
+    onChange()
   }
 
   func blur() async { _ = try? await webView?.evaluateJavaScript("document.activeElement?.blur();true") }
@@ -217,7 +243,10 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
         let cg = image.cgImage else { throw CancellationError() }
       let normalized = UIImage(cgImage: cg, scale: Double(cg.width) / size.width, orientation: .up)
       let source = SceneRasterSource.document(id: documentID, token: "program:\(block.id):\(id):\(operation)")
-      guard let raster = resources.storeAndRetain(normalized, for: source, reservation: reservation) else { throw SceneRenderError.resourceLimit }
+      guard let raster = resources.storeAndRetain(normalized, for: source, reservation: reservation,
+        semanticSelection: checkpointSelection?.mapped(from: .init(x: 0, y: 0, width: size.width, height: size.height),
+          into: .init(x: 0, y: sourceOffset, width: size.width, height: height))) else { throw SceneRenderError.resourceLimit }
+      if checkpointFrozen { checkpointWasCaptured = true }
       return raster
     }
     captureTask = task; captureID = operation
@@ -284,6 +313,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     releaseSurface(); onFocus(false); onChange()
   }
   private func releaseSurface() {
+    checkpointSelection = nil; checkpointWasCaptured = false; checkpointFrozen = false; attentionPauseID = nil
     programAssets.revokeAll(); packageURL = nil
     readinessDeadline?.cancel(); readinessDeadline = nil
     initialNavigationPending = false
@@ -327,7 +357,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       addEventListener('unhandledrejection',event=>post('failure',{message:String(event.reason)}));
       window.documentProgram=createNotebookProgram({state:\(try encoded(value)),paint:painted,
         onCommit:(value,revision)=>{post('state',{value,revision});present(revision)},
-        report:(kind,message)=>{if(kind!=='program_lifecycle_error')post('failure',{message:kind+': '+message})}});
+        report:(kind,message)=>{if(!['program_lifecycle_error','program_semantic_unavailable'].includes(kind))post('failure',{message:kind+': '+message})}});
       window.notebook=documentProgram.api;
       addEventListener('load',async()=>{try{
         await document.fonts.ready;

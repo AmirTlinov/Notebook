@@ -136,6 +136,17 @@ get('front').addEventListener('click',()=>{change({camera:[0,390,1]});applyCamer
 get('reset').addEventListener('click',()=>{change({camera:selection(null).camera});applyCamera();},{signal:events.signal});
 retry.addEventListener('click',startLoad,{signal:events.signal});theme.addEventListener('change',invalidate,{signal:events.signal});
 addEventListener('notebookstate',()=>{if(disposed)return;stop();state=selection(notebook.state);applyCamera();sync();invalidate();},{signal:events.signal});
+notebook.semantic(()=>{
+  if(!model||lost||disposed)return null;
+  const i=design.gears.findIndex(g=>g.id===state.selected),gear=design.gears[i];if(!gear)return null;
+  const projected=new THREE.Vector3(centers[i]!,9,0).project(camera),rect=canvas.getBoundingClientRect();
+  const x=(rect.left+(projected.x+1)/2*rect.width)/innerWidth,y=(rect.top+(1-projected.y)/2*rect.height)/innerHeight;
+  if(projected.z < -1||projected.z>1||x<0||x>1||y<0||y>1)return null;
+  return {objectID:gear.id,label:gear.label,anchor:{x,y},values:[{label:'Зубья',value:gear.teeth,unit:'1'},
+    {label:'Делительный радиус',value:design.module*gear.teeth/2,unit:'mm'},
+    {label:'Угол',value:angles(state.phase)[i]!,unit:'rad'}],
+    model:{time:state.phase*16,timeUnit:'s',ratio:ratios[i]!,reveal:state.reveal,camera:[...state.camera]}};
+});
 notebook.lifecycle({pause(){stop();renderNow();suspended=true;request?.abort();manager?.abort();if(controls)controls.enabled=false;sync();},checkpoint(){return {...state,camera:[...state.camera]};},resume(){if(disposed)return;suspended=false;if(controls)controls.enabled=!lost;sync();if(!model)startLoad();else renderNow();},dispose(){disposed=true;stop();events.abort();observer.disconnect();request?.abort();manager?.abort();controls?.dispose();controls=undefined;releaseModel();environment?.dispose();environment=undefined;scene.environment=null;renderer?.dispose();renderer?.forceContextLoss();renderer=undefined;}});
 get('model-size').textContent=`Локальный glTF: ${metadata.triangles.toLocaleString('ru-RU')} треугольников, две текстуры 2048 × 2048. Геометрия не пересобирается при движении; неподвижная сцена не запрашивает кадры.`;
 get<HTMLImageElement>('poster').src=posterURL;sync();

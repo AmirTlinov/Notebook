@@ -2626,6 +2626,7 @@ final class NotebookAppModel {
   @discardableResult
   private func replaceSelection(_ target: NotebookSelectionSession.Target?,
     persistsDeselection: Bool = true) -> UUID {
+    for (_, retained) in pinnedAttentionSelections { retained.resumePrograms() }
     let removesContext = !hasRestoredAgentQuestion || selectionSession.context != nil || selectionSession.isResolvingContext
     hasRestoredAgentQuestion = true
     referenceHighlightTask?.cancel(); referenceHighlightTask = nil
@@ -3814,6 +3815,92 @@ final class NotebookAppModel {
     }
   }
 
+  #if os(iOS)
+  func selectProgramForAttention(_ choice: NotebookAttentionProjection.ProgramChoice) {
+    guard let selected = NotebookAttentionProjection.captureProgram(choice, model: self) else {
+      agentRequestError = "Программа переместилась или ещё не показана. Выберите её снова."
+      return
+    }
+    publishHumanContext(selected)
+  }
+
+  var canFreezeProgramForAttention: Bool {
+    guard let refs = agentQuestion?.references, refs.count == 1, let ref = refs.first,
+      let id = ref.elementID, ref.region != nil else { return false }
+    switch ref.target.kind {
+    case .document: return documents[ref.target.id]?.blocks.first(where: { $0.id == id })?.kind == .interactive
+    case .page: return pages[ref.target.id]?.elements.first(where: { $0.id == id })?.kind == .web
+    case .board, .cover:
+      return boardHierarchy?.board(ref.target.boardID ?? ref.target.id)?.elements.first(where: { $0.id == id })?.kind == .web
+    default: return false
+    }
+  }
+
+  var hasFrozenProgramForAttention: Bool {
+    guard let question = agentQuestion else { return false }
+    return pinnedAttentionSelections.first { $0.0 == question.contextID }?.1.hasFrozenProgram == true
+  }
+
+  /// Explicitly stop one selected model outside the pointing contact. Rebind
+  /// its accepted state, then Send still copies the actual native pixels.
+  func freezeProgramForAttention() async {
+    guard canFreezeProgramForAttention, !selectionSession.isResolvingContext,
+      let reference = agentQuestion?.references.first, let id = reference.elementID, let region = reference.region else { return }
+    let generation = selectionSession.id
+    selectionSession.isResolvingContext = true
+    defer { if selectionSession.id == generation { selectionSession.isResolvingContext = false } }
+    var pause: NotebookProgramAttentionPause?
+    do {
+      let revision = try await persistence.submit(publishesChanges: false) {
+        try $0.referenceRevision(target: reference.target, elementID: id)
+      }
+      guard revision == reference.revision, selectionSession.id == generation else { throw CancellationError() }
+      let acceptsState: (JSONValue) -> Bool
+      switch reference.target.kind {
+      case .document:
+        guard let document = documents[reference.target.id],
+          let block = document.blocks.first(where: { $0.id == id }) else { throw CancellationError() }
+        let sourceVersion = document.sourceVersion(blockID: id)
+        acceptsState = { value in
+          self.documents[document.id]?.sourceVersion(blockID: id) == sourceVersion
+            && self.documents[document.id]?.blocks.first(where: { $0.id == id }) == block
+            && self.documentStates[document.id]?.records.first(where: { $0.id == id })?.value == value
+        }
+        pause = try await DocumentPagePresentationOwner.pauseForAttention(documentID: reference.target.id, blockID: id)
+      case .page:
+        guard let element = pages[reference.target.id]?.elements.first(where: { $0.id == id }) else { throw CancellationError() }
+        acceptsState = { value in self.pages[reference.target.id]?.elements.first(where: { $0.id == id }) == element.updating(state: value) }
+        pause = try await AgentWebCoordinator.pauseForAttention(focus: .page(pageID: reference.target.id, elementID: id), element: element, model: self)
+      case .board, .cover:
+        let board = reference.target.boardID ?? reference.target.id
+        guard let element = boardHierarchy?.board(board)?.elements.first(where: { $0.id == id }) else { throw CancellationError() }
+        acceptsState = { value in
+          guard let current = self.boardHierarchy?.board(board)?.elements.first(where: { $0.id == id }) else { return false }
+          return current.frame == element.frame && current.worldOrigin == element.worldOrigin && current.surface == element.surface
+            && agentElementSnapshotSource(current) == agentElementSnapshotSource(element).updating(state: value)
+        }
+        pause = try await AgentWebCoordinator.pauseForAttention(focus: .board(boardID: board, elementID: id), element: agentElementSnapshotSource(element), model: self)
+      default: throw CancellationError()
+      }
+      await reloadExternalChanges()?.value
+      guard selectionSession.id == generation, let pause, pause.isCurrent(), acceptsState(pause.value),
+        let workspace, let hierarchy = boardHierarchy, let ink = spatialInk else { throw CancellationError() }
+      let fragment = NotebookAttentionSelection.Fragment(target: reference.target, elementID: id, region: region,
+        worldOrigin: reference.worldOrigin, pageIndex: reference.pageIndex, label: reference.label)
+      let visuals = NotebookFrozenVisualSources.capture(fragments: [fragment], hierarchy: hierarchy,
+        pages: pages, documents: documents, states: documentStates,
+        elementErasures: { self.elementErasures(on: $0)[$1] ?? [] }, capturesLivePrograms: true)
+      visuals.attentionPause = pause
+      let selection = NotebookAttentionSelection(fragments: [fragment], workspace: workspace, hierarchy: hierarchy,
+        ink: ink, pages: pages, documents: documents, states: documentStates, visuals: visuals)
+      publishHumanContext(selection)
+    } catch {
+      pause?.release()
+      if selectionSession.id == generation { agentRequestError = "Не удалось связать объект с кадром. Укажите готовую программу снова." }
+    }
+  }
+  #endif
+
   func publishHumanContext(_ selection: NotebookAttentionSelection, target: NotebookSelectionSession.Target = .context, text: String? = nil) {
     let actor = actorID
     let generation = replaceSelection(target, persistsDeselection: false)
@@ -3947,6 +4034,7 @@ final class NotebookAppModel {
       let question = agentQuestion
       let retainedSource = question.flatMap { q in pinnedAttentionSelections.first { $0.0 == q.contextID }?.1 }
       let retained = retainedSource?.freezingSubmissionVisuals()
+      retainedSource?.resumePrograms()
       let capturedPresence = presence, capturedWorkspace = workspaceHeader?.workspaceID
       let capturedFile = chat.files.window.isOpen ? chat.files.document : nil
       return .init(attachments: chat.attachments) { [self] in
@@ -3959,6 +4047,7 @@ final class NotebookAppModel {
             let sources = try question.references.map { reference in
               try AgentPinnedSource.capture(requestID: question.contextID, reference: reference, files: files)
                 .withVisual(visual?.images[reference.id], unavailable: visual?.unavailable[reference.id] ?? "source_pixels_unavailable")
+                .withProgramSemanticSelection(visual?.semanticSelections[reference.id])
             }
             try store.saveAttentionEvidence(sources, contextID: question.contextID)
           }

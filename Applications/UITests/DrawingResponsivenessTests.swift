@@ -476,6 +476,38 @@ final class DrawingResponsivenessTests: XCTestCase {
   }
 
   #if targetEnvironment(simulator)
+  func testSelectedWaveCanFreezeForDiscussionAndResumeWhenContextIsCleared() throws {
+    continueAfterFailure = false
+    let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "wave-program", withExtension: "json"))
+    for document in [false, true] {
+      let app = XCUIApplication()
+      app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-compiled-program-fixture", "--notebook-simulator-finger-gestures"]
+        + (document ? ["--notebook-document-runtime-fixture"] : [])
+      app.launchEnvironment["NOTEBOOK_COMPILED_PROGRAM_PATH"] = url.path
+      launchPortraitFixture(app)
+      let mode = app.switches["Проверочная мода"]
+      XCTAssertTrue(mode.waitForExistence(timeout: 20)); mode.tap()
+      XCTAssertTrue(app.staticTexts["Показанный результат: t = 0,650 с · c = 1,00 м/с · проверочная мода."].waitForExistence(timeout: 12))
+      let field = app.images["Смещение мембраны: синий — вниз, оранжевый — вверх, светлый — ноль"]
+      XCTAssertTrue(field.waitForExistence(timeout: 5)); field.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.35)).tap()
+      app.buttons["notebook-context-add"].tap()
+      let program = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "notebook-context-program-")).firstMatch
+      XCTAssertTrue(program.waitForExistence(timeout: 3)); program.tap()
+      let count = app.buttons["notebook-context-count"]
+      XCTAssertTrue(count.waitForExistence(timeout: 5)); count.tap()
+      let freeze = app.buttons["notebook-context-freeze-program"]
+      XCTAssertTrue(freeze.waitForExistence(timeout: 3)); freeze.tap()
+      let paused = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !mode.isEnabled }, object: nil)
+      XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 8), .completed)
+      let picture = XCTAttachment(screenshot: app.screenshot()); picture.name = document ? "wave-document-frozen-selection" : "wave-board-frozen-selection"
+      picture.lifetime = .keepAlways; add(picture)
+      count.tap(); app.buttons["notebook-context-clear"].tap()
+      let resumed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in mode.isEnabled }, object: nil)
+      XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 5), .completed)
+      XCTAssertTrue(count.waitForNonExistence(timeout: 3)); app.terminate()
+    }
+  }
+
   func testWaveFirstControlMediaSeekAndColdReopenOnBothSurfaces() throws {
     continueAfterFailure = false
     let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "wave-program", withExtension: "json"))

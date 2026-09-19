@@ -12,12 +12,14 @@ import UIKit
 @MainActor
 final class NotebookSubmittedPixels {
   let region: PageRect
+  let semanticSelection: ProgramSemanticSelection?
   let pixelScale: Double
   private var image: CGImage?
   private let reservation: RasterReservation
   private var retainedRaster: RasterLease?
 
-  private init(region: PageRect, pixelScale: Double, image: CGImage, reservation: RasterReservation) {
+  private init(region: PageRect, pixelScale: Double, image: CGImage, reservation: RasterReservation, semanticSelection: ProgramSemanticSelection?) {
+    self.semanticSelection = semanticSelection
     self.region = region; self.pixelScale = pixelScale; self.image = image; self.reservation = reservation
   }
   isolated deinit { reservation.release() }
@@ -45,7 +47,7 @@ final class NotebookSubmittedPixels {
   /// proves that the requested crop belongs to the currently visible subtree.
   /// It does not flush layout, await a newer DOM frame, or draw other layers.
   static func capture(view: UIView, physicalSize: CGSize, region: PageRect,
-    resources: SceneRenderResources, sourceOrigin: CGPoint = .zero) throws -> NotebookSubmittedPixels? {
+    resources: SceneRenderResources, sourceOrigin: CGPoint = .zero, semanticSelection: ProgramSemanticSelection? = nil) throws -> NotebookSubmittedPixels? {
     let source = CGRect(origin: sourceOrigin, size: physicalSize)
     let crop = CGRect(x: region.x, y: region.y, width: region.width, height: region.height)
     guard [source.minX, source.minY, source.width, source.height, crop.minX, crop.minY, crop.width, crop.height].allSatisfy(\.isFinite),
@@ -80,14 +82,14 @@ final class NotebookSubmittedPixels {
     guard succeeded, let image = pixels.cgImage else {
       reservation.release(); throw SceneRenderError.snapshotPending("submitted_native_pixels_unavailable")
     }
-    return .init(region: region, pixelScale: scale, image: image, reservation: reservation)
+    return .init(region: region, pixelScale: scale, image: image, reservation: reservation, semanticSelection: semanticSelection)
   }
 
   func retainRaster(source: SceneRasterSource, resources: SceneRenderResources) throws -> RasterLease {
     if retainedRaster == nil {
       guard let image else { throw SceneRenderError.resourceLimit }
       retainedRaster = resources.storeAndRetain(UIImage(cgImage: image, scale: pixelScale, orientation: .up),
-        for: source, reservation: reservation)
+        for: source, reservation: reservation, semanticSelection: semanticSelection)
       if retainedRaster == nil { self.image = nil }
     }
     guard let retainedRaster, retainedRaster.source == source,

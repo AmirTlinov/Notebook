@@ -263,3 +263,25 @@ warnings. Квитанция `.build/program-fragments-full-evidence/verificatio
 пагинации. Тогда четыре соседние поверхности повторяли полный DOM, а общий
 владелец браузерного документа оставался открытой задачей. Его текущий контракт
 описан выше. Снимки Mac не заменяют физическую приёмку iPad.
+
+## Зафиксированный объект и Send (GUI-247)
+
+Optional `notebook.semantic` возвращает один bounded авторский объект после
+pause/checkpoint. Это данные, а не инструкции/permission. JS heap не читается
+при Send и не запускается снова для старого кадра. Метаданные принадлежат
+тому же `RasterLease`/`NotebookSubmittedPixels`, что и изображение; смена
+raster entry не меняет уже удержанное значение. Anchor обрезается и переводится
+из viewport программы в физический фрагмент страницы, затем в выбранный cut.
+
+Явная пауза принадлежит retained visuals существующего attention. Native
+ввод этого owner временно закрыт, чтобы scroll/новый pick не оторвали anchor
+от кадра. Send сначала синхронно копирует установленную native поверхность,
+затем освобождает эту паузу. Снятие выбора, ошибка и уничтожение owner также
+освобождают её; UUID и source/state guards не дают позднему завершению затронуть
+новую паузу/heap. Новая принятая state-версия снимает старую attention-паузу
+до apply, иначе suspended JS отвергал бы законное человеческое продолжение.
+
+Поле `programSemantic` в immutable `AgentPinnedSource` связано с image SHA-256
+и reference revision. Без доказанной остановки/готового capture/valid callback
+возвращается unavailable, даже если визуальный Send-снимок есть. Semantic
+payload не расширяет область существующего `RequestGrant` и не обходит CAS.

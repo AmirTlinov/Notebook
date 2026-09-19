@@ -1,5 +1,46 @@
 # Проверка Notebook
 
+## 19 сентября, 06:45 МСК — GUI-247: точный объект и показанный кадр
+
+В существующем меню материала чата можно выбрать видимую программу и явно
+зафиксировать кадр. Прокручиваемая программа сохраняет свои жесты; отдельного
+selection/scene manager нет. Тот же lifecycle подтверждает checkpoint у writer,
+останавливает ввод и удерживает WebKit до Send/снятия выделения. Send синхронно
+копирует фактически установленные native pixels, затем возобновляет программу.
+Замена source/принятого state не оставляет её в вечной паузе. Собственное echo
+записи checkpoint дожидается этой же транзакции и не считается внешней правкой.
+
+`notebook.semantic` — ограниченный синхронный авторский callback. Только frozen
+selection связывается с source revision, SHA изображения и физическими
+координатами его cut; это недоверенные данные, не инструкции/permission.
+Бегущая сцена, async/ошибочный callback или пропавший объект дают явное
+unavailable, а не данные из более позднего heap. Plot sample, Canvas node и
+Three part реализуют этот контракт; Plot/Canvas также доступны с клавиатуры.
+Прежние CAS/undo/transaction остаются единственными владельцами записи.
+
+**Simulator 4 PASS**, `.build/gui-247-sim-binding-v5.xcresult`, source inputs
+**13139981db3fff2f404a0566974c1128868f3290e84d35751be25f03730f0af5**.
+Проверены настоящие native Send pixels и semantic phase до/после resume,
+документный physical cut/anchor, три actual compiled packages, внешняя правка
+во время паузы и UI выбор/freeze/clear на доске и в документе. Экспортированный
+синий PDF-composite кадр и итоговый UI действительно осмотрены. V4 выявил
+собственное checkpoint echo, снимающее паузу; исправлен owner, не ослаблен тест.
+**Mac 2 PASS**, `.build/gui-247-mac-final/verification.json`, source
+**c108241cacc5f6276d2191e822b2a6d0c8df48ae8666e7e4a28840e5a43ac120**:
+writer refusal/checkpoint/raster и causal source ABA. Последующая правка касается
+только iOS DocumentBlockRuntime; Mac runtime не менялся.
+**Core 33 PASS**, `/tmp/gui-247-core-final.log`; **MCP 24 PASS + SDK check**,
+`/tmp/gui-247-js-final.log`, `/tmp/gui-247-sdk-final.log` — hash/trust/bounds,
+ошибочные callbacks, immutable copy, CAS и human-preserving undo.
+
+Browser keyboard proof: signal sample61338, t61.338s, u2.2285; wave node129:138,
+x.506m/y.541m/u−.9597mm. Их настоящие marker/caption осмотрены. Preview tabs и
+servers закрыты. Это не совместная installed agent/human сессия, не Pencil и
+не system frame/CPU/GPU gate. Физическая пользовательская пара116 не изменена.
+GUI-247 остаётся In Progress; интегрированный shared маршрут и GUI-248–250
+ещё не приняты. Известный визуальный остаток для GUI-248: marker Canvas-поля
+масштабируется вместе с научной сеткой256² и требует чёткой экранной обводки.
+
 ## 19 сентября, 05:53 МСК — GUI-246: Worker, внешний расчёт и локальное медиа
 
 Добавлен один asset-backed recipe `wave` на прежнем TS/package пути: мембрана

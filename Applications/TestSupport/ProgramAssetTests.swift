@@ -632,6 +632,66 @@ final class ProgramAssetTests: XCTestCase {
   }
 
   #if os(iOS)
+  func testAuthoredPlotCanvasAndThreeSelectionsBindOnlyToFrozenDocumentRasters() async throws {
+    for name in ["signal", "wave", "gears"] {
+      let f = try compiledFixture(name + "-program"); defer { f.close() }
+      let actor = UUID(), document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: name, html: "", programPackage: f.hash, height: 900)])
+      let block = try XCTUnwrap(document.blocks.first), resources = SceneRenderResources()
+      var journal = DocumentStateJournal(id: document.id, actor: actor)
+      let runtime = DocumentBlockRuntime(documentID: document.id, block: block, sourceVersion: document.sourceVersion(blockID: name),
+        value: block.initialState, stateVersion: nil, width: 600, resources: resources, programStore: f.store)
+      let container = UIView(), close = try mount(container)
+      defer { runtime.stop(); close() }
+      runtime.onMount = { web, size in container.addSubview(web); web.frame = .init(origin: .zero, size: size) }
+      runtime.onStateChange = { value in
+        _ = journal.commit(blockID: name, value: value, actor: actor)
+        return journal.records.first { $0.id == name }?.valueVersion
+      }
+      runtime.onStateCheckpoint = { value, _ in
+        _ = journal.commit(blockID: name, value: value, actor: actor)
+        return journal.records.first { $0.id == name }?.valueVersion
+      }
+      runtime.start(priority: .input); try await wait { runtime.ready || runtime.failure != nil }
+      XCTAssertTrue(runtime.ready, "\(name): \(String(describing: runtime.failure))")
+      let web = try XCTUnwrap(runtime.webView)
+      if name == "wave" {
+        var finished = false
+        let deadline = ContinuousClock.now + .seconds(8)
+        while !finished, ContinuousClock.now < deadline {
+          finished = try await web.evaluateJavaScript("document.getElementById('status').textContent==='Расчёт завершён.'") as? Bool == true
+          if !finished { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        XCTAssertTrue(finished)
+      }
+      if name != "gears" {
+        let target = name == "wave" ? "wave-field" : "detail"
+        _ = try await web.evaluateJavaScript("{const node=document.getElementById('\(target)'),r=node.getBoundingClientRect();node.dispatchEvent(new MouseEvent('click',{clientX:r.left+r.width*.5,clientY:r.top+r.height*.5}));}null")
+      }
+      XCTAssertNil(runtime.frozenSemanticSelection)
+      runtime.attentionPauseID = UUID()
+      let value = try await runtime.checkpoint()
+      let raster = try await runtime.capture(sourceOffset: 0, height: block.height, pixelWidth: 600)
+      defer { raster.release() }
+      let semantic = try XCTUnwrap(raster.semanticSelection, name)
+      try semantic.validate()
+      XCTAssertTrue(semantic.objectID.hasPrefix(name == "wave" ? "node:" : name == "signal" ? "sample:" : "input"))
+      XCTAssertLessThan(try JSONEncoder().encode(semantic).count, 4096, "Never serialize a full data array or scene graph")
+      XCTAssertEqual(runtime.value, value); XCTAssertEqual(runtime.frozenSemanticSelection, semantic)
+      XCTAssertFalse(web.isUserInteractionEnabled, "A frozen anchor cannot be scrolled or picked again before Send")
+      guard case .object(var edited) = value else { throw CocoaError(.coderInvalidValue) }
+      edited["acceptedPeerEdit"] = .bool(true)
+      let next = JSONValue.object(edited)
+      _ = journal.commit(blockID: name, value: next, actor: actor)
+      try await runtime.apply(next, stateVersion: journal.records.first { $0.id == name }?.valueVersion)
+      XCTAssertEqual(runtime.value, next, "A new accepted edit invalidates the old hold and applies instead of remaining suspended")
+      XCTAssertTrue(web.isUserInteractionEnabled); XCTAssertNil(runtime.frozenSemanticSelection)
+      let current = await NotebookProgramBridge.semanticSelection(controller: "documentProgram", in: web)
+      XCTAssertNil(current, "A resumed scene cannot supply data for the old frame")
+      XCTAssertEqual(raster.semanticSelection, semantic, "The retained historical raster remains immutable")
+      runtime.stop(); XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+    }
+  }
+
   func testIPadDocumentBlockPackageUsesItsNativeProgramOwner() async throws {
     let f = try fixture(); defer { f.close() }
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "asset", html: "", programPackage: f.hash, height: 180)])

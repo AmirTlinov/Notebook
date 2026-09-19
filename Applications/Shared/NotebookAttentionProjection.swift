@@ -195,6 +195,56 @@ enum NotebookAttentionProjection {
     let appearance: (SurfaceID, String, NotebookGraphic?, NotebookGraphicLayout?, CGSize, [InkElementErasure]) -> NotebookElementAppearance?
   }
 
+  #if os(iOS)
+  struct ProgramChoice: Identifiable {
+    let target: CollaborationTarget
+    let elementID: String
+    let point: CGPoint
+    let label: String
+    var id: String { target.id.uuidString + "/" + elementID }
+  }
+
+  /// The existing material menu can select a program whose local scroll or
+  /// canvas legitimately owns every finger contact. It uses the same physical
+  /// projection and attention capture as pointing, not a DOM selection channel.
+  static func programChoices(model: NotebookAppModel) -> [ProgramChoice] {
+    guard let presence = model.presence, let cohort = model.compositionTiles.published,
+      cohort.isPaintInstalled else { return [] }
+    var candidates: [(CollaborationTarget, String, String)] = []
+    if presence.mode == .document, let id = presence.focusedItemID, let document = model.documents[id] {
+      candidates = document.blocks.filter { $0.kind == .interactive }.map { (.init(kind: .document, id: id), $0.id, "Программа · " + $0.id) }
+    } else if presence.mode == .page, let id = presence.notebookPageID ?? model.workspace?.selectedPageID,
+      let page = model.pages[id] {
+      candidates = page.elements.filter { $0.kind == .web }.map { (.init(kind: .page, id: id), $0.id, $0.source) }
+    } else if presence.mode == .cover, let id = presence.focusedItemID {
+      candidates = model.presentedCoverElements(cohort: cohort, boardID: presence.boardID, itemID: id)
+        .filter { $0.kind == .web }.map { (.init(kind: .cover, id: id, boardID: presence.boardID), $0.id, $0.source) }
+    } else {
+      candidates = model.presentedWorkset(cohort: cohort, boardID: presence.boardID, presence: presence).elements
+        .filter { $0.kind == .web && $0.surface.kind == .board }
+        .map { (.init(kind: .board, id: presence.boardID), $0.id, $0.source) }
+    }
+    let viewport = CGRect(x: 0, y: 0, width: presence.viewport.x, height: presence.viewport.y)
+    return Array(candidates.lazy.compactMap { target, id, label -> ProgramChoice? in
+      guard let box = frame(target: target, elementID: id, region: nil, worldOrigin: nil,
+        pageIndex: target.kind == .document ? presence.documentPageIndex : nil,
+        model: model, presence: presence, minimumSide: 0) else { return nil }
+      let visible = box.intersection(viewport)
+      guard !visible.isNull, visible.width > 0, visible.height > 0 else { return nil }
+      return .init(target: target, elementID: id, point: .init(x: visible.midX, y: visible.midY),
+        label: label.isEmpty ? "Программа" : String(label.prefix(80)))
+    }.prefix(32))
+  }
+
+  static func captureProgram(_ choice: ProgramChoice, model: NotebookAppModel) -> NotebookAttentionSelection? {
+    guard let presence = model.presence, let cohort = model.compositionTiles.published,
+      let selected = capture(start: choice.point, end: choice.point, model: model, presence: presence,
+        cohort: cohort, installedInk: model.compositionTiles.surfaceRegistry.installedSources(),
+        acceptsFirstFragment: { $0.target == choice.target && $0.elementID == choice.elementID }) else { return nil }
+    return selected
+  }
+  #endif
+
   static func capture(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence,
     cohort: SceneCompositionCohort, installedInk: [SurfaceID: SpatialInkInstalledSource], itemID: UUID? = nil,
     selectedElements: [EditableElementReference]? = nil,

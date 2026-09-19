@@ -531,7 +531,9 @@ final class DocumentRuntimeTests: XCTestCase {
     defer { coordinator.invalidate(); lease.release(); window.orderOut(nil); window.close() }
     let source = AgentElement(id: "phase", kind: .web, frame: .init(x: 0, y: 0, width: 240, height: 120),
       source: "phase", html: "<output>0.5</output>", javaScript: """
-      notebook.lifecycle({checkpoint:()=>({phase:0.5})});notebook.ready(Promise.resolve());
+      notebook.lifecycle({pause:()=>{},checkpoint:()=>({phase:0.5})});
+      notebook.semantic(()=>({objectID:'gear-a',label:'Gear',anchor:{x:.5,y:.5},values:[],model:{phase:.5}}));
+      notebook.ready(Promise.resolve());
       """, state: .object(["phase": .number(0)]))
     let actor = UUID()
     var page = PageDocument(size: .init(width: 240, height: 120), actor: actor, elements: [source])
@@ -554,6 +556,10 @@ final class DocumentRuntimeTests: XCTestCase {
     defer { picture.release() }
     XCTAssertEqual(persisted, .object(["phase": .number(0.5)]))
     XCTAssertEqual(accepted.state, persisted)
+    XCTAssertEqual(picture.semanticSelection?.objectID, "gear-a")
+    XCTAssertEqual(picture.semanticSelection?.model["phase"], .number(0.5))
+    let retained = try XCTUnwrap(picture.retainedCopy()); defer { retained.release() }
+    XCTAssertEqual(retained.semanticSelection, picture.semanticSelection)
     XCTAssertTrue(coordinator.hasLiveSource(accepted))
     XCTAssertEqual(resources.activeWebSurfaceCount, 1)
     coordinator.load(source, basis: originalBasis, in: web)

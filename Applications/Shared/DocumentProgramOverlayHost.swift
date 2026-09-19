@@ -469,8 +469,8 @@ fileprivate final class ProgramFragmentClip: UIView, NotebookSceneFingerInputOwn
     webView.transform = .identity
     webView.frame = CGRect(x: 0, y: -placement.sourceOffset,
       width: placement.fullSize.width, height: placement.fullSize.height)
-    let acceptsInput = interactive && allowsInteraction
-    webView.isUserInteractionEnabled = acceptsInput; webView.accessibilityElementsHidden = !acceptsInput
+    let acceptsInput = interactive && allowsInteraction && (webView.navigationDelegate as? DocumentBlockRuntime)?.attentionPauseID == nil
+    webView.isUserInteractionEnabled = acceptsInput; webView.accessibilityElementsHidden = !interactive || !allowsInteraction
     isUserInteractionEnabled = acceptsInput
   }
 

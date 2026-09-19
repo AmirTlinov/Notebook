@@ -155,3 +155,30 @@ test('LC uses one analytic model: quarter-period signs, SI units and conserved e
     assert.ok(Math.abs(samples[0].q-samples[4].q)<1e-14);
   }
 });
+
+test('semantic selection is copied only after a successful pause and never read from a running scene', async () => {
+  const {program,api,json} = fixture();
+  let phase = .25, calls = 0;
+  const selected = {objectID:'gear-a',label:'Gear',anchor:{x:.4,y:.5},values:[{label:'angle',value:1,unit:'rad'}],model:{phase}};
+  api.semantic(() => {calls++;return selected;});
+  api.lifecycle({pause:() => {phase=.5;},checkpoint:() => ({phase})});
+  assert.throws(() => program.semanticSelection(), /pause_required/);
+  await program.checkpoint();
+  assert.equal(calls,1);selected.label='changed later';
+  assert.equal(json(program.semanticSelection()).label,'Gear');
+  await program.checkpoint();assert.equal(calls,1);
+  await program.resume();assert.throws(() => program.semanticSelection(),/pause_required/);
+  await program.dispose();assert.throws(() => program.semanticSelection(),/disposed/);
+});
+
+test('unbounded, asynchronous and throwing author semantics never fail the saved checkpoint or become late evidence', async () => {
+  for (const callback of [() => ({model:'x'.repeat(4097)}), () => Promise.resolve({objectID:'late'}), () => {throw Error('author');}]) {
+    const {program,api} = fixture();api.semantic(callback);
+    api.lifecycle({pause:() => {},checkpoint:() => ({phase:.75})});
+    assert.equal((await program.checkpoint()).phase,.75);
+    assert.equal(program.semanticSelection(),null);
+    await new Promise(resolve => setTimeout(resolve,0));assert.equal(program.semanticSelection(),null);
+  }
+  const {program,api} = fixture();api.semantic(() => ({objectID:'unsafe running'}));
+  await program.checkpoint();assert.equal(program.semanticSelection(),null,'No author pause means no semantic promise');
+});

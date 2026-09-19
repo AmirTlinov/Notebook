@@ -9,6 +9,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
   const copy = value => JSON.parse(JSON.stringify(value));
   let value = copy(state), revision = 0n, disposed = false, suspended = false, frozen = false;
   let hooks = {}, registered = false, generation = 0, operation = null, started = null;
+  let semantic = null, semanticValue = null;
   const readiness = [];
   const error = code => new Error(code);
   const alive = () => { if (disposed) throw error('program_disposed'); };
@@ -42,6 +43,13 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
       const pending = Promise.resolve(promise);
       // Observe rejection immediately, including before the document load event.
       pending.catch(() => {}); readiness.push(pending); return pending;
+    },
+    // A selected object, not the scene graph. The callback is read-only and
+    // synchronous; asynchronous hit tests must settle in the author's input owner.
+    semantic(callback) {
+      alive();
+      if (semantic || typeof callback !== 'function') throw error('program_semantic_invalid');
+      semantic = callback;
     },
     lifecycle(callbacks) {
       alive();
@@ -78,6 +86,11 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
       await paint();
       return !disposed && !suspended && String(revision) === expectedRevision;
     },
+    semanticSelection() {
+      alive();
+      if (!suspended || !frozen) throw error('program_semantic_pause_required');
+      return copy(semanticValue);
+    },
     async checkpoint() {
       alive();
       if (suspended && frozen) return copy(value);
@@ -98,14 +111,24 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
         // native snapshot owner establishes the pixel boundary afterwards.
         // No optimistic commit: the native checkpoint owner must admit this
         // value and confirm the existing writer before disposing the surface.
-        value = accepted; frozen = true;
+        value = accepted; frozen = true; semanticValue = null;
+        if (semantic && hooks.pause && hooks.checkpoint) {
+          try {
+            const selected = semantic();
+            if (selected?.then) { Promise.resolve(selected).catch(() => {}); throw error('program_semantic_async'); }
+            const json = JSON.stringify(selected);
+            // UTF-16 bound also bounds UTF-8 to 16 KiB; native validates fields.
+            if (typeof json !== 'string' || json.length > 4096) throw error('program_semantic_limit');
+            semanticValue = JSON.parse(json);
+          } catch (reason) { report('program_semantic_unavailable', String(reason?.message || reason)); }
+        }
         return copy(value);
       } catch (reason) {
         request.abort(); announce(reason); throw reason;
       } finally { if (operation === request) operation = null; }
     },
     async resume() {
-      alive(); abort();
+      alive(); abort(); semanticValue = null;
       if (!suspended) return true;
       const expected = generation, request = new AbortController(); operation = request;
       try {
@@ -118,7 +141,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
     },
     dispose() {
       if (disposed) return Promise.resolve();
-      disposed = true; suspended = true; abort();
+      disposed = true; suspended = true; semanticValue = null; semantic = null; abort();
       // Invoke synchronously before a native owner removes the browsing context.
       let result;
       try { result = hooks.dispose?.(); } catch (reason) { announce(reason); return Promise.reject(reason); }

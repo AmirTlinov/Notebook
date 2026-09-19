@@ -6,6 +6,26 @@ import WebKit
 /// old heap has no remaining publication rights and need not pin a closing UI.
 enum NotebookProgramCheckpointError: Error { case superseded }
 
+/// A selected frame borrows the existing paused owner, never another executor.
+/// Its lifetime belongs to the current attention's retained visual sources.
+@MainActor
+final class NotebookProgramAttentionPause {
+  let value: JSONValue
+  let isCurrent: @MainActor () -> Bool
+  private var continuation: (@MainActor @Sendable () async -> Void)?
+  init(value: JSONValue, isCurrent: @escaping @MainActor () -> Bool,
+    resume: @escaping @MainActor @Sendable () async -> Void) {
+    self.value = value; self.isCurrent = isCurrent; continuation = resume
+  }
+  func release() {
+    guard let resume = continuation else { return }; continuation = nil
+    Task { @MainActor in await resume() }
+  }
+  isolated deinit {
+    if let resume = continuation { Task { @MainActor in await resume() } }
+  }
+}
+
 /// One source for the public browser API; transport remains with each surface.
 enum NotebookProgramBridge {
   static let script: String = {
@@ -42,6 +62,14 @@ enum NotebookProgramBridge {
       installNotebookDocumentProgram(\(json),createNotebookProgram);</script>
       </head><body>
       """, after: "\(NotebookProgramAssets.script(package, origin: origin))</body></html>")
+  }
+
+  @MainActor
+  static func semanticSelection(controller: String, in web: WKWebView) async -> ProgramSemanticSelection? {
+    guard let value = try? await lifecycle("semanticSelection", controller: controller, in: web), value != .null,
+      let selected = try? value.decode(ProgramSemanticSelection.self),
+      (try? selected.validate()) != nil else { return nil }
+    return selected
   }
 
   /// A parked WebKit can throttle its timers as well as rAF. The native owner
