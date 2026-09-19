@@ -1,5 +1,40 @@
 # Проверка Notebook
 
+## 19 сентября, 17:53 UTC — GUI-183: проверка общего исполнителя с Desktop
+
+Проверена установленная сборка ChatGPT/Codex Desktop `26.915.31945` и её
+официальный бинарник `0.155.0-alpha.9.2`, отдельно от bundled Notebook `0.155.0`.
+Живой Desktop PID `81695` использует собственный stdio App Server PID `81755`.
+Стандартного `~/.codex/app-server-control/app-server-control.sock` нет;
+read-only `app-server daemon version` завершился `No such file or directory`.
+Неизвестные loopback listeners не считались публичным API и не использовались.
+
+На том же бинарнике Desktop в пустом изолированном CODEX_HOME:
+**7/7 проверок общего Unix-WebSocket runtime PASS**. Два клиента получили один
+PID `31880`, присоединились к задаче `01a0baca-a3ee-71a3-a7f1-05d62b011f95`;
+отключение первого не остановило сервер, третий клиент после отключения обоих
+получил тот же threadID. Тестовый контекст записан через `thread/inject_items`,
+без запуска модели и копирования авторизации. Тестовый процесс завершён.
+Это не приёмка активного хода, approvals или самого Desktop UI.
+
+Read-only анализ поставленного Desktop выявил native
+`CODEX_APP_SERVER_USE_LOCAL_DAEMON=1`, но этот путь требует пустых config overrides.
+Обычный local launch всегда добавляет override `codex-app-tools.enabled`
+(как при true, так и при false). Проверка точного поставленного метода выбора
+транспорта с изолированными IO-заглушками: **3/3 PASS** — без overrides выбирается
+WebSocket, с фактическим override остаётся stdio даже при включённом флаге.
+Это проверка условия в коде, не запуск изменённого Desktop. Другой внутренний
+override `CODEX_APP_SERVER_WS_URL` существует, но его поддерживаемый публичный
+контракт не найден; он не внедрялся как production-зависимость Notebook.
+
+GUI-осмотр через CUA запрещён инструментом для `com.openai.codex`; запрет не
+обходился. Живой Desktop, аккаунт, пользовательские задачи, VPN и VPS не менялись.
+Свидетельства: `.build/gui-183/desktop-attach-check/{live-desktop,shared-probe,
+transport-selection,transport-predicate-check}.json`. Итог: общий runtime
+поддерживает несколько клиентов, но штатный совместный путь текущего Desktop
+**не подтверждён и не включается одним найденным флагом**. Не выдавать новую
+Notebook-реализацию daemon за решённое присоединение к активной Desktop-задаче.
+
 ## 19 сентября — GUI-183: отдельная ветка, standalone Codex и публичный relay
 
 Ветка `codex/gui-183-codex-remote`, база `85d7d720`; рабочая production-пара не
