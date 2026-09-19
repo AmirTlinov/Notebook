@@ -9,6 +9,7 @@ import NotebookCore
     let dictation = ProcessInfo.processInfo.arguments.contains("--notebook-dictation-fixture")
     let compact = dictation || ProcessInfo.processInfo.arguments.contains("--notebook-compact-chat-fixture")
     guard compact || ProcessInfo.processInfo.arguments.contains("--notebook-chat-sync-fixture") else { return nil }
+    let generation = UUID()
     let peer = UUID(uuidString: "7E7A1000-0000-4000-8000-000000000099")!
     let turn = "7e7a1000-0000-4000-8000-000000000077"
     let task = CodexTask(id: "7e7a1000-0000-4000-8000-000000000088", title: "Непрерывный разговор", cwd: "/fixture", projectID: "fixture")
@@ -26,7 +27,7 @@ import NotebookCore
       text: "Добавь диктовку рядом с разговором.", attachments: ["code_image.png"])
     let fullReply = (1...16).map { "Объяснение формулы, часть \($0). Материал остаётся в этой же переписке." }.joined(separator: "\n\n")
     func conversation() -> CodexConversation {
-      .init(threadID: task.id, revision: revision, title: task.title, ready: true, busy: running,
+      .init(threadID: task.id, generation: generation, revision: revision, title: task.title, ready: true, busy: running,
         activeTurnID: running ? turn : nil, messages: recent + [user] + (deliveredReply ? [.init(id: "compact-reply", turnID: turn, clientID: nil, role: .assistant, text: fullReply, phase: "final_answer")] : running ? [] : [.init(id: "stopped", turnID: turn, clientID: nil, role: .assistant, text: "Ответ остановлен.")]) + submittedMessages,
         requests: [], acceptedMessages: [:], turnStatuses: [turn: running ? "inProgress" : deliveredReply ? "completed" : "interrupted"], model: selection, contextUsage: .init(used: 193000, window: 258000))
     }

@@ -221,7 +221,7 @@ final class NotebookChatPanelTests: XCTestCase {
         receiver?.receive(.init(id: envelope.id, body: .reply(.history(.init(messages: messages, nextCursor: nil)))), peerID: peer); return
       }
       if case .conversation(let thread) = query {
-        let request = CodexUserRequest(nativeID: .number(4), method: "mcpServer/elicitation/request", turnID: "turn", parameters: .object([
+        let request = CodexUserRequest(nativeID: .number(4), generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, method: "mcpServer/elicitation/request", turnID: "turn", parameters: .object([
           "mode": .string("form"), "serverName": .string("notebook"),
           "requestedSchema": .object(["type": .string("object"), "properties": .object([:])]),
           "_meta": .object(["codex_approval_kind": .string("mcp_tool_call"), "tool_title": .string("Прочитать выбранный участок доски"), "persist": .array([.string("session"), .string("always")])])]))

@@ -20,6 +20,7 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   var accessMode = CodexAccessMode.workspace
   var model = CodexModelSelection(model: "fixture", effort: "low")
   var modelChanges = 0
+  var pendingRequests: [CodexUserRequest] = []
   var submittedAttachments: [CodexInputAttachment] = []
   var accessChanges = 0
   var sent: [UUID] = [], interrupted: [String] = [], decisions: [CodexUserDecision] = []
@@ -39,7 +40,7 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   func close() { }
   func snapshot(threadID: String) -> CodexConversation? {
     .init(threadID: threadID, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Математика", ready: true, busy: busy, activeTurnID: busy ? turn : nil,
-      messages: accepted, requests: [], acceptedMessages: [:], turnStatuses: [:],
+      messages: accepted, requests: pendingRequests, acceptedMessages: [:], turnStatuses: [:],
       access: .init(profileID: accessMode.rawValue, approvalPolicy: .string(accessMode.approvalPolicy), available: CodexAccessMode.allCases), model: model)
   }
   func send(threadID: String, clientMessageID: UUID, text: String, context: String?, attachments: [CodexInputAttachment]) throws -> String {
@@ -57,7 +58,7 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
     if stopIsStale { throw CodexBridgeError.staleTurn }
     interrupted.append(turnID)
   }
-  func respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision) { decisions.append(decision) }
+  func respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision) { decisions.append(decision); pendingRequests.removeAll { $0 == request } }
   func setModel(threadID: String, selection: CodexModelSelection) throws {
     modelChanges += 1; model = selection
     if unknown { throw CodexBridgeError.acceptanceUnknown }
@@ -76,6 +77,13 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
     project = value
     if unknown { throw CodexBridgeError.acceptanceUnknown }
     return value
+  }
+  func largeRequests() -> [CodexUserRequest] {
+    pendingRequests = (1...4).map { .init(nativeID: .number(Double($0)),
+      generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!,
+      method: "item/permissions/requestApproval", turnID: turn,
+      parameters: .object(["permissions": .object(["fixture": .string(String(repeating: "x", count: 60_000))])])) }
+    return pendingRequests
   }
   func models() -> [CodexModelOption] { [.init(id: "fixture", name: "Fixture", efforts: ["low", "high"], defaultEffort: "low")] }
   func resources(threadID: String, kind: CodexResourceKind, cursor: String?) -> CodexResourcePage { .init(resources: []) }
@@ -111,6 +119,31 @@ final class NotebookCodexSidecarTests: XCTestCase {
     let deadline = ContinuousClock.now + .seconds(8)
     while !(try await predicate()), .now < deadline { try await Task.sleep(for: .milliseconds(50)) }
     let ready = try await predicate(); XCTAssertTrue(ready)
+  }
+
+  func testLargeRequestsStayAddressableAndEachDecisionExecutesOnce() async throws {
+    try await fixture { store, queue, native, peer in
+      let requests = await native.largeRequests()
+      let service = try sidecar(store, queue, native); service.start()
+      let envelope = await service.receive(.init(body: .request(.conversation(threadID: native.thread))), peerID: peer)
+      guard case .reply(.conversation(let value)) = envelope?.body else { return XCTFail("Missing conversation") }
+      XCTAssertEqual(value.requestIDs.count, 4); XCTAssertEqual(value.requests.count, 1)
+      XCTAssertTrue(envelope!.isValid(from: peer))
+      for request in requests {
+        let detail = await service.receive(.init(body: .request(.requestDetails(threadID: native.thread, generation: value.generation, requestID: request.id))), peerID: peer)
+        guard case .reply(.requestDetails(let actual)) = detail?.body else { return XCTFail("Lost full request") }
+        XCTAssertEqual(actual, request); XCTAssertTrue(detail!.isValid(from: peer))
+        let action = NotebookChatAction.respond(threadID: native.thread, request: actual, decision: .decline)
+        let input = NotebookChatInput(id: try XCTUnwrap(action.controlID(author: peer)), author: peer, action: action)
+        for _ in 0..<2 { _ = await service.receive(.init(body: .request(.job(input))), peerID: peer) }
+        try await wait { try await queue.submit { try $0.chatJob(input.id)?.state == .accepted } }
+      }
+      let count = await native.decisions.count
+      XCTAssertEqual(count, 4)
+      let stale = await service.receive(.init(body: .request(.requestDetails(threadID: native.thread, generation: UUID(), requestID: requests[0].id))), peerID: peer)
+      guard case .reply(.failure) = stale?.body else { return XCTFail("Old generation must not approve a new request") }
+      await service.stop()
+    }
   }
 
   func testUncertainSettingsCannotStarveNarrowerAccessOrStop() async throws {

@@ -248,11 +248,12 @@ struct NotebookChatPanel: View {
         })
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("notebook-chat-transcript")
-      if let conversation = chat.conversation, let request = conversation.requests.first {
-        NotebookCodexRequestView(request: request, job: chat.decisionJob(request, threadID: conversation.threadID), respond: { decision in
-          await chat.respond(request, decision: decision, threadID: conversation.threadID)
-        }, maximumHeight: min(300, height * 0.45))
-          .id(request.id).padding(.horizontal, 12).padding(.bottom, 8)
+      if let conversation = chat.conversation {
+        NotebookCodexRequestsView(conversation: conversation,
+          job: { chat.decisionJob($0, threadID: conversation.threadID) }, query: { try await chat.directQuery($0) },
+          respond: { await chat.respond($0, decision: $1, threadID: conversation.threadID) },
+          maximumHeight: min(300, height * 0.45))
+          .padding(.horizontal, 12).padding(.bottom, 8)
       }
       if !chat.pendingMessages.isEmpty { outbox }
     }

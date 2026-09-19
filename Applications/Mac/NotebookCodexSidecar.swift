@@ -235,6 +235,10 @@ final class NotebookCodexSidecar {
       case .account(let query):
         guard let accountRequest else { throw CodexBridgeError.unavailable }
         reply = .account(try await accountRequest(query))
+      case .requestDetails(let thread, let generation, let id):
+        guard let state = await bridge.snapshot(threadID: thread), state.generation == generation,
+          let request = state.requests.first(where: { $0.id == id }) else { throw CodexBridgeError.staleRequest }
+        reply = .requestDetails(request)
       case .stopWaiting(let id):
         reply = .job(try await persistence.submit { try $0.stopWaitingForChatJob(id, author: peerID) })
       case .dictation(let query):
@@ -479,12 +483,22 @@ final class NotebookCodexSidecar {
   }
 
   private static func transport(_ state: CodexConversation) -> CodexConversation {
-    let messages = CodexMessage.transportPage(Array(state.messages.suffix(32)))
-    let ids = Set(messages.compactMap(\.clientID)), turns = Set(messages.map(\.turnID))
-    return .init(threadID: state.threadID, generation: state.generation, revision: state.revision, title: state.title,
-      ready: state.ready, busy: state.busy, activeTurnID: state.activeTurnID, messages: messages,
-      requests: state.requests, acceptedMessages: state.acceptedMessages.filter { ids.contains($0.key) },
-      turnStatuses: state.turnStatuses.filter { turns.contains($0.key) || $0.key == state.activeTurnID }, access: state.access, model: state.model, contextUsage: state.contextUsage)
+    // One complete question is immediately actionable; the remaining native
+    // IDs are addressable without packing all permissions into one envelope.
+    var budget = 72 * 1024
+    while true {
+      let messages = CodexMessage.transportPage(Array(state.messages.suffix(32)), byteBudget: budget)
+      let ids = Set(messages.compactMap(\.clientID)), turns = Set(messages.map(\.turnID))
+      let value = CodexConversation(threadID: state.threadID, generation: state.generation, revision: state.revision, title: state.title,
+        ready: state.ready, busy: state.busy, activeTurnID: state.activeTurnID, messages: messages,
+        requests: Array(state.requests.prefix(1)), requestIDs: state.requests.map(\.id),
+        acceptedMessages: state.acceptedMessages.filter { ids.contains($0.key) },
+        turnStatuses: state.turnStatuses.filter { turns.contains($0.key) || $0.key == state.activeTurnID },
+        access: state.access, model: state.model, contextUsage: state.contextUsage)
+      // Count encoded bytes (escaping included), reserving envelope overhead.
+      if ((try? JSONEncoder().encode(value).count) ?? Int.max) <= 180 * 1024 || budget <= 2048 { return value }
+      budget /= 2
+    }
   }
 
   nonisolated static func message(_ error: Error) -> String {

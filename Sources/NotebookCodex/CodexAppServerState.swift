@@ -53,9 +53,10 @@ struct CodexAppServerState: Sendable {
       params["threadId"] == .string(threadID) else { return false }
     if let id = frame["id"] {
       guard id.string != nil || id.integer != nil, requests.count < 32,
+        try JSONEncoder().encode(id).count <= 512, method.utf8.count <= 256,
         try JSONEncoder().encode(params).count <= 65_536,
-        let turn = params["turnId"]?.string ?? activeTurnID else { throw CodexBridgeError.unsupportedRequest }
-      let request = CodexUserRequest(nativeID: id, method: method, turnID: turn, parameters: params)
+        let turn = params["turnId"]?.string ?? activeTurnID, turn.utf8.count <= 256 else { throw CodexBridgeError.unsupportedRequest }
+      let request = CodexUserRequest(nativeID: id, generation: generation, method: method, turnID: turn, parameters: params)
       if let prior = requests.first(where: { $0.nativeID == id }) {
         guard prior == request else { throw CodexBridgeError.invalidResponse }; return false
       }

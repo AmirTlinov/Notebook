@@ -13351,3 +13351,40 @@ disconnect во время resume → следующий attach ready=true, reta
 Mac owner module компилируется. Изменения тестовых fixtures передают явный generation,
 не создают произвольное новое поколение при каждом snapshot.
 Физический возврат/жест и installed pair ещё не заявляются: ожидание общего Xcode/device слота.
+
+
+### Физический прицельный сигнал GUI-267–269, 19 сентября 2026, 19:22 UTC
+
+Отдельный Notebook Remote Test, без изменения production-пары: Mac 3/3,
+физический iPad 4/4 native XCTest PASS. Проверены admission/revoke для run/voice,
+uncertain → новый access/Stop, создание с ошибкой дополнительной настройки,
+зарезервированный Stop при потерянном file reply, merge live/history и раскрытый
+каталог, поколение подписки, стабильный адрес permission/Stop после повторного
+нажатия/смены задачи/restart. Квитанции: `.build/gui-183/audit/slice23-{mac,ipad}.xcresult`.
+Это native controller/owner tests на установленном тестовом приложении,
+не ручной жест и не повторная WAN-приёмка. Simulator не использован.
+
+## GUI-270 — вывод не блокирует управление; все разрешения доступны
+
+Один JSONL reader больше не ждёт SQLite для вывода command/exec. У каждого
+из максимум четырёх процессов один mailbox на 512 KiB, включая порцию в записи.
+Переполнение/ошибка сохранения запрашивает Stop ровно один раз и явно сообщает
+неполный вывод; принятый префикс дренируется, команда не повторяется. Native end
+сохраняется после префикса; явное закрытие runtime ждёт drain. Это ограничение
+памяти mailbox, не измерение полного RSS приложения.
+
+Snapshot передаёт все native question IDs и один полный вопрос. Общий Mac/iPad
+picker дочитывает остальные по generation + native ID; обрезанного согласия нет.
+Generation входит в адрес ответа, повтор той же квитанции не исполняет решение
+снова. Протокол пары 33 требует совместного обновления.
+
+Прицельные 9 Core/Codex tests PASS. JSONL control при удержанном writer: 0.000136 s.
+Настоящий подписанный Codex 0.155.0, пустой временный CODEX_HOME, shell без модели:
+Resize + Stop 0.00105 s при writer delay 2 s; после close сохранён terminal event
+и 232 байта принятого вывода. Source-level настоящий Sidecar: четыре вопроса
+по 60 KB раньше давали envelope 241356 bytes (invalid); теперь первая страница
+60741 bytes, все четыре полных вопроса прочитаны, четыре решения при восьми
+доставках. Stale generation отвергается. Артефакты: `.build/gui-183/audit/`:
+`slice4-tests.log`, `native-output-probe.swift`, `approval-probe.swift`.
+Физический picker/жест после этой правки ещё не проверен; ожидается один общий
+Xcode/device слот. Ни login, ни длительная приёмка, ни полный suite не повторялись.

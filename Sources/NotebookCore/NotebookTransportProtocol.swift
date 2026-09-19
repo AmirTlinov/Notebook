@@ -6,7 +6,7 @@ import Foundation
 public enum NotebookTransportLimits {
   // Explicitly finished unknown command receipts require both applications to update.
   // Both applications update together; identities and queued history stay intact.
-  public static let protocolVersion = 32
+  public static let protocolVersion = 33
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 32 * 1_024
   public static let maximumQueuedBytes = 1_024 * 1_024

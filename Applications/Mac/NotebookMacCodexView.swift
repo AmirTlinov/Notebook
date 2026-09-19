@@ -245,11 +245,9 @@ struct NotebookMacCodexView: View {
           }.padding(.vertical, 8)
         }.accessibilityIdentifier("codex-mac-conversation")
         if let conversation = chat.conversation {
-          ForEach(conversation.requests) { request in
-            NotebookCodexRequestView(request: request, job: chat.decision(request), respond: { decision in
-              await chat.submit(.respond(threadID: conversation.threadID, request: request, decision: decision))
-            }, maximumHeight: 250)
-          }
+          NotebookCodexRequestsView(conversation: conversation, job: chat.decision,
+            query: { try await chat.model.localCodexQuery($0) },
+            respond: { await chat.submit(.respond(threadID: conversation.threadID, request: $0, decision: $1)) }, maximumHeight: 250)
         }
         if let failure = chat.failure { Text(failure).foregroundStyle(.red).textSelection(.enabled) }
         if let job = chat.jobs.first, job.state == .uncertain || job.state == .rejected || !job.isTerminal {

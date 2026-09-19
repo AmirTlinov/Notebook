@@ -482,7 +482,7 @@ final class NotebookChatControllerTests: XCTestCase {
       let reply: NotebookChatReply
       switch query {
       case .run: reply = .run(.init(record: nil))
-      case .account, .models, .resources, .file, .resizeRun, .voice, .dictation: return XCTFail("File, terminal, and audio panels are closed")
+      case .requestDetails, .stopWaiting, .account, .models, .resources, .file, .resizeRun, .voice, .dictation: return XCTFail("File, terminal, and audio panels are closed")
       case .projects: reply = .projects(.init(projects: [project], nextCursor: nil))
       case .catalogue(_, let selected):
         if selected == project { filtered = true }

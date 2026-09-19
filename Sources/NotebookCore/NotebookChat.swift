@@ -83,8 +83,8 @@ public struct CodexMessage: Codable, Equatable, Sendable, Identifiable {
 extension CodexMessage {
   /// Keep every item in this page. Only display text is shortened; native IDs and
   /// the continuation cursor remain authoritative, and the UI names the excerpt.
-  public static func transportPage(_ messages: [CodexMessage]) -> [CodexMessage] {
-    let budget = max(256, 72 * 1024 / max(1, messages.count))
+  public static func transportPage(_ messages: [CodexMessage], byteBudget: Int = 72 * 1024) -> [CodexMessage] {
+    let budget = max(64, byteBudget / max(1, messages.count))
     func prefix(_ text: String, bytes: Int) -> String {
       if text.utf8.count <= bytes { return text }
       let data = Data(text.utf8.prefix(bytes))
@@ -112,11 +112,13 @@ extension CodexMessage {
 public struct CodexUserRequest: Codable, Equatable, Sendable, Identifiable {
   // Request IDs are native JSON-RPC string OR integer IDs, not newly assigned UUIDs.
   public let nativeID: JSONValue
+  /// Absent only in historical journal receipts; live requests carry their producer generation.
+  public let generation: UUID?
   public let method: String
   public let turnID: String
   public let parameters: JSONValue
   public var id: String { (try? String(data: JSONEncoder().encode(nativeID), encoding: .utf8)) ?? "" }
-  public init(nativeID: JSONValue, method: String, turnID: String, parameters: JSONValue) { self.nativeID = nativeID; self.method = method; self.turnID = turnID; self.parameters = parameters }
+  public init(nativeID: JSONValue, generation: UUID? = nil, method: String, turnID: String, parameters: JSONValue) { self.generation = generation; self.nativeID = nativeID; self.method = method; self.turnID = turnID; self.parameters = parameters }
 
 }
 
@@ -130,13 +132,14 @@ public struct CodexConversation: Codable, Equatable, Sendable {
   public let activeTurnID: String?
   public let messages: [CodexMessage]
   public let requests: [CodexUserRequest]
+  public let requestIDs: [String]
   /// Native user items with a real turn ID, never an optimistic local composer item.
   public let acceptedMessages: [String: String]
   public let turnStatuses: [String: String]
   public let access: CodexAccess?
   public let model: CodexModelSelection?
   public let contextUsage: CodexContextUsage?
-  public init(threadID: String, generation: UUID, revision: Int, title: String, ready: Bool, busy: Bool, activeTurnID: String?, messages: [CodexMessage], requests: [CodexUserRequest], acceptedMessages: [String: String], turnStatuses: [String: String], access: CodexAccess? = nil, model: CodexModelSelection? = nil, contextUsage: CodexContextUsage? = nil) { self.threadID = threadID; self.generation = generation; self.revision = revision; self.title = title; self.ready = ready; self.busy = busy; self.activeTurnID = activeTurnID; self.messages = messages; self.requests = requests; self.acceptedMessages = acceptedMessages; self.turnStatuses = turnStatuses; self.access = access; self.model = model; self.contextUsage = contextUsage }
+  public init(threadID: String, generation: UUID, revision: Int, title: String, ready: Bool, busy: Bool, activeTurnID: String?, messages: [CodexMessage], requests: [CodexUserRequest], requestIDs: [String]? = nil, acceptedMessages: [String: String], turnStatuses: [String: String], access: CodexAccess? = nil, model: CodexModelSelection? = nil, contextUsage: CodexContextUsage? = nil) { self.threadID = threadID; self.generation = generation; self.revision = revision; self.title = title; self.ready = ready; self.busy = busy; self.activeTurnID = activeTurnID; self.messages = messages; self.requests = requests; self.requestIDs = requestIDs ?? requests.map(\.id); self.acceptedMessages = acceptedMessages; self.turnStatuses = turnStatuses; self.access = access; self.model = model; self.contextUsage = contextUsage }
 
 }
 
@@ -200,11 +203,12 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
   /// tapping Stop again cannot mint another delivery of that same control.
   /// Text messages and task creation remain independent human submissions.
   public func controlID(author: UUID) -> UUID? {
-    let address: [String]
+    var address: [String]
     switch self {
     case .stop(let thread, let turn): address = ["stop", thread.lowercased(), turn.lowercased()]
     case .respond(let thread, let request, _):
       address = ["respond", thread.lowercased(), request.turnID.lowercased(), request.method, request.id]
+      if let generation = request.generation { address.append(generation.uuidString.lowercased()) }
     case .stopVoice(let id): address = ["stopVoice", id.uuidString.lowercased()]
     case .stopRun(let id): address = ["stopRun", id.uuidString.lowercased()]
     case .send, .steer, .create, .createProject, .updateProject, .setAccess, .setModel, .compact, .saveFile, .renameFile, .startRun, .writeRun, .startVoice: return nil
@@ -309,6 +313,7 @@ public enum NotebookChatQuery: Codable, Equatable, Sendable {
   public var isInteractiveControl: Bool { switch self { case .job(let input): input.action.isInteractiveControl; case .stopWaiting: true; default: false } }
   case account(CodexAccountQuery)
   case stopWaiting(UUID)
+  case requestDetails(threadID: String, generation: UUID, requestID: String)
   case dictation(NotebookDictationQuery)
   case job(NotebookChatInput)
   case file(NotebookFileQuery)
@@ -325,6 +330,7 @@ public enum NotebookChatQuery: Codable, Equatable, Sendable {
 }
 
 public enum NotebookChatReply: Codable, Equatable, Sendable {
+  case requestDetails(CodexUserRequest)
   case account(CodexAccountState)
   case dictation(NotebookDictationState)
   case models([CodexModelOption]), resources(CodexResourcePage)

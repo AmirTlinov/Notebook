@@ -1,6 +1,56 @@
 import SwiftUI
 import NotebookCore
 
+/// One full, generation-bound question at a time. Other questions stay with
+/// Codex and are fetched by native ID, never stored as a second approval queue.
+struct NotebookCodexRequestsView: View {
+  let conversation: CodexConversation
+  let job: (CodexUserRequest) -> NotebookChatJob?
+  let query: (NotebookChatQuery) async throws -> NotebookChatReply
+  let respond: (CodexUserRequest, CodexUserDecision) async -> Void
+  let maximumHeight: CGFloat
+  @State private var selectedID: String?
+  @State private var detail: CodexUserRequest?
+  @State private var failure: String?
+  @State private var retry = UUID()
+  private var requestID: String? {
+    selectedID.flatMap { conversation.requestIDs.contains($0) ? $0 : nil } ?? conversation.requestIDs.first
+  }
+  private var request: CodexUserRequest? {
+    let value = conversation.requests.first { $0.id == requestID } ?? detail
+    return value?.id == requestID && value?.generation == conversation.generation ? value : nil
+  }
+  var body: some View {
+    if let requestID {
+      VStack(spacing: 4) {
+        if conversation.requestIDs.count > 1 {
+          Picker("Ожидают решения", selection: Binding(get: { requestID }, set: { selectedID = $0 })) {
+            ForEach(Array(conversation.requestIDs.enumerated()), id: \.element) { index, id in
+              Text("Запрос \(index + 1) из \(conversation.requestIDs.count)").tag(id)
+            }
+          }.accessibilityIdentifier("notebook-codex-requests")
+        }
+        if let request {
+          NotebookCodexRequestView(request: request, job: job(request), respond: { await respond(request, $0) }, maximumHeight: maximumHeight)
+            .id(conversation.generation.uuidString + request.id)
+        } else if let failure {
+          Text(failure).font(.caption)
+          Button("Повторить чтение запроса") { retry = UUID() }
+        } else { ProgressView("Читаю полный запрос…") }
+      }
+      .task(id: conversation.generation.uuidString + requestID + retry.uuidString) {
+        failure = nil
+        guard request == nil else { return }
+        do {
+          guard case .requestDetails(let value) = try await query(.requestDetails(threadID: conversation.threadID, generation: conversation.generation, requestID: requestID)),
+            value.id == requestID, value.generation == conversation.generation else { throw NotebookTransportError.invalidAcknowledgement }
+          guard !Task.isCancelled else { return }; detail = value
+        } catch { if !Task.isCancelled { failure = error.localizedDescription } }
+      }
+    }
+  }
+}
+
 struct NotebookCodexRequestView: View {
   struct Questions: Decodable { let questions: [Question] }
   struct Question: Decodable, Identifiable {

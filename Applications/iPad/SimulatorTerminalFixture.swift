@@ -7,6 +7,7 @@ import NotebookCore
 @MainActor enum SimulatorTerminalFixture {
   static func make(persistence: NotebookPersistenceQueue, author: UUID, directory: URL) async throws -> NotebookChatController? {
     guard ProcessInfo.processInfo.arguments.contains("--notebook-terminal-fixture") else { return nil }
+    let generation = UUID()
     let peer = UUID(uuidString: "7E7A1000-0000-4000-8000-000000000099")!
     let project = CodexProject(id: "terminal-fixture", name: "Notebook", roots: ["/tmp/terminal-fixture"])
     let task = CodexTask(id: "7e7a1000-0000-4000-8000-000000000088", title: "Работа с терминалом", cwd: project.roots[0], projectID: project.id)
@@ -29,7 +30,7 @@ import NotebookCore
         case .activity(let ids): reply = .activity(ids.map { .init(id: $0, status: .idle) })
         case .history: reply = .history(.init(messages: messages, nextCursor: nil))
         case .conversation(let id):
-          reply = .conversation(.init(threadID: id, revision: 1, title: id == task.id ? task.title : other.title, ready: true, busy: false,
+          reply = .conversation(.init(threadID: id, generation: generation, revision: 1, title: id == task.id ? task.title : other.title, ready: true, busy: false,
             activeTurnID: nil, messages: messages, requests: [], acceptedMessages: [:], turnStatuses: [:]))
         case .run(let read): reply = .run(try mac.readRun(read))
         case .resizeRun: reply = .acknowledged

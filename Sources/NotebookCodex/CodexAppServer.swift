@@ -27,7 +27,8 @@ public actor CodexAppServer {
   private var attaching: [String: Attachment] = [:]
   private var starting: Set<String> = []
   private struct RunningProcess {
-    let publish: @Sendable (NotebookProcessEvent) async throws -> Void
+    let output: CodexProcessOutput
+    var finishing = false
     var task: Task<Void, Never>?
     var probe: Task<Void, Never>?
     var running = false
@@ -323,7 +324,9 @@ public actor CodexAppServer {
     for entry in attaching.values { entry.task.cancel() }; attaching.removeAll()
     states.removeAll(); selections.removeAll(); answeringRequests.removeAll(); threadWorkspaces.removeAll()
     await rpc?.stop()
+    let outputs = processes.values.map(\.output)
     await interruptProcesses()
+    for output in outputs { await output.waitForDrain() }
   }
 
   public func voiceState(id: UUID) -> NotebookVoiceState? { voice?.id == id ? voice : nil }
@@ -387,7 +390,10 @@ public actor CodexAppServer {
     publish: @escaping @Sendable (NotebookProcessEvent) async throws -> Void) async throws {
     guard request.isValid, processes[id] == nil, processes.count < 4 else { throw CodexBridgeError.invalidInput }
     let rpc = try await connect()
-    processes[id] = .init(publish: publish)
+    guard processes[id] == nil, processes.count < 4 else { throw CodexBridgeError.busy }
+    processes[id] = .init(output: CodexProcessOutput(publish: publish,
+      stop: { [weak self] in await self?.stopFailedProcess(id) },
+      completed: { [weak self] in await self?.releaseProcess(id) }))
     processes[id]?.task = Task { [weak self] in
       do {
         let result = try await rpc.request("command/exec", params: .object([
@@ -413,15 +419,15 @@ public actor CodexAppServer {
   }
   private func processNeedsProbe(_ id: UUID) -> Bool { processes[id]?.running == false }
   private func markProcessRunning(_ id: UUID) async {
-    guard processes[id]?.running == false, let publish = processes[id]?.publish else { return }
-    processes[id]?.running = true
-    do { try await publish(.running) } catch { Task { await self.stopFailedProcess(id) } }
+    guard processes[id]?.running == false, let output = processes[id]?.output else { return }
+    processes[id]?.running = true; await output.running()
   }
   private func finishProcess(_ id: UUID, event: NotebookProcessEvent) async {
-    guard let process = processes.removeValue(forKey: id) else { return }
-    process.probe?.cancel()
-    try? await process.publish(event)
+    guard let process = processes[id], !process.finishing else { return }
+    processes[id]?.finishing = true; process.probe?.cancel()
+    await process.output.finish(event)
   }
+  private func releaseProcess(_ id: UUID) { processes.removeValue(forKey: id) }
   private func stopFailedProcess(_ id: UUID) async { try? await stopProcess(id: id) }
   public func writeProcess(id: UUID, data: Data) async throws {
     guard !data.isEmpty, data.count <= 8192, processes[id] != nil, let rpc else { throw CodexBridgeError.invalidInput }
@@ -439,10 +445,9 @@ public actor CodexAppServer {
     await task.value
   }
   private func interruptProcesses() async {
-    let previous = processes; processes.removeAll()
-    for process in previous.values {
+    for (id, process) in processes {
       process.probe?.cancel(); process.task?.cancel()
-      try? await process.publish(.interrupted("Соединение с исполнителем прервано. Запуск не повторён."))
+      await finishProcess(id, event: .interrupted("Соединение с исполнителем прервано. Запуск не повторён."))
     }
   }
 
@@ -527,12 +532,9 @@ public actor CodexAppServer {
     if frame["method"]?.string == "command/exec/outputDelta" {
       guard let id = frame["params"]?["processId"]?.string.flatMap(UUID.init(uuidString:)),
         let encoded = frame["params"]?["deltaBase64"]?.string, let bytes = Data(base64Encoded: encoded), bytes.count <= 131_072 else { throw CodexBridgeError.invalidFrame }
-      if let publish = processes[id]?.publish {
+      if let output = processes[id]?.output {
         processes[id]?.running = true
-        // Await durable consumption: a noisy child backpressures its own pipe,
-        // never an unbounded stream of Swift output values or the iPad camera.
-        do { try await publish(.output(bytes)) }
-        catch { Task { await self.stopFailedProcess(id) } }
+        await output.append(bytes)
       }
       return
     }
