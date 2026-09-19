@@ -76,7 +76,7 @@ final class DocumentRuntimeTests: XCTestCase {
     for scale in [0.44, 1.0, 1.5] {
       mounted.window.setContentSize(.init(width: canonical.width * scale, height: canonical.height * scale))
       plane.frame = .init(origin: .zero, size: .init(width: canonical.width * scale, height: canonical.height * scale))
-      plane.setBoundsSize(canonical)
+      mounted.host.frame = .init(origin: .zero, size: plane.bounds.size)
       mounted.host.setProjectionScale(scale)
       plane.layoutSubtreeIfNeeded()
       try await Task.sleep(for: .milliseconds(50))
@@ -89,6 +89,13 @@ final class DocumentRuntimeTests: XCTestCase {
       let width = try XCTUnwrap(currentWidth as? NSNumber).doubleValue
       XCTAssertEqual(width, before, accuracy: 2, "The author keeps the same CSS layout while native paper zooms")
       XCTAssertTrue(mounted.host.hasInteractiveSurface(web))
+      let browserHit = try await web.evaluateJavaScript("""
+        (() => { const frame = document.querySelector('iframe'), r = frame.getBoundingClientRect();
+          const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          return hit === frame ? 'iframe' : hit?.outerHTML.slice(0, 300); })()
+        """)
+      XCTAssertEqual(browserHit as? String, "iframe",
+        "Canonical paper hit regions must not cover the live program")
     }
   }
 
@@ -98,7 +105,7 @@ final class DocumentRuntimeTests: XCTestCase {
     func updateNSView(_ view: DocumentWebHost, context: Context) {}
   }
 
-  func testFittedReadingCompositionDeliversNativeHitsToWebKit() async throws {
+  func testProjectedReadingCompositionKeepsWebKitOutOfScaledAncestors() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "control",
       html: "<label>Parameter<input type='range' aria-label='Parameter'></label>", height: 100)])
     let mounted = surface(document: document, state: .init(id: document.id, actor: UUID()))
@@ -107,14 +114,17 @@ final class DocumentRuntimeTests: XCTestCase {
     let web = try XCTUnwrap(mounted.coordinator.webView), canonical = web.bounds.size, scale = 0.44
     mounted.host.setProjectionScale(scale)
     let root = NSHostingView(rootView: MountedWebHost(host: mounted.host)
-      .frame(width: canonical.width, height: canonical.height)
+      .frame(width: canonical.width * scale, height: canonical.height * scale)
       .background(.white).clipShape(RoundedRectangle(cornerRadius: 4))
-      .scaleEffect(scale)
       .frame(width: canonical.width * scale, height: canonical.height * scale))
     mounted.window.setContentSize(.init(width: canonical.width * scale, height: canonical.height * scale))
     mounted.window.contentView = root
     root.layoutSubtreeIfNeeded()
     try await Task.sleep(for: .milliseconds(50))
+    XCTAssertFalse(web.isRotatedOrScaledFromBase,
+      "Native events must not cross a scaled ancestor before reaching WebKit")
+    XCTAssertEqual(mounted.host.bounds.size, mounted.host.frame.size,
+      "The representable must not fight SwiftUI's frame layout by rewriting its bounds")
     let point = web.convert(.init(x: web.bounds.midX, y: web.bounds.midY), to: root.superview)
     let hit = root.hitTest(point)
     XCTAssertTrue(hit === web || hit?.isDescendant(of: web) == true,

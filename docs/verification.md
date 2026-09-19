@@ -1,5 +1,41 @@
 # Проверка Notebook
 
+## 19 сентября, 15:06 МСК — GUI-250: настоящий Mac control → saved → reopen принят
+
+Private V14 построен без изменения исходников, source
+`447bc76ed3219f70764151bd798c58ef371a1a5b026ec7f1da1e96c1c3fbcef0`,
+и установлен с сохранением stores/manifests. `.interactive-fragment` располагается
+над canonical paper hit regions: отрицательная WebKit-регрессия до правки
+попадала в пустой `section`, после правки — в iframe на44/100/150%.
+Native **6 PASS**, runtime warnings/skips0 (`.build/gui250-webkit-projection-mac-v8/`).
+Нативный host получает projected frame без изменения собственных bounds;
+WebKit единожды проецирует канонический CSS через pageZoom.
+
+UI attempt `271685cc-e7dc-413c-b399-78fcae2ddc8f` **PASS**:
+настоящие click/клавиша → изменение range0.75→1.05 → назад → reopen1.05.
+Public MCP независимо прочитал human state `{delta:1.05,time:0.2}`, revision2.
+После reopen CUA получил `pointerdown/pointerup/click` с `trusted:true`;
+настоящее перетаскивание изменило delta1.05→1.5 и график. Системное окно
+не читалось и не обходилось; обычная XCTest activation снова доступна.
+
+Повтор исходного, неинструментированного документа сначала не дошёл до zoom
+(attempt `c36d4943-d726-4331-802f-d858b98a30ad`): диагностическую обложку я создал
+поверх исходной. Обложки разнесены штатной адресной MCP-транзакцией
+`3734889D-82E3-4961-8D1A-AA994E186FF8` только в private stand. Затем CUA
+открыл исходный `034341cb-727d-5646-a0f3-ecc670225e74`, изменил0.75→1.05,
+вышел и открыл снова:1.05 сохранилось; public read подтвердил human revision2.
+Evidence: `.build/gui250-private-author-v14/`, V14 run/xcresult и
+`.build/gui250-v14-original-ui-attachments/`. Это реальная приёмка данного
+Mac сценария, не всех слайсов, не paired delivery и не system performance.
+
+Отдельный следующий candidate передаёт WebKit именно prepared camera scale,
+а не mutable current во время held gesture. State echo под активной камерой
+не должен масштабировать бумагу дважды. Source
+`3f85c25a8eb77eb70b62939a715e75e07fec12f25aa9f6e953d1d1db76bf1fcf`,
+native **7 PASS**, warnings/skips0 (`.build/gui250-webkit-projection-mac-v9/`);
+эта дополнительная правка ещё не установлена. Xcode уступлен другому targeted
+физическому прогону; свои Xcode runners завершены. GUI-240/250 остаются In Progress.
+
 ## 19 сентября, 14:49 МСК — GUI-250: idle feedback устранён, найден отдельный browser hit defect
 
 Installed private V13, source

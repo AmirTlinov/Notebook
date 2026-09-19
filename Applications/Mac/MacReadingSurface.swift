@@ -25,6 +25,9 @@ struct MacReadingSurface: View {
         reanchorsOnRevision: false, isCameraActive: model.presencePhase == .active,
         hitRegions: { anchor in [paperFrame(center: center, geometry: geometry, presence: anchor)] }) { anchor in
         let frame = paperFrame(center: center, geometry: geometry, presence: anchor)
+        // WebKit owns document projection through pageZoom. Supply its native
+        // host in screen points rather than applying a second ancestor scale.
+        let projectedDocument = presence.mode == .document
         Group {
           if presence.mode == .page, let page = model.activePage {
             PageSurface(page: page, isCurrent: true, isInteractive: true, isVisible: true,
@@ -38,11 +41,12 @@ struct MacReadingSurface: View {
             }
           }
         }
-        .frame(width: geometry.width, height: geometry.height)
+        .frame(width: projectedDocument ? frame.width : geometry.width,
+          height: projectedDocument ? frame.height : geometry.height)
         .background(.white)
         .clipShape(RoundedRectangle(cornerRadius: geometry.cornerRadius))
         .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
-        .scaleEffect(anchor.camera.scale)
+        .scaleEffect(projectedDocument ? 1 : anchor.camera.scale)
         .frame(width: frame.width, height: frame.height)
         .position(x: frame.midX, y: frame.midY)
         .environment(model).environment(\.sceneComposition, .init(nil))

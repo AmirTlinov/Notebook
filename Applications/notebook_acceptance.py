@@ -599,11 +599,13 @@ def upgrade(args):
 def document_ui_request(platform, test, document_id, document_title):
     """Validate the public fixture address before loading or touching a stand."""
     suite = "NotebookDocumentAcceptanceUITests/"
-    if not test.startswith(suite):
+    mac_document = test == "NotebookAcceptanceMacUITests/testPublicScientificDocumentRetainsARealControlEditAfterReopening"
+    if not test.startswith(suite) and not mac_document:
         release.require(document_id is None and document_title is None,
                         "Адрес документа допускается только в документном UI-сценарии.")
         return None
-    release.require(platform == "ipad", "Документная UI-приёмка выполняется на iPad Simulator.")
+    release.require(platform == ("mac" if mac_document else "ipad"),
+                    "Документный сценарий требует свою платформу Mac или iPad Simulator.")
     release.require(isinstance(document_id, str) and re.fullmatch(
         r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", document_id),
         "Нужен --document-id: UUID из результата публичного create-control.js.")

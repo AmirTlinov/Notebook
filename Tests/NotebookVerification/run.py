@@ -39,6 +39,15 @@ class FullPrerequisiteTests(unittest.TestCase):
 
 
 class SelectionTests(unittest.TestCase):
+    def test_mac_scientific_ui_requires_its_exact_private_document_and_platform(self):
+        method = "NotebookAcceptanceMacUITests/testPublicScientificDocumentRetainsARealControlEditAfterReopening"
+        identifier = "adb44de5-5b67-44f8-8371-9d03883e55ec"
+        self.assertEqual(acceptance.document_ui_request("mac", method, identifier, "Beats")["documentID"], identifier)
+        for platform, test, identity in (("ipad", method, identifier), ("mac", method + "Other", identifier),
+                                        ("mac", method, None)):
+            with self.assertRaises(release.ReleaseError):
+                acceptance.document_ui_request(platform, test, identity, "Beats")
+
     def test_document_ui_requires_a_real_address_and_ipad_before_touching_the_stand(self):
         method = "NotebookDocumentAcceptanceUITests/testRealPageControlsLinksAndTouchSourceEditingSurviveColdReopening"
         identifier = "ADB44DE5-5B67-44F8-8371-9D03883E55EC"

@@ -72,6 +72,8 @@
     .interactive-fragment {
       position: absolute;
       overflow: hidden;
+      /* Canonical paper keeps its source/link hit regions below live controls. */
+      z-index: 2;
     }
 
     ::selection { background: var(--selection); }

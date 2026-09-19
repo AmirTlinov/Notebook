@@ -2430,17 +2430,12 @@ private enum DocumentWebViewFactory {
       guard scale.isFinite, scale > 0, scale != projectionScale else { return }
       projectionScale = scale; projectSurface()
     }
-    override func setFrameSize(_ newSize: NSSize) {
-      super.setFrameSize(newSize)
-      projectSurface()
-    }
     private func projectSurface() {
       guard web != nil else { return }
       let size = CGSize(width: canonicalSize.width * projectionScale, height: canonicalSize.height * projectionScale)
-      // WebKit's remote accessibility scales its content, not ancestor NSView
-      // bounds. Keep this leaf in screen points and let pageZoom express the
-      // existing camera scale; its CSS viewport remains the canonical paper.
-      if bounds.size != size { setBoundsSize(size) }
+      // The reading owner supplies a screen-point frame. Do not mutate this
+      // representable's bounds from AppKit layout: SwiftUI owns that geometry.
+      // WebKit alone projects its canonical CSS viewport through pageZoom.
       let rect = CGRect(origin: .zero, size: size)
       if web?.frame != rect { web?.frame = rect }
       if web?.pageZoom != CGFloat(projectionScale) { web?.pageZoom = projectionScale }
@@ -2546,6 +2541,11 @@ private enum DocumentWebViewFactory {
          onStateChange: onStateChange)
     }
     func makeNSView(context: Context) -> DocumentWebHost { DocumentWebHost() }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: DocumentWebHost, context: Context) -> CGSize? {
+      let size = WorkspaceItemGeometry.document(document.paperSize)
+      // Native paper owns the extent, never WebKit's intrinsic content size.
+      return proposal.replacingUnspecifiedDimensions(by: .init(width: size.width, height: size.height))
+    }
     func updateNSView(_ view: DocumentWebHost, context: Context) {
       view.setProjectionScale(projection?.current.camera.scale ?? 1)
       context.coordinator.programStore = programStore
