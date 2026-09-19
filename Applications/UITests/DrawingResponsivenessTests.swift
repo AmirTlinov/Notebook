@@ -2243,6 +2243,36 @@ final class DrawingResponsivenessTests: XCTestCase {
     let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "compact-drawing-tools-toolbar"; proof.lifetime = .keepAlways; add(proof)
   }
 
+  func testShapeAndOperationSelectorsShareTopRowAndKeepIndependentSelections() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    launchPortraitFixture(app)
+    app.buttons["drawing-tools-more"].tap()
+    app.buttons["drawing-tool-shape"].firstMatch.tap()
+    app.buttons["drawing-tool-shape"].tap()
+    let shape = app.buttons["drawing-shape-kind"], operation = app.buttons["shape-operation"]
+    XCTAssertTrue(shape.waitForExistence(timeout:2))
+    XCTAssertTrue(operation.isHittable)
+    for title in ["Вычитание", "Объединение", "Пересечение", "Исключение", "Обычный"] {
+      operation.tap(); app.buttons[title].tap()
+      XCTAssertEqual(operation.label,"Наложение, \(title)")
+      XCTAssertEqual(shape.frame.midY,operation.frame.midY,accuracy:1)
+      XCTAssertLessThan(shape.frame.maxX,operation.frame.minX)
+      XCTAssertLessThan(operation.frame.maxY,app.sliders["shape-width"].frame.minY)
+    }
+    operation.tap(); app.buttons["Вычитание"].tap()
+    shape.tap(); app.buttons["Треугольник"].tap()
+    XCTAssertEqual(shape.value as? String,"Треугольник")
+    XCTAssertEqual(operation.label,"Наложение, Вычитание")
+    dismissDrawingSettings(app)
+    app.buttons["drawing-tool-shape"].tap()
+    XCTAssertEqual(shape.value as? String,"Треугольник")
+    XCTAssertEqual(operation.label,"Наложение, Вычитание")
+    let proof = XCTAttachment(screenshot:app.screenshot())
+    proof.name = "shape-and-operation-top-row"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testOpenToolSettingsLetOneTapSelectAnotherTool() {
     continueAfterFailure = false
     let app = XCUIApplication()
