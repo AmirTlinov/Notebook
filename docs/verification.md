@@ -1,5 +1,57 @@
 # Проверка Notebook
 
+## 19 сентября, 17:37 МСК — GUI-248: содержимое больше не прилипает к titlebar при scroll
+
+Mac V18 source `5b52a090262d84c42eee301c42c5a390a28911894791c27efbfe7138f5e265e4`,
+cdhash `5fb5dfb73194c79bc6c112a4fd294b37cc5b377a`, установлен только в private stand,
+store/manifest побайтно сохранены. Simulator остаётся V16; production не затронут.
+
+Причина: автоматический `WKWebView.obscuredContentInsets` трактовал уходящую
+за верх окна бумагу как содержимое под titlebar и независимо сдвигал live DOM.
+Read-only диагностика установленного V17 обнаружила top inset185.896pt при
+неизменных native frame/bounds. Воспроизведение с настоящим titled/fullSizeContentView
+окном: CSS height1542→1367→767 при pan; borderless fixture этого не показывал.
+Фабрика теперь задаёт явные нулевые insets до mount. В текущем WebKit публичный
+setter возвращается до отключения automatic policy, если значение не изменилось,
+поэтому перед zero устанавливается другое значение на ещё не показанном view.
+Нет private API, observers, нового camera owner или дополнительных frame loops.
+[Реализация setter WebKit](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/API/Cocoa/WKWebView.mm).
+
+- Настоящий AppKit/WebKit reproduction: до CSS height1542→767, после1542→1542,
+  top insets0 во всех положениях; native regression использует titled window.
+- **9 native PASS**, включая pan200/800/0, неизменные CSS/native viewport,
+  prepared scale и split-pane geometry; runtime warnings/skips0.
+- **1 installed Mac UI PASS**: открыть Sound → по ширине → wheel−120 → wheel+120.
+  Три window PNG осмотрены: заголовок, рисунок, подписи и controls уходят вверх
+  вместе на120pt и возвращаются к исходной композиции без сжатия. Не только AX.
+- `source_inputs` рабочего дерева и snapshot совпали после проверки;
+  `codesign --verify --deep --strict` и signature readback подтвердили artifact.
+
+Evidence: `.build/gui250-scroll-projection/native/proof.json`,
+`.build/gui250-mac-scroll-v18/{mac-build.json,native.xcresult,verified.json}`,
+`.build/gui250-scroll-ui-v18/after.xcresult` и `attachments/`.
+Первый CUA wheel не был доставлен (`noWindowsAvailable`); он не засчитан.
+Успешный жест принадлежит exact-app XCTest, не синтетическому DOM событию.
+Это закрывает конкретное расхождение бумаги/live содержимого при scroll;
+системные FPS/p95, десять повторов и30мин остаются открытыми.
+
+## 19 сентября, 17:19 МСК — GUI-242: реальная доставка 300 MiB в private Simulator
+
+На смешанном диагностическом стенде Mac V17 / Simulator V16 подтверждена
+настоящая доставка через account owner и TLS, без инъекции базы:
+
+- Sound action `5706233e-3003-4809-8723-f68ddf8cf7a0` и актуальный large v3 action
+  `2AF064DB-7071-4379-83F4-BD8E0DDB729B`: public `saved:confirmed`,
+  `receivedByIPad:confirmed`, `sameActionVersion/sameRevisions=true`.
+- Read-only проверка установленного Simulator-store: все **78 blobs** существуют,
+  SHA256/размер каждого совпали. Всего **314581987 байт**, включая ресурс
+  **314572800 байт (300 MiB)**, разбитый на75 частей по4MiB.
+- `shownOnIPad:awaiting_display`: получение не подменяет показ, cold/offline UI
+  ещё не принят. Encoder fix стоит на отправителе Mac; это не единый release cut.
+
+Evidence: `.build/gui250-private-delivery-v17/{sound-receipt-after.json,large-current-receipt.json,large-simulator-bytes.json}`
+и scoped TLS log. Production/физический iPad не затронуты.
+
 ## 19 сентября, 16:38 МСК — GUI-248: сжатие листа исправлено и проверено по пикселям
 
 Установлен Mac-only private V17, immutable source

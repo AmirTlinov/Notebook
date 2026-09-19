@@ -107,6 +107,44 @@ import XCTest
     restored.name = "paper-after-source-mode-round-trip"; restored.lifetime = .keepAlways; add(restored)
   }
 
+  func testReadingScrollMovesLiveContentWithThePaper() throws {
+    continueAfterFailure = false
+    let id = try XCTUnwrap(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_DOCUMENT_ID"].flatMap(UUID.init(uuidString:)))
+    let title = try XCTUnwrap(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_DOCUMENT_TITLE"])
+    try activatePrivateApplication()
+    let back = application.buttons["mac-workspace-back"]
+    if back.exists && back.isEnabled { back.click() }
+    let cover = application.buttons["workspace-item-" + id.uuidString.lowercased()]
+    XCTAssertTrue(cover.waitForExistence(timeout: 15)); cover.doubleClick()
+    let window = application.windows[title]
+    XCTAssertTrue(window.waitForExistence(timeout: 15))
+    window.menuButtons["mac-reading-zoom"].click()
+    application.menuItems["По ширине"].click()
+    let heading = window.webViews.staticTexts["Звук — движение без переноса"].firstMatch
+    XCTAssertTrue(heading.waitForExistence(timeout: 30)); XCTAssertTrue(heading.isHittable)
+    let top = heading.frame
+    func capture(_ name: String) {
+      let attachment = XCTAttachment(screenshot: window.screenshot())
+      attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+    }
+    capture("sound-scroll-top")
+    let margin = window.coordinate(withNormalizedOffset: .init(dx: 0.95, dy: 0.65))
+    margin.scroll(byDeltaX: 0, deltaY: -120)
+    let moved = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      heading.frame.minY < top.minY - 60
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [moved], timeout: 5), .completed,
+      "Live content must leave its old screen position with the paper, not stick below the titlebar")
+    capture("sound-scroll-bottom")
+    margin.scroll(byDeltaX: 0, deltaY: 120)
+    let returned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      abs(heading.frame.minY - top.minY) < 2 && heading.isHittable
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [returned], timeout: 5), .completed)
+    XCTAssertEqual(heading.frame.width, top.width, accuracy: 1)
+    capture("sound-scroll-returned")
+  }
+
   /// The public Sound document has white paper on the gray reader canvas.
   /// WebKit's remote AX frame alone can miss an ancestor's bounds transform.
   private func visiblePaperWidth(_ screenshot: XCUIScreenshot, windowWidth: CGFloat) throws -> CGFloat {

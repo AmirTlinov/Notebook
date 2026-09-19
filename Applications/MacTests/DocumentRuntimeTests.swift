@@ -105,6 +105,55 @@ final class DocumentRuntimeTests: XCTestCase {
     func updateNSView(_ view: DocumentWebHost, context: Context) {}
   }
 
+  func testReadingPanKeepsTheFullWebKitViewportAndContentOnThePaper() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "marker",
+      html: "<button style='margin-top:100px'>Paper marker</button>", height: 500)])
+    let mounted = surface(document: document, state: .init(id: document.id, actor: UUID()))
+    defer { mounted.close() }
+    await waitUntil { mounted.coordinator.renderIsReady }
+    let web = try XCTUnwrap(mounted.coordinator.webView)
+    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let viewport = SpatialPoint(x: 1100, y: 728), scale = 1052 / geometry.width
+    let plane = SceneCameraPlaneView<Int>()
+    plane.frame = .init(x: 0, y: 0, width: viewport.x, height: viewport.y)
+    // Unlike a borderless fixture, the real reader has titlebar geometry.
+    mounted.window.styleMask = [.titled, .closable, .resizable, .fullSizeContentView]
+    mounted.window.setContentSize(plane.frame.size); mounted.window.contentView = plane
+    defer { plane.uninstall() }
+    mounted.host.setProjectionScale(scale)
+    func update(_ offset: Double, active: Bool) {
+      let presence = SessionPresence(mode: .document, camera: .init(center: .init(x: 0, y: offset), scale: scale),
+        viewport: viewport, focusedItemID: document.id, openProgress: 1)
+      plane.update(presence: presence, revision: 0, reanchorsOnRevision: false, isCameraActive: active) { anchor, _ in
+        let top = 24 - anchor.camera.center.localY * scale
+        return AnyView(MountedWebHost(host: mounted.host)
+          .frame(width: geometry.width * scale, height: geometry.height * scale)
+          .background(.white).clipShape(RoundedRectangle(cornerRadius: 4))
+          .position(x: viewport.x / 2, y: top + geometry.height * scale / 2)
+          .frame(width: viewport.x, height: viewport.y))
+      }
+      plane.layoutSubtreeIfNeeded()
+    }
+    update(0, active: false)
+    try await Task.sleep(for: .milliseconds(50))
+    let original = web.convert(web.bounds, to: nil)
+    let originalViewport = try await web.evaluateJavaScript("[innerWidth,innerHeight]") as? [NSNumber]
+    for offset in [200.0, 800.0, 0.0] {
+      update(offset, active: true)
+      try await Task.sleep(for: .milliseconds(50))
+      update(offset, active: false)
+      try await Task.sleep(for: .milliseconds(50))
+      let projected = web.convert(web.bounds, to: nil)
+      XCTAssertEqual(projected.size, original.size)
+      XCTAssertEqual(projected.minY, original.minY + offset * scale, accuracy: 1)
+      let currentViewport = try await web.evaluateJavaScript("[innerWidth,innerHeight]") as? [NSNumber]
+      XCTAssertEqual(currentViewport, originalViewport, "Scrolling moves the paper, never resizes the browser viewport")
+      XCTAssertEqual(web.obscuredContentInsets.top, 0,
+        "The titlebar must not independently push live content down as paper leaves the window")
+      XCTAssertEqual(plane.contentPublicationCount, 1)
+    }
+  }
+
   func testStatePublicationDuringCameraContactKeepsThePreparedWebKitScale() async throws {
     let actor = UUID(), resources = SceneRenderResources(maximumWebSurfaces: 1)
     let document = DocumentDocument(actor: actor, blocks: [.interactive(id: "control",

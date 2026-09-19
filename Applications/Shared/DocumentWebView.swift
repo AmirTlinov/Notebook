@@ -2114,6 +2114,11 @@ private enum DocumentWebViewFactory {
       // underPageBackgroundColor alone leaves WebKit's page backing opaque.
       webView.setValue(false, forKey: "drawsBackground")
       webView.allowsMagnification = false
+      // Paper moves with the scene, not with the window's titlebar inset.
+      // WebKit ignores an unchanged zero before disabling automatic insets;
+      // establish explicit ownership before this unmounted view can paint.
+      webView.obscuredContentInsets = NSEdgeInsets(top: 1, left: 0, bottom: 0, right: 0)
+      webView.obscuredContentInsets = NSEdgeInsets()
     #endif
 
     if let shellURL = Bundle.main.url(
