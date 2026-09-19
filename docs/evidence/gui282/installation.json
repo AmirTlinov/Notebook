@@ -1,0 +1,29 @@
+{
+  "sourceSHA256": "bc02fcc7474997c2e4b40756ca77bfc3ccac6b64503ab9c925a021640675a6c5",
+  "baseCommit": "9479a0f857aa5fd6f5a7345a0e9f0c3e40723714",
+  "uncommittedRuntimeFix": false,
+  "sourceScope": "GUI-282 compact GPU ink, affine projection, screen LOD, retained dirty tiles; includes GUI-283 screen-density projection and GUI-266 lasso lifecycle; wire37/manifest18",
+  "status": "installed-and-live-readback-verified",
+  "macOldBundleSHA256": "e0f9b3eb76589c902f063b38610affe8abf8fc09093fec31769a53b51791a73d",
+  "macNewBundleSHA256": "877f99adedcdf8ab7fcebd2980914a4c37a875eea1a227db86703a981e6f2fe6",
+  "macDataBytesUnchangedBeforeLaunch": true,
+  "iPadWorkspaceRegistryDigestUnchanged": true,
+  "profileExpiresUTC": "2027-09-17T09:41:04",
+  "fullPhysicalAcceptance": false,
+  "noUninstallOrContainerReset": true,
+  "verifiedAtUTC": "2026-09-19T23:42:47.472900+00:00",
+  "installedVersion": "0.3.132",
+  "installedBuild": "135",
+  "liveReadback": {
+    "beforeCursor": "25775",
+    "afterCursor": "25780",
+    "contentBasisUnchanged": true,
+    "workspaceHeaderUnchanged": true,
+    "pageHeaderUnchanged": true,
+    "boardContentRevisionUnchanged": true,
+    "presenceCompared": false,
+    "presenceNote": "Device-local view changed on relaunch; not shared content."
+  },
+  "macInstalledWindowInspected": true,
+  "iPadInstalledScreenshotInspected": true
+}

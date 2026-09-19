@@ -1,0 +1,18 @@
+85fc0c5f38681be5f29dde60c0f0946a07be6f98
+9338df8bd058df7e0cb2ca7eb8e0b59c83c696b0e006cc945a969f7d13214996  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Sources/NotebookCore/InkStrokeGeometry.swift
+49610f11759c2435741fdddf7251a2ca2d5251893a333ec4b204380105636fcb  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Sources/NotebookCore/InkRenderGeometry.swift
+8a10b00740f90868abef93e3e1b7ad8fed47eef547ebb99da94e37ebd845699e  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Applications/Shared/InkRenderUniforms.swift
+ee49b395134c4b34c5af9ac393e5f7905ab2da110ed1de25dd4401519ddf5d36  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Applications/Shared/InkConnectivity.swift
+a2f24f3fd58989673fcbfa59320b3f11652d3b6500e6ddb208d4e8f2a91073dd  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Applications/Shared/InkShaders.metal
+521cde01670dc2ee8925b9853cef2d9b5a5806d460936061b91d80e91b5aa11f  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Applications/Shared/CompactInk.metal
+fe3deeb5d5803999bdd1deceff1c6de94adcd0ced00162799210fd045392fdeb  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Applications/TestSupport/CompactInkTestRenderer.swift
+6e9564f83e7131351fc8c1ddd0eabcd2efe571a8483c7aa10dea6f8a8839862a  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Tests/Performance/CompactInk/main.swift
+3b0044a36e667d6a0e67ab434f0317e216cd96cf13d9daeb9cba47f484f2cc8f  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Tests/Performance/CompactInk/run.sh
+Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)
+Target: arm64-apple-macosx27.0.0
+ProductName:		macOS
+ProductVersion:		27.0
+BuildVersion:		26A428
+Mac17,6
+137438953472
+Apple M5 Max
