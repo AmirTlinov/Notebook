@@ -77,6 +77,40 @@ final class ProgramAssetTests: XCTestCase {
     let package = NotebookProgramPackage(html: "view.html", css: "style.css", javaScript: "main.js", files: entries.sorted { $0.path < $1.path })
     return Fixture(root: root, store: store, package: package, hash: try store.stageProgramPackage(package))
   }
+  func testSevenScientificRecipesCheckpointTheirExplicitModelThroughTheExistingOwner() async throws {
+    let bundle = Bundle(for: Self.self)
+    func source(_ name: String, _ ext: String) throws -> String {
+      try String(contentsOf: XCTUnwrap(bundle.url(forResource: name, withExtension: ext, subdirectory: "science")), encoding: .utf8)
+    }
+    let shared = try source("models", "js") + "\n" + source("runtime", "js"), css = try source("common", "css")
+    for name in ["sound", "gears", "linear", "gaussian", "astar", "tensor", "probability"] {
+      let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
+      var ready = false, commits = 0
+      let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in commits += 1; return true })
+      let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
+      defer { owner.invalidate(); lease.release(); close() }
+      owner.load(.init(id: name, kind: .web, frame: .init(x: 0, y: 0, width: 760, height: 960), source: "",
+        html: try source(name, "html"), css: css, javaScript: try shared + "\n" + source(name, "js"),
+        state: .object(["phase": .number(0.25)])), policy: .exact(scale: 1), in: web)
+      try await wait { ready || owner.snapshotFailure != nil }; XCTAssertTrue(ready, name + String(describing: owner.snapshotFailure))
+      XCTAssertNil(owner.snapshotFailure, name)
+      let hasPhase = try await web.evaluateJavaScript("Boolean(document.getElementById('phase'))") as? Bool ?? false
+      var expectedPhase = 0.25
+      if hasPhase {
+        let accepted = try await web.evaluateJavaScript("document.getElementById('phase').value='0.625';document.getElementById('phase').dispatchEvent(new Event('input',{bubbles:true}));Number(document.getElementById('phase').value)")
+        expectedPhase = try XCTUnwrap(accepted as? Double)
+      }
+      let before = commits
+      let checkpoint = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram", in: web)
+      XCTAssertEqual(checkpoint["phase"], .number(expectedPhase), name)
+      XCTAssertEqual(commits, before, "The native checkpoint owns durable admission, not another optimistic commit: " + name)
+      let repeated = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram", in: web)
+      XCTAssertEqual(repeated, checkpoint, name)
+      _ = try await NotebookProgramBridge.lifecycle("resume", controller: "notebookProgram", in: web)
+      owner.invalidate(); lease.release(); try await wait { resources.activeWebSurfaceCount == 0 }
+    }
+  }
+
   private func compiledFixture() throws -> Fixture {
     struct Compiled: Decodable { let package: NotebookProgramPackage; let files: [String: String]; let packageHash: String }
     let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "compiled-program", withExtension: "json"))

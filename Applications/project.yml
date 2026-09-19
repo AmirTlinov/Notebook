@@ -89,6 +89,9 @@ targets:
     sources:
       - path: Tests
       - path: TestSupport
+      - path: ../MCP/skills/notebook/assets/science
+        type: folder
+        buildPhase: resources
       - path: ../Tests/NotebookCoreTests/Resources/QuickShapeMeasured.json
         buildPhase: resources
       - path: ../MCP/skills/notebook/assets/animation
@@ -194,6 +197,9 @@ targets:
     sources:
       - path: MacTests
       - path: TestSupport
+      - path: ../MCP/skills/notebook/assets/science
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: NotebookMac
     settings:

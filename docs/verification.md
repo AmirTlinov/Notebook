@@ -1,5 +1,32 @@
 # Проверка Notebook
 
+## 19 сентября, 04:00 МСК — GUI-244: checkpoint семи прежних научных recipes
+
+`Science.mount` подключён к общему NotebookProgram lifecycle: pause прекращает
+rAF и новые авторские изменения, checkpoint возвращает последнюю явную модель
+без дополнительного commit, resume оставляет модель остановленной, dispose
+отменяет кадр и снимает общие listeners. Сами семь моделей/рендеров не заменены.
+
+* **10 MCP PASS** и pinned SDK check: `/tmp/gui-244-lifecycle-js-v1.log`,
+  `/tmp/gui-244-lifecycle-sdk-v1.log`. Проверены последние анимационные phase,
+  отсутствие frame commits, freeze, deep-copy checkpoint, resume/dispose.
+* **Mac 1 PASS + Simulator 1 PASS**, каждый test проходит **все семь recipes**
+  через настоящий spatial WebKit owner: ready, изменение доступного phase input,
+  native checkpoint/repeat/resume и eventual release действительного lease.
+  `.build/gui-244-lifecycle-mac-v4/verification.json`,
+  `.build/gui-244-lifecycle-sim-v4.xcresult`; source до/после неизменен:
+  `0016bb0a6148dce927307f94ddb9bdb067452b483742ba18583ee7a6e984bf1a`.
+
+Первый native build выявил пропущенный try в тесте. V2 тест неверно предполагал
+0.625 при шаге slider 0.002 (браузер принимает 0.626); теперь сравнивает checkpoint
+с реально принятым DOM value. V3 Simulator неверно требовал синхронного release
+при действительном асинхронном snapshot borrow: проверка ждёт существующее
+bounded завершение. Production owner ради этих ожиданий не менялся.
+
+Это только lifecycle-срез GUI-244. Не заменяет настоящие пользовательские жесты
+и визуальное сравнение всех семи эпизодов с референсами, Plot/MathJax/100k Canvas,
+ориентацию/темы/масштаб, общую performance/release приёмку. Задача In Progress.
+
 ## 19 сентября, 03:48 МСК — GUI-243: TS/build/preview до работающего package
 
 `prepare.mjs program` теперь принимает TS entry, imports/CSS, explicit workers,
