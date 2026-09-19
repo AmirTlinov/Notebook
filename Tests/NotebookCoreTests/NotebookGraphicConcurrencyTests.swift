@@ -195,33 +195,48 @@ func graphicPatchUsesTheSameReducerAsStorage() throws {
   #expect(throws:CollaborationError.self) { try before.applying(.object(["style":try .encode(NotebookGraphic.Style(strokeWidth:-2))])) }
 }
 
-@Test("Native arrange uses complete membership and exact-source admission", arguments: [false, true])
-func graphicNativeArrangeUsesCompleteOwner(onBoard: Bool) throws {
+@Test("Native arrange uses complete membership and exact-source admission", arguments: [false, true], NotebookElementLayerMove.allCases)
+func graphicNativeArrangeUsesCompleteOwner(onBoard: Bool, move: NotebookElementLayerMove) throws {
   let f = try GraphicFixture(onBoard:onBoard); defer { f.clean() }
-  for (index,id) in ["a","b","offscreen"].enumerated() {
+  for (index,id) in ["a","b","c","d","offscreen"].enumerated() {
     var values: [String:JSONValue] = ["kind":.string("graphic"),"source":.string(""),
       "frame":try .encode(PageRect(x:10,y:10,width:80,height:80)),"graphic":try .encode(NotebookGraphic())]
-    if onBoard { values["worldOrigin"] = try .encode(WorldPoint(x:Double(index)*100_000,y:0)) }
+    if onBoard { values["worldOrigin"] = try .encode(WorldPoint(x:id == "c" ? 0 : Double(index+1)*100_000,y:0)) }
     _ = try f.write(.insertElement,id:id,values:values)
   }
-  let page = onBoard ? nil : try f.store.readPageElement(pageID:f.target.id,elementID:"a")
-  let spatial = onBoard ? try f.store.readSpatialElement(boardID:f.target.id,elementID:"a") : nil
+  let page = onBoard ? nil : try f.store.readPageElement(pageID:f.target.id,elementID:"c")
+  let spatial = onBoard ? try f.store.readSpatialElement(boardID:f.target.id,elementID:"c") : nil
   if onBoard {
     let window = try f.store.readSceneWindow(boardID:f.target.id,bounds:.init(origin:.zero,width:200,height:200))
     #expect(!window.boards[0].board.elements.contains { $0.id == "offscreen" })
   }
-  let arranged = try f.store.applyNativeElementEdit(.init(kind:.reorderElements,target:f.target,id:"a",values:[:]),
-    summary:"Front",expectedPage:page,expectedSpatial:spatial,moveToFront:true,actor:f.actor)
+  let arranged = try f.store.applyNativeElementEdit(.init(kind:.reorderElements,target:f.target,id:"c",values:[:]),
+    summary:"Move layer",expectedPage:page,expectedSpatial:spatial,layerMove:move,actor:f.actor)
   #expect(arranged.receipt.author == .human)
-  #expect(arranged.receipt.action.operations.first?.values["ids"] == .array(["b","offscreen","a"].map(JSONValue.string)))
+  let expected: [String]
+  switch move {
+  case .lower: expected = ["a","c","b","d","offscreen"]
+  case .higher: expected = ["a","b","d","c","offscreen"]
+  case .toBack: expected = ["c","a","b","d","offscreen"]
+  case .toFront: expected = ["a","b","d","offscreen","c"]
+  }
+  #expect(arranged.receipt.action.operations.first?.values["ids"] == .array(expected.map(JSONValue.string)))
+  let reopened = NotebookStore(root:f.root)
+  let order = onBoard ? try reopened.loadBoard(items:reopened.loadIndex().items).board(f.target.id)!.elements.map(\.id)
+    : try reopened.loadPage(f.target.id).elements.map(\.id)
+  #expect(order == expected)
+  _ = try reopened.undoCollaborationAction(arranged.receipt.id,actor:f.actor)
+  let undone = onBoard ? try reopened.loadBoard(items:reopened.loadIndex().items).board(f.target.id)!.elements.map(\.id)
+    : try reopened.loadPage(f.target.id).elements.map(\.id)
+  #expect(undone == ["a","b","c","d","offscreen"])
   // A peer edit after this accepted command is not our own predecessor.
-  _ = try f.write(.updateElement,id:"a",values:["graphic":.object(["label":.string("Peer")])],human:false)
+  _ = try f.write(.updateElement,id:"c",values:["graphic":.object(["label":.string("Peer")])],human:false)
   #expect(throws:CollaborationError.self) {
-    try f.store.applyNativeElementEdit(.init(kind:.updateElement,target:f.target,id:"a",values:["graphic":.object(["label":.string("Stale")])]),
+    try f.store.applyNativeElementEdit(.init(kind:.updateElement,target:f.target,id:"c",values:["graphic":.object(["label":.string("Stale")])]),
       summary:"Stale",expectedPage:arranged.page,expectedSpatial:arranged.spatial,actor:f.actor)
   }
-  let actual = onBoard ? try f.store.readSpatialElement(boardID:f.target.id,elementID:"a")?.graphic
-    : try f.store.readPageElement(pageID:f.target.id,elementID:"a")?.graphic
+  let actual = onBoard ? try f.store.readSpatialElement(boardID:f.target.id,elementID:"c")?.graphic
+    : try f.store.readPageElement(pageID:f.target.id,elementID:"c")?.graphic
   #expect(actual?.label == "Peer")
 }
 

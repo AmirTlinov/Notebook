@@ -246,7 +246,7 @@ struct SpatialWorkspaceView: View {
           }
           model.publishHumanContext(capture, target: target)
         }, onLift: { point in
-          guard cameraGesture == nil, !settling, let cohort else { return nil }
+          guard cameraGesture == nil, !settling, !model.selectionSession.isInteractive, let cohort else { return nil }
           let selected = selectedElement(at: point, presence: presence)
           let capture = selected == nil ? NotebookAttentionProjection.capture(start: point, end: point, model: model, presence: presence,
             cohort: cohort, installedInk: spatialInkSurfaces.installedSources(),

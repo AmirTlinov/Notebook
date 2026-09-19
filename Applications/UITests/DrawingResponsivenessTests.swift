@@ -65,8 +65,25 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(leading.frame.midX,text.frame.minX,accuracy:2)
     XCTAssertEqual(trailing.frame.midX,text.frame.maxX,accuracy:2)
     XCTAssertLessThan(text.frame.width,150,"Short text does not retain the 320pt editor box")
-    XCTAssertTrue(app.buttons["element-send-to-back"].exists)
-    XCTAssertTrue(app.buttons["element-bring-to-front"].exists)
+    let layers = app.buttons["element-layer-menu"]
+    XCTAssertTrue(layers.exists)
+    XCTAssertFalse(app.buttons["element-send-to-back"].exists)
+    XCTAssertFalse(app.buttons["element-bring-to-front"].exists)
+    layers.tap()
+    XCTAssertTrue(app.buttons["На слой ниже"].waitForExistence(timeout:3))
+    XCTAssertTrue(app.buttons["На слой ниже"].isEnabled)
+    XCTAssertFalse(app.buttons["На слой выше"].isEnabled)
+    XCTAssertTrue(app.buttons["В самый низ"].isEnabled)
+    XCTAssertFalse(app.buttons["В самый верх"].isEnabled)
+    let layerMenu = XCTAttachment(screenshot:app.screenshot()); layerMenu.name = "four-textual-layer-actions"; layerMenu.lifetime = .keepAlways; add(layerMenu)
+    app.buttons["На слой ниже"].tap()
+    for title in ["На слой выше","В самый низ","В самый верх"] {
+      layers.tap()
+      let action = app.buttons[title]; XCTAssertTrue(action.waitForExistence(timeout:3))
+      XCTAssertTrue(action.isEnabled,title)
+      if title == "В самый верх" { XCTAssertFalse(app.buttons["На слой ниже"].isEnabled) }
+      action.tap()
+    }
     XCTAssertFalse(app.buttons["element-actions-menu"].exists,"No empty or duplicate action menu for text")
     text.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.05,thenDragTo:text.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).withOffset(.init(dx:-60,dy:80)))
     XCTAssertGreaterThan(text.frame.midY,before.midY+40)

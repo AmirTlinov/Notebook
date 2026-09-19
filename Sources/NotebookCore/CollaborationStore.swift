@@ -114,7 +114,7 @@ extension NotebookStore {
   /// A viewport is not an ordering authority: arrange reads complete membership
   /// metadata here, without requiring off-screen element bodies in the UI.
   public func applyNativeElementEdit(_ operation: CollaborationOperation, summary: String,
-    expectedPage: AgentElement?, expectedSpatial: SpatialElement?, moveToFront: Bool? = nil, actor: UUID
+    expectedPage: AgentElement?, expectedSpatial: SpatialElement?, layerMove: NotebookElementLayerMove? = nil, actor: UUID
   ) throws -> (receipt: CollaborationReceipt, page: AgentElement?, spatial: SpatialElement?) {
     try commandTransaction(readAllowance: .agentCommand) {
       let target = operation.target
@@ -122,7 +122,7 @@ extension NotebookStore {
         throw invalid("Нативной правке нужен владелец и ID элемента.")
       }
       let result = try applyNativeElementEdits([operation], summary: summary,
-        sources: [.init(target: target, id: id, page: expectedPage, spatial: expectedSpatial)], moveToFront: moveToFront, actor: actor)
+        sources: [.init(target: target, id: id, page: expectedPage, spatial: expectedSpatial)], layerMove: layerMove, actor: actor)
       return (result.receipt, result.sources.first?.page, result.sources.first?.spatial)
     }
   }

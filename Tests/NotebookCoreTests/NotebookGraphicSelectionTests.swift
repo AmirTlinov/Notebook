@@ -4,6 +4,30 @@ import Testing
 
 @Suite("Atomic native graphic selections")
 struct NotebookGraphicSelectionTests {
+  @Test func layerStepsRetainRelativeOrderAndStopAtTheStackEdges() {
+    let order = ["a","b","c","d","e"], selected: Set<String> = ["b","d"]
+    #expect(NotebookElementLayerMove.lower.applying(to:order,selected:selected) == ["b","a","d","c","e"])
+    #expect(NotebookElementLayerMove.higher.applying(to:order,selected:selected) == ["a","c","b","e","d"])
+    #expect(NotebookElementLayerMove.toBack.applying(to:order,selected:selected) == ["b","d","a","c","e"])
+    #expect(NotebookElementLayerMove.toFront.applying(to:order,selected:selected) == ["a","c","e","b","d"])
+    #expect(NotebookElementLayerMove.higher.applying(to:order,selected:["b","c"]) == ["a","d","b","c","e"])
+    #expect(NotebookElementLayerMove.lower.applying(to:order,selected:["b","c"]) == ["b","c","a","d","e"])
+    for move in NotebookElementLayerMove.allCases {
+      #expect(move.applying(to:order,selected:Set(order)) == order)
+      #expect(!move.canApply(to:order,selected:Set(order)))
+      #expect(!move.canApply(to:order,selected:[]))
+    }
+    #expect(!NotebookElementLayerMove.lower.canApply(to:order,selected:["a","b"]))
+    #expect(!NotebookElementLayerMove.higher.canApply(to:order,selected:["d","e"]))
+    // Exercise the same linear ordering pass at the board's large-item scale.
+    let large = (0..<100_000).map(String.init), ids: Set<String> = ["1","50000","99998"]
+    let higher = NotebookElementLayerMove.higher.applying(to:large,selected:ids)
+    #expect(higher.count == large.count)
+    #expect(higher.filter { ids.contains($0) } == ["1","50000","99998"])
+    #expect(higher.filter { !ids.contains($0) } == large.filter { !ids.contains($0) })
+    #expect(higher[2] == "1" && higher[50001] == "50000" && higher[99999] == "99998")
+  }
+
   @Test(arguments:[false,true]) func moveCopyAlignUndoAndStaleMember(onBoard: Bool) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("selection-\(UUID())")
     defer { try? FileManager.default.removeItem(at:root) }
@@ -77,7 +101,7 @@ struct NotebookGraphicSelectionTests {
     // Complete painter order, not the selected or loaded subset. The pair's
     // relative order is retained when crossing the unselected connector.
     let arranged = try store.applyNativeElementEdits([.init(kind:.reorderElements,target:target,id:"a")],summary:"Arrange pair",
-      sources:["a","b"].map(source),moveToFront:true,actor:actor)
+      sources:["a","b"].map(source),layerMove:.toFront,actor:actor)
     let order = onBoard ? try store.loadBoard(items:store.loadIndex().items).board(target.id)!.elements.map(\.id) : try store.loadPage(target.id).elements.map(\.id)
     #expect(order == ["link","a","b"])
     _ = try reopened.undoCollaborationAction(arranged.receipt.id,actor:actor)

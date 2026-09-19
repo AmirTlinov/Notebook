@@ -2964,12 +2964,6 @@ final class NotebookAppModel {
     } catch { showCue(error.localizedDescription) }
   }
 
-  func arrangeGraphicSelection(front: Bool) {
-    guard let first = selectionSession.elements.first else { return }
-    _ = performElementOperations([.init(reference:first,kind:.reorderElements,values:[:])],
-      summary:front ? "На передний план" : "На задний план",moveToFront:front,readSources:selectionSession.elements)
-  }
-
   func deleteSelectedContent() {
     let elements = selectionSession.elements, items = selectionSession.items, selection = selectionSession.id
     if !elements.isEmpty {
@@ -3389,13 +3383,13 @@ final class NotebookAppModel {
 
   @discardableResult
   func performElementOperation(_ kind: CollaborationOperation.Kind, reference: EditableElementReference,
-    values: [String: JSONValue], summary: String, moveToFront: Bool? = nil) -> Bool {
-    performElementOperations([.init(reference:reference,kind:kind,values:values)],summary:summary,moveToFront:moveToFront)
+    values: [String: JSONValue], summary: String, layerMove: NotebookElementLayerMove? = nil) -> Bool {
+    performElementOperations([.init(reference:reference,kind:kind,values:values)],summary:summary,layerMove:layerMove)
   }
 
   @discardableResult
   func performElementOperations(_ edits: [NotebookElementEdit], summary: String,
-    moveToFront: Bool? = nil, readSources: [EditableElementReference] = [], copiedFrom: [String:String] = [:],
+    layerMove: NotebookElementLayerMove? = nil, readSources: [EditableElementReference] = [], copiedFrom: [String:String] = [:],
     insertionTarget explicitTarget: CollaborationTarget? = nil, expectedInkRevision: String? = nil, retainedSources: [EditableElementReference:NotebookNativeElementSource] = [:]) -> Bool {
     guard !edits.isEmpty, edits.count <= 32 else { return false }
     let references = Array(Set(edits.map(\.reference) + readSources))
@@ -3451,7 +3445,7 @@ final class NotebookAppModel {
         await withCheckedContinuation { continuation in inputGate.performAfterIdle { continuation.resume() } }
         let admittedSources = expected
         let (receipt,cursor,saved) = try await persistence.submit(publishesChanges:true) { store in
-          let result = try store.applyNativeElementEdits(operations,summary:summary,sources:admittedSources,moveToFront:moveToFront,copiedFrom:copiedFrom,expectedInkRevision:expectedInkRevision,actor:actor)
+          let result = try store.applyNativeElementEdits(operations,summary:summary,sources:admittedSources,layerMove:layerMove,copiedFrom:copiedFrom,expectedInkRevision:expectedInkRevision,actor:actor)
           return (result.receipt,try store.currentChangeCursor(),result.sources)
         }
         var results: [EditableElementReference:NotebookElementCommandResult] = [:]

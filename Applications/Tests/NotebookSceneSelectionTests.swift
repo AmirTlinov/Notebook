@@ -3,6 +3,28 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookSceneSelectionTests: XCTestCase {
+  func testKeyboardLayoutShiftIsNotFingerMotion() {
+    let window = UIWindow(frame:.init(x:0,y:0,width:600,height:800)), anchor = UIView(frame:.init(x:0,y:0,width:600,height:800))
+    window.addSubview(anchor)
+    let recognizer = SceneSelectionRecognizer(), gate = NotebookInputGate()
+    window.addGestureRecognizer(recognizer); recognizer.coordinateView = anchor; recognizer.gate = gate
+    let touch = WindowSelectionTouch(window:window)
+    var begins = 0, drops = 0, taps = 0, delta = CGPoint.zero
+    recognizer.onPoint = { _,_ in taps += 1 }
+    recognizer.onLift = { _ in .init(begin:{ begins += 1 },change:{ delta = $0 },end:{ delta = $0; drops += 1 },cancel:{}) }
+    recognizer.touchesBegan([touch],with:UIEvent())
+    anchor.frame.origin = .init(x:70,y:-176)
+    recognizer.touchesMoved([touch],with:UIEvent())
+    recognizer.touchesEnded([touch],with:UIEvent())
+    XCTAssertEqual(begins,0); XCTAssertEqual(drops,0); XCTAssertEqual(taps,1)
+    recognizer.isEnabled = false; recognizer.isEnabled = true
+    recognizer.touchesBegan([touch],with:UIEvent())
+    anchor.frame.origin = .zero; touch.point = .init(x:140,y:160)
+    recognizer.touchesMoved([touch],with:UIEvent())
+    recognizer.touchesEnded([touch],with:UIEvent())
+    XCTAssertEqual(begins,1); XCTAssertEqual(drops,1); XCTAssertEqual(delta,.init(x:40,y:60))
+  }
+
   func testLinkKeepsItsTapAndOnlyDraggingLiftsItsMaterial() async throws {
     let gate = NotebookInputGate(), recognizer = SceneSelectionRecognizer(), touch = SelectionTouch()
     let view = UIView(); view.addGestureRecognizer(recognizer); recognizer.gate = gate
@@ -114,4 +136,12 @@ import XCTest
   var point = CGPoint(x: 100, y: 100)
   override var type: UITouch.TouchType { .direct }
   override func location(in view: UIView?) -> CGPoint { point }
+}
+
+@MainActor private final class WindowSelectionTouch: UITouch {
+  let coordinateWindow: UIWindow
+  var point = CGPoint(x:100,y:100)
+  init(window: UIWindow) { coordinateWindow = window; super.init() }
+  override var type: UITouch.TouchType { .direct }
+  override func location(in view: UIView?) -> CGPoint { coordinateWindow.convert(point,to:view) }
 }
