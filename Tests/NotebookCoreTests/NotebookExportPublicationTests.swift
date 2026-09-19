@@ -207,6 +207,21 @@ struct NotebookExportPublicationTests {
     #expect(throws: CollaborationError.self) { try store.prepareDocumentExport(.init(cut: cut, source: "", artifact: image, log: "")) }
   }
 
+  @Test func standaloneHTMLUsesTheSameCutAndPublicationFence() throws {
+    let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
+    let cut = try NotebookExportCut(document: document, state: store.loadDocumentState(document.id))
+    let data = Data("<!doctype html><html><body>Offline</body></html>".utf8)
+    let options = NotebookExportOptions(format: .html, blockID: "body")
+    let receipt = try publish(store, .init(cut: cut, source: "", artifact: stageExportFixture(data, path: "document.html", store: store), log: "", options: options))
+    #expect(receipt.artifact.mimeType == "text/html")
+    #expect(try Data(contentsOf: URL(fileURLWithPath: receipt.artifact.path)) == data)
+    #expect(receipt.cutSHA256 == (try cut.sha256))
+    #expect(throws: CollaborationError.self) { try NotebookExportOptions(format: .html).validate() }
+    #expect(throws: CollaborationError.self) {
+      try publish(store, .init(cut: cut, source: "", artifact: stageExportFixture(Data("not html".utf8), path: "document.html", store: store), log: "", options: options))
+    }
+  }
+
   @Test func vectorExportRejectsActiveOrExternalResourcesButKeepsLocalDefinitions() throws {
     let prefix = "<svg xmlns='http://www.w3.org/2000/svg' width='200' height='100'>"
     try NotebookExportSVG.validate(Data((prefix+"<defs><linearGradient id='paint'><stop stop-color='blue'/></linearGradient></defs><path d='M0 0L100 50' fill='url(#paint)'/><text x='10' y='30' font-size='14' font-family='sans-serif'>Vector</text></svg>").utf8))

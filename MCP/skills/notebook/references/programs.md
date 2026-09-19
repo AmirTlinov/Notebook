@@ -298,3 +298,10 @@ notebook.exportFrame(async ({format,state,pixelRatio,signal}) => {
 не возвращай null до готовности и не увеличивай только CSS-размер старого bitmap.
 Рецепты signal/gears/wave и шесть inline science examples уже поддерживают raster;
 Plot signal также поддерживает SVG.
+
+
+Для компактной inline программы `nb.export(key,{documentID,format:'html',blockID})`
+возвращает один автономный offline HTML. Открытие запускает ту же программу с
+saved state в sandbox; локальные изменения не пишутся назад в Notebook. Пакеты
+с imports/workers/assets не переименовываются в standalone: нужен переносимый
+пакет (пока не реализован), иначе export_portable_required.

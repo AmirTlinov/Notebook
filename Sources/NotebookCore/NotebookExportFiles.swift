@@ -106,6 +106,7 @@ extension NotebookStore {
             let prefix: Data
             switch item.file.mimeType {
             case "application/pdf": prefix = Data("%PDF-".utf8)
+            case "text/html": prefix = Data("<!doctype html>".utf8)
             case "image/svg+xml":
               guard item.file.byteCount <= 1_048_576, bytes.count == item.file.byteCount else { throw CollaborationError("invalid_export_svg", "SVG превышает 1 МиБ.") }
               try NotebookExportSVG.validate(bytes); prefix = Data()

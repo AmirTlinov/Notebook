@@ -2,6 +2,7 @@ import AppKit
 import NotebookCore
 import PDFKit
 import XCTest
+import WebKit
 @testable import Notebook
 
 @MainActor final class DocumentCanonicalExportTests: XCTestCase {
@@ -122,6 +123,58 @@ import XCTest
     } catch { XCTAssertTrue(String(describing: error).contains("program_export_unavailable"), "\(error)") }
   }
 
+  func testStandaloneHTMLReopensTheRealSoundModelOfflineAtItsSavedPhase() async throws {
+    let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)), actor = UUID()
+    _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    defer { try? FileManager.default.removeItem(at: store.root) }
+    func source(_ name: String, _ ext: String) throws -> String {
+      try String(contentsOf: XCTUnwrap(Bundle(for: Self.self).url(forResource: name, withExtension: ext, subdirectory: "science")), encoding: .utf8)
+    }
+    var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
+    let item = try XCTUnwrap(index.createDocument(title: "Standalone sound", actor: actor))
+    XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
+    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.interactive(id: "sound", html: try source("sound", "html"),
+      css: try source("common", "css"), javaScript: try source("models", "js") + "\n" + source("runtime", "js") + "\n" + source("sound", "js"), height: 1000)])
+    var state = DocumentStateJournal(id: document.id, actor: actor)
+    XCTAssertTrue(state.commit(blockID: "sound", value: .object(["phase": .number(0.625)]), actor: actor))
+    try store.saveDocumentWorkspaceBundle(index: index, document: document, state: state, board: board)
+    let cut = try store.readTransaction { try NotebookExportCut(document: $0.loadDocument(item.id), state: $0.loadDocumentState(item.id)) }
+    let receipt = try await DocumentCanonicalExport.publish(cut: cut, options: .init(format: .html, blockID: "sound"), jobID: UUID(), store: store, persistence: NotebookPersistenceQueue(store: store))
+    let url = URL(fileURLWithPath: receipt.artifact.path), bytes = try Data(contentsOf: url)
+    XCTAssertEqual(receipt.artifact.mimeType, "text/html"); XCTAssertEqual(receipt.cutSHA256, try cut.sha256)
+    let probe = StandaloneProbe(), configuration = WKWebViewConfiguration()
+    configuration.websiteDataStore = .nonPersistent()
+    configuration.userContentController.add(probe, name: "probe")
+    configuration.userContentController.addUserScript(.init(source: """
+      if(window!==top)addEventListener('load',async()=>{try{
+        await window.notebookProgram.start();const before=notebook.state.phase;
+        document.getElementById('quarter').click();const after=notebook.state.phase;
+        let isolated=false,offline=false;try{parent.document.body}catch{isolated=true}
+        try{await fetch('https://example.com/notebook-export-forbidden')}catch{offline=true}
+        webkit.messageHandlers.probe.postMessage({before,after,isolated,offline,paths:document.querySelectorAll('svg path,circle').length});
+      }catch(error){webkit.messageHandlers.probe.postMessage({error:String(error)})}});
+      """, injectionTime: .atDocumentEnd, forMainFrameOnly: false))
+    let web = WKWebView(frame: .init(x: 0, y: 0, width: 900, height: 1100), configuration: configuration)
+    let window = NSWindow(contentRect: web.frame, styleMask: .borderless, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false; window.contentView = web; window.orderBack(nil)
+    defer { configuration.userContentController.removeScriptMessageHandler(forName: "probe"); window.orderOut(nil); window.close() }
+    web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+    let deadline = ContinuousClock.now + .seconds(10)
+    while probe.result == nil && .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    let result = try XCTUnwrap(probe.result, "Standalone file must really execute inside the offline frame")
+    XCTAssertNil(result["error"]); XCTAssertEqual(result["before"] as? Double, 0.625); XCTAssertEqual(result["after"] as? Double, 0.875)
+    XCTAssertEqual(result["isolated"] as? Bool, true); XCTAssertEqual(result["offline"] as? Bool, true)
+    XCTAssertGreaterThan(result["paths"] as? Int ?? 0, 20)
+    XCTAssertEqual(try store.loadDocumentState(item.id), cut.state, "Standalone edits have no Notebook writer capability")
+    let attachment = XCTAttachment(data: bytes, uniformTypeIdentifier: "public.html"); attachment.name = "offline-sound-saved-phase"; attachment.lifetime = .keepAlways; add(attachment)
+    let image = try await web.takeSnapshot(configuration: nil)
+    let visual = XCTAttachment(image: image); visual.name = "offline-sound-after-quarter"; visual.lifetime = .keepAlways; add(visual)
+    let packaged = DocumentBlock.interactive(id: "package", html: "", programPackage: String(repeating: "a", count: 64), height: 100)
+    XCTAssertThrowsError(try NotebookStandaloneExport.document(block: packaged, state: .null)) { error in
+      XCTAssertEqual((error as? CollaborationError)?.code, "export_portable_required")
+    }
+  }
+
   func testLargeQuartzPDFStreamsThroughPartsAndPublishesWithoutBinaryIPC() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let store = NotebookStore(root: root), actor = UUID()
@@ -177,4 +230,9 @@ import XCTest
     print("GUI249 streamed Quartz PDF: \(receipt.artifact.byteCount) bytes; \(file.file.parts.count) parts; metadata \(try JSONEncoder().encode(publication).count) bytes")
   }
 
+}
+
+@MainActor private final class StandaloneProbe: NSObject, WKScriptMessageHandler {
+  var result: [String: Any]?
+  func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) { result = message.body as? [String: Any] }
 }

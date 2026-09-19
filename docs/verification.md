@@ -1,5 +1,35 @@
 # Проверка Notebook
 
+## 19 сентября, 08:53 МСК — GUI-249: автономный offline HTML
+
+format=html + blockID публикует выбранную inline программу с точным saved state
+через прежний cut/V2/CAS/cancel owner, без typesetting и запуска кода при экспорте.
+Готовый файл открывается без Notebook, npm и server. Тот же NotebookProgram/1,
+opaque sandbox iframe, CSP закрывает network, parent/file-origin, frames/forms.
+Изменения внутри HTML локальны; writer Notebook туда не передаётся. Modules/assets
+package не притворяется file://-совместимым HTML: export_portable_required.
+Standalone ограничен 8 МиБ; переносимый пакет остаётся отдельной незавершённой
+частью этого же слайса.
+
+**Mac3 PASS**, `.build/gui249-html-mac-v6/verification.json`, source
+**ef7c24ad9b2709ddb2291da93b4daf6e4223fa0b242260065eb83d3c72946171**: настоящий опубликованный HTML
+звук-модели загружен с file://, saved phase0.625, кнопка +¼ даёт0.875; настоящий
+SVG имеет >20 элементов; CSP блокирует fetch и доступ к parent; shared state
+не изменился. Прежние real SDK PNG и durable cancellation PASS. Файл и screenshot
+экспортированы из v5, где модель работала, а проверка ошибочно читала range-control
+с шагом0.002 вместо model state. Просмотрена композиция: облако частиц, выделенная
+оранжевая частица, кривая давления, controls и объяснение.
+`.build/gui249-html-preview-v5/8D9D7805-E501-4C4E-85A4-2C10B455DC6B.html`;
+`.build/gui249-html-preview-v5/9AECD065-2D6E-4803-B4E8-9D8D1A9A07AE.png`.
+**Core12 PASS**, `/tmp/gui249-html-core-v4.log`; **SDK3 PASS+generated check**,
+`/tmp/gui249-html-js-v2.log`; **Simulator1 PASS**,
+`.build/gui249-html-sim-v1.xcresult`: compile/install/lifecycle общего bridge.
+
+Первая fixture использовала исходный pre-save document/state вместо принятого
+WAL cut; после чтения настоящего cut публикация корректна. Спекулятивные изменения
+filesystem/lifetime, не устранявшие этот сбой, удалены. Native publication fence
+не ослаблялся. Presented/portable/video/GUI-250 остаются незавершёнными.
+
 ## 19 сентября, 08:39 МСК — GUI-249: точный authored raster вместо startup кадра
 
 PNG/PDF ждут exportFrame(format=raster,state,pixelRatio) после author pause,

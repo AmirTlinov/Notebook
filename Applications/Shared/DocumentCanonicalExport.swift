@@ -28,11 +28,19 @@ import PDFKit
     let document = cut.document, state = cut.state
     // A saved export never borrows an uncommitted live frame with an equal
     // journal token, and never checkpoints or rewinds the user's executor.
-    let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
     let programs = Set(document.blocks.filter { $0.kind == .interactive }.map(\.id))
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-export-" + jobID.uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     defer { try? FileManager.default.removeItem(at: directory) }
+    if options.format == .html {
+      guard let block = document.blocks.first(where: { $0.id == options.blockID && $0.kind == .interactive }) else {
+        throw CollaborationError("export_block_missing", "HTML экспортирует явно выбранную программу.")
+      }
+      let html = try NotebookStandaloneExport.document(block: block, state: state.value(for: block.id) ?? block.initialState)
+      let file = try await stage(html, path: "document.html", directory: directory, persistence: persistence)
+      return .init(cut: cut, source: "", artifact: file, log: "Standalone NotebookProgram/1: saved state, isolated offline iframe", options: options, jobID: jobID)
+    }
+    let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
     if options.format == .svg {
       guard let block = document.blocks.first(where: { $0.id == options.blockID && $0.kind == .interactive }) else {
         throw CollaborationError("export_block_missing", "SVG exportFrame принадлежит явно названной программе.")

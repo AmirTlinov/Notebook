@@ -55,7 +55,7 @@ public struct NotebookExportCut: Codable, Equatable, Sendable {
 }
 
 public struct NotebookExportOptions: Codable, Equatable, Sendable {
-  public enum Format: String, Codable, Sendable { case pdf, png, svg }
+  public enum Format: String, Codable, Sendable { case pdf, png, svg, html }
   public let format: Format
   public let pageIndex: Int?
   public let pixelWidth: Int?
@@ -67,9 +67,9 @@ public struct NotebookExportOptions: Codable, Equatable, Sendable {
     switch format {
     case .pdf:
       guard pageIndex == nil, pixelWidth == nil, blockID == nil else { throw CollaborationError("invalid_export", "PDF сохраняет весь физический документ; размер пикселей относится к PNG.") }
-    case .svg:
+    case .svg, .html:
       guard let blockID, !blockID.isEmpty, blockID.utf8.count <= 120, pageIndex == nil, pixelWidth == nil else {
-        throw CollaborationError("invalid_export", "SVG требует ID программы с авторским exportFrame; пиксельный размер не задаётся.")
+        throw CollaborationError("invalid_export", "SVG/HTML требуют ID программы; пиксельный размер не задаётся.")
       }
     case .png:
       guard blockID == nil, (0..<10_000).contains(pageIndex ?? 0), (128...4096).contains(pixelWidth ?? 1600) else {

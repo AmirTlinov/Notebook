@@ -154,6 +154,12 @@ awaits model/media и рисует целевой backing Canvas/WebGL; возв
 используется прежний WebKit capture/compositor; live executor не меняется.
 Signal/Three/six inline recipes используют ту же модель; wave ждёт accepted
 Worker result (не draft), recording ждёт decoded seeked frame и остаётся muted.
+`nb.export(key,{documentID,format:'html',blockID:'sound'})` публикует выбранную
+inline программу и saved state как один offline HTML до 8 МиБ. Код не исполняется
+при экспорте; явное открытие запускает прежний NotebookProgram/1 внутри opaque
+sandbox iframe с закрытой сетью и без доступа к file-origin/Notebook writer.
+Local edits не возвращаются в Notebook. Модули/asset packages требуют portable
+экспорт и получают export_portable_required, не сломанный file:// bundle.
 Presented, portable и video пока относятся к незавершённой части GUI-249.
 
 Растр для агента подтверждает точные token, поколение и эпоху установки.
