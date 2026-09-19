@@ -30,18 +30,28 @@ public struct DocumentPrintSourceMap: Codable, Equatable, Sendable {
   public let ranges: [DocumentPrintSourceRange]
 
   public init(document: DocumentDocument, source: String, pdf: Data, ranges: [DocumentPrintSourceRange]) throws {
+    try self.init(document: document, source: source, pdfSHA256: Self.digest(pdf), ranges: ranges)
+  }
+
+  /// Streaming export validates the file bytes separately, without rebuilding a
+  /// whole PDF Data merely to bind its source map.
+  public init(document: DocumentDocument, source: String, pdfSHA256: String, ranges: [DocumentPrintSourceRange]) throws {
     format = 1; documentID = document.id; documentRevision = document.contentStamp.revision
     documentSHA256 = try Self.documentDigest(document)
-    sourceSHA256 = Self.digest(Data(source.utf8)); pdfSHA256 = Self.digest(pdf)
+    sourceSHA256 = Self.digest(Data(source.utf8)); self.pdfSHA256 = pdfSHA256
     self.ranges = ranges
-    try validate(document: document, source: source, pdf: pdf)
+    try validate(document: document, source: source, pdfSHA256: pdfSHA256)
   }
 
   public func validate(document: DocumentDocument, source: String, pdf: Data) throws {
-    guard source.utf8.count <= 4 * 1024 * 1024, pdf.count <= 16 * 1024 * 1024,
+    try validate(document: document, source: source, pdfSHA256: Self.digest(pdf))
+  }
+
+  public func validate(document: DocumentDocument, source: String, pdfSHA256: String) throws {
+    guard source.utf8.count <= 4 * 1024 * 1024, NotebookProgramPackage.validHash(pdfSHA256),
       format == 1, documentID == document.id, documentRevision == document.contentStamp.revision,
       documentSHA256 == (try Self.documentDigest(document)), sourceSHA256 == Self.digest(Data(source.utf8)),
-      pdfSHA256 == Self.digest(pdf),
+      self.pdfSHA256 == pdfSHA256,
       ranges.map(\.blockID) == document.blocks.map(\.id) else { throw Self.invalid() }
     let lineCount = source.utf8.reduce(1) { $1 == 10 ? $0 + 1 : $0 }
     var previousEnd = 0

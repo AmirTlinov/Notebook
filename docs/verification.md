@@ -1,5 +1,42 @@
 # Проверка Notebook
 
+## 19 сентября, 07:49 МСК — GUI-249: потоковый PDF без binary IPC
+
+Quartz output заменён с `NotebookPDFBuffer` на проверяемый file consumer:
+ошибка/short write не становятся saved. PDF/assets/SyncTeX получают обычные V2
+дескрипторы и полный file SHA; stage идёт частями по 4 МиБ через существующую
+очередь записи. Подготовка читает 1 МиБ окна вне writer, проверяет каждый SHA и
+map, затем native capability допускается коротким source/state CAS и atomic
+move/receipt. Удалены inline `NotebookExportAsset` и IPC command publishExport,
+не оставлен второй путь. Map принимает проверенный file hash без копии PDF.
+Нет прежних 8/17 MiB publication caps; metadata остаётся <=1 МиБ/16384 parts,
+ограничения canonical typesetter не изменены. Job receipt пишет один native
+publication owner, ошибочный поздний ответ не перезаписывает saved.
+
+**Mac6 PASS**, `.build/gui249-stream-mac-v2/verification.json`, source
+**99cf4ab671e79b5ac31a761344402be0c85a646c52dca5066194c3d8f18d3652**:
+настоящий 12-page Quartz PDF с несжимаемыми пикселями **>32 МиБ**, >8 parts,
+publication JSON <16 КиБ; повторное чтение всех байтов даёт тот же SHA и PDFKit
+открывает последнюю страницу. Также прежний real XPC export, asset-backed
+program, immutable state/conflict и red-vs-blue negative control PASS.
+Это не измерение системной пиковой памяти: bounded окна/состав ресурсов
+проверены по реализации, системный memory/CPU/GPU acceptance ещё впереди.
+После смены sink PDF действительно открыт через Quick Look: красная область,
+векторный заголовок и ссылка сохранены; `.build/gui249-stream-preview/`.
+
+**Core22 PASS**, `/tmp/gui249-stream-core-v4.log`: export/source/state CAS,
+потоковые hashes/missing parts/cancel cleanup/prior artifacts, V2 namespaces,
+атомарные receipts/restart. **MCP8 PASS + SDK check**,
+`/tmp/gui249-stream-js.log`: native/JS MIME согласованы, typed SDK и import.
+**Simulator1 PASS**, `.build/gui249-stream-sim-v1.xcresult`, тот же source hash:
+iOS compile/install и tall program/pages/reclamation. Mac и Simulator работали
+параллельно на независимых destination/bundle/derived data. Физическая пара не
+изменена. Первые сборки отклонили забытый Codable key, test helper shadowing и
+название CoreGraphics callback argument; исправлены, итоговые прогоны зелёные.
+
+Полный GUI-249 не завершён: presented/PNG/SVG, standalone/portable package,
+deterministic video и публичная отмена ещё впереди. GUI-250 не принят.
+
 ## 19 сентября, 07:34 МСК — GUI-249: immutable saved export cut
 
 Queue admission фиксирует source/state/packages в одной WAL snapshot, до

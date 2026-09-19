@@ -16,6 +16,7 @@ final class NotebookScriptServiceTests: XCTestCase {
   private static var checkedSandboxSignatures = false
   @MainActor private final class Owner {
     let store: NotebookStore
+    let persistence: NotebookPersistenceQueue
     var commitAccepted = false
     var holdCommit = false
     var releaseCommit: CheckedContinuation<Void, Never>?
@@ -33,6 +34,7 @@ final class NotebookScriptServiceTests: XCTestCase {
     var releaseExportRender: CheckedContinuation<Void, Never>?
     init(root: URL? = nil) throws {
       store = NotebookStore(root: root ?? FileManager.default.temporaryDirectory.appendingPathComponent("notebook-xpc-contract-\(UUID())"))
+      persistence = NotebookPersistenceQueue(store: store)
       _ = try store.loadOrCreate(actor: UUID(), pageSize: .init(width: 834, height: 1194))
       _ = try store.loadOrCreateSpatialInk(actor: UUID())
     }
@@ -41,10 +43,6 @@ final class NotebookScriptServiceTests: XCTestCase {
       if request.command == .commitAction, holdCommit {
         commitAccepted = true
         await withCheckedContinuation { releaseCommit = $0 }
-      }
-      if request.command == .publishExport, holdPublication {
-        publicationAccepted = true
-        await withCheckedContinuation { releasePublication = $0 }
       }
       let result = try NotebookCommandDispatcher(store: store).handle(request)
       if request.command == .commitAction || request.command == .undo {
@@ -75,7 +73,13 @@ final class NotebookScriptServiceTests: XCTestCase {
       canonicalExport: { cut, id in
         owner.exportCuts.append(cut)
         if owner.holdExportRender { await withCheckedContinuation { owner.releaseExportRender = $0 } }
-        return try await DocumentCanonicalExport.publication(cut: cut, jobID: id, programStore: owner.store)
+        let publication = try await DocumentCanonicalExport.publication(cut: cut, jobID: id, store: owner.store, persistence: owner.persistence)
+        let prepared = try await Task.detached { try owner.store.prepareDocumentExport(publication) }.value
+        if owner.holdPublication {
+          owner.publicationAccepted = true
+          await withCheckedContinuation { owner.releasePublication = $0 }
+        }
+        return try await owner.persistence.submit { try $0.publishDocumentExport(prepared) }
       },
       userServiceName: try service("NotebookScriptService"), markupServiceName: try service("NotebookMarkupService"))
   }

@@ -23,19 +23,19 @@ extension NotebookScriptCoordinator {
         var running = accepted.fields; running["status"] = .string("running")
         let started = JSONValue.object(running)
         _ = try await persistence { try $0.saveScriptExportJob(id, value: started); return .null }
-        let publication = try await canonicalExport(cut, id)
-        guard publication.cut == cut, publication.jobID == id else {
-          throw CollaborationError("invalid_export_cut", "Renderer вернул другой срез или задание.")
+        let receipt = try await canonicalExport(cut, id)
+        guard receipt.cutSHA256 == cutHash else {
+          throw CollaborationError("invalid_export_cut", "Renderer вернул другой срез.")
         }
-        let receipt = try await send(["command": .string("publishExport"), "export": try .encode(publication)])
-        let saved = JSONValue.object(["status": .string("saved"), "jobID": .string(id.uuidString.lowercased()),
-          "contentRevision": .string(document.contentStamp.revision), "stateRevision": .string(cut.state.stamp.revision),
-          "cutSHA256": .string(cutHash), "moment": .string("saved"), "receipt": receipt])
-        _ = try await persistence { try $0.saveScriptExportJob(id, value: saved); return .null }
+        // The native publication owner already committed artifacts and receipt
+        // together. A second write here could regress saved to failed on reply loss.
       } catch {
         var fields = accepted.fields; fields["status"] = .string("failed"); fields["error"] = Self.error(error)
         let failure = JSONValue.object(fields)
-        _ = try? await persistence { try $0.saveScriptExportJob(id, value: failure); return .null }
+        _ = try? await persistence {
+          if try $0.scriptExportJob(id)?.string("status") != "saved" { try $0.saveScriptExportJob(id, value: failure) }
+          return .null
+        }
       }
       exportTasks.removeValue(forKey: id)
     }

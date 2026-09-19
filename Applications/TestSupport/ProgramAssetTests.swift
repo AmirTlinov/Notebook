@@ -144,10 +144,11 @@ final class ProgramAssetTests: XCTestCase {
     var state = DocumentStateJournal(id: document.id, actor: UUID())
     XCTAssertTrue(state.commit(blockID: "compiled", value: .object(["x": .number(2)]), actor: UUID()))
     let cut = try NotebookExportCut(document: document, state: state)
-    let publication = try await DocumentCanonicalExport.publication(cut: cut, jobID: UUID(), programStore: f.store)
+    let publication = try await DocumentCanonicalExport.publication(cut: cut, jobID: UUID(), store: f.store, persistence: NotebookPersistenceQueue(store: f.store))
     XCTAssertEqual(publication.cut, cut)
-    XCTAssertTrue(publication.pdf.starts(with: Data("%PDF-".utf8))); XCTAssertGreaterThan(publication.pdf.count, 4000)
-    let attachment = XCTAttachment(data: publication.pdf, uniformTypeIdentifier: "com.adobe.pdf")
+    let pdfBytes = try readExportBytes(publication.pdf, store: f.store)
+    XCTAssertTrue(pdfBytes.starts(with: Data("%PDF-".utf8))); XCTAssertGreaterThan(pdfBytes.count, 4000)
+    let attachment = XCTAttachment(data: pdfBytes, uniformTypeIdentifier: "com.adobe.pdf")
     attachment.name = "compiled-offline-program-saved-pdf"; attachment.lifetime = .keepAlways; add(attachment)
   }
   #endif
@@ -857,3 +858,13 @@ final class ProgramAssetTests: XCTestCase {
     coordinator.invalidate(); XCTAssertEqual(coordinator.programAssets.scopeCount, 0); XCTAssertEqual(coordinator.programAssets.activeReadCount, 0)
   }
 }
+
+#if os(macOS)
+func readExportBytes(_ file: NotebookExportFile, store: NotebookStore) throws -> Data {
+  var bytes = Data()
+  while bytes.count < file.file.byteCount {
+    bytes.append(try store.readProgramFile(file.file, offset: Int64(bytes.count), maxBytes: 1_048_576))
+  }
+  return bytes
+}
+#endif

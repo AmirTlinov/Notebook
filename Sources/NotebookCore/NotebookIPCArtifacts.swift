@@ -33,12 +33,6 @@ public struct NotebookRuntimeStatus: Codable, Sendable {
   }
 }
 
-public struct NotebookExportAsset: Codable, Sendable {
-  public let name: String
-  public let data: Data
-  public init(name: String, data: Data) { self.name = name; self.data = data }
-}
-
 /// One accepted source/state/assets identity. Program package hashes belong to
 /// the document; their immutable namespaces cannot drift during rendering.
 public struct NotebookExportCut: Codable, Equatable, Sendable {
@@ -66,13 +60,13 @@ public struct NotebookExportPublication: Codable, Sendable {
   public var documentID: UUID { cut.document.id }
   public var expectedRevision: String { cut.document.contentStamp.revision }
   public let source: String
-  public let pdf: Data
+  public let pdf: NotebookExportFile
   public let log: String
-  public let assets: [NotebookExportAsset]?
+  public let assets: [NotebookExportFile]
   public let sourceMap: DocumentPrintSourceMap?
-  public let syncTeX: Data?
-  public init(cut: NotebookExportCut, source: String, pdf: Data, log: String, jobID: UUID? = nil,
-    assets: [NotebookExportAsset] = [], sourceMap: DocumentPrintSourceMap? = nil, syncTeX: Data? = nil) {
+  public let syncTeX: NotebookExportFile?
+  public init(cut: NotebookExportCut, source: String, pdf: NotebookExportFile, log: String, jobID: UUID? = nil,
+    assets: [NotebookExportFile] = [], sourceMap: DocumentPrintSourceMap? = nil, syncTeX: NotebookExportFile? = nil) {
     self.assets = assets
     self.sourceMap = sourceMap; self.syncTeX = syncTeX
     self.jobID = jobID
@@ -198,111 +192,6 @@ extension NotebookStore {
       }
     }
     return .init(path: url.path, sha256: request.expectedSHA256, byteCount: bytes.count, mimeType: "image/png")
-  }
-
-  public func publishDocumentExport(_ publication: NotebookExportPublication) throws -> NotebookExportReceipt {
-    // Decode/render/hash/write preparation never holds a SQL transaction. Only
-    // revision admission, atomic installation and the durable receipt use the writer.
-    let prepared = try prepareDocumentExport(publication)
-    defer { try? FileManager.default.removeItem(at: prepared.staging) }
-    return try commandTransaction(advancesReadRevision: false, readAllowance: .agentCommand) {
-      if let id = publication.jobID, let saved = try scriptExportJob(id), saved["status"] == .string("saved"),
-        let receipt = saved["receipt"] { return try receipt.decode(NotebookExportReceipt.self) }
-      let document = try loadDocument(publication.documentID)
-      guard document == publication.cut.document,
-        try loadDocumentState(publication.documentID) == publication.cut.state else {
-        throw CollaborationError("revision_conflict", "Исходник или состояние изменились во время экспорта.")
-      }
-      if !prepared.alreadyInstalled {
-        try FileManager.default.moveItem(at: prepared.staging, to: prepared.destination)
-      }
-      let receipt = prepared.receipt
-      if let id = publication.jobID {
-        try saveScriptExportJob(id, value: .object(["status": .string("saved"), "jobID": .string(id.uuidString.lowercased()),
-          "contentRevision": .string(publication.expectedRevision), "stateRevision": .string(publication.cut.state.stamp.revision),
-          "cutSHA256": .string(receipt.cutSHA256), "moment": .string("saved"), "receipt": try .encode(receipt)]))
-      }
-      return receipt
-    }
-  }
-
-  private func prepareDocumentExport(_ publication: NotebookExportPublication) throws ->
-    (staging: URL, destination: URL, alreadyInstalled: Bool, receipt: NotebookExportReceipt) {
-    guard currentSQL == nil else { throw NotebookStorageError.invalidTransaction("Export preparation must precede SQL admission") }
-    let cutData = try publication.cut.canonicalData()
-    let assets = publication.assets ?? []
-    let assetBytes = assets.reduce(0) { $0 + $1.data.count }
-    guard publication.source.utf8.count <= 4*1024*1024,
-      publication.pdf.count <= 16*1024*1024, publication.pdf.starts(with: Data("%PDF-".utf8)),
-      publication.log.utf8.count <= 32_000, assets.count <= 128,
-      Set(assets.map(\.name)).count == assets.count, assetBytes <= 8*1024*1024,
-      assetBytes + publication.pdf.count <= 17*1024*1024,
-      assets.enumerated().allSatisfy({ index, asset in
-        asset.name == "notebook-image-\(index).pdf" && asset.data.starts(with: Data("%PDF-".utf8))
-      }) else { throw CollaborationError("invalid_artifact", "Недопустимый или слишком большой печатный пакет.") }
-    var files = [("document.cut.json", cutData), ("document.tex", Data(publication.source.utf8)), ("document.pdf", publication.pdf)]
-      + assets.map { ($0.name, $0.data) }
-    if let map = publication.sourceMap, let syncTeX = publication.syncTeX {
-      guard syncTeX.count <= 4*1024*1024, syncTeX.starts(with: [0x1f, 0x8b]) else {
-        throw CollaborationError("invalid_artifact", "Недопустимая или слишком большая карта печатных страниц.")
-      }
-      try map.validate(document: publication.cut.document, source: publication.source, pdf: publication.pdf)
-      let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-      let encoded = try encoder.encode(map)
-      guard encoded.count <= 1024*1024 else { throw CollaborationError("invalid_artifact", "Карта блоков превышает 1 МиБ.") }
-      files += [("document.source-map.json", encoded), ("document.synctex.gz", syncTeX)]
-    } else {
-      guard publication.sourceMap == nil, publication.syncTeX == nil else {
-        throw CollaborationError("invalid_artifact", "Карта блоков и карта страниц публикуются вместе.")
-      }
-    }
-    // Length-framed names and content hashes bind the entire package, including
-    // TeX sources that happen to compile to identical PDF pixels.
-    var digest = SHA256()
-    for (name, data) in files {
-      let nameData = Data(name.utf8)
-      var length = UInt64(nameData.count).bigEndian
-      withUnsafeBytes(of: &length) { digest.update(data: Data($0)) }
-      digest.update(data: nameData)
-      var size = UInt64(data.count).bigEndian
-      withUnsafeBytes(of: &size) { digest.update(data: Data($0)) }
-      digest.update(data: Data(SHA256.hash(data: data)))
-    }
-    let hash = digest.finalize().map { String(format: "%02x", $0) }.joined()
-    let directory = root.appendingPathComponent("exports", isDirectory: true)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    let destination = directory.appendingPathComponent(publication.documentID.uuidString.lowercased() + "-" + hash, isDirectory: true)
-    let alreadyInstalled = FileManager.default.fileExists(atPath: destination.path)
-    // The serial writer owns this directory even before entering SQL. Verify
-    // an existing immutable package here, so repeated publication never reads
-    // or compares megabytes while a database transaction is open.
-    if alreadyInstalled {
-      for (name, data) in files {
-        guard try Data(contentsOf: destination.appendingPathComponent(name)) == data else {
-          throw CollaborationError("invalid_artifact", "Сохранённый печатный пакет не соответствует своему отпечатку.")
-        }
-      }
-    }
-    let staging = directory.appendingPathComponent(".pending-" + UUID().uuidString.lowercased(), isDirectory: true)
-    try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-    do { for (name, data) in files { try data.write(to: staging.appendingPathComponent(name), options: .atomic) } }
-    catch { try? FileManager.default.removeItem(at: staging); throw error }
-    func artifact(_ name: String, type: String) -> NotebookArtifact? {
-      files.first { $0.0 == name }.map { .init(path: destination.appendingPathComponent(name).path,
-        sha256: artifactHash($0.1), byteCount: $0.1.count, mimeType: type) }
-    }
-    let cutHash = artifactHash(cutData)
-    let receipt = NotebookExportReceipt(cutSHA256: cutHash, stateRevision: publication.cut.state.stamp.revision,
-      cut: .init(path: destination.appendingPathComponent("document.cut.json").path, sha256: cutHash,
-        byteCount: cutData.count, mimeType: "application/json"), documentID: publication.documentID,
-      texPath: destination.appendingPathComponent("document.tex").path,
-      pdfPath: destination.appendingPathComponent("document.pdf").path,
-      pdfSHA256: artifactHash(publication.pdf), byteCount: publication.pdf.count, log: publication.log,
-      packageSHA256: hash, assets: assets.map { .init(path: destination.appendingPathComponent($0.name).path,
-        sha256: artifactHash($0.data), byteCount: $0.data.count, mimeType: "application/pdf") },
-      sourceMap: artifact("document.source-map.json", type: "application/json"),
-      syncTeX: artifact("document.synctex.gz", type: "application/gzip"))
-    return (staging, destination, alreadyInstalled, receipt)
   }
 
   private func artifactID(_ id: UUID?) throws -> UUID {

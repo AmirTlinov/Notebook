@@ -27797,7 +27797,7 @@
         ],
         "additionalProperties": false
       },
-      "returns": "{status:queued,jobID,documentID,contentRevision,stateRevision,cutSHA256,moment:'saved'}. Queue acceptance reads source and state in one WAL snapshot. The native canonical print owner renders that immutable saved cut in isolation, never a later uncommitted live frame. Two admitted jobs; pinned embedded offline typesetter, same layout as paper. Source/formulas/SVG remain vector where possible; program regions are composited by the existing renderer with their local packages. Source or state changes before publication fail revision_conflict without replacing prior artifacts. TeX <=4 MiB, PDF <=16 MiB; current inline publication caps still apply.",
+      "returns": "{status:queued,jobID,documentID,contentRevision,stateRevision,cutSHA256,moment:'saved'}. Queue acceptance reads source and state in one WAL snapshot. The native canonical print owner renders that immutable saved cut in isolation, never a later uncommitted live frame. Two admitted jobs; pinned embedded offline typesetter, same layout as paper. Source/formulas/SVG remain vector where possible; program regions are composited by the existing renderer with their local packages. Source or state changes before publication fail revision_conflict without replacing prior artifacts. TeX <=4 MiB. Composed PDF/assets stream through immutable 4 MiB parts and 1 MiB verification windows; only metadata crosses IPC. The V2 descriptor is <=1 MiB / 16384 parts, not a PDF byte limit.",
       "example": "await emit(await nb.export('pdf',{documentID:args.documentID}));",
       "old": [
         "notebook_export_document"

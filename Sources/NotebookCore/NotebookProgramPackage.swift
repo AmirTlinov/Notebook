@@ -29,6 +29,15 @@ public struct NotebookProgramPackage: Codable, Equatable, Sendable {
     public init(path: String, mimeType: String, byteCount: Int64, parts: [Part]) {
       self.path = path; self.mimeType = mimeType; self.byteCount = byteCount; self.parts = parts
     }
+    public func validate() throws {
+      guard NotebookProgramPackage.validPath(path), mimeType == NotebookProgramPackage.mimeType(for: path), byteCount >= 0,
+        parts.count <= 16_384,
+        parts.allSatisfy({ NotebookProgramPackage.validHash($0.sha256) && (1...NotebookProgramPackage.partBytes).contains($0.byteCount) }),
+        parts.dropLast().allSatisfy({ $0.byteCount == NotebookProgramPackage.partBytes }),
+        parts.reduce(Int64(0), { $0 + Int64($1.byteCount) }) == byteCount else {
+        throw NotebookStorageError.invalidTransaction("program package file")
+      }
+    }
   }
 
   public init(html: String? = nil, css: String? = nil, javaScript: String? = nil, module: Bool = true, files: [File]) {
@@ -64,6 +73,7 @@ public struct NotebookProgramPackage: Codable, Equatable, Sendable {
       "woff":"font/woff", "woff2":"font/woff2", "ttf":"font/ttf", "otf":"font/otf",
       "mp4":"video/mp4", "webm":"video/webm", "mp3":"audio/mpeg", "m4a":"audio/mp4", "wav":"audio/wav",
       "ogg":"audio/ogg", "wasm":"application/wasm", "gltf":"model/gltf+json", "glb":"model/gltf-binary",
+      "pdf":"application/pdf", "tex":"application/x-tex", "gz":"application/gzip",
       "csv":"text/csv", "txt":"text/plain"][suffix] ?? "application/octet-stream"
   }
 
@@ -75,12 +85,7 @@ public struct NotebookProgramPackage: Codable, Equatable, Sendable {
     }
     var sizes: [String: Int] = [:]
     for file in files {
-      guard Self.validPath(file.path), file.mimeType == Self.mimeType(for: file.path), file.byteCount >= 0,
-        file.parts.allSatisfy({ Self.validHash($0.sha256) && (1...Self.partBytes).contains($0.byteCount) }),
-        file.parts.dropLast().allSatisfy({ $0.byteCount == Self.partBytes }),
-        file.parts.reduce(Int64(0), { $0 + Int64($1.byteCount) }) == file.byteCount else {
-        throw NotebookStorageError.invalidTransaction("program package file")
-      }
+      try file.validate()
       for part in file.parts {
         if let size = sizes[part.sha256], size != part.byteCount { throw NotebookStorageError.blobHashMismatch }
         sizes[part.sha256] = part.byteCount

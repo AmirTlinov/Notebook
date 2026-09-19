@@ -133,8 +133,8 @@ struct NotebookScriptAdmissionTests {
     let id = UUID()
     try store.saveScriptExportJob(id, value: .object(["status": .string("queued"), "jobID": .string(id.uuidString)]))
     let publication = NotebookExportPublication(cut: try .init(document: store.loadDocument(document.id), state: store.loadDocumentState(document.id)),
-      source: "trusted source", pdf: Data("%PDF-proof".utf8), log: "", jobID: id)
-    let receipt = try store.publishDocumentExport(publication)
+      source: "trusted source", pdf: try stageExportFixture(Data("%PDF-proof".utf8), store: store), log: "", jobID: id)
+    let receipt = try store.publishDocumentExport(store.prepareDocumentExport(publication))
     let lost = UUID()
     try store.saveScriptExportJob(lost, value: .object(["status": .string("queued"), "jobID": .string(lost.uuidString)]))
     let reopened = NotebookStore(root: store.root)

@@ -6,7 +6,7 @@ import CryptoKit
 public struct NotebookCommand: Codable, Sendable {
   public enum Kind: String, Codable, Sendable {
     case apply, admitAction, prepareAction, commitAction, undo, action, actions, continuations, search, contexts, point, delivery
-    case referenceStatus, referenceStatuses, actionDetails, reference, placement, render, pageVision, read, artifact, publishExport, presentation
+    case referenceStatus, referenceStatuses, actionDetails, reference, placement, render, pageVision, read, artifact, presentation
     case script, scriptContext, scriptArtifact, importProgram
   }
   public var command: Kind
@@ -30,7 +30,6 @@ public struct NotebookCommand: Codable, Sendable {
   public var queries: [NotebookReadQuery]?
   public var expectedCursor: String?
   public var artifact: NotebookArtifactRequest?
-  public var export: NotebookExportPublication?
   public var presentation: NotebookPresentationRequest?
   public var cancel: Bool?
   public var fingerprint: String?
@@ -44,7 +43,7 @@ public struct NotebookCommand: Codable, Sendable {
   enum CodingKeys: String, CodingKey, CaseIterable {
     case command, query, filters, next, limit, action, actionID, target, elementID, reference
     case expectedRevision, region, worldOrigin, pageIndex, placement, contextID
-    case replyTo, references, queries, expectedCursor, artifact, export, presentation, cancel, fingerprint, script, scriptContext, actionPage, scriptEffect, readSnapshots, programImport
+    case replyTo, references, queries, expectedCursor, artifact, presentation, cancel, fingerprint, script, scriptContext, actionPage, scriptEffect, readSnapshots, programImport
   }
 
   public init(command: Kind) { self.command = command }
@@ -52,7 +51,7 @@ public struct NotebookCommand: Codable, Sendable {
   /// These commands can commit or enqueue work; the Mac owner orders them with native intents.
   public var changesStore: Bool {
     switch command {
-    case .apply, .admitAction, .commitAction, .undo, .point, .placement, .render, .pageVision, .publishExport: true
+    case .apply, .admitAction, .commitAction, .undo, .point, .placement, .render, .pageVision: true
     default: false
     }
   }
@@ -116,9 +115,6 @@ public struct NotebookCommandDispatcher: Sendable {
 
   public func handle(_ request: NotebookCommand) throws -> JSONValue {
     do {
-      // Export owns preparation before its final writer transaction. Wrapping
-      // it here would hold SQLite while hashing and staging image/PDF bytes.
-      if request.command == .publishExport { return try execute(request) }
       if request.changesStore {
         return try store.commandTransaction(readAllowance: .agentCommand) { try execute(request) }
       }
@@ -297,9 +293,6 @@ public struct NotebookCommandDispatcher: Sendable {
     case .artifact:
       guard let artifact = request.artifact else { throw invalid("invalid_artifact", "Нужен адрес производного изображения.") }
       return try .encode(store.authorizedArtifact(artifact))
-    case .publishExport:
-      guard let value = request.export else { throw invalid("invalid_artifact", "Нужен законченный печатный результат.") }
-      return try .encode(store.publishDocumentExport(value))
     }
   }
 

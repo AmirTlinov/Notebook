@@ -10,7 +10,7 @@ const types = {html:'text/html',htm:'text/html',css:'text/css',js:'text/javascri
   json:'application/json',map:'application/json',svg:'image/svg+xml',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',
   webp:'image/webp',gif:'image/gif',avif:'image/avif',woff:'font/woff',woff2:'font/woff2',ttf:'font/ttf',otf:'font/otf',
   mp4:'video/mp4',webm:'video/webm',mp3:'audio/mpeg',m4a:'audio/mp4',wav:'audio/wav',ogg:'audio/ogg',wasm:'application/wasm',
-  gltf:'model/gltf+json',glb:'model/gltf-binary',csv:'text/csv',txt:'text/plain'};
+  gltf:'model/gltf+json',glb:'model/gltf-binary',pdf:'application/pdf',tex:'application/x-tex',gz:'application/gzip',csv:'text/csv',txt:'text/plain'};
 export const programMIME = path => types[extname(path).slice(1).toLowerCase()] ?? 'application/octet-stream';
 export function canonicalProgramJSON(value) {
   return JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item)

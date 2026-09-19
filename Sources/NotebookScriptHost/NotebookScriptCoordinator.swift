@@ -8,7 +8,7 @@ import NotebookScriptProtocol
 public final class NotebookScriptCoordinator {
   public typealias Command = @Sendable (NotebookCommand) async throws -> JSONValue
   public typealias Persistence = @Sendable (@escaping @Sendable (NotebookStore) throws -> JSONValue) async throws -> JSONValue
-  public typealias CanonicalExport = @MainActor (NotebookExportCut, UUID) async throws -> NotebookExportPublication
+  public typealias CanonicalExport = @MainActor (NotebookExportCut, UUID) async throws -> NotebookExportReceipt
   let canonicalExport: CanonicalExport
   let command: Command
   let persistence: Persistence

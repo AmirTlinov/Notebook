@@ -2,7 +2,22 @@ import Foundation
 import Testing
 @testable import NotebookCore
 
+func stageExportFixture(_ data: Data, path: String = "document.pdf", store: NotebookStore) throws -> NotebookExportFile {
+  let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try data.write(to: url); defer { try? FileManager.default.removeItem(at: url) }
+  let file = try NotebookExportFile.inspect(url, path: path)
+  var offset: Int64 = 0
+  for part in file.file.parts {
+    try store.stageBlob(file: url, expectedHash: part.sha256, byteCount: Int64(part.byteCount), range: offset..<(offset+Int64(part.byteCount)))
+    offset += Int64(part.byteCount)
+  }
+  return file
+}
+
 struct NotebookExportPublicationTests {
+  private func publish(_ store: NotebookStore, _ publication: NotebookExportPublication) throws -> NotebookExportReceipt {
+    try store.publishDocumentExport(store.prepareDocumentExport(publication))
+  }
   private func fixture() throws -> (NotebookStore, DocumentDocument) {
     let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("notebook-print-package-\(UUID())"))
     _ = try store.loadOrCreate(actor: UUID(), pageSize: .init(width: 834, height: 1194))
@@ -21,8 +36,8 @@ struct NotebookExportPublicationTests {
     let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
     let pdf = Data("%PDF-controlled-final".utf8), image = Data("%PDF-controlled-image".utf8)
     func publish(_ source: String, _ asset: Data = image) throws -> NotebookExportReceipt {
-      try store.publishDocumentExport(.init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
-        source: source, pdf: pdf, log: "", assets: [.init(name: "notebook-image-0.pdf", data: asset)]))
+      try self.publish(store, .init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
+        source: source, pdf: stageExportFixture(pdf, store: store), log: "", assets: [stageExportFixture(asset, path: "notebook-image-0.pdf", store: store)]))
     }
     let first = try publish("first"), repeatFirst = try publish("first"), second = try publish("second")
     let third = try publish("first", Data("%PDF-another-image".utf8))
@@ -40,8 +55,8 @@ struct NotebookExportPublicationTests {
     let changed = edited.replaceBlockSource(id: "body", source: "Edited after request", actor: UUID()); #expect(changed)
     try store.saveDocument(edited)
     do {
-      _ = try store.publishDocumentExport(.init(cut: cut,
-        source: "source", pdf: Data("%PDF-result".utf8), log: ""))
+      _ = try self.publish(store, .init(cut: cut,
+        source: "source", pdf: stageExportFixture(Data("%PDF-result".utf8), store: store), log: ""))
       Issue.record("An export of stale content cannot publish")
     } catch let error as CollaborationError { #expect(error.code == "revision_conflict") }
     #expect(try FileManager.default.contentsOfDirectory(atPath: store.root.appendingPathComponent("exports").path).isEmpty)
@@ -49,45 +64,45 @@ struct NotebookExportPublicationTests {
   @Test func assetNamesCannotEscapeThePreparedPackage() throws {
     let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
     #expect(throws: CollaborationError.self) {
-      try store.publishDocumentExport(.init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
-        source: "source", pdf: Data("%PDF-result".utf8), log: "", assets: [.init(name: "../outside.pdf", data: Data("%PDF-asset".utf8))]))
+      try self.publish(store, .init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
+        source: "source", pdf: stageExportFixture(Data("%PDF-result".utf8), store: store), log: "", assets: [NotebookExportFile(file: .init(path: "../outside.pdf", mimeType: "application/pdf", byteCount: 0, parts: []), sha256: String(repeating: "a", count: 64))]))
     }
     #expect(!FileManager.default.fileExists(atPath: store.root.appendingPathComponent("outside.pdf").path))
   }
-  @Test func nativeCommandLetsExportOwnItsPreparationAndCommitBoundary() throws {
+  @Test func preparationAndCommitHaveDistinctOwnership() throws {
     let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
-    var command = NotebookCommand(command: .publishExport)
-    command.export = .init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
-      source: "native command", pdf: Data("%PDF-native-export".utf8), log: "")
-    let reply = try NotebookCommandDispatcher(store: store).handle(command)
-    let receipt = try reply.decode(NotebookExportReceipt.self)
-    #expect(try String(contentsOfFile: receipt.texPath, encoding: .utf8) == "native command")
+    let publication = NotebookExportPublication(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
+      source: "native command", pdf: try stageExportFixture(Data("%PDF-native-export".utf8), store: store), log: "")
+    let prepared = try store.prepareDocumentExport(publication)
+    #expect(!FileManager.default.fileExists(atPath: prepared.receipt.pdfPath))
     #expect(store.currentSQL == nil)
     #expect(throws: NotebookStorageError.self) {
-      try store.commandTransaction { try store.publishDocumentExport(command.export!) }
+      try store.commandTransaction { try store.prepareDocumentExport(publication) }
     }
+    let receipt = try store.publishDocumentExport(prepared)
+    #expect(try String(contentsOfFile: receipt.texPath, encoding: .utf8) == "native command")
   }
   @Test func stateAndCausalABAInvalidateAQueuedCutWithoutChangingPriorArtifacts() throws {
     let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
     let cut = try NotebookExportCut(document: document, state: store.loadDocumentState(document.id))
-    let publication = NotebookExportPublication(cut: cut, source: "same source", pdf: Data("%PDF-same".utf8), log: "")
-    let saved = try store.publishDocumentExport(publication)
+    let publication = NotebookExportPublication(cut: cut, source: "same source", pdf: try stageExportFixture(Data("%PDF-same".utf8), store: store), log: "")
+    let saved = try publish(store, publication)
     #expect(saved.cutSHA256 == (try cut.sha256))
     #expect(try Data(contentsOf: URL(fileURLWithPath: saved.cut.path)) == cut.canonicalData())
     var state = cut.state
     let changed = state.commit(blockID: "body", value: .number(1), actor: UUID()); #expect(changed)
     try store.saveDocumentState(state)
-    do { _ = try store.publishDocumentExport(publication); Issue.record("State changed, source did not") }
+    do { _ = try publish(store, publication); Issue.record("State changed, source did not") }
     catch let error as CollaborationError { #expect(error.code == "revision_conflict") }
     let reset = state.commit(blockID: "body", value: .null, actor: UUID()); #expect(reset)
     try store.saveDocumentState(state)
-    #expect(throws: CollaborationError.self) { try store.publishDocumentExport(publication) }
+    #expect(throws: CollaborationError.self) { try publish(store, publication) }
     let next = try NotebookExportCut(document: document, state: state)
-    let newReceipt = try store.publishDocumentExport(.init(cut: next, source: publication.source, pdf: publication.pdf, log: ""))
+    let newReceipt = try self.publish(store, .init(cut: next, source: publication.source, pdf: publication.pdf, log: ""))
     #expect(newReceipt.pdfSHA256 == saved.pdfSHA256)
     #expect(newReceipt.packageSHA256 != saved.packageSHA256)
     #expect(newReceipt.cutSHA256 != saved.cutSHA256)
-    #expect(try Data(contentsOf: URL(fileURLWithPath: saved.pdfPath)) == publication.pdf)
+    #expect(try Data(contentsOf: URL(fileURLWithPath: saved.pdfPath)) == Data("%PDF-same".utf8))
     #expect(try FileManager.default.contentsOfDirectory(atPath: store.root.appendingPathComponent("exports").path).allSatisfy { !$0.hasPrefix(".pending-") })
   }
   @Test func sourceMapAndSyncTeXAreBoundToTheExactAtomicPrintPackage() throws {
@@ -96,19 +111,49 @@ struct NotebookExportPublicationTests {
     let syncTeX = Data([0x1f, 0x8b, 0x08, 0x00])
     let map = try DocumentPrintSourceMap(document: document, source: source, pdf: pdf,
       ranges: [.init(blockID: "body", firstLine: 2, lastLine: 2)])
-    let receipt = try store.publishDocumentExport(.init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
-      source: source, pdf: pdf, log: "",
-      sourceMap: map, syncTeX: syncTeX))
+    let receipt = try self.publish(store, .init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
+      source: source, pdf: stageExportFixture(pdf, store: store), log: "",
+      sourceMap: map, syncTeX: stageExportFixture(syncTeX, path: "document.synctex.gz", store: store)))
     let bytes = try Data(contentsOf: URL(fileURLWithPath: #require(receipt.sourceMap?.path)))
     #expect(try JSONDecoder().decode(DocumentPrintSourceMap.self, from: bytes) == map)
     #expect(try Data(contentsOf: URL(fileURLWithPath: #require(receipt.syncTeX?.path))) == syncTeX)
     #expect(throws: CollaborationError.self) {
-      try store.publishDocumentExport(.init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
-        source: source, pdf: Data("%PDF-other".utf8), log: "", sourceMap: map, syncTeX: syncTeX))
+      try self.publish(store, .init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
+        source: source, pdf: stageExportFixture(Data("%PDF-other".utf8), store: store), log: "", sourceMap: map, syncTeX: stageExportFixture(syncTeX, path: "document.synctex.gz", store: store)))
     }
     #expect(throws: CollaborationError.self) {
-      try store.publishDocumentExport(.init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
-        source: source, pdf: pdf, log: "", sourceMap: map))
+      try self.publish(store, .init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
+        source: source, pdf: stageExportFixture(pdf, store: store), log: "", sourceMap: map))
     }
   }
+  @Test func badWholeHashAndMissingPartsNeverPublishOrLeavePendingFiles() throws {
+    let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
+    let cut = try NotebookExportCut(document: document, state: store.loadDocumentState(document.id))
+    let valid = try stageExportFixture(Data("%PDF-integrity".utf8), store: store)
+    let prior = try publish(store, .init(cut: cut, source: "source", pdf: valid, log: ""))
+    let incorrect = NotebookExportFile(file: valid.file, sha256: String(repeating: "a", count: 64))
+    #expect(throws: NotebookStorageError.self) { try store.prepareDocumentExport(.init(cut: cut, source: "source", pdf: incorrect, log: "")) }
+    let missing = NotebookExportFile(file: .init(path: "document.pdf", mimeType: "application/pdf", byteCount: 12,
+      parts: [.init(sha256: String(repeating: "b", count: 64), byteCount: 12)]), sha256: valid.sha256)
+    #expect(throws: NotebookStorageError.self) { try store.prepareDocumentExport(.init(cut: cut, source: "source", pdf: missing, log: "")) }
+    #expect(try Data(contentsOf: URL(fileURLWithPath: prior.pdfPath)) == Data("%PDF-integrity".utf8))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: store.root.appendingPathComponent("exports").path).count == 1)
+  }
+
+  @Test func cancellationBeforePreparationLeavesThePriorPackageWhole() async throws {
+    let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
+    let cut = try NotebookExportCut(document: document, state: store.loadDocumentState(document.id))
+    let file = try stageExportFixture(Data("%PDF-cancel".utf8), store: store)
+    let publication = NotebookExportPublication(cut: cut, source: "source", pdf: file, log: "")
+    let prior = try publish(store, publication)
+    let task = Task.detached {
+      withUnsafeCurrentTask { $0?.cancel() }
+      return try store.prepareDocumentExport(publication)
+    }
+    do { _ = try await task.value; Issue.record("Cancelled preparation cannot produce a capability") }
+    catch is CancellationError { }
+    #expect(try Data(contentsOf: URL(fileURLWithPath: prior.pdfPath)) == Data("%PDF-cancel".utf8))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: store.root.appendingPathComponent("exports").path).count == 1)
+  }
+
 }
