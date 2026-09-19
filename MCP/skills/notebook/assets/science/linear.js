@@ -29,12 +29,18 @@
       $('linear-meaning').textContent=Math.abs(result.determinant)<.001?'Плоскость схлопнулась: площадь стала нулевой.':result.determinant<0?'Ориентация перевёрнута.':'Ориентация сохранена.';
       document.querySelectorAll('[data-preset]').forEach(el=>el.setAttribute('aria-pressed',String(presets[el.dataset.preset].every((v,i)=>v===matrix[i]))));
     }});
-  new ResizeObserver(()=>app.render()).observe($('linear-svg'));
+  // ViewBox changes resize the figure vertically; only its width selects a new
+  // layout. Draw on the next frame rather than resizing inside the observation.
+  let observedWidth=0;
+  new ResizeObserver(([entry])=>{
+    if(entry.contentRect.width===observedWidth)return;
+    observedWidth=entry.contentRect.width;requestAnimationFrame(()=>app.render());
+  }).observe($('linear-svg').parentElement);
   const presets={shear:[1,.8,0,1],rotate:[0,-1,1,0],project:[1,0,0,0],reflect:[-1,0,0,1]};
   document.querySelectorAll('[data-preset]').forEach(el=>el.onclick=()=>{const [a,b,c,d]=presets[el.dataset.preset];app.change({a,b,c,d,phase:0});});
   $('linear-start').onclick=()=>app.change({phase:0});
   let dragging=null;const el=$('linear-svg');
-  el.onpointerdown=e=>{const p=point(e,el),s=app.state,m=[s.a,s.b,s.c,s.d];for(const [i,v] of [[0,[1,0]],[1,[0,1]]]){const [x,y]=screen(ScienceModels.transform(m,s.phase,v).point);if(Math.hypot(p.x-x,p.y-y)<32){dragging=i;el.setPointerCapture(e.pointerId);app.stop();break;}}};
+  el.onpointerdown=e=>{const p=point(e,el),s=app.state,m=[s.a,s.b,s.c,s.d];for(const [i,v] of [[0,[1,0]],[1,[0,1]]]){const [x,y]=screen(ScienceModels.transform(m,s.phase,v).point);if(Math.hypot(p.x-x,p.y-y)<32){e.preventDefault();dragging=i;el.setPointerCapture(e.pointerId);app.stop();break;}}};
   el.onpointermove=e=>{if(dragging===null)return;const p=point(e,el),x=Math.round(clamp((p.x-O[0])/unit,-2,2)*10)/10,y=Math.round(clamp((O[1]-p.y)/unit,-2,2)*10)/10;app.change(dragging===0?{a:x,c:y,phase:1}:{b:x,d:y,phase:1},false);};
   function release(){if(dragging!==null){dragging=null;app.save();}}el.onpointerup=release;el.onpointercancel=release;
 })();

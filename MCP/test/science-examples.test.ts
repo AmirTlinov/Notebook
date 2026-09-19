@@ -30,12 +30,12 @@ test('linear model agrees with matrix action, oriented area and singular endpoin
 });
 test('linear drawing follows the same vector and its translated basis component',async()=>{
   const source=await readFile(new URL('../skills/notebook/assets/science/linear.js',import.meta.url),'utf8');
-  const elements=new Map<string,any>();let draw:Function=()=>{},body='';
+  const elements=new Map<string,any>();let draw:Function=()=>{},body='',resize:Function=()=>{},renders=0;const frames:Function[]=[];
   const $=(id:string)=>{if(!elements.has(id))elements.set(id,{clientWidth:600,textContent:'',setAttribute(){}});return elements.get(id)};
   const path=(points:number[][])=>points.map(([x,y],i)=>`${i?'L':'M'}${x!.toFixed(2)} ${y!.toFixed(2)}`).join(' ');
-  const Science={$,path,fmt:(v:number)=>String(v),svg:(_:string,value:string)=>body=value,
-    mount:(options:any)=>{draw=options.draw;return {render(){}}}};
-  runInNewContext(source,{Science,ScienceModels:models,document:{querySelectorAll:()=>[]},ResizeObserver:class{observe(){}}});
+  const Science={$,path,point:(event:unknown)=>event,fmt:(v:number)=>String(v),svg:(_:string,value:string)=>body=value,
+    mount:(options:any)=>{draw=options.draw;return {state:{a:1,b:.8,c:0,d:1,phase:0},stop(){},render(){renders++}}}};
+  runInNewContext(source,{Science,ScienceModels:models,document:{querySelectorAll:()=>[]},requestAnimationFrame:(callback:Function)=>frames.push(callback),ResizeObserver:class{constructor(callback:Function){resize=callback}observe(){}}});
   for(const width of [600,900])for(const matrix of [[1,.8,0,1],[0,-1,1,0],[1,0,0,0],[-1,0,0,1],[0,0,0,0]])for(const phase of [0,.5,1]){
     $('linear-svg').clientWidth=width;const [a,b,c,d]=matrix;draw({a,b,c,d,phase});
     const probe=models.transform(matrix,phase,[1,.5]).point,basis=models.transform(matrix,phase,[1,0]).point;
@@ -45,6 +45,15 @@ test('linear drawing follows the same vector and its translated basis component'
     assert.equal($('linear-equation').textContent,`Bv = (${probe[0]}; ${probe[1]})`);
     assert.doesNotMatch(body,/NaN|Infinity/);
   }
+  resize([{contentRect:{width:600,height:500}}]);
+  assert.equal(renders,0,'Resize delivery must not write geometry synchronously');
+  assert.equal(frames.length,1);frames.shift()!();assert.equal(renders,1);
+  resize([{contentRect:{width:600,height:400}}]);assert.equal(frames.length,0,'ViewBox height changes must not cause another render');
+  resize([{contentRect:{width:900,height:400}}]);assert.equal(frames.length,1);frames.shift()!();assert.equal(renders,2);
+  let prevented=0,captured=0;const scene=$('linear-svg');scene.setPointerCapture=(id:number)=>captured=id;
+  scene.onpointerdown({x:10,y:10,preventDefault(){prevented++},pointerId:7});assert.equal(prevented,0);
+  scene.onpointerdown({x:535,y:280,preventDefault(){prevented++},pointerId:7});
+  assert.equal(prevented,1,'A real basis drag must not also select text');assert.equal(captured,7);
 });
 test('GP posterior interpolates noiseless data and remains finite with duplicate inputs',()=>{
   const points=[[-1,-.4],[1,.8]],xs=[-1,0,1,3];

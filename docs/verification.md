@@ -1,5 +1,28 @@
 # Проверка Notebook
 
+## 19 сентября, 22:15 МСК — GUI-244/249: настоящий HTML resize и drag
+
+Проверка автономного HTML, экспортированного установленным Mac, обнаружила два
+реальных дефекта прежнего linear recipe: `ResizeObserver loop` выводился над
+сценой, а drag базиса одновременно выделял текст SVG. Observer теперь реагирует
+только на ширину родительской figure и рисует в следующем кадре, а захваченный
+basis pointerdown отменяет browser text selection. Ошибки не фильтруются и не
+скрываются; второй рендерер или обработчик ввода не добавлен.
+
+Pinned check и **10/10 science tests PASS**, включая deferred resize, отсутствие
+повторного render от изменения высоты и preventDefault только при попадании в
+ручку. Через обычный Chrome UI на ширине600px пройдены keyboard seek проекции,
+play поворота с переходом0→1/самоостановкой, drag базиса; ширина менялась600→900.
+На окончательном исходнике повторный drag дал матрицу `[2,.8;2,1]`,
+`Bv=(2.4;2.5)`, площадь0.4 без выделения текста и без error banner. Скриншоты
+действительно осмотрены. Временный viewport сброшен, tab и localhost server
+закрыты; exported HTML не пишет состояние обратно в Notebook.
+
+Финальный HTML SHA `de438da0b9e9545ed4c6eca1537b460aa3b41ebb847f9cfc556aadb137e5dff0`;
+`.build/gui244-linear-vector-v1/verification-v5.json` содержит source hashes,
+квитанцию и readback неизменённого private document state. Это browser acceptance
+экспорта, не installed Mac/Simulator reader gesture и не полный reference gate.
+
 ## 19 сентября, 22:08 МСК — GUI-244: видимый вектор той же линейной комбинации
 
 Сопоставление с эпизодом 3Blue1Brown Linear transformations обнаружило конкретный
