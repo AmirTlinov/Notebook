@@ -355,9 +355,13 @@ extension NotebookStore {
       let active = try storedValue("local/script-export-active.json")?.decode([UUID].self) ?? []
       guard active.count <= 2 else { throw NotebookStorageError.corruptRecord("script export admission window") }
       for id in active {
-        try saveScriptExportJob(id, value: .object(["status": .string("interrupted"),
-          "jobID": .string(id.uuidString.lowercased()), "error": .object(["code": .string("owner_restarted"),
-            "message": .string("The compiler did not publish a native receipt before restart. No automatic replay.")])]))
+        guard let current = try scriptExportJob(id), case .object(var fields) = current else {
+          throw NotebookStorageError.corruptRecord("script export active job")
+        }
+        fields["status"] = .string("interrupted")
+        fields["error"] = .object(["code": .string("owner_restarted"),
+          "message": .string("The export owner did not publish a native receipt before restart. No automatic replay.")])
+        try saveScriptExportJob(id, value: .object(fields))
       }
     }
   }

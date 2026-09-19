@@ -1,5 +1,14 @@
 # Проверка Notebook
 
+## 19 сентября, 09:32 МСК — GUI-249: restart не теряет смысл export job
+
+При переходе queued/running → interrupted прежний export owner теперь сохраняет
+cutSHA256, source/state revisions, moment и options (включая video timeline).
+Не создаёт пустую карточку вместо исходного задания, не повторяет исполнение.
+Core22 PASS, `/tmp/gui249-restart-core-v1.log`: повторный restart неизменен, saved
+и cancelled receipts не повреждаются; scoped storage-only проверка, не новая
+установка или GUI-250 acceptance.
+
 ## 19 сентября, 09:28 МСК — GUI-249: детерминированный MP4 из авторской модели
 
 MP4 использует выбранную canonical страницу, тот же isolated coordinator и
