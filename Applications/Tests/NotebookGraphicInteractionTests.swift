@@ -158,7 +158,7 @@ import XCTest
     XCTAssertEqual(pick(.init(x:190,y:250),[diamond,triangle,outer]),"diamond","Small inner shape wins even under a later enclosing outline")
     XCTAssertEqual(pick(.init(x:185,y:260),[child,diamond,triangle,outer]),"child")
     let oversized = element("canvas",.rectangle,.init(x:-1000,y:-1000,width:3000,height:3000))
-    XCTAssertNil(pick(.init(x:400,y:500),[oversized]),"An enclosing canvas cannot steal empty-paper navigation")
+    XCTAssertEqual(pick(.init(x:400,y:500),[oversized]),"canvas","A visible figure stays selectable when zoomed beyond the viewport")
   }
 
   func testGraphicPickingStaysCloseToTheVisibleStrokeAtEveryZoom() throws {

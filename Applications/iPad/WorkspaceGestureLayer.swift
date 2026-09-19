@@ -385,7 +385,7 @@ final class GestureAnchorView: UIView {
   }
 }
 
-struct BoardPanView: UIViewRepresentable {
+struct WorkspacePanView: UIViewRepresentable {
   let isEnabled: Bool
   let inputGate: NotebookInputGate
   let onBegan: () -> Void

@@ -5,6 +5,43 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testPaperSelectionZoomAndEdgeTapsDoNotTurnPages() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture","--notebook-native-graphic-page"]
+    launchPortraitFixture(app)
+    let surface = app.otherElements["page-turn-surface"], paper = app.otherElements["paper-input"]
+    let node = app.images["Узел +"]
+    XCTAssertTrue(node.waitForExistence(timeout:5))
+    let page = surface.value as? String, originalPaper = paper.frame
+    node.tap()
+    let before = node.frame
+    let body = node.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+    body.press(forDuration:0.05,thenDragTo:body.withOffset(.init(dx:160,dy:0)),withVelocity:.slow,thenHoldForDuration:0)
+    XCTAssertEqual(node.frame.midX-before.midX,160,accuracy:8)
+    XCTAssertEqual(surface.value as? String,page)
+    for x in [0.015,0.985] {
+      app.coordinate(withNormalizedOffset:.init(dx:x,dy:0.72)).tap()
+      XCTAssertEqual(surface.value as? String,page,"An edge tap cannot curl the sheet")
+    }
+    node.pinch(withScale:1.6,velocity:0.7)
+    XCTAssertGreaterThan(paper.frame.width,originalPaper.width*1.25)
+    let zoomed = node.frame
+    let blank = app.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.72))
+    blank.press(forDuration:0.05,thenDragTo:blank.withOffset(.init(dx:70,dy:25)),withVelocity:.slow,thenHoldForDuration:0)
+    XCTAssertEqual(surface.value as? String,page,"A zoomed sheet owns single-finger camera motion")
+    XCTAssertEqual(node.frame.midX-zoomed.midX,70,accuracy:10)
+    XCTAssertEqual(node.frame.midY-zoomed.midY,25,accuracy:10)
+    let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "zoomed-paper-single-finger-pan"; proof.lifetime = .keepAlways; add(proof)
+    node.pinch(withScale:0.1,velocity:-2)
+    XCTAssertEqual(paper.frame.width,originalPaper.width,accuracy:3)
+    surface.swipeLeft()
+    wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"value BEGINSWITH 'Страница 2 из '"),object:surface)],timeout:3)
+    surface.swipeRight()
+    wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"value BEGINSWITH 'Страница 1 из '"),object:surface)],timeout:3)
+    XCTAssertEqual(node.frame.midX-before.midX,160,accuracy:8,"The moved element returns on its original page")
+  }
+
   func testInlineFormattingAndTextDragStayOnTheirPaper() {
     continueAfterFailure = false
     let app = XCUIApplication()

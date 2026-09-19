@@ -647,8 +647,7 @@ enum NotebookAttentionProjection {
       let local = SpatialPoint(x:point.x-layout.frame.x,y:point.y-layout.frame.y)
       if layout.hitTest(local,graphic:graphic,tolerance:tolerance) { return element }
       let width = layout.frame.width, height = layout.frame.height
-      guard !(width*scale >= viewport.x && height*scale >= viewport.y),
-        NotebookGraphicGeometry.containsInterior(graphic,width:width,height:height,x:local.x,y:local.y) else { continue }
+      guard NotebookGraphicGeometry.containsInterior(graphic,width:width,height:height,x:local.x,y:local.y) else { continue }
       let area = width*height
       if interior == nil || area < interior!.1 { interior = (element,area) }
     }

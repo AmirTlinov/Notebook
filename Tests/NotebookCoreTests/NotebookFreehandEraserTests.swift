@@ -5,6 +5,21 @@ import Testing
 
 @Suite("Compact retained eraser sweeps")
 struct NotebookFreehandEraserTests {
+  @Test func denseInkPointPickingDoesNotBuildAnOverlappingStrokedPath() {
+    // Dense repeated paint used to send CGPath's stroked outline through a
+    // pathological union. Its size does not change the meaning of one contact.
+    let triangle: [NotebookFreehand.Vertex] = [.init(x:0.1,y:0.1,opacity:1),
+      .init(x:0.9,y:0.1,opacity:1),.init(x:0.5,y:0.9,opacity:1)]
+    let ink = NotebookFreehand(layers:[.init(color:.black,vertices:Array(repeating:triangle,count:20_000).flatMap { $0 })])
+    #expect(ink.isValid)
+    let size = CGSize(width:10_000,height:10_000), start = ContinuousClock.now
+    #expect(ink.contains(.init(x:5000,y:5000),size:size,transform:nil,tolerance:6))
+    #expect(ink.contains(.init(x:5000,y:995),size:size,transform:nil,tolerance:6))
+    #expect(!ink.contains(.init(x:9000,y:9000),size:size,transform:nil,tolerance:6))
+    #expect(!ink.contains(.init(x:5000,y:985),size:size,transform:nil,tolerance:6))
+    #expect(start.duration(to:.now) < .seconds(1))
+  }
+
   @Test func longEraserDoesNotSpendThePaintVertexBudgetAndKeepsExactGeometry() throws {
     let samples = (0..<1624).map { index in
       NotebookFreehand.Eraser.Sample(point:.init(x:Double(index)/4,y:40+sin(Double(index)/30)*20),width:8)

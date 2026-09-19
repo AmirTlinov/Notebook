@@ -3,6 +3,28 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookSceneSelectionTests: XCTestCase {
+  func testPageCurlAdmissionResolvesOwnershipBeforeMotion() {
+    let view = UIView(), owner = PageTurnAdmissionRecognizer(), touch = SelectionTouch()
+    view.addGestureRecognizer(owner)
+    var allowed = true
+    owner.canBeginNavigation = { allowed }
+    owner.touchesBegan([touch],with:UIEvent())
+    XCTAssertEqual(owner.state,.possible)
+    // Selection refines the owner later in the same touchdown dispatch.
+    allowed = false; touch.point.x += 20
+    owner.touchesMoved([touch],with:UIEvent())
+    XCTAssertEqual(owner.state,.began,"Dependent curl cannot begin after the object reserves this finger")
+    XCTAssertFalse(owner.canPrevent(UIPanGestureRecognizer()),"Admission does not block the object's own recognizer")
+    owner.isEnabled = false; owner.isEnabled = true; allowed = true
+    owner.touchesBegan([touch],with:UIEvent()); touch.point.x += 20
+    owner.touchesMoved([touch],with:UIEvent())
+    XCTAssertEqual(owner.state,.failed,"A fitted empty-paper swipe belongs to UIKit")
+    let zoomed = PageTurnAdmissionRecognizer(); view.addGestureRecognizer(zoomed)
+    zoomed.canBeginNavigation = { false }
+    zoomed.touchesBegan([touch],with:UIEvent())
+    XCTAssertEqual(zoomed.state,.began,"Zoomed paper denies curl from touchdown")
+  }
+
   func testKeyboardLayoutShiftIsNotFingerMotion() {
     let window = UIWindow(frame:.init(x:0,y:0,width:600,height:800)), anchor = UIView(frame:.init(x:0,y:0,width:600,height:800))
     window.addSubview(anchor)

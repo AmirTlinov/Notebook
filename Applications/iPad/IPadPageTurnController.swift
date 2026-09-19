@@ -3,6 +3,7 @@ import SwiftUI
 import UIKit
 
 enum PageTurnPlatformContract {
+  static let animationRate: Float = 1.8
   @MainActor
   static func makePageViewController() -> UIPageViewController {
     let controller = UIPageViewController(
@@ -20,6 +21,50 @@ enum PageTurnPlatformContract {
   }
 }
 
+/// Failure dependency for UIKit's curl. It never takes content input: a
+/// successful admission blocker only denies the dependent page recognizers.
+/// Resolve after touchdown has let selection reserve its original contact.
+final class PageTurnAdmissionRecognizer: UIGestureRecognizer {
+  var canBeginNavigation: () -> Bool = { true }
+  private var contacts: [UITouch: CGPoint] = [:]
+  private var beganAt: TimeInterval = 0
+  override init(target: Any?, action: Selector?) {
+    super.init(target:target,action:action)
+    name = "NotebookPageTurnAdmission"
+    allowedTouchTypes = [NSNumber(value:UITouch.TouchType.direct.rawValue)]
+    cancelsTouchesInView = false; delaysTouchesBegan = false; delaysTouchesEnded = false
+  }
+  convenience init() { self.init(target:nil,action:nil) }
+  override func canPrevent(_ other: UIGestureRecognizer) -> Bool { false }
+  override func canBePrevented(by other: UIGestureRecognizer) -> Bool { false }
+  override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+    for touch in touches { contacts[touch] = touch.location(in:view?.window) }
+    beganAt = touches.map(\.timestamp).max() ?? 0
+    if !canBeginNavigation() || contacts.count > 2 { state = .began }
+  }
+  override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+    guard state == .possible else { return }
+    guard canBeginNavigation() else { state = .began; return }
+    let pairs = contacts.map { (start:$0.value, end:$0.key.location(in:view?.window)) }
+    let deltas = pairs.map { CGPoint(x:$0.end.x-$0.start.x,y:$0.end.y-$0.start.y) }
+    if pairs.count == 1, let delta = deltas.first, hypot(delta.x,delta.y) >= 4 {
+      state = abs(delta.x) > abs(delta.y) ? .failed : .began
+    } else if pairs.count == 2 {
+      let startDistance = hypot(pairs[0].start.x-pairs[1].start.x,pairs[0].start.y-pairs[1].start.y)
+      let distance = hypot(pairs[0].end.x-pairs[1].end.x,pairs[0].end.y-pairs[1].end.y)
+      let intent = TwoFingerIntentArbiter.resolve(defersHorizontalMotionToPageTurn:true,
+        translation:.init(x:(deltas[0].x+deltas[1].x)/2,y:(deltas[0].y+deltas[1].y)/2),
+        fingerDisplacements:deltas,magnification:distance/max(1,startDistance),
+        elapsed:(touches.map(\.timestamp).max() ?? beganAt)-beganAt)
+      if intent == .navigation { state = .failed }
+      else if intent == .magnification { state = .began }
+    }
+  }
+  override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) { state = .ended }
+  override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { state = .cancelled }
+  override func reset() { super.reset(); contacts.removeAll() }
+}
+
 /// The iPad executor for `PageTurnSurface`.
 ///
 /// UIKit owns the physical curl. This container owns only page identity:
@@ -33,6 +78,7 @@ final class IPadPageTurnController: UIViewController,
   private let prewarmView = UIView()
   private let observationID = UUID()
   let pageViewController = PageTurnPlatformContract.makePageViewController()
+  private let navigationAdmission = PageTurnAdmissionRecognizer()
 
   private var controllers: [Int: IPadIndexedPageController] = [:]
   private var retiredControllers: [Int: WeakIPadPageController] = [:]
@@ -142,6 +188,11 @@ final class IPadPageTurnController: UIViewController,
     pageViewController.didMove(toParent: self)
     pageViewController.dataSource = self
     pageViewController.delegate = self
+    navigationAdmission.canBeginNavigation = { [weak self] in
+      guard let self else { return false }
+      return navigationIsEnabled && canBeginNavigation()
+    }
+    pageViewController.view.addGestureRecognizer(navigationAdmission)
 
     installDisplayedPage()
     configureSystemGestures()
@@ -361,12 +412,6 @@ final class IPadPageTurnController: UIViewController,
       onCommit(displayedIndex, sequenceRevision)
     }
     runPendingExternalSelection()
-  }
-
-  @objc private func systemGestureChanged(_ gesture: UIGestureRecognizer) {
-    guard gesture.state == .began, !canBeginNavigation() else { return }
-    gesture.isEnabled = false
-    gesture.isEnabled = navigationIsEnabled && pageCount > 1
   }
 
   private func installDisplayedPage() {
@@ -744,18 +789,19 @@ final class IPadPageTurnController: UIViewController,
         NSNumber(value: UITouch.TouchType.direct.rawValue)
       ]
       gesture.cancelsTouchesInView = true
-      if gesture.isEnabled != enabled { gesture.isEnabled = enabled }
-      gesture.removeTarget(self, action: #selector(systemGestureChanged))
-      gesture.addTarget(self, action: #selector(systemGestureChanged))
+      // A quiet edge tap is selection, never navigation. Keep UIKit's curl
+      // recognizers and delegates, but admit motion before they can begin.
+      let acceptsMotion = enabled && !(gesture is UITapGestureRecognizer)
+      if gesture.isEnabled != acceptsMotion { gesture.isEnabled = acceptsMotion }
+      gesture.require(toFail:navigationAdmission)
     }
   }
 
   private func cancelSystemGestures() {
-    let enabled = navigationIsEnabled && pageCount > 1
     for gesture in pageViewController.gestureRecognizers {
       gesture.isEnabled = false
-      gesture.isEnabled = enabled
     }
+    configureSystemGestures()
     setTransitioning(false)
     refreshControllerState()
   }
@@ -765,6 +811,13 @@ final class IPadPageTurnController: UIViewController,
     // UIKit and input admission change in this event. A SwiftUI observer cannot
     // be called from updateUIViewController, which may initiate an external turn.
     isTransitioning = value
+    // Speed only the native curl, not ordinary animations inside live pages.
+    // Preserve local time when changing the public CALayer playback rate.
+    let layer = pageViewController.view.layer, now = CACurrentMediaTime()
+    let local = layer.convertTime(now,from:nil)
+    let parent = layer.superlayer?.convertTime(now,from:nil) ?? now
+    layer.beginTime = parent; layer.timeOffset = local
+    layer.speed = value ? PageTurnPlatformContract.animationRate : 1
     pageTurnActivity.update(value)
     transitionNotificationRevision &+= 1
     let revision = transitionNotificationRevision, owner = ownerID

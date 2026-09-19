@@ -282,7 +282,7 @@ import XCTest
       var cancellations = 0
       selection.onLift = { _ in .init(begin: {}, change: { _ in },
         end: { _ in XCTFail("The second finger cancelled the drop") }, cancel: { cancellations += 1 }) }
-      let camera = BoardPanView.Coordinator(isEnabled: true, inputGate: gate,
+      let camera = WorkspacePanView.Coordinator(isEnabled: true, inputGate: gate,
         onBegan: { XCTFail("The object contact cannot also pan") }, onChanged: { _ in },
         onEnded: { _ in }, onCancelled: {})
       camera.install(on: window, inside: anchor)

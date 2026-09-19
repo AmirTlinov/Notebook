@@ -18,7 +18,7 @@ final class AgentSceneFingerRoutingTests: XCTestCase {
     let host = UIViewController(); window.rootViewController = host; window.makeKeyAndVisible()
     host.view.addSubview(viewport); viewport.frame = .init(x: 100, y: 200, width: 120, height: 80)
     viewport.layoutIfNeeded()
-    let panOwner = BoardPanView.Coordinator(isEnabled: true, inputGate: gate,
+    let panOwner = WorkspacePanView.Coordinator(isEnabled: true, inputGate: gate,
       onBegan: {}, onChanged: { _ in }, onEnded: { _ in }, onCancelled: {})
     panOwner.install(on: window, inside: host.view)
     defer {

@@ -78,8 +78,10 @@ struct SpatialWorkspaceView: View {
             .zIndex(9_000)
         }
 
-          BoardPanView(
-            isEnabled: (presence.mode == .board || presence.mode == .cover)
+          WorkspacePanView(
+            isEnabled: (presence.mode == .board || presence.mode == .cover
+              || ((presence.mode == .page || presence.mode == .document)
+                && presence.camera.scale > model.itemGeometry(presence.focusedItemID).fitScale(viewport:viewport) * 1.001))
               && cameraGesture == nil && !settling && !model.isPointing,
             inputGate: model.inputGate,
             onBegan: {
@@ -89,13 +91,13 @@ struct SpatialWorkspaceView: View {
               panStart = presenceForNewContact(presence)
             },
             onChanged: { translation in
-              updateBoardPan(translation, viewport: viewport)
+              updateWorkspacePan(translation, viewport: viewport)
             },
             onEnded: { translation in
-              finishBoardPan(translation, viewport: viewport)
+              finishWorkspacePan(translation, viewport: viewport)
             },
             onCancelled: {
-              finishBoardPan(nil, viewport: viewport)
+              finishWorkspacePan(nil, viewport: viewport)
             }
           )
           .frame(width: viewport.x, height: viewport.y)
@@ -749,16 +751,8 @@ struct SpatialWorkspaceView: View {
           size:.init(width:localFrame.width,height:localFrame.height),erasures:cuts) else { return nil }
       return appearance.contains(.init(x:(point.x-frame.minX)/scale,y:(point.y-frame.minY)/scale),tolerance:NotebookAttentionProjection.elementHitPadding/scale) ? reference : nil
     }
-    guard let graphic = model.graphicElement(reference) else { return frame.contains(point) ? reference : nil }
-    // Settled shapes use normal topmost picking, including overlapping links.
-    guard model.elementCommandDrafts[reference] != nil else { return nil }
-    let scale = max(0.001,presence.camera.scale)
-    let local = SpatialPoint(x:(point.x-frame.minX)/scale,y:(point.y-frame.minY)/scale)
-    if graphic.shape == .connector {
-      return model.graphicLayout(reference)?.hitTest(local,graphic:graphic,tolerance:NotebookAttentionProjection.elementHitPadding/scale) == true ? reference : nil
-    }
-    return NotebookGraphicGeometry.containsInterior(graphic,width:frame.width/scale,height:frame.height/scale,x:local.x,y:local.y)
-      || NotebookGraphicGeometry.hitTest(graphic,width:frame.width/scale,height:frame.height/scale,x:local.x,y:local.y,tolerance:NotebookAttentionProjection.elementHitPadding/scale) ? reference : nil
+    return frame.insetBy(dx:-NotebookAttentionProjection.elementHitPadding,
+      dy:-NotebookAttentionProjection.elementHitPadding).contains(point) ? reference : nil
   }
 
   private struct ElementPlaneRevision: Equatable {
@@ -1065,13 +1059,17 @@ struct SpatialWorkspaceView: View {
     settling = false
   }
 
-  private func updateBoardPan(
+  private func updateWorkspacePan(
     _ translation: CGPoint,
     viewport: SpatialPoint
   ) {
     guard let start = panStart else { return }
     var camera = start.camera
     camera.pan(screenX: translation.x, screenY: translation.y)
+    if start.mode == .page || start.mode == .document, let item = start.focusedItemID,
+      let center = model.boardHierarchy?.focusedCenter(of:item,in:start.boardID) {
+      camera = model.itemGeometry(item).readingCamera(camera,centeredOn:center,viewport:viewport)
+    }
     model.updatePresence(
       SessionPresence(
         boardID: start.boardID,
@@ -1092,12 +1090,12 @@ struct SpatialWorkspaceView: View {
       camera: presence.camera, viewport: presence.viewport)
   }
 
-  private func finishBoardPan(
+  private func finishWorkspacePan(
     _ translation: CGPoint?,
     viewport: SpatialPoint
   ) {
     guard panStart != nil else { return }
-    if let translation { updateBoardPan(translation, viewport: viewport) }
+    if let translation { updateWorkspacePan(translation, viewport: viewport) }
     panStart = nil
     // A pinch may already own the camera when its preceding one-finger pan
     // publishes cancellation. Only the current camera owner may settle it.
@@ -1487,7 +1485,9 @@ private struct WorkspaceSceneItem: View {
         allowsTrailingPageCreation: false,
         navigationIsEnabled: pageNavigationIsEnabled,
         pageIsInteractive: contentIsInteractive,
-        canBeginNavigation: { paperFitsViewport },
+        canBeginNavigation: {
+          model.inputGate.permitsPageNavigation && !model.selectionSession.isInteractive && paperFitsViewport
+        },
         page: { index, isCurrent, readiness in
           documentPage(
             document: document,
