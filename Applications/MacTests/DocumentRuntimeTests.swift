@@ -34,6 +34,28 @@ final class DocumentRuntimeTests: XCTestCase {
     return .init(coordinator: coordinator, host: host, window: window)
   }
 
+  func testInteractionLayerLeavesTheNativePrintedPaperVisible() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# Native paper must remain visible"),
+      .interactive(id: "control", html: "<div style='height:80px;background:blue'>Live program</div>", height: 100)])
+    let mounted = surface(document: document, state: .init(id: document.id, actor: UUID()))
+    defer { mounted.close() }
+    await waitUntil { mounted.coordinator.renderIsReady }
+    let web = try XCTUnwrap(mounted.coordinator.webView)
+    XCTAssertEqual(web.value(forKey: "drawsBackground") as? Bool, false)
+    let config = WKSnapshotConfiguration(); config.snapshotWidth = 595
+    let image = try await web.takeSnapshot(configuration: config)
+    var rect = CGRect(origin: .zero, size: image.size)
+    let cg = try XCTUnwrap(image.cgImage(forProposedRect: &rect, context: nil, hints: nil))
+    let pixels = try XCTUnwrap(CGContext(data: nil, width: cg.width, height: cg.height,
+      bitsPerComponent: 8, bytesPerRow: cg.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    pixels.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+    let bytes = try XCTUnwrap(pixels.data).assumingMemoryBound(to: UInt8.self)
+    let clear = (0..<(cg.width * cg.height)).filter { bytes[$0 * 4 + 3] == 0 }.count
+    XCTAssertGreaterThan(clear, cg.width * cg.height / 2,
+      "The live interaction surface must not cover native text with opaque white pixels")
+  }
+
   func testDocumentBoundarySavesTheAnimatedModelAndResumesTheSamePrograms() async throws {
     let actor = UUID()
     let document = DocumentDocument(actor: actor, blocks: [.interactive(id: "clock", html: "<output></output>", javaScript: """

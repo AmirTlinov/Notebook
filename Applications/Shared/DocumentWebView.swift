@@ -2110,6 +2110,9 @@ private enum DocumentWebViewFactory {
       // once is not a scroll policy: WebKit re-enables it after loading.
       webView.scrollView.isScrollEnabled = false
     #elseif os(macOS)
+      // The canonical paper is a native sibling below this interaction layer.
+      // underPageBackgroundColor alone leaves WebKit's page backing opaque.
+      webView.setValue(false, forKey: "drawsBackground")
       webView.allowsMagnification = false
     #endif
 

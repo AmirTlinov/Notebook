@@ -1,5 +1,44 @@
 # Проверка Notebook
 
+## 19 сентября, 12:05 МСК — GUI-250: нативный лист больше не скрыт под Mac WebKit
+
+Живой public TS-документ биений выявил дефект, которого не показывал экспорт:
+на Mac были видны график и controls, но заголовок, текст и формула закрывались
+белым WebKit. `underPageBackgroundColor = .clear` не отключает его page backing.
+В прежнем `DocumentWebViewFactory` включена та же прозрачность `drawsBackground`,
+которую уже использует пространственный WebKit. Новый renderer не добавлен.
+
+**Mac1 PASS**, warnings0/skips0,
+`.build/gui250-native-paper-mac-v1/verification.json`: настоящий WK snapshot
+имеет прозрачные pixels вне программы; background не подменяет native paper.
+Source `ec55fa5be0fecf9da678e49ffda3100092ddaa0ad30ee4e0938b7fe784e4068f`.
+Development Release этого source собран в `.build/gui250-release-v5`;
+Mac CDHash `b829ecbf7312868a1635da79decc0b73b69ce17d`. Обновление private пары
+`3af2d2e9-8bd0-47e9-baba-21b83ec1d6fa` сохранило store bytes, manifests и identities.
+Установленный Mac реально открыт: заголовок, текст, формула и график теперь
+видны одновременно при «Вся страница». До исправления — запись
+`.build/gui250-mac-ui-v3/separated-covers-attachments/A95EDDD6-B27F-4EAA-98CA-83284C9F2147.mp4`
+и просмотренный `native-paper-before.png`; после — осмотр CUA установленного v5.
+Это подтверждает видимость, но не полноценную интерактивную приёмку.
+
+Новый UI-сценарий пока **НЕ PASS**: исходные test-only проблемы (перекрытые
+контрольные обложки, окно вне активного Space, нечисловая трактовка AX slider)
+разобраны; обычным public moveItem обложки разведены. Последний keyboard/control
+прогон не подтвердил изменение значения, дальнейшая диагностика открыта.
+Попытки `.build/gui250-mac-ui-v7` и соответствующие отрицательные results сохранены;
+существующий другой acceptance Mac не закрывался. Нельзя считать неудачу harness
+доказанным дефектом ввода или заявлять accepted/reopened по одному screenshot.
+
+Дополнительно: public MP4 job `356d0f32-9c40-443b-8294-98d24a86b841` отменён обычным
+SDK и после v3→v4 restart остаётся cancelled, без artifact. Свидетельства
+`.build/gui250-free-author/cancel*-receipt.json`. **78 route tests PASS**.
+System-wide Host Blank/Display + GPU + Activity Monitor впервые завершили запись:
+`.build/gui250-host-display-trace-v1/system.trace`, 5,837631 с записи, exit0,
+непустые display/Metal/resource таблицы. Это idle/backend probe, не атрибутированные
+кадры Notebook, не p95 сценария и не аппаратный iPad. Time Profiler probes остаются
+отрицательными. Новые test-only ключи/trust не выдавались без ожидаемого отдельного
+разрешения. GUI-240/250 и installed shared/performance/reference acceptance открыты.
+
 ## 19 сентября, 11:21 МСК — GUI-250: public Release, полный Core gate и короткий vector viewport
 
 Isolated Release **3deac88**, source
