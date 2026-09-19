@@ -1,0 +1,14 @@
+df490a0203790c5b41ab1635391a83c8d44714f4
+df95062cee958a455e31d82e4f9e6f598c0a1bda8597af2fd126904364f5cb87  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Sources/NotebookCore/InkStrokeGeometry.swift
+bb29e17aac4f8dddc32915607ec5675b438022d62a0f02e3df9b2f3418d935fd  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Tests/Performance/RelationalInk/Codec.swift
+fdf369ccc283253f47ce0e64b6c33510ed223e960a96d360d803a46228418afd  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Tests/Performance/RelationalInk/main.swift
+4645ed14f55fad0f36ee9155bbfa49fc306aecfb69603f00835a84eb84200c00  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Tests/Performance/RelationalInk/run.sh
+cd6bb2fb5da1bf4489b205c2e843e35fa1c3f625fc97822ff44c5121b760f5dc  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Tests/NotebookCoreTests/Resources/QuickShapeMeasured.json
+Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)
+Target: arm64-apple-macosx27.0.0
+ProductName:		macOS
+ProductVersion:		27.0
+BuildVersion:		26A428
+Mac17,6
+137438953472
+Apple M5 Max
