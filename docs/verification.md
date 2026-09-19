@@ -13340,3 +13340,44 @@ Known selection получен от iPad5124BDCA-7613-4E48-B09B-928D81A03D4E.
 Квитанции `live-before.json`, `live-after.json`, `ipad-apps.json` находятся в
 `.build/gui259-install123/`. GUI-259 возвращена In Review; этот срез исправляет
 один toolbar gesture и не переобъявляет закрытыми прежние условия полной приёмки.
+
+## GUI-259: выбор наложения рядом с фигурой, 19 сентября — 124
+
+В `NotebookDrawingToolSettingsView` два прежних Picker теперь находятся в
+одной верхней строке: слева значок выбранной фигуры, справа название операции.
+Отдельная нижняя строка удалена; ширина 264, отступы и оформление панели
+сохранены. Binding остаются у прежних device-local preferences; Boolean-
+геометрия, записи содержания и владелец открытия панели не менялись.
+
+`.build/gui259-tools124-final2`: **1/1 physical iPad UI PASS**, 0 skips,
+0 runtime warnings. Сценарий `testShapeAndOperationSelectorsShareTopRowAndKeepIndependentSelections`
+переключает все 5 операций, проверяет расположение справа на одной высоте
+выше толщины, отдельно выбирает треугольник и повторно открывает панель с
+сохранёнными значениями. Снимок `shape-and-operation-top-row` экспортирован
+в `-final2-images` и просмотрен: значок и полное название не пересекаются,
+панель стала короче без расширения. Первые 2 попытки проверяли неверное AX-
+представление native Picker; сценарий исправлен на реальный label
+`Наложение, <операция>`, UI-код между попытками не менялся.
+
+Неизменный source SHA:
+`1786b64962f3145c0bb61c48140f7c1eb2fdf9aaea69b5dd029fa7bb3c58f89d`.
+Проверка относится к компоновке и выбору настроек, не к повторной приёмке
+Boolean-геометрии, аппаратного Pencil или общей производительности.
+
+Signed **0.3.121(124)** установлена поверх123 на обе платформы в14:52UTC;
+`.build/gui259-build124/build.json` связан с тем же source. Mac завершён
+штатно (`Drained74053`), store/registry bytes до relaunch и iPad registry
+совпали, версии124 сверены. Private GUI183/GUI240 apps, сеть, containers и
+ключи не менялись; uninstall/reset/force quit не применялись.
+
+Installed MCP сначала дал ready20591 (baseline20464): board revision+basis
+совпали, page header отличается только contentStamp23→26 от прежнего iPad-
+актора; inkStamp5 и остальные поля прежние. Неизменность всех content basis
+и камеры не заявляется. После этого presence/selection дали `ipc_timeout`.
+Mac PID81557 занял98–100% CPU; `mac-startup.sample.txt` (1s,14:54:32UTC)
+показывает main в `SceneCompositionTiles.prepare` → `paintElement` →
+`SceneRasterCompositor.drawView` → `ImageRenderer` → CoreGraphics soft-mask/
+stroke `aa_render`. Это отдельное подтверждённое ограничение GUI-255;
+renderer в этом изменении не менялся. Повторный startup readback и полная
+приёмка пары не объявляются пройденными. Установка и scoped iPad UI прошли,
+но не скрывают эту блокировку живой доски Mac.

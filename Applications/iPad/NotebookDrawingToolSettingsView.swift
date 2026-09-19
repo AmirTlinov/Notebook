@@ -16,18 +16,26 @@ struct NotebookDrawingToolSettingsView: View {
       Toggle("Добавлять к выделению",isOn:binding(\.lassoAddsToSelection))
         .accessibilityIdentifier("lasso-adds-selection")
     case .shape:
-      Picker("Фигура",selection:binding(\.shape)) {
-        ForEach(DrawingShape.allCases,id:\.self) { shape in Label(shape.title,systemImage:shape.symbol).tag(shape) }
-      }.accessibilityIdentifier("drawing-shape-kind")
+      HStack {
+        Picker("Фигура",selection:binding(\.shape)) {
+          ForEach(DrawingShape.allCases,id:\.self) { shape in Label(shape.title,systemImage:shape.symbol).tag(shape) }
+        }
+        .pickerStyle(.menu).labelsHidden().labelStyle(.iconOnly)
+        .accessibilityValue(model.drawingToolSettings.shape.title)
+        .accessibilityIdentifier("drawing-shape-kind")
+        Spacer(minLength:12)
+        Picker("Наложение",selection:Binding(get:{ model.drawingToolSettings.shapeOperation ?? .normal },set:{ model.drawingToolSettings.shapeOperation = $0 })) {
+          ForEach(NotebookShapeOperation.allCases,id:\.self) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.menu).labelsHidden()
+        .accessibilityIdentifier("shape-operation")
+      }
       slider("Толщина контура",path:\.shapeWidth,range:0.25...128,id:"shape-width",logarithmic:true)
       Toggle("Заливка",isOn:binding(\.shapeFilled)).accessibilityIdentifier("shape-fill")
       if model.drawingToolSettings.shapeFilled {
         Text("Цвет заливки").font(.caption)
         NotebookToolColorPalette(selection:Binding(get:{ model.drawingToolSettings.shapeFillColor ?? .yellow },set:{ model.drawingToolSettings.shapeFillColor = $0 }),prefix:"shape-fill")
       }
-      Picker("Наложение",selection:Binding(get:{ model.drawingToolSettings.shapeOperation ?? .normal },set:{ model.drawingToolSettings.shapeOperation = $0 })) {
-        ForEach(NotebookShapeOperation.allCases,id:\.self) { Text($0.title).tag($0) }
-      }.accessibilityIdentifier("shape-operation")
       Toggle("Фиксированные пропорции",isOn:binding(\.preservesAspect)).accessibilityIdentifier("shape-aspect")
     case .text:
       slider("Размер текста",path:\.textSize,range:12...72,id:"text-size")
