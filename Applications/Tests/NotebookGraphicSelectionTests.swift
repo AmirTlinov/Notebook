@@ -31,7 +31,7 @@ import XCTest
       let before = try XCTUnwrap(model.pages[pageID])
       let contact = try XCTUnwrap(model.beginElementManipulation(refs[0],kind:.move))
       XCTAssertTrue(model.finishElementManipulation(contact,translation:.init(x:30,y:40)))
-      for ref in refs { XCTAssertNotNil(model.graphicCommandDrafts[ref],"All accepted members survive Pencil/finger lift") }
+      for ref in refs { XCTAssertNotNil(model.elementCommandDrafts[ref],"All accepted members survive Pencil/finger lift") }
       let written = await model.finishPendingPersistence(); XCTAssertTrue(written)
       await model.reloadExternalChanges()?.value
       let moved = try model.store.loadPage(pageID)

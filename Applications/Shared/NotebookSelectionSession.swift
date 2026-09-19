@@ -65,8 +65,8 @@ struct NotebookNativeTextTarget: Equatable, Sendable {
   let reference: EditableElementReference
   let address: NotebookToolAddress
   var frame: PageRect
-  let source: String
-  let style: NativeTextStyle
+  var source: String
+  var style: NativeTextStyle
   var page: AgentElement?
   var spatial: SpatialElement?
 }

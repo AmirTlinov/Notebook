@@ -6,6 +6,51 @@ import XCTest
 /// Exercise the installed scene's Pencil owner, not a direct fit/model call.
 /// Synthetic UIKit contacts do not substitute for physical Pencil calibration.
 @MainActor final class NotebookGraphicSceneTests: XCTestCase {
+  func testPageLassoSelectsMeasuredInkThroughInstalledPencilOwner() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("lasso-scene-\(UUID())")
+    let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false,preferences:UserDefaults(suiteName:UUID().uuidString)!)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
+    let workspace = try XCTUnwrap(model.workspace)
+    var page = try XCTUnwrap(model.activePage)
+    func sample(_ x: Double, _ y: Double) -> SpatialInkSample {
+      .init(point:.init(x:x,y:y),timeOffset:0,width:8,opacity:1,force:1,azimuth:0,altitude:.pi/2)
+    }
+    let pen = PageInkAction(tool:.pen,samples:[sample(260,420),sample(480,420)])
+    let erase = PageInkAction(tool:.eraser,samples:(0..<1624).map { sample(370,400+Double($0%40)) })
+    XCTAssertTrue(page.replaceDrawing(try PageInkDrawing(actions:[pen,erase]).dataRepresentation(),actor:model.actorID))
+    try model.store.savePage(page); await model.reloadExternalChanges()?.value
+    let viewport = SpatialPoint(x:834,y:1194)
+    let center = model.boardHierarchy?.focusedCenter(of:workspace.selectedItemID,in:workspace.rootBoardID) ?? .zero
+    model.updatePresence(.init(boardID:workspace.rootBoardID,mode:.page,
+      camera:.init(center:center,scale:WorkspaceItemGeometry.notebook.fitScale(viewport:viewport)),
+      viewport:viewport,focusedItemID:workspace.selectedItemID,openProgress:1),settled:true)
+    model.selectDrawingTool(.lasso)
+    let window = try await mountNotebookScene(model)
+    let paper = try XCTUnwrap(descendants(try XCTUnwrap(window.rootViewController?.view)).compactMap { $0 as? PaperInputView }.first { $0.isUserInteractionEnabled })
+    let receiver = try XCTUnwrap(window.gestureRecognizers?.first { $0.name == "NotebookPaperPencil" })
+    let touch = SceneGraphicTouch(window:window), event = SceneGraphicEvent()
+    let trace = [CGPoint(x:245,y:405),.init(x:495,y:405),.init(x:495,y:440),.init(x:245,y:440),.init(x:245,y:405)]
+    for (i,p) in trace.enumerated() {
+      touch.point = paper.convert(p,to:window); touch.sampleTime += 0.02
+      if i == 0 { touch.sourceView = window.hitTest(touch.point,with:event); receiver.touchesBegan([touch],with:event) }
+      else { receiver.touchesMoved([touch],with:event) }
+    }
+    XCTAssertTrue(model.inputGate.hasActivePencil)
+    let released = ContinuousClock.now
+    receiver.touchesEnded([touch],with:event)
+    XCTAssertFalse(model.inputGate.hasActivePencil)
+    let deadline = ContinuousClock.now + .seconds(5)
+    while model.selectionSession.element.flatMap(model.graphicElement) == nil, ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
+    let graphic = try XCTUnwrap(model.selectionSession.element.flatMap(model.graphicElement))
+    print("LASSO_LONG_ERASER_SELECTION \(released.duration(to:.now))")
+    XCTAssertEqual(graphic.sourceInkIDs,[pen.id]); XCTAssertNotNil(graphic.freehand?.layers.last?.eraser)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    XCTAssertEqual(try PageInkDrawing.decode(model.store.loadPage(page.id).drawingData).actions.map(\.id),[pen.id,erase.id])
+    let image = UIGraphicsImageRenderer(bounds:window.bounds).image { _ in window.drawHierarchy(in:window.bounds,afterScreenUpdates:true) }
+    let shot = XCTAttachment(image:image); shot.name = "lasso-ink-after-long-eraser"; shot.lifetime = .keepAlways; add(shot)
+  }
+
   func testLaserPixelsRecedeAfterLiftWithoutAnotherInputEvent() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("laser-scene-\(UUID())")
     let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false,preferences:UserDefaults(suiteName:UUID().uuidString)!)
@@ -70,10 +115,7 @@ import XCTest
     let document = try XCTUnwrap(model.createDocument(at:.init(x:3000,y:0),paperSize:.a4))
     let address = NotebookToolAddress(surface:.board(board),boardID:board,worldOrigin:.zero,bounds:nil)
     let text = try XCTUnwrap(model.beginToolText(at:.init(x:-750,y:0),address:address,screenScale:1))
-    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
-    await model.reloadExternalChanges()?.value
-    let renderedText = try XCTUnwrap(model.store.readSpatialElement(boardID:board,elementID:text))
-    model.commitNativeText(reference:address.reference(text),text:"Lasso text",finish:true,retainedSpatial:renderedText)
+    model.commitNativeText(reference:address.reference(text),text:"Lasso text",finish:true)
     let textSaved = await model.finishPendingPersistence(); XCTAssertTrue(textSaved)
     XCTAssertEqual(try model.store.readSpatialElement(boardID:board,elementID:text)?.source,"Lasso text")
     await model.reloadExternalChanges()?.value
@@ -307,11 +349,11 @@ import XCTest
     let finalContact = try XCTUnwrap(model.beginElementManipulation(node,kind:.move))
     XCTAssertTrue(model.finishElementManipulation(finalContact,translation:.init(x:0,y:90)))
     XCTAssertNil(model.selectionSession.manipulation, "The lifted contact no longer owns input")
-    XCTAssertNotNil(model.graphicCommandDrafts[node])
+    XCTAssertNotNil(model.elementCommandDrafts[node])
     XCTAssertEqual(model.graphicLayout(link), preview, "Lift cannot expose the old node or its old bound line")
     XCTAssertEqual(try store.targetContentRevision(target:target), revision, "The accepted command has not run synchronously")
     let nextContact = try XCTUnwrap(model.beginElementManipulation(node,kind:.move))
-    XCTAssertEqual(model.selectionSession.manipulation?.original, model.graphicCommandDrafts[node]?.rect)
+    XCTAssertEqual(model.selectionSession.manipulation?.original, model.elementCommandDrafts[node]?.rect)
     model.cancelElementManipulation(nextContact)
     model.clearSelection()
     model.cancelElementManipulation(finalContact)
@@ -322,7 +364,7 @@ import XCTest
     let moved = await model.finishPendingPersistence(); XCTAssertTrue(moved)
     await model.reloadExternalChanges()?.value
     let actual = try XCTUnwrap(store.readGraphicResolution(target:target,elementID:id).layout)
-    XCTAssertTrue(model.graphicCommandDrafts.isEmpty, "The canonical scene has taken over the accepted draft")
+    XCTAssertTrue(model.elementCommandDrafts.isEmpty, "The canonical scene has taken over the accepted draft")
     XCTAssertEqual(model.graphicLayout(link),preview)
     XCTAssertEqual(actual,preview)
     let retained = try onBoard ? store.readSpatialElement(boardID:target.id,elementID:id)?.graphic
@@ -359,7 +401,7 @@ import XCTest
     let bent = await model.finishPendingPersistence(); XCTAssertTrue(bent)
     await model.reloadExternalChanges()?.value
     XCTAssertGreaterThan(abs(model.graphicElement(link)?.connection?.bend ?? 0),50)
-    XCTAssertTrue(model.graphicCommandDrafts.isEmpty)
+    XCTAssertTrue(model.elementCommandDrafts.isEmpty)
     XCTAssertEqual(model.graphicLayout(link),heldBend)
     model.setGraphicLabel("1:2",reference:link)
     let labelled = await model.finishPendingPersistence(); XCTAssertTrue(labelled)

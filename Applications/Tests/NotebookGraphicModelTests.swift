@@ -76,7 +76,7 @@ import XCTest
     XCTAssertTrue(model.graphicCommandPending)
     try writer.release()
     let completed = await model.finishPendingPersistence(); XCTAssertTrue(completed)
-    XCTAssertTrue(model.graphicCommandDrafts.isEmpty)
+    XCTAssertTrue(model.elementCommandDrafts.isEmpty)
     XCTAssertEqual(model.activePage?.elements.first?.frame, expected)
     XCTAssertEqual(model.graphicLayout(reference)?.frame, expected)
   }
@@ -116,11 +116,11 @@ import XCTest
     XCTAssertEqual(model.graphicElement(a)?.style.strokeWidth,4)
     XCTAssertEqual(model.graphicElement(a)?.style.stroke,.init(red:1,green:0,blue:0))
     XCTAssertEqual(model.graphicLayout(b)?.frame.x,370)
-    XCTAssertEqual(model.graphicCommandDrafts.count,2)
+    XCTAssertEqual(model.elementCommandDrafts.count,2)
     try writer.release()
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     await model.reloadExternalChanges()?.value
-    XCTAssertTrue(model.graphicCommandDrafts.isEmpty)
+    XCTAssertTrue(model.elementCommandDrafts.isEmpty)
     XCTAssertTrue(model.elementCommandSources.isEmpty)
     let reopened = NotebookStore(root:root)
     XCTAssertEqual(try reopened.readPageElement(pageID:pageID,elementID:"a")?.frame,expected)
@@ -199,7 +199,7 @@ import XCTest
     XCTAssertEqual(model.graphicLayout(reference), preview)
     model.setGraphicStyle(reference:reference) { $0.strokeWidth = 8 }
     try await wait { !model.graphicCommandPending }
-    XCTAssertTrue(model.graphicCommandDrafts.isEmpty)
+    XCTAssertTrue(model.elementCommandDrafts.isEmpty)
     XCTAssertNotNil(model.actionCue, "Rejection is visible, not a silently successful drag")
     await model.reloadExternalChanges()?.value
     XCTAssertEqual(model.graphicLayout(reference)?.frame, concurrent)

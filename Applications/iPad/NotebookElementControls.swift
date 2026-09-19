@@ -106,6 +106,28 @@ struct NotebookElementControls: UIViewRepresentable {
     menus.append(UIMenu(options:.displayInline,children:[UIAction(title:"Удалить",image:UIImage(systemName:"trash"),attributes:.destructive) { _ in
       guard model.selectionSession.id == selectionID else { return }; model.deleteElement(reference)
     }]))
+    if let text = model.nativeTextTarget(reference) {
+      let format = text.style.runs?.first?.format ?? text.style.format ?? .init()
+      view.setTextActions(NotebookTextFormattingMenu.make(format,apply:{ change in
+        guard model.selectionSession.id == selectionID else { return }
+        model.formatNativeText(reference,change:change)
+      },link:{ [weak view] in
+        guard let view, model.selectionSession.id == selectionID else { return }
+        NotebookTextFormattingMenu.editLink(format.link,from:view,apply:{ link in
+          guard model.selectionSession.id == selectionID else { return }
+          model.formatNativeText(reference) { $0.link = link }
+        })
+      }).children,cut:{
+        guard model.selectionSession.id == selectionID else { return }
+        NotebookTextObjectClipboard.copy(text); model.deleteElement(reference)
+      },copy:{
+        guard model.selectionSession.id == selectionID else { return }
+        NotebookTextObjectClipboard.copy(text)
+      },paste:{
+        guard model.selectionSession.id == selectionID else { return }
+        NotebookTextObjectClipboard.paste(nextTo:text,model:model)
+      })
+    } else { view.setTextActions(nil) }
     view.setActionsMenu(menus)
   }
 
@@ -241,8 +263,15 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   private let modeButton = UIButton(type: .system)
   private let routingButton = UIButton(type: .system)
   private let endsButton = UIButton(type: .system)
+  private let textFormatButton = NotebookContextMenuButton(type:.system)
+  private let cutButton = UIButton(type:.system)
+  private let copyButton = UIButton(type:.system)
+  private let pasteButton = UIButton(type:.system)
+  private var cutText: (() -> Void)?
+  private var copyText: (() -> Void)?
+  private var pasteText: (() -> Void)?
   private let moreButton = NotebookContextMenuButton(type: .system)
-  private var toolbarButtons: [UIButton] { [styleButton,editButton,modeButton,routingButton,endsButton,deleteButton,moreButton] }
+  private var toolbarButtons: [UIButton] { [textFormatButton,styleButton,editButton,cutButton,copyButton,pasteButton,modeButton,routingButton,endsButton,deleteButton,moreButton] }
   private var palette: NotebookElementStyleController? { contextMenus.presentedPopover(for:source) as? NotebookElementStyleController }
   private var connectionPalette: NotebookConnectionController? { contextMenus.presentedPopover(for:source) as? NotebookConnectionController }
   var changeRouting: ((NotebookGraphicConnection.Routing) -> Void)?
@@ -265,6 +294,13 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
       setNeedsLayout()
     }
   }
+  func setTextActions(_ menu: [UIMenuElement]?, cut: (() -> Void)? = nil,
+    copy: (() -> Void)? = nil, paste: (() -> Void)? = nil) {
+    for button in [textFormatButton,cutButton,copyButton,pasteButton] { button.isHidden = menu == nil }
+    textFormatButton.contents = menu ?? []
+    cutText = cut; copyText = copy; pasteText = paste
+    setNeedsLayout()
+  }
   func setActionsMenu(_ children: [UIMenuElement]) { moreButton.contents = children }
   var changeGeometryMode: ((NotebookSelectionSession.GeometryMode) -> Void)?
   var updateStyle: ((inout NotebookGraphic.Style) -> Void) -> Void = { _ in }
@@ -283,6 +319,10 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     super.init(frame: .zero)
     backgroundColor = .clear; isOpaque = false
     let buttons: [(UIButton,String,String,String)] = [
+      (textFormatButton,"textformat","Формат текста","native-text-format"),
+      (cutButton,"scissors","Вырезать","native-text-cut"),
+      (copyButton,"doc.on.doc","Копировать","native-text-copy"),
+      (pasteButton,"doc.on.clipboard","Вставить","native-text-paste"),
       (styleButton,"paintbrush.pointed","Оформление фигуры","graphic-style-menu"),
       (editButton,"character.cursor.ibeam","Подпись фигуры","edit-agent-element"),
       (modeButton,"arrow.up.left.and.arrow.down.right","Режим геометрии","graphic-geometry-mode"),
@@ -293,6 +333,10 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     for (button, symbol, label, identifier) in buttons {
       NotebookContextMenus.configure(button,symbol:symbol,title:label,id:identifier,destructive:button === deleteButton)
     }
+    setTextActions(nil)
+    cutButton.addAction(UIAction { [weak self] _ in self?.cutText?() },for:.touchUpInside)
+    copyButton.addAction(UIAction { [weak self] _ in self?.copyText?() },for:.touchUpInside)
+    pasteButton.addAction(UIAction { [weak self] _ in self?.pasteText?() },for:.touchUpInside)
     styleButton.isHidden = true
     modeButton.isHidden = true; routingButton.isHidden = true; endsButton.isHidden = true
     routingButton.addTarget(self,action:#selector(showRouting),for:.touchUpInside)

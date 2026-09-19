@@ -3,7 +3,7 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookSceneSelectionTests: XCTestCase {
-  func testLinkKeepsItsTapButHoldLiftsItsMaterialAndCancelsNativeDelivery() async throws {
+  func testLinkKeepsItsTapAndOnlyDraggingLiftsItsMaterial() async throws {
     let gate = NotebookInputGate(), recognizer = SceneSelectionRecognizer(), touch = SelectionTouch()
     let view = UIView(); view.addGestureRecognizer(recognizer); recognizer.gate = gate
     let content = UIView(), neighbour = UIView()
@@ -11,7 +11,7 @@ import XCTest
     let nativeHold = UILongPressGestureRecognizer(), neighbourHold = UILongPressGestureRecognizer(), camera = UIPanGestureRecognizer()
     content.addGestureRecognizer(nativeHold); neighbour.addGestureRecognizer(neighbourHold)
     var begins = 0, drops = 0
-    recognizer.onPoint = { _, _, _, _ in XCTFail("The original link owns a short tap") }
+    recognizer.onPoint = { _, _ in XCTFail("The original link owns a short tap") }
     recognizer.onLift = { _ in .init(begin: { begins += 1 }, change: { _ in }, end: { _ in drops += 1 }, cancel: {}) }
     func begin() {
       _ = gate.fingerContactOwner(for: ObjectIdentifier(touch)) { .webLink(ObjectIdentifier(view)) }
@@ -25,6 +25,8 @@ import XCTest
     XCTAssertEqual(begins, 0); XCTAssertEqual(drops, 0)
     recognizer.isEnabled = false; recognizer.isEnabled = true
     begin(); try await Task.sleep(for: .milliseconds(250))
+    XCTAssertEqual(begins,0)
+    touch.point.x += 20; recognizer.touchesMoved([touch],with:UIEvent())
     XCTAssertTrue(recognizer.cancelsTouchesInView)
     XCTAssertTrue(recognizer.canPrevent(nativeHold), "The lifted material cannot also select text or open a link menu")
     XCTAssertFalse(recognizer.canPrevent(neighbourHold)); XCTAssertFalse(recognizer.canPrevent(camera))
@@ -34,14 +36,14 @@ import XCTest
     recognizer.cancelSelection(); gate.endFingerContacts([ObjectIdentifier(touch)])
   }
 
-  func testFingerTapIsOneSelectionAndMotionBeforeHoldRemainsNavigation() {
+  func testFingerTapSelectsOnceAndPaperMotionRemainsNavigation() {
     let gate = NotebookInputGate(), recognizer = SceneSelectionRecognizer(), touch = SelectionTouch()
     let view = UIView(); view.addGestureRecognizer(recognizer)
     recognizer.gate = gate
     XCTAssertFalse(recognizer.canPrevent(UIPanGestureRecognizer()))
     XCTAssertFalse(recognizer.canBePrevented(by: UIPanGestureRecognizer()))
     var points: [CGPoint] = []
-    recognizer.onPoint = { _, end, _, _ in points.append(end) }
+    recognizer.onPoint = { end, _ in points.append(end) }
     recognizer.touchesBegan([touch], with: UIEvent()); recognizer.touchesEnded([touch], with: UIEvent())
     XCTAssertEqual(points, [.init(x: 100, y: 100)])
     recognizer.isEnabled = false; recognizer.isEnabled = true; touch.point = .init(x: 110, y: 100)
@@ -50,42 +52,36 @@ import XCTest
     XCTAssertEqual(points.count, 1)
     recognizer.cancelSelection()
   }
-  func testHoldSelectsRegionButPencilAndSecondFingerCancelTheSameContact() async throws {
+  func testHoldingPaperNeverSelectsARegionAndMotionRemainsNavigation() async throws {
     let gate = NotebookInputGate(), recognizer = SceneSelectionRecognizer(), touch = SelectionTouch()
-    let view = UIView(); view.addGestureRecognizer(recognizer)
-    recognizer.gate = gate
-    var committed = 0; var preview: CGRect?
-    recognizer.onPoint = { _, _, held, _ in XCTAssertTrue(held); committed += 1 }
-    recognizer.onPreview = { preview = $0 }
-    recognizer.touchesBegan([touch], with: UIEvent())
-    try await Task.sleep(for: .milliseconds(400))
-    XCTAssertNotNil(preview)
-    touch.point = .init(x: 180, y: 170); recognizer.touchesMoved([touch], with: UIEvent())
-    XCTAssertEqual(preview?.size, .init(width: 80, height: 70))
-    recognizer.touchesEnded([touch], with: UIEvent()); XCTAssertEqual(committed, 1)
-    recognizer.isEnabled = false; recognizer.isEnabled = true; recognizer.touchesBegan([touch], with: UIEvent())
-    let pencil = UUID(); XCTAssertTrue(gate.beginPencilAction(source: pencil))
-    recognizer.touchesEnded([touch], with: UIEvent()); XCTAssertEqual(committed, 1)
-    gate.endPencilAction(source: pencil)
-    recognizer.isEnabled = false; recognizer.isEnabled = true; recognizer.touchesBegan([touch], with: UIEvent())
-    recognizer.touchesBegan([SelectionTouch()], with: UIEvent())
-    recognizer.touchesEnded([touch], with: UIEvent()); XCTAssertEqual(committed, 1)
-    XCTAssertNil(preview); recognizer.cancelSelection()
+    let view = UIView(); view.addGestureRecognizer(recognizer); recognizer.gate = gate
+    var committed = 0
+    recognizer.onPoint = { _, _ in committed += 1 }
+    recognizer.touchesBegan([touch],with:UIEvent())
+    try await Task.sleep(for:.milliseconds(450))
+    XCTAssertEqual(committed,0); XCTAssertEqual(recognizer.state,.possible)
+    touch.point = .init(x:180,y:170); recognizer.touchesMoved([touch],with:UIEvent())
+    recognizer.touchesEnded([touch],with:UIEvent())
+    XCTAssertEqual(committed,0)
+    recognizer.reset()
+    recognizer.touchesBegan([touch],with:UIEvent())
+    let pencil = UUID(); XCTAssertTrue(gate.beginPencilAction(source:pencil))
+    recognizer.touchesEnded([touch],with:UIEvent()); XCTAssertEqual(committed,0)
+    gate.endPencilAction(source:pencil)
   }
-  func testArtifactHoldMovesFromItsBodyAndNeverCommitsAnAreaOrSecondDrop() async throws {
+  func testArtifactDragMovesFromItsBodyAndNeverCommitsAnAreaOrSecondDrop() async throws {
     let recognizer = SceneSelectionRecognizer(), gate = NotebookInputGate(), touch = SelectionTouch()
     let view = UIView(); view.addGestureRecognizer(recognizer); recognizer.gate = gate
     var begins = 0, drops = 0, cancels = 0
     var moved = CGPoint.zero
-    recognizer.onPreview = { if $0 != nil { XCTFail("An artifact hold is not an area selection") } }
-    recognizer.onPoint = { _, _, _, _ in XCTFail("Moving never publishes a second context") }
+    recognizer.onPoint = { _, _ in XCTFail("Moving never publishes a second context") }
     recognizer.onLift = { point in
       XCTAssertEqual(point, touch.point)
       return SceneSelectionLift(begin: { begins += 1 }, change: { moved = $0 },
         end: { moved = $0; drops += 1 }, cancel: { cancels += 1 })
     }
     recognizer.touchesBegan([touch], with: UIEvent())
-    // A view update during the hold cannot redirect it to a different owner.
+    // A view update during the drag cannot redirect it to a different owner.
     recognizer.onLift = { _ in XCTFail("The down contact already resolved its owner"); return nil }
     try await Task.sleep(for: .milliseconds(250))
     touch.point = .init(x: 160, y: 140); recognizer.touchesMoved([touch], with: UIEvent())
@@ -103,9 +99,10 @@ import XCTest
     defer { gate.unregisterFingerCancellation(source: source) }
     var cancelled = 0
     recognizer.onLift = { _ in .init(begin: {}, change: { _ in }, end: { _ in XCTFail("Pencil cancelled this drop") }, cancel: { cancelled += 1 }) }
-    recognizer.onPoint = { _, _, _, _ in XCTFail("Pencil cannot indicate a different fragment") }
+    recognizer.onPoint = { _, _ in XCTFail("Pencil cannot indicate a different fragment") }
     recognizer.touchesBegan([touch], with: UIEvent())
     try await Task.sleep(for: .milliseconds(250))
+    touch.point.x += 10; recognizer.touchesMoved([touch],with:UIEvent())
     let pencil = UUID(); XCTAssertTrue(gate.beginPencilAction(source: pencil))
     recognizer.touchesEnded([touch], with: UIEvent()); recognizer.reset()
     XCTAssertEqual(cancelled, 1); XCTAssertTrue(gate.hasActivePencil)

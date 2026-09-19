@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import NotebookCore
 
@@ -16,7 +17,7 @@ enum NotebookLassoInkSource: Sendable {
     let samples: [[SpatialInkSample]]
     let eraserIndex: Int
   }
-  func selection(polygon: [SpatialPoint], surface: SurfaceID, origin: WorldPoint?, bounds: CGRect?) throws -> Result? {
+  func selection(polygon: [SpatialPoint], surface: SurfaceID, origin: WorldPoint?, bounds: CGRect?, screenScale: Double = 1) throws -> Result? {
     var strokes: [Stroke] = []
     var erasers: [[SpatialInkSample]] = [], sampleCount = 0
     func point(_ sample: SpatialInkSample) -> SpatialPoint {
@@ -70,6 +71,16 @@ enum NotebookLassoInkSource: Sendable {
     var layers: [NotebookFreehand.Layer] = [], count = 0, eraserCursor = 0
     func append(_ samples: [SpatialInkSample], tool: SpatialInkTool, color: SpatialInkColor) throws {
       guard samples.count <= 10_000 else { throw CollaborationError("selection_limit","Слишком сложное выделение; выделите меньшую часть рукописи.") }
+      if tool == .eraser {
+        // Keep the exact sweep compact; a long eraser contact must not exhaust
+        // the unrelated pen-mesh budget and make all handwriting unselectable.
+        let local = samples.map { sample in
+          let p = point(sample)
+          return NotebookFreehand.Eraser.Sample(point:.init(x:p.x-frame.x,y:p.y-frame.y),width:sample.width)
+        }
+        layers.append(.init(eraser:.init(size:.init(x:frame.width,y:frame.height),samples:local)))
+        return
+      }
       let vertices = NotebookFreehand.mesh(samples:samples,frame:frame,origin:origin,tool:tool)
       count += vertices.count
       guard count <= NotebookFreehand.maximumVertices, layers.count < 2048 else {
@@ -92,7 +103,40 @@ enum NotebookLassoInkSource: Sendable {
     }
     let ink = NotebookFreehand(layers:layers)
     guard ink.isValid else { throw CollaborationError("selection_limit","Выделите меньшую часть рукописи.") }
-    if layers.contains(where:{ $0.tool == .eraser }), ink.paintPath(size:box.size,transform:nil).isEmpty { return nil }
+    guard Self.hasVisiblePaint(ink,frame:frame,polygon:polygon,scale:screenScale) else { return nil }
     return .init(frame:frame,graphic:.init(shape:.freehand,sourceInkIDs:strokes.map(\.id),freehand:ink))
   }
+  /// Selection asks whether the contacted pixels contain paint. Filling the
+  /// ordered triangle layers directly avoids an enormous vector boolean union
+  /// merely to discover that a previously erased stroke is invisible.
+  private static func hasVisiblePaint(_ ink: NotebookFreehand, frame: PageRect,
+    polygon: [SpatialPoint], scale: Double) -> Bool {
+    let selection = polygon.reduce(CGRect.null) { $0.union(.init(x:$1.x,y:$1.y,width:0.01,height:0.01)) }
+    let box = selection.intersection(.init(x:frame.x,y:frame.y,width:frame.width,height:frame.height))
+    guard !box.isNull, box.width > 0, box.height > 0, scale.isFinite, scale > 0 else { return false }
+    // One screen pixel is the selection unit. The lasso itself is viewport
+    // bounded; no page/world-sized image or approximation of its path is needed.
+    let width = max(1,Int(ceil(box.width*scale))), height = max(1,Int(ceil(box.height*scale)))
+    guard width <= 8192, height <= 8192,
+      let context = CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:width,
+        space:CGColorSpaceCreateDeviceGray(),bitmapInfo:CGImageAlphaInfo.none.rawValue) else { return false }
+    context.scaleBy(x:scale,y:scale); context.translateBy(x:-box.minX,y:-box.minY)
+    let clip = CGMutablePath()
+    if let first = polygon.first {
+      clip.move(to:.init(x:first.x,y:first.y))
+      for p in polygon.dropFirst() { clip.addLine(to:.init(x:p.x,y:p.y)) }
+      clip.closeSubpath()
+    }
+    context.addPath(clip); context.clip()
+    context.translateBy(x:frame.x,y:frame.y)
+    for layer in ink.layers {
+      if Task.isCancelled { return false }
+      context.setFillColor(gray:layer.tool == .eraser ? 0 : 1,alpha:1)
+      context.addPath(NotebookFreehand.path(layer.renderVertices,size:.init(width:frame.width,height:frame.height)))
+      context.fillPath()
+    }
+    guard let data = context.data?.assumingMemoryBound(to:UInt8.self) else { return false }
+    return UnsafeBufferPointer(start:data,count:width*height).contains { $0 != 0 }
+  }
+
 }

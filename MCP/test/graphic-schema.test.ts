@@ -84,3 +84,17 @@ test("boolean contours carry native Bézier commands, not raster or recursive op
   assert.deepEqual(operationSchema.parse({kind:"updateElement",target,id:"shape",values}).values,values);
   assert.throws(()=>operationSchema.parse({kind:"updateElement",target,id:"shape",values:{graphic:{path:{commands:[{kind:"raster",points:[]}]}}}}));
 });
+
+
+test("compact eraser sweeps do not spend the retained paint vertex budget", () => {
+  const pen = {tool:"pen",color:{red:0,green:0,blue:0},vertices:[
+    {x:0,y:0,opacity:1},{x:1,y:0,opacity:1},{x:1,y:1,opacity:1}]};
+  const eraser = {tool:"eraser",color:pen.color,vertices:[],eraser:{size:{x:500,y:200},
+    samples:Array.from({length:1624},(_,i)=>({point:{x:i/4,y:40},width:8}))}};
+  const values = {kind:"graphic",source:"",frame:{x:0,y:0,width:500,height:200},graphic:{...graphic,shape:"freehand",freehand:{layers:[pen,eraser]}}};
+  assert.deepEqual(operationSchema.parse({kind:"convertInkToElement",target,id:"ink",values}).values,values);
+  for (const invalid of [{...eraser,tool:"pen"},{...eraser,vertices:pen.vertices},{...pen,vertices:[]}]) {
+    assert.throws(()=>operationSchema.parse({kind:"convertInkToElement",target,id:"bad",values:{...values,
+      graphic:{...values.graphic,freehand:{layers:[pen,invalid]}}}}));
+  }
+});

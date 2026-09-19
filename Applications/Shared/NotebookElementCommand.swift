@@ -15,9 +15,9 @@ struct NotebookElementCommand {
   var cursor: UInt64?
 }
 
-struct NotebookGraphicCommandDraft: Equatable {
+struct NotebookElementCommandDraft: Equatable {
   let frame: PageRect
-  let graphic: NotebookGraphic
+  let graphic: NotebookGraphic?
   var rect: CGRect { .init(x: frame.x, y: frame.y, width: frame.width, height: frame.height) }
 }
 
@@ -26,7 +26,7 @@ extension NotebookAppModel {
     for (reference, command) in elementCommandSources {
       guard !editingNativeTextReferences.contains(reference), let accepted = command.cursor, cursor >= accepted else { continue }
       elementCommandSources[reference] = nil
-      graphicCommandDrafts[reference] = nil
+      elementCommandDrafts[reference] = nil
     }
   }
 
@@ -36,7 +36,7 @@ extension NotebookAppModel {
     reference: (String) -> EditableElementReference) -> NotebookGraphicGraph {
     let selectedEdits = Dictionary(uniqueKeysWithValues:(selectionSession.manipulation?.selectedEdits ?? []).map { ($0.id,$0) })
     return .init(graph.nodes.values.map { node in
-      let ref = reference(node.id), draft = graphicCommandDrafts[ref]
+      let ref = reference(node.id), draft = elementCommandDrafts[ref]
       let contact = selectionSession.manipulation.flatMap { $0.reference == ref ? $0 : nil }
       var graphic = draft?.graphic ?? node.graphic
       if let connection = contact?.connection { graphic.connection = connection }

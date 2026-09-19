@@ -19,7 +19,7 @@ public struct NotebookRecordMutation: Codable, Equatable, Sendable {
 }
 
 public struct NotebookChangeManifest: Codable, Equatable, Sendable {
-  public static let currentFormat = 17
+  public static let currentFormat = 18
   public let format: Int
   public let transactionID: UUID
   public let workspaceID: UUID

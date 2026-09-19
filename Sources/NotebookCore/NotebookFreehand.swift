@@ -12,12 +12,48 @@ public struct NotebookFreehand: Codable, Equatable, Sendable {
     public init(x: Double, y: Double, opacity: Double) { self.x = x; self.y = y; self.opacity = opacity }
     var isValid: Bool { x.isFinite && y.isFinite && abs(x) <= 1_000_000 && abs(y) <= 1_000_000 && (0...1).contains(opacity) }
   }
+  /// Cuts retain their measured circular sweep, not 78 redundant triangle
+  /// vertices per sample. The same tessellator expands them only for painting.
+  public struct Eraser: Codable, Equatable, Sendable {
+    public struct Sample: Codable, Equatable, Sendable {
+      public let point: SpatialPoint
+      public let width: Double
+      public init(point: SpatialPoint, width: Double) { self.point = point; self.width = width }
+    }
+    public let size: SpatialPoint
+    public let samples: [Sample]
+    public init(size: SpatialPoint, samples: [Sample]) { self.size = size; self.samples = samples }
+    var isValid: Bool {
+      size.x.isFinite && size.y.isFinite && size.x > 0 && size.y > 0 && size.x <= 1_000_000 && size.y <= 1_000_000
+        && !samples.isEmpty && samples.count <= 100_000 && samples.allSatisfy {
+          $0.point.x.isFinite && $0.point.y.isFinite && $0.width.isFinite && $0.width > 0 && $0.width <= 1_000_000
+            && abs($0.point.x) <= 1_000_000 && abs($0.point.y) <= 1_000_000
+        }
+    }
+    private var measuredSamples: [SpatialInkSample] {
+      samples.map { .init(point:$0.point,timeOffset:0,width:$0.width,opacity:1,force:1,azimuth:0,altitude:.pi/2) }
+    }
+    var vertices: [Vertex] {
+      NotebookFreehand.mesh(samples:measuredSamples,frame:.init(x:0,y:0,width:size.x,height:size.y),origin:nil,tool:.eraser)
+    }
+    func normalizedPath(size destination: CGSize, transform: NotebookGraphicTransform?) -> CGPath {
+      NotebookElementAppearance.erasurePath([.init(target:.init(elementID:"retained-ink",
+        frame:.init(x:0,y:0,width:size.x,height:size.y)),samples:measuredSamples)],size:destination,transform:transform)
+    }
+  }
   public struct Layer: Codable, Equatable, Sendable {
     public let tool: SpatialInkTool
     public let color: SpatialInkColor
     public let vertices: [Vertex]
+    public let eraser: Eraser?
     public init(tool: SpatialInkTool = .pen, color: SpatialInkColor, vertices: [Vertex]) {
-      self.tool = tool; self.color = color; self.vertices = vertices
+      self.tool = tool; self.color = color; self.vertices = vertices; eraser = nil
+    }
+    public init(eraser: Eraser) { tool = .eraser; color = .black; vertices = []; self.eraser = eraser }
+    public var renderVertices: [Vertex] { eraser?.vertices ?? vertices }
+    var isValid: Bool {
+      if let eraser { return tool == .eraser && color.isValid && vertices.isEmpty && eraser.isValid }
+      return color.isValid && !vertices.isEmpty && vertices.count % 3 == 0 && vertices.allSatisfy(\.isValid)
     }
   }
   public let layers: [Layer]
@@ -26,8 +62,8 @@ public struct NotebookFreehand: Codable, Equatable, Sendable {
   public var isValid: Bool {
     !layers.isEmpty && layers.count <= 2048 && layers.first?.tool == .pen
       && layers.reduce(0) { $0 + $1.vertices.count } <= Self.maximumVertices
-      && layers.allSatisfy { $0.color.isValid && !$0.vertices.isEmpty && $0.vertices.count % 3 == 0
-        && $0.vertices.allSatisfy(\.isValid) }
+      && layers.reduce(0) { $0 + ($1.eraser?.samples.count ?? 0) } <= 100_000
+      && layers.allSatisfy(\.isValid)
   }
   public static func mesh(samples: [SpatialInkSample], frame: PageRect, origin: WorldPoint?, tool: SpatialInkTool = .pen) -> [Vertex] {
     var points: [InkStrokeGeometry.RenderPoint] = []
@@ -58,10 +94,22 @@ public struct NotebookFreehand: Codable, Equatable, Sendable {
     }
     return path
   }
+  /// Hit testing walks paint order, not a Boolean union of every measured
+  /// triangle. A later cut removes only earlier paint; later pen still wins.
+  public func contains(_ point: CGPoint, size: CGSize, transform: NotebookGraphicTransform?, tolerance: Double = 0) -> Bool {
+    guard CGRect(origin:.zero,size:size).insetBy(dx:-tolerance,dy:-tolerance).contains(point) else { return false }
+    for layer in layers.reversed() {
+      let path = Self.path(layer.renderVertices,size:size,transform:transform)
+      if path.contains(point) { return layer.tool != .eraser }
+      if layer.tool == .pen, tolerance > 0,
+        path.copy(strokingWithWidth:tolerance*2,lineCap:.round,lineJoin:.round,miterLimit:10).contains(point) { return true }
+    }
+    return false
+  }
   public func paintPath(size: CGSize, transform: NotebookGraphicTransform?) -> CGPath {
     var result: CGPath = CGMutablePath()
     for layer in layers {
-      let path = Self.path(layer.vertices,size:size,transform:transform)
+      let path = layer.eraser?.normalizedPath(size:size,transform:transform) ?? Self.path(layer.vertices,size:size,transform:transform)
       result = layer.tool == .eraser ? result.subtracting(path) : result.union(path)
     }
     return result.intersection(CGPath(rect:CGRect(origin:.zero,size:size),transform:nil))

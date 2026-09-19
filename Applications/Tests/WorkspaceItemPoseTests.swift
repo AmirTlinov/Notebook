@@ -48,6 +48,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
     let pose = try XCTUnwrap(driver.physical.poses[coverID])
     let finger = driver.interaction(coverID), fingerTouch = PoseTouch(type: .direct)
     finger.touchesBegan([fingerTouch], with: nil)
+    fingerTouch.point.x += 5; finger.touchesMoved([fingerTouch],with:nil)
     try await waitUntil { driver.physical.lifted[coverID] == true }
     driver.physical.publish(coverID)
     let animation = try XCTUnwrap(pose.animator)
@@ -117,6 +118,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
     driver.end(at: CGPoint(x: 250, y: 240).applying(surface.localToScreen))
     XCTAssertEqual(driver.actions.count, 1)
     finger.touchesBegan([touch], with: nil)
+    touch.point.x += 5; finger.touchesMoved([touch],with:nil)
     try await waitUntil { driver.physical.lifted[id] == true }
     XCTAssertEqual(driver.physical.engaged, [id], "A new finger still acquires the same native owner")
     finger.cancelInteraction()
@@ -355,6 +357,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
     var cancellations = 0
     finger.onCancelled = { cancellations += 1; pose.cancelManipulation() }
     finger.touchesBegan([touch], with: nil)
+    touch.point.x += 5; finger.touchesMoved([touch],with:nil)
     try await waitUntil { driver.physical.lifted[id] == true }
     driver.physical.publish(id)
     try await pause(pose, fraction: 0.5, in: driver.canvas)

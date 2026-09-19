@@ -20,6 +20,7 @@ struct NotebookNativeTextView: View {
   var retainedPage: AgentElement? = nil
   var retainedSpatial: SpatialElement? = nil
   var ownsEditor = false
+  var draftTarget: NotebookNativeTextTarget?
   #if os(iOS)
   var contextMenus: NotebookContextMenus?
   #endif
@@ -53,7 +54,7 @@ struct NotebookNativeTextView: View {
           .environment(\.openURL,OpenURLAction { _ in
             // Keep the text's hit surface above underlying content. Editing
             // a linked word must not also navigate away from the canvas.
-            isEditing || model.drawingTool == .text ? .discarded : .systemAction
+            isEditing || model.selectionSession.element != reference || model.drawingTool == .text ? .discarded : .systemAction
           })
       }
     }
@@ -81,7 +82,7 @@ struct NotebookNativeTextView: View {
     guard draft != submitted || draftStyle != submittedStyle || (finishing && draft.isEmpty) else { return }
     let height = min(maximumHeight,measuredHeight ?? frame.height)
     model.commitNativeText(reference:reference,text:draft,finish:finishing,
-      retainedPage:retainedPage,retainedSpatial:retainedSpatial,height:max(1,height),style:draftStyle,editingFrame:frame)
+      retainedPage:retainedPage,retainedSpatial:retainedSpatial,height:max(1,height),style:draftStyle,editingFrame:frame,draftTarget:draftTarget)
     submitted = draft; submittedStyle = draftStyle
   }
 }
@@ -214,23 +215,8 @@ private struct NotebookInlineTextInput: UIViewRepresentable {
       owner.contextMenus?.show(source:menuSource,anchor:local,in:view,buttons:contextButtons)
     }
     private func formattingMenu(_ format: NativeTextFormat) -> UIMenu {
-      func action(_ title: String, _ symbol: String, selected: Bool = false,
-        change: @escaping (inout NativeTextFormat) -> Void) -> UIAction {
-        UIAction(title:title,image:UIImage(systemName:symbol),state:selected ? .on : .off) { [weak self] _ in
-          self?.apply(change)
-        }
-      }
-      let fonts = UIMenu(title:"Шрифт",image:UIImage(systemName:"textformat"),children:NotebookTextTypography.fonts.map { value in
-        action(value.title,"textformat",selected:format.fontName == value.name) { $0.fontName = value.name }
-      })
-      return UIMenu(children:[fonts,
-        action("Жирный","bold",selected:format.bold == true) { $0.bold = format.bold != true },
-        action("Курсив","italic",selected:format.italic == true) { $0.italic = format.italic != true },
-        action("Выделить маркером","highlighter",selected:format.highlight != nil) {
-          $0.highlight = format.highlight == nil ? .init(red:1,green:0.9,blue:0.35) : nil
-        },
-        UIAction(title:"Веб-ссылка",image:UIImage(systemName:"link"),state:format.link != nil ? .on : .off) { [weak self] _ in self?.editLink() }
-      ])
+      NotebookTextFormattingMenu.make(format,apply:{ [weak self] in self?.apply($0) },
+        link:{ [weak self] in self?.editLink() })
     }
 
     private func makeContextActions() -> [UIButton] {
@@ -249,34 +235,16 @@ private struct NotebookInlineTextInput: UIViewRepresentable {
         button("doc.on.clipboard","Вставить","native-text-paste") { [weak self] in self?.input?.paste(nil) }]
     }
     private func editLink() {
-      guard let view = input, var controller = view.window?.rootViewController else { return }
-      while let presented = controller.presentedViewController { controller = presented }
-      let original = currentFormat(view).link
-      let dialog = UIAlertController(title:"Веб-ссылка",message:nil,preferredStyle:.alert)
-      func resume() {
-        // UIAlertController owns its dismissal. Starting a second dismissal from
-        // an action interrupts UIKit's transition and loses the editing session.
-        view.becomeFirstResponder()
-        formattingDialog = false
-        updateContextMenu()
-      }
-      let save = UIAlertAction(title:"Применить",style:.default) { [weak self, weak dialog] _ in
-        guard let self, let link = dialog?.textFields?.first?.text, NativeTextFormat.isWebLink(link) else { resume(); return }
-        apply { $0.link = link }; resume()
-      }
-      save.isEnabled = original != nil
-      dialog.addTextField { [weak save] field in
-        field.text = original; field.placeholder = "https://…"; field.keyboardType = .URL
-        field.autocapitalizationType = .none; field.autocorrectionType = .no
-        field.accessibilityIdentifier = "native-text-link-url"
-        field.addAction(UIAction { [weak field, weak save] _ in save?.isEnabled = NativeTextFormat.isWebLink(field?.text ?? "") },for:.editingChanged)
-      }
-      dialog.addAction(save)
-      if original != nil { dialog.addAction(.init(title:"Убрать ссылку",style:.destructive) { [weak self] _ in self?.apply { $0.link = nil }; resume() }) }
-      dialog.addAction(.init(title:"Отмена",style:.cancel) { _ in resume() })
+      guard let view = input else { return }
       formattingDialog = true
       hideContextMenu()
-      controller.present(dialog,animated:true)
+      NotebookTextFormattingMenu.editLink(currentFormat(view).link,from:view,apply:{ [weak self] link in
+        self?.apply { $0.link = link }
+      },completion:{ [weak self, weak view] in
+        view?.becomeFirstResponder()
+        self?.formattingDialog = false
+        self?.updateContextMenu()
+      })
     }
   }
 }

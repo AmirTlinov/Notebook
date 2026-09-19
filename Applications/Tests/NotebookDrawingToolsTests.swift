@@ -27,6 +27,99 @@ import UIKit
       XCTAssertEqual(saved.source,"Hello"); XCTAssertEqual(saved.textStyle,style)
     }
   }
+  func testEmptyTextNeverPersistsAndQueuedTypingThenDeleteHasOneOwner() async throws {
+    try await fixture { model in
+      let page = try XCTUnwrap(model.activePage)
+      let address = NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+      let empty = try XCTUnwrap(model.beginToolText(at:.init(x:40,y:40),address:address,screenScale:1))
+      let abandoned = try XCTUnwrap(model.selectionSession.nativeText)
+      model.clearSelection()
+      model.commitNativeText(reference:address.reference(empty),text:"",finish:true,draftTarget:abandoned)
+      await assertSaved(model)
+      XCTAssertTrue(try model.store.loadPage(page.id).elements.isEmpty)
+      let id = try XCTUnwrap(model.beginToolText(at:.init(x:40,y:40),address:address,screenScale:1))
+      model.commitNativeText(reference:address.reference(id),text:"First",finish:false)
+      model.commitNativeText(reference:address.reference(id),text:"Second",finish:true)
+      model.deleteElement(address.reference(id))
+      await assertSaved(model)
+      XCTAssertTrue(try model.store.loadPage(page.id).elements.isEmpty,"Deletion follows accepted typing, never a competing page snapshot")
+    }
+  }
+
+  func testTextToolSelectsExistingTextAndWholeObjectFormattingUsesSameContent() async throws {
+    try await fixture { model in
+      let page = try XCTUnwrap(model.activePage)
+      let address = NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+      let id = try XCTUnwrap(model.beginToolText(at:.init(x:100,y:100),address:address,screenScale:1))
+      model.commitNativeText(reference:address.reference(id),text:"Styled",finish:true)
+      await assertSaved(model); await model.reloadExternalChanges()?.value
+      model.clearSelection()
+      XCTAssertNil(model.beginToolText(at:.init(x:110,y:110),address:address,screenScale:1))
+      XCTAssertEqual(model.selectionSession.element,address.reference(id))
+      XCTAssertFalse(model.selectionSession.isInteractive)
+      model.formatNativeText(address.reference(id)) { $0.bold = true }
+      model.formatNativeText(address.reference(id)) { $0.italic = true }
+      await assertSaved(model)
+      let saved = try XCTUnwrap(model.store.loadPage(page.id).elements.first)
+      XCTAssertEqual(saved.source,"Styled"); XCTAssertEqual(saved.textStyle?.format?.bold,true)
+      XCTAssertEqual(saved.textStyle?.format?.italic,true)
+      XCTAssertEqual(try model.store.loadPage(page.id).elements.count,1)
+    }
+  }
+
+  func testLassoAndTapSelectInkAfterLongEraserAndRespectTypeFilters() async throws {
+    try await fixture { model in
+      var page = try XCTUnwrap(model.activePage)
+      func sample(_ x:Double,_ y:Double,_ width:Double = 8) -> SpatialInkSample {
+        .init(point:.init(x:x,y:y),timeOffset:0,width:width,opacity:1,force:1,azimuth:0,altitude:.pi/2)
+      }
+      let pen = PageInkAction(tool:.pen,samples:[sample(100,100),sample(220,100)])
+      let eraser = PageInkAction(tool:.eraser,samples:(0..<1624).map { sample(160,80+Double($0%40)) })
+      let drawing = try PageInkDrawing(actions:[pen,eraser]).dataRepresentation()
+      XCTAssertTrue(page.replaceDrawing(drawing,actor:model.actorID)); try model.store.savePage(page)
+      await model.reloadExternalChanges()?.value
+      let address = NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+      let text = try XCTUnwrap(model.beginToolText(at:.init(x:120,y:120),address:address,screenScale:1))
+      model.commitNativeText(reference:address.reference(text),text:"Object",finish:true)
+      await assertSaved(model); await model.reloadExternalChanges()?.value
+      let polygon = [SpatialPoint(x:90,y:90),.init(x:230,y:90),.init(x:230,y:170),.init(x:90,y:170)]
+      model.selectDrawingTool(.lasso)
+      model.drawingToolSettings.lassoSelectsInk = false
+      @MainActor func lasso() {
+        XCTAssertTrue(model.drawingTools.begin(at:polygon[0],address:address,screenScale:1))
+        for point in polygon.dropFirst() { model.drawingTools.move(to:point) }; model.drawingTools.finish()
+      }
+      lasso(); XCTAssertEqual(model.selectionSession.elements,[address.reference(text)])
+      model.drawingToolSettings.lassoSelectsInk = true; model.drawingToolSettings.lassoSelectsObjects = false
+      lasso()
+      let deadline = ContinuousClock.now + .seconds(5)
+      while model.selectionSession.elements.isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
+      let selected = try XCTUnwrap(model.selectionSession.element)
+      XCTAssertNotEqual(selected,address.reference(text))
+      let graphic = try XCTUnwrap(model.graphicElement(selected))
+      XCTAssertEqual(graphic.sourceInkIDs,[pen.id]); XCTAssertNotNil(graphic.freehand?.layers.last?.eraser)
+      await assertSaved(model); await model.reloadExternalChanges()?.value
+      XCTAssertEqual(try model.store.loadPage(page.id).drawingData,drawing)
+      model.drawingToolSettings.lassoSelectsInk = false; model.drawingToolSettings.lassoSelectsObjects = true
+      lasso(); XCTAssertEqual(model.selectionSession.elements,[address.reference(text)],"Retained ink still obeys the ink filter")
+      model.drawingToolSettings.lassoSelectsInk = true; model.drawingToolSettings.lassoSelectsObjects = false
+      lasso(); XCTAssertEqual(model.selectionSession.elements,[selected])
+      model.deleteElement(selected); await assertSaved(model); await model.reloadExternalChanges()?.value
+      XCTAssertEqual(try model.store.loadPage(page.id).elements.filter { $0.graphic?.visible == true }.count,0)
+      // Another raw stroke is picked by the same owner, without any hold.
+      var next = try model.store.loadPage(page.id)
+      let raw = PageInkAction(tool:.pen,samples:[sample(350,200),sample(450,200)])
+      let ink = try PageInkDrawing.decode(next.drawingData).appending(raw)
+      XCTAssertTrue(next.replaceDrawing(try ink.dataRepresentation(),actor:model.actorID)); try model.store.savePage(next)
+      await model.reloadExternalChanges()?.value
+      model.drawingTools.selectInk(at:.init(x:400,y:200),address:address,screenScale:1)
+      let tapDeadline = ContinuousClock.now + .seconds(5)
+      while model.selectionSession.elements.isEmpty, ContinuousClock.now < tapDeadline { try await Task.sleep(for:.milliseconds(10)) }
+      XCTAssertEqual(model.selectionSession.element.flatMap(model.graphicElement)?.sourceInkIDs,[raw.id])
+      await assertSaved(model)
+    }
+  }
+
   func testMarkerUsesConstantOpacityAndKeepsIndependentStyle() {
     let settings = NotebookDrawingToolSettings(), marker = settings.marker
     XCTAssertEqual(marker.width,18)
@@ -162,12 +255,13 @@ import UIKit
       let id = try XCTUnwrap(model.beginToolText(at:.init(x:0,y:0),address:address,screenScale:0.03787425024543671))
       XCTAssertTrue(model.selectionSession.isInteractive)
       await assertSaved(model); await model.reloadExternalChanges()?.value
-      let element = try XCTUnwrap(model.store.loadBoard(items:model.store.loadIndex().items).board(board)?.elements.first { $0.id == id })
-      XCTAssertEqual(element.worldOrigin,origin)
-      XCTAssertEqual(element.frame.x,0); XCTAssertEqual(element.frame.y,0)
-      XCTAssertEqual(element.textStyle.fontSize*0.03787425024543671,24,accuracy:0.000001)
-      let fitted = PageRect(x:0,y:0,width:element.frame.width,height:element.textStyle.fontSize*2.5)
-      model.commitNativeText(reference:address.reference(id),text:"Plain **text**",finish:false,retainedSpatial:element,height:fitted.height)
+      XCTAssertNil(try model.store.readSpatialElement(boardID:board,elementID:id),"Empty drafts never enter the store")
+      let target = try XCTUnwrap(model.selectionSession.nativeText)
+      XCTAssertEqual(target.address.worldOrigin,origin)
+      XCTAssertEqual(target.frame.x,0); XCTAssertEqual(target.frame.y,0)
+      XCTAssertEqual(target.style.fontSize*0.03787425024543671,24,accuracy:0.000001)
+      let fitted = PageRect(x:0,y:0,width:target.frame.width,height:target.style.fontSize*2.5)
+      model.commitNativeText(reference:address.reference(id),text:"Plain **text**",finish:false,height:fitted.height)
       await assertSaved(model)
       let saved = try XCTUnwrap(model.store.loadBoard(items:model.store.loadIndex().items).board(board)?.elements.first { $0.id == id })
       XCTAssertEqual(saved.source,"Plain **text**"); XCTAssertEqual(saved.kind,.nativeText)
@@ -208,8 +302,6 @@ import UIKit
       XCTAssertEqual(saved.elements.last?.textStyle?.fontSize,24)
       XCTAssertEqual(try model.store.loadBoard(items:model.store.loadIndex().items).board(board)?.elements.count,8)
       let actions = try model.store.collaborationActions(afterID:nil)
-      let edit = try XCTUnwrap(actions.first { $0.action.summary == "Изменить текст" })
-      model.undoCollaboration(edit.id); await assertSaved(model)
       let action = try XCTUnwrap(actions.first { $0.action.summary == "Добавить текст" })
       model.undoCollaboration(action.id); await assertSaved(model)
       XCTAssertEqual(try model.store.loadBoard(items:model.store.loadIndex().items).board(board)?.elements.count,7)
@@ -269,6 +361,7 @@ import UIKit
       let page = try XCTUnwrap(model.activePage)
       let address = NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
       let text = try XCTUnwrap(model.beginToolText(at:.init(x:100,y:100),address:address,screenScale:1))
+      model.commitNativeText(reference:address.reference(text),text:"Lasso",finish:true)
       await assertSaved(model); await model.reloadExternalChanges()?.value
       let refs = model.lassoElements(polygon,at:address,graph:.init([]))
       XCTAssertTrue(refs.contains(address.reference(text)))

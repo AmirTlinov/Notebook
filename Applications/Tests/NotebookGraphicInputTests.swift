@@ -253,8 +253,8 @@ import XCTest
     let gate = NotebookInputGate(), recognizer = SceneSelectionRecognizer(), touch = GraphicFingerTouch()
     let view = UIView(); view.addGestureRecognizer(recognizer); recognizer.gate = gate
     var begins = 0, commits = 0, cancelled = 0, taps = 0
-    recognizer.onPoint = { _, _, _, _ in taps += 1 }
-    recognizer.onLift = { _ in .init(requiresHold: false, begin: { begins += 1 }, change: { _ in },
+    recognizer.onPoint = { _, _ in taps += 1 }
+    recognizer.onLift = { _ in .init(begin: { begins += 1 }, change: { _ in },
       end: { _ in commits += 1 }, cancel: { cancelled += 1 }) }
     recognizer.touchesBegan([touch], with: UIEvent())
     XCTAssertEqual(begins, 0)
@@ -280,7 +280,7 @@ import XCTest
       window.addGestureRecognizer(selection); selection.coordinateView = anchor; selection.gate = gate
       let curl = UIPanGestureRecognizer(); anchor.addGestureRecognizer(curl)
       var cancellations = 0
-      selection.onLift = { _ in .init(requiresHold: false, begin: {}, change: { _ in },
+      selection.onLift = { _ in .init(begin: {}, change: { _ in },
         end: { _ in XCTFail("The second finger cancelled the drop") }, cancel: { cancellations += 1 }) }
       let camera = BoardPanView.Coordinator(isEnabled: true, inputGate: gate,
         onBegan: { XCTFail("The object contact cannot also pan") }, onChanged: { _ in },
@@ -320,7 +320,7 @@ import XCTest
     }
   }
 
-  func testTextHoldReservesPageContactBeforeItsDragBegins() async throws {
+  func testTextTouchReservesPageContactButOnlyMovementBeginsDrag() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let gate = NotebookInputGate(), selection = SceneSelectionRecognizer(), window = UIWindow(windowScene:scene)
     let anchor = UIView(frame:.init(x:0,y:0,width:600,height:800))
@@ -328,12 +328,14 @@ import XCTest
     selection.coordinateView = anchor; selection.gate = gate
     let curl = UIPanGestureRecognizer(); anchor.addGestureRecognizer(curl)
     var began = false
-    selection.onLift = { _ in .init(requiresHold:true,begin:{ began = true },change:{ _ in },end:{ _ in },cancel:{}) }
+    selection.onLift = { _ in .init(begin:{ began = true },change:{ _ in },end:{ _ in },cancel:{}) }
     let touch = GraphicFingerTouch()
     selection.touchesBegan([touch],with:UIEvent())
-    XCTAssertFalse(gate.permitsPageNavigation,"Paper curl cannot steal the hold's first movement")
+    XCTAssertFalse(gate.permitsPageNavigation,"Paper curl cannot steal the object contact's first movement")
     XCTAssertFalse(began)
-    try await Task.sleep(for:.seconds(NotebookInteractionTouchView.liftDelay+0.1))
+    try await Task.sleep(for:.milliseconds(250))
+    XCTAssertFalse(began,"Holding does not select or lift text")
+    touch.point.x += 10; selection.touchesMoved([touch],with:UIEvent())
     XCTAssertTrue(began); XCTAssertTrue(selection.canPrevent(curl))
     selection.touchesEnded([touch],with:UIEvent()); gate.endFingerContacts([ObjectIdentifier(touch)])
     XCTAssertTrue(gate.permitsPageNavigation)

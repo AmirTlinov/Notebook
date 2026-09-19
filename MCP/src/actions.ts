@@ -39,7 +39,12 @@ const graphicConnection = z.object({start:graphicEndpoint, end:graphicEndpoint,
   labelPosition:z.number().min(0).max(1), bendPosition:z.number().min(0).max(1).optional()}).strict();
 const graphicTransform = z.object({a:z.number().finite(),b:z.number().finite(),c:z.number().finite(),d:z.number().finite(),tx:z.number().finite(),ty:z.number().finite()}).strict();
 const inkVertex = graphicPoint.extend({opacity:z.number().min(0).max(1)}).strict();
-const freehand = z.object({layers:z.array(z.object({tool:z.enum(["pen","eraser"]),color:graphicColor,vertices:z.array(inkVertex).min(3).max(65536)}).strict()).min(1).max(2048)}).strict();
+const compactEraser = z.object({size:z.object({x:z.number().finite().positive().max(1e6),y:z.number().finite().positive().max(1e6)}).strict(),
+  samples:z.array(z.object({point:graphicPoint,width:z.number().finite().positive().max(1e6)}).strict()).min(1).max(100000)}).strict();
+const freehand = z.object({layers:z.array(z.union([
+  z.object({tool:z.enum(["pen","eraser"]),color:graphicColor,vertices:z.array(inkVertex).min(3).max(65536)}).strict(),
+  z.object({tool:z.literal("eraser"),color:graphicColor,vertices:z.array(inkVertex).length(0),eraser:compactEraser}).strict()
+])).min(1).max(2048)}).strict();
 export const graphicSchema = z.object({ shape: z.enum(["ellipse", "rectangle", "triangle", "diamond", "plus", "connector", "freehand", "path"]), style: graphicStyle, label: z.string().max(100_000),
   representation: z.enum(["ink", "geometry"]), visible: z.boolean(), sourceInkIDs: z.array(z.uuid()).max(1024), connection:graphicConnection.optional(),
   path:z.object({commands:z.array(z.object({kind:z.enum(["move","line","quad","curve","close"]),points:z.array(graphicPoint).max(3)}).strict()).min(1).max(8192)}).strict().nullable().optional(),

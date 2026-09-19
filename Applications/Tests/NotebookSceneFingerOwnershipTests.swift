@@ -15,7 +15,7 @@ final class NotebookSceneFingerOwnershipTests: XCTestCase {
     let programHit = try XCTUnwrap(programWeb.hitTest(CGPoint(x: 100, y: 60), with: nil))
     let paperHit = try XCTUnwrap(paperWeb.hitTest(CGPoint(x: 100, y: 60), with: nil))
     var points = 0, liftRequests = 0, liftBegins = 0, liftEnds = 0
-    fixture.selection.recognizer.onPoint = { _, _, _, _ in points += 1 }
+    fixture.selection.recognizer.onPoint = { _, _ in points += 1 }
     fixture.selection.recognizer.onLift = { _ in liftRequests += 1; return nil }
 
     // Exercise UIKit's delegate -> accepted callback route against an actual

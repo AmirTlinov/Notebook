@@ -4,9 +4,9 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Program packages, full TeX and rich text share one integrated interpretation.
+  // Compact retained eraser sweeps have one interpretation on both devices.
   // Both applications update together; identities and queued history stay intact.
-  public static let protocolVersion = 35
+  public static let protocolVersion = 36
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16

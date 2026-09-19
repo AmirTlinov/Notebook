@@ -25,7 +25,7 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     await model.reloadExternalChanges()?.value
     XCTAssertTrue(model.compositionTiles.published === fixture.cohort)
     XCTAssertNotNil(model.workingGraphics.first { $0.id == id },"Original insertion is still retained for the old raster")
-    XCTAssertNil(model.graphicCommandDrafts[address.reference(id)],"The logical model has admitted the edits")
+    XCTAssertNil(model.elementCommandDrafts[address.reference(id)],"The logical model has admitted the edits")
     XCTAssertEqual(model.presentedGraphicGraph(boardID:board,cohort:fixture.cohort).nodes[id]?.graphic,expected,
       "The retained live host must paint the accepted hole, not resurrect the original rectangle")
   }

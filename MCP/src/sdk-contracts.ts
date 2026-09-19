@@ -61,7 +61,7 @@ const catalogue: Record<string,{input:z.ZodType;returns:string;example:string;ol
 
 const operationDescriptions:Record<z.infer<typeof operationSchema>["kind"],string>={
   appendInkStroke:"Append native pen samples to a page, board, cover or code fragment.",
-  convertInkToElement:"Convert existing pen strokes on the same physical owner into native geometry (1–16 strokes; up to 1024 for retained freehand, bounded to 65536 mesh vertices including cuts). Requires inkRevision. sourceInkIDs remain immutable; undo restores original ink. The graphic must be visible and use geometry representation.",
+  convertInkToElement:"Convert existing pen strokes on the same physical owner into native geometry (1–16 strokes; up to 1024 for retained freehand, bounded to 65536 paint vertices and 100000 compact eraser samples). Requires inkRevision. sourceInkIDs remain immutable; undo restores original ink. The graphic must be visible and use geometry representation.",
   insertElement:"Insert a native graphic, Markdown, a web program, or nativeText (page/board/cover) with a frame. Board elements require values.worldOrigin (tiled world anchor); their frame is relative to that anchor. Omit worldOrigin on cover/page elements, whose frame belongs to the surface.",
   updateElement:"Change a named element's source, style or frame.",
   setElementState:"Replace the JSON state of a named web element.",

@@ -76,7 +76,7 @@ final class InkRasterRenderer: @unchecked Sendable {
     return raster(size:region.size,baselinePNG:nil,scale:scale,layerCount:ink.layers.count) { index in
       let layer = ink.layers[index], erase = layer.tool == .eraser
       let color = mask || erase ? SpatialInkColor(red:1,green:1,blue:1) : layer.color
-      let vertices = layer.vertices.map { vertex -> SpatialInkGeometry.Vertex in
+      let vertices = layer.renderVertices.map { vertex -> SpatialInkGeometry.Vertex in
         let p = basis.applying(.init(x:vertex.x,y:vertex.y)), alpha = Float(vertex.opacity)
         return .init(position:.init(Float(p.x*size.width-region.minX),Float(p.y*size.height-region.minY)),
           premultipliedColor:.init(Float(color.red)*alpha,Float(color.green)*alpha,Float(color.blue)*alpha,alpha))

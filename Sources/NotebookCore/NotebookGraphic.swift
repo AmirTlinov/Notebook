@@ -106,7 +106,7 @@ public enum NotebookGraphicGeometry {
   public static func containsInterior(_ graphic: NotebookGraphic, width: Double, height: Double,
     x: Double, y: Double) -> Bool {
     guard graphic.showsGeometry, width > 0, height > 0 else { return false }
-    if graphic.shape == .freehand { return graphic.freehand?.paintPath(size:.init(width:width,height:height),transform:graphic.transform).contains(.init(x:x,y:y)) ?? false }
+    if graphic.shape == .freehand { return graphic.freehand?.contains(.init(x:x,y:y),size:.init(width:width,height:height),transform:graphic.transform) ?? false }
     if let transform = graphic.transform {
       var base = graphic; base.transform = nil
       let p = transform.unapplying(.init(x:x/width,y:y/height))
@@ -133,7 +133,10 @@ public enum NotebookGraphicGeometry {
   public static func hitTest(_ graphic: NotebookGraphic, width: Double, height: Double,
     x: Double, y: Double, tolerance: Double) -> Bool {
     guard graphic.showsGeometry, graphic.shape != .connector, width > 0, height > 0 else { return false }
-    if graphic.transform != nil || graphic.shape == .freehand || graphic.shape == .path {
+    if let ink = graphic.freehand {
+      return ink.contains(.init(x:x,y:y),size:.init(width:width,height:height),transform:graphic.transform,tolerance:tolerance)
+    }
+    if graphic.transform != nil || graphic.shape == .path {
       let path = paintPath(graphic,layout:nil,size:.init(width:width,height:height))
       let p = CGPoint(x:x,y:y)
       return path.contains(p) || (tolerance > 0 && path.copy(strokingWithWidth:tolerance*2,lineCap:.round,lineJoin:.round,miterLimit:10).contains(p))

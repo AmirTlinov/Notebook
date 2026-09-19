@@ -34,7 +34,9 @@ final class NotebookInteractionTests: XCTestCase {
 
     view.touchesBegan([touch], with: nil)
     try await Task.sleep(for: .milliseconds(250))
-    XCTAssertEqual(lifts, [true], "Only a new contact may acquire manipulation")
+    XCTAssertEqual(lifts, [], "Holding never acquires manipulation")
+    touch.point.x += 10; view.touchesMoved([touch],with:nil)
+    XCTAssertEqual(lifts, [true], "Only actual dragging acquires manipulation")
     view.cancelInteraction()
     XCTAssertEqual(lifts, [true, false])
   }
@@ -93,7 +95,7 @@ final class NotebookInteractionTests: XCTestCase {
     touch.point.x += 70
     touch.point.y -= 20
     view.touchesMoved([touch], with: nil)
-    XCTAssertFalse(view.yieldToCameraPan(), "An admitted hold owns its finger until drop")
+    XCTAssertFalse(view.yieldToCameraPan(), "An admitted drag owns its finger until drop")
     view.touchesEnded([touch], with: nil)
     XCTAssertEqual(events, [.lift(true), .end(.init(width: 70, height: -20)), .lift(false)])
   }
@@ -124,7 +126,7 @@ final class NotebookInteractionTests: XCTestCase {
     view.onTranslationEnded = { oldEvents.append(.end($0)) }
     view.onCancelled = { oldEvents.append(.cancel) }
     view.touchesBegan([touch], with: nil)
-    try await Task.sleep(for: .milliseconds(250))
+    touch.point.x += 10; view.touchesMoved([touch],with:nil)
     NotebookInteractionView.dismantleUIView(view, coordinator: ())
     XCTAssertEqual(oldEvents, [.lift(true)])
     view.onLiftChanged = { newEvents.append(.lift($0)) }

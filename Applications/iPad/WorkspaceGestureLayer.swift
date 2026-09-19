@@ -693,7 +693,6 @@ struct NotebookInteractionView: UIViewRepresentable {
 
 @MainActor
 final class NotebookInteractionTouchView: UIView {
-  static let liftDelay: TimeInterval = 0.18
   static let movementTolerance: CGFloat = 18
 
   var onTap: (CGPoint, Int) -> Void = { _, _ in }
@@ -708,10 +707,8 @@ final class NotebookInteractionTouchView: UIView {
   private var startPoint = CGPoint.zero
   private var latestTranslation = CGSize.zero
   private var maximumTravel: CGFloat = 0
-  private var liftWorkItem: DispatchWorkItem?
   private var isLifted = false
   private var hasLiftedDuringContact = false
-  private var contactGeneration = 0
   private var deferredLiftCancellation: (() -> Void)?
   private var inputGate: NotebookInputGate
   private let inputSource = UUID()
@@ -787,9 +784,8 @@ final class NotebookInteractionTouchView: UIView {
     startPoint = touch.location(in: window)
     latestTranslation = .zero
     maximumTravel = 0
-    contactGeneration += 1
     hasLiftedDuringContact = false
-    scheduleLift()
+    inputGate.claimSceneObjectContact(ObjectIdentifier(touch))
   }
 
   override func touchesMoved(
@@ -812,9 +808,9 @@ final class NotebookInteractionTouchView: UIView {
       maximumTravel,
       hypot(latestTranslation.width, latestTranslation.height)
     )
-    if !isLifted, maximumTravel > Self.movementTolerance {
-      liftWorkItem?.cancel()
-      liftWorkItem = nil
+    if !isLifted, maximumTravel >= 4 {
+      isLifted = true; hasLiftedDuringContact = true
+      contactCallbacks?.liftChanged(true)
     }
     if isLifted { contactCallbacks?.translationChanged(latestTranslation) }
   }
@@ -862,32 +858,11 @@ final class NotebookInteractionTouchView: UIView {
     )
   }
 
-  /// Movement takes the pending finger from this cover; a completed hold keeps
-  /// the same finger here until the item is dropped.
+  /// Only an unclaimed contact can yield; moving a card owns it until drop.
   func yieldToCameraPan() -> Bool {
     guard activeTouch != nil, !isLifted else { return false }
     cancelInteraction()
     return true
-  }
-
-  private func scheduleLift() {
-    liftWorkItem?.cancel()
-    let generation = contactGeneration
-    let workItem = DispatchWorkItem { [weak self] in
-      guard let self, activeTouch != nil,
-        contactGeneration == generation, ownerIsAvailable(),
-        let fingerGeneration, inputGate.acceptsFingerSequence(fingerGeneration),
-        maximumTravel <= Self.movementTolerance
-      else { return }
-      isLifted = true
-      hasLiftedDuringContact = true
-      contactCallbacks?.liftChanged(true)
-    }
-    liftWorkItem = workItem
-    DispatchQueue.main.asyncAfter(
-      deadline: .now() + Self.liftDelay,
-      execute: workItem
-    )
   }
 
   private func finishInteraction(
@@ -902,8 +877,6 @@ final class NotebookInteractionTouchView: UIView {
     let wasTap =
       acceptTap && !hasLiftedDuringContact
       && maximumTravel <= Self.movementTolerance
-    liftWorkItem?.cancel()
-    liftWorkItem = nil
     activeTouch = nil
     fingerGeneration = nil
     contactCallbacks = nil
@@ -911,7 +884,6 @@ final class NotebookInteractionTouchView: UIView {
     maximumTravel = 0
     isLifted = false
     hasLiftedDuringContact = false
-    contactGeneration += 1
 
     if wasLifted {
       if acceptTap {

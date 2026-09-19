@@ -157,7 +157,8 @@ enum NotebookAttentionProjection {
       if let id = elementID {
         guard let element = model.presentedElement(.spatial(boardID: presence.boardID, elementID: id), cohort: cohort) ?? index.element(id:id,boardID:presence.boardID),
           element.surface == .board(target.id) else { return nil }
-        local = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+        local = model.elementPresentationFrame(.spatial(boardID:presence.boardID,elementID:id),
+          fallback:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height))
         if element.graphic != nil {
           guard let layout = graphicLayout ?? model.graphicLayout(.spatial(boardID:presence.boardID,elementID:id)) else { return nil }
           local = layout.frame
@@ -174,7 +175,7 @@ enum NotebookAttentionProjection {
       itemID = ownerID
       if let id = elementID {
         guard let element = model.pages[target.id]?.elements.first(where: { $0.id == id }) else { return nil }
-        local = element.frame
+        local = model.elementPresentationFrame(.page(pageID:target.id,elementID:id),fallback:element.frame)
         if element.graphic != nil {
           guard let layout = graphicLayout ?? model.graphicLayout(.page(pageID:target.id,elementID:id)) else { return nil }
           local = layout.frame
@@ -279,6 +280,20 @@ enum NotebookAttentionProjection {
     return fragment(start:point,end:point,sources:sources,presence:presence,dragged:false)
   }
 
+  static func toolAddress(at point: CGPoint, fragment: NotebookAttentionSelection.Fragment,
+    model: NotebookAppModel, presence: SessionPresence) -> (address: NotebookToolAddress, point: SpatialPoint)? {
+    if fragment.target.kind == .board {
+      return (.init(surface:.board(fragment.target.id),boardID:fragment.target.id,
+        worldOrigin:presence.camera.screenToWorld(.init(x:point.x,y:point.y),viewport:presence.viewport),bounds:nil),.zero)
+    }
+    guard [.page,.cover].contains(fragment.target.kind),
+      let rect = frame(.init(target:fragment.target,revision:""),model:model,presence:presence) else { return nil }
+    let scale = presence.camera.scale
+    return (.init(surface:fragment.target.kind == .page ? .page(fragment.target.id) : .cover(fragment.target.id),
+      boardID:presence.boardID,worldOrigin:nil,bounds:.init(x:0,y:0,width:rect.width/scale,height:rect.height/scale)),
+      .init(x:(point.x-rect.minX)/scale,y:(point.y-rect.minY)/scale))
+  }
+
   private static func contactSources(model: NotebookAppModel, presence: SessionPresence,
     cohort: SceneCompositionCohort) -> CaptureSources? {
     guard cohort.isPaintInstalled, cohort.plan.presentations[.board(presence.boardID)] != nil else { return nil }
@@ -310,7 +325,7 @@ enum NotebookAttentionProjection {
     let fragments: [NotebookAttentionSelection.Fragment]
     if let selectedElements {
       guard (1...32).contains(selectedElements.count), Set(selectedElements).count == selectedElements.count,
-        selectedElements.allSatisfy({ model.graphicCommandDrafts[$0] == nil }), model.selectionSession.manipulation == nil else { return nil }
+        selectedElements.allSatisfy({ model.elementCommandDrafts[$0] == nil }), model.selectionSession.manipulation == nil else { return nil }
       var selected: [NotebookAttentionSelection.Fragment] = []
       var graphs: [SurfaceID:NotebookGraphicGraph] = [:]
       for reference in selectedElements {

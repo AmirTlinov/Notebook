@@ -74,6 +74,17 @@ struct NotebookDrawingToolSettings: Codable, Equatable, Sendable {
     set { laserTrailLifetime = newValue }
   }
   var lassoAddsToSelection = false
+  init() {}
+  private var lassoInk: Bool?
+  private var lassoObjects: Bool?
+  var lassoSelectsInk: Bool {
+    get { lassoInk ?? true }
+    set { lassoInk = newValue }
+  }
+  var lassoSelectsObjects: Bool {
+    get { lassoObjects ?? true }
+    set { lassoObjects = newValue }
+  }
 
   var isValid: Bool {
     (0.5...128).contains(markerWidth) && (0.1...0.65).contains(markerOpacity)

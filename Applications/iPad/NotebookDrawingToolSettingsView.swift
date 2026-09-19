@@ -13,6 +13,8 @@ struct NotebookDrawingToolSettingsView: View {
       slider("Толщина маркера", path: \.markerWidth, range: 0.5...128, id:"marker-width",logarithmic:true)
       slider("Непрозрачность маркера", path: \.markerOpacity, range: 0.1...0.65, id:"marker-opacity")
     case .lasso:
+      Toggle("Штрихи",isOn:binding(\.lassoSelectsInk)).accessibilityIdentifier("lasso-selects-ink")
+      Toggle("Объекты",isOn:binding(\.lassoSelectsObjects)).accessibilityIdentifier("lasso-selects-objects")
       Toggle("Добавлять к выделению",isOn:binding(\.lassoAddsToSelection))
         .accessibilityIdentifier("lasso-adds-selection")
     case .shape:

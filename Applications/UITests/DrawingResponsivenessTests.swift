@@ -51,13 +51,19 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(editor.waitForNonExistence(timeout:3),"One canvas tap finishes and saves; it must not create another empty text")
     let text = app.staticTexts["Styled"]
     XCTAssertTrue(text.waitForExistence(timeout:5)); let before = text.frame
-    text.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.5,thenDragTo:text.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).withOffset(.init(dx:-60,dy:80)))
+    text.tap()
+    XCTAssertFalse(editor.exists,"The first text-tool tap selects the object, never edits it")
+    XCTAssertTrue(format.waitForExistence(timeout:2))
+    for id in ["native-text-cut","native-text-copy","native-text-paste"] { XCTAssertTrue(app.buttons[id].exists) }
+    format.tap(); app.buttons["Жирный"].tap()
+    format.tap(); app.buttons["Жирный"].tap()
+    text.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.05,thenDragTo:text.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).withOffset(.init(dx:-60,dy:80)))
     XCTAssertGreaterThan(text.frame.midY,before.midY+40)
     XCTAssertEqual(paper.frame,originalPaper); XCTAssertEqual(paper.value as? String,ink)
-    XCTAssertFalse(editor.exists,"Holding text moves it instead of creating another editor or curling paper")
+    XCTAssertFalse(editor.exists,"Dragging text moves it instead of creating another editor or curling paper")
     XCTAssertTrue(app.buttons["edit-agent-element"].waitForExistence(timeout:3))
     XCTAssertEqual(app.otherElements.matching(identifier:"notebook-context-menu").count,1)
-    XCTAssertFalse(format.exists,"Object selection replaces text-selection actions in the same context host")
+    XCTAssertTrue(format.exists,"Object and character selection use the same formatting action")
     let objectMenu = XCTAttachment(screenshot:app.screenshot()); objectMenu.name = "shared-object-context"; objectMenu.lifetime = .keepAlways; add(objectMenu)
     app.coordinate(withNormalizedOffset:.zero).withOffset(.init(dx:text.frame.midX,dy:text.frame.midY)).doubleTap()
     XCTAssertTrue(editor.waitForExistence(timeout:3))
@@ -76,6 +82,36 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(format.waitForExistence(timeout:3))
     outside.tap()
     XCTAssertTrue(editor.waitForNonExistence(timeout:3),"One outside tap also finishes with the selection menu open")
+  }
+
+  func testTextObjectSelectFormatCopyPasteAndCutUseOnePanel() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture","--notebook-native-graphic-page"]
+    launchPortraitFixture(app)
+    app.buttons["drawing-tools-more"].tap(); app.buttons["drawing-tool-text"].tap()
+    app.coordinate(withNormalizedOffset:.init(dx:0.55,dy:0.15)).tap()
+    let editor = app.textViews["native-text-editor"]
+    XCTAssertTrue(editor.waitForExistence(timeout:2)); editor.typeText("Object clipboard")
+    app.coordinate(withNormalizedOffset:.init(dx:0.3,dy:0.6)).tap()
+    XCTAssertTrue(editor.waitForNonExistence(timeout:3))
+    let texts = app.staticTexts.matching(identifier:"Object clipboard")
+    XCTAssertTrue(texts.firstMatch.waitForExistence(timeout:5)); texts.firstMatch.tap()
+    XCTAssertFalse(editor.exists)
+    let format = app.buttons["native-text-format"]
+    XCTAssertTrue(format.waitForExistence(timeout:2))
+    format.tap(); app.buttons["Курсив"].tap()
+    app.buttons["native-text-copy"].tap(); app.buttons["native-text-paste"].tap()
+    XCTAssertTrue(waitUntil { texts.count == 2 })
+    XCTAssertEqual(app.otherElements.matching(identifier:"notebook-context-menu").count,1)
+    app.buttons["native-text-cut"].tap()
+    XCTAssertTrue(waitUntil { texts.count == 1 })
+    texts.firstMatch.tap(); format.tap()
+    XCTAssertTrue(app.buttons["Курсив"].isSelected,"Object clipboard keeps formatting")
+    app.buttons["Курсив"].tap()
+    let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "text-object-common-panel"; proof.lifetime = .keepAlways; add(proof)
+    app.buttons["delete-agent-element"].tap()
+    XCTAssertTrue(waitUntil { texts.count == 0 })
   }
 
   func testInlineSelectionClipboardActionsAreDirect() {

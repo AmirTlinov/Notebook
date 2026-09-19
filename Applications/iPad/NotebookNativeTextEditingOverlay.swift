@@ -16,7 +16,7 @@ struct NotebookNativeTextEditingOverlay: View {
         frame:target.frame,maximumHeight:target.address.bounds.map { $0.maxY-target.frame.y } ?? .greatestFiniteMagnitude,
         isEditing:true,onEditingEnded:{ [selectionID = model.selectionSession.id] in
           model.finishInteractiveElementInput(target.reference,selectionID:selectionID)
-        },retainedPage:target.page,retainedSpatial:target.spatial,ownsEditor:true,contextMenus:contextMenus)
+        },retainedPage:target.page,retainedSpatial:target.spatial,ownsEditor:true,draftTarget:target,contextMenus:contextMenus)
         .id(model.selectionSession.id)
         .frame(width:target.frame.width,height:target.frame.height,alignment:.topLeading)
         .scaleEffect(scale,anchor:.topLeading)

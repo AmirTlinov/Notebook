@@ -419,7 +419,9 @@ final class NotebookAppModel {
       // A coverage read made before an accepted insertion cannot declare its
       // new editing pin deleted. The existing causal command owns that frontier.
       let ids = missingIDs.filter { id in
-        guard let command = elementCommandSources[.spatial(boardID:boardID,elementID:id)] else { return true }
+        let reference = EditableElementReference.spatial(boardID:boardID,elementID:id)
+        if ownsUnpublishedTextDraft(reference) { return false }
+        guard let command = elementCommandSources[reference] else { return true }
         return command.cursor.map { $0 <= cursor } ?? false
       }
       scenePinnedElements[boardID] = scenePinnedElements[boardID]?.filter { !ids.contains($0) }
@@ -575,20 +577,36 @@ final class NotebookAppModel {
       case .board(let boardID, let id): reference = .spatial(boardID: boardID, elementID: id)
       }
       selectElement(reference)
-      if let value = nativeElementSource(reference) {
-        if let page = value.page, page.kind == .nativeText {
-          prepareNativeTextEditing(.init(reference:reference,address:.init(surface:.page(value.target.id),boardID:nil,
-            worldOrigin:nil,bounds:pages[value.target.id].map { .init(x:0,y:0,width:$0.size.width,height:$0.size.height) }),
-            frame:page.frame,source:page.source,style:page.textStyle ?? .standard,page:page))
-        } else if let spatial = value.spatial, spatial.kind == .nativeText {
-          prepareNativeTextEditing(.init(reference:reference,address:.init(surface:spatial.surface,boardID:value.target.boardID ?? value.target.id,
-            worldOrigin:spatial.worldOrigin,bounds:nil),frame:.init(x:spatial.frame.x,y:spatial.frame.y,width:spatial.frame.width,height:spatial.frame.height),
-            source:spatial.source,style:spatial.textStyle,spatial:spatial))
-        }
-      }
+      if let target = nativeTextTarget(reference) { prepareNativeTextEditing(target) }
       selectionSession.isInteractive = true
     }
   }
+  func nativeTextTarget(_ reference: EditableElementReference) -> NotebookNativeTextTarget? {
+    if let target = selectionSession.nativeText, target.reference == reference { return target }
+    guard let value = nativeElementSource(reference) else { return nil }
+    if let page = value.page, page.kind == .nativeText {
+      return .init(reference:reference,address:.init(surface:.page(value.target.id),boardID:nil,
+        worldOrigin:nil,bounds:pages[value.target.id].map { .init(x:0,y:0,width:$0.size.width,height:$0.size.height) }),
+        frame:page.frame,source:page.source,style:page.textStyle ?? .standard,page:page)
+    }
+    if let spatial = value.spatial, spatial.kind == .nativeText {
+      return .init(reference:reference,address:.init(surface:spatial.surface,boardID:value.target.boardID ?? value.target.id,
+        worldOrigin:spatial.worldOrigin,bounds:nil),frame:.init(x:spatial.frame.x,y:spatial.frame.y,width:spatial.frame.width,height:spatial.frame.height),
+        source:spatial.source,style:spatial.textStyle,spatial:spatial)
+    }
+    return nil
+  }
+
+  func formatNativeText(_ reference: EditableElementReference, change: (inout NativeTextFormat) -> Void) {
+    guard selectionSession.element == reference, !selectionSession.isInteractive,
+      var target = nativeTextTarget(reference) else { return }
+    var format = target.style.format ?? .init(); change(&format); target.style.format = format
+    target.style.runs = target.style.runs?.map { run in var run = run; change(&run.format); return run }
+    guard let value = try? JSONValue.encode(target.style),
+      performElementOperations([.init(reference:reference,kind:.updateElement,values:["textStyle":value])],summary:"Оформить текст") else { return }
+    selectionSession.nativeText = target
+  }
+
   /// A canvas tap finishes the current draft before the text tool can create
   /// another object. Teardown flushes the addressed editor, including early input.
   @discardableResult
@@ -600,6 +618,10 @@ final class NotebookAppModel {
     }
     clearSelection()
     return true
+  }
+  private func ownsUnpublishedTextDraft(_ reference: EditableElementReference) -> Bool {
+    guard let target = selectionSession.nativeText, target.reference == reference else { return false }
+    return target.page == nil && target.spatial == nil
   }
   func prepareNativeTextEditing(_ target: NotebookNativeTextTarget) {
     guard selectionSession.element == target.reference else { return }
@@ -853,11 +875,11 @@ final class NotebookAppModel {
   @ObservationIgnored let elementErasureCache = NotebookElementErasureCache()
   // Lift transfers its final draft to the accepted command. It is retired by
   // a scene read at/after the durable cursor, not by lift or receipt delivery.
-  var graphicCommandDrafts: [EditableElementReference: NotebookGraphicCommandDraft] = [:]
+  var elementCommandDrafts: [EditableElementReference: NotebookElementCommandDraft] = [:]
   @ObservationIgnored var editingNativeTextReferences: Set<EditableElementReference> = []
   @ObservationIgnored var elementCommandSources: [EditableElementReference: NotebookElementCommand] = [:]
   var graphicCommandPending: Bool {
-    graphicCommandTask != nil || !graphicCommandDrafts.isEmpty || workingGraphics.contains { $0.accepted && $0.publicationCursor == nil }
+    graphicCommandTask != nil || !elementCommandDrafts.isEmpty || workingGraphics.contains { $0.accepted && $0.publicationCursor == nil }
   }
   private var inkUndoInProgress = false
   private var reservedDrawingCounters: [UUID: UInt64] = [:]
@@ -2431,7 +2453,7 @@ final class NotebookAppModel {
   /// Late editor teardown can finish its original object, never the new page.
   func commitNativeText(reference: EditableElementReference, text: String, finish: Bool,
     retainedPage: AgentElement? = nil, retainedSpatial: SpatialElement? = nil, height: Double? = nil,
-    style: NativeTextStyle? = nil, editingFrame: PageRect? = nil) {
+    style: NativeTextStyle? = nil, editingFrame: PageRect? = nil, draftTarget: NotebookNativeTextTarget? = nil) {
     defer { if finish { endNativeTextEditing(reference) } }
     let retained: NotebookNativeElementSource?
     switch reference {
@@ -2445,13 +2467,30 @@ final class NotebookAppModel {
     if let style { values["textStyle"] = try? .encode(style) }
     let live = nativeElementSource(reference)
     let source = live?.page != nil || live?.spatial != nil ? live : retained ?? live
-    let currentFrame = editingFrame ?? source?.page?.frame ?? source?.spatial.map { PageRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height) }
+    let draftTarget = draftTarget ?? (selectionSession.nativeText?.reference == reference ? selectionSession.nativeText : nil)
+    let currentFrame = editingFrame ?? draftTarget?.frame ?? source?.page?.frame ?? source?.spatial.map { PageRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height) }
     if let height, let frame = currentFrame, height.isFinite, height > 0 {
       values["frame"] = try? .encode(PageRect(x:frame.x,y:frame.y,width:frame.width,height:height))
     }
     let removes = finish && text.isEmpty
-    guard performElementOperations([.init(reference:reference,kind:removes ? .removeElement : .updateElement,
-      values:removes ? [:] : values)],summary:"Изменить текст",retainedSources:retained.map { [reference:$0] } ?? [:]) else { return }
+    let inserting = source?.page == nil && source?.spatial == nil && elementCommandSources[reference] == nil
+    if inserting {
+      guard !text.isEmpty, let draftTarget else { return }
+      values["kind"] = .string("nativeText")
+      values["frame"] = values["frame"] ?? (try? .encode(draftTarget.frame))
+      values["textStyle"] = try? .encode(style ?? draftTarget.style)
+      if let origin = draftTarget.address.worldOrigin { values["worldOrigin"] = try? .encode(origin) }
+    }
+    guard performElementOperations([.init(reference:reference,kind:removes ? .removeElement : inserting ? .insertElement : .updateElement,
+      values:removes ? [:] : values)],summary:inserting ? "Добавить текст" : "Изменить текст",
+      insertionTarget:inserting ? draftTarget?.address.target : nil,
+      retainedSources:retained.map { [reference:$0] } ?? [:]) else { return }
+    if var target = selectionSession.nativeText, target.reference == reference {
+      target.source = text
+      if let style { target.style = style }
+      if let frame = try? values["frame"]?.decode(PageRect.self) { target.frame = frame }
+      selectionSession.nativeText = target
+    }
     if !finish { editingNativeTextReferences.insert(reference) }
     // Keep an admitted spatial editor responsive while its command is queued.
     if case .spatial(let boardID,let id) = reference, var hierarchy = boardHierarchy,
@@ -3051,6 +3090,7 @@ final class NotebookAppModel {
       guard kind == .move, let members = selectedGraphicMembers() else { return nil }
       contact.selectedMembers = members
     }
+    if !selectionSession.isInteractive { selectionSession.nativeText = nil }
     selectionSession.manipulation = contact
     inputGate.beginContact(source: contact.id)
     inputGate.registerFingerCancellation(source: contact.id) { [weak self] in self?.cancelElementManipulation(contact.id) }
@@ -3120,7 +3160,7 @@ final class NotebookAppModel {
   private func commitElementFrame(_ contact: NotebookElementManipulation) -> Bool {
     guard let identity = contact.identity else { return false }
     let frame = contact.frame, original = contact.original, actor = actorID
-    if graphicElement(contact.reference) != nil {
+    if graphicElement(contact.reference) != nil || nativeTextTarget(contact.reference) != nil {
       return performElementOperation(.updateElement, reference: contact.reference,
         values: ["frame": (try? .encode(PageRect(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height))) ?? .null],
         summary: "Переместить фигуру")
@@ -3168,8 +3208,11 @@ final class NotebookAppModel {
   }
 
   func elementPresentationFrame(_ reference: EditableElementReference, fallback: PageRect, preview: Bool = true) -> PageRect {
-    guard preview, let contact = selectionSession.manipulation, contact.reference == reference else { return fallback }
-    return .init(x: contact.frame.minX, y: contact.frame.minY, width: contact.frame.width, height: contact.frame.height)
+    guard preview else { return fallback }
+    if let contact = selectionSession.manipulation, contact.reference == reference {
+      return .init(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height)
+    }
+    return elementCommandDrafts[reference]?.frame ?? fallback
   }
 
   private func elementGeometry(_ reference: EditableElementReference) -> (frame: CGRect, bounds: CGRect?, identity: VersionStamp?, worldOrigin: WorldPoint?)? {
@@ -3181,20 +3224,20 @@ final class NotebookAppModel {
         let size = itemGeometry(working.surface.ownerID); bounds = .init(x:0,y:0,width:size.width,height:size.height)
       } else { bounds = nil }
       let f = working.frame
-      return (graphicCommandDrafts[reference]?.rect ?? .init(x:f.x,y:f.y,width:f.width,height:f.height),bounds,nil,working.worldOrigin)
+      return (elementCommandDrafts[reference]?.rect ?? .init(x:f.x,y:f.y,width:f.width,height:f.height),bounds,nil,working.worldOrigin)
     }
     switch reference {
     case .page(let pageID, let id):
       guard !isPageBeingDeleted(pageID), let page = pages[pageID],
         let element = page.elements.first(where: { $0.id == id }) else { return nil }
-      return (graphicCommandDrafts[reference]?.rect ?? .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height),
+      return (elementCommandDrafts[reference]?.rect ?? .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height),
         .init(x: 0, y: 0, width: page.size.width, height: page.size.height), page.elementIdentityStamp(id), nil)
     case .spatial(let boardID, let id):
       guard let element = boardHierarchy?.board(boardID)?.elements.first(where: { $0.id == id }),
         surfaceAcceptsChanges(element.surface) else { return nil }
       let size = itemGeometry(element.surface.ownerID)
       let bounds: CGRect? = element.surface.kind == .cover ? .init(x: 0, y: 0, width: size.width, height: size.height) : nil
-      return (graphicCommandDrafts[reference]?.rect ?? .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height), bounds,
+      return (elementCommandDrafts[reference]?.rect ?? .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height), bounds,
         boardHierarchy?.board(boardID)?.elementIdentityStamp(id), element.worldOrigin)
     }
   }
@@ -3206,7 +3249,7 @@ final class NotebookAppModel {
   }
 
   func graphicElement(_ reference: EditableElementReference) -> NotebookGraphic? {
-    if let draft = graphicCommandDrafts[reference] { return draft.graphic }
+    if let draft = elementCommandDrafts[reference] { return draft.graphic }
     if let working = acceptedWorkingGraphic(reference) { return working.graphic }
     switch reference {
     case .page(let pageID, let id): return pages[pageID]?.elements.first { $0.id == id }?.graphic
@@ -3334,20 +3377,22 @@ final class NotebookAppModel {
     let sourceTasks = references.reduce(into: [EditableElementReference: Task<NotebookElementCommandResult?, Never>]()) {
       $0[$1] = elementCommandSources[$1]?.task
     }
-    var drafts: [EditableElementReference: NotebookGraphicCommandDraft] = [:]
+    var drafts: [EditableElementReference: NotebookElementCommandDraft] = [:]
     do {
       for edit in edits {
         // Creation already has a working object; its full payload is not an update patch.
         guard ![CollaborationOperation.Kind.insertElement,.convertInkToElement].contains(edit.kind),
-          var graphic = graphicElement(edit.reference), let geometry = elementGeometry(edit.reference) else { continue }
-        if let patch = edit.values["graphic"] { graphic = try graphic.applying(patch) }
-        if edit.kind == .removeElement { graphic.visible = false }
+          let geometry = elementGeometry(edit.reference) else { continue }
+        var graphic = graphicElement(edit.reference)
+        guard graphic != nil || nativeTextTarget(edit.reference) != nil else { continue }
+        if let patch = edit.values["graphic"] { graphic = try graphic?.applying(patch) }
+        if edit.kind == .removeElement { graphic?.visible = false }
         let frame = try edit.values["frame"]?.decode(PageRect.self)
           ?? PageRect(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height)
         drafts[edit.reference] = .init(frame:frame,graphic:graphic)
       }
     } catch { showCue(error.localizedDescription); return false }
-    for (reference,draft) in drafts { graphicCommandDrafts[reference] = draft }
+    for (reference,draft) in drafts { elementCommandDrafts[reference] = draft }
     let task = Task<[EditableElementReference: NotebookElementCommandResult]?, Never> { [weak self] in
       guard let self else { return nil }
       defer { if graphicCommandGeneration == generation { graphicCommandTask = nil } }
@@ -3383,7 +3428,7 @@ final class NotebookAppModel {
         return results
       } catch {
         for reference in references {
-          if elementCommandSources[reference]?.id == generation { graphicCommandDrafts[reference] = nil; elementCommandSources[reference] = nil }
+          if elementCommandSources[reference]?.id == generation { elementCommandDrafts[reference] = nil; elementCommandSources[reference] = nil }
           cancelElementManipulationForFailedCommand(reference)
           workingGraphics.removeAll { $0.id == sources[reference]!.id }
         }
@@ -3420,14 +3465,10 @@ final class NotebookAppModel {
 
   func deleteElement(_ reference: EditableElementReference) {
     guard selectionSession.element == reference else { return }
-    if graphicElement(reference) != nil {
-      performElementOperation(.removeElement, reference: reference, values: [:], summary: "Удалить фигуру")
-      clearSelection(); return
-    }
-    clearSelection()
-    switch reference {
-    case .page(let pageID, let elementID): _ = removePageElement(pageID: pageID, elementID: elementID)
-    case .spatial(let boardID, let elementID): _ = removeSpatialElement(boardID: boardID, elementID: elementID)
+    // Text, figures and programs have the same causal deletion owner. A page
+    // snapshot save must not race and resurrect a queued native edit.
+    if performElementOperations([.init(reference:reference,kind:.removeElement,values:[:])],summary:"Удалить элемент") {
+      clearSelection()
     }
   }
 
@@ -3481,47 +3522,6 @@ final class NotebookAppModel {
     return true
   }
 
-  @discardableResult
-  func removePageElement(pageID: UUID, elementID: String) -> Bool {
-    let removed = mutatePageElements(pageID: pageID) { _, elements in
-      let count = elements.count
-      elements.removeAll { $0.id == elementID }
-      return elements.count != count
-    }
-    return removed
-  }
-
-  @discardableResult
-  func removeSpatialElement(boardID: UUID, elementID: String) -> Bool {
-    guard var hierarchy = boardHierarchy, workspace != nil else {
-      return false
-    }
-    guard let element = hierarchy.board(boardID)?.elements.first(where: { $0.id == elementID }),
-      surfaceAcceptsChanges(element.surface) else { return false }
-    guard hierarchy.removeElements(
-      ids: [elementID],
-      from: boardID,
-      actor: actorID
-    ) == 1 else {
-      return false
-    }
-    persistBoard(hierarchy)
-    return true
-  }
-
-  private func mutatePageElements(
-    pageID: UUID,
-    mutation: (PageDocument, inout [AgentElement]) -> Bool
-  ) -> Bool {
-    guard !isPageBeingDeleted(pageID), var page = pages[pageID] else { return false }
-    var elements = page.elements
-    guard mutation(page, &elements),
-      page.replaceElements(elements, actor: actorID)
-    else { return false }
-    persistMerged(page)
-    return true
-  }
-
   func insertDocumentSource(documentID: UUID, kind: DocumentBlockKind) async throws -> DocumentSourceRequest {
     guard shutdownPhase == .running, !isItemBeingDeleted(documentID) else { throw CancellationError() }
     let actor = actorID
@@ -3555,6 +3555,7 @@ final class NotebookAppModel {
     showCue("Выделенный исходник добавлен в контекст Codex")
     #endif
   }
+
 
   func saveDocumentDraft(_ draft: DocumentEditingSession) {
     guard !isItemBeingDeleted(draft.edit.documentID) else { return }
@@ -3784,7 +3785,7 @@ final class NotebookAppModel {
           // A failed publication cannot masquerade as a still-pending write.
           // Its durable command remains available to undo/reopen normally.
           for (reference, command) in elementCommandSources where command.cursor != nil && !editingNativeTextReferences.contains(reference) {
-            graphicCommandDrafts[reference] = nil; elementCommandSources[reference] = nil
+            elementCommandDrafts[reference] = nil; elementCommandSources[reference] = nil
           }
           return
         }
@@ -4902,9 +4903,22 @@ final class NotebookAppModel {
     documentEditingSessions = state.drafts
     admitDocumentReading(state.reading)
     presence = preservingPresence ?? constrainedPaperPresence(state.presence)
+    // A blank inline draft is intentionally absent from SQL. A scene refresh
+    // cannot call that absence deletion. Once first input publishes, retain its
+    // real identity so subsequent removal is handled normally.
+    if var target = selectionSession.nativeText {
+      switch target.reference {
+      case .page(let owner,let id):
+        if let element = pages[owner]?.elements.first(where:{ $0.id == id }) { target.page = element }
+      case .spatial(let owner,let id):
+        if let element = boardHierarchy?.board(owner)?.elements.first(where:{ $0.id == id }) { target.spatial = element }
+      }
+      selectionSession.nativeText = target
+    }
     retireGraphicCommands(through: state.header.cursor)
     alignWorkspaceSelection()
     if selectionSession.elements.contains(where: { reference in
+      guard !ownsUnpublishedTextDraft(reference) else { return false }
       if case .page(let pageID,let id) = reference, let page = pages[pageID] { return !page.elements.contains { $0.id == id } }; return false
     }) { clearSelection() }
   }
