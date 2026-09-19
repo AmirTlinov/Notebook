@@ -8,7 +8,7 @@ struct NotebookNativeTextEditingOverlay: View {
   let presence: SessionPresence
   var body: some View {
     if model.selectionSession.isInteractive, let target = model.selectionSession.nativeText,
-      target.reference == model.selectionSession.element, let origin = origin(target) {
+      target.reference == model.selectionSession.element, let frame = NotebookAttentionProjection.nativeTextEditingFrame(target,model:model,presence:presence) {
       let scale = presence.camera.scale
       NotebookNativeTextView(source:target.source,style:target.style,reference:target.reference,
         frame:target.frame,maximumHeight:target.address.bounds.map { $0.maxY-target.frame.y } ?? .greatestFiniteMagnitude,
@@ -20,17 +20,7 @@ struct NotebookNativeTextEditingOverlay: View {
         .scaleEffect(scale,anchor:.topLeading)
         .frame(width:target.frame.width*scale,height:target.frame.height*scale,alignment:.topLeading)
         .background(NotebookControlRegion(gate:model.inputGate))
-        .position(x:origin.x+target.frame.width*scale/2,y:origin.y+target.frame.height*scale/2)
+        .position(x:frame.midX,y:frame.midY)
     }
-  }
-  private func origin(_ target: NotebookNativeTextTarget) -> CGPoint? {
-    let scale = presence.camera.scale
-    if target.address.surface.kind == .board {
-      guard target.address.boardID == presence.boardID else { return nil }
-      let p = presence.camera.worldToScreen(target.address.worldOrigin ?? .zero,viewport:presence.viewport)
-      return .init(x:p.x+target.frame.x*scale,y:p.y+target.frame.y*scale)
-    }
-    guard let frame = NotebookAttentionProjection.frame(.init(target:target.address.target,revision:""),model:model,presence:presence) else { return nil }
-    return .init(x:frame.minX+target.frame.x*scale,y:frame.minY+target.frame.y*scale)
   }
 }

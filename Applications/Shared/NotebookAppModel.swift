@@ -588,6 +588,18 @@ final class NotebookAppModel {
       selectionSession.isInteractive = true
     }
   }
+  /// A canvas tap finishes the current draft before the text tool can create
+  /// another object. Teardown flushes the addressed editor, including early input.
+  @discardableResult
+  func consumeNativeTextCanvasTap(at point: CGPoint? = nil) -> Bool {
+    guard selectionSession.isInteractive, let target = selectionSession.nativeText else { return false }
+    if let point, let presence,
+      NotebookAttentionProjection.nativeTextEditingFrame(target,model:self,presence:presence)?.contains(point) == true {
+      return true
+    }
+    clearSelection()
+    return true
+  }
   func prepareNativeTextEditing(_ target: NotebookNativeTextTarget) {
     guard selectionSession.element == target.reference else { return }
     selectionSession.nativeText = target

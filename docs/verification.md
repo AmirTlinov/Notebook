@@ -13465,3 +13465,70 @@ visual = current_scene_unknown, изображения по-прежнему н�
 к этому времени уже освобождён для отдельной private GUI183 проверки, поэтому
 актуальная видимость production UI не предполагается. Live-final сохранён
 отдельно; scoped physical UI-свидетельства выше остаются проверкой жестов.
+
+## GUI-266: выделение текста и единый стиль панели — 126
+
+Срез **0.3.123(126), wire34/manifest16** заменяет keyboard accessory с Done
+на немодальную панель иконок около фактических TextKit selectionRects.
+Один tap на холсте заканчивает draft без создания следующей пустой надписи.
+Отвергнутый промежуточный вариант с текстовыми пунктами native edit menu удалён.
+По замечанию Амира от19 сентября панель использует системный glass capsule,
+монохромные SF Symbols и размеры NotebookChrome, а не отдельную blur-плашку.
+
+Промежуточный physical126e: **1/3 PASS**; создание/выделение/стили/link,
+выход одним tap и drag прошли. Повторное редактирование обнаружило конфликт
+с переходом по ссылке. В126f неверное отключение всей hit surface пропустило
+tap к программе под текстом (AX Count2); этот путь заменён сохранением hit
+surface с запретом URL во время text tool/редактирования. Тест вставки теперь
+явно ставит caret в конец: вставка «Second! line» была корректной работой
+TextKit, а не потерей данных. 126f остановлен без итоговой квитанции.
+
+126h/i/j не начали UI-сценарии: XCTest `Timed out while enabling automation mode`.
+Проверка19 сентября17:36UTC уточнила причину: Mac GUI240 действительно
+ожидал локальную авторизацию, но physical iPad уже был авторизован. Прежнее
+объяснение общей блокировкой Mac было ошибочным. На iPad зависла тестовая
+служба; обычный SIGTERM только `/System/Developer/usr/libexec/testmanagerd`
+PID653 восстановил XCTest. Reset/reboot/uninstall и изменение разрешений не
+выполнялись; production/private apps не завершались.
+
+126k выявил два конфликта системного ввода: native `.link` отнимал двойной tap
+у выделения, а spelling replacements поглощали tap для установки caret.
+В редакторе link теперь только атрибут содержания и подчёркивание, не native
+navigation target; snapshot сохраняет настоящий URL. Автозамена/spell checking
+не создают второе меню поверх нашего выделения. 126l: **4/5 PASS** — оба
+типографических контракта и создание/сохранение/повторный ввод на доске и
+странице. URL-проверка попала в старую позицию кнопки при восстановлении
+клавиатуры после XCTest typeText; video и synthesized event подтверждают
+смену координаты y619 → y482. Тест ждёт появления клавиатуры перед разрешением
+alert action и отдельно проверяет закрытие диалога. Это не изменение runtime
+ради теста и не повторный tap пользователя.
+
+Финальный неизменный `.build/gui266-text126m/verification.json`: **5/5 PASS**
+на physical iPad (2 native typography + 3 UI), без skips/runtime warnings.
+Source SHA256: `2e3fcf6637a3a71022219e664f89fa3f027aef5f60e35e08551ae46d7d221548`.
+Проверены отсутствие панели при caret, компактные иконки рядом с выделением,
+bold/italic/highlight/link и сохранение стиля, один tap вне текста без новой
+пустой надписи, hold/drag без сдвига/перелистывания бумаги, повторное выделение
+связанного текста, повторный ввод на доске и странице. Финальный screenshot
+`gui266-text126m-images/F553C724-3AEE-4DA3-842E-46A5F42928F5.png` просмотрен:
+панель использует стиль остальных glass controls приложения, не клавиатурную
+полосу. Это физическая scoped UI-регрессия, не аппаратная приёмка Pencil и
+не общий FPS/CPU/GPU/30-minute acceptance.
+
+Подписанная пара `.build/gui266-build126/build.json` с тем же source SHA256
+установлена поверх125 в17:55UTC: Mac и physical iPad **0.3.123(126)**.
+`.build/gui266-install126/installation.json` фиксирует normal Mac termination
+(PID32342), совпадение store/spaces/registry/activation bytes до relaunch,
+неизменный iPad registry и отсутствие uninstall/reset. Private apps и ключи
+не менялись. До обновления production125 был не запущен; обычный launch
+восстановил IPC, baseline ready21026 получен перед установкой.
+
+Installed MCP readback в17:56UTC — ready21078/21080: board revision и basis
+совпали; page header сохранил все поля, кроме content stamp40 →42 от прежнего
+iPad actor (ink stamp5 неизменен). Это не заявляется побайтовым равенством
+после возобновления доставки. Selection известна от прежнего iPad actor с
+новой sessionE63BF1C1-F70C-4A16-9EB9-F3320F35D9DB. Свежий CoreDevice screenshot
+`gui266-install126/ipad-installed.png` просмотрен: production126 показывает
+страницу1/4 существующей тетради; тестового текста в live content не создавали.
+Xcode runner и физический iPad после readback переданы GUI240; GUI183 уведомлён
+об очереди.

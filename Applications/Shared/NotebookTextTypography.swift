@@ -17,14 +17,14 @@ enum NotebookTextTypography {
     ("Menlo-Regular","Моноширинный"),("ChalkboardSE-Regular","Рукописный"),("Noteworthy-Light","Заметки")]
   private static let formatKey = NSAttributedString.Key("notebook.nativeTextFormat")
 
-  static func attributed(_ text: String, style: NativeTextStyle) -> NSAttributedString {
-    let result = NSMutableAttributedString(string:text,attributes:attributes(style:style,format:style.format ?? .init()))
+  static func attributed(_ text: String, style: NativeTextStyle, editing: Bool = false) -> NSAttributedString {
+    let result = NSMutableAttributedString(string:text,attributes:attributes(style:style,format:style.format ?? .init(),editing:editing))
     for run in style.runs ?? [] where run.location >= 0 && run.length > 0 && run.location <= result.length-run.length {
-      result.setAttributes(attributes(style:style,format:run.format),range:.init(location:run.location,length:run.length))
+      result.setAttributes(attributes(style:style,format:run.format,editing:editing),range:.init(location:run.location,length:run.length))
     }
     return result
   }
-  static func attributes(style: NativeTextStyle, format: NativeTextFormat) -> [NSAttributedString.Key:Any] {
+  static func attributes(style: NativeTextStyle, format: NativeTextFormat, editing: Bool = false) -> [NSAttributedString.Key:Any] {
     let weight = format.bold.map { $0 ? 0.9 : 0.3 } ?? style.weight
     let nativeWeight: NativeFont.Weight = switch weight {
     case ..<0.2: .light; case ..<0.4: .regular; case ..<0.6: .medium; case ..<0.8: .semibold; default: .bold
@@ -44,10 +44,14 @@ enum NotebookTextTypography {
     var result: [NSAttributedString.Key:Any] = [.font:font,
       .foregroundColor:NativeColor(red:style.red,green:style.green,blue:style.blue,alpha:style.alpha),formatKey:format]
     if let highlight = format.highlight { result[.backgroundColor] = NativeColor(red:highlight.red,green:highlight.green,blue:highlight.blue,alpha:1) }
-    if let link = format.link, NativeTextFormat.isWebLink(link) { result[.link] = URL(string:link) }
+    if let link = format.link, NativeTextFormat.isWebLink(link) {
+      // An editor keeps link metadata, not a competing native link interaction.
+      if editing { result[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+      else { result[.link] = URL(string:link) }
+    }
     return result
   }
-  static func format(from attributes: [NSAttributedString.Key:Any], base: NativeTextStyle) -> NativeTextFormat {
+  static func format(from attributes: [NSAttributedString.Key:Any], base: NativeTextStyle, editing: Bool = false) -> NativeTextFormat {
     var format = attributes[formatKey] as? NativeTextFormat ?? base.format ?? .init()
     let expected = self.attributes(style:base,format:format)
     if let font = attributes[.font] as? NativeFont, let previous = expected[.font] as? NativeFont {
@@ -62,15 +66,17 @@ enum NotebookTextTypography {
       if traits.contains(.italic) != oldTraits.contains(.italic) { format.italic = traits.contains(.italic) }
       #endif
     }
-    let link = (attributes[.link] as? URL)?.absoluteString ?? attributes[.link] as? String
-    format.link = link.flatMap { NativeTextFormat.isWebLink($0) ? $0 : nil }
+    if !editing {
+      let link = (attributes[.link] as? URL)?.absoluteString ?? attributes[.link] as? String
+      format.link = link.flatMap { NativeTextFormat.isWebLink($0) ? $0 : nil }
+    }
     if attributes[.backgroundColor] == nil { format.highlight = nil }
     return format
   }
-  static func style(from text: NSAttributedString, base: NativeTextStyle) -> NativeTextStyle {
+  static func style(from text: NSAttributedString, base: NativeTextStyle, editing: Bool = false) -> NativeTextStyle {
     var result = base, runs: [NativeTextRun] = []
     text.enumerateAttributes(in:.init(location:0,length:text.length)) { attributes,range,_ in
-      let format = format(from:attributes,base:base)
+      let format = format(from:attributes,base:base,editing:editing)
       if let last = runs.last, last.format == format, last.location+last.length == range.location {
         runs[runs.count-1].length += range.length
       } else { runs.append(.init(location:range.location,length:range.length,format:format)) }

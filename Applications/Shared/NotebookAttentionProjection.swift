@@ -105,6 +105,24 @@ enum NotebookAttentionProjection {
     return finished(result)
   }
 
+  /// The admitted editor has geometry before its element reaches a published
+  /// scene. Painting and outside-tap routing must use this same live frame.
+  static func nativeTextEditingFrame(_ target: NotebookNativeTextTarget, model: NotebookAppModel,
+    presence: SessionPresence) -> CGRect? {
+    let scale = presence.camera.scale
+    let origin: CGPoint
+    if target.address.surface.kind == .board {
+      guard target.address.boardID == presence.boardID else { return nil }
+      let point = presence.camera.worldToScreen(target.address.worldOrigin ?? .zero,viewport:presence.viewport)
+      origin = .init(x:point.x,y:point.y)
+    } else {
+      guard let rect = frame(.init(target:target.address.target,revision:""),model:model,presence:presence) else { return nil }
+      origin = rect.origin
+    }
+    return .init(x:origin.x+target.frame.x*scale,y:origin.y+target.frame.y*scale,
+      width:target.frame.width*scale,height:target.frame.height*scale)
+  }
+
   static func editingFrame(_ reference: EditableElementReference, model: NotebookAppModel, presence: SessionPresence,
     layout: NotebookGraphicLayout? = nil) -> CGRect? {
     let target: CollaborationTarget, id: String

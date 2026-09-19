@@ -45,6 +45,13 @@ struct NotebookNativeTextView: View {
           .onDisappear { pending?.cancel(); commit(finishing:true) }
       } else {
         NotebookNativeTextSnapshot(source:source,style:style).opacity(isEditing ? 0 : 1)
+          .allowsHitTesting(!isEditing)
+          .accessibilityHidden(isEditing)
+          .environment(\.openURL,OpenURLAction { _ in
+            // Keep the text's hit surface above underlying content. Editing
+            // a linked word must not also navigate away from the canvas.
+            isEditing || model.drawingTool == .text ? .discarded : .systemAction
+          })
       }
     }
   }
@@ -101,7 +108,10 @@ private struct NotebookInlineTextInput: UIViewRepresentable {
     view.delegate = context.coordinator
     view.accessibilityIdentifier = "native-text-editor"
     view.smartQuotesType = .no; view.smartDashesType = .no
-    context.coordinator.installToolbar(on:view)
+    view.autocorrectionType = .no; view.spellCheckingType = .no
+    view.smartInsertDeleteType = .no
+    context.coordinator.input = view
+    view.onLayout = { [weak coordinator = context.coordinator] in coordinator?.updateSelectionPanel() }
     return view
   }
   func updateUIView(_ view: Input, context: Context) {
@@ -109,17 +119,20 @@ private struct NotebookInlineTextInput: UIViewRepresentable {
     coordinator.owner = self
     if view.markedTextRange == nil, coordinator.presentedText != text || coordinator.presentedStyle != style {
       let selection = coordinator.presentedText == text ? view.selectedRange : NSRange(location:text.utf16.count,length:0)
-      view.attributedText = NotebookTextTypography.attributed(text,style:style)
+      view.attributedText = NotebookTextTypography.attributed(text,style:style,editing:true)
       view.selectedRange = .init(location:min(selection.location,text.utf16.count),length:min(selection.length,max(0,text.utf16.count-selection.location)))
-      if text.isEmpty { view.typingAttributes = NotebookTextTypography.attributes(style:style,format:style.format ?? .init()) }
+      if text.isEmpty { view.typingAttributes = NotebookTextTypography.attributes(style:style,format:style.format ?? .init(),editing:true) }
       coordinator.presentedText = text; coordinator.presentedStyle = style
     }
   }
   static func dismantleUIView(_ view: Input, coordinator: Coordinator) {
-    view.delegate = nil; view.resignFirstResponder()
+    coordinator.removeSelectionPanel()
+    view.onLayout = nil; view.delegate = nil; view.resignFirstResponder()
   }
   final class Input: UITextView {
+    var onLayout: (() -> Void)?
     private var requestedFocus = false
+    override func layoutSubviews() { super.layoutSubviews(); onLayout?() }
     override func didMoveToWindow() {
       super.didMoveToWindow()
       if window != nil, !requestedFocus { requestedFocus = true; becomeFirstResponder() }
@@ -133,23 +146,26 @@ private struct NotebookInlineTextInput: UIViewRepresentable {
     var owner: NotebookInlineTextInput
     var presentedText: String?
     var presentedStyle: NativeTextStyle?
-    private weak var input: Input?
+    weak var input: Input?
+    private var selectionPanel: UIVisualEffectView?
     private var formatButtons: [String:UIButton] = [:]
     private var formattingDialog = false
     private var finishing = false
     init(_ owner: NotebookInlineTextInput) { self.owner = owner }
     func textViewDidChange(_ view: UITextView) {
-      let style = NotebookTextTypography.style(from:view.attributedText,base:owner.style)
+      let style = NotebookTextTypography.style(from:view.attributedText,base:owner.style,editing:true)
       presentedText = view.text; presentedStyle = style
       owner.text = view.text; owner.style = style
       owner.onHeight(ceil(view.sizeThatFits(.init(width:view.bounds.width,height:.greatestFiniteMagnitude)).height))
-      refreshFormatting(view)
+      updateSelectionPanel()
     }
-    func textViewDidChangeSelection(_ view: UITextView) { refreshFormatting(view) }
+    func textViewDidChangeSelection(_ view: UITextView) { updateSelectionPanel() }
+    func textViewDidBeginEditing(_ view: UITextView) { updateSelectionPanel() }
     func textViewDidEndEditing(_ view: UITextView) { if !formattingDialog { finishEditing() } }
     private func finishEditing() {
       guard !finishing else { return }
       finishing = true
+      removeSelectionPanel()
       owner.onFinish()
       input?.resignFirstResponder()
     }
@@ -157,70 +173,113 @@ private struct NotebookInlineTextInput: UIViewRepresentable {
       let range = view.selectedRange
       let attributes = range.length > 0 && range.location < view.attributedText.length
         ? view.attributedText.attributes(at:range.location,effectiveRange:nil) : view.typingAttributes
-      return NotebookTextTypography.format(from:attributes,base:owner.style)
+      return NotebookTextTypography.format(from:attributes,base:owner.style,editing:true)
     }
     private func apply(_ change: (inout NativeTextFormat) -> Void) {
-      guard let view = input else { return }
+      guard let view = input, view.selectedRange.length > 0 else { return }
       let range = view.selectedRange
-      if range.length == 0 {
-        var format = currentFormat(view); change(&format)
-        view.typingAttributes = NotebookTextTypography.attributes(style:owner.style,format:format)
-        if view.text.isEmpty { var style = owner.style; style.format = format; owner.style = style; presentedStyle = style }
-      } else {
-        let copy = NSMutableAttributedString(attributedString:view.attributedText)
-        copy.enumerateAttributes(in:range) { attributes,part,_ in
-          var format = NotebookTextTypography.format(from:attributes,base:owner.style); change(&format)
-          copy.setAttributes(NotebookTextTypography.attributes(style:owner.style,format:format),range:part)
-        }
-        view.attributedText = copy; view.selectedRange = range
-        textViewDidChange(view)
+      let selection = view.attributedText.attributedSubstring(from:range)
+      view.textStorage.beginEditing()
+      selection.enumerateAttributes(in:.init(location:0,length:selection.length)) { attributes,part,_ in
+        var format = NotebookTextTypography.format(from:attributes,base:owner.style,editing:true); change(&format)
+        view.textStorage.setAttributes(NotebookTextTypography.attributes(style:owner.style,format:format,editing:true),
+          range:.init(location:range.location+part.location,length:part.length))
       }
-      refreshFormatting(view)
+      view.textStorage.endEditing()
+      textViewDidChange(view)
     }
-    private func refreshFormatting(_ view: UITextView) {
+    func textView(_ textView: UITextView, editMenuForTextInRanges ranges: [NSValue],
+      suggestedActions: [UIMenuElement]) -> UIMenu? {
+      // The icon panel is the only selection menu. A caret still has native
+      // insertion/paste actions, but never a formatting toolbar.
+      textView.selectedRange.length > 0 ? UIMenu(children:[]) : nil
+    }
+    func removeSelectionPanel() {
+      selectionPanel?.removeFromSuperview(); selectionPanel = nil; formatButtons = [:]
+    }
+    func updateSelectionPanel() {
+      guard !finishing, !formattingDialog, let view = input, view.isFirstResponder,
+        let window = view.window, let range = view.selectedTextRange, !range.isEmpty else {
+        removeSelectionPanel(); return
+      }
+      let local = view.selectionRects(for:range).reduce(CGRect.null) { result, selection in
+        selection.rect.isEmpty ? result : result.union(selection.rect)
+      }
+      guard !local.isNull else { removeSelectionPanel(); return }
+      let selection = view.convert(local,to:window)
+      guard selection.intersects(window.bounds) else { removeSelectionPanel(); return }
+      let panel = selectionPanel ?? makeSelectionPanel()
+      if panel.superview !== window { window.addSubview(panel) }
+      let width = NotebookChrome.controlSize*6+8, height = NotebookChrome.controlSize, gap: CGFloat = 10
+      let safe = window.bounds.inset(by:window.safeAreaInsets).insetBy(dx:8,dy:8)
+      let x = min(max(selection.midX-width/2,safe.minX),safe.maxX-width)
+      let above = selection.minY-height-gap
+      let y = min(above >= safe.minY ? above : selection.maxY+gap,safe.maxY-height)
+      let frame = CGRect(x:x,y:y,width:width,height:height)
+      if panel.frame != frame { panel.frame = frame }
       let format = currentFormat(view)
       for (id,active) in [("native-text-bold",format.bold == true),("native-text-italic",format.italic == true),
         ("native-text-highlight",format.highlight != nil),("native-text-link",format.link != nil)] {
         guard let button = formatButtons[id] else { continue }
-        button.backgroundColor = active ? UIColor.secondarySystemFill : .clear
-        button.layer.cornerRadius = 6
+        var configuration = button.configuration
+        configuration?.background.backgroundColor = active ? UIColor(NotebookChrome.selectionSurface) : .clear
+        button.configuration = configuration
         button.accessibilityTraits = active ? [.button,.selected] : .button
       }
     }
-    func installToolbar(on view: Input) {
-      input = view
-      let toolbar = UIToolbar(frame:.init(x:0,y:0,width:400,height:44))
-      func button(_ symbol: String, _ title: String, _ id: String, action: @escaping () -> Void) -> UIBarButtonItem {
+    private func makeSelectionPanel() -> UIVisualEffectView {
+      let panel = UIVisualEffectView(effect:UIGlassEffect(style:.regular))
+      panel.accessibilityIdentifier = "native-text-selection-panel"
+      panel.cornerConfiguration = .capsule()
+      let stack = UIStackView(); stack.axis = .horizontal; stack.distribution = .fillEqually
+      stack.translatesAutoresizingMaskIntoConstraints = false
+      panel.contentView.addSubview(stack)
+      NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo:panel.contentView.leadingAnchor,constant:4),
+        stack.trailingAnchor.constraint(equalTo:panel.contentView.trailingAnchor,constant:-4),
+        stack.topAnchor.constraint(equalTo:panel.contentView.topAnchor),
+        stack.bottomAnchor.constraint(equalTo:panel.contentView.bottomAnchor)])
+      func button(_ symbol: String, _ title: String, _ id: String, action: (() -> Void)? = nil) -> UIButton {
         let button = UIButton(type:.system)
-        button.setImage(UIImage(systemName:symbol),for:.normal)
-        button.frame = .init(x:0,y:0,width:44,height:44)
+        var configuration = UIButton.Configuration.plain()
+        configuration.image = UIImage(systemName:symbol)
+        configuration.preferredSymbolConfigurationForImage = .init(pointSize:NotebookChrome.iconSize,weight:.regular)
+        configuration.baseForegroundColor = .label
+        configuration.contentInsets = .zero
+        configuration.background.cornerRadius = 8
+        configuration.background.backgroundInsets = .init(top:6,leading:6,bottom:6,trailing:6)
+        button.configuration = configuration
+        button.tintColor = .label
         button.accessibilityLabel = title; button.accessibilityIdentifier = id
-        button.addAction(UIAction { _ in action() },for:.touchUpInside)
-        formatButtons[id] = button
-        return .init(customView:button)
+        if let action { button.addAction(UIAction { _ in action() },for:.touchUpInside) }
+        formatButtons[id] = button; stack.addArrangedSubview(button)
+        return button
       }
-      let font = UIButton(type:.system)
-      font.setImage(UIImage(systemName:"textformat"),for:.normal); font.frame = .init(x:0,y:0,width:44,height:44)
-      font.accessibilityLabel = "Шрифт"; font.accessibilityIdentifier = "native-text-font"
+      let font = button("textformat","Шрифт","native-text-font")
       font.showsMenuAsPrimaryAction = true
       font.menu = UIMenu(children:NotebookTextTypography.fonts.map { value in
         UIAction(title:value.title) { [weak self] _ in self?.apply { $0.fontName = value.name } }
       })
-      toolbar.items = [.init(customView:font),
-        button("bold","Жирный","native-text-bold") { [weak self] in
-          guard let self, let input else { return }; let enabled = currentFormat(input).bold != true; apply { $0.bold = enabled }
-        },
-        button("italic","Курсив","native-text-italic") { [weak self] in
-          guard let self, let input else { return }; let enabled = currentFormat(input).italic != true; apply { $0.italic = enabled }
-        },
-        button("highlighter","Выделить маркером","native-text-highlight") { [weak self] in
-          guard let self, let input else { return }; let color: SpatialInkColor? = currentFormat(input).highlight == nil ? .init(red:1,green:0.9,blue:0.35) : nil
-          apply { $0.highlight = color }
-        },
-        button("link","Веб-ссылка","native-text-link") { [weak self] in self?.editLink() },
-        .init(systemItem:.flexibleSpace),
-        button("checkmark","Закончить редактирование","native-text-done") { [weak self] in self?.finishEditing() }]
-      view.inputAccessoryView = toolbar
+      _ = button("bold","Жирный","native-text-bold") { [weak self] in
+        guard let self, let input else { return }; let enabled = currentFormat(input).bold != true; apply { $0.bold = enabled }
+      }
+      _ = button("italic","Курсив","native-text-italic") { [weak self] in
+        guard let self, let input else { return }; let enabled = currentFormat(input).italic != true; apply { $0.italic = enabled }
+      }
+      _ = button("highlighter","Выделить маркером","native-text-highlight") { [weak self] in
+        guard let self, let input else { return }
+        let color: SpatialInkColor? = currentFormat(input).highlight == nil ? .init(red:1,green:0.9,blue:0.35) : nil
+        apply { $0.highlight = color }
+      }
+      _ = button("link","Веб-ссылка","native-text-link") { [weak self] in self?.editLink() }
+      let more = button("ellipsis","Действия с текстом","native-text-actions")
+      more.showsMenuAsPrimaryAction = true
+      more.menu = UIMenu(children:[
+        UIAction(title:"Вырезать",image:UIImage(systemName:"scissors")) { [weak self] _ in self?.input?.cut(nil) },
+        UIAction(title:"Копировать",image:UIImage(systemName:"doc.on.doc")) { [weak self] _ in self?.input?.copy(nil) },
+        UIAction(title:"Вставить",image:UIImage(systemName:"doc.on.clipboard")) { [weak self] _ in self?.input?.paste(nil) }
+      ])
+      selectionPanel = panel
+      return panel
     }
     private func editLink() {
       guard let view = input, var controller = view.window?.rootViewController else { return }
@@ -232,6 +291,7 @@ private struct NotebookInlineTextInput: UIViewRepresentable {
         // an action interrupts UIKit's transition and loses the editing session.
         view.becomeFirstResponder()
         formattingDialog = false
+        updateSelectionPanel()
       }
       let save = UIAlertAction(title:"Применить",style:.default) { [weak self, weak dialog] _ in
         guard let self, let link = dialog?.textFields?.first?.text, NativeTextFormat.isWebLink(link) else { resume(); return }
@@ -248,6 +308,7 @@ private struct NotebookInlineTextInput: UIViewRepresentable {
       if original != nil { dialog.addAction(.init(title:"Убрать ссылку",style:.destructive) { [weak self] _ in self?.apply { $0.link = nil }; resume() }) }
       dialog.addAction(.init(title:"Отмена",style:.cancel) { _ in resume() })
       formattingDialog = true
+      removeSelectionPanel()
       controller.present(dialog,animated:true)
     }
   }

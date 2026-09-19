@@ -16,28 +16,52 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.coordinate(withNormalizedOffset:.init(dx:0.55,dy:0.15)).tap()
     let editor = app.textViews["native-text-editor"]
     XCTAssertTrue(editor.waitForExistence(timeout:2))
+    XCTAssertFalse(app.buttons["native-text-done"].exists)
+    XCTAssertFalse(app.buttons["native-text-bold"].exists,"Formatting is not a keyboard accessory")
+    editor.typeText("Styled")
+    XCTAssertEqual(editor.value as? String,"Styled")
+    XCTAssertFalse(app.buttons["native-text-bold"].exists,"A caret is not a text selection")
+    let word = editor.coordinate(withNormalizedOffset:.init(dx:0.1,dy:0.5))
+    word.doubleTap()
+    let bold = app.buttons["native-text-bold"]
+    XCTAssertTrue(bold.waitForExistence(timeout:3))
+    XCTAssertLessThan(abs(bold.frame.midY-editor.frame.midY),140,"The menu belongs beside the selected text, not to the keyboard")
+    XCTAssertLessThanOrEqual(app.otherElements["native-text-selection-panel"].frame.width,280)
     for id in ["native-text-bold","native-text-italic","native-text-highlight"] {
-      XCTAssertTrue(app.buttons[id].waitForExistence(timeout:3)); app.buttons[id].tap()
+      let action = app.buttons[id]; XCTAssertTrue(action.waitForExistence(timeout:3)); action.tap(); XCTAssertTrue(action.isSelected)
     }
+    let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "formatting-at-text-selection"; proof.lifetime = .keepAlways; add(proof)
     app.buttons["native-text-link"].tap()
     let url = app.textFields["native-text-link-url"]
     XCTAssertTrue(url.waitForExistence(timeout:2)); url.typeText("https://example.com")
-    app.buttons["Применить"].tap()
-    editor.typeText("Styled text")
-    XCTAssertEqual(editor.value as? String,"Styled text")
-    let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "inline-native-formatting"; proof.lifetime = .keepAlways; add(proof)
-    app.buttons["native-text-done"].tap()
-    XCTAssertTrue(editor.waitForNonExistence(timeout:3))
-    let text = app.staticTexts["Styled text"]
+    // XCTest temporarily hides the software keyboard while injecting text.
+    // Resolve the alert action only after the keyboard restores its layout.
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout:3))
+    app.alerts.buttons["Применить"].tap()
+    XCTAssertTrue(url.waitForNonExistence(timeout:3))
+    let outside = app.coordinate(withNormalizedOffset:.init(dx:0.35,dy:0.60))
+    outside.tap()
+    XCTAssertTrue(editor.waitForNonExistence(timeout:3),"One canvas tap finishes and saves; it must not create another empty text")
+    let text = app.staticTexts["Styled"]
     XCTAssertTrue(text.waitForExistence(timeout:5)); let before = text.frame
     text.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.5,thenDragTo:text.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).withOffset(.init(dx:-60,dy:80)))
     XCTAssertGreaterThan(text.frame.midY,before.midY+40)
     XCTAssertEqual(paper.frame,originalPaper); XCTAssertEqual(paper.value as? String,ink)
     XCTAssertFalse(editor.exists,"Holding text moves it instead of creating another editor or curling paper")
-    text.doubleTap(); XCTAssertTrue(editor.waitForExistence(timeout:3))
-    XCTAssertEqual(editor.value as? String,"Styled text")
+    app.coordinate(withNormalizedOffset:.zero).withOffset(.init(dx:text.frame.midX,dy:text.frame.midY)).doubleTap()
+    XCTAssertTrue(editor.waitForExistence(timeout:3))
+    XCTAssertEqual(editor.value as? String,"Styled")
+    editor.coordinate(withNormalizedOffset:.init(dx:0.1,dy:0.5)).doubleTap()
+    XCTAssertTrue(bold.waitForExistence(timeout:3))
     for id in ["native-text-bold","native-text-italic","native-text-highlight","native-text-link"] { XCTAssertTrue(app.buttons[id].isSelected,id) }
-    app.buttons["native-text-done"].tap()
+    app.buttons["native-text-link"].tap()
+    XCTAssertTrue(url.waitForExistence(timeout:2))
+    XCTAssertEqual(url.value as? String,"https://example.com","Selected text retains its saved link")
+    XCTAssertTrue(app.buttons["Убрать ссылку"].exists)
+    app.buttons["Отмена"].tap()
+    XCTAssertTrue(bold.waitForExistence(timeout:3))
+    outside.tap()
+    XCTAssertTrue(editor.waitForNonExistence(timeout:3),"One outside tap also finishes with the selection menu open")
   }
 
   func testArrowSettingsUseTwoEndsAndIconLinePatterns() {
@@ -86,7 +110,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     editor.typeText("Inline 123\nSecond line")
     XCTAssertEqual(editor.value as? String,"Inline 123\nSecond line")
     let shot = XCTAttachment(screenshot:app.screenshot()); shot.name = "inline-text-\(onPage ? "page" : deepZoom ? "deep-board" : "board")"; shot.lifetime = .keepAlways; add(shot)
-    app.buttons["pen-controls-toggle"].tap()
+    XCTAssertFalse(app.buttons["native-text-done"].exists)
     app.coordinate(withNormalizedOffset:.init(dx:0.35,dy:0.60)).tap()
     XCTAssertTrue(editor.waitForNonExistence(timeout:5))
     let text = app.staticTexts["Inline 123\nSecond line"]
@@ -94,6 +118,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.coordinate(withNormalizedOffset:.zero).withOffset(.init(dx:text.frame.midX,dy:text.frame.midY)).doubleTap()
     XCTAssertTrue(editor.waitForExistence(timeout:5))
     XCTAssertEqual(editor.value as? String,"Inline 123\nSecond line","Reopening must read persisted source, not a modal draft")
+    // Reopening places the caret at the contact, not necessarily at the end.
+    editor.coordinate(withNormalizedOffset:.init(dx:0.95,dy:0.8)).tap()
     editor.typeText("!")
     app.coordinate(withNormalizedOffset:.init(dx:0.35,dy:0.60)).tap()
     XCTAssertTrue(app.staticTexts["Inline 123\nSecond line!"].waitForExistence(timeout:10))

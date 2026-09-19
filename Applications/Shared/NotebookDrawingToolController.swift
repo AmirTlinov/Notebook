@@ -253,6 +253,7 @@ extension NotebookAppModel {
   /// editor. No modal draft, placeholder string or content-type guessing.
   @discardableResult
   func beginToolText(at point: SpatialPoint, address: NotebookToolAddress, screenScale: Double) -> String? {
+    guard !consumeNativeTextCanvasTap() else { return nil }
     guard screenScale.isFinite, screenScale > 0 else { return nil }
     let fontSize = drawingToolSettings.textSize/screenScale
     guard (3...5760).contains(fontSize) else { return nil }

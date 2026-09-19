@@ -185,6 +185,7 @@ struct SpatialWorkspaceView: View {
         NotebookSelectionGesture(inputGate: model.inputGate, onPreview: model.updateSelectionPreview,
           onPoint: { start, end, held, tapCount in
           guard cameraGesture == nil, !settling, let cohort else { return }
+          if !held, model.consumeNativeTextCanvasTap(at:end) { return }
           if !held, model.drawingTool == .text {
             guard let fragment = NotebookAttentionProjection.textContact(at:end,model:model,presence:presence,
               cohort:cohort) else { return }
