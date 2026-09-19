@@ -16,6 +16,18 @@ struct NotebookChatStoreTests {
     .init(id: id, author: author, action: .send(threadID: "00000000-0000-0000-0000-000000000001", text: text, context: ""), createdAt: Date(timeIntervalSince1970: 100))
   }
 
+  @Test func approvalDetailsUseTheControlLaneAndDecisionsAreGenerationBound() {
+    let author = UUID(), first = UUID(), second = UUID()
+    let read = NotebookChatQuery.requestDetails(threadID: "thread", generation: first, requestID: "1")
+    #expect(read.isInteractiveControl)
+    func action(_ generation: UUID) -> NotebookChatAction {
+      .respond(threadID: "thread", request: .init(nativeID: .number(1), generation: generation,
+        method: "item/commandExecution/requestApproval", turnID: "turn", parameters: .object([:])), decision: .decline)
+    }
+    #expect(action(first).controlID(author: author) == action(first).controlID(author: author))
+    #expect(action(first).controlID(author: author) != action(second).controlID(author: author))
+  }
+
   @Test func endingUnknownObservationPreservesOutcomeAndFreesAdmissionWithoutReplay() throws {
     try fixture { store, author in
       let message = input(author)

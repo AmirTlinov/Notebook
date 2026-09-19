@@ -7,14 +7,21 @@ struct NotebookApp: App {
   @State private var launch: NotebookApplicationLaunch
 
   init() {
+    #if DEBUG
+      let debugLaunch = NotebookDebugLaunch(arguments: ProcessInfo.processInfo.arguments,
+        environment: ProcessInfo.processInfo.environment)
+      // Explicit fixtures own fresh disposable stores, not the acceptance pair.
+      // Keep the manifest guard for every ordinary launch of a private bundle.
+      if debugLaunch == .drawingFixture || debugLaunch == .workspaceLibraryFixture {
+        _launch = State(initialValue: debugLaunch.makeLaunch()); return
+      }
+    #endif
     if let isolated = NotebookAcceptanceConfiguration.requestedLaunch() {
       _launch = State(initialValue: isolated)
       return
     }
     #if DEBUG
-      let launch = NotebookDebugLaunch(arguments: ProcessInfo.processInfo.arguments,
-        environment: ProcessInfo.processInfo.environment)
-      _launch = State(initialValue: launch.makeLaunch())
+      _launch = State(initialValue: debugLaunch.makeLaunch())
     #else
       _launch = State(initialValue: NotebookApplicationLaunch())
     #endif

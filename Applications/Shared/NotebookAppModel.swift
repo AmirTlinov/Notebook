@@ -1452,10 +1452,15 @@ final class NotebookAppModel {
         startPreviewPublication()
       #endif
       #if os(iOS)
-        #if DEBUG && targetEnvironment(simulator)
+        #if DEBUG
+        let approvalFixture = try await NotebookApprovalFixture.make(persistence: persistence, author: actorID, directory: store.root)
+        #if targetEnvironment(simulator)
         let syncFixture = try await SimulatorChatFixture.make(persistence: persistence, author: actorID)
         let terminalFixture = try await SimulatorTerminalFixture.make(persistence: persistence, author: actorID, directory: store.root)
-        let fixtureChat = syncFixture ?? terminalFixture
+        let fixtureChat = approvalFixture ?? syncFixture ?? terminalFixture
+        #else
+        let fixtureChat = approvalFixture
+        #endif
         #else
         let fixtureChat: NotebookChatController? = nil
         #endif

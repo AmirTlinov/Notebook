@@ -310,7 +310,7 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
 }
 
 public enum NotebookChatQuery: Codable, Equatable, Sendable {
-  public var isInteractiveControl: Bool { switch self { case .job(let input): input.action.isInteractiveControl; case .stopWaiting: true; default: false } }
+  public var isInteractiveControl: Bool { switch self { case .job(let input): input.action.isInteractiveControl; case .stopWaiting, .requestDetails: true; default: false } }
   case account(CodexAccountQuery)
   case stopWaiting(UUID)
   case requestDetails(threadID: String, generation: UUID, requestID: String)
