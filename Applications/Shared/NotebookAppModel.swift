@@ -458,7 +458,7 @@ final class NotebookAppModel {
           }
           guard epoch == collaborationReadEpoch, state.header.cursor == workspaceHeader?.cursor else {
             externalReloadPending = true
-            if presencePhase == .settled, !inputIsActive { reloadExternalChanges() }
+            if permitsExternalScenePublication { reloadExternalChanges() }
             return
           }
           guard !inputGate.hasActivePencil else { externalReloadPending = true; return }
@@ -3503,17 +3503,24 @@ final class NotebookAppModel {
     return record.valueVersion
   }
 
+  // A camera contact owns its coordinates, not the old content cursor. The
+  // same admission as scene preparation still protects Pencil and controls.
+  private var permitsExternalScenePublication: Bool {
+    (!inputGate.isActive && presencePhase != .active)
+      || (presencePhase == .active && permitsScenePreparation)
+  }
+
   @discardableResult
   func reloadExternalChanges() -> Task<Void, Never>? {
     guard loadState == .ready, !isStopped else { return nil }
-    guard !inputGate.isActive, presencePhase != .active else { externalReloadPending = true; return nil }
+    guard permitsExternalScenePublication else { externalReloadPending = true; return nil }
     diskRefreshRequested = true
     if let diskRefreshTask { return diskRefreshTask }
     let task = Task { [weak self] in
       guard let self else { return }
       defer { diskRefreshTask = nil }
       while diskRefreshRequested, !Task.isCancelled, let presence {
-        guard !inputGate.isActive, presencePhase != .active else { externalReloadPending = true; return }
+        guard permitsExternalScenePublication else { externalReloadPending = true; return }
         diskRefreshRequested = false
         let epoch = collaborationReadEpoch
         let draftEpoch = documentDraftEpoch
@@ -4534,15 +4541,25 @@ final class NotebookAppModel {
   @discardableResult
   func acceptExternalScene(_ state: NotebookSceneState, observedEpoch: UInt64,
     observedPresence: SessionPresence, itemPins: [UUID: [UUID]]) -> Bool {
-    guard !inputGate.isActive, presencePhase != .active,
-      observedEpoch == collaborationReadEpoch, presence == observedPresence,
-      itemPins == scenePinnedItems else { return false }
+    guard permitsExternalScenePublication, observedEpoch == collaborationReadEpoch,
+      let current = presence, itemPins == scenePinnedItems else { return false }
+    let moving = presencePhase == .active
+    func withCurrentCamera(_ value: SessionPresence) -> SessionPresence {
+      .init(boardID: value.boardID, mode: value.mode, camera: current.camera, viewport: current.viewport,
+        focusedItemID: value.focusedItemID, openProgress: value.openProgress, documentPageIndex: value.documentPageIndex,
+        selectedItemID: value.selectedItemID, notebookPageID: value.notebookPageID)
+    }
+    guard moving ? (withCurrentCamera(observedPresence) == current && withCurrentCamera(state.presence) == current)
+      : current == observedPresence else { return false }
     acceptItemOwnerInvalidations(state, requested: itemPins)
-    acceptSceneState(state)
+    acceptSceneState(state, preservingPresence: moving ? current : nil)
+    // This refresh may advance content, but no content contact is admitted.
+    // Publish its finite window now, never an old camera from the SQL read.
+    if moving { scheduleScenePreparation(coverageOnly: true) }
     return true
   }
 
-  private func acceptSceneState(_ state: NotebookSceneState) {
+  private func acceptSceneState(_ state: NotebookSceneState, preservingPresence: SessionPresence? = nil) {
     workspaceHeader = state.header
     for (id, cursor) in completedDeletions where state.header.cursor >= cursor {
       pendingDeletions[id] = nil
@@ -4570,7 +4587,7 @@ final class NotebookAppModel {
     documentStates = state.states
     documentEditingSessions = state.drafts
     admitDocumentReading(state.reading)
-    presence = constrainedPaperPresence(state.presence)
+    presence = preservingPresence ?? constrainedPaperPresence(state.presence)
     retireGraphicCommands(through: state.header.cursor)
     alignWorkspaceSelection()
     if selectionSession.elements.contains(where: { reference in

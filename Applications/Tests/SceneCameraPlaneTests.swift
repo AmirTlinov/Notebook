@@ -410,7 +410,7 @@ final class SceneCameraPlaneTests: XCTestCase {
   }
 
   @MainActor
-  func testCameraChangesOneNativeTransformWithoutReplacingContentOrBounds() throws {
+  func testCameraUsesOneTransformWithinDensityBandsWithoutReplacingTheHost() throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene)
     window.frame = CGRect(x: 0, y: 0, width: 1194, height: 834)
@@ -420,12 +420,15 @@ final class SceneCameraPlaneTests: XCTestCase {
     defer { window.isHidden = true }
     let initial = SessionPresence(mode: .board, camera: .init(scale: 0.05), viewport: .init(x: 1194, y: 834))
     var builds = 0
+    var installedAnchor = initial
+    let world = initial.camera.screenToWorld(.init(x: 391, y: 284), viewport: initial.viewport)
     var handlerProjection: ScenePlaneProjection?
     func content(_ anchor: SessionPresence, _ projection: ScenePlaneProjection) -> AnyView {
-      builds += 1
+      builds += 1; installedAnchor = anchor
       handlerProjection = projection
+      let point = anchor.camera.worldToScreen(world, viewport: anchor.viewport)
       return AnyView(Color.red.frame(width: 20, height: 30)
-        .position(x: 391, y: 284).frame(width: anchor.viewport.x, height: anchor.viewport.y))
+        .position(x: point.x, y: point.y).frame(width: anchor.viewport.x, height: anchor.viewport.y))
     }
     controller.update(presence: initial, revision: 1, content: content)
     let view = controller.contentView
@@ -436,17 +439,20 @@ final class SceneCameraPlaneTests: XCTestCase {
         viewport: initial.viewport)
       controller.update(presence: current, revision: 1, isCameraActive: true, content: content)
       XCTAssertEqual(view.bounds, CGRect(x: 0, y: 0, width: 1194, height: 834))
-      let screen = view.convert(CGPoint(x: 391, y: 284), to: controller.view)
-      let expected = SceneCameraProjection(anchor: initial, current: current).project(.init(x: 391, y: 284))
+      let local = installedAnchor.camera.worldToScreen(world, viewport: installedAnchor.viewport)
+      let screen = view.convert(CGPoint(x: local.x, y: local.y), to: controller.view)
+      let expected = current.camera.worldToScreen(world, viewport: current.viewport)
       XCTAssertEqual(screen.x - controller.view.bounds.minX, expected.x, accuracy: 0.0001)
       XCTAssertEqual(screen.y - controller.view.bounds.minY, expected.y, accuracy: 0.0001)
       XCTAssertEqual(handlerProjection?.current, current)
     }
-    XCTAssertEqual(builds, 1)
-    XCTAssertEqual(controller.contentPublicationCount, 1)
+    XCTAssertGreaterThan(builds, 1, "34x held zoom cannot magnify the initial native raster indefinitely")
+    XCTAssertLessThan(builds, 40, "Only density boundaries, not 400 individual samples, rebuild the batches")
+    XCTAssertEqual(controller.contentPublicationCount, builds)
     XCTAssertEqual(controller.cameraProjectionCount, 401)
+    let before = builds
     controller.update(presence: initial, revision: 2, content: content)
-    XCTAssertEqual(builds, 2, "A content revision, not a camera sample, updates the root")
+    XCTAssertEqual(builds, before + 1, "A content revision still updates the root")
     XCTAssertTrue(view === controller.contentView)
   }
 

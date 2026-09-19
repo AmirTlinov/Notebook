@@ -1,12 +1,29 @@
 import NotebookCore
 import SwiftUI
 import UIKit
+import WebKit
 import XCTest
 @testable import Notebook
 
 @MainActor
 final class ZoomOutCoverageTests: XCTestCase {
   func testNewlyVisibleNotebookAppearsBeforeTheCameraContactEnds() async throws {
+    try await checkNewlyVisibleContent(nested: false)
+  }
+
+  func testInkedNestedBoardRevealsContentDuringContinuousPinch() async throws {
+    try await checkNewlyVisibleContent(nested: true)
+  }
+
+  func testCameraCoverageAdvancesPastAnExternalCommitWithoutLiftingFingers() async throws {
+    try await checkNewlyVisibleContent(nested: true, advancesSource: true)
+  }
+
+  func testMixedSceneRefinesPixelsWhileZoomRemainsHeld() async throws {
+    try await checkNewlyVisibleContent(nested: true, mixed: true)
+  }
+
+  private func checkNewlyVisibleContent(nested: Bool, advancesSource: Bool = false, mixed: Bool = false) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
@@ -17,21 +34,56 @@ final class ZoomOutCoverageTests: XCTestCase {
       if stopped { try FileManager.default.removeItem(at: root) }
     }
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    if nested {
+      let parent = try XCTUnwrap(model.presence?.boardID)
+      let child = try XCTUnwrap(model.createBoard(at: .zero))
+      func ink(_ surface: SurfaceID) {
+        _ = model.appendSpatialInk(tool: .pen, color: .black, spans: [.init(surface: surface,
+          samples: [0.0, 100.0].map { .init(point: .init(x: $0, y: $0), worldPoint: .init(x: $0, y: $0),
+            timeOffset: $0 / 100, width: 2, opacity: 1, force: 1, azimuth: 0, altitude: 1) })])
+      }
+      ink(.board(parent))
+      model.updatePresence(.init(boardID: child, mode: .board, camera: .init(),
+        viewport: .init(x: 834, y: 1194)), settled: true)
+      _ = model.createNotebook(at: .zero)
+      ink(.board(child))
+      let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+      await model.reloadExternalChanges()?.value
+    }
     let first = try XCTUnwrap(model.workspace?.selectedItemID)
     model.moveItem(first, to: .zero)
     let distant = try XCTUnwrap(model.createNotebook(at: .init(x: 2400, y: 0)))
     model.selectItem(first)
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
-    let boardID = try XCTUnwrap(model.workspace?.rootBoardID)
+    let boardID = try XCTUnwrap(model.presence?.boardID)
     let fixtureItems = try model.store.readItemHeaders(limit: 8).map(\.item)
-    XCTAssertEqual(fixtureItems.count, 2)
+    XCTAssertEqual(fixtureItems.count, nested ? 4 : 2)
     let before = try model.store.loadBoard(items: fixtureItems)
     var after = before
     let diagram = SpatialElement(id: "offscreen-diagram", surface: .board(boardID), kind: .web,
       frame: .init(x: 0, y: 0, width: 400, height: 300), worldOrigin: .init(x: 1700, y: 800),
       source: "A blue circle to reveal while zooming out", html: "<svg viewBox='0 0 400 300'><rect width='400' height='300' fill='white'/><circle cx='200' cy='150' r='100' fill='#156dd9'/></svg>",
-      css: "html,body,svg{margin:0;width:100%;height:100%}", stamp: .init(counter: 0, actor: model.actorID))
+      css: "", stamp: .init(counter: 0, actor: model.actorID))
     XCTAssertTrue(after.upsertElement(diagram, in: boardID, expected: nil, actor: model.actorID))
+    if mixed {
+      for i in 0..<3 {
+        let program = SpatialElement(id: "program-\(i)", surface: .board(boardID), kind: .web,
+          frame: .init(x: 0, y: 0, width: 350, height: 180), worldOrigin: .init(x: 1500 + Double(i % 2)*420, y: 100 + Double(i/2)*250),
+          source: "Interactive program", html: "<button onclick='this.textContent=Number(this.textContent)+1'>1</button><input value='Input stays live'>",
+          css: "body{background:white;font:24px sans-serif}button,input{font:inherit}", stamp: .init(counter: 0, actor: model.actorID))
+        XCTAssertTrue(after.upsertElement(program, in: boardID, expected: nil, actor: model.actorID))
+      }
+      for i in 0..<2 {
+        let label = SpatialElement(id: "label-\(i)", surface: .board(boardID), kind: .nativeText,
+          frame: .init(x: 0, y: 0, width: 900, height: 80), worldOrigin: .init(x: 1500, y: 30 + Double(i)*650),
+          source: "Чёткий текст и тонкие линии · \(i)", textStyle: .init(fontSize: 28), stamp: .init(counter: 0, actor: model.actorID))
+        XCTAssertTrue(after.upsertElement(label, in: boardID, expected: nil, actor: model.actorID))
+      }
+      let svg = SpatialElement(id: "thin-lines", surface: .board(boardID), kind: .web,
+        frame: .init(x: 0, y: 0, width: 400, height: 250), worldOrigin: .init(x: 2120, y: 800),
+        source: "Vector line detail", html: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 250'><rect width='400' height='250' fill='white'/><path d='M20 210L130 40L220 180L380 30' fill='none' stroke='#123' stroke-width='1.5'/><text x='20' y='235' font-size='20'>SVG thin lines</text></svg>", stamp: .init(counter: 0, actor: model.actorID))
+      XCTAssertTrue(after.upsertElement(svg, in: boardID, expected: nil, actor: model.actorID))
+    }
     _ = try model.store.saveBoardEdits(before: before, after: after)
     await model.reloadExternalChanges()?.value
     let viewport = SpatialPoint(x: 834, y: 1194)
@@ -39,7 +91,8 @@ final class ZoomOutCoverageTests: XCTestCase {
       model.updatePresence(.init(boardID: boardID, mode: .board,
         camera: .init(center: center, scale: scale), viewport: viewport), settled: settled)
     }
-    show(center: .zero, scale: 0.8, settled: true)
+    let initialScale = nested ? 3.2 : 0.8
+    show(center: .zero, scale: initialScale, settled: true)
     window.frame = .init(x: 0, y: 0, width: viewport.x, height: viewport.y)
     host.rootView = AnyView(SpatialWorkspaceView().environment(model).environment(\.displayScale, 2).ignoresSafeArea())
     window.rootViewController = host; window.makeKeyAndVisible()
@@ -47,36 +100,56 @@ final class ZoomOutCoverageTests: XCTestCase {
     while (model.compositionTiles.published == nil || model.scenePreparationPending || model.compositionTiles.isPreparing),
       ContinuousClock.now < initialDeadline { try await Task.sleep(for: .milliseconds(20)) }
     let initial = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "Initial notebook")
+    if nested {
+      XCTAssertEqual(initial.plan.inkBoardIDs, [boardID], "Explicit Back does not reserve invisible parent ink")
+      XCTAssertTrue(initial.plan.meetsRequiredDensity)
+    }
     XCTAssertFalse(initial.plan.allowsLive(.item(distant), in: .board(boardID)))
     XCTAssertFalse(initial.plan.allowsLive(.element(diagram.id), in: .board(boardID)))
+    if advancesSource {
+      let before = try model.store.loadBoard(items: fixtureItems)
+      var changed = before
+      let extra = SpatialElement(id: "new-peer-label", surface: .board(boardID), kind: .nativeText,
+        frame: .init(x: 0, y: 0, width: 200, height: 50), worldOrigin: .init(x: 5000, y: 5000),
+        source: "Peer content outside this viewport", stamp: .init(counter: 0, actor: model.actorID))
+      XCTAssertTrue(changed.upsertElement(extra, in: boardID, expected: nil, actor: model.actorID))
+      _ = try model.store.saveBoardEdits(before: before, after: changed)
+      // Deliberately leave the displayed cut behind a new durable source. The
+      // next camera window must advance safely, not wait for a fingers-up event.
+    }
     let originalInk = model.spatialInk
     let contact = UUID()
     model.inputGate.beginContact(source: contact)
     defer { model.inputGate.endContact(source: contact) }
     let start = ContinuousClock.now
     var firstShown: Duration?
+    var firstVisible: Duration?
     let address = SceneSourceAddress(plane: .board(boardID), elementID: diagram.id)
     // Keep taking real camera samples. Holding the final view without lifting
     // is not enough: coverage must make progress while samples keep arriving.
     for step in 0..<150 {
       let progress = min(1, Double(step) / 45)
-      let scale = exp(log(0.8) + (log(0.2) - log(0.8)) * progress)
+      let scale = exp(log(initialScale) + (log(0.2) - log(initialScale)) * progress)
       let center = WorldPoint(x: 1100 * progress + (step > 45 ? sin(Double(step) / 8) * 20 : 0), y: 0)
       show(center: center, scale: scale, settled: false)
+      if firstVisible == nil, let current = model.presence {
+        let visible = SceneSourceCapture.visibleRect(source: agentElementSnapshotSource(diagram),
+          origin: diagram.worldOrigin ?? .zero, presence: current)
+        if !visible.isNull && !visible.isEmpty { firstVisible = start.duration(to: .now) }
+      }
       try await Task.sleep(for: .milliseconds(16))
       XCTAssertEqual(model.presence?.camera, .init(center: center, scale: scale))
       let resources = SceneRenderResources.shared
       XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, resources.byteLimit)
-      XCTAssertLessThanOrEqual(resources.pendingWebRequestCount, 1,
+      XCTAssertLessThanOrEqual(resources.pendingWebRequestCount, mixed ? 7 : nested ? 2 : 1,
         "Camera samples replace the next address instead of accumulating WebKit work")
       if let cohort = model.compositionTiles.published,
-        cohort.plan.allowsLive(.element(diagram.id), in: .board(boardID)),
         cohort.nativeInk.owners[.cover(distant)]?.canvas.isDescendant(of: host.view) == true,
         cohort.hasInstalledPixels(for: address),
         firstShown == nil { firstShown = start.duration(to: ContinuousClock.now) }
     }
     let shown = model.compositionTiles.published
-    let diagnostic = "firstShown=\(String(describing: firstShown)); active=\(model.inputIsActive); phase=\(model.presencePhase); scenePending=\(model.scenePreparationPending); preparing=\(model.compositionTiles.isPreparing); failure=\(model.compositionTiles.failure ?? "none"); refusals=\(model.compositionTiles.budgetFailures); diagramLive=\(shown?.plan.allowsLive(.element(diagram.id), in: .board(boardID)) == true); diagramPixels=\(shown?.hasInstalledPixels(for: address) == true); coverMounted=\(shown?.nativeInk.owners[.cover(distant)]?.canvas.isDescendant(of: host.view) == true); rasterViews=\(rasterViews(in: host.view).count); receipts=\(String(describing: shown?.sourceReceipts[address])); items=\(shown?.frame.workset(boardID: boardID).items.map(\.id) ?? [])"
+    let diagnostic = "firstVisible=\(String(describing: firstVisible)); firstShown=\(String(describing: firstShown)); active=\(model.inputIsActive); phase=\(model.presencePhase); scenePending=\(model.scenePreparationPending); preparing=\(model.compositionTiles.isPreparing); failure=\(model.compositionTiles.failure ?? "none"); refusals=\(model.compositionTiles.budgetFailures); diagramLive=\(shown?.plan.allowsLive(.element(diagram.id), in: .board(boardID)) == true); diagramPixels=\(shown?.hasInstalledPixels(for: address) == true); coverMounted=\(shown?.nativeInk.owners[.cover(distant)]?.canvas.isDescendant(of: host.view) == true); rasterViews=\(rasterViews(in: host.view).count); receipts=\(String(describing: shown?.sourceReceipts[address])); items=\(shown?.frame.workset(boardID: boardID).items.map(\.id) ?? [])"
     let report = XCTAttachment(string: diagnostic); report.name = "Zoom-out coverage while camera remains active"; report.lifetime = .keepAlways; add(report)
     XCTAssertNotNil(firstShown, diagnostic)
     XCTAssertTrue(model.inputIsActive)
@@ -85,6 +158,32 @@ final class ZoomOutCoverageTests: XCTestCase {
     XCTAssertEqual(try model.store.readSpatialElement(boardID: boardID, elementID: diagram.id)?.html, diagram.html)
     let image = UIGraphicsImageRenderer(size: host.view.bounds.size).image { _ in host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) }
     let pixels = XCTAttachment(image: image); pixels.name = "New notebook and diagram during zoom-out"; pixels.lifetime = .keepAlways; add(pixels)
+    if mixed {
+      for step in 0..<90 {
+        let progress = min(1, Double(step)/45)
+        show(center: .init(x: 2000, y: 530), scale: exp(log(0.2) + (log(0.752)-log(0.2))*progress), settled: false)
+        try await Task.sleep(for: .milliseconds(16))
+      }
+      let deadline = ContinuousClock.now + .seconds(5)
+      while model.compositionTiles.isPreparing, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+      let detailed = try XCTUnwrap(model.compositionTiles.published)
+      XCTAssertTrue(model.inputIsActive)
+      XCTAssertEqual(model.presencePhase, .active)
+      XCTAssertTrue(detailed.plan.meetsRequiredDensity, "A small mixed scene cannot settle for blurry overview tiles")
+      for id in [diagram.id, "thin-lines"] {
+        let receipt = try XCTUnwrap(detailed.sourceReceipts[.init(plane: .board(boardID), elementID: id)])
+        XCTAssertTrue(receipt.hasCurrentPixels)
+        XCTAssertGreaterThanOrEqual(receipt.installedScale * sqrt(2.0), 0.752 * 2)
+      }
+      XCTAssertNil(model.compositionTiles.failure)
+      let note = XCTAttachment(string: "tiles=\(detailed.plan.tiles.map { "\($0.pixelSize)/\($0.tile.worldSize)" }); refusals=\(model.compositionTiles.budgetFailures); heldBytes=\(SceneRenderResources.shared.rasterAdmission.heldBytes)")
+      note.name = "Mixed scene held-zoom density"; note.lifetime = .keepAlways; add(note)
+      let image = UIGraphicsImageRenderer(size: host.view.bounds.size).image { _ in
+        host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+      }
+      let screenshot = XCTAttachment(image: image)
+      screenshot.name = "Mixed scene during held zoom"; screenshot.lifetime = .keepAlways; add(screenshot)
+    }
     model.inputGate.endContact(source: contact)
     model.updatePresence(try XCTUnwrap(model.presence), settled: true)
   }

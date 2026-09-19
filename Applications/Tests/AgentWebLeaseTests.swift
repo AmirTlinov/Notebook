@@ -8,7 +8,56 @@ import XCTest
 
 final class AgentWebLeaseTests: XCTestCase {
   @MainActor
-  func testSourceMipmapPyramidPreservesOriginalPixelsAndSharesItsChargedLifetime() throws {
+  func testCancelledCaptureCannotPublishAfterMipmapYield() async throws {
+    let resources = SceneRenderResources()
+    let lease = try await resources.acquireWebSurface(priority: .visible)
+    var ready: [Bool] = []
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources,
+      onRenderReady: { ready.append($0) }, onState: { _ in false })
+    let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
+    defer { coordinator.invalidate(); lease.release() }
+    let source = element(source: "cancelled submitted capture")
+    coordinator.load(source, in: web)
+    let token = try XCTUnwrap(coordinator.loadToken)
+    let reservation = try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 32, height: 32)))
+    let capture = coordinator.holdSubmittedSnapshot(reservation)
+    defer { capture.finish() }
+    let cancellation = Task { @MainActor in capture.cancel() }
+    await coordinator.completeSnapshot(raster(), error: nil, token: token, element: source,
+      reservation: reservation, permitsPublication: { !capture.isCancelled })
+    await cancellation.value
+    XCTAssertEqual(coordinator.loadToken, token, "Cancellation also fences an otherwise unchanged source")
+    XCTAssertNil(resources.image(for: source))
+    XCTAssertFalse(ready.contains(true), "Loading may report false readiness; cancelled pixels cannot report true")
+    XCTAssertTrue(reservation.isReleased)
+  }
+
+  @MainActor
+  func testLargeMipmapWorkYieldsToInputAndRechecksItsPublicationFence() async throws {
+    let size = CGSize(width: 2048, height: 1536)
+    let format = UIGraphicsImageRendererFormat(); format.scale = 1
+    let image = UIGraphicsImageRenderer(size: size, format: format).image { context in
+      UIColor.red.setFill(); context.fill(CGRect(origin: .zero, size: size))
+    }
+    let resources = SceneRenderResources(byteLimit: 64 * 1024 * 1024, profile: .headless)
+    let source = element(source: "large captured frame", width: size.width, height: size.height)
+    let reservation = try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: size))
+    let charged = resources.reservedBytes, started = ContinuousClock.now
+    var current = true, observedCharge = 0
+    let input = Task { @MainActor in current = false; observedCharge = resources.reservedBytes }
+    let raster = await resources.storeWebSnapshot(image, for: .agent(source), reservation: reservation,
+      permitsPublication: { current })
+    await input.value
+    XCTAssertNil(raster, "Input/source replacement during pixel work revokes publication")
+    XCTAssertEqual(observedCharge, charged, "Submitted pixels remain charged while the UI handles input")
+    XCTAssertEqual(resources.rasterCount, 0)
+    reservation.release(); XCTAssertEqual(resources.reservedBytes, 0)
+    let report = XCTAttachment(string: "2048x1536; pixelWorkAndFence=\(started.duration(to: .now)); charged=\(charged); mainInputRan=true; stalePublication=false")
+    report.name = "off-main-mipmap-fence"; report.lifetime = .keepAlways; add(report)
+  }
+
+  @MainActor
+  func testSourceMipmapPyramidPreservesOriginalPixelsAndSharesItsChargedLifetime() async throws {
     let size = CGSize(width: 301, height: 173)
     let format = UIGraphicsImageRendererFormat(); format.scale = 1
     let image = UIGraphicsImageRenderer(size: size, format: format).image { context in
@@ -19,7 +68,8 @@ final class AgentWebLeaseTests: XCTestCase {
     let source = element(source: "asymmetric pixels", width: size.width, height: size.height)
     let reservation = try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: size))
     let reserved = reservation.byteCount, started = ContinuousClock.now
-    let raster = try XCTUnwrap(resources.storeWebSnapshot(image, for: .agent(source), reservation: reservation))
+    let stored = await resources.storeWebSnapshot(image, for: .agent(source), reservation: reservation)
+    let raster = try XCTUnwrap(stored)
     let elapsed = started.duration(to: .now), original = try XCTUnwrap(image.cgImage)
     XCTAssertTrue(raster.image === image, "Export and composition retain the original exact pixels")
     XCTAssertTrue(raster.hasMipmaps); XCTAssertEqual(raster.pixelScale, 1)
@@ -351,7 +401,7 @@ final class AgentWebLeaseTests: XCTestCase {
     let token = try XCTUnwrap(coordinator.loadToken)
     let reservation = try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 32, height: 32)))
     coordinator.invalidate()
-    coordinator.completeSnapshot(raster(), error: nil, token: token, element: source, reservation: reservation)
+    await coordinator.completeSnapshot(raster(), error: nil, token: token, element: source, reservation: reservation)
     coordinator.receive(["token": token, "kind": "state", "value": 42])
     coordinator.receive(["token": token, "kind": "diagnostic", "category": "javascript_error", "message": "too late"])
     await Task.yield()
@@ -376,13 +426,13 @@ final class AgentWebLeaseTests: XCTestCase {
     let previousToken = try XCTUnwrap(coordinator.loadToken)
     let previousReservation = try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 32, height: 32)))
     coordinator.load(current, in: web)
-    coordinator.completeSnapshot(raster(), error: nil, token: previousToken, element: previous,
+    await coordinator.completeSnapshot(raster(), error: nil, token: previousToken, element: previous,
       reservation: previousReservation)
     XCTAssertNil(resources.image(for: previous))
     XCTAssertNil(resources.image(for: current))
 
     let currentReservation = try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 32, height: 32)))
-    coordinator.completeSnapshot(raster(), error: nil, token: try XCTUnwrap(coordinator.loadToken),
+    await coordinator.completeSnapshot(raster(), error: nil, token: try XCTUnwrap(coordinator.loadToken),
       element: current, reservation: currentReservation)
     XCTAssertNotNil(resources.image(for: current))
     XCTAssertNil(resources.image(for: previous))
@@ -420,7 +470,7 @@ final class AgentWebLeaseTests: XCTestCase {
     coordinator.load(moved, in: web)
     XCTAssertEqual(coordinator.loadToken, token)
     let reservation = try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 32, height: 32)))
-    coordinator.completeSnapshot(raster(), error: nil, token: token, element: original, reservation: reservation)
+    await coordinator.completeSnapshot(raster(), error: nil, token: token, element: original, reservation: reservation)
     let retained = try XCTUnwrap(resources.retainRaster(for: moved))
     defer { retained.release() }
     XCTAssertNotNil(retained.image(for: .agent(original)))
@@ -442,11 +492,11 @@ final class AgentWebLeaseTests: XCTestCase {
     let token = try XCTUnwrap(coordinator.loadToken)
     let failure = NSError(domain: "NotebookSnapshotTest", code: 1,
       userInfo: [NSLocalizedDescriptionKey: "Snapshot failed"])
-    coordinator.completeSnapshot(nil, error: failure, token: token, element: source,
+    await coordinator.completeSnapshot(nil, error: failure, token: token, element: source,
       reservation: try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 32, height: 32))))
     XCTAssertEqual(resources.diagnostics(for: [source]).map(\.kind), ["snapshot_error"])
     coordinator.invalidate()
-    coordinator.completeSnapshot(nil, error: NSError(domain: "late", code: 2), token: token, element: source,
+    await coordinator.completeSnapshot(nil, error: NSError(domain: "late", code: 2), token: token, element: source,
       reservation: try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 32, height: 32))))
     XCTAssertEqual(resources.diagnostics(for: [source]).count, 1)
   }

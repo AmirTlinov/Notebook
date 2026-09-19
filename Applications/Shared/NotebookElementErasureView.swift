@@ -14,7 +14,10 @@ enum NotebookElementErasurePaint {
 extension View {
   @ViewBuilder func erased(by erasures: [InkElementErasure], appearance: NotebookElementAppearance? = nil) -> some View {
     if erasures.isEmpty { self }
-    else if appearance?.state == .erased { hidden().allowsHitTesting(false) }
+    else if appearance?.state == .erased || erasures.contains(where: { $0.target.wholeElement }) {
+      // Retire WebKit and its input/capture leases, not a hidden running program.
+      Color.clear.allowsHitTesting(false).accessibilityHidden(true)
+    }
     else {
       mask {
         Canvas { context, size in

@@ -73,6 +73,10 @@ struct NotebookElementErasing {
       if entries[address]?.value == nil { entries.removeValue(forKey:address)?.task.cancel() }
       return nil
     }
+    if erasures.contains(where: { $0.target.wholeElement }) {
+      entries.removeValue(forKey: address)?.task.cancel()
+      return .init(graphic: nil, layout: nil, size: size, erasures: erasures)
+    }
     let input = Input(graphic:graphic,layout:layout,size:size,erasures:erasures)
     sequence &+= 1
     if let entry = entries[address], entry.input == input { return entry.value }
@@ -151,7 +155,7 @@ extension NotebookAppModel {
       if element.graphic != nil {
         guard let layout = graph.resolve(element.id).layout else { return nil }; frame = layout.frame
       } else { frame = element.frame }
-      return .init(elementID: element.id, frame: frame)
+      return .init(elementID: element.id, frame: frame, wholeElement: element.kind == .web)
     }
   }
 
@@ -162,7 +166,7 @@ extension NotebookAppModel {
     for element in board?.elements ?? [] where element.graphic == nil {
       result[element.surface, default: []].append(.init(elementID: element.id,
         frame: .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height),
-        worldOrigin: element.worldOrigin))
+        worldOrigin: element.worldOrigin, wholeElement: element.kind == .web))
     }
     for node in graph.nodes.values {
       guard let layout = graph.resolve(node.id).layout else { continue }

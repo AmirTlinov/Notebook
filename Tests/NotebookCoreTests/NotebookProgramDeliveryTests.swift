@@ -157,7 +157,7 @@ struct NotebookProgramDeliveryTests {
     try f.publish(hash)
     let change = try #require(f.a.changeJournal(after: f.b.peerCursor(peerID: f.peerID, direction: .incoming)).last)
     let raw = try f.a.readBlobChunk(hash: change.manifestHash, offset: 0, maxBytes: change.byteCount)
-    let value = try JSONDecoder().decode(JSONValue.self, from: raw).setting("format", .number(8))
+    let value = try JSONDecoder().decode(JSONValue.self, from: raw).setting("format", .number(9))
     let bytes = try NotebookStore.storageEncoder.encode(value), forgedHash = NotebookProgramPackage.hash(bytes)
     try f.a.stageBlob(data: bytes, expectedHash: forgedHash)
     let forged = NotebookDurableChange(sequence: change.sequence, transactionID: change.transactionID, manifestHash: forgedHash, byteCount: bytes.count)

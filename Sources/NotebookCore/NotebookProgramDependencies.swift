@@ -82,7 +82,7 @@ extension NotebookStore {
       try db.run("INSERT INTO manifest_program_discovery VALUES(?)", [.text(manifest)])
     }
     if try !db.rows("SELECT 1 FROM manifest_program_roots WHERE manifest_hash=? LIMIT 1", [.text(manifest)]).isEmpty {
-      guard try validatedManifest(change).format >= 9 else { throw NotebookStorageError.invalidTransaction("program package requires wire format 9") }
+      guard try validatedManifest(change).format >= 10 else { throw NotebookStorageError.invalidTransaction("program package requires wire format 10") }
     }
     // Recheck even expanded roots: cached discovery is not proof of presence.
     let missingRoots = try db.rows("SELECT r.hash FROM manifest_program_roots r LEFT JOIN blobs b ON b.hash=r.hash WHERE r.manifest_hash=? AND b.hash IS NULL ORDER BY r.hash LIMIT ?", [.text(manifest), .integer(Int64(limit))]).compactMap { $0[0].text }

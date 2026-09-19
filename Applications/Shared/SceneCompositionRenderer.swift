@@ -19,24 +19,33 @@ final class SceneCompositionRenderer {
   private var fallbackSources: [SceneSourceAddress: RasterLease]
   private var sourceFailures: [SceneSourceAddress: SceneSourceFailure]
   private var currentTile: SceneCompositionTileKey?
-  private var sourcePresentation: (plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double)?
+  var onSourceDemand: (@MainActor () -> Void)?
+  private var paintedTiles = Set<SceneCompositionTileKey>()
+  private var carriedReceipts: [SceneSourceAddress: SceneSourceReceipt] = [:]
+  private var sourcePresentation: (plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double, refinesDetails: Bool)?
   private(set) var sourceDemands: [SceneSourceAddress: SceneSourceDemand] = [:]
   private(set) var sourceRasters: [SceneSourceAddress: RasterLease] = [:]
   private(set) var tileSources: [SceneCompositionTileKey: Set<SceneSourceAddress>] = [:]
 
-  func useSourcePresentation(plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double) {
-    sourcePresentation = (plan, frame, displayScale)
+  func useSourcePresentation(plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double, refinesDetails: Bool = true) {
+    sourcePresentation = (plan, frame, displayScale, refinesDetails)
   }
 
   private func demand(for element: SpatialElement, plane: SceneCompositionPlane, density: Double) -> SceneSourceDemand {
     let source = agentElementSnapshotSource(element)
     guard let window = sourcePresentation,
       let view = window.plan.presentations[.board(plane.boardID)] else { return .init(source: source, minimumScale: density) }
+    let address = SceneSourceAddress(plane: plane, elementID: source.id)
+    let previous = fallbackSources[address].flatMap { raster in
+      raster.source.agentElement.map { SceneRasterSource.agent($0) == .agent(source) } == true ? raster : nil
+    }
+    let density: Double = if !window.refinesDetails, let previous,
+      (0.6...sqrt(2.0)).contains(density / previous.pixelScale) { previous.pixelScale }
+      else { pow(2, ceil(log2(density) * 2) / 2) }
     var region = SceneSourceCapture.region(element: element, plane: plane,
       presence: view, frame: window.frame, density: density)
     let origin = SceneSourceCapture.origin(element: element, plane: plane, frame: window.frame)
-    let address = SceneSourceAddress(plane: plane, elementID: source.id)
-    if region != nil, let previous = fallbackSources[address], previous.source.agentElement.map({ SceneRasterSource.agent($0) == .agent(source) }) == true,
+    if region != nil, let previous,
       previous.pixelScale + 0.000_001 >= density, let old = previous.source.captureRegion {
       let visible = SceneSourceCapture.visibleRect(source: source, origin: origin, presence: view)
       if CGRect(x: old.x, y: old.y, width: old.width, height: old.height).contains(visible) { region = old }
@@ -47,7 +56,7 @@ final class SceneCompositionRenderer {
   func sourcesOutsideCoverage(of previous: SceneCompositionCohort?) async throws -> Set<SceneSourceAddress> {
     guard let previous, let window = sourcePresentation else { return [] }
     var changed = Set<SceneSourceAddress>()
-    for (address, receipt) in previous.sourceReceipts where receipt.demand.region != nil {
+    for (address, receipt) in previous.sourceReceipts {
       guard let element = try await source.element(address.elementID, boardID: address.plane.boardID) else { continue }
       let scale = (window.frame.pixelScales[address.plane.boardID] ?? 1) * window.displayScale
       if demand(for: element, plane: address.plane, density: scale) != receipt.demand { changed.insert(address) }
@@ -58,14 +67,48 @@ final class SceneCompositionRenderer {
   /// Carried tiles keep the source receipts and owned fallbacks that produced
   /// them. Only fragments actually redrawn in this pass replace those values.
   func carrySources(from previous: SceneCompositionCohort?, tiles: [SceneCompositionTileKey: RasterLease]) {
-    guard let previous else { return }
-    for key in tiles.keys {
-      let oldKey = key.atRevision(previous.plan.revision)
-      guard let dependencies = previous.tileSources[oldKey] else { continue }
+    for (key, raster) in tiles {
+      let oldKey = previous.map { key.atRevision($0.plan.revision) }
+      let fromPrevious = oldKey.flatMap { previous?.rasters[$0]?.entryID } == raster.entryID
+      let receipts = fromPrevious ? previous?.sourceReceipts ?? [:] : resources.compositionReceipts(for: raster) ?? [:]
+      let dependencies = fromPrevious ? oldKey.flatMap { previous?.tileSources[$0] } ?? [] : Set(receipts.keys)
       tileSources[key] = dependencies
       for address in dependencies {
-        if let receipt = previous.sourceReceipts[address] { sourceDemands[address] = receipt.demand }
-        if sourceRasters[address] == nil { sourceRasters[address] = previous.sourceRasters[address]?.retainedCopy() }
+        if let receipt = receipts[address] {
+          sourceDemands[address] = receipt.demand; carriedReceipts[address] = receipt
+        }
+        if sourceRasters[address] == nil, fromPrevious {
+          sourceRasters[address] = previous?.sourceRasters[address]?.retainedCopy()
+        }
+      }
+    }
+  }
+
+  func cachePreparedTiles(_ rasters: [SceneCompositionTileKey: RasterLease]) {
+    let receipts = receipts()
+    for key in paintedTiles {
+      guard let raster = rasters[key] else { continue }
+      let dependencies = tileSources[key] ?? []
+      resources.cacheComposition(raster, receipts: receipts.filter { dependencies.contains($0.key) }, sources: sourceRasters)
+    }
+  }
+
+  /// Start the addressed, bounded workset before native preparation or a
+  /// placeholder pass. Deeper painter discoveries join the same scheduler.
+  func discoverSources(plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double) async throws {
+    for plane in plan.presentations.keys {
+      let workset = plane.coverID.flatMap { frame.covers[$0] } ?? frame.worksets[plane.boardID]
+      let erased = try await source.wholeErasedElements(workset?.elements ?? [])
+      for element in workset?.elements ?? [] where element.kind != .nativeText && element.kind != .graphic {
+        if erased.contains(element.id) { continue }
+        let address = SceneSourceAddress(plane: plane, elementID: element.id)
+        let demand = demand(for: element, plane: plane,
+          density: (frame.pixelScales[plane.boardID] ?? 1) * displayScale)
+        sourceDemands[address] = demand
+        if sourceRasters[address] == nil {
+          sourceRasters[address] = resources.retainRaster(for: demand.rasterSource, minimumScale: demand.minimumScale)
+            ?? fallbackSources[address]?.retainedCopy()
+        }
       }
     }
   }
@@ -82,6 +125,9 @@ final class SceneCompositionRenderer {
   func receipts() -> [SceneSourceAddress: SceneSourceReceipt] {
     return Dictionary(uniqueKeysWithValues: sourceDemands.map { address, demand in
       let raster = sourceRasters[address]
+      if raster == nil, let carried = carriedReceipts[address], carried.demand == demand {
+        return (address, carried)
+      }
       let installed: AgentElement?
       installed = raster?.source.agentElement
       let ready = raster?.image(for: demand.rasterSource, minimumScale: demand.minimumScale) != nil
@@ -171,7 +217,9 @@ final class SceneCompositionRenderer {
         frame: frame, projection: cameraScale, range: key.range, canvas: canvas)
     }
     try await source.validate(); try checkPreparation()
-    return try await canvas.finishRaster(for: .composition(key))
+    let raster = try await canvas.finishRaster(for: .composition(key))
+    paintedTiles.insert(key)
+    return raster
   }
 
   private func paintBoard(presence: SessionPresence, frame: CGRect, visible: CGRect,
@@ -326,6 +374,7 @@ final class SceneCompositionRenderer {
     graphicLayout: NotebookGraphicLayout? = nil) async throws {
     try checkPreparation()
     let erasures = try await source.elementErasures(element)
+    guard !erasures.contains(where: { $0.target.wholeElement }) else { return }
     if let graphic = element.graphic {
       if graphic.showsGeometry {
         let size = graphicLayout?.frame ?? .init(x:0,y:0,width:element.frame.width,height:element.frame.height)
@@ -352,6 +401,7 @@ final class SceneCompositionRenderer {
       let address = SceneSourceAddress(plane: plane, elementID: element.id)
       let desired = sourcePresentation.map { ($0.frame.pixelScales[boardID] ?? 1) * $0.displayScale } ?? density
       let demand = demand(for: element, plane: plane, density: desired)
+      let discoversDemand = sourceDemands[address] != demand
       sourceDemands[address] = demand
       if let currentTile { tileSources[currentTile, default: []].insert(address) }
       // A painter pass consumes immutable, already admitted pixels. It never
@@ -364,8 +414,9 @@ final class SceneCompositionRenderer {
       let raster = sourceRasters[address]
         ?? resources.retainRaster(for: demand.rasterSource, minimumScale: demand.minimumScale)
         ?? fallback
+      if let raster { sourceRasters[address] = raster }
+      if discoversDemand { onSourceDemand?() }
       if let raster {
-        sourceRasters[address] = raster
         let destination: CGRect
         if let crop = raster.source.captureRegion {
           destination = CGRect(x: frame.minX + crop.x / source.frame.width * frame.width,

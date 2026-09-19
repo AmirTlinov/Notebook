@@ -17,7 +17,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     let crop = canvas.convert(fixture.canvas.bounds, from: fixture.canvas)
     XCTAssertTrue(canvas.bounds.contains(crop),
       "The native backing itself contains all 512 points; admission keeps its strict extent check")
-    XCTAssertEqual(canvas.bounds.width, 512)
+    XCTAssertEqual(canvas.bounds.width, 1024)
     let before = try Self.inkPixelCount(fixture.canvas)
     let first = CGPoint(x: 0, y: 40)
     fixture.contact(tool: .pen, from: first, to: .init(x: 24, y: 80))
@@ -73,13 +73,13 @@ final class SpatialInkHandoffTests: XCTestCase {
 
   func testFullPortraitRetinaBudgetReadiesNonemptyParentAndChildWithoutLoweringInkDensity() async throws {
     let fixture = try await Fixture.make(viewport: .init(x: 834, y: 1194), displayScale: 2,
-      requiresStaticRaster: true, includesCoverInk: true)
+      requiresStaticRaster: true, includesCoverInk: true, includesVisibleParent: true)
     addTeardownBlock { await fixture.close() }
     for id in [fixture.parentID, fixture.childID] {
       let canvas = try XCTUnwrap(fixture.cohort.nativeInk.owners[.board(id)]?.canvas)
       XCTAssertTrue(canvas.isStableFramePresented)
-      XCTAssertEqual(canvas.bounds.size, CGSize(width: 834, height: 1194),
-        "Portrait backing covers the current screen and portal, not a hypothetical landscape rotation")
+      XCTAssertEqual(canvas.bounds.size, CGSize(width: 1024, height: 1280),
+        "Motion uses the same 4 by 5 Retina tile pools, including their previously unused edge pixels")
       XCTAssertEqual(canvas.drawableSize.width / canvas.bounds.width, 2, accuracy: 0.001)
       XCTAssertEqual(canvas.drawableSize.height / canvas.bounds.height, 2, accuracy: 0.001)
     }
@@ -99,7 +99,7 @@ final class SpatialInkHandoffTests: XCTestCase {
 
   func testOffscreenInkNeedsNoBackingAndReturnsAtFullDensityWhenProjectedIntoView() async throws {
     let viewport = SpatialPoint(x: 834, y: 1194)
-    let fixture = try await Fixture.make(viewport: viewport, displayScale: 2, inkY: 100_000)
+    let fixture = try await Fixture.make(viewport: viewport, displayScale: 2, inkY: 100_000, includesVisibleParent: true)
     addTeardownBlock { await fixture.close() }
     for id in [fixture.parentID, fixture.childID] {
       let canvas = try XCTUnwrap(fixture.cohort.nativeInk.owners[.board(id)]?.canvas)
@@ -271,7 +271,7 @@ final class SpatialInkHandoffTests: XCTestCase {
   }
 
   func testCancelledCandidateKeepsBothInstalledSourcesAndPhysicalOwners() async throws {
-    let fixture = try await Fixture.make(viewport: .init(x: 512, y: 512))
+    let fixture = try await Fixture.make(viewport: .init(x: 512, y: 512), includesVisibleParent: true)
     addTeardownBlock { await fixture.close() }
     let old = fixture.cohort
     let childCanvas = try XCTUnwrap(old.nativeInk.owners[.board(fixture.childID)]?.canvas)
@@ -476,7 +476,7 @@ final class SpatialInkHandoffTests: XCTestCase {
   }
 
   private static func prepareAndRetireMountedScene() async throws -> RetiredScene {
-    let fixture = try await Fixture.make(viewport: .init(x: 512, y: 512), requiresStaticRaster: true)
+    let fixture = try await Fixture.make(viewport: .init(x: 512, y: 512), requiresStaticRaster: true, includesVisibleParent: true)
     try fixture.mountActive(fixture.childID)
     XCTAssertFalse(fixture.cohort.rasters.isEmpty, "The retirement fixture must own actual painted fragments")
     try fixture.mountActive(fixture.parentID)
@@ -488,7 +488,7 @@ final class SpatialInkHandoffTests: XCTestCase {
   }
 
   private func assertHandoff(viewport: SpatialPoint) async throws {
-    let fixture = try await Fixture.make(viewport: viewport)
+    let fixture = try await Fixture.make(viewport: viewport, includesVisibleParent: true)
     addTeardownBlock { await fixture.close() }
     let cohort = fixture.cohort
     let parent = try XCTUnwrap(cohort.nativeInk.owners[.board(fixture.parentID)]?.canvas)
@@ -577,7 +577,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     var activeCamera: SpatialCamera { cohort.plan.presentations[.board(currentID)]!.camera }
 
     static func make(viewport: SpatialPoint, displayScale: Double = 1, requiresStaticRaster: Bool = false,
-      includesCoverInk: Bool = false, inkY: Double = 0) async throws -> Fixture {
+      includesCoverInk: Bool = false, inkY: Double = 0, includesVisibleParent: Bool = false) async throws -> Fixture {
       let root = FileManager.default.temporaryDirectory.appendingPathComponent("ink-handoff-" + UUID().uuidString)
       let store = NotebookStore(root: root), actor = UUID()
       let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
@@ -586,6 +586,10 @@ final class SpatialInkHandoffTests: XCTestCase {
       _ = hierarchy.moveItem(workspace.selectedItemID, in: header.rootBoardID, to: .init(x: 100_000, y: 100_000), actor: actor)
       let child = try XCTUnwrap(workspace.createBoard(title: "Ink handoff", actor: actor))
       _ = hierarchy.createBoard(child.id, in: header.rootBoardID, near: .zero, actor: actor)
+      // Test two actually visible planes at portal entry. An opened child no
+      // longer allocates its invisible parent solely for a hypothetical exit.
+      _ = hierarchy.updatePortalCamera(BoardPortalProjection.portalCamera(from: .init(scale: 1), viewport: viewport),
+        for: child.id, actor: actor)
       if requiresStaticRaster {
         // More visible sources than native slots leaves a real painter fragment
         // pinned. Empty painter bands are correctly pruned by the product.
@@ -613,8 +617,10 @@ final class SpatialInkHandoffTests: XCTestCase {
       let current = try store.workspaceHeader()
       let source = SceneCompositionSource(store: store, revision: current.cursor, workspaceID: current.workspaceID)
       let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
-      let presence = SessionPresence(boardID: child.id, mode: .board, camera: .init(scale: 1), viewport: viewport)
-      let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil })
+      let presence = SessionPresence(boardID: includesVisibleParent ? header.rootBoardID : child.id, mode: .board,
+        camera: includesVisibleParent ? BoardPortalProjection.parentBoundaryCamera(portalCenter: .zero, viewport: viewport) : .init(scale: 1),
+        viewport: viewport)
+      let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { hierarchy.portalCamera($0) })
       let resources = SceneRenderResources(), tiles = SceneCompositionTiles(resources: resources)
       tiles.prepare(source: source, presence: presence, frame: frame, pinned: [], displayScale: displayScale)
       try await waitUntil { tiles.published != nil || tiles.failure != nil }
@@ -650,7 +656,7 @@ final class SpatialInkHandoffTests: XCTestCase {
       let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
       let presence = SessionPresence(boardID: currentID, mode: .board, camera: camera ?? activeCamera, viewport: viewport)
       let requested = WorkspaceSceneFrame(index: cohort.frame.index, presence: presence, portalCamera: { _ in nil })
-      let frame = try await source.compositionFrame(requested: requested, presence: presence, pinned: [])
+      let frame = requested
       let plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
         pinned: [], displayScale: displayScale, previous: cohort.plan)
       let liveData = try await source.liveData(plan: plan, presence: presence, frame: frame)

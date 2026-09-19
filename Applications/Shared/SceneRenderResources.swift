@@ -100,12 +100,11 @@ final class RasterLease {
     #else
     var result = retainedImage?.cgImage(forProposedRect: nil, context: nil, hints: nil)
     #endif
-    // Nearest level in log2 space bounds either downsampling or enlargement
-    // by sqrt(2), rather than undersampling a high-frequency source by almost 2.
-    let boundary = sqrt(2.0)
+    // Never magnify a lower mip when sharper admitted pixels already exist.
+    // Thin lines and text must not lose samples merely to select a nearer LOD.
     for level in mipmaps {
-      guard Double(level.width) >= pixelSize.width / boundary,
-        Double(level.height) >= pixelSize.height / boundary else { break }
+      guard Double(level.width) >= pixelSize.width,
+        Double(level.height) >= pixelSize.height else { break }
       result = level
     }
     return result
@@ -474,6 +473,9 @@ final class SceneRenderResources {
     let publication: UInt64
     var access: UInt64
     var retains: Int
+    // Only complete composition pixels are eligible for a warm return. This
+    // metadata dies with the same budgeted entry; it retains no source images.
+    var compositionReceipts: [SceneSourceAddress: SceneSourceReceipt]? = nil
   }
   private struct DiagnosticEntry {
     let element: AgentElement
@@ -578,6 +580,34 @@ final class SceneRenderResources {
     accessClock &+= 1; entry.access = accessClock; entry.retains += 1; entries[id] = entry
     return RasterLease(source: entry.source, pixelScale: entry.pixelScale, image: entry.image,
       mipmaps: entry.mipmaps, byteCount: entry.cost, entryID: id, resources: self)
+  }
+
+  func compositionReceipts(for raster: RasterLease) -> [SceneSourceAddress: SceneSourceReceipt]? {
+    guard !raster.isReleased else { return nil }
+    return entries[raster.entryID]?.compositionReceipts
+  }
+
+  func retainComposition(_ key: SceneCompositionTileKey,
+    accepts: ([SceneSourceAddress: SceneSourceReceipt]) -> Bool) -> RasterLease? {
+    guard let id = matchingRaster(.composition(key), minimumScale: 0),
+      let receipts = entries[id]?.compositionReceipts, accepts(receipts) else { return nil }
+    return retainRasterEntry(id)
+  }
+
+  func cacheComposition(_ raster: RasterLease, receipts: [SceneSourceAddress: SceneSourceReceipt],
+    sources: [SceneSourceAddress: RasterLease]) {
+    guard !raster.isReleased, case .composition = raster.source,
+      receipts.values.allSatisfy(\.hasCurrentPixels) else { return }
+    for (address, receipt) in receipts {
+      // Capture may finish during an awaited paint. Do not register the old
+      // output as reusable after that newer source already invalidated caches.
+      guard let source = sources[address], let entry = entries[source.entryID],
+        source.image(for: receipt.demand.rasterSource, minimumScale: receipt.demand.minimumScale) != nil,
+        !(rasterOwners[entry.source.owner] ?? []).contains(where: {
+          (entries[$0]?.publication ?? 0) > entry.publication
+        }) else { return }
+    }
+    entries[raster.entryID]?.compositionReceipts = receipts
   }
 
   func reserveWebSnapshot(pixelSize: CGSize) -> RasterReservation? {
@@ -843,7 +873,8 @@ final class SceneRenderResources {
   /// NPOT images need explicit levels on renderers that ignore trilinear mipmaps.
   /// This keeps the original exact pixels and adds about a third, not POT padding.
   func storeWebSnapshot(_ image: AgentSnapshotImage, for source: SceneRasterSource,
-    reservation: RasterReservation) -> RasterLease? {
+    reservation: RasterReservation, permitsPublication: @MainActor () -> Bool = { true }) async -> RasterLease? {
+    guard !Task.isCancelled, permitsPublication() else { return nil }
     #if os(iOS)
     guard !reservation.isReleased, reservation.resources === self,
       let allocation = reservations[reservation.id], let original = image.cgImage,
@@ -856,19 +887,8 @@ final class SceneRenderResources {
       guard !sum.overflow, sum.partialValue <= allocation.bytes else { return nil }
       required = sum.partialValue
     }
-    let space = original.colorSpace?.model == .rgb ? original.colorSpace : CGColorSpace(name: CGColorSpace.sRGB)
-    guard let space else { return nil }
-    var previous = original, levels: [CGImage] = []
-    for size in sizes {
-      guard let context = CGContext(data: nil, width: size.width, height: size.height,
-        bitsPerComponent: 8, bytesPerRow: ((size.width * 4 + 63) / 64) * 64, space: space,
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-      context.interpolationQuality = .high
-      context.setBlendMode(.copy)
-      context.draw(previous, in: CGRect(x: 0, y: 0, width: size.width, height: size.height))
-      guard let level = context.makeImage() else { return nil }
-      levels.append(level); previous = level
-    }
+    guard let levels = try? await CompositionPixels.makeMipmaps(original, sizes: sizes),
+      !Task.isCancelled, permitsPublication() else { return nil }
     return storeAndRetain(image, for: source, reservation: reservation, mipmaps: levels)
     #else
     return storeAndRetain(image, for: source, reservation: reservation)
@@ -922,6 +942,13 @@ final class SceneRenderResources {
     if let element = source.agentElement, var diagnostics = diagnosticEntries[element.id], diagnostics.element == element {
       diagnostics.values.removeAll { $0.kind == "resource_limit" }
       diagnosticEntries[element.id] = diagnostics
+    }
+    if let element = source.agentElement {
+      // A new capture may have the same durable source/state as its previous
+      // frame. Revoke dependent cache eligibility, never displayed leases.
+      for id in entries.keys where entries[id]?.compositionReceipts?.keys.contains(where: { $0.elementID == element.id }) == true {
+        entries[id]?.compositionReceipts = nil
+      }
     }
     changed(source.owner)
     return id
