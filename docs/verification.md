@@ -1,5 +1,30 @@
 # Проверка Notebook
 
+## 19 сентября, 10:46 МСК — GUI-250: Release обнаружил чужой XPC sandbox owner
+
+Неизменная Release-пара `ce3b979`, source
+`ac5cb18e064c629e5497feb86b081d7f4e8577643f59db5af5218cd874ccde22`,
+собрана в `.build/gui250-release-v2`; Simulator GUI-240 установлен, Mac
+запущен с новым manifest/root/socket `3af2d2e9-8bd0-47e9-baba-21b83ec1d6fa`.
+Установленный в этом bundle MCP импортировал новый свободно написанный TS
+пример биений: 9639 bytes, package `a56fc444afaaaaffc127df00413ed30848b8874e4a5030e5d037f12740ec5a89`.
+Создание документа **не прошло**, эффект notSaved / normalization_timeout:
+`secinitd` показал до-main ACL mismatch markup-service `.acceptance-runtime`
+между прежним VUNH73AYPY и текущим M94V58FCVP. Этот риск ранее обходился
+одноразовым S10 suffix, но штатный acceptance builder оставался неисправным.
+Теперь его единственный suffix включает проверенный signing team. Старые
+контейнеры, ACL, production identity и данные не меняются. **77 route tests PASS**,
+`/tmp/gui250-worker-identity-tests-v1.log`; повтор Release/public route ещё нужен.
+
+На прежнем source дополнительно **Mac4 PASS**, warnings0,
+`.build/gui250-integrated-mac-v1/verification.json`: SDK/XPC immutable cut,
+mixed PNG, cancellation fence, одинаковый TS/JS writer. Это не отменяет
+отрицательный public Release результат. Свежий app-scoped Time Profiler
+реально начал запись и UI выполнил жесты, но xctrace завис при SIGINT;
+`ipad-testSystemTraceAttachesToLaunchedApplication-*` **FAIL**, не performance
+receipt. Амир разрешил system-wide capture с процессами host Mac; отдельный
+повтор использует это явное согласие. Физическая пара не затрагивалась.
+
 ## 19 сентября, 10:33 МСК — GUI-250: UUID alias сохраняет владельца source edit
 
 Native source reader уже адресовал UUID независимо от регистра, но общий action

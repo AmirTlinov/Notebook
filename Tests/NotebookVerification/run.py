@@ -129,6 +129,7 @@ class SelectionTests(unittest.TestCase):
         signer, identity = acceptance.mac_acceptance_signer(display)
         self.assertEqual(signer, "Apple Development: Test Developer")
         self.assertEqual(identity["identifier"], acceptance.MAC_BUNDLE)
+        self.assertEqual(acceptance.SCRIPT_BUNDLE_SUFFIX, ".acceptance-runtime-" + identity["team"].lower())
         for invalid in (display + "Signature=adhoc\n",
                         display.replace(acceptance.MAC_BUNDLE, release.MAC_BUNDLE),
                         display.replace(release.TEAM, "OTHERTEAM"),

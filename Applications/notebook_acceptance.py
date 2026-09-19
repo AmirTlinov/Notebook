@@ -25,7 +25,10 @@ import notebook_navigation_observation as navigation_observation
 ROOT = Path(__file__).resolve().parents[1]
 IPAD_BUNDLE = "com.amirtlinov.notebook.acceptance"
 MAC_BUNDLE = "com.amirtlinov.notebook.mac.acceptance"
-SCRIPT_BUNDLE_SUFFIX = ".acceptance-runtime"
+# Sandbox containers are keyed by bundle ID and admit their original signer.
+# Scope these stateless workers to the verified build team, never reuse an old
+# development team's container or alter its ACL to make a test launch succeed.
+SCRIPT_BUNDLE_SUFFIX = ".acceptance-runtime-" + release.TEAM.lower()
 UI_TEST_BUNDLE = "com.amirtlinov.notebook.acceptance.diagnostic-uitests"
 
 
