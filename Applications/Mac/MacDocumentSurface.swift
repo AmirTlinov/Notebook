@@ -8,8 +8,13 @@ struct MacDocumentSurface: View {
   let document: DocumentDocument
   let state: DocumentStateJournal
   let onLayout: (DocumentPageLayout) -> Void
-  @State private var controllerID = UUID()
-  @State private var revision: UInt64 = 0
+  // Readiness is replayed when SwiftUI updates its callback. Advancing the
+  // controller sequence must not itself schedule another body update.
+  @MainActor private final class Navigation {
+    let id = UUID()
+    var revision: UInt64 = 0
+  }
+  @State private var navigation = Navigation()
 
   var body: some View {
     let source = NotebookAppModel.documentPageSourceRevision(document)
@@ -20,9 +25,9 @@ struct MacDocumentSurface: View {
       onRenderReady: .init(onFailure: { failure in
         Task { @MainActor in
           guard model.documentPageSelection?.id == request?.id else { return }
-          revision &+= 1
-          model.acceptDocumentPageNavigationStatus(.init(controllerID: controllerID, documentID: document.id,
-            sourceRevision: source, revision: revision, requestID: request?.id, target: page,
+          navigation.revision &+= 1
+          model.acceptDocumentPageNavigationStatus(.init(controllerID: navigation.id, documentID: document.id,
+            sourceRevision: source, revision: navigation.revision, requestID: request?.id, target: page,
             phase: .failed, failure: failure))
         }
       }) { ready in
@@ -31,10 +36,10 @@ struct MacDocumentSurface: View {
             model.presence?.focusedItemID == document.id,
             model.documentPageSelection?.id == request?.id else { return }
           guard ready else { return }
-          model.bindDocumentPageController(controllerID, documentID: document.id, source: source)
-          revision &+= 1
-          _ = model.acceptDocumentPageLanding(.init(controllerID: controllerID, documentID: document.id,
-            sourceRevision: source, revision: revision, pageIndex: page, requestID: request?.id))
+          model.bindDocumentPageController(navigation.id, documentID: document.id, source: source)
+          navigation.revision &+= 1
+          _ = model.acceptDocumentPageLanding(.init(controllerID: navigation.id, documentID: document.id,
+            sourceRevision: source, revision: navigation.revision, pageIndex: page, requestID: request?.id))
         }
       },
       onPageLayout: { layout in
@@ -52,7 +57,7 @@ struct MacDocumentSurface: View {
       .overlay(alignment: .bottom) { if let failure = model.documentPageNavigationStatus?.failure {
         VStack { Text(failure.message); Button("Повторить") { model.retryDocumentPageNavigation() } }.padding().background(.regularMaterial)
       } }
-      .onChange(of: source, initial: true) { _, _ in model.bindDocumentPageController(controllerID, documentID: document.id, source: source) }
-      .onDisappear { model.unbindDocumentPageController(controllerID) }
+      .onChange(of: source, initial: true) { _, _ in model.bindDocumentPageController(navigation.id, documentID: document.id, source: source) }
+      .onDisappear { model.unbindDocumentPageController(navigation.id) }
   }
 }

@@ -135,6 +135,30 @@ PASS; production-сертификат и PID relay сохранены. Перв�
 `FAILED: Physical pair condition timed out` в 15:09:26, route=disconnected.
 Этот тайм-аут недоступного старого relay не переименовывается в PASS после миграции.
 
+Дополнение 16:36 UTC — Амир подтвердил отключение старого VPS в 15:54.
+Повторный `/healthz` нового сервера: 200, peer=92.255.79.47, TLS verify=0.
+При возврате к private Mac обнаружен feedback документа: readiness увеличивал
+наблюдаемый `@State revision`, а landing публиковал nil поверх nil. Перенесено
+прицельное исправление GUI-240 `7469deaa` (не его остальные изменения reader):
+ненаблюдаемый navigation sequence и отсутствие пустых публикаций в модели,
+вместе с regression десяти повторных landing без invalidation.
+
+Первый неполный перенос только sequence прошёл 14 тестов, но живой запуск
+по-прежнему потреблял около 100% CPU; он **не принят**. Полный перенос:
+app-source SHA-256 `20ac5463804008f17274456d48b82a5ac64cb863041f054d5aacb532c28b2c39`,
+`mac-feedback2-tests.xcresult`: **15 PASS**, 0 FAIL/SKIP/runtime warnings;
+inventory до/после совпал, подпись private Mac deep/strict PASS.
+Только private Mac штатно остановлен/перезапущен с прежними контейнером и ключами.
+`private-mac-feedback2-cpu.json`: шесть коротких CPU-снимков 6.9, 4.7, 0, 2.5, 3, 0%;
+двухсекундный system sample — main thread 1725/1728 samples в ожидании Mach port,
+вместо SwiftUI update loop. Это проверка конкретного feedback, не полный perf/soak.
+`private-feedback2-ipc.json`: чтение за 14.6 ms, прежний workspace и документ
+`8D27B7BD-1B6E-4FB1-84B1-3FB25BC41EFC`, `GUI-183-CHECK-PASSED` сохранён.
+Mac получил новый relay host ticket HTTP 200 в 16:35:47. Старый agent send не
+повторялся. Захват CUA после перезапуска продолжает возвращать ScreenCaptureKit
+-3811: новый визуальный PASS не заявляется. Физический iPad занят независимой
+GUI-266 проверкой; его private bundle не изменён. WAN/AWDL остаются открытыми.
+
 Фактические свидетельства находятся в `.build/gui-183/` этого worktree:
 
 - `swift-final6.log`: 4 Core remote-control и 22 Codex/account/connection/scope — PASS.
