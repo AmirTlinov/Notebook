@@ -568,6 +568,7 @@ final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneA
       y: -matrix.translation.y / matrix.scale,
       width: frame.width / matrix.scale, height: frame.height / matrix.scale)
     if bounds != projected { bounds = projected }
+    projection?.didProject()
   }
 
   override func viewDidMoveToWindow() {

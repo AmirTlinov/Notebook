@@ -17,7 +17,7 @@ struct StableInkVertexOut {
   float2 textureCoordinate;
 };
 
-vertex StableInkVertexOut stableInkVertex(uint vertexID [[vertex_id]]) {
+vertex StableInkVertexOut stableInkVertex(constant float4 &textureRect [[buffer(0)]], uint vertexID [[vertex_id]]) {
   constexpr float2 positions[] = {
     float2(-1.0, 1.0),
     float2(-1.0, -1.0),
@@ -37,7 +37,7 @@ vertex StableInkVertexOut stableInkVertex(uint vertexID [[vertex_id]]) {
 
   StableInkVertexOut output;
   output.position = float4(positions[vertexID], 0.0, 1.0);
-  output.textureCoordinate = textureCoordinates[vertexID];
+  output.textureCoordinate = textureRect.xy + textureCoordinates[vertexID] * textureRect.zw;
   return output;
 }
 

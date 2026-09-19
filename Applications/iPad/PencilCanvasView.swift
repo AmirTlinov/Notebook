@@ -5,6 +5,7 @@ import UIKit
 
 struct PencilCanvasView: UIViewRepresentable {
   @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
+  @Environment(\.scenePlaneProjection) private var projection
   let pageID: UUID
   let drawingData: Data
   var suppressedInkIDs: Set<UUID> = []
@@ -33,6 +34,7 @@ struct PencilCanvasView: UIViewRepresentable {
 
   func makeUIView(context: Context) -> PaperCanvasContainerView {
     let paper = PaperCanvasContainerView()
+    paper.inkProjection.observe(projection)
     paper.touchView.toolController = model?.drawingTools
     paper.touchView.toolInputGate = inputGate
     paper.touchView.quickShapePageID = pageID
@@ -57,6 +59,7 @@ struct PencilCanvasView: UIViewRepresentable {
   }
 
   func updateUIView(_ paper: PaperCanvasContainerView, context: Context) {
+    paper.inkProjection.observe(projection)
     paper.touchView.toolController = model?.drawingTools
     paper.touchView.toolInputGate = inputGate
     paper.touchView.quickShapePageID = pageID
@@ -394,6 +397,7 @@ struct PencilCanvasView: UIViewRepresentable {
 @MainActor
 final class PaperCanvasContainerView: UIView {
   let inkView = InkCanvasView(frame: .zero)
+  lazy var inkProjection = PageInkProjection(host: self, canvas: inkView)
   let touchView = PaperInputView(frame: .zero)
   var admitsPencilContact: (UITouch) -> Bool = { _ in true }
   private let pencil = PaperPencilGestureRecognizer()
@@ -444,7 +448,7 @@ final class PaperCanvasContainerView: UIView {
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    inkView.frame = bounds
+    inkProjection.refresh()
     touchView.frame = bounds
   }
 
@@ -457,6 +461,7 @@ final class PaperCanvasContainerView: UIView {
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
+    inkProjection.refresh()
     guard pencil.view !== window else { return }
     if pencil.view != nil { touchView.finishCurrentAction {}; touchView.endShapeSequence() }
     pencil.view?.removeGestureRecognizer(pencil)
@@ -469,6 +474,7 @@ final class PaperCanvasContainerView: UIView {
   }
 
   func retireInput() {
+    inkProjection.stop()
     inputIsRetired = true
     touchView.finishCurrentAction {}
     touchView.endShapeSequence()

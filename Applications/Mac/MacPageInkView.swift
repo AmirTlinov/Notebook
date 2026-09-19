@@ -5,11 +5,13 @@ import SwiftUI
 
 struct MacPageInkView: NSViewRepresentable {
   @Environment(NotebookAppModel.self) private var model
+  @Environment(\.scenePlaneProjection) private var projection
   let page: PageDocument
   let isInteractive: Bool
   let onReady: (Bool) -> Void
   func makeNSView(context: Context) -> MacPageInkCanvas { .init(model: model, pageID: page.id) }
   func updateNSView(_ view: MacPageInkCanvas, context: Context) {
+    view.inkProjection.observe(projection)
     view.update(page: page, enabled: isInteractive && model.macInputTool != .pointer,
       current: isInteractive, onReady: onReady)
   }
@@ -20,6 +22,7 @@ struct MacPageInkView: NSViewRepresentable {
 /// as Pencil. This view owns only the active contact and its Metal presentation.
 final class MacPageInkCanvas: NSView {
   let ink = InkCanvasView(frame: .zero)
+  lazy var inkProjection = PageInkProjection(host: self, canvas: ink)
   private let model: NotebookAppModel
   private let pageID: UUID
   private let source = UUID()
@@ -55,7 +58,8 @@ final class MacPageInkCanvas: NSView {
     }
   }
   required init?(coder: NSCoder) { fatalError("Use init(model:pageID:)") }
-  override func layout() { super.layout(); ink.frame = bounds }
+  override func layout() { super.layout(); inkProjection.refresh() }
+  override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); inkProjection.refresh() }
   override func hitTest(_ point: NSPoint) -> NSView? {
     guard inputEnabled, !retired, delivery == nil, bounds.contains(convert(point, from: superview)) else { return nil }
     return self
@@ -146,6 +150,7 @@ final class MacPageInkCanvas: NSView {
   func uninstall() {
     guard !retired else { return }
     finishStroke(); retired = true; inputEnabled = false
+    inkProjection.stop()
     load?.cancel(); load = nil; ink.onRenderReadinessChange = nil
     model.inputGate.unregisterPageFinisher(source: source)
   }
