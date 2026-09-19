@@ -1,5 +1,22 @@
 # Проверка Notebook
 
+## 19 сентября, 04:03 МСК — GUI-243: CLI descriptor не копирует пакет заново
+
+Проверка реальной пары CLI-команд, а не только build API, нашла лишнюю работу:
+созданный рядом `prepared.json` менял directory listing и заставлял заново
+копировать тот же immutable package. Теперь после необходимого re-resolution
+проверяется semantic key; прежний неповреждённый артефакт переиспользуется.
+Resolver не игнорирует неизвестные JSON/пакеты ради искусственного cache hit.
+Если имена файлов не менялись, остаётся прежний быстрый путь без bundler.
+
+**27 MCP PASS + pinned SDK check**, `/tmp/gui-243-cli-cache-tests.log`,
+`/tmp/gui-243-cli-cache-sdk.log`. Новый regression выполняет две настоящие CLI
+команды с разными output JSON и проверяет hit, тот же directory/source map и
+package identity. Генератор native fixture обновил только notebook-build.json
+(builder identity/provenance); все JS/CSS/SVG/worker bytes и native owners
+не менялись, Xcode ради этого CLI-исправления не повторялся. Предыдущие native
+квитанции относятся к своим указанным SHA, не к этому новому всему дереву.
+
 ## 19 сентября, 04:00 МСК — GUI-244: checkpoint семи прежних научных recipes
 
 `Science.mount` подключён к общему NotebookProgram lifecycle: pause прекращает

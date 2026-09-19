@@ -133,11 +133,18 @@ export async function buildProgram(input,{signal}={}) {
     try{before=await capture(paths,previous?.inputs);}catch(error){if(error.code!=='ENOENT')throw error;before=await capture(base);}
     const identify=records=>hash(canonical({options,inputs:Object.entries(records).map(([path,item])=>[relative(root,path),item.sha256,item.bytes])}));
     const initialKey=identify(before),directories=await directoryIdentity(Object.keys(before),root);
-    if(previous?.key===initialKey&&canonical(previous.directories)===canonical(directories)&&previous.directory&&inside(cache,previous.directory)) {
+    async function reuse(records,directories) {
+      if(!previous?.directory||!inside(cache,previous.directory))return null;
       const intact=await Promise.all(Object.entries(previous.outputs??{}).map(async([path,stamp])=>{
         try{return inside(previous.directory,path)&&(await regular(path)).stamp===stamp;}catch{return false;}
       }));
-      if(intact.length&&intact.every(Boolean))return {...previous.request,build:{...previous.build,cacheHit:true}};
+      if(!intact.length||!intact.every(Boolean))return null;
+      const temporary=join(work,'index.json');
+      await writeFile(temporary,JSON.stringify({...previous,inputs:records,directories}));await rename(temporary,indexPath);
+      return {...previous.request,build:{...previous.build,cacheHit:true}};
+    }
+    if(previous?.key===initialKey&&canonical(previous.directories)===canonical(directories)) {
+      const cached=await reuse(before,directories);if(cached)return cached;
     }
     const fileAssets=new Map(),sourceReads=new Map(),virtual=join(root,'.notebook','out');
     let bundled;
@@ -184,7 +191,11 @@ export async function buildProgram(input,{signal}={}) {
     const inputs=await capture([...base,...imported,...fileAssets.keys(),...packageFiles],before);
     for(const [path,item] of [...Object.entries(before),...sourceReads,...[...fileAssets].map(([path,item])=>[path,item.record])])
       if(inputs[path]&&inputs[path].stamp!==item.stamp)throw problem('files','Source changed during build: '+relative(root,path));
-    const key=identify(inputs),directory=join(cache,key+'-'+randomUUID()),stage=join(work,'package');await mkdir(stage);
+    const key=identify(inputs);
+    // New directory entries (including the CLI's saved descriptor) require a
+    // resolution check, not another copy of an unchanged 300 MiB artifact.
+    if(key===previous?.key){const cached=await reuse(inputs,await directoryIdentity(Object.keys(inputs),root));if(cached)return cached;}
+    const directory=join(cache,key+'-'+randomUUID()),stage=join(work,'package');await mkdir(stage);
     const names=[];
     for(const output of bundled.outputFiles) {
       const name=relative(virtual,output.path);

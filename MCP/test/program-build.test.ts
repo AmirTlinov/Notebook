@@ -151,3 +151,20 @@ test('external CSS imports are build errors, not silently broken offline package
   try{await assert.rejects(buildProgram({directory:root,entry:'main.ts'}),(error:any)=>error.stage==='bundle'&&error.message.includes('External import'));}
   finally{await rm(root,{recursive:true,force:true});}
 });
+
+
+test('saving a prepared descriptor beside sources does not copy the same package on the next CLI run',async()=>{
+  const {execFileSync}=await import('node:child_process');
+  const {fileURLToPath}=await import('node:url');
+  const root=await project({'main.ts':'notebook.ready(1);','build.json':'{"entry":"main.ts"}'});
+  try {
+    const results=[];
+    for(const name of ['first.json','second.json']) {
+      execFileSync(process.execPath,[fileURLToPath(new URL('../skills/notebook/scripts/prepare.mjs',import.meta.url)),'program',join(root,'build.json'),join(root,name)]);
+      results.push(JSON.parse(await readFile(join(root,name),'utf8')));
+    }
+    assert.equal(results[0].build.cacheHit,false);assert.equal(results[1].build.cacheHit,true);
+    assert.equal(results[0].build.directory,results[1].build.directory);
+    assert.deepEqual(results[0].sources,results[1].sources);assert.equal(results[0].packageHash,results[1].packageHash);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
