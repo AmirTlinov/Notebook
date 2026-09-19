@@ -38,6 +38,11 @@ import XCTest
     let window = try await mountNotebookScene(model)
     let paper = try XCTUnwrap(descendants(try XCTUnwrap(window.rootViewController?.view)).compactMap { $0 as? PaperInputView }.first { $0.isUserInteractionEnabled })
     let receiver = try XCTUnwrap(window.gestureRecognizers?.first { $0.name == "NotebookPaperPencil" })
+    let presence = try XCTUnwrap(model.presence)
+    let itemPins = [presence.boardID:[try XCTUnwrap(presence.focusedItemID)]]
+    let older = try NotebookSceneState.read(store:model.store,presence:presence,viewport:presence.viewport,pinnedItems:itemPins)
+    let writer = try NotebookSQLWriteBlocker(store:model.store)
+    defer { try? writer.release() }
     let touch = SceneGraphicTouch(window:window), event = SceneGraphicEvent()
     let trace = [CGPoint(x:245,y:405),.init(x:495,y:405),.init(x:495,y:440),.init(x:245,y:440),.init(x:245,y:405)]
     for (i,p) in trace.enumerated() {
@@ -55,7 +60,16 @@ import XCTest
     print("LASSO_DENSE_ERASER_SELECTION \(released.duration(to:.now))")
     XCTAssertLessThan(released.duration(to:.now),.seconds(2))
     XCTAssertEqual(graphic.sourceInkIDs,pens.map(\.id)); XCTAssertNotNil(graphic.freehand?.layers.last?.eraser)
+    let selected = try XCTUnwrap(model.selectionSession.element)
+    await withCheckedContinuation { continuation in model.inputGate.performAfterIdle { continuation.resume() } }
+    XCTAssertTrue(model.acceptExternalScene(older,observedEpoch:model.collaborationReadEpoch,
+      observedPresence:presence,itemPins:itemPins))
+    XCTAssertEqual(model.selectionSession.element,selected,
+      "A scene cut taken before lasso conversion is not deletion of its accepted selection")
+    XCTAssertNotNil(model.graphicLayout(selected),"The accepted graphic still owns the visible geometry")
+    try writer.release()
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    XCTAssertEqual(model.selectionSession.element,selected,"Publishing the conversion must retain selection; cue=\(model.actionCue ?? "none"), elements=\(model.activePage?.elements.map(\.id) ?? [])")
     XCTAssertEqual(try PageInkDrawing.decode(model.store.loadPage(page.id).drawingData).actions.map(\.id),pens.map(\.id)+[erase.id])
     let image = UIGraphicsImageRenderer(bounds:window.bounds).image { _ in window.drawHierarchy(in:window.bounds,afterScreenUpdates:true) }
     let shot = XCTAttachment(image:image); shot.name = "lasso-ink-after-long-eraser"; shot.lifetime = .keepAlways; add(shot)
