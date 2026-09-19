@@ -21,6 +21,35 @@ Desktop bundle/private Node больше не нужны. Добавлены о�
 Неподтверждённое подключение к уже работающему daemon Desktop не имитируется:
 foreign writer явно отклоняется, без force-takeover/клона.
 
+Дополнение 13:10 UTC: Амир подтвердил новый официальный device-code. Пустой
+профиль → account/limits → настоящая правка и Python-проверка → прежняя задача
+после перезапуска → logout только этого профиля: **PASS**. Квитанции
+`fresh-login-final.json` + `.auth.json`, task `01a0b9c9-f3d6-7031-8bd4-96c0193e75e8`,
+turn `01a0b9c9-f789-78e2-8940-0c528a53e28c`. Generic standalone receipt сохраняет
+список границ своего режима; sibling auth receipt отдельно подтверждает clean-login.
+Амир отменил требование агентского длительного прогона: проверит его сам.
+Отдельная физическая пара для AWDL/разных сетей разрешена, production не заменяется.
+
+Дополнение 13:57 UTC: исправлены классификация реального AWDL на обоих концах
+и bounded поиск при потере default IP path/живом старом TCP, возврат из сна.
+Новый source SHA-256 `3ce77d4daed0b1f42963796a400977182ae54d3731b292f09b3a28644852c889`.
+`ipad-routes-tests.xcresult`: **22 PASS**, `mac-private-config-tests.xcresult`:
+**6 PASS**, без пропусков/ошибок/runtime warnings. Loopback с ложным nearby hint
+теперь честно остаётся direct. Signed private Mac и physical iPad собраны;
+ключи iPad ограничены собственным bundle, CloudKit entitlements отсутствуют.
+Helpers Mac переподписаны с исходными sandbox entitlements, deep verify PASS.
+Первый physical compile отклонил macOS-only `homeDirectoryForCurrentUser`;
+заменён общим Foundation `NSHomeDirectory`, повтор обеих сборок прошёл.
+
+Подготовлен fresh checkpoint и одноразовое enrollment только отдельной пары
+`com.amirtlinov.notebook[.mac].acceptance.gui183`. Это не проверка автоматического
+CloudKit enrollment и не копия production. Ключи принимает прежний Keychain owner;
+bootstrap удаляется, существующее доверие не заменяется. Untethered DEBUG probe
+в допущенном private приложении включается только явным env, использует уже
+смонтированную модель/контроллер и не зависит от USB/XCTest при уходе из LAN.
+Saved start запрещает автоматический повтор неизвестного исхода. Signed iPad
+установлен отдельно; физический WAN/AWDL PASS пока не заявляется.
+
 Фактические свидетельства находятся в `.build/gui-183/` этого worktree:
 
 - `swift-final6.log`: 4 Core remote-control и 22 Codex/account/connection/scope — PASS.
@@ -37,7 +66,7 @@ foreign writer явно отклоняется, без force-takeover/клона
 - `device-code-project-proof.log`: пустой отдельный CODEX_HOME — native project
   create/read/idempotency, start/dedup/cancel входа PASS. С согласия Амира начат
   настоящий интерактивный вход в другой пустой профиль; подтверждения за 10 минут
-  не было, попытка отменена. Завершённый clean-login/result/logout остаётся открытым.
+  не было, попытка отменена. Эта первая попытка отменена; новая завершена в 13:10 UTC (см. выше).
 - `ipad-final-tests.xcresult`: 39 PASS, один opt-in relay SKIP без credentials.
   Тот же relay test отдельно выполнен ниже, а не засчитан по пропуску.
   Десять настоящих TLS handover сохранили command ID и одно durable исполнение;
@@ -94,8 +123,8 @@ production по полному пути. Установленные bundle/ко�
 Границы: оба клиента WAN-теста работали на одном Mac через публичный сервер —
 это **не две физические сети**. Метка nearby на loopback в handover-test не
 доказывает AWDL; аппаратный P2P без AP не проверялся. Не выполнены production
-installation acceptance, 30 минут совместной работы и системные CPU/GPU/frame
-измерения. Голос не получал отдельной WAN seamlessness-приёмки. Общая GUI-183
+installation acceptance и системные CPU/GPU/frame измерения. Длительную
+совместную работу Амир проверяет сам; это не оставшееся условие агентского прогона. Голос не получал отдельной WAN seamlessness-приёмки. Общая GUI-183
 не считается полностью принятой по этим scoped результатам.
 
 ## 19 сентября — GUI-200/255/257: дефекты 115 воспроизведены, исправление 116 проверяется

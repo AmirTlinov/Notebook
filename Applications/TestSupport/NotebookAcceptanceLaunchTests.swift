@@ -25,7 +25,25 @@ import XCTest
     XCTAssertTrue(NotebookAcceptanceConfiguration.requiresManifest(bundleID: "com.amirtlinov.notebook.acceptance", enabled: false))
     XCTAssertTrue(NotebookAcceptanceConfiguration.requiresManifest(bundleID: "com.amirtlinov.notebook.mac.acceptance", enabled: false))
     XCTAssertTrue(NotebookAcceptanceConfiguration.requiresManifest(bundleID: "unexpected", enabled: true))
+    XCTAssertTrue(NotebookAcceptanceConfiguration.requiresManifest(bundleID: "com.amirtlinov.notebook.mac.acceptance.invalid.suffix", enabled: false),
+      "A malformed private identity must fail closed, not open production")
     XCTAssertFalse(NotebookAcceptanceConfiguration.requiresManifest(bundleID: "com.amirtlinov.notebook.preview", enabled: false))
+  }
+
+  func testPortableDeviceRootAndUniqueBundleRemainInsidePrivateRun() throws {
+    let run = UUID(), home = URL(fileURLWithPath: "/private/isolated-device")
+    var value = NotebookAcceptanceConfiguration(version: 1, runID: run, workspaceID: UUID(), actorID: UUID(), role: .iPad,
+      bundleID: "com.amirtlinov.notebook.acceptance.gui183", sourceRevision: String(repeating: "a", count: 40),
+      root: "Documents/acceptance/\(run.uuidString.lowercased())/store", socket: nil, codexDirectory: nil)
+    try value.resolvePortableRoot(home: home)
+    XCTAssertEqual(value.root, home.appendingPathComponent("Documents/acceptance/\(run.uuidString.lowercased())/store").path)
+    XCTAssertNoThrow(try value.validate(bundle: value.bundleID, enabled: true))
+    XCTAssertTrue(NotebookAcceptanceConfiguration.requiresManifest(bundleID: value.bundleID, enabled: false))
+    XCTAssertThrowsError(try NotebookAcceptanceConfiguration.manifestURL("Documents/acceptance/../ipad.json", home: home))
+    value.root = "Documents/../store"
+    XCTAssertThrowsError(try value.resolvePortableRoot(home: home))
+    XCTAssertFalse(NotebookAcceptanceConfiguration.isAcceptanceBundle("com.amirtlinov.notebook.acceptance.", role: .iPad))
+    XCTAssertFalse(NotebookAcceptanceConfiguration.isAcceptanceBundle("com.amirtlinov.notebook.acceptance.other.suffix", role: .iPad))
   }
 
   func testProductionStorageAndSocketCannotBeSelected() throws {

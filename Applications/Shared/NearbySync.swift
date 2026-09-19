@@ -193,9 +193,9 @@ final class NearbySync {
       }
       isStarted = true
       let monitor = NWPathMonitor(); pathMonitor = monitor
-      monitor.pathUpdateHandler = { [weak self] path in
+      monitor.pathUpdateHandler = { [weak self] _ in
         Task { @MainActor in
-          guard let self, self.isStarted, path.status == .satisfied else { return }
+          guard let self, self.isStarted else { return }
           self.networkChange?.cancel()
           self.networkChange = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(3)) } catch { return }
@@ -324,6 +324,13 @@ final class NearbySync {
     for session in sessions.values where session.isReady && session.peerIdentity.map({ currentGeneration[$0.deviceID] == session.generation }) == true && (peerID == nil || session.peerIdentity?.deviceID == peerID) { session.sendTransient(value) }
   }
 
+  /// Foreground after sleep may not change the default IP path. Permit one
+  /// bounded discovery window without churning a healthy authenticated channel.
+  func resumeDiscovery() {
+    guard currentGeneration.isEmpty else { return }
+    networkPathChanged()
+  }
+
   /// A debounced system path event opens a new candidate epoch without retiring
   /// the selected authenticated channel. The connector commits handover on ready.
   func networkPathChanged() {
@@ -383,7 +390,10 @@ final class NearbySync {
         do { try await Task.sleep(for: .seconds(peerToPeer ? 12 : 4)) } catch { return }
         guard let self, let browser, self.browser === browser else { return }
         browser.cancel(); self.browser = nil
-        if !peerToPeer, self.currentGeneration.isEmpty, self.nearbySearchAllowed { self.nearbySearchAllowed = false; self.refreshDiscovery(peerToPeer: true) }
+        let hasCurrentDirectPath = self.currentGeneration.values.contains {
+          self.sessionEpochs[$0] == self.pathEpoch && self.sessionRoutes[$0] != .relay
+        }
+        if !peerToPeer, !hasCurrentDirectPath, self.nearbySearchAllowed { self.nearbySearchAllowed = false; self.refreshDiscovery(peerToPeer: true) }
         else if peerToPeer { self.refreshDiscovery() }
         self.connectRelayPeers()
       }
@@ -428,9 +438,7 @@ final class NearbySync {
       guard !sessions.values.contains(where: { ($0.expectedPeerID == deviceID || $0.peerIdentity?.deviceID == deviceID) && sessionRoutes[$0.generation] != .relay && sessionEpochs[$0.generation] == pathEpoch }) else { continue }
       guard let peer = trusted.first(where: { $0.identity.deviceID == deviceID }) else { continue }
       let credential = NotebookPeerCredential(credentialID: peer.credentialID, secret: peer.secret, expectedPeer: peer.identity)
-      let route: Route
-      if case .service(_, _, _, let interface) = endpoint, interface?.name == "awdl0" { route = .nearby } else { route = .direct }
-      do { addSession(connection: NWConnection(to: endpoint, using: try NotebookTransportTLS.parameters(keys: [credential.tlsKey])), credential: credential, route: route) }
+      do { addSession(connection: NWConnection(to: endpoint, using: try NotebookTransportTLS.parameters(keys: [credential.tlsKey])), credential: credential) }
       catch { report(error) }
     }
   }
@@ -539,6 +547,7 @@ final class NearbySync {
       let session = try NotebookTransportSession(connection: connection, identity: identity, credential: credential,
         storage: storage, stagingRoot: stagingRoot, queue: queue)
       let generation = session.generation
+      let pathReport = connection.startDataTransferReport(), logger = self.logger
       sessions[generation] = session; sessionRoutes[generation] = route; sessionEpochs[generation] = pathEpoch
       session.resolveCredential = { [weak self] hello in guard let self else { throw NotebookTransportError.disconnected }; return try self.resolve(hello) }
       session.onAuthenticated = { [weak self] peer, credential in
@@ -549,7 +558,7 @@ final class NearbySync {
         guard let self, self.sessions[generation]?.isReady == true else { return }
         let old = self.currentGeneration.updateValue(generation, forKey: peer.deviceID)
         self.reconnectFailures = 0
-        if route != .relay { self.browser?.cancel(); self.browser = nil; self.discoveryStop?.cancel() }
+        if self.sessionRoutes[generation] != .relay { self.browser?.cancel(); self.browser = nil; self.discoveryStop?.cancel() }
         if let old, old != generation { self.sessions[old]?.stop() }
         self.onStateChange?(.connected(peer)); self.onConnect?(peer, generation)
         if self.role == .macListener, let credential = self.trusted.first(where: { $0.identity.deviceID == peer.deviceID }) {
@@ -558,12 +567,24 @@ final class NearbySync {
       }
       session.onReady = { [weak self] peer in
         guard let self, self.sessions[generation] != nil else { return }
+        // Bonjour may omit an interface and an accepted Mac socket has no
+        // discovery hint. Classify the resolved, established path on both ends,
+        // never all available interfaces or includePeerToPeer.
+        let selectedRoute: Route = route == .relay ? .relay
+          : [connection.currentPath?.localEndpoint, connection.currentPath?.remoteEndpoint]
+              .contains(where: { $0?.interface?.name == "awdl0" }) ? .nearby : .direct
+        self.sessionRoutes[generation] = selectedRoute
+        pathReport.collect(queue: self.queue) { report in
+          for path in report.pathReports {
+            logger.info("Authenticated transport generation=\(generation.uuidString, privacy: .public) interface=\(path.interface.name, privacy: .public) sentPackets=\(path.sentIPPacketCount) receivedPackets=\(path.receivedIPPacketCount)")
+          }
+        }
         if let previous = self.currentGeneration[peer.deviceID], previous != generation {
           // The connector alone chooses the route. Mac parks an authenticated
           // candidate until its first selected transient: an idle old TCP socket
           // must not veto a connector that has already left that network.
           if self.role == .macListener { return }
-          if let selected = self.sessionRoutes[previous], self.sessionEpochs[previous] == self.sessionEpochs[generation], selected.rawValue <= route.rawValue {
+          if let selected = self.sessionRoutes[previous], self.sessionEpochs[previous] == self.sessionEpochs[generation], selected.rawValue <= selectedRoute.rawValue {
             self.sessions[generation]?.stop(); return
           }
         }

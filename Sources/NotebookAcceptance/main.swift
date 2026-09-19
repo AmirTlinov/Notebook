@@ -6,8 +6,8 @@ import NotebookCore
 @main struct NotebookAcceptance {
   static func main() throws {
     let args = CommandLine.arguments
-    guard args.count == 5, args[1] == "prepare" else {
-      throw failure("usage: notebook-acceptance prepare NEW_RUN_DIRECTORY SOURCE_SHA SIMULATOR_APP_CONTAINER")
+    guard args.count == 5, ["prepare", "prepare-device"].contains(args[1]) else {
+      throw failure("usage: notebook-acceptance prepare|prepare-device NEW_RUN_DIRECTORY SOURCE_SHA SIMULATOR_APP_CONTAINER|PRIVATE_BUNDLE_SUFFIX")
     }
     let directory = URL(fileURLWithPath: args[2], isDirectory: true).standardizedFileURL.resolvingSymlinksInPath()
     guard let runID = UUID(uuidString: directory.lastPathComponent),
@@ -15,12 +15,23 @@ import NotebookCore
       args[3].allSatisfy({ $0.isHexDigit }), !FileManager.default.fileExists(atPath: directory.path) else {
       throw failure("run directory must be new and end in a lowercase UUID; source SHA is required")
     }
-    let container = URL(fileURLWithPath: args[4], isDirectory: true).standardizedFileURL.resolvingSymlinksInPath()
-    let metadata = try Data(contentsOf: container.appendingPathComponent(".com.apple.mobile_container_manager.metadata.plist"))
-    guard let object = try PropertyListSerialization.propertyList(from: metadata, format: nil) as? [String: Any],
-      object["MCMMetadataIdentifier"] as? String == "com.amirtlinov.notebook.acceptance",
-      container.pathComponents.contains("CoreSimulator") else {
-      throw failure("destination is not the installed acceptance Simulator container")
+    let physical = args[1] == "prepare-device"
+    let suffix = physical ? args[4] : ""
+    guard !physical || (!suffix.isEmpty && suffix.count <= 64 && suffix.allSatisfy { $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "-") }) else {
+      throw failure("physical acceptance requires a private bundle suffix")
+    }
+    let container: URL
+    if physical {
+      // This is an upload payload, not a live device container or archive.
+      container = directory.appendingPathComponent("ipad-payload", isDirectory: true)
+    } else {
+      container = URL(fileURLWithPath: args[4], isDirectory: true).standardizedFileURL.resolvingSymlinksInPath()
+      let metadata = try Data(contentsOf: container.appendingPathComponent(".com.apple.mobile_container_manager.metadata.plist"))
+      guard let object = try PropertyListSerialization.propertyList(from: metadata, format: nil) as? [String: Any],
+        object["MCMMetadataIdentifier"] as? String == "com.amirtlinov.notebook.acceptance",
+        container.pathComponents.contains("CoreSimulator") else {
+        throw failure("destination is not the installed acceptance Simulator container")
+      }
     }
     let workspaceID = UUID(), seedActor = UUID(), macActor = UUID(), iPadActor = UUID()
     let initial = WorkspaceIndex.initial(actor: seedActor, pageSize: .init(width: 834, height: 1194))
@@ -41,14 +52,14 @@ import NotebookCore
     let socket = "/tmp/notebook-acceptance-\(runID.uuidString.lowercased())/bridge.sock"
     func manifest(role: String, actor: UUID, bundle: String, root: URL) -> [String: Any] {
       var result: [String: Any] = ["version": 1, "runID": runID.uuidString, "workspaceID": workspaceID.uuidString,
-        "actorID": actor.uuidString, "role": role, "bundleID": bundle, "sourceRevision": args[3], "root": root.path]
+        "actorID": actor.uuidString, "role": role, "bundleID": bundle, "sourceRevision": args[3], "root": physical && role == "iPad" ? "Documents/acceptance/\(runID.uuidString.lowercased())/store" : root.path]
       if role == "mac" { result["socket"] = socket; result["codexDirectory"] = root.appendingPathComponent("Codex").path }
       return result
     }
     let macManifest = directory.appendingPathComponent("mac.json")
     let iPadManifest = iPadRoot.deletingLastPathComponent().appendingPathComponent("ipad.json")
-    try write(manifest(role: "mac", actor: macActor, bundle: "com.amirtlinov.notebook.mac.acceptance", root: macRoot), to: macManifest)
-    try write(manifest(role: "iPad", actor: iPadActor, bundle: "com.amirtlinov.notebook.acceptance", root: iPadRoot), to: iPadManifest)
+    try write(manifest(role: "mac", actor: macActor, bundle: "com.amirtlinov.notebook.mac.acceptance" + (physical ? "." + suffix : ""), root: macRoot), to: macManifest)
+    try write(manifest(role: "iPad", actor: iPadActor, bundle: "com.amirtlinov.notebook.acceptance" + (physical ? "." + suffix : ""), root: iPadRoot), to: iPadManifest)
     let result: [String: Any] = ["runID": runID.uuidString.lowercased(), "workspaceID": workspaceID.uuidString,
       "sourceRevision": args[3], "macManifest": macManifest.path, "iPadManifest": iPadManifest.path,
       "socket": socket, "checkpointSHA256": macReceipt.checkpointSHA256]

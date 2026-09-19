@@ -498,7 +498,9 @@ def restrict_test_script_services(app, source, command, signing_identity="-"):
     app, source = Path(app).resolve(), Path(source).resolve()
     require(not below(app, CANONICAL_MAC.resolve()), "Нельзя переподписывать установленный рабочий Mac.")
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
-    require(info.get("CFBundleIdentifier") in (MAC_BUNDLE, MAC_BUNDLE + ".acceptance"),
+    identifier = info.get("CFBundleIdentifier", "")
+    require(identifier in (MAC_BUNDLE, MAC_BUNDLE + ".acceptance")
+            or re.fullmatch(re.escape(MAC_BUNDLE + ".acceptance.") + r"[a-z0-9-]{1,64}", identifier) is not None,
             "Ожидался созданный этим маршрутом тестовый Mac bundle.")
     root = app / "Contents/XPCServices"
     require(root.is_dir() and {path.name for path in root.iterdir()}

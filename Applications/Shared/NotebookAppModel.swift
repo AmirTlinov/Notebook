@@ -1132,10 +1132,11 @@ final class NotebookAppModel {
       let role = NearbySync.Role.macListener
       let name = Host.current().localizedName ?? "Mac"
     #endif
-    let connection = NearbySync(role: role,
-      identity: .init(deviceID: actorID, workspaceID: workspaceID, displayName: name),
-      storage: storage, stagingRoot: store.root.appendingPathComponent("transfer-staging", isDirectory: true),
-      trustStore: NotebookKeychainDeviceStore(activationID: pairingActivationID, service: pairingService))
+    let identity = NotebookTransportIdentity(deviceID: actorID, workspaceID: workspaceID, displayName: name)
+    let trust = NotebookKeychainDeviceStore(activationID: pairingActivationID, service: pairingService)
+    try await acceptance?.bootstrapTrust(trust, identity: identity)
+    let connection = NearbySync(role: role, identity: identity,
+      storage: storage, stagingRoot: store.root.appendingPathComponent("transfer-staging", isDirectory: true), trustStore: trust)
     connection.onStateChange = { [weak self] state in
       self?.connectionState = state
       self?.pairedPeers = self?.sync?.pairedPeers ?? []
@@ -1308,7 +1309,7 @@ final class NotebookAppModel {
     }
   }
 
-  func refreshDeviceConnection() { accountConnection?.refresh() }
+  func refreshDeviceConnection() { accountConnection?.refresh(); sync?.resumeDiscovery() }
 
   private func startAccountConnection(_ connection: NearbySync) async {
     guard acceptance == nil else { return }

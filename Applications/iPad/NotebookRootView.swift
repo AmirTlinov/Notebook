@@ -6,6 +6,9 @@ struct NotebookRootView: View {
   @State private var showsDevices = false
   @State private var showsHistory = false
   @State private var penControlsFrame = CGRect.zero
+  #if DEBUG
+    @State private var remoteProofPhase: String?
+  #endif
 
   var body: some View {
     ZStack {
@@ -75,7 +78,19 @@ struct NotebookRootView: View {
             pageSize: NotebookAppModel.defaultPageSize,
             viewport: .init(x: geometry.size.width, y: geometry.size.height)
           )
+          #if DEBUG
+            await NotebookPhysicalRemoteProof.runIfRequested(model) { remoteProofPhase = $0 }
+          #endif
       }
+      #if DEBUG
+        .overlay(alignment: .bottomLeading) {
+          if let remoteProofPhase {
+            Text(NotebookPhysicalRemoteProof.title(remoteProofPhase)).font(.caption)
+              .padding(10).background(.regularMaterial).padding()
+              .accessibilityIdentifier("notebook-remote-proof-phase")
+          }
+        }
+      #endif
     }
     .ignoresSafeArea()
     // Only the composer follows the keyboard safe area. The drawing geometry

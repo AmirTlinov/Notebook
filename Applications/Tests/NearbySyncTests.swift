@@ -75,8 +75,8 @@ final class NearbySyncTests: XCTestCase {
         using: try NotebookTransportTLS.parameters(keys: [credential.tlsKey])), credential: credential, route: route)
       let deadline = ContinuousClock.now + .seconds(5)
       while receipts <= index, .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
-      XCTAssertEqual(receipts, index + 1); XCTAssertEqual(pad.routeTitle(for: macID), route.title)
-      XCTAssertEqual(mac.routeTitle(for: padID), route.title)
+      XCTAssertEqual(receipts, index + 1); XCTAssertEqual(pad.routeTitle(for: macID), NearbySync.Route.direct.title)
+      XCTAssertEqual(mac.routeTitle(for: padID), NearbySync.Route.direct.title, "A nearby discovery hint cannot turn loopback into AWDL")
     }
     XCTAssertEqual(executed, 1); XCTAssertEqual(generations.count, 11)
     XCTAssertEqual(disconnected, 0, "A retired generation cannot disconnect the new selected route")
@@ -94,6 +94,9 @@ final class NearbySyncTests: XCTestCase {
     while sync.browser?.parameters.includePeerToPeer != true, .now < deadline { try await Task.sleep(for: .milliseconds(100)) }
     XCTAssertTrue(try XCTUnwrap(sync.browser).parameters.includePeerToPeer,
       "Only the bounded nearby search enables peer-to-peer interfaces")
+    sync.resumeDiscovery()
+    XCTAssertFalse(try XCTUnwrap(sync.browser).parameters.includePeerToPeer,
+      "Foreground after an offline sleep starts a fresh bounded LAN-first window")
   }
 
   @MainActor
