@@ -12,6 +12,8 @@ import NotebookCore
     let peer = UUID(uuidString: "7E7A1000-0000-4000-8000-000000000099")!
     let turn = "7e7a1000-0000-4000-8000-000000000077"
     let task = CodexTask(id: "7e7a1000-0000-4000-8000-000000000088", title: "Непрерывный разговор", cwd: "/fixture", projectID: "fixture")
+    var accountLogin: CodexAccountState.Login?
+    let accountRevision = UUID()
     var running = !dictation, subscription: UUID?
     var recordingID = UUID(), receivedAudio = 0
     var deliveredReply = false, admissions = Set<UUID>(), submittedMessages: [CodexMessage] = []
@@ -34,6 +36,13 @@ import NotebookCore
       guard destination == peer, case .request(let query) = envelope.body else { return }
       let reply: NotebookChatReply
       switch query {
+      case .account(let action):
+        switch action {
+        case .beginLogin: accountLogin = .init(id: UUID().uuidString, verificationURL: URL(string: "https://auth.openai.com/codex/device")!, userCode: "TEST-183")
+        case .cancelLogin: accountLogin = nil
+        default: break
+        }
+        reply = .account(.init(revision: accountRevision, account: nil, requiresSignIn: true, login: accountLogin))
       case .dictation(let action):
         guard dictation else { reply = .failure("Outside dictation gesture scenario"); break }
         let state: NotebookDictationState

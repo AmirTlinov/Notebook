@@ -18,6 +18,7 @@ struct NotebookChatPanel: View {
   let endInteraction: () -> Void
   @GestureState private var moving = false
   @GestureState private var resizing = false
+  @State private var showsCodexAccount = false
   @State private var editingProject: CodexProject?
   @State private var terminalDrag: NotebookTerminalSplit?
   @State private var terminalFraction: Double?
@@ -98,6 +99,15 @@ struct NotebookChatPanel: View {
     .background(NotebookControlRegion(gate: model.inputGate))
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("notebook-chat-panel")
+    .sheet(isPresented: $showsCodexAccount) {
+      let computer = chat.computerID
+      NotebookCodexAccountView { query in
+        guard chat.computerID == computer, case .account(let state) = try await chat.directQuery(.account(query)) else {
+          throw NotebookTransportError.disconnected
+        }
+        return state
+      }.id(computer)
+    }
     .sheet(item: $editingProject) { NotebookProjectSettings(project: $0, chat: chat) }
     .onChange(of: scenePhase) {
       if scenePhase == .background { chat.voice.connectionLost() }
@@ -147,6 +157,8 @@ struct NotebookChatPanel: View {
             }
           }
         }
+        Button("Аккаунт Codex", systemImage: "person.crop.circle") { showsCodexAccount = true }
+          .accessibilityIdentifier("codex-account-open")
         if !chat.projects.isEmpty {
           Section("Настройки проектов") {
             ForEach(chat.projects) { project in
@@ -237,7 +249,9 @@ struct NotebookChatPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("notebook-chat-transcript")
       if let conversation = chat.conversation, let request = conversation.requests.first {
-        NotebookCodexRequestView(request: request, threadID: conversation.threadID, chat: chat, maximumHeight: min(300, height * 0.45))
+        NotebookCodexRequestView(request: request, job: chat.decisionJob(request, threadID: conversation.threadID), respond: { decision in
+          await chat.respond(request, decision: decision, threadID: conversation.threadID)
+        }, maximumHeight: min(300, height * 0.45))
           .id(request.id).padding(.horizontal, 12).padding(.bottom, 8)
       }
       if !chat.pendingMessages.isEmpty { outbox }

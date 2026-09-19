@@ -528,6 +528,7 @@ def run_selected(root, plan, evidence):
         if platform == "ipad":
             args.extend(native_ipad_signing_settings())
         if platform == "mac":
+            release.prepare_codex_runtime(root, command)
             tex_runtime = release.prepare_tex_runtime(root, command)
             args.append("NOTEBOOK_TEX_RUNTIME=" + str(tex_runtime))
             image_runtime = release.prepare_image_runtime(root, command)

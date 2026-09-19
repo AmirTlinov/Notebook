@@ -16,16 +16,20 @@ struct NotebookDeviceTrustState: Codable, Equatable, Sendable {
   var account: String?
   var records: [NotebookTrustedDevice] = []
   var blocked: Set<UUID> = []
+  var relays: [UUID: NotebookRelayRoute]?
+  var relayClients: [UUID: NotebookRelayRoute]?
 
   init(account: String? = nil, records: [NotebookTrustedDevice] = [], blocked: Set<UUID> = []) {
     self.account = account; self.records = records; self.blocked = blocked
   }
 
-  private enum CodingKeys: String, CodingKey { case format, account, records, blocked }
+  private enum CodingKeys: String, CodingKey { case format, account, records, blocked, relays, relayClients }
   init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     let version = try values.decode(Int.self, forKey: .format)
     guard version == 1 || version == 2 else { throw NotebookTransportError.unsupportedVersion }
+    relays = try values.decodeIfPresent([UUID: NotebookRelayRoute].self, forKey: .relays)
+    relayClients = try values.decodeIfPresent([UUID: NotebookRelayRoute].self, forKey: .relayClients)
     account = try values.decodeIfPresent(String.self, forKey: .account)
     blocked = try values.decodeIfPresent(Set<UUID>.self, forKey: .blocked) ?? []
     if version == 1 {
@@ -46,6 +50,8 @@ struct NotebookDeviceTrustState: Codable, Equatable, Sendable {
 
   func validate(for identity: NotebookTransportIdentity) throws {
     guard format == 2, records.count <= 8, blocked.count <= 64,
+      (relays?.count ?? 0) <= 8, (relayClients?.count ?? 0) <= 8,
+      (relays?.values.allSatisfy(\.isValid) ?? true), (relayClients?.values.allSatisfy(\.isValid) ?? true),
       account.map({ !$0.isEmpty && $0.utf8.count <= 512 }) ?? true,
       Set(records.map { $0.identity.deviceID }).count == records.count,
       records.allSatisfy({ $0.identity.isValid && $0.identity.workspaceID == identity.workspaceID

@@ -4,6 +4,47 @@ import XCTest
 
 @MainActor
 final class NotebookChatControllerTests: XCTestCase {
+  func testStopUsesReservedControlSlotWhileFileReplyIsMissing() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("control-slot-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), peer = UUID()
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let queue = NotebookPersistenceQueue(store: store)
+    var chat: NotebookChatController!, held: NotebookChatEnvelope?
+    let readStarted = expectation(description: "File read remains outstanding")
+    let stopDelivered = expectation(description: "Stop admitted without waiting for file read")
+    var control: NotebookChatInput?
+    chat = .init(persistence: queue, author: author) { envelope, _ in
+      guard case .request(let query) = envelope.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .file:
+        if held == nil { held = envelope; readStarted.fulfill() }; return
+      case .job(let input):
+        if control == nil { control = input; stopDelivered.fulfill() }
+        XCTAssertNotNil(held)
+        reply = .job(.init(input: input, state: .accepted, result: .acknowledged, revision: 2))
+      case .run: reply = .run(.init(record: nil))
+      case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
+      case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
+      case .activity: reply = .activity([])
+      default: return XCTFail("Unexpected query")
+      }
+      chat.receive(.init(id: envelope.id, body: .reply(reply)), peerID: peer)
+    }
+    await chat.start(); await chat.connect(peer)
+    let reading = Task { try? await chat.directQuery(.file(.directory(.init(computer: peer, project: "fixture", root: "/fixture", path: ""), after: nil))) }
+    await fulfillment(of: [readStarted], timeout: 3)
+    let thread = UUID().uuidString, turn = UUID().uuidString
+    let stopping = Task { await chat.stopTurn(threadID: thread, turnID: turn) }
+    await fulfillment(of: [stopDelivered], timeout: 1)
+    await stopping.value
+    XCTAssertEqual(control?.action, .stop(threadID: thread, turnID: turn))
+    if let held { chat.receive(.init(id: held.id, body: .reply(.failure("Read intentionally interrupted"))), peerID: peer) }
+    _ = await reading.value; await chat.stop(); _ = await queue.flush()
+    XCTAssertEqual(try store.chatJob(XCTUnwrap(control?.id))?.state, .accepted)
+  }
+
   func testCreationWaitsForItsReceiptWithoutReopeningThePreviousEmptyConversation() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-creation-selection-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -441,7 +482,7 @@ final class NotebookChatControllerTests: XCTestCase {
       let reply: NotebookChatReply
       switch query {
       case .run: reply = .run(.init(record: nil))
-      case .models, .resources, .file, .resizeRun, .voice, .dictation: return XCTFail("File, terminal, and audio panels are closed")
+      case .account, .models, .resources, .file, .resizeRun, .voice, .dictation: return XCTFail("File, terminal, and audio panels are closed")
       case .projects: reply = .projects(.init(projects: [project], nextCursor: nil))
       case .catalogue(_, let selected):
         if selected == project { filtered = true }

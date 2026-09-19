@@ -3,7 +3,7 @@ import NotebookCore
 import NotebookCodex
 
 extension Proof {
-  static func exerciseComposer(_ bridge: CodexAppServer, installation: CodexDesktopInstallation, receipt: String) async throws {
+  static func exerciseComposer(_ bridge: CodexAppServer, installation: CodexRuntimeInstallation, receipt: String) async throws {
     guard !FileManager.default.fileExists(atPath: receipt) else { throw CocoaError(.fileWriteFileExists) }
     let options = try await bridge.models()
     guard let option = options.first(where: { $0.efforts.contains("low") }), options.count > 1 else { throw CodexBridgeError.invalidResponse }

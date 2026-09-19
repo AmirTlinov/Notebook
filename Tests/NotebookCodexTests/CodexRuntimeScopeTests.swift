@@ -112,7 +112,7 @@ struct CodexRuntimeScopeTests {
     try #require(manifest["bundleID"] == .string("com.amirtlinov.notebook.mac.acceptance"))
     try #require(manifest["codexDirectory"] == .string(directory.path))
     try #require(manifest["socket"] == .string(socket.path))
-    let installation = try CodexDesktopInstallation.discover()
+    let installation = try CodexRuntimeInstallation.discover()
     try installation.validate()
     let scope = try CodexRuntimeScope(directory: directory, toolsEntry: URL(fileURLWithPath: toolsPath), socket: socket)
     let bootstrap = try scope.bootstrapConfiguration(installation: installation)

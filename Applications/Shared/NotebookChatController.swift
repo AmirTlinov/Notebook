@@ -3,8 +3,8 @@ import Foundation
 import Observation
 import NotebookCore
 
-/// The panel owns only selection, draft and display. The sole outstanding query
-/// can be replaced in the transient lane; mutations survive in SQLite by ID.
+/// The panel owns only selection, draft and display. One normal query and one reserved human control
+/// use separate bounded transient slots; mutations survive in SQLite by ID.
 @MainActor @Observable
 final class NotebookChatController {
   enum BrowserMode: String, CaseIterable { case chats = "Чаты", projects = "Проекты" }
@@ -72,8 +72,9 @@ final class NotebookChatController {
   @ObservationIgnored private var loaded = false
   @ObservationIgnored private var stopped = false
   @ObservationIgnored private var loop: Task<Void, Never>?
-  @ObservationIgnored private var pending: (NotebookChatEnvelope, CheckedContinuation<NotebookChatReply, Error>)?
-  @ObservationIgnored private var retry: Task<Void, Never>?
+  @ObservationIgnored private var pending: [UUID: (NotebookChatEnvelope, CheckedContinuation<NotebookChatReply, Error>)] = [:]
+  @ObservationIgnored private var retries: [UUID: Task<Void, Never>] = [:]
+  @ObservationIgnored private var interactiveRequest = false
   @ObservationIgnored private var directQueries: [(NotebookChatQuery, UUID, CheckedContinuation<NotebookChatReply, Error>)] = []
   @ObservationIgnored private let wake = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
   @ObservationIgnored private var ticker: Task<Void, Never>?
@@ -181,8 +182,7 @@ final class NotebookChatController {
     await runs.stop()
     stopped = true; ticker?.cancel(); wake.continuation.finish()
     cancelQueries()
-    loop?.cancel(); retry?.cancel()
-    pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
+    loop?.cancel()
     await files.stop()
     await loop?.value; loop = nil
   }
@@ -216,8 +216,10 @@ final class NotebookChatController {
     for scope in catalogues.keys { catalogues[scope]?.loading = false }
     catchUpRead?.cancel(); catchUpRead = nil
     for (_, _, continuation) in directQueries { continuation.resume(throwing: NotebookTransportError.disconnected) }
-    directQueries.removeAll(); queries.removeAll(); retry?.cancel()
-    pending?.1.resume(throwing: NotebookTransportError.disconnected); pending = nil
+    directQueries.removeAll(); queries.removeAll()
+    for task in retries.values { task.cancel() }; retries.removeAll()
+    let cancelled = pending; pending.removeAll()
+    for (_, completion) in cancelled.values { completion.resume(throwing: NotebookTransportError.disconnected) }
   }
   func chooseComputer(_ id: UUID, firstConnection: Bool = false) async {
     guard loaded, !stopped, !switchingComputer, !saving, savingInput == nil, !files.notes.contactActive,
@@ -258,9 +260,9 @@ final class NotebookChatController {
       guard subscription == conversationSubscription, value.threadID == threadID else { return }
       acceptConversation(value); return
     }
-    guard pending?.0.id == envelope.id, case .reply(let reply) = envelope.body else { return }
-    let completion = pending?.1; pending = nil; retry?.cancel(); retry = nil
-    completion?.resume(returning: reply)
+    guard case .reply(let reply) = envelope.body, let (_, completion) = pending.removeValue(forKey: envelope.id) else { return }
+    retries.removeValue(forKey: envelope.id)?.cancel()
+    completion.resume(returning: reply)
   }
 
   /// Refresh only the loaded catalogue window. Publish a complete read so a
@@ -542,7 +544,10 @@ final class NotebookChatController {
     savingInput = input
     do {
       _ = try await persistence.submit { try $0.saveChatSubmission(input, to: computer) }
-      try await refreshJobs(); savingInput = nil; error = nil; return true
+      try await refreshJobs(); savingInput = nil; error = nil
+      if action.isInteractiveControl, connected, computer == peer,
+        let reply = try? await directQuery(.job(input)) { try await accept(reply, for: .job(input), computer: computer) }
+      return true
     } catch {
       // A lost local commit acknowledgement also keeps the same message ID.
       if let recovered = try? await persistence.submit({ try $0.chatJob(input.id) }), recovered.input == input {
@@ -587,7 +592,15 @@ final class NotebookChatController {
   func directQuery(_ query: NotebookChatQuery) async throws -> NotebookChatReply {
     let endsVoice: Bool
     if case .job(let input) = query, case .stopVoice = input.action { endsVoice = true } else { endsVoice = false }
-    guard connected, !stopped, (!switchingComputer || endsVoice), let computer = peer, directQueries.count < 8 else { throw NotebookTransportError.disconnected }
+    guard connected, !stopped, (!switchingComputer || endsVoice), let computer = peer else { throw NotebookTransportError.disconnected }
+    if query.isInteractiveControl {
+      guard !interactiveRequest else { throw NotebookTransportError.backpressure }
+      interactiveRequest = true; defer { interactiveRequest = false }
+      let reply = try await request(query)
+      if case .failure(let message) = reply { throw NotebookPersistenceQueue.Failure(message: message) }
+      return reply
+    }
+    guard directQueries.count < 8 else { throw NotebookTransportError.backpressure }
     return try await withCheckedThrowingContinuation { continuation in
       directQueries.append((query, computer, continuation)); wake.continuation.yield(())
     }
@@ -616,19 +629,25 @@ final class NotebookChatController {
     queries.append(query); wake.continuation.yield(()); return true
   }
   private func request(_ query: NotebookChatQuery) async throws -> NotebookChatReply {
-    guard pending == nil, connected, let peer else { throw NotebookTransportError.disconnected }
+    // One bounded normal request plus one reserved human-control request.
+    // A file chunk or lost read reply cannot head-of-line block Cancel/Approval.
+    while pending.count >= (query.isInteractiveControl ? 2 : 1), connected, !stopped {
+      try await Task.sleep(for: .milliseconds(25))
+    }
+    guard connected, !stopped, let peer else { throw NotebookTransportError.disconnected }
     let envelope = NotebookChatEnvelope(body: .request(query))
     if case .conversation = query { conversationSubscription = envelope.id; subscriptionRevision = nil }
     let reply: NotebookChatReply = try await withCheckedThrowingContinuation { continuation in
-      pending = (envelope, continuation)
-      retry = Task { [weak self] in
+      pending[envelope.id] = (envelope, continuation)
+      retries[envelope.id] = Task { [weak self] in
         for _ in 0..<8 {
-          guard !Task.isCancelled, let self, self.pending?.0.id == envelope.id else { return }
+          guard !Task.isCancelled, let self, self.pending[envelope.id] != nil else { return }
           self.send(envelope, peer)
           do { try await Task.sleep(for: .seconds(2)) } catch { return }
         }
-        guard let self, self.pending?.0.id == envelope.id else { return }
-        self.pending = nil; continuation.resume(throwing: NotebookTransportError.disconnected)
+        guard let self, self.pending[envelope.id] != nil else { return }
+        self.pending.removeValue(forKey: envelope.id); self.retries.removeValue(forKey: envelope.id)
+        continuation.resume(throwing: NotebookTransportError.disconnected)
       }
     }
     guard self.peer == peer else { throw NotebookTransportError.disconnected }

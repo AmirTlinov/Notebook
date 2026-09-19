@@ -24,6 +24,7 @@ settings:
     NOTEBOOK_CLOUD_CONTAINER: ""
     NOTEBOOK_TEX_RUNTIME: $(SRCROOT)/../.build/notebook-tex-runtime
     NOTEBOOK_IMAGE_RUNTIME: ""
+    NOTEBOOK_CODEX_RUNTIME: $(SRCROOT)/../.build/notebook-codex-runtime
 
 targets:
   Notebook:
@@ -128,6 +129,15 @@ targets:
         type: folder
         buildPhase: resources
     preBuildScripts:
+      - name: Bundle official Codex and Node runtimes
+        script: |
+          /usr/bin/python3 "$SRCROOT/prepare_notebook_codex.py" --stage "$NOTEBOOK_CODEX_RUNTIME" --bundle "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/CodexRuntime"
+        inputFiles:
+          - $(SRCROOT)/prepare_notebook_codex.py
+          - $(SRCROOT)/NotebookCodexResources.xcfilelist
+          - $(NOTEBOOK_CODEX_RUNTIME)
+        outputFileLists:
+          - $(SRCROOT)/NotebookCodexResources.xcfilelist
       - name: Bundle Notebook tools
         script: |
           /usr/bin/env node "$SRCROOT/../MCP/build-sidecar.mjs" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/NotebookTools"

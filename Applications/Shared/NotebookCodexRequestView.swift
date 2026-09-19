@@ -8,8 +8,8 @@ struct NotebookCodexRequestView: View {
     let id: String; let question: String; let options: [Option]?
   }
   let request: CodexUserRequest
-  let threadID: String
-  let chat: NotebookChatController
+  let job: NotebookChatJob?
+  let respond: (CodexUserDecision) async -> Void
   let maximumHeight: CGFloat
   @State private var answers: [String: String] = [:]
   @State private var submitted = false
@@ -78,21 +78,21 @@ struct NotebookCodexRequestView: View {
               }
             }.font(.system(size: 13)).controlSize(.small)
           } else if request.method == "mcpServer/elicitation/request" {
-            Text("Эта форма требует дополнительных данных. Откройте её в Codex на Mac.")
+            Text("Эта форма требует дополнительных данных. Форма этого инструмента пока не поддерживается. Можно отказать или остановить задачу.")
               .font(.caption).foregroundStyle(.secondary)
             Button("Отказать") { decide(.elicitation(.object(["action": .string("decline")]))) }
-          } else { Text("Этот запрос нужно обработать в Codex на Mac.").font(.caption).foregroundStyle(.secondary) }
+          } else { Text("Этот тип запроса пока не поддерживается. Можно остановить задачу.").font(.caption).foregroundStyle(.secondary) }
           if showsDetails {
             Text(parameters).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
               .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
           }
         }
-        if let job = chat.decisionJob(request, threadID: threadID) {
+        if let job {
           Text(job.error ?? (job.state == .accepted ? "Решение принято Codex" : "Решение сохранено · ожидается Codex"))
             .font(.caption).foregroundStyle(.secondary)
         }
       }
-      .disabled(submitted || chat.decisionJob(request, threadID: threadID) != nil)
+      .disabled(submitted || job != nil)
       .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 10)
       .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { contentHeight = $0 }
     }
@@ -121,6 +121,6 @@ struct NotebookCodexRequestView: View {
   }
   private func decide(_ decision: CodexUserDecision) {
     submitted = true
-    Task { await chat.respond(request, decision: decision, threadID: threadID); submitted = false }
+    Task { await respond(decision); submitted = false }
   }
 }

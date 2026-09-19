@@ -157,6 +157,7 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
   case send(threadID: String, text: String, context: String)
   case steer(threadID: String, turnID: String, text: String, context: String)
   case create(title: String, project: CodexProject? = nil)
+  case createProject(name: String, path: String)
   case updateProject(CodexProjectEdit)
   case setAccess(threadID: String, mode: CodexAccessMode)
   case setModel(threadID: String, selection: CodexModelSelection)
@@ -173,8 +174,12 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
   public var threadID: String? {
     switch self {
     case .send(let id, _, _), .steer(let id, _, _, _), .stop(let id, _), .respond(let id, _, _), .setAccess(let id, _), .setModel(let id, _), .compact(let id): id
-    case .create, .updateProject, .saveFile, .renameFile, .startRun, .writeRun, .stopRun, .startVoice, .stopVoice: nil
+    case .create, .createProject, .updateProject, .saveFile, .renameFile, .startRun, .writeRun, .stopRun, .startVoice, .stopVoice: nil
     }
+  }
+
+  public var isInteractiveControl: Bool {
+    switch self { case .stop, .respond, .stopRun, .stopVoice, .steer: true; default: false }
   }
 
   public var isVoiceCommand: Bool { switch self { case .startVoice, .stopVoice: true; default: false } }
@@ -201,7 +206,7 @@ public enum NotebookChatAction: Codable, Equatable, Sendable {
       address = ["respond", thread.lowercased(), request.turnID.lowercased(), request.method, request.id]
     case .stopVoice(let id): address = ["stopVoice", id.uuidString.lowercased()]
     case .stopRun(let id): address = ["stopRun", id.uuidString.lowercased()]
-    case .send, .steer, .create, .updateProject, .setAccess, .setModel, .compact, .saveFile, .renameFile, .startRun, .writeRun, .startVoice: return nil
+    case .send, .steer, .create, .createProject, .updateProject, .setAccess, .setModel, .compact, .saveFile, .renameFile, .startRun, .writeRun, .startVoice: return nil
     }
     var data = Data()
     for part in ["NotebookChatControl/1", author.uuidString.lowercased()] + address {
@@ -236,6 +241,7 @@ public struct NotebookChatInput: Codable, Equatable, Sendable, Identifiable {
     case .steer(_, let turn, let text, let context):
       return UUID(uuidString: turn) != nil && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.utf8.count <= 32768 && context.utf8.count <= 32768
     case .create(let title, let project): return !title.isEmpty && title.utf8.count <= 256 && (project == nil || (project!.id.utf8.count <= 256 && !project!.id.isEmpty && project!.roots.count <= 32 && project!.roots.allSatisfy { $0.hasPrefix("/") && $0.utf8.count <= 4096 }))
+    case .createProject(let name, let path): return CodexProjectEdit(id: "new", name: name, roots: [path]).isValid
     case .updateProject(let edit): return edit.isValid
     case .setModel(_, let selection): return selection.isValid
     case .setAccess, .compact: return true
@@ -284,6 +290,7 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
     case (.stopVoice, .acknowledged): return true
     case (.startRun, .run(let id)): return id == input.id
     case (.writeRun, .acknowledged), (.stopRun, .acknowledged): return true
+    case (.createProject(let name, let path), .project(let project)): return !project.id.isEmpty && project.name == name && project.roots == [path]
     case (.updateProject(let edit), .project(let project)): return edit.matches(project)
     case (.create, .created(let task)): return UUID(uuidString: task.id) != nil && task.title.utf8.count <= 1024
     case (.send, .turn(let id)), (.steer, .turn(let id)): return UUID(uuidString: id) != nil
@@ -294,6 +301,8 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
 }
 
 public enum NotebookChatQuery: Codable, Equatable, Sendable {
+  public var isInteractiveControl: Bool { if case .job(let input) = self { input.action.isInteractiveControl } else { false } }
+  case account(CodexAccountQuery)
   case dictation(NotebookDictationQuery)
   case job(NotebookChatInput)
   case file(NotebookFileQuery)
@@ -310,6 +319,7 @@ public enum NotebookChatQuery: Codable, Equatable, Sendable {
 }
 
 public enum NotebookChatReply: Codable, Equatable, Sendable {
+  case account(CodexAccountState)
   case dictation(NotebookDictationState)
   case models([CodexModelOption]), resources(CodexResourcePage)
   case projects(CodexProjectPage), activity([CodexTaskActivity])
@@ -322,7 +332,7 @@ public enum NotebookChatReply: Codable, Equatable, Sendable {
   case acknowledged
 }
 
-/// Only one outstanding request per iPad uses the coalesced low-priority lane.
+/// One normal request and one urgent control use separate coalesced lanes per iPad.
 /// Retransmission reuses the request ID and the durable mutation's original ID.
 public struct NotebookChatEnvelope: Codable, Equatable, Sendable {
   public enum Body: Codable, Equatable, Sendable { case request(NotebookChatQuery), reply(NotebookChatReply), event(subscriptionID: UUID, conversation: CodexConversation) }

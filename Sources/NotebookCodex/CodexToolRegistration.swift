@@ -1,12 +1,12 @@
 import Foundation
 import NotebookCore
 
-extension CodexDesktopInstallation {
+extension CodexRuntimeInstallation {
   /// Registration belongs to Codex's config writer. Call only after the app's
   /// pair-activation admission; a development archive must not redirect live tools.
   public func registerNotebookTools(entry: URL, socket: URL) async throws {
     try validate()
-    let node = application.appendingPathComponent("Contents/Resources/cua_node/bin/node")
+    let node = self.node
     guard FileManager.default.isExecutableFile(atPath: node.path),
       FileManager.default.fileExists(atPath: entry.path), socket.isFileURL else { throw CodexBridgeError.notInstalled }
     let current = try await Self.configuration(binary: binary, arguments: ["mcp", "get", "notebook", "--json"])
@@ -38,7 +38,7 @@ extension CodexDesktopInstallation {
       value["transport"]?["env"]?["NOTEBOOK_SOCKET"] == .string(socket.path) else { throw CodexBridgeError.invalidResponse }
   }
 
-  private static func configuration(binary: URL, arguments: [String]) async throws -> (status: Int32, data: Data) {
+  static func configuration(binary: URL, arguments: [String]) async throws -> (status: Int32, data: Data) {
     try await Task.detached(priority: .utility) {
       let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-codex-config-" + UUID().uuidString)
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])

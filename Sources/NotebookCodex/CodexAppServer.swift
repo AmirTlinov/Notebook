@@ -10,9 +10,10 @@ public enum CodexBridgeEvent: Sendable {
 public actor CodexAppServer {
   public nonisolated let events: AsyncStream<CodexBridgeEvent>
   private let output: AsyncStream<CodexBridgeEvent>.Continuation
-  private let installation: CodexDesktopInstallation
+  private let installation: CodexRuntimeInstallation
   let runtimeScope: CodexRuntimeScope?
   private var rpc: CodexRPC?
+  var accountSession = CodexAccountSession()
   private struct Connection: Sendable {
     let rpc: CodexRPC
     let configuration: CodexScopedConfiguration?
@@ -32,8 +33,40 @@ public actor CodexAppServer {
   private var voice: NotebookVoiceState?
   private var processes: [UUID: RunningProcess] = [:]
   private var selections: Set<String> = []
+  private var workspaceTools: [UUID: JSONValue] = [:]
+  private var threadWorkspaces: [String: UUID] = [:]
 
-  public init(installation: CodexDesktopInstallation, scope: CodexRuntimeScope? = nil) {
+  public func registerWorkspace(_ workspace: UUID, entry: URL, socket: URL) throws {
+    guard entry.isFileURL, socket.isFileURL, FileManager.default.fileExists(atPath: entry.path),
+      workspaceTools[workspace] != nil || workspaceTools.count < 8 else { throw CodexBridgeError.invalidInput }
+    workspaceTools[workspace] = .object(["command": .string(installation.node.path), "args": .array([.string(entry.path)]),
+      "env": .object(["NOTEBOOK_SOCKET": .string(socket.path)]), "enabled": .bool(true), "required": .bool(true)])
+  }
+
+  public func unregisterWorkspace(_ workspace: UUID) async throws {
+    guard !hasActiveWork(workspace: workspace) else { throw CodexBridgeError.busy }
+    let threads = threadWorkspaces.filter { $0.value == workspace }.map(\.key)
+    for thread in threads {
+      if states[thread] != nil, let rpc { _ = try await rpc.request("thread/unsubscribe", params: .object(["threadId": .string(thread)])) }
+      states.removeValue(forKey: thread); selections.remove(thread); threadWorkspaces.removeValue(forKey: thread)
+    }
+    workspaceTools.removeValue(forKey: workspace)
+  }
+
+  public func bindWorkspace(_ workspace: UUID, threadID: String) throws {
+    guard threadWorkspaces[threadID] == nil || threadWorkspaces[threadID] == workspace else { throw CodexBridgeError.busy }
+    threadWorkspaces[threadID] = workspace
+  }
+  public func hasActiveWork(workspace: UUID) -> Bool {
+    !processes.isEmpty || starting.contains { threadWorkspaces[$0] == workspace }
+      || attaching.keys.contains { threadWorkspaces[$0] == workspace }
+      || (voice?.isActive == true && voice.map { threadWorkspaces[$0.threadID] == workspace } == true)
+      || states.contains { threadWorkspaces[$0.key] == workspace && ($0.value.view.busy || !$0.value.requests.isEmpty) }
+  }
+
+  private var answeringRequests: Set<String> = []
+
+  public init(installation: CodexRuntimeInstallation, scope: CodexRuntimeScope? = nil) {
     self.installation = installation
     runtimeScope = scope
     let stream = AsyncStream<CodexBridgeEvent>.makeStream(bufferingPolicy: .bufferingNewest(16))
@@ -51,6 +84,7 @@ public actor CodexAppServer {
   public func snapshot(threadID: String) -> CodexConversation? { states[threadID]?.view }
 
   public func attach(threadID: String) async throws {
+    guard !accountSession.changing else { throw CodexBridgeError.busy }
     guard UUID(uuidString: threadID) != nil else { throw CodexBridgeError.invalidInput }
     if states[threadID]?.ready == true { selections.insert(threadID); return }
     if let task = attaching[threadID] { try await task.value; selections.insert(threadID); return }
@@ -73,7 +107,7 @@ public actor CodexAppServer {
     if states.count >= 9 {
       guard let idle = states.keys.sorted().first(where: { !selections.contains($0) && !(voice?.threadID == $0 && voice?.phase != .ended) && states[$0]?.view.busy == false && states[$0]?.requests.isEmpty == true }) else { throw CodexBridgeError.busy }
       _ = try await rpc.request("thread/unsubscribe", params: .object(["threadId": .string(idle)]))
-      states.removeValue(forKey: idle)
+      states.removeValue(forKey: idle); threadWorkspaces.removeValue(forKey: idle)
     }
     // No settings overrides, stale-turn inference or force takeover. A foreign active writer is a refusal.
     states[threadID] = CodexAppServerState(threadID: threadID)
@@ -144,6 +178,7 @@ public actor CodexAppServer {
     try await submit(threadID: threadID, clientMessageID: clientMessageID, text: text, context: context, expectedTurnID: turnID, attachments: attachments)
   }
   private func submit(threadID: String, clientMessageID: UUID, text: String, context: String?, expectedTurnID: String?, attachments: [CodexInputAttachment]) async throws -> String {
+    guard !accountSession.changing else { throw CodexBridgeError.busy }
     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
       text.utf8.count <= CodexProtocol.messageLimit, (context?.utf8.count ?? 0) <= CodexProtocol.messageLimit else { throw CodexBridgeError.invalidInput }
     guard let rpc, let current = states[threadID]?.view, current.ready else { throw CodexBridgeError.unavailable }
@@ -171,8 +206,12 @@ public actor CodexAppServer {
   }
 
   public func respond(threadID: String, request: CodexUserRequest, decision: CodexUserDecision) async throws {
+    guard !accountSession.changing else { throw CodexBridgeError.busy }
     guard let rpc, states[threadID]?.requests.contains(request) == true else { throw CodexBridgeError.staleRequest }
     let value = try Self.response(request: request, decision: decision), epoch = generation
+    // Claim before suspension: two routes/devices cannot answer the same native request.
+    let key = threadID + "/" + request.id
+    guard answeringRequests.insert(key).inserted else { throw CodexBridgeError.acceptanceUnknown }
     try await rpc.respond(id: request.nativeID, result: value)
     let deadline = ContinuousClock.now.advanced(by: .seconds(12))
     while states[threadID]?.requests.contains(request) == true {
@@ -247,6 +286,15 @@ public actor CodexAppServer {
     }
   }
 
+  func invalidateAccountPresentation() {
+    for task in attaching.values { task.cancel() }; attaching.removeAll()
+    states.removeAll(); selections.removeAll(); answeringRequests.removeAll(); threadWorkspaces.removeAll()
+  }
+
+  public func hasActiveWork() -> Bool {
+    !processes.isEmpty || !starting.isEmpty || !attaching.isEmpty || voice?.isActive == true || states.values.contains { $0.view.busy || !$0.requests.isEmpty }
+  }
+
   public func close() async {
     if let current = voice, current.phase != .ended { try? await stopVoice(id: current.id) }
     generation = UUID()
@@ -254,7 +302,7 @@ public actor CodexAppServer {
     let rpc = self.rpc; self.rpc = nil; scopedConfiguration = nil
     connection?.cancel(); connection = nil
     for task in attaching.values { task.cancel() }; attaching.removeAll()
-    states.removeAll(); selections.removeAll()
+    states.removeAll(); selections.removeAll(); answeringRequests.removeAll(); threadWorkspaces.removeAll()
     await rpc?.stop()
     await interruptProcesses()
   }
@@ -378,7 +426,7 @@ public actor CodexAppServer {
     }
   }
 
-  private func connect() async throws -> CodexRPC {
+  func connect() async throws -> CodexRPC {
     if let rpc { return rpc }
     if let connection {
       let epoch = generation, result = try await connection.value
@@ -389,6 +437,7 @@ public actor CodexAppServer {
     let installation = installation, epoch = generation, scope = runtimeScope
     let task = Task { [weak self] in
       try installation.validate()
+      try await installation.validateVersion()
       let configuration: CodexScopedConfiguration?
       if let scope {
         let bootstrap = try scope.bootstrapConfiguration(installation: installation)
@@ -427,8 +476,14 @@ public actor CodexAppServer {
     } catch { connection = nil; throw error }
   }
 
-  func scopedThreadParameters(_ original: [String: JSONValue], rpc: CodexRPC) async throws -> [String: JSONValue] {
-    guard runtimeScope != nil else { return original }
+  func scopedThreadParameters(_ original: [String: JSONValue], rpc: CodexRPC, workspaceID: UUID? = nil) async throws -> [String: JSONValue] {
+    guard runtimeScope != nil else {
+      let workspace = workspaceID ?? original["threadId"]?.string.flatMap { threadWorkspaces[$0] }
+      guard let workspace, let tools = workspaceTools[workspace] else { return original }
+      var result = original
+      result["config"] = .object(["mcp_servers": .object(["notebook": tools])])
+      return result
+    }
     guard let configuration = scopedConfiguration, self.rpc === rpc else { throw CodexBridgeError.unsafeEndpoint }
     let effective = try await rpc.request("config/read", params: .object([
       "includeLayers": .bool(false), "cwd": .string(configuration.scope.directory.path)]))
@@ -447,6 +502,7 @@ public actor CodexAppServer {
 
   private func receive(_ frame: JSONValue, epoch: UUID) async throws {
     guard epoch == generation else { return }
+    if accountSession.receive(frame) { return }
     if try receiveVoice(frame) { return }
     if frame["method"]?.string == "command/exec/outputDelta" {
       guard let id = frame["params"]?["processId"]?.string.flatMap(UUID.init(uuidString:)),
@@ -463,12 +519,19 @@ public actor CodexAppServer {
     guard let id = frame["params"]?["threadId"]?.string, var state = states[id] else {
       if frame["id"] != nil { throw CodexBridgeError.unsupportedRequest }; return
     }
-    if try state.accept(frame) { states[id] = state; output.yield(.conversation(state.view)) }
+    if try state.accept(frame) {
+      states[id] = state
+      if frame["method"] == .string("serverRequest/resolved") {
+        let live = Set(state.requests.map { id + "/" + $0.id })
+        answeringRequests = answeringRequests.filter { !$0.hasPrefix(id + "/") || live.contains($0) }
+      }
+      output.yield(.conversation(state.view))
+    }
   }
   private func disconnected(_ error: CodexBridgeError, epoch: UUID) async {
     guard generation == epoch else { return }
     if voice?.isActive == true { voice?.phase = .failed; voice?.sdp = nil; voice?.error = "Соединение с Codex прервано. Голос не возобновляется автоматически." }
-    generation = UUID(); rpc = nil; scopedConfiguration = nil; states.removeAll(); selections.removeAll()
+    generation = UUID(); rpc = nil; scopedConfiguration = nil; states.removeAll(); selections.removeAll(); answeringRequests.removeAll(); threadWorkspaces.removeAll()
     output.yield(.unavailable(error))
     await interruptProcesses()
   }

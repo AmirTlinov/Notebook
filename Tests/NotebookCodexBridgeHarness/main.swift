@@ -29,9 +29,18 @@ import NotebookCodex
 
   static func run() async throws {
     let foreground = await MainActor.run { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }
-    let installation = try await CodexDesktopInstallation.discover()
-    let metadata = CodexAppServer(installation: installation)
     let args = CommandLine.arguments
+    if args.count == 5, args[1] == "device-code-live" {
+      let root = URL(fileURLWithPath: args[3])
+      try await exerciseLiveDeviceCode(installation: .init(binary: root.appendingPathComponent("codex/bin/codex"), node: root.appendingPathComponent("node")), entry: URL(fileURLWithPath: args[4]), receipt: args[2]); return
+    }
+    if args.count == 5, args[1] == "standalone" {
+      let root = URL(fileURLWithPath: args[3])
+      try await exerciseStandalone(installation: .init(binary: root.appendingPathComponent("codex/bin/codex"), node: root.appendingPathComponent("node")), entry: URL(fileURLWithPath: args[4]), receipt: args[2]); return
+    }
+    let installation = try CodexRuntimeInstallation.discover()
+    let metadata = CodexAppServer(installation: installation)
+    if args.count == 2, args[1] == "device-code" { try await exerciseDeviceCode(installation: installation); return }
     if args.count == 3, args[1] == "dictation" {
       let audio = try Data(contentsOf: URL(fileURLWithPath: args[2]))
       let start = Date()
@@ -125,8 +134,8 @@ import NotebookCodex
       print("Expected-turn interruption passed")
       await bridge.close()
       let foregroundAfter = await MainActor.run { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }
-      let receipt = Receipt(checkedAt: Date(), appVersion: Bundle(url: installation.application)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
-        appBuild: Bundle(url: installation.application)?.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown", threadID: task.id, clientMessageID: clientID.uuidString.lowercased(),
+      let receipt = Receipt(checkedAt: Date(), appVersion: installation.binary.lastPathComponent,
+        appBuild: "standalone", threadID: task.id, clientMessageID: clientID.uuidString.lowercased(),
         answeredTurnID: firstTurn, permissionTurnID: permissionTurn, stoppedTurnID: stopTurn,
         catalogueCount: catalogue.tasks.count, historyMessageCount: history.messages.count,
         nativeBridgePassed: true, foregroundUnchanged: foreground == foregroundAfter, steeringPassed: true, secondWriterRejected: true, featureReady: false, disposableTaskArchived: false,

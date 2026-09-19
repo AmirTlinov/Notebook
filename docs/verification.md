@@ -1,5 +1,92 @@
 # Проверка Notebook
 
+## 19 сентября — GUI-183: отдельная ветка, standalone Codex и публичный relay
+
+Ветка `codex/gui-183-codex-remote`, база `85d7d720`; рабочая production-пара не
+заменялась. Финальный app-source SHA-256:
+`f6bc0b83dd8a378d02eb62075eb705cab41ae8ed77ce90ff65f3c57d5e156d59`;
+relay.mjs SHA-256:
+`d97153d43e381bee89e300cb1831cb79cb55d3d5376f8b62c67fff318a1abdd7`. По прямому указанию Амира использован отдельный iPad Simulator
+`B1F70A0C-34FB-44E3-850A-BE1EE225D967`, bundle suffix `.gui183` и отдельный derived data.
+GUI-259 параллельно выпустил production wire 31/manifest 14; эта ветка содержит
+wire 30/manifest 9 своей базы. Перед будущей интеграцией нужно единое новое
+значение протокола и повторная проверка объединённого source, не слепой merge.
+
+Изменён прямой runtime-путь: один app-level Mac host официального App Server,
+per-workspace IPC/пersistence, локальное окно задач и удалённый iPad используют
+один журнал. Закрытие отображения не закрывает принятую задачу. Упакованы официальный
+Codex 0.155.0 и Node 24.21.0, проверены подписи производителей, архивные SHA и inventory.
+Desktop bundle/private Node больше не нужны. Добавлены официальный device-code,
+публичный account/limits/logout, account/revocation fencing и scoped project/create.
+Неподтверждённое подключение к уже работающему daemon Desktop не имитируется:
+foreign writer явно отклоняется, без force-takeover/клона.
+
+Фактические свидетельства находятся в `.build/gui-183/` этого worktree:
+
+- `swift-final6.log`: 4 Core remote-control и 22 Codex/account/connection/scope — PASS.
+- `mac-final-build10.log`: clean helper build-for-testing, script sandbox **включён**,
+  ad-hoc изолированный Mac bundle; `codesign --verify --deep --strict` PASS.
+  Исходный incremental TeX/image `ditto` не мог перезаписать sandbox outputs;
+  очищался только собственный generated `NotebookMarkupService.xpc`, не runtime
+  источники, production или настройки sandbox.
+- `standalone-receipt.json`: настоящий bundled Codex записал `proof.txt` и выполнил
+  Python assert с `GUI-183-CHECK-PASSED`. Task `01a0b978-ebf7-7192-bedf-17548463f89e`,
+  turn `01a0b978-f010-73a3-885f-167eea29297d`: повтор input ID вернул прежний turn,
+  второй writer отклонён, detach не остановил задачу, после перезапуска прочитана
+  та же история с одним input. Это существующий официальный аккаунт, не clean-login.
+- `device-code-project-proof.log`: пустой отдельный CODEX_HOME — native project
+  create/read/idempotency, start/dedup/cancel входа PASS. С согласия Амира начат
+  настоящий интерактивный вход в другой пустой профиль; подтверждения за 10 минут
+  не было, попытка отменена. Завершённый clean-login/result/logout остаётся открытым.
+- `ipad-final-tests.xcresult`: 39 PASS, один opt-in relay SKIP без credentials.
+  Тот же relay test отдельно выполнен ниже, а не засчитан по пропуску.
+  Десять настоящих TLS handover сохранили command ID и одно durable исполнение;
+  late stop старого канала не отключил новый. Stop обошёл зависшее чтение файла.
+  Simulator UI account open/code/cancel/dismiss прошёл; снимок формы просмотрен.
+- `ipad-relay-final.xcresult`: 1 PASS через настоящий публичный `https://catocut.com`.
+  Native Network.framework HTTP CONNECT + reverse uplink + прежний inner PSK/TLS.
+  8 MiB доставлены один раз; отзыв закрыл поток. Десять control RTT под bulk:
+  p50 **283.37 ms**, p95 **345.69 ms** (эмпирическая верхняя квантиль десяти samples).
+  RSS с шагом 100 ms: **247.52 → 282.37 MiB**, прирост **34.86 MiB**; включает
+  payload и тестовые stores. Без bulk отдельный carrier proof: p50 около 297 ms,
+  p95 около 303 ms. Это разные короткие прогоны, не контролируемый causal benchmark.
+- `relay-last-tests.log`: 4 Node PASS — scoped opaque relay, неправильный ключ,
+  одноразовые/истёкшие tickets, отзыв/rotation и bounds. Сервис развёрнут на
+  предоставленном сервере, HTTPS healthz готов, systemd/renew hook настроены.
+  Тестовый маршрут отозван после проверки; production devices не подключались.
+
+`mac-final2-tests.xcresult`: **25 PASS**, 0 FAIL/SKIP/runtime warnings. Новый
+opt-in сценарий использовал настоящий Mac presentation → host → durable journal:
+агент изменил файл, выполнил Python assert и создал документ в изолированном
+Notebook через публичный MCP. Только exact `notebook_execute`/`notebook_context`
+approval этого private socket получил allowOnce; разрешения shell/network/global
+не расширялись, ответ с тем же ID повторно не исполнялся. Task
+`01a0b9b8-3149-7472-aa4d-f3e40eb35e53`, turn
+`01a0b9b8-544e-74b1-8c5d-7e0ab1306275`, документ
+`8BC8A293-EFF4-4F1B-89FF-4332859FE2F0`. Подпись runtime проверяется вне MainActor;
+runtime warning первого прогона исчез после исправления этого пути.
+
+Offscreen `NSView.cacheDisplay` снимок SwiftUI оказался неполным и не принят
+как визуальное доказательство окна. Прямая CUA-проверка DEBUG isolated fixture:
+Cmd1 открыл читаемое окно; редактор, проект и кнопки не перекрываются, сообщение
+о запрете запуска не скрыто. AX-ввод точного черновика → закрыть окно → Cmd1
+сохранил строку. CUA keyboard/paste ненадёжны в текущем окружении (paste вернул
+ошибку без изменения текста); использован проверенный AX setValue, сообщение
+не отправлялось. Это проверка компоновки/черновика, не live task UI acceptance.
+
+`ipad-final-build2.log` и `ipad-final2-tests.xcresult`: финальный затронутый source
+скомпилирован, **39 PASS**, 0 FAIL/runtime warnings, 1 opt-in relay SKIP без env.
+Предыдущий отдельный public relay PASS остаётся отдельным измерением, не повтором
+на этом окончательном source. После него менялись только локальное выключение
+маршрута и cleanup неудавшегося loopback соединения, не framing или byte budgets.
+
+Границы: оба клиента WAN-теста работали на одном Mac через публичный сервер —
+это **не две физические сети**. Метка nearby на loopback в handover-test не
+доказывает AWDL; аппаратный P2P без AP не проверялся. Не выполнены production
+installation acceptance, 30 минут совместной работы и системные CPU/GPU/frame
+измерения. Голос не получал отдельной WAN seamlessness-приёмки. Общая GUI-183
+не считается полностью принятой по этим scoped результатам.
+
 ## 19 сентября — GUI-200/255/257: дефекты 115 воспроизведены, исправление 116 проверяется
 
 Снимки и жалоба Амира после установки 115 опровергают принятие прежнего среза

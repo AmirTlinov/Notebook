@@ -5,7 +5,7 @@ import NotebookCodex
 extension Proof {
   /// This task has no model turns and never uses the granted permissions. The
   /// proof changes only its native settings, then restores the project profile.
-  static func exerciseAccess(_ bridge: CodexAppServer, installation: CodexDesktopInstallation, receipt: String) async throws {
+  static func exerciseAccess(_ bridge: CodexAppServer, installation: CodexRuntimeInstallation, receipt: String) async throws {
     guard !FileManager.default.fileExists(atPath: receipt) else { throw CocoaError(.fileWriteFileExists) }
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-access-proof-\(UUID())")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)

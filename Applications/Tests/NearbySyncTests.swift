@@ -5,15 +5,95 @@ import NotebookCore
 import XCTest
 @testable import Notebook
 
+@MainActor private final class HandoverRoute { var value = NearbySync.Route.direct }
+
 final class NearbySyncTests: XCTestCase {
   @MainActor
-  func testDiscoveryIncludesThePeerToPeerInterfacesUsedByTheTransport() async throws {
+  func testTenAuthenticatedHandoversKeepOneCommandIdentityAndRejectStaleDisconnects() async throws {
+    let workspace = UUID(), macID = UUID(), padID = UUID(), credentialID = UUID(), secret = Data(repeating: 87, count: 32)
+    let macIdentity = NotebookTransportIdentity(deviceID: macID, workspaceID: workspace, displayName: "Mac route fixture")
+    let padIdentity = NotebookTransportIdentity(deviceID: padID, workspaceID: workspace, displayName: "iPad route fixture")
+    let macTrust = RecoverableDeviceStore(), padTrust = RecoverableDeviceStore()
+    macTrust.unavailable = false; padTrust.unavailable = false
+    macTrust.records = [.init(identity: padIdentity, credentialID: credentialID, secret: secret)]
+    padTrust.records = [.init(identity: macIdentity, credentialID: credentialID, secret: secret)]
+    let storage = NotebookTransportStorage(changes: { _, _ in [] }, incomingCursor: { _ in 0 }, acknowledgePeer: { _, _ in },
+      blobSize: { _ in throw NotebookTransportError.invalidBlob }, readBlobChunk: { _, _, _ in throw NotebookTransportError.invalidBlob },
+      stageBlob: { _, _, _ in }, missingBlobHashes: { _, _, _ in [] }, applyRemoteChange: { _ in 0 })
+    let root = temporaryDirectory(); defer { try? FileManager.default.removeItem(at: root) }
+    let mac = NearbySync(role: .macListener, identity: macIdentity, storage: storage, stagingRoot: root.appendingPathComponent("mac"), trustStore: macTrust)
+    let pad = NearbySync(role: .iPadConnector, identity: padIdentity, storage: storage, stagingRoot: root.appendingPathComponent("pad"), trustStore: padTrust)
+    defer { mac.stop(); pad.stop() }
+    await pad.start(); pad.browser?.cancel() // Deterministic endpoints, not a fabricated DNS advertisement.
+    await mac.start()
+    let listener = try NWListener(using: NotebookTransportTLS.parameters(keys: [macTrust.records[0].tlsKey], loopback: true))
+    defer { listener.cancel() }
+    let selectedRoute = HandoverRoute()
+    listener.newConnectionHandler = { connection in Task { @MainActor in mac.addSession(connection: connection, credential: nil, route: selectedRoute.value) } }
+    listener.start(queue: .init(label: "Notebook.Handover.Test"))
+    let deadline = ContinuousClock.now + .seconds(5)
+    while listener.port == nil || listener.port == .any, .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    let port = try XCTUnwrap(listener.port); XCTAssertNotEqual(port, .any)
+    let credential = NotebookPeerCredential(credentialID: credentialID, secret: secret, expectedPeer: macIdentity)
+    let thread = UUID().uuidString, turn = UUID().uuidString
+    let request = CodexUserRequest(nativeID: .number(183), method: "item/commandExecution/requestApproval", turnID: turn, parameters: .object([:]))
+    let action = NotebookChatAction.respond(threadID: thread, request: request, decision: .allowOnce)
+    let input = NotebookChatInput(id: try XCTUnwrap(action.controlID(author: padID)), author: padID, action: action)
+    let journal = NotebookStore(root: root.appendingPathComponent("journal"))
+    _ = try journal.initializeWorkspace(actor: macID, pageSize: .init(width: 100, height: 100))
+    var receipts = 0, executed = 0, disconnected = 0, generations = Set<UUID>()
+    pad.onConnect = { _, generation in
+      generations.insert(generation)
+      pad.sendTransient(.codex(.init(body: .request(.job(input)))), to: macID)
+    }
+    pad.onDisconnect = { _, _ in disconnected += 1 }
+    mac.onTransient = { value, _, _ in
+      guard case .codex(let envelope) = value, case .request(.job(let received)) = envelope.body else { return }
+      XCTAssertEqual(received, input)
+      do {
+        var job = try journal.saveChatInput(received)
+        if job.state == .saved {
+          _ = try journal.advanceChatJob(job.id, from: .saved, to: .attempting)
+          executed += 1
+          job = try journal.advanceChatJob(job.id, from: .attempting, to: .accepted, result: .acknowledged)
+        }
+        mac.sendTransient(.codex(.init(id: envelope.id, body: .reply(.job(job)))), to: padID)
+      } catch { XCTFail(error.localizedDescription) }
+    }
+    pad.onTransient = { value, _, _ in
+      if case .codex(let envelope) = value, case .reply(.job(let job)) = envelope.body {
+        XCTAssertEqual(job.id, input.id); XCTAssertEqual(job.state, .accepted); receipts += 1
+      }
+    }
+    // These loopback TLS connections exercise production handover and journals;
+    // the separate public-relay test verifies the actual internet carrier.
+    for index in 0...10 {
+      if index > 0 { pad.networkPathChanged(); pad.browser?.cancel() }
+      let route: NearbySync.Route = index.isMultiple(of: 2) ? .direct : .nearby
+      selectedRoute.value = route
+      pad.addSession(connection: NWConnection(host: "127.0.0.1", port: port,
+        using: try NotebookTransportTLS.parameters(keys: [credential.tlsKey])), credential: credential, route: route)
+      let deadline = ContinuousClock.now + .seconds(5)
+      while receipts <= index, .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+      XCTAssertEqual(receipts, index + 1); XCTAssertEqual(pad.routeTitle(for: macID), route.title)
+      XCTAssertEqual(mac.routeTitle(for: padID), route.title)
+    }
+    XCTAssertEqual(executed, 1); XCTAssertEqual(generations.count, 11)
+    XCTAssertEqual(disconnected, 0, "A retired generation cannot disconnect the new selected route")
+    XCTAssertEqual(try journal.recentChatJobs(author: padID).count, 1)
+  }
+
+  @MainActor
+  func testDiscoveryUsesLANFirstAndBoundsPeerToPeerSearch() async throws {
     let trust = RecoverableDeviceStore(); trust.unavailable = false
     let sync = makeRecoverableSync(trust); defer { sync.stop() }
     trust.records = [confirmedPeer(for: sync)]
     await sync.start()
+    XCTAssertFalse(try XCTUnwrap(sync.browser).parameters.includePeerToPeer)
+    let deadline = ContinuousClock.now + .seconds(7)
+    while sync.browser?.parameters.includePeerToPeer != true, .now < deadline { try await Task.sleep(for: .milliseconds(100)) }
     XCTAssertTrue(try XCTUnwrap(sync.browser).parameters.includePeerToPeer,
-      "Discovery must reach the same nearby interfaces as its TLS connections")
+      "Only the bounded nearby search enables peer-to-peer interfaces")
   }
 
   @MainActor

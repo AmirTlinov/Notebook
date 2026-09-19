@@ -1,6 +1,32 @@
 import Foundation
 
 extension NotebookStore {
+  /// A queued native command belongs to the account that admitted it. Existing
+  /// unbound saved commands are not silently inherited by a newly signed-in user.
+  @discardableResult public func admitCodexAccount(_ identity: String) throws -> Bool {
+    guard identity == "signed-out" || (identity.count == 64 && identity.allSatisfy({ "0123456789abcdef".contains($0) })) else {
+      throw NotebookStorageError.invalidTransaction("invalid account identity")
+    }
+    return try commandTransaction(advancesReadRevision: false) {
+      let previous = try currentSQL!.rows("SELECT value FROM metadata WHERE key='codex_account'").first?[0].text
+      guard previous != identity else { return false }
+      for job in try pendingChatJobs() where job.state == .saved {
+        _ = try advanceChatJob(job.id, from: .saved, to: .rejected,
+          error: "Аккаунт Codex изменился. Действие не выполнено; отправьте его заново явно.")
+      }
+      try currentSQL!.run("INSERT INTO metadata(key,value) VALUES('codex_account',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [.text(identity)])
+      return true
+    }
+  }
+
+  public func rejectSavedChatInputs(from author: UUID) throws {
+    try commandTransaction(advancesReadRevision: false) {
+      for job in try pendingChatJobs() where job.state == .saved && job.input.author == author {
+        _ = try advanceChatJob(job.id, from: .saved, to: .rejected, error: "Доступ устройства отозван. Действие не выполнено.")
+      }
+    }
+  }
+
   public func chatJob(_ id: UUID) throws -> NotebookChatJob? {
     try sqlRead { db in
       try db.rows("SELECT value FROM chat_jobs WHERE id=?", [.text(id.uuidString)]).first.map {

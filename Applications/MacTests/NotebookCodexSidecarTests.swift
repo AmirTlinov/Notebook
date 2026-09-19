@@ -17,6 +17,8 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   var accepted: [CodexMessage] = []
   var stopIsStale = false
   var needsSignIn = false
+  var slowCreation = false
+  func delayCreation() { slowCreation = true }
   func requireSignIn(_ required: Bool) { needsSignIn = required }
   func finishBeforeStop() { stopIsStale = true }
   func configure(busy: Bool = false, unknown: Bool = false) { self.busy = busy; self.unknown = unknown }
@@ -56,6 +58,7 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   }
   func activities(threadIDs: [String]) -> [CodexTaskActivity] { threadIDs.map { .init(id: $0, status: .idle) } }
   func readProject(id: String) -> CodexProject { project ?? .init(id: id, name: "Notebook", roots: ["/tmp"]) }
+  func createProject(name: String, path: String, idempotencyKey: UUID) throws -> CodexProject { .init(id: idempotencyKey.uuidString, name: name, roots: [path]) }
   func updateProject(_ edit: CodexProjectEdit) throws -> CodexProject {
     projectEdits += 1
     let value = CodexProject(id: edit.id, name: edit.name ?? "Notebook", roots: edit.roots ?? ["/tmp"])
@@ -68,7 +71,8 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   func projects(cursor: String?) -> CodexProjectPage { .init(projects: [], nextCursor: nil) }
   func tasks(cursor: String?, project: CodexProject?) -> CodexTaskPage { .init(tasks: [.init(id: thread, title: "Математика", cwd: "/tmp")], nextCursor: nil, defaultProviderNeedsSignIn: needsSignIn) }
   func history(threadID: String, cursor: String?) -> CodexHistoryPage { .init(messages: accepted, nextCursor: nil) }
-  func create(directory: URL, title: String, workspaceID: UUID, project: CodexProject?) throws -> CodexTask {
+  func create(directory: URL, title: String, workspaceID: UUID, project: CodexProject?) async throws -> CodexTask {
+    if slowCreation { try await Task.sleep(for: .seconds(5)) }
     if needsSignIn { throw CodexBridgeError.signInRequired }
     return .init(id: thread, title: title, cwd: directory.path)
   }
@@ -277,13 +281,41 @@ final class NotebookCodexSidecarTests: XCTestCase {
       _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
       service.start()
       try await wait { try await queue.submit { try $0.chatJob(input.id)?.state == .rejected } }
-      XCTAssertEqual(try store.chatJob(input.id)?.error, "Войдите в Codex на Mac. Отдельного входа Notebook нет.")
+      XCTAssertEqual(try store.chatJob(input.id)?.error, "Войдите в Codex через настройки аккаунта Notebook.")
       await native.requireSignIn(false)
       _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
       XCTAssertEqual(try store.chatJob(input.id)?.state, .rejected, "Sign-in never silently replays a rejected creation")
       let next = NotebookChatInput(author: peer, action: .create(title: "Математика"))
       _ = await service.receive(.init(body: .request(.job(next))), peerID: peer)
       try await wait { try await queue.submit { try $0.chatJob(next.id)?.state == .accepted } }
+      await service.stop()
+    }
+  }
+
+  func testDetachingViewDoesNotStopAnAdmittedTaskAndSlowCreationDoesNotBlockAnotherThread() async throws {
+    try await fixture { store, queue, native, peer in
+      await native.delayCreation()
+      let service = try sidecar(store, queue, native)
+      let create = NotebookChatInput(author: peer, action: .create(title: "slow"))
+      let message = NotebookChatInput(author: peer, action: .send(threadID: native.thread, text: "independent", context: ""))
+      _ = await service.receive(.init(body: .request(.job(create))), peerID: peer)
+      _ = await service.receive(.init(body: .request(.job(message))), peerID: peer)
+      service.start(); service.detachView()
+      try await wait { try await queue.submit { try $0.chatJob(message.id)?.state == .accepted } }
+      XCTAssertEqual(try store.chatJob(create.id)?.state, .attempting)
+      let count = await native.counts(); XCTAssertEqual(count.0, 1)
+      await service.stop()
+    }
+  }
+
+  func testRevocationRejectsSavedInputBeforeItCanSurviveRestart() async throws {
+    try await fixture { store, queue, native, peer in
+      let service = try sidecar(store, queue, native)
+      let message = NotebookChatInput(author: peer, action: .send(threadID: native.thread, text: "must not execute", context: ""))
+      _ = await service.receive(.init(body: .request(.job(message))), peerID: peer)
+      service.authorizePeer = { _ in false }; service.start()
+      try await wait { try await queue.submit { try $0.chatJob(message.id)?.state == .rejected } }
+      let count = await native.counts(); XCTAssertEqual(count.0, 0)
       await service.stop()
     }
   }

@@ -22,8 +22,8 @@ public struct CodexRuntimeScope: Sendable, Equatable {
     URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.resolvingSymlinksInPath().path == directory.path
   }
 
-  func bootstrapConfiguration(installation: CodexDesktopInstallation) throws -> CodexScopedConfiguration {
-    let node = installation.application.appendingPathComponent("Contents/Resources/cua_node/bin/node")
+  func bootstrapConfiguration(installation: CodexRuntimeInstallation) throws -> CodexScopedConfiguration {
+    let node = installation.node
     guard FileManager.default.isExecutableFile(atPath: node.path),
       FileManager.default.fileExists(atPath: toolsEntry.path) else { throw CodexBridgeError.notInstalled }
     return try CodexScopedConfiguration(scope: self, notebook: .object([
