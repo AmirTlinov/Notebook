@@ -7,6 +7,17 @@ const target = { kind: "page", id: randomUUID() };
 const graphic = { shape: "ellipse", style: { stroke: { red: 0, green: 0, blue: 0 }, strokeWidth: 2 },
   label: "+", representation: "geometry", visible: true, sourceInkIDs: [randomUUID()] };
 
+test("retained measured layers and native page text use the ordinary typed element action", () => {
+  const freehand = {layers:[{tool:"pen",color:{red:0,green:0.2,blue:0.8},vertices:[
+    {x:0,y:0,opacity:0.2},{x:1,y:0,opacity:0.8},{x:1,y:1,opacity:0.8}]}]};
+  const values = {kind:"graphic",source:"",frame:{x:10,y:10,width:80,height:80},graphic:{...graphic,shape:"freehand",freehand}};
+  assert.deepEqual(operationSchema.parse({kind:"convertInkToElement",target,id:"ink",values}).values,values);
+  const text = {kind:"nativeText",source:"Подпись",frame:values.frame,textStyle:{fontSize:24,weight:0.5,red:0,green:0,blue:0,alpha:1}};
+  assert.deepEqual(operationSchema.parse({kind:"insertElement",target,id:"text",values:text}).values,text);
+  assert.throws(() => operationSchema.parse({kind:"insertElement",target,id:"bad",values:{...values,
+    graphic:{...values.graphic,freehand:{layers:[{...freehand.layers[0],tool:"pencil"}]}}}}));
+});
+
 test("nb.action keeps the native geometry and immutable source references, not SVG", () => {
   const values = { kind: "graphic", source: "", frame: { x: 10, y: 10, width: 80, height: 80 }, graphic };
   const result = operationSchema.parse({ kind: "convertInkToElement", target, id: "circle", values });

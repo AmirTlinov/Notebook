@@ -738,6 +738,11 @@ final class NotebookAppModel {
   #if os(macOS)
   var macInputTool = MacNotebookInputTool.pointer
   #endif
+  var drawingToolSettings = NotebookDrawingToolSettings() {
+    didSet { if let data = try? JSONEncoder().encode(drawingToolSettings) { preferences.set(data,forKey:"notebook.drawing-tool-settings") } }
+  }
+  @ObservationIgnored lazy var drawingTools = NotebookDrawingToolController(model:self)
+  var activePenStyle: PenStyle { drawingTool == .marker ? drawingToolSettings.marker : penStyle }
   private(set) var drawingTool: DrawingTool = .pen
   private(set) var selectionSession = NotebookSelectionSession() {
     didSet {
@@ -984,6 +989,8 @@ final class NotebookAppModel {
     self.startsNearbySync = startsNearbySync
     penStyle = Self.loadPenStyle(defaults: preferences)
     eraserStyle = Self.loadEraserStyle(defaults: preferences)
+    if let data = preferences.data(forKey:"notebook.drawing-tool-settings"),
+      let settings = try? JSONDecoder().decode(NotebookDrawingToolSettings.self,from:data), settings.isValid { drawingToolSettings = settings }
     actorID = Self.loadActorID(defaults: preferences)
     #if os(macOS)
       self.commandSocketURL = commandSocketURL ?? (startsNearbySync ? NotebookIPC.defaultSocketURL : nil)
@@ -2359,17 +2366,16 @@ final class NotebookAppModel {
     return id
   }
 
-  func updateNativeText(boardID: UUID, elementID: String, text: String) {
-    publishNativeText(boardID: boardID, elementID: elementID, text: text, finish: false)
-  }
-
-  /// The editor keeps the address of its accepted input after its old board
-  /// leaves the finite scene. Disk admission checks that owner, not the camera.
-  func finishNativeTextEditing(boardID: UUID, elementID: String, text: String) {
-    publishNativeText(boardID: boardID, elementID: elementID, text: text, finish: true)
-  }
-
-  private func publishNativeText(boardID: UUID, elementID: String, text: String, finish: Bool) {
+  /// Editing retains its admitted address even after navigation evicts its view.
+  func commitNativeText(reference: EditableElementReference, text: String, finish: Bool, retainedPage: AgentElement? = nil) {
+    guard case .spatial(let boardID,let elementID) = reference else {
+      guard case .page(let pageID,let id) = reference else { return }
+      let snapshot = retainedPage.map { NotebookNativeElementSource(target:.init(kind:.page,id:pageID),id:id,page:$0) }
+      _ = performElementOperations([.init(reference:reference,kind:finish && text.isEmpty ? .removeElement : .updateElement,
+        values:finish && text.isEmpty ? [:] : ["source":.string(text),"html":.string(text)])],summary:"Изменить текст",
+        retainedSources:snapshot.map { [reference:$0] } ?? [:])
+      return
+    }
     guard !isItemBeingDeleted(boardID) else { return }
     if var hierarchy = boardHierarchy,
       var element = hierarchy.board(boardID)?.elements.first(where: { $0.id == elementID }),
@@ -2467,6 +2473,20 @@ final class NotebookAppModel {
     // This task only observes delivery. Cancelling or discarding it cannot
     // cancel the accepted action, whose lifetime belongs to this model.
     return Task { await accepted.value() }
+  }
+
+  /// A lasso sees the already lifted ink tail, even while its off-main
+  /// preparation is pending. Later contacts and remote reloads cannot retarget
+  /// this snapshot; the existing accepted-action owner supplies its result.
+  func lassoInkSnapshot(_ page: PageDocument) -> Task<NotebookLassoInkSource?,Never> {
+    let tail = lastAcceptedPageInk[page.id]
+    return Task {
+      guard let tail else { return .page(page) }
+      guard let change = await tail.value() else { return nil }
+      var snapshot = page
+      _ = snapshot.replaceDrawing(change.data,stamp:change.stamp)
+      return .page(snapshot)
+    }
   }
 
   private func startAcceptedPageInkPreparation() {
@@ -2615,6 +2635,7 @@ final class NotebookAppModel {
   }
 
   func selectDrawingTool(_ tool: DrawingTool) {
+    drawingTools.cancel()
     clearSelection()
     drawingTool = tool
   }
@@ -2650,6 +2671,12 @@ final class NotebookAppModel {
 
   func selectElement(_ reference: EditableElementReference) {
     if selectionSession.element != reference { replaceSelection(.element(reference)) }
+  }
+
+  func selectElements(_ references: [EditableElementReference]) {
+    let refs = Array(Set(references)).sorted { String(describing:$0) < String(describing:$1) }
+    guard refs.count <= 32 else { showCue("Выберите не более 32 объектов за один раз."); return }
+    replaceSelection(refs.isEmpty ? nil : refs.count == 1 ? .element(refs[0]) : .elements(refs))
   }
 
   func beginMultipleSelection() {
@@ -2708,7 +2735,12 @@ final class NotebookAppModel {
         var values: [String:JSONValue] = [:]
         let frame = PageRect(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height)
         if frame != edit.frame { values["frame"] = try .encode(edit.frame) }
-        if graphic.connection != edit.graphic.connection { values["graphic"] = .object(["connection":try .encode(edit.graphic.connection)]) }
+        var patch: [String:JSONValue] = [:]
+        if graphic.connection != edit.graphic.connection { patch["connection"] = try .encode(edit.graphic.connection) }
+        if graphic.transform != edit.graphic.transform { patch["transform"] = try .encode(edit.graphic.transform) }
+        if graphic.style != edit.graphic.style { patch["style"] = try .encode(edit.graphic.style) }
+        if graphic.cornerRadius != edit.graphic.cornerRadius { patch["cornerRadius"] = try .encode(edit.graphic.cornerRadius) }
+        if !patch.isEmpty { values["graphic"] = .object(patch) }
         return values.isEmpty ? nil : .init(reference:reference,kind:.updateElement,values:values)
       }
       return operations.isEmpty || performElementOperations(operations,summary:summary,readSources:selectionSession.elements)
@@ -2718,6 +2750,16 @@ final class NotebookAppModel {
   func alignGraphicSelection(_ alignment: NotebookGraphicSelection.Alignment) {
     guard let members = selectedGraphicMembers() else { return }
     _ = applySelectionEdits(NotebookGraphicSelection.aligned(members,to:alignment),summary:"Выровнять фигуры")
+  }
+
+  func transformGraphicSelection(radians: Double = 0, scale: Double = 1) {
+    guard let members = selectedGraphicMembers(), let first = selectionSession.elements.first else { return }
+    let edits = NotebookGraphicSelection.transformed(members,radians:radians,scale:scale)
+    if let bounds = elementGeometry(first)?.bounds,
+      edits.contains(where: { !bounds.contains(CGRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height)) }) {
+      showCue("Для этого поворота или масштаба не хватает места на листе."); return
+    }
+    _ = applySelectionEdits(edits,summary:radians == 0 ? "Масштабировать выделение" : "Повернуть выделение")
   }
 
   func duplicateGraphicSelection() {
@@ -3140,13 +3182,14 @@ final class NotebookAppModel {
 
   @discardableResult
   func performElementOperations(_ edits: [NotebookElementEdit], summary: String,
-    moveToFront: Bool? = nil, readSources: [EditableElementReference] = [], copiedFrom: [String:String] = [:]) -> Bool {
+    moveToFront: Bool? = nil, readSources: [EditableElementReference] = [], copiedFrom: [String:String] = [:],
+    insertionTarget explicitTarget: CollaborationTarget? = nil, expectedInkRevision: String? = nil, retainedSources: [EditableElementReference:NotebookNativeElementSource] = [:]) -> Bool {
     guard !edits.isEmpty, edits.count <= 32 else { return false }
     let references = Array(Set(edits.map(\.reference) + readSources))
-    let insertionTarget = readSources.first.flatMap { nativeElementSource($0)?.target }
+    let insertionTarget = explicitTarget ?? readSources.first.flatMap { nativeElementSource($0)?.target }
     var originals: [EditableElementReference: NotebookNativeElementSource] = [:]
     for reference in references {
-      guard let source = nativeElementSource(reference) else { return false }
+      guard let source = nativeElementSource(reference) ?? retainedSources[reference] else { return false }
       originals[reference] = source.page == nil && source.spatial == nil && insertionTarget != nil
         ? .init(target:insertionTarget!,id:source.id) : source
     }
@@ -3190,7 +3233,7 @@ final class NotebookAppModel {
         await withCheckedContinuation { continuation in inputGate.performAfterIdle { continuation.resume() } }
         let admittedSources = expected
         let (receipt,cursor,saved) = try await persistence.submit(publishesChanges:true) { store in
-          let result = try store.applyNativeElementEdits(operations,summary:summary,sources:admittedSources,moveToFront:moveToFront,copiedFrom:copiedFrom,actor:actor)
+          let result = try store.applyNativeElementEdits(operations,summary:summary,sources:admittedSources,moveToFront:moveToFront,copiedFrom:copiedFrom,expectedInkRevision:expectedInkRevision,actor:actor)
           return (result.receipt,try store.currentChangeCursor(),result.sources)
         }
         var results: [EditableElementReference:NotebookElementCommandResult] = [:]
@@ -3199,7 +3242,7 @@ final class NotebookAppModel {
           let id = sources[reference]!.id
           let source = saved.first { $0.id == id }
           results[reference] = .init(page:source?.page,spatial:source?.spatial)
-          if operations.contains(where: { $0.id == id && $0.kind == .convertInkToElement }),
+          if operations.contains(where: { $0.id == id && [.convertInkToElement,.insertElement].contains($0.kind) }),
             let index = workingGraphics.firstIndex(where: { $0.id == id }) { workingGraphics[index].publicationCursor = cursor }
         }
         pencilUndoHistory.recordCommand(ownerID:target.id,actionID:receipt.id)
@@ -4686,6 +4729,7 @@ final class NotebookAppModel {
     if shutdownPhase == .stopped { return true }
     if shutdownPhase == .running { shutdownPhase = .closing }
     let task = Task { [self] in
+      drawingTools.cancel(); drawingTools.textDraft = nil
       cancelRequestedNavigation()
       cancelDocumentOpening()
       documentShellPreparation?.stop(); documentShellPreparation = nil

@@ -25,7 +25,10 @@ extension NotebookAppModel {
     let board = presentedBoard(captured, boardID:boardID,cohort:cohort)
     let graph = board.graphicGraph()
     guard preview else { return graph }
-    let working = workingBoardGraphics(boardID: boardID, cohort: cohort)
+    let working = workingGraphics.filter {
+      ($0.surface == .board(boardID) || ($0.surface.kind == .cover && $0.surface.ownerID.flatMap { cohort.frame.index.ownerBoard(itemID:$0) } == boardID))
+        && ($0.publicationCursor.map { cohort.plan.revision < $0 } ?? true)
+    }
     let ids = Set(working.map(\.id))
     let combined = NotebookGraphicGraph(Array(graph.nodes.values).filter { !ids.contains($0.id) } + working.map(\.node))
     return projectingGraphicCommands(combined) { .spatial(boardID: boardID, elementID: $0) }

@@ -18,7 +18,7 @@ struct NotebookPageElementProjection: Codable {
       && collaboration.isValid && collaboration.fields["computations"] == nil
       && collaboration.fields["elements/order"] != nil
       && elements.allSatisfy { element in
-        AgentElement.causalFieldKeys(id: element.id, graphic: element.graphic).allSatisfy { collaboration.fields[$0] != nil }
+        AgentElement.causalFieldKeys(id: element.id, graphic: element.graphic, textStyle: element.textStyle).allSatisfy { collaboration.fields[$0] != nil }
       }
       && PageDocument.elementsAreValid(elements, in: size)
   }

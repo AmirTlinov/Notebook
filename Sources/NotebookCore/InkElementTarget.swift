@@ -9,19 +9,21 @@ public struct InkElementTarget: Codable, Equatable, Sendable {
   public let frame: PageRect
   public let worldOrigin: WorldPoint?
   public let wholeElement: Bool
+  public let graphicTransform: NotebookGraphicTransform?
 
-  public init(elementID: String, frame: PageRect, worldOrigin: WorldPoint? = nil, wholeElement: Bool = false) {
+  public init(elementID: String, frame: PageRect, worldOrigin: WorldPoint? = nil, wholeElement: Bool = false, graphicTransform: NotebookGraphicTransform? = nil) {
     self.elementID = elementID; self.frame = frame; self.worldOrigin = worldOrigin
-    self.wholeElement = wholeElement
+    self.wholeElement = wholeElement; self.graphicTransform = graphicTransform
     precondition(isValid)
   }
 
-  private enum CodingKeys: String, CodingKey { case elementID, frame, worldOrigin, wholeElement }
+  private enum CodingKeys: String, CodingKey { case elementID, frame, worldOrigin, wholeElement, graphicTransform }
   public init(from decoder: any Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     elementID = try values.decode(String.self, forKey: .elementID)
     frame = try values.decode(PageRect.self, forKey: .frame)
     worldOrigin = try values.decodeIfPresent(WorldPoint.self, forKey: .worldOrigin)
+    graphicTransform = try values.decodeIfPresent(NotebookGraphicTransform.self,forKey:.graphicTransform)
     wholeElement = try values.decodeIfPresent(Bool.self, forKey: .wholeElement) ?? false
     guard isValid else { throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
       debugDescription: "Invalid eraser target")) }
@@ -31,13 +33,14 @@ public struct InkElementTarget: Codable, Equatable, Sendable {
     try values.encode(elementID, forKey: .elementID)
     try values.encode(frame, forKey: .frame)
     try values.encodeIfPresent(worldOrigin, forKey: .worldOrigin)
+    try values.encodeIfPresent(graphicTransform,forKey:.graphicTransform)
     if wholeElement { try values.encode(true, forKey: .wholeElement) }
   }
 
   var isValid: Bool {
     !elementID.isEmpty && elementID.count <= 120
       && [frame.x, frame.y, frame.width, frame.height].allSatisfy(\.isFinite)
-      && frame.width > 0 && frame.height > 0 && (worldOrigin?.isValid ?? true)
+      && frame.width > 0 && frame.height > 0 && (worldOrigin?.isValid ?? true) && (graphicTransform?.isValid ?? true)
   }
 
   public func localPoint(_ sample: SpatialInkSample) -> SpatialPoint {

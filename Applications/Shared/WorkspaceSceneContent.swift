@@ -219,6 +219,13 @@ struct WorkspaceItemCoverView: View {
             .zIndex(cohort.plan.rank(id: run.id.id, in: plane) ?? 0)
         }
       }
+      if !isPortalProjection, let cohort, let plane, let graph,
+        let run = model.workingGraphicRun(plane:plane,cohort:cohort) {
+        NotebookGraphicBatchView(run:run,
+          elements:model.workingGraphics(on:.cover(item.id),cohort:cohort).map { $0.spatialElement(stamp:.init(counter:0,actor:model.actorID)) },
+          graph:graph,scale:1,size:.init(width:geometry.width,height:geometry.height),projectOrigin:{ _ in .zero },commitsState:false)
+          .opacity(portalOverlayOpacity).zIndex(Double.greatestFiniteMagnitude)
+      }
       ForEach(elements.filter { element in
         if element.graphic != nil { return false }
         guard let cohort, let plane else { return true }
@@ -409,12 +416,9 @@ struct SpatialElementContent: View {
     switch element.kind {
     case .graphic: EmptyView()
     case .nativeText:
-      NativeTextElementView(
-        element: element,
-        boardID: sourceBoardID,
-        isEditing: isTextEditing && commitsState && sourceBoardID != nil,
-        onEditingEnded: onTextEditingEnded
-      )
+      NotebookNativeTextView(source:element.source,style:element.textStyle,
+        reference:.spatial(boardID:sourceBoardID ?? WorkspaceRoot.boardID,elementID:element.id),
+        isEditing:isTextEditing && commitsState && sourceBoardID != nil,onEditingEnded:onTextEditingEnded)
     case .markdown, .web:
       let sourceBoardID = self.sourceBoardID
       PreparedAgentElementView(element: agentElement,
@@ -467,144 +471,14 @@ struct SpatialTextSnapshot: View {
 
   static func text(_ element: SpatialElement, mask: Bool = false) -> Text {
     Text(element.source)
-      .font(.system(size: element.textStyle.fontSize, weight: fontWeight(element.textStyle.weight)))
+      .font(.system(size: element.textStyle.fontSize, weight: element.textStyle.fontWeight))
       .foregroundStyle(mask ? Color.white.opacity(element.textStyle.alpha) : Color(red: element.textStyle.red, green: element.textStyle.green,
         blue: element.textStyle.blue, opacity: element.textStyle.alpha))
   }
-  private static func fontWeight(_ value: Double) -> Font.Weight {
-    switch value {
-    case ..<0.2: .light
-    case ..<0.4: .regular
-    case ..<0.6: .medium
-    case ..<0.8: .semibold
-    default: .bold
-    }
-  }
+
 }
 
-private struct NativeTextElementView: View {
-  @Environment(NotebookAppModel.self) private var model
-  @FocusState private var focused: Bool
-  @State private var text: String
-  @State private var commitTask: Task<Void, Never>?
-  @State private var focusTask: Task<Void, Never>?
-  @State private var hasFinishedEditing = false
-  @State private var hasOwnedEditing = false
 
-  let element: SpatialElement
-  let boardID: UUID?
-  let isEditing: Bool
-  let onEditingEnded: () -> Void
-
-  init(
-    element: SpatialElement,
-    boardID: UUID?,
-    isEditing: Bool,
-    onEditingEnded: @escaping () -> Void
-  ) {
-    self.element = element
-    self.boardID = boardID
-    self.isEditing = isEditing
-    self.onEditingEnded = onEditingEnded
-    _text = State(initialValue: element.source)
-  }
-
-  var body: some View {
-    TextEditor(text: $text)
-      .scrollContentBackground(.hidden)
-      .background(.clear)
-      .font(
-        .system(
-          size: element.textStyle.fontSize,
-          weight: fontWeight(element.textStyle.weight)
-        )
-      )
-      .foregroundStyle(
-        Color(
-          red: element.textStyle.red,
-          green: element.textStyle.green,
-          blue: element.textStyle.blue,
-          opacity: element.textStyle.alpha
-        )
-      )
-      .focused($focused)
-      .allowsHitTesting(isEditing)
-      .accessibilityHidden(!isEditing)
-      .accessibilityIdentifier("native-text-editor")
-      .onAppear {
-        synchronizeEditingState()
-      }
-      .onChange(of: element.source) { _, source in
-        if !focused { text = source }
-      }
-      .onChange(of: text) { _, _ in
-        if isEditing { scheduleCommit() }
-      }
-      .onChange(of: isEditing) { _, _ in
-        synchronizeEditingState()
-      }
-      .onChange(of: focused) { _, isFocused in
-        if !isFocused, isEditing { finishEditing() }
-      }
-      .onDisappear {
-        focusTask?.cancel()
-        focusTask = nil
-        if isEditing { finishEditing() }
-      }
-  }
-
-  private func synchronizeEditingState() {
-    focusTask?.cancel()
-    focusTask = nil
-    if isEditing {
-      hasOwnedEditing = true
-      hasFinishedEditing = false
-      focusTask = Task { @MainActor in
-        await Task.yield()
-        guard !Task.isCancelled else { return }
-        focused = true
-      }
-    } else {
-      if focused { focused = false }
-      if hasOwnedEditing { finishEditing() }
-    }
-  }
-
-  private func scheduleCommit() {
-    commitTask?.cancel()
-    commitTask = Task { @MainActor in
-      try? await Task.sleep(for: .milliseconds(180))
-      guard !Task.isCancelled else { return }
-      commit()
-    }
-  }
-
-  private func commit() {
-    commitTask?.cancel()
-    commitTask = nil
-    guard text != element.source, let boardID else { return }
-    model.updateNativeText(boardID: boardID, elementID: element.id, text: text)
-  }
-
-  private func finishEditing() {
-    guard !hasFinishedEditing else { return }
-    hasFinishedEditing = true
-    commitTask?.cancel()
-    commitTask = nil
-    if let boardID { model.finishNativeTextEditing(boardID: boardID, elementID: element.id, text: text) }
-    onEditingEnded()
-  }
-
-  private func fontWeight(_ value: Double) -> Font.Weight {
-    switch value {
-    case ..<0.2: .light
-    case ..<0.4: .regular
-    case ..<0.6: .medium
-    case ..<0.8: .semibold
-    default: .bold
-    }
-  }
-}
 
 struct SpatialBoardGrid: View {
   @Environment(\.displayScale) private var displayScale

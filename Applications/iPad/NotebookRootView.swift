@@ -59,7 +59,7 @@ struct NotebookRootView: View {
           .accessibilityIdentifier("persistence-failure")
         }
 
-          PenControlsView()
+          PenControlsView(inkOnly:model.chat?.files.window.isOpen == true && model.chat?.files.document != nil)
             .background(NotebookControlRegion(gate: model.inputGate))
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { penControlsFrame = $0 }
             .frame(

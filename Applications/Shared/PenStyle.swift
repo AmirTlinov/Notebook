@@ -1,16 +1,12 @@
 import SwiftUI
 import NotebookCore
 
-enum DrawingTool: Sendable {
-  case pen
-  case eraser
-}
-
-enum PenColor: String, CaseIterable, Identifiable, Sendable {
+enum PenColor: String, CaseIterable, Identifiable, Codable, Sendable {
   case black
   case blue
   case red
   case green
+  case yellow
 
   var id: Self { self }
 
@@ -20,6 +16,7 @@ enum PenColor: String, CaseIterable, Identifiable, Sendable {
     case .blue: "Синяя"
     case .red: "Красная"
     case .green: "Зелёная"
+    case .yellow: "Жёлтая"
     }
   }
 
@@ -29,6 +26,7 @@ enum PenColor: String, CaseIterable, Identifiable, Sendable {
     case .blue: (0, 0.19, 0.78)
     case .red: (0.82, 0.04, 0.07)
     case .green: (0, 0.43, 0.2)
+    case .yellow: (1, 0.83, 0.05)
     }
   }
 
@@ -48,17 +46,23 @@ struct PenStyle: Equatable, Sendable {
   static let highestMinimumOpacity = PencilPressureOpacity.maximumFloor
   static let standard = Self(color: .black, width: 2.2, minimumOpacity: 0.18)
 
+  enum Kind: Sendable { case pen, marker }
+  let kind: Kind
   let color: PenColor
   let width: Double
   let minimumOpacity: Double
 
-  init(color: PenColor, width: Double, minimumOpacity: Double) {
+  init(color: PenColor, width: Double, minimumOpacity: Double, kind: Kind = .pen) {
+    self.kind = kind
     self.color = color
-    self.width = min(max(width, Self.minimumWidth), Self.maximumWidth)
+    self.width = min(max(width, Self.minimumWidth), kind == .marker ? 48 : Self.maximumWidth)
     self.minimumOpacity = min(
       max(minimumOpacity, Self.lowestMinimumOpacity),
-      Self.highestMinimumOpacity
+      kind == .marker ? 0.65 : Self.highestMinimumOpacity
     )
+  }
+  func opacity(force: Double) -> Double {
+    kind == .marker ? minimumOpacity : PencilPressureOpacity.value(force:force,minimum:minimumOpacity)
   }
 }
 

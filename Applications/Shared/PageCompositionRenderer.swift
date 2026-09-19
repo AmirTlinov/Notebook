@@ -55,6 +55,11 @@ enum PageCompositionRenderer {
         try await canvas.drawView(NotebookGraphicView(graphic: graphic, layout:layout, erasures: erasures[element.id] ?? []), size: frame.size, in: frame)
         continue
       }
+      if element.kind == .nativeText {
+        try await canvas.drawView(NotebookNativeTextSnapshot(source:element.source,style:element.textStyle ?? .standard)
+          .erased(by:erasures[element.id] ?? []),size:frame.size,in:frame)
+        continue
+      }
       let image = try await raster(element)
       if let crop = image.source.captureRegion {
         let captured = CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height)

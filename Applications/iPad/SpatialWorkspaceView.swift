@@ -115,7 +115,7 @@ struct SpatialWorkspaceView: View {
               )
             },
             journal: model.spatialInk,
-            penStyle: model.penStyle,
+            penStyle: model.activePenStyle,
             eraserStyle: model.eraserStyle,
             drawingTool: model.drawingTool,
             surfaceRegistry: spatialInkSurfaces,
@@ -777,9 +777,9 @@ struct SpatialWorkspaceView: View {
           projectOrigin: { presence.camera.worldToScreen($0, viewport: viewport).cgPoint })
           .zIndex(cohort.plan.rank(id: run.id.id, in: run.plane) ?? 0)
       }
-      if let run = model.workingGraphicRun(boardID: presence.boardID, cohort: cohort) {
+      if let run = model.workingGraphicRun(plane: .board(presence.boardID), cohort: cohort) {
         NotebookGraphicBatchView(run: run,
-          elements: model.workingBoardGraphics(boardID: presence.boardID, cohort: cohort)
+          elements: model.workingGraphics(on: .board(presence.boardID), cohort: cohort)
             .map { $0.spatialElement(stamp: .init(counter: 0, actor: model.actorID)) },
           graph: graph, scale: presence.camera.scale, size: .init(width: viewport.x, height: viewport.y),
           projectOrigin: { presence.camera.worldToScreen($0, viewport: viewport).cgPoint }, commitsState: false)

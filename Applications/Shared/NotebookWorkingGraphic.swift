@@ -21,6 +21,10 @@ struct NotebookWorkingGraphic: Equatable, Identifiable {
       sourceInkIDs: fit.precedingStrokeIDs + [strokeID], connection: fit.connection, vertices: fit.vertices)
   }
 
+  init(id: UUID, surface: SurfaceID, frame: PageRect, worldOrigin: WorldPoint?, graphic: NotebookGraphic) {
+    strokeID = id; self.surface = surface; self.frame = frame; self.worldOrigin = worldOrigin; self.graphic = graphic
+  }
+
   var pageElement: AgentElement {
     .init(id: id, kind: .graphic, frame: frame, source: "", html: "", graphic: graphic)
   }
@@ -59,27 +63,28 @@ extension NotebookAppModel {
       workingGraphics.filter { $0.surface == .page(page.id) }.flatMap { $0.graphic.sourceInkIDs })
   }
 
-  func workingBoardGraphics(boardID: UUID, cohort: SceneCompositionCohort) -> [NotebookWorkingGraphic] {
+  func workingGraphics(on surface: SurfaceID, cohort: SceneCompositionCohort) -> [NotebookWorkingGraphic] {
     workingGraphics.filter { graphic in
-      graphic.surface == .board(boardID)
+      graphic.surface == surface
         && (graphic.publicationCursor.map { cohort.plan.revision < $0 } ?? true)
     }
   }
 
   /// One temporary vector run in the existing element plane, below ink/covers.
   /// It uses the ordinary graphic painter, not an input-layer preview renderer.
-  func workingGraphicRun(boardID: UUID, cohort: SceneCompositionCohort) -> SceneCompositionVectorRun? {
-    let owners = workingBoardGraphics(boardID: boardID, cohort: cohort).map { graphic in
-      SceneCompositionLiveOwner(plane: .board(boardID), id: .element(graphic.id),
+  func workingGraphicRun(plane: SceneCompositionPlane, cohort: SceneCompositionCohort) -> SceneCompositionVectorRun? {
+    let surface = plane.coverID.map(SurfaceID.cover) ?? .board(plane.boardID)
+    let owners = workingGraphics(on:surface, cohort: cohort).map { graphic in
+      SceneCompositionLiveOwner(plane: plane, id: .element(graphic.id),
         position: .init(layer: .elements, zIndex: Double.greatestFiniteMagnitude, key: graphic.id))
     }
-    return owners.isEmpty ? nil : .init(plane: .board(boardID), owners: owners)
+    return owners.isEmpty ? nil : .init(plane: plane, owners: owners)
   }
 
   func retireWorkingGraphics(in cohort: SceneCompositionCohort) {
     guard cohort.isPaintInstalled else { return }
     workingGraphics.removeAll { graphic in
-      graphic.surface.kind == .board
+      graphic.surface.kind != .page
         && (graphic.publicationCursor.map { cohort.plan.revision >= $0 } ?? false)
     }
   }

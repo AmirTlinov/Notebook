@@ -1853,6 +1853,44 @@ final class DrawingResponsivenessTests: XCTestCase {
     proof.name = "codex-panel-keyboard-landscape"; proof.lifetime = .keepAlways; add(proof)
   }
 
+  func testAllDrawingToolsUseRepeatedTapSettingsWithoutExtraToolbarButton() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    launchPortraitFixture(app)
+    let marker = app.buttons["drawing-tool-marker"]
+    XCTAssertTrue(marker.waitForExistence(timeout:5))
+    marker.tap(); XCTAssertTrue(marker.isSelected); XCTAssertFalse(app.sliders["marker-width"].exists)
+    marker.tap(); XCTAssertTrue(app.sliders["marker-width"].waitForExistence(timeout:2))
+    app.buttons["marker-color-green"].tap()
+    app.sliders["marker-width"].adjust(toNormalizedSliderPosition:0.6)
+    let chosen = app.sliders["marker-width"].value as? String
+    app.buttons["Закрыть настройки"].tap()
+    app.buttons["drawing-tool-eraser"].tap(); marker.tap(); marker.tap()
+    XCTAssertTrue(app.sliders["marker-width"].waitForExistence(timeout:2))
+    XCTAssertEqual(app.sliders["marker-width"].value as? String,chosen)
+    XCTAssertTrue(app.buttons["marker-color-green"].isSelected)
+    app.buttons["Закрыть настройки"].tap()
+    for (tool,setting) in [("lasso","lasso-adds-selection"),("shape","shape-width"),("text","text-size"),
+      ("connector","connector-width"),("ruler","ruler-angle"),("laser","laser-duration")] {
+      if tool != "lasso" {
+        app.buttons["drawing-tools-more"].tap()
+        let menuItem = app.buttons["drawing-tool-"+tool].firstMatch
+        XCTAssertTrue(menuItem.waitForExistence(timeout:2)); menuItem.tap()
+      } else { app.buttons["drawing-tool-lasso"].tap() }
+      let button = app.buttons["drawing-tool-"+tool]
+      XCTAssertTrue(button.waitForExistence(timeout:2)); XCTAssertTrue(button.isSelected)
+      XCTAssertFalse(app.descendants(matching:.any).matching(identifier:setting).firstMatch.exists)
+      button.tap()
+      XCTAssertTrue(app.descendants(matching:.any).matching(identifier:setting).firstMatch.waitForExistence(timeout:2))
+      let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "tool-settings-"+tool; proof.lifetime = .keepAlways; add(proof)
+      app.buttons["Закрыть настройки"].tap()
+      XCTAssertTrue(button.isSelected)
+      XCTAssertFalse(app.buttons["pen-settings"].exists)
+    }
+    let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "compact-drawing-tools-toolbar"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testToolSettingsOpenOnRepeatedTapAndPreserveSelection() {
     continueAfterFailure = false
     let app = XCUIApplication()
@@ -1872,9 +1910,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertFalse(pen.frame.intersects(eraser.frame))
     XCTAssertEqual(pen.frame.midY, eraser.frame.midY, accuracy: 1)
     XCTAssertLessThanOrEqual(
-      abs(eraser.frame.minX - pen.frame.maxX),
+      abs(eraser.frame.minX - app.buttons["drawing-tool-marker"].frame.maxX),
       10,
-      "Ластик должен стоять отдельной кнопкой непосредственно рядом с ручкой"
+      "Ластик стоит рядом с маркером в компактном ряду инструментов"
     )
 
     let settings = app.sliders["pen-width"]
@@ -1887,6 +1925,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     eraser.coordinate(withNormalizedOffset: .init(dx: 0.1, dy: 0.1)).tap()
     XCTAssertTrue(eraserSettings.waitForExistence(timeout: 2))
     XCTAssertFalse(settings.exists, "У ластика открываются только его настройки")
+    eraserSettings.adjust(toNormalizedSliderPosition: 0.1)
     let initialEraserWidth = eraserSettings.value as? String
     eraserSettings.adjust(toNormalizedSliderPosition: 0.7)
     let chosenEraserWidth = eraserSettings.value as? String

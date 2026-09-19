@@ -42,6 +42,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       coordinator.install(on: window, inside: view)
     }
     context.coordinator.onWorkingGraphic = { [weak model] in model?.updateWorkingGraphic($0, strokeID: $1) }
+    context.coordinator.toolController = model?.drawingTools
     context.coordinator.onQuickShape = onQuickShape
     context.coordinator.appearances = model?.elementErasureCache
     context.coordinator.resolveEraserTargets = { [weak model] in model?.eraserTargets(boardID: $1, cohort: $0) ?? [:] }
@@ -75,6 +76,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
   func updateUIView(_ view: SpatialInkContainerView, context: Context) {
     view.bindCameraProjection(to: model?.nativeCameraProjection)
     context.coordinator.onWorkingGraphic = { [weak model] in model?.updateWorkingGraphic($0, strokeID: $1) }
+    context.coordinator.toolController = model?.drawingTools
     context.coordinator.onQuickShape = onQuickShape
     context.coordinator.appearances = model?.elementErasureCache
     context.coordinator.resolveEraserTargets = { [weak model] in model?.eraserTargets(boardID: $1, cohort: $0) ?? [:] }
@@ -121,6 +123,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
     var onElementErasing: ([NotebookElementErasing], UUID) -> Void = { _, _ in }
     var resolveGraphicErasures: ((SceneCompositionCohort, UUID) -> [String: [InkElementErasure]])?
     var resolveGraphicGraph: ((SceneCompositionCohort, UUID) -> NotebookGraphicGraph)?
+    weak var toolController: NotebookDrawingToolController?
+    private var toolContact: NotebookToolInputContact?
     private let quickShape = NotebookQuickShapeSession()
     var onWorkingGraphic: (NotebookWorkingGraphic?, UUID) -> Void = { _, _ in }
     private var actionStrokeID = UUID()
@@ -328,6 +332,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
 
     func uninstall() {
+      toolContact?.finish(cancelled:true); toolContact = nil
       finishAction()
       recognizer?.onEvent = nil
       recognizer?.canBeginContact = nil
@@ -355,6 +360,17 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
 
     private func handle(_ input: SpatialPencilGestureRecognizer.Event) {
+      if let contact = toolContact {
+        switch input {
+        case .moved(let touch,_): if let view { contact.move(to:touch.preciseLocation(in:view)) }
+        case .ended(let touch,_):
+          if let view { contact.move(to:touch.preciseLocation(in:view)) }
+          toolContact = nil; contact.finish()
+        case .cancelled: toolContact = nil; contact.finish(cancelled:true)
+        case .began: toolContact = nil; contact.finish(cancelled:true)
+        }
+        return
+      }
       switch input {
       case .began(let touch, let event):
         guard isEnabled, admitsNewContact() else { return }
@@ -374,6 +390,24 @@ struct SpatialInkCanvas: UIViewRepresentable {
       guard inputGate.permitsNewContact else { return }
       if actionTool != nil { finishAction() }
       guard let view, let surfaces = admissionSurfaces() else { return }
+      if !drawingTool.usesInkJournal {
+        guard let controller = toolController, let boardID = boardSurface.ownerID else { return }
+        let point = touch.preciseLocation(in:view)
+        let surface = SpatialSurfaceRouter.surface(at:point,covers:surfaces,board:boardSurface)
+        let address: NotebookToolAddress, toOwner: (CGPoint) -> SpatialPoint, scale: Double
+        if let cover = surfaces.first(where:{ $0.id == surface }) {
+          address = .init(surface:surface,boardID:boardID,worldOrigin:nil,bounds:cover.localBounds)
+          toOwner = { let p = cover.localPoint($0); return .init(x:p.x,y:p.y) }; scale = cover.screenScale
+        } else {
+          let camera = camera, viewport = viewport, origin = camera.screenToWorld(.init(x:point.x,y:point.y),viewport:viewport)
+          address = .init(surface:boardSurface,boardID:boardID,worldOrigin:origin,bounds:nil)
+          toOwner = { origin.delta(to:camera.screenToWorld(.init(x:$0.x,y:$0.y),viewport:viewport)) }; scale = camera.scale
+        }
+        toolContact = .init(controller:controller,gate:inputGate,view:view,address:address,point:point,
+          screenScale:scale,viewScale:1,toOwner:toOwner)
+        toolContact?.onFinish = { [weak self] in self?.toolContact = nil }
+        return
+      }
       var leases: [SpatialInkSurfaceRegistry.ContactLease] = []
       var frozen: [SpatialScreenSurface] = []
       for surface in surfaces {
@@ -463,7 +497,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       guard let lastActionPoint else { return }
       quickShape.move(to: .init(x: lastActionPoint.location.x, y: lastActionPoint.location.y))
 
-      if actionTool == .pen,
+      if actionTool.drawsInk,
         let activePen,
         let currentSurface
       {
@@ -492,6 +526,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
 
     private func finishAction(convertsHeldShape: Bool = false) {
+      if let contact = toolContact { toolContact = nil; contact.finish(cancelled:true) }
       if !convertsHeldShape { quickShape.cancel() }
       let fit = quickShape.finish()
       guard let actionTool, lastActionPoint != nil else {
@@ -538,7 +573,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         touchedSurfaces = []
         return
       }
-      let committed = onCommit(actionTool == .pen ? .pen : .eraser, color, spans, actionStrokeID)
+      let committed = onCommit(actionTool.drawsInk ? .pen : .eraser, color, spans, actionStrokeID)
       onElementErasing([], actionStrokeID)
       if let fit, let geometry, let committed, let boardID = boardSurface.ownerID,
         spans.allSatisfy({ $0.surface == .board(boardID) }) {
@@ -563,6 +598,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
 
     private func cancelAction() {
+      if let contact = toolContact { toolContact = nil; contact.finish(cancelled:true) }
       onElementErasing([], actionStrokeID)
       quickShape.cancel()
       let geometry = actionGeometry
@@ -648,7 +684,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       currentSurface = surface
       touchedSurfaces.insert(surface)
       surfaceRegistry.beginAction(on: surface)
-      if actionTool == .pen {
+      if actionTool?.drawsInk == true {
         let stroke = ActiveInkStroke(style: actionPenStyle ?? penStyle)
         activePen = stroke
         activeEraser = nil
@@ -725,7 +761,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     ) -> PKStrokePoint {
       let force = normalizedForce(touch)
       let filtered: CGFloat
-      if tool == .pen {
+      if tool.drawsInk {
         filtered = CGFloat(
           PencilPressureSmoothing.value(
             force: Double(force),
@@ -742,13 +778,10 @@ struct SpatialInkCanvas: UIViewRepresentable {
       }
       let width: Double
       let opacity: Double
-      if tool == .pen {
+      if tool.drawsInk {
         let style = actionPenStyle ?? penStyle
         width = style.width
-        opacity = PencilPressureOpacity.value(
-          force: Double(filtered),
-          minimum: style.minimumOpacity
-        )
+        opacity = style.opacity(force:Double(filtered))
       } else {
         let style = actionEraserStyle ?? eraserStyle
         width = PencilPressureWidth.value(

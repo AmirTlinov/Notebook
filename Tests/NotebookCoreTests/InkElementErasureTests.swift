@@ -130,7 +130,7 @@ struct InkElementErasureTests {
     #expect(try reopened.readElementErasures(on:surface,elementID:"circle").isEmpty)
   }
 
-  @Test(arguments:[4,5,6,7,8]) func newManifestFencesOldReadersWithoutDroppingQueuedHistory(legacyFormat: Int) throws {
+  @Test(arguments:[4,5,6,7,8,9]) func newManifestFencesOldReadersWithoutDroppingQueuedHistory(legacyFormat: Int) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let a = NotebookStore(root: root.appendingPathComponent("a")), b = NotebookStore(root: root.appendingPathComponent("b"))

@@ -16,14 +16,14 @@ final class AgentStateTests: XCTestCase {
     model.updatePresence(.init(boardID: boardB, mode: .board, camera: .init(),
       viewport: .init(x: 1194, y: 834)), settled: true)
     // The editor's debounce or onDisappear can finish after camera ownership changes.
-    model.finishNativeTextEditing(boardID: boardA, elementID: elementID, text: "Продолжение у исходника")
+    model.commitNativeText(reference:.spatial(boardID:boardA,elementID:elementID),text:"Продолжение у исходника",finish:true)
     await model.finishPendingPersistence()
     let saved = try model.store.loadBoard(items: model.store.loadIndex().items)
     XCTAssertEqual(saved.board(boardA)?.elements.first { $0.id == elementID }?.source,
       "Продолжение у исходника")
     XCTAssertTrue(saved.board(boardB)?.elements.isEmpty == true)
-    model.finishNativeTextEditing(boardID: boardA, elementID: elementID, text: "")
-    model.updateNativeText(boardID: boardA, elementID: elementID, text: "Не возвращать удалённый предмет")
+    model.commitNativeText(reference:.spatial(boardID:boardA,elementID:elementID),text:"",finish:true)
+    model.commitNativeText(reference:.spatial(boardID:boardA,elementID:elementID),text:"Не возвращать удалённый предмет",finish:false)
     await model.finishPendingPersistence()
     let afterDeletion = try model.store.loadBoard(items: model.store.loadIndex().items)
     XCTAssertFalse(afterDeletion.board(boardA)?.elements.contains { $0.id == elementID } ?? true)
@@ -112,10 +112,7 @@ final class AgentStateTests: XCTestCase {
     XCTAssertEqual(draft.frame.x, WorkspaceItemGeometry.notebook.width - 420)
     XCTAssertEqual(draft.frame.y, WorkspaceItemGeometry.notebook.height - 120)
 
-    model.finishNativeTextEditing(
-      boardID: boardID, elementID: elementID,
-      text: "Первая мысль"
-    )
+    model.commitNativeText(reference:.spatial(boardID:boardID,elementID:elementID),text:"Первая мысль",finish:true)
 
     let workspace = try XCTUnwrap(model.workspace)
     await model.finishPendingPersistence()
@@ -126,7 +123,7 @@ final class AgentStateTests: XCTestCase {
       "Первая мысль"
     )
 
-    model.finishNativeTextEditing(boardID: boardID, elementID: elementID, text: "")
+    model.commitNativeText(reference:.spatial(boardID:boardID,elementID:elementID),text:"",finish:true)
 
     XCTAssertFalse(model.board?.elements.contains(where: {
       $0.id == elementID

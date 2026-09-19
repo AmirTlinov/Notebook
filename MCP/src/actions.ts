@@ -36,8 +36,12 @@ const graphicConnection = z.object({start:graphicEndpoint, end:graphicEndpoint,
   bend:z.number().finite().min(-1e6).max(1e6), startArrowhead:arrowhead, endArrowhead:arrowhead,
   routing:z.enum(["straight","elbow","curved"]).optional(),
   labelPosition:z.number().min(0).max(1), bendPosition:z.number().min(0).max(1).optional()}).strict();
-export const graphicSchema = z.object({ shape: z.enum(["ellipse", "rectangle", "triangle", "diamond", "plus", "connector"]), style: graphicStyle, label: z.string().max(100_000),
-  representation: z.enum(["ink", "geometry"]), visible: z.boolean(), sourceInkIDs: z.array(z.uuid()).max(16), connection:graphicConnection.optional(),
+const graphicTransform = z.object({a:z.number().finite(),b:z.number().finite(),c:z.number().finite(),d:z.number().finite(),tx:z.number().finite(),ty:z.number().finite()}).strict();
+const inkVertex = graphicPoint.extend({opacity:z.number().min(0).max(1)}).strict();
+const freehand = z.object({layers:z.array(z.object({tool:z.enum(["pen","eraser"]),color:graphicColor,vertices:z.array(inkVertex).min(3).max(65536)}).strict()).min(1).max(2048)}).strict();
+export const graphicSchema = z.object({ shape: z.enum(["ellipse", "rectangle", "triangle", "diamond", "plus", "connector", "freehand"]), style: graphicStyle, label: z.string().max(100_000),
+  representation: z.enum(["ink", "geometry"]), visible: z.boolean(), sourceInkIDs: z.array(z.uuid()).max(1024), connection:graphicConnection.optional(),
+  transform:graphicTransform.nullable().optional(),freehand:freehand.nullable().optional(),
   cornerRadius:z.number().finite().min(0).max(1e6).nullable().optional(),
   vertices:z.array(z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1)}).strict()).min(3).max(4).nullable().optional() }).strict();
 const graphicEdit = graphicSchema.omit({ sourceInkIDs: true, connection: true }).partial().extend({connection:graphicConnection.partial().strict().optional()}).strict();

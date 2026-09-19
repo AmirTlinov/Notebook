@@ -53,6 +53,40 @@ final class InkRasterRenderer: @unchecked Sendable {
   func render(
     layers: [SpatialInkRenderLayer], size: CGSize, baselinePNG: Data? = nil, scale: Double = 2
   ) -> CGImage? {
+    raster(size:size,baselinePNG:baselinePNG,scale:scale,layerCount:layers.count) { index in
+      var vertices: [SpatialInkGeometry.Vertex] = []
+      let erase: Bool
+      switch layers[index] {
+      case .ink(let points,let color):
+        erase = false
+        SpatialInkGeometry.appendStrokeVertices(points:points,color:.init(Float(color.red),Float(color.green),Float(color.blue),1),to:&vertices)
+      case .erase(let points):
+        erase = true
+        SpatialInkGeometry.appendStrokeVertices(points:points,color:.init(1,1,1,1),to:&vertices)
+      }
+      return (vertices,erase)
+    }
+  }
+
+  /// Retained handwriting uses the same shader, triangle coverage and ordered
+  /// source-over/erase blend as live measured ink. No CPU triangle painter.
+  func freehand(_ ink: NotebookFreehand, transform: NotebookGraphicTransform?, size: CGSize,
+    region: CGRect, scale: Double, mask: Bool) -> CGImage? {
+    let basis = transform ?? .identity
+    return raster(size:region.size,baselinePNG:nil,scale:scale,layerCount:ink.layers.count) { index in
+      let layer = ink.layers[index], erase = layer.tool == .eraser
+      let color = mask || erase ? SpatialInkColor(red:1,green:1,blue:1) : layer.color
+      let vertices = layer.vertices.map { vertex -> SpatialInkGeometry.Vertex in
+        let p = basis.applying(.init(x:vertex.x,y:vertex.y)), alpha = Float(vertex.opacity)
+        return .init(position:.init(Float(p.x*size.width-region.minX),Float(p.y*size.height-region.minY)),
+          premultipliedColor:.init(Float(color.red)*alpha,Float(color.green)*alpha,Float(color.blue)*alpha,alpha))
+      }
+      return (vertices,erase)
+    }
+  }
+
+  private func raster(size: CGSize, baselinePNG: Data?, scale: Double, layerCount: Int,
+    prepareLayer: (Int) -> ([SpatialInkGeometry.Vertex],Bool)) -> CGImage? {
     guard !Task.isCancelled, size.width.isFinite, size.height.isFinite,
       size.width > 0, size.height > 0, scale.isFinite, scale > 0,
       size.width * scale <= 8192, size.height * scale <= 8192,
@@ -100,20 +134,10 @@ final class InkRasterRenderer: @unchecked Sendable {
     encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
     var identity = SIMD4<Float>(1, 1, 0, 0)
     encoder.setVertexBytes(&identity, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
-    for layer in layers {
+    for index in 0..<layerCount {
       guard !Task.isCancelled else { encoder.endEncoding(); return nil }
-      var vertices: [SpatialInkGeometry.Vertex] = []
-      switch layer {
-      case .ink(let points, let color):
-        encoder.setRenderPipelineState(ink)
-        SpatialInkGeometry.appendStrokeVertices(
-          points: points, color: .init(Float(color.red), Float(color.green), Float(color.blue), 1),
-          to: &vertices)
-      case .erase(let points):
-        encoder.setRenderPipelineState(eraser)
-        SpatialInkGeometry.appendStrokeVertices(
-          points: points, color: .init(1, 1, 1, 1), to: &vertices)
-      }
+      let (vertices,erase) = prepareLayer(index)
+      encoder.setRenderPipelineState(erase ? eraser : ink)
       guard !Task.isCancelled else { encoder.endEncoding(); return nil }
       guard !vertices.isEmpty else { continue }
       for chunk in SpatialInkGeometry.chunks(for: vertices)

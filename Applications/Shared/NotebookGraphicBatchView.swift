@@ -74,7 +74,7 @@ struct NotebookGraphicBatchView: View {
       if let object = objects.first(where: { $0.id == editingID }) {
         NotebookGraphicElementView(graphic: graph.nodes[object.id]!.graphic, reference: reference(object.id), layout: object.layout)
           .frame(width: object.layout.frame.width, height: object.layout.frame.height)
-          .erased(by: erasures[object.id] ?? [], appearance: appearances[object.id])
+          .erased(by: erasures[object.id] ?? [], appearance: appearances[object.id],transform:graph.nodes[object.id]?.graphic.transform)
           .scaleEffect(scale)
           .frame(width: object.frame.width, height: object.frame.height)
           .position(x: object.frame.midX, y: object.frame.midY)

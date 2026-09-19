@@ -4,6 +4,53 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookGraphicRenderingTests: XCTestCase {
+  func testRetainedPressureInkAndNativePageTextUseTheNativeExportPlane() async throws {
+    let actor = UUID(), size = PageSize(width:300,height:200)
+    let samples = (0...30).map { i in SpatialInkSample(point:.init(x:30+Double(i)*7,y:60+sin(Double(i)/5)*25),
+      timeOffset:Double(i)/100,width:14,opacity:0.2+Double(i)/50,force:Double(i)/30,azimuth:0,altitude:1) }
+    let stroke = PageInkAction(tool:.pen,color:.init(red:0.1,green:0.3,blue:0.8),samples:samples)
+    let cut = PageInkAction(tool:.eraser,samples:[45.0,105].map { y in
+      .init(point:.init(x:160,y:y),timeOffset:0,width:12,opacity:1,force:1,azimuth:0,altitude:1) })
+    let later = PageInkAction(tool:.pen,color:.init(red:0.8,green:0.2,blue:0.1),samples:[140.0,190,140,190].enumerated().map { i,x in
+      .init(point:.init(x:x,y:65+Double(i)*10),timeOffset:Double(i),width:10,opacity:0.4,force:0.4,azimuth:0,altitude:1) })
+    let actions = [stroke,cut,later]
+    let drawing = try PageInkDrawing(actions:actions).dataRepresentation()
+    let raw = PageDocument(size:size,actor:actor,drawingData:drawing)
+    let frame = PageRect(x:0,y:0,width:300,height:200)
+    let graphic = NotebookGraphic(shape:.freehand,sourceInkIDs:[stroke.id,later.id],freehand:.init(layers:actions.map {
+      .init(tool:$0.tool,color:$0.color,vertices:NotebookFreehand.mesh(samples:$0.samples,frame:frame,origin:nil)) }))
+    let converted = PageDocument(size:size,actor:actor,drawingData:drawing,elements:[
+      .init(id:"retained",kind:.graphic,frame:frame,source:"",html:"",graphic:graphic)])
+    func render(_ page:PageDocument,_ name:String) async throws -> NSBitmapImageRep {
+      let result = try await PageCompositionRenderer.render(page,scale:2) { _ in
+        XCTFail("Native ink/text must never start WebKit"); throw CocoaError(.featureUnsupported)
+      }
+      let proof = XCTAttachment(data:result.png,uniformTypeIdentifier:"public.png"); proof.name = name; proof.lifetime = .keepAlways; add(proof)
+      return try XCTUnwrap(NSBitmapImageRep(data:result.png))
+    }
+    let before = try await render(raw,"measured-pressure-ink"), after = try await render(converted,"retained-pressure-ink")
+    var error = 0.0, count = 0, interiorError = 0.0
+    for x in stride(from:40,to:510,by:2) { for y in stride(from:50,to:180,by:2) {
+      let a = try XCTUnwrap(before.colorAt(x:x,y:y)?.usingColorSpace(.deviceRGB))
+      let b = try XCTUnwrap(after.colorAt(x:x,y:y)?.usingColorSpace(.deviceRGB))
+      error += abs(a.redComponent-b.redComponent)+abs(a.greenComponent-b.greenComponent)+abs(a.blueComponent-b.blueComponent); count += 3
+      let inside = [(0,0),(-4,0),(4,0),(0,-4),(0,4)].allSatisfy { dx,dy in
+        (before.colorAt(x:x+dx,y:y+dy)?.usingColorSpace(.deviceRGB)?.redComponent ?? 1) < 0.88
+      }
+      if inside { interiorError = max(interiorError,abs(a.redComponent-b.redComponent),abs(a.greenComponent-b.greenComponent),abs(a.blueComponent-b.blueComponent)) }
+    } }
+    XCTAssertLessThan(error/Double(count),0.015,"A lasso preserves measured paint; only raster-edge antialiasing can differ")
+    XCTAssertLessThan(interiorError,0.025,"Average error can hide triangle seams; stroke interiors must preserve coverage too")
+    let text = AgentElement(id:"text",kind:.nativeText,frame:.init(x:30,y:120,width:240,height:60),source:"Native page text",html:"",textStyle:.init(fontSize:24))
+    let withText = PageDocument(size:size,actor:actor,elements:[text])
+    let textImage = try await render(withText,"native-page-text")
+    var dark = 0
+    for x in 60..<530 { for y in 240..<330 {
+      if let c = textImage.colorAt(x:x,y:y)?.usingColorSpace(.deviceRGB),max(c.redComponent,c.greenComponent,c.blueComponent) < 0.4 { dark += 1 }
+    } }
+    XCTAssertGreaterThan(dark,1000)
+  }
+
   func testRoundedPolygonPaintUsesTheSharedContour() async throws {
     let graphic = NotebookGraphic(shape:.rectangle,style:.init(strokeWidth:3,fill:.black),cornerRadius:30)
     let page = PageDocument(size:.init(width:200,height:180),actor:UUID(),elements:[
