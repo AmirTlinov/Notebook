@@ -18,11 +18,17 @@ Package-контракт теперь **wire27 / manifest10**, отдельно 
   assets, все AgentWebLeaseTests, независимая текстовая правка и три конфликтовавших
   PreparedAgentElementViewTests. Оба native прогона неизменны, source SHA
   `6b4d339fdd6fb0080422c7b40de206fe76a56703bc862939d90ef7101db99012`.
-* MCP: **28 PASS** и pinned SDK check PASS, `/tmp/gui-242-release116-mcp-v3.log`,
-  `/tmp/gui-242-release116-sdk-v3.log`. Первый ручной вызов не создал isolated IPC
+* MCP: **28 PASS** и pinned SDK check PASS, `/tmp/gui-242-release116-mcp-v5.log`,
+  `/tmp/gui-242-release116-sdk-v4.log`. Первый ручной вызов не создал isolated IPC
   fixture host; повтор использовал настоящий собранный test host. После native
   receipt изменён только type-safe test присоединённого gear примера: размеры
   массивов явно проверяются, strict TypeScript больше не видит undefined/unused.
+  Затем SDK check нашёл stale generated wholeElement return schema: оба штатных
+  ресурса (sdk-reference.json/notebook-sdk.d.ts) регенерированы существующим
+  генератором; isolated IPC test host пересобран перед итоговым MCP v5. Native
+  receipt выше относится к предыдущему source SHA, Swift/UI code не менялся.
+  Первоначальная запись SDK PASS для v3 была преждевременной; v3 завершился stale
+  resource error, правильный завершённый PASS — v4.
 
 GUI-240–243 остаются In Progress. Это scoped интеграционный прогон, не повтор
 полной чужой приёмки 116 и не выпуск/physical/performance acceptance GUI-240.

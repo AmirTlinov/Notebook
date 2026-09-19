@@ -5877,6 +5877,9 @@
               },
               "worldOrigin": {
                 "$ref": "#/$defs/__schema25"
+              },
+              "wholeElement": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -10240,6 +10243,9 @@
               },
               "worldOrigin": {
                 "$ref": "#/$defs/__schema25"
+              },
+              "wholeElement": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -14825,6 +14831,9 @@
                                             },
                                             "worldOrigin": {
                                               "$ref": "#/$defs/__schema5"
+                                            },
+                                            "wholeElement": {
+                                              "type": "boolean"
                                             }
                                           },
                                           "required": [
@@ -31065,6 +31074,9 @@
                               },
                               "worldOrigin": {
                                 "$ref": "#/$defs/__schema18"
+                              },
+                              "wholeElement": {
+                                "type": "boolean"
                               }
                             },
                             "required": [
@@ -34717,6 +34729,9 @@
                       },
                       "worldOrigin": {
                         "$ref": "#/$defs/__schema3"
+                      },
+                      "wholeElement": {
+                        "type": "boolean"
                       }
                     },
                     "required": [
@@ -37824,6 +37839,9 @@
                           },
                           "worldOrigin": {
                             "$ref": "#/$defs/__schema2"
+                          },
+                          "wholeElement": {
+                            "type": "boolean"
                           }
                         },
                         "required": [
@@ -41942,6 +41960,9 @@
                                   },
                                   "worldOrigin": {
                                     "$ref": "#/$defs/__schema4"
+                                  },
+                                  "wholeElement": {
+                                    "type": "boolean"
                                   }
                                 },
                                 "required": [
