@@ -36,8 +36,10 @@ struct NotebookAcceptanceConfiguration: Codable, Equatable {
         throw NotebookStorageError.invalidTransaction("simulated contacts are restricted to Simulator")
       #endif
     }
-    let expected = role == .mac ? "com.amirtlinov.notebook.mac.acceptance" : "com.amirtlinov.notebook.acceptance"
-    guard enabled, version == 1, bundle == expected, bundleID == expected,
+    let allowedBundle = role == .mac
+      ? bundleID.wholeMatch(of: /com\.amirtlinov\.notebook\.mac\.acceptance\.[0-9a-f]{12}/) != nil
+      : bundleID == "com.amirtlinov.notebook.acceptance"
+    guard enabled, version == 1, allowedBundle, bundle == bundleID,
       sourceRevision.count == 40, sourceRevision.allSatisfy({ $0.isHexDigit }),
       root.hasPrefix("/"), rootURL.pathComponents.contains(runID.uuidString.lowercased()) else {
       throw NotebookStorageError.invalidTransaction("invalid isolated acceptance launch")
@@ -102,6 +104,7 @@ struct NotebookAcceptanceConfiguration: Codable, Equatable {
 
   static func requiresManifest(bundleID: String?, enabled: Bool) -> Bool {
     enabled || bundleID == "com.amirtlinov.notebook.mac.acceptance"
+      || bundleID?.hasPrefix("com.amirtlinov.notebook.mac.acceptance.") == true
       || bundleID == "com.amirtlinov.notebook.acceptance"
   }
 }

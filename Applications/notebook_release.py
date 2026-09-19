@@ -473,7 +473,7 @@ def prepare_typescript_runtime(source, command, stage_root=None):
     return Path(value["stage"])
 
 
-def restrict_test_script_services(app, source, command, signing_identity="-"):
+def restrict_test_script_services(app, source, command, *, bundle_identifier, signing_identity="-"):
     """Remove Xcode's test-only sandbox grants before executing real workers.
 
     Xcode injects a read-all-files exception for its test action separately
@@ -484,7 +484,7 @@ def restrict_test_script_services(app, source, command, signing_identity="-"):
     app, source = Path(app).resolve(), Path(source).resolve()
     require(not below(app, CANONICAL_MAC.resolve()), "Нельзя переподписывать установленный рабочий Mac.")
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
-    require(info.get("CFBundleIdentifier") in (MAC_BUNDLE, MAC_BUNDLE + ".acceptance"),
+    require(info.get("CFBundleIdentifier") == bundle_identifier,
             "Ожидался созданный этим маршрутом тестовый Mac bundle.")
     root = app / "Contents/XPCServices"
     require(root.is_dir() and {path.name for path in root.iterdir()}

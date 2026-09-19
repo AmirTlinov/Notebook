@@ -123,6 +123,47 @@ class SelectionTests(unittest.TestCase):
             with self.assertRaises(release.ReleaseError):
                 acceptance.validate_simulator_entitlements(invalid)
 
+    def test_worker_reseal_requires_the_exact_attested_mac_bundle_before_any_signing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / "Notebook.app"
+            (app / "Contents").mkdir(parents=True)
+            (app / "Contents/Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": acceptance.MAC_BUNDLE}))
+            command = Mock()
+            with self.assertRaisesRegex(release.ReleaseError, "Mac bundle"):
+                release.restrict_test_script_services(app, ROOT, command, bundle_identifier=release.MAC_BUNDLE + ".acceptance")
+            command.assert_not_called()
+            with self.assertRaisesRegex(release.ReleaseError, "ровно два"):
+                release.restrict_test_script_services(app, ROOT, command, bundle_identifier=acceptance.MAC_BUNDLE)
+            command.assert_not_called()
+
+    def test_acceptance_locks_actual_devices_not_all_xcode_runners(self):
+        simulator = str(uuid.uuid4())
+        built = {"simulator": {"udid": simulator}, "macApp": "/private/Notebook.app"}
+        value = {"build": "/private/build"}
+        args = SimpleNamespace(command="ui", run=Path("/private/run"), platform="mac")
+        with patch.object(acceptance, "read", side_effect=[value, built] * 3), \
+             patch.object(acceptance, "info", return_value={"CFBundleIdentifier": acceptance.MAC_BUNDLE}):
+            self.assertEqual(acceptance.lock_names(args), [acceptance.MAC_BUNDLE])
+            args.platform = "ipad"
+            self.assertEqual(acceptance.lock_names(args), ["simulator-" + simulator])
+            args.command = "upgrade"
+            self.assertEqual(acceptance.lock_names(args), sorted([acceptance.MAC_BUNDLE, "simulator-" + simulator]))
+        self.assertNotIn(acceptance.MAC_BUNDLE, acceptance.lock_names(SimpleNamespace(command="build")))
+
+    def test_mac_acceptance_identity_is_stable_per_canonical_checkout_and_not_shared(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first"; first.mkdir()
+            alias = root / "alias"; alias.symlink_to(first, target_is_directory=True)
+            bundle = acceptance.mac_bundle_for(first)
+            self.assertRegex(bundle, r"^com\.amirtlinov\.notebook\.mac\.acceptance\.[0-9a-f]{12}$")
+            self.assertEqual(bundle, acceptance.mac_bundle_for(alias))
+            self.assertNotEqual(bundle, acceptance.mac_bundle_for(root / "second"))
+        project = (ROOT / "Applications/project.yml").read_text()
+        self.assertIn("com.amirtlinov.notebook.mac$(NOTEBOOK_MAC_BUNDLE_SUFFIX)", project)
+        self.assertIn("com.amirtlinov.notebook.mac$(NOTEBOOK_MAC_BUNDLE_SUFFIX).uitests", project)
+        self.assertEqual(acceptance.MAC_BUNDLE, acceptance.mac_bundle_for(ROOT))
+
     def test_acceptance_mac_has_its_own_stable_apple_identity(self):
         display = ("Identifier=" + acceptance.MAC_BUNDLE + "\nTeamIdentifier=" + release.TEAM
                    + "\nAuthority=Apple Development: Test Developer\nCDHash=" + "a" * 40 + "\n")

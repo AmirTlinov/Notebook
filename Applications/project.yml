@@ -18,6 +18,7 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: true
     CLANG_ENABLE_MODULES: true
     NOTEBOOK_BUNDLE_SUFFIX: ""
+    NOTEBOOK_MAC_BUNDLE_SUFFIX: $(NOTEBOOK_BUNDLE_SUFFIX)
     NOTEBOOK_SCRIPT_BUNDLE_SUFFIX: $(NOTEBOOK_BUNDLE_SUFFIX)
     NOTEBOOK_ACCEPTANCE_ENABLED: NO
     NOTEBOOK_IPAD_ENTITLEMENTS: ""
@@ -209,7 +210,7 @@ targets:
           - _notebook._tcp
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.mac$(NOTEBOOK_BUNDLE_SUFFIX)
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.mac$(NOTEBOOK_MAC_BUNDLE_SUFFIX)
         CODE_SIGN_ENTITLEMENTS: $(NOTEBOOK_MAC_ENTITLEMENTS)
         PRODUCT_NAME: Notebook
         OTHER_LDFLAGS: "$(inherited) $(NOTEBOOK_TYPESETTER_RUNTIME)/$(PLATFORM_NAME)/libnotebook_typesetter_runtime.a -liconv -lresolv -framework Security"
@@ -324,7 +325,7 @@ targets:
       - target: NotebookMac
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.mac.acceptance.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.mac$(NOTEBOOK_MAC_BUNDLE_SUFFIX).uitests
         GENERATE_INFOPLIST_FILE: true
         TEST_TARGET_NAME: NotebookMac
 

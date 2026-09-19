@@ -536,7 +536,7 @@ def run_selected(root, plan, evidence):
             app = derived / "mac/Build/Products/Debug/Notebook.app"
             display = command("mac-native-signer", ["/usr/bin/codesign", "--display", "--verbose=4", app], read_output=True)
             signer, identity = release.development_signer(b"\n".join(display).decode(), release.MAC_BUNDLE + ".acceptance")
-            release.restrict_test_script_services(app, root, command, signing_identity=signer)
+            release.restrict_test_script_services(app, root, command, bundle_identifier=release.MAC_BUNDLE + ".acceptance", signing_identity=signer)
             release.write_json(evidence / "mac-native-signature.json", {"identity": identity,
                 "workerBundleSuffix": ".native-test", "scope": "isolated stateless native-test workers"})
             args[args.index("test")] = "test-without-building"

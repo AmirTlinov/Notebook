@@ -6,8 +6,11 @@ import NotebookCore
 @main struct NotebookAcceptance {
   static func main() throws {
     let args = CommandLine.arguments
-    guard args.count == 5, args[1] == "prepare" else {
-      throw failure("usage: notebook-acceptance prepare NEW_RUN_DIRECTORY SOURCE_SHA SIMULATOR_APP_CONTAINER")
+    guard args.count == 6, args[1] == "prepare" else {
+      throw failure("usage: notebook-acceptance prepare NEW_RUN_DIRECTORY SOURCE_SHA SIMULATOR_APP_CONTAINER MAC_BUNDLE_ID")
+    }
+    guard args[5].wholeMatch(of: /com\.amirtlinov\.notebook\.mac\.acceptance\.[0-9a-f]{12}/) != nil else {
+      throw failure("Mac bundle must identify one isolated checkout")
     }
     let directory = URL(fileURLWithPath: args[2], isDirectory: true).standardizedFileURL.resolvingSymlinksInPath()
     guard let runID = UUID(uuidString: directory.lastPathComponent),
@@ -47,7 +50,7 @@ import NotebookCore
     }
     let macManifest = directory.appendingPathComponent("mac.json")
     let iPadManifest = iPadRoot.deletingLastPathComponent().appendingPathComponent("ipad.json")
-    try write(manifest(role: "mac", actor: macActor, bundle: "com.amirtlinov.notebook.mac.acceptance", root: macRoot), to: macManifest)
+    try write(manifest(role: "mac", actor: macActor, bundle: args[5], root: macRoot), to: macManifest)
     try write(manifest(role: "iPad", actor: iPadActor, bundle: "com.amirtlinov.notebook.acceptance", root: iPadRoot), to: iPadManifest)
     let result: [String: Any] = ["runID": runID.uuidString.lowercased(), "workspaceID": workspaceID.uuidString,
       "sourceRevision": args[3], "macManifest": macManifest.path, "iPadManifest": iPadManifest.path,

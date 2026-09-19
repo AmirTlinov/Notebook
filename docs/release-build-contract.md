@@ -155,8 +155,14 @@ WASM-ядра, собирает AOT и ограниченный host, готов
 ## Изолированная приёмка перед обновлением устройства
 
 `Applications/notebook_acceptance.py` собирает отдельные Release targets
-`NotebookAcceptance` и `NotebookMacAcceptance`, всегда с суффиксом
-`.acceptance`. Он не имеет команды установки на физическое устройство.
+`NotebookAcceptance` и `NotebookMacAcceptance`. iPad использует `.acceptance`
+в выбранном Simulator; Mac — `.acceptance.<12 hex SHA-256 canonical checkout path>`.
+Mac-приложение и UI runner имеют отдельную стабильную идентичность каждого checkout:
+LaunchServices/XCTest не должны переключать чужой параллельный стенд.
+Acceptance driver блокирует конкретный Mac bundle/Simulator UDID, а не все
+процессы Xcode машины; независимые destinations и derived data не делят очередь.
+Смена checkout не мигрирует старый run или его Keychain; создаётся свежая пара.
+Он не имеет команды установки на физическое устройство.
 `prepare` создаёт одинаковый новый checkpoint для Mac и iPad Simulator,
 раздельные manifest, root, настройки и Keychain-службы; доверие не подставляется.
 Ручной маршрут сопряжения удалён. Изолированная acceptance-сборка без iCloud

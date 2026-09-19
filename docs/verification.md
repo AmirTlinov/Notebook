@@ -1,5 +1,44 @@
 # Проверка Notebook
 
+## 19 сентября, 12:43 МСК — GUI-250: независимая Mac identity и пустое назначение portable import
+
+Mac acceptance application/UI runner получили стабильный суффикс checkout
+`.acceptance.0eb64b772a19`; приложение и manifest обязаны совпадать целиком.
+Старый stand не мигрирует и не получает доступ к новым ключам: создан fresh run
+`e6bc2672-bf28-4ccc-bd74-3d6034146723`, workspace `5159ED05-BD8B-495C-A4D7-197C5F291AE7`,
+без заранее выданного trust. iPad остаётся в Simulator
+`3E0E27D3-C87A-40EB-B875-6D6571DC29D3`; физическая пара не затронута.
+Driver locks теперь относятся к конкретному Mac bundle/Simulator, не всей машине.
+Worker reseal проверяет точный attested bundle вместо двух hard-coded имён.
+
+Проверки: route **81**, release **67**, Swift scope **8**, native launch **6 PASS**;
+отдельный actual Codex scope probe **1 PASS**, без model turn/новой задачи.
+Журналы `/tmp/gui250-checkout-identity-routes-v3.log`,
+`/tmp/gui250-checkout-release-v1.log`, `/tmp/gui250-checkout-codex-v1.log`,
+`/tmp/gui250-checkout-codex-live-v1.log`,
+`.build/gui250-checkout-identity-mac-v2/verification.json` (source `801a7308…f31b`).
+V6 выявил оставшийся hard-coded signer guard и не был установлен.
+Development v7 собран и установлен: source
+`e41ffa9206535a72895a0816c3eb0b2da1c752184cb5fc3b526b65436fbee286`,
+Mac CDHash `84ff911b8afa6f9772b8cb58732e53ee09734fc6`.
+`workingTreeUnchanged=false`: во время сборки исправлен accessor только в
+opt-in Codex test; это диагностический build, не окончательный единый gate.
+
+В пустое пространство обычным installed MCP импортирован прежний portable
+пакет биений. Новый документ `034341cb-727d-5646-a0f3-ecc670225e74` даёт SVG
+SHA256 `53680f9ed2aeb74ec3d4eb3e53e5743435c27e8698de45ddebc9dcbf3f7353bd`,
+побайтно равный оригиналу; receipts в `.build/gui250-private-author-v7/`.
+Это не delivery/Apple Account acceptance: pair trust ещё не разрешён.
+
+Настоящий UI runner теперь запускает правильный process, но control test пока
+**FAIL**: при масштабе 44% AX slider сообщает ширину 613 вместо видимых ~270 points.
+Просмотрена запись v7; Native camera correction проверяется отдельно и пока
+не принята установленным UI. CUA дополнительно не смог захватить Stage Manager
+thumbnail вне экрана (`SCStreamError -3811/-3812`); это не успешная UI-проверка.
+Public probe реального файла 300 MiB (75 различных частей по 4 MiB) успешно
+staged/published, но PNG export вернул JavaScript exception; отрицательные
+receipts сохранены в `.build/gui250-large-public/`. Large-assets acceptance не закрыт.
+
 ## 19 сентября, 12:05 МСК — GUI-250: нативный лист больше не скрыт под Mac WebKit
 
 Живой public TS-документ биений выявил дефект, которого не показывал экспорт:

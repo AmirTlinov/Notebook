@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Build and drive an isolated production Mac/Simulator pair; never install a device build."""
 import argparse
+from contextlib import ExitStack
 import fcntl
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -24,7 +26,15 @@ import notebook_navigation_observation as navigation_observation
 
 ROOT = Path(__file__).resolve().parents[1]
 IPAD_BUNDLE = "com.amirtlinov.notebook.acceptance"
-MAC_BUNDLE = "com.amirtlinov.notebook.mac.acceptance"
+# LaunchServices and XCTest identify Mac applications by bundle ID, not just
+# executable path. Distinct worktrees must not activate each other's stand.
+def mac_bundle_for(root):
+    scope = hashlib.sha256(str(Path(root).resolve()).encode()).hexdigest()[:12]
+    return "com.amirtlinov.notebook.mac.acceptance." + scope
+
+
+MAC_BUNDLE = mac_bundle_for(ROOT)
+MAC_BUNDLE_SUFFIX = MAC_BUNDLE.removeprefix("com.amirtlinov.notebook.mac")
 # Sandbox containers are keyed by bundle ID and admit their original signer.
 # Scope these stateless workers to the verified build team, never reuse an old
 # development team's container or alter its ACL to make a test launch succeed.
@@ -237,7 +247,8 @@ def build(args):
         else:
             command += ["CODE_SIGN_IDENTITY=Apple Development", "CODE_SIGN_STYLE=Automatic",
                         "CODE_SIGNING_ALLOWED=YES", "DEVELOPMENT_TEAM=" + release.TEAM,
-                        "NOTEBOOK_SCRIPT_BUNDLE_SUFFIX=" + SCRIPT_BUNDLE_SUFFIX]
+                        "NOTEBOOK_SCRIPT_BUNDLE_SUFFIX=" + SCRIPT_BUNDLE_SUFFIX,
+                        "NOTEBOOK_MAC_BUNDLE_SUFFIX=" + MAC_BUNDLE_SUFFIX]
         command.append("NOTEBOOK_TYPESETTER_RUNTIME=" + str(runtime))
         if platform == "mac":
             command.append("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript_runtime))
@@ -247,7 +258,7 @@ def build(args):
             signing = release.release_commands(evidence)
             display = signing("acceptance-mac-signer", ["/usr/bin/codesign", "--display", "--verbose=4", mac_app], read_output=True)
             signer, _ = mac_acceptance_signer(b"\n".join(display).decode())
-            release.restrict_test_script_services(mac_app, snapshot, signing, signing_identity=signer)
+            release.restrict_test_script_services(mac_app, snapshot, signing, bundle_identifier=MAC_BUNDLE, signing_identity=signer)
             display = signing("acceptance-mac-signature", ["/usr/bin/codesign", "--display", "--verbose=4", mac_app], read_output=True)
             _, mac_signature = mac_acceptance_signer(b"\n".join(display).decode())
     release.require(before == release.source_inputs(snapshot), "Исходники независимой копии изменились во время сборки.")
@@ -415,13 +426,15 @@ def prepare(args):
     # the user's Documents merely because the checkout happens to live there.
     runtime = (Path.home() / "Library/Application Support/NotebookAcceptance" / identifier).resolve()
     release.require(not directory.exists() and not runtime.exists(), "Нужен новый каталог данных и квитанции стенда.")
+    release.require(info(Path(built["macApp"]), True)["CFBundleIdentifier"] == MAC_BUNDLE,
+                    "Mac-стенд должен принадлежать этому checkout; старый run не мигрируется.")
     ipad = Path(built["ipadApp"])
     release.require(info(ipad)["CFBundleIdentifier"] == IPAD_BUNDLE, "Нельзя устанавливать production bundle из маршрута стенда.")
     verify_simulator_signature(ipad)
     run(["xcrun", "simctl", "install", built["simulator"]["udid"], ipad])
     container = run(["xcrun", "simctl", "get_app_container", built["simulator"]["udid"], IPAD_BUNDLE, "data"]).decode().strip()
     run(["swift", "run", "--package-path", built["source"], "notebook-acceptance", "prepare", runtime,
-                  built["sourceRevision"], container], timeout=600)
+                  built["sourceRevision"], container, MAC_BUNDLE], timeout=600)
     value = read(runtime / "run.json")
     value["build"] = str(args.build.resolve())
     value["runtimeDirectory"] = str(runtime)
@@ -876,6 +889,24 @@ def ui(args):
     print(str(evidence))
 
 
+def lock_names(args):
+    # Only mutable device/application owners are exclusive. Immutable builds
+    # and distinct Mac/Simulator stands need no machine-wide Xcode queue.
+    if args.command in ("build", "ui-build"):
+        return ["build-" + MAC_BUNDLE]
+    if args.command == "prepare":
+        built = read(args.build / "build.json")
+    else:
+        value = read(args.run / "run.json")
+        built = read(Path(value["build"]) / "build.json")
+    simulator = "simulator-" + str(uuid.UUID(built["simulator"]["udid"]))
+    mac = info(Path(built["macApp"]), True)["CFBundleIdentifier"]
+    release.require(mac == MAC_BUNDLE, "Стенд другого checkout не может получить этот runner.")
+    if args.command == "ui":
+        return [mac if args.platform == "mac" else simulator]
+    return sorted([mac, simulator])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -901,10 +932,10 @@ def main():
     command.add_argument("--document-id", help="UUID контрольного документа, созданного через публичный API")
     command.add_argument("--document-title", help="Точное сохранённое название контрольного документа для настоящего поиска")
     args = parser.parse_args()
-    with (Path(tempfile.gettempdir()) / "notebook-verification.lock").open("w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        release.require(subprocess.run(["pgrep", "-x", "xcodebuild"], capture_output=True).returncode != 0,
-                        "Xcode уже занят; второй runner не запущен.")
+    with ExitStack() as locks:
+        for name in lock_names(args):
+            lock = locks.enter_context((Path(tempfile.gettempdir()) / ("notebook-acceptance-" + name + ".lock")).open("w"))
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         {"build": build, "ui-build": ui_build, "prepare": prepare, "upgrade": upgrade, "ui": ui}[args.command](args)
 
 
