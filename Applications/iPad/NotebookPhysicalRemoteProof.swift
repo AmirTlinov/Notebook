@@ -13,7 +13,9 @@ import SwiftUI
     #if targetEnvironment(simulator)
       guard localOnly else { phaseChanged("Physical device required"); return }
     #endif
-    let progress = config.rootURL.deletingLastPathComponent().appendingPathComponent(localOnly ? "local-proof.json" : "progress.json")
+    let attempt = ProcessInfo.processInfo.environment["NOTEBOOK_REMOTE_PROOF_ATTEMPT"].flatMap(UUID.init(uuidString:))
+    let progressName = (localOnly ? "local-proof" : "progress") + (attempt.map { "-" + $0.uuidString.lowercased() } ?? "") + ".json"
+    let progress = config.rootURL.deletingLastPathComponent().appendingPathComponent(progressName)
     let fileName = localOnly ? "local-proof.txt" : "proof.txt"
     let documentTitle = localOnly ? "GUI-183 local proof" : "GUI-183 physical proof"
     guard !FileManager.default.fileExists(atPath: progress.path) else { return }
@@ -40,8 +42,10 @@ import SwiftUI
       try await wait(60) { chat.threadID != nil }
       let thread = try unwrap(chat.threadID)
       recordedThread = thread
+      try await wait(60) { chat.conversation?.access?.available.contains(.workspace) == true }
       await chat.setAccess(.workspace, thread: thread)
       try await wait(30) { chat.jobs.contains { if case .setAccess = $0.input.action { return $0.state == .accepted }; return false } }
+      try record("sending-isolated-check", thread: thread)
       let sent = await chat.sendMessage(threadID: thread, text: """
         This is an isolated acceptance project and a fresh private Notebook workspace. Do not access any other project.
         Create \(fileName) containing exactly GUI-183 plus a newline. Run /usr/bin/python3 -c 'from pathlib import Path; assert Path("\(fileName)").read_text() == "GUI-183\\n"; print("GUI-183-CHECK-PASSED")'.
