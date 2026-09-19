@@ -14,6 +14,18 @@ struct Node {
 struct Uniforms { float2 viewport; uint nodeCount; uint indexCount; };
 struct DirectOut { float4 position [[position]]; float4 premultipliedColor; };
 struct Evaluated { float2 position; float4 color; };
+// Row-major affine state: two rows (a,b,translation,reserved), 32 bytes.
+struct InkSpace { float4 x; float4 y; };
+InkSpace identitySpace() { return {float4(1,0,0,0),float4(0,1,0,0)}; }
+float2 inSpace(float2 p, InkSpace s) {
+  return float2(dot(s.x.xy,p)+s.x.z,dot(s.y.xy,p)+s.y.z);
+}
+float4 shapeInSpace(float4 value, InkSpace s) {
+  float2x2 a=float2x2(float2(s.x.x,s.y.x),float2(s.x.y,s.y.y));
+  float2x2 q=float2x2(float2(value.x,value.y),float2(value.y,value.z));
+  q=a*q*transpose(a);
+  return float4(q[0][0],(q[0][1]+q[1][0])*0.5f,q[1][1],0);
+}
 
 float2 direction(float2 from, float2 to) {
   float2 d = to - from;
@@ -39,31 +51,32 @@ uint packShape(float4 q) {
   return (uint(base)&4095) | (ratio<<12) | ((uint(phase)&1023)<<22);
 }
 
-float2 support(uint id, float2 normal, device const float *shapes) {
+float2 support(uint id, float2 normal, device const float *shapes, InkSpace space) {
   if (!tensorMode) return normal * shapes[id];
   float4 q = bitShapeMode ? unpackShape(((device const uint *)shapes)[id])
     : ((device const float4 *)shapes)[id]; // Qxx, Qxy, Qyy, reserved
+  q = shapeInSpace(q,space);
   float2 v = float2(q.x * normal.x + q.y * normal.y, q.y * normal.x + q.z * normal.y);
   return v / sqrt(max(dot(normal, v), 1e-12f));
 }
-float2 crossSection(uint id, device const Node *nodes, device const float *shapes) {
+float2 crossSection(uint id, device const Node *nodes, device const float *shapes, InkSpace space) {
   Node n = nodes[id];
-  float2 incoming = n.previous == id ? direction(n.position, nodes[n.next].position)
-    : direction(nodes[n.previous].position, n.position);
-  float2 outgoing = n.next == id ? incoming : direction(n.position, nodes[n.next].position);
+  float2 incoming = n.previous == id ? direction(inSpace(n.position,space), inSpace(nodes[n.next].position,space))
+    : direction(inSpace(nodes[n.previous].position,space), inSpace(n.position,space));
+  float2 outgoing = n.next == id ? incoming : direction(inSpace(n.position,space), inSpace(nodes[n.next].position,space));
   float2 sum = float2(-incoming.y-outgoing.y, incoming.x+outgoing.x);
   float2 outNormal = float2(-outgoing.y,outgoing.x);
   float2 normal = dot(sum,sum) > 0.0001f ? normalize(sum) : outNormal;
   float denominator = max(abs(dot(normal,outNormal)),0.55f);
-  return support(id,normal,shapes) * min(1.0f/denominator,1.8f);
+  return support(id,normal,shapes,space) * min(1.0f/denominator,1.8f);
 }
 Evaluated evaluate(uint vertexID, device const Node *nodes, device const float *shapes,
-  device const uint2 *caps, uint nodeCount) {
+  device const uint2 *caps, uint nodeCount, InkSpace space) {
   uint node;
   float2 offset;
   if (vertexID < 2 * nodeCount) {
     node = vertexID / 2;
-    offset = crossSection(node,nodes,shapes) * ((vertexID & 1) ? -1.0f : 1.0f);
+    offset = crossSection(node,nodes,shapes,space) * ((vertexID & 1) ? -1.0f : 1.0f);
   } else {
     uint capVertex = vertexID - 2 * nodeCount;
     uint2 cap = caps[capVertex / 32];
@@ -76,17 +89,21 @@ Evaluated evaluate(uint vertexID, device const Node *nodes, device const float *
       float sweep = 2.0f * M_PI_F;
       if (cap.y != 2) {
         Node n = nodes[node];
-        float2 outward = cap.y == 0 ? -direction(n.position,nodes[n.next].position)
-          : direction(nodes[n.previous].position,n.position);
+        float2 outward = cap.y == 0 ? -direction(inSpace(n.position,space),inSpace(nodes[n.next].position,space))
+          : direction(inSpace(nodes[n.previous].position,space),inSpace(n.position,space));
         start = atan2(outward.y,outward.x) - M_PI_F / 2.0f;
         sweep = M_PI_F;
       }
       uint arc = local - 1;
       float angle = cap.y == 2 && arc == segments ? start : start + (float(arc)/float(segments))*sweep;
-      offset = support(node,float2(cos(angle),sin(angle)),shapes);
+      offset = support(node,float2(cos(angle),sin(angle)),shapes,space);
     }
   }
-  return {nodes[node].position + offset, nodes[node].color};
+  return {inSpace(nodes[node].position,space) + offset, nodes[node].color};
+}
+Evaluated evaluate(uint vertexID, device const Node *nodes, device const float *shapes,
+  device const uint2 *caps, uint nodeCount) {
+  return evaluate(vertexID,nodes,shapes,caps,nodeCount,identitySpace());
 }
 vertex DirectOut directInkVertex(device const Node *nodes [[buffer(0)]],
   device const float *shapes [[buffer(1)]], device const uint2 *caps [[buffer(2)]],
