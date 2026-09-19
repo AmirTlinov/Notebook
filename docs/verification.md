@@ -6,11 +6,11 @@ environment; later changes do not inherit acceptance automatically.
 
 ## Current recorded state — September 19–20, 2026
 
-- Latest completed installed pair recorded here: **0.3.129 (132)** on Mac and
-  physical iPad, source commit `f7e3b25b`, wire **37**, content manifest **18**.
+- Latest completed installed pair recorded here: **0.3.130 (133)** on Mac and
+  physical iPad, source commit `8d02d946`, wire **37**, content manifest **18**.
   Its exact receipt is below.
-- GUI-266's subsequent page-gesture/large-selection work is in progress. Build
-  132's receipt does not cover that work or imply it has shipped.
+- GUI-266's page-gesture/large-selection follow-up is installed and awaits
+  Amir's physical user acceptance; scoped checks are not full acceptance.
 - GUI-240 is **Done by Amir's explicit decision**; its integration is complete.
   Remaining GUI-250 performance/long-session conditions were not declared passed.
 - GUI-183, GUI-196, and GUI-197 remain In Progress in Linear as checked on
@@ -19,6 +19,18 @@ environment; later changes do not inherit acceptance automatically.
 - Documentation translations do not change application behavior. Source-directory
   Markdown belongs to the build inventory, so this documentation revision has a
   different input identity from earlier installed releases.
+
+## GUI-266 follow-up: page gesture ownership and large selection — build 133
+
+Source commit `8d02d9469e1122f10b52461e629fad173822da4f` is pushed. Immutable input SHA-256: `993a14ae101f3bc556ee4eef5c60cac11a24e4ccd2b8901927c3bdfc372400a6`. The signed pair retains wire 37 and manifest 18.
+
+- UIKit's curl now waits for contact admission before beginning, instead of being cancelled after it has already started. Selected-object manipulation, editing and zoom own their contacts. System edge-tap page turns are disabled. Curl playback is 1.8 times faster while transitioning, with ordinary layer timing restored afterwards.
+- The existing one-finger camera owner now also pans zoomed paper, constrained by the reading camera. Selected graphics own their visible selection envelope; erased graphics retain exact remaining-paint hit testing.
+- Viewport-sized figures are no longer excluded from selection. Measured-ink point picking uses the retained triangles directly rather than building a pathological overlapping stroked path; chronological erasure and transformed geometry remain intact. Raw-ink selection budgets were not changed.
+
+Final unchanged-source verification: **physical iPad 40/40**, runtime warnings empty; **Core 4/4**. Real device UI gestures exercise selected-object drag, both edge taps, pinch zoom, one-finger camera pan, return to fit, forward/reverse curl and the existing inline text/formatting/layer flow. Screenshots were inspected. A 60,000-vertex Core picking regression completed in 14 ms. Synthetic native contacts do not establish hardware Pencil feel; no simulator was used. Diagnostic runs A/B remain recorded: a recognizer-reset assumption and UI pinch targeting/near-fit precision were corrected in the tests, without weakening production admission thresholds. Final evidence: `.build/gui266-selection133c/verification.json`, `.build/gui266-followup133/core.log`, `.build/gui266-followup133/attachments-c/`, `.build/gui266-build133/build.json`.
+
+Mac and physical iPad were updated in place to **0.3.130 (133)** and launched at about **22:37 UTC on September 19**. The first normal Mac quit waited at its active-work confirmation and timed out before replacement; it was cancelled. Amir then explicitly authorized interruption, and the ordinary AppKit shutdown completed without forced termination. Mac store/spaces/registry/activation bytes before relaunch and the iPad workspace registry digest were preserved. Installed-helper readback at cursor **25133** matched baseline **25126** for both checked pages and the board's content/ink revisions. The installed iPad screenshot shows the existing user notebook and ink. Receipt: `.build/gui266-install133/installation.json`. User acceptance, hardware Pencil feel and full performance/long-session acceptance remain open.
 
 ## GUI-266 follow-up: one layer menu — build 132
 
