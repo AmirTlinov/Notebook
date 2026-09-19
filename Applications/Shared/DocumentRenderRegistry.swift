@@ -64,7 +64,7 @@ final class DocumentRenderRegistry {
     let pageIndex: Int
     let generation: UInt64
     let isAttached: @MainActor (DocumentPresentationScope) -> Bool
-    let feedback: @MainActor ([NotebookAgentFeedback.Episode]) -> Void
+    let paper: @MainActor () -> DocumentPaperRaster?
   }
   @ObservationIgnored private var liveSurfaces: [UUID: LiveSurface] = [:]
   private struct LiveObserver {
@@ -110,15 +110,6 @@ final class DocumentRenderRegistry {
     #endif
   }
 
-
-  func setAgentFeedback(_ episodes: [NotebookAgentFeedback.Episode]) {
-    for surface in Array(liveSurfaces.values) {
-      let active = surface.isAttached(.paper) ? episodes.filter {
-        $0.subject.reference.target.kind == .document && $0.subject.reference.target.id == surface.documentID
-      } : []
-      surface.feedback(active)
-    }
-  }
 
   func retainRetiringProgram(_ renderer: DocumentWebCoordinator, web: WKWebView, hostID: UUID) {
     let entry = renderers[hostID] ?? Renderer(renderer)
@@ -178,21 +169,28 @@ final class DocumentRenderRegistry {
     }
   }
 
+  /// Borrow the installed, accounted paper pixels. A prepared or detached page
+  /// is not a mask for feedback on the current source.
+  func installedPaper(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int) -> DocumentPaperRaster? {
+    let token = DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndex)
+    return liveSurfaces.values.first {
+      $0.documentID == document.id && $0.token == token && $0.pageIndex == pageIndex && $0.isAttached(.paper)
+    }?.paper()
+  }
+
   func publishLive(documentID: UUID, token: String, pageIndex: Int, hostID: UUID, generation: UInt64,
-    feedback: @escaping @MainActor ([NotebookAgentFeedback.Episode]) -> Void = { _ in },
+    paper: @escaping @MainActor () -> DocumentPaperRaster? = { nil },
     isAttached: @escaping @MainActor (DocumentPresentationScope) -> Bool) {
     if let previous = liveSurfaces[hostID] {
       if previous.generation > generation { return }
-      if previous.token != token || previous.pageIndex != pageIndex { previous.feedback([]) }
     }
     liveSurfaces[hostID] = .init(documentID: documentID, token: token, pageIndex: pageIndex,
-      generation: generation, isAttached: isAttached, feedback: feedback)
+      generation: generation, isAttached: isAttached, paper: paper)
     for observer in Array(liveObservers.values) where observer.documentID == documentID { observer.changed() }
   }
 
   func revokeLive(hostID: UUID, through generation: UInt64) {
     guard let previous = liveSurfaces[hostID], previous.generation <= generation else { return }
-    previous.feedback([])
     liveSurfaces[hostID] = nil
   }
 

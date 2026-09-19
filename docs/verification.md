@@ -1,5 +1,42 @@
 # Проверка Notebook
 
+## 19 сентября, 18:43 МСК — GUI-247: подсветка настоящей бумаги; Mac замечания повторно приняты
+
+Единый `NotebookAgentFeedbackOverlay` теперь заимствует установленный, учтённый
+растр PDF через точный live paper owner. Shimmer следует реальным буквам/
+контурам, не пустому DOM. Общий `WorkspaceItemGeometry` переводит PDF points
+в координаты бумаги; смешение этих единиц дало отрицательный промежуточный
+pixel check и устранено. Программы сохраняют свой WebKit/context/input;
+передаваемые и экспортируемые canonical pixels не содержат sibling overlay.
+Старый `agent-feedback.js`, его native bridge и synthetic DOM fixture удалены.
+Reduce Motion/attention имеют неподвижный видимый акцент на всём выбранном
+тексте, а не остановленный за короткой строкой гребень анимации.
+
+Неизменный source `e01cc1b544bbc621fad40c5696b75381a388f96e2e68c68a240ef5c4ae5f209b`,
+`.build/gui247-printed-feedback-v22`: private Simulator Debug build и **16/16
+native PASS**, failures/skips/runtime warnings0. Проверены actual printed ink,
+истечение и Reduce Motion, canonical snapshot equality, прежний program context
+и click handler, отказ заимствования detached paper; SharedAttention7,
+feedback lifecycle6, frozen semantic frame и topbar. PNG осмотрены: изменение
+1379 непочти-белых пикселей и одного светлого antialias-пикселя только в пределах
+букв `[81,82,293,125]`; expired byte-for-byte совпал с before. Промежуточные
+V20/V21 отрицательные результаты сохранены, не объявлены успехом.
+
+Toolbar-sized fixture теперь исключает системный safe-area inset: прежний PNG
+обрезал нижний ряд из-за status bar чужого размера окна, не из-за layout панели.
+Новые ширины284/360/798/1158 прошли; полный narrow render осмотрен.
+
+Отдельно `.build/gui250-integrated-ui-v19`: на установленном **Release V19**
+настоящие Mac UI **2/2 PASS** (warnings/skips0): полноразмерные empty panes,
+«Рядом → Код → Лист» без горизонтального сжатия и wheel−120/+120 с совместным
+движением paper/live content. Все затронутые состояния PNG осмотрены. Это
+повторная приёмка пользовательских замечаний на едином интегрированном срезе.
+
+Feedback fix пока принят в Simulator native, не в новой Release private паре;
+Mac Release rebuild с ним ещё впереди. GUI-240/250 не Done: cold/system/reference/
+shared full-route/10-repeat/30-minute gates остаются. Production, physical iPad,
+сеть и пользовательские контейнеры не изменялись.
+
 ## 19 сентября, 18:29 МСК — GUI-240: единая private пара release124 установлена
 
 Срез `2968a11bac9dbabd577d02fbd1ebda38e4b67381c18c3407d4e691308f60fe92`

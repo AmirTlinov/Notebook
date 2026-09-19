@@ -1033,7 +1033,7 @@ final class DocumentWebCoordinator: NSObject,
       appliedPageIndex == requestedPageIndex, let pageIndex = appliedPageIndex else { revokeLiveReceipt(); return }
     DocumentRenderRegistry.shared.publishLive(documentID: payload.documentID, token: payload.compositeToken,
       pageIndex: pageIndex, hostID: hostID, generation: generation,
-      feedback: { [weak self] episodes in self?.setAgentFeedback(episodes) }) { [weak self] _ in
+      paper: { [weak self] in self?.installedPaper }) { [weak self] _ in
         guard let self, !isInvalidated, hasCanonicalPixels, acceptsInput, let host else { return false }
         #if os(iOS)
           return host.window?.isKeyWindow == true && UIApplication.shared.applicationState == .active && !host.isHidden
@@ -1137,22 +1137,7 @@ final class DocumentWebCoordinator: NSObject,
     preparedSnapshotLease?.release()
   }
 
-  private var agentFeedbackSignature: String?
-  func setAgentFeedback(_ episodes: [NotebookAgentFeedback.Episode]) {
-    guard let webView, isReady else { return }
-    let effects: [[String: JSONValue]] = episodes.sorted { $0.id < $1.id }.map {
-      ["blockID": $0.subject.reference.elementID.map(JSONValue.string) ?? .null,
-       "start": .number($0.startedAt.timeIntervalSince1970 * 1000),
-       "end": .number($0.endsAt.timeIntervalSince1970 * 1000), "attention": .bool($0.isAttention)]
-    }
-    guard let data = try? JSONEncoder().encode(effects), let json = String(data:data,encoding:.utf8) else { return }
-    let signature = String(describing:ObjectIdentifier(webView)) + String(generation) + (renderedToken ?? "") + json
-    guard agentFeedbackSignature != signature else { return }
-    agentFeedbackSignature = signature
-    webView.evaluateJavaScript("window.notebookAgentFeedback?.update(\(json))") { [weak self] _, error in
-      if error != nil, self?.agentFeedbackSignature == signature { self?.agentFeedbackSignature = nil }
-    }
-  }
+  var installedPaper: DocumentPaperRaster? { hasCanonicalPixels && printedSourceMatches ? printedView.raster : nil }
 
   weak var webView: WKWebView?
   var isReady = false
@@ -1927,9 +1912,8 @@ final class DocumentWebCoordinator: NSObject,
     payload: DocumentRuntimePayload, generation expected: UInt64,
     pixelWidth: Int, size: CGSize, scale: Double, nativeScale: Double?) {
     guard let web = webView else { finishReader(throwing: CancellationError()); return }
-    web.evaluateJavaScript("window.notebookAgentFeedback?.suspend(); window.notebookRenderer.presentationReceipt()") { [weak self, capture] raw, error in
+    web.evaluateJavaScript("window.notebookRenderer.presentationReceipt()") { [weak self, capture] raw, error in
       guard let self, readerID == id else {
-        web.evaluateJavaScript("window.notebookAgentFeedback?.resume()",completionHandler:nil)
         capture.cancel(); return
       }
       do {
@@ -1941,7 +1925,6 @@ final class DocumentWebCoordinator: NSObject,
         if nativeScale == nil { configuration.snapshotWidth = NSNumber(value: Double(pixelWidth) / scale) }
         capture.submit()
         web.takeSnapshot(with: configuration) { [weak self, capture] image, error in
-          defer { web.evaluateJavaScript("window.notebookAgentFeedback?.resume()",completionHandler:nil) }
           guard capture.receive(image) else { return }
           guard let self, readerID == id else { capture.cancel(); return }
           if let error { finishReader(throwing: error); return }
@@ -1998,7 +1981,6 @@ final class DocumentWebCoordinator: NSObject,
           }
         }
       } catch {
-        web.evaluateJavaScript("window.notebookAgentFeedback?.resume()",completionHandler:nil)
         finishReader(throwing: error)
       }
     }

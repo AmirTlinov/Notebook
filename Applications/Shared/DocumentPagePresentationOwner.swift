@@ -1020,7 +1020,7 @@ final class DocumentPagePresentationOwner {
       }
     DocumentRenderRegistry.shared.publishLive(documentID: documentID, token: installedToken,
       pageIndex: entry.input.pageIndex, hostID: installationID, generation: installationGeneration,
-      feedback: { [weak self] episodes in self?.paper.setAgentFeedback(episodes) }, isAttached: isInstalled)
+      paper: { [weak self] in self?.paper.installedPaper }, isAttached: isInstalled)
     if let measurements = entry.input.measurements, measurements.enabled {
       if NotebookNavigationObservation.enabled {
         observe("document_content_published", entryID: entry.id, page: entry.input.pageIndex,

@@ -64,8 +64,16 @@ enum NotebookAttentionProjection {
     }
     if reference.target.kind == .document {
       if reference.elementID == nil, reference.region != nil { result.isSurface = true; return finished(result) }
-      guard let id = reference.elementID, model.documents[reference.target.id]?.blocks.first(where: { $0.id == id })?.kind == .interactive else { return nil }
-      result.isSurface = true; return finished(result)
+      guard let id = reference.elementID, let document = model.documents[reference.target.id],
+        let block = document.blocks.first(where: { $0.id == id }) else { return nil }
+      if block.kind == .interactive { result.isSurface = true; return finished(result) }
+      guard let state = model.documentStates[document.id],
+        let paper = DocumentRenderRegistry.shared.installedPaper(document: document, state: state, pageIndex: presence.documentPageIndex),
+        let page = result.clipRect else { return nil }
+      result.paper = paper
+      result.paperOrigin = .init(x: (page.minX-rect.minX)/result.scale, y: (page.minY-rect.minY)/result.scale)
+      result.clipRect = rect.intersection(page)
+      return finished(result)
     }
     if let strokeID = subject.strokeID {
       guard let ink = NotebookAgentFeedbackInk.path(strokeID:strokeID,reference:reference,model:model) else { return nil }

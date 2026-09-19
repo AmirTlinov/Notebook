@@ -22,7 +22,8 @@ import XCTest
     defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
     for width in [284.0, 360.0, 798.0, 1158.0] {
       let view = NotebookTopBar(presence: presence, documentMode: .constant(.paper), allowsBeside: width >= 1000, onBack: {}).environment(model)
-      let host = UIHostingController(rootView: view)
+      // This is a toolbar-sized window, not a full screen with status-bar insets.
+      let host = UIHostingController(rootView: view.ignoresSafeArea())
       let size = host.sizeThatFits(in: CGSize(width: width, height: 200))
       XCTAssertLessThanOrEqual(size.width, width+0.5)
       XCTAssertLessThan(size.height, 155)

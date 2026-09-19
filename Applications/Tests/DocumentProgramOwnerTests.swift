@@ -1,4 +1,5 @@
 import NotebookCore
+import SwiftUI
 import UIKit
 import WebKit
 import XCTest
@@ -48,28 +49,64 @@ final class DocumentProgramOwnerTests: XCTestCase {
     shot.name = "document-frozen-semantic-blue-frame"; shot.lifetime = .keepAlways; add(shot)
   }
 
-  func testAgentFeedbackRoutesThroughTheInstalledPaperOwnerWithoutRecreatingAProgram() async throws {
+  func testAgentFeedbackBorrowsInstalledPaperInkWithoutRecreatingAProgram() async throws {
     let document = DocumentDocument(actor:UUID(),blocks:[.markdown(id:"words",source:"# Видимый результат\n\nТекст остаётся текстом."),
       .interactive(id:"program",html:"<button onclick='this.dataset.clicked=1'>Не прерывать</button>",height:100)])
     let fixture = try ProgramFixture(document:document,showsNeighbour:false)
-    defer { DocumentRenderRegistry.shared.setAgentFeedback([]); fixture.close() }
+    defer { fixture.close() }
     try await wait(message:{ fixture.diagnostics }) { fixture.isPresented && fixture.web(block:"program") != nil }
-    let paper = try XCTUnwrap(fixture.paper(in:0)), program = try XCTUnwrap(fixture.web(block:"program"))
+    let web = try XCTUnwrap(fixture.paper(in:0)), program = try XCTUnwrap(fixture.web(block:"program"))
+    let paper = try XCTUnwrap(fixture.installedPaper,
+      "The installed paper owner, not the distinct WebKit coordinator ID, supplies the mask")
+    let region = try XCTUnwrap(DocumentRenderRegistry.shared.regions(document:document).first { $0.id == "words" })
+    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let host = fixture.hosts[0], scale = host.bounds.width/geometry.width
     let target = CollaborationTarget(kind:.document,id:document.id)
     let subject = NotebookAgentFeedbackChange.Subject(reference:.init(target:target,elementID:"words",revision:"fixture"),
       expected:.init(target:target,revision:"fixture"))
-    DocumentRenderRegistry.shared.setAgentFeedback([.init(subject:subject,startedAt:Date(),endsAt:Date().addingTimeInterval(2.4),isAttention:false)])
-    try await Task.sleep(for:.milliseconds(120))
-    let marked = try await paper.evaluateJavaScript("document.querySelectorAll('[data-nb-feedback-ink]').length") as? Int
-    XCTAssertGreaterThan(marked ?? 0,0,"The paper installation ID is distinct from the WebKit coordinator ID")
-    XCTAssertTrue(fixture.web(block:"program") === program)
+    let rect = CGRect(x:region.frame.x*scale,y:region.frame.y*scale,width:region.frame.width*scale,height:region.frame.height*scale)
+    let surface = NotebookAgentFeedbackSurface(rect:rect,scale:scale,paper:paper,
+      paperOrigin:.init(x:-region.frame.x,y:-region.frame.y),clipRect:rect)
+    let start = Date(), episode = NotebookAgentFeedback.Episode(subject:subject,startedAt:start,
+      endsAt:start.addingTimeInterval(2.4),isAttention:false)
+    let overlay = UIHostingController(rootView:AnyView(EmptyView()))
+    let container = try XCTUnwrap(fixture.window.rootViewController)
+    container.addChild(overlay); container.view.addSubview(overlay.view); overlay.didMove(toParent:container)
+    overlay.view.backgroundColor = .clear; overlay.view.isUserInteractionEnabled = false
+    overlay.view.frame = host.frame
+    defer { overlay.willMove(toParent:nil); overlay.view.removeFromSuperview(); overlay.removeFromParent() }
+    func screen(_ age: Double, reduced: Bool = false) async throws -> UIImage {
+      overlay.rootView = AnyView(NotebookAgentFeedbackMaterial(surface:surface,episode:episode,
+        date:start.addingTimeInterval(age),reduceMotion:reduced)
+        .frame(width:host.bounds.width,height:host.bounds.height,alignment:.topLeading).ignoresSafeArea())
+      try await Task.sleep(for:.milliseconds(80)); overlay.view.layoutIfNeeded()
+      return UIGraphicsImageRenderer(bounds:host.frame).image { _ in
+        container.view.drawHierarchy(in:container.view.bounds,afterScreenUpdates:true)
+      }
+    }
+    let dimensions = XCTAttachment(string:"paper=\(paper.page.width)x\(paper.page.height) mask=\(paper.image.width)x\(paper.image.height) region=\(region.frame) host=\(host.frame) overlay=\(overlay.view.frame) scale=\(scale)")
+    dimensions.name="paper-feedback-geometry"; dimensions.lifetime = .keepAlways; add(dimensions)
+    let before = try await screen(-1)
+    let plain = try await fixture.captureCurrent(); defer { plain.release() }
+    let lit = try await screen(0.6)
+    XCTAssertNotEqual(before.pngData(),lit.pngData(),"Shimmer must alter the actual printed ink, not an empty DOM")
+    XCTAssertTrue(fixture.installedPaper === paper)
+    XCTAssertTrue(fixture.paper(in:0) === web && fixture.web(block:"program") === program)
+    let canonical = try await fixture.captureCurrent(); defer { canonical.release() }
+    XCTAssertEqual(plain.image.pngData(),canonical.image.pngData(),"The sibling material cannot enter canonical paper pixels")
+    let expired = try await screen(3)
+    XCTAssertEqual(before.pngData(),expired.pngData())
+    let stillA = try await screen(0.4,reduced:true), stillB = try await screen(1.4,reduced:true)
+    XCTAssertEqual(stillA.pngData(),stillB.pngData())
+    XCTAssertNotEqual(before.pngData(),stillA.pngData(),"Reduce Motion must still accent the printed text")
+    for (name,image) in [("paper-feedback-before",before),("paper-feedback-ink",lit),("paper-feedback-expired",expired)] {
+      let attachment = XCTAttachment(image:image); attachment.name=name; attachment.lifetime = .keepAlways; add(attachment)
+    }
     _ = try await program.evaluateJavaScript("document.querySelector('button').click()")
     let clicked = try await program.evaluateJavaScript("document.querySelector('button').dataset.clicked") as? String
     XCTAssertEqual(clicked,"1")
-    DocumentRenderRegistry.shared.setAgentFeedback([])
-    try await Task.sleep(for:.milliseconds(50))
-    let remaining = try await paper.evaluateJavaScript("document.querySelectorAll('[data-nb-feedback-ink]').length") as? Int
-    XCTAssertEqual(remaining,0)
+    fixture.retirePresentation(0)
+    XCTAssertNil(fixture.installedPaper,"A detached page cannot lend a feedback mask")
   }
 
   func testSavingIndependentTextKeepsTheProgramContextAndItsUnsavedDOM() async throws {
@@ -1704,6 +1741,9 @@ final class ProgramFixture {
   }
   var currentToken: String { DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndices[selected]) }
   var isPresented: Bool { presents(.page) }
+  var installedPaper: DocumentPaperRaster? {
+    DocumentRenderRegistry.shared.installedPaper(document:document,state:state,pageIndex:pageIndices[selected])
+  }
   func presents(_ scope: DocumentPresentationScope) -> Bool {
     DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: pageIndices[selected], scope: scope)
   }
