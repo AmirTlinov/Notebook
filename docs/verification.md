@@ -73,6 +73,13 @@ Cmd1 открыл читаемое окно; редактор, проект и �
 сохранил строку. CUA keyboard/paste ненадёжны в текущем окружении (paste вернул
 ошибку без изменения текста); использован проверенный AX setValue, сообщение
 не отправлялось. Это проверка компоновки/черновика, не live task UI acceptance.
+После CmdQ инструмент CUA повторно разрешил приложение при getAXState без fixture
+аргумента; показан activation-target-mismatch. После повторного закрытия обнаружено,
+что production-процесс `/Users/amir/Applications/Notebook.app` также отсутствует.
+Владелец GUI-259 подтвердил, что сам его не закрывал, и взял проверку/открытие
+production по полному пути. Установленные bundle/контейнеры не заменялись.
+Это побочный lifecycle-инцидент UI-проверки, не успешная проверка production quit;
+не следует скрывать его за PASS изолированных тестов.
 
 `ipad-final-build2.log` и `ipad-final2-tests.xcresult`: финальный затронутый source
 скомпилирован, **39 PASS**, 0 FAIL/runtime warnings, 1 opt-in relay SKIP без env.
