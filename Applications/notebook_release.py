@@ -120,7 +120,7 @@ def source_inputs(root):
             directories[:] = sorted(name for name in directories
                 if name not in (".git", ".build", "node_modules", "__pycache__", ".notebook-test")
                 and not name.endswith(".xcresult")
-                and (relative / name).as_posix() != "Applications/Notebook.xcodeproj"
+                and (relative / name).as_posix() not in ("Applications/Notebook.xcodeproj", "MCP/.notebook/program-builds")
                 and not (relative.as_posix() == "Applications" and name.startswith("DerivedData")))
             for name in directories:
                 require(not (Path(base) / name).is_symlink(), "Ссылка за пределы исходников не допускается.")

@@ -466,12 +466,19 @@ class ReleaseTests(unittest.TestCase):
     def test_generated_files_and_dependencies_do_not_change_input_identity(self):
         for file in ("Applications/Notebook.xcodeproj/project.pbxproj", "Applications/iPad/Info.plist",
                      "Applications/Mac/Info.plist", "Applications/DerivedDataRelease/output", "MCP/node_modules/lib.js",
-                     "Tests/Harness/node_modules/lib.js", "Applications/__pycache__/cache.pyc"):
+                     "Tests/Harness/node_modules/lib.js", "Applications/__pycache__/cache.pyc",
+                     "MCP/.notebook/program-builds/immutable/main.js"):
             path = self.source / file
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("generated output\n")
         self.assertEqual(release.source_inputs(self.source), self.before)
         self.build()
+
+    def test_authored_notebook_data_is_still_a_source_input(self):
+        path = self.source / "MCP/.notebook/authored.json"
+        path.parent.mkdir(parents=True)
+        path.write_text("{}")
+        self.assertNotEqual(release.source_inputs(self.source), self.before)
 
     def test_symlink_source_file_is_rejected(self):
         (self.source / "MCP/link.ts").symlink_to(self.source / "MCP/tool.ts")

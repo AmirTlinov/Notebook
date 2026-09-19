@@ -47,5 +47,11 @@
     "source": "https://seeing-theory.brown.edu/basic-probability/index.html",
     "author": "Seeing Theory",
     "idea": "От наблюдаемого опыта перейти к закономерности и формуле."
+  },
+  {
+    "id": "signal",
+    "title": "Не потерять короткое событие",
+    "format": "program",
+    "idea": "Сохранить экстремумы 100k отсчётов и связать выбранное окно с исходными данными и формулой."
   }
 ]

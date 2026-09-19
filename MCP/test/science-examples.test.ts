@@ -60,8 +60,8 @@ test('Bernoulli experiment has reproducible prefixes, exact counts and boundary 
   assert.equal(models.bernoulli(0,100,3).total,0);assert.equal(models.bernoulli(1,100,3).total,100);assert.equal(models.bernoulli(.5,0,3).total,0);
 });
 test('all seven examples prepare through animation into valid self-contained Notebook programs',async()=>{
-  assert.equal(scienceExamples.length,7);
-  for(const example of scienceExamples)for(const kind of ['page','document']) {
+  assert.equal(scienceExamples.filter((e:any)=>!e.format).length,7);
+  for(const example of scienceExamples.filter((e:any)=>!e.format))for(const kind of ['page','document']) {
     const request=await prepare('animation',{example:example.id,target:{kind,id:randomUUID()},initialState:{phase:.25}},{runID:randomUUID()});
     executionInput.parse(request);const operation=request.args.operations[0];operationSchema.parse(operation);
     const program=operation.values;assert.ok(program.javaScript.includes('ScienceModels'));assert.ok(program.html.includes(example.source));assert.ok(Buffer.byteLength(JSON.stringify(request))<200_000);

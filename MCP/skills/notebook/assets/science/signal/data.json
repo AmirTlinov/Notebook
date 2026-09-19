@@ -1,0 +1,12 @@
+{
+  "format": 1,
+  "count": 100000,
+  "sampleRate": 1000,
+  "binSize": 100,
+  "seed": 20260919,
+  "impulseIndex": 61337,
+  "encoding": "float32-le",
+  "unit": "arbitrary",
+  "model": "exp(-t/55)*(sin(2*pi*2*t)+0.3*sin(2*pi*7*t))+uniform[-0.08,0.08]; additive impulse [1.4,2.5,1.4]",
+  "sha256": "8a2489658228a898107478ef07d4eee6c18501fa42d768ae0510db6ba89d9f3d"
+}

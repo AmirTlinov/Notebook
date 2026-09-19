@@ -111,15 +111,20 @@ final class ProgramAssetTests: XCTestCase {
     }
   }
 
-  private func compiledFixture() throws -> Fixture {
-    struct Compiled: Decodable { let package: NotebookProgramPackage; let files: [String: String]; let packageHash: String }
-    let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "compiled-program", withExtension: "json"))
+  private func compiledFixture(_ name: String = "compiled-program") throws -> Fixture {
+    struct Compiled: Decodable { let package: NotebookProgramPackage; let files: [String: String]; let packageHash: String
+      let binaryFiles: [String: String]?; let webResources: [String: String]? }
+    let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: name, withExtension: "json"))
     let value = try JSONDecoder().decode(Compiled.self, from: Data(contentsOf: url))
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), store = NotebookStore(root: root)
     _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
     for file in value.package.files {
       XCTAssertEqual(file.parts.count, 1)
-      try store.stageBlob(data: Data(try XCTUnwrap(value.files[file.path]).utf8), expectedHash: file.parts[0].sha256)
+      let bytes: Data
+      if let source = value.files[file.path] { bytes = Data(source.utf8) }
+      else if let source = value.binaryFiles?[file.path] { bytes = try XCTUnwrap(Data(base64Encoded: source)) }
+      else { bytes = try Data(contentsOf: XCTUnwrap(Bundle.main.resourceURL).appendingPathComponent("WebResources/" + XCTUnwrap(value.webResources?[file.path]))) }
+      try store.stageBlob(data: bytes, expectedHash: file.parts[0].sha256)
     }
     let hash = try store.stageProgramPackage(value.package); XCTAssertEqual(hash, value.packageHash)
     return Fixture(root: root, store: store, package: value.package, hash: hash)
@@ -162,6 +167,81 @@ final class ProgramAssetTests: XCTestCase {
     owner.onStateCheckpoint = { _, value, _, _ in checkpoint = value; return nil }
     let accepted = await owner.checkpointPrograms(resume: true)
     XCTAssertTrue(accepted); XCTAssertEqual(checkpoint?["x"], .number(2))
+  }
+
+  func testDenseSignalPackageUsesOfflinePlotMathJaxRangesAndLatestCheckpoint() async throws {
+    var phase = "package import"
+    do {
+    let f = try compiledFixture("signal-program"); defer { f.close() }
+    phase = "web acquisition"
+    let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
+    var ready = false
+    let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in true })
+    owner.programStore = f.store
+    let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
+    defer { owner.invalidate(); lease.release(); close() }
+    web.configuration.userContentController.addUserScript(WKUserScript(source: """
+      (()=>{ const original=window.fetch;window.fixtureFetches=[];
+        window.fetch=(url,options)=>{window.fixtureFetches.push({url:String(url),range:new Headers(options?.headers).get('Range')});return original(url,options)};
+      })();
+      """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+    phase = "initial ready"
+    owner.load(.init(id: "signal", kind: .web, frame: .init(x: 0, y: 0, width: 760, height: 1050), source: "", html: "", programPackage: f.hash),
+      policy: .exact(scale: 1), in: web)
+    try await wait { ready || owner.snapshotFailure != nil }; XCTAssertTrue(ready); XCTAssertNil(owner.snapshotFailure)
+    phase = "first interaction"
+    _ = try await web.evaluateJavaScript("document.getElementById('event').click()")
+    let deadline = ContinuousClock.now + .seconds(8)
+    var drawn = false
+    repeat {
+      drawn = try await web.evaluateJavaScript("document.querySelectorAll('#detail circle').length===50 && document.querySelector('#formula').textContent.includes('2.228')") as? Bool ?? false
+      if !drawn { try await Task.sleep(for: .milliseconds(10)) }
+    } while !drawn && .now < deadline
+    XCTAssertTrue(drawn, "Plot and isolated MathJax must display the same original impulse samples")
+    let selected = try await web.evaluateJavaScript("document.getElementById('span').value") as? String
+    XCTAssertEqual(selected, "0.05")
+    phase = "checkpoint and resume"
+    let checkpoint = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram", in: web)
+    XCTAssertEqual(checkpoint["center"], .number(61.337)); XCTAssertEqual(checkpoint["span"], .number(0.05))
+    _ = try await NotebookProgramBridge.lifecycle("resume", controller: "notebookProgram", in: web)
+    // A width change redraws the exact same samples, without fetching the source again.
+    let before = try await web.evaluateJavaScript("window.fixtureFetches.filter(e=>e.url.endsWith('.bin')).length") as? Int
+    web.frame.size.width = 420
+    _ = try await web.evaluateJavaScript("dispatchEvent(new Event('resize'))")
+    try await Task.sleep(for: .milliseconds(100))
+    let after = try await web.evaluateJavaScript("window.fixtureFetches.filter(e=>e.url.endsWith('.bin')).length") as? Int
+    XCTAssertGreaterThan(try XCTUnwrap(before), 1, "Observe real fetch calls: custom-scheme resources do not appear in WebKit Resource Timing")
+    XCTAssertEqual(before, after)
+    let exactRange = try await web.evaluateJavaScript("window.fixtureFetches.some(e=>e.range==='bytes=245248-245447')") as? Bool
+    XCTAssertEqual(exactRange, true, "The impulse detail reads 200 bytes, not the entire 400 kB source")
+    let marks = try await web.evaluateJavaScript("document.querySelectorAll('#detail circle').length") as? Int
+    XCTAssertEqual(marks, 50)
+    phase = "external state"
+    _ = try await web.evaluateJavaScript("notebookProgram.apply({center:20,span:1}).catch(e=>{window.externalStateError=String(e)});null")
+    var applied = false
+    let externalDeadline = ContinuousClock.now + .seconds(5)
+    repeat {
+      applied = try await web.evaluateJavaScript("document.getElementById('center').value==='20' && document.getElementById('detail-caption').textContent.startsWith('19,500')") as? Bool ?? false
+      if !applied { try await Task.sleep(for: .milliseconds(10)) }
+    } while !applied && .now < externalDeadline
+    XCTAssertTrue(applied, "External state uses the same selection/render path, without a local commit")
+    let externalCheckpoint = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram", in: web)
+    XCTAssertEqual(externalCheckpoint["center"], .number(20)); XCTAssertEqual(externalCheckpoint["span"], .number(1))
+    _ = try await NotebookProgramBridge.lifecycle("resume", controller: "notebookProgram", in: web)
+    phase = "dynamic MathJax font"
+    // Non-base glyphs really load from the package, not the parent shell or a CDN.
+    _ = try await web.evaluateJavaScript("window.extraFormulaDone=false;MathJax.tex2svgPromise('\\\\mathscr{F}',{display:false}).then(node=>{document.getElementById('formula').replaceChildren(node);window.extraFormulaDone=true},e=>{window.extraFormulaError=String(e)});null")
+    var extra = false
+    let fontDeadline = ContinuousClock.now + .seconds(5)
+    repeat {
+      extra = try await web.evaluateJavaScript("window.extraFormulaDone") as? Bool ?? false
+      if !extra { try await Task.sleep(for: .milliseconds(10)) }
+    } while !extra && .now < fontDeadline
+    let error = try await web.evaluateJavaScript("window.extraFormulaError || ''") as? String
+    XCTAssertTrue(extra, error ?? "MathJax dynamic glyph did not load")
+    let local = try await web.evaluateJavaScript("[...document.scripts].filter(s=>s.src).every(s=>new URL(s.src).protocol===location.protocol && new URL(s.src).host===location.host)") as? Bool
+    XCTAssertEqual(local, true)
+    } catch { XCTFail("Dense signal at \(phase): \(error)") }
   }
 
   private func wav() -> Data {

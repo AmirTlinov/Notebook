@@ -475,6 +475,44 @@ final class DrawingResponsivenessTests: XCTestCase {
     }
   }
 
+  #if targetEnvironment(simulator)
+  func testDenseSignalFirstTapRotationBackgroundAndColdReopenOnBoardAndDocument() throws {
+    continueAfterFailure = false
+    let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "signal-program", withExtension: "json"))
+    for document in [false, true] {
+      let app = XCUIApplication()
+      app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-compiled-program-fixture",
+        "--notebook-simulator-finger-gestures"] + (document ? ["--notebook-document-runtime-fixture"] : [])
+      app.launchEnvironment["NOTEBOOK_COMPILED_PROGRAM_PATH"] = url.path
+      launchPortraitFixture(app)
+      let impulse = app.buttons["К всплеску"]
+      XCTAssertTrue(impulse.waitForExistence(timeout: 20)); impulse.tap()
+      XCTAssertTrue(app.staticTexts["61,337 с"].waitForExistence(timeout: 8))
+      let material = app.webViews.containing(.button, identifier: "К всплеску").firstMatch
+      let originalFrame = material.frame
+      material.swipeUp()
+      let note = app.staticTexts["Синтетический затухающий сигнал с шумом и добавленным импульсом. Формула и график используют одни и те же исходные отсчёты."]
+      let scrolled = XCTAttachment(screenshot: app.screenshot()); scrolled.name = document ? "signal-document-formula" : "signal-board-formula"
+      scrolled.lifetime = .keepAlways; add(scrolled)
+      XCTAssertTrue(note.waitForExistence(timeout: 5)); XCTAssertTrue(note.isHittable, "The formula and its explanation must be reachable inside a short fragment")
+      XCTAssertEqual(material.frame.midX, originalFrame.midX, accuracy: 4)
+      XCTAssertEqual(material.frame.midY, originalFrame.midY, accuracy: 4, "Reading the scene must not pan the board")
+      let picture = XCTAttachment(screenshot: app.screenshot())
+      picture.name = document ? "signal-document-impulse" : "signal-board-impulse"
+      picture.lifetime = .keepAlways; add(picture)
+      material.swipeDown()
+      XCUIDevice.shared.orientation = .landscapeLeft
+      XCTAssertTrue(app.staticTexts["61,337 с"].waitForExistence(timeout: 5))
+      XCUIDevice.shared.orientation = .portrait
+      XCUIDevice.shared.press(.home); app.activate()
+      XCTAssertTrue(app.staticTexts["61,337 с"].waitForExistence(timeout: 8))
+      app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+      XCTAssertTrue(app.staticTexts["61,337 с"].waitForExistence(timeout: 20), "Cold SQLite preserves the selected raw data window")
+      app.terminate()
+    }
+  }
+  #endif
+
   func testLCFirstGestureParametersBackgroundAndColdReopenOnBoardAndDocument() throws {
     continueAfterFailure = false
     for document in [false, true] {

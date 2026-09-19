@@ -113,6 +113,8 @@ targets:
       - path: UITests
       - path: TestSupport/ProgramAssets/compiled-program.json
         buildPhase: resources
+      - path: TestSupport/ProgramAssets/signal-program.json
+        buildPhase: resources
       - path: ../MCP/skills/notebook/assets/animation
         type: folder
         buildPhase: resources

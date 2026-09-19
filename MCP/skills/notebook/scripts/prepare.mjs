@@ -4,7 +4,7 @@ import {execFileSync} from 'node:child_process';
 import {resolve,dirname,extname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {makeRecipe,chartSVG} from './recipes.mjs';
-import {loadScienceExample} from './science-examples.mjs';
+import {loadScienceExample,buildScienceProgram} from './science-examples.mjs';
 import {prepareProgramPackage} from './program-package.mjs';
 
 const maxImageBytes=700_000;
@@ -42,6 +42,10 @@ export async function loadImage(path,{fit=false,outputPath}={}) {
 
 export async function prepare(name,input,{baseDirectory='.',outputPath,runID}={}) {
   input=structuredClone(input);
+  if(name==='program'&&input.example) {
+    if(Object.keys(input).some(key=>key!=='example'))throw new Error('Choose a named program or build inputs, not both');
+    return buildScienceProgram(input.example);
+  }
   if(name==='program') return (input.entry?(await import('./program-build.mjs')).buildProgram:prepareProgramPackage)({...input,directory:resolve(baseDirectory,input.directory??'.')});
   if(name==='animation'&&input.example) {
     if(input.programPackage!==undefined)throw new Error('Choose an example or a package, not both');

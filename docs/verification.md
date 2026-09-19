@@ -1,5 +1,56 @@
 # Проверка Notebook
 
+## 19 сентября, 04:32 МСК — GUI-244: плотный сигнал, Plot и формула в одном пакете
+
+В прежнюю библиотеку добавлен только отсутствовавший asset-backed recipe `signal`:
+100 000 воспроизводимых float32 отсчётов, Canvas min–max обзор (8 000 B),
+Observable Plot 0.6.17 для адресного окна 50–4000 исходных точек, изолированный
+MathJax 4.1.3 с локальными SVG-глифами и assistive MathML. Синтетический источник,
+seed, units и добавленный 3-sample импульс названы явно. Всплеск открывает 50
+отсчётов через Range **245248–245447**, то есть 200 B, не всю запись 400 000 B.
+Один текущий запрос, отмена устаревшего, retry, resize/theme без повторной загрузки,
+checkpoint selection и внешний `notebookstate` используют один путь. Нет нового
+native renderer, scene DSL, package manager или второго набора семи примеров.
+
+**23 MCP PASS + pinned SDK check**: `/tmp/gui-244-signal-js-final.log`,
+`/tmp/gui-244-signal-sdk-final.log`. Полная воспроизводимость raw/envelope,
+сохранение экстремумов, индексы краевых окон, точное совпадение native fixture с
+browser build. Два source-inventory checks PASS: исключён только производный
+`MCP/.notebook/program-builds`, соседнее authored содержимое остаётся входом.
+
+**Mac 1 PASS + Simulator 1 PASS**, `.build/gui-244-signal-mac-v5/verification.json`,
+`.build/gui-244-signal-sim-v5.xcresult`; до/после SHA
+`bbd3f74fac37567f75960d1bf16ace3a87cd89ad2a246f37ef16c1c604d0ddb5`.
+Проверены настоящий offline WebKit, Plot, MathJax (включая дополнительный script
+глиф), Range, resize без fetch, checkpoint/resume и внешний state. Custom-scheme
+загрузки не попадают в WebKit Resource Timing: v4 обнаружил 0, поэтому v5
+наблюдает реальные fetch вызовы тестовым document-start script, не принимает
+сравнение двух нулей за доказательство отсутствия повторной загрузки.
+
+**Simulator UI 1 PASS** в `.build/gui-244-signal-sim-v4.xcresult`, source
+`c93852f0ee876031f698d0ba2b97ff3954c51dd8ab3414d4bd3da8202d42249e`:
+обе поверхности — первый tap, свайп до полной формулы без сдвига доски,
+rotation, Home/return, cold SQLite reopen. Unit в этом же v4 был FAIL по
+Resource Timing, исправлен и отдельно проверен выше; весь v4 не назван PASS.
+Физический iPad не использовался. Exported screenshots реально осмотрены:
+`.build/gui-244-signal-ui-v4-shots/68B19F65-2C74-45B8-8073-E51506715775.png`
+и `7C844C3D-EE01-4EB5-A612-9ACC903DED2B.png`.
+
+Осмотр, а не зелёный lifecycle test, нашёл обрезанную нижнюю часть сцены:
+добавлена собственная focusable scroll region, использующая нынешний finger
+owner. Также исправлены неверные Plot dots и видимый дубль assistive MathML
+(нужен MathJax updateDocument). После native checks исправлен только правый
+отступ оси при ширине <450 и обновлён generated fixture: browser 420 dark/reduced
+motion + 834 light осмотрены; ось не обрезана, формула одна, 256 DOM nodes вместо
+100k. Файлы `.build/gui-244-signal-{narrow-dark,834-light}.png`.
+Итоговый package `38f991b9d1aee1cfcd4085a6e9fae8e4630af069f5e1f55df54247fd6ab9d3a7`
+(14 211 148 B, включая offline MathJax и source maps). Native receipts относятся
+к своим SHA до этой последней layout-only правки, а не выданы за весь final tree.
+
+GUI-244 остаётся In Progress: новая 2D-ветка реализована, но визуальная приёмка
+семи прежних reference episodes, live shared delivery и итоговые performance/
+release условия не закрыты. Это не аппаратная performance приёмка Simulator.
+
 ## 19 сентября, 04:03 МСК — GUI-243: CLI descriptor не копирует пакет заново
 
 Проверка реальной пары CLI-команд, а не только build API, нашла лишнюю работу:
