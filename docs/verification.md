@@ -13459,3 +13459,9 @@ revision вместе с basis совпали с baseline20766; известна
 В16:06:50UTC снят 1s sample того же Mac (`mac-startup.sample.txt`): main
 преимущественно ждёт run loop, часть samples проходит SceneCompositionTiles /
 ImageRenderer. Полный startup/performance PASS из этого не следует.
+
+Повтор в16:08UTC без restart: presence ready20948, observe ready20968;
+visual = current_scene_unknown, изображения по-прежнему нет. Physical iPad
+к этому времени уже освобождён для отдельной private GUI183 проверки, поэтому
+актуальная видимость production UI не предполагается. Live-final сохранён
+отдельно; scoped physical UI-свидетельства выше остаются проверкой жестов.
