@@ -894,14 +894,14 @@ struct CollaborationWorkspace {
   mutating func editDocument(_ op: CollaborationOperation, actor: UUID) throws {
     guard op.target.kind == .document, let value = files[documentFile(op.target.id)] else { throw missing(op.target) }
     var blocks = value["blocks"]!.array
-    let index = op.id.flatMap { id in blocks.firstIndex { $0["id"]?.string == id } }
+    let index = op.id.flatMap { id in blocks.firstIndex { $0.memberIdentity == collaborationIdentity(id) } }
     var next = value
     switch op.kind {
     case .insertBlock:
       guard index == nil, let id = op.id else { throw invalid("Новый блок получает свободный ID.") }
       let block = try completeBlock(op.values.merging(["id": .string(id)]) { _, new in new })
       if let afterID = op.values["afterID"]?.string {
-        guard let anchor = blocks.firstIndex(where: { $0["id"]?.string == afterID }) else { throw invalid("Опорный блок найден в этом документе.") }
+        guard let anchor = blocks.firstIndex(where: { $0.memberIdentity == collaborationIdentity(afterID) }) else { throw invalid("Опорный блок найден в этом документе.") }
         blocks.insert(block, at: anchor + 1)
       } else { blocks.append(block) }
     case .updateBlock:

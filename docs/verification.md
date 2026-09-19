@@ -1,5 +1,22 @@
 # Проверка Notebook
 
+## 19 сентября, 10:33 МСК — GUI-250: UUID alias сохраняет владельца source edit
+
+Native source reader уже адресовал UUID независимо от регистра, но общий action
+executor затем искал update/remove/insert-anchor по исходной строке. Поэтому
+правильный CAS мог закончиться target_missing. Исправлен именно общий document
+оператор: lookup использует прежний collaborationIdentity/memberIdentity, ID
+сохранённого блока не переписывается; второго пути native сохранения нет.
+
+**Core10 PASS**, `/tmp/gui250-source-identity-core-v1.log`: source CAS/drafts,
+конфликт, независимый блок, перезапуск/undo, UUID update, отказ duplicate spelling,
+remove через alias и undo с исходным ID. **Simulator1 PASS**,
+`.build/gui250-source-identity-sim-v1.xcresult`: сохранение независимого native
+текста оставляет тот же program heap и unsaved DOM; warnings0/skips0.
+Source `ac5cb18e064c629e5497feb86b081d7f4e8577643f59db5af5218cd874ccde22`.
+Не считается закрытием остальных отрицательных результатов полного прогона
+или installed/shared acceptance; физическая пара не менялась.
+
 ## 19 сентября, 10:29 МСК — GUI-250: dependency admission и интеграционные расхождения
 
 Первый full MCP run: 147/151. Три scientific/native fixture содержали устаревший
