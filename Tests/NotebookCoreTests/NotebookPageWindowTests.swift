@@ -148,7 +148,10 @@ struct NotebookPageWindowTests {
     #expect(try fixture.store.readItemHeader(fixture.itemID) == nil)
     #expect(try fixture.store.loadPresence().selectedItemID == remaining.item.id)
     #expect(try fixture.store.loadPresence().notebookPageID == remaining.page.id)
-    for id in fixture.pages { #expect(try !fixture.store.hasStoredValue(pageFile(id))) }
+    for id in fixture.pages {
+      #expect(try fixture.store.hasStoredValue(pageFile(id)))
+      #expect(throws: CocoaError.self) { try fixture.store.loadPage(id) }
+    }
     #expect(try fixture.store.loadPage(remaining.page.id) == remaining.page)
   }
 

@@ -12,7 +12,7 @@ private struct GraphicFixture {
     store = .init(root: root); self.actor = actor
     if let seed {
       try store.prepareEmptyWorkspace(workspaceID:seed.workspaceHeader().workspaceID)
-      try receiveGraphics(from:seed,to:store,peerID:UUID())
+      try receiveFixtureChanges(from:seed,to:store,peerID:UUID())
     } else {
       _ = try store.loadOrCreate(actor:actor,pageSize:.init(width:834,height:1194))
       _ = try store.loadOrCreateSpatialInk(actor:actor)
@@ -44,27 +44,6 @@ private struct GraphicFixture {
   func presentation() throws -> NotebookGraphicPresentation {
     if target.kind == .page { return try store.loadPage(target.id).graphicPresentation }
     return try store.loadBoard(items: store.loadIndex().items).board(target.id)!.graphicPresentation
-  }
-}
-
-/// Use the same addressed admission as devices, including lifecycle inverse
-/// blobs. A value-only CollaborationContent copy cannot transport that proof.
-private func receiveGraphics(_ delivery: NotebookReplicationDelivery, from source: NotebookStore, to destination: NotebookStore) throws {
-  while true {
-    let hashes = try destination.missingBlobHashes(for:delivery.change)
-    if hashes.isEmpty { break }
-    for hash in hashes {
-      let size = try source.blobSize(hash:hash)
-      var bytes = Data()
-      while Int64(bytes.count) < size { bytes += try source.readBlobChunk(hash:hash,offset:Int64(bytes.count),maxBytes:1_048_576) }
-      try destination.stageBlob(data:bytes,expectedHash:hash)
-    }
-  }
-  try destination.applyDelivery(delivery)
-}
-private func receiveGraphics(from source: NotebookStore, to destination: NotebookStore, peerID: UUID) throws {
-  for change in try source.changeJournal(after:0) {
-    try receiveGraphics(.init(source:.init(deviceID:peerID,generation:peerID),change:change),from:source,to:destination)
   }
 }
 
@@ -105,16 +84,16 @@ func graphicConcurrentClaimsConverge(onBoard: Bool) throws {
         // Coalesce A+B at a real relay, then deliver its ordinary snapshot and
         // C. Receipt inverse blobs travel with the cut, not fabricated values.
         let relay = try GraphicFixture(onBoard:onBoard,seed:base.store,target:base.target); defer { relay.clean() }
-        for i in order.prefix(2) { try receiveGraphics(from:authors[i].store,to:relay.store,peerID:authors[i].actor) }
+        for i in order.prefix(2) { try receiveFixtureChanges(from:authors[i].store,to:relay.store,peerID:authors[i].actor) }
         let snapshot = try relay.store.commandTransaction {
           try relay.store.cloudSnapshot(source:.init(deviceID:relay.actor,generation:relay.actor))
         }
-        try receiveGraphics(snapshot,from:relay.store,to:peer.store)
-        try receiveGraphics(snapshot,from:relay.store,to:peer.store)
+        try receiveFixtureChanges(snapshot,from:relay.store,to:peer.store)
+        try receiveFixtureChanges(snapshot,from:relay.store,to:peer.store)
         let i = order[2]
-        try receiveGraphics(from:authors[i].store,to:peer.store,peerID:authors[i].actor)
+        try receiveFixtureChanges(from:authors[i].store,to:peer.store,peerID:authors[i].actor)
       } else {
-        for i in order + order.reversed() { try receiveGraphics(from:authors[i].store,to:peer.store,peerID:authors[i].actor) }
+        for i in order + order.reversed() { try receiveFixtureChanges(from:authors[i].store,to:peer.store,peerID:authors[i].actor) }
       }
       let expected: Set<String> = ["shape-0", "shape-2"]
       #expect(try peer.presentation().geometryIDs == expected)
@@ -167,7 +146,7 @@ func graphicSelectionBatchConverges(onBoard: Bool) throws {
   let deletion = try hidden.write(.removeElement,id:"b",values:[:],human:false)
   for order in [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]] {
     let peer = try GraphicFixture(onBoard:onBoard,seed:base.store,target:base.target); defer { peer.clean() }
-    for i in order + order.reversed() { try receiveGraphics(from:authors[i].store,to:peer.store,peerID:authors[i].actor) }
+    for i in order + order.reversed() { try receiveFixtureChanges(from:authors[i].store,to:peer.store,peerID:authors[i].actor) }
     func objects() throws -> [String:(PageRect,NotebookGraphic)] {
       let reopened = NotebookStore(root:peer.root)
       if onBoard {
@@ -252,13 +231,11 @@ func graphicCornerGeometryPersists(onBoard: Bool) throws {
   let source = try f.stroke(); _ = try f.convert("box",sources:[source],shape:.rectangle)
   let patch: JSONValue = .object(["vertices":try .encode([SpatialPoint(x:0.2,y:0.1),.init(x:1,y:0),.init(x:1,y:1),.init(x:0,y:1)]),"cornerRadius":.number(18)])
   let action = try f.write(.updateElement,id:"box",values:["graphic":patch])
-  let snapshot = try f.store.collaborationContent()
   let root = FileManager.default.temporaryDirectory.appendingPathComponent("corners-peer-\(UUID())")
   defer { try? FileManager.default.removeItem(at:root) }
   let peer = NotebookStore(root:root)
-  _ = try peer.loadOrCreate(actor:UUID(),pageSize:.init(width:834,height:1194))
-  _ = try peer.loadOrCreateSpatialInk(actor:UUID())
-  _ = try peer.mergeCollaborationContent(snapshot,actions:try f.store.collaborationActions(afterID:nil))
+  try peer.prepareEmptyWorkspace(workspaceID: f.store.workspaceHeader().workspaceID)
+  try receiveFixtureChanges(from: f.store, to: peer, peerID: f.actor)
   func read(_ store: NotebookStore) throws -> NotebookGraphic? {
     if onBoard { return try store.readSpatialElement(boardID:f.target.id,elementID:"box")?.graphic }
     return try store.readPageElement(pageID:f.target.id,elementID:"box")?.graphic

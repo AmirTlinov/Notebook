@@ -19,11 +19,16 @@ private struct ConnectorFixture {
   let store: NotebookStore
   let target: CollaborationTarget
   let actor = UUID()
-  init(board: Bool, seed: CollaborationContent? = nil, target: CollaborationTarget? = nil) throws {
+  init(board: Bool, seed: NotebookStore? = nil, target: CollaborationTarget? = nil) throws {
     store = .init(root: root)
-    let (index, _) = try store.loadOrCreate(actor: actor, pageSize: .init(width: 834,height: 1194))
-    _ = try store.loadOrCreateSpatialInk(actor: actor)
-    if let seed { _ = try store.mergeCollaborationContent(seed) }
+    if let seed {
+      try store.prepareEmptyWorkspace(workspaceID: seed.workspaceHeader().workspaceID)
+      try receiveFixtureChanges(from: seed, to: store, peerID: UUID())
+    } else {
+      _ = try store.loadOrCreate(actor: actor, pageSize: .init(width: 834,height: 1194))
+      _ = try store.loadOrCreateSpatialInk(actor: actor)
+    }
+    let index = try store.loadIndex()
     self.target = target ?? .init(kind: board ? .board : .page, id: board ? index.rootBoardID : index.selectedPageID!)
   }
   func clean() { try? FileManager.default.removeItem(at: root) }
@@ -110,19 +115,23 @@ func connectorWindowResolvesEndpoints() throws {
 func connectorConcurrentDeletion(board: Bool) throws {
   let base = try ConnectorFixture(board:board); defer { base.clean() }
   _ = try base.write([base.node("a",x:60),base.node("b",x:400)])
-  let seed = try base.store.collaborationContent()
+  let seed = base.store
   let human = try ConnectorFixture(board:board,seed:seed,target:base.target); defer { human.clean() }
   let agent = try ConnectorFixture(board:board,seed:seed,target:base.target); defer { agent.clean() }
   let removal = try human.write([human.operation(.removeElement,"a",[:])])
-  let creation = try agent.write([agent.arrow()],human:false)
-  let edits = try [human.store.collaborationContent(),agent.store.collaborationContent()]
+  _ = try agent.write([agent.arrow()],human:false)
+  let authors = [human, agent]
   for (order,grouped) in [([0,1,0,1],false),([1,0,1,0],false),([0,1],true),([1,0],true)] {
     let peer = try ConnectorFixture(board:board,seed:seed,target:base.target); defer { peer.clean() }
     if grouped {
-      var merged = edits[order[0]]; try merged.merge(edits[order[1]])
-      _ = try peer.store.mergeCollaborationContent(merged,actions:[removal,creation])
+      let relay = try ConnectorFixture(board: board, seed: seed, target: base.target); defer { relay.clean() }
+      for index in order { try receiveFixtureChanges(from: authors[index].store, to: relay.store, peerID: authors[index].actor) }
+      let snapshot = try relay.store.commandTransaction {
+        try relay.store.cloudSnapshot(source: .init(deviceID: relay.actor, generation: relay.actor))
+      }
+      try receiveFixtureChanges(snapshot, from: relay.store, to: peer.store)
     } else {
-      for index in order { _ = try peer.store.mergeCollaborationContent(edits[index],actions:[index == 0 ? removal : creation]) }
+      for index in order { try receiveFixtureChanges(from: authors[index].store, to: peer.store, peerID: authors[index].actor) }
     }
     #expect(try peer.resolution() == .hidden)
     #expect(try peer.graphic("a")?.visible == false)
@@ -136,20 +145,24 @@ func connectorConcurrentDeletion(board: Bool) throws {
 func connectorIndependentEnds(board: Bool) throws {
   let base = try ConnectorFixture(board:board); defer { base.clean() }
   _ = try base.write([base.node("a",x:60),base.node("b",x:400),base.node("c",x:200,y:400),base.arrow(),base.arrow("ba",from:"b",to:"a")])
-  let seed = try base.store.collaborationContent()
+  let seed = base.store
   let left = try ConnectorFixture(board:board,seed:seed,target:base.target); defer { left.clean() }
   let right = try ConnectorFixture(board:board,seed:seed,target:base.target); defer { right.clean() }
   let endpoint = NotebookGraphicConnection.Endpoint(point:.zero,binding:.init(elementID:"c"))
   let a = try left.write([left.operation(.updateElement,"ab",["graphic":.object(["connection":.object(["start":.encode(endpoint)])])])])
   let b = try right.write([right.operation(.updateElement,"ab",["graphic":.object(["connection":.object(["end":.encode(endpoint)])])])],human:false)
-  let payloads = try [left.store.collaborationContent(),right.store.collaborationContent()]
+  let authors = [left, right]
   for (order,grouped) in [([0,1,0,1],false),([1,0,1,0],false),([0,1],true),([1,0],true)] {
     let peer = try ConnectorFixture(board:board,seed:seed,target:base.target); defer { peer.clean() }
     if grouped {
-      var merged = payloads[order[0]]; try merged.merge(payloads[order[1]])
-      _ = try peer.store.mergeCollaborationContent(merged,actions:[a,b])
+      let relay = try ConnectorFixture(board: board, seed: seed, target: base.target); defer { relay.clean() }
+      for index in order { try receiveFixtureChanges(from: authors[index].store, to: relay.store, peerID: authors[index].actor) }
+      let snapshot = try relay.store.commandTransaction {
+        try relay.store.cloudSnapshot(source: .init(deviceID: relay.actor, generation: relay.actor))
+      }
+      try receiveFixtureChanges(snapshot, from: relay.store, to: peer.store)
     } else {
-      for index in order { _ = try peer.store.mergeCollaborationContent(payloads[index],actions:[index == 0 ? a : b]) }
+      for index in order { try receiveFixtureChanges(from: authors[index].store, to: peer.store, peerID: authors[index].actor) }
     }
     #expect(try peer.graphic("ab")?.connection?.start.binding?.elementID == "c")
     #expect(try peer.graphic("ab")?.connection?.end.binding?.elementID == "c")
@@ -200,21 +213,21 @@ func connectorClaimComponentWithItsOwnDependent() throws {
     base.operation(.appendInkStroke,id.uuidString,["worldOrigin":try .encode(WorldPoint(x:20_000,y:-30_000)),
       "points":.array([.object(["x":.number(100),"y":.number(100)]),.object(["x":.number(200),"y":.number(150)])])])
   },human:false)
-  let seed = try base.store.collaborationContent()
+  let seed = base.store
   let left = try ConnectorFixture(board:true,seed:seed,target:base.target); defer { left.clean() }
   let right = try ConnectorFixture(board:true,seed:seed,target:base.target); defer { right.clean() }
   func convert(_ f: ConnectorFixture, _ id: String, graphic: NotebookGraphic) throws -> CollaborationOperation {
     let insertion = try f.insert(id,graphic:graphic,frame:.init(x:100,y:100,width:100,height:100))
     return f.operation(.convertInkToElement,id,insertion.values)
   }
-  let a = try left.write([convert(left,"a",graphic:.init(sourceInkIDs:[strokes[0]])),
+  _ = try left.write([convert(left,"a",graphic:.init(sourceInkIDs:[strokes[0]])),
     convert(left,"ab",graphic:.init(shape:.connector,sourceInkIDs:[strokes[1]],connection:.init(
       start:.init(point:.zero,binding:.init(elementID:"a")),end:.init(point:.init(x:100,y:0),binding:.init(elementID:"b")))))] )
-  let b = try right.write([convert(right,"alternative",graphic:.init(sourceInkIDs:strokes))],human:false)
-  let payloads = try [left.store.collaborationContent(),right.store.collaborationContent()]
+  _ = try right.write([convert(right,"alternative",graphic:.init(sourceInkIDs:strokes))],human:false)
+  let authors = [left, right]
   for order in [[0,1,1,0],[1,0,0,1]] {
     let peer = try ConnectorFixture(board:true,seed:seed,target:base.target); defer { peer.clean() }
-    for index in order { _ = try peer.store.mergeCollaborationContent(payloads[index],actions:[index == 0 ? a : b]) }
+    for index in order { try receiveFixtureChanges(from: authors[index].store, to: peer.store, peerID: authors[index].actor) }
     #expect(try peer.resolution().layout != nil)
     #expect(try peer.resolution("alternative") == .hidden)
     let window = try peer.store.readSceneWindow(boardID:peer.target.id,

@@ -1,5 +1,29 @@
 # Проверка Notebook
 
+## 19 сентября, 11:02 МСК — GUI-250: действующий lifecycle вместо старых fixture shortcuts
+
+Отрицательные проверки полного Core прогона разделены по владельцам. Старые
+тесты требовали физического удаления source, хотя causal undo теперь сохраняет
+его за закрытым lifecycle gate. Они проверяют именно сохранность source, отказ
+чтения/поздней записи и неизменный cursor. Повтор raw native birth без immutable
+action ID явно отклоняется; retry исходного action ID и запрет второго lifetime
+проверены отдельно. Addressed vision fixture теперь имеет настоящую каталоговую
+принадлежность; повреждённый посторонний body не уничтожает нужный owner index.
+Production правила и лимиты ради тестов не менялись.
+
+Старые ink/graphic/connector fixtures переносили только values/actions, теряя
+обязательные inverse blobs. Теперь используют общий прежний addressed delivery
+helper; grouped cases проходят через relay snapshot, а не синтетическую смесь
+без closure. Порядки, повторы, reopen и causal undo сохранены.
+
+**17 Core PASS**, `/tmp/gui250-retained-contracts-v3.log`;
+**9 guards PASS**, `/tmp/gui250-retained-guards-v1.log` (включая повтор action ID,
+retired page и cross-owner admission); **6 replication tests PASS** с параметрами
+и перестановками, `/tmp/gui250-replication-fixtures-v2.log`. Два предварительных
+vision test compile errors (return dictionary / nested require macro) исправлены
+в самих тестах. Новый source `694a57f80cf511248421ad969cc39f9b71b05b196d322c6cdd17735a6e1ad4d3`;
+полный повтор ещё нужен.
+
 ## 19 сентября, 10:46 МСК — GUI-250: Release обнаружил чужой XPC sandbox owner
 
 Неизменная Release-пара `ce3b979`, source
