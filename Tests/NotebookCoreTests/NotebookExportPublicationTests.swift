@@ -231,6 +231,31 @@ struct NotebookExportPublicationTests {
     #expect(throws: CollaborationError.self) { try NotebookPortableDocument(cut: cut, packages: []).data() }
   }
 
+  @Test func videoOptionsAndPublicationBindTheExplicitTimeline() throws {
+    let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
+    func options(_ end: Double = 1, width: Int = 640, fps: Int = 4) -> NotebookExportOptions {
+      .init(format: .mp4, pixelWidth: width, blockID: "body", video: .init(start: 0, end: end, framesPerSecond: fps))
+    }
+    try options().validate()
+    #expect(throws: CollaborationError.self) { try options(1.1).validate() }
+    #expect(throws: CollaborationError.self) { try options(width: 641).validate() }
+    #expect(throws: CollaborationError.self) { try options(fps: 61).validate() }
+    #expect(throws: CollaborationError.self) { try options(1000).validate() }
+    #expect(throws: CollaborationError.self) { try NotebookExportOptions(format: .mp4, blockID: "body").validate() }
+    let cut = try NotebookExportCut(document: document, state: store.loadDocumentState(document.id))
+    // Bounded container header check; Mac decodes complete native-encoded media.
+    let bytes = Data([0,0,0,20]) + Data("ftypisom00000000".utf8)
+    let file = try stageExportFixture(bytes, path: "document.mp4", store: store)
+    let first = try publish(store, .init(cut: cut, source: "", artifact: file, log: "", options: options()))
+    let other = try publish(store, .init(cut: cut, source: "", artifact: file, log: "", options: options(2)))
+    #expect(first.packageSHA256 != other.packageSHA256)
+    #expect(first.artifact.mimeType == "video/mp4")
+    #expect(throws: CollaborationError.self) {
+      try publish(store, .init(cut: cut, source: "", artifact: stageExportFixture(Data("bad mp4 header".utf8), path: "document.mp4", store: store), log: "", options: options()))
+    }
+    #expect(try Data(contentsOf: URL(fileURLWithPath: first.artifact.path)) == bytes)
+  }
+
   @Test func pngOptionsBindPageIdentityAndRejectWrongExtentOrFormat() throws {
     let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
     let cut = try NotebookExportCut(document: document, state: store.loadDocumentState(document.id))

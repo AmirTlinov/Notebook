@@ -76,13 +76,13 @@ test('shared scene runtime keeps frames local, commits controls and restores foc
     addEventListener(key:string,fn:Function){this.listeners[key]=fn},setAttribute(){}});
   const input=element({type:'range',dataset:{key:'phase'}}),live=element({type:'range',dataset:{key:'yaw',pause:'false'}}),play=element(),output=element();
   const elements=new Map([['phase',input],['play',play],['phase-value',output]]);
-  let state:any={phase:.2},sequence=0,ready:Promise<unknown>|undefined,drawn:any,lifecycle:any;
+  let state:any={phase:.2},sequence=0,ready:Promise<unknown>|undefined,drawn:any,lifecycle:any,exportFrame:any,timeline=false;
   const document={activeElement:null as any,hidden:false,getElementById:(id:string)=>elements.get(id),
     querySelectorAll:()=>[input,live],addEventListener:(name:string,fn:Function)=>events.set(name,fn),removeEventListener:(name:string)=>events.delete(name)};
-  const notebook={get state(){return state},commit:(value:any)=>{state=value;commits.push(value)},ready:(promise:Promise<unknown>)=>ready=promise,lifecycle:(hooks:any)=>lifecycle=hooks};
+  const notebook={exportFrame:(callback:any,options:any)=>{exportFrame=callback;timeline=options.timeline},get state(){return state},commit:(value:any)=>{state=value;commits.push(value)},ready:(promise:Promise<unknown>)=>ready=promise,lifecycle:(hooks:any)=>lifecycle=hooks};
   const Science=new Function('document','notebook','requestAnimationFrame','cancelAnimationFrame','addEventListener','removeEventListener',source+';return Science;')(document,notebook,
     (fn:Function)=>{frames.set(++sequence,fn);return sequence},(id:number)=>frames.delete(id),(name:string,fn:Function)=>events.set(name,fn),(name:string)=>events.delete(name));
-  const app=Science.mount({defaults:{phase:0,yaw:0},ranges:{phase:[0,1]},draw:(s:any)=>drawn=s.phase,tick:(s:any,dt:number)=>({phase:s.phase+dt/1000})});
+  const app=Science.mount({defaults:{phase:0,yaw:0},ranges:{phase:[0,1]},draw:(s:any)=>drawn=s.phase,tick:(s:any,dt:number)=>({phase:s.phase+dt/1000}),seek:(s:any,time:number)=>({phase:s.phase+time})});
   await ready;assert.equal(drawn,.2);
   play.listeners.click();
   const tick=(time:number)=>{const [id,fn]=[...frames][0]!;frames.delete(id);fn(time)};
@@ -102,6 +102,10 @@ test('shared scene runtime keeps frames local, commits controls and restores foc
   assert.equal(commits.length,beforeCheckpoint,'owner checkpoint, not a second optimistic commit');
   const checkpoint=lifecycle.checkpoint();checkpoint.phase=0;near(lifecycle.checkpoint().phase,.85);
   lifecycle.resume();assert.equal(frames.size,0);near(drawn,.85);
+  const beforeExport=commits.length;lifecycle.pause();assert.equal(timeline,true);
+  assert.equal(exportFrame({format:'raster',state:{phase:.25},time:.5}),null);near(drawn,.75);assert.equal(commits.length,beforeExport);
+  exportFrame({format:'raster',state:{phase:.25},time:0});near(drawn,.25);assert.equal(frames.size,0);
+  lifecycle.resume();app.change({phase:.85},false);
   play.listeners.click();assert.equal(frames.size,1);lifecycle.dispose();assert.equal(frames.size,0);
   assert.equal(events.has('notebookstate'),false);assert.equal(events.has('visibilitychange'),false);
   app.change({phase:.2});near(drawn,.85);

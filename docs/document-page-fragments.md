@@ -160,7 +160,13 @@ inline программу и saved state как один offline HTML до 8 М�
 sandbox iframe с закрытой сетью и без доступа к file-origin/Notebook writer.
 Local edits не возвращаются в Notebook. Модули/asset packages требуют portable
 экспорт и получают export_portable_required, не сломанный file:// bundle.
-Presented, portable и video пока относятся к незавершённой части GUI-249.
+Portable directory импортируется существующим V2/native путём; контракт —
+[document-program-fragments.md](document-program-fragments.md). MP4 — та же
+каноническая страница, один изолированный coordinator и явный authored timeline
+(не запись экрана). Off-main AVFoundation receiver принимает последовательные
+кадры с backpressure; нет массива кадров/PNG sequence/второго animation engine.
+Рабочие буферы имеют отдельный допуск прежнего пула, ограничения не обходятся.
+Presented cut остаётся незавершённой частью GUI-249.
 
 Растр для агента подтверждает точные token, поколение и эпоху установки.
 Квитанция ready означает готовность артефакта, а не shown на iPad. Ключ нового

@@ -29,6 +29,6 @@ declare const notebook: {
    * SVG: return a self-contained passive vector image.
    * Runs only in an isolated export executor, after pause; commits are disabled.
    * Missing or failed author export is an error, not a raster disguised as SVG. */
-  exportFrame(render: (request: {format: 'svg' | 'raster'; state: NotebookJSON; pixelRatio?: number; signal: AbortSignal}) => string | null | Promise<string | null>): void;
+  exportFrame(render: (request: {format: 'svg' | 'raster'; state: NotebookJSON; pixelRatio?: number; time?: number; signal: AbortSignal}) => string | null | Promise<string | null>, options?: {timeline?: boolean}): void;
   lifecycle(hooks: NotebookProgramLifecycle): void;
 };

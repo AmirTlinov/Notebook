@@ -304,4 +304,30 @@ Plot signal также поддерживает SVG.
 возвращает один автономный offline HTML. Открытие запускает ту же программу с
 saved state в sandbox; локальные изменения не пишутся назад в Notebook. Пакеты
 с imports/workers/assets не переименовываются в standalone: нужен переносимый
-пакет (пока не реализован), иначе export_portable_required.
+пакет: `nb.export(key,{documentID,format:'package'})`. Перенеси весь каталог
+artifact, затем `node scripts/submit.mjs /absolute/directory/document.package`:
+старый native importer проверит V2 parts, одна обычная transaction создаст копию
+с saved state; до явного открытия код не исполняется.
+
+Для MP4 на Mac укажи `format:'mp4',blockID,pageIndex,pixelWidth` и
+`video:{start:0,end:6,framesPerSecond:30}`. Это выбранная каноническая страница,
+не запись экрана: чётная ширина 128…4096, высота по листу с белым дополнением до
+чётной; H.264 без audio. Допускается целое число 1…3600 кадров в [start,end),
+FPS 1…60. Каждый кадр получает time=start+index/FPS и **тот же** saved state/seed.
+Автор явно регистрирует возможность timeline:
+
+```js
+notebook.exportFrame(async ({state,time,pixelRatio,signal}) => {
+  const model = time === undefined ? restore(state) : seekFromSaved(state,time);
+  await renderModel(model,pixelRatio,signal);
+  return null;
+},{timeline:true});
+```
+
+Не интегрируй wall-clock delta и не перематывай live scene. Нельзя объявлять
+`timeline:true`, если time игнорируется. Недопустимый диапазон модели — явная
+ошибка, не clamp/последний кадр. Sound и linear используют свои authored seek,
+gears — период16 s, wave — тот же Worker от accepted model/seed (time<=4 s),
+recording — decoded seek в пределах исходной записи. Native encoder ждёт каждый
+кадр с backpressure, работает не на UI actor; отмена и ошибки не публикуют partial.
+Системный backend — [AVFoundation PixelBufferReceiver](https://developer.apple.com/documentation/avfoundation/avassetwriterinput/pixelbufferreceiver/append(_:with:)).

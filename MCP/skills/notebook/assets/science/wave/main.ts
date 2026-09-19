@@ -126,10 +126,20 @@ notebook.semantic(()=>{
     {label:'Смещение',value:lastGood[p.y*size+p.x]!,unit:'mm'},{label:'Время',value:lastReport.time,unit:'s'}],
   model:{parameters:{...state.accepted},grid:size,index:p.y*size+p.x,energyRatio:lastReport.energy}};
 });
-notebook.exportFrame(async ({format,state:saved,pixelRatio,signal})=>{
+notebook.exportFrame(async ({format,state:saved,pixelRatio,time:offset,signal})=>{
  if(format!=='raster')throw Error('program_export_unavailable');
  if(signal.aborted||disposed)throw Error('program_export_cancelled');
- state=stateFrom(saved);exportRatio=pixelRatio;lastGood=undefined;lastReport=undefined;suspended=false;
+ state=stateFrom(saved);
+ if(offset!==undefined) {
+  if(state.tab==='model') {
+   if(!state.accepted||state.accepted.time+offset>4)throw Error('program_export_timeline_out_of_range');
+   state.accepted={...state.accepted,time:state.accepted.time+offset};
+  } else {
+   if(state.playhead+offset>=provenance.duration)throw Error('program_export_timeline_out_of_range');
+   state.playhead+=offset;
+  }
+ }
+ exportRatio=pixelRatio;lastGood=undefined;lastReport=undefined;suspended=false;
  const cancel=()=>{stop();unmountMedia();};signal.addEventListener('abort',cancel,{once:true});
  try {
   sync();
@@ -151,7 +161,7 @@ notebook.exportFrame(async ({format,state:saved,pixelRatio,signal})=>{
   if(signal.aborted)throw Error('program_export_cancelled');
   return null;
  } finally {signal.removeEventListener('abort',cancel);suspended=true;stop();video.pause();}
-});
+},{timeline:true});
 notebook.lifecycle({pause(){suspended=true;stop();unmountMedia();referenceRequest?.abort();showLast();status.textContent='Расчёт приостановлен.';sync();},checkpoint(){return {...state,draft:{...state.draft},accepted:state.accepted?{...state.accepted}:null};},resume(){if(disposed)return;suspended=false;sync();if(!reference)void loadReference();if(state.tab==='recording')mountMedia();else if(!lastGood)run(state.accepted??state.draft,true);else{showLast();status.textContent='Последний результат восстановлен. Новый расчёт — по команде.';}},dispose(){disposed=true;stop();unmountMedia();referenceRequest?.abort();resize.disconnect();events.abort();lastGood=undefined;reference=undefined;canvas.width=canvas.height=cut.width=cut.height=0;}});
 get('provenance').textContent=`Внешний расчёт: NumPy ${provenance.numpy}, ${provenance.steps} шагов; input SHA-256 ${provenance.inputSHA256}; script ${provenance.scriptSHA256}; video ${provenance.outputs['experiment.mp4'].sha256}. Полные параметры и hashes — provenance.json в пакете.`;
 sync();showLast();notebook.ready(Promise.resolve()).catch(()=>{});void loadReference();if(state.tab==='recording')mountMedia();else run(state.accepted??state.draft,true);

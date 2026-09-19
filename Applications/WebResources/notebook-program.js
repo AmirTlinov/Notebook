@@ -9,7 +9,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
   const copy = value => JSON.parse(JSON.stringify(value));
   let value = copy(state), revision = 0n, disposed = false, suspended = false, frozen = false;
   let hooks = {}, registered = false, generation = 0, operation = null, started = null;
-  let semantic = null, semanticValue = null, exportFrame = null;
+  let semantic = null, semanticValue = null, exportFrame = null, exportTimeline = false;
   const readiness = [];
   const error = code => new Error(code);
   const alive = () => { if (disposed) throw error('program_disposed'); };
@@ -53,10 +53,10 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
     },
     // An author-owned static representation, not serialization of arbitrary
     // heap/DOM. Native invokes this only in an isolated export executor.
-    exportFrame(callback) {
+    exportFrame(callback, {timeline = false} = {}) {
       alive();
-      if (exportFrame || typeof callback !== 'function') throw error('program_export_invalid');
-      exportFrame = callback;
+      if (exportFrame || typeof callback !== 'function' || typeof timeline !== 'boolean') throw error('program_export_invalid');
+      exportFrame = callback; exportTimeline = timeline;
     },
     lifecycle(callbacks) {
       alive();
@@ -102,6 +102,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
       alive();
       if (!exportFrame || !['svg','raster'].includes(request?.format)) throw error('program_export_unavailable');
       if(request.format==='raster'&&(!Number.isFinite(request.pixelRatio)||request.pixelRatio<=0||request.pixelRatio>8))throw error('program_export_extent');
+      if(request.time!==undefined&&(!exportTimeline||!Number.isFinite(request.time)||request.time<0))throw error('program_export_timeline_unavailable');
       const input = copy(request.state);
       suspended = true; frozen = false; abort();
       const expected = generation, operationRequest = new AbortController(); operation = operationRequest;
@@ -109,7 +110,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
         const result = await bounded(async () => {
           await hooks.pause?.({signal:operationRequest.signal});
           if (operationRequest.signal.aborted) throw error('program_superseded');
-          return await exportFrame({format:request.format,state:copy(input),pixelRatio:request.pixelRatio,signal:operationRequest.signal});
+          return await exportFrame({format:request.format,state:copy(input),pixelRatio:request.pixelRatio,time:request.time,signal:operationRequest.signal});
         }, operationRequest.signal, 'program_export');
         alive();
         if (expected !== generation) throw error('program_superseded');

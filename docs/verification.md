@@ -1,5 +1,48 @@
 # Проверка Notebook
 
+## 19 сентября, 09:28 МСК — GUI-249: детерминированный MP4 из авторской модели
+
+MP4 использует выбранную canonical страницу, тот же isolated coordinator и
+source/state cut. Явные blockID/width/start/end/FPS; одинаковый saved model/seed
+передаётся для каждого time=start+index/FPS. Автор подтверждает timeline:true;
+без seek-capability нет фиктивного фильма из startup frame. H.264, без audio,
+чётная ширина128…4096, высота листа дополняется белым до чётной, диапазон[start,end),
+1…60 FPS/1…3600 целых кадров. Нет live rewind, массива кадров или PNG sequence.
+Off-main AVFoundation receiver даёт backpressure; один кадр в работе, raster и
+conversion buffers допущены прежним пулом. Ошибки/отмена не доходят до saved,
+адресная V2 публикация/финальный CAS прежние. Sound/linear используют свои seek;
+gears период16 s, wave прежний Worker от accepted/seed, media decoded seek.
+Выход за диапазон численной модели/записи — ошибка, не скрытый clamp.
+
+**Mac4 PASS**, `.build/gui249-video-mac-v4/verification.json`, source
+**e4e9e7e49ffb36b716753cfd5e9e36faeecd2781ccbf11c4ca179bf24af324bc**:
+настоящий опубликованный MP4640/4FPS/1s декодирован покадрово; фазы red/blue/blue/red
+совпали, duration/FPS/extent/audio проверены, source/state неизменны. Отмена
+во время работы isolated renderer/encoder освобождает WebKit и сохраняет прошлый
+файл. Настоящий звук-пример экспортирован900px/12FPS/6s; gears/wave получают
+offset0.5 и показывают10.5s/0.750s без commits. Прежний exact raster PASS.
+
+Файл `.build/gui249-video-preview/730E9970-72A4-443B-AB61-3C510A9B6C4E.mp4` и
+четыре PNG из v3: осмотрены фазы0/.25/.5/.75 — облако сохраняет частицы,
+оранжевая частица движется вперёд/назад, давление соответствует фазе; заголовок,
+композиция и controls остаются на canonical листе. Видео не объявлено системным
+FPS-измерением и не заменяет reference-motion acceptance GUI-250.
+
+**Core14 PASS**, `/tmp/gui249-video-core-v1.log`: timeline validation/header/CAS,
+нецелое число кадров и неверный MP4 отвергаются, prior artifact цел. **JS36 PASS
++ generated check**, `/tmp/gui249-video-js-v4.log`: timeline opt-in, повторное
+absolute seek, models/seed и typed API. **Simulator2 PASS** в двух независимых
+от Mac прогонах: v1 шесть inline checkpoint, v2 Worker/media обновлённого package,
+`.build/gui249-video-sim-v2.xcresult` на final source. Физическая пара не изменена.
+Первый native run имел реальные Performance Diagnostics: synchronous codec
+работа на UI actor. Устранено одним off-main encoder owner; последующие прогоны
+без runtime warnings. Старый JS runtime fixture не знал exportFrame; исправлен
+сам fixture, добавлена проверка seek, контракт не ослаблен.
+
+Открыты presented cut, сохранение доступных интерактивных векторов внутри PDF
+(отдельный SVG уже векторный), installed/shared/системная приёмка GUI-250.
+Весь GUI-249/GUI-240 не Done.
+
 ## 19 сентября, 09:13 МСК — GUI-249: переносимый документ без исполнения при импорте
 
 format=package публикует NotebookPortable/1: точный cut + исходные V2 manifests

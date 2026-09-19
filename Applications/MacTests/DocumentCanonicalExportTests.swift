@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import NotebookCore
 import PDFKit
 import XCTest
@@ -6,6 +7,99 @@ import WebKit
 @testable import Notebook
 
 @MainActor final class DocumentCanonicalExportTests: XCTestCase {
+  func testVideoUsesExplicitSavedTimelineAndDecodesTheRequestedFrames() async throws {
+    let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+    let actor = UUID(); _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    defer { try? FileManager.default.removeItem(at: store.root) }
+    var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
+    let item = try XCTUnwrap(index.createDocument(title: "Exact video", actor: actor))
+    XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
+    let script = """
+      const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
+      notebook.ready(Promise.resolve());
+      notebook.lifecycle({pause(){},checkpoint(){throw Error('Do not change live/saved state');}});
+      notebook.exportFrame(({format,state,time,pixelRatio})=>{
+        if(format!=='raster'||state.phase!==.25||!Number.isFinite(time))throw Error('Wrong model');
+        const r=canvas.getBoundingClientRect();canvas.width=Math.round(r.width*pixelRatio);canvas.height=Math.round(r.height*pixelRatio);
+        const phase=(state.phase+time)%1;ctx.fillStyle=phase<.5?'#ee0000':'#0000ee';ctx.fillRect(0,0,canvas.width,canvas.height);
+        if(notebook.commit({phase:99}))throw Error('Video must not commit');return null;
+      },{timeline:true});
+      """
+    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.markdown(id: "heading", source: "# Exact video phase"),
+      .interactive(id: "model", html: "<canvas style='width:100%;height:150px'></canvas>", javaScript: script, height: 150)])
+    var state = DocumentStateJournal(id: item.id, actor: actor)
+    XCTAssertTrue(state.commit(blockID: "model", value: .object(["phase": .number(0.25)]), actor: actor))
+    try store.saveDocumentWorkspaceBundle(index: index, document: document, state: state, board: board)
+    let cut = try store.readTransaction { try NotebookExportCut(document: $0.loadDocument(item.id), state: $0.loadDocumentState(item.id)) }
+    let options = NotebookExportOptions(format: .mp4, pixelWidth: 640, blockID: "model", video: .init(start: 0, end: 1, framesPerSecond: 4))
+    let receipt = try await DocumentCanonicalExport.publish(cut: cut, options: options, jobID: UUID(), store: store, persistence: NotebookPersistenceQueue(store: store))
+    XCTAssertEqual(receipt.options, options); XCTAssertEqual(receipt.artifact.mimeType, "video/mp4")
+    XCTAssertEqual(try store.loadDocument(item.id), cut.document); XCTAssertEqual(try store.loadDocumentState(item.id), cut.state)
+    let url = URL(fileURLWithPath: receipt.artifact.path), asset = AVURLAsset(url: url)
+    let duration = try await asset.load(.duration); XCTAssertEqual(duration.seconds, 1, accuracy: 0.0001)
+    let tracks = try await asset.loadTracks(withMediaType: .video), track = try XCTUnwrap(tracks.first)
+    let size = try await track.load(.naturalSize), fps = try await track.load(.nominalFrameRate)
+    XCTAssertEqual(size.width, 640); XCTAssertEqual(Int(size.height)%2, 0); XCTAssertEqual(fps, 4, accuracy: 0.01)
+    let audio = try await asset.loadTracks(withMediaType: .audio); XCTAssertTrue(audio.isEmpty)
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+    for (i, expectsRed) in [true,false,false,true].enumerated() {
+      let frame = try await generator.image(at: CMTime(value: Int64(i), timescale: 4))
+      let bitmap = NSBitmapImageRep(cgImage: frame.image)
+      var red = 0, blue = 0
+      for y in stride(from: 0, to: bitmap.pixelsHigh, by: 4) { for x in stride(from: 0, to: bitmap.pixelsWide, by: 4) {
+        if let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) {
+          if c.redComponent > 0.7 && c.blueComponent < 0.3 { red += 1 }
+          if c.blueComponent > 0.7 && c.redComponent < 0.3 { blue += 1 }
+        }
+      } }
+      XCTAssertGreaterThan(expectsRed ? red : blue, 100, "Decoded frame \(i), red=\(red), blue=\(blue)")
+      XCTAssertLessThan(expectsRed ? blue : red, 10)
+    }
+    let attachment = XCTAttachment(contentsOfFile: url); attachment.name = "canonical-exact-timeline-4fps"; attachment.lifetime = .keepAlways; add(attachment)
+    let previous = try Data(contentsOf: url)
+    let count = SceneRenderResources.shared.activeWebSurfaceCount
+    let task = Task { @MainActor in
+      try await DocumentCanonicalExport.publish(cut: cut, options: .init(format: .mp4, pixelWidth: 640, blockID: "model", video: .init(start: 0, end: 30, framesPerSecond: 60)),
+        jobID: UUID(), store: store, persistence: NotebookPersistenceQueue(store: store))
+    }
+    let deadline = ContinuousClock.now + .seconds(5)
+    while SceneRenderResources.shared.activeWebSurfaceCount == count, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertGreaterThan(SceneRenderResources.shared.activeWebSurfaceCount, count, "Cancel an active isolated renderer and encoder, not an unstarted task")
+    task.cancel()
+    do { _ = try await task.value; XCTFail("Cancelled export published") } catch is CancellationError { }
+    XCTAssertEqual(SceneRenderResources.shared.activeWebSurfaceCount, count)
+    XCTAssertEqual(try Data(contentsOf: url), previous)
+  }
+
+  func testScientificSoundVideoKeepsItsAuthoredModelAndComposition() async throws {
+    let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    defer { try? FileManager.default.removeItem(at: store.root) }
+    func source(_ name: String, _ ext: String) throws -> String {
+      try String(contentsOf: XCTUnwrap(Bundle(for: Self.self).url(forResource: name, withExtension: ext, subdirectory: "science")), encoding: .utf8)
+    }
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "sound", html: try source("sound", "html"), css: try source("common", "css"),
+      javaScript: try source("models", "js") + "\n" + source("runtime", "js") + "\n" + source("sound", "js"), height: 1000)])
+    var state = DocumentStateJournal(id: document.id, actor: UUID())
+    XCTAssertTrue(state.commit(blockID: "sound", value: .object(["phase": .number(0)]), actor: UUID()))
+    let publication = try await DocumentCanonicalExport.publication(cut: .init(document: document, state: state),
+      options: .init(format: .mp4, pixelWidth: 900, blockID: "sound", video: .init(start: 0, end: 6, framesPerSecond: 12)), jobID: UUID(), store: store, persistence: NotebookPersistenceQueue(store: store))
+    let bytes = try readExportBytes(publication.artifact, store: store)
+    let url = store.root.appendingPathComponent("sound.mp4"); try bytes.write(to: url)
+    let asset = AVURLAsset(url: url), duration = try await asset.load(.duration)
+    XCTAssertEqual(duration.seconds, 6, accuracy: 0.001)
+    let attachment = XCTAttachment(contentsOfFile: url); attachment.name = "sound-wave-six-second-model-cycle"; attachment.lifetime = .keepAlways; add(attachment)
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+    for second in [0.0, 1.5, 3.0, 4.5] {
+      let frame = try await generator.image(at: CMTime(seconds: second, preferredTimescale: 12))
+      let bitmap = NSBitmapImageRep(cgImage: frame.image)
+      let image = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+      let shot = XCTAttachment(data: image, uniformTypeIdentifier: "public.png"); shot.name = "sound-phase-\(second/6)"; shot.lifetime = .keepAlways; add(shot)
+    }
+  }
+
   func testStaticExportReusesTheExactPDFAndItsSourceMapWithoutTypesettingAgain() async throws {
     let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
     _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))

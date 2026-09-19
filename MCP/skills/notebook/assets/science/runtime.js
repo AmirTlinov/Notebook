@@ -17,7 +17,7 @@ var Science = (() => {
   function point(event,svgElement) {
     return new DOMPoint(event.clientX,event.clientY).matrixTransform(svgElement.getScreenCTM().inverse());
   }
-  function mount({defaults,ranges={},normalize=v=>v,draw,tick}) {
+  function mount({defaults,ranges={},normalize=v=>v,draw,tick,seek}) {
     let state,playing=false,frame=0,last=null,suspended=false,disposed=false;
     const sanitize=value=>{
       const next={...structuredClone(defaults),...value};
@@ -52,10 +52,10 @@ var Science = (() => {
     addEventListener('notebookstate',restore);
     const visibility=()=>{if(document.hidden&&!disposed){stop();render();}};
     document.addEventListener('visibilitychange',visibility);
-    notebook.exportFrame(({format,state:saved})=>{
+    notebook.exportFrame(({format,state:saved,time})=>{
       if(format!=='raster')throw new Error('program_export_unavailable');
-      stop();state=sanitize(saved??{});render(true);return null;
-    });
+      stop();state=sanitize(saved??{});if(time!==undefined)state=sanitize({...state,...seek(state,time)});render(true);return null;
+    },{timeline:typeof seek==='function'});
     notebook.lifecycle({
       pause(){suspended=true;stop();render();},
       checkpoint(){return structuredClone(state);},

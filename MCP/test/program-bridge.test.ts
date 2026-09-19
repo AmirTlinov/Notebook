@@ -217,3 +217,13 @@ test('raster export waits for the authored saved frame at exact scale and never 
   await assert.rejects(fixture().program.exportFrame({format:'raster',state:null,pixelRatio:2}),/unavailable/);
   const invalid=fixture();invalid.api.exportFrame(()=>'<svg/>');await assert.rejects(invalid.program.exportFrame({format:'raster',state:null,pixelRatio:2}),/raster_invalid/);
 });
+
+test('video requires explicit author timeline, receives absolute times and never advances the saved state',async()=>{
+  const missing=fixture();missing.api.exportFrame(()=>null);
+  await assert.rejects(missing.program.exportFrame({format:'raster',state:{phase:.25},pixelRatio:1,time:0}),/timeline_unavailable/);
+  const {program,api,commits}=fixture();const frames:any[]=[];
+  api.exportFrame(({state,time}:any)=>{frames.push([state.phase,time]);return null;},{timeline:true});
+  for(const time of [0,.5,0])await program.exportFrame({format:'raster',state:{phase:.25},pixelRatio:2,time});
+  assert.deepEqual(frames,[[.25,0],[.25,.5],[.25,0]]);assert.equal(commits.length,0);assert.equal(api.state.phase,0);
+  await assert.rejects(program.exportFrame({format:'raster',state:null,pixelRatio:1,time:-1}),/timeline_unavailable/);
+});

@@ -246,6 +246,13 @@ final class ProgramAssetTests: XCTestCase {
       XCTAssertEqual(exact, true, name + " draws real target pixels, not an upscaled low-resolution buffer")
       let caption = try await web.evaluateJavaScript(name == "signal" ? "document.getElementById('detail-caption').textContent" : name == "gears" ? "document.getElementById('phase').value" : "document.getElementById('result-caption').textContent") as? String
       XCTAssertTrue(caption?.contains(name == "signal" ? "37125" : name == "gears" ? "0.625" : "0,250") == true, name + " " + (caption ?? "missing"))
+      if name == "gears" || name == "wave" {
+        _ = try await NotebookProgramBridge.lifecycle("exportFrame", controller: "notebookProgram",
+          argument: .object(["format": .string("raster"), "state": saved, "pixelRatio": .number(1), "time": .number(0.5)]), in: web)
+        let label = try await web.evaluateJavaScript(name == "gears" ? "document.getElementById('phase-value').textContent" : "document.getElementById('result-caption').textContent") as? String
+        XCTAssertTrue(label?.contains(name == "gears" ? "10,5" : "0,750") == true, label ?? "missing")
+        XCTAssertEqual(commits, before)
+      }
       if name == "wave" {
         let recording: JSONValue = .object(["tab": .string("recording"), "playhead": .number(0.75)])
         _ = try await NotebookProgramBridge.lifecycle("exportFrame", controller: "notebookProgram", argument: .object(["format": .string("raster"), "state": recording, "pixelRatio": .number(3)]), in: web)

@@ -150,12 +150,12 @@ notebook.semantic(()=>{
     {label:'Угол',value:angles(state.phase)[i]!,unit:'rad'}],
     model:{time:state.phase*16,timeUnit:'s',ratio:ratios[i]!,reveal:state.reveal,camera:[...state.camera]}};
 });
-notebook.exportFrame(({format,state:saved,pixelRatio,signal})=>{
+notebook.exportFrame(({format,state:saved,pixelRatio,time,signal})=>{
   if(format!=='raster')throw Error('program_export_unavailable');
   if(signal.aborted||!renderer||!model||lost)throw Error('program_export_3d_not_ready');
-  stop();state=selection(saved);exportRatio=pixelRatio;suspended=false;
+  stop();state=selection(saved);if(time!==undefined)state.phase=(state.phase+time/16)%1;exportRatio=pixelRatio;suspended=false;
   try{applyCamera();sync();renderNow();return null;}finally{suspended=true;stop();}
-});
+},{timeline:true});
 notebook.lifecycle({pause(){stop();renderNow();suspended=true;request?.abort();manager?.abort();if(controls)controls.enabled=false;sync();},checkpoint(){return {...state,camera:[...state.camera]};},resume(){if(disposed)return;suspended=false;if(controls)controls.enabled=!lost;sync();if(!model)startLoad();else renderNow();},dispose(){disposed=true;stop();events.abort();observer.disconnect();request?.abort();manager?.abort();controls?.dispose();controls=undefined;releaseModel();environment?.dispose();environment=undefined;scene.environment=null;renderer?.dispose();renderer?.forceContextLoss();renderer=undefined;}});
 get('model-size').textContent=`Локальный glTF: ${metadata.triangles.toLocaleString('ru-RU')} треугольников, две текстуры 2048 × 2048. Геометрия не пересобирается при движении; неподвижная сцена не запрашивает кадры.`;
 get<HTMLImageElement>('poster').src=posterURL;sync();

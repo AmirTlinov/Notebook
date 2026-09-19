@@ -55,7 +55,7 @@ final class DocumentSnapshotCache {
         }
     }
 
-    private func withPreparedPage<T>(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int,
+    func withPreparedPage<T>(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int,
       resources: SceneRenderResources, programStore: NotebookStore?, isolationID: UUID?,
       operation: (DocumentWebCoordinator) async throws -> T) async throws -> T {
       let geometry = WorkspaceItemGeometry.document(document.paperSize)
@@ -1771,7 +1771,7 @@ final class DocumentWebCoordinator: NSObject,
   }
 
   func retainPreparedSnapshot(pixelWidth: Int, nativeScale: Double? = nil, force: Bool = false,
-    waitsForRasterAdmission: Bool = false, reservation granted: RasterReservation? = nil) async throws -> RasterLease {
+    waitsForRasterAdmission: Bool = false, reservation granted: RasterReservation? = nil, videoFrame: (blockID: String, time: Double)? = nil) async throws -> RasterLease {
     guard let payload, !isInvalidated else { throw CancellationError() }
     let requestGeneration = generation
     // Only measured page membership can name a composite image. Before that
@@ -1817,11 +1817,12 @@ final class DocumentWebCoordinator: NSObject,
         if exportSnapshotID != nil {
           do {
             let ids = payload.source.programIDs(on: payload.pageIndex) ?? payload.source.programIDs
+            if let videoFrame, !ids.contains(videoFrame.blockID) { throw CollaborationError("export_block_missing", "Программы нет на выбранной странице видео.") }
             for block in payload.blocks where ids.contains(block.id) {
-              _ = try await NotebookProgramBridge.lifecycle("exportProgram", controller: "notebookRenderer",
-                argument: .object(["format": .string("raster"), "blockID": .string(block.id),
-                  "state": payload.states[block.id] ?? block.initialState,
-                  "pixelRatio": .number(Double(pixelWidth) / size.width)]), in: web)
+              var request: [String: JSONValue] = ["format": .string("raster"), "blockID": .string(block.id),
+                "state": payload.states[block.id] ?? block.initialState, "pixelRatio": .number(Double(pixelWidth) / size.width)]
+              if let videoFrame, videoFrame.blockID == block.id { request["time"] = .number(videoFrame.time) }
+              _ = try await NotebookProgramBridge.lifecycle("exportProgram", controller: "notebookRenderer", argument: .object(request), in: web)
             }
             guard !Task.isCancelled, !isInvalidated, generation == expectedGeneration else { throw CancellationError() }
           } catch { reservation.release(); throw error }

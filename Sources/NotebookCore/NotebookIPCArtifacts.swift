@@ -55,16 +55,38 @@ public struct NotebookExportCut: Codable, Equatable, Sendable {
 }
 
 public struct NotebookExportOptions: Codable, Equatable, Sendable {
-  public enum Format: String, Codable, Sendable { case pdf, png, svg, html, package }
+  public enum Format: String, Codable, Sendable { case pdf, png, svg, html, package, mp4 }
   public let format: Format
   public let pageIndex: Int?
   public let pixelWidth: Int?
   public let blockID: String?
-  public init(format: Format = .pdf, pageIndex: Int? = nil, pixelWidth: Int? = nil, blockID: String? = nil) {
-    self.format = format; self.pageIndex = pageIndex; self.pixelWidth = pixelWidth; self.blockID = blockID
+  public let video: Video?
+  public struct Video: Codable, Equatable, Sendable {
+    public let start: Double
+    public let end: Double
+    public let framesPerSecond: Int
+    public init(start: Double, end: Double, framesPerSecond: Int) { self.start = start; self.end = end; self.framesPerSecond = framesPerSecond }
+    public var frameCount: Int { Int(((end-start)*Double(framesPerSecond)).rounded()) }
+    public func validate() throws {
+      let frames = (end-start)*Double(framesPerSecond)
+      guard start.isFinite, end.isFinite, start >= 0, end > start, (1...60).contains(framesPerSecond),
+        frames.isFinite, frames >= 1, frames <= 3600, abs(frames-frames.rounded()) < 0.000001 else {
+        throw CollaborationError("invalid_export", "Видео требует start>=0, end>start, FPS 1…60 и целое число кадров 1…3600 в полуоткрытом диапазоне [start,end).")
+      }
+    }
+  }
+  public init(format: Format = .pdf, pageIndex: Int? = nil, pixelWidth: Int? = nil, blockID: String? = nil, video: Video? = nil) {
+    self.video = video; self.format = format; self.pageIndex = pageIndex; self.pixelWidth = pixelWidth; self.blockID = blockID
   }
   public func validate() throws {
+    guard format == .mp4 || video == nil else { throw CollaborationError("invalid_export", "Диапазон времени относится только к MP4.") }
     switch format {
+    case .mp4:
+      guard let video, let pixelWidth, pixelWidth.isMultiple(of: 2), (128...4096).contains(pixelWidth),
+        let blockID, !blockID.isEmpty, blockID.utf8.count <= 120, (0..<10_000).contains(pageIndex ?? 0) else {
+        throw CollaborationError("invalid_export", "MP4 требует программу, диапазон/FPS и чётную ширину 128…4096; высота выводится из канонического листа и дополняется до чётной.")
+      }
+      try video.validate()
     case .pdf, .package:
       guard pageIndex == nil, pixelWidth == nil, blockID == nil else { throw CollaborationError("invalid_export", "PDF/пакет сохраняют весь документ; выбор блока и пиксельный размер здесь не задаются.") }
     case .svg, .html:

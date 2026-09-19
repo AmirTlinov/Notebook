@@ -2,6 +2,7 @@
   const {$,fmt,clamp,text,path,svg,point,mount}=Science;
   const O=[450,280],unit=85,screen=([x,y])=>[O[0]+unit*x,O[1]-unit*y];
   const app=mount({defaults:{a:1,b:.8,c:0,d:1,phase:.65},ranges:{a:[-2,2],b:[-2,2],c:[-2,2],d:[-2,2],phase:[0,1]},
+    seek:(s,seconds)=>({phase:Math.min(1,s.phase+seconds/3.2)}),
     tick:(s,dt)=>s.phase>=1?null:{phase:Math.min(1,s.phase+dt/3200)},draw(s){
       const width=$('linear-svg').clientWidth<650?600:900;O[0]=width/2;$('linear-svg').setAttribute('viewBox',`0 0 ${width} 500`);
       const matrix=[s.a,s.b,s.c,s.d],result=ScienceModels.transform(matrix,s.phase,[1,.5]),move=p=>screen(ScienceModels.transform(matrix,s.phase,p).point);

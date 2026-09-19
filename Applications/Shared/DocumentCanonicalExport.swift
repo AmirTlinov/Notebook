@@ -53,6 +53,19 @@ import PDFKit
       return .init(cut: cut, source: "", artifact: file, log: "Standalone NotebookProgram/1: saved state, isolated offline iframe", options: options, jobID: jobID)
     }
     let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
+    if options.format == .mp4 {
+      guard document.blocks.contains(where: { $0.id == options.blockID && $0.kind == .interactive }) else {
+        throw CollaborationError("export_block_missing", "Видео требует явно выбранную программу.")
+      }
+      let locations = try await Task.detached { try artifact.locations() }.value
+      guard locations.contains(where: { $0.blockID == options.blockID && $0.pageIndex == (options.pageIndex ?? 0) }) else {
+        throw CollaborationError("export_block_missing", "Программы нет на выбранной странице видео.")
+      }
+      let url = directory.appendingPathComponent("document.mp4")
+      try await NotebookVideoExport.write(to: url, cut: cut, options: options, jobID: jobID, store: store)
+      return .init(cut: cut, source: "", artifact: try await stage(url, path: "document.mp4", persistence: persistence),
+        log: "H.264, no audio; explicit model times [start,end); canonical page, even height padded white", options: options, jobID: jobID)
+    }
     if options.format == .svg {
       guard let block = document.blocks.first(where: { $0.id == options.blockID && $0.kind == .interactive }) else {
         throw CollaborationError("export_block_missing", "SVG exportFrame принадлежит явно названной программе.")
