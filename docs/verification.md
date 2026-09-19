@@ -1,5 +1,40 @@
 # Проверка Notebook
 
+## 19 сентября, 19:17 МСК — GUI-250: Release V20 на private паре; cold путь разделён по стадиям
+
+Единый Release Mac/Simulator V20,0.3.121(124),wire33/manifest15 построен из
+неизменного `3772ddc3` с source
+`51abbcf5edbf9af8354cb436cbebf57bb47ddee917fed0c2aec11469d0d7b7e3`.
+В нём уже есть native printed-paper feedback и исправленная авторская галерея.
+Mac cdhash `8391e40293a8e29f839d729db2570209a9f5d39d`. Обновление V19→V20
+сохранило inventories stores/manifests побайтно; stale mixed-baseline flag
+старого предшественника удалён из новой квитанции. Production/physical iPad,
+сеть, архивы и доверенная пара пользователя не менялись.
+
+`.build/gui250-release-v20/verification.json`: **Mac native18/18, Mac UI2/2,
+Simulator cold UI2/2 PASS**, runtime warnings/skips/failures0. Native проверяет
+geometry/camera/pan/prepared-scale; UI действительно переключает «Рядом → Код
+→ Лист» и прокручивает wheel−120/+120. PNG осмотрены: empty panes занимают
+всю область, текст/сцена после возврата не сжаты, бумага и содержимое движутся
+вместе. Это не системная frame-pacing приёмка. Подсветка на настоящем PDF
+ранее принята native16/16 V22; её установка в Release сама по себе не заменяет
+полный shared editing/attention пользовательский маршрут.
+
+Два холодных запуска доставленного Sound с существующим дисковым print cache:
+request→installed **1915.16/1735.15ms**, request→canonical content ready
+**250.83/213.92ms**, canonicalPrint **1.92/104.80ms**; после contentReady до
+подтверждённой установки интерактивного composite остаётся **1664.33/1521.24ms**.
+Цель500ms не выполнена. Это два наблюдения, не p95/десять повторов. Теперь
+видно, что этот cached сценарий задерживается главным образом после готовности
+бумаги, а не на компиляции TeX. Причина задержки программы ещё не доказана.
+
+Fresh installed MCP Sound readback: saved/receivedByIPad подтверждены,
+shownOnIPad всё ещё awaiting_display для исходной actionVersion после более
+нового human state. UI/native installation не подменяет эту квитанцию.
+Семь reference episodes, общий shared route, recovery и системные CPU/GPU/
+представленные кадры/память,10повторов/30мин остаются открытыми. GUI-240/250
+не переводились в Done.
+
 ## 19 сентября, 18:57 МСК — GUI-243: галерея снова принимает пакетные сцены
 
 Реальное выполнение `science-preview.mjs` падало на `gears`: общий список уже
