@@ -42,9 +42,9 @@ struct PenControlsView: View {
       .accessibilityIdentifier("drawing-primary-color")
     }
     .notebookBar()
-    .background {
-      NotebookToolPopover(isPresented:panel != nil,anchor:settingsAnchor,
-        content:settings.environment(model),onDismiss:{ panel = nil })
+    .anchorPreference(key:NotebookToolPanelPreference.self,value:.bounds) { toolbar in
+      panel == nil ? nil : .init(toolbar:toolbar,anchor:settingsAnchor,
+        content:AnyView(settings.environment(model)),dismiss:{ panel = nil })
     }
     .onChange(of:model.drawingTool) { _,_ in panel = nil }
     .onChange(of:inkOnly,initial:true) { _,onlyInk in

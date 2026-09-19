@@ -1960,6 +1960,53 @@ final class DrawingResponsivenessTests: XCTestCase {
     let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "compact-drawing-tools-toolbar"; proof.lifetime = .keepAlways; add(proof)
   }
 
+  func testOpenToolSettingsLetOneTapSelectAnotherTool() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    launchPortraitFixture(app)
+    let eraser = app.buttons["drawing-tool-eraser"], marker = app.buttons["drawing-tool-marker"]
+    let pen = app.buttons["pen-controls-toggle"], color = app.buttons["drawing-primary-color"]
+    XCTAssertTrue(eraser.waitForExistence(timeout:5))
+    // Literal screen taps, not an accessibility activation that could bypass
+    // the panel's outside-tap layer and conceal the two-tap regression.
+    let markerPoint = marker.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+    let penPoint = pen.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+    eraser.tap(); eraser.tap()
+    XCTAssertTrue(app.sliders["eraser-width"].waitForExistence(timeout:2))
+    markerPoint.tap()
+    XCTAssertTrue(marker.isSelected,"The first tap must select the real toolbar button")
+    XCTAssertTrue(app.sliders["eraser-width"].waitForNonExistence(timeout:2))
+    XCTAssertFalse(app.sliders["marker-width"].exists,"Switching selects, but does not open the new settings")
+    marker.tap()
+    XCTAssertTrue(app.sliders["marker-width"].waitForExistence(timeout:2))
+    color.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).tap()
+    XCTAssertTrue(app.buttons["drawing-color-green"].waitForExistence(timeout:2))
+    XCTAssertFalse(app.sliders["marker-width"].exists)
+    penPoint.tap()
+    XCTAssertTrue(pen.isSelected)
+    XCTAssertTrue(app.buttons["drawing-color-green"].waitForNonExistence(timeout:2))
+    pen.tap()
+    XCTAssertTrue(app.sliders["pen-width"].waitForExistence(timeout:2))
+    penPoint.tap()
+    XCTAssertTrue(app.sliders["pen-width"].waitForNonExistence(timeout:2),"Repeated tap also closes the current panel")
+    XCTAssertTrue(pen.isSelected)
+    pen.tap()
+    XCTAssertTrue(app.sliders["pen-width"].waitForExistence(timeout:2))
+    app.buttons["drawing-tools-more"].coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).tap()
+    let shape = app.buttons["drawing-tool-shape"].firstMatch
+    XCTAssertTrue(shape.waitForExistence(timeout:2)); shape.tap()
+    XCTAssertTrue(app.buttons["drawing-tool-shape"].isSelected)
+    XCTAssertFalse(app.sliders["pen-width"].exists)
+    app.buttons["drawing-tool-shape"].tap()
+    XCTAssertTrue(app.sliders["shape-width"].waitForExistence(timeout:2))
+    eraser.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).tap()
+    XCTAssertTrue(eraser.isSelected)
+    XCTAssertTrue(app.sliders["shape-width"].waitForNonExistence(timeout:2))
+    let proof = XCTAttachment(screenshot:app.screenshot())
+    proof.name = "one-tap-tool-switch-through-open-settings"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testToolSettingsOpenOnRepeatedTapAndPreserveSelection() {
     continueAfterFailure = false
     let app = XCUIApplication()

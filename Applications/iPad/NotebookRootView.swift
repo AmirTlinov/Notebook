@@ -111,6 +111,9 @@ struct NotebookRootView: View {
     .overlay(alignment: .bottomTrailing) {
       if let voice = model.chat?.voice { NotebookVoiceSurface(voice: voice).frame(width: 1, height: 1).allowsHitTesting(false).accessibilityHidden(true) }
     }
+    .overlayPreferenceValue(NotebookToolPanelPreference.self) { panel in
+      if let panel { NotebookToolPopover(panel:panel) }
+    }
     .coordinateSpace(name: "notebook-window")
     .sheet(isPresented: $showsDevices) { NotebookDevicesView().environment(model) }
     .sheet(item: Binding(get: { model.chat?.files.notes.reviewed }, set: { model.chat?.files.notes.reviewed = $0 })) { fragment in
