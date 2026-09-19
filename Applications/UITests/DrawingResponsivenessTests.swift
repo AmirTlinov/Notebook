@@ -1530,7 +1530,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       for expanded in [false, true] {
         if expanded { openChat(in: app) }
         let controls = ["previous-page", "page-overview", "next-page",
-          "pen-controls-toggle", "drawing-tool-eraser", "pen-settings"]
+          "pen-controls-toggle", "drawing-tool-eraser"]
         let unobstructed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
           let window = app.frame, frame = panel.frame
           guard (window.width > window.height) == landscape,
@@ -1853,7 +1853,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     proof.name = "codex-panel-keyboard-landscape"; proof.lifetime = .keepAlways; add(proof)
   }
 
-  func testEraserAndPenSelectDirectlyBeforeOpeningPenSettings() {
+  func testToolSettingsOpenOnRepeatedTapAndPreserveSelection() {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
@@ -1878,8 +1878,29 @@ final class DrawingResponsivenessTests: XCTestCase {
     )
 
     let settings = app.sliders["pen-width"]
+    let eraserSettings = app.sliders["eraser-width"]
+    XCTAssertFalse(app.buttons["pen-settings"].exists, "Настройки не занимают отдельное место на панели")
+    XCTAssertFalse(settings.exists)
     eraser.tap()
     XCTAssertTrue(eraser.isSelected)
+    XCTAssertFalse(eraserSettings.exists, "Первое нажатие только выбирает ластик")
+    eraser.coordinate(withNormalizedOffset: .init(dx: 0.1, dy: 0.1)).tap()
+    XCTAssertTrue(eraserSettings.waitForExistence(timeout: 2))
+    XCTAssertFalse(settings.exists, "У ластика открываются только его настройки")
+    let initialEraserWidth = eraserSettings.value as? String
+    eraserSettings.adjust(toNormalizedSliderPosition: 0.7)
+    let chosenEraserWidth = eraserSettings.value as? String
+    XCTAssertNotEqual(chosenEraserWidth, initialEraserWidth)
+    let eraserProof = XCTAttachment(screenshot: app.screenshot())
+    eraserProof.name = "eraser-settings-from-repeated-tap"; eraserProof.lifetime = .keepAlways; add(eraserProof)
+    app.buttons["Закрыть настройки"].tap()
+    XCTAssertTrue(eraserSettings.waitForNonExistence(timeout: 2))
+    XCTAssertTrue(eraser.isSelected)
+    eraser.tap()
+    XCTAssertTrue(eraserSettings.waitForExistence(timeout: 2))
+    XCTAssertEqual(eraserSettings.value as? String, chosenEraserWidth)
+    app.buttons["Закрыть настройки"].tap()
+    XCTAssertTrue(eraserSettings.waitForNonExistence(timeout: 2))
     let inactivePen = pen.screenshot()
     pen.tap()
     XCTAssertFalse(settings.exists, "Первое касание выбирает ручку и сохраняет компактную панель")
@@ -1899,12 +1920,12 @@ final class DrawingResponsivenessTests: XCTestCase {
     penProof.lifetime = .keepAlways
     add(penProof)
 
-    pen.tap()
-    XCTAssertFalse(settings.exists, "Повторное касание тоже только выбирает ручку")
-    let settingsButton = app.buttons["pen-settings"]
-    XCTAssertEqual(settingsButton.frame.width,44,accuracy:1); XCTAssertEqual(settingsButton.frame.height,44,accuracy:1)
-    settingsButton.coordinate(withNormalizedOffset:.init(dx:0.1,dy:0.1)).tap()
-    XCTAssertTrue(settings.waitForExistence(timeout: 2), "Вся область кнопки открывает настройки, не только штрихи иконки")
+    pen.coordinate(withNormalizedOffset: .init(dx: 0.1, dy: 0.1)).tap()
+    XCTAssertTrue(settings.waitForExistence(timeout: 2), "Повторное нажатие всей областью инструмента открывает настройки")
+    XCTAssertFalse(eraserSettings.exists)
+    XCTAssertTrue(app.sliders["pen-minimum-opacity"].exists)
+    app.buttons["pen-color-red"].tap()
+    XCTAssertTrue(app.buttons["pen-color-red"].isSelected)
     XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "pen-stroke-preview").firstMatch.waitForExistence(timeout: 2))
     let previewProof = XCTAttachment(screenshot: app.screenshot())
     previewProof.name = "actual-pen-pressure-preview"; previewProof.lifetime = .keepAlways; add(previewProof)
@@ -1915,10 +1936,11 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertFalse(app.buttons["drawing-tool-pointer"].exists)
     XCTAssertTrue(pen.isSelected, "Selection by finger does not add a drawing mode")
 
-    app.buttons["pen-settings"].tap()
+    pen.tap()
     XCTAssertTrue(settings.waitForExistence(timeout: 2))
-    app.buttons["Закрыть настройки"].tap()
-    XCTAssertTrue(settings.waitForNonExistence(timeout: 2))
+    XCTAssertTrue(app.buttons["pen-color-red"].isSelected, "Повторное открытие сохраняет параметры ручки")
+    app.otherElements["paper-input"].coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.6)).tap()
+    XCTAssertTrue(settings.waitForNonExistence(timeout: 2), "Нажатие вне настроек закрывает их")
     XCTAssertTrue(pen.isSelected, "Настройки не создают скрытого инструмента редактирования")
   }
 
@@ -3948,7 +3970,6 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let controls = app.buttons["pen-controls-toggle"]
     XCTAssertTrue(controls.waitForExistence(timeout: 5))
-    controls.tap()
 
     let eraser = app.buttons["drawing-tool-eraser"]
     XCTAssertTrue(eraser.waitForExistence(timeout: 2))

@@ -2,50 +2,45 @@ import SwiftUI
 
 struct PenControlsView: View {
   @Environment(NotebookAppModel.self) private var model
-  @State private var isExpanded = false
+  @State private var settingsTool: DrawingTool?
 
   var body: some View {
     HStack(spacing: 0) {
-      tool("pencil.tip", title: "Ручка", id: "pen-controls-toggle", selected: isPenSelected) {
-        model.selectDrawingTool(.pen)
-      }
-      tool("eraser.fill", title: "Ластик", id: "drawing-tool-eraser", selected: isEraserSelected) {
-        model.selectDrawingTool(.eraser)
-      }
-      Divider().frame(height: 18)
-      Button { isExpanded = true } label: {
-        Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44).contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .accessibilityLabel("Настройки инструмента")
-      .accessibilityIdentifier("pen-settings")
-      .popover(isPresented: $isExpanded, arrowEdge: .top) {
-        VStack(alignment: .leading, spacing: 20) {
-          HStack {
-            Text(model.drawingTool == .pen ? "Ручка" : "Ластик").font(.headline)
-            Spacer()
-            Button { isExpanded = false } label: { Image(systemName: "xmark").frame(width: 44, height: 44).contentShape(Rectangle()) }
-              .accessibilityLabel("Закрыть настройки").buttonStyle(.plain)
-          }
-          if model.drawingTool == .pen {
-            colorChoices
-            PenStrokePreview(style: model.penStyle).frame(height: 52)
-          }
-          widthControl
-          if model.drawingTool == .pen { opacityControl }
-        }
-        .padding(20).frame(minWidth: 300)
-        .presentationCompactAdaptation(.popover).presentationBackground(NotebookChrome.surface)
-      }
+      tool("pencil.tip", title: "Ручка", id: "pen-controls-toggle", drawingTool: .pen)
+      tool("eraser.fill", title: "Ластик", id: "drawing-tool-eraser", drawingTool: .eraser)
     }
     .notebookBar()
   }
 
-  private var isPenSelected: Bool { model.drawingTool == .pen }
-  private var isEraserSelected: Bool { model.drawingTool == .eraser }
+  private var settings: some View {
+    VStack(alignment: .leading, spacing: 20) {
+      HStack {
+        Text(model.drawingTool == .pen ? "Ручка" : "Ластик").font(.headline)
+        Spacer()
+        Button { settingsTool = nil } label: { Image(systemName: "xmark").frame(width: 44, height: 44).contentShape(Rectangle()) }
+          .accessibilityLabel("Закрыть настройки").buttonStyle(.plain)
+      }
+      if model.drawingTool == .pen {
+        colorChoices
+        PenStrokePreview(style: model.penStyle).frame(height: 52)
+      }
+      widthControl
+      if model.drawingTool == .pen { opacityControl }
+    }
+    .padding(20).frame(minWidth: 300)
+    .presentationCompactAdaptation(.popover).presentationBackground(NotebookChrome.surface)
+  }
 
-  private func tool(_ icon: String, title: String, id: String, selected: Bool, action: @escaping () -> Void) -> some View {
-    Button(action: action) {
+  private func tool(_ icon: String, title: String, id: String, drawingTool: DrawingTool) -> some View {
+    let selected = model.drawingTool == drawingTool
+    return Button {
+      if selected {
+        settingsTool = drawingTool
+      } else {
+        settingsTool = nil
+        model.selectDrawingTool(drawingTool)
+      }
+    } label: {
       Image(systemName: icon)
         .font(NotebookChrome.iconFont)
         .foregroundStyle(Color.primary)
@@ -57,6 +52,13 @@ struct PenControlsView: View {
     .accessibilityLabel(title)
     .accessibilityIdentifier(id)
     .accessibilityAddTraits(selected ? .isSelected : [])
+    .accessibilityHint(selected ? "Нажмите ещё раз, чтобы открыть настройки" : "Выбрать инструмент")
+    .popover(isPresented: Binding(
+      get: { settingsTool == drawingTool },
+      set: { if !$0, settingsTool == drawingTool { settingsTool = nil } }
+    ), arrowEdge: .top) {
+      settings
+    }
   }
 
   private var colorChoices: some View {
