@@ -1,201 +1,76 @@
-# Точный мировой адрес
+# Exact world addresses
 
-`WorldPoint` хранит тайл и нормализованное локальное смещение отдельно. Непрерывный
-диапазон сохраняемого индекса тайла — от −(2^53−1) до +(2^53−1), одинаковый для
-Swift `JSONValue` и JavaScript. Кодирование и декодирование отвергают другие
-индексы; поля с похожими именами внутри произвольной программы не являются
-координатами и не переписываются.
+`WorldPoint` stores a tile and normalized local offset separately. Persisted tile
+indices range from −(2^53−1) through +(2^53−1), exactly representable by Swift
+`JSONValue` and JavaScript. Coding rejects values outside that range. Similar field
+names inside arbitrary program data are not coordinates and are never rewritten.
 
-`CollaborationInkStroke` принимает `worldOrigin` в этом же диапазоне, без второго
-предела ±10^12. Каждая измеренная точка получается локальным смещением от него
-и проверяется до создания `SpatialInkAction`. Если хотя бы одна точка выходит
-за допустимый адрес, весь ход отклоняется с `invalid_operation`: не публикуются
-ни предшествующие операции пакета, ни квитанция, ни новый курсор. MCP применяет
-тот же отказ в `offsetWorld`.
+`CollaborationInkStroke.worldOrigin` uses the same range. Every measured offset is
+validated before creating `SpatialInkAction`. An invalid point rejects the entire
+agent batch with `invalid_operation`, including earlier operations, receipt and
+cursor. MCP `offsetWorld` enforces the same boundary.
 
-## Проверка 10 сентября 2026
+## Camera and native input
 
-Приватный срез от `24bbb162` проверен до интеграции: 18 Core-проверок
-(`agentInk`, `pageInkConcurrent`, `pencilUndo`, `WorldPointCodingTests`) и четыре
-TypeScript-проверки пространственных координат прошли; `tsc --noEmit` успешен.
-Новые проверки проходят оба края и оба направления каждой оси, сохранение и
-обратное чтение точек, а также отказ смешанного пакета без частичной публикации.
-Исходная runtime-разница имеет SHA-256
-`7d5cb2de5c0a62892ede1bf339bb4cea1d48ccb3a7d8f5844e22ad78b3cf6781`.
-Локальные журналы: `/tmp/notebook-world-address-profile.log` и
-`/tmp/notebook-world-address-mcp.log`; оба статуса — 0.
+`WorldPoint.addressOffset` validates finite offsets, exact integral conversion and
+addition overflow before constructing an address. Invalid pan preserves the center;
+invalid pinch publishes neither center nor scale. Pinch solves local displacement
+before normalization, allowing an out-of-range temporary finger anchor when the
+final center is valid. Geometric `offsetBy` is projection, not persisted admission.
 
-## Допуск нового центра камеры
+`SpatialCamera.worldAddress` separates admitted measurement from `screenToWorld`
+geometry. `SpatialInkCanvas` ends a valid span at the address boundary and begins
+another when contact returns. Already accepted points survive; no line bridges the
+invalid gap. Prediction, pen and eraser share this rule. Entirely external contact
+creates no empty UUID and releases input/resources.
 
-`WorldPoint.addressOffset` проверяет конечность смещения, точное преобразование
-целой части и переполнение сложения **до** создания нового адреса. Его используют
-агентские точки и переходы `SpatialCamera`. Pan возвращает отказ, оставляя
-прежний центр; недопустимый pinch не публикует ни новый центр, ни новый масштаб.
-Щипок сначала решает локальное смещение и только затем нормализует адрес:
-временная точка под пальцами может лежать за границей, если конечный центр допустим.
-Произвольный finite Double не может попасть в аварийный Int64-конструктор.
+`WorkspaceItemPose` validates a drop before publication; refusal restores the
+previous cover and allows a later valid drag. Portal entry/exit validates the
+destination camera before changing selection or camera.
 
-Профиль от `5e5e79c` прошёл 39 Core-проверок за 0.239 s: обе оси и оба края,
-возврат внутрь диапазона, крайние finite/nonfinite смещения, щипок с внешним
-якорем, прежняя обратимость камеры/портала/поворота и агентская ручка.
-SHA-256 runtime-разницы:
-`61d75445ac30d0c5e60bfb87ac9a9c84ecdad235a6583a0ae193afe6c9dabf4b`;
-журнал `/tmp/notebook-camera-address-profile.log`, статус 0.
+`interpolatedAddress` interpolates integer tiles and local coordinates separately,
+preserving local precision far from zero. Invalid endpoints/fractions fail before
+arithmetic. Camera springs and reveal use this owner. Rejected assignment does not
+cancel the current trajectory. Creation, movement and stack dissolution validate
+addresses before optimistic state, clocks or SQL change.
 
-Геометрический `offsetBy` остаётся операцией проекции, не допуском нового
-сохраняемого адреса. Эти проверки не подтверждают нативный Pencil, пересекающий
-край допустимого мира, производные границы изображения у этого края или все
-прямые назначения положения. Нативный и полный объединённый маршруты, как
-и физическая приёмка iPad, не заменяются этим Core-профилем.
+A stack fan may geometrically extend outside the persisted address range. Rendering
+and indexing retain that edge, while cold opening uses its valid board anchor
+instead of substituting an invalid page center.
 
-Объединённый `fea0e79` дополнительно прошёл 67 native и два UI-теста камеры,
-композиции, Metal-пулов и портала; `.build/native-address-profile.xcresult`.
-Эти сценарии не проверяют Pencil на предельном мировом адресе.
+## Derived geometry and bounded queries
 
-## Нативный контакт, отпускание обложки и вход в портал
+`WorkspaceSpatialBounds` encodes derived `origin` and `maximum` using decimal
+string `tileX` / `tileY` and normalized numeric `localX` / `localY`.
+Canonical strings preserve Int64 across Swift → JSONValue → JavaScript.
+Rounded numbers, noncanonical strings, overflow, unnormalized or reversed ends fail.
+This does not enlarge the range of persisted physical items.
 
-`SpatialCamera.worldAddress` отделяет физический адрес измерения от геометрии
-`screenToWorld`. `SpatialInkCanvas` допускает точку до добавления в принятую
-линию и нативную геометрию. Выход за край завершает допустимый span, а возвращение
-начинает следующий в том же контакте. Уже принятые точки не выбрасываются,
-через недопустимый промежуток не появляется соединяющая линия. Прогноз Pencil
-имеет ту же границу. Полностью внешний контакт не создаёт пустой UUID и
-освобождает ввод и аренды. Для ручки и ластика действует один путь.
+These geometric bounds also feed read-cursor hashes and paint-order bounds.
+MCP/IPC windows use:
 
-`WorkspaceItemPose` допускает конечный центр до вызова `onDrop`: недопустимая
-посадка возвращает прежнюю обложку, а следующий перенос внутрь остаётся рабочим.
-`BoardPortalProjection.enteringCamera` аналогично отказывает до назначения
-недопустимого центра ребёнка, не меняя проверку покрытия порталом.
+```js
+{ bounds: { anchor, region: { x, y, width, height } } }
+```
 
-10 сентября в 20:59 МСК на неизменной копии
-`.build/pencil-world-address-development` прошли **26 Core / 5 suites** (0.958 s)
-и **46/46 native**: `NotebookInputTests`, `WorkspaceItemPoseTests`,
-`PortalPassageTests`. Ошибок, пропусков и runtime warnings нет, Simulator
-`24A434`. Новый тест проходит восемь контактов: обе оси, оба края, ручка и ластик.
-Он использует настоящую подготовленную композицию, установленный Metal-владелец,
-Pencil recognizer, а затем SQLite-публикацию и обратное чтение: UUID, точки,
-порядок двух spans и инструмент равны принятому значению. Отдельно проверены
-полностью внешний контакт, недопустимая посадка и следующий допустимый перенос.
+`anchor` is an admitted WorldPoint. Offsets are within ±10 million points;
+positive dimensions are at most 10 million. The full finite rectangle is validated
+before SQL; its external edges are not clipped into physical item addresses.
+`visibleBounds` anchors at the exact camera center and works at terminal tiles.
+The former `{origin,width,height}` query shape is retired.
 
-Логи: `/tmp/notebook-pencil-world-core-final.log` и
-`/tmp/notebook-pencil-world-native-verified.log`, оба exit 0.
-Native result: `.build/pencil-world-native-verified.xcresult`, summary:
-`.build/pencil-world-native-verified-summary.json`. Runner сообщает 31.464 s;
-summary включает 40.399 s от начала до завершения. Отпечаток двоичного git-diff
-от `63ad950` до и после совпал:
-`fecf089ded1dcafaf5fdde69b78bf0769f368e9116407267b4d370f716d68685`.
+## Verification boundaries
 
-Отрицательные попытки сохранены: новый Core-тест ошибочно конструировал
-`SpatialPoint.infinity` до проверяемого метода
-(`/tmp/notebook-pencil-world-invalid-test-input.log`); он заменён допустимым
-finite-входом, переполняющим нормализацию адреса. При расширении native-теста
-аннотация актора оказалась перед новым методом вместо Driver; отказ сборки
-сохранён в `.build/pencil-world-native-final.xcresult`. Аннотация Driver
-восстановлена, условия тестов не ослаблены. Ранний профиль ручки без ластика
-также сохранился: `.build/pencil-world-native-profile.xcresult`, 45 PASS.
+Core and MCP tests cover both axes/edges, atomic rejection, far-tile precision,
+JSON round trips and cursor invalidation. Native regressions cover measured
+recognizer contacts, spans, SQL readback, drops, portals and cold selection.
+Simulator pixel comparisons checked identical covers at all four extreme corners
+against near-origin controls. These are not hardware Pencil or physical FPS tests.
 
-Эти результаты не являются физическими Pencil-событиями iPad или полным
-`verify.sh`. Прямое создание/показ предмета и производные границы всё ещё нужно
-проверить на крайних адресах. Физическая нагрузка и установка пары открыты.
+A historical cold-scene failure exposed a random-UUID fixture assumption:
+without saved presence, selection uses the first addressed catalog UUID. The
+fixture now explicitly tests both UUID orders rather than retrying randomness.
 
-## Назначение камеры и геометрия изображения
-
-`WorldPoint.interpolatedAddress` строит каждый промежуточный центр из целых
-тайлов и отдельных локальных координат. Он не вычитает два огромных мировых
-Double: движение внутри далёкого тайла сохраняет локальные биты. Округление
-ограничено точными концами каждой оси; недопустимые концы и доли отвергаются
-до арифметики. Пружина камеры и поле раскрытия используют этот же метод.
-Отклонённое назначение не отменяет текущую траекторию и не сообщает о её
-завершении. Создание, перенос и распускание стопки допускают адрес до изменения
-оптимистической модели, причинных часов и SQLite.
-
-Веер стопки остаётся геометрией своего физического владельца. Его внешний
-край может лежать за допустимым адресом: индексы и рендер сохраняют этот край,
-но открытие не подставляет вместо него другой центр камеры. Холодная сцена
-показывает такую стопку на доске у её сохранённого якоря, не открывая смещённую
-страницу. Отказ выхода через портал не успевает изменить выбор или его камеру.
-
-`WorkspaceSpatialBounds` отдельно кодирует **производные границы**: `origin`
-и `maximum` содержат десятичные строки `tileX`/`tileY` и нормализованные числа
-`localX`/`localY`. Строки сохраняют Int64 в Swift → JSONValue → JavaScript;
-декодер отвергает округлённые числа, неканонические строки, переполнение,
-ненормализованные и обратные концы. Это не новый диапазон сохраняемых предметов:
-обычный `WorldPoint` по-прежнему не кодирует внешний адрес. Геометрические
-границы теперь также являются источником хеша курсора чтения и поля `bounds`
-у элемента порядка рисования. Старый кодек через физические адреса удалён.
-
-Ограниченный запрос MCP/IPC задаёт `bounds: {anchor, region}`: `anchor` —
-допустимый `WorldPoint`, `region` — локальная рамка `{x,y,width,height}`.
-Смещения ограничены ±10 миллионов points, положительные размеры —
-10 миллионами. Тот же владелец допускает конечную рамку до SQL; внешний край
-окна не становится предметом и не обрезается. `visibleBounds` оставляет точный
-центр камеры якорем, поэтому наблюдение не отказывает у первого/последнего
-тайла. Предыдущей формы запроса `{origin,width,height}` больше нет.
-
-### Проверка объединённого назначения и проекции — 10 сентября, 22:28 МСК
-
-На неизменной копии `.build/world-camera-admission-cut` прошли **76 Core /
-8 suites** (1.631 s), **43 MCP** и smoke, `tsc --noEmit`, **54 native**
-(49.898 s исполнения). Native — камера, индекс сцены, очередь сохранения,
-портал и SQL-композиция; нет ошибок, пропусков и runtime warnings.
-Профиль включает оба края и направления, сохранение местных битов на далёком
-тайле, JSONValue, отказ до оптимистической публикации, холодный вход у внешнего
-веера, SQL-страницы и отказ изменившегося курсора. Настоящий изолированный IPC
-читает рамку с внешними краями и возвращает точные строки геометрии, не меняя
-сохраняемые адреса предметов.
-
-Дополнительный native-тест переносит одну и ту же обложку во все четыре крайних
-угла. Полные RGBA-буферы SQL-рендера совпадают с контрольными буферами около нуля,
-включая внешние края. Восемь PNG сохранены в xcresult; изображения двух
-противоположных углов просмотрены. Это реальные пиксели Simulator, не доказательство
-кадров или ввода физического iPad.
-
-Сценарий — `/tmp/notebook-world-projection-pixels-verified.sh`; журналы —
-`/tmp/notebook-world-projection-pixels-{core,mcp,native}.log`, статус —
-`/tmp/notebook-world-projection-pixels-verified.status` (0). Результат —
-`.build/world-projection-pixels-verified.xcresult`, сводка —
-`.build/world-projection-pixels-summary.json`, PNG —
-`.build/world-projection-pixels-images/manifest.json`.
-SHA-256 двоичного diff от `9254be1` до/после и в основном дереве одинаков:
-`990bd0ff6bdb9cd7fae39736abef31fc889a0dbed3b01895b8498454221f1487`.
-
-Отрицательные попытки сохранены. Swift Testing не компилировал mutating-вызов
-в новом `#expect`; действие вынесено перед проверкой без изменения её условия
-(`/tmp/notebook-world-camera-admission-core.log`). Следующая native-сборка
-обнаружила недоступный модулю контракт `SpatialCamera.isValid`; он открыт
-владельцем (`/tmp/notebook-world-camera-admission-native-final.log`). Затем
-49 native прошли, а холодный внешний веер выявил настоящий отказ старого хеша
-через WorldPoint (`.build/world-camera-admission-verified.xcresult`). Это
-причина введения кодека геометрических границ; тест не пропущен и не ослаблен.
-Промежуточный профиль после исправления — 53 native PASS; новый итог дополнительно
-включает пиксельный контроль. Полный `verify.sh` этих объединённых изменений
-и физическая приёмка всё ещё требуются.
-
-
-## Холодный выбор по адресу — 10 сентября, 23:10 МСК
-
-Полный проход `47d5bb3` завершился 65: 467 iPad-тестов прошли, один тест
-холодной сцены отказал. Без сохранённого присутствия `NotebookSceneState`
-выбирает первый UUID адресного каталога, а не transient-выбор `WorkspaceIndex`.
-Прежняя фикстура имела случайные UUID и ожидала только внешнего участника:
-в этот раз выбранный внутренний участник корректно открылся страницей.
-Исходный xcresult и все четыре assertion сохранены в
-`.build/world-admission-full-evidence/ipad.xcresult` и
-`/tmp/notebook-world-admission-full-failure-details.json`.
-
-Фикстура теперь явно задаёт оба порядка UUID. До чтения сцены тест проверяет
-отсутствие сохранённого выбора, первый адрес каталога и допустимость обоих
-геометрических центров. Два отдельных сценария требуют соответственно обзор
-по якорю либо страницу по внутреннему центру; проверки положения, выбранного
-UUID, неизменности каталога и внешней геометрии сохранены. Runtime не изменён,
-случайный повтор не используется как доказательство.
-
-На неизменной копии `.build/cold-fan-fixture-cut` от `47d5bb3` прошли
-**55 native-тестов**, без ошибок, пропусков и runtime warnings; runner 46.437 s.
-Профиль включает оба холодных выбора, четыре попиксельных сравнения на границе,
-сохранение, переходы портала и SQL-композицию. Разница до/после и нынешний файл
-совпали: `e62c2e20a8ee5359d2913489cf0921a41738b7fb47f3dc39778d496ddf8b9385`.
-Журнал/статус 0 — `/tmp/notebook-cold-fan-fixture-profile.log` и `.status`;
-сводка — `/tmp/notebook-cold-fan-fixture-summary.json`, результат —
-`.build/cold-fan-fixture-profile.xcresult`. Нужен полный проход объединённого
-дерева; прежний отказ не переименован в PASS.
+Exact September 10 source hashes, negative attempts, logs and counts remain in
+[the historical evidence](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/world-address-contract.md).
+Current release scope is in [verification](verification.md).

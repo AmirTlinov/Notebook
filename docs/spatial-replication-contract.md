@@ -1,96 +1,56 @@
-# Адресная доставка пространственных чернил
+# Addressed spatial-ink delivery
 
-Физическое положение предметов имеет отдельный
-[контракт размещения](board-placement-contract.md): один причинный регистр
-предмета заменяет конкурирующие записи свободной карточки и состава стопки.
-Чернила сохраняют описанного ниже владельца; перемещение не переавторит штрихи.
+Item geometry follows the [placement contract](board-placement-contract.md).
+Moving an item does not re-author its ink.
 
-`NotebookReplicationStore` передаёт пространственные записи тому же
-`NotebookStore.publishSpatialInk`, который сохраняет нативный контакт.
-`SpatialInkReplication` проверяет страницы входящего manifest по 64 адреса,
-корень журнала, заголовок UUID и его неизменяемые spans. Полное восстановление
-`SpatialInkJournal` из локального архива и последующая публикация всего журнала
-удалены из сетевого пути. Другой писатель SQLite не появился.
+`NotebookReplicationStore` delegates spatial records to
+`NotebookStore.publishSpatialInk`, the same publisher used by native contact.
+`SpatialInkReplication` validates manifest pages of 64 addresses, the journal
+root, UUID headers, and immutable spans. Incoming delivery does not reconstruct
+and republish the complete local journal.
 
-Новое действие требует своего заголовка и spans. Уже существующее действие
-сохраняет UUID, инструмент, цвет, исходную причинную версию и измеренные точки;
-меняться может только активность с более поздней версией. Противоречащие значения
-одной версии, чужой UUID в адресе, удаление истории и повреждённый корень дают
-отказ. Старое эхо не возвращает отменённую линию. Локальные позиции прежних
-действий не перенумеровываются; видимый порядок задаётся исходными версиями.
+A new action requires its header and spans. An existing action retains its UUID,
+tool, color, original causal version, and measured points; only activity may
+change under a later version. Conflicting values for one version, mismatched UUIDs,
+history deletion, and a damaged root are rejected. Old echoes cannot reactivate
+an undone stroke. Original versions determine visible order without renumbering
+unrelated local actions.
 
-Сетевой пакет сохраняет исторические измерения даже после удаления их обложки,
-но не создаёт саму обложку и не даёт разрешения новому локальному контакту.
-Нативный путь по-прежнему требует живых владельцев при добавлении и реактивации.
-Содержание, запись получения и входящий курсор принадлежат одной транзакции;
-ошибка после её commit разрешается точным повтором, а не повторной публикацией.
+Content, receipt, and incoming cursor share one transaction. An ambiguous response
+after commit is resolved by exact retry. Native additions and reactivation require
+live owners, while delivery may retain historical measurements after cover removal.
 
-## Проверка 10 сентября 2026
+## Retained sources and live membership
 
-Приватный срез от `0118386` прошёл 17 Core-проверок за 126.303 секунды:
-новая доставка, обычная репликация, нативные пространственные команды и доставка
-агентской ручки. При 100 000 посторонних действиях на той же доске добавление
-потребовало 2 298 SQL-инструкций, отмена — 1 997, повтор — 49, доставка уже
-принятого хода от другого peer — 100. Измерение включает commit. Повреждённое
-постороннее тело не читается, а корень с более поздними часами сохраняется.
+Deletion separates live membership from an already admitted source:
+a notebook retains PAGE and typed order, a document retains its source/state pair,
+and a child board retains its typed node. Existing mergers can accept later fields
+without putting the item back into the catalog.
 
-Дополнительно проверены 131 действие через несколько страниц manifest,
-независимый старый пакет с новым transaction ID, неизменность чужих позиций,
-пять видов конфликтного пакета с откатом его нового вопроса и курсора,
-удалённая обложка и сбои после записи, перед commit и после commit.
-Runtime-разница: SHA-256
-`94bfb7227c20d1614a78b18ef65f465aee644957f8a8d1903a0e05db793a9ce3`.
-Итоговый журнал — `/tmp/notebook-spatial-replication-final.log`, статус 0.
+First admission of a hidden source on a fresh peer needs a complete baseline in
+one snapshot or manifest: PAGE drawing/order/birth/exists, both document roots with
+kind/exists, or a board node with kind/exists. Metadata alone, half a document pair,
+or a tombstone alone cannot create an orphan. Dependencies are checked before
+commit and ACK, independent of UUID ordering.
 
-Сохранены отрицательные подготовительные попытки:
-`/tmp/notebook-spatial-replication-initial.log` — ошибка компиляции тестового
-mutating-вызова внутри `#expect`; `/tmp/notebook-spatial-replication-small.log` —
-штатный локальный писатель не позволил создать повреждённые spans в источнике.
-Тест теперь строит враждебный сетевой manifest, не ослабляя локального писателя.
-Промежуточный профиль из 15 проверок также прошёл; он не заменяет итоговый.
+Ordinary reads, search, link resolution, and local writes require live membership.
+A retained source stays hidden until an authorized causal undo restores it.
+Reusing an occupied UUID is rejected by its existing causal birth/exists records.
 
-На срезе 10 сентября каталог, дерево досок, страницы и документы ещё имели полные сетевые слияния;
-срок хранения журнала требует отдельного протокола checkpoint. Этот профиль
-не объявляет всю адресную репликацию, текущий общий `verify.sh` или физическую
-пару завершёнными.
+Typed placement proofs and retired-page lookup are derived indexes. Rebuilding
+them preserves canonical content, UUIDs, receipts, and read/delivery cursors.
+Current wire and manifest versions are defined in the [transport contract](transport-contract.md).
 
-Тот же сетевой runtime дополнительно прошёл 22 Core-проверки checkpoint,
-объединения и активации и 23 проверки внешнего переноса. Журнал:
-`/tmp/notebook-spatial-replication-transfer.log`, статус 0.
+`CollaborationContent` represents a live cut. A local/incoming cut containing a
+PAGE/document/state/board source whose owner is absent from the final catalog
+fails with `addressed_delivery_required` before content, context, or ACK publication.
+Live-only publication preserves retained sources. Remote historical ink uses its
+existing merger; new local ink on a removed board is rejected.
 
-## S8: сохранённый источник — не живой предмет
+## Verification
 
-Удаление отделяет живое членство от уже допущенного источника. Тетрадь
-сохраняет PAGE и typed order; документ — пару source/state одного UUID;
-дочерняя доска — typed node. Существующие Page/DocumentSource/DocumentState/
-Board mergers принимают поздние поля без возвращения предмета в каталог.
-Это не архив, второй merger или повтор истории квитанций.
-
-Первый допуск скрытого источника на свежем peer требует полного baseline
-из snapshot либо одного manifest: PAGE с drawing/order/birth/exists;
-документ с обоими корнями и kind/exists; доска с узлом и kind/exists.
-Metadata-first, половина документной пары и одиночный tombstone не разрешают
-создать orphan. Проверки зависимостей выполняются до commit и ACK, а проверка
-конечного дерева не зависит от порядка UUID в manifest.
-
-Обычные чтения, поиск, раскрытие ссылок и локальная запись требуют живого
-владельца. Источник остаётся скрытым до разрешённой причинной отмены удаления;
-автоматического resurrection нет. Исторический источник сообщения от этого
-не становится текущим выбором пользователя.
-
-S8 повышает manifest до **8**, локальную производную SQLite-схему — до **11**.
-Схема 11 восстанавливает typed placement proofs в прежнем receipt-derived
-индексе из существующих inverse streams. Пересборка не меняет canonical
-содержание, UUID, квитанции и курсоры чтения/доставки.
-Повторное рождение ранее занятого UUID запрещено существующими causal birth/
-exists записями. Retired-page lookup — производный индекс, не новая история.
-Точный повтор принятого page landing сохраняет идемпотентность.
-
-`CollaborationContent` — живой срез, не замена addressed delivery. Если явно
-переданный local/incoming срез содержит PAGE/document/state/board source с
-отсутствующим в итоговом каталоге владельцем, Core возвращает
-`addressed_delivery_required` до публикации содержания, контекстов и ACK.
-Свежая live-only публикация сохраняет прежние скрытые источники. Remote ink
-history объединяется прежним владельцем; новые локальные изменения чернил
-удалённой доски запрещены. Неизменная история и пропущенная запись в additive
-local merge не считаются новым контактом или запросом удаления.
+Core scenarios cover 100,000 unrelated actions, multiple manifest pages, old echo,
+rollback, replay after commit, removed covers, immutable spans, and baseline
+admission. These checks establish their scoped storage behavior; they do not
+establish current installed-pair performance or unlimited journal retention.
+See [verification](verification.md).

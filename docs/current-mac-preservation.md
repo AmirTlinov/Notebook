@@ -1,41 +1,31 @@
-# Данные уже работающего Mac-помощника
+# Historical Mac data preservation — September 11, 2026
 
-11 сентября 2026, 15:45 МСК, установленный `~/Applications/Notebook.app`
-уже работал с новым SQLite-архивом по обычному пути. Это изменение не выполнялось
-текущим проверенным срезом. Квитанция прежней активации называла 19 записей,
-но живой архив уже содержал 1179: в нём находится новый документ
-`B8AB0A3D-19AC-431E-8460-6451C64D793E`, полный русский перевод из соседней задачи.
-Квитанция активации не является отпечатком этих последующих записей.
+This is provenance for independent copies, not a restoration or release procedure.
+On September 11 at 15:45 MSK, the installed Mac helper already used the current
+SQLite format. Its earlier activation receipt named 19 records; live storage had
+1,179, including document `B8AB0A3D-19AC-431E-8460-6451C64D793E`.
+An activation receipt does not fingerprint subsequent work.
 
-## Независимые копии
-
-Корень сохранения:
+The preservation root is:
 `/Users/amir/Documents/Notebook Backups/2026-09-11-124530-current-mac-preservation`.
 
-- `mac-live-sql-snapshot` получен SQLite online backup из read-only соединения.
-  `quick_check` вернул `ok`; для всех 1179 канонических записей независимо
-  проверены присутствие BLOB и SHA-256. Список адресов и хешей находится
-  в `current-record-proof.json`, отпечатки файлов — в `preservation.json`.
-- `mac-retained-preactivation` — независимая копия старого файлового архива,
-  который обмен каталогов оставил в `Notebook.activation/candidate`.
-  789 файлов, 179429247 байт; исходная опись, копия и повторная опись исходника
-  совпали. Свидетельство — `retained-preactivation-proof.json`.
+- `mac-live-sql-snapshot`: SQLite online backup through a read-only connection.
+  `quick_check` returned `ok`; all 1,179 canonical records had independently
+  verified blobs and SHA-256. Evidence: `current-record-proof.json` and
+  `preservation.json`.
+- `mac-retained-preactivation`: independent copy of the former file archive from
+  `Notebook.activation/candidate`, 789 files / 179,429,247 bytes. Before/copy/after
+  inventories matched; evidence: `retained-preactivation-proof.json`.
 
-Приложение не останавливалось, архив не заменялся и доверие не изменялось.
-Копии и квитанции принудительно сохранены на диск. Это дополнительная защита
-текущей работы, **не окончательная копия после согласованной паузы рисования**
-и не историческое доказательство каждого принятого штриха.
+The application stayed running; storage and trust were unchanged. These durable
+copies are not a final snapshot after a coordinated drawing pause and do not
+prove every historically accepted stroke.
 
-## Текущее назначение копий
+Amir subsequently canceled restoration and kept these archives in reserve.
+Workspace `FAAAC405-8EF9-4FB9-9B93-CBD876FA97A4` must retain its later content.
+The September 10 Lab copy's workspace `17248CEA-63FD-42D3-AC4F-D6C5F13DED14`
+identifies that backup, not the current iPad. Neither restoration nor archive
+merging belongs to an ordinary release. Experimental four-way consolidation was
+not included or applied.
 
-11 сентября Амир явно отменил восстановление прежних архивов и подтвердил,
-что они остаются в резерве. Эти копии и все предшествующие резервные копии
-не удаляются. Рабочее пространство `FAAAC405-8EF9-4FB9-9B93-CBD876FA97A4`
-продолжает жить своим текущим содержанием; его последующие записи нельзя
-подменять сохранённым здесь снимком или прежней квитанцией активации.
-
-Сохранённый 10 сентября Lab называл другое пространство
-`17248CEA-63FD-42D3-AC4F-D6C5F13DED14`; это происхождение резервной копии,
-не адрес нынешнего iPad. Восстановление либо объединение этих архивов теперь
-не входит в выпуск. Подготовленная экспериментальная четырёхсторонняя
-консолидация не включена в исходники и не применялась к настоящим данным.
+See [archive transfer](archive-transfer.md) and [release procedure](release-build-contract.md).

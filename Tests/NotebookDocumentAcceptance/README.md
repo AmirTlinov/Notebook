@@ -1,139 +1,123 @@
-# Приёмка документа через настоящие приложения
+# Document acceptance through real applications
 
-`create-control.js` выполняется как исходник `notebook_execute start` только на
-частном MCP endpoint сопряжённого acceptance Mac. Он создаёт материал через
-публичные `nb.board`, `nb.id`, `nb.transaction` и проверяет адресные чтения
-`nb.document`. Исходник содержит 140 блоков, 35 SVG, 1680 формул и больше 6 МиБ
-текста. Возвращённые documentID, boardID и actionIDs входят в доказательства.
-Сам факт выполнения генератора не доказывает доставку или показ на iPad.
+Run `create-control.js` as `notebook_execute start` source only against the
+paired private acceptance Mac's MCP endpoint. It creates material through
+`nb.board`, `nb.id`, and `nb.transaction`, then checks addressed
+`nb.document` reads. The control has 140 blocks, 35 SVGs, 1,680 formulas, and
+more than 6 MiB of text. Keep returned document/board/action IDs.
+Generator completion alone does not establish delivery or iPad presentation.
 
-`NotebookDocumentAcceptanceUITests` запускает отдельное установленное приложение
-`com.amirtlinov.notebook.acceptance`. Его окружение:
+`NotebookDocumentAcceptanceUITests` launches the separately installed
+`com.amirtlinov.notebook.acceptance` with:
 
-- `NOTEBOOK_ACCEPTANCE_MANIFEST` — manifest уже сопряжённой изолированной пары;
-- `NOTEBOOK_ACCEPTANCE_DOCUMENT_ID` — UUID из результата реального генератора;
-- `NOTEBOOK_ACCEPTANCE_DOCUMENT_TITLE` — необязательное название, по умолчанию
+- `NOTEBOOK_ACCEPTANCE_MANIFEST`: the already paired isolated pair's manifest.
+- `NOTEBOOK_ACCEPTANCE_DOCUMENT_ID`: the actual generator's document UUID.
+- Optional `NOTEBOOK_ACCEPTANCE_DOCUMENT_TITLE`, default
   `Notebook canonical control`.
 
-Тест не заполняет базу, не подменяет ответы агента и не управляет DOM. Поиск,
-открытие, ссылки, страницы, ввод и сохранение выполняются обычными UI-жестами.
-Метод с десятью холодными открытиями следует выполнять до метода редактирования,
-чтобы исходный контрольный документ сохранял точный состав при измерении.
+The test uses ordinary search, open, links, pages, typing, and Save gestures.
+It does not populate storage directly, substitute agent replies, or control DOM.
+Run ten cold openings before editing so measurements use the unchanged control.
 
-Время запрашивается у `DocumentPresentationRecorder`, включённого только для
-acceptance или явного профилирования. Он наблюдает существующий native owner:
-запрос пользователя, получение канонического содержимого и фактическую установку
-готовой текущей поверхности. Целевой период наблюдения — 5 мс; занятый
-MainActor может задержать наблюдение дольше. Эта задержка не вычитается:
-измеряется консервативное время от запроса до наблюдения установки, без
-гарантии погрешности не более 5 мс. Код измерения не вызывает layout, snapshot, фокус или
-загрузку. Отсутствие доступного native record завершает тест ошибкой, а не
-подменяется наличием WebKit или снимка в кэше.
+## Presentation timing and source freshness
 
-В каждом запуске приложения принятые записи имеют уникальные ID и строго
-возрастающее время запроса. Повторное посещение страницы не принимает её старую
-успешную запись: проверяются также доступность host для настоящего касания,
-пересечение с окном и номер текущей страницы из обычного accessibility value
-`page-turn-surface`. История сбрасывается только после нового `app.launch()`.
-Чистый контракт `testInstallationHistoryRejectsReplayedOrOutOfOrderPageReceipts`
-проверяет повтор ID, старый запрос с новым ID, равные времена и новый запуск.
+`DocumentPresentationRecorder`, enabled only for acceptance or explicit
+profiling, observes the existing native owner: user request, canonical-content
+arrival, and installation of the ready current surface. Its target polling
+interval is 5 ms; a busy MainActor may delay observation longer. That delay is
+included, so this is conservative request-to-observed-installation timing,
+not a guaranteed ±5 ms measurement. The recorder does not trigger layout,
+snapshots, focus, or loading. Missing native evidence fails explicitly.
 
-Короткий диагностический метод `testColdOpeningAndDistantLinkPublishFreshNativeInstallations`
-проходит первое открытие, дальнюю ссылку и возврат теми же жестами и строгими
-проверками свежей установки. Он сохраняет отдельные записи и PNG; его успех
-не означает прохождения p95 полного workload.
+Within one app launch, accepted records have unique IDs and strictly increasing
+request times. Revisiting a page cannot reuse its prior record. Checks include
+actual touch eligibility, window intersection, and current page from the ordinary
+`page-turn-surface` accessibility value. History resets only after a new launch.
+`testInstallationHistoryRejectsReplayedOrOutOfOrderPageReceipts` checks repeated
+IDs, stale requests with new IDs, equal times, and new launches.
 
-Холодные открытия повторяются в десяти новых процессах приложения/WebKit,
-каждый начинается с доски. Для тёплых ссылок сначала реально открываются оба
-конца, затем выполняются десять переходов туда и обратно. Порог p95:
-3000 мс для холодного открытия, 300 мс для тёплого перехода. Это измерение
-Simulator от принятого запроса до установки; оно не измеряет touch-to-photon,
-частоту кадров, CPU/GPU или системные пропуски кадров.
+`testColdOpeningAndDistantLinkPublishFreshNativeInstallations` is a short
+diagnostic: open, distant link, and return using the same fresh-install checks.
+It saves records and PNGs; success does not establish full-workload p95.
 
-`export-control.js` после UI-редактирования проверяет его маркер отдельным
-публичным чтением на Mac и запускает долговечное задание экспорта. Следующий
-запуск с jobID читает `nb.exportStatus`. Публикацию PDF и его визуальную
-проверку фиксируют отдельно; ответ `queued` не считается завершённым экспортом.
-У текущего интерфейса документа нет отдельной кнопки экспорта, поэтому этот
-шаг принадлежит публичному API агента.
+Cold measurements use ten fresh application/WebKit processes starting from the
+board. Warm measurements first visit both ends, then execute ten return trips.
+Thresholds: cold p95 ≤3,000 ms; warm p95 ≤300 ms. These are Simulator
+request-to-installation measurements, not touch-to-photon, FPS, CPU/GPU, or
+system dropped-frame measurements.
 
-Сохраняются неизменный source SHA, Release build, manifest, журнал start/resume,
-XCTest attachments и xcresult. Наличие этих файлов и CPU-проверки генератора
-не означают, что приёмка уже выполнена.
+After UI editing, `export-control.js` independently reads the saved marker on
+Mac and starts a durable export job. Later calls with its ID read
+`nb.exportStatus`. Verify PDF publication and appearance separately;
+`queued` is not complete. This scenario's export uses the agent API.
 
-## Системная трасса каждого процесса
+Retain source SHA, Release build, manifest, start/resume logs, XCTest attachments,
+and xcresult. File existence and generator CPU tests do not establish acceptance.
 
-При явном выборе Time Profiler driver создаёт `system_trace.TraceHandshake` до
-запуска Xcode UI runner. Конструктор принимает `session_id`,
-`control_directory`, `evidence_directory`, `simulator_udid`,
-`expected_bundle_id`, `expected_executable_uuid` и
-`segment_time_limit_seconds`. Каталоги control/evidence должны быть новыми;
-родитель может существовать. `start()` получает полный документ параметров
-установленного xctrace, сохраняет его и меняет Hangs threshold на100 мс.
-`environment` передаётся UI runner; `finish()` требует завершённые сегменты,
-`cancel()` прекращает только принадлежащую этому координатору запись.
+## Per-process system tracing
 
-Окружение:
+When Time Profiler is explicitly selected, the driver creates
+`system_trace.TraceHandshake` before the UI runner. Constructor inputs:
+`session_id`, `control_directory`, `evidence_directory`, `simulator_udid`,
+`expected_bundle_id`, `expected_executable_uuid`, and
+`segment_time_limit_seconds`. Control/evidence directories must be new.
+`start()` retains installed xctrace settings and sets Hangs threshold to 100 ms.
+Pass `environment` to UI; `finish()` requires completed segments.
+`cancel()` stops only this coordinator's recording.
 
-- `NOTEBOOK_TRACE_SESSION_ID`: UUID сессии, UI runner и приложение;
-- `NOTEBOOK_TRACE_CONTROL_DIRECTORY`: абсолютный приватный каталог обмена,
-  UI runner и host coordinator. Приложение не читает этот каталог.
+- `NOTEBOOK_TRACE_SESSION_ID`: shared session UUID.
+- `NOTEBOOK_TRACE_CONTROL_DIRECTORY`: private absolute exchange directory for
+  UI runner and host coordinator; the application does not read it.
 
-`NotebookSystemTraceIdentitySurface` публикует только диагностическую identity
-через свой UIKit accessibility value, только для private acceptance bundle
-с явным session UUID и manifest. PID берётся у текущего процесса, UUID — из
-LC_UUID фактически загруженного главного Mach-O, launchID сохраняется на весь
-срок жизни процесса. Surface не объявляет UI готовым и не принимает касания.
+`NotebookSystemTraceIdentitySurface` exposes diagnostic identity only for the
+private acceptance bundle with explicit session/manifest. It uses the current
+PID, loaded main Mach-O LC_UUID, and a per-process launch ID. It takes no input
+and does not declare UI readiness.
 
-После настоящего `app.launch()` XCTest helper читает эту identity и посылает
-READY для нового segment UUID. Host сверяет Simulator container, bundle,
-установленный Mach-O UUID, PID executable и время создания процесса. Затем
-выполняется `xctrace record --device UDID --attach PID`. До запуска регистрируется уникальное Darwin notification через публичный libnotify.
-Только событие `--notify-tracing-started` от ещё живого собственного xctrace
-разрешает STARTED; текст лога не является подтверждением начала записи.
-XCTest повторно проверяет identity и продолжает обычные UI-жесты. Перед
-`app.terminate()` helper отправляет END и ждёт CLOSED; каждый новый launch
-получает собственный сегмент. Максимум16 последовательных сегментов.
+After actual launch, XCTest reads identity and sends READY with a new segment
+UUID. The host validates Simulator container, bundle, installed Mach-O UUID,
+PID executable, and process creation time, then starts
+`xctrace record --device UDID --attach PID`.
 
-Во время записи polling делает только дешёвую проверку liveness `kill(pid,0)`.
-Полная identity проверяется на границах before/start/end/after. Обрыв xctrace,
-тайм-аут старта, смена identity, неправильный UUID или отсутствие END дают
-явный FAIL. Очередная trace не переносится на будущий процесс по старому PID.
-Первичная ошибка сохраняется и при последующей ошибке остановки xctrace.
-`session.json` записывает `primaryError` и отдельные `cleanupErrors`; отказ
-остановки, записи подтверждения или квитанции не превращает сегмент в успешный.
-FAILED не выдаёт CLOSED и не добавляет сегмент в список завершённых измерений.
+A unique Darwin notification is registered through public libnotify before
+recording. Only `--notify-tracing-started` from the still-live owned xctrace
+permits STARTED. Log text is insufficient. XCTest rechecks identity before
+gestures. Before termination it sends END and waits for CLOSED. Each launch gets
+its own segment, with at most 16 sequential segments.
 
-Для каждого сегмента сохраняются команда, начало/конец workload, identity,
-параметры, лог, `.trace` и исходный TOC. Известные имена `time-profile`,
-`potential-hangs` и `hangs-threshold` подтверждены историческим реальным TOC
-проекта; это не обещание схемы любого нового Simulator. Неизвестная схема
-остаётся `captured_unassessed`; ошибка экспорта сохраняет evidence и завершает
-жизненный цикл ошибкой. Явный известный Hangs threshold250 вместо100 запрещён.
-Даже распознанный TOC не доказывает отсутствие зависаний: нужны дальнейший
-экспорт actual rows, покрытие main thread и workload intervals. Счётчик
-пропущенных display frames здесь вообще не выдаётся.
+During recording, polling uses only cheap `kill(pid,0)` liveness checks.
+Full identity checks happen before/start/end/after. Recorder death, start timeout,
+identity changes, wrong UUID, or missing END fail explicitly. PID reuse cannot
+transfer recording to a future process. `session.json` preserves
+`primaryError` and separate `cleanupErrors`; failed cleanup never promotes
+a failed segment to CLOSED or completed.
 
-CPU-проверка маршрута:
+Each segment retains command, workload interval, identity, settings, logs,
+`.trace`, and original TOC. Historically observed schema names include
+`time-profile`, `potential-hangs`, and `hangs-threshold`. Unknown schemas
+remain `captured_unassessed`; export errors preserve evidence and fail the
+lifecycle. A known 250 ms threshold cannot replace 100 ms. Recognized TOC alone
+does not prove absence of hangs: assess actual rows, main-thread coverage, and
+workload intervals. This route does not report dropped display frames.
+
+## Instrument checks and historical failures
 
 ```sh
 python3 -m unittest discover -s Tests/NotebookDocumentAcceptance -p test_system_trace.py -v
 ```
 
-14сентября:16/16 CPU tests PASS; Swift6 strict semantic для UIKit probe,
-XCTest helper и документных UI сценариев PASS. CPU tests используют fake
-xctrace только для проверки порядка событий и отказов, не для приёмочных
-квитанций. Настоящий smoke 14 сентября в 07:35–07:36 UTC дошёл до проверенного
-живого PID, но не получил `Recording started`: системный DVT Instruments
-сообщил об отказе tap configuration/start. Это отрицательное доказательство,
-не успешно собранная трасса. Диагностика и точная идентичность сохранены в
-`.build/v6-trace-diagnosis/`; пороги и границы измерений не изменены.
+On September 14, 2026, 16 CPU checks and Swift 6 semantic checks passed.
+Fake xctrace exercised ordering/failures only. The real 07:35–07:36 UTC smoke
+validated the live PID but DVT Instruments failed tap configuration/start.
+Evidence in `.build/v6-trace-diagnosis/` records a failed capture.
 
-15 сентября: прежнее ожидание строки `Recording started` заменено публичным
-событием xctrace. Настоящий host-Mac recorder успешно завершил запись, не выдав
-такую строку вообще; notification пришёл за 1,965 s при живом процессе.
-18 CPU/notification contracts PASS, включая настоящий libnotify descriptor,
-изоляцию имени, освобождение и запрет запуска workload по одному логу.
-Это исправление START-barrier не снимает отдельный отказ Simulator tap: проба
-`.build/profiler-simulator-notification-diagnostic` не получила события за20s,
-запись не принята. Mac trace не выдан за Simulator CPU/GPU/frames acceptance.
+On September 15, the log-string barrier was replaced by public notification.
+A real Mac recorder notified after 1.965 seconds without printing the expected
+log line. Eighteen CPU/notification contracts passed, including real libnotify,
+name isolation, cleanup, and rejection of log-only readiness. The separate
+Simulator probe in `.build/profiler-simulator-notification-diagnostic` still
+received no event within 20 seconds. Mac recording did not establish Simulator
+CPU/GPU/frame acceptance.
+
+These are dated results; consult [verification](../../docs/verification.md) for
+later receipts and current limitations.

@@ -1,43 +1,36 @@
-# Свидетельства аудита 13 сентября 2026
+# Audit evidence — September 13, 2026
 
-Проверенный код: `fceadf0a7cc553813423f356908bf09574f79a15`.
-Выводы и ограничения — в [отчёте](../../audit-2026-09-13.md).
+Source: `fceadf0a7cc553813423f356908bf09574f79a15`.
+Findings and limitations: [audit summary](../../audit-2026-09-13.md).
 
-- `native-observed.json` — команды, результаты Xcode, классификация семи
-  падений тестовой заготовки и измерение холодной подготовки документа.
-- `mcp-observed.json` — фактический вывод переносимого воспроизведения ниже.
-- `mcp-reproduce.mjs` — диагностическая программа для четырёх найденных ошибок.
+- `native-observed.json`: Xcode commands/results, classification of seven fixture
+  failures and cold document-preparation timing.
+- `mcp-observed.json`: observed diagnostic output.
+- `mcp-reproduce.mjs`: a dated reproducer of four defects, using the **then-current**
+  MCP interface. It is not a regression runner for today's SDK.
 
-## Воспроизведение MCP
+## Historical reproduction
 
-Из корня проекта, с установленными зависимостями `MCP`:
+Use a checkout of the audited revision with its own MCP dependencies:
 
 ```sh
 swift build --product notebook-ipc-test-host
 node --import ./MCP/node_modules/tsx/dist/loader.mjs docs/audit-evidence/2026-09-13/mcp-reproduce.mjs
 ```
 
-При необходимости `NOTEBOOK_IPC_TEST_HOST` задаёт путь к уже собранному
-тестовому исполнителю. Программа создаёт новые временные хранилища и сокеты,
-удаляет их после проверки и печатает путь к отдельному `results.json`.
-Она не подключается к установленному помощнику и не читает рабочие документы.
+`NOTEBOOK_IPC_TEST_HOST` can select an already-built isolated host.
+The script creates temporary stores/sockets, cleans them and prints a separate
+results.json path. It neither connects to the installed helper nor reads user data.
 
-Для `notebook_read_attention` используется настоящий MCP server/client SDK
-и синтетический корректный IPC-ответ: проверяются обе успешные ветви ответа
-с изображением и совпадающим SHA-256 и без изображения. Это проверка
-MCP-границы, а не декодирования картинки или доставки с физического iPad.
-Остальные сценарии используют настоящий `NotebookCore` через тестовый IPC-host.
-Холодный `referenceStatus` вызывается непосредственно через IPC; изменения
-элемента, повтор действия и история — через MCP `tools/call`.
+The former attention tool used real MCP client/server SDK with synthetic valid IPC
+responses, with and without an SHA-matching image. This tested response contracts,
+not image decoding or physical iPad delivery. Other scenarios used actual Core through
+the test host.
 
-На проверенной версии успешное завершение этой диагностической программы
-означает **воспроизведение дефектов**, а не PASS приложения. В ней намеренно
-сохранены ожидания текущих ошибок `read_attention` и повторного действия;
-после исправления они должны перестать выполняться. История и холодный
-регион дополнительно фиксируются в JSON. Это датированное свидетельство,
-оно не включено в постоянный маршрут `verify.sh`.
+Successful execution of this diagnostic meant **reproducing known defects**, not
+application PASS. Its deliberately negative expectations should fail after repair.
+It is excluded from the permanent verification route.
 
-В Git сохранены небольшие текстовые результаты. Полные `.xcresult`, журналы,
-снимки и квитанция дополнительного прогона находятся локально в
-`.build/audit-20260913-selected/` и `.build/audit-20260913-ui-density/`.
-У первого прогона нет квитанции общего PASS: семь проверок завершились ошибкой.
+Small observed records remain tracked. Full local xcresults/logs/images were in
+`.build/audit-20260913-selected/` and `.build/audit-20260913-ui-density/`.
+The first run had seven failures and no overall PASS receipt.

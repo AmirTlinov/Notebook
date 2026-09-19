@@ -1,320 +1,199 @@
-# Физическое продолжение высокой программы
+# Programs across physical document pages
 
-## Исходник и приостановленная программа
+## Source modes and suspension
 
-«Лист → Код» скрывает бумагу, но не закрывает документ. На iPad существующий
-`DocumentProgramOwner` приостанавливает модель и удерживает её WebKit тем же
-механизмом возвратного контекста; на Mac это делает владелец документного iframe.
-Независимая правка текста не пересоздаёт программу. Быстрый возврат к листу ждёт
-подтверждения checkpoint общим писателем; отмена UI-задачи не отменяет эту запись.
-При ошибке записи модель остаётся замороженной, показывает адресный повтор и
-не теряет heap. Только принятый checkpoint разрешает освобождение под давлением
-пула. Возврат без вытеснения продолжает тот же экземпляр, не восстановленную копию.
+Switching Paper → Code hides paper without closing the document. On iPad,
+`DocumentProgramOwner` pauses and retains its WebKit context; the Mac iframe owner
+does the equivalent. Independent text edits preserve unchanged programs.
+Returning waits for the shared writer's checkpoint acknowledgment. Canceling a UI
+task does not cancel that accepted write. On failure the model stays frozen with
+an addressed retry and retains its heap. Only an accepted checkpoint permits
+pressure-driven eviction. Return without eviction resumes the same instance.
 
-## Файловый источник программы (GUI-242, development-срез)
+## File-backed packages
 
-У page/board web element и interactive document block есть необязательный
-`programPackage`: SHA-256 канонического `NotebookProgramPackage`. Он атомарен с
-`kind/source/html` в причинном поле `content`, поэтому смена пакета меняет source
-basis и отвергает старый checkpoint. State и геометрия остаются независимыми.
-Inline и package не смешиваются: для package source/html/css/javaScript пусты.
-Update с `programPackage: null` снимает ссылку и может одновременно задать inline.
+A web element or interactive block may reference `programPackage`, the SHA-256
+of a canonical `NotebookProgramPackage`. It is atomic with source/kind in the
+causal content field; changing it invalidates old checkpoints. State and geometry
+remain independent. Package sources have empty inline HTML/CSS/JavaScript/source.
+An explicit null removes the package and can simultaneously supply inline content.
 
-Один manifest задаёт отсортированные уникальные относительные пути, фиксированные
-MIME, размеры и ordered SHA частей по 4 MiB; максимум 1 MiB metadata, 4096 файлов,
-16384 частей. SHA пакета связывает этот namespace, а не выдаётся за плоскую сумму
-большого файла. Чтение использует прежнее окно <=1 MiB и не собирает файл целиком.
-Части и manifest хранятся в прежнем SQLite SHA store; повтор использует те же bytes.
+A manifest contains sorted unique relative paths, fixed MIME, lengths and ordered
+4 MiB part hashes. Limits: 1 MiB metadata, 4,096 files, 16,384 parts.
+The package hash binds the namespace, not a fictitious flat-file digest.
+Existing reads stream windows up to 1 MiB from the SQL SHA store.
 
-`prepare.mjs program` хеширует файлы вне QuickJS. `submit.mjs` вызывает типизированный
-`notebook_import_program` на Mac, показывает окончательный status; cancel прекращает
-работу между частями. Путь descriptor — только доверенная локальная file capability,
-не browser permission и не выбор Notebook store. `ready` означает admitted bytes,
-не публикацию и не показ. Затем `prepare.mjs animation` принимает `programPackage`
-и формирует обычную атомарную transaction без исходных bytes в args.
-Установленная release-пара и её skill ещё не обновлялись этим development-срезом.
+`prepare.mjs program` hashes files outside QuickJS. `submit.mjs` calls typed
+`notebook_import_program` and reports terminal status; cancellation stops between
+parts. Its descriptor path is a trusted local file capability, not browser access
+or a choice of Notebook store. Ready means admitted bytes, not publication/display.
+`prepare.mjs animation` then creates an ordinary atomic transaction referring to
+the package without embedding source bytes in arguments.
 
-`NotebookProgramAssets` — один URL adapter при существующем WebKit-владельце,
-не новый runtime. У каждого запуска собственный случайный origin
-`notebook-program://<capability>/`. Доступны только перечисленные package paths;
-ни SHA, ни путь SQLite/файла браузер не выбирает. Native metadata read и поток
-HTML/JS/assets не собирают весь ресурс в String/Data. Wrapper HTML окружает
-поток авторского HTML; CSS и entry JS — обычные относительные ресурсы. GET/HEAD,
-один byte range, MIME, Content-Length/Content-Range/416 и части <=1 MiB принадлежат
-этому же reader. При stop/revoke новые callback и чтение запрещены; смена source
-сразу отзывает capability, изменение state или положения её не меняет.
+`NotebookProgramAssets` is a URL adapter on the existing WebKit owner. Each launch
+gets a random `notebook-program://<capability>/` origin and only manifest-listed
+paths. Native metadata and HTML/JS/assets are streamed. GET/HEAD, one byte range,
+MIME, Content-Length/Content-Range/416 and bounded reads share one reader.
+There are at most 64 concurrent readers. Revocation stops new callbacks/reads and
+waits at most for the current bounded read. Source replacement revokes capability;
+state or geometry changes do not.
 
-CSP разрешает только origin этого пакета, необходимые inline bootstrap и
-явно перечисленные data/blob типы. Внешняя сеть, произвольные файлы, формы и
-вложенные frames не разрешены. Та же CSP передаётся response header каждому
-ресурсу, включая worker: одного meta CSP корневого документа недостаточно.
-Максимум 64 одновременных reader; остановка не ждёт больше текущего bounded read.
+CSP allows only the package origin, required bootstrap and explicitly admitted
+data/blob types. External network, arbitrary files, forms and nested frames are
+closed. Every resource, including workers, receives the CSP header.
 
-Spatial runtime, passive raster job и iPad `DocumentBlockRuntime` получают store
-от своего текущего владельца. Mac документ сохраняет прежний iframe/state/lifecycle
-владелец; `document-program.js` — единственный transport adapter для inline и
-файлового child, а `notebook-program.js` по-прежнему владеет публичным API.
-Только child с native-minted package origin получает `allow-same-origin` вместе
-с `allow-scripts`, чтобы Worker сохранил origin; это не origin файлового parent.
-Навигация iframe к file URL запрещена. Inline child остаётся opaque sandbox.
-Независимая текстовая правка сохраняет running child и его capability; замена
-пакета/inline, удаление и закрытие отзывают старый namespace.
+`document-program.js` is the Mac inline/package transport adapter;
+`notebook-program.js` owns the public API. Only a native-minted package origin
+receives allow-same-origin with allow-scripts so Worker retains that origin.
+It never inherits the file parent's origin; navigation to file URLs is blocked.
+Inline children remain opaque. Source replacement/removal/closure revokes the
+namespace, while independent text editing preserves it.
 
-## Программный слот в канонической печатной карте
+## Canonical physical slots
 
-Слот задаёт высоту в PDF points (`bp`), не в типографских TeX `pt`.
-Его breakable строки содержат полный по ширине hbox с нулевым по ширине
-strut. SyncTeX decoder узнаёт именно эти строки, сохраняя их реальные
-координаты и сумму высот; sourceOffset следующего фрагмента — сумма
-предыдущих, а не включённого по ошибке номера страницы. TeX shipout может
-приписать колонтитулу исходную строку прерванного слота: он не становится
-содержанием программы. Исходный текст/формулы продолжают пользоваться
-обычной source map. Один и тот же decoder обслуживает экран и экспорт.
+Program height is in PDF points (`bp`), not TeX `pt`. Breakable slot rows contain
+full-width boxes and zero-width struts. SyncTeX recognizes those rows and retains
+their real coordinates/heights. A continuation's `sourceOffset` is the sum of
+preceding fragment heights, not a page number or footer's inherited source line.
+The same decoder serves screen and export. See [cut admission](document-program-cuts.md).
 
-## Исполнитель блока и физические листы на iPad
+## iPad owners and native handoff
 
-`DocumentPagePresentationOwner` владеет подготовкой бумаги, композиционными
-снимками и нативной передачей. `DocumentProgramOwner` владеет runtime-словарём,
-применением состояния, приостановкой и checkpoint-задачами отдельных программ.
-У каждого checkpoint свой исход и отмена; бумажная задача его не ожидает,
-если её лист не содержит этой программы. Завершение записи повторно проверяет
-источник, актуальную потребность и принятый ввод; только затем снимок заменяет
-живой viewport и освобождается его допуск. Один
-`DocumentBlockRuntime` исполняет конкретный block ID и source version в своём
-WebKit; текущая страница монтирует его полный viewport за нативной обрезкой
-`DocumentProgramOverlayHost`. Допущенный высокий блок сохраняет тот же контекст
-при переходах между его удержанными фрагментами. Текстовый `DocumentWebCoordinator`
-и печатный движок не запускают скрытые копии интерактивных программ.
+`DocumentPagePresentationOwner` owns paper preparation, composites and handoff.
+`DocumentProgramOwner` owns per-program runtimes, state, pause and checkpoint jobs.
+Paper waits only for programs relevant to its demand.
 
-Соседняя страница независимо готовит пассивный текст и получает точные снимки
-нужных областей существующих program viewports. Захват не меняет размер,
-родителя или доступность текущей программы. Готовая кнопка принимает первый
-жест и во время подготовки соседа. Ожидающая программа показывает своё
-состояние подготовки; ошибка и повтор ограничены её областью.
-`PageTurnActivity`, реальные касания и фокус поля удерживают нативное размещение.
-Нативный редактор сохраняет свой ввод независимо от контекста программы;
-черновики и сохранение принадлежат общему писателю.
+One `DocumentBlockRuntime` executes a block ID/source version in one WebKit.
+`DocumentProgramOverlayHost` mounts its full viewport behind a native clip.
+Retained continuations share the same context; paper coordinators and typesetting
+never start hidden copies. A passive neighbor borrows exact viewport cuts without
+resizing, reparenting or disabling the current program. Ready controls accept their
+first gesture while neighbors prepare. Local preparation/failure/retry occupies only
+the affected region. Native contact, focus and page turns retain placement.
 
-Число одновременно исполняемых программ ограничивает общий `SceneRenderResources`.
-Видимость задаёт спрос, а не второй лимит исполнителей: все действительно видимые
-программы автоматически запрашивают свой runtime. Документ получает видимую область
-из нативной обрезки текущего листа; обычный лист — из своего `PagePresentationNativeView`,
-доска — из установленного пространственного cohort. После движения камера сначала
-проектирует прежние нативные плоскости, затем обновляется спрос. Фокус и принятое
-касание удерживают уже работающую программу.
+Visible geometry determines runtime demand through the existing
+`SceneRenderResources` pool. Document demand comes from native page clipping,
+ordinary paper from `PagePresentationNativeView`, and boards from the admitted
+spatial cohort. Camera motion projects existing planes first, then updates demand.
+Accepted touch and focus pin active programs.
 
-В обычном профиле одновременно допускаются три фоновые живые программы, остаются
-резервы ввода и подготовки; размеры пула не увеличены. Остальные видимые элементы
-показывают локальное ожидание ресурсов, а не «готовый» снимок или кнопку «Запустить».
-Освобождение действительного допуска будит очередь; заполненная очередь повторяет
-спрос по новой версии доступности, без таймера и дополнительного касания. Время
-очереди не тратит восемь секунд, отведённых исполнению после допуска. Настоящая
-ошибка JavaScript освобождает неисправный executor и показывает адресный «Повторить»;
-принятое явное состояние остаётся у писателя. Ключ допуска включает document ID и
-block ID; снимок удерживает заём того же исполнителя, поэтому для одного блока
-нельзя создать параллельный WebKit. Ожидание никогда не запоминает координаты касания
-для позднего воспроизведения. Сохранённые пассивные пиксели могут оставаться под
-локальным статусом, но не подтверждают готовность ввода.
+The shared pool defaults to six WebKit surfaces, at most two background surfaces
+and reserved input/preparation capacity; live input programs are not passive work. Other visible programs show local resource waiting, not a
+false ready image or an extra Run button. Real lease release wakes queued demand;
+availability generations replace timer polling. Queue time does not consume the
+eight-second execution deadline after admission. JavaScript failure releases the
+faulty executor and offers an addressed retry, preserving accepted explicit state.
+Admission identity includes document and block IDs, and snapshots borrow that same
+executor. Input coordinates are never retained for later replay.
 
-Передача по дальней ссылке монтирует подготовленную живую бумагу даже при наличии
-программ. Их runtime устанавливается в целевой контейнер после нативного handoff;
-неисправный интерактив не запрещает читать текст. Полный curl-снимок, напротив,
-требует пиксели всех своих программ. Ошибка такого композита не отравляет последующую
-живую передачу той же версии. Подтверждения имеют явную область: Save ждёт каноническую
-бумагу, действие над блоком — именно этот блок, полная страница — все её источники.
-Изображение, runtime и разрешение ввода не подменяют друг друга.
+Distant-link handoff installs prepared paper even with programs; runtimes mount
+afterward. A broken program does not block reading text. Full curl composites
+require all program pixels, but their failure does not poison later live paper.
+Save confirms canonical paper; a block action confirms that block; a full-page
+receipt covers all sources. Image, runtime and input readiness stay distinct.
 
-Перед приостановкой общий `WebResources/notebook-program.js` прекращает новые
-commits, вызывает авторские `pause` и `checkpoint`, получает полное JSON-состояние
-остановленной модели. `DocumentBlockRuntime` допускает новое значение только
-при прежних source/state versions и подтверждает его через единственного писателя;
-затем прежний владелец получает пиксели полного остановленного viewport.
-Пока это происходит, прежний WebKit остаётся установленным. Единственная нативная
-транзакция заменяет его обрезанным изображением; принятое касание или фокус
-откладывают эту передачу. Отказ сохранения оставляет тот же runtime и локальную
-ошибку с повтором. Поздний ответ не отменяет вновь возникшую видимость блока. Повторный
-запуск приостановленной программы восстанавливает её source identity и
-`notebook.state`; сохранение произвольного JavaScript heap не обещается.
+## Lifecycle and durable state
 
-API устанавливается до выполнения авторского HTML. Обратное состояние
-принимается по новой наблюдённой causal state version. `onStateChange` сразу
-возвращает принятую версию или отказ; это подтверждение admission, а не диска.
-Применение проверяет счётчик локальных commits и в JavaScript, и после
-асинхронного ответа на нативной стороне. Старый оптимистичный echo не возвращает
-счётчик назад. Изменение версии исходника заменяет ровно соответствующий runtime.
+NotebookProgram/1 is shared by spatial WebKit, iPad blocks, Mac iframes and preview;
+only transport adapters differ. The API is installed before authored HTML.
+JavaScript must declare `notebook.ready`; all declared promises count.
+Missing declaration, rejection or a hung promise cannot succeed. Static HTML
+needs no declaration. The author owns scheduling, pause and disposal of resources.
 
-`NotebookProgram/1` — один JS-источник для spatial WebKit, отдельного iPad-блока,
-iframe Mac и локального preview. Их транспортные адаптеры остаются разными.
-JavaScript обязан объявить `notebook.ready`; все объявленные promises входят
-в готовность. Отсутствие декларации, rejected или hung promise не дают success.
-Статическому HTML декларация не нужна. У lifecycle нет общего scheduler:
-автор сам останавливает свою модель/ресурсы и освобождает их в `dispose`.
-Checkpoint не ждёт rAF скрытого WebKit; границей пикселей остаётся нативный
-snapshot. JS ограничивает lifecycle четырьмя секундами; нативный адаптер имеет
-независимый предел 4,5 секунды, поскольку скрытый WebKit может остановить и timers.
-После отказа тот же runtime возобновляется. Preview не подтверждает запись,
-доставку или физическую приёмку.
+Pause stops new commits, invokes authored `pause` and `checkpoint`, then obtains
+complete JSON state. Native admission checks exact causal source/state versions
+and persists through the shared writer before capturing the stopped viewport.
+The original WebKit remains mounted until one native transaction replaces it with
+the clipped image; contact/focus postpones that handoff.
 
-Окно программ выводится из принятой геометрии mounted/requested страниц и одной
-соседней с каждой стороны. Программа вне этого окна освобождается только после
-согласованной остановки новых `notebook.commit`, получения последнего явного
-состояния и подтверждения `onStateCheckpoint`. Этот callback проходит через
-очередь писателя и проверяет точные причинные source/state versions в SQLite.
-Состояние другого блока не вызывает ложный конфликт; изменение и возврат того же
-значения (ABA) не разрешает старой программе запись. Callback возвращает принятую
-версию, а не Boolean: запоздалый UI echo не откатывает подтверждённую модель.
-Оптимистичное
-состояние SwiftUI подтверждением сохранения не является. После ответа повторно
-проверяются окно, source token, фокус и нативный жест. Отказ сохраняет runtime
-и не блокирует открытие других страниц. Возврат восстанавливает block ID,
-source version и сохранённый `notebook.state`; произвольный heap за пределами
-окна, как и после закрытия документа, не сохраняется.
+I/O or lifecycle failure retains the runtime and retry. A causal rejection caused
+by source replacement, deletion or newer state retires the obsolete heap without
+overwriting accepted state. Late completion rechecks source, current demand and
+input. Return after eviction restores source identity and `notebook.state`, not an
+arbitrary JavaScript heap.
 
-Фон, уход с поверхности и закрытие проходят через тот же checkpoint, а не
-через отдельное периодическое автосохранение. Одновременные запросы остановки
-объединяются у исполнителя. Успешная остановка идемпотентна до `resume`;
-возврат в foreground возобновляет существующий контекст. Нативное снятие
-представления удерживает прежний WebKit и его действительный допуск до ответа
-писателя. Ошибка I/O или lifecycle сохраняет их для явного повтора. Причинный
-отказ из-за замены исходника, удаления или более нового состояния, напротив,
-освобождает устаревший heap и не перезаписывает новое состояние.
+State application checks the local commit counter in JavaScript and again after
+the native asynchronous reply. Old optimistic echo cannot roll the counter back.
+`onStateChange` acknowledges admission, not disk. `onStateCheckpoint` returns the
+accepted version after SQL, not a Boolean or optimistic SwiftUI state. Another
+block's change does not conflict; ABA in the same field does.
 
-Документ вне рабочего набора модели не считается удалённым: его финальный
-checkpoint адресует один существующий блок в SQLite, не открывает документ
-и не загружает весь журнал. Mac iframe передаёт ту же наблюдённую state version;
-нативный владелец подтверждает её только после сохранения. Сохранённый кадр,
-оптимистичный `commit` и durable checkpoint остаются различными границами.
+Lifecycle timeout is four seconds in JS and independently 4.5 seconds natively,
+because hidden WebKit can suspend timers. Checkpoint does not await hidden rAF.
+Coalesced pause is idempotent until resume. Backgrounding, leaving and closing use
+that same checkpoint path, not a periodic autosave. Native removal retains the
+actual WebKit/lease through writer completion. An unloaded document is not deleted:
+its final checkpoint addresses one SQL block without loading the full document.
 
-У страницы без программ уже захваченные пиксели бумаги сразу становятся
-конечным изображением; второй полный буфер не создаётся. Для программы
-владелец страницы получает единый допуск бумаги, нужных срезов программ и результата
-до первого захвата. Каждому исполнителю передаётся уже полученный резерв;
-промежуточный снимок не освобождает и не запрашивает свои байты повторно.
-Требование выражено целым числом пикселей, включая округление высоты WebKit.
-Изменение масштаба меняет требование плотности пассивного изображения. Оно
-участвует в том же лимите, что сцена, и уточняется после реального освобождения
-ресурсов; собственное освобождение не запускает бесконечный повтор. Пустая
-страница показывает подготовку, ошибка сохраняет доступную кнопку повтора.
-Изображение из кэша с тем же source token не подтверждает текущий кадр живой
-анимации. В момент отправки сообщения `capturePresented` синхронно сохраняет
-фактически установленную область бумаги вместе со всеми нативными программами;
-кодирование PNG происходит позже, из уже сохранённых пикселей. Скрытая область,
-незавершённая передача или отсутствующее установленное представление возвращают
-явную недоступность. Отдельный асинхронный `captureCurrent` получает новый кадр
-для обычного запроса изображения и не служит доказательством момента отправки.
+The working window follows admitted mounted/requested pages plus one neighbor on
+each side. Outside it, release follows durable checkpoint and a fresh visibility/
+focus/source/contact check. A failed checkpoint does not prevent other pages opening.
 
-`DocumentProgramOwnerTests` проверяет единственность контекста, независимость
-от неготового соседа, сохранение редактора, checkpoint перед освобождением и
-работу девяти программ на одном листе без увеличения пула. Нативный владелец
-пассивного изображения освобождает его pin при снятии с поверхности, даже если
-UIKit ещё удерживает сам UIView; квитанция установленного изображения ресурсов
-не удерживает. Снятый физический clip удаляет дочерний WebKit и не сохраняет
-сильную ссылку на исполнитель. Завершение координатора снимает также fallback
-страницы; удержанная оболочка перехода не продлевает скрытое владение пикселями.
-Жесты и физическая приёмка остаются отдельными проверками; их фактические
-результаты фиксируются в `verification.md`.
+## Pixels and submitted evidence
 
-## История исходного отказа 11 сентября
+Paper without programs reuses captured pixels directly. A program composite reserves
+paper, cuts and result before the first capture; sub-operations borrow that admission
+rather than releasing/reacquiring bytes. Exact integer dimensions include WebKit
+height rounding. Passive density follows scale within the shared pool and retries
+on actual capacity release without a self-triggered loop.
 
-Неизменный `.build/tall-program-cut` от `988b3ac` с уже проверенными изменениями
-нативного текста/IPC и новой проверкой сохранил два PNG настоящего WebKit.
-Оба листа повторяют начало программы, а изображение выходит на поля. Браузер
-правильно измерил две части высотой 1283.21875 и 764.78125 points: вместе ровно
-2048. Ошибка принадлежала показу, а не вычислению числа листов. Ифрейм получал
-объединённую рамку двух колонок без смещения по исходной высоте программы.
+`capturePresented` synchronously freezes the installed paper and native programs
+at Send; PNG encoding happens later from those pixels. Hidden/uninstalled/pending
+handoff surfaces report unavailable. Asynchronous `captureCurrent` captures a new
+frame for ordinary image requests and cannot prove the send instant. A cached
+source token alone is not evidence for a current animated frame.
 
-Проверка остановилась на пиксельном `XCTAssertLessThan` второго листа;
-два независимых sample застали XCTest внутри символизации этого отказа.
-После этого остановлен сам xcodebuild, без повторного запуска прежних исходников.
-Статус **73**, итог xcresult — **Failed / Testing was canceled**, не обычный
-завершённый отрицательный тест и не PASS. Разница до/после неизменна:
-`7444eff54c664220cc4de57d0065f636e466fa83a2d3f557cc21f0b7a2c3882a`.
+Unmount releases passive raster pins even if UIKit retains its UIView. Clips remove
+child WebKit references; coordinator completion also releases page fallback pixels.
 
-Квитанция — `.build/tall-program-baseline.xcresult`. Просмотренные PNG и измерения
-экспортированы в `/tmp/notebook-tall-program-baseline-attachments`, там же
-`manifest.json`; две выборки стека —
-`/tmp/notebook-tall-program-baseline-sample-{1,2}.txt`. Причина остановки и
-неуспешная сводка сохранены с тем же префиксом. Это не системный InputUI-сбой
-и не основание менять автокоррекцию или отключать тест.
+## Semantic attention
 
-## Владелец измерения и показа
+Optional `notebook.semantic` returns one bounded authored object after pause/
+checkpoint. It is data, not instructions or permission. Metadata shares the exact
+`RasterLease` / `NotebookSubmittedPixels` with the image and is transformed from
+program viewport through physical fragment into the selected crop.
 
-`document-shell.html` измеряет каждый фрагмент одной браузерной раскладки.
-Вместе с физической рамкой он удерживает высоту предыдущих частей того же блока.
-Установленная программа сохраняет свой полный iframe и его высоту. Физическая
-оболочка обрезает текущую часть, а iframe смещается по измеренной высоте исходника;
-объединённая рамка колонок больше не участвует в показе. Смена страницы не
-перезагружает программу и не повторяет разметку или MathJax внутри этой поверхности.
-Закрытие программы удаляет и её оболочку, и прежний браузерный контекст.
+Existing attention owns the explicit pause and temporarily closes native input so
+scroll/pick cannot detach the anchor from its frame. Send freezes the installed
+surface before releasing pause. Clear, error and disposal also release it.
+Source/state/UUID guards prevent late callbacks affecting another heap or pause.
+Newly accepted state releases old attention pause before applying.
 
-Тесты требуют разные реальные центральные пиксели двух листов, неизменную
-идентичность iframe и один запуск программы. Вторая проверка ставит перед
-программой текст: первая часть короче полного листа, сумма частей остаётся 2048,
-возврат назад сохраняет тот же viewport, а состояния ширины и высоты берутся
-из самой работающей программы. Неизменный профиль прошёл **44 MCP** с проверкой
-типов и изолированным smoke, **97 Mac** (74.902 s) и **40 iPad** (19.070 s),
-без ошибок, пропусков и runtime warnings. Два положительных PNG экспортированы
-из `.build/tall-program-fragments-mac.xcresult` в
-`/tmp/notebook-tall-program-fragments-attachments` и просмотрены: второй лист
-продолжает зелёную полосу, затем показывает синюю; поля обоих листов свободны.
-Код раскладки колонок не изменён: заменён только владелец физического показа.
+Immutable `AgentPinnedSource.programSemantic` binds image SHA and reference revision.
+Without proven pause, ready capture and valid callback it is unavailable, even if
+visual evidence exists. It neither expands RequestGrant nor bypasses CAS.
 
-Профиль — `.build/tall-program-fragments-cut`; 516 исходных файлов с SHA-256
-`648be8a35a7a9d183352e909992e73842c9cb5076331f52f4b5e1f97a12497ac`.
-Разница от `988b3ac` до/после одинакова:
-`e83a6ac73ddfe31e598d8cbfd062e0a4c53c4b8a7ba25d3ad68203deecd20f72`.
-Журналы и обе сводки — `/tmp/notebook-tall-program-fragments-*`; статус профиля 0.
-Полный неизменный маршрут затем прошёл 11 сентября в 04:22 МСК: 499 Core,
-26 Codex, 26 external, 44 MCP, 97 Mac и 476 iPad, без ошибок, пропусков и runtime
-warnings. Квитанция `.build/program-fragments-full-evidence/verification.json`
-связывает ту же опись 516 исходных файлов и 1523 свидетельства. Журнал и статус —
-`/tmp/notebook-program-fragments-full.log` и `.status` (0).
+## Portable document import
 
-Этот исторический результат подтверждал контракт **одной физической WebKit-поверхности**, не завершение общей
-пагинации. Тогда четыре соседние поверхности повторяли полный DOM, а общий
-владелец браузерного документа оставался открытой задачей. Его текущий контракт
-описан выше. Снимки Mac не заменяют физическую приёмку iPad.
+`nb.export(key,{documentID,format:"package"})` uses the same immutable export cut,
+CAS and cancellation without running code or typesetting. Its artifact is
+`document.package` plus unique adjacent `blob-<sha256>` V2 parts.
+Copy the **whole directory**, not just the JSON. Metadata is at most 8 MiB;
+publication remains bounded by 1 MiB / 16,384 parts. Complete dependency sizes and
+hashes are streamed and validated before saved publication.
 
-## Зафиксированный объект и Send (GUI-247)
+From the Notebook skill directory:
 
-Optional `notebook.semantic` возвращает один bounded авторский объект после
-pause/checkpoint. Это данные, а не инструкции/permission. JS heap не читается
-при Send и не запускается снова для старого кадра. Метаданные принадлежат
-тому же `RasterLease`/`NotebookSubmittedPixels`, что и изображение; смена
-raster entry не меняет уже удержанное значение. Anchor обрезается и переводится
-из viewport программы в физический фрагмент страницы, затем в выбранный cut.
+```sh
+node scripts/submit.mjs /absolute/directory/document.package
+```
 
-Явная пауза принадлежит retained visuals существующего attention. Native
-ввод этого owner временно закрыт, чтобы scroll/новый pick не оторвали anchor
-от кадра. Send сначала синхронно копирует установленную native поверхность,
-затем освобождает эту паузу. Снятие выбора, ошибка и уничтожение owner также
-освобождают её; UUID и source/state guards не дают позднему завершению затронуть
-новую паузу/heap. Новая принятая state-версия снимает старую attention-паузу
-до apply, иначе suspended JS отвергал бы законное человеческое продолжение.
+The existing importer admits dependencies, then submits one ordinary
+`createDocument` transaction in the current workspace. It accepts a whole source
+file or explicitly addressed parts, deriving part paths only from adjacent hashes.
+Retries preserve package/run/document identities; an uncertain response resumes
+rather than creating another transaction. Saved block values, including JSON null,
+replace initial state; old workspace causal clocks are not imported. Code remains
+data until explicit opening, and camera/selection stay unchanged.
 
-Поле `programSemantic` в immutable `AgentPinnedSource` связано с image SHA-256
-и reference revision. Без доказанной остановки/готового capture/valid callback
-возвращается unavailable, даже если визуальный Send-снимок есть. Semantic
-payload не расширяет область существующего `RequestGrant` и не обходит CAS.
+This creates a new document copy, not restoration of a historical archive.
 
-## Переносимый экспорт документа (GUI-249)
+## Evidence scope
 
-`nb.export(key, {documentID, format:'package'})` использует тот же immutable
-source/state cut и writer/CAS/cancel, но не запускает программы и typesetter.
-`receipt.artifact` указывает на `document.package` (`NotebookPortable/1`).
-**Копируется весь содержащий его каталог**, не только этот JSON: файлы
-`blob-<sha256>` — уникальные исходные V2 части до 4 МиБ; больших собранных копий
-assets и Base64 в metadata нет. Метаданные среза/manifest ограничены 8 МиБ,
-адресный publication — прежними 1 МиБ/16384 parts. Ресурсы потоково проверяются
-по размерам/SHA до атомарной публикации; неполная closure не получает saved.
-
-Штатная операция `node scripts/submit.mjs /absolute/directory/document.package`
-сначала вызывает прежний `notebook_import_program`, затем одну обычную
-`createDocument` транзакцию в текущем пространстве. Импортёр принимает либо
-исходный целый файл, либо явно адресованные части; у чтения и допуска байтов
-один владелец. Пути частей выводятся только из SHA рядом с manifest. Повтор
-использует те же package/run/document identities; при потере ответа — resume,
-не новая транзакция. Сохранённые значения блоков, включая JSON null, заменяют
-initialState, причинные clocks старого пространства не импортируются.
-Авторский код остаётся данными до явного открытия; камера/selection не меняются.
-Это перенос новой копии документа, не восстановление исторического архива.
+`DocumentProgramOwnerTests` checks one context, independent neighbors/editor,
+checkpoint-before-release and nine programs without enlarging the pool.
+Historical September 11 failures showed repeated first fragments and duplicate
+passive execution; those are superseded by the current owners above.
+[Original measurements and negative evidence](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/document-program-fragments.md)
+remain available. Native tests and preview do not prove physical gestures,
+delivery or long-session acceptance; see [verification](verification.md).

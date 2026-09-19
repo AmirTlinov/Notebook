@@ -1,126 +1,100 @@
-# Автоматическое подключение своих устройств
+# Automatic connection of personal devices
 
-Открыть Notebook на Mac и iPad с одним Apple Account — полный обычный сценарий.
-Нет приглашения, QR, ручного копирования, второго подтверждения или установочного
-разрешения. «Устройства» показывает состояние, а не является шагом подключения.
-Первое обнаружение своих устройств требует доступного iCloud; сохранённая пара
-работает по локальной сети и без интернета. Недоступность Mac не мешает писать.
-Для чата и живого взаимодействия нужен работающий Mac, доступный прямому каналу.
+Open Notebook on a Mac and iPad using the same Apple Account. That is the normal
+connection flow. The Devices screen reports status; it is not an enrollment step.
+First discovery requires iCloud. A saved pair can subsequently use the local
+network without internet. Writing remains available without a Mac; chat and live
+agent interaction require a reachable, running Mac.
 
-## Один владелец доверия
+## Trust owner
 
-`NotebookAccountConnection` владеет жизненным циклом регистрации, обработкой
-смены Apple Account и повтором после сетевой ошибки. `NotebookAccountCloud`
-читает только private database контейнера `iCloud.com.amirtlinov.notebook`:
-зона `NotebookAccount`, одна запись `NotebookDevices/devices`. Поле `directory`
-имеет тип **ENCRYPTED BYTES**; открытых grants и опубликованных секретов нет.
-Bonjour не участвует в принятии доверия.
+`NotebookAccountConnection` owns registration, account changes and network-error
+retry. `NotebookAccountCloud` uses only the private database of
+`iCloud.com.amirtlinov.notebook`: zone `NotebookAccount`, record
+`NotebookDevices/devices`. Its `directory` field is **ENCRYPTED BYTES**.
+Bonjour and cloud notifications do not grant trust.
 
-`NotebookAccountDirectory` хранит пространства, зарегистрированные устройства
-и случайные 256-битные ключи пар Mac–iPad внутри одного пространства. Сохранение
-использует CloudKit CAS (`ifServerRecordUnchanged`): одновременный первый запуск
-не теряет чужую регистрацию и не создаёт два действующих ключа. Сохранённый
-устройством ключ заполняет неизвестную пару без изменения; после регистрации
-каноническим становится ключ private directory. Его нельзя заменить устаревшей
-локальной копией. Для выдачи ключа обе стороны должны присутствовать в аккаунте.
+`NotebookAccountDirectory` holds workspaces, registered devices and random
+256-bit Mac–iPad pair keys within a workspace. CloudKit CAS
+(`ifServerRecordUnchanged`) preserves concurrent registration and a single
+canonical key. A saved device key may fill an unknown pair; after registration,
+the private directory is authoritative. Both devices must be registered before
+a key is issued.
 
-`NotebookKeychainDeviceStore` — единственный actor хранения доверия на устройстве.
-Он атомарно сохраняет аккаунт, ключи и локальный запрет автоподключения, затем
-читает результат обратно. Адрес установленного элемента и device-only protection
-сохранены. Однократное чтение старого формата переносит только завершённые
-доверенные пары; незавершённые подтверждения не дают доступа. Старых обработчиков
-приглашений, установочных grants и подтверждений в приложениях больше нет.
+`NotebookKeychainDeviceStore` atomically persists the account, keys and local
+auto-connect prohibition, then reads them back. Protection remains device-only.
+One-time decoding of the former format accepts completed trusted pairs only.
+The live applications have no invitation, QR or manual-approval flow.
 
-`NearbySync` начинает сеанс только с сохранённым устройством. Изменения Keychain
-упорядочены, принятая запись завершается при shutdown, позднее завершение не
-воскрешает остановленный сетевой владелец. Повтор доставки неизменной директории
-не переписывает Keychain и не перезапускает Bonjour. Смена ключа новой активации
-закрывает прежний сеанс до подключения с новым ключом. Выключение автоподключения
-не стирает ключ и не отменяется очередным обновлением аккаунта.
+`NearbySync` starts sessions only for saved devices. Trust writes are ordered and
+accepted writes finish during shutdown. Late completion cannot revive a stopped
+owner. An unchanged directory does not rewrite Keychain or restart Bonjour.
+A key change closes the old session before reconnecting. Disabling auto-connect
+retains the key and survives account refresh.
 
-Единственный CKSyncEngine private database получает изменения директории и
-содержания. Выключение синхронизации содержания оставляет только account zone,
-без отправки или чтения материалов. При ошибке работает ограниченный
-exponential backoff; возвращение сети и foreground дают новую попытку. Постоянного
-опроса успешного соединения нет. При смене аккаунта локальный канал останавливается
-немедленно, старое содержание и ключи не отправляются в новый аккаунт. Приложение
-не сбрасывает привязку и не объединяет аккаунты автоматически.
+## Account and cloud scheduling
 
-## Пространства и содержание
+One `NotebookCloudSync` / CKSyncEngine owns the private database, observing the
+account zone and, when content sync is enabled, the selected workspace zone.
+There is no second engine or independent push/subscription route. Account events
+wake the CAS owner; the first observation explicitly fetches the account zone.
+Delegates do not await their own registration task, and every await rechecks
+owner generation.
 
-Новое пустое устройство открывает default space аккаунта автоматически. Если
-человек успел начать работу, автооткрытие отменяется: ввод и локальные материалы
-не отбрасываются. Независимые непустые пространства не сливаются. При нескольких
-пространствах их можно открыть через «Пространства»; каждое имеет свой SQLite-владелец.
-Исходный каталог остаётся на месте. Локальный файл выбора записывается после допуска владельца назначения,
-а прежний writer сначала завершает ввод. Пустая реплика ожидает реальные материалы:
-она не создаёт конкурирующую начальную тетрадь и не публикует пустой cloud snapshot.
-Пока идёт первая загрузка, можно выбрать другое пространство.
-Автопереход закрывает приём нового ввода до последней проверки SQL cursor;
-контакт, принятый во время ответа iCloud, отменяет переход.
-Исторические архивы не читаются и не восстанавливаются.
+Errors use bounded exponential backoff; foreground/network recovery allows a
+retry. A healthy connection is not continuously polled. Account change or sign-out
+stops exchange immediately and preserves local content. Materials and keys never
+move automatically to another account.
 
-Облачная доставка содержания включается при первом подтверждённом аккаунте.
-Ранее выбранное пользователем выключение сохраняется. Переключатель iCloud
-управляет содержанием, не удаляет локальные данные и не заменяет регистрацию
-своих устройств. Account directory не переносит чат, голос или терминал.
+Content sync starts with the first confirmed account unless the user previously
+disabled it. Its switch controls content delivery, not device registration or
+local deletion. The directory carries no chat, voice or terminal data.
 
-Архивная активация остаётся отдельным допуском данных. Её transitionID выбирает
-новую область device-only Keychain при тех же device/workspace UUID. Новая
-регистрация активации заменяет её ключ в account directory; прежняя запись
-Keychain и независимый архив не читаются и не удаляются.
+## Workspace lifecycle
 
-## Проверка и выпуск
+A new empty device automatically opens the account's default workspace.
+Input accepted while account lookup is pending cancels this switch; independent
+nonempty workspaces are not merged. An empty replica waits for actual content
+instead of publishing a competing starter notebook or empty cloud snapshot.
+The user can choose another workspace while loading.
 
-Протокол 24 требует обновления обоих приложений. Старых wire-маршрутов нет. Страницы, камера и выделение принадлежат каждому
-экрану отдельно; удалённой команды переключения страницы больше нет.
-`NotebookAccountDirectoryTests` проверяет регистрацию, сохранение ключей,
-конкурентные/устаревшие данные, активации и изоляцию пространств.
-`NotebookDeviceTrustTests` проверяет реальный Keychain, однократное обновление
-установленных записей, запрет автоподключения и выбор пространства.
-`NotebookAccountConnectionTests` проверяет работу владельца без UI, смену
-аккаунта, остановку поздней регистрации и автоматический выбор пустого устройства.
-Реальные TLS-тесты проверяют proof/ready, неправильный ключ и запрет передачи
-курсора и содержания до допуска аккаунта.
+Each workspace has a separate SQLite store and writer. `NotebookApplicationLaunch`
+drains accepted input and the previous writer before opening or deleting one.
+`NotebookWorkspaceLibrary` owns the local catalog and selected UUID. Destination
+admission precedes saving selection. Removing the last workspace leaves the
+chooser; it does not silently create a replacement.
 
-Schema `NotebookDevices` должна быть опубликована в Production до выпуска пары.
-Подпись пары — `M94V58FCVP`, установленный контейнер и идентичности не меняются.
-Факт компиляции/локального PASS не доказывает CloudKit и физический iPad.
-Точные результаты и история заменённого механизма: [verification.md](verification.md).
+Creation, naming and local use work without pairing. Published names use account
+CAS; filenames and UUIDs are unchanged. Historical archives are not restored.
+An installation activation marker, the common Codex working directory and an
+independent archive are outside a workspace's deletion scope.
 
-### Один системный планировщик облака
+- **Delete from this device** removes local materials after confirmation and
+  leaves the cloud copy. The confirmation warns that unsent changes can be lost.
+- **Delete everywhere** first persists intent, then CAS-removes membership/keys
+  and writes a UUID tombstone, then removes the cloud zone and local files.
+  Interrupted deletion resumes the same intent. An offline device later reading
+  the directory cannot register that UUID again and removes its local copy.
 
-В Production Apple запрещает несколько CKSyncEngine для одной базы:
+Directory format 2 reads format 1 once while preserving keys; an old application
+cannot overwrite format 2. Update both applications together.
+
+Explicit archive activation is a separate data-admission operation. Its transition
+ID selects a new device-only Keychain scope; ordinary updates preserve the
+existing one. See [archive transfer](archive-transfer.md).
+
+## Release and verification
+
+The current source uses wire **37**, manifest **18**; see
+[transport](transport-contract.md). Signed builds use team `M94V58FCVP` and
+preserve installed container identities. The `NotebookDevices` schema must be
+deployed to Production.
+
+`NotebookAccountDirectoryTests`, `NotebookDeviceTests`,
+`NotebookAccountConnectionTests` and real TLS tests cover CAS, account changes,
+Keychain persistence, admission, proof/ready and stopping late registration.
+Compilation and local tests do not establish real CloudKit delivery or physical
+iPad behavior. Installed-pair evidence is in [verification](verification.md).
+
+Apple requires one engine per database:
 [CKSyncEngine.Configuration.database](https://developer.apple.com/documentation/cloudkit/cksyncengine-5sie5/configuration/database).
-Поэтому один `NotebookCloudSync` наблюдает account zone и, только при включённом
-обмене содержанием, текущее пространство. Отдельной zone subscription,
-AppDelegate-маршрута и второго engine нет. Событие account zone будит CAS-владельца;
-само событие и запись, полученная engine, никогда не дают доверие. Первое наблюдение
-явно дочитывает account zone, закрывая промежуток между enrollment и подпиской.
-Delegate не ждёт собственной account-задачи: это исключает цикл ожидания между
-fetch и повторной регистрацией. Каждое await проверяет поколение владельца.
-
-## Управление пространствами
-
-«Пространства» открывается нажатием названия в навигации iPad или из меню Mac.
-Создать, назвать, открыть, переименовать и удалить можно без устройств и
-сопряжения. Создание работает локально; новое пространство публикует своё имя
-при регистрации. Уже опубликованное имя меняется CAS-записью аккаунта, а не
-переименованием SQLite/UUID. Каждый vault сохраняет отдельную базу и writer.
-
-`NotebookApplicationLaunch` — единственный lifecycle owner. Он завершает
-принятый ввод и прежний writer до открытия/удаления. `NotebookWorkspaceLibrary`
-хранит локальный каталог и выбранный UUID; однократно забирает прежний файл
-выбора и удаляет его после атомарной записи нового каталога. Удаление последнего
-пространства оставляет экран выбора, не создаёт тетрадь заново. Installation
-activation marker, общий каталог работы Codex и отдельный архив не принадлежат удаляемому пространству.
-
-«Удалить с этого устройства» стирает локальные материалы после подтверждения,
-не удаляя облачную копию. Неотправленные изменения могут быть потеряны — это
-написано в подтверждении. «Удалить везде» сначала сохраняет намерение локально,
-потом CAS удаляет membership/ключи и сохраняет tombstone UUID, затем стирает
-cloud zone и локальные файлы. Прерванное удаление повторяется с тем же намерением.
-Офлайн-устройство при следующем чтении directory не может зарегистрировать
-удалённый UUID и удаляет его локальную копию. Старые ключи не восстанавливают
-доступ. Directory data format2 однократно читает format1 с сохранением ключей;
-старое приложение не может прочитать/перезаписать format2. Обновляется вся пара.

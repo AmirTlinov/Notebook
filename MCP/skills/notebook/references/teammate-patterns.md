@@ -1,14 +1,13 @@
-# Несколько приёмов напарника
+# Teammate patterns
 
-Выбирай их свободно, как жесты в разговоре. Обычно хватает одного указания
-и короткой фразы о том, что ты заметил.
+Choose these like gestures in a conversation. One pointer and a short observation
+are often enough.
 
-## «Посмотри сюда»
+## Look here
 
-«Вот здесь обратная связь возвращается ко входу». Краткая подсветка помогает
-сопоставить слова с объектом. В `args.reference` передаётся уже известная текущая
-ссылка на видимый объект: `id`, `target`, `revision`, `label`, при необходимости
-`elementID` или `region`.
+“Here the feedback returns to the input.” A brief highlight connects words to
+an object. `args.reference` is an already known current reference:
+`id`, `target`, `revision`, `label`, and optionally `elementID` or `region`.
 
 ```js
 const {view} = (await nb.presentation({})).data;
@@ -18,15 +17,15 @@ return await nb.present("look-here", {
 });
 ```
 
-Такой жест оставляет рисунок, камеру и человеческое выделение как есть.
-Он заканчивается сам; касание человека тоже его завершает.
+The gesture leaves content, camera, and human selection unchanged. It ends
+automatically or when the person touches the surface.
 
-## «Вот эта область»
+## This region
 
-Для свободного указания пригодится временная стрелка или обводка. `args.bounds`
-задаёт известный участок в мировых координатах доски:
-`{origin:{tileX,tileY,localX,localY},width,height}`. Для объекта с готовой ссылкой
-обычно проще подсветка выше.
+Use a temporary arrow or outline for an unstructured region.
+`args.bounds` is a known board-world region:
+`{origin:{tileX,tileY,localX,localY},width,height}`.
+For an object with a reference, the highlight above is usually simpler.
 
 ```js
 const {view} = (await nb.presentation({})).data;
@@ -41,29 +40,27 @@ return await nb.present("pointer", {
 });
 ```
 
-Путь легко развернуть к нужной точке. Для обводки вместо `path` подойдёт
-`ellipse` с тем же оформлением. SVG исчезнет вместе с жестом.
+Adapt the path to the intended point, or use an `ellipse` for an outline.
+The SVG disappears with the gesture.
 
-## «Сначала здесь, потом здесь»
+## First here, then there
 
-«Здесь сигнал появляется, а здесь мы видим его следствие». Передай в `present`
-два шага с `attention`, примерно по две секунды на каждый объект. Это помогает
-провести мысль между двумя видимыми частями схемы.
+“Here the signal begins; here we see its effect.” Give `present` two attention
+steps, roughly two seconds each, to connect two visible parts of a diagram.
 
-## «Я понимаю это так…»
+## My interpretation
 
-Когда мысль стоит сохранить вместе с источником, используй
-`nb.point(key, {contextID, replyTo, references})`. Пояснение помещается в `label`
-рассмотренной ссылки. Например: «Похоже, эта петля означает запаздывание».
-Получится реплика в истории фрагмента, к которой можно вернуться.
+Use `nb.point(key, {contextID, replyTo, references})` to retain an interpretation
+alongside its source. Put the explanation in the reference's `label`, for example
+“This loop appears to represent a delay.” It becomes a reply in the fragment's
+history.
 
-## «Оставь здесь пометку»
+## Leave a note here
 
-Для постоянной стрелки, подписи или обводки добавь отдельный редактируемый
-`graphic` через транзакцию. Привязанные концы connector будут следовать за узлами.
-Сохрани `actionID` своего хода — так его удобно отменить, если идея не пригодится.
+For a persistent arrow, label, or outline, add an editable `graphic` in a
+transaction. Attached connector ends follow their nodes. Keep the action's
+`actionID` for selective undo.
 
-Временное указание и постоянная пометка служат разным моментам разговора.
-Выбирай по намерению: привлечь внимание сейчас или оставить материал для
-дальнейшей работы. Ответ `sent` говорит об отправке указания; подтверждение
-показа можно получить через `nb.presentation({id})`, когда оно действительно нужно.
+Choose a temporary gesture for immediate attention or persistent content for
+continued work. A `sent` response confirms sending; `nb.presentation({id})`
+can confirm presentation when the task needs that distinction.

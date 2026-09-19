@@ -1,90 +1,58 @@
-# Пометки на рассмотренном коде
+# Annotations on reviewed code
 
-`NotebookCodeFragment` сохраняет адрес компьютера, проекта и файла, хеш
-рассмотренного текста, UTF-16-смещение, сам фрагмент и исходную геометрию текста.
-Это неизменяемый материал Notebook, а не вторая рабочая копия проекта.
-`code_fragment_files` — производный SQLite-индекс текущей принадлежности файлу.
-Неизменяемый материал и версионная `NotebookCodeLocation` принадлежат одному
-фрагменту: новое место ссылки не заменяет прежний текст или поверхность чернил.
-Чтение возвращает до 64 фрагментов; продолжение берётся от последней строки
-хранилища, а не от случайного UUID ещё сохраняемого контакта.
+`NotebookCodeFragment` preserves computer/project/file address, reviewed-text hash,
+UTF-16 offset, excerpt, and original text geometry. It is immutable Notebook material.
+`NotebookCodeLocation` is a separately versioned current link; relocating it does
+not replace the text or ink surface. `code_fragment_files` is the derived file index.
+Reads return at most 64 fragments and continue from the last stored row.
 
-`NotebookCodeInkPresenter` соединяет точный layout `UITextView` с существующими
-`PaperInputView` и Metal `InkCanvasView`. Текст и чернила прокручиваются в одной
-локальной системе координат. У холста размер viewport, не высота всего файла.
-Перенос камеры доски не участвует в этой проекции. Контакт удерживает исходную
-ширину и текст до отпускания; редактирование, смена файла и внешнее обновление
-не меняют материал под принятым Pencil.
+`NotebookCodeInkPresenter` combines the exact `UITextView` layout, `PaperInputView`,
+and Metal `InkCanvasView`. Text and ink share local scrolling coordinates.
+Backing size follows the viewport, not the entire file. Contact retains its starting
+text and width until lift, across editing, file switches, and external updates.
 
-`NotebookCodeAnnotations` синхронно передаёт UUID и измеренные точки в прежнюю
-очередь сохранения до освобождения `NotebookInputGate`. `commitCodeInk`
-публикует материал и `NotebookSpatialInkCommand` одной транзакцией.
-Отказ удерживает принятую запись; закрытие представления завершает контакт,
-но не отменяет его сохранение. Размонтирование освобождает input-регистрацию,
-подготовку и GPU-ресурсы. Подготовленный для прежнего текста mesh не может
-появиться на новом тексте.
+Before releasing `NotebookInputGate`, `NotebookCodeAnnotations` queues the stroke
+UUID and measured points. `commitCodeInk` publishes the fragment and
+`NotebookSpatialInkCommand` atomically. Failure retains accepted input; closing
+finishes contact without cancelling its save. Unmount retires input registration,
+preparation, and GPU resources. A mesh prepared for old text cannot appear on new text.
 
-`SurfaceID.codeFragment` адресует тот же `SpatialInkJournal`. Агент читает
-`notebook_read_code_notes` и выполняет прежний `appendInkStroke` с ожидаемыми
-версиями материала и чернил. Его действие действительно входит в общие чернила,
-а не в имитацию поверх текста. Человеческая и агентская отмена сохраняют UUID
-и точки, меняя только активность собственного вклада. Повтор записи не
-создаёт второй штрих. Новый владелец доставляется прежним журналом пары;
-протокол 7 не допускает соединение с прежним писателем, который не сохраняет
-перепривязку материала.
+`SurfaceID.codeFragment` uses the existing `SpatialInkJournal`.
+The agent reads annotations with `nb.code` and adds real shared ink through
+`appendInkStroke`, using content/ink expectations. Human and agent undo retain
+UUIDs and points while changing the activity of the owned contribution.
+Current delivery compatibility is defined by [transport](transport-contract.md).
 
-На той же версии файла пометка остаётся на исходном диапазоне. После правки
-она следует только за единственным дословно сохранившимся фрагментом.
-Неоднозначность, удаление либо изменённая ширина не растягивают старые чернила
-на другой код: исходный материал с пометкой доступен из меню; у совместимого
-диапазона появляется маркер. В просмотре исходной заметки есть «Перепривязать»:
-человек выбирает код в этом или другом файле и связывает с ним прежнюю пометку.
-При другом тексте переносится только маркер, не почерк поверх другого объяснения.
-Исходный код, ширина и UUID всех штрихов остаются прежними. Ссылка на фрагмент
-открывает его текущее место и прокручивает документ, а не доску.
+## Relocation and rename
 
-`rebindCodeFragment` сравнивает именно рассмотренное место ссылки. Новые штрихи
-не запрещают перепривязку, а уже изменённое другим автором место даёт отказ.
-Независимые доставки сходятся по версии; старое эхо и поздний принятый Pencil
-не возвращают прежнюю привязку. После закрытия приложения владелец редактора
-закрывает новые обращения и дожидается своего чтения; поздние callbacks UIKit
-не открывают SQLite заново. В меню файла переименование выполняет сам Mac. Перед этим он принимает все
-пометки, уже сохранённые iPad к моменту поручения. Пока исход операции неизвестен,
-редактор не создаёт новый контакт кода; доска и чат продолжают работать.
-Новый путь получает текущие ссылки, а исходное имя остаётся частью рассмотренного
-материала. Повторное создание файла по старому пути не связывает с ним эти пометки.
+On the same file version, ink stays at its original range. After an edit, an annotation
+follows only one exact surviving excerpt. Ambiguous or changed text/width preserves
+the original annotated material and offers a marker where compatible.
+Explicit rebinding can move the link to another range or file while preserving
+original text, width, and stroke UUIDs. Different text receives the marker, not
+stretched historical handwriting.
 
-Проверки: `NotebookCodeFragmentTests`, `NotebookCodeStoreTests`,
-`NotebookCodeAnnotationsTests`, MCP `agent-ink.test.ts` и два жестовых сценария
-документа. Точный установленный и физический статус — `verification.md`.
+`rebindCodeFragment` compares the reviewed location. New strokes do not block
+rebinding; a concurrently changed location does. Late ink and old delivery echoes
+cannot restore an earlier binding. Editor shutdown closes admission and drains its
+read, preventing callbacks from reopening SQLite.
 
-12 сентября: `.build/code-rebinding-final` проверяет перепривязку, исходный
-материал, собственную отмену, повтор доставки, холодное чтение и отсутствие
-обращений после закрытия. Изменение ещё не установлено на физическую пару;
-проверки реализации не заменяют Pencil-приёмку.
+`NotebookFileRename` uses the durable job journal and waits for annotations accepted
+before the request. Mac uses `NSFileCoordinator`, validates the project root and
+observed file identity, rejects symlinks, and calls `renameatx_np(RENAME_EXCL)`.
+An existing destination is preserved. Durable intent precedes rename; identity
+readback and new annotation locations establish completion. After interruption,
+device/inode/birth-time evidence resolves the result without repeating the rename.
 
-Переименование проверено в `.build/code-rename-second`: 42 Core, 45 MCP и
-нативные сценарии Mac/iPad. Проверены настоящий файл, отказ замены существующего
-назначения, восстановление после прерывания, локальный черновик и его положение,
-а также сохранение двух независимых черновиков при совпадении нового пути.
-Переименование вне Notebook не угадывается по похожему тексту: без наблюдаемого
-подтверждения человек использует добровольную перепривязку.
+iPad relocates its draft and selection transactionally, preserving an incompatible
+draft at the destination. Unknown rename outcome temporarily blocks new code contact;
+board and chat remain available. External uncoordinated writers are outside a global
+filesystem compare-and-swap guarantee. External renames are not inferred from
+similar text; the user can explicitly rebind.
 
-## Достоверное переименование
+## Verification
 
-`NotebookFileRename` идёт через прежний журнал поручений. Его граница доставки
-удерживает ещё не полученные Mac пометки до изменения имени. Mac согласует
-перенос с `NSFileCoordinator`, запрещает ссылки и выход из текущего корня проекта,
-сравнивает наблюдавшуюся версию и выполняет `renameatx_np(RENAME_EXCL)`: существующее
-назначение не заменяется. До операции сохраняется намерение с идентичностью
-файла, после неё — устойчивое подтверждение вместе с новыми местами пометок.
-При обрыве Mac сверяет устройство, inode и время создания по новому пути,
-дожидается сохранения каталогов и не повторяет перенос. Последующая правка
-текста того же файла не отменяет уже доказанное переименование.
-
-iPad переносит свой черновик и выбор одной транзакцией, не меняя камеру.
-Несовместимый локальный черновик по новому адресу не затирается. Согласование
-защищает взаимодействующие редакторы; сравнение перед системной операцией
-не обещает атомарного сравнения inode против стороннего процесса, который
-одновременно подменяет путь и не участвует в согласовании.
-Поведение уведомлений соответствует [документации Apple](https://developer.apple.com/documentation/foundation/nsfilecoordinator/item(at:didmoveto:)).
+`NotebookCodeFragmentTests`, `NotebookCodeStoreTests`,
+`NotebookCodeAnnotationsTests`, and MCP/gesture scenarios cover immutable material,
+own undo, delivery, reopen, shutdown, real rename, conflicts, and recovery.
+See [verification](verification.md) for installed and physical scope.

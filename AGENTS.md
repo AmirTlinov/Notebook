@@ -1,71 +1,77 @@
-# Notebook: владельцы и проверка
+# Notebook: ownership and verification
 
 ```text
 Notebook/
-|-- Sources/NotebookCore/          # Содержание, SQLite, причинные действия и доставка.
-|-- Sources/NotebookCodex/         # Адаптер к Codex desktop; своим исполнителем модели не владеет.
-|-- Sources/NotebookArchiveTransfer/ # Внешний конвертер копий, отдельно от приложений.
-|-- Applications/Shared/           # Модель приложения, очередь записи, камера, чернила и документы.
-|-- Applications/iPad/             # Рабочая поверхность и системный ввод iPad.
-|-- Applications/Mac/              # Рабочее окно, ввод Mac, IPC и доверенная связь.
-|-- Applications/WebResources/     # Представление документов и программ в WebKit.
-|-- MCP/                          # Инструменты общего пространства через Mac-владельца.
-|-- Tests/                        # Контракты Core, MCP, Codex и маршрута проверки.
-|-- Applications/*Tests/           # Нативные проверки и сценарии жестов.
-`-- verify.sh                     # Проверки по изменённому поведению; --full — полная приёмка.
+|-- Sources/NotebookCore/            # Content, SQLite, causal actions, and delivery.
+|-- Sources/NotebookCodex/           # Codex adapter; does not own model execution.
+|-- Sources/NotebookArchiveTransfer/ # External copy converter, separate from apps.
+|-- Applications/Shared/             # App model, write queue, camera, ink, documents.
+|-- Applications/iPad/               # iPad workspace and system input.
+|-- Applications/Mac/                # Mac window, input, IPC, and trusted connection.
+|-- Applications/WebResources/       # WebKit document and program presentation.
+|-- MCP/                            # Shared-workspace tools through the Mac owner.
+|-- Tests/                          # Core, MCP, Codex, and verification contracts.
+|-- Applications/*Tests/             # Native checks and gesture scenarios.
+`-- verify.sh                       # Change-scoped checks; --full is full acceptance.
 ```
 
-## Работа с настоящим содержанием
+Product and interaction decisions follow [PHILOSOPHY.md](PHILOSOPHY.md).
 
-Живые приложения читают новый формат. Исторические архивы остаются в независимых
-резервных копиях: решение Амира от 11 сентября не разрешает их восстановление
-или объединение с текущим пространством. Обновление установленной пары сохраняет
-контейнеры, идентичности и ключи. Собранный helper не запускается над прежним
-архивом; контрактные проверки MCP используют изолированный `NOTEBOOK_HOME`.
-Живую проверку ведёт MCP установленного допущенного помощника.
+## Working with real content
 
-## По задаче
+Live applications read the current format. Historical archives remain in independent
+backups: Amir's September 11 decision does not authorize restoring or merging them
+into the current workspace. Updating the installed pair preserves containers,
+identities, and keys. Never run a newly built helper against a historical archive.
+MCP contract checks use an isolated `NOTEBOOK_HOME`. Live checks use MCP from the
+installed, admitted helper.
 
-- Содержание, адресная запись и доставка: `Sources/NotebookCore/`,
-  `docs/spatial-replication-contract.md`, `docs/replication-owner-window.md` и
-  `docs/transport-contract.md`.
-- Чернила, камера, композиция и память: `Applications/Shared/`,
-  `docs/performance.md`, `docs/page-ink-conflict-contract.md` и
-  `docs/scene-allocation-contract.md`.
-- Документы, ссылки и WebKit: `docs/document-link-navigation.md`,
-  `docs/document-page-fragments.md`, `docs/document-program-fragments.md` и
-  `docs/live-document-render-boundary.md`.
-- Общий фрагмент и действия агента: `docs/collaboration.md`,
-  `docs/shared-context-contract.md` и профильные `docs/agent-*-contract.md`.
-- Проекты, разговор и поток Codex: `docs/codex-desktop-bridge.md` и
-  `docs/agent-runtime-contract.md`.
-- Сборка, сопряжение и перенос: `docs/release-build-contract.md`,
-  `docs/installation-pairing.md` и `docs/archive-transfer.md`.
-- Открытые условия и результаты: `docs/reliability-transition.md` и
-  `docs/verification.md`. История выпусков хранится там, а не в этой карте.
+## Find the owner
 
-Выбирай нужный маршрут, а не весь список. Код владеет поведением, профильный
-документ раскрывает контракт, тест проверяет его; карта только приводит к ним.
+- Content, addressed writes, delivery: `Sources/NotebookCore/`,
+  [spatial replication](docs/spatial-replication-contract.md),
+  [replication owner window](docs/replication-owner-window.md),
+  [transport](docs/transport-contract.md).
+- Ink, camera, composition, memory: `Applications/Shared/`,
+  [performance](docs/performance.md),
+  [page ink](docs/page-ink-conflict-contract.md),
+  [scene allocation](docs/scene-allocation-contract.md).
+- Documents, links, WebKit: [navigation](docs/document-link-navigation.md),
+  [printed pages](docs/document-page-fragments.md),
+  [programs](docs/document-program-fragments.md),
+  [render evidence](docs/live-document-render-boundary.md).
+- Shared context and agent actions: [collaboration](docs/collaboration.md),
+  [shared context](docs/shared-context-contract.md), and the relevant
+  `docs/agent-*-contract.md`.
+- Projects, conversations, Codex: [bridge](docs/codex-desktop-bridge.md),
+  [runtime](docs/agent-runtime-contract.md).
+- Builds, pairing, transfer: [release](docs/release-build-contract.md),
+  [installation and pairing](docs/installation-pairing.md),
+  [archive transfer](docs/archive-transfer.md).
+- Open conditions and results: [reliability](docs/reliability-transition.md),
+  [verification](docs/verification.md). Keep tasks and actual status in Linear.
 
-## Проверка и завершение
+Choose the relevant route. Code owns behavior, the focused document explains its
+contract, and tests exercise it; this map provides navigation.
 
-Изменения iPad-приложения сразу устанавливай и проверяй на физическом iPad.
-Симуляторы не используй.
+## Verification and completion
 
-Для обычной правки выбери регрессию дефекта и затронутый пользовательский сценарий.
-`./verify.sh --plan` предлагает стартовый набор; `--only --profile ... --test ...`
-оставляет явную область. Неизвестный маршрут требует инженерного выбора, а не
-полного прогона или новой записи в карте. Команды и правила квитанции:
-`docs/release-build-contract.md`, раздел «Выбор проверки».
+Install iPad application changes on the physical iPad and check them there.
+Do not use simulators unless the user explicitly selects that route for the task.
 
-UI проверяй затронутым жестом. Нагрузка на 100 000 предметов нужна при изменении
-соответствующего алгоритма. `./verify.sh --full` — отдельная полная приёмка по
-необходимости; несколько Xcode runners одновременно не запускаются.
-Проверка относится к неизменным исходникам и честно называет свою область.
+For an ordinary change, choose the defect regression and the affected user scenario.
+`./verify.sh --plan` proposes a starting scope; `--only --profile ... --test ...`
+makes it explicit. An unknown route calls for engineering judgment, not a full run
+or another map entry. See [verification selection](docs/release-build-contract.md#verification-selection).
 
-Исправляй сбои своего изменения и продолжай выбранную проверку. Завершённый
-проверенный срез получает conventional commit и push при наличии remote.
-Локальный PASS и установка не заменяют физическую приёмку. Для полной приёмки
-нужны системные измерения кадров, CPU/GPU и памяти, десять повторов сценария
-и 30 минут совместной работы; CADisplayLink не измеряет FPS. Точные результаты
-и неподтверждённые условия записывай в `docs/verification.md`.
+Check UI changes with the affected gesture. A 100,000-item workload is needed when
+the corresponding algorithm changes. `./verify.sh --full` is a separate full
+acceptance route. Run only one Xcode runner at a time.
+Evidence applies to unchanged sources and states its actual scope.
+
+Fix failures caused by your change and complete the selected checks. Commit a
+verified slice with a conventional commit and push when a remote is available.
+Local PASS and installation do not establish physical acceptance. Full acceptance
+requires system frame, CPU/GPU, and memory measurements, ten scenario repetitions,
+and 30 minutes of joint work; CADisplayLink does not measure FPS.
+Record exact results and remaining limitations in [verification](docs/verification.md).

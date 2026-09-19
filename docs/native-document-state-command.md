@@ -1,97 +1,42 @@
-# Нативное состояние: одна принятая программа
+# Native state: one accepted program
 
-`NotebookAppModel.commitDocumentState` сначала принимает значение в показанный
-`DocumentStateJournal`, затем передаёт очереди только `NotebookDocumentStateCommand`:
-UUID документа, запись одного блока и уже принятые часы. Замыкание очереди больше
-не удерживает весь журнал. Прежний `saveMergedDocumentState` удалён; это не
-дополнительный способ записи рядом с ним.
+`NotebookAppModel.commitDocumentState` accepts a value into the displayed
+`DocumentStateJournal`, then queues a `NotebookDocumentStateCommand` containing
+the document UUID, one block record, and its accepted clocks. The closure retains
+that command rather than the entire journal.
 
-`NotebookPersistenceQueue` не объединяет эти адресные команды. Изменения A, B,
-A доходят в принятом порядке, даже если первая запись ещё выполняется или
-заблокирована. Указание остаётся fence между предшествующими и последующими
-значениями. Ошибка удерживает принятый блок и его зависимости для явного повтора;
-переход на другую страницу не меняет адрес команды. Заключительное ожидание
-остановки присоединяет принятые значения; сообщения программы после перехода
-модели к окончательному завершению не создают новые записи.
+`NotebookPersistenceQueue` preserves A, B, A ordering even while the first write
+is blocked. Shared-attention capture forms a fence between earlier and later values.
+A failed write retains the accepted block and dependencies for explicit retry.
+Navigation does not redirect it. Shutdown drains accepted commands; callbacks after
+final model termination cannot create new writes.
 
-`NotebookStore.commitDocumentState` читает живое членство документа, заголовок
-журнала и поддерево одного block ID. Полный исходник программы, прочие состояния
-и их физические позиции не читаются и не перенумеровываются. Состояния уже
-удалённых программ остаются историей того же документа; удаление самого
-документа запрещает запоздалое воскрешение его журнала.
+## Storage and causality
 
-Слияние использует прежний `DocumentStateRecord.replace` в том же направлении,
-что доставка. Команда не присваивает себе версию, впервые увиденную лишь при
-записи, и не объявляет старое предложение человеческим продолжением. Заголовок
-берёт наибольшие часы; если они уже называют другое показанное значение,
-публикация нового сочетания продвигает их один раз. Старое проигравшее значение
-и точный повтор не создают новый кадр. Исчерпание точного счётчика запрещает
-замену, а не публикует разные значения с прежней версией.
+`NotebookStore.commitDocumentState` reads live document membership, the journal
+header, and one block subtree. It leaves unrelated sources, states, and positions
+untouched. Retired program states remain history; removing the document prevents
+a delayed command from recreating its journal.
 
-Нативная команда требует явную принятую причинную версию. Общая проверка записи
-теперь также проверяет её собственный stamp, валидность причинной версии и
-существующий предел 256 наблюдённых авторов. Ни локальная публикация, ни входящее
-слияние не могут выпустить объединение за этим пределом. Старые неявные версии
-существующих записей по-прежнему принадлежат доменному формату; нативная команда
-не принимает их за новый контакт.
+`DocumentStateRecord.replace` uses the same direction as delivery. The command
+keeps the causal version accepted at input; it cannot claim a newly observed
+stored version as human continuation. The aggregate advances once for a new
+combined visible state. A losing stale value or exact retry creates no new frame.
+Counter exhaustion rejects publication.
 
-`publishProjectionEdits` публикует разницу выбранного блока, включая удалённые
-вложенные коллекции его JSON. `writeFragment` остаётся единственным физическим
-писателем; состояние, часы и журнал доставки сохраняют одну SQLite-транзакцию.
-Ответ содержит только принятый блок и итоговые часы. Неоднозначный ответ после
-commit можно повторить без второй доработки.
+A native command requires an explicit accepted causal version. Validation includes
+the record stamp, causal-version validity, and the existing bound of 256 observed
+authors. Both local and incoming merges obey it. Existing implicit versions remain
+part of the historical domain format, not a fresh native contact.
 
-## Проверка Core — 11 сентября, 00:11 МСК
+`publishProjectionEdits` writes the selected block difference, including removed
+nested JSON collections. `writeFragment` owns the physical write. State, clocks,
+and delivery share one SQLite transaction; the response returns the accepted
+block and final clocks. Exact retry resolves an ambiguous post-commit response.
 
-Профиль на `.build/native-document-state-cut` от `fea9242` прошёл **95 Core
-в семи наборах** за 20.782 s и **26 external в четырёх наборах** за 0.575 s.
-Среди 100 000 исторических записей после создания индексов намеренно повреждены
-посторонние тело состояния и исходник программы. Добавление, изменение и повтор
-их не декодируют; старые строки остаются точными. Измерение включая commit:
-**834 / 867 / 148 SQL-инструкций** при неизменном пределе 200 000.
+## Verification
 
-Проверены конкурентный агрегат, сохранение человеческого продолжения, вложенные
-коллекции и похожие ID, пять видов недопустимой команды, предел причинного
-объединения, исчерпание счётчика и три границы отказа транзакции. Соседние
-проверки доставки, закреплённого состояния, отмены и внешнего переноса прошли.
-Новая отрицательная доставка отвергает несовпадающую причинную версию до
-публикации других исправных блоков и курсора.
-
-Первый запуск остановился на ошибке новой фикстуры: макрос `#require` захватывал
-изменяемый `WorkspaceIndex` как неизменяемый. Создание теперь выполняется до
-макроса; рабочая логика для этого не менялась. Отрицательные журнал, статус
-и точная разница сохранены в `/tmp/notebook-native-document-state-compile-failed.*`.
-Успешный журнал — `/tmp/notebook-native-document-state-profile.log`, статус 0;
-отпечаток разницы до/после —
-`f716e6e843f27061e6784156a6e0a7abbf08f6984e40742f812b60edf440aedf`.
-
-## Окончательный профиль — 11 сентября, 00:18 МСК
-
-После добавления запрета позднего callback один неизменный набор прошёл
-**95 Core / семь наборов** за 19.331 s, **26 external / четыре набора** за
-0.623 s, **43 MCP** с typecheck и smoke, **95 Mac** и **68 iPad native**.
-Ошибок, пропусков и runtime warnings нет. Runner Mac — 75.904 s, iPad —
-38.818 s. Четыре новых native-теста проверяют три последовательных значения
-двух программ, наблюдение между значениями, удержание отказа и явный повтор,
-смену документа и запрет поздней записи после завершения модели.
-
-Журналы и статусы 0 — `/tmp/notebook-native-document-state-final-profile.*`
-и `/tmp/notebook-native-document-state-final-runtime.*`, отдельные MCP/native
-журналы — `/tmp/notebook-native-document-state-final-{mcp,mac,ipad}.log`.
-Результаты — `.build/native-document-state-final-mac.xcresult` и
-`.build/native-document-state-final-ipad.xcresult`; независимые summary находятся
-в `/tmp/notebook-native-document-state-final-{mac,ipad}-summary.json`.
-Все четыре отпечатка разницы до/после совпали:
-`e7792bac5d0ee25b40ba9e23bb873804747d20c40c8af1f57f68538800091c2d`.
-Двенадцать runtime/test-файлов совпали с текущими исходниками.
-
-Первый native-профиль также сохранён: 95 Mac и 67 iPad без ошибок, пропусков
-и runtime warnings. Он предшествовал дополнительному запрету после shutdown,
-не был повтором упавшего native-теста и не подменяет окончательную проверку.
-
-## Граница
-
-Новый полный `verify.sh` ещё требуется. Рабочее чтение и рендер всё ещё получают полный журнал состояний;
-адресная запись сама по себе эту границу не закрывает. Общая пагинация,
-оставшиеся тяжёлые проекции, срок хранения журнала, установка, свежие архивы,
-сопряжение и физическая приёмка также не подтверждены этим профилем.
+Core checks cover 100,000 unrelated records, corrupt unread bodies, nested collections,
+similar IDs, causal union limits, counter exhaustion, human continuation, and faults
+around commit. Native checks cover queue order, observation fences, retry, navigation,
+and terminal shutdown. See [verification](verification.md) for evidence scope.

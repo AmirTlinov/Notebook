@@ -1,89 +1,70 @@
-# Воспроизводимый набор тяжёлых источников
+# Reproducible heavy-source fixtures
 
-`Applications/generate-load-fixture.sh` создаёт независимые оригиналы для
-проверочного импорта. Seed по умолчанию — `410041`, полный набор — 100 000
-предметов. Это вход для будущего адресного загрузчика, **не другая база Notebook**
-и не уже установленная доска. Скрипт не открывает и не изменяет человеческие
-материалы Mac или iPad.
+`Applications/generate-load-fixture.sh` creates independent originals for test import.
+Default seed is 410041; the full set has 100,000 items. It is input data, not another
+Notebook store or an already-installed board, and does not open live user material.
 
 ```sh
 Applications/generate-load-fixture.sh "$PWD/.build/load-100000" 100000 410041
 python3 Applications/LoadFixtures/verify.py "$PWD/.build/load-100000"
 ```
 
-Путь результата должен отсутствовать. Подготовка происходит в отдельной
-соседней папке; только законченный манифест публикуется под выбранным именем.
-Повтор поверх существующего набора получает ошибку. Неожиданное завершение
-процесса может оставить папку `.preparing-*`, но не законченный набор или
-видимый предмет Notebook. Обычная ошибка очищает только свою подготовку.
+Output must not exist. A private sibling preparation directory is published only
+after the manifest completes. Ordinary failure removes only that preparation;
+an abrupt process exit may leave .preparing-* but no finished fixture or Notebook item.
 
-## Что входит
+## Contents and identity
 
-Каждые восемь предметов включают тетрадь, Markdown-документ, SVG,
-интерактивную модель, PDF и три изображения. JPEG и PNG чередуются с HEIC;
-контейнер HEIC представлен также расширением HEIF. Манифест сохраняет
-фактически прочитанный ImageIO тип, а не выводит его из расширения.
+Every eight items include a notebook, Markdown document, SVG, interactive model, PDF
+and three images. JPEG/PNG alternate with HEIC/HEIF; the manifest records the actual
+ImageIO type rather than guessing from extension.
 
-- У тетради четыре явные страницы 834 × 1194 points с упорядоченными контактами
-  пера и ластика, давлением, шириной и временем каждого замера. Это рецепты
-  проверочного ввода, **не каноническое кодирование `PageInkDrawing`**.
-- Markdown содержит длинный поток текста и формул. Число его физических страниц
-  отсутствует до настоящей пагинации; ноль не выдаётся за измеренную величину.
-- SVG и PDF содержат независимо построенные кривые и тонкие линии. PDF имеет
-  настоящие разные страницы, CropBox и повороты 0/90/180/270; CoreGraphics
-  проверяет возможность чтения и число листов до публикации файла.
-- Интерактивная модель сохраняет свой параметр и рисует кривую из 1024 точек.
-  Её исполнение и видимая готовность ещё требуют проверки внутри Notebook.
-- Изображения имеют независимые пиксели, пропорции 512 × 384 и ориентации
-  1/3/6/8. Периодические тяжёлые образцы имеют 4096 × 3072 pixels. Прочитанные
-  размеры и ориентация проверяются после кодирования, включая TIFF-ориентацию
-  JPEG. Повторение обеспечивается на той же версии системных кодировщиков;
-  версия платформы включена в манифест.
+- Notebook: four 834×1194-point pages with ordered pen/eraser contact recipes,
+  pressure, width and sample times—not canonical PageInkDrawing bytes.
+- Markdown: long text/formula flow; physical page count remains unknown until real
+  pagination, not a false measured zero.
+- SVG/PDF: independently generated curves/fine lines. PDFs have distinct pages,
+  CropBox and 0/90/180/270 rotations, validated by CoreGraphics.
+- Interactive model: explicit parameter and 1,024-point curve; execution/readiness
+  still requires Notebook verification.
+- Images: independent pixels, 512×384 proportions, orientations 1/3/6/8 and periodic
+  4096×3072 heavy samples. Encoded size/orientation is read back. Repeatability is
+  scoped to the same system encoder version, recorded in the manifest.
 
-Для каждого предмета записаны три размещения: редкая доска, плотная композиция
-и полное перекрытие, а также глубина будущего портального пути. Первые 24
-предмета и их исходники не зависят от размера набора; остальные размещены
-вдалеке в редком варианте. Поэтому 1k/10k/100k могут использовать один видимый
-рабочий набор. Построение реальных порталов и публикация предметов принадлежат
-адресному загрузчику; значение глубины само не доказывает проход портала.
+Each item has sparse, dense and fully overlapping placement plus intended portal
+depth. The first 24 items/sources are independent of collection size; sparse remaining
+items are distant, allowing the same visible workset at 1k/10k/100k.
+Actual portal construction/publication belongs to the importer; depth metadata is
+not traversal evidence.
 
-## Проверка состава
+`items.jsonl` records SHA-256, bytes, known pages/pixels and source complexity
+(curve segments, measured ink samples, text volume, blocks, controls).
+`manifest.json` aggregates these and hashes records/generator.
+These are source properties, not invented execution timings.
 
-`items.jsonl` читается последовательно. Каждый источник имеет SHA-256, число
-байтов, известные страницы, пиксели и измеримые признаки сложности: сегменты
-кривых, замеры пера, объём текста, блоки документа и интерактивные контролы.
-Это свойства исходника, не выдуманное время его выполнения.
-`manifest.json` суммирует эти величины и хранит хеш записей и генератора.
+`Applications/test-load-fixture.sh` checks same/different seed, formats/orientations,
+page geometry and invalid/existing output rejection. The verifier rereads every
+original; repeated references to a few files fail uniqueness.
 
-`Applications/test-load-fixture.sh` повторяет один seed, сравнивает итоговые
-байты, проверяет другой seed, все форматы и ориентации, геометрию четырёх
-рукописных страниц, отказ при совпадении пути и неверном размере. Этот маршрут
-входит в `verify.sh`. Проверяющий скрипт перечитывает **каждый** оригинал:
-100 000 ссылок на несколько общих файлов не проходят проверку уникальности.
+## Historical full set
 
-Готовый набор всё ещё необходимо импортировать через новый маршрут,
-прогреть и пройти на физическом iPad. Ни генерация, ни сумма уникальных файлов
-не подтверждают время кадра, предел памяти или готовность выпуска 0.4.
+September 6 fixture `.build/notebook-04-load-100000`, seed 410041:
 
-## Проверенный полный набор
+| Property | Count |
+|---|---:|
+| Items / unique sources | 100,000 / 100,000 |
+| Source bytes | 21,652,987,639 |
+| Known pages | 174,837 |
+| Image pixels | 12,153,913,344 |
+| Markdown documents awaiting pagination | 12,500 |
+| Measured pen samples | 13,148,352 |
+| Vector segments | 95,071,105 |
 
-6 сентября 2026 создан и независимо перечитан набор
-`.build/notebook-04-load-100000`, seed `410041`:
+Generator hash:
+`67ff549e14438953f87c11bafcd433fd191e8644f709e6194433c164bdad0ce2`.
+Record hash:
+`98942e60fa4996226d8a4e92e29143d4d0f575af9fd7b21fea5f03cd9503157f`.
+Readback log: `.build/notebook-04-load-100000.log`.
 
-| Измерение | Значение |
-| --- | --- |
-| Предметы / уникальные исходники | 100 000 / 100 000 |
-| Исходные байты | 21 652 987 639 |
-| Известные страницы | 174 837 |
-| Пиксели изображений | 12 153 913 344 |
-| Markdown-документы без измеренной пагинации | 12 500 |
-| Контакты пера: записанные замеры | 13 148 352 |
-| Векторные сегменты | 95 071 105 |
-
-Каждого вида, кроме изображений, — 12 500; изображений — 37 500.
-Хеш генератора — `67ff549e14438953f87c11bafcd433fd191e8644f709e6194433c164bdad0ce2`;
-хеш всех записей — `98942e60fa4996226d8a4e92e29143d4d0f575af9fd7b21fea5f03cd9503157f`.
-Манифест хранит фактическую версию ImageIO-платформы; лог полного перечитывания
-находится в `.build/notebook-04-load-100000.log`.
-Повторяемость и отказ при неверном вводе отдельно проверены
-`Applications/test-load-fixture.sh` на небольших наборах.
+Generation/uniqueness does not prove import, frame latency, memory or physical
+acceptance. Run the intended bounded import and user route separately.

@@ -1,47 +1,48 @@
-# Изображения, SVG и наброски
+# Images, SVG, and sketches
 
-Для иллюстрации используй доступный `$imagegen`, для точной SVG-композиции —
-`$svg-diagram-design`. Рабочей поверхностью этой задачи остаётся Notebook.
-Полученный файл можно сразу включить в общий материал:
+Use the available `$imagegen` for illustrations and `$svg-diagram-design` for
+precise SVG composition. Notebook remains the shared working surface. Insert
+the resulting file directly:
 
 ```json
 {
-  "target":{"kind":"board","id":"UUID доски"},
+  "target":{"kind":"board","id":"BOARD_ID"},
   "anchor":{"tileX":0,"tileY":0,"localX":600,"localY":400},
   "imagePath":"/absolute/path/illustration.png",
   "width":720,
-  "caption":"Короткая мысль, которую помогает увидеть рисунок",
+  "caption":"The relationship this illustration makes visible",
   "fit":true
 }
 ```
 
-Передай этот вход в `prepare.mjs visual`. PNG, JPEG и SVG встраиваются в источник
-обычного Markdown-элемента и сохраняются вместе с ним. В доске остаются сами
-байты; пути к временным файлам ей не нужны. SVG сохраняется векторным.
-`imagePath` также может быть относительным к входному JSON.
+Pass this input to `prepare.mjs visual`. PNG, JPEG, and SVG bytes are embedded
+in an ordinary Markdown element and saved with it; temporary paths are not
+needed afterward. SVG stays vector-based. `imagePath` may be relative to the
+input JSON.
 
-Для большого PNG/JPEG `fit:true` готовит уменьшенную копию рядом с запросом,
-сохраняя формат и прозрачность PNG. Исходник остаётся прежним. Встроенный рисунок
-ограничен 700 КБ, чтобы вместе с кодом и данными пройти текущие лимиты SDK.
-Если важны мелкие детали, выбирай соответствующий масштаб или отдельные фрагменты.
+For a large PNG/JPEG, `fit:true` writes a reduced derivative beside the request
+while preserving format and PNG transparency. The original is unchanged.
+Embedded images are limited to 700 KB to fit the SDK's request budget together
+with code and data. Choose an appropriate scale or separate fragments for
+fine details.
 
-`plot` — небольшой SVG-график из настоящих данных. Вместо `imagePath` укажи:
+`plot` creates a small SVG plot from actual data. Replace `imagePath` with:
 
 ```json
-{"title":"Измерение","xLabel":"Время, с","series":[
-  {"label":"Опыт A","points":[[0,2],[1,4],[2,3],[3,6]]},
-  {"label":"Опыт B","points":[[0,1],[1,2],[2,4],[3,4]]}
+{"title":"Measurement","xLabel":"Time, s","series":[
+  {"label":"Trial A","points":[[0,2],[1,4],[2,3],[3,6]]},
+  {"label":"Trial B","points":[[0,1],[1,2],[2,4],[3,4]]}
 ]}
 ```
 
-Добавь обычные `target` и размещение. Для иной научной графики можно создать
-свой SVG и использовать тот же путь вставки.
+Include the usual `target` and placement. Other scientific graphics can use
+custom SVG through the same insertion path.
 
-`sketch` принимает `strokes:[{points:[{x,y,width?,opacity?}],width?,color?}]`.
-Это нативные штрихи, доступные дальнейшей работе с чернилами. На доске точки —
-смещения от `anchor`, на странице — её локальные координаты.
+`sketch` takes `strokes:[{points:[{x,y,width?,opacity?}],width?,color?}]`.
+These become native ink. Board points are offsets from `anchor`; page points
+are page-local.
 
-`point` принимает текущие `references:[...]` или `bounds:{origin,width,height}`
-в мировых координатах доски; `shape:"ring"` даёт обводку, по умолчанию — стрелку.
-`duration` задаёт время жеста. Он использует существующую временную презентацию;
-камера и содержание остаются на месте. Живые примеры — в [приёмах напарника](teammate-patterns.md).
+`point` takes current `references:[...]` or board-world
+`bounds:{origin,width,height}`. `shape:"ring"` draws an outline; the default is
+an arrow. `duration` controls the temporary presentation. Content and camera
+stay unchanged. See [teammate patterns](teammate-patterns.md).

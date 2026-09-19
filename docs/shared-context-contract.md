@@ -1,212 +1,145 @@
-# Общая история: содержание, порядок и область действия
+# Shared context: history, references and selection
 
-`SharedContextEntry` хранит неизменяемое указание или ответ. Его физический адрес
-составляют UUID контекста и UUID записи; порядок определяют `VersionStamp`
-(счётчик, автор устройства) и UUID записи. Приход более раннего ответа не меняет
-номера, хеши или содержание уже сохранённых записей. `records.position` не
-является вторым авторским порядком истории.
+## Immutable history
 
-## Запись и доставка
+`SharedContextEntry` is an immutable indication or reply addressed by context UUID
+and entry UUID. `VersionStamp` (counter, device author) and entry UUID define order.
+An earlier-arriving reply does not renumber or rewrite stored entries.
+`records.position` is not a second authorial order.
 
-`NotebookStore.appendContext` читает корень контекста, прямого родителя ответа
-и максимальный причинный счётчик. Он публикует одну новую запись, её индекс и
-журнал одной транзакцией. `SharedContextAppend` подтверждает эту запись, а не
-возвращает всю переписку.
+`appendContext` reads the root, direct reply parent and maximum causal counter,
+then publishes one entry, its indexes and journal in one transaction.
+`SharedContextAppend` returns that entry, not the whole conversation.
 
-`applyRemoteChange` читает входящие адреса контекста порциями по 64. Корень
-проверяется по UUID и точной структуре; существующая запись принимает только
-тождественное содержание. Удаление истории, замена UUID, неизвестный родитель
-и неверный счётчик запрещают весь пакет. Родители проверяются после установки
-всех входящих записей, поэтому их порядок в пакете и границы порций не меняют
-результат. Содержание, подтверждение приёма, защита от повтора и входящий курсор
-фиксируются вместе. Прежний путь полного сетевого слияния контекста удалён.
-Полный `SharedContext` остаётся формой внешнего переноса и проверки архива.
+Incoming context addresses are read in batches of 64. Roots require matching UUID
+and structure; existing entries accept only identical content. Deletion, changed
+UUID, unknown parent or invalid counter rejects the entire delivery. Parents are
+validated after all incoming entries are installed, independent of batch order.
+Content, deduplication, receipt and cursor commit together. Full `SharedContext`
+remains an external-transfer/checkpoint form.
 
-## Чтение и ссылки
+## Bounded reads and authority
 
-`context_entry_order` — производный индекс канонических записей, не отдельная
-история. Индексы причинного порядка и автора находят границы страницы и первое
-человеческое указание без чтения промежуточных ответов. Страница содержит не
-более 64 записей и 4 МиБ; одна запись — не более 2 МиБ. Продолжение связывается
-с ревизией именно этого контекста. Камера, выбор и другой контекст не делают
-его курсор устаревшим.
+`context_entry_order` is a derived canonical index. Causal-order and author indexes
+find page boundaries and the first human indication without scanning intervening
+replies. A page is at most 64 entries / 4 MiB; one entry is at most 2 MiB.
+Continuation binds to that context's revision, not camera or another context.
 
-`context_references` хранит только адрес записи, идентичность и хеш ссылки,
-а не вторую копию её содержания. Запись обоих индексов принадлежит тому же
-физическому писателю. Проверка закреплённого источника адресует точную
-человеческую ссылку и сверяет её каноническое значение. Ссылка агента сама по
-себе не подтверждает человеческое указание.
+`context_references` stores entry address, reference identity and hash, not duplicate
+reference bodies. Both indexes share the physical writer. Pinned-source validation
+reads the exact human reference and canonical value; an agent-created reference
+does not establish human authority.
 
-Область действия сохраняет прежнее объединение исторических ссылок. Повтор
-одинаковой ссылки пропускается индексным переходом по хешу, а не просмотром
-всех повторивших её ответов. Один расчёт удерживает до 512 разных ссылок и
-4 МиБ исходных записей. Превышение возвращает `context_reference_budget` до
-изменений, без частично разрешённого действия. Размещение и запись используют
-это же чтение. Подтверждение и отмена действия проверяют адрес контекста и
-конкретную запись, не загружают переписку.
+Action scope retains the union of historical references. Duplicate references are
+skipped by indexed hash lookup. One calculation admits at most 512 distinct
+references and 4 MiB of source records; exceeding this returns
+`context_reference_budget` before mutation. Placement and writes use the same read.
+Action confirmation/undo checks the context and named entry without loading history.
 
-## Внешняя подготовка и приёмка
+External preparation rebuilds indexes only in an independent candidate, preserving
+canonical bytes, historical positions, identities and cursors. Failed rebuilding
+rolls back both tables. Activation validates definitions and every indexed author
+and reference; missing/corrupt indexes reject admission.
 
-Существующий архив не получает индекс молча при запуске приложения. Внешний
-перенос перестраивает его в своей независимой проверенной копии, читая текущий
-типизированный формат. Канонические записи, их исторические позиции, журнал,
-идентичность устройства и сетевые курсоры этим не переписываются. Отказ
-перестройки откатывает обе индексные таблицы. Проверка архива перед активацией
-сверяет определения индексов, каждую запись, её автора и каждую ссылку;
-отсутствующий либо неверный индекс запрещает активацию.
+## One selection owner
 
-`SharedContextReadTests`, `SharedContextReplicationTests` и
-`SharedContextReferenceTests` проверяют 100 000 записей, повреждённое
-непрочитанное тело, неизменность прежних хешей и позиций, конкурентный порядок,
-родителя в следующей порции, отказ пакета и сохранение канонических байтов
-при внешней перестройке. Системный показ на iPad и установка пары — отдельная
-приёмка; эти тесты её не заменяют. Полные входящие каталог, дерево, чернила и
-тяжёлые проекции операций этим контрактом ещё не завершены.
+`NotebookSelectionSession` owns one current target: item, artifact, context region
+or temporarily presented reference. Pending movement, region rectangle, program/text
+focus and pinned references belong to that same selection.
+`NotebookAgentQuestion` is its immutable reference value, not another controller.
 
-## Указание материала без отдельного режима
+Finger tap indicates material. Holding an artifact starts manipulation; holding
+empty space starts a region. A region crossing open paper is clipped to that paper,
+not redirected to the hidden board. Camera and scale are fixed at contact start.
+Dragging the same selected source neither adds another indication nor sends a message.
 
-`NotebookSelectionGesture` наблюдает палец в существующей сцене. Касание
-прикрепляет рассмотренный объект через прежний `NotebookAttentionSelection`;
-удержание самого артефакта начинает его перемещение, а удержание пустого места
-выделяет область. Рамка, пересекающая край открытого листа или документа,
-остаётся областью этой бумаги и обрезается её границами: она не выбирает
-скрытую под бумагой доску. Полностью внешняя рамка не создаёт такого указания.
-Положение и масштаб фиксируются при начале контакта.
-Выбор объекта закрепляет рассмотренный источник; продолжение переноса того же
-объекта не создаёт ещё одно указание и не отправляет сообщение агенту.
+Chat and companion use one small `NotebookContextCounter` for source count, reviewed
+version and clearing. Paper shows a thin contour, without a floating question editor.
+Chat size and counter actions do not change the Pencil contact or send destination.
 
-`NotebookAgentQuestion` — неизменное значение ссылок внутри единой
-`NotebookSelectionSession`, а не второй владелец выделения. Чат и компаньон
-показывают их количество одной маленькой кнопкой `NotebookContextCounter`.
-По нажатию доступны источники, состояние рассмотренной версии и снятие
-выделения без удаления истории. Над бумагой остаётся только тонкий контур:
-плавающей карточки вопроса, подписей «Амир указал область» и отдельного
-редактора поверх содержания больше нет. Размер чата и этот счётчик не меняют
-`SessionPresence`, принятый контакт Pencil или адрес отправки.
+A new tap replaces selection immediately; empty-paper tap or clear removes all of
+it. Navigation ends manipulation but retains pinned reviewed content as context.
+Late saves/history reads recheck selection identity and cannot resurrect replaced
+frames. Send waits for new-source persistence; failure never restores an old selection.
 
+Closed covers receive contact through `NotebookInteractionTouchView` only.
+Artifacts, including native text, retain their own input. Spatial element addresses
+include board ID, so deferred work never substitutes the current camera's board.
 
-## Один текущий выбор
+## Session publication
 
-`NotebookSelectionSession` в модели владеет одним целевым объектом: предметом,
-артефактом, областью контекста или временно показанной ссылкой. Незавершённые
-смещения, прямоугольник области, фокус программы/текста и сохранённые ссылки
-принадлежат этому же выбору. У представления доски нет собственного выбранного
-предмета или фокуса текста; `NotebookAttentionMarks` не рисует контекстные рамки
-поверх уже выбранного предмета или артефакта. Область с несколькими ссылками
-имеет один внешний контур, а счётчик сообщает число источников.
+`NotebookSelectionEnvelope` serializes the existing selection, physical surface,
+device/session and increasing sequence. Camera, highlight and preview geometry
+alone do not create a selection generation. Inactive scenes publish unknown while
+retaining local selection; activation republishes it with a new sequence.
 
-Тап по новому материалу заменяет предыдущий выбор сразу. Тап по пустой бумаге
-или «Снять выделение» очищает весь выбор, не только счётчик. При навигации
-манипуляция заканчивается, а закреплённое рассмотренное содержание остаётся
-контекстом того же выбора. История не удаляется и возвращается только явным
-действием. Позднее сохранение или чтение истории проверяет идентичность
-принятого выбора и не может вернуть заменённую рамку. Пока новый материал
-сохраняется, отправка недоступна: поручение не теряет указание и не получает
-предыдущий контекст. Ошибка нового источника не восстанавливает старый выбор.
+Mac accepts only the current authenticated connection/device/session and increasing
+sequence. A stale disconnect cannot clear a new connection. The single local runtime
+record is not replicated content, an undo action or a content cursor change.
+Startup/disconnect makes it unknown. MCP reads that projection through ordinary
+addressed reads.
 
-Закрытая обложка получает контакт только через `NotebookInteractionTouchView`;
-общий распознаватель не повторяет её тап. Артефакты, включая нативный текст,
-пропускаются к собственному контакту. Пространственный адрес элемента содержит
-ID доски: отложенное преобразование не использует доску текущей камеры.
+## Direct geometry manipulation
 
-### Сессионная публикация для агента
+One `NotebookElementControls` frame has four corner targets of 44×44 points;
+delete stays outside them. Pencil outside controls reaches paper. One
+`NotebookElementManipulation` value owns the full address, initial bounds, grabbed
+corner, allowed extent, target field identity and world anchor.
 
-Модель только сериализует существующий выбор, его ID и физическую поверхность.
-`NotebookSelectionEnvelope` использует текущий device/session и монотонный
-sequence. Изменение камеры, подсветки или промежуточной геометрии само по себе
-не создаёт поколение. Неактивная сцена публикует неизвестное значение, не очищая
-локальный выбор и не прерывая Pencil; активация вновь публикует тот же выбор
-с новым sequence. Навигация и clear по-прежнему принадлежат текущему владельцу.
+Preview and committed geometry use the same calculation. The opposite corner is
+fixed; minimum size/paper edges constrain only the dragged corner. Movement counts
+from first contact, including pre-recognition motion. Body hold, corners and
+accessibility actions use the same owner.
 
-На Mac существующая очередь записи принимает публикации только текущего
-аутентифицированного connectionID, deviceID и sessionID, в возрастающем порядке.
-Старый disconnect не очищает новое соединение. Один локальный runtime record
-не реплицируется, не создаёт действие/Undo и не меняет курсор чтения содержания.
-При старте и разрыве запись становится unknown. MCP получает эту проекцию через
-обычное адресное чтение, без второго selection-controller и без новых прав.
+Cancellation, selection/camera/window change, a second finger or Pencil start
+discards preview without restoring old stored geometry. Completion checks contact,
+bounds, target identity and anchor; Core repeats that check inside SQL. A late
+release cannot resurrect deleted content or move a replacement with the same local ID.
+Only geometry changes; concurrent text/ink merge through their existing owners.
 
-### Прямое изменение геометрии
+Accepted bounds and the actual owner frontier return together, including concurrent
+neighbors. A truly deleted target clears selection after page admission; a temporary
+unloaded range does not. Native editor completion also checks full address and
+selection identity. `isPointing` is derived from the current accepted contact/region.
 
-У выбранного артефакта одна экранная рамка `NotebookElementControls`, а не
-отдельные рамки в листе, обложке и проекции доски. Четыре коротких угловых
-маркера имеют области касания 44×44 точки; отдельной кнопки размера нет.
-Удаление размещается вне этих областей, в том числе у края экрана. Внешний
-контакт Pencil проходит к бумаге; контакт пальца за угол принадлежит рамке.
+Rendering, handles and hit testing use the same admitted physical projection, with
+no retained second drag offset. Background composition catches up independently.
 
-`NotebookElementManipulation` — значение одного контакта внутри
-`NotebookSelectionSession`: полный адрес элемента, исходный прямоугольник,
-сторона захвата и допустимые границы. Расчёт один: предварительная рамка и
-запись используют тот же результат. Контакт также удерживает авторскую версию
-поля ID цели и её мировой опоры, а не только строковое имя. Противоположный угол неподвижен; нижний
-предел размера и край листа ограничивают только тянущийся угол. Смещение
-измеряется с первого касания, включая движение до распознавания жеста.
-Старые отдельные пути перемещения/размера удалены. Удержание тела элемента,
-углы и действия универсального доступа проходят через тот же контакт.
+## Evidence for displayed regions
 
-Отмена, другой выбор, смена камеры/окна, второй палец и начало Pencil не
-публикуют незавершённую геометрию. Завершение проверяет идентификатор контакта
-и исходный прямоугольник, идентичность и мировую опору. Адресная команда Core
-повторяет эту проверку внутри транзакции над текущим содержанием SQLite.
-Она меняет только рамку существующей цели: позднее отпускание не воскрешает
-удалённый материал и не двигает новый материал с тем же ID. Отмена снимает
-лишь preview, без обратной записи старого снимка. Последующая работа другого контакта не отменяется
-старым отпусканием. Ресурсы WebKit сохраняют физический размер до завершения,
-а на запись меняется только геометрия: одновременные текст и чернила агента
-объединяются прежними владельцами содержания. Принятая рамка возвращается
-вместе с фактическим фронтом владельца; если за время контакта появился сосед,
-модель принимает и его. Исчезнувшая цель снимает выбор после принятия её
-страницы, но не из-за временного отсутствия страницы в загруженном диапазоне.
+`NotebookReferenceBasis` retains installed-ink evidence and per-element, placement,
+board-header and order-neighbor contributions from one SQL cut. Capture replaces
+only live contributions and accepted ink; static pixels and ancestors retain their
+original basis. Deletion removes its contribution and joins former neighbors.
+This is temporary displayed-material evidence, not another content index.
 
-Признак исчезнувшего закреплённого элемента сохраняет ID его доски. Одинаковое
-локальное имя на другой доске не снимает её выбор. Завершение нативного
-редактора проверяет полный адрес и идентичность принятого выбора, поэтому
-демонтированный редактор не закрывает новый.
+Persistence checks the result against SQL. Ordinary move/resize/delete can support
+pointing without waiting for a new overview image. If an unseen region changed or a
+stack reconstruction affected static pixels, the full region waits for consistent
+composition rather than assigning a fresh hash to old pixels. Exact live-element
+references remain available. New HTML becomes shown only after its image is ready.
 
-`isPointing` — вычисляемое следствие принятого контакта/области этого выбора,
-не отдельный переключатель режима. Повторный выбор того же элемента не может
-выключить уже принятый контакт; его отмена сразу освобождает режим указания.
+## One-shot laser context
 
-Завершение контакта не возвращает тело к геометрии прежнего изображения сцены.
-Для уже допущенного нативного элемента тело, рамка и захват читают одну текущую
-физическую проекцию. Сохранённый результат не удерживается вторым временным
-смещением: фоновые изображения догоняют существующую модель независимо от
-следующего движения. Полная ссылка области должна соответствовать действительно
-показанной композиции; прежний отпечаток нельзя выдать за новую геометрию.
+`NotebookLaserContext` retains the last five completed local indications for a
+specific Mac/chat, each expiring after 30 monotonic seconds. Drawing alone writes
+nothing. The next nonempty message consumes the packet once; starting dictation does
+not. A different chat/computer never inherits it, and the crop-count clear action
+discards pending captures.
 
-`NotebookReferenceBasis` продолжает прежнее доказательство установленных
-чернил для допущенных предметов. Из того же SQL-среза сохраняются вклады
-конкретных элементов, размещения, заголовка доски и соседей в порядке элементов.
-При захвате заменяются только эти живые вклады и принятые чернила; неподвижные
-пиксели, невидимое содержание и цепочка родителей остаются исходными.
-Удаление исключает свой вклад и соединяет прежних соседей. Это временное
-доказательство показанного материала, не второй индекс содержания или очередь.
+A message carries at most five frozen displayed images / 4 MiB total. Missing
+evidence is not replaced with newly captured pixels. Persistence uses SharedContext
+and AgentPinnedSource with `select: false`. Chat jobs carry evidence addresses;
+PNGs use normal blob delivery. Mac waits for those exact images before the native
+Codex turn. Frame/job limits remain unchanged.
 
-Сохранение через прежнюю очередь по-прежнему строго сверяет результат с SQL.
-Обычные переносы, размер и удаление не ждут новой обзорной композиции для
-указания доски или обложки. Если изменилась ещё не показанная часть либо
-перестройка стопки затронула неподвижный слой, целая область ждёт согласованного
-изображения, не получает свежий отпечаток для старых пикселей. Указание точного
-живого элемента от этого не блокируется. Новое содержимое HTML считается
-показанным только после подготовки его собственного изображения.
+The delivered packet belongs to that message and its idempotent retries, not future
+drafts or automatic context.
 
-## Одноразовое указание лазером
+## Checks
 
-`NotebookLaserContext` хранит только локальный незавершённый пакет: последние
-пять завершённых указаний для конкретных Mac и чата. Каждый захват истекает
-через 30 секунд по монотонным часам; запись в пространство при рисовании не
-происходит. Отправка следующего непустого сообщения забирает пакет один раз.
-Начало диктовки пакет не забирает. Другой чат/компьютер не наследует указания;
-крестик рядом с числом кропов очищает их до отправки.
-
-Из показанного среза берутся точные замороженные изображения, не новая
-фотография сцены после ожидания. На одно сообщение допускаются до пяти
-изображений и суммарно 4 МиБ. Недоступный снимок не подменяется свежими пикселями.
-Сохранение использует существующие `SharedContext` и `AgentPinnedSource`, но
-не меняет выбранный общий фрагмент (`select: false`). В коротком chat job
-передаются адреса evidence, а PNG доставляются обычным каналом blob-репликации.
-Mac ждёт эти адресные изображения до начала native turn и разрешает их в
-нативные image inputs Codex. Лимиты chat job и transport frame не увеличены.
-
-Доставленный пакет остаётся частью своего сообщения и его идемпотентной
-повторной доставки. Он не становится вложениями черновика, активным выбором
-или автоматически прикладываемым контекстом следующих сообщений.
+`SharedContextReadTests`, `SharedContextReplicationTests` and
+`SharedContextReferenceTests` cover 100,000-entry histories, bounded reads, immutable
+hashes, concurrent order, cross-batch parents, rejection and external index rebuilding.
+These contracts do not establish physical display or whole-system performance.
+See [verification](verification.md).

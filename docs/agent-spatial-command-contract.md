@@ -1,72 +1,46 @@
-# Адресная агентская ручка
+# Addressed agent ink and item lifecycle
 
-`NotebookActionProjection` читает корень пространственных чернил и поддеревья
-UUID, перечисленных в `appendInkStroke`. Это одинаковая проекция для применения
-и причинной отмены: квитанция удерживает исходные UUID. Проверка существования
-действия глобальна, а не ограничена выбранной поверхностью. Поэтому UUID,
-уже принадлежащий другой обложке, нельзя повторно присвоить доске.
+`NotebookActionProjection` reads the spatial-ink root and the UUID subtrees named
+by `appendInkStroke`. Apply and causal undo use the same projection; the receipt
+retains the original UUIDs. Action existence is checked globally, so a UUID owned
+by another cover cannot be reassigned to the board.
 
-Существующий `CollaborationStore` проверяет ход и публикует разницу этой
-проекции через прежнюю транзакцию. Невидимые действия, их порядок и точки не
-перезаписываются. Отмена меняет активность выбранного действия, а не сохранённые
-spans. Повтор команды возвращает прежнюю квитанцию и не добавляет изменение.
+`CollaborationStore` validates and publishes the projection difference in its
+existing transaction. Unread actions, order, and measured points remain intact.
+Undo changes activity, preserving immutable spans. Exact retry returns the same
+receipt. Creation undo separately checks later human content of created surfaces.
 
-Защита человеческой доработки при отмене **создания** по-прежнему проверяет
-содержание созданных поверхностей. Она отделена от списка UUID добавляемой
-ручки и не заменена неполной проекцией. Адресный переход этой проверки, тяжёлых
-страниц, документов и причинных полей предков остаётся открытым.
+## Physical-owner lifecycle
 
-## Проверка 10 сентября 2026
+`appendPage` uses `publishPageAppend`, as native landing does.
+`deleteItem` uses the UI's `deleteWorkspaceItemContent`.
+The command preserves presence, camera, and selected page. Store membership, not
+the paint window, defines deletion scope. A nonempty board and the final working
+item are rejected before writing.
 
-Отдельный профиль на исходниках от `7ff90a5` прошёл 20 Core-проверок за
-123.792 секунды. При 100 000 прежних действиях на **той же** доске добавление
-двух агентских штрихов потребовало 4 169 SQL-инструкций, отмена — 3 269,
-точный повтор — 38; измерение включает финальную публикацию транзакции.
-Повреждённое постороннее тело не декодируется. Проверены неизменные spans,
-пять изменённых пространственных адресов, прежние UUID и отказ повторного
-присвоения чужого UUID. Прежние проверки нативной ручки и её отказов также прошли.
+Lifecycle inverse data uses immutable roots/parts in the existing blob store.
+Ordered `{address,beforeHash?,afterHash?}` entries bind workspace and action.
+First-before capture covers action content, excluding results, receipts, and context.
+Original and restoration inverse streams are required delivery/snapshot/cloud
+dependencies. Hash validity accompanies causal and domain validation.
 
-Первый профиль не прошёл: диагностическое повреждение было сделано внутри
-подготовки фикстуры, до построения её производных индексов. Корректный тест
-сначала завершает транзакцию 100 000 валидных действий и только затем повреждает
-постороннее тело; проверяемая команда не ослаблена. Обе попытки сохранены:
-`/tmp/notebook-spatial-action-profile.log` (статус 1) и
-`/tmp/notebook-spatial-action-final-profile.log` (статус 0).
-Профиль не заменяет полный `verify.sh` на объединённых исходниках и приёмку iPad.
+`undoCollaborationAction` checks deletion existence, the complete placement register,
+and notebook membership/order before restoring groups. Parent boards precede children.
+Independent continuation of a parent preserves its group. Membership restoration
+uses fresh causal versions; ordinary fields use conditional undo, preserving accepted
+later PAGE/document/state/board content.
 
-## S8: жизненный цикл физического владельца
+Creating and deleting an item in one action does not resurrect it on undo.
+Undo of append removes only a birth still owned by that action; human-adopted pages
+survive. The shared [read allowance](agent-command-read-allowance.md) remains unchanged.
 
-`appendPage` использует `publishPageAppend`, как native landing; `deleteItem` —
-`deleteWorkspaceItemContent`, как UI. Агентская команда не меняет presence,
-камеру и выбранный лист. Состав удаления берётся у Store, не из paint window.
-Непустая доска и последний рабочий предмет отклоняются до записи.
+The move/create → delete → undo-delete → undo-earlier chain follows complete placement
+proofs. `action_field_restorations` links earlier inverse blobs so provenance survives
+reopen, delivery, and derived-index rebuilding. Shared-dot payloads, dominance, and
+canonical address/value are validated. Independent human ABA and losing concurrent
+heads do not become an earlier action's property. There is no automatic basis refresh
+or action replay.
 
-Lifecycle inverse — ссылка квитанции на неизменные root/parts из существующего
-blob store: упорядоченные `{address,beforeHash?,afterHash?}` связаны с workspace
-и action. First-before capture охватывает содержание всего хода, не результат,
-receipt или контекст. Исходный inverse и inverse восстановления при undo
-входят в обязательные зависимости доставки/snapshot/cloud. Хеши не заменяют
-причинную и доменную проверку восстановления.
-
-Тот же `undoCollaborationAction` сначала проверяет все группы: deletion
-existence, полное placement и notebook membership/order. Зависимые доски
-восстанавливаются раньше детей; чужое продолжение родителя сохраняет всю
-группу. После восстановления членства свежими причинными версиями обычные
-поля условно отменяются прежним владельцем. Сохранённые PAGE/document/state/
-board тела не заменяются из истории: принятая поздняя human-правка остаётся.
-Контракт хранения — [retained sources](spatial-replication-contract.md#s8-сохранённый-источник-не-живой-предмет).
-
-Создание и удаление одного предмета в одном ходе не дают resurrection при
-undo. Отмена append удаляет только ещё принадлежащее ходу рождение; принятый
-человеком лист сохраняется. Полная история undo/redo здесь не добавляется.
-Общий [read allowance](agent-command-read-allowance.md) не увеличен.
-
-Цепочка move/create → delete → undo delete → undo earlier следует сохранённому
-inverse доказательству полного placement register. Свежая human-версия undo
-не теряет происхождение после reopen, доставки новому peer или пересборки
-производного индекса. Доказательство хранит ссылки на прежние inverse blobs
-в том же `action_field_restorations`, не вторую историю. Shared causal merger
-проверяет payload общего dot и dominance; canonical address/value проверяются
-до публикации. Независимый human ABA и даже проигрывающий concurrent head
-не становятся собственностью более раннего хода. Нет автоматического
-освежения basis или повторного исполнения действия.
+See [retained sources](spatial-replication-contract.md#retained-sources-and-live-membership)
+and [verification](verification.md). Large-owner creation protection and runtime
+acceptance are separate from bounded append/undo storage checks.

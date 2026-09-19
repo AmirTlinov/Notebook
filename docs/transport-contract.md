@@ -1,236 +1,131 @@
-# Доверенная связь iPad и Mac
+# Trusted iPad–Mac transport
 
-Связь переносит выбранное общее пространство между своими устройствами,
-допущенными private directory одного Apple Account и сохранёнными в Keychain.
-Имя в Bonjour помогает найти Mac, но не даёт доступа к материалам. Приглашений,
-QR и ручных подтверждений нет. До проверки ключа, обеих идентичностей и
-сохранённого допуска не передаются ни содержание, ни курсор истории.
-Полный контракт владельца: [installation-pairing.md](installation-pairing.md).
+Transport carries a selected shared workspace between devices admitted by the
+private directory of one Apple Account and stored in Keychain. Bonjour discovers
+endpoints; access comes from verified keys, identities and account admission.
+See [automatic connection](installation-pairing.md).
 
-## Общая интеграция: протокол 37 / manifest 18
+## Current compatibility: wire 37, manifest 18
 
-Протокол 37 объединяет GUI-183 (общий Mac runtime, account/relay, поколения
-разговора, адресные разрешения и завершённые неопределённые квитанции) с renderer
-основной ветки 36/18. Предыдущая пара 36 не совместима с объединённым wire-контрактом;
-обновляются оба приложения. Формат сохранённого содержания остаётся manifest 18.
+Both applications must use the same wire contract. Version 37 integrates the
+shared Mac runtime, account/relay routing, conversation generations, addressed
+approvals and resolved-unknown receipts with manifest 18 content: full TeX,
+program packages, formatted native text, drawing tools, canonical board placements
+and whole-element SVG/HTML erasure. Existing manifests 4–17 remain readable;
+history is not rewritten. Package sources require manifest 10 or later and full
+TeX requires 11 or later.
 
-### Предыдущая интеграция 35/17
+Content, local containers, workspace/device identities and keys survive an
+ordinary update. Installed build status belongs in [verification](verification.md);
+a source version alone does not prove installation.
 
-Единый декодер объединяет пакеты программ и полный TeX GUI-240 (33/15)
-с нативными инструментами, форматированным текстом и линиями основной ветки (34/16).
-Ни одна прежняя ветка не объявляется совместимой с объединённым содержанием:
-сопряжение требует обновления обоих приложений. Manifest 4–16 читаются без
-перезаписи истории; пакетные источники до 10 и `.tex` до 11 отвергаются.
-Локальные контейнеры, идентичности и ключи сохраняются. Эта development-граница
-сама по себе не означает обновление установленной пары; её статус — в `verification.md`.
+Bonjour advertises `notebook-v37-<UUID>-<generation>`; TXT `workspace` distinguishes
+background workspace listeners sharing a Mac device ID. One transport owner
+changes the advertisement generation on restart. Metadata grants no trust.
 
-## Пакетные программы: протокол 27 / manifest 10 (GUI-242, в разработке)
+Before a format transition, outgoing shared writes must be acknowledged. Old
+journal entries retain their format. A peer behind the transition floor needs a
+current checkpoint; its cursor is never advanced artificially. Authenticated
+`contentUnavailable` reports a specific upgrade/checkpoint reason without
+acknowledging content. The final control frame has a bounded close deadline.
+An unchanged incompatible advertisement does not restart exchange every two seconds.
 
-`programPackage` — SHA канонического namespace, часть единого причинного `content`
-элемента/блока, а не ссылка на произвольный файл или URL. Прежние source/html/css/JS
-в таком источнике пусты; явный null переключает обратно на inline. Сторона с прежним
-протоколом не получает содержание нового формата. Выпуск установленной пары этим
-изменением не объявляется.
+## Authentication and encryption
 
-До публикации и ACK проверяются manifest и все его части. Та же dependency closure
-идёт через direct replication, CloudKit outbox/snapshot, оригинальный inverse и
-выполненный undo. Удержанные конкурирующие source heads тоже несут зависимости;
-строки с похожим SHA в пользовательском state их не создают. Недостающая часть
-оставляет прежнее содержание/курсор целиком. Discovery-индексы расположены в прежнем
-SQLite и не являются ни архивом, ни второй очередью доставки. Дедупликация receipt
-не позволяет подтвердить утраченную зависимость.
-LAN, ограниченный Apple peer-to-peer поиск и relay принадлежат тому же `NearbySync`.
-Смена канала не создаёт новую задачу, SQLite-очередь или копию проекта.
-Протокол 30 добавляет account presentation и выдачу relay capability уже доверенному
-peer; детали — [codex-remote-work.md](codex-remote-work.md). Содержимое и ключ пары
-не меняются. Авторитет команды остаётся у выбранного аутентифицированного поколения.
+`NotebookTransportTLS` uses Network.framework and Security with one pinned profile:
+TLS 1.2, `TLS_ECDHE_PSK_WITH_CHACHA20_POLY1305_SHA256` (`0xCCAC`).
+ECDHE provides forward secrecy; ChaCha20-Poly1305 provides authenticated
+encryption; the pair uses a random 256-bit secret. Both ends verify the negotiated
+version and cipher before Notebook messages. Resumption and early data are disabled.
 
-## Совместимость текущего размещения
+System loopback tests established this profile on the supported SDK. External-PSK
+TLS 1.3 did not complete that handshake and is not a supported alternative.
+SDK or minimum-OS changes require positive and negative handshake checks.
+Loopback success remains distinct from physical-pair acceptance.
 
-В текущих исходниках протокол 37 и manifest 18 объединяют полный TeX,
-пакетные программы, форматированный текст и нативные инструменты с каноническими размещениями доски 3
-и цельным стиранием SVG/HTML. Старый получатель не должен терять зависимости
-пакета или интерпретировать `wholeElement` как частичную маску;
-manifest 4–17 остаются читаемыми без переписывания истории.
-Версия 23 заменила ручное сопряжение account-authorized proof/ready;
-версия 22 добавила сессионное выделение. В этих двух версиях manifest содержания не менялся.
-Ниже сохранены границы предыдущих изменений; статус установленной пары — в
-`verification.md`.
-Версия 19 добавляет треугольники, ромбы и нормализованные углы многоугольников.
-Manifest 6 не позволяет прежнему получателю потерять тип или ориентацию;
-новый получатель читает уже записанные manifest 4 и 5 без переписывания.
-Версия 18 добавляет неизменные цели частичного стирания в действиях чернил.
-Manifest 5 не позволяет прежнему CloudKit-получателю молча отбросить эти поля;
-новый получатель продолжает принимать уже записанные manifest 4 без их переписывания.
-Версия 17 добавляет типы нативных прямоугольников и плюсов; версия 16 добавила подписанное поколение журнала для единой доставки через
-LAN и CloudKit; сохраняется требование неизменных конкурентных авторов общего поля:
-прежний peer не должен свернуть их обратно в одного победителя на эхо.
-Формат локального пространства и установленные ключи пары не меняются;
-для обмена обновляются оба приложения. Несовпадающая версия пары
-отказывается от обмена до декодирования неизвестных сообщений.
-Bonjour объявляет версию обмена в имени `notebook-v37-<UUID>-<поколение>`; прежний writer
-не получает соединение с новым содержанием. TXT `workspace` выбирает нужный
-listener среди фоновых пространств с одним device ID Mac. Метаданные не заменяют TLS или
-доверие. После обновления объявления существующее сопряжение продолжает
-работать автоматически, без нового подтверждения доступа. Поколение объявления
-принадлежит одному владельцу связи и меняется после перезапуска, поэтому даже
-объединённое событие Bonjour отличает обновлённое устройство от прежней паузы.
+`NotebookTransportAuthentication` binds both device UUIDs, the workspace and two
+fresh 256-bit nonces using CryptoKit HMAC-SHA256. Both ends verify saved admission,
+then exchange ready. Content and history cursors become available only afterward.
+Keys use device-only Keychain protection. A local auto-connect prohibition is
+persisted before publication and survives account refresh.
 
-До перехода все исходящие общие записи должны быть подтверждены. Старый
-журнал сохраняется неизменным, но не переобозначается новым форматом. Peer,
-чей входящий курсор находится до границы перехода, требует текущую исходную
-копию через checkpoint; его курсор не передвигается принудительно.
-`contentUnavailable` передаёт только определённую причину обновления или
-исходной копии по уже подтверждённому каналу. Последний контрольный кадр имеет
-ограниченный срок закрытия соединения и не подтверждает содержание.
-Оба конца прекращают повторять несовместимый обмен; причина видна в состоянии
-подключения, а не маскируется сетевым тайм-аутом. Неизменное объявление не
-возобновляет такой обмен каждые две секунды.
+An explicitly admitted archive activation selects a new Keychain scope through
+its transition ID. Ordinary updates retain that scope. Historical keys and
+archives are neither read nor deleted by this path.
 
-Подробности облачной доставки, snapshot cut, дедупликации и аккаунта:
-[cloud-delivery-contract.md](cloud-delivery-contract.md).
+## Framing, backpressure and durability
 
-## Выделение активной сцены (протокол 22)
+`NotebookTransportSession` owns one TLS connection generation:
 
-Версия 22 добавляет `.selection` в существующую transient-полосу. Один
-заменяемый слот передаёт только последний выбор после contact, presence и
-остальных служебных сообщений. DeviceID сверяется с аутентифицированным peer;
-отдельный session/sequence и поколение соединения не позволяют позднему
-сообщению восстановить прежний выбор после clear или перезапуска. Неактивная
-сцена передаёт неизвестное значение, а не сохранённый viewport как выделение.
+| Limit | Value |
+|---|---:|
+| Frame, including four-byte length | 256 KiB |
+| Unacknowledged frames / bytes | 16 / 512 KiB |
+| Reserved control capacity | 256 KiB |
+| Encoded message queue | 1 MiB |
+| Concurrent durable change offers | 2 |
+| Connections | 8 |
+| Blob transfer chunk | 32 KiB |
+| Manifest / individual blob | 64 MiB / 256 MiB |
 
-Это сессионные данные, не новый формат содержания/manifest и не новая очередь
-репликации. Совместимость требует обновления обоих приложений; ключи и доверие
-сохраняются. Публикация не подтверждает получение или показ действия агента.
-Реальная установка/проверка 22 фиксируется отдельно в verification.md.
+The receiver validates the length before requesting the body. Replaceable
+transient slots retain the latest state instead of accumulating snapshots.
+A temporary blob file belongs to one connection generation and hash. Invalid
+length, order or SHA-256 discards the incomplete assembly. SQL ingests a verified
+file by streaming; a large owner is not assembled in transport memory. Limits
+produce errors, never silent truncation.
 
-## Доверие после активации архива
+A frame credit releases transport capacity. A durable `committed` response is sent
+only after `NotebookTransportStorage.applyRemoteChange` completes the single SQL
+transaction for content, causal merge, deduplication and incoming cursor.
+Reconnect resumes from that cursor. A lost ACK neither loses a completed write
+nor duplicates an action. Late transient events and disconnects cannot revive a
+retired connection generation.
 
-Допущенный transitionID выбирает отдельную область device-only Keychain при
-тех же идентичностях. Новая регистрация активации в private account directory
-получает новый ключ; устаревший локальный ключ не заменяет его. Холодный запуск
-обычного обновления использует прежний transitionID и сохраняет существующее
-доверие. Исторические ключи и архивы не читаются и не удаляются.
+Program manifests and their complete dependency closure are validated before
+publication or ACK, including retained competing source heads, original inverse
+actions and completed undo. State strings resembling hashes are not dependencies.
+Missing data leaves the previous content and cursor intact. Direct and cloud
+delivery share this rule; see [cloud delivery](cloud-delivery-contract.md).
 
-## Кто защищает канал
+## Session selection and Codex traffic
 
-`NotebookTransportTLS` использует системные Network.framework и Security:
-TLS 1.2, **TLS_ECDHE_PSK_WITH_CHACHA20_POLY1305_SHA256**, код `0xCCAC`.
-ECDHE даёт прямую секретность, ChaCha20-Poly1305 — аутентифицированное шифрование,
-случайный 256-битный ключ пары — аутентификацию связи. Это один закреплённый профиль,
-а не переход на более слабый вариант при ошибке. Обе стороны проверяют фактически
-согласованные версию и шифр до первого сообщения Notebook. Другой результат
-закрывает канал. Возобновление TLS и отправка до завершения рукопожатия выключены;
-обхода проверки сертификата в программе нет.
+Active-scene selection uses one replaceable transient slot after contact and
+presence. Device identity, session sequence and connection generation prevent a
+late message from restoring a cleared selection. An inactive scene publishes
+unknown, not a saved viewport. Selection is session data, not durable content or
+proof that an agent action was displayed.
 
-Системная реализация проверена через настоящий loopback handshake на SDK Xcode
-27 beta 5 / macOS 27. TLS 1.3 с external PSK в этом окружении не прошёл handshake
-и **не является поддерживаемой веткой**. При смене SDK или минимальной версии ОС
-тот же положительный и отрицательный тесты входят в обязательный `verify`.
-Компиляция API сама по себе не доказывает защищённую связь. Приёмка физической
-пары Mac/iPad остаётся отдельной от loopback-проверки.
+Chat uses `NotebookChatEnvelope`, up to 192 KiB inside the existing frame.
+The iPad retains one request and retries the same UUID until response or
+disconnect. The SQL outgoing journal proves persistence; a transient frame does
+not. Responses are routed to the same trusted peer and connection generation.
+LAN, bounded Apple peer-to-peer discovery and relay belong to the same
+`NearbySync` owner. See [agent runtime](agent-runtime-contract.md) and
+[remote work](codex-remote-work.md).
 
-Поскольку публичные метаданные Security не называют выбранный из нескольких
-локальных PSK, `NotebookTransportAuthentication` дополнительно связывает пару
-заявленных UUID, пространство и две свежие 256-битные случайности через системный
-CryptoKit HMAC-SHA256. Обе стороны проверяют сохранённое разрешение, затем
-обмениваются ready. Только после допуска открываются курсор и содержание.
-Keychain хранит ключ device-only. Локальный запрет автоматического подключения
-сохраняется прежде публикации результата и не снимается cloud refresh.
+## Local Mac IPC
 
-Первичные контракты: [PSK в Security](https://developer.apple.com/documentation/security/sec_protocol_options_add_pre_shared_key(_:_:_:)),
-[набор шифров](https://developer.apple.com/documentation/security/sec_protocol_options_append_tls_ciphersuite(_:_:)),
-[фактически согласованный шифр](https://developer.apple.com/documentation/security/sec_protocol_metadata_get_negotiated_tls_ciphersuite(_:)),
+`SocketIO` implements the private Unix channel between `NotebookIPCServer` and
+`NotebookIPCClient`: socket-owner validation, bounded waits, interrupted-read
+retry and length validation before allocation. Its limits are separate from TLS.
+
+`stopAndDrain` closes admission and waits for readers and accepted writer commands.
+Closing a socket is not completion of its SQL command. The server owns admitted
+sockets before queued workers start, closes them synchronously on shutdown and
+prevents late workers from reading released descriptors. Accepted writes retain
+their owner until completion. Completion timing is measured under the server lock;
+a repeated drain of an already-finished owner returns zero wait.
+
+## Verification and references
+
+`NotebookTransportSessionTests`, `NearbySyncTests`,
+`NotebookTransportBlobTests` and `NotebookIPCTests` cover actual system handshakes,
+incorrect secrets, proof/ready, bounded queues, chunk integrity, commit-before-ACK,
+reconnect, stale generations, Unix socket permissions and accepted-command drain.
+Exact runs and their scope are in [verification](verification.md).
+
+Primary references: [Security PSK API](https://developer.apple.com/documentation/security/sec_protocol_options_add_pre_shared_key(_:_:_:)),
+[Security cipher configuration](https://developer.apple.com/documentation/security/sec_protocol_options_append_tls_ciphersuite(_:_:)),
+[negotiated cipher](https://developer.apple.com/documentation/security/sec_protocol_metadata_get_negotiated_tls_ciphersuite(_:)),
 [RFC 7905](https://www.rfc-editor.org/rfc/rfc7905.html).
-Идентификатор `0xCCAC` также объявлен системным `Security/CipherSuite.h`.
-
-## Кто отвечает за перенос и сохранение
-
-`NotebookTransportSession` владеет одним поколением TLS-соединения. Размер кадра
-вместе с четырёхбайтной длиной — не более 256 КиБ. Приёмник проверяет длину прежде,
-чем запросить тело у Network.framework. Одновременно разрешены 16 неподтверждённых
-кадров и 512 КиБ в полёте; 256 КиБ зарезервированы для управления. Очередь encoded
-сообщений ограничена 1 МиБ; заменяемые transient-слоты удерживают последние
-состояния, а не растущую очередь снимков. Одновременно предлагаются не более
-двух устойчивых изменений, подключений — не более восьми.
-Тяжёлые данные проходят кусками до 32 КиБ, поэтому их base64-представление
-помещается в тот же кадр. Временный файл принадлежит одному поколению и одному
-хешу; нарушение длины, порядка или SHA-256 удаляет незавершённую сборку.
-
-Манифест ограничен 64 МиБ, отдельный blob — 256 МиБ. Превышение возвращает ошибку,
-а не усечение или пустой результат. Транспорт не собирает тяжёлого владельца
-целиком в памяти. SQL принимает проверенный файл через потоковую запись.
-Отдельный credit означает только освобождение места для следующего кадра;
-он **не подтверждает сохранение тетради**.
-
-`NotebookTransportStorage.applyRemoteChange` возвращается только после одной
-SQL-транзакции содержания, причинного слияния, защиты от повторов и входного
-курсора. Только затем отправляется `committed`. Отправитель сохраняет этот ACK
-и читает следующую ограниченную страницу журнала. После обрыва новый канал
-начинает с SQL-курсора приёмника: потерянный ACK не теряет завершённую запись и
-не дублирует ход. Каждое transient-уведомление и disconnect несут UUID поколения;
-поздняя запись прежнего канала не может восстановить его контакт в новом.
-
-`NotebookTransportSessionTests` проверяет настоящее системное TLS-рукопожатие,
-отказ с неверным секретом, взаимный proof/ready, передачу владельца в несколько
-кусков, отсутствие durable ACK до commit, контакт и камеру при задержке commit,
-отключение старого поколения и восстановление по завершённому курсору.
-`NearbySyncTests` и `NotebookTransportBlobTests` проверяют границы кадров, кредитов,
-очередей, account admission, proof, порядка кусков и окончательного SHA-256.
-
-## Локальный IPC Mac
-
-`SocketIO` исполняет существующий закрытый Unix-канал `NotebookIPCServer` и
-`NotebookIPCClient`: проверяет владельца сокета, ограничивает ожидание, повторяет
-прерванное чтение и отвергает недопустимую длину до получения тела. Это отдельный
-локальный канал, не изменение предела TLS-кадра между устройствами.
-
-`NotebookIPCServer.stopAndDrain` закрывает новые соединения и дожидается
-читателей вместе с уже принятыми командами писателя. Закрытие клиентского
-сокета не считается завершением SQL-команды. Последнее освобождение соединения
-или обработчика фиксирует время под замком самого сервера и передаёт его всем
-ожидающим. Прежний `DispatchGroup.notify` удалён: задержка глобальной очереди
-уведомлений больше не меняет время завершения владельца. Уже завершённый сервер
-возвращает нулевое ожидание при повторе.
-
-Допущенный сокет принадлежит серверу ещё до запуска его рабочего блока.
-Остановка закрывает такие сокеты синхронно; поздний блок проверяет фазу и не
-читает освобождённый дескриптор. Блок в очереди слабо держит сервер, а начатая
-команда писателя — сильно до своего фактического завершения. Неполный кадр
-сохраняет строгий предел меньше секунды; таймаут не увеличен и тест не пропущен.
-
-`NotebookIPCTests` проверяет настройки и права настоящих Unix-сокетов, точные
-байты тела, оборванные заголовок и тело, отказ по длине при ещё открытом peer,
-невызов писателя при ошибке, несколько ожидающих завершения и сохранение
-принятой команды после отключения клиента. Дополнительный сценарий допускает
-восемь клиентов при намеренно остановленной рабочей очереди: завершение обязано
-произойти до её возобновления, и поздние блоки не вызывают обработчик.
-Некорректный peer отправляет raw
-заголовок, но принимает ответ тем же `SocketIO`; отдельного запасного reader нет.
-10 сентября в 21:36 МСК профиль **14 тестов прошёл за 0.078 s**, неполный кадр
-завершился у владельца за 0.000113375 s. Журнал —
-`/tmp/notebook-ipc-drain-owner-final.log`, статус 0 и одинаковые SHA исходников
-до/после — соседние `.status` и `notebook-ipc-drain-owner-source-{before,after}.txt`.
-Это профиль, а не новый полный PASS. Полный прогон `a9b5e3c` ранее обнаружил
-5.772526084 s на прежней границе; отрицательный журнал сохранён как
-`/tmp/notebook-release-pair-full.log`. Новый полный маршрут нужен на исправленных
-исходниках и учитывается отдельно в [verification.md](verification.md).
-
-## Codex в существующей доверенной связи
-
-Чат использует текущую версию общего кадра. Он не создаёт второй адрес, сокет сети,
-пароль или сопряжение. `NotebookChatEnvelope` допускает до 192 КиБ внутри
-прежнего кадра 256 КиБ и идёт после contact/presence/document-selection.
-Поскольку transient-полоса объединяет ожидания по приоритету, iPad держит ровно
-один запрос и повторяет тот же UUID до ответа/разрыва. SQL-журнал исходящих
-сообщений, а не transient-кадр, доказывает сохранение. Ответ доставляется только
-тому же доверенному peer и поколению связи. Подробнее —
-[владелец разговора и доставка](agent-runtime-contract.md).
-
-## S8: обязательная история обратного действия
-
-Manifest 8 включает dependencies обоих lifecycle inverse: исходного действия
-и выполненной отмены. Отсутствующая/повреждённая часть не подтверждается даже
-при известной receipt identity. Snapshot/cloud несут то же замыкание. Старый
-manifest не трактуется как полное объявление; обновление требует согласованной
-пары, без восстановления архивов, смены workspace, идентичностей или ключей.

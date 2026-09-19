@@ -1,47 +1,48 @@
-# Рецепты под рукой
+# Recipes at hand
 
-Это заготовки, которые можно свободно менять и сочетать. Выбор формы остаётся
-за тобой. Исходный материал и замысел важнее устройства библиотеки.
+These are adaptable building blocks. Choose their form and combination around
+the source material and the intended result.
 
-| Заготовка | Что получается |
+| Recipe | Result |
 |---|---|
-| `mindmap`, `flow`, `compare` | Отдельные редактируемые узлы и привязанные связи — [примеры](diagrams.md) |
-| `visual`, `plot` | Сохранённое изображение или SVG, включая файлы imagegen — [примеры](visuals.md) |
-| `program` | TS/imports/CSS/assets/workers → автономный пакет — [сборка и preview](programs.md) |
-| `animation` | Управляемая HTML/SVG-сцена на доске или в документе — [пример и подготовка](animations.md) |
-| `sketch`, `point` | Нативные штрихи или временное указание — [примеры](visuals.md) |
-| `document` | Запись выбранных блоков в новый или существующий документ — [параметры](documents.md) |
+| `mindmap`, `flow`, `compare` | Editable native nodes and attached connectors — [diagrams](diagrams.md) |
+| `visual`, `plot` | Saved images or SVG, including imagegen output — [visuals](visuals.md) |
+| `program` | TS/imports/CSS/assets/workers compiled into an offline package — [build and preview](programs.md) |
+| `animation` | Interactive HTML/SVG on a board, page, or document — [animation](animations.md) |
+| `sketch`, `point` | Native ink or temporary attention — [visuals](visuals.md) |
+| `document` | Selected blocks in a new or existing document — [documents](documents.md) |
 
-Для научного объяснения можно начать с [семи живых JS/SVG-примеров](scientific-examples.md):
-звук, механизм, линейная геометрия, неопределённость, поиск, тензорная свёртка и
-вероятностный опыт. Они используют тот же рецепт `animation`.
+The [scientific examples](scientific-examples.md) cover sound, mechanisms, linear
+geometry, uncertainty, search, tensor contraction, and probability. Larger
+asset-backed examples use the same package pipeline.
 
-## Взять готовую программу
+## Prepare and submit
 
-Запиши выбранные данные в `input.json`, затем:
+Save the selected inputs in `input.json`, then run:
 
 ```sh
 node ~/.codex/skills/notebook/scripts/prepare.mjs mindmap input.json request.json
 ```
 
-В `request.json` лежат обычные аргументы `notebook_execute`: код, данные и
-стабильный `run_id`. Подай файл целиком в этот инструмент. Для изображений есть
-короткий файловый клиент, чтобы байты не проходили через текст разговора:
+The resulting file contains ordinary `notebook_execute` arguments: code, data,
+and a stable `run_id`. Pass the whole file to that tool. A file client keeps
+image bytes out of conversation text:
 
 ```sh
 node ~/.codex/skills/notebook/scripts/submit.mjs request.json
 ```
 
-Он вызывает тот же публичный `notebook_execute` через MCP установленного
-Mac-владельца и возвращает его ответ. При продолжении используй сохранённый
-запрос и его `run_id`; `resume` доступен обычным инструментом.
+It calls the same public API through the installed Mac owner's MCP and returns
+its response. Continue with the saved request and `run_id`; use the ordinary
+tool's `resume` operation when needed.
 
-Общие входы: `target`, выбранные `anchor` на доске или `offset:{x,y}` на странице,
-необязательные `summary`, `contextID`, `base` из уже сделанного чтения.
-Рецепт с `base` использует её как есть; без неё читает только заголовки назначения.
-Одна композиция сохраняется одной транзакцией. Ответ содержит обычный `action`
-и `ids` смысловых частей — пригодятся для точечных правок и отмены.
+Common inputs are `target`, a board `anchor` or page `offset:{x,y}`, and optional
+`summary`, `contextID`, and a previously read `base`. A supplied basis is used
+unchanged; otherwise the recipe reads only destination headers. One composition
+is saved in one transaction. The response includes its `action` and semantic
+part `ids` for targeted edits and undo.
 
-`prepare.mjs` только готовит файл. Результат живёт в Notebook; дальнейшие изменения
-можно делать любым кодом SDK. Сам [генератор](../scripts/recipes.mjs) тоже доступен
-для адаптации: раскладка, отступы, подписи и соединения здесь обычные функции.
+`prepare.mjs` only prepares a file. The published result lives in Notebook and
+can be changed through any ordinary SDK program. The
+[generator](../scripts/recipes.mjs) exposes layout, spacing, labels, and
+connections as ordinary functions.

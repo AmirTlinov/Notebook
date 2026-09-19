@@ -1,31 +1,26 @@
-# Научно-образовательная анимация
+# Scientific and educational animation
 
-Движение помогает увидеть переход, который теряется между двумя картинками:
-как меняется поле, проходит сигнал, работает алгоритм или возникает форма.
-Пауза и перемотка позволяют рассмотреть выбранный момент, а изменение параметра —
-сравнить варианты. Визуальный ход и нужные органы управления выбирай под объяснение.
+Motion can explain a transition between states: a changing field, a moving signal,
+an algorithm, or an emerging form. Pause, seek, and meaningful parameters help
+the reader examine and compare those states.
 
-`animation` сохраняет HTML/SVG и JavaScript в обычном элементе `web` на доске
-или странице, либо в блоке `interactive` документа. Код и начальное состояние
-остаются внутри Notebook. Это подходящее место для маленькой исследуемой модели,
-к которой можно вернуться вместе с текстом и рисунками.
+`animation` saves HTML/SVG and JavaScript as a board/page `web` element or a
+document `interactive` block. Code and initial state remain in Notebook beside
+the surrounding material.
 
-## Готовая основа
+## Starting point
 
-Для законченного предметного примера открой [семь научных сцен](scientific-examples.md).
-Ниже — минимальная основа, если нужен только небольшой цикл с управлением.
+See the [scientific examples](scientific-examples.md) for complete explanations.
+[assets/animation](../assets/animation/) contains a smaller traveling sine wave
+with a point at fixed x: play/pause, quarter-cycle steps, phase, amplitude, and
+speed. Reuse its time controls or replace `sample()` and `draw()`.
 
-В [assets/animation](../assets/animation/) лежит небольшой работающий пример:
-бегущая синусоида и точка при фиксированном x. Есть пуск/пауза, шаги по четверти
-цикла, ползунок фазы, амплитуда и темп. Можно взять только управление временем
-или заменить `sample()` и `draw()` своей моделью.
-
-Скопируй `wave.html`, `wave.css`, `wave.js` рядом с `input.json`:
+Copy `wave.html`, `wave.css`, and `wave.js` beside `input.json`:
 
 ```json
 {
   "target": {"kind": "page", "id": "PAGE_ID"},
-  "title": "Волна и движение точки",
+  "title": "A wave and a moving point",
   "htmlPath": "wave.html",
   "cssPath": "wave.css",
   "javaScriptPath": "wave.js",
@@ -36,64 +31,67 @@
 }
 ```
 
-Для доски задай `target.kind: "board"` и `anchor`; для документа —
-`target.kind: "document"` и при необходимости `afterID`. Высота блока документа
-48–2048. Вместо файлов можно передать строки `html`, `css`, `javaScript`.
+For a board use `target.kind:"board"` and `anchor`. For a document use
+`target.kind:"document"` and optional `afterID`; block height is 48–2,048.
+Inline `html`, `css`, and `javaScript` strings can replace paths.
 
 ```sh
 node ~/.codex/skills/notebook/scripts/prepare.mjs animation input.json request.json
 node ~/.codex/skills/notebook/scripts/animation-preview.mjs request.json preview.html
-# Когда сцена готова к размещению:
+# Publish once the scene is ready and publication is intended:
 node ~/.codex/skills/notebook/scripts/submit.mjs request.json
 ```
 
-`preview.html` — самодостаточный локальный просмотр той же программы. Он ничего
-не отправляет в Notebook; его состояние сбрасывается при перезагрузке.
-Предпросмотр полезен для новой сцены, а при правке известного параметра обычно
-можно сразу использовать `setElementState` или `setBlockState`.
+The self-contained preview sends nothing to Notebook and resets state on reload.
+An existing scene's parameter changes usually need only `setElementState` or
+`setBlockState`. Use [file-backed programs](programs.md) for TS, imports, large
+assets, and workers.
 
-Для TS, imports, больших файлов и workers используй [файловую программу](programs.md),
-а не раздувай inline JSON.
+## Authoring a scene
 
-## Своя сцена
+`html` is a body fragment with inline SVG/canvas and controls. Styles and code
+are separate fields. Inline images use data URLs; network libraries and local
+file paths inside HTML cannot load. Embed SVG directly instead of using
+`<object>`, which is unavailable. SVG animation can use `pauseAnimations()`
+and `setCurrentTime()`.
 
-В `html` помещается фрагмент с inline SVG/canvas и управлением. Стили и код идут
-отдельными полями. Изображения встраиваются как data URL; сетевые библиотеки и
-локальные пути внутри HTML не загружаются. В примере с отдельным SVG через
-`<object>` перенеси сам `<svg>` в HTML: `object` в Notebook недоступен.
-SVG-анимацией можно управлять через `pauseAnimations()` и `setCurrentTime()`.
+Browser programs receive `notebook.state`, `notebook.commit(next)`, and
+`notebook.ready(promise)`. Declare ready after the first intended frame.
+External state arrives through `notebookstate`. The example saves explicit
+human changes to phase and parameters; playback is local and frames do not
+create writes. An external state change stops playback at the received moment.
 
-DOM-программа получает `notebook.state`, `notebook.commit(next)` и
-`notebook.ready(promise)`. Готовность означает первый нарисованный кадр.
-Изменения извне приходят событием `notebookstate`. В заготовке выбранная фаза и
-параметры сохраняются при действии человека, воспроизведение остаётся локальным:
-кадры не создают поток записей. После нового состояния сцена останавливается
-на нём, чтобы агент и человек могли обсуждать один момент.
+The model owns motion; the visual representation explains it. Name important
+simplifications and distinguish schematic displays from measurements. Inspect
+the phases and transitions on which the explanation depends.
 
-Модель определяет движение, а графика его объясняет: например, знак, направление
-и интенсивность поля могут меняться независимо. Для научного объяснения полезно
-назвать принятые упрощения и различать условное изображение и измеренные данные.
-Проверяй те фазы и переходы, на которых держится смысл конкретной сцены.
+## Lifecycle
 
-## Согласованная остановка модели
+Executable JavaScript must declare readiness under `NotebookProgram/1`.
+A missing declaration, rejected promise, or timeout is a local failure.
 
-Общий API `NotebookProgram/1` требует `ready` у исполняемого JavaScript.
-Отсутствующая декларация, rejected promise и timeout — локальный отказ, не готовый кадр.
-Зарегистрируй `notebook.lifecycle({pause, checkpoint, resume, dispose})` один раз:
-`pause` останавливает собственные часы/worker/audio, `checkpoint` возвращает полный
-JSON показанного момента, `resume` восстанавливает работоспособность после отказа
-или возврата, `dispose` освобождает ресурсы. Асинхронные hooks получают `{signal}`;
-предел одной операции — 4 секунды. Позднее завершение не имеет права записи.
-Нативный владелец подтверждает запись перед освобождением. Это не сохранение heap.
-Браузерные типы: [notebook-browser.d.ts](notebook-browser.d.ts); это не QuickJS `nb`.
+Register `notebook.lifecycle({pause, checkpoint, resume, dispose})` once:
 
-Пример LC: `assets/animation/lc.html`, `lc.css`, `lc.js`. Передай их существующему
-`prepare.mjs animation` как `htmlPath`, `cssPath`, `javaScriptPath`; рекомендуемый
-frame — 900 × 760 (для ширины 760 достаточно высоты 720). Это аналитическая модель без потерь: q, I и энергии вычисляются
-из одной фазы. Поле качественное, воспроизведение замедлено; параметры имеют SI-единицы.
-Пауза/четверти периода/начало/параметры сохраняют явное состояние, кадры — нет.
+- `pause`: stop clocks, workers, and audio.
+- `checkpoint`: return the complete JSON state of the shown moment.
+- `resume`: restore operation after return or a recoverable failure.
+- `dispose`: release resources.
 
-Локальный `animation-preview.mjs` использует тот же JS bridge с local adapter,
-не копию API. В отдельно установленном skill укажи `NOTEBOOK_PROGRAM_BRIDGE` —
-абсолютный путь к `WebResources/notebook-program.js` проверяемого приложения.
-Версия отражается в `notebook.version`. Preview не доказывает WK/iPad-приёмку.
+Async hooks receive `{signal}`; an operation has a four-second deadline.
+Late completion cannot write. The native owner confirms persistence before
+release. Checkpoints serialize model state, not the JavaScript heap.
+Types are in [notebook-browser.d.ts](notebook-browser.d.ts), separate from
+QuickJS `nb`.
+
+The LC example uses `lc.html`, `lc.css`, and `lc.js` in
+[assets/animation](../assets/animation/). Feed them to the same recipe.
+Suggested frame: 900 × 760, or 760 × 720. Charge, current, and energy derive from
+one phase in an ideal lossless model. Fields are qualitative, playback is slowed,
+and parameters have SI units. Pause, quarter-period steps, reset, and parameter
+changes save explicit state; frames do not.
+
+Local preview uses the same JS bridge with a local adapter. For a separately
+installed skill, set `NOTEBOOK_PROGRAM_BRIDGE` to the absolute
+`WebResources/notebook-program.js` path from the build being examined.
+`notebook.version` exposes the API version. Preview does not establish
+WebKit/iPad acceptance.

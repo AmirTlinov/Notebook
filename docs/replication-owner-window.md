@@ -1,69 +1,42 @@
-# Окно владельцев входящей транзакции
+# Incoming transaction owner window
 
-`NotebookReplicationStore.applyRemoteChange` читает индекс одного принятого
-manifest порциями не больше 64 записей. Каталог, размещения, элементы досок
-и страниц, программы и состояния документов, контекст и пространственные
-чернила объединяются по адресам изменённых владельцев. Квитанции и архивные
-запросы остаются ограниченными самостоятельными логическими файлами.
+`NotebookReplicationStore.applyRemoteChange` reads one admitted manifest in pages
+of at most 64 records. Catalog, placement, board/page elements, document programs
+and states, shared context, and spatial ink are merged by changed owner addresses.
+Receipts and archived requests remain bounded, independent logical files.
 
-`WorkspaceReplication`, `BoardReplication` и `PageReplication` заменяют прежние
-полные ветви каталога, дерева и листа, а не дополняют их запасным маршрутом.
-`NotebookIncomingRecords` предоставляет индекс входящих адресов и публикацию
-поддерева. Решения конфликтов остаются у `CollaborativeContent`,
-`WorkspacePlacement`, `NotebookPageOrderRegister` и типизированных владельцев
-чернил/вычислений. Частичный набор элементов не выдаётся за новую авторскую
-перестановку всей поверхности. Обычная правка поля не перечисляет соседей;
-действительное изменение порядка читает метаданные ID/позиций.
+`WorkspaceReplication`, `BoardReplication`, and `PageReplication` own their typed
+merges. `NotebookIncomingRecords` supplies the incoming-address index and subtree
+publication. Conflict decisions remain with `CollaborativeContent`,
+`WorkspacePlacement`, `NotebookPageOrderRegister`, and typed ink/computation owners.
+An element subset cannot author a reorder of an entire surface. Ordinary field
+changes do not enumerate neighbors; a real reorder reads ID/position metadata.
 
-Это **не** частичное принятие пакета. Все вызовы выполняются внутри прежней
-`commandTransaction`: содержание, зависимости, собственный журнал, входящий
-курсор и квитанция либо фиксируются вместе, либо откатываются. Ошибка последнего
-владельца не оставляет первые записи; точный повтор не публикует вторую доработку.
+## Atomicity and dependencies
 
-Порядок публикации совпадает с зависимостями прежнего `publishRecords`:
-сначала каталог, затем размеры документов, остальное содержание и размещение.
-Индекс размещения нового документа читает уже опубликованный размер бумаги.
-Принадлежность листа или документа проверяется по каноническому SQL-каталогу
-после его слияния; задержанный пакет не воскрешает удалённого владельца.
+All owners execute inside the same `commandTransaction`. Content, dependencies,
+local journal, incoming cursor, and receipt commit or roll back together.
+A late owner failure leaves no earlier partial records; exact retry does not
+create a second contribution.
 
-Архивные запросы агента проверяются после публикации всех зависимостей. Временная
-SQL-таблица хранит UUID запроса и предыдущее исполнение, а не тела всех источников
-и ответов. Её страница ограничена 64 строками, общий кеш временного SQL — 2 МиБ.
-Предыдущее исполнение позволяет прежнему валидатору читать только новый хвост
-ответа. Неизменность закреплённого источника проверяется при слиянии, а наличие
-его человеческого указания — после публикации пакета. Это не второй архив или
-новый путь исполнения агента: таблица существует только у текущего соединения.
+Publication follows dependencies: catalog, document dimensions, then other content
+and placements. New document placement reads the published paper size.
+Canonical SQL membership is checked after merging the catalog. A delayed package
+cannot resurrect a removed owner.
 
-## Граница
+Archived agent requests are validated after their dependencies. A transaction-local
+SQL table stores request UUIDs and prior execution metadata, not every source or
+answer body. Pages contain at most 64 rows and temporary SQL has a 2 MiB cache.
+The validator reads only a new answer tail and checks the original pinned source.
 
-Полные чтения сохраняются для явно запрошенного документа, экспорта и снимка.
-Изменение элемента листа не читает рисунок, вычисления или соседние элементы.
-Изменение самих чернил листа пока собирает только владельца `drawingData`;
-адресная репликация отдельных штрихов этого рисунка и замена полной native
-публикации `savePage` не входят в подтверждённый срез. Вектор порядка страниц
-при конкурентном изменении нормализуется существующим владельцем только
-затронутой тетради. Это не обещание постоянной стоимости произвольного reorder.
-Удаление истории не добавлено. Облачная доставка и физическая приёмка отмечаются
-отдельно; локальный приём SQLite не подтверждает показ на втором устройстве.
+## Scope and checks
 
-`NotebookReplicationOwnerWindowTests` исполняет настоящие публикацию, staging
-значений и входящую транзакцию на двух изолированных SQLite-архивах. SQLite trace
-считает фактически выданные строки, а не только наличие `LIMIT` в тексте запроса.
-Профиль включает 513 независимых квитанций, отказ последнего владельца после
-129 записей и 65 архивных запросов с ответами в двух последовательных пакетах.
-Во втором пакете недоступные старые порции ответа не перечитываются.
+Explicit whole-document reads, exports, and snapshots retain their full-input
+semantics. An element edit avoids unrelated drawing, computation, and elements.
+Concurrent page order normalization belongs to the affected notebook; arbitrary
+reorder is not a constant-time promise. Retention needs its own checkpoint policy.
 
-## Проверка — 10 сентября, 23:09 МСК
-
-На неизменной копии от `47d5bb3` прошли **20 Core-тестов в пяти наборах**
-за 104.465 s: новое окно владельцев, обычная репликация, архивные запросы,
-контекст и пространственные чернила. Включены прежние профили среди 100 000
-записей, старое эхо, отказ транзакции, потеря ответа и повтор.
-Три новых теста прошли за 9.203 s. Это профиль, не полный `verify.sh`.
-
-Исходная копия — `.build/replication-owner-window-cut`; журнал и статус 0 —
-`/tmp/notebook-replication-owner-window-profile.log` и `.status`.
-Отпечаток полной разницы до/после совпал с текущими тремя файлами:
-`7463fbed4ba506bd6acccebbdee93140fa1d008522edc516b942247dc830318c`.
-Никакой установленный процесс, человеческий архив или физическое устройство
-этот профиль не менял.
+`NotebookReplicationOwnerWindowTests` exercises two isolated stores, real staging,
+SQL-result row counts, multi-page manifests, late failures, repeated delivery,
+and archived answer continuations. Storage acceptance and actual display on a
+second device are separate receipts; see [verification](verification.md).

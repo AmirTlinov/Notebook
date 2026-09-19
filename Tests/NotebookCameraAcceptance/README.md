@@ -1,17 +1,41 @@
-# Проверка камеры на пикселях Simulator
+# Camera acceptance from Simulator pixels
 
-`run.py` собирает неизменную копию исходников и записывает настоящие XCUITest drag/pinch. В baseline и current переносится один и тот же небольшой bootstrap + seed через обычный NotebookStore. Код сцены, камера, WebKit, чернила, бюджет и условия готовности не подменяются. Bootstrap требует отдельный bundle `com.amirtlinov.notebook.cameraaudit`, Simulator и новый UUID каждого запуска. Сопряжение отключено; настоящие контейнеры и архивы не используются.
+This isolated harness records real XCUITest drag/pinch input against an immutable
+source snapshot. Baseline and current builds use the same small bootstrap/seed
+through NotebookStore. Production scene, camera, WebKit, ink, budgets, and
+readiness remain in control. Bootstrap requires a Simulator, the separate
+`com.amirtlinov.notebook.cameraaudit` bundle, and a new run UUID. Pairing is
+disabled; production containers and archives are untouched.
 
-На доске три бумажных предмета, два нативных цветных штриха, красный SVG и зелёный интерактивный элемент. `static` заполняет семь обычных live slots, поэтому SVG проходит через настоящий тайл; `live` оставляет SVG в native owner. Через 10 и 20 секунд обычная адресная запись добавляет/обновляет независимый источник с задержкой готовности 4,5 секунды. Десять циклов pan туда/обратно и pinch close/open пересекают эти публикации. Обычный тап и при необходимости двойной тап пробуют активировать focus-gated baseline. Доступность кнопки в AX сохраняется отдельно и не останавливает pan/pinch; по одному отсутствию AX нельзя заключить, что пикселей нет. Это сценарий положения камеры, отдельная приёмка первого нажатия выполняется без такой активации.
+The fixture has three paper items, two native colored ink strokes, a red SVG,
+and a green interactive element. Its static/live variants exercise tile and
+native rendering. Historical slot assumptions must be checked against the
+selected source revision's resource budget; variant names alone do not prove
+which owner actually rendered an item. At 10 and 20 seconds, addressed writes
+add/update an independent source with a 4.5-second readiness delay.
 
-Текущий сценарий в каждом из десяти циклов делает непрерывный pan 100×55 pt туда/обратно со скоростью 40 pt/s, затем обычную быструю пару и тот же pinch. Скорость пересекает существующую границу удержания 8 pt / 350 ms прежде, чем она выберет область: прежние 12 pt/s дали длительные контакты удержания, не движение камеры. Эта историческая запись сохранена как недостаточное покрытие. Длительность нового сценария увеличена самим принятым движением, без дополнительных idle-снимков или удержания неподвижного пальца. Старые неизменные сборки и их короткие UI-сценарии сохраняются со своими хешами; новую запись нельзя объявить повтором прежнего harness. Для коротких fast-pan внешний screenshot-запрос может пересекать границы контакта: такие PNG остаются измеренными пикселями, но не считаются «целиком внутри жеста». Недостаточный fast-motion охват явно виден в отчёте.
+Ten pan-out/back and pinch-close/open cycles cross these publications. A tap,
+and if needed a double tap, activates a focus-gated historical baseline. AX
+button availability is recorded separately and cannot alone establish missing
+pixels. This camera scenario is distinct from first-tap acceptance.
 
-Запрошенный множитель XCTest не гарантирует точный физический pinch. В предварительной записи UIKit начинал открывающий жест с расстояния 6,708 pt и заканчивал на 15,556 pt: запрос 1,12 дал настоящий множитель 2,319. Камера текущего приложения применила этот множитель один раз, с нулевой ошибкой относительно стартовой камеры. Поэтому общий сценарий использует close 0,43 / open 1,12, чтобы сохранять ориентиры в кадре; параметры одинаковы для baseline/current. Это выбор диапазона настоящих жестов, без переопределения масштаба продукта. Трасса контактов и полное покрытие PNG/видео остаются обязательными, даже если другая версия Simulator синтезирует жест иначе.
+## Gesture and source identity
 
-Все команды используют общий native lock. Одновременные Xcode runners отклоняются.
+Each cycle includes a continuous 100 × 55 pt pan in both directions at 40 pt/s,
+then a fast pair and pinch. The earlier 12 pt/s experiment crossed the 8 pt /
+350 ms hold boundary and produced selection holds rather than camera movement;
+its recording remains insufficient coverage.
+
+XCTest's requested pinch multiplier does not guarantee the actual synthesized
+scale. A historical request of 1.12 produced contact spacing 6.708 → 15.556 pt
+(scale 2.319), which the application applied once correctly. The scenario uses
+close 0.43 / open 1.12 consistently for baseline/current. Native contact traces
+and actual pixel coverage remain necessary.
+
+All native commands share the runner lock; concurrent Xcode runners are rejected.
 
 ```sh
-python3 Tests/NotebookCameraAcceptance/run.py build --revision 012921b7e8b6ac739c7492071f4ade91e23941e9 --simulator SIMULATOR_UUID --evidence .build/camera-baseline
+python3 Tests/NotebookCameraAcceptance/run.py build --revision BASELINE_COMMIT --simulator SIMULATOR_UUID --evidence .build/camera-baseline
 python3 Tests/NotebookCameraAcceptance/run.py build --revision working-tree --simulator SIMULATOR_UUID --evidence .build/camera-current
 python3 Tests/NotebookCameraAcceptance/run.py record --build .build/camera-baseline --variant static
 python3 Tests/NotebookCameraAcceptance/run.py record --build .build/camera-current --variant static
@@ -22,57 +46,148 @@ python3 Tests/NotebookCameraAcceptance/run.py record --build .build/camera-curre
 python3 Tests/NotebookCameraAcceptance/measure_lossless.py --run RUN_DIR --output RUN_DIR/lossless-measurement
 ```
 
-Для измерителей нужны NumPy, Pillow, macOS с публичными AVFoundation/CoreVideo, Xcode Command Line Tools (`swiftc`, SDK) и ffprobe. FFmpeg используется только CPU-тестом для создания маленькой синтетической записи; рабочий декодер не конвертирует им видеопиксели. В установленном Codex они доступны в Python runtime; `test_measure.py` проверяет сам измеритель на точной проекции, известном сдвиге 4 px и отсутствующих пикселях. Эти синтетические проверки не подтверждают поведение приложения.
+Select a real baseline commit. Historical runs used
+`012921b7e8b6ac739c7492071f4ade91e23941e9`.
+Measurement requires NumPy, Pillow, macOS AVFoundation/CoreVideo, Swift/Xcode
+Command Line Tools, and ffprobe. FFmpeg creates small synthetic CPU-test videos;
+the measurement decoder uses native offline decoding.
 
-В `build.json` сохраняются исходная revision, хеш исходников до и после test-only вставки, общий хеш fixture/bootstrap/UI, хеш точного bootstrap patch, версия Xcode и Simulator. Дополнительный `input-trace.patch` только записывает настоящие UIKit-контакты, cumulative scale распознавателя и camera scale до/после существующего обработчика; он не меняет вход, камеру или готовность. JSON сбрасывается после завершения жеста, не на каждом движении. Его хеш сохранён отдельно. Так можно отличить множитель фактического жеста от повторного применения масштаба в приложении. Сравнивать можно записи с одинаковыми `harnessSHA256` и текстом вставленных наблюдений (`inputTraceRecipeSHA256`; для ранней квитанции он выводится из добавленных строк сохранённого patch). Точный `inputTracePatchSHA256` может различаться из-за номеров строк и окружающего производственного кода; каждый patch проверяется против своего неизменного исходника. `recording.json`, `camera-input-trace.json`, `result.xcresult`, вложенные скриншоты и видео описывают выполненный сценарий.
+`build.json` retains revision, hashes before/after test-only insertion,
+fixture/bootstrap/UI identity, exact patches, Xcode, and Simulator. An optional
+input trace observes UIKit contacts, recognizer cumulative scale, and camera
+scale before/after the existing handler. It changes no input or camera behavior
+and flushes after gestures. Compare runs with equal `harnessSHA256` and
+`inputTraceRecipeSHA256`; patch hashes may differ with source line numbers.
+Each exact patch must match its own immutable source.
 
-`measure.py` декодирует каждый видеокадр через тот же нативный offline owner, что и совместный измеритель, и сверяет точный рациональный PTS каждого кадра с независимой описью ffprobe. Его исторический пиксельный детектор и метрика L∞ сохранены явно. Цветные чернильные кресты задают наблюдаемый масштаб и смещение; положение SVG/WK предсказывается из их известных физических координат. Центр каждого креста считается по исходным пикселям. В `frames.csv` попадают и отсутствующие/неоднозначные точки, а не только удачные кадры. Итог также требует PASS настоящего XCUITest, все десять camera-settled PNG и camera-finish с измеримыми опорами; удачный отрезок прерванного теста не получает приёмку. Сохранены худший кадр, p95 и максимум смещения по каждой оси в device pixels, отдельно во время движения. Его исторический порог — 1 px по любой оси (L∞), минимум 200 измеренных/60 движущихся кадров; пропуск больше трёх последовательных кадров внутри измеренного интервала означает неполную визуальную проверку. Чувствительность центров к включению сглаженных границ оценивается изменением цветового порога на ±16 RGB и распространяется через обе чернильные опоры. Только верхняя граница ошибки ≤1 px получает PASS; пограничное значение получает inconclusive, а не ослабленный допуск. Это проверка чувствительности измерителя к пикселям видео, а не обещание недостижимой точности любых сжатых кадров.
+Evidence includes `recording.json`, `camera-input-trace.json`,
+`result.xcresult`, original screenshots, and video.
 
-Это доказательство относительного положения на экране Simulator. Оно не измеряет физический Pencil, FPS, GPU или память и не заменяется наличием UIView, готовым кешем либо PNG, созданным Mac renderer. Системные метрики и непрерывная совместная работа проверяются отдельными сценариями общей приёмки.
+## Video and lossless measurements
 
-`completedTenGestureScenario` сообщает результат настоящего UI-сценария; `completePixelCoverage` — полноту измеримого охвата. Даже при неполном охвате достоверный кадр с нижней границей ошибки >1 px даёт `fail`: увиденный контрпример не исчезает от того, что позже ориентир ушёл за экран. Принимать исправление можно только с полным охватом и `pass`.
+`measure.py` decodes every video frame through the native offline owner and
+checks its rational PTS against independent ffprobe inventory. Colored ink
+crosses provide observed scale/translation; their physical relationship predicts
+SVG/WebKit position. Missing/ambiguous points remain in `frames.csv`.
+The historical metric is L∞ with a one-device-pixel threshold, at least 200
+measured / 60 moving frames, and no gap exceeding three consecutive frames in
+the measured interval. It also requires a passing UI run, all ten settled PNGs,
+and the finish PNG. RGB-threshold sensitivity (±16) propagates through both ink
+anchors; an upper error bound above one pixel cannot pass.
 
-`--lossless` дополнительно сохраняет оригинальные `simctl io screenshot --type=png` во время того же неизменного UI-сценария. Это последовательный внешний читатель экрана с пределом 1 GiB/6000 снимков. Каждый удачный снимок имеет SHA256, исходные размеры и интервал начала/завершения захвата; ошибки также сохраняются. Каждый запрос наблюдает один неизвестный момент внутри своего интервала, а не все кадры за это время. Отчёт сохраняет длительность запросов и нижнюю/верхнюю границы промежутков между наблюдёнными кадрами; время работы screenshot не выдаётся за непрерывное наблюдение. Неудачный запрос не добавляет наблюдённый кадр. Частота этих запросов не является FPS приложения. Запись не использует геометрию UIView для предсказания координат и не берет PNG из кеша или Mac.
+`--lossless` adds original `simctl io screenshot --type=png` captures to the
+same UI scenario, bounded by 1 GiB / 6,000 images. Successful images retain hashes,
+dimensions, and start/end capture intervals; failures remain recorded.
+A capture observes one unknown instant inside its interval. Request duration is
+not continuous observation, and capture frequency is not application FPS.
 
-`measure_lossless.py` проверяет хеш каждого исходного PNG и применяет прежний пиксельный детектор. Основной порог новой приёмки — **евклидово расстояние ≤1 device pixel** между контрольными точками. Исторический L∞ выводится дополнительно и не подменяет длину вектора; например, остатки (0.9,0.9) означают 1.273 px и не соответствуют требованию. Погрешность центров распространяется через опоры по обеим осям, а границы длины считаются по полученному прямоугольнику неопределённости. Отдельно считает снимки, чей полный интервал захвата лежит внутри настоящего pan/pinch по сохраненной native-трассе. Полный sampled-охват требует завершения десяти циклов, всех settled/finish PNG, 200 измеримых снимков, 60 внутри жестов и хотя бы одного внутри каждого жестового интервала длиннее 120 ms. Пропуски и незахваченные интервалы остаются в отчете. `sensitivityVerdict` описывает проверку ±16 RGB; итоговый `verdict` не станет PASS только из-за смены H.264 на PNG. Для этого дополнительно нужна независимая оценка subpixel/antialias погрешности на новых lossless пикселях. Старые видеорезультаты и их FAIL сохраняются.
+`measure_lossless.py` verifies every PNG hash. Its primary threshold is
+**Euclidean residual ≤1 device pixel**; historical L∞ is supplemental.
+Residual (0.9,0.9), for example, is 1.273 pixels. Center uncertainty propagates
+through both axes/anchors and yields a residual-length interval.
 
-## Совместная проверка исходных PNG и всех кадров видео
+Complete sampled coverage requires ten cycles, all settled/finish images, at
+least 200 measurable PNGs, at least 60 wholly within gestures, and an in-gesture
+sample for each contact longer than 120 ms. Fast pans may be shorter than an
+external screenshot request; those captures remain measured but cannot claim
+wholly contained coverage. Sensitivity checks alone do not certify independent
+subpixel/antialias uncertainty.
 
-`pipeline.py prepare` сохраняет неизменную копию исходников, полный SHA, инструмент, Xcode, точный Simulator и команды отдельных последовательных фаз. Подготовка не запускает приложение. `pipeline.py run --prepared DIR --phase build|static|live|measure-static|measure-live` выполняет ровно одну выбранную фазу; это позволяет освободить общий native runner между проверками. Каждая запись получает новый UUID, старые записи и FAIL не перезаписываются.
+`completedTenGestureScenario` and `completePixelCoverage` are separate.
+A reliable frame with a lower error bound above one pixel is a failure even if
+later coverage is incomplete. Acceptance requires both coverage and a passing
+measurement. Synthetic `test_measure.py` checks exact projection, a known
+four-pixel error, and missing pixels; it does not validate application behavior.
 
-`measure_joint.py` читает каждый исходный видеокадр через `NativeVideoDecoder.swift` / `AVAssetReaderTrackOutput`, без пересэмплирования. AVFoundation выполняет преобразование цвета и размещение chroma samples; Python меняет только порядок каналов BGRA→RGB и исключает padding строк. `native_video.py` сверяет размеры, последовательность и точный рациональный PTS **каждого** кадра с независимым ffprobe inventory. Пропущенный/лишний кадр, несовпадение PTS, поворот/resize или незавершённый decoder являются ошибкой измерения, а не inconclusive пиксельным результатом. Дополнительно заново проверяет SHA всех оригинальных PNG и считает независимый connected-component centroid шестью RGB/chroma/AA-padding методами. Главный результат — Euclidean residual от двух наблюдённых чернильных опор; геометрия приложения не предсказывает SVG/WK.
+## Joint PNG/video pipeline
 
-Промежуточные before/after native camera poses используются для сопоставления наблюдённых ink anchors с принятым контактом **после** проверки временного происхождения. Глобальная уникальность двух опор и направления недостаточна: одинаковая поза повторяется в разных циклах. Измеритель требует ограниченный общий Mach-clock origin, и весь возможный временной интервал видеокадра должен лежать внутри контакта. После этого проверяет обе опоры, настоящее изменение и направление. Неизвестный origin не заменяется best fit, MP4 creation_time или timestamp запуска процесса. Неоднозначные кандидаты сохраняются и не добавляют покрытия. Конвенция pixel centre `(x+.5,y+.5)` относится только к координатам измерителя. Все измеримые кадры, включая несопоставленные, участвуют в максимуме ошибки.
+`pipeline.py prepare` saves immutable sources, full hashes, tools, Xcode,
+Simulator, and sequential phase commands without launching the application.
+`run --prepared DIR --phase build|static|live|measure-static|measure-live`
+executes only the chosen phase, releasing the native slot between phases.
+Each recording has a new UUID; previous failures are retained.
 
-Полнота сохраняет ≥200 измеримых lossless PNG, ≥60 целиком внутри реального контакта, все11 XCTest checkpoints и десять циклов. Для каждого контакта длиннее120ms требуется либо wholly-contained PNG, либо видеокадр с однозначно сопоставленной промежуточной позой; сериализованный simctl screenshot часто физически дольше короткого fast pan. Видеопокрытие не превращает частоту записи в FPS.
+`measure_joint.py` reads every source frame through
+`NativeVideoDecoder.swift` / `AVAssetReaderTrackOutput` without resampling.
+AVFoundation owns color conversion/chroma placement; Python only reorders
+BGRA→RGB and strips row padding. `native_video.py` checks every frame's
+dimensions, order, and rational PTS against ffprobe. Missing/extra/reordered
+frames, rotation/resize, PTS mismatch, or incomplete decoding are measurement
+errors. Original PNG hashes are rechecked. Six RGB/chroma/AA-padding centroid
+methods provide independent pixel observations.
 
-Сравнение PNG/видео сохраняет **все** совместимые кандидаты с одинаковой видимой меткой, пересекающимися временными границами и обеими ink poses. Наибольшее расхождение сохраняется. Такая группа является bounded visual cohort, а не доказанным одним GPU/display frame: WebKit может публиковаться независимо. Поэтому наблюдаемая variability включает и кодек, и изменения отрисовки; `codecCalibrationCertified=false`, а `readyForIndependentPixelReview` не превращается в PASS. Пороги сопоставления, RGB/chroma method spread и дополнительный запас сохраняются. Меньше 100 совпавших PNG или 60 motion PNG означает недостаточное число сравнений. Для изолированной codec calibration нужен источник, сохраняющий PNG и видео из одного публично полученного CVPixelBuffer, либо отдельно доказанная неизменность пикселей. Одной неподвижной геометрии resting fixture недостаточно: публикация WebKit, raster/cache admission и antialias phase могут менять пиксели.
+Joint contact attribution requires a bounded shared Mach-clock origin and the
+entire possible frame-time interval inside the contact, then both ink poses,
+actual movement, and direction. Repeated poses across cycles are ambiguous.
+No best-fit clock origin, MP4 creation time, or process-start substitution is
+allowed. All measurable frames contribute to maximum error, even when
+unattributed. Pixel-center coordinates are `(x+.5,y+.5)`.
 
+Coverage retains 200 measurable lossless PNGs, 60 wholly in contacts, all eleven
+XCTest checkpoints, and ten cycles. Each contact longer than 120 ms requires
+a wholly contained PNG or an unambiguously attributed intermediate video pose.
 
-## Идентичность нативного offline decoder
+PNG/video comparison keeps every compatible candidate with matching visible
+marker, overlapping time bounds, and both ink poses; it preserves the worst
+difference. This bounded visual cohort is not proof of one GPU/display frame:
+WebKit can publish independently. Thus `codecCalibrationCertified=false`;
+`readyForIndependentPixelReview` alone cannot pass. At least 100 paired PNGs
+and 60 motion PNGs are needed. Independent codec calibration requires the same
+public CVPixelBuffer for PNG/video, or separately proven pixel invariance.
+Resting geometry alone is insufficient.
 
-Для каждого нового каталога измерения исходник Swift и Python adapter копируются, Swift helper компилируется отдельно и сохраняется рядом с квитанцией. `native-decoder/receipt.json` фиксирует SHA256 исходного видео до/после чтения, исходников/скомпилированного helper, Swift toolchain, SDK, host OS/архитектуру, команды компиляции/ffprobe и исходные цветовые метаданные. `ffprobe.json` содержит независимую опись; `frames.json` — все рациональные PTS, размеры/stride и цветовые attachments от AVFoundation. Только полное завершение и совпадение всех кадров устанавливают `completed=true`. Менять decoder или библиотеку между двумя сравниваемыми запусками без новой квитанции нельзя; старые записи/инструменты сохраняются.
+## Decoder identity and historical findings
 
-Причина замены установлена на исходной static-записи `fcaf38dd-004b-4314-b400-fe394cbba037`: видеокадр292 имеет PTS6241/600 и исходный формат H.264/yuv420p с chroma location Left. При прежнем автоматическом FFmpeg RGB conversion центры тех же стабильных ink anchors отличались от PNG13 до0,66993px; AVAssetReader того же кадра дал0,059923px. Явное `in_chroma_loc=left` в FFmpeg исправило лишь горизонтальную часть. Это конкретный дефект прежнего offline пути, а не основание сдвигать изображение, менять +0,5 pixel-centre convention или увеличивать допуски. Старые output/instruments остаются доказательством прежнего inconclusive результата; пересчёт получает отдельный каталог и новую идентичность decoder. Пороги matching, Euclidean1px и propagation calibration uncertainty не изменены.
+Each measurement directory retains copied Swift/Python decoder sources, its own
+compiled helper, and `native-decoder/receipt.json`: video hashes before/after,
+source/binary hashes, Swift/SDK/OS/architecture, commands, and color metadata.
+`ffprobe.json` is independent inventory; `frames.json` retains rational PTS,
+dimensions, strides, and native color attachments. Only complete matching output
+sets `completed=true`.
 
-`test_native_video.py` проверяет сохранение точного PTS и каналов/row padding, отказ на усечённом/лишнем/переставленном кадре и несовпавшем PTS, а также компилирует публичный helper и читает все три кадра настоящего синтетического H.264 файла с независимой описью и сохранением source hash/color metadata. Это CPU-проверки инструмента; они не заменяют визуальную приёмку приложения.
+A historical H.264/yuv420p frame at PTS 6241/600 in run
+`fcaf38dd-004b-4314-b400-fe394cbba037` exposed FFmpeg conversion error:
+ink centers differed from PNG by up to 0.66993 px; AVAssetReader reduced that
+difference to 0.059923 px. Explicit left-chroma placement fixed only the
+horizontal FFmpeg component. This justified replacing the offline decoder,
+not moving pixels or relaxing thresholds. Recalculation has a separate identity.
 
-Число MP4 `nb_frames` учитывает закодированные пакеты, в том числе исключённый конец edit interval. В настоящей witness-записи `36474e64-46ad-4c3c-9b0a-f90876f97c77` контейнер содержит 11011 пакетов, а AVAssetReader и ffprobe независимо выдают одинаковые 11010 кадров с полностью совпадающей рациональной последовательностью PTS. Единственный оставшийся пакет имеет флаг `discard` и PTS104322/600, точно равный исключённому правому концу native track/asset interval `[0,104322/600)`. Измеритель сверяет declared count с полной описью пакетов, затем объясняет каждый пакет либо decoded frame, либо явным trailing discard вне интервала. Внутренний, непомеченный или необъяснённый пропуск остаётся ошибкой; CPU-тесты проверяют эти отказы. Исключённый пакет и полная опись сохраняются в decoder receipt/`packets.json`. Нативный pixel decoder и проверка каждого отображаемого PTS не меняются.
+MP4 `nb_frames` may include a trailing discarded packet outside the edit
+interval. Run `36474e64-46ad-4c3c-9b0a-f90876f97c77` had 11,011 packets but
+11,010 identical decoded-frame PTS entries in AVFoundation and ffprobe.
+The last packet was marked discard at 104322/600, the excluded endpoint of
+`[0,104322/600)`. Inventory must explain every packet as a decoded frame or an
+explicit trailing discard. Internal, unmarked, or unexplained gaps fail.
+`test_native_video.py` covers these boundaries, exact PTS, channels/padding,
+and actual synthetic H.264 decoding; these are instrument tests.
 
+## Temporal witness
 
-## Следующая запись с временным происхождением
+`--temporal-witness` requires a new fixture build and lossless capture.
+Only the audit bundle displays a passive 288 × 6 pt marker at y = 84 pt with
+run tag, monotonic sequence, and CRC. It takes no input and is hidden from AX.
+CADisplayLink requests marker changes; its ticks are not GPU frames or FPS.
 
-Флаг `--temporal-witness` требует новой сборки fixture и `--lossless`. Только audit bundle публикует пассивную чёрно-белую полоску шириной 288 pt и высотой 6 pt у верхнего края окна (y=84 pt); она не принимает касания и скрыта от AX. Метка содержит run tag, монотонную sequence и CRC. CADisplayLink лишь просит публиковать следующую метку; его ticks/sequence не считаются GPU-кадрами, FPS или задержкой продукта. Сам сценарий жестов и позиции контрольных материалов не меняются. Новый fixture/harness получает собственные хеши.
-
-Native trace и внешние screenshot bookends записывают один `mach_absolute_ns`. По каждой подлинной PNG-метке и предыдущей/следующей отличающейся метке в сохранённом видео строится консервативный интервал возможного PTS origin. Измеритель пересекает **все** эти ограничения, учитывая один квант source PTS. Пустое пересечение, регресс sequence, неверный run/CRC или отсутствующие свидетельства не исправляются подгонкой: provenance остаётся unavailable/inconsistent, а contact coverage не подтверждается. Ширина полученного интервала выводится явно; слишком широкий bound может не покрыть короткий жест. Возможные кандидаты PNG/видео сохраняются целиком в пределах этой временной неопределённости.
+Native traces and screenshot bookends use `mach_absolute_ns`. Authentic PNG
+markers and neighboring distinct video markers bound the possible PTS origin.
+The measurement intersects every constraint, allowing one source PTS quantum.
+Empty intersections, regressing sequences, bad run/CRC, or absent witnesses stay
+unavailable/inconsistent. Wide intervals may leave short gestures uncovered.
+Compatible PNG/video candidates remain in the evidence.
 
 ```sh
-python3 Tests/NotebookCameraAcceptance/pipeline.py prepare --evidence .build/camera-temporal-provenance-v1 --simulator CBDE7503-A0F7-4B92-85B5-626B9375E0FA --python /Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 --temporal-witness
+python3 Tests/NotebookCameraAcceptance/pipeline.py prepare --evidence .build/camera-temporal-provenance-v1 --simulator SIMULATOR_UUID --python /absolute/path/to/python3 --temporal-witness
 python3 Tests/NotebookCameraAcceptance/pipeline.py run --prepared .build/camera-temporal-provenance-v1 --phase build
 python3 Tests/NotebookCameraAcceptance/pipeline.py run --prepared .build/camera-temporal-provenance-v1 --phase static
 python3 Tests/NotebookCameraAcceptance/pipeline.py run --prepared .build/camera-temporal-provenance-v1 --phase measure-static
 ```
 
-Фазы `live` и `measure-live` выполняются тем же способом после static. Подготовка только сохраняет неизменные исходники; native runner/запись запускает его владелец. Оставшиеся gates: прочитать настоящую метку в целевой среде, получить непротиворечивый достаточно узкий временной bound, покрыть все жесты и закрыть независимую pixel/codec uncertainty. Старые записи без метки сохраняют исходные observed residuals и явный unavailable origin; их временная доказательность задним числом не создаётся.
+Run `live` and `measure-live` similarly. A new run must establish readable
+markers, consistent sufficiently narrow time bounds, complete gesture coverage,
+and independent pixel/codec uncertainty. Old runs cannot acquire provenance
+retroactively. `test_temporal_provenance.py` checks the protocol, not actual
+marker readability in the selected runtime.
 
-`test_temporal_provenance.py` проверяет CRC/run identity, пересечение всех ограничений и отказ от best fit, повторный cohort, ложный cross-cycle pose, широкий origin и сохранение худшего совместимого кадра без сравнения с другой группой. Это проверки измерительного протокола; реальное чтение полоски после сборки остаётся отдельным шагом.
+This harness measures relative Simulator screen positions. Physical Pencil,
+system FPS/CPU/GPU/memory, and long-session acceptance remain separate.
+Current results are recorded in [verification](../../docs/verification.md).

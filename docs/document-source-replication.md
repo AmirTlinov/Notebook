@@ -1,99 +1,50 @@
-# Адресная доставка исходников документа
+# Addressed document-source delivery
 
-## Текущий статус
+`NotebookStore.applyReplicatedDocumentSource` passes one program at a time to
+`DocumentDocument.merge`. Causal history is read in pages of 64 addresses.
+Ordering reads at most 512 index rows and uses the same `contentMemberOrder`
+as a full merge. `DocumentBlock` defines causal field names for delivery and
+agent commands alike.
 
-Неизменный профиль прошёл 142 Core-теста в 11 наборах (181.043 s), 17 тестов
-внешнего переноса в трёх наборах (0.727 s), проверку типов, 44 MCP-теста
-и изолированный smoke. Нативный профиль затем прошёл 95 Mac- и 68 iPad-тестов.
-Полный неизменный `verify.sh` завершился 11 сентября в 02:45 МСК: 491 Core,
-26 Codex, 26 external, 44 MCP, 95 Mac и 473 iPad, без ошибок и пропусков.
-514 исходных файлов связаны с 1507 файлами свидетельств в
-`.build/source-replication-full-evidence/verification.json`; SHA-256 описи
-`b252f7c0690325f5ddca20189a9f47ba6fc0010648991ff409e1d4557b07f18e`.
-Адресная запись текста из нативного редактора в этот PASS ещё не входит.
-Ни установка, ни активация настоящего архива не выполнялись.
+## Admission and complete declarations
 
-## Владелец и конечные значения
+Incoming and stored program sources are admitted before decoding: 4,096 fragments
+and 16 MiB each. The merged value must also fit. Headers are limited to 1 MiB and
+causal versions to 64 KiB. A newly materialized causal field checks the owner's
+100,000-field bound; that occasional SQL count remains proportional to history.
 
-`NotebookStore.applyReplicatedDocumentSource` передаёт по одной программе прежнему
-`DocumentDocument.merge`. История причинных полей проходит страницами по 64
-адреса, не становится словарём целого документа. Порядок читает только до 512
-индексных строк, исходники соседних программ не нужны для изменения одного блока.
-Выбор порядка у полного и адресного слияния использует одну `contentMemberOrder`.
-`DocumentBlock` задаёт имена своих причинных полей также для команды агента.
+Changing a source fragment marks its program in the existing transaction-local SQL
+table. Before publishing a manifest, the writer enumerates the complete current
+subtree and its seven causal fields in pages of 64 hashes. Unchanged bodies are
+referenced rather than rewritten. An order change declares all author positions,
+including positions that only changed at the receiver.
 
-Входящие и прежние фрагменты программы допускаются до декодирования: по 4096
-фрагментов и 16 МиБ для каждого источника. Собранное значение также обязано
-поместиться в этот предел. Заголовок — до 1 МиБ, причинная версия — до 64 КиБ.
-Это явный отказ всей транзакции, не разрешение оставить пустое содержание.
-Изменение ранее неявного поля проверяет общий предел 100 000; редкий общий
-подсчёт строк остаётся пропорциональным истории.
+`initialState` is one authored value. Arbitrary JSON keys such as `records`,
+`blocks`, or `collaboration.fields` do not grant storage structure.
+The receiver merges a complete declared program against its local causal fields.
+A child mutation without that declaration is rejected; unrelated programs remain
+unchanged.
 
-## Полное объявление одной программы
+Complete declarations were introduced with manifest 3. That historical transition
+is not the current wire version; see [transport](transport-contract.md).
+Unsupported manifests are rejected rather than interpreted as complete programs.
 
-Изменение любого фрагмента исходника отмечает физического владельца программы
-в существующей временной таблице SQL. Перед публикацией manifest перечисляются
-хеши всего его текущего поддерева и семи причинных полей, порциями по 64.
-Это не новая запись неизменившихся тел и не новый журнал. При правке порядка
-перечисляются все авторские позиции: позиция, не изменившаяся у отправителя,
-могла измениться у получателя. Старые специальные обходы доставки причинных
-полей документа из двух публикаторов удалены; доски и каталоги не заменены.
+## Snapshot and retained-source boundaries
 
-`initialState` — одно авторское значение, даже если произвольный JSON программы
-содержит массивы `records`, `blocks` или объект `collaboration.fields`.
-Получатель не достраивает объявленную программу из постороннего текущего JSON
-другого устройства. После получения полной программы сам причинный владелец
-выбирает её поля относительно местной доработки. Необъявленная программа
-остаётся неизменной; дочерняя мутация без объявления программы отклоняется.
+`prepareDeviceSnapshot` can rebuild delivery from current records while preserving
+content hashes, questions, receipts, and stopped runs. A newly prepared journal
+starts at sequence 1 with no copied network acknowledgements. A continuing device
+preserves its local drafts/jobs; another device has independent presence.
+This belongs to the explicit snapshot/transfer route, not normal application startup.
 
-Этот контракт принадлежит **manifest 3**. Версия 2 не читается как полное
-объявление и не имеет запасного пути. Внешняя подготовка каждого устройства
-пересоздаёт только доставку из всех текущих записей, сохраняя хеши содержания,
-историю вопросов, квитанции действий и остановки. Курсор нового журнала — 1,
-сетевые подтверждения не копируются. Продолжающий iPad сохраняет локальные
-черновики и задания; Mac получает собственное присутствие без них.
-`prepareDeviceSnapshot` заменяет прежний односторонний `prepareReplicaSnapshot`.
-Проверка готового архива теперь отклоняет неподдерживаемые manifests журнала.
-Старые blobs остаются непрозрачными неизменяемыми значениями; общий сбор мусора
-и ограничение хранения доставки не объявлены реализованными.
+Admitted source/state baselines survive catalog removal and accept late causal fields
+without restoring live membership. See
+[retained sources](spatial-replication-contract.md#retained-sources-and-live-membership).
 
-## Пройденные регрессии
+## Verification
 
-- 99 000 чужих причинных полей и повреждённая соседняя программа не читаются
-  при доставке одного исходника; повтор не публикует второй commit.
-- Независимый CSS, человеческая доработка, удаление и порядок совпадают с
-  решением полного причинного владельца.
-- Вложенное начальное состояние не смешивает две конкурентные версии; обе
-  стороны победы проверяются отдельно, включая чужое добавление внутри JSON.
-- 137 программ с экранированными ID и вложенными массивами проходят окна
-  адресов; доставка не создаёт записи текущего состояния программы.
-- Повреждение позднего фрагмента, неподдерживаемая версия, отсутствие корня
-  и три сбоя транзакции не разделяют содержание, квитанцию и входящий курсор.
-- Снимок продолжающего устройства сохраняет локальный вопрос и задание,
-  но не воспроизводит устаревшую сетевую историю; исходная копия неизменна.
-
-- Нехватка общего причинного бюджета, 4097 фрагментов и 17 МиБ программы
-  отклоняются до декодирования её повреждённого первого тела. Отказ не
-  публикует заголовок, содержание или входящий курсор.
-- После активации двух искусственных копий их новые начальные пакеты
-  применяются без эха. Первая новая правка получает последовательность 2,
-  доставляется второй копии и совпадает с обратным чтением первой.
-
-Опись разницы профиля до/после: SHA-256
-`ed78f688285612424498bd6106e170530d5bb5aa33fae07d4d322e37b06c5541`.
-Срез — `.build/source-replication-cut`, основание `b3eed99`; журналы и статус
-`/tmp/notebook-source-replication-final-{core,mcp}.log`,
-`/tmp/notebook-source-replication-final-profile.status` (**0**). Применение
-среди 99 000 чужих причинных полей — 6482 SQL-инструкции, повтор — 49.
-Два предыдущих отказа компиляции тестовых Swift Testing-макросов сохранены:
-`/tmp/notebook-source-replication-compile-failed.log` и
-`/tmp/notebook-source-replication-macro-closure-failed.log`. После исправления
-самих выражений без ослабления assertions предыдущий профиль прошёл
-141 Core, 17 external и 44 MCP; окончательный профиль добавляет отказы
-ресурсного допуска и настоящий обмен между подготовленными копиями.
-
-## Удалённый владелец
-
-Допущенный source/state baseline сохраняется при удалении предмета и принимает
-поздние поля тем же merger, но не открывает обычные чтения или локальную запись.
-Первый допуск пары и граница ACK описаны в [retained sources](spatial-replication-contract.md#s8-сохранённый-источник-не-живой-предмет).
+Tests cover 99,000 unrelated fields, independent CSS, human continuation, removals,
+ordering, nested initial state, escaped IDs, resource limits before decoding,
+rollback, exact retry, and real exchange between prepared stores.
+These storage checks do not establish physical display, source-editor acceptance,
+or general blob garbage collection. Evidence is in [verification](verification.md).

@@ -1,25 +1,27 @@
-# Зафиксированный вычислительный комплект
+# Pinned computation resources
 
 Pyodide **314.0.6**, CPython **3.14.2**, NumPy **2.4.6**, SciPy **1.18.0**,
-SymPy **1.14.0**, mpmath **1.4.1**. Версии, размеры и SHA-256 принадлежат
-`manifest.json`; проверка не скачивает и не исполняет сторонний код.
+SymPy **1.14.0**, and mpmath **1.4.1**. `manifest.json` owns versions, sizes,
+and SHA-256 identities. Resource verification neither downloads nor executes
+third-party code.
 
-Источник ядра — [официальный выпуск](https://github.com/pyodide/pyodide/releases/tag/314.0.6),
-архив `pyodide-core-314.0.6.tar.bz2`, SHA-256
+The core comes from the
+[official release](https://github.com/pyodide/pyodide/releases/tag/314.0.6):
+`pyodide-core-314.0.6.tar.bz2`, SHA-256
 `1016c31e39ce3764d9a418cbb491a392c802c1b86ccc1367f009f5c59bf8f5fd`.
-Из него без изменений взяты два ES-модуля, WASM и стандартная библиотека.
-Четыре wheel взяты из `https://cdn.jsdelivr.net/pyodide/v314.0.6/full/`
-и проверены по SHA-256 исходного lockfile. Локальный lockfile содержит только
-их записи и исходную информацию о версии ABI; устанавливать другие пакеты нельзя.
-Непрошенные CLI, Windows executable, типы TypeScript и каталог остальных пакетов
-в комплект не входят.
+Its two ES modules, WASM, and standard library are unchanged. Four wheels came
+from the release's full jsDelivr distribution and were verified against upstream
+lockfile hashes. The local lock retains only their entries and original ABI
+version metadata. Other package installation is disabled. Unneeded CLIs,
+Windows executables, TypeScript types, and the rest of the package catalog are
+excluded.
 
-Лицензия Pyodide — MPL-2.0; соответствующие исходники доступны по ссылке выпуска.
-Лицензии Python и библиотек сохранены в `Licenses`; wheel также содержат свои
-неизменённые уведомления, включая вложенные зависимости. Файлы библиотек не
-патчились. `README.md` является сопровождающим документом, не ресурсом движка.
+Pyodide uses MPL-2.0; corresponding source is available at the release link.
+Python and library licenses are retained in `Licenses`; wheels preserve their
+own notices, including bundled dependencies. Library files are unmodified.
+This README is documentation, not an engine resource.
 
-**Комплект ещё не подключён к целям приложений.** Его единственный текущий
-потребитель — `Tests/NotebookComputationHarness`. Это автономное доказательство
-зависимостей, не законченный вычислитель тетради. Условия интеграции перечислены
-в `docs/executable-ink.md`.
+**These resources are not linked into application targets.**
+The current consumer is `Tests/NotebookComputationHarness`: isolated dependency
+evidence, not a released notebook calculator. Integration boundaries are in
+[executable ink](../../docs/executable-ink.md).

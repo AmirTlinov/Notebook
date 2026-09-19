@@ -1,201 +1,116 @@
-# Канонический печатный лист и нативный исходник
+# Canonical printed pages and native source editing
 
-`DocumentDocument` остаётся единственным владельцем содержания. Блоки Markdown,
-формулы `latex`, исходный LaTeX `tex`, преамбула и живые программы сохраняются
-существующими командами и причинной отменой. Markdown преобразуется в TeX только
-для набора: обратного преобразования и двух независимо редактируемых источников нет.
+`DocumentDocument` owns Markdown, `latex` formulas, full `tex`, preamble and
+interactive blocks. Existing commands and causal undo persist them. Markdown is
+converted to TeX for typesetting only; there is no independently editable reverse
+conversion.
 
-## Один набор
+## One print layout
 
-`NotebookTypesetter` компилирует неизменную версию в PDF и SyncTeX вне главного
-актора. `NotebookPrintedDocumentStore` объединяет читателей одного задания и
-хранит производные артефакты в ограниченном дисковом кеше 128 МиБ. Ключ включает
-версию ресурсов и весь документ; PDF, исходник и карта проверяются перед чтением.
-Кеш не владеет содержанием. Отмена последнего читателя останавливает фактическое
-задание; отмена одного из нескольких не отменяет остальных.
+`NotebookTypesetter` compiles an immutable document to PDF and SyncTeX off the main
+actor. `NotebookPrintedDocumentStore` shares jobs and maintains a bounded 128 MiB
+derived disk cache keyed by resource version and complete source. PDF, source and
+map are checked on read. Canceling the last reader stops the real job; canceling
+one shared reader preserves the others.
 
-`DocumentSourceSnapshot` имеет одну `DocumentPagePreparation`: PDF, адреса
-SyncTeX, ссылки и принятый `DocumentLayoutRecord`. Она не занимает WebKit для
-вёрстки. `DocumentPrintedSource` удерживает ту же карту для редактора и бумаги,
-без второго разбора в интерфейсе. Подготовка выполняет полный набор документа:
-произвольный TeX не поддерживает прежнее обещание независимой вёрстки префикса.
-Нативное чтение содержания пока также загружает документ целиком.
+`DocumentSourceSnapshot` has one `DocumentPagePreparation` containing PDF,
+SyncTeX addresses, links and accepted `DocumentLayoutRecord`.
+`DocumentPrintedSource` shares that map with paper and editor. Arbitrary TeX
+requires whole-document compilation; native content loading also currently reads
+the whole document. Independent prefix pagination is not promised.
 
-После получения текущего WebKit admission единственный frame sender начинает
-подготовку PDF одновременно с загрузкой browser shell. Только отправка JS-frame
-ждёт готовности этой оболочки. Отмена/retirement завершает это ожидание, а перед
-отправкой вновь проверяются runtime, generation и source. Второго renderer,
-спекулятивного набора документов или отдельной очереди подготовки нет.
+After WebKit admission, the existing frame sender starts PDF preparation alongside
+shell loading; only frame delivery waits for the shell. Cancellation/retirement
+ends that wait, and runtime/generation/source are rechecked before sending.
 
-Физический размер задаёт `DocumentPaperSize`: A4 210×297 мм или Letter 8.5×11 дюймов,
-в PDF points (72 на дюйм). `WorkspaceItemGeometry` задаёт установленное размещение
-листа, не новый размер шрифта. MediaBox проверяется перед публикацией. Масштаб,
-камера, поворот экрана и плотность растра не вызывают повторную вёрстку.
-`DocumentPaperView` рисует страницы того же PDF через Quartz. WebKit содержит
-только адресные области, ссылки и существующие живые элементы, не копию текста
-для независимой HTML-пагинации. `document-fragments.js` и его измерительный DOM удалены.
+`DocumentPaperSize` defines A4 (210×297 mm) or Letter (8.5×11 in), in PDF points
+(72/in). `WorkspaceItemGeometry` defines placement, not font size. MediaBox is
+validated before publication. Zoom, camera, rotation and raster density do not
+retypeset. `DocumentPaperView` draws that PDF through Quartz. WebKit supplies links,
+addressed regions and live programs, not duplicate text or HTML pagination.
+The former measurement DOM and `document-fragments.js` are removed.
 
-На iPad бумага и программы сохраняют `DocumentPagePresentationOwner` и
-`DocumentProgramOwner`; правила контекста, checkpoint и нативного handoff описаны
-в [document-program-fragments.md](document-program-fragments.md). Новая версия
-независимого текста не должна перемонтировать неизменившуюся программу.
+iPad paper and programs retain `DocumentPagePresentationOwner` and
+`DocumentProgramOwner`; see [program fragments](document-program-fragments.md).
+Independent text edits preserve unchanged programs.
 
-## Редактор и общая запись
+## Source editing
 
-«Код» и «Рядом» по умолчанию показывают точный собранный LaTeX только для
-чтения. В нём интерактивный блок явно подписан: inline HTML/CSS/JavaScript и
-начальное состояние находятся в безопасных TeX-комментариях, пакетная программа
-связана своим неизменяемым SHA-256. LaTeX резервирует физическое место; код
-исполняет Notebook, не TeX. Через то же меню открываются реальные файлы пакета
-или inline HTML/CSS/JavaScript, без создания редактируемой копии. Большой текст
-читается частями по 256 КиБ с сохранением UTF-8; двоичные ресурсы показывают
-метаданные, а не загружаются в текстовый редактор. Если набор не готов, исходники
-отдельных блоков и программ всё равно доступны через меню.
+Code and Side-by-side initially show the exact assembled LaTeX read-only.
+Interactive blocks are explicit in safe TeX comments: inline HTML/CSS/JavaScript
+and initial state, or an immutable package SHA-256. TeX reserves their physical
+space; Notebook executes the code. The same menu opens real package files or
+inline source, without making an editable duplicate. Text is paged in UTF-8-safe
+256 KiB chunks; binary files show metadata. Block/program sources remain accessible
+when typesetting is unavailable.
 
-`DocumentSourceEditorSession` редактирует адресное поле с исходной версией.
-`DocumentNativeSourceEditor` использует UITextView/NSTextView, подсветку, системный
-поиск, дополнение команд и выделение UTF-16. Ввод не ждёт компиляции. Автосохранение
-после паузы вызывает `NotebookAppModel.commitDocumentSource`; набранное во время
-записи продолжение сохраняется новым черновиком на **принятой версии**, а не на
-случайно прочитанном позднем значении. Квитанция повторной команды возвращает
-версию именно первоначальной записи, включая повтор после открытия SQLite.
+`DocumentSourceEditorSession` edits an addressed field against its original version.
+`DocumentNativeSourceEditor` uses UITextView/NSTextView, syntax highlighting,
+system search, completion and UTF-16 ranges. Input never waits for compilation.
+Debounced `commitDocumentSource` autosaves; text typed during a write becomes a new
+draft on the **accepted** version. Idempotent retries return the original accepted
+version, including after SQL reopen.
 
-IME сохраняется как черновик до окончания композиции. Черновик хранит текст,
-выделение и прокрутку; конфликт или удаление блока не выбрасывает ввод. Сравнение
-и замена на свежую версию требуют явного решения пользователя. Добавление блока,
-правки человека и агента, а также Undo идут через общий исполнитель. Истории
-отмены UITextView/NSTextView и второго журнала документа нет.
+IME composition remains a draft until complete. Draft text, selection and scroll
+survive conflicts or block deletion. Comparing/replacing with a new source requires
+an explicit user decision. Human edits, agent edits, additions and undo share one
+command owner; native text widgets have no independent document undo history.
 
-В вертикальном окне iPad доступны «Лист» и «Код», в горизонтальном — также «Рядом».
-Поворот из «Рядом» в вертикаль оставляет исходник и курсор. Клавиатура не меняет
-число режимов. В режиме «Код» бумага не допускает ввод и не считается видимой.
+Portrait iPad offers Paper and Code; landscape also offers Side-by-side. Rotation
+from split to portrait preserves source/cursor. Keyboard appearance does not
+change mode availability. Code mode neither admits paper input nor claims paper
+visibility.
 
-Двойное касание печатного блока открывает ближайшую строку TeX или исходный
-абзац Markdown (UTF-16, до вставки служебных TeX-строк) по SyncTeX **того самого установленного PDF**. Свежая модель не подменяет адрес
-старых пикселей. Выделение исходника позволяет перейти к соответствующему листу
-или передать текст, диапазон и проверенную версию в существующий общий контекст
-агента. Произвольный макрос может разрешаться к ближайшему фрагменту, а не символу.
+Double-tapping printed content resolves the nearest TeX line or original Markdown
+paragraph through SyncTeX from the **installed PDF**. A newer model cannot relabel
+old pixels. Source selection can navigate to paper or share its exact text, range
+and verified version with the agent. A macro may resolve to a nearby fragment,
+not an individual character.
 
-Во время набора и при ошибке сохраняется последний успешный печатный результат
-с явным статусом. Новая страница устанавливается только после полной готовности.
-`DocumentSavePresentation` различает saved и installed: запись в SQLite не
-подтверждает показ. Нативный черновик не входит в PDF; режим «Рядом» может
-показывать свежую каноническую бумагу независимо от незавершённого ввода.
+While compiling or on failure, retain the last successful print with explicit
+status. Install new paper only when fully ready. `DocumentSavePresentation`
+distinguishes saved from installed. Native drafts do not enter the PDF.
 
-## Отмена и ресурсы
+## Runtime and resource limits
 
-Тот же AOT WebAssembly-движок и закреплённые шрифты работают на iPad и Mac,
-без JIT, shell, сети, доступа к SQLite или пользовательской файловой системе.
-Остановки проверяются в сгенерированных базовых блоках TeX, шрифтов, изображений,
-BibTeX и PDF, а не только в цикле макроса. Trap не пересекает кадры Rust/Swift.
-Встроенная WASI-файловая система выдаёт только разрешённые ресурсы.
+Both platforms use the same AOT WebAssembly engine and pinned fonts, without JIT,
+shell, network, SQLite or user-filesystem access. Cancellation checks exist in
+generated TeX/font/image/BibTeX/PDF code; traps do not cross Rust/Swift frames.
+WASI exposes only admitted resources.
 
-Границы: 320 МиБ линейной памяти одной VM; 64 МиБ виртуальных файлов,
-32 МиБ на файл; 128 файловых дескрипторов; 30 секунд задания с учётом очереди;
-64 КиБ лога. QuickJS нормализации: 64 МиБ, стек 1 МиБ, 2 секунды CPU.
-PDF ограничен 16 МиБ, сжатая SyncTeX — 4 МиБ, распакованная — 16 МиБ;
-4096 страниц. Растр страницы ограничен 8192 по оси и 16 мегапикселями.
-Невозможное требование даёт явный отказ, не бесконечное ожидание ресурсов.
-Простой 15 секунд или давление памяти освобождают неработающий экземпляр движка.
+| Resource | Limit |
+|---|---:|
+| VM linear memory | 320 MiB |
+| Virtual files / one file / descriptors | 64 MiB / 32 MiB / 128 |
+| Job, including queue / log | 30 s / 64 KiB |
+| Normalizer memory / stack / CPU | 64 MiB / 1 MiB / 2 s |
+| PDF / compressed SyncTeX / expanded SyncTeX | 16 / 4 / 16 MiB |
+| Pages | 4,096 |
+| Page raster | 8,192 px per axis, 16 megapixels |
 
-`SceneRenderResources` учитывает декодирование, карту, страницу, сообщения и
-растры. При передаче JSON учитываются стили, программы, initialState и причинные
-версии; резерв остаётся до callback. Старый lease не передаётся другой задаче,
-пока реальная операция не завершилась. Quartz/PDFKit нельзя прервать посреди
-системного draw: его размер ограничен, а отмена запрещает публикацию и ждёт
-освобождения действительного владельца. Эти лимиты не выдаются за измерение RSS.
+Impossible requests fail explicitly. Fifteen seconds idle or memory pressure releases
+an unused engine. `SceneRenderResources` accounts for decoding, maps, messages and
+rasters; JSON includes styles, programs, state and causal versions. Reservations
+last through actual completion, including callbacks. Quartz/PDFKit draw cannot be
+interrupted mid-call: bounded dimensions and cancellation prevent publication,
+while the real owner keeps its lease until return. Accounting limits are not RSS
+measurements.
 
-Повышение плотности нативного PDF-растра следует видимой проекции бумаги, а не
-самому наличию окна. Скрытый исполнитель сохраняет подготовительный растр;
-миниатюра подготавливается в её запрошенных 256 px, а точный снимок получает
-собственный резерв нужного размера. Смена разрешения инвалидирует generation
-того же sender: переход к открытому листу не может принять старые 256 px за
-готовую бумагу. Скрытый исполнитель освобождает заменяемый растр до запроса
-нового; видимая бумага сохраняет предыдущие пиксели до готовности замены. При
-появлении бумаги в окне прежний владелец повышает чёткость, не перекомпилируя
-документ. Полноразмерный экспорт от разрешения миниатюры не зависит.
+Raster density follows visible projection. Hidden preparation and 256 px thumbnails
+retain only their requested density; exact snapshots reserve their own extent.
+Density changes invalidate the same sender generation. Hidden owners release
+replaced rasters before admission; visible paper keeps old pixels until replacement.
+Showing paper sharpens the existing artifact without recompilation.
 
-## Навигация, экспорт и квитанции
+## Position, export and receipts
 
-`DocumentReadingPosition` остаётся локальным смысловым якорем: блок, ближайшая
-строка исходника, смещение, масштаб относительно fit. Страница — результат
-актуальной разметки. Удаление блока разрешается по прежнему порядку; отсутствие
-готовой карты не считается удалением. Переход подтверждает установленный лист,
-а не ожидание готовности в интерфейсе.
+`DocumentReadingPosition` is a device-local semantic anchor: block, nearest source
+line, offset and scale relative to fit. Page number comes from current layout.
+Deletion resolves through prior order; an unavailable map is not deletion.
+Navigation confirms installed paper, not a loading UI.
 
-Задание экспорта принимает `NotebookExportCut`: исходник и state из одной WAL
-транзакции. Его SHA и `stateRevision` записываются до render. Режим `saved`
-исполняет этот cut в изолированном viewport прежнего renderer, с asset store и
-**общим** SceneRenderResources budget. Он не заимствует и не заменяет live cache
-с тем же journal token: неподтверждённые пиксели не являются сохранённым state.
-Экспорт не вызывает checkpoint/seek чужого живого исполнителя. Готовый PDF
-выбранного исходника берётся из того же canonical store; только программные
-прямоугольники дополняются снимками. Текст/векторы и ссылки остаются прежними.
-
-Writer перед атомарной публикацией сравнивает весь source/state cut, включая
-causal metadata. Изменение во время работы даёт `revision_conflict`, а не новый
-ярлык актуальности старому PDF. Package hash включает `document.cut.json`;
-повторный status читает то же задание без исполнения. `saved` обозначает
-названный срез, не обещает его актуальности после будущих правок.
-
-Quartz пишет composed PDF в приватный файл, не в `Data` с прежним лимитом 16 МиБ.
-Файл и assets адресуются теми же V2 parts по 4 МиБ; каждый part проверяется и
-ставится через обычный writer FIFO, между частями остаётся очередь малых правок.
-Подготовка publication читает окна до 1 МиБ, проверяет полный SHA каждого файла,
-исходник и source map вне writer. Затем нативная capability проходит короткий
-CAS/move/receipt commit. Binary IPC `publishExport` удалён: нет PDF/base64 в
-команде или результата больше IPC limit. Метаданные ограничены 1 МиБ/16384 parts;
-отдельные ограничения canonical typesetter остаются. Ошибка, stale cut или
-отмена подготовки не меняют прошлые файлы; временный каталог удаляется.
-`nb.cancelExport(key,{jobID})` сохраняет cancelled и keyed effect в одной
-транзакции, затем останавливает producer. Final publication rechecks cancelled
-даже если вычисление поздно ответило или проигнорировало Task cancellation.
-Если saved уже прошёл writer fence, возвращается этот неизменный receipt.
-Status/retry/restart не оживляют cancelled job. Повтор
-проверяет существующий файл потоково.
-
-`nb.export(key,{documentID,format:'png',pageIndex:0,pixelWidth:1600})` сохраняет
-одну canonical страницу, включая программные области, через ту же publication.
-PDF остаётся форматом по умолчанию. PNG имеет запрошенную ширину без тихого
-уменьшения при нехватке бюджета; отсутствующая страница — export_page_missing,
-не clamp к последней. В квитанции единый `artifact {path,sha256,byteCount,mimeType}`,
-`options`, а у PDF также `source`, assets/maps. PDF-only поля путей удалены.
-Options входят в hash пакета: одинаковые пиксели разных страниц не стирают
-смысл выбора. При смешанной растеризации WebKit владеет только прямоугольниками
-программ из canonical map; его непрозрачный snapshot background не перекрывает
-PDF текст, формулы и SVG. Это тот же `DocumentPrintedPage`, не второй макет.
-`nb.export(key,{documentID,format:'svg',blockID:'signal'})` просит авторский
-`notebook.exportFrame(({format,state,signal})=>svg)` в отдельном executor той же
-программы. Перед callback выполнен pause, но не checkpoint текущего позднего
-момента: state — точно saved cut. Commit заблокирован, timeout/dispose отменяет
-операцию. Нет raster fallback под расширением SVG. Выход до 1 МиБ — пассивный
-замкнутый SVG с literal presentation attributes/local definitions; script,
-foreignObject, CSS styles, анимация и внешние ресурсы отклоняются, а не вырезаются.
-Signal экспортирует выбранное окно Plot и marker настоящими path/text, без PNG.
-PNG/PDF интерактивных областей тоже требуют `exportFrame`: format=raster,
-pixelRatio в CSS-пикселях, exact saved state. Автор останавливает свои часы,
-awaits model/media и рисует целевой backing Canvas/WebGL; возвращает null после
-готовности. Нет callback — program_export_unavailable, а не случайный startup
-кадр. Ресурсный raster admission происходит до увеличения backing, после callback
-используется прежний WebKit capture/compositor; live executor не меняется.
-Signal/Three/six inline recipes используют ту же модель; wave ждёт accepted
-Worker result (не draft), recording ждёт decoded seeked frame и остаётся muted.
-`nb.export(key,{documentID,format:'html',blockID:'sound'})` публикует выбранную
-inline программу и saved state как один offline HTML до 8 МиБ. Код не исполняется
-при экспорте; явное открытие запускает прежний NotebookProgram/1 внутри opaque
-sandbox iframe с закрытой сетью и без доступа к file-origin/Notebook writer.
-Local edits не возвращаются в Notebook. Модули/asset packages требуют portable
-экспорт и получают export_portable_required, не сломанный file:// bundle.
-Portable directory импортируется существующим V2/native путём; контракт —
-[document-program-fragments.md](document-program-fragments.md). MP4 — та же
-каноническая страница, один изолированный coordinator и явный authored timeline
-(не запись экрана). Off-main AVFoundation receiver принимает последовательные
-кадры с backpressure; нет массива кадров/PNG sequence/второго animation engine.
-Рабочие буферы имеют отдельный допуск прежнего пула, ограничения не обходятся.
-Presented cut остаётся незавершённой частью GUI-249.
-
-Растр для агента подтверждает точные token, поколение и эпоху установки.
-Квитанция ready означает готовность артефакта, а не shown на iPad. Ключ нового
-рендера отделён от прежней DOM-пагинации; исторические изображения и квитанции
-не переписываются. Результаты и открытая общая приёмка — в
-[verification.md](verification.md), не в предположении о достаточности тестов.
+[Export](document-export-contract.md) shares the canonical artifact and immutable
+source/state cut. Exact raster evidence binds token, generation and installation
+epoch. Ready means an artifact is available, not that it was shown on iPad.
+Historical DOM receipts are not rewritten or reused as current renderer evidence.
+See [verification](verification.md).

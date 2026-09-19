@@ -1,47 +1,29 @@
-# Агентское состояние: адрес блока, а не весь документ
+# Addressed agent state updates
 
-`NotebookActionProjection` выбирает заголовок документа, программы из
-`setBlockState` и записи состояния с теми же ID. UUID-подобные ID нормализуются
-по прежнему правилу адреса; `/` и `~` экранируются только в SQL-адресе, не в
-содержимом. Заголовок сохраняет полную версию источника и состояния.
-`CollaborationWorkspace` по-прежнему требует интерактивный блок, точные
-`revision`/`stateRevision` и допустимый JSON. Эта команда не меняет исходник,
-его часы или причинные поля.
+`NotebookActionProjection` selects the document header, interactive programs named
+by `setBlockState`, and state records with the same IDs. UUID-like IDs follow the
+existing normalization; `/` and `~` are escaped in SQL addresses only.
+The header retains complete source and state revisions.
 
-`CollaborationStore` публикует изменение состояния через прежнюю разницу
-baseline-проекции. `NotebookStore.writeFragment` остаётся единственным
-писателем. Непрочитанные состояния, включая записи удалённых программ, не
-становятся удалениями. Запись, квитанция, контекст и курсор публикуются одной
-транзакцией. Отмена возвращает предыдущее значение, а для первой записи —
-исходное состояние именно адресованной программы; поздняя человеческая
-доработка сохраняется. Повтор UUID возвращает прежнюю квитанцию.
+`CollaborationWorkspace` requires an interactive block, exact `revision` and
+`stateRevision`, and valid JSON. Updating state leaves source clocks and causal
+source fields unchanged.
 
-## Проверка 10 сентября 2026
+`CollaborationStore` publishes the baseline projection difference through
+`NotebookStore.writeFragment`. Unread states, including retired program records,
+are preserved. Content, receipt, context, and cursor commit atomically.
+Undo restores the addressed program's previous value, or its initial state when
+undoing its first write, while preserving later human edits. Repeating the UUID
+returns the original receipt.
 
-Неизменный профиль в `.build/document-command-development`:
-`/tmp/notebook-document-state-final.log`, exit 0, 42 Core-теста, 10.941 s.
-Команда `swift test --filter
-'NotebookAgentDocumentStateProjectionTests|collaboration|creationUndo'`
-проверила прежние частичные правки, слияние, защищённое создание и отмену.
-В новой регрессии 100 000 исторических состояний находятся в том же документе.
-После полного создания индексов повреждены посторонняя запись состояния и
-блок с источником в миллион символов. Apply/undo/retry не читают эти тела;
-только заголовок состояния и одна запись входят в изменения. SQL-профиль
-включает flush/commit и имеет предел 200 000 инструкций. Проверены также
-устаревшая версия, человеческое продолжение, отказ после записи, до commit и
-неоднозначный ответ после commit. Первый неуспешный запуск был ошибкой
-`#expect` в новом тесте, сохранён в
-`/tmp/notebook-document-state-compile-failed.log`; runtime-условия не ослаблялись.
+## Verification and limits
 
-## Оставшаяся граница
+`NotebookAgentDocumentStateProjectionTests` exercises apply/undo/retry among
+100,000 historical states, with corrupted unrelated records and a large unrelated
+source. It checks stale revisions, human continuation, rollback, and ambiguous
+post-commit responses. SQL accounting includes flush and commit.
 
-Этот профиль не является полным `verify.sh` или живой MCP-приёмкой. Изменение
-исходника, последовательности блоков и отмена создания документа по-прежнему
-имеют отдельное полное чтение. Последнее намеренно сохраняет проверку всей
-поздней человеческой доработки. Входящее слияние теперь также
-адресовано по блокам и проверено среди 100 000 состояний; отдельный
-[контракт](document-state-replication.md) описывает сохранение порядка,
-вложенного JSON и причинной версии. Нативная публикация также
-[заменена командой одного блока](native-document-state-command.md); её отказ,
-повтор и порядок очереди проверены отдельно. Рабочее чтение полного журнала
-ещё осталось; общий выпуск не объявляется завершённым.
+Source changes, block ordering, and creation undo have separate contracts.
+Creation undo intentionally checks the owner's later human work before removal.
+This addressed-state contract does not establish full UI or installed-pair acceptance.
+See [verification](verification.md).

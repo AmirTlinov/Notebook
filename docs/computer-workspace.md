@@ -1,56 +1,38 @@
-# Рабочее место конкретного Mac
+# A workspace on a specific Mac
 
-`NotebookChatController` выбирает один Mac из уже доверенных соединений
-`NearbySync`. Появление второго соединения не перехватывает выбор. Меню рядом
-с проектами показывает имя и доступность компьютера; прежнее сопряжение и TLS
-остаются единственными владельцами доверия.
+`NotebookChatController` selects one already trusted Mac through `NearbySync`.
+A second connection cannot take over that selection. Computer identity is part of
+every command even when paths or task IDs match on different machines.
 
-`NotebookStore` хранит активный компьютер отдельно от окна каждого Mac.
-Прежние таблицы `chat_panel` и `file_window` адресуют состояние парой
-«автор, компьютер»: выбранная задача, черновик, проект, открытый документ,
-файловая панель и терминал возвращаются вместе. Текст и место чтения остаются
-в `file_drafts` по полному адресу файла. Геометрия плавающего чата остаётся
-локальным свойством окна, а камера — только `SessionPresence`.
+`NotebookStore` keeps active-computer selection separate from each Mac's window.
+`chat_panel` and `file_window` use the author/computer pair for conversation, draft,
+project, document, file panel, and terminal. `file_drafts` uses the complete file
+address. Floating-chat geometry is device-local; the board camera belongs to
+`SessionPresence`.
 
-Смена компьютера проходит после принятого Pencil. На короткое время чтения
-нового окна не принимается новый контакт кода; уже измеренные точки принадлежат
-прежнему материалу. Очередь сохранения удерживает предыдущие черновики перед
-выбором. Непрочитанное или повреждённое окно отклоняет всю смену, не выбрасывая
-показанный черновик. Потерянное подтверждение принятого выбора проверяется
-чтением, не повторной заменой данных. Ошибка записи удерживает прежнее окно
-и текст до повтора. Черновик чата теперь входит в ту же удерживаемую очередь
-нативной записи, а не в одноразовую команду без повтора.
+Switching waits for accepted Pencil and queues the old drafts first.
+New code contact is briefly fenced while reading the target window. A corrupt or
+unread window rejects the switch without discarding the visible draft.
+Unknown selection outcome is resolved by reading rather than replacement.
+Write failure retains the previous window and text for retry.
 
-Компьютер команды записан в самом `chat_jobs`, не во втором журнале. Его нельзя
-заменить при повторе UUID, даже когда на двух Mac совпали пути или идентификаторы
-задач. Выбранный компьютер читает ограниченное окно своих ожидающих и недавних
-команд. Ввод терминала закрепляет также Mac измеренного ввода; позднее завершение
-голоса отправляется прежнему владельцу звонка. Смена панели не завершает процесс.
-Поздние ответы, подписки и подготовленные редакторы не обновляют другой компьютер.
+`chat_jobs` stores the target computer in the existing journal. Retry cannot change
+that target. Terminal input and late voice completion retain their original owners.
+Changing a panel does not terminate a process. Late answers, subscriptions, and
+prepared editors cannot update another computer.
 
-Текущие однокомпьютерные предпочтения переносятся адресно одной транзакцией.
-Содержимое сообщений, UUID, каталог, чернила и камера не переписываются;
-непривязанный черновик назначается только первому выбранному Mac. Прежние
-неадресованные строки после переноса удаляются. Исторические архивы не читаются.
+Migration of earlier single-computer preferences is addressed and transactional.
+Messages, IDs, catalog, ink, and camera are preserved; an unbound draft belongs only
+to the first selected Mac. Retired unaddressed rows are removed. Historical archives
+are not read.
 
-Без связи документ явно назван сохранённой копией или локальным черновиком;
-чтение, ввод и пометки остаются доступны. Обновление и запись файла на Mac
-недоступны до соединения. Отзыв доверия не удаляет материал Notebook. Ссылка
-на файл или разговор выбирает его доверенный Mac и документ, не камеру.
+Offline files are labeled as saved copies or local drafts. Reading, editing, and
+annotations remain available; refreshing or writing the Mac file requires connection.
+Revoking trust preserves Notebook material. A file/conversation link selects its
+trusted computer and document, not the board camera.
 
-## Проверенная область и открытый вход
-
-`.build/computers-final-second` прошёл 25 Core и 15 iPad проверок. Два независимых
-адреса с одинаковыми путями сохраняют свои тексты, места чтения и команды.
-Нативный сценарий переключает два подставных доверенных Mac, оставляет неизвестные
-поручения у исходного компьютера, возвращает прежние UUID, сохраняет материал
-после отзыва и восстанавливает окно холодным запуском. Отказ записи и повтор
-проверены на настоящей SQLite-очереди. После защиты смены окна отдельно прошли
-компьютерные сценарии и панель в `.build/computers-switch-finish`; выбор проверок
-прошёл 25 тестов.
-
-Это ещё не физическая приёмка второго Mac. Новый компьютер должен быть отдельно
-допущен к нынешнему пространству и явно сопряжён; подготовка третьего устройства
-реализована отдельным [маршрутом текущего пространства](computer-enrollment.md). Нельзя подменить её копированием
-идентичности первого Mac, заменой архива iPad или отключением проверки допуска.
-Открытые условия GUI-189 и GUI-190 сохраняются до этого сценария.
+Native/Core checks cover identical paths on two distinct computer identities,
+unknown jobs, persistent drafts, revocation, queue failure, and cold restoration.
+A fixture with two peers does not establish physical second-Mac acceptance.
+See [enrollment](computer-enrollment.md), [pairing](installation-pairing.md),
+and [verification](verification.md).

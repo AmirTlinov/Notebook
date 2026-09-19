@@ -1,90 +1,34 @@
-# MCP читает программу по адресу блока
+# Addressed document-block reads
 
-`NotebookStore.readDocumentBlock` возвращает `NotebookDocumentBlockRead`:
-UUID документа, одну программу, её сохранённое состояние и две версии —
-исходника и состояния. Все значения относятся к одному WAL-срезу. Ответ
-не объявляется полным `DocumentDocument` или `DocumentStateJournal` и не
-несёт поля формата архива, соседних блоков либо исторических состояний.
+`NotebookStore.readDocumentBlock` returns a `NotebookDocumentBlockRead`: document
+UUID, one program, its saved state, and source/state revisions from one WAL
+snapshot. It is a partial read, not a complete `DocumentDocument` or
+`DocumentStateJournal`.
 
-Перед чтением тел SQL проверяет живого владельца и длины его адресных
-фрагментов: заголовки документа и журнала, поддеревья выбранных программы
-и состояния. Один запрос допускает до 4096 фрагментов и 4 МиБ исходных
-байтов; превышение возвращает отказ до декодирования даже первого тела.
-Пакет IPC допускает до четырёх таких блоков. Размер ответа после полного
-чтения не используется вместо этого допуска.
+Before decoding bodies, SQL checks live membership and the lengths of the document
+and journal headers plus the selected program/state subtrees. A read admits at
+most 4,096 fragments and 4 MiB; an IPC package admits up to four such blocks.
+A response-size check after loading is insufficient.
 
-Поддерево выбирается индексным диапазоном экранированного адреса, не
-обходом всех соседей и не растущей очередью рекурсии. UUID-подобный ID
-сохраняет существующую нормализацию; обычные имена, `/`, `~` и похожие
-префиксы не смешиваются. Типизированное значение и точная структура
-фрагментов сверяются; чужой parent/collection не становится прочитанной
-программой. Отсутствующий блок даёт отсутствие, а не соседний исходник.
-Отсутствующее тело при существующей строке даёт явное повреждение: левое
-соединение не скрывает такую строку до проверки допуска.
+Indexed escaped-address ranges select subtrees. UUID-like IDs are normalized;
+ordinary names, Unicode, `/`, `~`, and similar prefixes remain distinct.
+Typed structure and parent/collection ownership are validated. A missing block
+returns absence; a missing blob behind an existing row reports corruption.
 
-`NotebookCommandDispatcher` и TypeScript `NotebookStore` передают этот же
-срез. `notebook_read_document(block_id: …)` больше не загружает полные
-документ и журнал перед фильтрацией. Выбор текущего документа без явного
-UUID также использует присутствие и адресный заголовок предмета, а не
-`readCurrent()` с тяжёлым содержанием. Старый полный путь внутри этой ветви
-инструмента удалён. Камера и человеческий выбор не меняются.
+The dispatcher and public SDK's `nb.document({id, blockID})` use this same cut.
+Resolving the current document uses presence and its addressed header rather than
+loading all current content. Reading leaves camera and human selection unchanged.
 
-Сохранённый JSON `null` отличен от отсутствующей записи. Swift-декодирование
-сохраняет наличие поля, а MCP не подставляет начальное состояние вместо
-принятого `null`. Исправлено и компактное представление этого значения.
+A saved JSON `null` differs from an absent state record. Swift and MCP preserve
+that distinction instead of replacing accepted `null` with the initial state.
 
-## Проверка — 11 сентября, 00:35 МСК
+## Checks and scope
 
-Неизменный срез `.build/document-block-read-cut` от `b3eed99` прошёл
-**108 Core в восьми наборах** за 22.190 s, **три external-теста одного набора**
-за 0.059 s, **44 MCP**, typecheck и smoke. Среди 100 000 исторических
-состояний чтение одного блока выполняет **295 SQL-инструкций**, не декодируя
-два намеренно повреждённых посторонних тела. Чтение не меняет курсор, строки
-и их позиции. Предел измерения оставлен 200 000 инструкций.
+Regressions cover admission before decoding, corrupted unrelated bodies among
+100,000 states, exact/current-document addressing, escaped IDs, missing blobs,
+and unchanged cursors and positions. MCP checks use a real isolated Unix IPC host.
 
-Проверены начальное и сохранённое `null`, похожие и UUID-адреса, вложенные
-коллекции, недопустимая структура хранения, отсутствующее тело при сохранённой строке, слишком длинный ID и общий предел
-пакета. Два отрицательных контроля сначала повреждают первый заголовок, затем
-требуют отказ именно по объёму/числу фрагментов: декодирование первого тела
-дало бы другой тип ошибки. Это проверяет порядок допуска, не только код отказа.
-
-MCP smoke проходит через настоящий Unix IPC изолированного Core-процесса и
-stdio MCP. Ограниченная трасса только тестового владельца подтверждает:
-как явный UUID, так и текущий документ вызывают `documentBlock`, но не
-`document`/`documentState`. Принятый через обычный apply `null` возвращается
-обратно; прежнее присутствие после сценария восстановлено внутри фикстуры.
-В рабочий протокол средство трассировки не добавлялось.
-
-Первый запуск остановился на трёх вызовах `#require` новой фикстуры:
-выбрасывающий метод должен иметь `try` внутри макроса. Отрицательные журнал,
-статус и разница сохранены в `/tmp/notebook-document-block-read-compile-failed.*`.
-Первый профиль и native прошли, после чего проверка владельца выявила, что
-внутреннее SQL-соединение могло скрыть строку с отсутствующим телом. Соединение
-исправлено и добавлен отдельный отрицательный контроль; окончательный профиль
-заново прошёл на новой неизменной разнице. Это не повтор упавшего XCTest.
-
-Окончательный native: **95 Mac** и **68 iPad Simulator**, без ошибок, пропусков
-и runtime warnings; runner 79.211 s и 44.714 s. Четыре отпечатка до/после Core/MCP
-и native совпадают:
-`c904302d1e3145b6e1e0b3db68bf8396e96e798732a1f3eccce2207e0fb11c54`.
-Все восемь исходных и тестовых файлов рабочего дерева побайтно равны этому срезу.
-Журналы — `/tmp/notebook-document-block-read-final-{core,mcp,mac,ipad}.log`,
-статусы — `-profile.status` и `-runtime.status` (0). Результаты —
-`.build/document-block-read-final-{mac,ipad}.xcresult`; независимые сводки —
-`/tmp/notebook-document-block-read-final-{mac,ipad}-summary.json`.
-
-## Граница
-
-Это профиль, не полный `verify.sh`,
-не установленный Mac и не восстановленный пользовательский MCP. Компактное
-чтение всего документа без `block_id`, явный `include_source`, экспорт и
-рабочий UI по-прежнему имеют полное чтение документа/журнала. Общая браузерная
-пагинация, тяжёлые изменения источника и срок хранения доставки также остаются
-отдельными условиями. Установленные приложения и человеческие архивы не менялись.
-
-## Общий маршрут — 11 сентября, 01:54 МСК
-
-Этот читатель вместе с адресной правкой исходника прошёл полный `verify.sh`:
-480 Core, 26 Codex, 26 external, 44 MCP, 95 Mac и 473 iPad без ошибок,
-пропусков и runtime warnings. Квитанция и точный набор — в `docs/verification.md`.
-Установленный MCP и физическая приёмка этим проходом не подтверждены.
+Explicit full-source reads, exports, and the current native document model still
+have full-input paths. Addressed block reads do not establish incremental TeX layout,
+bounded journal retention, or installed-device acceptance.
+See [verification](verification.md).

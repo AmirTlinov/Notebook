@@ -1,309 +1,143 @@
-# Codex без обязательного окна
+# Codex without a required Desktop window
 
-Создание разговора удерживает один запрос `thread/start` до ответа или закрытия
-подключения: общий 12-секундный срок чтения не отбрасывает поздний ID во время
-системного запроса доступа или запуска MCP. Неизвестный исход не отправляется
-повторно. Его состояние показывается в списке чатов; повтор квитанции прежнего
-создания не становится ошибкой уже открытого разговора.
+`CodexAppServer` is a persistent stdio client of the bundled official App Server.
+It uses native auth, projects, history, models, tools and permissions without
+opening a Desktop window or replacing existing task settings.
+The checked-in adapter and bundled-runtime manifest define the supported protocol;
+external API references are not a promise of compatibility with an arbitrary version.
 
-`CodexAppServer` — постоянный клиент комплектного Codex App Server по stdio.
-Mac-приложение использует комплектный официальный подписанный Codex и его существующую
-авторизацию, проекты, историю, модель, инструменты и политику доступа. Окно
-Codex не открывается, параметры существующей задачи при продолжении не меняются.
-Документированный интерфейс: https://learn.chatgpt.com/docs/app-server.
+## Host and task ownership
 
-## Один владелец подключения, независимые задачи
+`NotebookCodexHost` owns one App Server per Mac app. Workspace
+`NotebookCodexSidecar` instances route delivery, not separate model processes.
+Mac calls the route directly; iPad uses authenticated Notebook transport.
+Up to eight workspace owners retain distinct IPC addresses, so switching windows
+does not redirect an active agent's tools.
 
-`thread/resume` получает исключительное право записи у самого Codex. Ответ
-`already has an active writer` означает отказ: Notebook может читать историю,
-но не вытесняет другой процесс и не создаёт заменяющую задачу. Каталог и сводки
-используют ограниченные чтения, не возобновляют все показанные задачи.
-Снятие панели не закрывает подключение, не отпускает активный ход и не останавливает
-его. Не выбранные завершённые задачи освобождаются при заполнении рабочего набора.
+`thread/resume` acquires Codex's own exclusive writer. “Already has an active
+writer” is an explicit refusal; history remains readable. Notebook neither evicts
+the other process nor creates a replacement task. Catalog reads do not resume
+every listed task. Closing the panel leaves the connection and active turn alive;
+inactive completed tasks can leave the bounded working set.
 
-`NotebookCodexHost` принадлежит Mac-приложению и владеет одним App Server.
-`NotebookCodexSidecar` — маршрут пространства, не дочерний исполнитель. Локальное
-окно задач Mac обращается к нему напрямую, iPad — через существующий транспорт.
-Независимые задачи имеют отдельные ограниченные workers; медленный `thread/start`
-не блокирует другое обсуждение. До восьми открытых владельцев пространств сохраняют
-собственные IPC-адреса; переключение окна не перенаправляет инструменты активного агента.
-Подробности входа, runtime, интернет-маршрута и жизненного цикла:
-[codex-remote-work.md](codex-remote-work.md).
+A `thread/start` request remains pending until reply or connection closure, rather
+than discarding a late ID after the ordinary 12-second read timeout.
+Unknown create outcomes are not retried. Native writes persist attempts before RPC;
+positive `clientUserMessageId` evidence resolves uncertain sends.
+Ordinary busy-task messages queue; explicit steer and stop target the exact turn.
 
-`NotebookCodexSidecar` продолжает существующие SQLite-записи доставки.
-Перед внешней командой устойчиво записывается попытка; потерянный ответ оставляет
-неизвестный исход, а не разрешение повторить. Сообщение сверяется с настоящим
-`clientUserMessageId` в адресных страницах истории. Отсутствие в текущей странице
-не доказывает непринятие. Обычное сообщение занятой задаче остаётся в очереди.
-Явное «Уточнить текущий ход» использует `turn/steer` с закреплённым `expectedTurnId`:
-окончание этого хода не превращает уточнение в новый ход. Остановка также адресует
-ровно выбранный ход. Создание задачи сохраняет выбранный настоящий проект Codex.
+## Bounded protocol and questions
 
-## События и решения
+`CodexRPC` supports at most 16 pending requests, 8 MiB JSONL frames and a ten-second
+partial-frame deadline. `CodexAppServerState` retains up to 64 public messages,
+separate recent acceptance receipts and 32 questions. Hidden reasoning is not
+exposed. History pages contain native items rather than entire multiday turns;
+late reads cannot replace newer events. Truncation is explicit.
 
-`CodexRPC` ведёт один ограниченный JSONL-канал: до 16 ожидающих запросов, кадр
-до 8 МиБ, частичный кадр до 10 секунд. `CodexAppServerState` удерживает до 64
-публичных сообщений, отдельные недавние квитанции принятия и до 32 вопросов.
-Скрытые рассуждения не попадают в показанную историю. Начальная история читается
-порцией элементов, а не полным многодневным ходом; позднее чтение не заменяет
-более новое событие. Текстовые фрагменты явно обозначаются как сокращённые.
+Native string/numeric question IDs survive unchanged. Human decisions may approve
+once or for a duration offered by Codex. A supported
+`codex_approval_kind: mcp_tool_call` form shows approval/denial and only offered
+session/always scopes; persistent approval names that tool, not universal access.
+Unsupported forms never auto-consent. Completion comes from Codex's event, not
+merely writing to a pipe.
 
-Вопросы, разрешения и уточнения MCP сохраняют строковый либо числовой ID Codex.
-Только явное решение человека отправляет ответ. Разрешение выдаётся в исходном
-объёме один раз либо на весь разговор. Пустая форма разрешения MCP с
-`codex_approval_kind: mcp_tool_call` показывает согласие, отказ и только те сроки
-`session`/`always`, которые предлагает Codex. Постоянное разрешение адресует этот
-инструмент, не превращается в полный доступ. Неподдержанная форма не получает
-автоматического согласия. Параметры и вывод раскрываются по желанию, а соседние
-действия одного хода свёрнуты в общую строку с сохранением исходных ID.
-Подтверждение обработки приходит событием Codex, не самим окончанием записи в pipe.
-Snapshot содержит все native question IDs и один полный вопрос; общий Mac/iPad
-picker дочитывает выбранный вопрос по поколению подключения и native ID.
-Решение для прежнего поколения не может ответить новому запросу с повторившимся ID.
-JSONL reader не ждёт сохранения process output: один mailbox на процесс удерживает
-не больше 512 KiB, включая текущую запись, и сохраняет порядок до terminal event.
-Переполнение явно показывает неполный вывод, запрашивает Stop и не повторяет запуск.
+Snapshots carry all native question IDs and one full question. The common Mac/iPad
+picker reads another question by connection generation and native ID. A decision
+from an old generation cannot answer a reused ID.
 
-## Названия действий
+Process-output persistence does not block the JSONL reader. One per-process mailbox
+holds at most 512 KiB including its active write and preserves terminal-event order.
+Overflow reports incomplete output, requests Stop and never reruns the command.
 
-Краткая строка инструмента Notebook называет действие над материалом: чтение
-документа, подбор места, изменение или проверку появления результата. Название
-`notebook_action` обозначает именно проверку, а не новую запись на доску.
-Отображение принадлежит `CodexAppServerState.displayMessage`: исходные ID хода
-и сообщения сохраняются, имя инструмента и параметры доступны в подробностях.
-Представление не исполняет инструмент и не создаёт повторную доставку.
+## Permissions, model and attachments
 
-## Уровень доступа задачи
+Task permission controls show native profiles returned by `permissionProfile/list`.
+`thread/settings/update` changes the selected task's subsequent-turn policy only.
+Full access requires explicit confirmation of its consequences. Existing questions,
+other tasks, global settings and macOS application rights remain separate.
+Uncertain updates are reconciled by reads, not repeated grants.
 
-Иконка рядом с «+» в поле сообщения показывает действующий нативный профиль;
-полный доступ выделен оранжевым, название доступно в меню и VoiceOver. Человек может
-выбрать чтение, работу в проекте или полный доступ, только если
-`permissionProfile/list` разрешает соответствующий встроенный профиль.
-`thread/settings/update` изменяет профиль и политику подтверждений выбранной
-задачи для последующих ходов; текущие вопросы решаются отдельно. Полный доступ
-включается явной кнопкой после описания его последствий. Другие задачи,
-глобальные настройки и системный доступ приложения macOS не меняются.
-Собственный профиль Notebook не подменяет и не переименовывает во встроенный.
+Models and supported effort come from `model/list`, not a fixed list.
+A durable `setModel` command updates model/effort without changing permissions or
+interrupting the current reply. Displayed values come from resume/settings events.
+Context usage uses `last.totalTokens` and `modelContextWindow` from
+`thread/tokenUsage/updated`; missing data is unknown, never zero or a guessed percent.
 
-Показанный выбор приходит из `thread/resume` и `thread/settings/updated`.
-SQLite хранит доставку человеческого действия, но не второго владельца политики.
-После неизвестного исхода Mac сверяет нативное состояние без повторной выдачи
-доступа; человек по-прежнему может выбрать более узкий режим. Протокол пары 7
-не передаёт новые решения прежнему приложению, которое их не понимает.
+The composer adds Mac files/folders, skills, installed plugins and connected apps.
+`skills/list` is cwd-scoped; `plugin/installed` supplies installed plugins;
+`app/installed` / `app/read` supplies apps. Catalog listing neither installs nor
+grants access. Draft attachments are saved per computer and included atomically
+with the message UUID. Only the sent draft version is cleared. Native structured
+skill/mention inputs preserve the actual identities.
 
-На iPad поступает последняя показанная версия, объединённая за 100 мс. Она
-принадлежит запросу подписки выбранного разговора и доверенному компьютеру;
-поздний пакет прежней подписки не меняет новое представление. События используют
-отдельную низкоприоритетную позицию транспорта и не вытесняют ответы доставки,
-камеру или Pencil. Ограниченное контрольное чтение раз в 10 секунд восстанавливает
-пропущенное последнее событие; прежний постоянный опрос полной истории удалён.
+The composer keeps model, effort, context, dictation, voice and send/stop controls.
+Narrow layouts use another row or an accessible processor icon instead of hiding
+voice actions. Stop replaces send during a turn; the plus menu offers explicit steer
+or send-after-reply. It does not create a second stop owner.
 
-## Проверяемая граница
+## History and quiet updates
 
-Приватный стенд передаёт адрес Notebook в конфигурации отдельного процесса
-App Server. `CodexRuntimeScope` кодирует значения как TOML basic strings: `/`
-сохраняется, кавычки, обратный слэш, C0 и DEL экранируются. Обычный JSONEncoder
-здесь не подходит: его `\/` недопустим в TOML, а неэкранированный DEL разрешён
-в JSON. Проверка эффективной конфигурации подтверждает адрес Notebook после
-`initialize`; фильтр `thread/list` допускает только папку этого стенда.
+One `NotebookChatController.messages` projection merges native IDs. Older
+`thread/items/list` pages are inserted near shared IDs, preserving scroll anchor
+and pixel offset. Reconnect/return fills the gap to the last shown ID without
+executing work again. New conversations begin at the live tail.
 
-Для каждого подключения стенд один раз читает `config/read` в коротком
-bootstrap-процессе без задач и подписок. Единственный рабочий процесс получает
-`enabled=false` для каждого унаследованного MCP и собственный обязательный
-Notebook. `features.plugins=false` и `features.apps=false` исключают источники
-добавочных инструментов, которых нет в таблице `mcp_servers`. Обычные нативные
-возможности Codex, аккаунт, модель и настройки разрешений не переопределяются.
-Это [параметры одного запуска](https://learn.chatgpt.com/docs/config-file/config-advanced#one-off-overrides-from-the-cli),
-а не запись пользовательской конфигурации; production-путь их не получает.
+Catalogs refresh only loaded windows. Visible chat lists refresh every ten seconds,
+projects every fifteen; hidden lists/folders do not poll. Activity summaries read
+at most eight tasks at a time. Chats and Projects retain independent cursors,
+expanded folders, pages and drafts. Actual project/worktree membership comes from
+Codex; an unknown project is not guessed from a similar path.
 
-После `initialize` проверяется, что включён только Notebook и его адрес совпадает
-со стендом. Перед `thread/start` и `thread/resume` проверка выполняется снова;
-появившийся включённый сервер отклоняет запрос. Оба метода получают тот же
-явный `config` и точный приватный `cwd`. Публичный App Server не предоставляет
-атомарной операции, связывающей `config/read` с его внутренним повторным чтением
-изменяемых глобальных слоёв: конкурентное добавление неизвестного сервера строго
-между этими шагами не заявляется как исключённое. Приёмка проверяет фактический
-состав инструментов созданной задачи отдельно.
+Conversation events coalesce over 100 ms and bind to subscription, trusted computer
+and connection generation. A ten-second control read recovers a missed final event.
+They use a lower-priority transport lane than delivery receipts and input.
 
-`CodexRPC.start` отличает неожиданное закрытие во время `initialize` от обрыва
-уже открытого канала. Ошибка запуска содержит только этап и фактический код
-завершения, если он уже доступен; сырой stderr, аргументы и данные аккаунта
-в сообщение не попадают. Явная остановка и отмена остаются отменой соединения.
-Каталог показывает причину ошибки, сохраняя уже прочитанные строки.
+`CodexUserMessageDisplay` removes only the complete recognized native file-mention
+wrapper before truncation. Quoted/partial wrappers and agent answers remain intact.
+Filenames are safe labels, not loaded thumbnails or permission to open Mac paths.
+Canonical message IDs, attachments and request content remain unchanged.
 
-`CodexRuntimeScopeTests.actualSwiftArgumentsRoundTripThroughPrivateCodex`
-проверяет точные Swift argv через подписанный установленный Codex: `initialize`,
-`config/read`, `thread/list`, включая двух одновременных читателей владельца
-`CodexAppServer`. Явные переменные
-`NOTEBOOK_CODEX_SCOPE_PROBE_MANIFEST` и `NOTEBOOK_CODEX_SCOPE_PROBE_TOOLS`
-включают этот тест только для приватного acceptance manifest; без них он
-пропускается. Второй процесс проверяет TOML roundtrip управляющих символов
-и Unicode. Создание задач и запуск модели в эту проверку не входят.
+Native `realtime_delegation` displays its input, not a second user message from
+transcript deltas or tail flush. `flushTranscriptTailOnSessionEnd` is disabled.
+Adjacent comments/tools from one turn form one expandable work row, retaining
+individual IDs/details. `NotebookChatWorkStatus` uses only current public activity.
+Reduce Motion makes the active accent static.
 
-Нативный harness использует отдельную тестовую задачу и временную папку, не
-настоящие рисунки. Проверяются ответ с исходным ID, отсутствие повторного хода,
-возврат к той же истории, настоящее разрешение с явным отказом и адресная остановка.
-Контрактные тесты проверяют поток, позднюю историю, границы памяти, числовые ID,
-потерю ответа и отказ чужому исполнителю. Проверка установленного приложения и
-физического iPad фиксируется отдельно в `verification.md`.
+## Async view fences
 
-Через существующую авторизацию ChatGPT доступен `thread/realtime/listVoices`;
-11 сентября он вернул четыре голоса. Это доказательство доступности интерфейса,
-не диктовки и не состоявшегося живого разговора. Голосовой срез GUI-191 остаётся
-отдельной работой; Apple-диктовка не выдаётся за его реализацию.
+File opens have monotonically new opening identities, even when reopening the
+same file. Slow old results cannot restore a closed or replaced document.
+Refresh rechecks address, open generation, base revision, conflict and write/rename
+activity, merging against the latest draft. Old failures and annotation reads cannot
+affect another file or resurrect dismissed review.
 
-## Единая переписка и тихое обновление
+Terminal read/start/stop/input results bind to their view session/project/process.
+Unknown input remains blocked only for its original process. Changing views never
+reexecutes it. Collapse changes persisted window visibility/height, not process
+lifecycle or paper camera.
 
-`NotebookChatController.messages` — одна проекция показанных нативных ID. Новые
-события обновляют существующие строки, а страницы `thread/items/list` вставляют
-недостающий участок рядом с общими ID, не перенося старый префикс в конец.
-Прокрутка к началу запрашивает следующую страницу только один раз; отдельного
-режима «История», кнопок «Ранее» и «К ответу» нет. WebKit удерживает ID и экранное
-смещение первого видимого сообщения при добавлении предыдущей страницы; новый
-разговор начинается с последних сообщений. После обрыва или скрытия чата
-контроллер дочитывает промежуток до последнего показанного ID: ограниченные
-запросы не превращаются в повторное исполнение поручений.
+## Isolated adapter verification
 
-Каталог обновляет только уже загруженное окно страниц, публикуя результат целиком,
-без сброса дочитанного конца. При показе и восстановлении связи выполняется
-чтение, затем видимый список проверяется раз в 10 секунд, проекты — раз в 15.
-Невидимый список не опрашивается. Изменение названия проекта на Mac не открывает
-список вместо текущего разговора и не сбрасывает раскрытые папки. Сводки активности
-по-прежнему читают не больше восьми нативных задач одним запросом.
+Private harness config uses TOML basic-string escaping, not JSON escaping.
+A bootstrap process reads effective config; the test runtime disables inherited
+MCPs, plugins and apps and enables only its scoped Notebook. Native model/account/
+permission settings are not replaced. These are process-local overrides, not edits
+to user configuration.
 
-Пока выбранный агент работает, квадрат остановки заменяет стрелку отправки в
-поле сообщения. Действие сохраняет прежние идентификаторы задачи и хода в той
-же очереди; черновик остаётся. В меню «+» доступны уточнение текущего хода и
-отправка после ответа. У заголовка второй кнопки остановки нет.
+After initialize and before start/resume, effective enabled servers and exact socket
+are checked. Start/resume receive the same private cwd/config. The public API offers
+no atomic config-read plus start transaction: a concurrent global addition strictly
+between checks is not claimed impossible. Actual task tools are checked separately.
 
-`CodexUserMessageDisplay` распознаёт только полный префикс упоминания файлов,
-который создаёт установленный Codex: список абсолютных адресов, предупреждение
-об инструкциях во вложениях и границу запроса. Неполная обёртка, цитата внутри
-текста и ответы агента не очищаются. Разбор предшествует сокращению текста для
-транспорта. Имена файлов показаны безопасными текстовыми метками; это не
-загруженные миниатюры и не разрешение открыть путь Mac на iPad. Нативное сообщение,
-ID, вложения Codex и содержимое самого запроса не переписываются. Имена делят
-ограниченный бюджет транспортной страницы с текстом сообщения.
+Startup failure exposes stage and exit code, not raw stderr, arguments or account
+data. Optional real-runtime probes require
+`NOTEBOOK_CODEX_SCOPE_PROBE_MANIFEST` and `NOTEBOOK_CODEX_SCOPE_PROBE_TOOLS`;
+without those explicit private inputs they skip. They verify argv/config round trips,
+not a model turn.
 
-## Два режима навигации
+Use a private task/root for live approval, denial, stop, history and duplicate-send
+checks. Installed-pair and physical acceptance remain separate:
+[verification](verification.md), [runtime](agent-runtime-contract.md),
+[remote work](codex-remote-work.md).
 
-`NotebookChatController` разделяет «Чаты» и «Проекты». Общий список всегда читает
-нефильтрованный каталог Codex. Раскрытая папка читает собственные страницы
-настоящего проекта, включая закреплённые в нём worktree-разговоры и нативные
-задачи его папок. Пустой проект показывает «Нет чатов», а не исчезает из списка.
-Окна чтения в `catalogues` имеют отдельные курсоры; одна последовательная линия
-запросов обслуживает их без создания разговоров и запуска моделей. Раскрытие
-папки не меняет выбранные файлы и терминал. Выбор разговора разрешает его
-настоящий проект; неизвестная принадлежность не заменяется похожим путём.
-
-Прокрутка дочитывает только нужное окно. Смена режима сохраняет раскрытые папки,
-загруженные страницы и черновик; закрытые папки не опрашиваются. Переименование
-проекта не переносит человека из разговора в навигацию. Изменение корней
-отбрасывает только прежнее окно членства этого проекта. Смена компьютера
-отделяет его каталог и запрещает публикацию запоздалого ответа прежнего.
-`NotebookChatBrowser` даёт режимам разные идентичности нативного представления:
-строка общего списка не сохраняет свой отступ и подпись внутри папки.
-
-Кнопки терминала и файлов находятся рядом в заголовке. Собственная кнопка
-сворачивания терминала занимает 44×44 точки и вызывает `showTerminal(false)`,
-не инверсию состояния: повторный сигнал не раскрывает закрытую панель.
-Сохраняемая видимость и высота принадлежат файловому состоянию окна;
-`NotebookRunController` продолжает владеть чтением и принятым вводом прежнего
-процесса. Сворачивание не является остановкой процесса или изменением камеры.
-
-## Панель ввода: материал, модель и контекст
-
-`NotebookChatComposer` отделяет текст от инструментов. В узком разговоре
-появляется ещё один ряд, а не исчезают микрофон и голосовой разговор; отправка
-и остановка продолжают занимать одно место. «+» добавляет файлы и папки Mac,
-установленные плагины, навыки и подключённые приложения. Подключение и совместные
-ходы находятся в настройках проектов и меню заголовка, не подменяют добавление.
-
-Модель и поддержанные усилия приходят из `model/list`; фиксированного списка
-моделей или размеров окна нет. Выбор — устойчивая команда `setModel` существующей
-очереди, которую единственный Mac-исполнитель передаёт в `thread/settings/update`
-с полями `model` и `effort`, без изменения прав. Показанное значение приходит
-из `thread/resume` и `thread/settings/updated`. После неизвестного ответа
-сверяется нативное состояние, запись не повторяется. Текущий ответ не прерывается.
-
-Индикатор контекста читает `thread/tokenUsage/updated`: `last.totalTokens` и
-`modelContextWindow`, не накопленную стоимость `total` и не длину видимого текста.
-При отсутствии значения показана неизвестность, а не ноль или выдуманный процент.
-Подписка принимается до ответа resume, чтобы не потерять начальную статистику;
-событие статистики не заменяет состояние выполняемого хода при загрузке.
-
-`skills/list` читает навыки рабочего каталога настоящей задачи, `plugin/installed`
-— установленные плагины. Общий магазин `plugin/list` не используется: публичная
-документация не разрешает применять его в production-клиентах. Приложения берутся
-из `app/installed` и `app/read`, без ожидания всей сетевой директории `app/list`.
-Страницы и подписи ограничены; выключенные элементы не становятся разрешёнными
-из-за добавления к сообщению. Каталог не устанавливает плагины и не выдаёт доступ.
-
-Прикрепления сохраняются вместе с черновиком в `NotebookChatPanelState` выбранного
-компьютера. `NotebookChatInput.attachments` попадает в ту же атомарную запись,
-что текст и прежний ID сообщения. Очищается только отправленная версия черновика
-и прикреплений. В App Server уходят структурированные `skill` и `mention` с
-реальными путями, `plugin://<полный ID>` и `app://<ID>`; файл дополнительно указан
-путём в запросе и остаётся рабочей копией Mac, не скрыто загруженным снимком.
-Дерево выбора использует существующий файловый контроллер и не открывает документ
-или пространственный предмет, не меняет камеру.
-
-Команды меню имеют прямые действия: «Сжать контекст» отправляет
-`thread/compact/start` через устойчивую очередь; «Проверить изменения» лишь
-готовит редактируемый запрос. Уточнение и отправка после ответа используют
-прежние `turn/steer` и очередь. Строки TUI `/команд` не отправляются модели
-под видом исполненной команды. Неизвестный исход сжатия не разрешает его повтор.
-
-Схемы проверены комплектным Codex 0.154.0-alpha.6.2. Интерфейс описан в
-[App Server](https://learn.chatgpt.com/docs/app-server); семантика явной ссылки
-плагина — в [исходном обработчике Codex](https://github.com/openai/codex/blob/main/codex-rs/core/src/plugins/mentions.rs).
-
-### Голосовое поручение в переписке
-
-Нативный `realtime_delegation` содержит просьбу и служебный накопленный
-протокол. Представление показывает только `input`, сохраняя ID нативного
-сообщения. `transcript_delta` не становится вторым текстом пользователя;
-исторический `transcript_tail_flush` не показывается как его поручение.
-Обычные цитаты и незавершённые оболочки не разбираются как протокол.
-Новое соединение отключает `flushTranscriptTailOnSessionEnd`: завершение
-звонка не запускает отдельную задачу с просьбой подтвердить его окончание.
-
-## Текущая работа и правая часть ввода
-
-`NotebookChatWorkStatus` читает только публичное состояние активного хода:
-последний комментарий агента либо текущее действие. Более ранний ход не может
-стать сегодняшним статусом. При вопросе строка сообщает о нужном решении,
-при обрыве — об отсутствии Mac, без ложного непрерывного выполнения.
-
-Переписка сворачивает соседние комментарии и инструменты одного хода в строку
-работы. Текущая строка переливается спокойным перламутром; завершённая остаётся
-статичной. Раскрытие показывает исходные действия с осмысленными иконками и
-подробностями. Исходные идентификаторы остаются неизменными. Изменение геометрии
-не публикует прежний текст повторно; обновление событий сохраняет раскрытие
-подробностей. Reduce Motion отключает перелив.
-
-Выбор модели, мышления и фактического контекста закреплён справа, рядом с
-диктовкой, разговором и отправкой. При узкой области название модели заменяется
-значком процессора с тем же меню и доступным названием; в самом узком чате
-правая группа переносится на соседнюю строку, не скрывая голосовые кнопки.
-
-## Завершение чтения относится к принятому окну
-
-`NotebookFileController.open` выдаёт идентификатор последнего открытия, даже
-если человек повторно выбрал уже показанный файл. Результат медленного
-предыдущего открытия не возвращает старый документ. Закрытие и установка
-состояния другого компьютера прекращают прежнее открытие. Переход по ссылке
-продолжается только после завершения своего запроса. Во время смены компьютера
-новая файловая навигация не принимается до установки его состояния.
-
-Тихое обновление проверяет адрес, открытие, базовую версию, конфликт и отсутствие
-сохранения/переименования. Введённый за время чтения текст не отбрасывается:
-объединение использует последний черновик. Запоздавшая ошибка чужого файла не
-попадает в текущий документ. Чтение старой пометки проверяет файл и поколение
-рассмотрения; возврат к тому же файлу не возвращает уже отменённый просмотр.
-
-Чтение команды терминала проверяет свой сеанс представления и при ошибке.
-Завершения запуска, остановки и ввода меняют состояние только соответствующего
-проекта/процесса. Неизвестный исход ввода остаётся заблокированным для своего
-процесса, но не становится ошибкой терминала другого проекта. Повторного
-исполнения при смене интерфейса нет.
+Protocol reference: [OpenAI App Server](https://learn.chatgpt.com/docs/app-server).

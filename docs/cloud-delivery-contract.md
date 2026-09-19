@@ -1,155 +1,114 @@
-# Личная облачная доставка Notebook
+# Private cloud delivery
 
-## Владельцы и неизменные границы
+## Ownership
 
-Оба устройства сохраняют тетрадь в своей SQLite. `NotebookStore` владеет
-содержанием и причинным согласованием; `NotebookPersistenceQueue` — очередью
-записи приложения. `NearbySync` и `NotebookCloudSync` доставляют одни и те же
-неизменяемые манифесты и SHA-256 blobs. Файл SQLite не синхронизируется.
+Each device owns its SQLite store. `NotebookStore` owns content and causal merge;
+`NotebookPersistenceQueue` owns application writes. `NearbySync` and
+`NotebookCloudSync` deliver the same immutable manifests and SHA-256 blobs.
+The SQLite file itself is never synchronized.
 
-`NotebookStore.applyDelivery` — общий вход. `applyCloudDelivery` добавляет только
-проверку выбранного аккаунта и удаление принятого staging-пакета в той же SQL
-транзакции. Правила `ContentFieldVersion`, PageInk, размещения, undo и публичные
-CAS-предусловия MCP не заменяются облачными правилами или wall-clock LWW.
+`NotebookStore.applyDelivery` is the common entry. `applyCloudDelivery` adds account
+validation and removal of the accepted staging package in the same transaction.
+Cloud delivery preserves field versions, ink, placement, undo and public CAS
+preconditions. Direct transport owns low-latency presence and Codex interaction.
+CloudKit does not deliver chat, audio, terminal, drafts, jobs or presence and
+cannot issue a `shownOnIPad` receipt.
 
-Прямой канал остаётся владельцем быстрых передач, присутствия и взаимодействия
-с Codex. Облако не доставляет чат, аудио, терминал, локальные drafts/jobs или
-присутствие и не выдаёт подтверждение `shownOnIPad`.
+## Delivery identity and checkpoints
 
-## Идентичность доставки
+`NotebookReplicationDelivery` identifies the source device and journal generation,
+sequence, immutable transaction UUID, manifest hash, byte count and snapshot flag.
+Transaction UUID + hash are deduplicated globally across channels. A received
+transaction with a real effect is forwarded with the same identity and manifest;
+local `change_records` separately describes actual merged addresses for view
+invalidation. An empty effect creates no journal event. An echo of the local
+generation creates no incoming self-cursor.
 
-`NotebookReplicationDelivery` содержит:
+An existing journal's first generation equals its device ID and is persisted in
+SQL without resetting acknowledged cursors. Explicit `prepareDeviceSnapshot`
+creates a new generation and does not inherit enabled cloud transport. A continuing
+source copy retains its covered generation and prefix.
 
-- `source.deviceID` и `source.generation` — журнал отправителя;
-- `change.sequence` — позицию в этом журнале;
-- `change.transactionID`, `manifestHash`, `byteCount` — неизменяемую транзакцию;
-- `isSnapshot` — согласованный срез, покрывающий префикс журнала.
+A snapshot is one consistent SQL cut of shared records, explicit deletions and
+ordering dependencies, followed by the journal tail. It merges rather than
+replacing the database or declaring a winning device. Causal existence clocks
+preserve deletions even without old change records. Snapshot coverage is stored
+separately from the incoming cursor; covered old deltas need no individual
+receipt, while new deltas still require contiguous order. History is not
+automatically removed.
 
-UUID транзакции + hash проверяются глобально, независимо от канала. Полученная
-транзакция, реально изменившая записи, пересылается с **тем же** ID/manifest.
-Локальный `change_records` отдельно хранит фактические merged-адреса для
-инвалидации представления. При пустом эффекте нового события журнала нет.
-Облачное эхо собственного поколения не создаёт входящую очередь: запись уже
-принадлежит локальному журналу, отдельного incoming cursor самого себя нет.
+If a cloud checkpoint overtakes an offered LAN change, the shared owner confirms
+coverage. LAN acknowledges the offered transaction's own ID and sequence, not a
+future transaction's identity, and does not fetch its obsolete bodies again.
 
-LAN v16 включает поколение журнала в аутентифицируемый hello. Идентичность
-Keychain и уже одобренная пара не меняются. Для обмена нужны два обновлённых
-приложения; обход несовместимости отсутствует.
+## CloudKit and staging
 
-У существующего журнала первое поколение равно deviceID: уже подтверждённые
-курсоры не сбрасываются, в том числе за retired wire floor. Поколение сохраняется
-в SQLite. `prepareDeviceSnapshot` при явной подготовке новой копии создаёт
-новое поколение и не наследует включённый облачный транспорт. При копировании
-продолжающегося источника сохраняется покрытый префикс именно его поколения.
+Container: `iCloud.com.amirtlinov.notebook`; database: **private**, bound to the
+selected Apple Account; workspace zone: `Notebook-<workspace UUID>`.
+[Automatic connection](installation-pairing.md) owns account admission and
+workspace selection.
 
-Полученный снимок не заменяет локальную базу и не назначает устройство
-победителем. В одном SQL cut собираются все текущие общие записи, явные
-удаления и зависимости порядка; после него отправляется хвост журнала.
-Удаления сохраняются и при отсутствии старых `change_records`: адресное
-отсутствие восстанавливается из сохранённых causal existence clocks.
-Покрытый снимком префикс сохраняется отдельно от текущего incoming cursor,
-поэтому старый дельта-пакет не требует индивидуальной квитанции каждого
-действия, вошедшего в снимок. Новые дельты по-прежнему требуют непрерывного
-порядка. История автоматически не удаляется.
-Если cloud checkpoint обогнал уже предложенный LAN-пакет, общий владелец
-подтверждает покрытие; LAN отвечает ID и номером именно предложенного пакета,
-а не номером чужой будущей транзакции. Его старые тела повторно не запрашиваются.
+`Applications/CloudKit/Notebook.ckdb` defines:
 
-## CloudKit и staging
+- `NotebookDelivery`: wire version and a JSON envelope up to 4,096 bytes.
+- `NotebookBlob`: complete hash, chunk offset/total, chunk SHA-256 and `CKAsset`.
 
-Общий контейнер: `iCloud.com.amirtlinov.notebook`; база **private** текущего
-Apple Account; зона `Notebook-<workspace UUID>`. Регистрация своих устройств и выбор
-пространства принадлежат `NotebookAccountConnection`: новое пустое устройство
-открывает пространство аккаунта, независимые непустые пространства не объединяются.
-См. [installation-pairing.md](installation-pairing.md).
+These types need no public grants. CloudKit public-database RBAC and its automatic
+`Users` type are not an alternate access path.
 
-Типы записей содержания описаны в `Applications/CloudKit/Notebook.ckdb`:
+Chunks are at most 1 MiB; upload batches contain eight records. Manifest parts
+retain the 16,384-address limit. Large snapshots use SQL indexes and bounded
+parts, not one Swift array or cloud record. Raster bases and program dependencies
+use the same content model.
 
-- `NotebookDelivery`: версия wire и ограниченный JSON envelope (до 4096 bytes);
-- `NotebookBlob`: hash целого blob, offset/total, SHA-256 порции и `CKAsset`.
+`cloud_outbox`, `cloud_exports`, `cloud_uploaded`, `cloud_inbox`,
+`cloud_chunks` and CKSyncEngine state are local SQL data. Each uploaded record's
+ACK is durable; the outgoing prefix advances only after the entire delivery.
+Pending engine work is rebuilt from the outbox after restart. An existing immutable
+server record is accepted only when identity, metadata and digest match.
 
-У этих типов нет public `GRANT`: доставка использует только private database.
-CloudKit RBAC относится к публичной базе, поэтому выдавать `_world` или
-`_icloud` доступ к типам Notebook не требуется. Автоматический системный тип
-`Users` не меняется. [Правила доступа Apple](https://developer.apple.com/icloud/cloudkit/designing/).
+Incoming chunks may precede their envelope and arrive out of order. They are
+persisted before returning from the fetch event and advancing the engine token.
+Assembly runs outside the writer queue and Pencil handler; `stageBlob` checks the
+complete SHA. Only the shared transaction publishes content after dependency and
+owner validation. A staging failure stops the engine rather than acknowledging
+lost data.
 
-Порция — не более 1 MiB; партия отправки — 8 записей. Манифесты сохраняют
-существующий лимит 16 384 адресов в части. Большой снимок не собирается в один
-Swift-массив или один облачный record. Вспомогательные индексы хранятся в SQL.
-Растровая основа и крупные тела передаются так же, без второй модели документов.
+The OS controls background timing. Internet, quota and execution are not guaranteed.
+“Sent to iCloud” means outgoing-record acknowledgment, not receipt or display on
+another device.
 
-`cloud_outbox`, `cloud_exports`, `cloud_uploaded`, `cloud_inbox`, `cloud_chunks`
-и сериализация CKSyncEngine — локальные таблицы. ACK каждой отправленной записи
-фиксируется устойчиво; префикс outgoing продвигается только после всей поставки.
-После перезапуска список pending CKSyncEngine восстанавливается из SQL outbox.
-Повторная неизменяемая серверная запись допускается только при совпадении
-идентичности, метаданных и digest, без перезаписи чужого значения.
+## Account, release and operational boundaries
 
-Входящие порции могут прибывать до envelope и в любом порядке. Они сохраняются
-до возврата из fetch event; лишь затем может сохраняться следующий engine token.
-Сборка файла идёт вне очереди записи и обработчика Pencil. Полный SHA проверяет
-существующий `stageBlob`; принятые fragments становятся содержанием только
-после общей транзакции, проверок зависимостей и владельцев. Отказ staging
-останавливает текущий engine, а не подтверждает потерянный пакет.
+First confirmed account admission enables content delivery unless explicitly
+disabled before. Every transfer rechecks account and workspace identity. Sign-out
+or account change stops exchange without deleting local material or assigning it
+to a new account. iCloud failure does not block the local writer or LAN.
 
-Время фонового обмена выбирает CKSyncEngine/ОС. Интернет, квота и фоновое
-исполнение не гарантируются. «Отправлено в iCloud» означает подтверждение
-исходящих записей, не получение или показ на другом устройстве.
+Initial account lookup does not delay LAN startup. Before an engine exists, failed
+offline startup retries only account lookup after 30 seconds or on a local save.
+Once created, CKSyncEngine owns network retries. Disabling sync cancels pending
+startup and retry.
 
-## Аккаунт, выключение и выпуск
+Persistent content uses **Production**. Isolated native acceptance has neither
+the user's container setting nor CloudKit entitlement. Release tooling validates
+the exact container, Production and Push entitlements, real Apple Development
+signatures and device-specific profiles on both platforms. Mac additionally
+requires its embedded profile, current Provisioning UDID, expiry and permitted
+certificate. XPC workers receive no cloud rights.
 
-Первый подтверждённый аккаунт автоматически включает доставку содержания.
-Явное прежнее выключение остаётся выключением. Возобновление проверяет тот же
-account identifier и пространство перед каждой передачей. Смена аккаунта/выход
-останавливают обмен без удаления локального содержания; новый аккаунт не
-получает материалы прежнего автоматически или через переключатель.
-Ошибки iCloud/квоты не блокируют локальный writer или LAN.
-Начальная проверка аккаунта не удерживает запуск LAN. Если при offline launch
-engine ещё не создан, повторяется только эта проверка через 30 секунд или при
-локальном сохранении. После создания engine все сетевые повторы принадлежат
-CKSyncEngine; отдельного цикла опроса данных нет. Выключение отменяет и
-незавершённую попытку старта, и её повтор.
+Initial deployment requires matching App IDs/capabilities, comparison of the
+existing schema, Development validation followed by explicit Production deployment,
+updated profiles and signed-pair validation. Do not reset an unknown schema or
+overwrite an existing container. Authorized CloudKit Console is sufficient;
+`cktool` management credentials belong in Keychain, never source or logs.
 
-Постоянное содержание направляется в **Production**, без скрытого fallback в
-Development. Изолированная native acceptance не получает container setting или
-CloudKit entitlement и не обращается к облаку пользователя.
+The historical September 17 schema/signing probes established deployment and
+signatures, not end-to-end delivery. A real “iPad uploads, turns off, Mac receives
+without LAN” scenario is separate evidence; consult [verification](verification.md).
 
-`notebook_release.py` генерирует и проверяет точный общий контейнер, CloudKit,
-Production и Push entitlement. Apple Development подпись и device-specific
-provisioning проверяются на обеих платформах; Mac теперь также требует
-embedded profile, текущий Provisioning UDID, срок и разрешённый сертификат.
-XPC workers этих прав не получают. Bundle IDs и Keychain-группы не меняются.
-
-До первого реального включения нужны внешние действия в Apple Developer / CloudKit:
-
-1. Связать оба существующих App ID с общим контейнером и Push capability.
-2. Проверить существующую schema контейнера; добавить типы из `.ckdb`
-   через Development, затем явно развернуть schema в Production. Не делать
-   reset schema, не очищать базы и не импортировать поверх неизвестного
-   существующего контейнера без сравнения.
-3. Обновить profiles и пройти строгую проверку подписанной пары.
-4. На обоих устройствах с одним Apple Account проверить автоматический запуск и пройти
-   сценарий «iPad загрузил → выключен → Mac получил без LAN».
-
-Проверка syntax/import schema требует CloudKit management access; файл `.ckdb`
-сам по себе не доказывает развёртывание. Достаточен авторизованный CloudKit
-Console, отдельный management token для приложения не нужен. При использовании
-`cktool` токен хранится штатным `cktool save-token` в Keychain, не в репозитории,
-логах или чате.
-
-17 сентября 2026 подтверждены создание контейнера, привязка обоих App ID,
-серверные validation/import в первоначально пустой Development и публикация
-двух типов в Production без новых public grants. Это **не** подтверждение
-включения синхронизации или облачного обмена: эти границы проверяются отдельно.
-После восстановления входа Xcode отдельные Release-сборки Mac и физического
-iPad прошли строгую проверку настоящей подписи и новых profiles. Это signing
-probes, а не допуск выпуска пары или установка. Подмена подписи и смена идентичности приложения не
-используются. Актуальные результаты — в `docs/verification.md`.
-
-Apple подтверждает интеграцию CKSyncEngine с собственной базой данных:
-[WWDC23](https://developer.apple.com/videos/play/wwdc2023/10188/).
-Контракт schema management: [cktool](https://developer.apple.com/icloud/ck-tool/).
-Mac device admission использует [Provisioning UDID](https://developer.apple.com/documentation/xcode/distributing-your-app-to-registered-devices);
-неограниченный `com.apple.security.get-task-allow` проверяется в подписи, не
-требуется внутри profile ([TN3125](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles)).
-Фактические тесты и открытая физическая граница — в `docs/verification.md`.
+References: [Apple access design](https://developer.apple.com/icloud/cloudkit/designing/),
+[CKSyncEngine integration](https://developer.apple.com/videos/play/wwdc2023/10188/),
+[cktool](https://developer.apple.com/icloud/ck-tool/),
+[registered-device distribution](https://developer.apple.com/documentation/xcode/distributing-your-app-to-registered-devices),
+[profile interpretation](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles).

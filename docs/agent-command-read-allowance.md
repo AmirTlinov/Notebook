@@ -1,76 +1,39 @@
-# Общий предел чтения агентской команды
+# Shared read allowance for an agent command
 
-## Статус
+## Owner and budget
 
-Профиль текущих исходников прошёл 167 Core-тестов в 17 suites, 44 MCP-теста
-и полный smoke, 16 Mac- и 80 iPad runtime-тестов. Обе нативные сводки:
-0 отказов, 0 пропусков, пустой список runtime warnings. Профиль iPad включает
-настоящий набор по 100 000 листов и адресную навигацию. 522 файла до/после
-совпали, SHA-256
-`f3e1ac388d3bc5b5cbde85238b843e8799e321d17a20eaa262b20fb0ddf74953`.
-Полный `verify.sh` на том же наборе завершился 11 сентября, 15:32 МСК:
-530 Core, 26 Codex, 26 external, 44 MCP, 39 проверок первого установщика,
-40 сборщика пары, 113 Mac и 483 iPad. Обе нативные сводки не содержат ошибок,
-пропусков и runtime warnings. Квитанция связывает 1879 файлов свидетельств;
-точные длительности и проверка — в [verification.md](verification.md).
-Это не подтверждает установленную пару, физический iPad или удаление старого приложения.
+`NotebookSQLConnection` owns the synchronous lifetime of one transaction.
+`NotebookCommandDispatcher` uses `changesStore` to choose a read or write
+transaction with a finite allowance. Direct agent apply and undo use the same
+connection limits: 65,536 result rows, 32 MiB of values in total, and 8 MiB for
+one value. Receipt and continuation reads share this allowance.
 
-Первый запуск остановился на компиляции новых тестов: исправлены способ
-передачи неизменяемого fault callback и вызов throwing-чтения внутри макроса.
-Во втором 166 Core-тестов и 44 MCP-теста прошли, но smoke отказал при расчёте
-размещения из читающей транзакции. После исправления владельца очереди третий
-профиль прошёл целиком; исходный отказ не скрывался повтором прежнего кода.
-На неизменных исходниках предыдущего среза три внешних теста дали 16 нарушений:
-слишком большой владелец читался, структурные команды сохранялись, а журнал
-и содержание менялись вместо отказа. Положительные журналы и отрицательный
-контроль сохранены в `/tmp/notebook-agent-command-budget-v3-*.log`; первые
-отказы — в одноимённых журналах без `v3` и с `v2`.
+These limits account for SQL results, not total RSS or SQLite instruction count.
+Text and BLOB lengths are charged before Swift values are allocated. Repeated
+queries spend the remaining allowance; nested calls cannot reset it.
+Addressed element reads retain their stricter admission of 4,096 fragments and
+4 MiB before decoding.
 
-## Владелец отказа
+Exhaustion is retained on the connection. Catching the error does not permit a
+commit: the final check rolls back content, journal, and receipt together.
+The next transaction has a fresh connection; native input does not inherit a
+completed command's failure.
 
-`NotebookSQLConnection` принадлежит синхронному отрезку одной транзакции.
-`NotebookCommandDispatcher` использует существующий признак `changesStore`,
-чтобы открыть обычный читающий либо записывающий срез с конечным допуском.
-Прямые агентские сохранение и отмена ограничивают ту же связь: не более
-65 536 результирующих строк, 32 МиБ значений суммарно и 8 МиБ одного значения.
-Чтение квитанции и продолжений имеет тот же предел. Это стоимость результатов
-SQL, а не обещание ограничения всего RSS или числа инструкций SQLite.
+## Useful-operation boundary
 
-Длина текста и BLOB учитывается до создания Swift-значения. Повторные запросы
-расходуют оставшийся допуск; внутренний вызов не выдаёт новый. Именованные
-чтения элементов по-прежнему заранее проверяют свои более строгие 4096 строк
-и 4 МиБ до декодирования. Общий допуск не заменяет эти адресные проверки:
-он закрывает чтения квитанций, геометрии, оставшихся полных владельцев и
-итоговых зависимостей, которые нельзя спрятать в другом helper.
+Structural operations that still require a full large owner must fail with
+`agent_command_read` rather than load it without a bound. An addressed change
+to an existing small element can still succeed, produce a receipt, and be undone.
+A bounded response alone does not establish an addressed implementation.
 
-Превышение сохраняется в соединении. Даже если вызывающий код поймал ошибку,
-окончательная проверка перед commit запрещает публикацию; исходная транзакция
-откатывается вместе с журналом и квитанцией. Следующая транзакция получает
-новое соединение, а нативный ввод не наследует отказ завершённой команды.
+Placement does not move saved content, but preparing an exact raster persists a
+request. Its `changesStore` classification routes it through the native command
+queue. A read transaction cannot silently promote itself to a writer.
 
-## Граница полезного действия
+## Verification
 
-Структурные операции над большим листом пока требуют его полного значения.
-Теперь такой путь должен отказать с `agent_command_read`, а не загружать
-неограниченный владелец. Это не объявляет структурную операцию адресной:
-отдельный переход её порядка и обратного действия остаётся необходимым.
-Изменение уже существующего маленького элемента того же тяжёлого листа
-продолжает использовать адресный путь, получать квитанцию и отменяться.
-
-## Проверяемый контракт
-
-`NotebookAgentCommandBudgetTests` проверяет строку UTF-8 и BLOB до копирования,
-сумму повторных запросов, нулевые значения в большом наборе строк, запрет
-возобновления бюджета внутренней командой и rollback после перехваченного
-отказа. Проверка на границе commit отдельно не позволяет успешному окончанию
-тела скрыть исчерпанный допуск. Внешние сценарии вызывают настоящие
-`insertElement`, `removeElement`, `reorderElements`, адресное изменение,
-повтор, чтение квитанции, продолжения и отмену на одном тяжёлом листе.
-Внешнее чтение и изменение через dispatcher возвращают одинаковый
-`resource_limit`, без частичной страницы или ложного сохранения.
-
-Первый MCP smoke нового допуска выявил прежнюю неверную классификацию
-`placement`: расчёт не двигает содержание, но сохраняет запрос точного растра.
-Теперь существующий `changesStore` относит его к той же нативной очереди
-команд. Повтор читает тот же запрос растра, без второго запроса и без изменения
-листов. Читающая транзакция не повышается до записывающей обходным путём.
+`NotebookAgentCommandBudgetTests` covers charging before copying, cumulative
+reads, rows containing null values, nested commands, caught failures, and commit
+fencing. Dispatcher checks exercise apply, receipt, continuation, retry, and undo
+against a large owner and require `resource_limit` without partial publication.
+See [verification](verification.md) for evidence scope and historical results.

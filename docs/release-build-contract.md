@@ -1,204 +1,161 @@
-# Сборка проверенной пары
+# Verified pair builds
 
-`Applications/notebook_release.py` владеет описью build inputs, проверкой
-свидетельств и подписи. `verify.sh`, установщик первого Lab и сборщик пары
-используют этот же код. Прежние два несовпадающих сканера удалены.
+`Applications/notebook_release.py` owns build-input inventories, evidence
+validation and signature checks. `verify.sh`, the first-Lab installer and the
+pair builder share this implementation.
 
-Опись формата 2 включает `Package.swift`, необязательный `Package.resolved`,
-`verify.sh`, `Sources`, `Tests`, `Applications` и **MCP**. Новые, удалённые и
-изменённые файлы, а также исполняемый режим меняют отпечаток. Символические ссылки
-и специальные файлы запрещены. Git не участвует в перечислении: частная копия
-имеет тот же контракт даже внутри другого checkout. Исключены только явно
-названные производные файлы, каталоги сборки и установленные зависимости;
-lockfiles, исходники иконки, инструменты выпуска и тестовые наборы сохраняются.
+Inventory format 2 covers `Package.swift`, optional `Package.resolved`,
+`verify.sh`, `Sources`, `Tests`, `Applications` and `MCP`. File additions,
+deletions, bytes and executable mode affect its hash. Symlinks and special files
+are rejected. Enumeration is independent of Git and excludes only explicitly
+named generated files, build directories and installed dependencies. Root
+Markdown and `docs/` are outside the build inventory; Markdown inside an
+inventoried directory is an input.
 
-`verify.sh` записывает `verification.json` только в самом конце успешного
-маршрута. Квитанция связывает неизменные исходники с полным содержимым каталога
-свидетельств. Полный `--full` включает оба xcresult, журналы и изображение
-рабочего окна Mac. Выбранный маршрут `./verify.sh:selected` включает
-`selection.json`, завершённые команды и xcresult только затронутых платформ.
-Каждый выбранный XCTest должен действительно исполниться: опечатка в одном
-селекторе не скрывается за успехом соседнего теста. Достаточная область выбирается
-по правилам раздела «Выбор проверки» ниже.
-Ошибки, пропуски, runtime warnings и изменение версий инструментов запрещают
-завершение. Исторические сводки не превращаются в такую квитанцию задним числом.
+## Verification selection
 
-Выбранные iPad-проверки устанавливают подписанный Debug `.native-test` на
-физическое устройство выпуска, затем исполняют native/UI-сценарии. Simulator
-этот маршрут не запускает. Тестовое приложение отдельно от `.preview`: его
-фикстуры не заменяют рабочее содержимое, допуск и Keychain-группу пары.
+For an ordinary change, select the defect regression and affected user scenario.
+`./verify.sh --plan` proposes a starting selection; `./verify.sh` runs it.
+Use `--base HEAD^`, for example, to describe the last committed slice.
+
+- `--test target/suite/method` and `--profile name` add to automatic selection.
+- `--only --test … --profile …` runs only the explicit scope and records
+  `selectionMode: explicit-only`. A single regression may need only one selector.
+- An unmapped native source seeks a matching `*Tests.swift` on its platform.
+  `document-web` covers JavaScript contracts and four native WebKit boundaries;
+  `documents` is the broader integration profile.
+- `unclassified` files require engineering selection, not a compulsory map entry.
+  Explicit selection retains them in the receipt; unresolved automatic selection
+  stops. A shared UI fixture requires a named gesture.
+
+An empty selection, unexecuted selector, failure, skip, runtime warning or tool
+version change prevents PASS. UI changes require the affected gesture; Node and
+native unit checks do not substitute for it. A 100,000-item load is relevant when
+the corresponding algorithm changes. `--full` is separate broad verification,
+not the default for every edit and not physical acceptance by itself.
+
+`verification.json` is written only after success and binds immutable sources to
+the complete evidence directory. The full route includes both xcresults, logs and
+the Mac workspace image. `./verify.sh:selected` includes `selection.json`,
+executed commands and the affected platforms' xcresults. Every requested XCTest
+must actually run. Historical reports cannot become receipts retroactively.
+
+Selected iPad verification installs signed Debug `.native-test` on the physical
+release device. Its isolated fixtures do not replace production content, admission
+or Keychain groups. The separate Simulator acceptance route is described below.
+
+## Signed build
 
 ```sh
-/Users/amir/Documents/projects/Notebook/Applications/build-verified-pair.sh \
+Applications/build-verified-pair.sh \
   --verification-dir /absolute/completed-verify-evidence \
   --evidence-dir /absolute/new-build-directory
 ```
 
-Сборщик сначала сверяет текущие исходники, собственный исполняемый код и все
-свидетельства выбранного либо полного прохода. Тип сохраняется как `verificationRoute`,
-поэтому узкая проверка не становится полным PASS. Затем создаёт независимую копию, устанавливает
-MCP-зависимости по lockfile без install scripts и последовательно собирает
-Release iPad и Mac. Xcode, Swift, SDK, XcodeGen, Node и npm должны совпадать с
-проверкой и не измениться за время сборки.
+The builder verifies current inputs, its own executable code and all evidence,
+retaining the selected/full distinction in `verificationRoute`. It creates an
+independent source copy, installs locked MCP dependencies without install scripts
+and builds Release iPad, then Mac. Xcode, Swift, SDK, XcodeGen, Node and npm must
+match verification and remain unchanged.
 
-Оба приложения требуют настоящую Apple Development подпись команды
-`M94V58FCVP`, собственный bundle ID и допустимые права. iPad сохраняет
-`com.amirtlinov.notebook.preview` и собственную Keychain-группу; его профиль
-проверяется против сертификата и согласованного физического устройства.
-Mac сохраняет `com.amirtlinov.notebook.mac`, arm64 и встроенный MCP. Это обычное
-приложение с Dock и рабочим окном: `LSUIElement` и `LSBackgroundOnly` выключены.
-Закрытие окна не останавливает единственного владельца хранения, связи и MCP. Обе подписи требуют общий `iCloud.com.amirtlinov.notebook`, CloudKit и
-Production environment; Push остаётся development для Apple Development
-подписи. Mac также проверяет embedded provisioning profile, Provisioning UDID
-(не Hardware UUID),
-срок и сертификат. Выданный Apple профиль может разрешать iCloud services
-строкой `*`: это allowlist профиля, а не право приложения. Подпись по-прежнему
-требует ровно `CloudKit`, а профиль — явно назначенный контейнер и разрешённые
-окружения. [Контракт облака](cloud-delivery-contract.md) описывает
-внешнее создание контейнера и публикацию schema; наличие кода не означает,
-что Apple уже выдала эти права. Чужие группы Keychain, неизвестные права, Simulator Mach-O, разные версии
-пары и изменение любого подписанного файла дают отказ.
+Both apps require genuine Apple Development signatures from team `M94V58FCVP`,
+matching pair versions and exact bundle identities:
 
-Mac содержит ровно два XPC service: `NotebookScriptService` и
-`NotebookMarkupService`. У каждого свой bundle ID, исполняемый файл,
-`XPCService.ServiceType=Application`, встроенный SDK либо parser и
-Apple Development подпись той же команды. Оба имеют только App Sandbox;
-сетевые права, расширение доступа к файлам и чужие Keychain-группы запрещены.
-QuickJS связан с worker, а не с главным процессом приложения. Отсутствие
-одного service, его ресурса или sandbox отклоняет сборку пары.
+- iPad: `com.amirtlinov.notebook.preview`, its existing Keychain group and a profile
+  admitting the certificate and designated physical device.
+- Mac: `com.amirtlinov.notebook.mac`, arm64 and the bundled MCP server.
+  It is a normal Dock/window application; closing the window leaves storage,
+  transport and MCP alive.
 
-Настройки bundle ID и entitlements передаются конкретному target. Глобальные
-`PRODUCT_BUNDLE_IDENTIFIER` и `CODE_SIGN_ENTITLEMENTS` в команде Mac запрещены:
-они переопределили бы идентичность и права вложенных процессов. Выбранный
-локальный native маршрут использует ad-hoc подпись XPC для исполнения тестов;
-проверенный выпуск по-прежнему требует настоящую подпись разработчика.
+Both signatures require `iCloud.com.amirtlinov.notebook`, CloudKit and Production;
+Push remains development for Apple Development signing. Mac also requires an
+embedded profile, its Provisioning UDID (not Hardware UUID), valid expiry and
+certificate. A profile may allow iCloud services with `*`; the app signature still
+requires exactly CloudKit and the explicitly admitted container/environments.
+Unknown rights, foreign Keychain groups, Simulator Mach-O or modified signed
+files reject the pair. See [cloud delivery](cloud-delivery-contract.md).
 
-Xcode 27 добавляет тестируемым sandbox target временное чтение всего диска
-даже при `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO`. Поэтому Mac native-проверка
-выполняет `build-for-testing`, возвращает обоим встроенным service точные
-права из исходных entitlements, заново запечатывает тестовый host, затем
-исполняет `test-without-building`. Тестовые права остаются у host; у worker
-их нет. Проверка реальной подписи выполняется до XPC-вызова. Этот маршрут
-не изменяет установленное приложение и не применяется к выпускной паре.
+Mac contains exactly two XPC services: `NotebookScriptService` and
+`NotebookMarkupService`, with distinct identities, Application service type,
+their SDK/parser resources and the same signing team. Their rights are limited
+to App Sandbox: no network, expanded file access or foreign Keychain groups.
+QuickJS is linked into the worker, not the main application.
 
-Единый печатный движок `NotebookTypesetter` статически связан с обоими приложениями.
-`prepare_notebook_typesetter.py --prepare --platform <SDK>` проверяет закреплённые
-WASM-ядра, собирает AOT и ограниченный host, готовит один набор шрифтов/пакетов.
-`Runtime.lock.json` фиксирует ресурсы, исходники и toolchain. Дистрибутив занимает
-1 481 187 938 байт: это осознанная стоимость автономной полной комплектации.
-`bundle_notebook_typesetter.py` переносит только объявленные ресурсы с проверкой
-хешей; выпуск проверяет точную опись, источник и закреплённые байты в обоих app.
-`--check` не скачивает и не собирает. Нативные TeX/image helper и прежние bundlers
-удалены. TypeScript остаётся отдельным подписанным дочерним процессом markup XPC
-с наследуемой песочницей; права ему не расширяются из-за смены печатного движка.
+Bundle IDs and entitlements are target-specific. Global
+`PRODUCT_BUNDLE_IDENTIFIER` or `CODE_SIGN_ENTITLEMENTS` overrides would corrupt
+nested identities and are forbidden. Native tests may use their documented
+ad-hoc worker route; release still requires genuine developer signing.
 
-`build.json` со статусом `verified-build` называет обе подписи, UUID бинарников
-и описи bundle. Это **свидетельство сборки, не допуск установки**. В команде нет
-копирования архива, запуска, установки, удаления, принудительного обхода или
-повторного использования прежней попытки. Установщик первого Lab по-прежнему
-отказывает при существующем Lab, в том числе в режиме `--build`.
+Xcode 27 adds broad temporary read rights to tested sandbox targets. Mac native
+verification therefore uses build-for-testing, reapplies each service's exact
+source entitlements, reseals the host, verifies signatures, then runs
+test-without-building. Test-host rights never expand the worker contract.
 
-## Проверка 10 сентября, 21:24 МСК
+## Bundled compilers
 
-39 проверок первого установщика и 40 проверок сборки пары прошли против
-подставных CLI и явно искусственных свидетельств. Проверены изменение MCP,
-самого маршрута и набора файлов; права исполнения; ссылки/FIFO; независимость
-от Git; изменение xcresult, журналов, исходника и bundle во время сборки;
-ошибка второго приложения; подписи, архитектуры, права и повтор команды.
-Журналы — `/tmp/notebook-release-first-install-final.log` и
-`/tmp/notebook-release-pair-final.log`. Эти тесты **не запускали Xcode и не
-подключались к iPad**.
+`NotebookTypesetter` is statically linked into both apps.
+`prepare_notebook_typesetter.py --prepare --platform <SDK>` validates pinned WASM
+cores, prepares AOT/host code and the declared fonts/packages. `Runtime.lock.json`
+pins resources, source and toolchain. The full offline distribution is about
+1.48 GB; the lockfile and generated inventory own the exact size and hashes.
 
-Первый прогон рефакторинга отказал из-за пустого MCP-каталога искусственного
-источника: опись копирует файлы, а не пустые каталоги. Фикстура теперь содержит
-собственный `package.json`; рабочий контракт не ослаблен. Первый профиль пары
-верно сохранил прежнюю успешную квитанцию при повторе; ошибочное ожидание теста,
-что она станет отказом, заменено проверкой её неизменности. Отрицательные журналы
-сохранены как `/tmp/notebook-release-first-install-profile.log` и
-`/tmp/notebook-release-pair-profile.log`.
+`bundle_notebook_typesetter.py` copies only declared, hash-checked resources.
+Release validates the inventory in both apps. `--check` neither downloads nor
+builds. TypeScript uses its separate signed child of the markup XPC service and
+inherits its sandbox. The current print route has no native TeX/image helper.
 
-Полный `d4b4b40` 10 сентября в 23:48 МСК опубликовал настоящую квитанцию
-`verification.json` в `.build/owner-window-full-evidence`: 502 исходных файла
-и 1501 файл свидетельств. Это доказательство этого среза, не последующих правок.
-Настоящая подписанная сборка и отдельный маршрут обновления с активацией пары
-ещё не проверены. Этот срез не закрывает
-остаточные условия реализации, свежий перенос, сопряжение, установленный MCP,
-физическую приёмку и удаление старого приложения.
+## Build versus installation
 
-## Выбор проверки
+A `build.json` with `verified-build` records signatures, binary UUIDs and bundle
+inventories. It proves the build, not permission or completion of installation.
+The builder does not copy user archives, launch, install, delete, force a failed
+check or reuse an old attempt. The first-Lab installer still rejects an existing
+Lab, including with `--build`.
 
-Для обычной правки достаточно регрессии конкретного дефекта и затронутого
-пользовательского сценария. `./verify.sh --plan` предлагает стартовый набор,
-а не доказывает полноту покрытия. `./verify.sh` исполняет его; `--base` задаёт
-начало среза (например, `--base HEAD^` для последнего коммита).
+Ordinary in-place updates preserve containers, identities and keys.
+Historical archive conversion is a separate explicitly authorized operation, not
+a prerequisite to each release. Use current installation tooling and live
+readback; see [verification](verification.md) for the last installed pair.
 
-- `--test target/suite/method` и `--profile name` добавляют проверки к автовыбору.
-- `--only --test … --profile …` запускает только явно выбранную область и
-  сохраняет `selectionMode: explicit-only`. Для одной регрессии достаточно
-  одного `--test`; оба аргумента одновременно не обязательны.
-- Native-файл без специального маршрута ищет одноимённый `*Tests.swift` на
-  своей платформе; документ с таким тестом не расширяется до всей интеграции.
-  `document-web` проверяет JavaScript-контракты и четыре native-границы WebKit.
-  `documents` остаётся доступным широким профилем интеграции, а не нормой для HTML.
-- Файл без найденного маршрута остаётся в `unclassified`. Это повод выбрать
-  достаточный тест или профиль, не дописывать обязательную карту каждого файла.
-  Явный выбор допускает такие файлы и сохраняет их в квитанции; без него
-  проверка останавливается. Общая UI-фикстура требует названного жеста.
+## Isolated acceptance
 
-Пустая явная область, неисполненный селектор, ошибка или пропуск не дают PASS.
-Квитанция связывает исходники с реально исполненными проверками и остаётся
-выборочной. UI-правка требует настоящего затронутого жеста; JavaScript в Node
-и native-тесты не заменяют его. Нагрузка на 100 000 предметов выбирается при
-изменении соответствующего алгоритма. `--full` — отдельный длительный проход
-завершённого общего среза; даже он не заменяет физическую приёмку.
+`Applications/notebook_acceptance.py` builds separate Release
+`NotebookAcceptance` and `NotebookMacAcceptance` targets. The iPad acceptance app
+uses `.acceptance` in the selected Simulator; Mac uses
+`.acceptance.<12-hex SHA-256 of canonical checkout path>`. Each checkout has its
+own app/UI-runner identity. The driver locks a particular Mac bundle or Simulator
+UDID; independent destinations/derived data can run separately. It has no physical
+device install command.
 
-## Изолированная приёмка перед обновлением устройства
+`prepare` creates a new shared checkpoint with separate roots, manifests, settings
+and Keychain services. It does not inject trust. Acceptance without iCloud cannot
+prove initial account connection; already-connected scenarios require an admitted
+pair. Real first connection uses signed apps and the private account directory.
 
-`Applications/notebook_acceptance.py` собирает отдельные Release targets
-`NotebookAcceptance` и `NotebookMacAcceptance`. iPad использует `.acceptance`
-в выбранном Simulator; Mac — `.acceptance.<12 hex SHA-256 canonical checkout path>`.
-Mac-приложение и UI runner имеют отдельную стабильную идентичность каждого checkout:
-LaunchServices/XCTest не должны переключать чужой параллельный стенд.
-Acceptance driver блокирует конкретный Mac bundle/Simulator UDID, а не все
-процессы Xcode машины; независимые destinations и derived data не делят очередь.
-Смена checkout не мигрирует старый run или его Keychain; создаётся свежая пара.
-Он не имеет команды установки на физическое устройство.
-`prepare` создаёт одинаковый новый checkpoint для Mac и iPad Simulator,
-раздельные manifest, root, настройки и Keychain-службы; доверие не подставляется.
-Ручной маршрут сопряжения удалён. Изолированная acceptance-сборка без iCloud
-не создаёт доверие и не доказывает первичное подключение; сценарии уже
-соединённой пары требуют заранее допущенную пару. Реальное первичное
-подключение проверяется подписанными приложениями через private directory
-Apple Account на физическом iPad, без подстановки ключей или обхода admission.
+Mac and both XPCs use one Apple Development certificate. Stateless pair-test workers
+use `.acceptance-runtime-<lowercase signing team>`; native unit tests use
+`.native-test`. Existing ad-hoc containers and ACLs are untouched. Workers are
+resealed with exact source entitlements after Xcode.
 
-Mac и оба XPC с первого запуска подписываются одним Apple Development
-сертификатом. Безданные исполнители парного стенда имеют фиксированный
-суффикс `.acceptance-runtime-<team>` (нижний регистр signing team);
-нативные unit tests — `.native-test`.
-Они не читают sandbox контейнеры прежних ad-hoc сборок. Хранилище заданий,
-эффектов и содержания остаётся у Mac-модели с прежними manifest/идентичностями.
-Маршрут не меняет ACL, разрешения или старые контейнеры. После Xcode
-исполнители переподписываются с точными исходными entitlements, чтобы
-тестовые исключения на чтение файлов не расширяли production-контракт.
+`upgrade` resolves a relocated Simulator manifest through the current container
+of the same bundle, validates run/workspace/actor scope and preserves its original
+bytes. Inventories are compared after stopping the identified test processes and
+before relaunch; relocation changes only the root.
 
-`upgrade` разрешает перемещённый Simulator manifest через текущий контейнер
-того же bundle, проверяет run/workspace/actor scope и сохраняет его исходные
-байты. Сравнение inventories выполняется после остановки конкретных
-проверенных процессов и до повторного запуска; relocation меняет только root.
+`build --development` creates an immutable diagnostic snapshot marked intermediate.
+Final `build` requires a clean commit, immutable inputs and the exact Simulator
+UDID. UI attempts retain build/run identity, xcresult, named images, video and a
+system trace when requested. Video failure does not erase test evidence.
 
-`build --development` сохраняет неизменную диагностическую копию и явно
-помечает её как промежуточную. Окончательный `build` требует чистый commit,
-неизменные исходники и точный Simulator UDID. Каждая UI-попытка сохраняет
-идентичность сборки/run, `xcresult`, именованные снимки, видео и отдельную
-системную трассу, если она запрошена. Ошибка записи видео не удаляет
-свидетельство самого теста. Ни видео, ни CADisplayLink не измеряют системный FPS.
+`--pencil` is accepted only by the Simulator acceptance bundle. It sends measured
+test contacts through the normal Pencil owner and records that limitation.
+It is not hardware stylus calibration. Production bundles or overlapping working
+stores reject an acceptance manifest before model creation.
 
-`--pencil` допустим только в Simulator acceptance bundle. Он направляет
-измеренные касания теста в обычного владельца Pencil и записывает это
-ограничение в сценарий. Такой результат не является измерением физического
-стилуса. Production bundle или совпавшее рабочее хранилище отклоняют
-acceptance manifest до создания модели.
+Use the environment explicitly selected for the task and label it honestly.
+Video and CADisplayLink are not system FPS measurements. Full physical acceptance
+requires the separate gesture, CPU/GPU/frame, memory and long-session evidence
+described in [verification](verification.md).
 
-Успех bootstrap, native тестов или сборки не разрешает промежуточную
-установку: полный принятый маршрут остаётся в `implementation-2026-09-13.md`,
-а фактические результаты и непроверенные условия — в `verification.md`.
+Historical release-harness runs and former transition gates are retained in
+[the original report](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/release-build-contract.md).
