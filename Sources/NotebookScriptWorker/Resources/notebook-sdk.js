@@ -36,7 +36,7 @@
     pageImage: read("pageImage"), regions: read("regions"), place: read("place"), prepareTldraw: read("prepareTldraw"),
     exportStatus: read("exportStatus"), presentation: read("presentation"), wait: read("wait"), id: key => host("id", { key }),
     transaction: (key, action) => host("transaction", { key, action }),
-    undo: effect("undo"), point: effect("point"), present: effect("present"), cancelPresentation: effect("cancelPresentation"), export: effect("export"),
+    undo: effect("undo"), point: effect("point"), present: effect("present"), cancelPresentation: effect("cancelPresentation"), export: effect("export"), cancelExport: effect("cancelExport"),
   });
   Object.defineProperty(globalThis, "nb", { value: nb });
   Object.defineProperty(globalThis, "emit", { value: value => host("emit", { value }) });

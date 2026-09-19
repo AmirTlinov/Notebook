@@ -27814,7 +27814,217 @@
               "running",
               "saved",
               "failed",
-              "interrupted"
+              "interrupted",
+              "cancelled"
+            ]
+          },
+          "jobID": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "documentID": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "contentRevision": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "stateRevision": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "cutSHA256": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "moment": {
+            "type": "string",
+            "const": "saved"
+          },
+          "receipt": {
+            "type": "object",
+            "properties": {
+              "cutSHA256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "stateRevision": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "cut": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "documentID": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "pdfPath": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "texPath": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "pdfSHA256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "byteCount": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "log": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "packageSHA256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "assets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "$ref": "#/$defs/__schema1"
+                    },
+                    "sha256": {
+                      "$ref": "#/$defs/__schema1"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "sha256"
+                  ],
+                  "additionalProperties": {}
+                }
+              },
+              "sourceMap": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "syncTeX": {
+                "$ref": "#/$defs/__schema2"
+              }
+            },
+            "required": [
+              "cutSHA256",
+              "stateRevision",
+              "cut",
+              "documentID",
+              "pdfPath",
+              "texPath",
+              "pdfSHA256",
+              "byteCount",
+              "log"
+            ],
+            "additionalProperties": {}
+          },
+          "error": {
+            "$ref": "#/$defs/__schema4"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": {},
+        "$defs": {
+          "__schema0": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "__schema1": {
+            "type": "string"
+          },
+          "__schema2": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "sha256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "byteCount": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "mimeType": {
+                "$ref": "#/$defs/__schema1"
+              }
+            },
+            "required": [
+              "path",
+              "sha256",
+              "byteCount",
+              "mimeType"
+            ],
+            "additionalProperties": {}
+          },
+          "__schema3": {
+            "type": "number"
+          },
+          "__schema4": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema4"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema4"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "cancelExport": {
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "jobID": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "key",
+          "jobID"
+        ],
+        "additionalProperties": false
+      },
+      "returns": "Durably cancels the explicitly named unfinished export, without altering previous artifacts or the live scene. Returns cancelled or the existing terminal job (saved wins after its final writer fence). Same key attaches to its receipt; exportStatus never restarts it.",
+      "example": "await emit(await nb.cancelExport('stop-pdf',{jobID:args.jobID}));",
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "queued",
+              "running",
+              "saved",
+              "failed",
+              "interrupted",
+              "cancelled"
             ]
           },
           "jobID": {
@@ -28002,7 +28212,7 @@
         ],
         "additionalProperties": false
       },
-      "returns": "Snapshot {data,basis,coverage,cursor}. Queued/running/saved/failed/interrupted job. Saved receipt names the exact cutSHA256/stateRevision and immutable document.cut.json, texPath/pdfPath, PDF SHA, assets, sourceMap and syncTeX. packageSHA256 binds all files including the source/state cut. Status never re-executes or relabels an old cut as current.",
+      "returns": "Snapshot {data,basis,coverage,cursor}. Queued/running/saved/failed/interrupted/cancelled job. Saved receipt names the exact cutSHA256/stateRevision and immutable document.cut.json, texPath/pdfPath, PDF SHA, assets, sourceMap and syncTeX. packageSHA256 binds all files including the source/state cut. Status never re-executes or relabels an old cut as current.",
       "example": "await emit(await nb.exportStatus({jobID:args.jobID}));",
       "output": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -28019,7 +28229,8 @@
                   "running",
                   "saved",
                   "failed",
-                  "interrupted"
+                  "interrupted",
+                  "cancelled"
                 ]
               },
               "jobID": {

@@ -21,6 +21,7 @@ import PDFKit
   }
 
   static func publication(cut: NotebookExportCut, jobID: UUID, store: NotebookStore, persistence: NotebookPersistenceQueue) async throws -> NotebookExportPublication {
+    try Task.checkCancellation()
     let document = cut.document, state = cut.state
     // A saved export never borrows an uncommitted live frame with an equal
     // journal token, and never checkpoints or rewinds the user's executor.

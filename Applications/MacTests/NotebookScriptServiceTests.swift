@@ -947,6 +947,41 @@ final class NotebookScriptServiceTests: XCTestCase {
     await host.shutdown()
   }
 
+  func testSDKCancellationWinsBeforeTheFinalExportFenceAndNeverReplays() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), run = UUID(), actor = UUID()
+    defer { owner.releasePublication?.resume(); try? FileManager.default.removeItem(at: owner.store.root) }
+    var index = try owner.store.loadIndex(), board = try owner.store.loadBoard(items: index.items)
+    let item = try XCTUnwrap(index.createDocument(title: "Cancel a real PDF", actor: actor))
+    XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
+    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.markdown(id: "text", source: "An actual rendered PDF")])
+    try owner.store.saveDocumentWorkspaceBundle(index: index, document: document, state: .init(id: item.id, actor: actor), board: board)
+    owner.holdPublication = true
+    _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2,
+      code: "return await nb.export('pdf',{documentID:args.documentID});", arguments: .object(["documentID": .string(item.id.uuidString)])))
+    let result = try await finish(host, run), jobID = try XCTUnwrap(result["result"]?.string("jobID"))
+    let deadline = ContinuousClock.now + .seconds(20)
+    while !owner.publicationAccepted, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    XCTAssertTrue(owner.publicationAccepted, "A real streamed PDF is prepared before cancellation")
+    let cancelRun = UUID()
+    _ = try await host.handle(.init(op: .start, runID: cancelRun, apiVersion: 2,
+      code: "const first=await nb.cancelExport('stop',{jobID:args.jobID});const repeated=await nb.cancelExport('stop',{jobID:args.jobID});return {first,repeated};",
+      arguments: .object(["jobID": .string(jobID)])))
+    let cancelled = try await finish(host, cancelRun)
+    XCTAssertEqual(cancelled.string("status"), "completed", "\(cancelled)")
+    XCTAssertEqual(cancelled["result"]?["first"]?.string("status"), "cancelled")
+    XCTAssertEqual(cancelled["result"]?["first"], cancelled["result"]?["repeated"])
+    owner.releasePublication?.resume(); owner.releasePublication = nil
+    let released = ContinuousClock.now + .seconds(5)
+    while !host.exportTasks.isEmpty, ContinuousClock.now < released { try await Task.sleep(for: .milliseconds(20)) }
+    XCTAssertTrue(host.exportTasks.isEmpty)
+    let status = try await host.context(.init(method: "exportStatus", arguments: .object(["jobID": .string(jobID)])))
+    XCTAssertEqual(status["data"]?.string("status"), "cancelled"); XCTAssertEqual(owner.exportCuts.count, 1)
+    XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: owner.store.root.appendingPathComponent("exports").path).isEmpty)
+    let resumed = try await host.handle(.init(op: .resume, runID: cancelRun))
+    XCTAssertEqual(resumed["result"], cancelled["result"])
+    await host.shutdown()
+  }
+
   func testActualPDFJobOutlivesItsUserRunAndPublishesThroughTheNativeOwner() async throws {
     let owner = try Owner(), host = try await coordinator(owner), run = UUID()
     defer { owner.releasePublication?.resume(); try? FileManager.default.removeItem(at: owner.store.root) }

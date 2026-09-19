@@ -1,5 +1,32 @@
 # Проверка Notebook
 
+## 19 сентября, 07:56 МСК — GUI-249: durable cancelExport
+
+Публичный keyed SDK `nb.cancelExport(key,{jobID})` отменяет принятый job независимо
+от уже законченного JS run. Cancelled job и effect receipt сохраняются одним
+writer cut; затем Task останавливается. Final publication отказывается от
+cancelled даже при позднем/некооперативном ответе producer. Если saved fence
+выиграл первым, поздняя отмена возвращает тот же saved receipt без изменения
+файлов. Ни running, ни failure, ни startup не оживляют cancelled. Повтор key и
+resume читают один durable результат. Отмена user run по-прежнему не отменяет
+его уже отдельно принятые export jobs.
+
+**Mac2 PASS**, `.build/gui249-cancel-mac-v3/verification.json`, source
+**337fe83ac1712a2ab2b4f1fe325374f35ea5b84be50a7a7ae02ed20ec1678242**:
+реальный XPC SDK готовит streamed PDF; cancel до final fence, повтор key, поздний
+completion, status/resume — cancelled и ни одного опубликованного файла; прежний
+успешный настоящий PDF export остаётся рабочим. **Core22 PASS**,
+`/tmp/gui249-cancel-core-v4.log`: оба порядка cancel/publication, atomic effect,
+restart/reconcile, prior bytes; прежние CAS/hash/recovery регрессии.
+**MCP3 PASS + generated SDK check**, `/tmp/gui249-cancel-js.log`.
+**Simulator1 PASS**, `.build/gui249-cancel-sim-v1.xcresult`, тот же source:
+iOS compile/install и tall-program lifecycle. Физическая пара не изменена.
+Промежуточно исправлены неверное использование private Host JSON helpers в Core
+и fixture без running run; это не основания ослаблять сценарий или контракт.
+
+PNG/SVG/presented, standalone/portable package и video ещё не реализованы;
+GUI-249/250 не закрыты.
+
 ## 19 сентября, 07:49 МСК — GUI-249: потоковый PDF без binary IPC
 
 Quartz output заменён с `NotebookPDFBuffer` на проверяемый file consumer:

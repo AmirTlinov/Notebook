@@ -147,6 +147,7 @@ extension NotebookStore {
     return try commandTransaction(advancesReadRevision: false, readAllowance: .agentCommand) {
       if let id = publication.jobID, let saved = try scriptExportJob(id), saved["status"] == .string("saved"),
         let receipt = saved["receipt"] { return try receipt.decode(NotebookExportReceipt.self) }
+      if let id = publication.jobID, try scriptExportJob(id)?["status"]?.string == "cancelled" { throw CancellationError() }
       guard try loadDocument(publication.documentID) == publication.cut.document,
         try loadDocumentState(publication.documentID) == publication.cut.state else {
         throw CollaborationError("revision_conflict", "Исходник или состояние изменились во время экспорта.")

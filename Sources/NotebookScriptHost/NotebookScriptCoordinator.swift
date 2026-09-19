@@ -322,7 +322,7 @@ public final class NotebookScriptCoordinator {
       case "id":
         guard let key = arguments.string("key"), !key.isEmpty, key.utf8.count <= 120 else { throw CollaborationError("invalid_key", "id получает непустой key до 120 байт.") }
         value = .string(NotebookStore.submissionID(call.runID, suffix: "id:" + key).uuidString.lowercased())
-      case "transaction", "undo", "point", "present", "cancelPresentation", "export":
+      case "transaction", "undo", "point", "present", "cancelPresentation", "export", "cancelExport":
         // Own this accepted wire call before even the async effect method can
         // suspend; no coroutine/admission reply gap may escape terminal drain.
         beginEffectCall()

@@ -12,6 +12,7 @@ public enum NotebookScriptEffectOutcome: Equatable, Sendable {
 public struct NotebookScriptEffectAddress: Codable, Equatable, Sendable {
   public let runID: UUID
   public let effectID: UUID
+  public init(runID: UUID, effectID: UUID) { self.runID = runID; self.effectID = effectID }
 }
 
 extension NotebookStore {
@@ -72,13 +73,17 @@ extension NotebookStore {
       case "export":
         guard let job = try scriptExportJob(effect.id) else { return .notSaved }
         guard case .object = job, let status = job["status"]?.string,
-          ["queued", "running", "saved", "failed", "interrupted"].contains(status),
+          ["queued", "running", "saved", "failed", "interrupted", "cancelled"].contains(status),
           job["jobID"]?.string.flatMap(UUID.init(uuidString:)) == effect.id else {
           throw NotebookStorageError.corruptRecord("script export receipt")
         }
         // The effect admits a job. The compiler's later failure/interruption
         // does not erase that accepted job or run JavaScript a second time.
         return .saved(job)
+      case "cancelExport":
+        // Its receipt is atomic with the effect itself. Reconciliation has
+        // already returned any terminal effect before consulting this method.
+        return .notSaved
       default:
         // Presentation is transient. Absence from memory is not proof that
         // the iPad did not receive or display the previous command.

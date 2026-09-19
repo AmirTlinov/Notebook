@@ -20,6 +20,7 @@ extension NotebookScriptCoordinator {
     _ = try await persistence { try $0.saveScriptExportJob(id, value: accepted); return .null }
     exportTasks[id] = Task { [self] in
       do {
+        try Task.checkCancellation()
         var running = accepted.fields; running["status"] = .string("running")
         let started = JSONValue.object(running)
         _ = try await persistence { try $0.saveScriptExportJob(id, value: started); return .null }
@@ -33,7 +34,7 @@ extension NotebookScriptCoordinator {
         var fields = accepted.fields; fields["status"] = .string("failed"); fields["error"] = Self.error(error)
         let failure = JSONValue.object(fields)
         _ = try? await persistence {
-          if try $0.scriptExportJob(id)?.string("status") != "saved" { try $0.saveScriptExportJob(id, value: failure) }
+          if !["saved", "cancelled"].contains(try $0.scriptExportJob(id)?.string("status") ?? "") { try $0.saveScriptExportJob(id, value: failure) }
           return .null
         }
       }

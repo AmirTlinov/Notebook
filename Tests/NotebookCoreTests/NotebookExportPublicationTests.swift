@@ -156,4 +156,37 @@ struct NotebookExportPublicationTests {
     #expect(try FileManager.default.contentsOfDirectory(atPath: store.root.appendingPathComponent("exports").path).count == 1)
   }
 
+  @Test func durableCancellationAndPublicationHaveOneWriterWinnerAcrossRestart() throws {
+    let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
+    let cut = try NotebookExportCut(document: document, state: store.loadDocumentState(document.id))
+    let file = try stageExportFixture(Data("%PDF-cancel-race".utf8), store: store)
+    func job(_ id: UUID) throws -> NotebookPreparedExport {
+      try store.saveScriptExportJob(id, value: .object(["status": .string("running"), "jobID": .string(id.uuidString.lowercased()), "cutSHA256": .string(try cut.sha256)]))
+      return try store.prepareDocumentExport(.init(cut: cut, source: "source", pdf: file, log: "", jobID: id))
+    }
+    func cancellation(_ id: UUID) throws -> NotebookScriptEffectAddress {
+      let run = UUID()
+      _ = try store.admitScriptRun(.init(op: .start, runID: run, apiVersion: 2, code: "cancel"))
+      _ = try store.setScriptRunState(run, state: .running)
+      var effect = try store.admitScriptEffect(run, key: "stop", method: "cancelExport", arguments: .object(["key": .string("stop"), "jobID": .string(id.uuidString)]))
+      effect.state = .committing; try store.saveScriptEffect(run, effect: effect)
+      return .init(runID: run, effectID: effect.id)
+    }
+    let savedID = UUID(), saved = try store.publishDocumentExport(job(savedID))
+    let late = try cancellation(savedID), won = try store.cancelScriptExport(savedID, effect: late)
+    #expect(won["status"]?.string == "saved")
+    #expect(won["receipt"]?["pdfSHA256"] == .string(saved.pdfSHA256))
+    let cancelledID = UUID(), prepared = try job(cancelledID), address = try cancellation(cancelledID)
+    let cancelled = try store.cancelScriptExport(cancelledID, effect: address)
+    #expect(cancelled["status"]?.string == "cancelled")
+    #expect(throws: CancellationError.self) { try store.publishDocumentExport(prepared) }
+    try store.saveScriptExportJob(cancelledID, value: .object(["status": .string("running")]))
+    let reopened = NotebookStore(root: store.root)
+    try reopened.interruptUnfinishedScriptExports()
+    #expect(try reopened.scriptExportJob(cancelledID) == cancelled)
+    #expect(try reopened.reconcileScriptEffect(address.runID, id: address.effectID).value == cancelled)
+    #expect(try reopened.cancelScriptExport(cancelledID, effect: address) == cancelled)
+    #expect(try Data(contentsOf: URL(fileURLWithPath: saved.pdfPath)) == Data("%PDF-cancel-race".utf8))
+  }
+
 }

@@ -239,6 +239,7 @@ extension NotebookStore {
     if effect.method == "undo" { result["actionID"] = effect.arguments["actionID"] }
     if effect.method == "transaction" { result["actionID"] = .string(effect.id.uuidString.lowercased()) }
     if effect.method == "export" { result["jobID"] = .string(effect.id.uuidString.lowercased()) }
+    if effect.method == "cancelExport" { result["jobID"] = effect.arguments["jobID"] }
     if effect.method == "present" { result["presentationID"] = .string(effect.id.uuidString.lowercased()) }
     if effect.method == "cancelPresentation" { result["presentationID"] = effect.arguments["id"] }
     if effect.method == "point" { result["contextID"] = effect.value?["id"]; result["entryID"] = effect.value?["entry"]?["id"] }
@@ -316,13 +317,36 @@ extension NotebookStore {
 
   public func saveScriptExportJob(_ id: UUID, value: JSONValue) throws {
     try commandTransaction(advancesReadRevision: false) {
-      if try scriptExportJob(id)?["status"] == .string("saved") { return }
+      if ["saved", "cancelled"].contains(try scriptExportJob(id)?["status"]?.string ?? "") { return }
       var active = try storedValue("local/script-export-active.json")?.decode([UUID].self) ?? []
       active.removeAll { $0 == id }
       if ["queued", "running"].contains(value["status"]?.string ?? "") { active.append(id) }
       guard active.count <= 2 else { throw CollaborationError("export_limit", "На Mac собираются до двух PDF.") }
       try publishRecords(writes: ["local/script-exports/\(id.uuidString.lowercased()).json": value])
       try publishRecords(writes: ["local/script-export-active.json": try .encode(active)])
+    }
+  }
+
+  /// Cancellation and its keyed effect witness share the same writer cut.
+  /// Publication checks this terminal record at its final fence; a cancelled
+  /// producer cannot later install files even if its computation ignores Task.
+  public func cancelScriptExport(_ id: UUID, effect address: NotebookScriptEffectAddress) throws -> JSONValue {
+    try commandTransaction(advancesReadRevision: false) {
+      var effect = try scriptEffect(address.runID, id: address.effectID)
+      guard effect.method == "cancelExport", effect.arguments["jobID"]?.string.flatMap(UUID.init(uuidString:)) == id else {
+        throw CollaborationError("invalid_export", "Отмена относится к явно названному заданию.")
+      }
+      if effect.state == .saved { return effect.value ?? .null }
+      guard effect.state == .committing, let current = try scriptExportJob(id) else {
+        throw CollaborationError("export_missing", "Задание экспорта не принято владельцем.")
+      }
+      guard case .object(var fields) = current else { throw NotebookStorageError.corruptRecord("script export job") }
+      if ["queued", "running"].contains(current["status"]?.string ?? "") { fields["status"] = .string("cancelled") }
+      let result = JSONValue.object(fields)
+      try saveScriptExportJob(id, value: result)
+      effect.state = .saved; effect.value = result; effect.error = nil
+      try saveScriptEffect(address.runID, effect: effect)
+      return result
     }
   }
 

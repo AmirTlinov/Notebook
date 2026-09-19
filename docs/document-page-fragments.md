@@ -120,7 +120,12 @@ Quartz пишет composed PDF в приватный файл, не в `Data` с
 CAS/move/receipt commit. Binary IPC `publishExport` удалён: нет PDF/base64 в
 команде или результата больше IPC limit. Метаданные ограничены 1 МиБ/16384 parts;
 отдельные ограничения canonical typesetter остаются. Ошибка, stale cut или
-отмена подготовки не меняют прошлые файлы; временный каталог удаляется. Повтор
+отмена подготовки не меняют прошлые файлы; временный каталог удаляется.
+`nb.cancelExport(key,{jobID})` сохраняет cancelled и keyed effect в одной
+транзакции, затем останавливает producer. Final publication rechecks cancelled
+даже если вычисление поздно ответило или проигнорировало Task cancellation.
+Если saved уже прошёл writer fence, возвращается этот неизменный receipt.
+Status/retry/restart не оживляют cancelled job. Повтор
 проверяет существующий файл потоково. Пока доступны PDF; presented/PNG/SVG,
 portable и video относятся к незавершённой части GUI-249.
 
