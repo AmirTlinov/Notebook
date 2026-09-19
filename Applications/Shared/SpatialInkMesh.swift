@@ -55,8 +55,8 @@ struct SpatialInkInstalledSource: Sendable {
 }
 import PencilKit
 
-/// Vertices stay near their physical origin. Camera motion changes one uniform
-/// per span, never the measured samples or triangle buffers.
+/// Nodes stay near their physical origin. Camera motion changes one uniform
+/// per span, never the measured samples or compact node buffers.
 struct SpatialInkMesh: Sendable {
   enum Projection: Equatable, Sendable {
     case local
@@ -83,46 +83,53 @@ struct SpatialInkMesh: Sendable {
 
   struct Batch: Sendable {
     let tool: SpatialInkTool
-    let vertices: [SpatialInkGeometry.Vertex]
+    let nodes: [SpatialInkGeometry.Node]
     let projection: Projection
     let chunks: [Chunk]
     let chunkIndex: SpatialInkGeometry.ChunkIndex
-
-    init(tool: SpatialInkTool, vertices: [SpatialInkGeometry.Vertex], projection: Projection) {
-      self.init(tool: tool, vertices: vertices, chunks: SpatialInkGeometry.chunks(for: vertices), projection: projection)
+    var vertexCount: Int { chunks.reduce(0) { $0 + $1.vertexCount } }
+    init(
+      tool: SpatialInkTool, nodes: [SpatialInkGeometry.Node], color: SIMD4<Float>,
+      projection: Projection
+    ) {
+      self.init(
+        tool: tool, nodes: nodes,
+        chunks: SpatialInkGeometry.chunks(for: nodes, color: color, eraser: tool == .eraser),
+        projection: projection)
     }
-
-    init(tool: SpatialInkTool, vertices: [SpatialInkGeometry.Vertex], chunks: [Chunk], projection: Projection) {
-      self.tool = tool; self.vertices = vertices; self.projection = projection; self.chunks = chunks
+    init(
+      tool: SpatialInkTool, nodes: [SpatialInkGeometry.Node], chunks: [Chunk],
+      projection: Projection
+    ) {
+      self.tool = tool; self.nodes = nodes; self.projection = projection; self.chunks = chunks
       chunkIndex = .init(chunks)
     }
   }
-
   let batches: [Batch]
-
   static func local(_ layers: [SpatialInkRenderLayer]) -> Self {
     .init(batches: layers.map { layer in
-      var vertices: [SpatialInkGeometry.Vertex] = []
-      let tool: SpatialInkTool
+        let points: [PKStrokePoint], color: SIMD4<Float>, tool: SpatialInkTool
       switch layer {
-      case .ink(let points, let color):
-        tool = .pen
-        SpatialInkGeometry.appendStrokeVertices(points: points,
-          color: .init(Float(color.red), Float(color.green), Float(color.blue), 1), to: &vertices)
-      case .erase(let points):
-        tool = .eraser
-        SpatialInkGeometry.appendStrokeVertices(points: points, color: .init(1, 1, 1, 1), eraser:true, to: &vertices)
+        case .ink(let p, let c):
+          points = p; color = .init(Float(c.red), Float(c.green), Float(c.blue), 1); tool = .pen
+        case .erase(let p): points = p; color = .init(repeating: 1); tool = .eraser
       }
-      return .init(tool: tool, vertices: vertices, projection: .local)
+        return .init(
+          tool: tool, nodes: SpatialInkGeometry.compact(points: points, color: color), color: color,
+          projection: .local)
     })
   }
-
   static func prepare(surface: SurfaceID, journal: SpatialInkJournal?, suppressedInkIDs: Set<UUID> = []) throws -> Self {
     var batches: [Batch] = []
-    var pending: (tool: SpatialInkTool, projection: Projection, vertices: [SpatialInkGeometry.Vertex])?
+    var pending:
+      (
+        tool: SpatialInkTool, projection: Projection, nodes: [SpatialInkGeometry.Node],
+        chunks: [Chunk]
+      )?
     func seal() {
-      guard let value = pending else { return }
-      batches.append(.init(tool: value.tool, vertices: value.vertices, projection: value.projection))
+      guard let p = pending else { return }
+      batches.append(
+        .init(tool: p.tool, nodes: p.nodes, chunks: p.chunks, projection: p.projection));
       pending = nil
     }
     for action in journal?.actions ?? [] where action.isActive && !suppressedInkIDs.contains(action.id) {
@@ -132,27 +139,37 @@ struct SpatialInkMesh: Sendable {
           WorldPoint(tileX: $0.tileX, tileY: $0.tileY, localX: 0, localY: 0)
         }
         let points = span.samples.map { sample in
-          let local = origin.flatMap { start in sample.worldPoint.map { start.delta(to: $0) } } ?? sample.point
-          return PKStrokePoint(location: .init(x: local.x, y: local.y), timeOffset: sample.timeOffset,
+          let local =
+            origin.flatMap { start in sample.worldPoint.map { start.delta(to: $0) } }
+            ?? sample.point
+          return PKStrokePoint(
+            location: .init(x: local.x, y: local.y), timeOffset: sample.timeOffset,
             size: .init(width: sample.width, height: sample.width), opacity: sample.opacity,
             force: sample.force, azimuth: sample.azimuth, altitude: sample.altitude)
         }
-        var vertices: [SpatialInkGeometry.Vertex] = []
-        let color = action.color
-        SpatialInkGeometry.appendStrokeVertices(points: points,
-          color: action.tool == .pen ? .init(Float(color.red), Float(color.green), Float(color.blue), 1) : .init(1, 1, 1, 1),
-          eraser:action.tool == .eraser, to: &vertices)
-        try Task.checkCancellation()
+        let c = action.color,
+          color: SIMD4<Float> =
+            action.tool == .pen
+            ? .init(Float(c.red), Float(c.green), Float(c.blue), 1) : .init(repeating: 1)
+        let nodes = SpatialInkGeometry.compact(points: points, color: color)
+        let chunks = SpatialInkGeometry.chunks(
+          for: nodes, color: color, eraser: action.tool == .eraser)
         let projection = origin.map(Projection.world) ?? .local
-        if pending?.tool == action.tool, pending?.projection == projection {
-          pending?.vertices.append(contentsOf: vertices)
-        } else {
-          seal(); pending = (action.tool, projection, vertices)
+        if pending?.tool != action.tool || pending?.projection != projection {
+          seal(); pending = (action.tool, projection, [], [])
         }
+        let start = pending!.nodes.count
+        pending!.nodes.append(contentsOf: nodes)
+        pending!.chunks.append(
+          contentsOf: chunks.map {
+            .init(
+              nodes: ($0.nodes.lowerBound + start)..<($0.nodes.upperBound + start),
+              bounds: $0.bounds, color: $0.color, flags: $0.flags, levels: $0.levels)
+          })
+        try Task.checkCancellation()
       }
     }
-    seal()
-    return .init(batches: batches)
+    seal(); return .init(batches: batches)
   }
 }
 
@@ -186,13 +203,17 @@ struct PageInkMesh: Sendable {
           size: .init(width: sample.width, height: sample.width), opacity: sample.opacity,
           force: sample.force, azimuth: sample.azimuth, altitude: sample.altitude)
       }
-      var vertices: [SpatialInkGeometry.Vertex] = []
-      let color = action.color
-      SpatialInkGeometry.appendStrokeVertices(points: points,
-        color: action.tool == .pen ? .init(Float(color.red), Float(color.green), Float(color.blue), 1) : .init(1, 1, 1, 1),
-        eraser: action.tool == .eraser, to: &vertices)
+      let color = action.color,
+        c: SIMD4<Float> =
+          action.tool == .pen
+          ? .init(Float(color.red), Float(color.green), Float(color.blue), 1) : .init(repeating: 1)
+      let nodes = SpatialInkGeometry.compact(points: points, color: c)
       try Task.checkCancellation()
-      entries.append(.init(action: action, mesh: .init(tool: action.tool, vertices: vertices, projection: .local), reusedIndex: nil))
+      entries.append(
+        .init(
+          action: action,
+          mesh: .init(tool: action.tool, nodes: nodes, color: c, projection: .local),
+          reusedIndex: nil))
     }
     return .init(entries: entries)
   }
@@ -236,14 +257,18 @@ final class SpatialInkMeshCache {
   fileprivate func store(_ mesh: SpatialInkMesh, versions: [ActionVersion],
     surface: SurfaceID, journal: SpatialInkJournal?) {
     if let old = entries.removeValue(forKey: surface) { retainedBytes -= old.cost }
-    let vertices = mesh.batches.reduce(0) { $0 + $1.vertices.count }
+    let nodes = mesh.batches.reduce(0) { $0 + $1.nodes.count }
     let samples = journal?.actions.reduce(0) { total, action in
       total + action.spans.reduce(0) { $0 + $1.samples.count }
     } ?? 0
     // Count retained source storage too; shared Swift arrays only reduce the
     // real cost. One oversized surface is used by its canvas but not retained.
-    let cost = vertices * MemoryLayout<SpatialInkGeometry.Vertex>.stride
-      + mesh.batches.reduce(0) { $0 + $1.chunks.count * MemoryLayout<SpatialInkGeometry.Chunk>.stride + $1.chunkIndex.byteCount }
+    let cost =
+      nodes * MemoryLayout<SpatialInkGeometry.Node>.stride
+      + mesh.batches.reduce(0) {
+        $0 + $1.chunks.count * MemoryLayout<SpatialInkGeometry.Chunk>.stride
+          + $1.chunkIndex.byteCount + $1.chunks.reduce(0) { $0 + $1.metadataBytes }
+      }
       + samples * MemoryLayout<SpatialInkSample>.stride
       + (journal?.actions.count ?? 0) * MemoryLayout<SpatialInkAction>.stride
     guard capacity > 0, cost <= byteLimit else { return }

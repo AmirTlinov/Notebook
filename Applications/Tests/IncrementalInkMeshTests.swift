@@ -62,20 +62,22 @@ final class IncrementalInkMeshTests: XCTestCase {
     for position in [CGPoint(x:20,y:20),.init(x:100,y:20),.init(x:100,y:100),.init(x:100,y:20),.init(x:20,y:20)] {
       points.append(.init(location:position,timeOffset:Double(points.count)/240,size:.init(width:40,height:40),opacity:1,force:1,azimuth:0,altitude:1))
       mesh.update(points:points,changedFrom:points.count-1,color:color)
-      var full: [SpatialInkGeometry.Vertex] = []
-      SpatialInkGeometry.appendStrokeVertices(points:points,color:color,eraser:true,to:&full)
-      XCTAssertEqual(mesh.vertices,full)
+      XCTAssertEqual(mesh.nodes, SpatialInkGeometry.compact(points: points, color: color))
       XCTAssertLessThanOrEqual(mesh.rebuiltPointCount,2)
     }
     // The outside of this right-angle turn is a disk, not a square/miter.
-    let meshPath = NotebookFreehand.path(mesh.vertices.map { .init(x:Double($0.position.x)/140,y:Double($0.position.y)/140,opacity:1) },size:.init(width:140,height:140))
+    var canonical: [SpatialInkGeometry.Vertex] = []
+    SpatialInkGeometry.appendStrokeVertices(
+      points: points, color: color, eraser: true, to: &canonical)
+    let meshPath = NotebookFreehand.path(
+      canonical.map {
+        .init(x: Double($0.position.x) / 140, y: Double($0.position.y) / 140, opacity: 1)
+      }, size: .init(width: 140, height: 140))
     XCTAssertFalse(meshPath.contains(.init(x:119,y:1)))
     XCTAssertTrue(meshPath.contains(.init(x:113,y:7)))
     points.removeLast(2)
     mesh.update(points:points,changedFrom:points.count,color:color)
-    var full: [SpatialInkGeometry.Vertex] = []
-    SpatialInkGeometry.appendStrokeVertices(points:points,color:color,eraser:true,to:&full)
-    XCTAssertEqual(mesh.vertices,full)
+    XCTAssertEqual(mesh.nodes, SpatialInkGeometry.compact(points: points, color: color))
   }
 
   private func sample(_ index: Int, x: Double? = nil) -> PKStrokePoint {
@@ -88,7 +90,8 @@ final class IncrementalInkMeshTests: XCTestCase {
     color: SIMD4<Float>, file: StaticString = #filePath, line: UInt = #line) {
     var full: [SpatialInkGeometry.Vertex] = []
     SpatialInkGeometry.appendStrokeVertices(points: points, color: color, to: &full)
-    XCTAssertEqual(mesh.vertices, full, file: file, line: line)
+    XCTAssertEqual(
+      mesh.nodes, SpatialInkGeometry.compact(points: points, color: color), file: file, line: line)
   }
 
   func testAppendPredictionsAndCorrectionsMatchTheCompleteGeometry() {
@@ -103,7 +106,7 @@ final class IncrementalInkMeshTests: XCTestCase {
     func assertExact() {
       var full: [SpatialInkGeometry.Vertex] = []
       SpatialInkGeometry.appendStrokeVertices(points: points, color: color, to: &full)
-      XCTAssertEqual(mesh.vertices, full)
+      XCTAssertEqual(mesh.nodes, SpatialInkGeometry.compact(points: points, color: color))
     }
     for i in 0..<2400 {
       points.append(point(i))

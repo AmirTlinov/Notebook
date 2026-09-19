@@ -46,6 +46,43 @@ covers ink, undo, off-window elements and child portals, but excludes the board'
 incoming camera. Ready tiles can be reused through the same bounded resource pool
 without retaining old cohorts or increasing budgets.
 
+## Compact ink display
+
+Measured source data and persisted actions are unchanged. `InkRenderGeometry` owns
+24-byte display nodes (position, contour edge, exact radius, alpha). Stroke RGB is
+supplied once per draw; two immutable shared connectivity templates (43,296 bytes
+in total) replace per-node neighbours and per-stroke triangle indices. Both apps
+use `compactInkVertex`; canonical CPU tessellation remains for semantic picking
+and durable freehand triangles, not a second measured-ink display path.
+
+A whole uses a 32-byte affine state. Position and local contour are transformed
+in order; an originally circular footprint follows `Q' = A Q Aᵀ`. Joins are the
+transformed local contour, not joins recomputed after transformation. This keeps
+the existing graphic-transform semantics. No new arbitrary per-node tensor brush
+or bit-quantized durable format is introduced. Radius stays Float32 so zoom cannot
+magnify logarithmic quantization error. Freehand export still prepares its source
+triangles on each raster job; its affine is no longer materialized into each point.
+
+Display-only LOD keeps the original samples. It bounds both contour rails by
+0.20 physical pixels and linear alpha error by 1/4096, preserves cap neighbours
+and reversals, and restores full nodes on zoom. Affine magnification uses the
+largest singular value, including shear. Eraser sweeps and canonical arbitrary
+triangles are not simplified. Visibility queries precede GPU uploads; only the
+selected level of a visible chunk is resident.
+
+The retained spatial canvas compares ordered tile contributors, selected levels,
+source revisions and projections. A changed whole invalidates both its former
+and current coverage, including a tile whose last contributor disappeared. Only
+changed 512-pixel tiles obtain drawables; unchanged tiles retain their presented
+layers. There is no second complete retained bitmap. Imported baselines, painter
+order, in-flight allocation lifetimes and first-visible-frame readiness remain
+part of the same owner. Page MTKView drawing and disposable export raster jobs
+are not the spatial retained-tile cache.
+
+An isolated state-update ratio is not a frame-rate claim. Benchmarks must report
+GPU and submit/wait separately, preparation and resident payload separately, and
+whether LOD or dirty tiles actually removed work.
+
 ## Navigation and working sets
 
 Double-tap explicitly opens paper through one 0.3-second reveal/camera transition.

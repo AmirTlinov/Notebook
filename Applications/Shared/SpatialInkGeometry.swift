@@ -2,16 +2,26 @@ import NotebookCore
 import PencilKit
 import simd
 
-/// One triangle geometry feeds the live iPad canvas and the Mac raster.
+/// One compact display geometry feeds the live canvas and the Mac raster.
 enum SpatialInkGeometry {
   typealias Vertex = InkStrokeGeometry.Vertex
-  /// Splitting the already generated triangles does not introduce stroke caps
-  /// or another alpha blend. A chunk is only an upload/culling boundary.
+  typealias Node = InkRenderGeometry.Node
   struct Chunk: Sendable {
-    static let maximumVertexCount = 4_092
-    let vertices: Range<Int>
+    let nodes: Range<Int>
     let bounds: CGRect
-
+    let color: SIMD4<Float>
+    let flags: UInt32
+    let levels: [InkRenderGeometry.Level]
+    var vertexCount: Int { InkRenderGeometry.vertexCount(nodes: nodes.count, flags: flags) }
+    var metadataBytes: Int { levels.reduce(0) { $0 + $1.indices.count * 2 } }
+    init(
+      nodes: Range<Int>, bounds: CGRect, color: SIMD4<Float> = .init(repeating: 1),
+      flags: UInt32 = 3,
+      levels: [InkRenderGeometry.Level] = []
+    ) {
+      self.nodes = nodes; self.bounds = bounds; self.color = color; self.flags = flags;
+      self.levels = levels
+    }
     func intersects(viewport: CGRect, transform: SIMD4<Float>) -> Bool {
       let projected = CGRect(x: Double(bounds.minX) * Double(transform.x) + Double(transform.z),
         y: Double(bounds.minY) * Double(transform.y) + Double(transform.w),
@@ -19,7 +29,6 @@ enum SpatialInkGeometry {
       return projected.intersects(viewport.insetBy(dx: -1, dy: -1))
     }
   }
-
 
   /// Immutable bounds tree of upload chunks, built with the mesh off the frame
   /// path. Queries visit intersecting branches before touching chunk geometry.
@@ -80,21 +89,24 @@ enum SpatialInkGeometry {
 
   typealias RenderPoint = InkStrokeGeometry.RenderPoint
 
-  static func chunks(for vertices: [Vertex], startingAt start: Int = 0) -> [Chunk] {
-    var chunks: [Chunk] = []
-    for start in stride(from: start, to: vertices.count, by: Chunk.maximumVertexCount) {
-      let end = min(start + Chunk.maximumVertexCount, vertices.count)
-      var minX = Float.infinity, minY = Float.infinity
-      var maxX = -Float.infinity, maxY = -Float.infinity
-      for index in start..<end {
-        let point = vertices[index].position
-        minX = min(minX, point.x); minY = min(minY, point.y)
-        maxX = max(maxX, point.x); maxY = max(maxY, point.y)
-      }
-      chunks.append(.init(vertices: start..<end,
-        bounds: .init(x: Double(minX), y: Double(minY), width: Double(maxX) - Double(minX), height: Double(maxY) - Double(minY))))
+  static func chunks(
+    for nodes: [Node], color: SIMD4<Float>, eraser: Bool,
+    startingSegment: Int = 0, buildLOD: Bool = true
+  ) -> [Chunk] {
+    guard !nodes.isEmpty else { return [] }
+    let last = nodes.count - 1
+    return stride(from: startingSegment, to: max(1, last), by: InkRenderGeometry.maximumSegments)
+      .map { start in
+        let end = min(last, start + InkRenderGeometry.maximumSegments), range = start..<(end + 1)
+        let flags: UInt32 = (start == 0 ? 1 : 0) | (end == last ? 2 : 0) | (eraser ? 4 : 0)
+        return .init(
+          nodes: range, bounds: InkRenderGeometry.bounds(nodes[range]), color: color, flags: flags,
+          levels: buildLOD ? InkRenderGeometry.levels(nodes[range], flags: flags) : [])
     }
-    return chunks
+  }
+  static func compact(points: [PKStrokePoint], color: SIMD4<Float>) -> [Node] {
+    let normalized = renderPoints(from: points, color: color)
+    return normalized.indices.map { InkRenderGeometry.node(at: $0, in: normalized) }
   }
 
   static var roundCapVertexCount: Int { InkStrokeGeometry.roundCapVertexCount }

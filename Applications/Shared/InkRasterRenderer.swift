@@ -14,18 +14,20 @@ final class InkRasterRenderer: @unchecked Sendable {
   let ink: (any MTLRenderPipelineState)?
   let eraser: (any MTLRenderPipelineState)?
   let baseline: (any MTLRenderPipelineState)?
+  let connectivity: InkConnectivity?
 
   private init() {
     let device = MTLCreateSystemDefaultDevice()
     self.device = device
     queue = device?.makeCommandQueue()
+    connectivity = device.flatMap(InkConnectivity.init(device:))
     func pipeline(erase: Bool = false, raster: Bool = false) -> (any MTLRenderPipelineState)? {
       guard let device, let library = try? device.makeDefaultLibrary(bundle: .main) else {
         return nil
       }
       let descriptor = MTLRenderPipelineDescriptor()
       descriptor.vertexFunction = library.makeFunction(
-        name: raster ? "stableInkVertex" : "paperInkVertex")
+        name: raster ? "stableInkVertex" : "compactInkVertex")
       descriptor.fragmentFunction = library.makeFunction(
         name: raster ? "stableInkFragment" : "paperInkFragment")
       descriptor.rasterSampleCount = device.supportsTextureSampleCount(4) ? 4 : 1
@@ -53,44 +55,56 @@ final class InkRasterRenderer: @unchecked Sendable {
   func render(
     layers: [SpatialInkRenderLayer], size: CGSize, baselinePNG: Data? = nil, scale: Double = 2
   ) -> CGImage? {
-    raster(size:size,baselinePNG:baselinePNG,scale:scale,layerCount:layers.count) { index in
-      var vertices: [SpatialInkGeometry.Vertex] = []
-      let erase: Bool
-      switch layers[index] {
-      case .ink(let points,let color):
-        erase = false
-        SpatialInkGeometry.appendStrokeVertices(points:points,color:.init(Float(color.red),Float(color.green),Float(color.blue),1),to:&vertices)
-      case .erase(let points):
-        erase = true
-        SpatialInkGeometry.appendStrokeVertices(points:points,color:.init(1,1,1,1),eraser:true,to:&vertices)
-      }
-      return (vertices,erase)
-    }
+    let mesh = SpatialInkMesh.local(layers)
+    return raster(
+      size: size, baselinePNG: baselinePNG, scale: scale, affine: InkAffine(), batches: mesh.batches
+    )
   }
 
-  /// Retained handwriting uses the same shader, triangle coverage and ordered
-  /// source-over/erase blend as live measured ink. No CPU triangle painter.
+  /// Canonical freehand already stores triangles. Keep their topology, but move
+  /// the entire object with one affine uniform instead of rewriting every point.
   func freehand(_ ink: NotebookFreehand, transform: NotebookGraphicTransform?, size: CGSize,
     region: CGRect, scale: Double, mask: Bool) -> CGImage? {
     let basis = transform ?? .identity
-    return raster(size:region.size,baselinePNG:nil,scale:scale,layerCount:ink.layers.count) { index in
-      let layer = ink.layers[index], erase = layer.tool == .eraser
-      let color = mask || erase ? SpatialInkColor(red:1,green:1,blue:1) : layer.color
-      let vertices = layer.renderVertices.map { vertex -> SpatialInkGeometry.Vertex in
-        let p = basis.applying(.init(x:vertex.x,y:vertex.y)), alpha = Float(vertex.opacity)
-        return .init(position:.init(Float(p.x*size.width-region.minX),Float(p.y*size.height-region.minY)),
-          premultipliedColor:.init(Float(color.red)*alpha,Float(color.green)*alpha,Float(color.blue)*alpha,alpha))
+    let o = basis.applying(.init(x: 0, y: 0)), u = basis.applying(.init(x: 1, y: 0)),
+      v = basis.applying(.init(x: 0, y: 1))
+    let affine = InkAffine(
+      x: .init(
+        Float((u.x - o.x) * size.width), Float((v.x - o.x) * size.width),
+        Float(o.x * size.width - region.minX), 0),
+      y: .init(
+        Float((u.y - o.y) * size.height), Float((v.y - o.y) * size.height),
+        Float(o.y * size.height - region.minY), 0))
+    let batches = ink.layers.map { layer -> SpatialInkMesh.Batch in
+      let color =
+        mask || layer.tool == .eraser ? SpatialInkColor(red: 1, green: 1, blue: 1) : layer.color
+      let nodes = layer.renderVertices.map {
+        SpatialInkGeometry.Node(
+          position: .init(Float($0.x), Float($0.y)), edge: .zero, radius: 0,
+          alpha: Float($0.opacity))
       }
-      return (vertices,erase)
+      var chunks: [SpatialInkGeometry.Chunk] = []
+      for start in stride(from: 0, to: nodes.count, by: 4092) {
+        let range = start..<min(nodes.count, start + 4092)
+        chunks.append(
+          .init(
+            nodes: range, bounds: InkRenderGeometry.bounds(nodes[range]),
+            color: .init(Float(color.red), Float(color.green), Float(color.blue), 1), flags: 8))
+      }
+      return .init(tool: layer.tool, nodes: nodes, chunks: chunks, projection: .local)
     }
+    return raster(
+      size: region.size, baselinePNG: nil, scale: scale, affine: affine, batches: batches)
   }
 
-  private func raster(size: CGSize, baselinePNG: Data?, scale: Double, layerCount: Int,
-    prepareLayer: (Int) -> ([SpatialInkGeometry.Vertex],Bool)) -> CGImage? {
+  private func raster(
+    size: CGSize, baselinePNG: Data?, scale: Double, affine: InkAffine,
+    batches: [SpatialInkMesh.Batch]
+  ) -> CGImage? {
     guard !Task.isCancelled, size.width.isFinite, size.height.isFinite,
       size.width > 0, size.height > 0, scale.isFinite, scale > 0,
       size.width * scale <= 8192, size.height * scale <= 8192,
-      let device, let queue, let ink, let eraser, let baseline,
+      let device, let queue, let ink, let eraser, let baseline, let connectivity,
       let command = queue.makeCommandBuffer()
     else { return nil }
     let width = max(1, Int(ceil(size.width * scale)))
@@ -132,24 +146,30 @@ final class InkRasterRenderer: @unchecked Sendable {
     }
     var viewport = SIMD2<Float>(Float(size.width), Float(size.height))
     encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
-    var identity = SIMD4<Float>(1, 1, 0, 0)
-    encoder.setVertexBytes(&identity, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
-    for index in 0..<layerCount {
+    var affine = affine
+    encoder.setVertexBytes(&affine, length: MemoryLayout<InkAffine>.stride, index: 2)
+    let area = CGRect(origin: .zero, size: size).insetBy(dx: -1 / scale, dy: -1 / scale)
+    let stretch = affine.maximumStretch
+    for batch in batches {
       guard !Task.isCancelled else { encoder.endEncoding(); return nil }
-      let (vertices,erase) = prepareLayer(index)
-      encoder.setRenderPipelineState(erase ? eraser : ink)
-      guard !Task.isCancelled else { encoder.endEncoding(); return nil }
-      guard !vertices.isEmpty else { continue }
-      for chunk in SpatialInkGeometry.chunks(for: vertices)
-        where chunk.intersects(viewport: CGRect(origin: .zero, size: size), transform: identity) {
-        guard !Task.isCancelled else { encoder.endEncoding(); return nil }
-        let buffer = vertices.withUnsafeBytes { bytes in
-          device.makeBuffer(bytes: bytes.baseAddress!.advanced(by: chunk.vertices.lowerBound * MemoryLayout<SpatialInkGeometry.Vertex>.stride),
-            length: chunk.vertices.count * MemoryLayout<SpatialInkGeometry.Vertex>.stride, options: .storageModeShared)
-        }
-        guard let buffer else { encoder.endEncoding(); return nil }
+      encoder.setRenderPipelineState(batch.tool == .eraser ? eraser : ink)
+      for chunk in batch.chunks where affine.bounds(chunk.bounds).intersects(area) {
+        let level = InkRenderGeometry.level(chunk.levels, pixelsPerUnit: stretch * Float(scale))
+        let nodes =
+          level >= 0
+          ? chunk.levels[level].indices.map { batch.nodes[chunk.nodes.lowerBound + Int($0)] }
+          : Array(batch.nodes[chunk.nodes])
+        guard !nodes.isEmpty else { continue }
+        guard
+          let buffer = nodes.withUnsafeBytes({
+            device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+          })
+        else { encoder.endEncoding(); return nil }
+        var primitive = InkPrimitive(
+          count: UInt32(nodes.count), flags: chunk.flags, color: chunk.color)
         encoder.setVertexBuffer(buffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: chunk.vertices.count)
+        encoder.setVertexBytes(&primitive, length: MemoryLayout<InkPrimitive>.stride, index: 3)
+        connectivity.draw(nodes: nodes.count, flags: chunk.flags, encoder: encoder)
       }
     }
     encoder.endEncoding()

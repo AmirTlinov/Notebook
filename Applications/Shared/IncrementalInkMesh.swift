@@ -5,16 +5,17 @@ import simd
 /// Raw measurements map to the single normalized strip. A coincident sample
 /// replaces the final point without invalidating the already sealed prefix.
 struct IncrementalInkMesh {
-  private(set) var vertices: [SpatialInkGeometry.Vertex] = []
+  private(set) var nodes: [SpatialInkGeometry.Node] = []
   private(set) var chunks: [SpatialInkGeometry.Chunk] = []
+  private(set) var chunkRevisions: [UInt64] = []
+  private var revision: UInt64 = 0
   private(set) var rebuiltPointCount = 0
-  private(set) var rebuiltVertexStart = 0
+  private(set) var rebuiltNodeStart = 0
   private var normalized: [SpatialInkGeometry.RenderPoint] = []
   private var rawToNormalized: [Int] = []
   private var color: SIMD4<Float>?
   let eraser: Bool
   init(eraser: Bool = false) { self.eraser = eraser }
-  private static var capVertexCount: Int { SpatialInkGeometry.roundCapVertexCount }
 
   mutating func update(points: [PKStrokePoint], changedFrom: Int, color: SIMD4<Float>) {
     update(count: points.count, point: { points[$0] }, changedFrom: changedFrom, color: color)
@@ -56,35 +57,37 @@ struct IncrementalInkMesh {
       rawToNormalized.append(normalized.count - 1)
     }
 
-    let firstSegment = max(0, min(changed, oldCount) - 2)
-    if eraser {
-      let segment = max(0,min(changed,oldCount)-1)
-      rebuiltVertexStart = segment == 0 ? 0 : InkStrokeGeometry.roundDiskVertexCount + segment * InkStrokeGeometry.roundSweepSegmentVertexCount
-      vertices.removeSubrange(min(rebuiltVertexStart,vertices.count)...)
-      InkStrokeGeometry.appendEraserVertices(renderPoints:Array(normalized.dropFirst(segment)),includesStart:segment == 0,to:&vertices)
-      rebuiltPointCount = normalized.count-segment
-    } else if firstSegment == 0 || oldCount < 3 || normalized.count < 3 {
-      vertices.removeAll(keepingCapacity: true)
-      SpatialInkGeometry.appendStrokeVertices(renderPoints: normalized, to: &vertices)
-      rebuiltPointCount = normalized.count
-      rebuiltVertexStart = 0
-    } else {
-      let tailStart = firstSegment - 1
-      let capStart = (oldCount - 1) * 6
-      let startCap = Array(vertices[capStart..<(capStart + Self.capVertexCount)])
-      var tail: [SpatialInkGeometry.Vertex] = []
-      SpatialInkGeometry.appendStrokeVertices(renderPoints: Array(normalized.dropFirst(tailStart)),
-        roundsStart: false, to: &tail)
-      rebuiltVertexStart = firstSegment * 6
-      vertices.removeSubrange(rebuiltVertexStart...)
-      vertices.append(contentsOf: tail.dropFirst(6).dropLast(Self.capVertexCount))
-      vertices.append(contentsOf: startCap)
-      vertices.append(contentsOf: tail.suffix(Self.capVertexCount))
-      rebuiltPointCount = normalized.count - tailStart
+    rebuiltNodeStart = max(0, min(changed, oldCount) - 1)
+    nodes.removeSubrange(min(rebuiltNodeStart, nodes.count)...)
+    for i in rebuiltNodeStart..<normalized.count {
+      nodes.append(InkRenderGeometry.node(at: i, in: normalized))
     }
-    let chunkIndex = min(rebuiltVertexStart / SpatialInkGeometry.Chunk.maximumVertexCount, chunks.count)
+    rebuiltPointCount = normalized.count - rebuiltNodeStart
+    let firstSegment = max(0, rebuiltNodeStart - 1)
+    let chunkIndex = min(firstSegment / InkRenderGeometry.maximumSegments, chunks.count)
     chunks.removeSubrange(chunkIndex...)
-    chunks.append(contentsOf: SpatialInkGeometry.chunks(for: vertices,
-      startingAt: chunkIndex * SpatialInkGeometry.Chunk.maximumVertexCount))
+    chunkRevisions.removeSubrange(chunkIndex...)
+    revision &+= 1
+    let fresh = SpatialInkGeometry.chunks(
+      for: nodes, color: color, eraser: eraser,
+      startingSegment: chunkIndex * InkRenderGeometry.maximumSegments, buildLOD: false)
+    for chunk in fresh {
+      chunkRevisions.append(revision)
+      let sealed = chunk.nodes.upperBound < nodes.count
+      chunks.append(
+        .init(
+          nodes: chunk.nodes, bounds: chunk.bounds, color: chunk.color, flags: chunk.flags,
+          levels: sealed ? InkRenderGeometry.levels(nodes[chunk.nodes], flags: chunk.flags) : []))
+    }
   }
+  var committedChunks: [SpatialInkGeometry.Chunk] {
+    guard let last = chunks.last else { return [] }
+    var result = chunks
+    result[result.count - 1] = .init(
+      nodes: last.nodes, bounds: last.bounds, color: last.color, flags: last.flags,
+      levels: InkRenderGeometry.levels(nodes[last.nodes], flags: last.flags))
+    return result
+  }
+  var vertexCount: Int { chunks.reduce(0) { $0 + $1.vertexCount } }
+  var strokeColor: SIMD4<Float> { color ?? .init(repeating: 1) }
 }

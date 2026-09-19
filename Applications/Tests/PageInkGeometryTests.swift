@@ -243,7 +243,7 @@ final class PageInkGeometryTests: XCTestCase {
     let expected = SpatialInkMesh.local(SpatialInkComposer.pageLayers(drawing))
     XCTAssertEqual(mesh.entries.map { $0.mesh.tool }, [.pen, .eraser, .pen])
     for (entry, batch) in zip(mesh.entries, expected.batches) {
-      XCTAssertEqual(entry.mesh.vertices, batch.vertices)
+      XCTAssertEqual(entry.mesh.nodes, batch.nodes)
     }
   }
 

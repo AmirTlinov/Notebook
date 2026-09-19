@@ -76,7 +76,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     case erase
   }
 
-  private typealias Vertex = SpatialInkGeometry.Vertex
+  private typealias Node = SpatialInkGeometry.Node
 
   /// Board motion uses the slack in the fixed-size native tile pools first.
   /// One bounded guard band, not another viewport, keeps small pans off the GPU.
@@ -155,9 +155,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   fileprivate struct GeometryBuffer {
     let buffer: any MTLBuffer
     let reservation: RasterReservation
+    let nodeCount: Int
+    let level: Int
   }
 
   fileprivate struct CommittedBatch {
+    let renderID = UUID()
     let mesh: SpatialInkMesh.Batch
     var buffers: [Int: GeometryBuffer] = [:]
     var pageAction: PageInkAction?
@@ -167,6 +170,24 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       self.mesh = mesh
     }
   }
+
+  private struct TileToken: Equatable {
+    let source: UUID
+    let chunk: Int
+    let revision: UInt64
+    let level: Int
+    let transform: SIMD4<Float>
+  }
+  private struct TileSignature: Equatable {
+    let tokens: [TileToken]
+    let baseline: ObjectIdentifier?
+  }
+  private var drawnTiles: (target: ObjectIdentifier, signatures: [TileSignature])?
+  private var needsRevealedFrame = false
+  private var activeRenderID = UUID()
+  private(set) var lastRenderedTileCount = 0
+  private(set) var submittedTileCount = 0
+  private(set) var residentCommittedNodeCount = 0
 
   private static let framesInFlight = 3
   /// A retained surface submits one GPU frame at a time beside its shown frame.
@@ -260,12 +281,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   var committedVertexCount: Int {
-    committedBatches.reduce(0) { $0 + $1.mesh.vertices.count }
+    committedBatches.reduce(0) { $0 + $1.mesh.vertexCount }
   }
 
   var committedEraserVertexCount: Int {
     committedBatches.reduce(0) { count, batch in
-      count + (batch.operation == .erase ? batch.mesh.vertices.count : 0)
+      count + (batch.operation == .erase ? batch.mesh.vertexCount : 0)
     }
   }
   var hasSpatialInkGeometry: Bool {
@@ -384,6 +405,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     installedSpatialSource = nil; spatialSourceGeneration &+= 1
     spatialStagingID = nil
     visibleCommittedVertexCount = 0; visibleCommittedChunkCount = 0
+    residentCommittedNodeCount = 0; drawnTiles = nil
     spatialTarget?.detach(); spatialTarget = nil
     hasRevealedFirstFrame = false
     presentedStableContentRevision = nil
@@ -595,6 +617,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       activeEraserStroke = nil
       builtActiveIdentity = nil
       builtActiveRevision = nil
+      activeRenderID = UUID()
     }
     requestFrame()
   }
@@ -607,6 +630,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       activeInkStroke = nil
       builtActiveIdentity = nil
       builtActiveRevision = nil
+      activeRenderID = UUID()
     }
     requestFrame()
   }
@@ -670,26 +694,61 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       }
     }
 
-    drawableRequestCount += 1
+    guard let visible = prepareCommittedBuffers() else { renderFailure = .resourceLimit; return }
+    let active = prepareActiveBuffer(in: frameSlot)
+    if (activeInkStroke != nil || activeEraserStroke != nil) && !activeMesh.nodes.isEmpty
+      && active == nil
+    {
+      renderFailure = .resourceLimit; return
+    }
     guard let commandQueue, let commandBuffer = commandQueue.makeCommandBuffer() else { return }
-    var passes: [(MTLRenderPassDescriptor, any CAMetalDrawable, MTLViewport?, CGRect?)] = []
+    var passes:
+      [(MTLRenderPassDescriptor, any CAMetalDrawable, MTLViewport?, CGRect?, [(Int, Int)])] = []
+    var signatures: [TileSignature] = []
     if let target = spatialTarget {
+      let previous = drawnTiles?.target == ObjectIdentifier(target) ? drawnTiles?.signatures : nil
       for (index, tile) in target.tiles.enumerated() {
-        guard let drawable = tile.layer.nextDrawable(), drawable.texture.allocatedSize <= tile.drawableByteCeiling else {
+        let clip = target.logicalRect(index)
+        let tileVisible = visibleChunks(in: clip)
+        let signature = tileSignature(visible: tileVisible, clip: clip)
+        signatures.append(signature)
+        if !needsRevealedFrame, let previous, index < previous.count, previous[index] == signature {
+          continue
+        }
+        guard let drawable = tile.layer.nextDrawable(),
+          drawable.texture.allocatedSize <= tile.drawableByteCeiling
+        else {
           renderFailure = .resourceLimit; return
         }
-        passes.append((spatialRenderPass(target: tile, drawable: drawable), drawable, target.viewport(index), target.logicalRect(index)))
+        passes.append(
+          (
+            spatialRenderPass(target: tile, drawable: drawable), drawable, target.viewport(index),
+            clip, tileVisible
+          ))
       }
     } else {
       guard let pass = currentRenderPassDescriptor, let drawable = currentDrawable else { return }
-      passes.append((pass, drawable, nil, nil))
+      passes.append((pass, drawable, nil, nil, visible))
     }
-    guard let visible = prepareCommittedBuffers() else { renderFailure = .resourceLimit; return }
-    let active = prepareActiveBuffer(in: frameSlot)
-    if (activeInkStroke != nil || activeEraserStroke != nil) && !activeMesh.vertices.isEmpty && active == nil {
-      renderFailure = .resourceLimit; return
+    lastRenderedTileCount = passes.count
+    guard !passes.isEmpty else {
+      if activeInkStroke == nil, activeEraserStroke == nil, pageGeometryIsReady {
+        isPaused = true
+        let revision = stableContentRevision
+        Task { @MainActor [weak self] in
+          guard let self, stableContentRevision == revision, spatialStagingID == nil, window != nil,
+            activeInkStroke == nil, activeEraserStroke == nil, pageGeometryIsReady,
+            !spatialHandoffIsStopping
+          else { return }
+          presentedStableContentRevision = revision; onRenderReadinessChange?(true)
+        }
+      }
+      return
     }
-    for (descriptor, _, viewport, clip) in passes {
+    drawableRequestCount += 1
+    submittedTileCount += passes.count
+    needsRevealedFrame = false
+    for (descriptor, _, viewport, clip, tileVisible) in passes {
       descriptor.colorAttachments[0].loadAction = .clear
       descriptor.colorAttachments[0].clearColor = clearColor
       guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
@@ -700,13 +759,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         encoder.setFragmentTexture(baselineTexture, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
       }
-      encodeSpatial(batches: committedBatches, visible: visible, active: active,
+      encodeSpatial(
+        batches: committedBatches, visible: tileVisible, active: active,
         camera: spatialCamera, viewport: spatialViewport, size: bounds.size, clip: clip, encoder: encoder)
       encoder.endEncoding()
     }
     presentsWithTransaction = false
     for tile in spatialTarget?.tiles ?? [] { tile.layer.presentsWithTransaction = false }
-    for (_, drawable, _, _) in passes { commandBuffer.present(drawable) }
+    for (_, drawable, _, _, _) in passes { commandBuffer.present(drawable) }
     let presentedRevision: UInt64? =
       activeInkStroke == nil
         && activeEraserStroke == nil
@@ -728,11 +788,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         withExtendedLifetime((heldGeometry, physical, target)) {}
         guard let self else { return }
         finishSubmittedFrame()
+        if !completed { drawnTiles = nil }
         guard completed, !spatialHandoffIsStopping, window != nil,
           stableContentRevision == submittedRevision else { return }
         renderFailure = nil
         if !hasRevealedFirstFrame {
           hasRevealedFirstFrame = true
+          needsRevealedFrame = true
           // Completing a hidden drawable is not a capturable visible layer.
           // Reveal without a Core Animation fade, then require one more frame
           // before a cover snapshot can freeze these pixels.
@@ -755,11 +817,43 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         onRenderReadinessChange?(true)
       }
     }
+    if let target = spatialTarget { drawnTiles = (ObjectIdentifier(target), signatures) }
     commandBuffer.commit()
     mustSignal = false
     frameSlot = (frameSlot + 1) % Self.framesInFlight
 
     if activeInkStroke == nil, activeEraserStroke == nil { isPaused = true }
+  }
+
+  private func visibleChunks(in clip: CGRect) -> [(Int, Int)] {
+    committedBatches.enumerated().flatMap { b, batch in
+      batch.mesh.chunkIndex.query(
+        viewport: clip,
+        transform: batch.mesh.projection.transform(camera: spatialCamera, viewport: spatialViewport)
+      ).chunks.map { (b, $0) }
+    }
+  }
+
+  private func tileSignature(visible: [(Int, Int)], clip: CGRect) -> TileSignature {
+    var tokens: [TileToken] = []
+    for (b, c) in visible {
+      let batch = committedBatches[b],
+        transform = batch.mesh.projection.transform(
+          camera: spatialCamera, viewport: spatialViewport)
+      guard batch.mesh.chunks[c].intersects(viewport: clip, transform: transform) else { continue }
+      tokens.append(
+        .init(
+          source: batch.renderID, chunk: c, revision: 0, level: batch.buffers[c]?.level ?? -1,
+          transform: transform))
+    }
+    for (c, chunk) in activeMesh.chunks.enumerated()
+    where chunk.intersects(viewport: clip, transform: .init(1, 1, 0, 0)) {
+      tokens.append(
+        .init(
+          source: activeRenderID, chunk: c, revision: activeMesh.chunkRevisions[c], level: -1,
+          transform: .init(1, 1, 0, 0)))
+    }
+    return .init(tokens: tokens, baseline: baselineTexture.map { ObjectIdentifier($0) })
   }
 
   private func encodeSpatial(batches: [CommittedBatch], visible: [(Int, Int)],
@@ -771,16 +865,27 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     encoder.setVertexBytes(&viewportSize, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
     for (batchIndex, chunkIndex) in visible {
       let batch = batches[batchIndex]
-      var transform = batch.mesh.projection.transform(camera: camera, viewport: viewport)
+      let transform = batch.mesh.projection.transform(camera: camera, viewport: viewport)
       if let clip, !batch.mesh.chunks[chunkIndex].intersects(viewport: clip, transform: transform) { continue }
-      encoder.setVertexBytes(&transform, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
-      draw(buffer: batch.buffers[chunkIndex]?.buffer, vertexCount: batch.mesh.chunks[chunkIndex].vertices.count,
-        operation: batch.operation, with: encoder)
+      var affine = InkAffine(transform)
+      encoder.setVertexBytes(&affine, length: MemoryLayout<InkAffine>.stride, index: 2)
+      let chunk = batch.mesh.chunks[chunkIndex]
+      draw(
+        buffer: batch.buffers[chunkIndex]?.buffer,
+        nodeCount: batch.buffers[chunkIndex]?.nodeCount ?? 0,
+        flags: chunk.flags, color: chunk.color, operation: batch.operation, with: encoder)
     }
     if let active {
-      var identity = SIMD4<Float>(1, 1, 0, 0)
-      encoder.setVertexBytes(&identity, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
-      draw(buffer: active.buffer, vertexCount: activeMesh.vertices.count, operation: active.operation, with: encoder)
+      var identity = InkAffine()
+      encoder.setVertexBytes(&identity, length: MemoryLayout<InkAffine>.stride, index: 2)
+      for chunk in activeMesh.chunks {
+        if let clip, !chunk.intersects(viewport: clip, transform: .init(1, 1, 0, 0)) { continue }
+        draw(
+          buffer: active.buffer, nodeCount: chunk.nodes.count, flags: chunk.flags,
+          color: chunk.color,
+          operation: active.operation, offset: chunk.nodes.lowerBound * MemoryLayout<Node>.stride,
+          with: encoder)
+      }
     }
   }
 
@@ -868,7 +973,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     _ = try layout.tileGrid()
     let viewport = size, camera = requestedCamera ?? spatialCamera
     var batches = mesh?.batches.map(CommittedBatch.init) ?? committedBatches
-    let visible = try prepareBuffers(in: &batches, camera: camera, viewport: viewport, size: layout.size)
+    let visible = try prepareBuffers(
+      in: &batches, camera: camera, viewport: viewport, size: layout.size,
+      pixelScale: Float(displayScale))
     if visible.isEmpty {
       let result = PreparedSpatialFrame(id: id, canvas: self, batches: batches, replacesMesh: mesh != nil,
         layout: layout, viewport: viewport, camera: camera, target: nil, drawables: [])
@@ -927,7 +1034,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     cancelPendingPageMesh()
     pageDrawing = nil; baselineTexture = nil; baselinePNG = nil; baselineReservation = nil; drawingIsPreparing = false
     installedPageRevision = nil; pendingPageRevision = nil
-    committedBatches = frame.batches; discardActiveAction()
+    committedBatches = frame.batches; drawnTiles = nil; discardActiveAction()
     installedSpatialSource = .init(surface: surface, journal: journal, suppressedInkIDs: suppressedInkIDs)
     let revision = stableContentRevision, generation = spatialSourceGeneration
     presentedStableContentRevision = nil
@@ -955,6 +1062,16 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     bounds.size = frame.layout.size
     spatialCamera = frame.camera; spatialViewport = frame.viewport; spatialDrawableScale = frame.layout.displayScale
     installSpatialTarget(frame.target)
+    needsRevealedFrame = false
+    if let target = frame.target {
+      drawnTiles = (
+        ObjectIdentifier(target),
+        target.tiles.indices.map { index in
+          let clip = target.logicalRect(index)
+          return tileSignature(visible: visibleChunks(in: clip), clip: clip)
+        }
+      )
+    }
     for tile in frame.target?.tiles ?? [] { tile.layer.presentsWithTransaction = true }
     #if os(iOS)
       layer.opacity = frame.drawables.isEmpty ? 0 : 1
@@ -1072,7 +1189,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     guard !spatialHandoffIsStopping, spatialStagingID == nil, pageGeometryIsReady, baselineTexture == nil,
       activeInkStroke == nil, activeEraserStroke == nil,
       committedBatches.allSatisfy({ batch in
-        if batch.mesh.vertices.isEmpty { return true }
+        if batch.mesh.nodes.isEmpty { return true }
         guard spatialDrawableScale != nil, bounds.width > 0, bounds.height > 0 else { return false }
         let transform = batch.mesh.projection.transform(camera: spatialCamera, viewport: spatialViewport)
         return batch.mesh.chunkIndex.query(viewport: CGRect(origin: .zero, size: bounds.size), transform: transform).chunks.isEmpty
@@ -1084,6 +1201,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       committedBatches[batch].buffers.removeAll(keepingCapacity: true)
     }
     visibleCommittedVertexCount = 0; visibleCommittedChunkCount = 0
+    residentCommittedNodeCount = 0; drawnTiles = nil
     isPaused = true
     if sampleCount != 1 { sampleCount = 1 }
     releaseDrawables()
@@ -1128,6 +1246,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   private func releaseGeometryBuffers() {
+    residentCommittedNodeCount = 0
+    drawnTiles = nil
     for index in committedBatches.indices {
       committedBatches[index].buffers.removeAll(keepingCapacity: true)
     }
@@ -1178,14 +1298,15 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       }
       activeMesh.update(measured: measured, predicted: predicted, changedFrom: changed, color: color)
       for index in activeBufferDirtyStarts.indices {
-        activeBufferDirtyStarts[index] = min(activeBufferDirtyStarts[index], activeMesh.rebuiltVertexStart)
+        activeBufferDirtyStarts[index] = min(
+          activeBufferDirtyStarts[index], activeMesh.rebuiltNodeStart)
       }
       builtActiveIdentity = identity
       builtActiveRevision = revision
     }
-    guard !activeMesh.vertices.isEmpty else { return nil }
+    guard !activeMesh.nodes.isEmpty else { return nil }
 
-    let requiredLength = activeMesh.vertices.count * MemoryLayout<Vertex>.stride
+    let requiredLength = activeMesh.nodes.count * MemoryLayout<Node>.stride
     if requiredLength > activeBufferCapacities[slot] {
       let capacity = max(4096, nextPowerOfTwo(requiredLength))
       guard let reservation = resources.reserveDerivedBytes(capacity, priority: physicalAdmission?.allocationPriority ?? .input, owner: physicalAdmission),
@@ -1202,18 +1323,18 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     }
     // Every in-flight frame owns its slot. The CPU never overwrites vertices
     // that a preceding GPU command buffer may still be reading.
-    let start = min(activeBufferDirtyStarts[slot], activeMesh.vertices.count)
-    let offset = start * MemoryLayout<Vertex>.stride
+    let start = min(activeBufferDirtyStarts[slot], activeMesh.nodes.count)
+    let offset = start * MemoryLayout<Node>.stride
     let length = requiredLength - offset
     if length > 0 {
-      activeMesh.vertices.withUnsafeBytes { bytes in
+      activeMesh.nodes.withUnsafeBytes { bytes in
         if let base = bytes.baseAddress {
           buffer.contents().advanced(by: offset).copyMemory(from: base.advanced(by: offset), byteCount: length)
         }
       }
       activeUploadedByteCount += length
     }
-    activeBufferDirtyStarts[slot] = activeMesh.vertices.count
+    activeBufferDirtyStarts[slot] = activeMesh.nodes.count
     return (buffer, operation)
   }
 
@@ -1222,12 +1343,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     operation: RenderOperation,
     action: PageInkAction?
   ) {
-    guard !active.vertices.isEmpty else { return }
+    guard !active.nodes.isEmpty else { return }
     let projection = spatialCamera.map { SpatialInkMesh.Projection.screen($0, spatialViewport) } ?? .local
     // The contact already indexed its mutable tail on display frames. Sealing
     // it retains those arrays; it neither rescans nor copies the older history.
     var batch = CommittedBatch(.init(tool: operation == .ink ? .pen : .eraser,
-      vertices: active.vertices, chunks: active.chunks, projection: projection))
+        nodes: active.nodes, chunks: active.committedChunks, projection: projection))
     pageCommit &+= 1
     batch.pageAction = action; batch.pageCommit = pageCommit
     committedBatches.append(batch)
@@ -1236,13 +1357,22 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private func prepareCommittedBuffers() -> [(Int, Int)]? {
     guard let visible = try? prepareBuffers(in: &committedBatches,
       camera: spatialCamera, viewport: spatialViewport, size: bounds.size) else { return nil }
-    visibleCommittedVertexCount = visible.reduce(0) { $0 + committedBatches[$1.0].mesh.chunks[$1.1].vertices.count }
+    visibleCommittedVertexCount = visible.reduce(0) {
+      $0
+        + InkRenderGeometry.vertexCount(
+          nodes: committedBatches[$1.0].buffers[$1.1]!.nodeCount,
+          flags: committedBatches[$1.0].mesh.chunks[$1.1].flags)
+    }
     visibleCommittedChunkCount = visible.count
+    residentCommittedNodeCount = visible.reduce(0) {
+      $0 + (committedBatches[$1.0].buffers[$1.1]?.nodeCount ?? 0)
+    }
     return visible
   }
 
   private func prepareBuffers(in batches: inout [CommittedBatch], camera: SpatialCamera?,
-    viewport: SpatialPoint, size: CGSize) throws -> [(Int, Int)] {
+    viewport: SpatialPoint, size: CGSize, pixelScale: Float? = nil
+  ) throws -> [(Int, Int)] {
     var visible: [(Int, Int)] = []
     let viewportRect = CGRect(origin: .zero, size: size)
     for batchIndex in batches.indices {
@@ -1257,46 +1387,48 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       }
       visible.append(contentsOf: selected.map { (batchIndex, $0) })
     }
-    for (batchIndex, chunkIndex) in visible where batches[batchIndex].buffers[chunkIndex] == nil {
-      let mesh = batches[batchIndex].mesh
-      guard let buffer = makeBuffer(for: mesh.vertices, range: mesh.chunks[chunkIndex].vertices) else { throw SceneRenderError.resourceLimit }
-      batches[batchIndex].buffers[chunkIndex] = buffer
+    let pixelsPerPoint =
+      pixelScale ?? Float(spatialDrawableScale ?? Double(drawableSize.width / max(bounds.width, 1)))
+    for (batchIndex, chunkIndex) in visible {
+      let mesh = batches[batchIndex].mesh, chunk = mesh.chunks[chunkIndex]
+      let transform = mesh.projection.transform(camera: camera, viewport: viewport)
+      let level = InkRenderGeometry.level(
+        chunk.levels, pixelsPerUnit: max(abs(transform.x), abs(transform.y)) * pixelsPerPoint)
+      if batches[batchIndex].buffers[chunkIndex]?.level == level { continue }
+      let selected: [Node]
+      if level >= 0 {
+        selected = chunk.levels[level].indices.map { mesh.nodes[chunk.nodes.lowerBound + Int($0)] }
+      } else {
+        selected = Array(mesh.nodes[chunk.nodes])
+      }
+      guard let device,
+        let reservation = resources.reserveDerivedBytes(
+          selected.count * MemoryLayout<Node>.stride,
+          priority: physicalAdmission?.allocationPriority ?? .input, owner: physicalAdmission),
+        let buffer = selected.withUnsafeBytes({ bytes in
+          device.makeBuffer(
+            bytes: bytes.baseAddress!, length: bytes.count, options: .storageModeShared)
+        })
+      else { throw SceneRenderError.resourceLimit }
+      buffer.label = "Visible compact ink nodes"
+      batches[batchIndex].buffers[chunkIndex] = .init(
+        buffer: buffer, reservation: reservation, nodeCount: selected.count, level: level)
     }
     return visible
   }
 
-  private func makeBuffer(for vertices: [Vertex], range: Range<Int>) -> GeometryBuffer? {
-    guard let device, !range.isEmpty,
-      let reservation = resources.reserveDerivedBytes(range.count * MemoryLayout<Vertex>.stride,
-        priority: physicalAdmission?.allocationPriority ?? .input, owner: physicalAdmission) else { return nil }
-    let buffer = vertices.withUnsafeBytes { bytes -> (any MTLBuffer)? in
-      guard let baseAddress = bytes.baseAddress else { return nil }
-      return device.makeBuffer(bytes: baseAddress.advanced(by: range.lowerBound * MemoryLayout<Vertex>.stride),
-        length: reservation.byteCount, options: .storageModeShared)
-    }
-    guard let buffer else { return nil }
-    buffer.label = "Visible Notebook Ink Chunk"
-    return .init(buffer: buffer, reservation: reservation)
-  }
-
   private func draw(
-    buffer: (any MTLBuffer)?,
-    vertexCount: Int,
-    operation: RenderOperation,
-    with encoder: any MTLRenderCommandEncoder
+    buffer: (any MTLBuffer)?, nodeCount: Int, flags: UInt32, color: SIMD4<Float>,
+    operation: RenderOperation, offset: Int = 0, with encoder: any MTLRenderCommandEncoder
   ) {
-    guard let buffer, vertexCount > 0 else { return }
-    let pipeline = operation == .ink
-      ? inkPipelineState
-      : eraserPipelineState
-    guard let pipeline else { return }
+    guard let buffer, nodeCount > 0,
+      let pipeline = operation == .ink ? inkPipelineState : eraserPipelineState
+    else { return }
     encoder.setRenderPipelineState(pipeline)
-    encoder.setVertexBuffer(buffer, offset: 0, index: 0)
-    encoder.drawPrimitives(
-      type: .triangle,
-      vertexStart: 0,
-      vertexCount: vertexCount
-    )
+    encoder.setVertexBuffer(buffer, offset: offset, index: 0)
+    var primitive = InkPrimitive(count: UInt32(nodeCount), flags: flags, color: color)
+    encoder.setVertexBytes(&primitive, length: MemoryLayout<InkPrimitive>.stride, index: 3)
+    InkRasterRenderer.shared.connectivity?.draw(nodes: nodeCount, flags: flags, encoder: encoder)
   }
 
   private func nextPowerOfTwo(_ value: Int) -> Int {

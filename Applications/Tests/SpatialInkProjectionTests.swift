@@ -15,11 +15,14 @@ final class SpatialInkProjectionTests: XCTestCase {
     XCTAssertEqual(mesh.batches.map(\.tool), [.pen, .eraser, .pen])
     for batch in mesh.batches {
       XCTAssertGreaterThan(batch.chunks.count, 1)
-      XCTAssertEqual(batch.chunks.flatMap { Array(batch.vertices[$0.vertices]) }, batch.vertices)
+      XCTAssertEqual(batch.chunks.first?.nodes.lowerBound, 0)
+      XCTAssertEqual(batch.chunks.last?.nodes.upperBound, batch.nodes.count)
+      XCTAssertEqual(
+        batch.chunks.reduce(0) { $0 + max(0, $1.nodes.count - 1) }, max(0, batch.nodes.count - 1))
       for chunk in batch.chunks {
-        XCTAssertLessThanOrEqual(chunk.vertices.count, 4_092)
-        XCTAssertTrue(chunk.vertices.count.isMultiple(of: 3))
-        for vertex in batch.vertices[chunk.vertices] {
+        XCTAssertLessThanOrEqual(chunk.nodes.count, InkRenderGeometry.maximumSegments + 1)
+        XCTAssertTrue(chunk.vertexCount.isMultiple(of: 3))
+        for vertex in batch.nodes[chunk.nodes] {
           XCTAssertGreaterThanOrEqual(CGFloat(vertex.position.x), chunk.bounds.minX)
           XCTAssertLessThanOrEqual(CGFloat(vertex.position.x), chunk.bounds.maxX)
           XCTAssertGreaterThanOrEqual(CGFloat(vertex.position.y), chunk.bounds.minY)
@@ -29,14 +32,17 @@ final class SpatialInkProjectionTests: XCTestCase {
       let visible = batch.chunks.filter {
         $0.intersects(viewport: .init(x: 0, y: 0, width: 600, height: 800), transform: .init(1, 1, 0, 0))
       }
-      XCTAssertEqual(visible.count, 2, "Первый участок и настоящий начальный cap остаются видимыми")
-      XCTAssertLessThan(visible.reduce(0) { $0 + $1.vertices.count }, batch.vertices.count / 10)
+      XCTAssertEqual(
+        visible.count, 1,
+        "Первый участок содержит настоящий начальный cap, не отдельную копию вершин")
+      XCTAssertLessThan(visible.reduce(0) { $0 + $1.nodes.count }, batch.nodes.count / 10)
     }
   }
 
   func testChunkQueryPrunesInvisibleGeometryBeforeReadingItsVertices() {
     let chunks: [SpatialInkGeometry.Chunk] = (0..<8_192).map { index in
-      .init(vertices: index*3..<(index+1)*3,
+      .init(
+        nodes: index * 3..<(index + 1) * 3,
         bounds: .init(x: Double(index % 128) * 100, y: Double(index / 128) * 100, width: 12, height: 12))
     }
     let index = SpatialInkGeometry.ChunkIndex(chunks)
@@ -71,7 +77,7 @@ final class SpatialInkProjectionTests: XCTestCase {
     XCTAssertNil(canvas.renderFailure)
     XCTAssertLessThan(canvas.visibleCommittedVertexCount, canvas.committedVertexCount / 10)
     XCTAssertEqual(canvas.residentCommittedBufferBytes,
-      canvas.visibleCommittedVertexCount * MemoryLayout<SpatialInkGeometry.Vertex>.stride)
+      canvas.residentCommittedNodeCount * MemoryLayout<SpatialInkGeometry.Node>.stride)
     XCTAssertLessThanOrEqual(resources.reservedBytes + resources.residentBytes, resources.byteLimit)
     canvas.removeFromSuperview()
     XCTAssertEqual(canvas.residentCommittedBufferBytes, 0)
@@ -143,7 +149,7 @@ final class SpatialInkProjectionTests: XCTestCase {
     let ready = expectation(description: "Портал уже показал окончательные чернила")
     var expectedCount = 0
     XCTAssertTrue(portal.update(surface: .board, journal: journal) { mesh, _ in
-      expectedCount = mesh?.batches.reduce(0) { $0 + $1.vertices.count } ?? 0
+        expectedCount = mesh?.batches.reduce(0) { $0 + $1.nodes.count } ?? 0
       if expectedCount > 0 { ready.fulfill() }
     })
     await fulfillment(of: [ready], timeout: 3)
@@ -151,7 +157,7 @@ final class SpatialInkProjectionTests: XCTestCase {
     var transferred: SpatialInkMesh?
     let pending = active.update(surface: .board, journal: journal) { mesh, _ in transferred = mesh }
     XCTAssertFalse(pending, "Смена камеры получает уже готовую геометрию без новой фоновой работы")
-    XCTAssertEqual(transferred?.batches.reduce(0) { $0 + $1.vertices.count }, expectedCount)
+    XCTAssertEqual(transferred?.batches.reduce(0) { $0 + $1.nodes.count }, expectedCount)
     portal.cancel(); active.cancel()
   }
 
@@ -167,8 +173,9 @@ final class SpatialInkProjectionTests: XCTestCase {
     XCTAssertTrue(journal.merge(.init(actions: [action], stamp: action.stamp)))
     XCTAssertEqual(journal.stamp, oldStamp)
     let after = try await prepare(preparation, surface: .board, journal: journal)
-    XCTAssertGreaterThan(after.batches.reduce(0) { $0 + $1.vertices.count },
-      before.batches.reduce(0) { $0 + $1.vertices.count })
+    XCTAssertGreaterThan(
+      after.batches.reduce(0) { $0 + $1.nodes.count },
+      before.batches.reduce(0) { $0 + $1.nodes.count })
     for _ in 0..<1000 {
       XCTAssertFalse(preparation.update(surface: .board, journal: journal) { _, _ in
         XCTFail("Камера не пересобирает и не переустанавливает неизменённые чернила")
@@ -271,9 +278,9 @@ final class SpatialInkProjectionTests: XCTestCase {
     XCTAssertEqual(mesh.batches.map(\.tool), [.pen, .eraser, .pen])
     let single = try SpatialInkMesh.prepare(surface: .board,
       journal: .init(actions: [journal.actions[0]], stamp: journal.stamp))
-    XCTAssertEqual(mesh.batches[0].vertices.count, single.batches[0].vertices.count * 2)
-    XCTAssertEqual(mesh.batches[1].vertices.count, single.batches[0].vertices.count)
-    XCTAssertEqual(mesh.batches[2].vertices.count, single.batches[0].vertices.count)
+    XCTAssertEqual(mesh.batches[0].nodes.count, single.batches[0].nodes.count * 2)
+    XCTAssertEqual(mesh.batches[1].nodes.count, single.batches[0].nodes.count)
+    XCTAssertEqual(mesh.batches[2].nodes.count, single.batches[0].nodes.count)
     XCTAssertEqual(mesh.batches[0].projection,
       .world(.init(tileX: 1_000_000, tileY: -1_000_000, localX: 0, localY: 0)))
   }

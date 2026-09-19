@@ -1,0 +1,44 @@
+import CoreGraphics
+import Foundation
+import simd
+
+struct InkPrimitive {
+  var count: UInt32
+  var flags: UInt32
+  var reserved = SIMD2<UInt32>(repeating: 0)
+  var color: SIMD4<Float>
+}
+/// A whole changes 32 bytes, never its immutable sample or display-node arrays.
+struct InkAffine {
+  var x: SIMD4<Float>
+  var y: SIMD4<Float>
+  init(_ scaleAndTranslation: SIMD4<Float> = .init(1, 1, 0, 0)) {
+    x = .init(scaleAndTranslation.x, 0, scaleAndTranslation.z, 0)
+    y = .init(0, scaleAndTranslation.y, scaleAndTranslation.w, 0)
+  }
+  init(x: SIMD4<Float>, y: SIMD4<Float>) {
+    self.x = x
+    self.y = y
+  }
+  /// Largest singular value; column lengths alone understate shear magnification.
+  var maximumStretch: Float {
+    let a = x.x * x.x + y.x * y.x
+    let b = x.x * x.y + y.x * y.y
+    let d = x.y * x.y + y.y * y.y
+    return sqrt(max(0, (a + d + sqrt((a - d) * (a - d) + 4 * b * b)) / 2))
+  }
+  func bounds(_ rect: CGRect) -> CGRect {
+    var lo = SIMD2<Float>(repeating: .infinity)
+    var hi = SIMD2<Float>(repeating: -.infinity)
+    for p in [
+      SIMD2<Float>(Float(rect.minX), Float(rect.minY)), .init(Float(rect.maxX), Float(rect.minY)),
+      .init(Float(rect.minX), Float(rect.maxY)), .init(Float(rect.maxX), Float(rect.maxY)),
+    ] {
+      let q = SIMD2<Float>(x.x * p.x + x.y * p.y + x.z, y.x * p.x + y.y * p.y + y.z)
+      lo = simd_min(lo, q)
+      hi = simd_max(hi, q)
+    }
+    return .init(
+      x: Double(lo.x), y: Double(lo.y), width: Double(hi.x - lo.x), height: Double(hi.y - lo.y))
+  }
+}

@@ -114,53 +114,31 @@ public enum InkStrokeGeometry {
     distanceSquared(first.position, second.position) < minimumDistanceSquared
   }
 
-  private static func crossSectionOffsets(
-    for points: [RenderPoint]
-  ) -> [SIMD2<Float>] {
-    var offsets: [SIMD2<Float>] = []
-    offsets.reserveCapacity(points.count)
-
+  private static func crossSectionOffsets(for points: [RenderPoint]) -> [SIMD2<Float>] {
+    var result: [SIMD2<Float>] = []
+    result.reserveCapacity(points.count)
     for index in points.indices {
       if index.isMultiple(of: 256), Task.isCancelled { return [] }
-      let incoming: SIMD2<Float>
-      let outgoing: SIMD2<Float>
-      if index == points.startIndex {
-        outgoing = unitDirection(
-          from: points[index].position,
-          to: points[index + 1].position
-        )
-        incoming = outgoing
-      } else if index == points.index(before: points.endIndex) {
-        incoming = unitDirection(
-          from: points[index - 1].position,
-          to: points[index].position
-        )
-        outgoing = incoming
-      } else {
-        incoming = unitDirection(
-          from: points[index - 1].position,
-          to: points[index].position
-        )
-        outgoing = unitDirection(
-          from: points[index].position,
-          to: points[index + 1].position
-        )
-      }
-
-      let incomingNormal = SIMD2<Float>(-incoming.y, incoming.x)
-      let outgoingNormal = SIMD2<Float>(-outgoing.y, outgoing.x)
-      let normalSum = incomingNormal + outgoingNormal
-      let normal = lengthSquared(normalSum) > 0.0001
-        ? normalize(normalSum)
-        : outgoingNormal
-      let denominator = max(abs(dot(normal, outgoingNormal)), 0.55)
-      let miterLength = min(
-        points[index].radius / denominator,
-        points[index].radius * 1.8
-      )
-      offsets.append(normal * miterLength)
+      result.append(crossSectionOffset(at: index, in: points))
     }
-    return offsets
+    return result
+  }
+
+  public static func crossSectionOffset(at index: Int, in points: [RenderPoint]) -> SIMD2<Float> {
+    guard points.count > 1 else { return .init(points[index].radius, 0) }
+    let incoming =
+      index == 0
+      ? unitDirection(from: points[0].position, to: points[1].position)
+      : unitDirection(from: points[index - 1].position, to: points[index].position)
+    let outgoing =
+      index == points.count - 1
+      ? incoming
+      : unitDirection(from: points[index].position, to: points[index + 1].position)
+    let outgoingNormal = SIMD2<Float>(-outgoing.y, outgoing.x)
+    let sum = SIMD2<Float>(-incoming.y, incoming.x) + outgoingNormal
+    let normal = lengthSquared(sum) > 0.0001 ? normalize(sum) : outgoingNormal
+    let denominator = max(abs(dot(normal, outgoingNormal)), 0.55)
+    return normal * min(points[index].radius / denominator, points[index].radius * 1.8)
   }
 
   private static func appendDisk(

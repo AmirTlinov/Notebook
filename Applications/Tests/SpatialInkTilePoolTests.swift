@@ -100,6 +100,42 @@ final class SpatialInkTilePoolTests: XCTestCase {
     XCTAssertEqual(try fixture.canvas.installedSpatialSource?.referenceInk(), try fixture.reference)
   }
 
+  func testLocalStrokeOnlyRedrawsDamagedTilesAndCancellationClearsOldBounds() async throws {
+    let fixture = try await Fixture.make()
+    addTeardownBlock { await fixture.close() }
+    let canvas = fixture.canvas
+    // Establish cache signatures after the private initial presentation.
+    canvas.project(camera: .init(scale: 1), viewport: .init(x: 512, y: 768))
+    try await Task.sleep(for: .milliseconds(150))
+    let before = try pixels(canvas)
+    let stroke = ActiveInkStroke(style: .standard)
+    func point(_ x: CGFloat, _ y: CGFloat) -> PKStrokePoint {
+      .init(
+        location: .init(x: x, y: y), timeOffset: 0, size: .init(width: 4, height: 4), opacity: 1,
+        force: 1, azimuth: 0, altitude: 1)
+    }
+    stroke.replaceMeasuredTail(from: 0, with: [point(30, 30), point(110, 80)])
+    let submitted = canvas.submittedTileCount
+    canvas.displayActiveStroke(stroke)
+    try await Task.sleep(for: .milliseconds(150))
+    XCTAssertGreaterThan(canvas.submittedTileCount, submitted)
+    XCTAssertLessThan(
+      canvas.submittedTileCount - submitted, canvas.spatialTilePoolIDs.count,
+      "A local contact cannot redraw all six retained tiles")
+    XCTAssertNotEqual(try pixels(canvas), before)
+    let painted = canvas.submittedTileCount
+    canvas.clearActiveAction()
+    try await Task.sleep(for: .milliseconds(150))
+    XCTAssertGreaterThan(canvas.submittedTileCount, painted)
+    XCTAssertLessThan(canvas.submittedTileCount - painted, canvas.spatialTilePoolIDs.count)
+    XCTAssertEqual(
+      try pixels(canvas), before,
+      "Removed content invalidates its old tile even without a new contributor")
+    let idle = canvas.submittedTileCount
+    try await Task.sleep(for: .milliseconds(80))
+    XCTAssertEqual(canvas.submittedTileCount, idle)
+  }
+
   private func assertContinuousCenterLine(_ canvas: UIView) throws {
     let image = try XCTUnwrap(capture(canvas).cgImage)
     let context = try XCTUnwrap(CGContext(data: nil, width: image.width, height: image.height,
