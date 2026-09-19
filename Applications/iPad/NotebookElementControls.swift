@@ -83,18 +83,13 @@ struct NotebookElementControls: UIViewRepresentable {
       ]))
     }
     if graphic != nil { menus.append(selectionTransformMenu(model:model,selectionID:selectionID)) }
-    menus.append(UIMenu(options: .displayInline, children: [
-      UIAction(title: "На задний план", image: UIImage(systemName:"square.3.layers.3d.bottom.filled"),
-        attributes: order?.first == id ? .disabled : []) { _ in
-          guard model.selectionSession.id == selectionID else { return }
-          model.arrangeElement(reference, front: false)
-        },
-      UIAction(title: "На передний план", image: UIImage(systemName:"square.3.layers.3d.top.filled"),
-        attributes: order?.last == id ? .disabled : []) { _ in
-          guard model.selectionSession.id == selectionID else { return }
-          model.arrangeElement(reference, front: true)
-        }
-    ]))
+    view.setLayerActions(front:{
+      guard model.selectionSession.id == selectionID else { return }
+      model.arrangeElement(reference,front:true)
+    },back:{
+      guard model.selectionSession.id == selectionID else { return }
+      model.arrangeElement(reference,front:false)
+    },canFront:order?.last != id,canBack:order?.first != id)
     view.changeRouting = { routing in
       guard model.selectionSession.id == selectionID else { return }
       model.setGraphicRouting(routing,reference:reference)
@@ -103,9 +98,6 @@ struct NotebookElementControls: UIViewRepresentable {
       guard model.selectionSession.id == selectionID else { return }
       model.setGraphicArrowhead(head,terminal:terminal,reference:reference)
     }
-    menus.append(UIMenu(options:.displayInline,children:[UIAction(title:"Удалить",image:UIImage(systemName:"trash"),attributes:.destructive) { _ in
-      guard model.selectionSession.id == selectionID else { return }; model.deleteElement(reference)
-    }]))
     if let text = model.nativeTextTarget(reference) {
       let format = text.style.runs?.first?.format ?? text.style.format ?? .init()
       view.setTextActions(NotebookTextFormattingMenu.make(format,apply:{ change in
@@ -125,7 +117,7 @@ struct NotebookElementControls: UIViewRepresentable {
         NotebookTextObjectClipboard.copy(text)
       },paste:{
         guard model.selectionSession.id == selectionID else { return }
-        NotebookTextObjectClipboard.paste(nextTo:text,model:model)
+        Task { _ = await NotebookTextObjectClipboard.paste(nextTo:text,model:model) }
       })
     } else { view.setTextActions(nil) }
     view.setActionsMenu(menus)
@@ -155,6 +147,11 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
       view.deleteElement = { if model.selectionSession.id == selectionID { model.deleteSelectedContent() } }
       return
     }
+    view.setLayerActions(front:{
+      guard model.selectionSession.id == selectionID else { return }; model.arrangeGraphicSelection(front:true)
+    },back:{
+      guard model.selectionSession.id == selectionID else { return }; model.arrangeGraphicSelection(front:false)
+    })
     let alignments: [(NotebookGraphicSelection.Alignment,String)] = [(.left,"По левому краю"),(.center,"По центру горизонтально"),
       (.right,"По правому краю"),(.top,"По верхнему краю"),(.middle,"По центру вертикально"),(.bottom,"По нижнему краю")]
     view.setActionsMenu([
@@ -164,12 +161,6 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
       },
       UIAction(title:"Дублировать",image:UIImage(systemName:"plus.square.on.square")) { _ in
         guard model.selectionSession.id == selectionID else { return }; model.duplicateGraphicSelection()
-      },
-      UIAction(title:"На передний план",image:UIImage(systemName:"square.3.layers.3d.top.filled")) { _ in
-        guard model.selectionSession.id == selectionID else { return }; model.arrangeGraphicSelection(front:true)
-      },
-      UIAction(title:"На задний план",image:UIImage(systemName:"square.3.layers.3d.bottom.filled")) { _ in
-        guard model.selectionSession.id == selectionID else { return }; model.arrangeGraphicSelection(front:false)
       },
       UIMenu(title:"Выровнять",image:UIImage(systemName:"align.horizontal.left"),children:alignments.map { alignment,title in
         UIAction(title:title) { _ in guard model.selectionSession.id == selectionID else { return }; model.alignGraphicSelection(alignment) }
@@ -264,14 +255,13 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   private let routingButton = UIButton(type: .system)
   private let endsButton = UIButton(type: .system)
   private let textFormatButton = NotebookContextMenuButton(type:.system)
-  private let cutButton = UIButton(type:.system)
-  private let copyButton = UIButton(type:.system)
-  private let pasteButton = UIButton(type:.system)
-  private var cutText: (() -> Void)?
-  private var copyText: (() -> Void)?
-  private var pasteText: (() -> Void)?
+  private let clipboardButton = NotebookContextMenuButton(type:.system)
+  private let frontButton = UIButton(type:.system)
+  private let backButton = UIButton(type:.system)
+  private var bringToFront: (() -> Void)?
+  private var sendToBack: (() -> Void)?
   private let moreButton = NotebookContextMenuButton(type: .system)
-  private var toolbarButtons: [UIButton] { [textFormatButton,styleButton,editButton,cutButton,copyButton,pasteButton,modeButton,routingButton,endsButton,deleteButton,moreButton] }
+  private var toolbarButtons: [UIButton] { [textFormatButton,styleButton,editButton,clipboardButton,modeButton,routingButton,endsButton,backButton,frontButton,deleteButton,moreButton] }
   private var palette: NotebookElementStyleController? { contextMenus.presentedPopover(for:source) as? NotebookElementStyleController }
   private var connectionPalette: NotebookConnectionController? { contextMenus.presentedPopover(for:source) as? NotebookConnectionController }
   var changeRouting: ((NotebookGraphicConnection.Routing) -> Void)?
@@ -296,12 +286,22 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   }
   func setTextActions(_ menu: [UIMenuElement]?, cut: (() -> Void)? = nil,
     copy: (() -> Void)? = nil, paste: (() -> Void)? = nil) {
-    for button in [textFormatButton,cutButton,copyButton,pasteButton] { button.isHidden = menu == nil }
+    textFormatButton.isHidden = menu == nil; clipboardButton.isHidden = menu == nil
+    if case .element = subject { editButton.isHidden = menu != nil }
     textFormatButton.contents = menu ?? []
-    cutText = cut; copyText = copy; pasteText = paste
+    clipboardButton.contents = NotebookContextMenus.clipboardActions(cut:cut,copy:copy,paste:paste)
     setNeedsLayout()
   }
-  func setActionsMenu(_ children: [UIMenuElement]) { moreButton.contents = children }
+  func setLayerActions(front: (() -> Void)? = nil, back: (() -> Void)? = nil, canFront: Bool = true, canBack: Bool = true) {
+    bringToFront = front; sendToBack = back
+    frontButton.isHidden = front == nil; backButton.isHidden = back == nil
+    frontButton.isEnabled = canFront; backButton.isEnabled = canBack
+    setNeedsLayout()
+  }
+  func setActionsMenu(_ children: [UIMenuElement]) {
+    moreButton.contents = children; moreButton.isHidden = children.isEmpty
+    setNeedsLayout()
+  }
   var changeGeometryMode: ((NotebookSelectionSession.GeometryMode) -> Void)?
   var updateStyle: ((inout NotebookGraphic.Style) -> Void) -> Void = { _ in }
   var editElement: (() -> Void)?
@@ -320,9 +320,9 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     backgroundColor = .clear; isOpaque = false
     let buttons: [(UIButton,String,String,String)] = [
       (textFormatButton,"textformat","Формат текста","native-text-format"),
-      (cutButton,"scissors","Вырезать","native-text-cut"),
-      (copyButton,"doc.on.doc","Копировать","native-text-copy"),
-      (pasteButton,"doc.on.clipboard","Вставить","native-text-paste"),
+      (clipboardButton,"doc.on.clipboard","Буфер обмена","native-text-clipboard"),
+      (backButton,"square.3.layers.3d.bottom.filled","На задний план","element-send-to-back"),
+      (frontButton,"square.3.layers.3d.top.filled","На передний план","element-bring-to-front"),
       (styleButton,"paintbrush.pointed","Оформление фигуры","graphic-style-menu"),
       (editButton,"character.cursor.ibeam","Подпись фигуры","edit-agent-element"),
       (modeButton,"arrow.up.left.and.arrow.down.right","Режим геометрии","graphic-geometry-mode"),
@@ -334,9 +334,9 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
       NotebookContextMenus.configure(button,symbol:symbol,title:label,id:identifier,destructive:button === deleteButton)
     }
     setTextActions(nil)
-    cutButton.addAction(UIAction { [weak self] _ in self?.cutText?() },for:.touchUpInside)
-    copyButton.addAction(UIAction { [weak self] _ in self?.copyText?() },for:.touchUpInside)
-    pasteButton.addAction(UIAction { [weak self] _ in self?.pasteText?() },for:.touchUpInside)
+    setLayerActions()
+    frontButton.addAction(UIAction { [weak self] _ in self?.bringToFront?() },for:.touchUpInside)
+    backButton.addAction(UIAction { [weak self] _ in self?.sendToBack?() },for:.touchUpInside)
     styleButton.isHidden = true
     modeButton.isHidden = true; routingButton.isHidden = true; endsButton.isHidden = true
     routingButton.addTarget(self,action:#selector(showRouting),for:.touchUpInside)
@@ -376,6 +376,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   func configure(selectionID: UUID, frame: CGRect, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false, mode: NotebookSelectionSession.GeometryMode = .transform, manipulating: Bool = false, subject: Subject = .element) {
     if self.selectionID != selectionID { cancel(); contextMenus.hide(source:source); self.selectionID = selectionID }
     self.subject = subject
+    editButton.isHidden = false; setTextActions(nil); setLayerActions()
     var primary = editButton.configuration!
     switch subject {
     case .element:

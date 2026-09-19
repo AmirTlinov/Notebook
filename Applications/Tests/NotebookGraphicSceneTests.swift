@@ -16,9 +16,18 @@ import XCTest
     func sample(_ x: Double, _ y: Double) -> SpatialInkSample {
       .init(point:.init(x:x,y:y),timeOffset:0,width:8,opacity:1,force:1,azimuth:0,altitude:.pi/2)
     }
-    let pen = PageInkAction(tool:.pen,samples:[sample(260,420),sample(480,420)])
-    let erase = PageInkAction(tool:.eraser,samples:(0..<1624).map { sample(370,400+Double($0%40)) })
-    XCTAssertTrue(page.replaceDrawing(try PageInkDrawing(actions:[pen,erase]).dataRepresentation(),actor:model.actorID))
+    let pen = PageInkAction(tool:.pen,samples:(0..<1210).map { i in
+      sample(370+100*sin(Double(i)*0.041),420+15*cos(Double(i)*0.091))
+    })
+    let pens = [pen] + (0..<26).map { index in
+      PageInkAction(tool:.pen,samples:[sample(260,408+Double(index)),sample(480,408+Double(index))])
+    }
+    // A real eraser repeatedly crosses itself, unlike the old straight fixture.
+    // A monolithic CGPath stalls on the intersections even off the main actor.
+    let erase = PageInkAction(tool:.eraser,samples:(0..<2387).map { i in
+      sample(370+55*sin(Double(i)*0.137),420+22*cos(Double(i)*0.193))
+    })
+    XCTAssertTrue(page.replaceDrawing(try PageInkDrawing(actions:pens+[erase]).dataRepresentation(),actor:model.actorID))
     try model.store.savePage(page); await model.reloadExternalChanges()?.value
     let viewport = SpatialPoint(x:834,y:1194)
     let center = model.boardHierarchy?.focusedCenter(of:workspace.selectedItemID,in:workspace.rootBoardID) ?? .zero
@@ -43,12 +52,60 @@ import XCTest
     let deadline = ContinuousClock.now + .seconds(5)
     while model.selectionSession.element.flatMap(model.graphicElement) == nil, ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
     let graphic = try XCTUnwrap(model.selectionSession.element.flatMap(model.graphicElement))
-    print("LASSO_LONG_ERASER_SELECTION \(released.duration(to:.now))")
-    XCTAssertEqual(graphic.sourceInkIDs,[pen.id]); XCTAssertNotNil(graphic.freehand?.layers.last?.eraser)
+    print("LASSO_DENSE_ERASER_SELECTION \(released.duration(to:.now))")
+    XCTAssertLessThan(released.duration(to:.now),.seconds(2))
+    XCTAssertEqual(graphic.sourceInkIDs,pens.map(\.id)); XCTAssertNotNil(graphic.freehand?.layers.last?.eraser)
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
-    XCTAssertEqual(try PageInkDrawing.decode(model.store.loadPage(page.id).drawingData).actions.map(\.id),[pen.id,erase.id])
+    XCTAssertEqual(try PageInkDrawing.decode(model.store.loadPage(page.id).drawingData).actions.map(\.id),pens.map(\.id)+[erase.id])
     let image = UIGraphicsImageRenderer(bounds:window.bounds).image { _ in window.drawHierarchy(in:window.bounds,afterScreenUpdates:true) }
     let shot = XCTAttachment(image:image); shot.name = "lasso-ink-after-long-eraser"; shot.lifetime = .keepAlways; add(shot)
+  }
+
+  func testTextSelectionFitsContentAndMovesOnceDuringDrag() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("text-bounds-\(UUID())")
+    let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false,preferences:UserDefaults(suiteName:UUID().uuidString)!)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
+    let workspace = try XCTUnwrap(model.workspace)
+    var page = try XCTUnwrap(model.activePage)
+    let text = AgentElement(id:"text-bounds",kind:.nativeText,frame:.init(x:200,y:320,width:500,height:80),source:"Bounds",html:"Bounds",textStyle:.init(fontSize:24))
+    XCTAssertTrue(page.replaceElements([text],actor:model.actorID)); try model.store.savePage(page)
+    await model.reloadExternalChanges()?.value
+    let viewport = SpatialPoint(x:834,y:1194)
+    let center = model.boardHierarchy?.focusedCenter(of:workspace.selectedItemID,in:workspace.rootBoardID) ?? .zero
+    let presence = SessionPresence(boardID:workspace.rootBoardID,mode:.page,
+      camera:.init(center:center,scale:WorkspaceItemGeometry.notebook.fitScale(viewport:viewport)),viewport:viewport,
+      focusedItemID:workspace.selectedItemID,openProgress:1)
+    model.updatePresence(presence,settled:true)
+    let window = try await mountNotebookScene(model)
+    let reference = EditableElementReference.page(pageID:page.id,elementID:text.id)
+    model.selectElement(reference)
+    try await Task.sleep(for:.milliseconds(200))
+    let before = try XCTUnwrap(NotebookAttentionProjection.editingFrame(reference,model:model,presence:presence))
+    XCTAssertLessThan(before.width,110*presence.camera.scale)
+    let controls = try XCTUnwrap(descendants(try XCTUnwrap(window.rootViewController?.view)).compactMap { $0 as? NotebookSelectionControlsView }.first)
+    func leadingGrip() throws -> CGPoint {
+      controls.layoutIfNeeded()
+      let grip = try XCTUnwrap((controls.accessibilityElements as? [UIAccessibilityElement])?.first { $0.accessibilityIdentifier == "resize-agent-element-topLeading" })
+      let rect = grip.accessibilityFrameInContainerSpace
+      return .init(x:rect.midX,y:rect.midY)
+    }
+    XCTAssertEqual(try leadingGrip().x,before.minX,accuracy:1)
+    let drag = try XCTUnwrap(model.beginElementManipulation(reference,kind:.move))
+    model.updateElementManipulation(drag,translation:.init(x:45,y:70))
+    try await Task.sleep(for:.milliseconds(200))
+    let during = try XCTUnwrap(NotebookAttentionProjection.editingFrame(reference,model:model,presence:presence))
+    XCTAssertEqual(during.minX-before.minX,45*presence.camera.scale,accuracy:0.01)
+    XCTAssertEqual(during.minY-before.minY,70*presence.camera.scale,accuracy:0.01)
+    XCTAssertEqual(try leadingGrip().x,during.minX,accuracy:1,"Installed controls must not apply the preview translation twice")
+    XCTAssertEqual(try leadingGrip().y,during.minY,accuracy:1)
+    let shot = XCTAttachment(image:UIGraphicsImageRenderer(bounds:window.bounds).image { _ in window.drawHierarchy(in:window.bounds,afterScreenUpdates:true) })
+    shot.name = "text-selection-during-drag"; shot.lifetime = .keepAlways; add(shot)
+    XCTAssertTrue(model.finishElementManipulation(drag,translation:.init(x:45,y:70)))
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let moved = try XCTUnwrap(model.store.loadPage(page.id).elements.first)
+    XCTAssertEqual(moved.frame.x,245); XCTAssertEqual(moved.frame.y,390)
+    XCTAssertLessThan(moved.frame.width,110)
   }
 
   func testLaserPixelsRecedeAfterLiftWithoutAnotherInputEvent() async throws {

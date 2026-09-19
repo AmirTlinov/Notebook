@@ -278,7 +278,8 @@ extension NotebookAppModel {
         .filter { $0.surface == address.surface && $0.kind == .nativeText }.map { address.reference($0.id) } ?? []
     }
     for reference in candidates {
-      guard let target = nativeTextTarget(reference) else { continue }
+      guard var target = nativeTextTarget(reference) else { continue }
+      target.frame = elementPresentationFrame(reference,fallback:target.frame)
       let delta = (address.worldOrigin ?? .zero).delta(to:target.address.worldOrigin ?? .zero)
       if CGRect(x:target.frame.x+delta.x,y:target.frame.y+delta.y,width:target.frame.width,height:target.frame.height)
         .contains(CGPoint(x:point.x,y:point.y)) {
@@ -330,14 +331,20 @@ extension NotebookAppModel {
     }
     var all = references
     if address.surface.kind == .page, let page = pages[address.surface.ownerID!] {
-      all += page.elements.filter { $0.graphic == nil && visible($0.id,.init(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height)) && NotebookToolGeometry.intersects(.init(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height),polygon:polygon) }.map { address.reference($0.id) }
+      all += page.elements.filter { element in
+        guard element.graphic == nil else { return false }
+        let f = elementPresentationFrame(address.reference(element.id),fallback:element.frame)
+        let rect = CGRect(x:f.x,y:f.y,width:f.width,height:f.height)
+        return visible(element.id,rect) && NotebookToolGeometry.intersects(rect,polygon:polygon)
+      }.map { address.reference($0.id) }
     } else if let board = address.boardID ?? address.surface.ownerID, let cohort = compositionTiles.published {
       let elements = address.surface.kind == .cover
         ? cohort.frame.index.coverElements(itemID:address.surface.ownerID!,boardID:board)
         : cohort.frame.workset(boardID:board).elements
       all += elements.filter { element in
         guard element.surface == address.surface, element.graphic == nil else { return false }
-        let delta = origin.delta(to:element.worldOrigin ?? .zero), f = element.frame
+        let delta = origin.delta(to:element.worldOrigin ?? .zero)
+        let f = elementPresentationFrame(address.reference(element.id),fallback:NotebookTextTypography.frame(element))
         return visible(element.id,.init(x:f.x,y:f.y,width:f.width,height:f.height)) && NotebookToolGeometry.intersects(.init(x:delta.x+f.x,y:delta.y+f.y,width:f.width,height:f.height),polygon:polygon)
       }.map { address.reference($0.id) }
     }

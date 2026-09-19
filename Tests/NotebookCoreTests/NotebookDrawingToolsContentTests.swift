@@ -5,6 +5,36 @@ import Testing
 
 @Suite("Drawing tools content ownership")
 struct NotebookDrawingToolsContentTests {
+  @Test func freehandConversionUsesItsOwnSourceBudgetBeyondSixteenStrokes() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("lasso-many-\(UUID())")
+    defer { try? FileManager.default.removeItem(at:root) }
+    let actor = UUID(), store = NotebookStore(root:root)
+    let (_,pages) = try store.loadOrCreate(actor:actor,pageSize:.init(width:600,height:800))
+    _ = try store.loadOrCreateSpatialInk(actor:actor)
+    var page = try #require(pages.values.first)
+    let strokes = (0..<27).map { i in PageInkAction(tool:.pen,samples:[
+      .init(point:.init(x:100,y:100+Double(i)),timeOffset:0,width:2,opacity:1,force:1,azimuth:0,altitude:1),
+      .init(point:.init(x:200,y:100+Double(i)),timeOffset:1,width:2,opacity:1,force:1,azimuth:0,altitude:1)]) }
+    let original = try PageInkDrawing(actions:strokes).dataRepresentation()
+    let changed = page.replaceDrawing(original,actor:actor)
+    #expect(changed); try store.savePage(page)
+    let frame = PageRect(x:98,y:98,width:104,height:32)
+    let graphic = NotebookGraphic(shape:.freehand,sourceInkIDs:strokes.map(\.id),freehand:.init(layers:strokes.map {
+      .init(color:$0.color,vertices:NotebookFreehand.mesh(samples:$0.samples,frame:frame,origin:nil))
+    }))
+    let target = CollaborationTarget(kind:.page,id:page.id)
+    let operation = CollaborationOperation(kind:.convertInkToElement,target:target,id:"handwriting",values:[
+      "kind":.string("graphic"),"source":.string(""),"frame":try .encode(frame),"graphic":try .encode(graphic)])
+    let result = try store.applyNativeElementEdits([operation],summary:"Lasso 27 strokes",sources:[.init(target:target,id:"handwriting")],
+      expectedInkRevision:page.drawingStamp.revision,actor:actor)
+    let saved = try NotebookStore(root:root).loadPage(page.id)
+    #expect(saved.elements.first?.graphic == graphic)
+    #expect(saved.graphicPresentation.suppressedInkIDs == Set(strokes.map(\.id)))
+    #expect(saved.drawingData == original)
+    _ = try store.undoCollaborationAction(result.receipt.id,actor:actor)
+    #expect(try store.loadPage(page.id).graphicPresentation.suppressedInkIDs.isEmpty)
+  }
+
   @Test func rotationKeepsPhysicalCornerRadiusRatherThanRoundingTheBoundingBox() throws {
     let graphic = NotebookGraphic(shape:.rectangle,cornerRadius:20)
     let frame = PageRect(x:0,y:0,width:200,height:80), surface = SurfaceID.page(UUID())

@@ -75,8 +75,12 @@ extension NotebookStore {
           if operation.kind == .convertInkToElement {
             let page = operation.target.id, file = pageFile(page)
             pageElementIDs[page, default: []].formUnion(operation.id.map { [collaborationIdentity($0)] } ?? [])
-            let ids = try operation.values["graphic"]?["sourceInkIDs"]?.decode([UUID].self) ?? []
-            guard ids.count <= 16 else { throw NotebookStorageError.limitExceeded("graphic_sources") }
+            guard let graphic = try operation.values["graphic"]?.decode(NotebookGraphic.self), graphic.isValid else {
+              throw CollaborationError("invalid_operation", "Недопустимая геометрия преобразования.")
+            }
+            // The graphic owns its source budget: a retained freehand selection
+            // is not limited to a quick-shape recognizer's sixteen strokes.
+            let ids = graphic.sourceInkIDs
             let claimants = try graphicClaimants(on: .page(page), sourceInkIDs: Set(ids))
             pageElementIDs[page, default: []].formUnion(claimants.map { collaborationIdentity($0.candidate.id) })
             for id in ids {

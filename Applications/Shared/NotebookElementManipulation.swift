@@ -163,9 +163,5 @@ struct NotebookElementManipulation: Equatable, Sendable {
     return .init(x: frame.minX - original.minX, y: frame.minY - original.minY)
   }
 
-  func projected(over originalScreenFrame: CGRect, scale: Double) -> CGRect {
-    .init(x: originalScreenFrame.minX + (frame.minX - original.minX) * scale,
-      y: originalScreenFrame.minY + (frame.minY - original.minY) * scale,
-      width: frame.width * scale, height: frame.height * scale)
-  }
+
 }

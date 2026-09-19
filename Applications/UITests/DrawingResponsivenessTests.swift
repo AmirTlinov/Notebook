@@ -29,7 +29,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertLessThanOrEqual(app.otherElements["notebook-context-menu"].frame.width,200)
     XCTAssertEqual(app.otherElements.matching(identifier:"notebook-context-menu").count,1)
     XCTAssertFalse(app.buttons["edit-agent-element"].exists)
-    for id in ["native-text-cut","native-text-copy","native-text-paste"] { XCTAssertTrue(app.buttons[id].exists) }
+    XCTAssertTrue(app.buttons["native-text-clipboard"].exists)
+    for id in ["native-text-cut","native-text-copy","native-text-paste"] { XCTAssertFalse(app.buttons[id].exists) }
     XCTAssertFalse(app.buttons["native-text-actions"].exists)
     format.tap(); XCTAssertTrue(app.buttons["Шрифт"].waitForExistence(timeout:3)); app.buttons["Шрифт"].tap()
     XCTAssertTrue(app.buttons["С засечками"].waitForExistence(timeout:3)); app.buttons["С засечками"].tap()
@@ -54,14 +55,27 @@ final class DrawingResponsivenessTests: XCTestCase {
     text.tap()
     XCTAssertFalse(editor.exists,"The first text-tool tap selects the object, never edits it")
     XCTAssertTrue(format.waitForExistence(timeout:2))
-    for id in ["native-text-cut","native-text-copy","native-text-paste"] { XCTAssertTrue(app.buttons[id].exists) }
+    XCTAssertTrue(app.buttons["native-text-clipboard"].exists)
+    for id in ["native-text-cut","native-text-copy","native-text-paste"] { XCTAssertFalse(app.buttons[id].exists) }
     format.tap(); app.buttons["Жирный"].tap()
     format.tap(); app.buttons["Жирный"].tap()
+    let leading = app.descendants(matching:.any)["resize-agent-element-topLeading"]
+    let trailing = app.descendants(matching:.any)["resize-agent-element-bottomTrailing"]
+    XCTAssertTrue(leading.waitForExistence(timeout:2))
+    XCTAssertEqual(leading.frame.midX,text.frame.minX,accuracy:2)
+    XCTAssertEqual(trailing.frame.midX,text.frame.maxX,accuracy:2)
+    XCTAssertLessThan(text.frame.width,150,"Short text does not retain the 320pt editor box")
+    XCTAssertTrue(app.buttons["element-send-to-back"].exists)
+    XCTAssertTrue(app.buttons["element-bring-to-front"].exists)
+    XCTAssertFalse(app.buttons["element-actions-menu"].exists,"No empty or duplicate action menu for text")
     text.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.05,thenDragTo:text.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).withOffset(.init(dx:-60,dy:80)))
     XCTAssertGreaterThan(text.frame.midY,before.midY+40)
+    XCTAssertEqual(leading.frame.midX,text.frame.minX,accuracy:2)
+    XCTAssertEqual(leading.frame.midY,text.frame.minY,accuracy:2)
+    XCTAssertEqual(trailing.frame.midX,text.frame.maxX,accuracy:2)
     XCTAssertEqual(paper.frame,originalPaper); XCTAssertEqual(paper.value as? String,ink)
     XCTAssertFalse(editor.exists,"Dragging text moves it instead of creating another editor or curling paper")
-    XCTAssertTrue(app.buttons["edit-agent-element"].waitForExistence(timeout:3))
+    XCTAssertFalse(app.buttons["edit-agent-element"].exists)
     XCTAssertEqual(app.otherElements.matching(identifier:"notebook-context-menu").count,1)
     XCTAssertTrue(format.exists,"Object and character selection use the same formatting action")
     let objectMenu = XCTAttachment(screenshot:app.screenshot()); objectMenu.name = "shared-object-context"; objectMenu.lifetime = .keepAlways; add(objectMenu)
@@ -101,10 +115,13 @@ final class DrawingResponsivenessTests: XCTestCase {
     let format = app.buttons["native-text-format"]
     XCTAssertTrue(format.waitForExistence(timeout:2))
     format.tap(); app.buttons["Курсив"].tap()
-    app.buttons["native-text-copy"].tap(); app.buttons["native-text-paste"].tap()
-    XCTAssertTrue(waitUntil { texts.count == 2 })
+    clipboardAction("Копировать",in:app); clipboardAction("Вставить",in:app)
+    let pasted = waitUntil { texts.count == 2 }
+    let copyProof = XCTAttachment(screenshot:app.screenshot()); copyProof.name = "object-clipboard-paste-result"; copyProof.lifetime = .keepAlways; add(copyProof)
+    if !pasted { let hierarchy = XCTAttachment(string:app.debugDescription); hierarchy.lifetime = .keepAlways; add(hierarchy) }
+    XCTAssertTrue(pasted)
     XCTAssertEqual(app.otherElements.matching(identifier:"notebook-context-menu").count,1)
-    app.buttons["native-text-cut"].tap()
+    clipboardAction("Вырезать",in:app)
     XCTAssertTrue(waitUntil { texts.count == 1 })
     texts.firstMatch.tap(); format.tap()
     XCTAssertTrue(app.buttons["Курсив"].isSelected,"Object clipboard keeps formatting")
@@ -114,8 +131,12 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(waitUntil { texts.count == 0 })
   }
 
-  func testInlineSelectionClipboardActionsAreDirect() {
+  func testInlineSelectionClipboardUsesOneTextMenu() {
     continueAfterFailure = false
+    addUIInterruptionMonitor(withDescription:"Explicit fixture paste") { alert in
+      let allow = alert.buttons["Разрешить вставку"]
+      guard allow.exists else { return false }; allow.tap(); return true
+    }
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture"]
     launchPortraitFixture(app)
@@ -124,20 +145,26 @@ final class DrawingResponsivenessTests: XCTestCase {
     let editor = app.textViews["native-text-editor"]
     XCTAssertTrue(editor.waitForExistence(timeout:3)); editor.typeText("First Second")
     editor.coordinate(withNormalizedOffset:.init(dx:0.30,dy:0.5)).doubleTap()
-    let copy = app.buttons["native-text-copy"]
-    XCTAssertTrue(copy.waitForExistence(timeout:3)); copy.tap()
+    XCTAssertTrue(app.buttons["native-text-clipboard"].waitForExistence(timeout:3))
+    clipboardAction("Копировать",in:app)
     XCTAssertEqual(editor.value as? String,"First Second")
-    app.buttons["native-text-cut"].tap()
+    clipboardAction("Вырезать",in:app)
     XCTAssertEqual(editor.value as? String,"First ")
     editor.coordinate(withNormalizedOffset:.init(dx:0.05,dy:0.5)).doubleTap()
-    let paste = app.buttons["native-text-paste"]
-    XCTAssertTrue(paste.waitForExistence(timeout:3)); paste.tap()
+    XCTAssertTrue(app.buttons["native-text-clipboard"].waitForExistence(timeout:3))
+    clipboardAction("Вставить",in:app)
     // Observe the completed text update, not just the synthesized touch event.
     let pasted = XCTNSPredicateExpectation(predicate:NSPredicate(format:"value == %@","Second "),object:editor)
     XCTAssertEqual(XCTWaiter.wait(for:[pasted],timeout:3),.completed)
     XCTAssertEqual(editor.value as? String,"Second ")
     app.coordinate(withNormalizedOffset:.init(dx:0.35,dy:0.60)).tap()
     XCTAssertTrue(editor.waitForNonExistence(timeout:3))
+  }
+
+  private func clipboardAction(_ title: String, in app: XCUIApplication) {
+    app.buttons["native-text-clipboard"].tap()
+    let action = app.buttons[title]
+    XCTAssertTrue(action.waitForExistence(timeout:3)); action.tap()
   }
 
   func testArrowSettingsUseTwoEndsAndIconLinePatterns() {

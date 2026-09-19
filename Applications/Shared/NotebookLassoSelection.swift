@@ -129,14 +129,31 @@ enum NotebookLassoInkSource: Sendable {
     }
     context.addPath(clip); context.clip()
     context.translateBy(x:frame.x,y:frame.y)
-    for layer in ink.layers {
-      if Task.isCancelled { return false }
-      context.setFillColor(gray:layer.tool == .eraser ? 0 : 1,alpha:1)
-      context.addPath(NotebookFreehand.path(layer.renderVertices,size:.init(width:frame.width,height:frame.height)))
-      context.fillPath()
+    // This is a coverage mask, not a painted image. A whole overlapping eraser
+    // mesh in one CGPath makes CoreGraphics intersect every edge with every
+    // other edge. Rasterize bounded triangle batches instead; chronological
+    // paint/erase order and the exact measured tessellation stay unchanged.
+    func paint(_ layers: ArraySlice<NotebookFreehand.Layer>) {
+      for layer in layers {
+        context.setFillColor(gray:layer.tool == .eraser ? 0 : 1,alpha:1)
+        let vertices = layer.renderVertices
+        for start in stride(from:0,to:vertices.count,by:96) {
+          if Task.isCancelled { return }
+          let batch = Array(vertices[start..<min(start+96,vertices.count)])
+          context.addPath(NotebookFreehand.path(batch,size:.init(width:frame.width,height:frame.height)))
+          context.fillPath()
+        }
+      }
     }
     guard let data = context.data?.assumingMemoryBound(to:UInt8.self) else { return false }
-    return UnsafeBufferPointer(start:data,count:width*height).contains { $0 != 0 }
+    func hasPaint() -> Bool { UnsafeBufferPointer(start:data,count:width*height).contains { $0 != 0 } }
+    // Paint after the final cut cannot be erased by any older contact. Prove
+    // visibility there first instead of replaying the whole page's eraser history.
+    let tail = ink.layers.lastIndex(where:{ $0.tool == .eraser }).map { $0+1 } ?? 0
+    paint(ink.layers[tail...])
+    if hasPaint() { return !Task.isCancelled }
+    paint(ink.layers[..<tail])
+    return !Task.isCancelled && hasPaint()
   }
 
 }

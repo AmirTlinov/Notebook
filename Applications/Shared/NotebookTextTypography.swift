@@ -17,6 +17,22 @@ enum NotebookTextTypography {
     ("Menlo-Regular","Моноширинный"),("ChalkboardSE-Regular","Рукописный"),("Noteworthy-Light","Заметки")]
   private static let formatKey = NSAttributedString.Key("notebook.nativeTextFormat")
 
+  /// The authored frame is a text layout constraint, not a minimum selection
+  /// size. Rendering, grips and contact admission use the same fitted extent.
+  static func fittingFrame(_ text: String, style: NativeTextStyle, in frame: PageRect) -> PageRect {
+    guard !text.isEmpty else { return frame }
+    let rect = attributed(text,style:style).boundingRect(with:.init(width:frame.width,height:CGFloat.greatestFiniteMagnitude),
+      options:[.usesLineFragmentOrigin,.usesFontLeading],context:nil)
+    return .init(x:frame.x,y:frame.y,width:min(frame.width,max(1,ceil(rect.width))),height:max(1,ceil(rect.height)))
+  }
+  static func frame(_ element: AgentElement) -> PageRect {
+    element.kind == .nativeText ? fittingFrame(element.source,style:element.textStyle ?? .standard,in:element.frame) : element.frame
+  }
+  static func frame(_ element: SpatialElement) -> PageRect {
+    let frame = PageRect(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+    return element.kind == .nativeText ? fittingFrame(element.source,style:element.textStyle,in:frame) : frame
+  }
+
   static func attributed(_ text: String, style: NativeTextStyle, editing: Bool = false) -> NSAttributedString {
     let result = NSMutableAttributedString(string:text,attributes:attributes(style:style,format:style.format ?? .init(),editing:editing))
     for run in style.runs ?? [] where run.location >= 0 && run.length > 0 && run.location <= result.length-run.length {

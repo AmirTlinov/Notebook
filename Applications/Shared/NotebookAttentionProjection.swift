@@ -194,7 +194,8 @@ enum NotebookAttentionProjection {
         if let id = elementID {
           guard let element = model.presentedElement(.spatial(boardID: presence.boardID, elementID: id), cohort: cohort),
             element.surface == .cover(itemID) else { return nil }
-          local = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+          local = model.elementPresentationFrame(.spatial(boardID:presence.boardID,elementID:id),
+            fallback:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height))
           if element.graphic != nil {
             guard let layout = graphicLayout ?? model.graphicLayout(.spatial(boardID:presence.boardID,elementID:id)) else { return nil }
             local = layout.frame
@@ -570,8 +571,8 @@ enum NotebookAttentionProjection {
         if !dragged, let page = sources.pages[pageID], let graph,
           let element = pickElement(in: page.elements, graph: graph, erasures:sources.erasures(.page(pageID)),
             appearance: { sources.appearance(.page(pageID), $0, $1, $2, $3, $4) }, scale: presence.camera.scale, viewport: presence.viewport,
-            project: { ($0.id, $0.frame, $0.graphic, .init(x:region.x,y:region.y)) }) {
-          elementID = element.id; region = graph.resolve(element.id).layout?.frame ?? element.frame
+            project: { ($0.id, NotebookTextTypography.frame($0), $0.graphic, .init(x:region.x,y:region.y)) }) {
+          elementID = element.id; region = graph.resolve(element.id).layout?.frame ?? NotebookTextTypography.frame(element)
         }
       } else if presence.focusedItemID == item.id && presence.mode == .document,
         let document = sources.documents[item.id] {
@@ -589,11 +590,11 @@ enum NotebookAttentionProjection {
           if let element = pickElement(in: board.elements.filter { $0.surface == .cover(item.id) }, graph: graph, erasures:sources.erasures(.cover(item.id)),
             appearance: { sources.appearance(.cover(item.id), $0, $1, $2, $3, $4) },
             scale: presence.camera.scale, viewport: presence.viewport, project: {
-              ($0.id, .init(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height), $0.graphic,
+              ($0.id, NotebookTextTypography.frame($0), $0.graphic,
                 .init(x:region.x,y:region.y))
             }) {
             elementID = element.id
-            region = graph.resolve(element.id).layout?.frame ?? .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height)
+            region = graph.resolve(element.id).layout?.frame ?? NotebookTextTypography.frame(element)
           }
           if elementID == nil { region = .init(x:0,y:0,width:item.geometry.width,height:item.geometry.height) }
         }
@@ -606,11 +607,11 @@ enum NotebookAttentionProjection {
         if let element = pickElement(in: admitted.elements.filter { $0.surface == .board(presence.boardID) }, graph: graph, erasures:sources.erasures(.board(presence.boardID)),
             appearance: { sources.appearance(.board(presence.boardID), $0, $1, $2, $3, $4) },
           scale: presence.camera.scale, viewport: presence.viewport, project: {
-            ($0.id, .init(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height), $0.graphic,
+            ($0.id, NotebookTextTypography.frame($0), $0.graphic,
               ($0.worldOrigin ?? .zero).delta(to: pointOrigin))
           }) {
           elementID = element.id
-          region = graph.resolve(element.id).layout?.frame ?? .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height)
+          region = graph.resolve(element.id).layout?.frame ?? NotebookTextTypography.frame(element)
           origin = element.worldOrigin ?? .zero
         }
       }

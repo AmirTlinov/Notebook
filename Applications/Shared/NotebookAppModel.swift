@@ -591,7 +591,7 @@ final class NotebookAppModel {
     }
     if let spatial = value.spatial, spatial.kind == .nativeText {
       return .init(reference:reference,address:.init(surface:spatial.surface,boardID:value.target.boardID ?? value.target.id,
-        worldOrigin:spatial.worldOrigin,bounds:nil),frame:.init(x:spatial.frame.x,y:spatial.frame.y,width:spatial.frame.width,height:spatial.frame.height),
+        worldOrigin:spatial.worldOrigin,bounds:spatial.surface.kind == .cover ? .init(x:0,y:0,width:itemGeometry(spatial.surface.ownerID).width,height:itemGeometry(spatial.surface.ownerID).height) : nil),frame:.init(x:spatial.frame.x,y:spatial.frame.y,width:spatial.frame.width,height:spatial.frame.height),
         source:spatial.source,style:spatial.textStyle,spatial:spatial)
     }
     return nil
@@ -602,8 +602,12 @@ final class NotebookAppModel {
       var target = nativeTextTarget(reference) else { return }
     var format = target.style.format ?? .init(); change(&format); target.style.format = format
     target.style.runs = target.style.runs?.map { run in var run = run; change(&run.format); return run }
-    guard let value = try? JSONValue.encode(target.style),
-      performElementOperations([.init(reference:reference,kind:.updateElement,values:["textStyle":value])],summary:"Оформить текст") else { return }
+    let width = min(target.address.bounds.map { $0.maxX-target.frame.x } ?? .greatestFiniteMagnitude,
+      max(target.frame.width,320 / max(0.001,presence?.camera.scale ?? 1)))
+    target.frame = NotebookTextTypography.fittingFrame(target.source,style:target.style,
+      in:.init(x:target.frame.x,y:target.frame.y,width:max(1,width),height:target.frame.height))
+    guard let value = try? JSONValue.encode(target.style), let frame = try? JSONValue.encode(target.frame),
+      performElementOperations([.init(reference:reference,kind:.updateElement,values:["textStyle":value,"frame":frame])],summary:"Оформить текст") else { return }
     selectionSession.nativeText = target
   }
 
@@ -625,6 +629,12 @@ final class NotebookAppModel {
   }
   func prepareNativeTextEditing(_ target: NotebookNativeTextTarget) {
     guard selectionSession.element == target.reference else { return }
+    var target = target
+    // Editing has room for the next character; the saved object is fitted to
+    // its content. Reopening a short word must not wrap every new character.
+    let width = min(target.address.bounds.map { $0.maxX-target.frame.x } ?? .greatestFiniteMagnitude,
+      max(target.frame.width,320 / max(0.001,presence?.camera.scale ?? 1)))
+    target.frame = .init(x:target.frame.x,y:target.frame.y,width:max(1,width),height:target.frame.height)
     selectionSession.nativeText = target
   }
   func measureNativeText(_ reference: EditableElementReference, height: Double) {
@@ -2485,8 +2495,11 @@ final class NotebookAppModel {
     let source = live?.page != nil || live?.spatial != nil ? live : retained ?? live
     let draftTarget = draftTarget ?? (selectionSession.nativeText?.reference == reference ? selectionSession.nativeText : nil)
     let currentFrame = editingFrame ?? draftTarget?.frame ?? source?.page?.frame ?? source?.spatial.map { PageRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height) }
-    if let height, let frame = currentFrame, height.isFinite, height > 0 {
-      values["frame"] = try? .encode(PageRect(x:frame.x,y:frame.y,width:frame.width,height:height))
+    if let frame = currentFrame {
+      var fitted = NotebookTextTypography.fittingFrame(text,style:style ?? draftTarget?.style ?? source?.page?.textStyle ?? source?.spatial?.textStyle ?? .standard,in:frame)
+      let maximumHeight = draftTarget?.address.bounds.map { $0.maxY-frame.y } ?? .greatestFiniteMagnitude
+      fitted = .init(x:fitted.x,y:fitted.y,width:fitted.width,height:max(1,min(maximumHeight,height.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? fitted.height)))
+      values["frame"] = try? .encode(fitted)
     }
     let removes = finish && text.isEmpty
     let inserting = source?.page == nil && source?.spatial == nil && elementCommandSources[reference] == nil
@@ -2504,7 +2517,9 @@ final class NotebookAppModel {
     if var target = selectionSession.nativeText, target.reference == reference {
       target.source = text
       if let style { target.style = style }
-      if let frame = try? values["frame"]?.decode(PageRect.self) { target.frame = frame }
+      if let frame = try? values["frame"]?.decode(PageRect.self) {
+        target.frame = .init(x:frame.x,y:frame.y,width:finish ? frame.width : target.frame.width,height:frame.height)
+      }
       selectionSession.nativeText = target
     }
     if !finish { editingNativeTextReferences.insert(reference) }
@@ -3225,13 +3240,22 @@ final class NotebookAppModel {
 
   func elementPresentationFrame(_ reference: EditableElementReference, fallback: PageRect, preview: Bool = true) -> PageRect {
     guard preview else { return fallback }
+    let frame: PageRect
     if let contact = selectionSession.manipulation, contact.reference == reference {
-      return .init(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height)
+      frame = .init(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height)
+    } else {
+      frame = elementCommandDrafts[reference]?.frame ?? fallback
     }
-    return elementCommandDrafts[reference]?.frame ?? fallback
+    guard let text = nativeTextTarget(reference) else { return frame }
+    return NotebookTextTypography.fittingFrame(text.source,style:text.style,in:frame)
   }
 
   private func elementGeometry(_ reference: EditableElementReference) -> (frame: CGRect, bounds: CGRect?, identity: VersionStamp?, worldOrigin: WorldPoint?)? {
+    func fitted(_ frame: PageRect) -> CGRect {
+      let text = nativeTextTarget(reference)
+      let value = text.map { NotebookTextTypography.fittingFrame($0.source,style:$0.style,in:frame) } ?? frame
+      return .init(x:value.x,y:value.y,width:value.width,height:value.height)
+    }
     if let working = acceptedWorkingGraphic(reference) {
       let bounds: CGRect?
       if working.surface.kind == .page, let page = working.surface.ownerID.flatMap({ pages[$0] }) {
@@ -3246,14 +3270,14 @@ final class NotebookAppModel {
     case .page(let pageID, let id):
       guard !isPageBeingDeleted(pageID), let page = pages[pageID],
         let element = page.elements.first(where: { $0.id == id }) else { return nil }
-      return (elementCommandDrafts[reference]?.rect ?? .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height),
+      return (fitted(elementCommandDrafts[reference]?.frame ?? element.frame),
         .init(x: 0, y: 0, width: page.size.width, height: page.size.height), page.elementIdentityStamp(id), nil)
     case .spatial(let boardID, let id):
       guard let element = boardHierarchy?.board(boardID)?.elements.first(where: { $0.id == id }),
         surfaceAcceptsChanges(element.surface) else { return nil }
       let size = itemGeometry(element.surface.ownerID)
       let bounds: CGRect? = element.surface.kind == .cover ? .init(x: 0, y: 0, width: size.width, height: size.height) : nil
-      return (elementCommandDrafts[reference]?.rect ?? .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height), bounds,
+      return (fitted(elementCommandDrafts[reference]?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)), bounds,
         boardHierarchy?.board(boardID)?.elementIdentityStamp(id), element.worldOrigin)
     }
   }

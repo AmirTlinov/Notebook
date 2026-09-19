@@ -54,6 +54,11 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
     button.widthAnchor.constraint(equalToConstant:NotebookChrome.controlSize).isActive = true
     button.heightAnchor.constraint(equalToConstant:NotebookChrome.controlSize).isActive = true
   }
+  static func clipboardActions(cut: (() -> Void)?, copy: (() -> Void)?, paste: (() -> Void)?) -> [UIMenuElement] {
+    [("Вырезать",cut),("Копировать",copy),("Вставить",paste)].map { title, action in
+      UIAction(title:title,attributes:action == nil ? .disabled : []) { _ in action?() }
+    }
+  }
   func show(source: UUID, anchor: CGRect, in anchorView: UIView, buttons: [UIButton],
     avoiding exclusions: [CGRect] = [], enabled: Bool = true) {
     guard anchorView.window != nil, view.window == nil || anchorView.window === view.window else { return }

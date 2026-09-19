@@ -4,7 +4,7 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookElementManipulationTests: XCTestCase {
-  func testEveryCornerKeepsTheOppositeCornerAtLimitsAndAtDifferentScales() {
+  func testEveryCornerKeepsTheOppositeCornerAtLimits() {
     let original = CGRect(x: 100, y: 80, width: 200, height: 160)
     let reference = EditableElementReference.page(pageID: UUID(), elementID: "chart")
     let page = CGRect(x: 0, y: 0, width: 600, height: 800)
@@ -17,15 +17,7 @@ import XCTest
         XCTAssertEqual(corner.top ? result.maxY : result.minY, corner.top ? original.maxY : original.minY)
         XCTAssertGreaterThanOrEqual(result.width, 1); XCTAssertGreaterThanOrEqual(result.height, 1)
         XCTAssertTrue(page.contains(result))
-        for scale in [0.15, 1, 3] {
-          let screen = original.applying(.init(scaleX: scale, y: scale))
-          let projected = contact.projected(over: screen, scale: scale)
-          let expected = result.applying(.init(scaleX: scale, y: scale))
-          XCTAssertEqual(projected.minX, expected.minX, accuracy: 0.000001)
-          XCTAssertEqual(projected.minY, expected.minY, accuracy: 0.000001)
-          XCTAssertEqual(projected.width, expected.width, accuracy: 0.000001)
-          XCTAssertEqual(projected.height, expected.height, accuracy: 0.000001)
-        }
+
       }
     }
   }

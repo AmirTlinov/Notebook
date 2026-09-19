@@ -165,7 +165,7 @@ struct SpatialWorkspaceView: View {
         if let reference = model.selectionSession.editingElement,
           let rect = NotebookAttentionProjection.editingFrame(reference, model: model, presence: presence) {
           NotebookElementControls(contextMenus:contextMenus,reference: reference, selectionID: model.selectionSession.id,
-            frame: model.graphicElement(reference) != nil ? rect : model.selectionSession.manipulation?.projected(over: rect, scale: presence.camera.scale) ?? rect,
+            frame: rect,
             scale: presence.camera.scale)
             .frame(width: viewport.x, height: viewport.y)
         }

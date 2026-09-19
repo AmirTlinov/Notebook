@@ -9,8 +9,7 @@ struct MacElementControls: View {
   @State private var contact: UUID?
 
   var body: some View {
-    let rect = model.graphicElement(reference) != nil ? frame
-      : model.selectionSession.manipulation?.projected(over: frame, scale: scale) ?? frame
+    let rect = frame
     ZStack(alignment: .topLeading) {
       Rectangle().stroke(.tint, lineWidth: 1).frame(width: rect.width, height: rect.height)
         .position(x: rect.midX, y: rect.midY).allowsHitTesting(false)

@@ -142,10 +142,7 @@ private struct NotebookInlineTextInput: UIViewRepresentable {
       super.didMoveToWindow()
       if window != nil, !requestedFocus { requestedFocus = true; becomeFirstResponder() }
     }
-    override func paste(_ sender: Any?) {
-      guard let value = UIPasteboard.general.string, let range = selectedTextRange else { return }
-      replace(range,withText:value)
-    }
+
   }
   final class Coordinator: NSObject, UITextViewDelegate {
     var owner: NotebookInlineTextInput
@@ -223,17 +220,15 @@ private struct NotebookInlineTextInput: UIViewRepresentable {
       let format = NotebookContextMenuButton(type:.system)
       NotebookContextMenus.configure(format,symbol:"textformat",title:"Формат текста",id:"native-text-format")
       formatButton = format
-      func button(_ symbol: String, _ title: String, _ id: String, action: @escaping () -> Void) -> UIButton {
-        let button = UIButton(type:.system)
-        NotebookContextMenus.configure(button,symbol:symbol,title:title,id:id)
-        button.addAction(UIAction { _ in action() },for:.touchUpInside)
-        return button
-      }
-      return [format,
-        button("scissors","Вырезать","native-text-cut") { [weak self] in self?.input?.cut(nil) },
-        button("doc.on.doc","Копировать","native-text-copy") { [weak self] in self?.input?.copy(nil) },
-        button("doc.on.clipboard","Вставить","native-text-paste") { [weak self] in self?.input?.paste(nil) }]
+      let clipboard = NotebookContextMenuButton(type:.system)
+      NotebookContextMenus.configure(clipboard,symbol:"doc.on.clipboard",title:"Буфер обмена",id:"native-text-clipboard")
+      clipboard.contents = NotebookContextMenus.clipboardActions(
+        cut:{ [weak self] in self?.input?.cut(nil) },
+        copy:{ [weak self] in self?.input?.copy(nil) },
+        paste:{ [weak self] in self?.input?.paste(nil) })
+      return [format,clipboard]
     }
+
     private func editLink() {
       guard let view = input else { return }
       formattingDialog = true
