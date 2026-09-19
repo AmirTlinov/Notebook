@@ -17,15 +17,7 @@ extension NotebookScriptCoordinator {
         var running = accepted.fields; running["status"] = .string("running")
         let started = JSONValue.object(running)
         _ = try await persistence { try $0.saveScriptExportJob(id, value: started); return .null }
-        let result = try await markup.normalize(.object(["kind": .string("documentTeX"), "document": try .encode(document)]))
-        guard let source = result.string("source") else { throw CollaborationError("normalization_failed", "Нет печатного исходника.") }
-        let assets = try (result["assets"] ?? .array([])).decode([NotebookCompilerAsset].self)
-        let ranges = try (result["sourceRanges"] ?? .null).decode([DocumentPrintSourceRange].self)
-        let compiled = try await markup.compile(id: id, source: source, assets: assets)
-        let sourceMap = try DocumentPrintSourceMap(document: document, source: source, pdf: compiled.pdf, ranges: ranges)
-        let publication = NotebookExportPublication(documentID: document.id, expectedRevision: document.contentStamp.revision,
-          source: source, pdf: compiled.pdf, log: compiled.log, jobID: id,
-          assets: compiled.assets.map { .init(name: $0.name, data: $0.data) }, sourceMap: sourceMap, syncTeX: compiled.syncTeX)
+        let publication = try await canonicalExport(document, id)
         let receipt = try await send(["command": .string("publishExport"), "export": try .encode(publication)])
         let saved = JSONValue.object(["status": .string("saved"), "jobID": .string(id.uuidString.lowercased()),
           "contentRevision": .string(document.contentStamp.revision), "receipt": receipt])

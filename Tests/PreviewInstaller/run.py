@@ -21,6 +21,8 @@ MODULE = types.ModuleType("notebook_preview_installer")
 CODE = SCRIPT.read_text().split("<<'PY'\n", 1)[1].rsplit("\nPY\n", 1)[0]
 exec(compile(CODE, str(SCRIPT), "exec"), MODULE.__dict__)
 import notebook_release as release
+sys.path.insert(0, str(ROOT / "Tests/NotebookRelease"))
+import typesetter_fixture
 
 
 def device_result():
@@ -87,7 +89,9 @@ class FakeCLI:
         def emit(command, result):
             target = Path(after("--json-output"))
             target.write_text(json.dumps({"info": {"outcome": "success", "commandType": command}, "result": result}))
-        if argv[0] == "/usr/bin/xcrun" and argv[1:5] == ["devicectl", "device", "info", "details"]:
+        if "prepare_notebook_typesetter.py" in str(argv):
+            assert "--prepare" in argv and "--platform" in argv
+        elif argv[0] == "/usr/bin/xcrun" and argv[1:5] == ["devicectl", "device", "info", "details"]:
             emit("devicectl.device.info.details", self.device)
         elif argv[0] == "/usr/bin/xcrun" and argv[1:5] == ["devicectl", "device", "info", "apps"]:
             bundle = after("--bundle-id")
@@ -116,6 +120,7 @@ class FakeCLI:
                 self.app = Path(after("-derivedDataPath")) / ("Build/Products/" + after("-configuration") + "-iphoneos/Notebook.app")
                 self.app.mkdir(parents=True)
                 (self.app / "Info.plist").write_bytes(plistlib.dumps(self.info))
+                typesetter_fixture.stage(self.app / "NotebookTypesetter")
                 (self.app / "Notebook").write_bytes(b"fixture arm64 iOS binary")
                 (self.app / "Notebook").chmod(0o755)
                 (self.app / "embedded.mobileprovision").write_bytes(b"fixture signed profile")
@@ -159,6 +164,9 @@ class FakeCLI:
 
 class PreviewInstallerTests(unittest.TestCase):
     def setUp(self):
+        for name, value in {"LOCK": typesetter_fixture.LOCK, "input_digest": lambda: typesetter_fixture.IDENTITY}.items():
+            resource_patch = patch.object(release.notebook_typesetter, name, value)
+            resource_patch.start(); self.addCleanup(resource_patch.stop)
         self.temp = tempfile.TemporaryDirectory(prefix="notebook-preview-guards-")
         self.root = Path(self.temp.name).resolve()
         self.source = self.root / "source"

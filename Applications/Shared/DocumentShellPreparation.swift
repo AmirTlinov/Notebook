@@ -52,7 +52,7 @@ final class DocumentShellPreparation {
     }
     deferredAdmission = nil
     let renderer = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .targetMissing }, onStateChange: { _, _ in nil })
+      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
     let next = Entry(coordinator: renderer, host: DocumentWebHost(), leaseID: lease.id)
     entry = next
     renderer.onCommonRuntimeReady = { [weak self, weak renderer] in

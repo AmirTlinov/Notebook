@@ -20,11 +20,18 @@ if [ "${CODE_SIGNING_ALLOWED:-YES}" = YES ]; then
   /usr/bin/ditto --noqtn --norsrc "$compiler" "$temporary/notebook-typescript"
   /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --timestamp=none \
     --identifier com.amirtlinov.notebook.typescript-compiler \
-    --entitlements "$SRCROOT/../Sources/NotebookMarkupService/tex-child.entitlements.plist" \
+    --entitlements "$SRCROOT/../Sources/NotebookMarkupService/typescript-child.entitlements.plist" \
     "$temporary/notebook-typescript"
   compiler="$temporary/notebook-typescript"
 fi
 /bin/mkdir -p "$destination/Helpers"
-/usr/bin/ditto --noqtn --norsrc "$NOTEBOOK_TYPESCRIPT_RUNTIME/Resources/NotebookTypeScript" "$destination/Resources/NotebookTypeScript"
-/usr/bin/ditto --noqtn --norsrc "$compiler" "$destination/Helpers/notebook-typescript"
+/usr/bin/env python3 -B - "$NOTEBOOK_TYPESCRIPT_RUNTIME/Resources/NotebookTypeScript" "$destination/Resources/NotebookTypeScript" <<'PYTHON'
+import pathlib,shutil,sys
+source,destination=map(pathlib.Path,sys.argv[1:])
+destination.mkdir(parents=True,exist_ok=True)
+for path in source.iterdir():
+    if not path.is_file() or path.is_symlink(): raise RuntimeError("Unexpected TypeScript resource")
+    shutil.copyfile(path,destination/path.name)
+PYTHON
+/bin/cp "$compiler" "$destination/Helpers/notebook-typescript"
 /bin/ln -sfn ../Resources/NotebookTypeScript/lib.d.ts "$destination/Helpers/lib.d.ts"

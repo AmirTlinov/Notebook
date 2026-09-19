@@ -121,14 +121,12 @@ npm ci --ignore-scripts --prefix "$ROOT/Tests/NotebookRecognitionHarness"
 npm test --prefix "$ROOT/Tests/NotebookRecognitionHarness" 2>&1 | tee "$EVIDENCE/recognition-preparation.log"
 
 cd "$ROOT/Applications"
-NOTEBOOK_TEX_RUNTIME=${NOTEBOOK_TEX_RUNTIME:-"$ROOT/.build/notebook-tex-runtime"}
-export NOTEBOOK_TEX_RUNTIME
-python3 -B "$ROOT/Applications/prepare_notebook_tex.py" --prepare --stage "$NOTEBOOK_TEX_RUNTIME" \
-  2>&1 | tee "$EVIDENCE/tex-resources.log"
-python3 -B "$ROOT/Applications/prepare_notebook_images.py" --prepare \
-  --stage-root "$ROOT/.build/notebook-image-runtime" > "$EVIDENCE/image-resources.json" 2> "$EVIDENCE/image-resources.log"
-NOTEBOOK_IMAGE_RUNTIME=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["stage"])' "$EVIDENCE/image-resources.json")
-export NOTEBOOK_IMAGE_RUNTIME
+NOTEBOOK_TYPESETTER_RUNTIME=${NOTEBOOK_TYPESETTER_RUNTIME:-"$ROOT/.build/notebook-typesetter-runtime"}
+export NOTEBOOK_TYPESETTER_RUNTIME
+for platform in macosx iphoneos; do
+  python3 -B "$ROOT/Applications/prepare_notebook_typesetter.py" --prepare --platform "$platform" --stage "$NOTEBOOK_TYPESETTER_RUNTIME" \
+    2>&1 | tee "$EVIDENCE/typesetter-resources-$platform.log"
+done
 xcodegen generate --spec project.yml
 xcodebuild \
   -quiet \
@@ -138,7 +136,7 @@ xcodebuild \
   -destination 'generic/platform=macOS' \
   -derivedDataPath "$DERIVED/mac" \
   CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= \
-  "NOTEBOOK_TEX_RUNTIME=$NOTEBOOK_TEX_RUNTIME" "NOTEBOOK_IMAGE_RUNTIME=$NOTEBOOK_IMAGE_RUNTIME" "NOTEBOOK_TYPESCRIPT_RUNTIME=$NOTEBOOK_TYPESCRIPT_RUNTIME" \
+  "NOTEBOOK_TYPESETTER_RUNTIME=$NOTEBOOK_TYPESETTER_RUNTIME" "NOTEBOOK_TYPESCRIPT_RUNTIME=$NOTEBOOK_TYPESCRIPT_RUNTIME" \
   build
 # Native Codex wire and delivery checks run in swift test; no second model executor.
 MAC_SMOKE_APP="$DERIVED/mac/Build/Products/Debug/Notebook.app"
@@ -188,7 +186,7 @@ xcodebuild \
   -quiet -project Notebook.xcodeproj -scheme NotebookMac -configuration Debug \
   -destination 'platform=macOS' -derivedDataPath "$DERIVED/mac-tests" \
   "${MAC_NATIVE_SIGNING[@]}" \
-  "NOTEBOOK_TEX_RUNTIME=$NOTEBOOK_TEX_RUNTIME" "NOTEBOOK_IMAGE_RUNTIME=$NOTEBOOK_IMAGE_RUNTIME" "NOTEBOOK_TYPESCRIPT_RUNTIME=$NOTEBOOK_TYPESCRIPT_RUNTIME" \
+  "NOTEBOOK_TYPESETTER_RUNTIME=$NOTEBOOK_TYPESETTER_RUNTIME" "NOTEBOOK_TYPESCRIPT_RUNTIME=$NOTEBOOK_TYPESCRIPT_RUNTIME" \
   build-for-testing -only-testing:NotebookMacTests 2>&1 | tee "$EVIDENCE/mac-build.log"
 python3 -B - "$ROOT" "$DERIVED/mac-tests/Build/Products/Debug/Notebook.app" "$EVIDENCE" <<'PY'
 import pathlib, sys
@@ -213,7 +211,7 @@ xcodebuild \
   -derivedDataPath "$DERIVED/mac-tests" \
   -resultBundlePath "$EVIDENCE/mac.xcresult" \
   "${MAC_NATIVE_SIGNING[@]}" \
-  "NOTEBOOK_TEX_RUNTIME=$NOTEBOOK_TEX_RUNTIME" "NOTEBOOK_IMAGE_RUNTIME=$NOTEBOOK_IMAGE_RUNTIME" "NOTEBOOK_TYPESCRIPT_RUNTIME=$NOTEBOOK_TYPESCRIPT_RUNTIME" \
+  "NOTEBOOK_TYPESETTER_RUNTIME=$NOTEBOOK_TYPESETTER_RUNTIME" "NOTEBOOK_TYPESCRIPT_RUNTIME=$NOTEBOOK_TYPESCRIPT_RUNTIME" \
   test-without-building \
   -only-testing:NotebookMacTests 2>&1 | tee "$EVIDENCE/mac.log"
 xcodebuild \

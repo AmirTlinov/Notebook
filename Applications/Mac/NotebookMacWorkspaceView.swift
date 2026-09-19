@@ -47,12 +47,13 @@ struct NotebookMacWorkspaceView: View {
   let showPaste: () -> Void
   @State private var showsSearch = false
   @State private var documentLayout: DocumentPageLayout?
+  @State private var documentMode = DocumentViewMode.paper
 
   var body: some View {
     Group {
       switch model.loadState {
       case .ready:
-        NotebookMacCanvas(documentLayout: $documentLayout)
+        DocumentSourceWorkspace(mode: $documentMode) { NotebookMacCanvas(documentLayout: $documentLayout) }
       case .loading:
         VStack(spacing: 12) {
           ProgressView(model.awaitingAccountContent ? "Открываем ваши материалы…" : "Открываем пространство…")
@@ -75,6 +76,9 @@ struct NotebookMacWorkspaceView: View {
       }
     }
     .toolbar {
+      ToolbarItem(placement: .principal) {
+        if model.activeDocument != nil { DocumentViewModePicker(mode: $documentMode).frame(width: 224) }
+      }
       ToolbarItemGroup(placement: .navigation) {
         Button(action: model.macGoBack) { Label("Назад", systemImage: "chevron.left") }
           .disabled(!model.macCanGoBack).keyboardShortcut("[", modifiers: .command)

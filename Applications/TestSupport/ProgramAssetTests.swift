@@ -155,12 +155,12 @@ final class ProgramAssetTests: XCTestCase {
 
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "compiled", html: "", programPackage: f.hash, height: 600)])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
-    let owner = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+    let owner = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
     owner.programStore = f.store
     let host = DocumentWebHost(), closeHost = try mount(host)
     defer { owner.invalidate(); closeHost() }
     owner.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
     owner.mount(in: host, physicalSize: .init(width: 595, height: 842), isInteractive: true, priority: .currentPage)
     try await wait { owner.hasCanonicalPixels || owner.acquisitionError != nil }; XCTAssertTrue(owner.hasCanonicalPixels); XCTAssertNil(owner.acquisitionError)
     var checkpoint: JSONValue?
@@ -423,12 +423,12 @@ final class ProgramAssetTests: XCTestCase {
     let f = try fixture(); defer { f.close() }
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "asset", html: "", programPackage: f.hash, height: 180)])
     let state = DocumentStateJournal(id: document.id, actor: UUID()), resources = SceneRenderResources()
-    let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+    let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
     coordinator.programStore = f.store
     let host = DocumentWebHost(), close = try mount(host)
     defer { coordinator.invalidate(); close() }
     coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
     coordinator.mount(in: host, physicalSize: .init(width: 595, height: 842), isInteractive: true, priority: .currentPage)
     try await wait { coordinator.hasCanonicalPixels || coordinator.acquisitionError != nil }
     let web = try XCTUnwrap(coordinator.webView, String(describing: coordinator.acquisitionError))
@@ -447,7 +447,7 @@ final class ProgramAssetTests: XCTestCase {
     var changed = document
     _ = changed.replaceContent(blocks: [.markdown(id: "other", source: "Independent text")] + document.blocks, actor: UUID())
     coordinator.update(document: changed, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
     try await wait { coordinator.hasCanonicalPixels || coordinator.acquisitionError != nil }
     XCTAssertTrue(coordinator.hasCanonicalPixels, String(describing: coordinator.acquisitionError))
     let afterURL = try await web.evaluateJavaScript("document.querySelector('iframe').src") as? String
@@ -455,7 +455,7 @@ final class ProgramAssetTests: XCTestCase {
     XCTAssertEqual(coordinator.programAssets.scopeCount, 1)
     _ = changed.replaceContent(blocks: [.interactive(id: "asset", html: "<strong>Inline replacement</strong>")], actor: UUID())
     coordinator.update(document: changed, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
     XCTAssertEqual(coordinator.programAssets.scopeCount, 0, "Replacing package source revokes its namespace immediately")
     try await wait { coordinator.hasCanonicalPixels || coordinator.acquisitionError != nil }
     XCTAssertTrue(coordinator.hasCanonicalPixels, String(describing: coordinator.acquisitionError))

@@ -7,6 +7,11 @@ import WebKit
 @MainActor
 final class PhysicalWebViewport: UIView, NotebookSceneFingerInputOwner {
   private(set) weak var webView: WKWebView?
+  private var contentBackground: UIView?
+  func installBackground(_ view: UIView) {
+    if contentBackground !== view { contentBackground?.removeFromSuperview(); contentBackground = view; insertSubview(view, at: 0) }
+    view.bounds = CGRect(origin: .zero, size: contentSize); setNeedsLayout()
+  }
   var onInstalled: (() -> Void)?
   private var contentSize: CGSize
   private let holdsFingerInput: Bool
@@ -65,7 +70,7 @@ final class PhysicalWebViewport: UIView, NotebookSceneFingerInputOwner {
   func retire() {
     onInstalled = nil
     if let webView, webView.superview === self { webView.removeFromSuperview() }
-    webView = nil
+    webView = nil; contentBackground?.removeFromSuperview(); contentBackground = nil
   }
 
   override func layoutSubviews() {
@@ -81,6 +86,11 @@ final class PhysicalWebViewport: UIView, NotebookSceneFingerInputOwner {
     guard scaleX.isFinite, scaleY.isFinite, scaleX > 0, scaleY > 0 else { return }
     webView.center = CGPoint(x: bounds.midX, y: bounds.midY)
     webView.transform = CGAffineTransform(scaleX: scaleX, y: scaleY)
+    if let contentBackground {
+      contentBackground.bounds = CGRect(origin: .zero, size: size)
+      contentBackground.center = webView.center; contentBackground.transform = webView.transform
+      (contentBackground as? DocumentPaperView)?.refine()
+    }
     if window != nil { onInstalled?() }
   }
 

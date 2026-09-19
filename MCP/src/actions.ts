@@ -21,7 +21,7 @@ const programPackage = z.string().regex(/^[a-f0-9]{64}$/).nullable().describe("I
 export const textStyleSchema = z.object({fontSize:z.number().min(8).max(240),weight:z.number().min(0).max(1),
   red:z.number().min(0).max(1),green:z.number().min(0).max(1),blue:z.number().min(0).max(1),alpha:z.number().min(0).max(1)}).strict();
 const block = z.discriminatedUnion("kind", [
-  z.object({ id: z.string().min(1).max(120), kind: z.enum(["markdown", "latex"]), source }).strict(),
+  z.object({ id: z.string().min(1).max(120), kind: z.enum(["markdown", "latex", "tex"]), source }).strict(),
   z.object({ id: z.string().min(1).max(120), kind: z.literal("interactive"), html: source,
     css: source.optional(), javaScript: source.optional(), programPackage: programPackage.optional(), initialState: z.json().optional(), height: z.number().min(48).max(2048).optional() }).strict(),
 ]);
@@ -63,7 +63,7 @@ export const operationSchema = z.discriminatedUnion("kind", [
   op("setElementState", z.object({ state: z.json() }).strict()),
   op("removeElement", z.object({}).strict().default({})),
   op("reorderElements", z.object({ ids: z.array(z.string()).max(512) }).strict(), null),
-  op("insertBlock", z.object({ kind: z.enum(["markdown", "latex", "interactive"]), source: source.optional(), html: source.optional(), css: source.optional(),
+  op("insertBlock", z.object({ kind: z.enum(["markdown", "latex", "tex", "interactive"]), source: source.optional(), html: source.optional(), css: source.optional(),
     javaScript: source.optional(), programPackage: programPackage.optional(), initialState: z.json().optional(), height: z.number().min(48).max(2048).optional(), afterID: z.string().optional() }).strict()),
   op("updateBlock", z.object({ source: source.optional(), html: source.optional(), css: source.optional(), javaScript: source.optional(), programPackage: programPackage.optional(), height: z.number().min(48).max(2048).optional() }).strict()),
   op("setBlockState", z.object({state:z.json()}).strict()),

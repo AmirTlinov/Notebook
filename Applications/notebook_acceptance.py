@@ -216,11 +216,8 @@ def build(args):
     devices = [d for values in inventory["devices"].values() for d in values if d["udid"] == args.simulator]
     release.require(len(devices) == 1 and ".iPad-" in devices[0].get("deviceTypeIdentifier", ""), "Нужен точный iPad Simulator UDID.")
     run(["npm", "ci", "--ignore-scripts"], cwd=snapshot / "MCP", output=evidence / "dependencies.log")
-    tex_runtime = Path(os.environ.get("NOTEBOOK_TEX_RUNTIME", ROOT / ".build/notebook-tex-runtime")).resolve()
-    run(["python3", "-B", snapshot / "Applications/prepare_notebook_tex.py", "--prepare", "--stage", tex_runtime],
-        output=evidence / "tex-resources.log")
-    image_runtime = release.prepare_image_runtime(snapshot, release.release_commands(evidence),
-        stage_root=ROOT / ".build/notebook-image-runtime")
+    runtime = release.prepare_typesetter_runtime(snapshot, release.release_commands(evidence), "iphonesimulator", stage=ROOT / ".build/notebook-typesetter-runtime")
+    release.prepare_typesetter_runtime(snapshot, release.release_commands(evidence), "macosx", stage=runtime)
     typescript_runtime = release.prepare_typescript_runtime(snapshot, release.release_commands(evidence))
     run(["xcodegen", "generate", "--spec", "project.yml"], cwd=snapshot / "Applications", output=evidence / "project.log")
     for platform, scheme, destination in (("ipad", "NotebookAcceptance", "platform=iOS Simulator,id=" + args.simulator),
@@ -238,8 +235,9 @@ def build(args):
             command += ["CODE_SIGN_IDENTITY=Apple Development", "CODE_SIGN_STYLE=Automatic",
                         "CODE_SIGNING_ALLOWED=YES", "DEVELOPMENT_TEAM=" + release.TEAM,
                         "NOTEBOOK_SCRIPT_BUNDLE_SUFFIX=" + SCRIPT_BUNDLE_SUFFIX]
+        command.append("NOTEBOOK_TYPESETTER_RUNTIME=" + str(runtime))
         if platform == "mac":
-            command.extend(["NOTEBOOK_TEX_RUNTIME=" + str(tex_runtime), "NOTEBOOK_IMAGE_RUNTIME=" + str(image_runtime), "NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript_runtime)])
+            command.append("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript_runtime))
         run(command + ["build-for-testing"], output=evidence / (platform + "-build.log"))
         if platform == "mac":
             mac_app = evidence / "derived/mac/Build/Products/Release/Notebook.app"

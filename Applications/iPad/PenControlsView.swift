@@ -3,6 +3,7 @@ import SwiftUI
 struct PenControlsView: View {
   @Environment(NotebookAppModel.self) private var model
   @State private var isExpanded = false
+  var embedded = false
 
   var body: some View {
     HStack(spacing: 0) {
@@ -38,7 +39,8 @@ struct PenControlsView: View {
         .presentationCompactAdaptation(.popover).presentationBackground(NotebookChrome.surface)
       }
     }
-    .notebookBar()
+    .font(NotebookChrome.iconFont).buttonStyle(.plain)
+    .background { if !embedded { NotebookSurface(radius: NotebookChrome.barHeight / 2).padding(.vertical, 2) } }
   }
 
   private var isPenSelected: Bool { model.drawingTool == .pen }

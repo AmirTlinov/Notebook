@@ -39,7 +39,7 @@ final class DocumentGeometryTests: XCTestCase {
               completed = true
               ready.fulfill()
             }
-          }, onPageLayout: { _ in }, onLinkActivation: { _ in nil }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil }
+          }, onPageLayout: { _ in }, onLinkActivation: { _ in nil },  onStateChange: { _, _ in nil }
         ).ignoresSafeArea())
       container.addChild(host)
       container.view.addSubview(host.view)
@@ -50,33 +50,10 @@ final class DocumentGeometryTests: XCTestCase {
       host.view.layoutIfNeeded()
       await fulfillment(of: [ready], timeout: 8)
       let web = try XCTUnwrap(webView(in: host.view))
-      let physicalValue = try await web.evaluateJavaScript(
-        """
-        (() => {
-          const sheet = document.querySelector('.paper-sheet').getBoundingClientRect();
-          const scale = sheet.width / \(paper.widthPoints);
-          const paragraph = getComputedStyle(document.querySelector('#document p'));
-          return {
-            body: parseFloat(paragraph.fontSize) / scale,
-            leading: parseFloat(paragraph.lineHeight) / scale,
-            h1: parseFloat(getComputedStyle(document.querySelector('h1')).fontSize) / scale,
-            h2: parseFloat(getComputedStyle(document.querySelector('h2')).fontSize) / scale,
-            h3: parseFloat(getComputedStyle(document.querySelector('h3')).fontSize) / scale,
-            top: (document.querySelector('h1').getBoundingClientRect().top - sheet.top) / scale,
-            left: (document.querySelector('h1').getBoundingClientRect().left - sheet.left) / scale
-          };
-        })()
-        """)
-      let physical = try XCTUnwrap(physicalValue as? [String: Double])
-      print("DOCUMENT PHYSICAL TYPE", paper, physical)
-      XCTAssertEqual(try XCTUnwrap(physical["body"]), 12, accuracy: 0.05)
-      XCTAssertEqual(try XCTUnwrap(physical["leading"]), 14.5, accuracy: 0.05)
-      XCTAssertEqual(try XCTUnwrap(physical["h1"]), 17.28, accuracy: 0.05)
-      XCTAssertEqual(try XCTUnwrap(physical["h2"]), 14.4, accuracy: 0.05)
-      XCTAssertEqual(try XCTUnwrap(physical["h3"]), 12, accuracy: 0.05)
-      XCTAssertEqual(try XCTUnwrap(physical["top"]), paper.marginPoints, accuracy: 0.1)
-      XCTAssertEqual(try XCTUnwrap(physical["left"]), paper.marginPoints, accuracy: 0.1)
-      let initialMetrics = try await textMetrics(in: web)
+      let paperView = try XCTUnwrap(descendant(DocumentPaperView.self, in: host.view))
+      let artifact = try XCTUnwrap(paperView.raster?.page.artifact)
+      let locations = try artifact.locations()
+      XCTAssertFalse(locations.isEmpty)
       for width in [baseWidth, baseWidth + 0.15, baseWidth - 0.2, baseWidth * 1.5, baseWidth] {
         let target = CGSize(width: width, height: width * geometry.height / geometry.width)
         host.view.frame.size = target
@@ -98,16 +75,14 @@ final class DocumentGeometryTests: XCTestCase {
         XCTAssertEqual(bounds["scale"]!, 1, accuracy: 1e-8)
         XCTAssertEqual(bounds["viewport"]!, geometry.width, accuracy: 1)
         XCTAssertEqual(bounds["radius"]!, geometry.cornerRadius, accuracy: 0.05)
-        let metrics = try await textMetrics(in: web)
-        XCTAssertEqual(
-          metrics, initialMetrics, "Масштаб камеры сохраняет размер шрифта и переносы строк WebKit")
+        XCTAssertEqual(paperView.raster?.page.artifact.pdf, artifact.pdf,
+          "A camera resize cannot recompile or replace the printed layout")
+        XCTAssertEqual(try paperView.raster?.page.artifact.locations(), locations)
         let projected = web.convert(web.bounds, to: host.view)
         XCTAssertEqual(projected.width, target.width, accuracy: 1 / window.screen.scale)
         XCTAssertEqual(projected.height, target.height, accuracy: 1 / window.screen.scale)
       }
-      let configuration = WKSnapshotConfiguration()
-      let page = try await web.takeSnapshot(configuration: configuration)
-      let proof = XCTAttachment(image: page)
+      let proof = XCTAttachment(image: UIImage(cgImage: try XCTUnwrap(paperView.raster?.image)))
       proof.name = "\(paper.rawValue)-physical-paper"
       proof.lifetime = .keepAlways
       add(proof)
@@ -115,125 +90,10 @@ final class DocumentGeometryTests: XCTestCase {
   }
 
   @MainActor
-  func testOneOfflineRenderCompletesMathAndInteractiveStateThenSerializesUpdates() async throws {
-    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
-    var document = DocumentDocument(id: UUID(), actor: UUID(), paperSize: .letter, blocks: [
-      .latex(id: "formula", source: #"\mathfrak{A} + \sum_{k=1}^{n} k^2"#),
-      .interactive(id: "interactive", html: "<p>Готово</p>", css: "",
-        javaScript: "notebook.commit({ready:true});notebook.ready(Promise.resolve())", initialState: .null, height: 100),
-      .markdown(id: "body", source: (1...40).map {
-        "## Раздел \($0)\n\nПоследовательное содержание физического листа."
-      }.joined(separator: "\n\n")),
-    ])
-    let state = DocumentStateJournal(id: document.id, actor: UUID())
-    let ready = expectation(description: "Один завершённый набор")
-    let interactive = expectation(description: "Исполнен исходник интерактивного блока")
-    var completed = false
-    var committed = false
-    let window = UIWindow(windowScene: scene)
-    defer { window.isHidden = true }
-    let coordinator = DocumentWebCoordinator(onRenderReady: .init { _ in }, onPageLayout: { _ in },
-      onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
-    defer { coordinator.invalidate() }
-    let host = DocumentWebHost(), controller = UIViewController()
-    controller.view = host; window.rootViewController = controller
-    let onReady = PageTurnReadiness { value in
-      if value && !completed { completed = true; ready.fulfill() }
-    }
-    let onState: (String, JSONValue) -> ContentFieldVersion? = { id, value in
-      if id == "interactive", value == .object(["ready": .bool(true)]), !committed {
-        committed = true; interactive.fulfill()
-      }
-      return nil
-    }
-    func update(page: Int = 0) {
-      coordinator.update(document: document, state: state, selectedPageIndex: page, capturesSnapshot: false,
-        onRenderReady: onReady, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: onState)
-    }
-    update()
-    let geometry = WorkspaceItemGeometry.document(document.paperSize)
-    coordinator.mount(in: host, physicalSize: .init(width: geometry.width, height: geometry.height), isInteractive: true, priority: .currentPage)
-    window.makeKeyAndVisible()
-    await fulfillment(of: [ready, interactive], timeout: 8)
-    let web = try XCTUnwrap(coordinator.webView)
-    let result = try await web.evaluateJavaScript("""
-      (() => ({
-        math: document.querySelectorAll('#document mjx-container svg').length,
-        accessibleMath: document.querySelectorAll('#document mjx-assistive-mml math').length,
-        remoteScripts: [...document.scripts].filter(s => /^https?:/.test(s.src)).length,
-        diagnostics: window.notebookRenderer.pageReceipt().diagnostics.length
-      }))()
-      """)
-    let proof = try XCTUnwrap(result as? [String: Int])
-    XCTAssertEqual(proof["math"], 1)
-    XCTAssertEqual(proof["accessibleMath"], 1)
-    XCTAssertEqual(proof["remoteScripts"], 0)
-    XCTAssertEqual(proof["diagnostics"], 0)
+  private func descendant<T: UIView>(_ type: T.Type, in view: UIView) -> T? {
+    if let value = view as? T { return value }
+    return view.subviews.lazy.compactMap { self.descendant(type, in: $0) }.first
 
-    _ = try await web.evaluateJavaScript("""
-      window.typesetEntered=false;window.typesetCount=0;
-      window.typesetGate=new Promise(resolve=>window.releaseTypeset=resolve);
-      window.originalTypeset=MathJax.typesetPromise.bind(MathJax);
-      MathJax.typesetPromise=async nodes=>{typesetCount++;typesetEntered=true;await typesetGate;return originalTypeset(nodes)};
-      true;
-      """)
-    func content(_ name: String) -> [DocumentBlock] {
-      [.markdown(id: "body", source: (0..<40).map { "# \(name) \($0)\n\nСодержание конечного листа." }.joined(separator: "\n\n"))]
-    }
-    XCTAssertTrue(document.replaceContent(blocks: content("first"), actor: UUID())); update()
-    var entered = false
-    for _ in 0..<200 {
-      entered = try await web.evaluateJavaScript("window.typesetEntered") as? Bool == true
-      if entered { break }
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    XCTAssertTrue(entered, "The following inputs arrive during an actual pending MathJax pass")
-    XCTAssertTrue(document.replaceContent(blocks: content("superseded"), actor: UUID())); update()
-    XCTAssertTrue(document.replaceContent(blocks: content("latest"), actor: UUID())); update(page: 1)
-    let expected = try XCTUnwrap(coordinator.payload)
-    _ = try await web.evaluateJavaScript("window.releaseTypeset(); true")
-    let deadline = ContinuousClock.now + .seconds(8)
-    while !coordinator.renderIsReady && coordinator.acquisitionError == nil && ContinuousClock.now < deadline {
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    XCTAssertNil(coordinator.acquisitionError); XCTAssertTrue(coordinator.renderIsReady)
-    let raw = try await web.evaluateJavaScript("""
-      (()=>({count:typesetCount,...notebookRenderer.pageReceipt(),
-        childIDs:[...document.getElementById('document').children].map(node=>node.dataset.blockId),
-        text:document.getElementById('document').textContent,
-        offset:new DOMMatrix(getComputedStyle(document.querySelector('#page-track')).transform).m41}))()
-      """)
-    let receipt = try XCTUnwrap(raw as? [String: Any])
-    XCTAssertEqual(receipt["count"] as? Int, 2, "Waiting native inputs coalesce to the latest source")
-    XCTAssertEqual(receipt["renderToken"] as? String, expected.renderToken)
-    XCTAssertEqual(receipt["sourceKey"] as? String, expected.source.message.key)
-    XCTAssertEqual(receipt["stateKey"] as? String, expected.state.message.key)
-    XCTAssertEqual(receipt["layoutCanonical"] as? Bool, true)
-    XCTAssertEqual(receipt["layoutScope"] as? String, "page")
-    XCTAssertEqual(receipt["childIDs"] as? [String], ["body"])
-    let text = try XCTUnwrap(receipt["text"] as? String)
-    XCTAssertTrue(text.contains("latest")); XCTAssertFalse(text.contains("first")); XCTAssertFalse(text.contains("superseded"))
-    XCTAssertFalse(text.contains("latest 0"), "The second physical DOM cannot retain the first page's heading")
-    XCTAssertEqual(receipt["pageIndex"] as? Int, 1)
-    XCTAssertLessThan(try XCTUnwrap(receipt["offset"] as? Double), -100)
-  }
-
-  @MainActor
-  private func textMetrics(in web: WKWebView) async throws -> String {
-    let value = try await web.evaluateJavaScript(
-      """
-      (() => {
-        const paragraph = document.querySelector('#document p');
-        const range = document.createRange();
-        range.selectNodeContents(paragraph);
-        return JSON.stringify({
-          font: getComputedStyle(paragraph).fontSize,
-          lines: Array.from(range.getClientRects(), r => [r.x, r.y, r.width, r.height]),
-          width: innerWidth, height: innerHeight
-        });
-      })()
-      """)
-    return try XCTUnwrap(value as? String)
   }
 
   @MainActor

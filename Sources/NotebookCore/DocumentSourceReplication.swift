@@ -4,7 +4,7 @@ extension NotebookStore {
   /// The document's field merger works on one program at a time. SQL retains
   /// the incoming address set; retired field clocks and unrequested programs
   /// never become a second, reconstructed DocumentDocument in memory.
-  func applyReplicatedDocumentSource(file: String, manifestHash: String) throws {
+  func applyReplicatedDocumentSource(file: String, manifestHash: String, manifestFormat: Int) throws {
     let database = currentSQL!, root = file + "#", blockPrefix = root + "/blocks/@"
     let fieldPrefix = root + "/collaboration/fields/@"
     let identifier = String(file.dropFirst("documents/".count).dropLast(5))
@@ -47,6 +47,9 @@ extension NotebookStore {
         let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(hash))
         guard fragment.address == row[0].text, fragment.file == file, fragment.position >= 0, fragment.value.isValid else {
           throw NotebookStorageError.invalidTransaction("document source fragment identity")
+        }
+        if fragment.collection == "blocks", fragment.value["kind"] == .string("tex"), manifestFormat < 11 {
+          throw NotebookStorageError.invalidTransaction("full TeX source requires manifest format 11")
         }
         return fragment
       }

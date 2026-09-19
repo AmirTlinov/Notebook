@@ -2,7 +2,7 @@ import Foundation
 import CoreFoundation
 import NotebookCore
 
-/// The measured DOM's compact addresses. Its owning DocumentLayoutRecord keeps
+/// The canonical print's compact source addresses. Its owning DocumentLayoutRecord keeps
 /// the existing layout reservation; neither the view nor a bookmark copies text.
 struct DocumentReadingIndex: Equatable, Sendable {
   struct Segment: Equatable, Sendable {
@@ -50,15 +50,6 @@ struct DocumentReadingIndex: Equatable, Sendable {
 
   func matches(_ other: Self, tolerance: Double) -> Bool {
     segments.count == other.segments.count && zip(segments, other.segments).allSatisfy { left, right in
-      left.blockID == right.blockID && left.nodeID == right.nodeID && left.textOffset == right.textOffset
-        && left.start == right.start && left.end == right.end && left.pageIndex == right.pageIndex
-        && abs(left.y - right.y) <= tolerance
-    }
-  }
-
-  func matchesPrefix(of other: Self, pageCount: Int, tolerance: Double) -> Bool {
-    let prefix = other.segments.filter { $0.pageIndex < pageCount }
-    return segments.count == prefix.count && zip(segments, prefix).allSatisfy { left, right in
       left.blockID == right.blockID && left.nodeID == right.nodeID && left.textOffset == right.textOffset
         && left.start == right.start && left.end == right.end && left.pageIndex == right.pageIndex
         && abs(left.y - right.y) <= tolerance

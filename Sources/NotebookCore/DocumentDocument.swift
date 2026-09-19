@@ -3,6 +3,7 @@ import Foundation
 public enum DocumentBlockKind: String, Codable, Equatable, Sendable {
   case markdown
   case latex
+  case tex
   case interactive
 }
 
@@ -112,7 +113,7 @@ public struct DocumentBlock: Codable, Equatable, Identifiable, Sendable {
 
   public func replacingSource(_ source: String) -> Self {
     switch kind {
-    case .markdown, .latex:
+    case .markdown, .latex, .tex:
       Self(id: id, kind: kind, source: source)
     case .interactive:
       Self(
@@ -140,7 +141,7 @@ public struct DocumentBlock: Codable, Equatable, Identifiable, Sendable {
     else { return false }
 
     switch kind {
-    case .markdown, .latex:
+    case .markdown, .latex, .tex:
       return html.isEmpty && css.isEmpty && javaScript.isEmpty
         && initialState == .object([:])
     case .interactive:
@@ -307,6 +308,27 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
     return true
   }
 
+  public var preambleVersion: ContentFieldVersion {
+    collaboration?.fields["preamble"] ?? .init(stamp: contentStamp, human: true)
+  }
+
+  @discardableResult
+  public mutating func mergeSource(_ publication: DocumentPreamblePublication) -> Bool {
+    guard id == publication.documentID else { return false }
+    var local = self; local.blocks = []
+    local.collaboration = .init(fields: ["preamble": preambleVersion])
+    var incoming = local; incoming.preamble = publication.source
+    incoming.contentStamp = publication.contentStamp
+    incoming.collaboration = .init(fields: ["preamble": publication.sourceVersion])
+    _ = local.merge(incoming)
+    let version = local.preambleVersion, stamp = max(contentStamp, local.contentStamp)
+    guard preamble != local.preamble || preambleVersion != version || stamp != contentStamp else { return false }
+    var metadata = collaboration ?? (try? materializingCausalVersions().collaboration) ?? CollaborativeContent()
+    do { try metadata.joinField("preamble", version: version) } catch { return false }
+    preamble = local.preamble; contentStamp = stamp; collaboration = metadata
+    return true
+  }
+
   /// Publication makes implicit field clocks explicit without editing source
   /// or advancing its frontier. Offline preparation uses the same owner so a
   /// checked checkpoint already equals the archive that SQLite will publish.
@@ -371,11 +393,25 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
 
 /// A command publishes one complete program and its own causal fields, not a
 /// partial DocumentDocument that a caller might mistake for the whole source.
-public struct DocumentBlockSourcePublication: Equatable, Sendable {
+public struct DocumentPreamblePublication: Codable, Equatable, Sendable {
+  public let documentID: UUID
+  public let contentStamp: VersionStamp
+  public let source: String
+  public let sourceVersion: ContentFieldVersion
+  init(document: DocumentDocument) {
+    documentID = document.id; contentStamp = document.contentStamp
+    source = document.preamble; sourceVersion = document.preambleVersion
+  }
+}
+
+public struct DocumentBlockSourcePublication: Codable, Equatable, Sendable {
   public let documentID: UUID
   public let contentStamp: VersionStamp
   public let block: DocumentBlock
   let fields: [String: ContentFieldVersion]
+  public var sourceVersion: ContentFieldVersion {
+    fields[fieldKey(["blocks", collaborationIdentity(block.id), "content"])] ?? .init(stamp: contentStamp, human: true)
+  }
 
   init?(document: DocumentDocument, blockID: String) {
     guard let block = document.blocks.first(where: { collaborationIdentity($0.id) == collaborationIdentity(blockID) }) else { return nil }

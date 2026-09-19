@@ -188,7 +188,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.web(in: 0) != nil }
     let runtime = try XCTUnwrap(fixture.web(in: 0))
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
-    let target = try XCTUnwrap(source.layout?.anchorPages["far"])
+    let target = try XCTUnwrap(source.layout).pageCount - 1
     XCTAssertGreaterThan(target, 3)
     fixture.activity.prepare(target, presentation: .live)
     fixture.showPages(current: 2, neighbour: target); fixture.restorePresentation(1)
@@ -292,8 +292,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
     fixture.window.rootViewController!.view.addSubview(thumbnail)
     thumbnailCoordinator.update(.init(document: document, state: .init(id: document.id, actor: UUID()),
       pageIndex: target, isCurrent: false, isVisible: true, isInteractive: false, pageTurnActive: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed },
-      onStateChange: { _, _ in nil }, drafts: [], onDraftChange: { _ in }, onDraftDiscard: { _ in },
+      onRenderReady: .init { _ in }, onPageLayout: { _ in },
+      onStateChange: { _, _ in nil },
       onLinkActivation: { _ in }, snapshotPixelWidth: 256,
       onPreparationFailure: { error in XCTFail("Thumbnail preparation: \(error)") }), in: thumbnail, resources: fixture.resources)
     try await wait(message: { fixture.diagnostics }) { thumbnail.hasSnapshot }
@@ -537,14 +537,14 @@ final class DocumentProgramOwnerTests: XCTestCase {
     // Hold a real second admitted WebKit. The passive owner must queue through
     // SceneRenderResources, rather than a manufactured renderer-ready callback.
     let blocker = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
     let blockerHost = DocumentWebHost()
     fixture.window.rootViewController?.view.addSubview(blockerHost)
     blockerHost.frame = .init(x: 720, y: 0, width: 240, height: 340)
     let blockerDocument = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "blocker", source: "# Another active paper")])
     blocker.update(document: blockerDocument, state: .init(id: blockerDocument.id, actor: UUID()),
       selectedPageIndex: 0, capturesSnapshot: false, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
     let geometry = WorkspaceItemGeometry.document(blockerDocument.paperSize)
     blocker.mount(in: blockerHost, physicalSize: .init(width: geometry.width, height: geometry.height),
       isInteractive: true, priority: .currentPage)
@@ -906,11 +906,65 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertEqual(returned, original, "Return attaches the existing DOM; parsing, math, layout and page installation do not run again")
     XCTAssertEqual(source.measurementCount, measurements)
     XCTAssertEqual(source.compiledPageCount, fragments)
-    let editing = try await web.evaluateJavaScript("""
-      document.querySelector('[data-block-id=body]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
-      document.querySelector('textarea').value;
-      """) as? String
-    XCTAssertEqual(editing, document.blocks[0].source, "Return must expose the working source, not just a cached picture")
+    let requested = expectation(description: "Native source is addressed by returned paper")
+    let observer = NotificationCenter.default.addObserver(forName: DocumentSourceRequest.notification, object: nil, queue: .main) { note in
+      guard let request = note.object as? DocumentSourceRequest, request.documentID == document.id else { return }
+      XCTAssertEqual(request.source, document.blocks[0].source)
+      requested.fulfill()
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+    _ = try await web.evaluateJavaScript("""
+      const block=document.querySelector('[data-block-id=body]'), rect=block.getBoundingClientRect();
+      block.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,clientX:rect.left+5,clientY:rect.top+5}));true;
+      """)
+    await fulfillment(of: [requested], timeout: 3)
+
+  }
+
+  func testCodeModeKeepsTheSameFrozenHeapThroughSourceChangesAndDelayedPersistence() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [
+      .markdown(id: "body", source: "# Before"),
+      .interactive(id: "clock", html: "<output></output>", javaScript: """
+        let phase=0,timer;
+        const start=()=>{timer=setInterval(()=>{phase++;document.querySelector('output').textContent=phase},10)};
+        notebook.lifecycle({pause(){clearInterval(timer)},checkpoint(){return {phase}},resume:start,dispose(){clearInterval(timer)}});
+        notebook.ready(Promise.resolve().then(start));
+        """, initialState: .object(["phase": .number(0)]), height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    var held: CheckedContinuation<Void, Never>?
+    defer { held?.resume(); fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "clock") != nil }
+    let web = try XCTUnwrap(fixture.web(block: "clock"))
+    try await Task.sleep(for: .milliseconds(100))
+    fixture.onCheckpoint = { _ in await withCheckedContinuation { held = $0 } }
+    fixture.setVisible(false)
+    try await wait(message: { fixture.diagnostics }) { held != nil }
+    let phase = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    fixture.replaceSource(blockID: "body", source: "# After")
+    fixture.setVisible(true)
+    try await Task.sleep(for: .milliseconds(150))
+    let waiting = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertEqual(waiting, phase, "Returning must await durable persistence, not cancel it")
+    fixture.onCheckpoint = { _ in }; held?.resume(); held = nil
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "clock") === web }
+    try await Task.sleep(for: .milliseconds(100))
+    let resumed = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertGreaterThan(resumed ?? 0, phase ?? 0)
+
+    var attempts = 0
+    fixture.onCheckpoint = { _ in attempts += 1 }; fixture.acceptsCheckpoints = false
+    fixture.setVisible(false)
+    try await wait(message: { fixture.diagnostics }) { attempts > 0 }
+    fixture.setVisible(true)
+    try await wait(message: { fixture.diagnostics }) { fixture.hasProgramAction("clock") }
+    let failed = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    try await Task.sleep(for: .milliseconds(150))
+    let stillFrozen = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertEqual(stillFrozen, failed, "An I/O failure cannot restart an unconfirmed hidden model")
+    fixture.acceptsCheckpoints = true
+    fixture.setVisible(false); fixture.setVisible(true)
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && !fixture.hasProgramAction("clock") }
+    XCTAssertTrue(fixture.web(block: "clock") === web)
   }
 
   func testBackgroundCheckpointFreezesTheModelAndForegroundResumesTheSameHeap() async throws {
@@ -1056,6 +1110,11 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertFalse(fixture.checkpoints.contains("program"), "Rejected state is not permission to destroy the running program")
     first.release(); admitted?.release()
     lifetime.resume(); fixture.restorePresentation(0)
+    try await wait(message: { fixture.diagnostics }) { fixture.hasProgramAction("program") }
+    XCTAssertNotNil(original.superview, "A failed writer retains the frozen heap, not a falsely interactive surface")
+    XCTAssertFalse(original.isUserInteractionEnabled)
+    fixture.acceptsCheckpoints = true
+    try fixture.retryProgram("program")
     try await wait(message: { fixture.diagnostics }) { fixture.web(in: 0) === original && fixture.ready[0] == true }
   }
 
@@ -1330,54 +1389,6 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertLessThanOrEqual(fixture.resources.activeWebSurfaceCount, 4)
   }
 
-  func testViewRecreationAndNewSourceKeepTheComposingEditorAndItsSelection() async throws {
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# Original text"),
-      .markdown(id: "other", source: "A separate block")])
-    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
-    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
-    let lifetime = owner.retainOpenDocument()
-    defer { fixture.close(); lifetime.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled }
-    let web = try XCTUnwrap(fixture.paper(in: 0))
-    _ = try await web.evaluateJavaScript("""
-      document.querySelector('#document .editable').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
-      window.originalEditor=document.querySelector('textarea');originalEditor.value='A composing draft stays here';
-      originalEditor.setSelectionRange(2,11);originalEditor.dispatchEvent(new Event('compositionstart'));
-      originalEditor.dispatchEvent(new Event('input'));true
-      """)
-    fixture.replaceSource(blockID: "other", source: "A changed independent block")
-    await owner.observePendingPresentationWork()
-    fixture.retirePresentation(0)
-    await owner.observePendingPresentationWork()
-    fixture.restorePresentation(0)
-    try await wait(message: { fixture.diagnostics }) { fixture.paper(in: 0) === web && fixture.hosts[0].isUserInteractionEnabled }
-    let unchanged = try await web.evaluateJavaScript("originalEditor===document.querySelector('textarea')&&document.activeElement===originalEditor&&notebookRenderer.editingDraft().isComposing&&originalEditor.value==='A composing draft stays here'&&originalEditor.selectionStart===2&&originalEditor.selectionEnd===11")
-    XCTAssertEqual(unchanged as? Bool, true)
-    _ = try await web.evaluateJavaScript("originalEditor.dispatchEvent(new Event('compositionend'));true")
-  }
-
-  func testAnOpenSourceEditorKeepsItsDOMWhilePassiveWorkAndCameraSizeChange() async throws {
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
-      (0..<60).map { "Paragraph \($0). " + String(repeating: "The editor owns this accepted draft. ", count: 10) }.joined(separator: "\n\n"))])
-    let fixture = try ProgramFixture(document: document)
-    defer { fixture.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.ready[1] == true && fixture.hosts[0].isUserInteractionEnabled }
-    let web = try XCTUnwrap(fixture.paper(in: 0))
-    _ = try await web.evaluateJavaScript("""
-      document.querySelector('#document .editable').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
-      window.originalEditor=document.querySelector('textarea');originalEditor.value='An accepted unfinished draft';
-      originalEditor.dispatchEvent(new Event('input',{bubbles:true}));true
-      """)
-    fixture.hosts[0].frame.size.width += 0.15
-    fixture.hosts[0].setNeedsLayout(); fixture.hosts[0].layoutIfNeeded()
-    try await Task.sleep(for: .milliseconds(250))
-    let survived = try await web.evaluateJavaScript("originalEditor===document.querySelector('textarea')&&originalEditor.value==='An accepted unfinished draft'")
-    XCTAssertEqual(survived as? Bool, true)
-    XCTAssertTrue(fixture.paper(in: 0) === web)
-    XCTAssertTrue(fixture.hosts[0].isUserInteractionEnabled)
-    XCTAssertLessThanOrEqual(fixture.resources.activeWebSurfaceCount, 4)
-  }
-
   func testAttentionCapturesLivePixelsEvenWhenProgramChangesWithoutAStateCommit() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
       html: "<div id='swatch' style='height:200px;background:#ff0000'></div>", css: "",
@@ -1622,6 +1633,7 @@ private final class ProgramFixture {
   private var linkNavigation: (DocumentLinkDestination) -> Void = { _ in }
   private var selected = 0
   private var interactive: Bool
+  private var visible = true
   private var retiredPresentations: Set<Int> = []
   private var thumbnailPresentations: Set<Int> = []
   private var pageIndices = [0, 1]
@@ -1672,6 +1684,7 @@ private final class ProgramFixture {
       && coordinator.payload?.renderToken == DocumentSnapshotCache.paperToken(sourceRevision: document.contentStamp.revision, pageIndex: pageIndices[index])
   }
   func select(_ index: Int) { selected = index; refresh() }
+  func setVisible(_ value: Bool) { visible = value; refresh() }
   func setInteractive(_ value: Bool) { interactive = value; refresh() }
   func setThumbnail(_ index: Int) { thumbnailPresentations.insert(index); refresh() }
   func retirePresentation(_ index: Int) {
@@ -1685,15 +1698,15 @@ private final class ProgramFixture {
     for (index, coordinator) in coordinators.enumerated() {
       guard !retiredPresentations.contains(index) else { continue }
       coordinator.update(.init(document: document, state: state, pageIndex: pageIndices[index], isCurrent: selected == index && !thumbnailPresentations.contains(index),
-        isVisible: true, isInteractive: selected == index && interactive && !thumbnailPresentations.contains(index), pageTurnActive: false,
+        isVisible: visible, isInteractive: visible && selected == index && interactive && !thumbnailPresentations.contains(index), pageTurnActive: false,
         onRenderReady: .init(activity: activity) { [weak self] in self?.ready[index] = $0 },
-        onPageLayout: { _ in }, onSourceChange: { _ in .committed },
+        onPageLayout: { _ in },
         onStateChange: { [weak self] block, value in
           guard let self else { return nil }
           _ = state.commit(blockID: block, value: value, actor: actor)
           let accepted = state.records.first { $0.id == block }?.valueVersion
           refresh(); return accepted
-        }, drafts: [], onDraftChange: { _ in }, onDraftDiscard: { _ in }, onLinkActivation: { [weak self] in self?.linkNavigation($0.destination) },
+        },    onLinkActivation: { [weak self] in self?.linkNavigation($0.destination) },
         snapshotPixelWidth: thumbnailPresentations.contains(index) ? 256 : nil, onPreparationFailure: { [weak self] error in
           self?.preparationErrors.append("page \(index): \(error)")
         },
@@ -1729,6 +1742,11 @@ private final class ProgramFixture {
   func web(in index: Int) -> WKWebView? { descendants(hosts[index]).first { $0.accessibilityIdentifier?.hasPrefix("document-program-") == true && $0.isUserInteractionEnabled } }
   func web(block: String) -> WKWebView? {
     descendants(hosts[selected]).first { $0.accessibilityIdentifier == "document-program-" + block && $0.isUserInteractionEnabled }
+  }
+  func retryProgram(_ block: String) throws {
+    func buttons(_ view: UIView) -> [UIButton] { (view as? UIButton).map { [$0] } ?? view.subviews.flatMap(buttons) }
+    let button = try XCTUnwrap(buttons(hosts[selected]).first { $0.accessibilityIdentifier == "document-program-retry-" + block && !$0.isHidden })
+    button.sendActions(for: .touchUpInside)
   }
   func hasProgramAction(_ block: String) -> Bool {
     func buttons(_ view: UIView) -> [UIButton] { (view as? UIButton).map { [$0] } ?? view.subviews.flatMap(buttons) }
