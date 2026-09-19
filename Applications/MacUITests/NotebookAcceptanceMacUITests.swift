@@ -62,11 +62,24 @@ import XCTest
     let id = try XCTUnwrap(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_DOCUMENT_ID"].flatMap(UUID.init(uuidString:)))
     let title = try XCTUnwrap(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_DOCUMENT_TITLE"])
     try activatePrivateApplication()
+    let back = application.buttons["mac-workspace-back"]
+    if back.exists && back.isEnabled { back.click() }
     let cover = application.buttons["workspace-item-" + id.uuidString.lowercased()]
-    if cover.exists { cover.doubleClick() }
+    XCTAssertTrue(cover.waitForExistence(timeout: 15)); cover.doubleClick()
     let window = application.windows[title]
     XCTAssertTrue(window.waitForExistence(timeout: 15))
     XCTAssertTrue(window.buttons["mac-workspace-back"].isEnabled, "The exact public document, not its board, must be open")
+    window.menuButtons["mac-reading-zoom"].click()
+    application.menuItems["По ширине"].click()
+    let paper = window.webViews.firstMatch
+    XCTAssertTrue(paper.waitForExistence(timeout: 30))
+    let originalPaper = paper.frame.size
+    XCTAssertGreaterThan(originalPaper.width, window.frame.width * 0.8)
+    let originalPixels = window.screenshot()
+    let originalPaperWidth = try visiblePaperWidth(originalPixels, windowWidth: window.frame.width)
+    XCTAssertGreaterThan(originalPaperWidth, window.frame.width * 0.8)
+    let original = XCTAttachment(screenshot: originalPixels)
+    original.name = "paper-before-source-mode-round-trip"; original.lifetime = .keepAlways; add(original)
     let unavailable = window.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@ OR value BEGINSWITH %@",
       "Нет текстового исходника", "Нет текстового исходника")).firstMatch
     for mode in ["Рядом", "Код"] {
@@ -83,6 +96,42 @@ import XCTest
     }
     window.buttons["Показать лист"].click()
     XCTAssertFalse(unavailable.exists)
+    XCTAssertTrue(paper.waitForExistence(timeout: 5))
+    XCTAssertEqual(paper.frame.width, originalPaper.width, accuracy: 1,
+      "Returning to paper must restore its width without a hidden horizontal scale")
+    XCTAssertEqual(paper.frame.height, originalPaper.height, accuracy: 1)
+    let restoredPixels = window.screenshot()
+    XCTAssertEqual(try visiblePaperWidth(restoredPixels, windowWidth: window.frame.width), originalPaperWidth, accuracy: 2,
+      "Actual paper pixels, not only WebKit accessibility bounds, must retain their width")
+    let restored = XCTAttachment(screenshot: restoredPixels)
+    restored.name = "paper-after-source-mode-round-trip"; restored.lifetime = .keepAlways; add(restored)
+  }
+
+  /// The public Sound document has white paper on the gray reader canvas.
+  /// WebKit's remote AX frame alone can miss an ancestor's bounds transform.
+  private func visiblePaperWidth(_ screenshot: XCUIScreenshot, windowWidth: CGFloat) throws -> CGFloat {
+    let image = try XCTUnwrap(screenshot.image.cgImage(forProposedRect: nil, context: nil, hints: nil))
+    let width = image.width, height = image.height
+    var pixels = [UInt8](repeating: 0, count: width * height * 4)
+    return try pixels.withUnsafeMutableBytes { bytes in
+      let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: width, height: height,
+        bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+      context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+      let scale = CGFloat(width) / windowWidth
+      let inset = Int(100 * scale) // Exclude the white toolbar and window edges.
+      var widest = 0
+      for y in stride(from: inset, to: height - inset, by: 4) {
+        var run = 0
+        for x in 0..<width {
+          let offset = (y * width + x) * 4
+          if bytes[offset] > 248 && bytes[offset + 1] > 248 && bytes[offset + 2] > 248 {
+            run += 1; widest = max(widest, run)
+          } else { run = 0 }
+        }
+      }
+      return CGFloat(widest) / scale
+    }
   }
 
   /// This document is authored through the installed public MCP before the

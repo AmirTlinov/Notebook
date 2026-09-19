@@ -1,5 +1,62 @@
 # Проверка Notebook
 
+## 19 сентября, 16:38 МСК — GUI-248: сжатие листа исправлено и проверено по пикселям
+
+Установлен Mac-only private V17, immutable source
+`86a0e2a55bc3cb4e563efa601ffd7fbacd74a0f12ab1454f12455c5b5c04825f`,
+cdhash `5fff5350376fa7693ca33d2c0ce4e60c6c9934db`. Рабочие исходники и snapshot
+совпали до/после; подпись приложения сохранена. Private store и manifest
+побайтно сохранены при замене Mac. Production и физический iPad не затронуты;
+Simulator остаётся V16. Это диагностический Mac-срез, не финальная новая пара.
+
+- Прежний V16: усиленный UI сценарий FAIL уже на исходной сжатой геометрии,
+  WebKit width 524 вместо ширины окна 1100. Это тот же установленный дефект,
+  а не ошибка сборки; native отрицательная регрессия отдельно проверяет оба
+  порядка resize и даёт 8 geometry failures на прежнем owner.
+- Новый V17: все **6 SceneCameraPlaneTests PASS**, включая split-pane resize,
+  pan settlement, native coordinates и raster projection; skips/warnings 0.
+- Настоящий Mac UI: повторное открытие Sound → «По ширине» → «Рядом» → «Код» →
+  «Показать лист»: **1 PASS**, skips/runtime warnings 0. Ширина белых пикселей
+  бумаги до/после **1052 → 1052 pt** при окне 1100 pt; AX width/height также
+  совпали. Обе оси текста и рисунка визуально осмотрены на PNG после возврата.
+  Нормальная геометрия восстановлена; в «Рядом» нет дополнительного растяжения.
+
+Evidence: `.build/gui250-mac-geometry-v17/{mac-build.json,native.xcresult,launch.json}`,
+`.build/gui250-pane-geometry-ui/{before.xcresult,after.xcresult,provenance.json,paper-pixels.json}`
+и четыре явных window PNG в `after-attachments/`. До исправления автоматические
+failure attachments XCTest были pending; отрицательное доказательство — точная
+ошибка width, native before/after и исходный screenshot Амира, не эти placeholders.
+
+Этот результат закрывает горизонтальное сжатие при смене режимов. Живое
+дрожание при scroll и системное frame pacing **не объявляются принятыми**:
+последний сценарий не содержал scroll или системного измерения кадров.
+
+## 19 сентября, 16:21 МСК — GUI-248: возврат из исходника искажает лист
+
+Новый screenshot Амира после принятого source-pane сценария показал отдельный
+дефект: при96% лист и текст сжаты по горизонтали примерно вдвое. Предыдущая
+UI-проверка не проверяла возвращённую геометрию бумаги; её PASS не закрывает
+этот дефект.
+
+Воспроизведение на настоящем AppKit: frame1100/bounds572 → frame572 даёт
+bounds297.44; возврат frame1100 после bounds1100 даёт bounds2115.38. AppKit
+сохраняет уже установленный bounds transform, когда SwiftUI меняет frame после
+updateNSView. Исправление у прежнего Mac SceneCameraPlaneView: размер bounds
+вычисляется по фактическому frame; setFrameSize повторно применяет только
+camera projection. UIKit не изменён.
+
+Без Xcode runner выполнен scoped native probe: неизменённые тексты прежнего
+и нового SceneCameraPlaneView + SceneCameraProjection, настоящий Core/AppKit/
+SwiftUI, фиктивны только неиспользуемые model register/unregister callbacks.
+Новый repo-тест выполняет оба порядка layout, восемь изменений ширины и held
+scale. Прежний owner:8 geometry failures; новый owner:0, одинаковый масштаб
+обеих осей. Evidence `.build/gui250-pane-geometry-native/`. Первый probe имел
+неверный NSButton fixture (intrinsic height24); заменён обычным NSView96×96,
+продуктовые проверки не ослаблены. Это native geometry evidence, не установленный
+Mac UI. UI regression теперь задаёт fit width и проверяет width/height до и
+после «Рядом»/«Код», сохраняет screenshot возвращённой бумаги. Новая правка ещё
+не установлена; Xcode/установка ожидают завершения GUI-259.
+
 ## 19 сентября, 16:13 МСК — GUI-248: «Рядом» и «Код» приняты на установленном Mac
 
 V16 immutable source `2f48105d25c6dcea9609d6b722e3cb92f3711a624097af006852a2ef8671a8cc`
