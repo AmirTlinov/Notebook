@@ -210,14 +210,31 @@ notebook.exportFrame(async ({format,state: saved,signal,pixelRatio}) => {
       background.setAttribute('x',String(box.x));background.setAttribute('y',String(box.y));
       background.setAttribute('width',String(box.width||r.width));background.setAttribute('height',String(box.height||r.height));background.setAttribute('fill',getComputedStyle(canvas).getPropertyValue('--paper').trim()||'#fff');svg.prepend(background);
       const title=document.createElementNS('http://www.w3.org/2000/svg','title');title.textContent=get('detail-caption').textContent;svg.prepend(title);
+      if(format==='pdf') {
+        // A short authored slot can scroll. Replace only its visible vector
+        // pixels; a formula below the viewport is not an invalid native layer.
+        let left=Math.max(0,r.left),top=Math.max(0,r.top),right=Math.min(innerWidth,r.right),bottom=Math.min(innerHeight,r.bottom);
+        for(let parent=source.parentElement;parent;parent=parent.parentElement) {
+          const style=getComputedStyle(parent),clip=parent.getBoundingClientRect();
+          if(/^(auto|scroll|hidden|clip)$/.test(style.overflowX)) {left=Math.max(left,clip.left+parent.clientLeft);right=Math.min(right,clip.left+parent.clientLeft+parent.clientWidth);}
+          if(/^(auto|scroll|hidden|clip)$/.test(style.overflowY)) {top=Math.max(top,clip.top+parent.clientTop);bottom=Math.min(bottom,clip.top+parent.clientTop+parent.clientHeight);}
+        }
+        if(right<=left||bottom<=top)return null;
+        const clipped=document.createElementNS('http://www.w3.org/2000/svg','svg');
+        clipped.setAttribute('xmlns','http://www.w3.org/2000/svg');
+        clipped.setAttribute('width',String(right-left));clipped.setAttribute('height',String(bottom-top));
+        clipped.setAttribute('viewBox',`0 0 ${right-left} ${bottom-top}`);
+        svg.setAttribute('x',String(r.left-left));svg.setAttribute('y',String(r.top-top));clipped.append(svg);
+        return {svg:new XMLSerializer().serializeToString(clipped),frame:{x:left,y:top,width:right-left,height:bottom-top}};
+      }
       return {svg:new XMLSerializer().serializeToString(svg),frame:{x:r.left,y:r.top,width:r.width,height:r.height}};
     }
     const plot=vector(source);
     if(format==='pdf') {
       const formula=get('formula').querySelector('svg');if(!formula)throw Error('Формула не готова');
-      return [plot,vector(formula)];
+      return [plot,vector(formula)].flatMap(layer=>layer?[layer]:[]);
     }
-    const serialized=plot.svg;
+    const serialized=plot!.svg;
     return serialized;
   } finally {signal.removeEventListener('abort',cancel);pause();}
 },{vectors:true});

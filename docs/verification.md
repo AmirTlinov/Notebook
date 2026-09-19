@@ -1,5 +1,57 @@
 # Проверка Notebook
 
+## 19 сентября, 11:21 МСК — GUI-250: public Release, полный Core gate и короткий vector viewport
+
+Isolated Release **3deac88**, source
+`e24ca83eca9022b1db9ef12a2aab557d40e9a0020e8bf57d9493eb7e9a71e847`,
+собран и обновлён в `.build/gui250-release-v3`; private Mac/Simulator store inventories
+и прежние manifests сохранены. Mac CDHash `f2f8f5dbcf8551acc84c6c0afdf19eb3d38591cd`.
+Установленный MCP по явному private socket создал новый TS-пример биений вне
+рецептов и все девять научных программ. Исправление XPC signing-team identity
+подтверждено настоящим createDocument, не только конфигурационной проверкой.
+
+Биения: saved PDF/PNG/SVG/package/MP4 из одного cut
+`f20dff31ba291a7046889dba7dcec1131b436024dd4b2c420dc379f076e9c789`.
+PDF, PNG, SVG и декодированный последний MP4-кадр просмотрены; H.264 800×1132,
+8 кадров/с, четыре кадра за 0,5 с с последовательной модельной фазой. Это частота
+экспортного файла, не измерение производительности UI. Portable reimport обычным
+SDK создаёт новый документ, SVG SHA совпал байт-в-байт
+`53680f9ed2aeb74ec3d4eb3e53e5743435c27e8698de45ddebc9dcbf3f7353bd`.
+Roundtrip выполнен в том же private store; не объявляется cold destination proof.
+Standalone HTML saved, но интерактивное открытие блокировано политикой browser
+инструмента; обходов нет. Все девять corpus PNG просмотрены; это канонические
+сохранённые кадры, не принятые reference episodes и не shownOnIPad.
+
+Public PDF signal при height=800 обнаружил дефект авторского recipe: он объявлял
+векторную формулу вне прокручиваемого viewport. Native bounds guard правильно
+отказал `invalid_export_vector`. Height=1600 подтвердил полное содержание;
+теперь recipe ограничивает замену реальными viewport/ancestor scroll clips,
+сохраняя частично видимый SVG векторным и не добавляя невидимые области. Native
+admission не ослаблен. **JS3 PASS**, `/tmp/gui250-clipped-vector-js-v1.log`;
+**Mac1 PASS**, warnings0/skips0, `.build/gui250-clipped-vector-mac-v1/verification.json`,
+source `04ec01b871141bebe8c9c3cba03e25dae455efba725f54767e447f81592e5820`:
+SVG выбранного отсчёта и реальные PDF высоты 800/1000. Новый package опубликован
+тем же installed Release: короткий PDF теперь saved, SHA
+`e8582fd4d6b9d35ae0b91becfeb559baf3a730a9f311b0b9b3642c9a218fdc65`,
+просмотрен целиком. Свидетельства `.build/gui250-corpus/signal/clipped-*`.
+
+Полный **Swift1125 PASS**, `/tmp/gui250-swift-full-v2.log`: suites 21+33+993+49+29,
+exit0, Core 1054,459 с с 100k seeds. Компиляция и неизменные test binaries относятся
+к **69d6a0c**, source `694a57f80cf511248421ad969cc39f9b71b05b196d322c6cdd17735a6e1ad4d3`.
+Во время завершающих Core scale tests выше изменён только signal recipe/native
+fixture; их проверяет отдельный новый Mac receipt, не прежний Swift результат.
+Одна inherited Swift compiler warning о лишнем try; новых runtime failures нет.
+
+System-wide tracing разрешён Амиром. Реальный Simulator Pencil/eraser scenario
+runner завершился exit0, но вся traced attempt FAILED: xctrace не финализировал
+trace. Отдельные auto-stop 5 с Simulator/host probes также зависли; host сообщил
+`dylibs overlap`, sample указывает CoreSymbolicationDT, не deadlock Notebook.
+Ни один partial trace не принят как системные кадры/CPU/GPU. Fresh test pair ещё
+без trust, разрешение на test-only bootstrap ожидается. Поэтому saved/exported
+не означает received/shown; 10 повторов, 30 минут совместной работы и reference
+сопоставление остаются открытыми. Physical pair/Apple Account не изменялись.
+
+
 ## 19 сентября, 11:02 МСК — GUI-250: действующий lifecycle вместо старых fixture shortcuts
 
 Отрицательные проверки полного Core прогона разделены по владельцам. Старые
