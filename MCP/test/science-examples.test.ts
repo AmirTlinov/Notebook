@@ -28,6 +28,24 @@ test('linear model agrees with matrix action, oriented area and singular endpoin
   near(models.transform([-1,0,0,1],1,[1,1]).determinant,-1);
   const identity=models.transform([2,1,-1,0],0,[3,4]);near(identity.point[0],3);near(identity.point[1],4);
 });
+test('linear drawing follows the same vector and its translated basis component',async()=>{
+  const source=await readFile(new URL('../skills/notebook/assets/science/linear.js',import.meta.url),'utf8');
+  const elements=new Map<string,any>();let draw:Function=()=>{},body='';
+  const $=(id:string)=>{if(!elements.has(id))elements.set(id,{clientWidth:600,textContent:'',setAttribute(){}});return elements.get(id)};
+  const path=(points:number[][])=>points.map(([x,y],i)=>`${i?'L':'M'}${x!.toFixed(2)} ${y!.toFixed(2)}`).join(' ');
+  const Science={$,path,fmt:(v:number)=>String(v),svg:(_:string,value:string)=>body=value,
+    mount:(options:any)=>{draw=options.draw;return {render(){}}}};
+  runInNewContext(source,{Science,ScienceModels:models,document:{querySelectorAll:()=>[]},ResizeObserver:class{observe(){}}});
+  for(const width of [600,900])for(const matrix of [[1,.8,0,1],[0,-1,1,0],[1,0,0,0],[-1,0,0,1],[0,0,0,0]])for(const phase of [0,.5,1]){
+    $('linear-svg').clientWidth=width;const [a,b,c,d]=matrix;draw({a,b,c,d,phase});
+    const probe=models.transform(matrix,phase,[1,.5]).point,basis=models.transform(matrix,phase,[1,0]).point;
+    const screen=([x,y]:number[])=>[width/2+85*x!,280-85*y!];const [x,y]=screen(probe);
+    assert.ok(body.includes(`id="linear-probe" d="M${width/2} 280L${x} ${y}"`));
+    assert.ok(body.includes(`id="linear-sum" d="${path([screen(basis),screen(probe)])}"`));
+    assert.equal($('linear-equation').textContent,`Bv = (${probe[0]}; ${probe[1]})`);
+    assert.doesNotMatch(body,/NaN|Infinity/);
+  }
+});
 test('GP posterior interpolates noiseless data and remains finite with duplicate inputs',()=>{
   const points=[[-1,-.4],[1,.8]],xs=[-1,0,1,3];
   const p=models.gaussianProcess(points,xs,.8,0);near(p[0].mean,-.4);near(p[2].mean,.8);assert.ok(p[0].variance<1e-7);assert.ok(p[3].variance>p[0].variance);
