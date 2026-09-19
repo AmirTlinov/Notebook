@@ -52,6 +52,9 @@ node ~/.codex/skills/notebook/scripts/submit.mjs request.json
 Предпросмотр полезен для новой сцены, а при правке известного параметра обычно
 можно сразу использовать `setElementState` или `setBlockState`.
 
+Для TS, imports, больших файлов и workers используй [файловую программу](programs.md),
+а не раздувай inline JSON.
+
 ## Своя сцена
 
 В `html` помещается фрагмент с inline SVG/canvas и управлением. Стили и код идут

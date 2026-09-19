@@ -108,6 +108,8 @@ targets:
     deploymentTarget: "27.0"
     sources:
       - path: UITests
+      - path: TestSupport/ProgramAssets/compiled-program.json
+        buildPhase: resources
       - path: ../MCP/skills/notebook/assets/animation
         type: folder
         buildPhase: resources

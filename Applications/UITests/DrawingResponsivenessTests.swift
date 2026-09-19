@@ -450,6 +450,31 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.terminate()
   }
 
+  func testCompiledTypeScriptPackageFirstTapAndColdReopenOnBoardAndDocument() throws {
+    continueAfterFailure = false
+    let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "compiled-program", withExtension: "json"))
+    for document in [false, true] {
+      let app = XCUIApplication()
+      app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-compiled-program-fixture",
+        "--notebook-simulator-finger-gestures"] + (document ? ["--notebook-document-runtime-fixture"] : [])
+      app.launchEnvironment["NOTEBOOK_COMPILED_PROGRAM"] = try String(contentsOf: url, encoding: .utf8)
+      launchPortraitFixture(app)
+      XCTAssertTrue(app.staticTexts["2² = 4"].waitForExistence(timeout: 15))
+      let button = app.buttons["Увеличить x"]
+      XCTAssertTrue(button.waitForExistence(timeout: 5)); button.tap()
+      XCTAssertTrue(app.staticTexts["3² = 9"].waitForExistence(timeout: 5), "The first tap reaches the compiled module and Worker")
+      let picture = XCTAttachment(screenshot: app.screenshot())
+      picture.name = document ? "compiled-document-worker-result" : "compiled-board-worker-result"
+      picture.lifetime = .keepAlways; add(picture)
+      XCUIDevice.shared.press(.home); app.activate()
+      XCTAssertTrue(button.waitForExistence(timeout: 5)); XCTAssertTrue(app.staticTexts["3² = 9"].exists)
+      app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+      XCTAssertTrue(app.staticTexts["3² = 9"].waitForExistence(timeout: 15), "Cold SQLite restores the package and its checkpoint, without a dev server")
+      button.tap(); XCTAssertTrue(app.staticTexts["(−3)² = 9"].waitForExistence(timeout: 5))
+      app.terminate()
+    }
+  }
+
   func testLCFirstGestureParametersBackgroundAndColdReopenOnBoardAndDocument() throws {
     continueAfterFailure = false
     for document in [false, true] {

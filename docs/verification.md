@@ -1,5 +1,64 @@
 # Проверка Notebook
 
+## 19 сентября, 03:48 МСК — GUI-243: TS/build/preview до работающего package
+
+`prepare.mjs program` теперь принимает TS entry, imports/CSS, explicit workers,
+HTML и адресованные assets. Отдельный pinned TypeScript 7.0.2 CLI проверяет DOM
+и WebWorker, esbuild 0.28.2 собирает ESM с linked source maps. Имеющийся package
+format1 и GUI-242 importer/publication остаются единственным native путём.
+Нет npm install/scripts внутри сборки, CDN или whitelist библиотек. Проверяются
+lock version/integrity metadata и реальные source SHA; npm tarball integrity
+заново не проверяется. Внешние bundle/CSS imports отвергаются. File URL plugin
+хеширует/копирует binaries потоком; cache не перезаписывает используемые пакеты.
+
+Local preview обслуживает только подготовленные paths на случайном loopback URL,
+проверяет identity, MIME/ranges, CSP и изменённые файлы. Он использует прежний
+`notebook-program.js` с local transport, явно сообщает package/build/bridge hash
+и не подключается к Notebook. Runtime/ready ошибки выводятся в UI и stderr,
+source maps восстанавливают авторскую позицию, если она есть в stack.
+
+Проверки:
+
+* **26 MCP PASS**, `/tmp/gui-243-js-v5.log`: TS/CSS/modules/typed workers, portable
+  output при переносе проекта, cache/source/lock/config invalidation, две параллельные
+  сборки, repair повреждённого derived entry, type/missing dependency/external CSS
+  errors без изменения старого артефакта, 300 MiB binary по 75 bounded parts,
+  preview namespace/Range/409 и mapped diagnostics, прежние recipes/import.
+  Это sparse binary fixture, не benchmark уникальной передачи 300 MiB.
+* **Pinned SDK check PASS**, `/tmp/gui-243-sdk-v5.log`. Browser fixture исключён
+  только из NodeNext-конфига MCP: его TS действительно проверяет browser build,
+  а regression сравнивает весь generated native fixture с текущим compiler output.
+* **Mac 1 PASS**, `.build/gui-243-compiled-mac-v2/verification.json`: настоящий
+  compiled package запускается в spatial и document iframe владельцах, общий
+  worker chunk/asset/CSS загружаются offline, checkpoint документа возвращает x.
+* **Отдельный Simulator 3 PASS**, `.build/gui-243-compiled-sim-v2.xcresult`:
+  тот же native contract; compiled package first tap → Worker result → Home/return
+  → process terminate/cold reopen на board и document; прежний полный LC gesture
+  scenario на обеих поверхностях (параметры, background, final checkpoint).
+  Исходники обоих native прогонов до/после неизменны:
+  `9e4ce4c75fdfc4a42c8ff7f8c06fd65ba2070c9cc2edb7882a9dcf70d1daeb1f`.
+* Живой in-app browser: 2²=4 → первый клик → 3²=9 → (−3)²=9; reload сбрасывает
+  только local preview state. Отдельно runtime exception показал `main.ts:2:30`,
+  rejected ready — `main.ts:1:31`, без programReady. Осмотрены финальный preview
+  `.build/gui-243-preview-final.png` и оба Simulator screenshot из
+  `.build/gui-243-compiled-sim-v2-shots/` — график/подписи/control читаемы.
+  Проверенный compiled package SHA:
+  `804e33f3780ef7a3d5796cf01187bec86cb91cbe85d8eec9371324ce5492781f`.
+
+Первый native v1: Simulator 1 PASS/1 FAIL, Mac 0 PASS/1 FAIL. Причина — тест
+вызвал callback-overload callAsyncJavaScript как async и сравнил Void с String;
+исправлен сам readback теста, не поведение приложения. Итог — v2 выше.
+Первый Node regression выявил абсолютные пути в virtual asset modules/source maps;
+они заменены project-relative paths, воспроизводимость проверена заново.
+
+Это принятый development-срез GUI-243, не Done всей задачи/GUI-240. Пользовательская
+пара 116 не обновлялась; текущий live submit через неё, межустройственная доставка
+этого TS-артефакта, full release/performance, 10 повторов/30 минут не заявляются.
+Симулятор используется по прямому указанию Амира и не называется физическим iPad.
+Простая квадратная функция — build/transport fixture, не визуальная приёмка
+семи предметных сцен GUI-244/245. Дальше — lifecycle семи прежних recipes,
+Plot/MathJax и плотная 2D-сцена через этот же открытый author-side путь.
+
 ## 19 сентября, 03:14 МСК — GUI-240: интеграция выпущенной пары 116
 
 В ветку визуализаций объединён завершённый `f638433` из

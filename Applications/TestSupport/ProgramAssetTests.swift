@@ -77,6 +77,59 @@ final class ProgramAssetTests: XCTestCase {
     let package = NotebookProgramPackage(html: "view.html", css: "style.css", javaScript: "main.js", files: entries.sorted { $0.path < $1.path })
     return Fixture(root: root, store: store, package: package, hash: try store.stageProgramPackage(package))
   }
+  private func compiledFixture() throws -> Fixture {
+    struct Compiled: Decodable { let package: NotebookProgramPackage; let files: [String: String]; let packageHash: String }
+    let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "compiled-program", withExtension: "json"))
+    let value = try JSONDecoder().decode(Compiled.self, from: Data(contentsOf: url))
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), store = NotebookStore(root: root)
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    for file in value.package.files {
+      XCTAssertEqual(file.parts.count, 1)
+      try store.stageBlob(data: Data(try XCTUnwrap(value.files[file.path]).utf8), expectedHash: file.parts[0].sha256)
+    }
+    let hash = try store.stageProgramPackage(value.package); XCTAssertEqual(hash, value.packageHash)
+    return Fixture(root: root, store: store, package: value.package, hash: hash)
+  }
+
+  func testCompiledTypeScriptPackageRunsOfflineAndCheckpointsInBothExistingOwners() async throws {
+    let f = try compiledFixture(); defer { f.close() }
+    let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
+    var ready = false
+    let agent = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in true })
+    agent.programStore = f.store
+    let web = AgentWebCoordinator.makeWebView(coordinator: agent), close = try mount(web)
+    defer { agent.invalidate(); lease.release(); close() }
+    agent.load(.init(id: "compiled", kind: .web, frame: .init(x: 0, y: 0, width: 600, height: 600), source: "", html: "", programPackage: f.hash),
+      policy: .exact(scale: 1), in: web)
+    try await wait { ready || agent.snapshotFailure != nil }; XCTAssertTrue(ready); XCTAssertNil(agent.snapshotFailure)
+    let initial = try await web.evaluateJavaScript("document.querySelector('#value').textContent") as? String
+    XCTAssertEqual(initial, "2² = 4")
+    _ = try await web.evaluateJavaScript("document.querySelector('button').click()")
+    var result: String?
+    let deadline = ContinuousClock.now + .seconds(5)
+    repeat {
+      result = try await web.evaluateJavaScript("document.querySelector('#value').textContent") as? String
+      if result != "3² = 9" { try await Task.sleep(for: .milliseconds(10)) }
+    } while result != "3² = 9" && .now < deadline
+    XCTAssertEqual(result, "3² = 9")
+    agent.invalidate(); lease.release()
+
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "compiled", html: "", programPackage: f.hash, height: 600)])
+    let state = DocumentStateJournal(id: document.id, actor: UUID())
+    let owner = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+    owner.programStore = f.store
+    let host = DocumentWebHost(), closeHost = try mount(host)
+    defer { owner.invalidate(); closeHost() }
+    owner.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+    owner.mount(in: host, physicalSize: .init(width: 595, height: 842), isInteractive: true, priority: .currentPage)
+    try await wait { owner.hasCanonicalPixels || owner.acquisitionError != nil }; XCTAssertTrue(owner.hasCanonicalPixels); XCTAssertNil(owner.acquisitionError)
+    var checkpoint: JSONValue?
+    owner.onStateCheckpoint = { _, value, _, _ in checkpoint = value; return nil }
+    let accepted = await owner.checkpointPrograms(resume: true)
+    XCTAssertTrue(accepted); XCTAssertEqual(checkpoint?["x"], .number(2))
+  }
+
   private func wav() -> Data {
     var result = Data()
     func string(_ s: String) { result.append(Data(s.utf8)) }

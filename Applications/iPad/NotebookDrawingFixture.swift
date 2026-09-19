@@ -28,6 +28,7 @@
     static let historyArgument = "--notebook-history-performance-fixture"
     static let pointerArgument = "--notebook-pointer-fixture"
     static let passiveSVGArgument = "--notebook-passive-svg-fixture"
+    static let packageArgument = "--notebook-compiled-program-fixture"
     static let lcArgument = "--notebook-lc-fixture"
     static let mixedWebArgument = "--notebook-mixed-web-fixture"
     static let independentMaterialsArgument = "--notebook-independent-materials="
@@ -36,6 +37,7 @@
 
     static func makeModel() -> NotebookAppModel {
       let fileManager = FileManager.default
+      let packageFixture = ProcessInfo.processInfo.arguments.contains(packageArgument)
       let lcFixture = ProcessInfo.processInfo.arguments.contains(lcArgument)
       let nativeGraphics = ProcessInfo.processInfo.arguments.contains(nativeGraphicsArgument)
       let nativeGraphicPage = ProcessInfo.processInfo.arguments.contains(nativeGraphicPageArgument)
@@ -77,7 +79,9 @@
       let fixtureName: String
       // The full route reads this gesture's durable result after other UI
       // scenarios. Their fresh default fixture must not replace that evidence.
-      if lcFixture {
+      if packageFixture {
+        fixtureName = startsInDocument ? "CompiledDocument" : "CompiledBoard"
+      } else if lcFixture {
         fixtureName = startsInDocument ? "LCDocument" : "LCBoard"
       } else if ProcessInfo.processInfo.arguments.contains(pageTurnContentArgument) {
         fixtureName = "PageTurnContent"
@@ -188,13 +192,14 @@
             ] : [])
         )
         try store.savePage(page)
-        if lcFixture && !startsInDocument {
+        let packageHash = packageFixture ? try installCompiledProgram(store: store) : nil
+        if (lcFixture || packageFixture) && !startsInDocument {
           var board = BoardDocument.initial(itemIDs: [itemID], actor: actor)
           _ = board.moveItem(itemID, to: .init(x: 8_000, y: 8_000), actor: actor)
           let program = SpatialElement(id: "lc", surface: .board(index.rootBoardID), kind: .web,
             frame: .init(x: 0, y: 0, width: 760, height: 720), worldOrigin: .init(x: -380, y: -420),
-            source: "Идеальный LC-контур", html: try lcSource("html"), css: try lcSource("css"),
-            javaScript: try lcSource("js"), stamp: .init(counter: 0, actor: actor))
+            source: packageFixture ? "" : "Идеальный LC-контур", html: packageFixture ? "" : try lcSource("html"), css: packageFixture ? "" : try lcSource("css"),
+            javaScript: packageFixture ? "" : try lcSource("js"), programPackage: packageHash, stamp: .init(counter: 0, actor: actor))
           _ = board.upsertElement(program, expected: nil, actor: actor)
           try store.saveBoard(.init(rootBoardID: index.rootBoardID,
             boards: [.init(id: index.rootBoardID, board: board)], stamp: board.stamp), items: index.items)
@@ -298,7 +303,9 @@
             id: documentID,
             actor: actor,
             paperSize: ProcessInfo.processInfo.arguments.contains(documentLetterArgument) ? .letter : .a4,
-            blocks: lcFixture ? [
+            blocks: packageFixture ? [
+              .interactive(id: "compiled", html: "", programPackage: packageHash, height: 600)
+            ] : lcFixture ? [
               .interactive(id: "lc", html: try lcSource("html"), css: try lcSource("css"),
                 javaScript: try lcSource("js"), height: 720)
             ] : ProcessInfo.processInfo.arguments.contains(documentLinksArgument)
@@ -628,6 +635,23 @@
       } catch {
         fatalError("Не удалось создать лист проверки инструментов: \(error)")
       }
+    }
+
+    private static func installCompiledProgram(store: NotebookStore) throws -> String {
+      struct Compiled: Decodable { let package: NotebookProgramPackage; let files: [String: String]; let packageHash: String }
+      guard let encoded = ProcessInfo.processInfo.environment["NOTEBOOK_COMPILED_PROGRAM"] else {
+        throw NotebookStorageError.invalidTransaction("Compiled fixture source missing")
+      }
+      let value = try JSONDecoder().decode(Compiled.self, from: Data(encoded.utf8))
+      for file in value.package.files {
+        guard let source = value.files[file.path], file.parts.count == 1 else {
+          throw NotebookStorageError.invalidTransaction("Compiled fixture file missing")
+        }
+        try store.stageBlob(data: Data(source.utf8), expectedHash: file.parts[0].sha256)
+      }
+      let hash = try store.stageProgramPackage(value.package)
+      guard hash == value.packageHash else { throw NotebookStorageError.invalidTransaction("Compiled fixture identity changed") }
+      return hash
     }
 
     // The UI runner supplies the shipped recipe bytes. No second example or
