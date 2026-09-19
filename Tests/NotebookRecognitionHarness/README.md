@@ -1,20 +1,20 @@
-# Проверка открытого распознавания без MyScript
+# Offline recognition candidate measurement
 
-Это измерение кандидата **TexTeller 3 / ONNX q8**, а не распознаватель,
-подключённый к Notebook. Модель, исходные изображения и ожидаемые транскрипции
-не заменяют настоящие UUID/точки Pencil. Нет облачного сервиса, SDK-сертификата,
-платного API или подставного распознавания.
+This harness measures **TexTeller 3 / ONNX q8**. It is not Notebook's integrated
+recognizer. Model images and expected transcriptions do not establish binding
+to real Pencil stroke IDs or points. No cloud recognition service, paid API,
+SDK certificate, or substituted recognition output is used.
 
-## Воспроизведение
+## Reproduce
 
-Из корня проекта, подготовка с сетью только на машине сборки:
+From the repository root, prepare dependencies with network access:
 
 ```sh
 python3 Tests/NotebookRecognitionHarness/prepare.py
 npm ci --ignore-scripts --prefix Tests/NotebookRecognitionHarness
 ```
 
-Проверка преобразования изображения и настоящее исполнение модели без сети:
+Check image preprocessing, then run the actual model with networking denied:
 
 ```sh
 npm test --prefix Tests/NotebookRecognitionHarness
@@ -22,36 +22,36 @@ sandbox-exec -p '(version 1)(allow default)(deny network*)' \
   node Tests/NotebookRecognitionHarness/evaluate.mjs
 ```
 
-Отчёт: `.build/recognition-result.json`. Команда измерения возвращает результат
-самого измерения; `status: not_accepted` не становится приёмкой, даже при пяти
-совпадениях. Нет доказательства iPad, памяти, привязки к штрихам, калибровки
-неоднозначности или независимой точности. Примеры автора могли входить в обучение.
-Не добавлять эту команду в качестве «зелёного распознавателя» в тесты приложения.
+The report is `.build/recognition-result.json`. Its `status:not_accepted`
+remains unaccepted even if five examples match. This does not establish iPad
+execution, memory bounds, stroke binding, ambiguity calibration, or independent
+accuracy; upstream examples may have appeared in training. Do not register this
+as a passing integrated-recognition acceptance test.
 
-## Владельцы и ограничения
+## Sources and boundaries
 
-- [TexTeller](https://github.com/OleehyO/TexTeller) — исходная модель; веса
-  [ONNX-конверсии](https://huggingface.co/onnx-community/TexTeller3-ONNX) имеют
-  опубликованную лицензию Apache-2.0. Точная ревизия и хеши — `model-lock.json`.
-  Файлы модели размещаются только в `.build`, не в архиве пользователя.
-- `preprocess.mjs` сохраняет пропорции, обрезает фон и готовит одноканальный
-  вход 448×448. Контракт основан на
-  [исходной подготовке TexTeller](https://github.com/OleehyO/TexTeller/blob/9b88cec77bda735aa16f9fc7e4ccb4eb1500a8b2/texteller/utils/image.py).
-  Численное равенство Torch ещё не доказано. Начальный токен задаётся BOS
-  токенизатора вместо унаследованного EOS; проверка исходной модели ещё нужна.
-- `evaluate.mjs` проверяет SHA-256 **до** загрузки модели и изображений. Никакие
-  числа, знаки или структура не исправляются после распознавания. Сравнение
-  убирает только пробелы и внешние маркеры математического блока.
-- Пять изображений взяты из
-  [демонстрации UniMERNet](https://github.com/opendatalab/UniMERNet/tree/5a2c80d96b1d2dba447ff18d873e5fb73ba03c35/asset/streamlit_demo/DirectRecognition).
-  [Датасет](https://huggingface.co/datasets/wanderkid/UniMER_Dataset) опубликован
-  с Apache-2.0; сохранена лицензия автора. `fixtures.json` содержит происхождение,
-  хеши и отдельно помеченные визуально переписанные ожидаемые строки. Химический
-  пример — диагностический контроль, не обещанная поддержка химии.
-- Node/Transformers.js нужен только этому проверочному процессу. Он не является
-  предлагаемым iPad-исполнителем. Закреплён выпуск 3.8.1 и исправленный Sharp
-  0.35.4; установка отключает install-скрипты. На проверенной установке
-  `npm audit` не нашёл известных уязвимостей. Это не вечная гарантия.
+- [TexTeller](https://github.com/OleehyO/TexTeller) is the source model.
+  The [ONNX conversion](https://huggingface.co/onnx-community/TexTeller3-ONNX)
+  publishes Apache-2.0 licensing. `model-lock.json` pins revision and hashes.
+  Model files go only into `.build`, never a user archive.
+- `preprocess.mjs` preserves aspect ratio, crops background, and prepares
+  single-channel 448 × 448 input, based on
+  [upstream preprocessing](https://github.com/OleehyO/TexTeller/blob/9b88cec77bda735aa16f9fc7e4ccb4eb1500a8b2/texteller/utils/image.py).
+  Numerical equivalence with Torch remains unproven. Decoding starts with the
+  tokenizer BOS rather than inherited EOS; upstream-model validation is pending.
+- `evaluate.mjs` checks SHA-256 before loading models and images. It does not
+  repair recognized numbers, signs, or structure. Comparison removes only
+  whitespace and outer math delimiters.
+- Five images come from the
+  [UniMERNet demonstration](https://github.com/opendatalab/UniMERNet/tree/5a2c80d96b1d2dba447ff18d873e5fb73ba03c35/asset/streamlit_demo/DirectRecognition).
+  The [dataset](https://huggingface.co/datasets/wanderkid/UniMER_Dataset) publishes
+  Apache-2.0 licensing; the notice is retained. `fixtures.json` records origins,
+  hashes, and explicitly identified visually transcribed expected strings.
+  Chemistry is a diagnostic control, not supported product functionality.
+- Node/Transformers.js belongs only to this measurement process. It is not the
+  proposed iPad runtime. Dependencies pin Transformers.js 3.8.1 and Sharp 0.35.4;
+  install scripts are disabled. The historical installation's `npm audit`
+  reported no known vulnerabilities, not a permanent security guarantee.
 
-Ни одного чтения NotebookStore, NOTEBOOK_HOME, установленного приложения,
-доставки MCP или изменения пользовательских чернил здесь нет.
+The harness does not read NotebookStore, `NOTEBOOK_HOME`, installed apps, or MCP
+delivery, and does not modify user ink.

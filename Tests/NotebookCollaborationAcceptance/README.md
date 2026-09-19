@@ -1,127 +1,132 @@
-# Настоящая совместная работа в Simulator
+# Real collaboration acceptance in Simulator
 
-`NotebookCollaborationAcceptanceUITests` запускает только подписанный private bundle
-`com.amirtlinov.notebook.acceptance` с `NOTEBOOK_ACCEPTANCE_MANIFEST`. До запуска
-пара должна быть сопряжена обычным интерфейсом, Mac должен обслуживать настоящий
-Codex с двумя публичными инструментами, а созданный через `nb.transaction` виджет
-`acceptance-controls` должен быть доставлен и виден на текущей доске. Тест не
-создаёт доверие, не читает SQLite/модель, не подставляет ответы чата или квитанции.
+`NotebookCollaborationAcceptanceUITests` launches only the signed private bundle
+`com.amirtlinov.notebook.acceptance` with `NOTEBOOK_ACCEPTANCE_MANIFEST`.
+Before launch, pair the isolated apps through the ordinary UI, connect the Mac
+to real Codex, and publish/deliver/show an `acceptance-controls` widget through
+`nb.transaction`. The scenario uses `notebook_context` and
+`notebook_execute`; the server also exposes the separate package-import tool.
+The test does not create trust, read SQLite/model state, or substitute chat
+responses or receipts.
 
-Публичный контрольный материал: web element `acceptance-controls`, полный state
-`{count, slider, text}`. Его реальные AX controls — `Acceptance increment`,
-`Acceptance slider`, `Acceptance text`; видимый output — `Acceptance count: N`.
-Кнопка и поле сохраняют полный state через `notebook.commit`, удалённые изменения
-отрисовываются на `notebookstate`. Board UUID определяется агентом через контекст,
-не зашит в тесте. Нужен видимый свободный край доски рядом с виджетом для long hold.
+The control is a web element with complete state `{count, slider, text}`.
+Its AX controls are `Acceptance increment`, `Acceptance slider`, and
+`Acceptance text`; visible output is `Acceptance count: N`. Button/text input
+commit complete state through `notebook.commit`; received changes render on
+`notebookstate`. The agent resolves the board UUID from context. Leave visible
+empty board space beside the widget for long hold.
 
-Основной связный сценарий и отдельная регрессия CAS, до 600 секунд каждый; `notebook_acceptance.py`
-назначает этим точным сценариям 660 секунд внешнего ожидания и сохраняет
-выбранный `timeoutSeconds` в квитанции:
+## Scenarios
+
+The main scenario and CAS regression each allow 600 seconds.
+`notebook_acceptance.py` gives these exact methods a 660-second outer timeout
+and records `timeoutSeconds`:
 
 - `NotebookAcceptanceUITests/NotebookCollaborationAcceptanceUITests/testCreatedMaterialRetainsHumanEditsThroughAgentUndoAndCancellation`
 - `NotebookAcceptanceUITests/NotebookCollaborationAcceptanceUITests/testConcurrentHumanStateRejectsStaleAgentWriteAndSurvivesItsUndo`
 
-Первый тест выбирает область настоящим hold/drag от пустой доски, проверяет
-счётчик контекста и отправляет естественную просьбу Codex. После Send человек
-нажимает исходный counter. Агент должен открыть отправленные пиксели, прочитать
-старое значение, дождаться нового живого state и повторно получить тот же SHA
-внимания; затем создать документ с интерактивным блоком. UI ищет этот документ,
-открывает его и проверяет изменение 0 → 1 первым настоящим нажатием. В том же
-документе человек открывает исходный редактор, сохраняет добавленный текст и
-дожидается его установки. Следующий запрос в этом же чате экспортирует именно
-сохранённую версию с формулой, SVG и ссылкой. Адрес export job проверяется
-отдельно через публичный API и сам PDF, не по словам агента. Затем агент
-продолжает сохранённое 1 одной транзакцией до 101. Человек
-нажимает ту же кнопку до 102; устаревшая CAS записи агента обязана получить
-revision_conflict. Undo отменяет только +100 и сохраняет человеческие 102.
-Затем UI останавливает настоящий следующий readonly turn; документ не исчезает.
+The first test selects a region by real hold/drag, checks the context counter, and
+sends a natural request to Codex. After Send, the person increments the original
+counter. The agent must open the submitted pixels, read the old value, await new
+live state, and reread the same attention SHA before creating an interactive
+document.
 
-После этого внешний runner останавливает **только точный процесс private Mac**.
-`testOfflineOutgoingAndDraftSurviveRelaunchInTheSameConversation` требует настоящий
-offline banner, сохраняет одно исходящее сообщение, отдельный неотправленный
-черновик, перезапускает iPad и сверяет conversation/outgoing UUID и точный текст.
-После запуска прежнего private binary с тем же manifest метод
-`testReconnectedConversationDeliversOnceAndRetainsUnsentDraft` ждёт реальный ответ
-Codex, пустой outbox, неизменный черновик и сохранённые102. Для этих двух методов
-и методов `testUseCreatedDocumentFromTheExistingRealConversation` /
-`testContinueSavedDocumentFromTheExistingRealConversation` driver также даёт660s,
-но не разрешает trace attach без launch-handshake. Recovery читает фактическую
-квитанцию прежнего создания из того же transcript, не запускает создание снова.
-Неудачный исходный прогон остаётся FAIL, даже если продолжение прошло.
-Recovery после Save читает прежний экспорт; если 102 уже действительно показано,
-читает результат прежнего CAS/undo, не отправляя +100 повторно. Поток ответа
-наблюдается одним immutable AX snapshot: исчезнувший индекс не становится
-ошибкой приложения. Stop до первого действия допустим; отсутствие выдуманной
-группы «1 действие» не означает отказ отмены. Статус того же turn сверяется
-с владельцем Codex в независимом аудите.
+UI then opens that document and verifies 0 → 1 on the first actual tap.
+The person opens source, adds text, saves, and waits for installation. A later
+request exports that exact saved version with formula, SVG, and link.
+The job and PDF are verified independently through public APIs.
+The agent continues saved 1 to 101 in one transaction; the person taps to 102.
+The agent's stale CAS must fail with `revision_conflict`; selective undo of
+the agent's +100 preserves the later human value 102. Stopping the next real
+read-only turn must leave the document intact.
 
-Во втором тесте агент сначала принимает изменение text того же виджета и
-сохраняет post-commit `saved.receipt.revisions` и `saved.receipt.id` из ответа той
-же транзакции. Повторное чтение после появления маркера запрещено как источник
-expected: оно уже могло бы прочитать человеческую правку. Синхронизация — фактически видимый `Agent ready …`
-в настоящем поле вместе с кнопкой Stop текущего Codex turn. Commentary внутри
-скрытого disclosure и эхо исходного запроса не считаются готовностью. Затем UI
-меняет count и заменяет text через настоящие tap → клавиатуру → Cmd+A → ввод;
-агент делает запись с прежней expected version, получает
-`revision_conflict` и отменяет только свой первоначальный action. UI проверяет,
-что оба человеческих значения сохранились. Самотест не исправляет неожиданно
-принятую устаревшую запись и не отменяет пользовательские действия.
-`nb.undo` изменяет квитанцию исходного действия: `undoReceiptID == effectActionID`.
-Отдельный actionID отмены не придумывается; сохраняются реальные
-`publication.saved`, `receipt.undo.completedAt` (исходное число Apple reference date),
-`restored` и `preservedCount`.
+### Offline and recovery
 
-Основной сценарий создания и отдельная регрессия CAS создают новый чат и nonce;
-recovery/offline/reconnect продолжают прежний чат. Тест сначала читает ID текущего
-разговора и задач в настоящем каталоге, затем однократно нажимает «Новый чат».
-Квитанция создания должна открыть разговор с новым UUID; тест проверяет его
-реальную AX-идентичность и пустой transcript. Пустой чат может ещё не входить
-в историю Codex, поэтому возвращение в каталог не является шагом создания.
-Наличие прежнего transcript не подтверждает создание.
-Перед Send тест заменяет через клавиатуру только узнаваемый оставшийся черновик
-приёмки и проверяет точное равенство введённого запроса. Неизвестный черновик
-останавливает сценарий до его замены. Найденное по названию создание документа
-открывается обычным двойным нажатием на адресованную обложку.
-Плоский JSON в реальном ответе содержит
-полученные context/reference/action/document/program IDs, SHA, версии, error code,
-результат undo и настоящие `notebook_execute` run IDs изображения/создания/эффекта/
-непринятой CAS записи/undo. Агент выводит через `emit` неизменяемую post-commit
-квитанцию до ожидания пользователя, фактическую CAS ошибку и результат undo.
-Наличие JSON **не доказывает сохранение или показ**. Он сохраняется
-как `agent-reported-…-public-addresses-unverified`; отдельные attachments содержат
-фактические UI значения и скриншоты до/после переходов. При отсутствии ответа,
-attention pixels или control тест остаётся FAIL, готовый ответ не подставляется.
+The outer runner stops only the exact private Mac process.
+`testOfflineOutgoingAndDraftSurviveRelaunchInTheSameConversation` requires the
+actual offline banner, queues one outgoing message, retains a separate unsent
+draft, relaunches iPad, and compares conversation/outgoing IDs and exact text.
 
-После UI прогона независимая проверка через те же публичные инструменты обязана:
+After the same private Mac binary restarts with the same manifest,
+`testReconnectedConversationDeliversOnceAndRetainsUnsentDraft` waits for a real
+Codex reply, empty outbox, unchanged draft, and retained 102. These methods and
+`testUseCreatedDocumentFromTheExistingRealConversation` /
+`testContinueSavedDocumentFromTheExistingRealConversation` also receive 660
+seconds, but no trace attachment without a launch handshake.
 
-1. Повторно прочитать `nb.attention({contextID,referenceID})`, открыть его artifact
-   через `emitImage`, сверить `expectedSHA256` и старые пиксели с кадром до Send.
-2. Через `notebook_execute` с `op: "resume"` прочитать реальные output/effects всех
-   названных run IDs, сверить сохранённую до ожидания post-commit `expectedA` с
-   expected отказанной CAS записи; исходный запрос не запускать повторно.
-   Прочитать реальные действия и все необходимые страницы `nb.action`, убедиться
-   в принятых операциях, исходной CAS ошибке из run output и результате undo.
-   Совпадение слов агента с ожидаемыми строками недостаточно.
-3. Прочитать созданный документ и состояние его `programID`: на первом нажатии
-   сохранено 1, после продолжения/undo/Stop — 102. Прочитать исходный `acceptance-controls` и сверить пользовательские
-   count/text с UI attachments после undo.
-4. Отдельно сверить сохранение, доставку и actual shown версии через публичные
-   publication/presentation receipts. Прочитанный cache image не заменяет показ.
-5. Сохранить commit/source SHA, build manifest, xcresult, видео и реальные tool
-   run IDs с этими адресами; ошибки и непроверенные этапы не превращать в PASS.
+Recovery reads the previous creation receipt from the same transcript; it never
+creates again. After Save it reads the prior export; if 102 is already shown,
+it reads the prior CAS/undo outcome rather than applying +100 again.
+A failed original run remains failed even if recovery succeeds.
 
-Необязательная системная трасса использует существующий
-`NotebookSystemTraceHandshake`: отдельная identity/segment для настоящего launch,
-READY → Darwin start notification → жесты → END. Это не измерение FPS посредством видео
-или CADisplayLink. Исполнение каждого этапа фиксируется отдельно в docs/verification.md;
-компиляция не считается сквозной приёмкой.
+Observe the response through one immutable AX snapshot; disappearing indices
+do not alone establish an application fault. Stop may precede any action, so an
+absent action group is valid. Independently check the same turn with Codex.
 
-Семантику Swift 6 проверяет `python3 Tests/NotebookCollaborationAcceptance/typecheck.py`.
-Скрипт не занимает Simulator runner и сохраняет точную команду, compiler version,
-SHA обоих Swift sources до/после и отдельную квитанцию `uiExecuted:false`.
+### Concurrent state regression
 
-Ожидание человеческого жеста ограничено в prompt: один JavaScript run не дольше
-30 секунд. Продолжение следующего run переносит уже выведенные post-commit
-expected/state; оно не повторяет первый эффект и не подменяет expected свежим
-чтением. Отклонение по времени или реальная ошибка инструмента остаются частью
-наблюдаемого результата. Тест не отключает ограничения QuickJS.
+The agent first changes widget text and emits the same transaction's immutable
+`saved.receipt.revisions` and `saved.receipt.id`. Do not derive expected
+versions from a later read that could already include human changes.
+
+Readiness requires the visible `Agent ready …` text in the actual field and
+the current turn's Stop button. Hidden commentary or prompt echo is insufficient.
+UI changes count and text through tap, keyboard, Cmd+A, and typing.
+The agent then writes with its earlier expected version, receives
+`revision_conflict`, and undoes only its original action. Both human values
+must survive. The test never repairs an incorrectly admitted stale write.
+
+`nb.undo` updates the original action receipt:
+`undoReceiptID == effectActionID`. Preserve actual `publication.saved`,
+`receipt.undo.completedAt` (Apple reference-date numeric value), `restored`,
+and `preservedCount`; do not invent a separate undo action ID.
+
+## Conversation and evidence identity
+
+Creation/CAS scenarios each create a fresh chat and nonce. Recovery/offline/
+reconnect continue that chat. Read existing conversation/task IDs, then select
+New Chat once. The receipt must open a new UUID with an empty transcript.
+An empty conversation may not yet appear in Codex history.
+
+Replace only a recognizable leftover acceptance draft and verify exact prompt
+text before Send. An unknown draft stops the scenario before replacement.
+Open the addressed document cover through the ordinary double-click path.
+
+Agent output includes actual context/reference/action/document/program IDs,
+hashes, versions, errors, undo result, and real `notebook_execute` run IDs.
+Emit post-commit expected state before awaiting human input, then actual CAS and
+undo outputs. Agent-reported JSON remains labeled
+`agent-reported-…-public-addresses-unverified`; it alone does not establish
+persistence or display. Separate attachments retain UI values and screenshots.
+Missing responses, attention pixels, or controls remain failures.
+
+After UI execution, independently verify through public tools:
+
+1. Reread `nb.attention({contextID,referenceID})`, display its artifact with
+   `emitImage`, and compare `expectedSHA256` and old pixels with the pre-Send frame.
+2. Resume each real run ID to read output/effects without re-execution. Compare
+   the original post-commit expected version with the rejected CAS input.
+   Read every needed page of `nb.action`, including accepted operations,
+   CAS error, and undo outcome.
+3. Read the created document/program: first tap saved 1; continuation/undo/Stop
+   retained 102. Compare original widget count/text with post-undo UI evidence.
+4. Verify saving, delivery, and actual shown version separately through
+   publication/presentation receipts. Cached images do not prove presentation.
+5. Retain commit/source SHA, build manifest, xcresult, video, real run IDs, and
+   all unverified or failed stages.
+
+## Trace and type checking
+
+Optional system tracing uses `NotebookSystemTraceHandshake`: identity per
+actual launch, READY → Darwin start notification → gestures → END.
+Neither video nor CADisplayLink measures system FPS. Record exact outcomes in
+[verification](../../docs/verification.md).
+
+`python3 Tests/NotebookCollaborationAcceptance/typecheck.py` checks Swift 6
+semantics without taking the Simulator runner. It records command, compiler,
+both source hashes before/after, and `uiExecuted:false`.
+
+Prompts bound a single JavaScript wait to 30 seconds. A subsequent run carries
+the already emitted expected/state, without repeating the first effect or
+replacing expected with fresh state. Timeout and real tool errors remain visible;
+the harness does not disable QuickJS limits.

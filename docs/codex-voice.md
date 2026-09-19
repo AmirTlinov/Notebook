@@ -1,330 +1,187 @@
-# Голос через авторизацию Codex
+# Voice through Codex authentication
 
-## Один разговор, независимо от окна чата
+## One conversation owner
 
-`NotebookVoiceController` принадлежит существующему `NotebookChatController`.
-Его медиаповерхность смонтирована в корне окна, вне раскрываемого чата и доски.
-Сворачивание не завершает звонок и не меняет камеру. Компактные кнопки показывают
-название закреплённой задачи, состояние, микрофон, завершение и доступ к тексту
-последних реплик. Выбор другой задачи или компьютера требует сначала завершить
-этот разговор; продолжающаяся речь не перенаправляется молча.
+`NotebookVoiceController` belongs to `NotebookChatController`. Its media surface
+is mounted at the window root, independent of expanded chat and board visibility.
+Collapse does not end a call or move the camera. Controls show the pinned task,
+state, microphone, playback and end action. Changing task/computer requires ending
+the call first; ongoing speech is never silently redirected.
 
-`MacNotebookVoice` использует прежний журнал `NotebookChatInput` и единственный
-`CodexAppServer`. Он проверяет вход ChatGPT, продолжает выбранную задачу и
-вызывает `thread/realtime/start` v3 с WebRTC. Приватный интерфейс окна и отдельный
-API-ключ не используются. UUID вызова, задача и инициировавшее устройство
-сохраняются. Чужое устройство не читает SDP и не завершает вызов; повтор квитанции
-не начинает звонок ещё раз. Неопределённая попытка остаётся неопределённой.
+`MacNotebookVoice` uses the existing durable chat-input journal and single
+`CodexAppServer`. It checks ChatGPT auth, resumes the selected task and calls
+`thread/realtime/start` v3 with WebRTC. Call UUID, task and initiating device are
+fixed. Another device cannot read SDP or stop it. Repeated receipt reads do not
+restart calls; uncertain attempts remain uncertain.
 
-## Локальное обращение в открытом Notebook
+## Explicit call and local wake address
 
-Нажатие на волну в раскрытом чате или компаньоне сразу начинает голосовой
-разговор в текущей задаче. Произносить GPT, включать ожидание или открывать
-меню не требуется. Этот путь не зависит от разрешения Speech и локального
-языка обращения: после допуска микрофона начинается прежний WebRTC-разговор.
-Удержание этой же кнопки открывает язык и отдельное действие ожидания
-обращения для звонка. Оно временно уступает микрофон голосовому владельцу
-вместо автоматического ожидания диктовки.
-Удержание не выполняет действие короткого нажатия;
-настройки доступны и отдельным действием VoiceOver. Состояние микрофона и
-закреплённая задача остаются видимыми, даже если карточка обычной работы скрыта.
-Язык, местное обращение и явное выключение микрофона сохраняются.
-Обычное нажатие отдельной кнопки микрофона заполняет редактируемый черновик.
-Ожидание диктовки по GPT включается автоматически в открытом Notebook при
-выбранной задаче и подключении. Отдельного переключателя ожидания нет.
-Контекстное действие микрофона выключает весь местный захват до явного включения.
-Одновременный захват для диктовки и разговора запрещён их общим владельцем чата.
-Прежняя настройка, которую ошибочно записывала эта иконка, удаляется при запуске;
-сам разговор всё равно начинается только после явного действия пользователя.
-Фокус и единственный редактор черновика принадлежат раскрытой панели.
-Сворачивание освобождает фокус до смены представления, чтобы клавиатура не
-перехватывала последующее нажатие на голосовые кнопки компаньона.
-Естественное обращение перед GPT можно изменить для выбранного языка. Русские
-«Слушай, GPT» и «GPT», английские «Hey, GPT» и «GPT» равноправны; имя учитывает
-местное произношение. Для языка без готового обращения остаётся короткое GPT,
-а не навязанный перевод слова «слушай».
-Для русского языка также принимаются точные написания английского обращения
-Hey / Хей / Хэй / Эй. Словарь подсказок распознавателя и проверка обращения
-принадлежат `NotebookWakeAddress`, а не двум расходящимся спискам.
+Tapping the wave starts voice in the selected task after microphone admission.
+It does not require Speech permission, a wake word or a menu. Holding it opens
+language and the separate wake-for-call action without also triggering a tap;
+VoiceOver has the equivalent action. Dictation and voice share microphone ownership.
+The separate microphone button records an editable draft.
 
-Один захват WebKit подаёт PCM в `voice-worklet.js`. Пока пользователь не позвал
-агента, WebRTC-соединения нет. Ограниченный 12-секундный буфер остаётся в памяти
-медиаповерхности; PCM поступает в `NotebookWakeRecognizer` только локально.
-Apple Speech используется **только для распознавания обращения**, не для
-диктовки черновика. Обязательны `supportsOnDeviceRecognition` и
-`requiresOnDeviceRecognition`; при отсутствии локального распознавания для языка
-или разрешения захват не начинается. Перехода к распознаванию на сервере нет.
-Выбранный язык должен входить в системный список поддерживаемых языков:
-неизвестная локаль не даёт распознавателю молча выбрать язык по умолчанию.
-Отсутствие чата, связи, локальной языковой модели или разрешения не завершается
-молча. Выключение захвата освобождает ресурсы, но не стирает причину ошибки;
-она остаётся видимой после сворачивания до нового запуска или явного закрытия.
+With a selected task and connection, foreground Notebook can automatically wait
+for a dictation wake address. The microphone's context action explicitly disables
+all local capture until re-enabled. Language, custom address and mute persist.
+Collapsing chat releases text focus before moving controls so a departing keyboard
+does not intercept the next voice tap.
 
-Системные ответы Speech о разрешении и результатах распознавания не наследуют
-`MainActor`: Apple вправе вызвать их в фоновой очереди. Callback разрешения
-только возобновляет continuation; callback распознавания копирует текст, времена
-и ошибку в передаваемые значения и возвращает их актору распознавателя.
-Ни приём каждого блока PCM, ни локальное распознавание не ждут `MainActor`. Состояние ожидания остаётся у `NotebookWakeRecognizer`, а запрос
-разрешения не открывает микрофон и не создаёт голосовую задачу. Проверка вызывает
-настоящий системный ответ несколько раз при уже принятом решении в тестовом
-Simulator, не подменяя его mock и не требуя доступа к микрофону.
+`NotebookWakeAddress` owns recognition hints and matching. Supported Russian and
+English forms include the localized “Listen/Hey, GPT” and bare “GPT”; Russian
+recognition also accepts its documented phonetic spellings of Hey. Other languages
+retain bare GPT unless configured. Exact recognized strings belong to source/tests,
+not an independently maintained second list in this document.
 
-`NotebookAcousticUtterance` отмечает начало и паузу по непрерывным кадрам
-микрофона. Короткий запас 200 мс сохраняет начальные согласные, не захватывая
-прошлую отделённую реплику. Оценка фонового уровня ограничена 30 отсчётами;
-короткая пауза внутри слова не начинает новый запрос. Один локальный запрос
-Speech получает только этот звуковой участок. По паузе 800 мс он закрывается;
-долгое неадресованное высказывание не перезапускается посреди речи. Прежняя
-45-секундная ротация с повторным хвостом удалена.
+Apple Speech is used **only for local wake recognition**, not draft transcription.
+Both `supportsOnDeviceRecognition` and `requiresOnDeviceRecognition` are mandatory.
+Missing permission, local model or supported locale prevents capture with an explicit
+reason; there is no server-recognition fallback. Failure remains visible after
+collapse until retry or dismissal.
 
-`NotebookWakeAddress` классифицирует начало этой реплики, но не определяет её
-аудиопозицию и не выдаёт разрешений. Частичный результат с просьбой допускается
-сразу; отдельное имя ждёт устойчивого результата и паузы. Apple Speech может
-вернуть все слова с нулевыми временными метками до конца фразы: они больше не
-задерживают включение записи и не становятся ошибочным frame zero. Позиция уже
-принадлежит исходному звуковому участку. Локально распознанные слова не становятся
-текстом поручения: запись по-прежнему распознаёт Codex. Акустическое выделение
-не является пониманием речи; шумная комната, произношение и пропуски на живом
-микрофоне требуют отдельной физической проверки.
+System Speech callbacks do not inherit MainActor. Permission callbacks resume a
+continuation; recognition copies text/timing/error into sendable values for its
+actor. PCM processing and recognition do not wait for the UI actor.
 
-После распознавания начало адресованной реплики фиксируется в единственном
-буфере. Предшествующие отсчёты удаляются; исходная запись обращения **вместе с
-просьбой** проходит через тот же WebRTC-аудиотрек после подключения. Распознанный
-текст не отправляется вторым поручением. Если начало уже вышло из буфера или
-подключение не состоялось, микрофон выключается с объяснением, без частичной
-передачи и автоматического повтора. При задержке накоплено не более 40 секунд.
-Тихая речь не отбрасывается по догадке: первоначальная задержка воспроизведения
-сохраняется и должна оцениваться вместе с перебиванием на физическом устройстве.
+`NotebookAcousticUtterance` identifies speech boundaries from continuous microphone
+frames. A 200 ms pre-roll retains initial consonants, background estimation holds
+30 samples and an 800 ms pause closes the local Speech request. Long unaddressed
+speech is not periodically restarted with repeated tails. Wake classification
+uses the utterance's original audio position, including when partial Speech results
+have zero word timestamps. Recognized local words do not become the actual request;
+Codex transcribes the audio. Noisy-room behavior still needs physical checking.
 
-Во время звонка локальное ожидание выключено: собственный ответ агента не может
-снова запустить вызов. WebRTC использует эхоподавление и существующее прерывание
-ответа Codex. Выключение микрофона останавливает исходный MediaStreamTrack и
-очищает ещё не переданный локальный звук, но не закрывает задачу и собеседника.
-Повторное включение создаёт только новый захват в прежнем соединении. Завершение
-сначала останавливает местный звук и WebRTC, затем отправляет устойчивый stop
-на Mac. Потеря соединения, уход в фон и снятие медиаповерхности также выключают
-захват; аренда WebKit освобождается. Работа при блокировке iPad или в другом
-приложении не реализована и не обещается.
+For wake-to-call, one WebKit capture feeds `voice-worklet.js`. Before wake there is
+no WebRTC peer; up to 12 seconds of PCM remains local in memory. After wake, earlier
+samples are dropped and the original address plus request is sent through the same
+audio track once connected, never duplicated as text. Missing buffered start or
+connection failure stops capture with an explanation, not partial automatic replay.
+Delayed connection retains at most 40 seconds. Quiet speech is not discarded by a
+guessed catch-up shortcut; delay and interruption must be evaluated together.
 
-Остановка местного захвата не ждёт завершения JavaScript: контроллер выключает
-микрофон WebKit и уничтожает медиастраницу. Пока Mac не подтвердил завершение,
-интерфейс отличает «микрофон выключен» от «звонок завершён» и удерживает прежний
-UUID. Неизвестный исход stop проверяется только чтением, без повторной отправки
-и второго звонка. `flushTranscriptTailOnSessionEnd` выключен: служебный остаток
-транскрипта при завершении не становится новым поручением.
+## Call termination and playback
 
-## Компаньон и необходимые вопросы
+During a call local wake listening is disabled so the agent cannot trigger itself.
+WebRTC uses echo cancellation and Codex interruption. Mute stops the original
+MediaStreamTrack and clears unsent local audio; unmute creates a new capture in
+the same peer. Playback mute affects only the received stream.
 
-`NotebookCompanion` показывает тот же разговор компактной панелью по образцу
-Codex, а не создаёт второго голосового агента.
-Кнопка письма сразу раскрывает ту же переписку. Стрелки раскрытия, промежуточного
-компактного редактора и его состояния нет. Вложения, «+» и редактирование остаются
-в единственном полном чате. Под панелью показываются только настоящая работа,
-ответы и необходимые решения, не пустое предложение продолжить разговор.
-Во время диктовки панель сохраняет оболочку, кнопку раскрытия, высоту и привязку:
-справа появляются отмена, реальная шкала, стоп для редактирования и отправка.
-Обработка занимает ту же строку. Ширина меняется плавно в пределах экрана.
+End first stops local capture/WebRTC, then sends durable stop to Mac. Background,
+disconnect and media-surface removal also stop capture and release WebKit.
+Locked/background iPad calling is not supported. Native shutdown does not wait for
+JavaScript: it disables WebKit microphone access and destroys the media page.
+Until Mac confirms, UI distinguishes microphone off from call ended and retains
+the call UUID. Unknown stop is reconciled by reads, not a second stop/call.
+`flushTranscriptTailOnSessionEnd` is disabled so final service transcript does not
+become another task.
 
-Карточка текущей работы и тучки ответов имеют разные условия показа.
-В них нет повторяющегося заголовка задачи или отдельного значка расширения:
-нажатие на сам текст раскрывает ту же переписку. Название остаётся в полном
-чате и доступном описании состояния звонка, не отнимая строку у сообщения.
-После диктовки в свёрнутом чате виден сам полезный ответ, а не только счётчик.
-Показываются не более двух тучек по шесть строк нативного текста. Нажатие
-открывает полный ответ по его настоящему ID в прежней переписке. Крестик
-убирает всю соответствующую тучку сразу; автоматическое скрытие происходит
-через 12–25 секунд в зависимости от длины. Скрытые ответы остаются в переписке
-и сохраняют отметку непрочитанного на кнопке письма, но не удерживают пустую
-карточку задачи и не появляются снова при закрытии более нового ответа.
+## Companion and questions
 
-`NotebookChatReadPosition` сохраняет место чтения и сроки показа по ID в пределах
-компьютера и задачи. Старое сохранённое закрытие переносится в эту же форму.
-Существующий цикл `NotebookChatController` обновляет проекцию; пересоздание view,
-изменение размеров, повтор события и перезапуск не перезапускают срок показа.
-Текст и порядок остаются у Codex; новой истории или очереди поручений нет.
-Необходимый вопрос агента не исчезает по таймеру. Во время звонка видно состояние
-без дублирования каждой голосовой реплики; переход ведёт в закреплённую задачу.
+`NotebookCompanion` is a compact view of the same conversation. Its writing button
+opens the sole full composer; there is no second compact draft editor. It shows
+actual work, useful replies and required questions. Dictation reuses its shell and
+anchor with cancel, measured waveform, edit-stop and send.
 
-`NotebookChatController` сохраняет подписку и дочитывает пропущенное после
-обрыва, даже когда интерфейс свёрнут. Единственный редактор использует прежний
-`chat.draft` и очередь отправки; неизвестный исход не позволяет повторить запрос.
-Клавиатура сдвигает только окно. Перенос берётся за кнопку письма, не за текст;
-Pencil вне интерфейса остаётся у бумаги. Размер, сворачивание и раскрытие не
-обращаются к `SessionPresence` и не меняют центр или масштаб камеры.
+At most two reply bubbles of six native-text lines are visible. Tapping opens the
+same native message; close removes that bubble immediately. Automatic dismissal
+uses 12–25 seconds based on length. Hidden replies remain in history/unread state
+and never reappear when a later bubble closes. Required questions do not time out.
 
-Диктовка и живой разговор имеют разные кнопки. У начатого разговора видны
-состояние, микрофон, звук GPT и завершение. Звук выключает только воспроизведение
-существующего MediaStream, не микрофон, ожидание обращения или задачу. Управление
-микрофоном сохраняет прежний контракт остановки захвата. Перламутровый индикатор
-не владеет аудио; при Reduce Motion он неподвижен. Сворачивание использует
-системную анимацию, а не снимает голосовую сессию.
+`NotebookChatReadPosition` persists reading IDs and display deadlines per computer/
+task. View recreation, resizing, repeated events and restart do not reset them.
+The existing chat controller keeps subscription and fills reconnect gaps while
+collapsed. Companion dragging uses the writing control, not message text. Pencil
+outside it stays with paper; layout never changes SessionPresence camera.
+Reduce Motion makes the visual accent static without owning audio lifecycle.
 
-## Диктовка через текущий вход Codex
+## Dictation capture and delivery
 
-`NotebookDictationController` принадлежит тому же `NotebookChatController` и
-продолжает запись при сворачивании чата. При наличии задачи и соединения контроллер готовит локальное ожидание;
-явное нажатие начинает ручную диктовку без автоматической отправки.
-Запись занимает существующую строку управления полного чата или компаньона:
-отмена, волна реального звука, стоп и стрелка отправки внутри прежней оболочки.
-Поле черновика в полном чате остаётся смонтированным; на время записи ввод
-запрещён, но текст и вложения не заменяются записью.
-История уровня ограничена 240 отсчётами; тишина отображается точками.
-Снимок отсчётов читается в наблюдаемом SwiftUI body, а не только внутри Canvas:
-поэтому реальная амплитуда обновляет волну. Небольшая точка у микрофона
-обозначает местное ожидание имени, не передачу окружающего разговора.
-Стоп сразу раскрывает чат, а после распознавания ставит курсор в черновик.
-Стрелка завершает запись и после сохранения текста вызывает обычную отправку
-`NotebookAppModel.sendChatMessage`. Выбранное внимание, камера, открытый файл
-и вложения фиксируются в момент нажатия стрелки, до ожидания распознавания;
-контекст готовит тот же владелец, что и для напечатанного сообщения.
-Повторное нажатие не заменяет решение и не создаёт второе поручение.
-При ошибке, отмене или перезапуске намерение немедленной отправки снимается:
-явный повтор открывает результат на проверку. Отказ сохранения сообщения
-также оставляет черновик в раскрытом чате.
-`NotebookMicrophoneDictationCapture` владеет системным захватом, а
-`NotebookDictationAudioStorage` — непрерывным анализом, порядком и записью AAC.
-Внешний контракт передаёт снимки измерений и отдельное завершение или ошибку
-с UUID записи, позицией PCM и частотой;
-опроса `sample()` и определителя паузы по визуальному уровню нет.
-Снимки для UI объединяются в один ожидающий, завершение не проходит через
-потерянные снимки. Состояние диктовки и решение пользователя остаются в контроллере.
-Автоматическая подготовка ожидания не блокирует черновик и не забирает фокус
-клавиатуры; прерванный запрос разрешения не запускает микрофон в фоне.
-Тесты подают PCM в настоящий анализ и AAC, не подменяя конец речи нулём шкалы.
-Уход в фон и аудиопрерывание завершают захват с просмотром черновика.
-Запись ограничена пятью минутами: AAC с частотой системного входа
-(8–96 кГц), моно, 64 кбит/с, не более 8 МиБ.
-До подтверждённой вставки или явной отмены файл и его метаданные сохраняются
-в частном `runtime/dictation/<author>` на iPad; в архив содержания не реплицируются.
+`NotebookDictationController` retains recording across chat collapse. Manual tap
+starts dictation without automatic sending. The draft stays mounted but input is
+temporarily disabled; existing text/attachments survive. UI level history is capped
+at 240 measured samples, with silence shown as dots. Stop opens chat and focuses
+the recognized draft. Send fixes attention, camera, file and attachments before
+awaiting transcription, then uses ordinary `sendChatMessage` after saving text.
+Repeated taps cannot replace that decision or create another message.
 
-Протокол пары 11 передаёт запись прежними аутентифицированными запросами
-`NotebookChatEnvelope`, порциями до 96 КиБ. `MacNotebookDictation` проверяет
-устройство, компьютер, длину, порядок и SHA-256. Повтор порции или потерянной
-квитанции окончания не запускает распознавание ещё раз. На устройство приходится
-одна незавершённая запись; всего Mac удерживает не более четырёх, удаляя
-неиспользуемые результаты через 15 минут при следующем запросе. Отказ сервиса
-сохраняет аудио; новый запрос распознавания требует явного повтора. Отмена
-немедленно выключает микрофон и запрещает публикацию позднего текста.
-Её небольшая метка сохраняется перед удалением аудио: при обрыве или перезапуске
-Mac получает отмену до начала следующей записи, освобождая прежнее место.
-Перезапуск между сохранением отмены и удалением файла также не возобновляет
-отменённую диктовку.
+Failure, cancellation or restart clears immediate-send intent. An explicit retry
+opens the result for review; failed message persistence also leaves the draft.
+`NotebookMicrophoneDictationCapture` owns system capture and
+`NotebookDictationAudioStorage` owns ordered PCM analysis/AAC writing off the UI.
+Completion is a distinct UUID/position/rate event, not inferred from a zero UI meter.
+Background or audio interruption ends capture into draft review.
 
-`CodexAppServer.transcribeDictation` получает текущую авторизацию через
-`getAuthStatus(includeToken: true)`, затем отправляет только запись на
-`https://chatgpt.com/backend-api/transcribe`. Именно этот путь использует
-установленный Codex 0.154.0-alpha.6.2. Метод авторизации исполняется App Server,
-хотя отсутствует в его экспериментальном сгенерированном списке из 159 методов;
-прежний вывод о невозможности диктовки по одному этому списку был неполным.
-Токен остаётся в памяти Mac, не читается из частных файлов, не передаётся iPad
-и не записывается в журналы. HTTP-клиент не сохраняет cookies или cache,
-отказывает любому перенаправлению и выдаёт ограниченные сообщения об ошибке.
-Только 401 допускает одно обновление входа через тот же App Server; смена
-учётной записи не позволяет автоматически повторить отправку под другим входом.
-Отдельный ключ API, Apple Speech и ход голосового агента не используются.
-Это проверенный интерфейс установленного клиента, не обещание стабильности
-публичного API: изменение его контракта должно дать явный отказ с сохранённой записью.
+Limits: five minutes, mono AAC at the system input's 8–96 kHz, 64 kbit/s, 8 MiB.
+Until insertion or cancellation, private `runtime/dictation/<author>` retains audio
+and metadata on iPad; it is not replicated content.
 
-Результат сначала сохраняется рядом с аудио, затем `NotebookStore.insertChatDictation`
-добавляет его в текущий черновик исходного чата. Текст и UUID квитанции входят
-в одну транзакцию; восстановление после сбоя не повторяет вставку. Обычные
-сохранения панели не могут поставить старый черновик после этой транзакции.
-Другой чат, Mac, отправка и разговор недоступны до завершения или отмены.
-При ошибке редактор снова доступен: можно сократить черновик и повторить
-вставку сохранённого результата. Предел 32 КиБ не обрезает текст молча.
-При обычной диктовке распознавание и стоп сами не создают поручение. Стрелка
-отправки передаёт готовый текст прежней устойчивой очереди; разрешения задачи
-не меняются. Для обращения в открытом Notebook действует следующий контракт.
+Authenticated chat requests transfer at most 96 KiB per chunk. Mac validates device,
+computer, length, order and SHA-256. Duplicate chunks/final receipts never repeat
+transcription. One unfinished recording per device and four total are retained;
+unused results expire after 15 minutes at the next request. Service failure preserves
+audio for explicit retry. Cancellation stops capture immediately and durably records
+its tombstone before deleting audio, blocking late text and restart resurrection.
 
-Живой вызов выпускаемого Swift-адаптера с синтетической русской записью
-32 274 байта вернул «Слушай, GPT, объясни эту формулу.» за 0,907 секунды:
-`.build/dictation-investigation/native-transcription.log`. Это проверяет настоящий
-Codex и текущую авторизацию, но не микрофон физического iPad. Точная область
-нативных проверок и установленная версия фиксируются в `verification.md`.
+`CodexAppServer.transcribeDictation` obtains current auth via
+`getAuthStatus(includeToken: true)` and uploads only the recording to
+`https://chatgpt.com/backend-api/transcribe`. This is an adapter to the observed
+Codex client interface, not a stable public API promise. Tokens stay in Mac memory,
+never iPad/files/logs; HTTP stores no cookies/cache, rejects redirects and bounds
+errors. Only 401 permits one auth refresh, and account change prevents automatic
+resubmission under a different identity. Contract change must fail explicitly
+while preserving the recording.
 
-## Обращение включает диктовку с немедленной отправкой
+The result is saved beside audio, then `insertChatDictation` atomically inserts text
+and receipt UUID into the originating task's draft. Recovery cannot insert twice or
+let an old panel save replace it. Task/computer/send/call changes wait for completion
+or cancellation. A 32 KiB draft limit fails rather than silently truncating text.
+Manual stop/transcription alone does not create a task.
 
-`NotebookDictationController` автоматически ожидает обращение в открытом
-Notebook после подготовки выбранной задачи и соединения. Он принимает его через
-тот же `NotebookWakeRecognizer`; словарь, выбранный язык и местное обращение
-общие с голосом. Только имя распознаётся Apple Speech, строго на iPad;
-текст просьбы возвращает действующая диктовка Codex через текущую авторизацию.
+## Wake-triggered dictation
 
-`NotebookMicrophoneDictationCapture` владеет одним AVAudioEngine. До обращения
-`NotebookDictationAudioStorage` удерживает не более десяти секунд PCM в памяти,
-не создаёт файл и не передаёт звук. При обращении этот же поток сохраняется
-в AAC от найденного звукового кадра: речь перед именем отбрасывается, просьба
-сразу после него не теряется при запуске второго микрофона. Запись и кодирование
-последовательно выполняет актор вне UI; очередь ограничена 32 порциями.
-Вход нормализуется в моно с учётом чередования и количества каналов.
-Две секунды без новых кадров завершаются ошибкой входа, а не выдуманной тишиной.
-Потерянный кадр или переполнение останавливают захват, а не склеивают чужие фразы.
+One AVAudioEngine feeds a ten-second in-memory PCM pre-roll before wake, with no
+file or upload. The same stream begins AAC at the identified utterance frame;
+there is no second-microphone startup gap. The off-main queue admits 32 chunks,
+normalizes interleaved/multichannel input to mono and reports two seconds without
+frames as an input error. Missing frames/overflow stop rather than join unrelated
+phrases.
 
-Один акустический анализатор продолжает работать после обращения без сброса
-оценки фона. Фон оценивается по неречевым участкам; пороги начала и продолжения
-различаются, чтобы тихое продолжение фразы не обрывалось. Видимый уровень
-вычисляется отдельно из RMS и пиков и никогда не управляет завершением.
-Когда просьба закончилась, 1,4 секунды исходного звука без речи завершают запись. Пауза, уже
-наблюдавшаяся до распознавания обращения, учитывается, а не начинается заново. Одно имя ждёт
-следующую реплику; через двенадцать секунд без неё ожидание возобновляется без
-передачи пустой записи. После распознавания из начала убирается только обращение.
-Готовая просьба сразу поступает в `NotebookAppModel.sendChatMessage` и обычную
-очередь `NotebookChatController`. UUID записи становится UUID сообщения.
-Выбранный материал фиксируется при обращении; существующие напечатанный черновик
-и вложения не очищаются и его текст не приписывается к просьбе. Нормальный путь
-не раскрывает чат: ответ показывает действующий компаньон той же переписки.
+Acoustic analysis continues without resetting background estimates. Different
+start/continuation thresholds preserve quiet speech; UI RMS/peak levels never decide
+completion. A request ends after 1.4 seconds of source-audio silence, including
+silence already observed before wake recognition. Bare wake waits for the request;
+after twelve empty seconds listening resumes without uploading an empty recording.
+Only the address prefix is removed from returned transcription.
 
-Принятый запрос при восстановлении проверяется по этой же записи очереди.
-Сбой между сохранением поручения и удалением аудио не создаёт второй отправки
-или вставки в черновик. Если отправка не сохранена, ошибка оставляет запись;
-явный повтор после сбоя или перезапуска открывает текст на проверку, не
-восстанавливая старое намерение отправки с потерянным выбранным материалом.
-Кнопка стопа во время записи также оставляет возможность редактирования.
+A complete request enters the ordinary send queue using recording UUID as message
+UUID. Attention is fixed at wake; existing typed draft/attachments are preserved and
+not appended. Normal completion stays collapsed and uses the existing companion.
+Recovery checks that same queue entry. If sending was not durably accepted, explicit
+retry opens review rather than restoring lost automatic-send context.
 
-Остановка, отмена и принятая отправка не выключают будущие обращения.
-После освобождения записи контроллер заново проверяет доступность задачи,
-подключение, нахождение приложения на экране и занятость голосовым разговором.
-Явное выключение хранится в `notebook.microphone-muted` и имеет приоритет над
-автоматическим возобновлением. Возвращение приложения и переподключение не
-отменяют это решение. Незавершённая запись удерживает восстановление на просмотре;
-старое намерение немедленной отправки не восстанавливается. Нет отдельного
-`activationEnabled`, редактора компаньона или второй очереди поручений.
+After completion/cancel/stop, foreground listening resumes only after rechecking task,
+connection and voice ownership. `notebook.microphone-muted` always overrides it.
+Pending recovery remains in review. One private `audio-diagnostics.json` records UUID,
+rates/positions, RMS/peaks, background estimate, silence, processing delay and at most
+240 samples—no text or audio. It is not replicated or sent to the model.
 
-Последний завершённый захват оставляет в частном каталоге один ограниченный
-`audio-diagnostics.json`: UUID, частоту, позиции звука, RMS/пики, оценку фона,
-длительность тишины, задержку обработки блока и не более 240 измерений. Ни текст, ни звук туда не записываются;
-эта сводка позволяет проверить физический вход независимо от рисунка волны.
-Она не передаётся модели и не реплицируется с содержимым. Журнал переходов
-отдельно отмечает максимальное отставание шкалы и доставку завершения от
-исходного звука; времена обработки Codex видны между состояниями контроллера.
+## Verification boundary
 
-## Проверяемая граница
+Synthetic PCM through real analysis/AAC and a live authenticated transcription probe
+prove those routes, not a physical iPad microphone. A real WebKit probe retained a
+complete synthetic utterance through delayed connection and obtained a voice answer;
+it did not prove human audibility or noisy-room wake accuracy.
 
-`.build/board-voice-probe/buffer.log`: настоящий WebKit загрузил выпускаемый
-`voice-shell`, задержал подключение на 2,3 секунды, передал синтетическое
-«Hey GPT, what is two plus two?» целиком и получил «Two plus two is four» через
-существующий вход Codex. Вызов остановлен. До обращения peer отсутствовал.
-Это доказательство сохранности начала аудио, не физической слышимости.
+`NotebookVoiceControllerTests` uses the real AudioWorklet in a noninteractive 1×1
+surface without a human microphone. Dedicated Simulator tests revoke microphone
+access for the actual isolated test bundle before synthetic capture and verify that
+precondition. Never apply privacy changes to a production bundle by copying an old
+command. Tests cover continuity, pre-wake absence of a peer, mute/resume/dispose,
+false wake, buffers, drafts and reading state. Full live voice with hardware Pencil
+remains separate acceptance, including GUI-196/GUI-272 status in
+[verification](verification.md).
 
-`NotebookVoiceControllerTests` исполняет настоящий AudioWorklet в такой же
-невзаимодействующей поверхности 1 × 1, как в корне окна, без микрофона
-человека. Перед синтетической проверкой аппаратный захват в тестовом Simulator
-должен быть запрещён: `xcrun simctl privacy <test-device> revoke microphone com.amirtlinov.notebook`.
-Тест проверяет это до создания WebKit и сразу сообщает неверную подготовку,
-а не зависает на системном запросе. Проверяются типы и непрерывность PCM,
-отсутствие peer при ожидании, остановка трека при mute,
-возвращение в прежний peer и освобождение медиаресурсов. Отдельные тесты проверяют
-положительные обращения, случайные упоминания, собственный голос, границы буфера,
-неповторение звука, сохранение черновика и отметок чтения. Проверка голосовых
-кнопок непосредственно вызывает голосового владельца из чата и компаньона;
-удержание открывает параметры, не включая микрофон. Проверка сохраняет черновик, камеру
-и уже принятые чернила. Более широкий сценарий компаньона остановился на новом
-штрихе ещё до голосовых действий, в том числе на неизменённом исходном commit;
-это открытая проверка GUI-196, а не пройденная приёмка Pencil.
-Полный цикл с живым голосом и настоящим Pencil на физическом iPad остаётся
-отдельной приёмкой; локальные проверки его не заменяют.
-
-Официальные границы:
-[Codex App Server](https://learn.chatgpt.com/docs/app-server),
-[локальная поддержка Apple Speech](https://developer.apple.com/documentation/speech/sfspeechrecognizer/supportsondevicerecognition),
-[запрет серверного распознавания](https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/requiresondevicerecognition).
+References: [App Server](https://learn.chatgpt.com/docs/app-server),
+[on-device availability](https://developer.apple.com/documentation/speech/sfspeechrecognizer/supportsondevicerecognition),
+[on-device requirement](https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/requiresondevicerecognition).

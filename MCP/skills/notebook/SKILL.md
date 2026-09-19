@@ -1,115 +1,104 @@
 ---
 name: notebook
-description: "Совместная работа в приложении Notebook: разбирать материал, показывать связи, рисовать и продолжать страницы и документы через MCP."
+description: "Collaborate in Notebook: explore material, show relationships, draw, and extend shared pages and documents through MCP."
 ---
 
-# Notebook — работа напарниками
+# Notebook — thinking together
 
-Notebook — общий лист, на котором вы с Амиром думаете вместе. Он может показать
-фрагмент, продолжить рисунок рукой или изменить твою идею. Предпочитай помогать
-этому разговору: прояснить мысль, показать связь, предложить вариант, сделать
-полезную часть работы.
+Notebook is a shared surface where you and Amir think together. He can point to
+a fragment, continue a drawing by hand, or change your idea. Help the conversation
+move forward: clarify a thought, show a relationship, offer an alternative, or
+complete a useful part of the work.
 
-Помогай Амиру легче понимать тему и работать с материалом. Сам выбирай и сочетай
-текст, рисунки, схемы, изображения и программы: что позволит увидеть главное,
-удержать важные связи и сделать следующий шаг, сохранив смысл и глубину.
+Choose and combine text, drawings, diagrams, images, and programs to make the
+subject easier to understand while preserving its meaning and depth.
 
-## Чувствуй следующий ход
+## Choose the next useful move
 
-Начинай с того, что уже понятно из разговора и выбранного материала. Иногда
-достаточно поправить подпись, иногда — рассмотреть рисунок, а иногда удобнее
-написать программу, которая перестроит целую схему. Выбирай подходящий масштаб.
+Start with what the conversation and selected material already tell you. The
+right scope might be a label, a drawing, or a program that reorganizes a diagram.
 
-Когда объясняешь, можно показать пальцем: подсветить объект, провести временную
-стрелку, по очереди указать на две части. Когда предлагаешь идею — оставь рядом
-редактируемое продолжение, с которым Амир сможет поработать. Несколько
-[приёмов напарника](references/teammate-patterns.md) помогут начать.
+Point while explaining: highlight an object, draw a temporary arrow, or indicate
+two parts in sequence. Leave an editable continuation when proposing an idea.
+[Teammate patterns](references/teammate-patterns.md) offer a few starting points.
 
-Под рукой есть [исполняемые рецепты](references/recipes.md): редактируемые карты
-и схемы, SVG и графики, управляемые анимации, наброски, изображения и блоки документа.
-Бери подходящие заготовки, меняй их или составляй своё решение.
+[Executable recipes](references/recipes.md) cover editable maps and diagrams,
+SVG, plots, animations, sketches, images, and document blocks. Adapt and combine
+them freely.
 
-Старайся довести намерение до результата оптимальным путём: используй уже известные
-данные, объединяй связанные изменения в один ход. Успешного ответа обычно
-достаточно, чтобы закончить. Дополнительное рассмотрение полезно, когда осталось
-что-то существенное и неясное — например, читается ли новая композиция.
+Take the shortest reliable path from intention to result. Reuse known data and
+group related changes into one action. A successful response is usually enough
+to finish. Inspect further when a meaningful uncertainty remains, such as the
+readability of a new composition.
 
-## Научное объяснение через изображение
+## Scientific explanations
 
-Строй научную или учебную иллюстрацию вокруг того, что нужно понять: устройство,
-зависимость, причинный механизм или изменение состояния. Выбирай представление,
-которое сохраняет существенные отношения, а не просто выглядит научным.
+Build the illustration around the mechanism, relationship, structure, or state
+change the reader needs to understand. Preserve the essential relationships.
 
-В [семи живых JS/SVG-примерах](references/scientific-examples.md) можно прожить
-такое объяснение и взять его исходники: от волны и механизма до тензорной свёртки.
-Выбирай близкий по смыслу приём, а не обязательный шаблон оформления.
+The [scientific examples](references/scientific-examples.md) provide working
+models and source code, from waves and gears to tensor contraction. Borrow the
+explanatory technique that fits the subject.
 
-Главное поле отдавай самому явлению, а не интерфейсу вокруг него. Управление
-появляется там, где человек меняет существенное условие; предпочитай действие
-над объектом россыпи параметров. Крупная подпись проясняет видимое отношение,
-а подробные формулы, допущения и источники можно раскрыть по запросу. Не пытайся
-вместить всё уменьшением текста. Научность не требует ни ретро-фона, ни цветных
-панелей: форма и палитра должны служить конкретной модели. Если референс
-объясняет объёмом, движением или прямым взаимодействием, перенеси именно этот
-приём, а не замени его плоским графиком в типовой панели.
+Give the phenomenon the main space. Place controls where the user changes a
+meaningful condition; prefer direct interaction with the object. Use readable
+labels for visible relationships and progressive disclosure for detailed
+formulas, assumptions, and sources. Keep text comfortably sized. Shape and
+palette should serve the model. When a reference explains through depth, motion,
+or direct manipulation, preserve that technique.
 
-Убирай интерфейсный шум, а не уменьшай его до мелкого шрифта: декоративные
-панели, дублирующие показатели, служебные комментарии и эвристические подписи
-вроде «исследуй» или «попробуй изменить», если действие и так очевидно. Нужные
-имена величин, единицы и существенные ограничения модели остаются.
-Если нужен ползунок, предпочитай тонкую скруглённую светло-серую дорожку,
-более тёмный пройденный участок и один крупный круглый серый бегунок — без
-теней, градиентов и постоянного бейджа значения. Числа и деления нужны для
-точного выбора, а не для украшения. Сохраняй удобную область захвата,
-доступное имя, клавиатурное управление и видимый фокус.
+Keep the interface quiet. Remove decorative panels, duplicate indicators, and
+unnecessary prompts. Retain quantity names, units, and important model limits.
+For a slider, prefer a thin rounded light-gray track, a darker completed segment,
+and one generously sized gray circular thumb. Keep its hit area, accessible
+name, keyboard controls, and visible focus. Add numbers and ticks when precise
+selection needs them.
 
-Для величин, единиц и математической записи опирайся на
+References for quantities, units, and notation:
 [ISO 80000-1:2022](https://www.iso.org/standard/76921.html),
-[ISO 80000-2:2019](https://www.iso.org/standard/64973.html) и
-[брошюру SI](https://www.bipm.org/en/publications/si-brochure).
-Для ясности и организации визуальной информации полезны применимые рекомендации
-[ISO 9241-112:2025](https://www.iso.org/standard/87518.html) и
-[ISO 9241-125:2017](https://www.iso.org/standard/64839.html); они не заменяют
-предметную модель и не задают универсальных правил научных графиков.
-Когда нужен технический чертёж, используй правила линий
-[ISO 128-2:2022](https://www.iso.org/standard/83355.html), видов и разрезов
-[ISO 128-3:2022](https://www.iso.org/standard/83356.html), ортогональных и
-аксонометрических проекций [ISO 5456-2](https://www.iso.org/standard/11502.html)
-и [ISO 5456-3](https://www.iso.org/standard/11503.html). Свободное объяснение не
-нужно превращать в чертёж. Это опоры по задаче, а не основание заявлять полное
-соответствие ISO без проверки применимых требований по тексту стандарта.
+[ISO 80000-2:2019](https://www.iso.org/standard/64973.html), and the
+[SI brochure](https://www.bipm.org/en/publications/si-brochure).
+Applicable guidance on visual information:
+[ISO 9241-112:2025](https://www.iso.org/standard/87518.html) and
+[ISO 9241-125:2017](https://www.iso.org/standard/64839.html).
+For technical drawings, consult line conventions in
+[ISO 128-2:2022](https://www.iso.org/standard/83355.html), views and sections in
+[ISO 128-3:2022](https://www.iso.org/standard/83356.html), and projections in
+[ISO 5456-2](https://www.iso.org/standard/11502.html) and
+[ISO 5456-3](https://www.iso.org/standard/11503.html).
+Use these references where relevant. Claiming compliance requires checking the
+applicable requirements in the standard itself.
 
-Делай понятными смысл осей, единиц, масштабов, стрелок и визуальных кодов;
-важные различия передавай не одним цветом. Различай физическое пространство,
-пространство состояний и индексы данных: куб компонентов тензора ещё не
-объясняет его отношения. Сохраняй различие между наблюдением, расчётом,
-гипотезой и условной схемой; отмечай существенные допущения и упрощения.
+Make axes, units, scales, arrows, and visual encodings understandable. Use more
+than color to convey important differences. Distinguish physical space, state
+space, and data indices: a cube of tensor components alone does not explain its
+relations. Identify observations, calculations, hypotheses, and schematic
+representations, including their important assumptions.
 
-В анимации согласуй связанные изображения с одной моделью состояния и времени.
-Например, в колебательном контуре заряд, ток, поля и график показывают один
-момент процесса; перераспределение носителей не должно выглядеть как их
-необъяснимое появление и исчезновение. Замедление, преувеличение и условное
-движение допустимы, если их смысл понятен. Дай возможность остановиться и
-рассмотреть существенные стадии, сохрани объяснение и без непрерывного движения.
+Drive related animated views from one state and timeline. In an LC circuit,
+charge, current, fields, and plots must describe the same instant. Carrier
+redistribution should remain physically intelligible. Explain slow motion,
+exaggeration, and symbolic movement. Let the reader pause at meaningful stages;
+the explanation should remain useful without continuous motion.
 
-После последней визуальной правки посмотри итог в рабочем масштабе, а анимацию —
-также в характерных состояниях и переходах. Проверяй, какое объяснение человек
-действительно видит: читаемость не заменяет научную корректность, а правильные
-формулы не гарантируют правильного изображения. Если просмотр недоступен,
-честно обозначь эту границу проверки.
+After the final visual edit, inspect the result at its working size and, for an
+animation, at representative states and transitions. Check both legibility and
+scientific correctness. State the inspection boundary if rendering is unavailable.
 
-## Техническая опора
+## Technical foundation
 
-`notebook_context` читает материал; `notebook_execute` выполняет JS/TS с `nb`,
-`args`, `emit` и `emitImage`. Неизвестный метод можно уточнить через `nb.help(topic)`.
-Читай нужные объекты и блоки по адресу, большие выдачи раскрывай по мере надобности.
+`notebook_context` reads material. `notebook_execute` runs JS/TS with `nb`,
+`args`, `emit`, and `emitImage`. `notebook_import_program` stages a file-backed
+program package; publication is a separate transaction. Use `nb.help(topic)`
+for an unfamiliar SDK method. Read objects and blocks by address and expand
+large results only as needed.
 
-Чтение возвращает `data` и готовую `basis`. Передавай её как `base` в
-`nb.transaction(key, {base, summary, operations})`. Notebook сам проверяет версии
-и сохраняет транзакцию атомарно. При конфликте учти человеческое продолжение.
-После разрыва связи `resume` с тем же `run_id` позволяет получить результат
-без повторного выполнения.
+Reads return `data` and a ready-to-use `basis`. Pass it as `base` to
+`nb.transaction(key, {base, summary, operations})`. Notebook checks versions
+and saves atomically. Resolve conflicts in the context of the person's latest
+work. After disconnection, `resume` with the same `run_id` retrieves the result
+without repeating execution.
 
-Источник старого сообщения сохраняет тот момент разговора; текущая поверхность
-может уже измениться. Сохранение, получение устройством и фактический показ —
-разные результаты. Уточняй именно тот, который важен для задачи.
+An old message's source preserves that moment in the conversation; the current
+surface may have changed. Saving, device receipt, and actual presentation are
+distinct outcomes. Verify the outcome that matters to the request.

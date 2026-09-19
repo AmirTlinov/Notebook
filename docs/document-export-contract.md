@@ -1,91 +1,121 @@
-# Экспорт документа: содержание и один владелец публикации
+# Document export
 
-`MCP/src/document-tex.ts` готовит один печатный пакет из неизменного
-`DocumentDocument`. Markdown проходит `marked`, затем Markdown и вложенный HTML
-разбираются закреплённым HTML5 parser `parse5`. Заголовки, текст, формулы,
-таблицы, изображения и ссылки имеют структурное представление. Удаление тегов
-регулярным выражением и подмена изображений текстом больше не участвуют в экспорте.
+## One canonical owner
 
-Пакет содержит TeX и типизированные встроенные изображения. Поддерживаются
-SVG (включая inline SVG), PNG и JPEG. Повторяющиеся data URL используют один
-ресурс. Ссылки на локальные файлы и изображения из сети дают явную ошибку:
-экспортёр не получает файловых или сетевых возможностей. Внутренние адреса
-заголовков совпадают с правилом живого документа; действующие внутренние и
-HTTP/HTTPS/mailto ссылки становятся PDF-аннотациями. Отсутствующий адрес виден
-в печати как недоступная ссылка, без ложного перехода к первой странице.
+`DocumentCanonicalExport` reads the same `DocumentCanonicalPrint.store` artifact
+used by paper. `NotebookTypesetter` owns PDF/SyncTeX layout. Printed text, paths,
+formulas and links retain their canonical coordinates; only live program rectangles
+need isolated authored frames. Export does not use the retired
+`NotebookSandboxedTeXCompiler` / native Tectonic-helper pipeline.
 
-Markdown-формулы и LaTeX-блоки остаются TeX. Пользовательские класс, преамбула
-и пакеты сохраняются; экспортёр добавляет только отсутствующие зависимости
-своего представления. SVG сохраняется как изображение, поэтому его текст,
-включая знаки `$` или `\(`, не становится кодом TeX.
+`nb.export(key, options)` starts a durable job. Its `NotebookExportCut` captures
+source and state in one WAL transaction; hash and state revision are recorded
+before rendering. Saved export executes that cut in an isolated existing renderer
+using the asset store and shared `SceneRenderResources` budget. It never checkpoints,
+seeks, borrows uncommitted pixels from or rewinds the user's live executor.
 
-`NotebookSandboxedTeXCompiler` владеет подготовкой изображений и запуском
-закреплённого Tectonic. SVG печатает статически собранный helper на
-`krilla 0.8.2`, `krilla-svg 0.8.1` и `usvg 0.47.0`; `Cargo.lock` закрепляет
-полное дерево зависимостей. SVG остаётся векторным; фильтры обрабатываются
-настоящим resvg renderer. PNG/JPEG декодируются ImageIO и печатаются CoreGraphics.
-WebKit не участвует: на проверенной macOS 27 даже встроенное изображение
-требовало от WebKit сетевого entitlement, несовместимого с этим владельцем.
+## Formats
 
-Подписанный SVG helper наследует sandbox markup XPC. Его единственный вход —
-SVG в stdin; выход — PDF в stdout. Параметров с путями, импорта, сети или доступа
-к пользовательским файлам нет. Внешние ресурсы запрещены в usvg resolver;
-шрифты читаются только из системного `/System/Library/Fonts`. Встроенные SVG
-повторно проверяются. Не поддерживаемые статической печатью foreignObject,
-скрипты, анимация и CSS at-rules дают явную ошибку. Диагностированные движком
-потери не превращаются в успешный пустой PDF.
+PDF is the default. All receipts use
+`artifact {path, sha256, byteCount, mimeType}` and `options`; PDF additionally
+provides source, assets and maps. Options participate in package identity.
 
-Компилятор включает подготовленные PDF-изображения в TeX. Размеры CSS
-переводятся в печатные точки, изображение сохраняет пропорции и вписывается
-в доступную ширину и высоту страницы. Одновременно готовится одно изображение.
-SVG helper имеет лимит 10 секунд и 512 МиБ; отмена и общий watchdog завершают
-дочерний процесс через того же владельца, что и Tectonic.
+| Format | Meaning |
+|---|---|
+| `pdf` | Canonical vector paper, with authored program-frame composition |
+| `png` | One canonical page at the requested pixel width |
+| `svg` | Passive authored vector frame from a named interactive block |
+| `html` | One inline program and saved state as an offline standalone file |
+| `package` | Portable document/source/state with complete package dependencies |
+| `mp4` | Canonical page frames at explicit authored model times |
 
-`NotebookCompilerProcess` устанавливает единственный сигнал завершения до
-запуска child. Статус остаётся доступен ожидающим, пришедшим до или после
-выхода процесса. Завершение и отмена не вызывают синхронный `waitUntilExit`
-с его вложенным CFRunLoop из Swift executor. `NotebookCompilerPipe` отдельно
-владеет каждым stdin/stdout/stderr до EOF: неблокирующие операции, ограниченный
-poll и общий deadline включают окончание обмена. Только этот владелец закрывает
-fd; отмена не закрывает дескриптор конкурентно выполняющемуся read/write.
-Каждый compiler job получает собственную XPC connection.
+```js
+await nb.export("page-image", {
+  documentID, format: "png", pageIndex: 0, pixelWidth: 1600
+});
+await nb.export("vector-frame", {
+  documentID, format: "svg", blockID: "signal"
+});
+```
 
-Ограничения: 128 изображений, до 8 МиБ исходных данных одного изображения и
-16 МиБ всех исходных изображений; до 16384 px по стороне и 16 мегапикселей.
-Подготовленные PDF-изображения занимают до 8 МиБ. Итоговый PDF — до 16 МиБ,
-PDF вместе с подготовленными изображениями — до 17 МиБ. Последний предел
-учитывает два слоя кодирования data-only XPC ответа. TeX — до 4 МиБ;
-нормализованный JSON — до 23 МиБ перед внешним base64-конвертом 32 МиБ;
-временные файлы — до 128 МиБ; процесс Tectonic — до 1 ГиБ.
-Общие 120 секунд компилятора включают изображения. Лимиты JavaScript-запуска
-не продлеваются экспортом: это отдельное сохранённое задание.
+PNG preserves the requested width rather than silently reducing it for admission.
+A missing page returns `export_page_missing`, not the last page. WebKit owns only
+program rectangles from the canonical map; opaque snapshot backgrounds cannot
+cover neighboring printed text or formulas.
 
-`NotebookStore.publishDocumentExport` готовит и хэширует файлы вне SQL.
-Единственный writer проверяет актуальную версию документа, атомарно
-устанавливает готовый каталог и сохраняет квитанцию. Адрес пакета связывает
-имена, длины и SHA-256 всех файлов, включая TeX и изображения: одинаковый PDF
-не позволяет заменить различающиеся исходники. В каталоге лежат
-`document.tex`, `document.pdf` и все `notebook-image-N.pdf`, необходимые для
-повторной компиляции. Ошибка устаревшей версии не оставляет установленный
-частичный пакет. Старые файлы и квитанции остаются читаемыми по прежним путям.
+Programs declare `notebook.exportFrame(({format,state,signal}) => …)`.
+The isolated runtime pauses before invoking it with the exact saved state; commits
+are disabled. For raster output, the author stops clocks, awaits model/media work,
+draws the target backing Canvas/WebGL at the supplied CSS pixel ratio and returns
+null once ready. Missing callback returns `program_export_unavailable`, not an
+arbitrary startup frame. Admission precedes backing-size growth; normal native
+capture/composition follows. Timeout or disposal aborts the operation.
 
-Проверки владельцев:
+SVG uses the same callback with vector output. It accepts up to 1 MiB of closed,
+passive SVG using literal presentation attributes/local definitions. Scripts,
+foreignObject, CSS styles, animation and external resources fail explicitly.
+There is no raster fallback disguised as SVG.
 
-- `MCP/test/latex.test.ts`: HTML/Markdown, anchors, встроенные изображения,
-  преамбула, реальный большой контрольный документ (35 SVG, 1680 формул).
-- `NotebookMarkupExportTests`: тот же bundled parser в настоящем QuickJS.
-- `NotebookCompilerProcessTests`: ранний выход и поздние ожидающие, отмена,
-  ошибка запуска, 20 последовательных обменов по 1 МиБ, EOF, backpressure,
-  deadline и закрытый получатель без SIGPIPE.
-- `NotebookExportPublicationTests`: полный адрес пакета, stale revision,
-  запрет выхода пути, чтение исторической квитанции и SQL-граница настоящего dispatcher.
-- `Sources/NotebookImageCompiler` Cargo tests: настоящий движок, CSS/gradient/clip/filter,
-  явный отказ foreignObject, внешних ресурсов и обхода через MIME вложенного SVG.
-- `NotebookScriptServiceTests/testActualPDFJobOutlivesItsUserRunAndPublishesThroughTheNativeOwner`:
-  настоящий подписанный XPC → krilla/usvg → Tectonic → Core, PDF Link annotations,
-  сохранённый текст SVG и красные пиксели изображения в итоговом PDF.
-- `testActualCompilerCannotReadOutsideItsSandboxAndUserServiceRejectsCompilation`:
-  запрет чтения внешнего файла, явный отказ неподдерживаемых SVG и недоступность компиляции из user worker.
+Standalone HTML is at most 8 MiB and is not executed during export. Explicitly
+opening it runs NotebookProgram/1 in an opaque offline sandbox iframe without
+file-origin or Notebook-writer access. Local changes do not return to Notebook.
+Modules/package assets require portable export and return
+`export_portable_required` rather than a broken file-URL bundle.
 
-Нативная проверка и публичный экспорт большого документа должны пройти на
-неизменной сборке; структурная проверка TeX сама по себе не подтверждает PDF.
+Portable output is `document.package` (`NotebookPortable/1`) plus adjacent
+`blob-<sha256>` files. **Copy the entire containing directory.**
+It does not run programs or typesetting. Source/state/manifest metadata is limited
+to 8 MiB; unique V2 parts remain at most 4 MiB. Import is described in
+[program fragments](document-program-fragments.md#portable-document-import).
+
+MP4 uses one isolated coordinator and authored timeline, not screen recording or
+a second animation engine. An off-main AVFoundation receiver consumes sequential
+frames with backpressure. Output is H.264 without audio, using model times
+`[start,end)`; odd height is padded white. Working buffers use the existing pool.
+
+A submitted **presented PNG cut**, when supplied, exports the exact retained
+presentation crop with original pixels and extent: no new WebKit frame, checkpoint,
+rescale or cache read. This is different from rendering a saved-state page.
+
+For `moment: "presented"`, supply `attention:{contextID,referenceID}`.
+PNG takes the original crop, without page/block selectors or resolution changes.
+Other formats require the same source and a frozen program checkpoint bound to
+those pixels; mismatches return `export_presentation_model_unavailable` or
+`export_presentation_mismatch`. Whole-document/page formats (PDF/package/MP4)
+reject other interactive blocks without that checkpoint. A selected block's frozen
+state cannot label unrelated running models as presented.
+
+MP4 requires an even width of 128–4,096, 1–60 FPS and an integral 1–3,600 frames.
+Saved PNG accepts widths 128–4,096 (default 1,600), subject to resource admission.
+
+## Atomic publication and cancellation
+
+Quartz writes composed PDF to a private file. Artifact/assets use existing V2
+4 MiB parts, each checked and admitted through the writer FIFO so small edits can
+run between parts. Preparation reads windows up to 1 MiB, verifies complete file
+hashes/source/map off the writer, then submits a short native CAS/move/receipt
+transaction. Publication metadata is limited to 1 MiB / 16,384 parts. Canonical
+typesetter limits still apply to its own artifact.
+
+The writer rechecks the entire source/state cut, including causal metadata.
+Concurrent edits return `revision_conflict`; old output is never relabeled current.
+Package identity includes `document.cut.json`. Failed/stale/canceled preparation
+removes its temporary directory and preserves prior exports.
+
+`nb.cancelExport(key,{jobID})` persists cancellation and its keyed effect atomically,
+then stops the producer. Final publication rechecks cancellation even after a late
+callback. Once the saved receipt has passed the writer fence, that immutable receipt
+wins over late cancellation. Status/retry/restart never revive canceled jobs;
+repeated reads validate existing files by streaming.
+
+There is no binary `publishExport` IPC path or oversized base64 PDF command.
+Saved identifies that captured cut, not perpetual freshness after future edits.
+Ready, saved, delivered and shown are separate facts.
+
+## Verification
+
+Check publication identity/CAS/cancellation in Core, authored frames and composition
+in native export tests, and the actual rendered artifact for the affected format.
+Structural TeX assertions alone do not establish a correct PDF.
+Current limits and print ownership: [canonical paper](document-page-fragments.md).
+Exact release results: [verification](verification.md).

@@ -1,110 +1,87 @@
-# Временный показ агентом
+# Temporary agent presentation
 
-`nb.present(key,{view,steps})` — явная просьба показать материал, не побочный
-эффект чтения, вставки, ответа в чате или перехода по ссылке на код. Агент получает
-текущий вид через `nb.presentation({})`, затем передаёт его `view`, устойчивый
-ключ эффекта и короткую последовательность `steps`. ID показа принадлежит run ID
-и ключу. `nb.presentation({id})` читает результат; `nb.cancelPresentation(key,{id})`
-останавливает названный показ. Методы доступны через
-[общий JavaScript API](notebook-javascript-api.md). Поля `camera` задают центр и масштаб;
-`focus` вместо них вписывает область в экран с запасом. SVG с `bounds`
-показывается поверх материала и плавно исчезает. Следующий шаг заменяет
-предыдущее временное пояснение. Камера остаётся там, куда законченный показ
-её привёл: скрытого возврата и второго сохранённого положения нет.
+`nb.present(key, {view, steps})` explicitly requests a presentation. Reads,
+insertions, chat replies and code links do not move the user's view implicitly.
+Read `nb.presentation({})` first, then pass its `view`, a stable effect key and a
+short step sequence. The presentation ID belongs to the run/key.
+`nb.presentation({id})` reads the result; `nb.cancelPresentation(key,{id})`
+cancels that presentation. See the [JavaScript API](notebook-javascript-api.md).
 
-## Владельцы и доставка
+A step can set camera center/scale or `focus` bounds, show bounded SVG, or direct
+attention. Each step replaces the preceding temporary explanation. A completed
+camera move remains where it ended; there is no hidden return camera.
 
-Mac принимает запрос через существующий IPC. `NotebookPresentationRelay`
-связывает одноразовое право на показ с устройством, запуском iPad и номером
-последнего законченного вида. Даже показ без движения камеры расходует это
-право; новое читается явно. Relay отправляет один пакет существующего доверенного
-транспорта и хранит последние 64 квитанции с отпечатком запроса, не его SVG.
-Повтор ID и того же пакета читает квитанцию, другой пакет получает конфликт.
-После потери квитанции старое право не становится действительным снова.
+## Ownership and delivery
 
-`NotebookPresentationPlayer` на открытом iPad принимает только ещё актуальный
-вид, незанятую поверхность и пакет не старше пяти секунд. Он не ждёт в очереди
-за Pencil и не запускает показ после переподключения. Контакт человека,
-навигация, смена доступного экрана, закрытие приложения и обрыв прерывают
-текущий показ. Существующий `NotebookInputGate` синхронно сохраняет приоритет
-принятого Pencil. Существующий `SceneCameraSettlement` публикует каждый кадр
-через `NotebookAppModel.updatePresence`; `SessionPresence` остаётся единственным
-владельцем камеры. Зум внутри открытого листа не превращает его в обложку,
-не меняет номер листа и не выбирает другой предмет.
+Mac receives the request through existing IPC. `NotebookPresentationRelay` binds
+a single-use view capability to device, iPad launch and the last settled view.
+Even a presentation without camera motion consumes it. The relay retains the last
+64 receipts and request fingerprints, not SVG bodies. An identical ID/payload
+reads its receipt; changed payload conflicts. Losing a receipt does not revive
+an old capability.
 
-Временные пакеты занимают отдельный ограниченный слот ниже касаний, камеры
-и разговора. Они не входят в SQLite, журнал чернил, действия содержания,
-SharedContext или очередь поручений Codex. Только конечная камера сохраняется
-обычным владельцем присутствия. Отправка, исполнение и просмотр человеком —
-разные факты: `sent` означает передачу в транспорт, `playing` — исполнение
-устройством (для SVG после загрузки векторной поверхности), `completed` —
-завершение сценария. Это не доказательство, что человек увидел или понял материал.
-`interrupted`, `rejected`, `unavailable` сохраняют конкретную причину.
+`NotebookPresentationPlayer` accepts only a current view, an idle surface and a
+package no older than five seconds. It never queues behind Pencil or replays after
+reconnect. Human contact, navigation, scene change, closure or disconnect interrupts
+it. `NotebookInputGate` synchronously preserves accepted Pencil priority.
+`SceneCameraSettlement` publishes camera frames through the existing presence
+owner. Zooming within an open sheet does not turn it into a cover or select another
+item/page.
 
-## Координаты и ресурс
+Presentation uses a bounded transient slot below contact, camera and conversation.
+It is absent from content, ink, undo, SharedContext and Codex job storage; only the
+final camera follows ordinary local presence persistence.
 
-`origin`, ширина и высота областей относятся к мировой системе текущей доски,
-в том числе к бумаге, уже открытой на ней. Для привязки экранной точки используется
-показанная камера: `world = center + (screen - viewport/2) / scale`, с нормализацией
-плиточного адреса. Инструмент не открывает другую доску, документ или файл кода.
-Чтение файла по-прежнему независимо от камеры доски.
+- `sent`: handed to transport.
+- `playing`: execution began; SVG has loaded when present.
+- `completed`: the step sequence finished.
+- `interrupted`, `rejected`, `unavailable`: a specific reason is retained.
 
-Один временный WebKit получает аренду существующего `SceneRenderResources`.
-Он имеет размер viewport, не размер огромной мировой области, и рисует SVG
-векторно; снимки и сохранённые миниатюры не создаются. `SceneCameraPlane`
-проецирует его тем же преобразованием, что материал, и уточняет при остановке.
-Поверхность прозрачна, не принимает касания и не закрывает кнопки чата.
-Её аренда заканчивается после исчезновения, отказа или отмены, включая поздние
-ответы WebKit. JavaScript содержимого отключён; CSP запрещает сеть и внешние
-ресурсы. XML проверяется до доставки: нет внешних сущностей, исполняемых тегов,
-встроенных HTML-документов, изображений или обработчиков событий.
+None proves that a person saw or understood the material.
 
-Один сценарий содержит до 12 шагов и длится до 60 секунд; один SVG — до 48 КиБ,
-весь закодированный запрос — до 192 КиБ. Короткий сценарий — это массив шагов,
-который агент может сформировать в изолированном JS executor и отправить одним
-вызовом. Проигрыватель показа исполняет только проверенные шаги камеры и SVG.
-Временное SVG может
-содержать собственную векторную анимацию. Для сохраняемых программ остаётся
-существующий механизм интерактивных элементов Notebook.
+## Coordinates, attention and resources
 
-## Проверка
+Bounds use the current board's world coordinates, including open paper.
+Screen conversion uses the displayed camera:
+`world = center + (screen - viewport/2) / scale`, then tile normalization.
+Presentation cannot open another board, document or code file.
 
-Профиль `presentation` проверяет границы SVG/пакета, отдельную доставку,
-повтор ID, потерю связи, живой IPC, сохранность режима бумаги при зуме,
-приоритет Pencil, поздний ответ, прозрачный нативный WebKit и освобождение
-его аренды. Установленная проверка отдельно передаёт один сценарий настоящему
-iPad, читает квитанции и наблюдает появление и исчезновение SVG. Полный ручной
-жестовый опыт не подменяется состоянием квитанции или снимком экрана.
+One temporary viewport-sized WebKit lease comes from `SceneRenderResources`.
+`SceneCameraPlane` applies the material's transform and refines at settlement.
+The transparent vector surface does not intercept touches or cover chat controls;
+completion, cancellation, rejection and late callbacks release its lease.
+JavaScript is disabled and CSP forbids network/external resources. XML validation
+rejects external entities, executable tags, embedded HTML, images and handlers.
 
-## Адресное внимание и результат записи
+Limits: 12 steps, 60 seconds total, 48 KiB per SVG, 192 KiB encoded request.
+SVG may contain its own vector animation. Persistent programs use ordinary
+interactive elements instead.
 
-`steps[].attention` принимает от 1 до 16 актуальных `CollaborationReference`.
-Шаг может содержать только внимание: камера и выбор человека тогда не меняются.
-Ссылки проверяются в одной транзакции чтения на iPad; устаревший исходник
-прерывает показ с `attention_source_changed`. `playing` ждёт установку всех
-названных видимых источников, а при совместном SVG — также его готовность.
-Невидимый материал не открывается и не выбирается автоматически. Внимание
-заканчивается вместе с шагом, отменой, вводом человека или потерей соединения.
+`steps[].attention` accepts 1–16 current `CollaborationReference` values.
+An attention-only step leaves camera and selection unchanged. iPad checks references
+in one read transaction; stale source ends with `attention_source_changed`.
+Playing waits for all named visible sources and any accompanying SVG readiness.
+Offscreen material is not opened automatically. Attention ends with the step,
+cancellation, human input or disconnect.
 
-Обычным записям `present` не нужен. `NotebookAgentFeedback` — единственный
-локальный владелец их визуального жизненного цикла. Адресные результаты и
-причинное продолжение читаются из исходных квитанций, независимо от открытия
-истории. Первое чтение истории молчит; новые видимые результаты ждут точного
-установленного содержания. Только затем начинается 2,4 секунды материала.
-Последовательные правки одного предмета продлевают эпизод без перезапуска фазы.
-Результат за экраном потребляется без отложенного повторения при возврате;
-ожидание подготовки ограничено 30 секундами. Отмена и чужое продолжение
-исключают уже не принадлежащий агенту материал. Это не квитанция просмотра
-человеком и не замена `receivedByIPad` / `shownOnIPad`.
+## Feedback for ordinary writes
 
-Shimmer следует настоящим буквам, штрихам и контурам; Mesh — заливкам фигур,
-новым физическим носителям и видимому фрагменту программы. Полая фигура не
-становится светящимся прямоугольником. Проекция использует ту же геометрию,
-порядок предметов, маски стирания и установленные растры. На бумаге документа
-тот же нативный overlay заимствует установленный учтённый растр PDF: маска
-следует его буквам и контурам, белая бумага не светится. Второго DOM-рендера
-или цикла анимации в WebKit нет; программы сохраняют
-свой нативный viewport и обработчики. Материал не принимает касания, не попадает
-в canonical snapshot и не записывается в содержание, чернила или undo.
-Reduce Motion оставляет неподвижный акцент без бесконечного кадрового цикла.
-Старые `agentHighlightStarts` и `NotebookAgentPearl` удалены, второго пути нет.
+Ordinary writes do not need `present`. `NotebookAgentFeedback` owns their local
+visual lifecycle using addressed results and causal continuation from original
+receipts. Initial history loading is silent. New visible results wait for the exact
+installed content, then show a 2.4-second accent. Consecutive changes to one item
+extend the episode without restarting phase. Offscreen results are consumed without
+replay on return; preparation waits at most 30 seconds. Undo or another author's
+continuation excludes content no longer attributable to that agent.
+
+Shimmer follows actual glyphs, strokes and contours; Mesh follows fills, new
+physical carriers and visible program regions. The overlay shares geometry,
+drawing order, erasure masks and accounted installed rasters. On document paper
+it borrows the existing PDF raster: letters glow, white paper does not. Programs
+retain their native viewports and handlers. Feedback takes no input, is absent
+from canonical snapshots/content/undo and uses a static accent under Reduce Motion.
+
+The `presentation` profile covers limits, routing, idempotency, interruption,
+Pencil priority and resource release. Installed-device checks must separately
+observe appearance/disappearance. Feedback is not a replacement for
+`receivedByIPad` / `shownOnIPad` or human visual acceptance.

@@ -1,49 +1,39 @@
-# Код и пометки в текущем разговоре
+# Discussing code and annotations
 
-«Обсудить выбранный код» берёт выделенные строки из того же `UITextView`.
-Без выделения берётся видимая часть. `NotebookCodeFragment` сохраняет полные
-затронутые абзацы, их исходную ширину и версию; это материал для обсуждения,
-не команда отправить сообщение. В исходном представлении пометки есть такое
-же действие. Текущий черновик чата остаётся редактируемым.
+“Discuss selected code” captures the selected paragraphs from the same `UITextView`,
+or the visible range when there is no selection. `NotebookCodeFragment` preserves
+complete affected paragraphs, original width, and version. It prepares discussion
+material; sending remains an explicit action and the chat draft stays editable.
 
-`NotebookAppModel.discussCode` адресно читает принятые чернила и пересекающиеся
-с материалом пометки, до 32 фрагментов общего контекста. Он не запрашивает
-модель для чтения или отрисовки. `NotebookCodeImageRenderer` воспроизводит
-сохранённый TextKit-layout и тот же Metal-композитор чернил. Его растр относится
-к рассмотренному коду, не к текущему положению экрана и не к плавающему чату.
-Размер, число пикселей и память ограничены прежним учётом ресурсов.
+`NotebookAppModel.discussCode` reads accepted ink and intersecting annotations,
+up to 32 shared-context fragments. `NotebookCodeImageRenderer` uses the saved
+TextKit layout and the existing Metal ink compositor. Its raster belongs to the
+reviewed code rather than the current screen position or floating chat.
+Existing size, pixel, and memory budgets apply.
 
-`NotebookStore.discussCode` публикует материал, `SharedContext` и неизменяемые
-`AgentPinnedSource` одной транзакцией. Версия ссылки включает код и собственные
-чернила, но не чужие поверхности. Неудачная отрисовка явно отмечается в исходнике;
-текст и принятые точки не выдаются за готовый PNG. Отправка сообщения использует
-прежний `attentionContextID`: Mac ждёт доставки исходников, прежде чем отдать
-поручение единственному исполнителю Codex. Смена файла или доски после отправки
-не меняет сохранённое указание.
+`NotebookStore.discussCode` publishes material, `SharedContext`, and immutable
+`AgentPinnedSource` values in one transaction. The reference version includes
+that code and its ink, excluding unrelated surfaces. A failed raster is recorded
+as such; text and measured points remain available without claiming a ready PNG.
 
-`NotebookCodeLink` допускает три точных адреса: рассмотренный фрагмент, файл
-определённого компьютера/проекта с номером строки, исходный разговор на Mac.
-WebKit принимает такую навигацию только после перехода по ссылке. Ссылка на
-фрагмент ищет прежний текст в рабочем документе и прокручивает его; если
-соответствия нет, открывает прежний материал с пометкой. Отсутствующий Mac не
-подменяет целый рабочий файл коротким сохранённым отрывком.
-`SessionPresence`, камера и пространственный выбор не участвуют в этом пути.
+Sending uses the existing `attentionContextID`. Mac waits for source delivery
+before giving the task to the Codex owner. Later file/board navigation cannot
+retarget the pinned context.
 
-«Сохранить в заметках» сохраняет показанный ответ в прежнем `SharedContext`
-со ссылкой на исходный разговор. При известной квитанции его хода сохраняются
-и исходные ссылки на материал. Отсутствие такой квитанции не разрешает
-приписать историческому ответу нынешнее выделение. Это добровольное действие,
-не обязательная фиксация вывода, оценка или учебный маршрут.
+## Links and saved answers
 
-Проверки `NotebookCodeDiscussionTests` покрывают неизменяемый контекст,
-различение компьютеров, реальные TextKit/Metal-пиксели, живой WebKit-переход,
-сохранение ответа и неизменность камеры. Физический полный разговор относится
-к GUI-190; сам по себе локальный PASS его не подтверждает.
+`NotebookCodeLink` supports a reviewed fragment, a computer/project file and line,
+or the original Mac conversation. WebKit navigation requires an actual link action.
+A fragment link locates the old text in the working file; when it no longer matches,
+the original annotated material opens instead. An unavailable Mac never causes a
+short excerpt to replace its full working file. Board presence and camera are unchanged.
 
-## Сохранение ответа из чата
+“Save answer to notes” stores the displayed message in the existing shared context
+with its source conversation. Known action receipts retain their original material
+references. Missing receipts do not attach today's selection to a historical answer.
+The note-plus control has a 44×44-point target and an accessible action label.
 
-Кнопка у ответа изображает заметку с плюсиком вместо надписи «В заметки».
-Её область касания — 44×44 points, подпись VoiceOver и подсказка —
-«Сохранить ответ в заметках». Кнопка передаёт прежнему владельцу сохранения
-ID именно этого сообщения; смена рисунка кнопки не меняет ссылку на разговор
-или содержание ответа.
+`NotebookCodeDiscussionTests` covers immutable context, computer identity,
+TextKit/Metal pixels, WebKit link activation, saved answers, and camera independence.
+End-to-end physical conversation acceptance is recorded separately in
+[verification](verification.md).

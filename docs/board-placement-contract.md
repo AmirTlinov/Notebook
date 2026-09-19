@@ -1,104 +1,68 @@
-# Одно физическое положение предмета
+# One physical placement per item
 
-`BoardDocument.placements` — единственное устойчивое размещение карточки,
-тетради или документа. Каждая запись `WorkspacePlacement` называет один предмет
-и сохраняет неизменные вершины собственных причинных перемещений. Вершина
-содержит положение, порядок и принадлежность стопке либо явное удаление.
-Принятое новое перемещение наблюдает прежние вершины; получение пакета само по
-себе не создаёт человеческого движения и не повышает его версию.
+`BoardDocument.placements` owns durable placement of cards, notebooks, and documents.
+Each `WorkspacePlacement` names an item and preserves immutable causal movement heads:
+position, order, stack membership, or explicit removal. An accepted movement observes
+earlier heads. Receipt of a package does not author another human movement.
 
-Слияние объединяет вершины и удаляет только причинно поглощённые. Среди
-одновременных намерений действуют прежний приоритет человека и устойчивый
-порядок версий. Проигравшее независимое намерение остаётся доказательством,
-пока последующее действие явно его не наблюдает. Поэтому порядок доставки,
-повтор пакета и промежуточный выбор победителя не изменяют итоговое положение.
+Merging unions heads and removes only causally dominated ones. Concurrent heads use
+human priority and stable version order. A losing independent intention remains
+evidence until explicitly observed, making replay and delivery order converge.
 
-`freeItems` и `stacks` — вычисленные представления, не вторые записи владения.
-Пустая стопка не рисуется, одиночный и сверхлимитный участник показывается
-свободно. Это не авторит новое движение этого участника и не стирает его
-намерение принадлежать стопке. Перенос другого участника не переписывает
-координаты оставшейся карточки. У UUID стопки один неизменный якорь.
+`freeItems` and `stacks` are derived views. Empty stacks are hidden; singleton or
+over-limit members appear free without rewriting their intended membership.
+Moving another member does not rewrite a remaining card's coordinates.
+A stack UUID has one immutable anchor.
 
-Адрес SQLite `board/placements/@item` сохраняет эту запись целиком. Физический
-индекс, ограниченное чтение сцены, контекст агента и причинная отмена используют
-её, а не пытаются свести отдельные владельцы свободной карточки и списка стопки.
-Создание больше не делает всю стопку собственностью создающего действия:
-принятие одной карточки не защищает от отмены все соседние созданные карточки.
+SQLite stores the complete register at `board/placements/@item`. The physical index,
+bounded scene reads, agent context, and undo use it. Creation owns individual
+placements, not an entire neighboring stack.
 
-Размещение принадлежит одной физической доске. Одновременное появление того же
-предмета у двух физических родителей по-прежнему отклоняется как
-`ownership_conflict`; эта граница не превращается в неявный перенос между
-досками. Текущее перемещение жестом не меняет физического родителя.
+## Parent ownership and revisions
 
-Явная передача между досками записывает удаление прежнего размещения и новое
-размещение в одной транзакции. Удаление снимает только свою строку физического
-индекса: оно не может стереть владельца, уже принятого другим адресом в той же
-транзакции. Проверка каждого изменённого предмета сопоставляет единственную
-живую пространственную запись с её точным индексом владельца; нарушение
-откатывает команду целиком. Порядок UUID досок, возврат и повторная доставка
-не меняют этот контракт.
+One item has one physical board owner. Concurrent live placement under two parents
+fails with `ownership_conflict`. A normal gesture does not change physical parent.
+An explicit transfer removes the old placement and adds the new one atomically.
+Index deletion removes only its own row, preserving an owner already installed by
+another address in the same transaction. A mismatch rolls back the whole command.
 
-## Версия полного содержания
+`BoardDocument.stamp` records authorship, not a complete edit precondition.
+`NotebookStore.boardContentRevision` computes the maintained SQL fingerprint of
+the board's addresses. The root contribution excludes `portalCamera` and
+`portalStamp`; spatial ink has separate addresses. Camera and Pencil therefore
+do not cause false content-edit conflicts.
 
-Часы `BoardDocument.stamp` отражают авторство, но не являются предусловием
-правки: независимое движение с меньшими часами может поменять результат.
-`NotebookStore.boardContentRevision` читает полный поддерживаемый SQLite
-отпечаток адресов конкретной доски. Вклад её корневого заголовка исключает
-только `portalCamera` и `portalStamp`; пространственные чернила принадлежат
-другим адресам. Поэтому сохранение камеры и Pencil не создают ложного конфликта
-обычной правки содержания.
+Scene and MCP reads return that fingerprint with their content from one snapshot.
+A bounded window cannot derive a full revision from its subset. Unpublished local
+edits invalidate the accepted revision; publication and receipt acquire the new
+revision through the same SQL owner.
 
-Окно сцены и MCP возвращают этот отпечаток из того же чтения, что и материал.
-Ограниченное окно не вычисляет его по собственному подмножеству предметов.
-Локальная ещё не опубликованная правка инвалидирует принятую версию; после
-публикации модель принимает версию нового чтения SQLite. Проверка действия
-использует фактического владельца, а его квитанция получает версию результата
-после записи содержания в той же транзакции. Один SQL-владелец обслуживает
-чтение, сравнение и подтверждение — отдельных часов или кеша у MCP нет.
+## Historical-format admission
 
-## Переход текущих данных
+`migrateBoardPlacements` upgrades the former representation transactionally after
+all known devices acknowledge outgoing changes. Placement inherits the real prior
+body version, not an aggregate header version. Content, blobs, history, context,
+ink, camera, drafts, identity, and cursors are preserved. The receipt records source
+cursor and before/after hashes; re-admission is idempotent.
 
-Формат доски 3 и manifest 4 заменяют прежнее представление. Обычный допуск
-SQLite выполняет `migrateBoardPlacements` в одной транзакции. До перехода все
-общие записи должны быть подтверждены каждым известным устройством. Положение
-получает настоящую версию прежнего тела, а не объединённую версию заголовка.
-Это существенно для обнаруженного расхождения: более поздняя версия 1 на iPad
-должна поглотить старую версию 0 на Mac, даже если их прежние заголовки совпали.
+Old journal entries are not relabeled as new packets. A peer before the transition
+needs a current checkpoint; acknowledgement cannot skip missing edits. Historical
+archives cannot replace the active workspace or overwrite later iPad work.
 
-Миграция сохраняет содержание, исходные blobs, историю, указания, чернила,
-камеру, черновики, идентичности и курсоры. Локальная квитанция называет исходный
-курсор и оба хеша; повторный допуск не создаёт новой записи. Старый журнал не
-выдаётся за новые пакеты. Устройство до границы перехода требует текущую
-исходную копию через существующий checkpoint; неполученные изменения нельзя
-пропустить подтверждением. Текущее пространство не заменяется историческим
-архивом и не копируется целиком с Mac поверх более поздней работы iPad.
+Old receipts remain immutable. A provable single free-item movement can be translated
+to current undo. Ambiguous legacy stack/batch ownership returns
+`placement_migration_boundary`. Current version numbers belong to
+[transport](transport-contract.md).
 
-Старые неизменные квитанции не переписываются. Отмена одиночного явного
-свободного перемещения переводится в нынешнее обратное действие, только если
-прежняя квитанция точно доказывает его авторство и текущее положение. Более
-поздняя работа сохраняется. Неоднозначная старая операция со стопкой или
-пакетным созданием возвращает `placement_migration_boundary`, а не угадывает
-собственность. Новые действия и их отмена используют только отдельные размещения.
+## Presentation and checks
 
-## Показ и граница доказательства
+Accepted geometry immediately defines the body, corners, and hit region. Background
+tiles cannot restore an old placement. Pixel admission remains with
+[scene publication](scene-allocation-contract.md) and [shared context](shared-context-contract.md).
 
-Принятое положение сразу определяет тело, четыре угла и следующую область
-касания; фоновые тайлы не могут вернуть старую геометрию. Допуск пикселей и
-границы ограниченного окна остаются у опубликованной композиции.
-[Контракт сцены](scene-allocation-contract.md) и
-[контракт общего фрагмента](shared-context-contract.md) различают живую
-геометрию и точное доказательство ещё не подготовленного пассивного материала.
-
-Сценарии `BoardMergeOwnershipTests`, `PlacementActionOwnershipTests`,
-`NotebookLiveScenePublicationTests` и `NotebookLiveGesturePresentationTests`
-проверяют независимые движения, стопки, доставку, отмену и последовательные
-жесты при удержанной старой композиции. `NotebookBoardContentRevisionTests`
-проверяет изменение содержания при прежнем максимуме часов, отклонение
-устаревшей правки и независимость камеры и Pencil. Фактическая область и результаты
-проверки — в [verification.md](verification.md).
-
-Это изменение не исправляет общий регистр содержимого и свойств артефактов:
-независимая поздняя правка текста или геометрии `SpatialElement` ещё может дать
-разный результат при разном порядке доставки (GUI-197).
-Этот регистр не используется для нового размещения карточек; вся совместная работа
-не объявляется завершённой проверкой одних перемещений.
+`BoardMergeOwnershipTests`, `PlacementActionOwnershipTests`,
+`NotebookLiveScenePublicationTests`, `NotebookLiveGesturePresentationTests`, and
+`NotebookBoardContentRevisionTests` cover convergence, transfer, undo, stale versions,
+and gestures against delayed composition. Element source/style concurrency is a
+separate contract and task; placement acceptance does not close all collaboration work.
+See [verification](verification.md).

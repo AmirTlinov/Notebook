@@ -67,9 +67,6 @@ struct NotebookElementControls: UIViewRepresentable {
       guard model.selectionSession.id == selectionID else { return }
       model.setElementGeometryMode(mode,reference:reference)
     }
-    let id: String
-    switch reference { case .page(_, let value), .spatial(_, let value): id = value }
-    let order = model.completeElementOrder(reference)
     var menus: [UIMenuElement] = []
     if graphic != nil {
       menus.append(UIMenu(options:.displayInline,children:[
@@ -83,13 +80,10 @@ struct NotebookElementControls: UIViewRepresentable {
       ]))
     }
     if graphic != nil { menus.append(selectionTransformMenu(model:model,selectionID:selectionID)) }
-    view.setLayerActions(front:{
+    view.setLayerActions(available:model.availableLayerMoves) { move in
       guard model.selectionSession.id == selectionID else { return }
-      model.arrangeElement(reference,front:true)
-    },back:{
-      guard model.selectionSession.id == selectionID else { return }
-      model.arrangeElement(reference,front:false)
-    },canFront:order?.last != id,canBack:order?.first != id)
+      model.arrangeSelection(move)
+    }
     view.changeRouting = { routing in
       guard model.selectionSession.id == selectionID else { return }
       model.setGraphicRouting(routing,reference:reference)
@@ -139,6 +133,12 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
     view.configure(selectionID:selectionID,frame:frame,manipulating:model.selectionSession.manipulation != nil,subject:.elements(frames.count))
     view.editElement = { if model.selectionSession.id == selectionID { model.finishMultipleSelection() } }
     view.deleteElement = { if model.selectionSession.id == selectionID { model.deleteGraphicSelection() } }
+    if model.selectionSession.items.isEmpty {
+      view.setLayerActions(available:model.availableLayerMoves) { move in
+        guard model.selectionSession.id == selectionID else { return }
+        model.arrangeSelection(move)
+      }
+    }
     guard model.selectionSession.items.isEmpty,
       model.selectionSession.elements.allSatisfy({ model.graphicElement($0) != nil }) else {
       view.setActionsMenu([UIAction(title:"Снять выделение",image:UIImage(systemName:"xmark")) { _ in
@@ -147,11 +147,6 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
       view.deleteElement = { if model.selectionSession.id == selectionID { model.deleteSelectedContent() } }
       return
     }
-    view.setLayerActions(front:{
-      guard model.selectionSession.id == selectionID else { return }; model.arrangeGraphicSelection(front:true)
-    },back:{
-      guard model.selectionSession.id == selectionID else { return }; model.arrangeGraphicSelection(front:false)
-    })
     let alignments: [(NotebookGraphicSelection.Alignment,String)] = [(.left,"По левому краю"),(.center,"По центру горизонтально"),
       (.right,"По правому краю"),(.top,"По верхнему краю"),(.middle,"По центру вертикально"),(.bottom,"По нижнему краю")]
     view.setActionsMenu([
@@ -256,12 +251,9 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   private let endsButton = UIButton(type: .system)
   private let textFormatButton = NotebookContextMenuButton(type:.system)
   private let clipboardButton = NotebookContextMenuButton(type:.system)
-  private let frontButton = UIButton(type:.system)
-  private let backButton = UIButton(type:.system)
-  private var bringToFront: (() -> Void)?
-  private var sendToBack: (() -> Void)?
+  private let layerButton = NotebookContextMenuButton(type:.system)
   private let moreButton = NotebookContextMenuButton(type: .system)
-  private var toolbarButtons: [UIButton] { [textFormatButton,styleButton,editButton,clipboardButton,modeButton,routingButton,endsButton,backButton,frontButton,deleteButton,moreButton] }
+  private var toolbarButtons: [UIButton] { [textFormatButton,styleButton,editButton,clipboardButton,modeButton,routingButton,endsButton,layerButton,deleteButton,moreButton] }
   private var palette: NotebookElementStyleController? { contextMenus.presentedPopover(for:source) as? NotebookElementStyleController }
   private var connectionPalette: NotebookConnectionController? { contextMenus.presentedPopover(for:source) as? NotebookConnectionController }
   var changeRouting: ((NotebookGraphicConnection.Routing) -> Void)?
@@ -292,10 +284,11 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     clipboardButton.contents = NotebookContextMenus.clipboardActions(cut:cut,copy:copy,paste:paste)
     setNeedsLayout()
   }
-  func setLayerActions(front: (() -> Void)? = nil, back: (() -> Void)? = nil, canFront: Bool = true, canBack: Bool = true) {
-    bringToFront = front; sendToBack = back
-    frontButton.isHidden = front == nil; backButton.isHidden = back == nil
-    frontButton.isEnabled = canFront; backButton.isEnabled = canBack
+  func setLayerActions(available: Set<NotebookElementLayerMove> = [], move: ((NotebookElementLayerMove) -> Void)? = nil) {
+    layerButton.isHidden = move == nil
+    layerButton.contents = NotebookElementLayerMove.allCases.map { direction in
+      UIAction(title:direction.title,attributes:available.contains(direction) ? [] : .disabled) { _ in move?(direction) }
+    }
     setNeedsLayout()
   }
   func setActionsMenu(_ children: [UIMenuElement]) {
@@ -321,8 +314,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     let buttons: [(UIButton,String,String,String)] = [
       (textFormatButton,"textformat","Формат текста","native-text-format"),
       (clipboardButton,"doc.on.clipboard","Буфер обмена","native-text-clipboard"),
-      (backButton,"square.3.layers.3d.bottom.filled","На задний план","element-send-to-back"),
-      (frontButton,"square.3.layers.3d.top.filled","На передний план","element-bring-to-front"),
+      (layerButton,"square.3.layers.3d","Порядок слоёв","element-layer-menu"),
       (styleButton,"paintbrush.pointed","Оформление фигуры","graphic-style-menu"),
       (editButton,"character.cursor.ibeam","Подпись фигуры","edit-agent-element"),
       (modeButton,"arrow.up.left.and.arrow.down.right","Режим геометрии","graphic-geometry-mode"),
@@ -335,8 +327,6 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     }
     setTextActions(nil)
     setLayerActions()
-    frontButton.addAction(UIAction { [weak self] _ in self?.bringToFront?() },for:.touchUpInside)
-    backButton.addAction(UIAction { [weak self] _ in self?.sendToBack?() },for:.touchUpInside)
     styleButton.isHidden = true
     modeButton.isHidden = true; routingButton.isHidden = true; endsButton.isHidden = true
     routingButton.addTarget(self,action:#selector(showRouting),for:.touchUpInside)

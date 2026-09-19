@@ -12,9 +12,47 @@ public struct NotebookNativeElementSource: Sendable {
   }
 }
 
+/// A layer action applies to the complete painter order inside the same native
+/// transaction. Selected members retain their own order, including disjoint runs.
+public enum NotebookElementLayerMove: String, CaseIterable, Sendable {
+  case lower, higher, toBack, toFront
+
+  public func canApply(to order: [String], selected: Set<String>) -> Bool {
+    zip(order,order.dropFirst()).contains { lower,higher in
+      switch self {
+      case .lower, .toBack: return !selected.contains(lower) && selected.contains(higher)
+      case .higher, .toFront: return selected.contains(lower) && !selected.contains(higher)
+      }
+    }
+  }
+
+  public func applying(to order: [String], selected: Set<String>) -> [String] {
+    guard order.count > 1, !selected.isEmpty else { return order }
+    switch self {
+    case .toBack, .toFront:
+      let moving = order.filter { selected.contains($0) }, rest = order.filter { !selected.contains($0) }
+      return self == .toFront ? rest+moving : moving+rest
+    case .lower, .higher:
+      var result = order
+      // Traverse against the movement so every selected run crosses exactly
+      // one unselected neighbour, never the entire stack in one command.
+      if self == .higher {
+        for i in (0..<result.count-1).reversed() where selected.contains(result[i]) && !selected.contains(result[i+1]) {
+          result.swapAt(i,i+1)
+        }
+      } else {
+        for i in 1..<result.count where selected.contains(result[i]) && !selected.contains(result[i-1]) {
+          result.swapAt(i,i-1)
+        }
+      }
+      return result
+    }
+  }
+}
+
 extension NotebookStore {
   public func applyNativeElementEdits(_ operations: [CollaborationOperation], summary: String,
-    sources: [NotebookNativeElementSource], moveToFront: Bool? = nil, copiedFrom: [String:String] = [:], expectedInkRevision: String? = nil, actor: UUID
+    sources: [NotebookNativeElementSource], layerMove: NotebookElementLayerMove? = nil, copiedFrom: [String:String] = [:], expectedInkRevision: String? = nil, actor: UUID
   ) throws -> (receipt: CollaborationReceipt, sources: [NotebookNativeElementSource]) {
     try commandTransaction(readAllowance: .agentCommand) {
       guard let target = operations.first?.target, [.page,.board,.cover].contains(target.kind),
@@ -48,7 +86,7 @@ extension NotebookStore {
         let positions = Dictionary(uniqueKeysWithValues:order.enumerated().map { ($0.element,$0.offset) })
         admitted.sort { positions[copiedFrom[$0.id!]!]! < positions[copiedFrom[$1.id!]!]! }
       }
-      if let moveToFront {
+      if let layerMove {
         guard operations.count == 1, operations[0].kind == .reorderElements else {
           throw CollaborationError("invalid_operation", "Порядок меняется одной перестановкой выбранных объектов.")
         }
@@ -56,9 +94,8 @@ extension NotebookStore {
         let order = try currentSQL!.rows("SELECT member FROM reference_element_order WHERE owner_key=? ORDER BY position,member", [.text(owner)]).compactMap { $0[0].text }
         let selected = Set(sources.map(\.id)), moving = order.filter { selected.contains($0) }
         guard moving.count == selected.count else { throw CollaborationError("revision_conflict", "Членство выбора изменилось.") }
-        let rest = order.filter { !selected.contains($0) }
         admitted = [.init(kind:.reorderElements,target:target,id:operations[0].id,
-          values:["ids":.array((moveToFront ? rest+moving : moving+rest).map(JSONValue.string))])]
+          values:["ids":.array(layerMove.applying(to:order,selected:selected).map(JSONValue.string))])]
       }
       let revision = try targetContentRevision(target: target)
       if let expectedInkRevision, try inkRevision(on:target) != expectedInkRevision {

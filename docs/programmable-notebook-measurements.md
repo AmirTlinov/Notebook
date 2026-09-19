@@ -1,249 +1,47 @@
-# Программируемый Notebook: сопоставимые измерения S10
+# Historical SDK v1/v2 measurements — September 18, 2026
 
-18 сентября 2026, macOS 27.0 (26A428), arm64. Это изолированные signed Mac
-Release приложения и настоящий public MCP → coordinator → QuickJS → native
-writer. Не production release, не парная и не физическая приёмка.
+Environment: macOS 27.0 (26A428), arm64, isolated signed Mac Release apps.
+Route: public MCP → coordinator → QuickJS → native writer.
+These comparative runs were not production-pair or physical acceptance.
 
-## Источники и одинаковые данные
+## Source and method
 
-- API v1: retained source `unified-chrome-release-20260918/source`, 910 inputs,
-  SHA256 `a9aad42a9a647039d94c980645d84c22115fbee9beb11775a44973c1fc5a6a7d`.
-  Exact source commit неизвестен. Snapshot отличается от `1e456d3` по 46 inputs;
-  этот commit — только comparison base, не идентичность измеренного бинарника.
-- Первоначальный API v2: `6f9e8e7` плюс явно учтённые незавершённые GUI-225
-  inputs, 996 файлов, SHA256
-  `d615df32d19b3cc24f3713be5afb5360de2ed25ca44968cb2582265ae51c936f`.
-  Этот fingerprint также относится к исходному signed integration gate.
-- Финальный v2: тот же cut плюс исправление ожидания и его регрессии, **997**
-  inputs, SHA256
-  `bf946a863aaac2e17142cf351a8eb79313863237e9803f0c19d7056af0080763`.
-  Mac CDHash `f53607260b1d549964a3c2676306dcb36ed1f271`. Наличие peer GUI-225
-  inputs в сборке зафиксировано, но не означает приёмку их поведения.
-- Все три приложения собраны Release, Apple Development / M94V58FCVP. Worker
-  entitlements — только `com.apple.security.app-sandbox`; API/SDK принадлежат
-  каждому bundle. Использованы отдельные новые root, workspace и private socket.
-- Штатный version-specific fixture host создал пустую тетрадь через Core и
-  полностью завершился до запуска MacAcceptance. Остальной setup выполнен через
-  публичный SDK: 64 посторонних элемента, два узла и bound connector, документ
-  из 81 блока, отдельная тетрадь в десяти tiles от исходной области.
-  Базы/архивы production не открывались, SQLite вручную не изменялась,
-  render/delivery/show receipts не подставлялись.
+v1 retained source inventory:
+`a9aad42a9a647039d94c980645d84c22115fbee9beb11775a44973c1fc5a6a7d`,
+910 inputs. Exact commit was unknown; `1e456d3` was only a comparison base and
+differed by 46 inputs. Initial v2 was `6f9e8e7` plus explicitly recorded GUI-225 work,
+996 inputs, SHA
+`d615df32d19b3cc24f3713be5afb5360de2ed25ca44968cb2582265ae51c936f`.
+Final corrected source identities and raw series remain in the linked full record.
 
-У исходного тестового suffix `.acceptance-runtime` обнаружился чужой старый
-container owner VUNH73AYPY: новый XPC ждал sandbox admission **до main**.
-`secinitd` подтвердил ACL mismatch. Для новых диагностических сборок использован
-существующий build setting `NOTEBOOK_SCRIPT_BUNDLE_SUFFIX=.s10-m94v58fcvp`.
-Старые контейнеры, их ACL, privacy и production identities не менялись.
-Артефакты и manifest размещены в собственном Application Support, не Documents.
-Первые неудачные запуски сохранены отдельно и не входят в измеренные серии.
+The first comparison exposed output-wait policy as a confounder. After correcting
+the owner, the whole series was rerun rather than discarding inconvenient results.
 
-## Метод
+| Scenario | Calls v1→v2 | Median RPC ms v1→v2 |
+|---|---:|---:|
+| Label | 2→1 | 150.93→121.66 |
+| Offscreen search | 2→1 | 16.45→16.81 |
+| One block | 2→1 | 15.53→15.24 |
+| Three related objects | 2→1 | 227.64→186.49 |
+| Diagram reflow | 2→1 | 194.44→148.97 |
+| Conflict continuation | 2→1 | 225.58→191.44 |
+| Reconnect with intentional 3 s wait | 5→5 | 3224.19→3239.56 |
 
-Шесть обычных задач повторены по пять раз, reconnect — три раза. Полный
-setup, проверки результата, undo/reset и handshake исключены из обычных
-измерений. Подписи менялись, новый граф получал новый prefix; reflow отменялся
-перед следующим повтором — повторные операции не были no-op.
+These were small sequential samples (five repeats, three for reconnect).
+They support fewer external calls for addressed work, not a universal speedup.
+Payload bytes did not decrease in every case. Equal wait=1000 comparisons and
+post-restart first-read checks were separate series; filesystem cache was not flushed.
+The SQL/read/decode diagnostic series was also separate from release timing.
 
-В основной серии сравнивается **default UX**: v1 start wait=0, v2 start wait=1000,
-resume обоих wait=1000. Это намеренное продуктовое различие, не равная polling
-policy и не чистое время вычислений. Отдельная серия ×3 использует одинаковые
-start/resume wait=1000 для подписи и блока.
+## Separate installed acceptance
 
-Время — monotonic round-trip/wall до ответа, а не timestamp native commit.
-Наблюдение `effects.state=saved` даёт верхнюю границу подтверждения сохранения,
-не фактический показ. Байты — сериализованный MCP tool payload, включая
-text + structuredContent, без JSON-RPC framing; это не размер логов или SQL.
-Восстановление транспорта включает явно заданное трёхсекундное ожидание:
-закрывается MCP после подтверждённого queued/running, не Mac/worker. Потеря
-admission reply около commit проверяется другими signed fault-injection тестами.
+The original record reports seven scenarios × ten on installed build 105, followed
+by final addressed regression/cleanup on production 106, system traces of 135.816 s
+and 300.948 s, and a >30-minute collaborative native/MCP scenario.
+Receipt: `.build/s10-complete-20260918/final-receipt.json`.
+That accepted S10 milestone did not claim isolated Notebook 60 FPS or a universal
+acceleration percentage, and it does not accept later GUI-240 changes.
 
-Перезапуск Mac и его собственных XPC проведён отдельно над тем же private root.
-Первое чтение после него отличается от трёх следующих тёплых чтений; filesystem
-cache не сбрасывался. Сохранённая подпись и прежний результат того же run после
-перезапуска проверены. Это не доказательство доставки на iPad.
-
-## Первоначальный результат и обнаруженный дефект ожидания
-
-| Задача | MCP calls v1 → v2 | Median wall ms v1 → v2 | Response bytes v1 → v2 |
-|---|---:|---:|---:|
-| Подпись | 2 → 1 | 150.93 → 128.56 | 4102 → 3130 |
-| Внеэкранный поиск | 2 → 1 | 16.45 → 67.35 | 2762 → 2844 |
-| Один блок | 2 → 1 | 15.53 → 79.01 | 3749 → 3859 |
-| Три связанных объекта | 2 → 1 | 227.64 → 218.11 | 5626 → 9154 |
-| Перестройка схемы | 2 → 1 | 194.44 → 131.06 | 5988 → 4992 |
-| Продолжение после конфликта | 2 → 1 | 225.58 → 175.52 | 5106 → 4174 |
-| Reconnect с намеренным wait=3000 | 5 → 5 | 3224.19 → 3194.09 | 7846 → 8298 |
-
-**Первоначальный v2 не быстрее во всём.** Короткие чтения задерживались
-фиксированным polling через 50 ms внутри `NotebookScriptCoordinator.handle`.
-Снижение внешних вызовов само по себе этого не устраняло. Ответ создания графа
-стал больше; при равной wait policy ответ одного блока тоже больше (3079 → 3859 B).
-У v1 уже был адресный document block: его не заменяли полным чтением ради
-искусственного ускорения. Параметры и форматы задачи не подменяют друг друга.
-
-## Исправление и повтор всей серии
-
-Coordinator теперь подписывает клиентский wait **до** async чтения журнала.
-Одноразовое уведомление отправляется после durable terminal reply; дедлайн и
-отмена освобождают клиентскую подписку. Отмена клиента не отменяет run,
-принятая запись всё ещё дожидается drain. Результат хранится только в прежнем
-журнале; нового result cache или второго исполнителя нет.
-
-Регрессия на wait=160 ms читала журнал четыре раза до исправления, теперь
-дважды — вход и выход. Проверены race между чтением и завершением, несколько
-клиентов/курсоров, client cancellation, shutdown и поздний durable reply.
-**20 Host tests / 3 suites PASS**; последующий immutable signed cut —
-**74 MCP + 10/10 Mac XPC PASS**, без skipped/runtime warnings.
-
-| Задача | MCP calls v1 → final v2 | Median wall ms v1 → final v2 | Response bytes v1 → final v2 |
-|---|---:|---:|---:|
-| Подпись | 2 → 1 | 150.93 → 121.66 | 4102 → 3130 |
-| Внеэкранный поиск | 2 → 1 | 16.45 → 16.81 | 2762 → 2844 |
-| Один блок | 2 → 1 | 15.53 → 15.24 | 3749 → 3859 |
-| Три связанных объекта | 2 → 1 | 227.64 → 186.49 | 5626 → 9154 |
-| Перестройка схемы | 2 → 1 | 194.44 → 148.97 | 5988 → 4992 |
-| Продолжение после конфликта | 2 → 1 | 225.58 → 191.44 | 5106 → 4174 |
-| Reconnect с намеренным wait=3000 | 5 → 5 | 3224.19 → 3239.56 | 7846 → 8298 |
-
-Это малые последовательные серии по пять повторов (reconnect — три), без
-статистического обещания ускорения. Поиск и блок вернулись к прежнему времени
-при одном внешнем вызове. Reflow/conflict final медленнее первоначального v2,
-хотя быстрее v1; результат не скрыт усреднением. Объём ответа не уменьшился
-во всех задачах. Общий timeout ответа не увеличен.
-
-При одинаковом start/resume wait=1000 (по три повтора) подпись:
-**205.40 → 119.54 ms**, блок: **70.30 → 16.37 ms**, по одному вызову обеих
-версий. Response payload подписи 3434 → 3130 B, блока 3079 → 3859 B.
-
-После отдельного перезапуска app+owned XPC первое чтение той же подписи
-(v1 читает страницу, v2 — точный элемент):
-**184.88 → 87.64 ms** (сумма RPC); медиана трёх следующих:
-**106.75 → 22.76 ms**. Первый из трёх тёплых final reads занял 93.79 ms:
-малую серию не следует выдавать за стабильный предел. Здесь снова default wait
-policy, filesystem cache не сбрасывался, не измеряется «холодный диск».
-
-## Обычное обновление истории v1 → v2
-
-После завершения baseline на **том же новом изолированном root** запущен final
-signed v2 с byte-identical исходным manifest. Перенесён только app bundle,
-не база. Обновлением хранилища владеет обычный startup Core, не драйвер проверки.
-Production и исторические архивы не участвовали.
-
-- Прежний run через `resume` вернул `api_version=2`, `run_api_version=1`,
-  неизменные fingerprint/result/effects. Старый `start v1` не возвращён.
-- Старая большая квитанция читается по точной `actionVersion`: 64 operations
-  страницами 32+32 и 65 changes страницами 32+32+1. Новые значения из текущего
-  состояния для неё не выдумываются.
-- Проверенные проекции 67 элементов и 81 блока, геометрия связей, workspace
-  и историческое авторство сохранены. Read-only программы не записывают доменных эффектов;
-  повторное чтение версии/старого run не меняет их результаты.
-- Это доказательство сохранности старого формата через public v2, не
-  утверждение о номере SQLite schema, будущих human writes или показе на iPad.
-
-## Доменный результат и границы
-
-У всех трёх сборок совпали проекции 67 элементов и 81 блока; пять созданных
-графов (по 70 элементов страницы) и пять reflow также совпали. Для элементов
-сравниваются id/kind/source/frame/label/connection/graphicResolution, для блоков
-— id/kind/source, не все native fields, styles или interactive state. Независимая сверка всех 39 последовательных различных состояний
-страницы также совпала (повторные одинаковые reads схлопнуты). Исключён только actor в page stamp независимых экземпляров.
-Reflow меняет derived frame связи, сохраняя её authored frame и оба binding.
-Конфликт отклонён без записи; программа сама прочитала актуальные данные и
-продолжила независимую правку. Это **не настоящий human UI жест**.
-
-- Поиск здесь имеет один hit. Continuation отдельно доказан Core и signed SDK
-  тестами; эти latency серии не измеряют раскрытие нескольких страниц.
-- SQL VM counts из S1–S3/S9 не являются количеством read/decode этих
-  latency-серий. Отдельные настоящие счётчики семи сценариев приведены ниже;
-  они не подменяют время неинструментированных сборок.
-- Финальный signed CLI gate дал две компиляции: 48.457917 / 51.187334 ms,
-  sampled RSS 39 272 448 / 43 859 968 B, sampled CPU 713 599 / 844 513 ns.
-  Sampling interval 20 ms; это не true peak или память всей программы.
-  Compiler 7.0.2, SDK `a6f192ea3615cfb0e1198a716935e587b7f2ac7febd24ab8edde2a3c10f1f46a`.
-- Число исправлений запросов автономного агента не измерено. В подготовке
-  driver исправлена неверная форма проверки full document v2; неудачный setup
-  verification сохранён, принятые setup эффекты не запускались повторно.
-- Physical selection/жесты, received/shown, десять повторов, 30 минут совместной
-  работы и системные frames/CPU/GPU/memory остаются отдельной открытой приёмкой.
-  Жалоба Амира на zoom/вход/неожиданный выход из тетради не закрыта.
-
-Локальные квитанции: `.build/s10-programmable-comparison-20260918/`,
-`.build/s10-measure-{baseline,current}-r2-20260918/`,
-`.build/s10-measure-final-20260918/`, `.build/s10-legacy-upgrade-20260918/`,
-`.build/s10-mac-only-{baseline,current}-20260918/build-r2.json`,
-`.build/s10-mac-only-final-20260918/build.json`,
-`.build/s10-completion-signed-20260918/verification.json`.
-В них сохранены actual source/app identities, команды, запросы/ответы и driver.
-Готовность всех десяти срезов не следует из этого Mac-only сравнения.
-
-## SQL/read/decode: отдельная диагностическая серия
-
-После исправления SDK `8c00bbe` выполнены ещё **33 v1 + 33 v2** сценария
-с теми же рецептами и новыми isolated roots. Оба Mac Release приложения
-подписаны Apple Development; production и iPad не участвовали. Только две
-private source copies получили одинаковые 76 строк наблюдателя в прежних
-`NotebookSQLConnection.rows`, `NotebookStoredPayload.init(from:)` и синхронных
-persistence closures. Canonical runtime, SQL, бюджеты и публичный API не менялись.
-
-Измерены admitted SQL result rows/bytes перед копированием и успешные decode
-физических `NotebookStoredPayload<Value>`. Повторное чтение/декодирование
-считается повторно; это **не disk I/O и не все JSON conversions**. Начало/конец
-каждой программы отделены offset-ами append-only JSONL. Setup, проверки результата,
-undo и фоновая работа вне этих scopes не включены. Наблюдатель пишет агрегат
-до возврата persistence closure, не удерживает thread-local через `await`.
-
-Две raw scope метки отражают **маршруты**, не непересекающиеся доменные роли:
-`domain` — native command closure, `journal` — script persistence closure.
-Последняя в v1 включает также прямые SDK page/document reads, поэтому нельзя
-приписывать разность этих столбцов только оптимизации журнала. Ниже показана
-их сумма — медиана пяти обычных или трёх reconnect повторов:
-
-| Задача | SQL rows v1 → v2 | SQL value bytes v1 → v2 | Fragment decodes v1 → v2 |
-|---|---:|---:|---:|
-| Подпись | 877 → 362 | 425027 → 91470 | 680 → 134 |
-| Внеэкранный поиск | 53 → 74 | 11406 → 15172 | 18 → 26 |
-| Один блок | 49 → 67 | 12396 → 16481 | 18 → 28 |
-| Три связанных объекта | 2407 → 1840 | 1273810 → 893687 | 2050 → 1410 |
-| Перестройка схемы | 1376 → 682 | 632479 → 188920 | 987 → 233 |
-| Продолжение после конфликта | 1213 → 487 | 591256 → 139410 | 958 → 191 |
-| Reconnect | 1341 → 409 | 659834 → 112874 | 1022 → 155 |
-
-**Поиск и адресный блок стали дороже по этим счётчикам.** Это не скрыто
-выигрышем остальных задач и не превращено в обещание общего ускорения.
-После graph undo остаётся причинная история: пять повторов дают диапазоны
-rows v1 **2133–2677**, v2 **1660–2020**; декодирования соответственно
-**1778–2320**, **1230–1590**. Это одинаковые последовательные рецепты, не
-пять восстановлений базы в исходное состояние. Полные диапазоны сохранены.
-
-Сопоставлены и совпали **39** последовательных различных проекций страницы
-и **81** блок документа с тем же перечнем полей, что в предыдущих сериях.
-Реальная обработка scripted conflict и replay осталась прежней. Обе private
-app и принадлежащие им XPC остановлены; проверены отсутствие ошибок metric I/O
-и неизменные fingerprints после сборки. Синтетический Swift 6 strict-concurrency
-fixture отдельно подтвердил Codable equivalence, repeated/failed decodes,
-вложенный scope и disabled mode; это не подмена настоящих workload counts.
-
-Идентичности instrumented sources:
-- v1 `7f51e673a22b95b933e995db58207ce041839500f7da3d5dcb8099978a412035`,
-  CDHash `523318c04695f0f7364c12ba00995651b52ec7ef`;
-- v2 `a242c415a49bf9115a29bc3727d82b09f64b2a81d0b53ff9ca284538e6704b30`,
-  CDHash `b5c00b70c8811a20a4161de4441549481da89907`.
-
-Evidence: `.build/s10-read-metrics-20260918/comparison.json`, `evidence-manifest.json`,
-`drivers/` (patcher, collector, build/launch/stop, рецепты и агрегатор),
-`{baseline,v2}/instrumentation/`, `build.json`, `run/counts/` и raw JSONL.
-**Instrumented wall/CPU timings не заменяют прежние uninstrumented latency
-серии.** Этот результат закрывает прежнее отсутствие read/decode counts семи
-сценариев, но не физическую доставку, gestures или системные frames/CPU/GPU/memory.
-
-## Физическая приёмка после сравнительных измерений
-
-18 сентября завершены семь сценариев ×10 на installed105 и адресная
-финальная регрессия/cleanup на production106. Системные профили iPad:
-135.816s (105) и300.948s (106); совместный native/MCP сценарий шёл более30min.
-Это отдельные от приведённых выше private Mac замеров источники и условия.
-Точная идентичность, saved/received/shown, реальные жесты, результаты и пределы
-системных FPS/CPU/GPU/memory приведены в `docs/verification.md`, раздел
-«Все десять срезов MCP TDD приняты, production106». Raw final receipt:
-`.build/s10-complete-20260918/final-receipt.json`. Полная веха принята без
-объявления общего процента ускорения или изолированного60FPS Notebook.
+[Full comparison, immutable sources and raw evidence](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/programmable-notebook-measurements.md).
+[Detailed production-106 acceptance in the retained journal](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/verification.md).
+[Current installed scope](verification.md).

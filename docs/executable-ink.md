@@ -1,185 +1,93 @@
-# Исполняемая рукопись: исходник и автономные зависимости
+# Executable handwriting: source and offline dependencies
 
-## Решение пользователя
+## Product boundary
 
-MyScript исключён: нет SDK, сертификата, платного API, демолицензии или
-обязательства получить их позже. Замена должна быть открытой либо собственной,
-работать на iPad без сети и читать настоящие чернила. Apple Vision для строк
-Python и открытая модель для двумерной математики — рассматриваемый маршрут,
-**не уже выполненная интеграция**. Точность выбранного распознавателя пока
-не достаточна для автоматического запуска.
+MyScript is excluded: no SDK, certificate, paid API or deferred licensing dependency.
+The intended recognizer must be open or owned, offline on iPad and based on actual
+ink. Apple Vision for Python and an open two-dimensional math model are investigated
+routes, **not a completed integration**. Recognition quality is not sufficient for
+automatic execution.
 
-Поверхность остаётся прежней: указание → «Вычислить» → небольшой результат;
-пояснения только по касанию. Никакого дополнительного редактора, холста или
-постоянной панели. UUID и точки Pencil остаются единственным исходником.
-Распознанное содержание не становится самостоятельным редактируемым документом.
+The intended interaction remains indicate → Compute → compact result, with details
+on demand. Pencil UUIDs/points are the source; recognized text is not a second
+independently editable document. No nonfunctional product button is added.
 
-## Адресный исходник и жизненный цикл распознавания
+## Implemented source/candidate storage
 
-`NotebookComputation` принадлежит физическим тетради и листу. Активация сохраняет
-область, исходную версию чернил и неизменяемый порядок внутри листа. Запись живёт
-в `PageDocument.computations`, адресуется отдельной строкой того же `NotebookStore`
-и доставляется общим журналом. До первой активации этого необязательного содержания
-на листе нет. Распознавание, остановка и повтор не перенумеровывают соседей.
-Удаление оставляет метку для этого UUID; запоздавший ответ и старый пакет другого
-устройства не возвращают удалённое вычисление. Прежние чернила не переписываются.
-Общие правки элементов и их отмена не назначают коллекции вычислений вторые
-часы агента: её состояние меняет только собственный типизированный контракт.
+`NotebookComputation` belongs to a physical notebook/page. Activation stores region,
+ink version and immutable page order in addressed `PageDocument.computations`
+records through the same store/journal. Deletion tombstones its UUID; late replies
+cannot revive it. Ordinary element edits do not assign computation state another
+agent clock.
 
-`readComputationInk` выдаёт ограниченный снимок настоящих UUID и исходных точек
-ручки и ластика в порядке рисования. Отменённые действия не передаются в рисунок,
-но участвуют в идентичности исходника. Пересекающий границу штрих сохраняется
-целиком: общий нативный renderer должен отсечь его областью, а не создавать новые
-концы линии. Импортированная PNG-основа явно отклоняется — она не выдаётся за
-редактируемые точки Pencil. Этот срез ещё не соединяет снимок с OCR-рендером.
+`readComputationInk` reads bounded original pen/eraser UUIDs and samples in painter
+order. Inactive actions affect source identity but are not drawn. Crossing strokes
+remain complete and are clipped by the renderer rather than given invented endpoints.
+PNG baselines are explicitly unsupported as editable Pencil points. This source read
+is not yet connected to a production OCR renderer.
 
-Тяжёлое чтение чернил и подготовка ответа отделены от публикации.
-`beginComputationRecognition` закрепляет попытку и исходник; публикация проверяет
-ID попытки, полную версию записи, часы чернил и SHA их адресованных значений.
-Совпадения одних часов недостаточно. Ответ после устойчиво сохранённой ручки,
-ластика или отмены отклоняется без повреждения очереди ввода. Повтор после
-неоднозначного commit не создаёт второй записи доставки. Остановка и удаление
-также повторяемы по исходной версии команды.
+`beginComputationRecognition` fixes attempt/source. Publication checks attempt,
+record version, ink clocks and SHA of addressed values; equal clocks alone are
+insufficient. New pen/eraser/undo rejects a stale answer without harming input.
+Retries after ambiguous commit do not duplicate delivery; stop/delete are versioned.
 
-Распознанные варианты сохраняются **только как требующие проверки**, даже если
-вариант один и его синтаксис корректен. Python сохраняет регистр, табуляцию,
-пробелы и переносы без исправления. Привязки используют границы UTF-8 и диапазоны
-исходных точек; неизвестный UUID, ластик вместо знака, выход за диапазон или разрыв
-UTF-8 отклоняются. Отсутствие привязок означает распознавание всей области,
-а не вымышленную точность до символа. Публикация не разрешает исполнить кандидата.
+Candidates are always saved as **requiring review**, even when unique and syntactically
+valid. Python case, indentation, whitespace and lines are preserved.
+Bindings validate UTF-8 boundaries and source UUID/sample ranges; missing bindings
+mean whole-region recognition, not fictitious character precision. Publication grants
+no execution authority.
 
-Сейчас любая правка чернил **всего листа** консервативно делает прежнюю
-интерпретацию устаревшей. Это проверяется при адресном чтении в одном SQL-снимке,
-а не хранится вторым флагом готовности. Предел подготовки — 8 МиБ адресованных
-значений, 4 098 строк и 65 536 точек листа; превышение возвращает явный отказ.
-На листе допускается до 256 записей, включая метки удаления. Рост чернил за
-предел распознавания не запрещает остановку или удаление записи. Список записей
-проверяет общую идентичность чернил один раз, не перечитывает точки для каждой.
+Any ink edit anywhere on the page conservatively invalidates prior interpretation
+during the addressed snapshot read. Limits: 8 MiB addressed data, 4,098 rows,
+65,536 page points; at most 256 computation records including tombstones.
+Exceeding recognition limits does not block stop/delete. Listing checks ink identity
+once rather than rereading it per computation.
 
-Core-проверки используют синтетические штрихи в настоящем формате и реальный
-SQLite, но **заданные вручную варианты текста**, не подставной распознаватель,
-выдаваемый за приёмку OCR.
-`Tests/NotebookComputationQueueHarness/run.sh` отдельно исполняет настоящий
-`NotebookPersistenceQueue`: принятый штрих предшествует чтению, устаревший ответ
-не сообщает commit, следующая линия сохраняется, остановленная попытка не
-публикуется. Проверка не запускает установленные приложения и не требует Simulator.
+Core tests use synthetic real-format ink and explicitly supplied candidate text,
+not a fake recognizer passed off as OCR. The actual persistence-queue harness checks
+input-before-read, stale answer rejection, later stroke preservation and stopped
+attempts without using installed stores.
 
-Это законченный контракт хранения исходника и кандидатов, **не рукописный
-калькулятор**. В нативный интерфейс, MCP и разрешения агента новые команды пока
-не открыты. Приложение ещё не запускает распознавание автоматически и не отменяет
-его по смене листа: такие переходы потребуют подключения владельца фоновой работы
-к существующим границам ввода. Численные результаты, общий Python-контекст,
-сохранённая трасса и экспорт вычислений ещё не реализованы. Не добавлены ни кнопка
-с неработающим действием, ни панель, ни альтернативный редактор.
+## Offline execution experiment
 
-## Что исполняется сейчас
+[ComputationResources](../Applications/ComputationResources/README.md) pins Pyodide
+314.0.6 / CPython 3.14.2 and four scientific libraries, about 35 MB.
+It is **not linked into app targets**. The isolated computation harness uses one
+headless WKWebView and one Worker; a new run terminates the old worker. It receives
+no archive/NOTEBOOK_HOME, invokes no MCP/helper and runs with system network denial.
 
-`Applications/ComputationResources` содержит неизменённый Pyodide 314.0.6,
-CPython 3.14.2 и четыре закреплённых библиотеки. Комплект занимает около 35 МБ,
-проверяется по хешам и пока **не включён в цели приложений**. Его потребитель —
-`Tests/NotebookComputationHarness/run.sh`: отдельный безоконный процесс, один
-WKWebView и один Worker. Новый проход сначала завершает прежнего Worker.
-Процесс запускается с системным запретом `network*`, не получает архив или
-NOTEBOOK_HOME, не вызывает MCP и не запускает установленный helper.
+A custom URL scheme serves exact immutable resource names. CSP plus system network
+denial rejects HTTP(S), WebSocket, file URLs and traversal. WebKit uses Blob modules
+from pinned bytes and loadPyodide.createPyodideModule; its inactive scheduling policy
+allows real headless work without pretending a visible window. This is Mac evidence,
+not physical iPad execution.
 
-Собственная URL-схема выдаёт только точные имена неизменяемых ресурсов.
-Обычные HTTP(S), WebSocket, файловые URL, неизвестное имя и обход каталога
-проверяются отрицательными примерами. CSP запрещает внешние подключения;
-системный запрет сети является дополнительным независимым ограничением проверки.
-Нет HTTP-сервера или замены `fetch`.
+Historical checks exercised fractions, algebra/calculus, NumPy/SciPy and high-precision
+math; bounded output, real Python errors and terminating an infinite worker.
+A local TexTeller 3 ONNX q8 candidate matched only three of five demonstration strings,
+misreading a chemical formula and a coefficient. Warm recognition around 0.20–0.25 s
+and roughly 1.59 GB process RSS were Mac observations, not calibrated OCR accuracy
+or iPad resource figures. Example training overlap was unknown.
+Cold scientific Python startup took 8–14 seconds in that run.
 
-У WebKit выявлены две важные особенности. Загрузка модулей напрямую через
-собственную схему не работает: используются Blob-модули с исходными байтами и
-опубликованный параметр `loadPyodide.createPyodideModule`. Скрытый WebKit по
-умолчанию замедляет вычисление; `WKPreferences.inactiveSchedulingPolicy = .none`
-разрешает работу служебного процесса без окна. Видимость окна не имитируется.
-Это пока проверено на macOS, не на физическом iPad.
+## Remaining limitations
 
-## Фактические проверки
+- WebAssembly floating-point exception behavior differs from native libraries:
+  the observed singular inverse returned NaN rather than LinAlgError. Strict JSON
+  rejects nonfinite output; native exception parity is not promised.
+- WASM declares up to 4 GiB memory. A worker timeout is not a hard application memory
+  cap or evidence that arbitrary computation is safe for production.
+- OCR has no proven stroke-level symbol alignment, calibrated confidence or
+  Torch/native-preparation parity. Syntax/numerical agreement is not recognition
+  accuracy.
+- Handwritten Python indentation/case, physical ink/eraser/undo, background lifecycle,
+  UI review, persistent trace, shared Python context and computation export remain
+  unimplemented or unaccepted.
 
-- 31 проверка движка: точные дроби, отрицательная степень, вложенная функция,
-  производная, интеграл, система, определитель, решение NumPy, интегрирование
-  SciPy, затухающая динамическая модель и 50-значное вычисление mpmath.
-- Захват чрезмерного вывода ограничен и сообщает усечение. Настоящая ошибка
-  изменения формы массива не ломает следующий расчёт. Бесконечный Python
-  останавливается `Worker.terminate()` родителя по нативному таймеру; новый
-  Worker не получает прежние переменные или временные файлы.
-- Отдельный открытый кандидат TexTeller 3 в ONNX q8 действительно исполняется
-  локально с системным запретом сети. Три проверки подготовки изображения
-  прошли. В пяти демонстрационных рукописных изображениях совпали три строки;
-  модель прочитала `NaOH` как `NaCH` и коэффициент `14` как `13`. Химическое
-  изображение — контроль распознавания, не заявленная поддержка химии.
-- Измеренные проходы распознавания на этой машине занимали примерно 0,20–0,25 с
-  после загрузки, RSS процесса достигал около 1,59 ГБ. Это не скорость или
-  память iPad, не p95 подготовки главного потока и не независимая оценка точности.
-  Примеры автора могли присутствовать в обучении. Для распознавания нет приёмки.
-- Холодная подготовка нового Python Worker с импортом всех научных модулей
-  заняла 8,0–14,0 с в проходе 10 сентября на Mac. Это отдельная цена
-  запуска, не задержка обработки Pencil. Повторное использование подготовленного
-  ядра и время iPad ещё не измерены.
+The next integration must reuse the existing source versions/writer while adding
+bounded offline physical-input recognition and explicit ambiguity handling.
+It cannot substitute a second content owner or use test success to authorize
+installation.
 
-Сырые воспроизводимые результаты создаются в `.build/computation-contract/result.json`
-и `.build/recognition-result.json`; команды описаны в проверочных каталогах.
-Проверка движка сравнивает отпечаток собственных исходников до и после прохода.
-`verify.sh` включает этот проход, проверку очереди и три проверки подготовки
-изображения; он не скачивает модель и не объявляет распознавание принятым.
-Проверки этого среза не используют основной Notebook, Lab или их архивы как
-данные и не заменяют установленную пару.
-
-### Проверка адресного среза 10 сентября 2026
-
-Полный `verify.sh` выполнен в отдельном рабочем дереве от `b6b6019` с изменениями
-только этого среза. Все 472 исходных файла до и после совпали:
-`29e8e8f1f74cc2b6472e19b0369de90ee509ef1ff420369306cefa45478c6010`.
-Прошли 376 Core-тестов, 25 проверок моста, 21 проверка переноса, MCP,
-8 проверок очереди, 31 проверка Python, подготовка изображений и 97 Mac-тестов.
-Из 448 iPad/Simulator-проверок прошли 447; одна завершилась таймаутом ожидания
-геометрии клавиатуры после поворота: `testQuestionDraftSurvivesRotationAndRemainsReachableAboveKeyboard`,
-строка 246. Пропусков и предупреждений runtime нет; **общий маршрут не прошёл**.
-Это не доказательство потери черновика или сбоя системного процесса.
-
-Во время нативного прохода другая задача установила дополнительный runtime
-`24A434`. Выбранный Simulator продолжал работать на `24A5408d`: это подтверждают
-его переменные среды и итоговый xcresult. Событие не скрыто из доказательств.
-Сырые результаты и отрицательный итог находятся в
-`.build/computation-verification-final-evidence`.
-На более новом основании `3c17de1`, уже с изменениями чата и журнала SQLite,
-отдельно прошли 20 тестов вычислительного исходника, 3 теста журнала и 8 проверок
-очереди. Эта проверка совместимости не выдаётся за полный прогон общего дерева
-или физическую приёмку рукописи.
-
-## Выявленные границы, которые нельзя замолчать
-
-1. WebAssembly не сохраняет все нативные исключения вычислений с плавающей точкой.
-   Реальный `np.linalg.inv(np.zeros((2,2)))` вернул массив `NaN` вместо
-   `LinAlgError`; то же повторилось в независимом Node-проходе с этим комплектом.
-   [Сопровождающий SciPy подтверждает ограничение](https://discuss.scientific-python.org/t/ann-scipy-1-18-0-release/2394/2).
-   Библиотека не подменена. Проверка сохраняет этот факт и доказывает, что
-   нечисловой массив отклоняется строгой JSON-сериализацией, а не превращается
-   в обычный численный ответ. Продуктовый формат должен явно различать такие
-   значения; нативную семантику всех исключений обещать нельзя.
-2. В исходном WASM память экспортирована с максимумом 4 ГиБ. Принимаемый бюджет
-   приложения пока не закреплён. Таймер остановки не является жёстким пределом
-   памяти. Нельзя публиковать этот комплект как безопасный исполнитель любых
-   программ по одному успешному прерыванию бесконечного цикла.
-3. ONNX-кандидат пока возвращает текст, не доказанную привязку каждого знака к
-   UUID и диапазону штриха. Уверенность не откалибрована, паритет с исходной
-   Torch-моделью и нативной подготовкой не доказан. Правильный синтаксис и
-   совпавшее численное значение не являются проверкой распознавания.
-4. Apple Vision ещё не проверен на рукописном Python с регистром и отступами.
-   Нет физической проверки чернил, ластика, отмены, поколений, интерактивного
-   просмотра, производительности и 30 минут совместной работы.
-
-## Следующий допускаемый срез
-
-Получить автономный iPad-проход распознавания с ограниченной памятью, настоящими
-Pencil-исходниками, доказанной привязкой к знакам и отказом при неоднозначности.
-Независимый контракт NotebookStore реализован раньше этой приёмки, чтобы
-распознаватель не получал второго владельца записи или обходной путь публикации.
-Следующий потребитель использует существующую очередь и проверенные исходные
-версии; наличие этого контракта не снимает требований к распознавателю.
-Порядок всей тетради, консервативная инвалидация Python, сохранённая трасса,
-нативный просмотр и отменяемая правка штрихов остаются обязательными срезами.
-
-Текущая работа **не разрешает заменять установленные приложения** и не является
-физической приёмкой функции.
+[Historical profiles, negative full-run result and raw output paths](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/executable-ink.md).
+Current evidence: [verification](verification.md).

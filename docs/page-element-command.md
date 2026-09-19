@@ -1,92 +1,44 @@
-# Адресное изменение существующего элемента листа
+# Addressed edits to an existing page element
 
-## Статус
+`NotebookStore.actionSourceProjection` returns a `CollaborationWorkspace` with an
+explicit set of partially read pages. `updateElement` and `setElementState` read
+the header, named elements, and their causal versions within a shared 4,096-row,
+4 MiB allowance for the action. Order is read as a version, not a neighbor-ID array.
+Geometry permission checks the addressed element's previous frame.
+`sourceRevision` remains the full physical SQL revision.
 
-Профиль связанных контрактов прошёл 89 Core-тестов, MCP — 44 теста и smoke.
-После добавления строгой проверки формы команды прошли 11 тестов нового
-контракта, 26 проверок внешнего переноса, 16 Mac- и 58 iPad runtime-тестов.
-Оба нативных результата не содержат отказов, пропусков или runtime warnings.
-Полный `verify.sh` завершился 11 сентября, 14:23 МСК, с кодом 0
-в `.build/page-element-command-full-cut`
-на 521 исходном файле с отпечатком
-`3dcd0543b4c73d6e3f312d78ff22a4fa4033bd4fbb47e2995e3456283e4ebdaa`.
-Прошли 521 Core, 26 Codex, 26 external, 44 MCP, 39 проверок первого
-установщика, 40 сборщика пары, 113 Mac и 483 iPad. Обе нативные сводки
-не содержат ошибок, пропусков и runtime warnings. Квитанция связывает
-1881 файл свидетельств; независимый `checked_verification` прошёл.
-Точная сводка находится в [verification.md](verification.md).
-Установка, перенос настоящих архивов и физическая приёмка не выполнялись.
+`NotebookReferenceIndex` includes the page owner. Headers, elements, computation,
+and drawing actions contribute independently. Editing an element need not reconstruct
+neighbor programs or ink to validate the page revision. A page edit does not change
+the cover's identity. A partial projection must carry a valid full identity rather
+than invent one from its subset.
 
-## Граница команды
+`NotebookPageElementProjection` contains no ink or computation. It cannot be decoded
+as a complete `PageDocument`, used as pixel evidence, or admitted as a full archive.
+`PageDocument` retains common element-size validation. Unread drawing is preserved.
 
-`NotebookStore.actionSourceProjection` возвращает существующий
-`CollaborationWorkspace` с явным набором частично прочитанных листов.
-Для `updateElement` и `setElementState` он получает заголовок, названные
-элементы и их причинные версии: не более 4096 строк и 4 МиБ на все такие листы
-одного хода. Поле порядка читается как версия, без массива соседних ID.
-Геометрия разрешения проверяет прежнюю рамку именно адресованного элемента.
-`sourceRevision` продолжает принадлежать полной физической версии SQL.
+## Versions, publication, and undo
 
-Существующий `NotebookReferenceIndex` теперь индексирует также физического
-владельца листа. Заголовок, элементы, вычисления и действия рисунка вносят
-собственные вклады; соседство элементов и чернил учитывается раздельно.
-Изменение элемента не восстанавливает соседнюю программу, точки или весь лист
-ради проверки его версии. Лист не становится дочерним источником обложки:
-его правка не меняет идентичность обложки. Полная версия, рассчитанная из
-`PageDocument`, совпадает с SQL-индексом после перестановки, отмены, добавления
-чернил и холодного открытия. Проекция без привязанной полной идентичности
-не получает поддельную версию по своему неполному содержанию.
+Creation establishes original causal element versions. Full publication and the
+external converter can make implicit versions explicit at their original counter.
+Updating one element does not assign its new clock to an invisible neighbor.
 
-`NotebookPageElementProjection` не содержит чернил и вычислений. Она не
-декодируется в `PageDocument`, не подтверждает пиксели и не проходит проверку
-полного архива. Общая проверка размеров элементов остаётся у `PageDocument`.
-Чтение и публикация не подставляют пустой рисунок вместо непрочитанного.
+`publishProjectionEdits` writes only the baseline difference. Missing ink and
+computation in both partial projections do not delete stored addresses.
+Element positions and neighboring bodies remain intact. New causal fields are
+charged against the complete owner's limit.
 
-`PageDocument` задаёт исходные причинные версии элементов при создании.
-Внешний конвертер и публикация полной страницы делают отсутствующие версии
-явными на прежнем счётчике, не объявляя новый человеческий ввод. Изменение
-одного элемента поэтому не переносит его новый счётчик на невидимого соседа.
-Слияние элементов обрабатывает только их значения и версии, без повторного
-кодирования чернил или передачи вычислений владельцу агентских полей.
+Undo reads the same addressed elements and versions. Later human fields survive;
+independent program-state edits do not prevent undo of earlier text.
+Replay returns the durable receipt. Resource exhaustion, stale physical revision,
+or a transaction failure cannot publish a partial result.
 
-## Публикация и отмена
+## Verification and scope
 
-Обычный `publishProjectionEdits` публикует только отличие от прочитанной базы.
-Список дочерних коллекций объединяется по той же базе: отсутствие рисунка
-и вычислений в обеих проекциях не удаляет их сохранённые адреса. Позиция
-изменённого элемента остаётся прежней; соседние тела и версии не записываются.
-Новые причинные поля, если они действительно появляются, учитывают общий
-предел своего владельца, а не размер частичного словаря.
+Regressions use corrupt unread ink/computation, a large neighboring program,
+99,000 causal records, geometry permissions, budget exhaustion, and commit faults.
+SQL accounting includes final checks and commit.
 
-Отмена читает те же элементы и версии. Последующее человеческое изменение
-сохраняет принадлежащее ему поле; независимое состояние программы не запрещает
-отменить прежний текст. Повтор хода возвращает прежнюю устойчивую квитанцию.
-Частичный результат не выдаётся при превышении бюджета, изменившейся версии
-источника или отказе общей транзакции.
-
-## Проверяемые сценарии
-
-Новые тесты отделяют содержание элемента от повреждённых непрочитанных
-чернил, соседней программы размером 8 МиБ и вычисления; проверяют сохранение,
-квитанцию, повтор, продолжения, отмену и обратное чтение. Отдельный сценарий
-добавляет 99 000 чужих причинных записей и ограничивает SQL всей команды,
-включая окончательную проверку и commit. Другие сценарии проверяют запрет
-публикации проекции как архива, человеческую доработку, старую физическую
-версию, геометрические разрешения, общий отказ большого пакета и сбои commit.
-
-На неизменном предыдущем Core (`9c21b77`) семь внешних сценариев дали шесть
-нарушений: чтение непрочитанного тела, принятие слишком большого элемента
-и 1025 ожиданий, изменение журнала после таких отказов и превышение SQL-бюджета.
-Этот отрицательный результат сохранён в
-`/tmp/notebook-page-element-address-red.log`. Первый профиль нового пути тоже
-сохранён: он обнаружил полное чтение чернил внутри проверки физической версии;
-исправление сделано в её владельце, а не удалением проверки версии из команды.
-В положительном профиле с 99 000 чужих версий сохранение потребовало 5885,
-отмена — 5226 инструкций SQL при пределе 200 000 на целую транзакцию.
-Профильные квитанции находятся в `/tmp/notebook-page-element-reference-profile.log`,
-`/tmp/notebook-page-element-shape-transfer-profile.log` и
-`/tmp/notebook-page-element-native-{mac,ipad}-summary.json`.
-
-Добавление, удаление, перестановка элементов, команды чернил и отмена создания
-целой тетради пока читают полный лист. Адресное входящее слияние тяжёлого листа
-также остаётся отдельной незавершённой границей.
+Insertion, removal, ordering, ink commands, and whole-item creation undo have
+separate input/ownership contracts. See [replication](replication-owner-window.md)
+for incoming page delivery and [verification](verification.md) for exact evidence.

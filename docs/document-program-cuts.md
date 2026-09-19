@@ -1,63 +1,34 @@
-# Физический фрагмент программы
+# Physical program cuts
 
-## Контракт разметки
+`DocumentLayoutRecord` binds each paper rectangle to its offset in the original
+block. Two pages can have identical paper bounds while showing different parts of
+one program. `sourceOffset` is required in the admitted layout and
+`DocumentBlockRegion`, not an optional JavaScript hint.
 
-`DocumentLayoutRecord` связывает прямоугольник на бумаге с началом фрагмента
-внутри его исходного блока. Два листа могут иметь одинаковые рамки, но показывать
-разные части одной программы. Поэтому `sourceOffset` является частью принятой
-разметки и `DocumentBlockRegion`, а не необязательной подсказкой JavaScript.
+The incoming offset must be finite, numeric and nonnegative; Boolean values are
+not coordinates. Native admission converts it to the same physical units as the
+rectangle and rejects unrepresentable values. Absence does not mean zero.
+Whole-source versus page comparison checks offset with the same 1/32-point
+rounding allowance. An inconsistent neighbor cannot replace accepted source layout.
 
-Браузер передаёт конечное неотрицательное числовое смещение; логические значения не являются координатами. Нативный получатель переводит
-его в те же физические единицы, что вертикальные координаты рамки, и отказывает,
-если результат не представим. Отсутствующее смещение не заменяется нулём.
-Сравнение целого исходника и отдельного листа проверяет также это смещение,
-с тем же пределом округления 1/32 пункта. Неправильный сосед не может заменить
-уже принятую разметку источника.
+Current offsets come from canonical print slots and SyncTeX. One
+`DocumentBlockRuntime` owns the program; passive continuations borrow its pixels
+without starting another executor. See [program fragments](document-program-fragments.md).
+The former outstanding duplicate-iframe issue below is historical, not the current
+ownership contract.
 
-Прежняя отдельная проверка только знака и конечности смещения удалена из
-`DocumentPagePreparation`: допуск принадлежит существующему владельцу разметки
-и действует также для квитанции настоящей страницы и кеша её снимка.
+## Historical regression
 
-## Проверка
+`DocumentCutOriginTests` covered equal paper frames with different source offsets,
+unit conversion, missing/nonnumeric offsets, overflow and inconsistent neighbors.
+All five regressions failed against the old admission owner, then the focused
+profile passed 118 Mac and 48 iPad tests without skips or runtime warnings.
 
-`DocumentCutOriginTests` сравнивает продолжения с одинаковой бумажной рамкой,
-изменение только исходного смещения, переход из браузерных в физические единицы,
-отсутствующие и нечисловые адреса, переполнение и отказ соседа после принятия
-полного источника. На прежнем владельце разметки все пять регрессий завершились
-ошибкой. Финальный профиль прошёл 118 Mac-тестов за 205.110 s и 48 выбранных
-iPad-тестов за 45.964 s, без ошибок, пропусков и runtime warnings. Опись 523
-исходников до и после совпала: `bae0cfbf598d01b4939cbd45f848c9cd34de2697b4a6039da0a3b1a89cb5d657`.
-Результаты — `.build/document-cut-origin-final-mac.xcresult` и
-`.build/document-cut-origin-final-ipad.xcresult`, журналы —
-`/tmp/notebook-document-cut-origin-final-{mac,ipad}.log`.
+A separate early negative test found a duplicate passive executor. Stock Mac WebKit
+could capture valid pixels within its own bounds but outside its visible native
+parent without resizing or a second launch. That finding did not prove Canvas/WebGL,
+iPad input or complete lifecycle ownership; the later single-owner implementation
+is documented in the linked contract.
 
-Первый полный Mac-профиль нового контракта дал 117/118: старая искусственная
-квитанция не содержала обязательного смещения. В ней указан фактический ноль,
-проверка отказа несовместимого соседа сохранена. Прерванные из-за соседней сборки
-профили не объявлены результатом. Артефакты нативной сборки находятся в системном
-временном каталоге: отладочные `.o` внутри «Документов» вызывали ожидание TCC
-при оформлении ошибки XCTest. Разрешения системы и проверки не изменялись.
-Полный `verify.sh` для нового набора ещё не выполнялся.
-
-## Незавершённая граница
-
-Это адрес физического фрагмента, а не завершённое владение исполнением.
-Пассивные iframe пока запускают программу независимо. Один активный исполнитель,
-его нативный ввод, совместное чтение пикселей, передача между листами и стоимость
-ресурсов остаются отдельным условием выпуска. Для снимка `WKWebView` Apple
-[требует область внутри собственных bounds](https://developer.apple.com/documentation/webkit/wksnapshotconfiguration/rect); область вне видимого родительского
-листа требует отдельной проверки настоящих пикселей без изменения активного
-viewport, а не создания второго исполнителя.
-
-
-Проверенный отрицательный сценарий `DocumentRuntimeTests/testPassiveContinuationBorrowsPixelsWithoutStartingTheProgramAgain`
-обнаружил один iframe на пассивном продолжении вместо нуля; программа действительно
-имеет второго исполнителя. Отдельная проверка стандартного `WKWebView` на Mac
-получила правильные красный, зелёный и синий фрагменты внутри bounds WebKit,
-но вне видимого нативного родителя, без изменения frame/bounds и второго запуска.
-Оба результата получены без пропусков и runtime warnings; изображения сохранены
-в `/tmp/notebook-document-program-owner-red-v4-images` и
-`/tmp/notebook-document-program-plane-stock-v4-images` и просмотрены.
-Это проверка DOM-пикселей на Mac, не Canvas/WebGL, iPad, IME или готовое владение
-программой. Пассивные исполнители не отключены фильтром callback и не объявлены
-исправленными этим адресным контрактом.
+Full source hashes, failed/interrupted attempts and image paths are retained in
+[the original evidence](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/document-program-cuts.md).

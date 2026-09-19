@@ -1,30 +1,30 @@
-# Философия Notebook
+# Notebook philosophy
 
-Главное в Notebook — **скорость достижения намерений пользователем и агентом
-при минимально возможной когнитивной нагрузке на них**.
-Приложение помогает прямо переходить от намерения к результату,
-сохраняя внимание на самой работе.
+Notebook's primary goal is **helping the user and the agent achieve their intentions
+quickly, with the lowest possible cognitive load**.
+The application provides a direct path from intention to result,
+keeping attention on the work itself.
 
-## Премиальный минимализм
+## Premium minimalism
 
-Интерфейс делаем премиально-минималистичным: минимум UI, ясная подача содержания
-и высокое качество исполнения. Премиальность выражается в точности,
-отзывчивости и продуманности взаимодействий.
+We build a premium, minimalist interface: minimal UI, clear presentation of content,
+and high-quality execution. Precision, responsiveness, and thoughtful interactions
+give the product its premium character.
 
-- В центре внимания — содержание и работа с ним.
-- Между пользователем, агентом и их намерениями должно быть минимум лишнего трения:
-  шагов, переключений, повторного ввода и объяснения уже известного контекста.
-- Нужные действия легко найти и выполнить. Простота интерфейса поддерживает
-  доступность возможностей и лёгкость работы пользователя и агента.
+- Content and the work around it are the focus.
+- Keep friction between the user, the agent, and their intentions to a minimum:
+  steps, context switches, repeated input, and explanations of already known context.
+- Make necessary actions easy to find and perform. A simple interface supports
+  accessible capabilities and effortless work for both the user and the agent.
 
-## Интуитивность
+## Intuitiveness
 
-Действия и их результаты должны быть ожидаемыми и привычными для пользователей.
-Опираемся на знакомые жесты, соглашения платформы и последовательное поведение.
+Actions and their results should feel expected and familiar to users.
+We build on familiar gestures, platform conventions, and consistent behavior.
 
-Стремимся к **магически предсказуемому поведению**: приложение делает именно то,
-что человек ожидал. Это ощущение рождается из точного соответствия намерению
-и естественного хода взаимодействия.
+We aim for **magically predictable behavior**: the application does exactly what
+the person expected. That feeling comes from accurately matching their intention
+and a natural flow of interaction.
 
-Любое продуктовое и интерфейсное решение оцениваем по тому, помогает ли оно
-пользователю и агенту быстрее достичь нужного результата с меньшими усилиями внимания.
+We evaluate every product and interface decision by how well it helps the user
+and the agent reach the intended result faster and with less mental effort.

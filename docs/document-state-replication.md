@@ -1,87 +1,41 @@
-# Доставка состояния по адресу блока
+# State delivery by block address
 
-`DocumentStateJournal` хранит значения по `DocumentStateRecord.id`, включая
-состояния уже удалённых программ. Порядок массива — канонический вид по ID,
-не пользовательская последовательность. Домен и SQL-декодирование выводят
-этот вид из ID; появление записи не перенумеровывает прежние физические строки.
-Новые полные публикации также не присваивают состояниям позиционную власть.
+`DocumentStateJournal` stores values by `DocumentStateRecord.id`, including retained
+states of removed programs. Its array is a canonical ID-ordered view, not user order.
+Adding a record does not renumber existing physical rows.
 
-`NotebookReplicationStore` направляет журнал состояния в
-`applyReplicatedDocumentState`. Общий путь полного слияния этого файла удалён.
-Входящий manifest перечисляется страницами до 64 адресов; временный SQL-индекс
-удерживает адреса затронутых блоков. Затем читаются только заголовок журнала
-и собственное поддерево каждого блока. Заголовок блока читается точечным
-запросом, его потомки — отдельным индексным диапазоном, без обхода всего пакета
-для каждого ID. Похожие ID `a`, `a!`, `a0`, экранированные `/` и `~` не
-подменяют друг друга; вложенные коллекции JSON остаются содержанием программы.
+`NotebookReplicationStore.applyReplicatedDocumentState` scans incoming addresses
+in pages of 64 and tracks affected block IDs in a temporary SQL index. It reads
+the journal header and each named subtree through point/range queries.
+Similar IDs and escaped `/` or `~` remain distinct; nested JSON collections remain
+program content.
 
-Слияние значения исполняет прежний `DocumentStateRecord.replace`: версия,
-человеческое продолжение и наблюдённые часы не получают второй политики.
-Сравнение с владельцем наибольших часов учитывает только изменённые значения;
-агрегат продвигается один раз при появлении объединённого видимого состояния.
-Неизменённые записи с неявной собственной версией не материализуются массово.
+`DocumentStateRecord.replace` owns version comparison, human continuation, and
+observed clocks. Only changed values participate in aggregate selection. A newly
+combined visible state advances the aggregate once; unchanged implicit versions
+are not materialized in bulk.
 
-Прежний `publishProjectionEdits` публикует разницу одного блока, а
-`NotebookStore.writeFragment` — заголовок и устойчивые записи. Непрочитанные
-состояния не становятся удалениями. Каталожное удаление запрещает возвращение
-документа в живой каталог; уже допущенная typed source/state пара продолжает
-принимать поздние поля через прежних владельцев. См. [retained sources](spatial-replication-contract.md#s8-сохранённый-источник-не-живой-предмет). Повреждение адреса, владельца,
-коллекции или лишнее непривязанное поддерево даёт отказ всего пакета. Записи,
-квитанция, журнал доставки и входящий курсор сохраняют общую транзакцию;
-восстановление после неоднозначного commit не повторяет доработку.
+`publishProjectionEdits` publishes each block difference through `writeFragment`.
+Unread states remain intact. Invalid addresses, owners, collections, or unattached
+subtrees reject the complete transaction. Records, receipt, delivery journal,
+and incoming cursor commit together; exact retry resolves an ambiguous commit.
 
-## Закреплённое значение программы
+An admitted typed source/state pair can receive late fields after catalog removal
+without restoring the document. See
+[retained sources](spatial-replication-contract.md#retained-sources-and-live-membership).
 
-`AgentPinnedSource.capture` теперь выбирает запись состояния по тому же
-`memberIdentity`, что проверка версии указанного блока. Прежний поиск по
-несуществующему полю `blockID` терял сохранённое значение; заменённый путь
-удалён. Обычный и UUID-подобный ID приводят к одному физическому владельцу.
-В указание попадают только источник и состояние выбранной программы, не её
-соседей. Более позднее изменение отвергает старую версию, но не переписывает
-уже закреплённое значение. Отсутствующая запись не выдаётся за сохранённую:
-исходное значение остаётся в самом блоке. Прежние архивные указания не меняются.
+## Pinned program state
 
-## Проверка — 10 сентября, 23:51 МСК
+`AgentPinnedSource.capture` uses the same `memberIdentity` as block-version
+validation. It pins only the selected program's source and state. Later changes
+invalidate a stale reference but do not rewrite an existing pin.
+An absent record remains absent; the initial value belongs to the block.
+Previously archived references remain immutable.
 
-На неизменной копии `.build/document-state-replication-cut` от `d4b4b40`
-прошли **93 Core-теста в 10 наборах** за 109.309 s и **26 external-тестов
-в четырёх наборах** за 0.567 s. Собственный набор доставки состояния —
-19.654 s. Он проверяет 100 000 исторических состояний, 136 похожих адресов
-с вложенными коллекциями, позднее человеческое продолжение, старую доставку,
-удалённый документ, четыре повреждения и три границы отказа транзакции.
+## Verification
 
-После создания индексов повреждены посторонние тело состояния и источник
-программы. Доставка их не декодирует. Измерение включает окончание общей
-транзакции: добавление — **2004 SQL-инструкции**, изменение — **2037**,
-точный повтор — **49** при неизменном пределе 200 000. Прежние строки и
-позиции сохранены; изменились только заголовок журнала и адрес одного блока.
-Два теста закрепления проверяют обычный и UUID-подобный ID, сохранённое и
-начальное состояние, источник только выбранного блока и отказ старой версии.
-
-Журнал/статус 0 — `/tmp/notebook-document-state-replication-profile.log` и
-`.status`. Отпечатки полной разницы до/после и семь текущих файлов совпали:
-`127d190a31f8d6e2f44ebced53eca9b893f9171288d471114c37f8997f332763`.
-
-## Проверка приложения — 10 сентября, 23:55 МСК
-
-Та же неизменная разница прошла **43 MCP**, typecheck и smoke, **95 Mac**
-и **52 iPad native**. Ошибок, пропусков и runtime warnings нет. Native-профиль
-проверяет документ, состояние WebKit, редактор, показ, указание, карточку
-вопроса и сохранение; это не повтор системного UI-сценария после сбоя.
-Runner Mac — 79.058 s, iPad — 27.654 s.
-
-Журналы — `/tmp/notebook-document-state-replication-mcp.log`, `-mac.log`,
-`-ipad.log`; общий статус 0 — `/tmp/notebook-document-state-replication-runtime.status`.
-Результаты — `.build/document-state-replication-mac.xcresult` и `-ipad.xcresult`;
-сводки — `/tmp/notebook-document-state-replication-mac-summary.json` и
-`-ipad-summary.json`. SHA разницы до/после совпадает с Core-профилем выше.
-
-## Оставшаяся граница
-
-Полное чтение каталога, дерева, тела страницы и исходника документа, срок
-хранения журнала доставки и защита целого создания остаются отдельными
-условиями. Следующий [нативный контракт](native-document-state-command.md) удалил полный
-`saveMergedDocumentState`: очередь теперь передаёт только принятый блок. Общая
-проверка причинной версии также применяется к входящей записи и её слиянию. Профиль не
-является полным `verify.sh` новых исходников, установленной парой или
-физической приёмкой. Человеческие архивы и приложения не менялись.
+Scenarios cover large state collections, unrelated corrupted bodies, nested JSON,
+similar IDs, causal conflicts, human continuation, cursor atomicity, and replay.
+Native publication and agent commands share these domain rules but have their own
+[command](native-document-state-command.md) and [agent](agent-document-state-contract.md)
+contracts. Historical results are in [verification](verification.md).

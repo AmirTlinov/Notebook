@@ -76,6 +76,9 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
       onTransitioningChange: { _ in }
     )
     controller.loadViewIfNeeded()
+    let taps = controller.pageViewController.gestureRecognizers.compactMap { $0 as? UITapGestureRecognizer }
+    XCTAssertFalse(taps.isEmpty)
+    XCTAssertTrue(taps.allSatisfy { !$0.isEnabled },"A paper edge tap never navigates")
     let current = try XCTUnwrap(
       controller.pageViewController.viewControllers?.first
     )
@@ -90,6 +93,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
       controller.pageViewController,
       willTransitionTo: [target]
     )
+    XCTAssertEqual(controller.pageViewController.view.layer.speed,1.8)
 
     XCTAssertNotNil(
       controller.cachedPageIdentities[3],

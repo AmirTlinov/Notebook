@@ -80,6 +80,7 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
   var gate: NotebookInputGate?
   private var touch: UITouch?
   private var start = CGPoint.zero
+  private var windowStart = CGPoint.zero
   private var dragging = false
   private var nativeTapOwner: ObjectIdentifier?
   private var revision: UInt64?
@@ -121,6 +122,9 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
       event.allTouches?.filter({ $0.phase != .ended && $0.phase != .cancelled }).count ?? 1 == 1,
       let first = touches.first, first.type == .direct, let revision = gate?.beginFingerSequence() else { cancelSelection(); return }
     touch = first; start = first.location(in: coordinateView); self.revision = revision
+    // The SwiftUI anchor can move while the keyboard or a menu is dismissed.
+    // Physical displacement belongs to the stationary window, not that layout.
+    windowStart = first.location(in:view)
     if let gate, case .webLink(let owner) = NotebookSceneFingerRouting.owner(of: first, gate: gate) {
       nativeTapOwner = owner
     } else { nativeTapOwner = nil }
@@ -135,16 +139,17 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
   }
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
     guard let touch, touches.contains(touch), let revision, gate?.acceptsFingerSequence(revision) == true else { cancelSelection(); return }
-    let end = touch.location(in: coordinateView)
-    if !dragging, let lift, hypot(end.x - start.x, end.y - start.y) >= 4 {
+    let point = touch.location(in:view)
+    let delta = CGPoint(x:point.x-windowStart.x,y:point.y-windowStart.y)
+    if !dragging, let lift, hypot(delta.x,delta.y) >= 4 {
       dragging = true; if state == .possible { state = .began }; lift.begin()
     }
     guard dragging else {
-      if lift == nil, hypot(end.x-start.x,end.y-start.y) > 8 { cancelSelection() }
+      if lift == nil, hypot(delta.x,delta.y) > 8 { cancelSelection() }
       return
     }
     state = .changed
-    lift?.change(CGPoint(x:end.x-start.x,y:end.y-start.y))
+    lift?.change(delta)
   }
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
     guard let touch, touches.contains(touch), let revision, gate?.acceptsFingerSequence(revision) == true else { cancelSelection(); return }
@@ -152,7 +157,8 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
     self.touch = nil
     if dragging, let lift {
       self.lift = nil; dragging = false
-      lift.end(CGPoint(x: end.x - start.x, y: end.y - start.y))
+      let point = touch.location(in:view)
+      lift.end(CGPoint(x:point.x-windowStart.x,y:point.y-windowStart.y))
     } else if nativeTapOwner != nil {
       self.lift = nil; state = .failed; return
     } else {

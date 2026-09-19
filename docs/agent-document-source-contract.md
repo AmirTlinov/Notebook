@@ -1,82 +1,43 @@
-# Адресная правка программы и её причинной версии
+# Addressed program-source edits and causal versions
 
-`NotebookActionProjection` для `updateBlock` и `setPreamble` читает заголовок
-документа, программы по заданным ID и их точные причинные поля. История удалённых
-программ не входит в проекцию. Состояние блока выбирает прежний адресный путь;
-смешанный пакет сохраняет один порядок операций и одну транзакцию.
+`NotebookActionProjection` reads the document header, the program IDs named by
+`updateBlock`, and the exact causal fields needed by `setPreamble`. Deleted
+program history is outside that projection. State commands use their addressed
+path; a mixed package retains one operation order and one transaction.
 
-`NotebookStore.boundedStoredFragments` допускает длины по SQL-индексу до
-декодирования первого значения. Все частичные документы одного пакета делят
-4096 фрагментов и 4 МиБ, а не получают этот предел каждый. Адреса относятся к
-одному WAL-срезу; отсутствующий blob — повреждение, пересекающиеся запросы —
-отказ. Тот же метод исполняет допуск `NotebookDocumentBlockRead`; заменённая
-копия механизма удалена. Данные и причинные поля сохраняют экранирование `/`,
-`~`, Unicode и нормализацию UUID.
+`NotebookStore.boundedStoredFragments` admits SQL-indexed lengths before decoding.
+All partial documents in a package share 4,096 fragments and 4 MiB. Reads belong
+to one WAL snapshot. A missing blob is corruption; overlapping requests are rejected.
+`NotebookDocumentBlockRead` uses the same owner. SQL addresses escape `/` and
+`~`, preserve Unicode, and normalize UUIDs.
 
-Команда изменения не получает полного `DocumentDocument` как право заменить
-его непрочитанное содержание. `CollaborationStore` публикует документы через
-существующую разницу baseline → изменение в `publishProjectionEdits`. Позиции
-незатронутых блоков не меняются, как и их исходники и состояния. Для создания
-нового владельца по-прежнему нужна полная начальная публикация. Операции,
-меняющие состав/порядок блоков либо весь документ, пока читают полный исходник;
-их уже полный результат использует тот же публикатор разницы.
+## Publication
 
-Неизменённое поле программы должно доставляться со своей авторской версией,
-если доставляется тело программы. Иначе получатель мог присвоить пришедшему
-старому CSS свою новую версию и потерять независимую правку. Оба существующих
-публикатора теперь строят этот адрес через `fieldKey`, включая экранированный
-ID; неизменённые причинные строки входят в manifest без новой записи тела.
-`DocumentDocument.sourceVersion` также нормализует UUID как владелец хранения.
+A partial document grants no authority to replace unread content.
+`CollaborationStore.publishProjectionEdits` publishes the baseline-to-edit
+difference. Unaffected block positions, sources, and states remain unchanged.
+Creation still requires a complete initial owner. Membership/order changes and
+whole-document replacement use their full-input path and the same difference publisher.
 
-У обычной опубликованной программы причинные поля уже материализованы.
-Их изменение и отмена не читают соседнюю историю. Если команда действительно
-создаёт ранее неявное поле, она проверяет общий счётчик строк соответствующей
-коллекции по SQL-индексу: небольшой размер проекции не разрешает превысить
-лимит `CollaborativeContent`. Эта проверка не декодирует чужие значения, но
-подсчёт ещё пропорционален числу строк; он не объявлен постоянной операцией.
+When a program body is delivered, unchanged fields retain their original author
+versions. Both publishers use `fieldKey`, including escaped IDs; unchanged causal
+rows enter the manifest without rewriting the body. This prevents old CSS from
+acquiring a recipient's newer version and overwriting an independent edit.
+`DocumentDocument.sourceVersion` follows the storage owner's UUID normalization.
 
-## Проверяемое завершение
+Existing materialized fields and undo do not read neighboring history. Creating
+a previously implicit field checks the collection count through the SQL index.
+That count remains proportional to row count; it is not claimed to be constant-time.
 
-`NotebookAgentDocumentSourceProjectionTests` связывает применённую команду,
-её квитанцию, отмену и повтор с неизменностью чужих исходников и позиций.
-Фикстура содержит 99 000 исторических причинных полей и повреждённые тела
-посторонней программы и версии. Отдельный отказ проверяет исчерпанный общий
-лимит при материализации неявного поля. Смешанный пакет, человеческая правка
-и возврат к прежнему тексту, оба публикатора экранированного ID, доставка
-конкурентного CSS, общая граница нескольких документов и три сбоя транзакции
-проверяют владельца изменения, а не только размер ответа.
+## Verification
 
-## Неизменный профиль — 11 сентября, 01:11 МСК
+`NotebookAgentDocumentSourceProjectionTests` checks apply, receipt, undo, retry,
+unread-source preservation, positions, escaped IDs, concurrent CSS, multiple
+documents sharing one allowance, and failures around commit. Fixtures include
+99,000 historical causal fields and corrupted unrelated bodies.
+A human change that returns to an earlier value still protects that accepted edit
+from agent undo.
 
-На неизменной разнице от `b3eed99`, включающей адресное чтение и этот публикатор,
-прошли **119 Core / 9 suites** за 21.462 s, **3 external / 1 suite** за 0.058 s,
-**44 MCP**, typecheck и smoke, **95 Mac** и **68 iPad native**. В обоих
-xcresult нет ошибок, пропусков и runtime warnings. Чтение среди 100 000 состояний — 295 SQL-инструкций;
-изменение источника, его повтор, отмена и повтор отмены среди 99 000 причинных
-полей — **5148 / 38 / 4680 / 26**. Допуск измерения не увеличен: 200 000.
-
-Первый build выявил неоднозначность локального имени `rows` и возвращаемого
-Optional в выделенном читателе. После уточнения имени и типа пять проверок
-обнаружили ошибку замены: сверка одного члена сравнивала все допущенные строки.
-Исправлен именно набор сравнения, тесты сохранены. Отрицательные журналы,
-статусы и разницы: `/tmp/notebook-document-source-compile-failed.*` и
-`/tmp/notebook-document-source-reader-regression.*`. Последний успешный профиль:
-`/tmp/notebook-document-source-final-{core,mcp}.log`, `-profile.status` (0);
-`.build/document-source-final-{mac,ipad}.xcresult`, `-runtime.status` (0).
-Отпечатки до/после совпали:
-`4acc07a44667fd3eefd09cd5560ca6cb1ef3c6fee1c1a549ee62f613292f9ded`.
-
-Последняя регрессия также проверяет причинное чтение элемента доски с `/`, `~`
-и UUID в верхнем регистре: человеческий возврат к прежнему значению не разрешает
-отмене агента уничтожить принятую доработку. Оба адреса строит тот же `fieldKey`.
-
-При просмотре Mac-вложения обнаружено, что прежний ImageRenderer сохранял
-заглушку вместо нативной обложки. Это не визуальное доказательство: захват
-реального NSHostingView и пиксельные проверки прошли отдельный Mac-профиль
-(`docs/verification.md`), PNG просмотрен. Общий маршрут
-этого среза прошёл 11 сентября в 01:54 МСК: 480 Core, 26 Codex, 26 external,
-44 MCP, 95 Mac и 473 iPad без ошибок, пропусков и runtime warnings. Точная опись
-и квитанция находятся в `docs/verification.md`. Эти изменения
-не подтверждают подписанную установку, живой пользовательский MCP, браузерную
-пагинацию, ограничение хранения доставки или физическую приёмку. Приложения
-и архивы пользователя не изменялись.
+These are command/storage guarantees. Installation, physical rendering, delivery
+retention, and live user MCP acceptance have separate evidence in
+[verification](verification.md).

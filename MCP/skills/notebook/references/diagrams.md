@@ -1,37 +1,37 @@
-# Карты, схемы и сравнение
+# Maps, diagrams, and comparisons
 
-`mindmap` раскладывает дерево слева направо, подбирая высоту узлов по подписям.
-Например, вход для уже выбранной страницы:
+`mindmap` lays out a tree left to right and sizes nodes for their labels.
+For an already selected page:
 
 ```json
 {
-  "target":{"kind":"page","id":"UUID страницы"},
+  "target":{"kind":"page","id":"PAGE_ID"},
   "offset":{"x":40,"y":80},
-  "tree":{"id":"question","label":"Почему результат изменился?","children":[
-    {"id":"observations","label":"Наблюдения","children":[
-      {"id":"before","label":"До изменения"},{"id":"after","label":"После изменения"}
+  "tree":{"id":"question","label":"Why did the result change?","children":[
+    {"id":"observations","label":"Observations","children":[
+      {"id":"before","label":"Before"},{"id":"after","label":"After"}
     ]},
-    {"id":"explanations","label":"Возможные объяснения"}
+    {"id":"explanations","label":"Possible explanations"}
   ]}
 }
 ```
 
-Для доски вместо `offset` передай известный `anchor`:
-`{tileX,tileY,localX,localY}`. Координаты каждого объекта нормализуются отдельно.
-Ширину узлов можно задать через `nodeWidth`, промежуток ветвей — `gap`.
+For a board, replace `offset` with a known
+`anchor:{tileX,tileY,localX,localY}`. Each object's coordinates are normalized
+separately. `nodeWidth` controls width; `gap` controls branch spacing.
 
-`flow` принимает `nodes:[{id,label,shape?}]` и `edges:[{from,to,label?}]`.
-Доступны обычные нативные фигуры; `diamond` пригодится для развилки.
-Обратные связи сохраняются и рисуются дугой. Раскладка простая: для плотной схемы
-можно поправить координаты в готовых операциях или использовать свой алгоритм.
+`flow` takes `nodes:[{id,label,shape?}]` and `edges:[{from,to,label?}]`.
+Use native shapes, such as `diamond` for a decision. Feedback edges are retained
+as curves. Dense diagrams may benefit from editing the generated coordinates or
+using a custom layout.
 
-`compare` принимает `columns:[{id?,title,body}]` и необязательный `columnWidth`.
-Получатся расположенные рядом карточки, которые удобно двигать и редактировать.
+`compare` takes `columns:[{id?,title,body}]` and optional `columnWidth`.
+The result is a row of movable, editable cards.
 
-В ответе `ids.observations` указывает на конкретный нативный узел. Для продолжения
-прочитай его адресно и поменяй нужное поле через `updateElement`, либо добавь
-соседние узлы. Так сохраняются внесённые человеком изменения композиции.
+In the response, `ids.observations` identifies the corresponding native node.
+Read it by address, then use `updateElement` for the intended field or add adjacent
+nodes. Preserve the person's existing composition changes.
 
-Mermaid можно использовать как текстовый эскиз. Эти рецепты принимают дерево
-или узлы и связи; автоматического парсера Mermaid в них пока нет. Готовый SVG
-из внешнего renderer вставляется через `visual`.
+Mermaid can serve as a textual sketch. These recipes take a tree or explicit
+nodes and edges; they do not parse Mermaid. Insert an externally rendered SVG
+through `visual`.

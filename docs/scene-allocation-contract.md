@@ -1,475 +1,184 @@
-# Публикация сцены и выделение памяти
+# Scene publication and memory ownership
 
-Нативные чернила доски выделяют backing для текущего viewport и полного
-портала этой же ориентации: один физический canvas переходит между ними.
-Квадрат по большей стороне экрана не резервируется «на будущий поворот»
-для каждой доски. Поворот проходит через существующую приватную подготовку
-нового размера и атомарную установку; до неё прежние bounds и пиксели
-не меняются. Retina-плотность, строгое покрытие первого контакта и общий
-учёт старого/нового состава сохраняются.
+## Physical owners and coherent publication
 
-Счётчик удержанных нативных идентичностей не ограничивает переход восемью
-владельцами на старый и новый состав вместе. Конечный рабочий набор выбирает
-планировщик; уходящий состав сохраняет пиксели до реальной передачи следующему.
-Каждое настоящее CPU/GPU-выделение по-прежнему проходит общий учёт байтов.
-Пустая идентичность не получает фиктивную стоимость или право вытеснить изображение.
+Board ink reserves backing for the current viewport and full portal in the same
+orientation, not a maximum-side square for every possible rotation. Rotation
+privately prepares new dimensions and installs atomically; old bounds/pixels remain
+until then. All simultaneous CPU/GPU allocations are accounted.
 
-Проверка занятых painter-тайлов использует один SQL read transaction для всего
-пакета. Вложенные адресные чтения заимствуют это соединение и проверяют ту же
-версию, а не открывают базу для каждой ячейки. Курсоры, проверка полной выборки
-и консервативное сохранение неизвестного диапазона остаются неизменными.
+The planner bounds the final workset. Retained outgoing identities are not mistaken
+for a second final-owner quota: their real leases remain charged until handoff.
+Roles change only for owners of the installing cohort. Existing mounted updates
+use their installed cohort and cannot demote an incoming cover between awaits.
+An empty identity has no fictitious memory cost or eviction entitlement.
 
-Роль нативного выделения меняется только у владельцев устанавливаемого состава.
-Обновление прежнего смонтированного view использует его установленный набор,
-а не все зарегистрированные canvases: оно не может понизить входящую обложку
-до пассивной между двумя await её подготовки. Новый корень допускается как
-ввод нового состава, а не по ID старого активного окна. Уходящий владелец
-удерживает прежнюю роль до возврата последнего физического lease; все его
-байты продолжают входить в общий предел. Его преждевременное превращение
-в новый пассивный материал блокировало сам переход, необходимый для освобождения.
+Painter occupancy probes share one SQL read transaction. Nested addressed reads
+borrow it and validate the same revision. A transparent offscreen-only board does
+not allocate Metal viewport backing merely because distant strokes exist.
+Chunk intersection uses the installed camera; source mesh remains available.
 
-Прозрачный viewport нативной доски не получает Metal backing лишь потому, что
-на этой доске есть штрихи далеко за экраном. Пустоту определяет тот же chunk
-intersection и установленная камера, что используются при подготовке GPU.
-Исходные mesh остаются у canvas; смена проекции возвращает нужные chunks
-в обычный путь с полной плотностью. Активные Pencil/eraser и страничный
-растровый путь этим правилом не подменяются.
+Unmounting/reparenting a document coordinator removes only its own WKWebView from
+the prior host, never a newly installed neighbor. Hidden parent boards are prepared
+only on explicit navigation, not an obsolete zoom-out corridor.
 
-Координатор физической страницы при перемонтировании или освобождении удаляет
-из прежнего `DocumentWebHost` только собственный WKWebView. Указатель на прежний
-host не даёт права удалить уже установленную туда новую страницу. Сам host
-передаёт целое физическое поддерево; уходящий coordinator не обрывает окно
-нового владельца при последующем использовании для соседней страницы.
+`SceneCompositionCohort.geometryID` identifies physical owners, geometry and order;
+`paintID` identifies pixel publication. Readiness belongs to the exact
+`(plane, elementID)`, source/state, crop and density. A slow program does not block
+ready neighbors even in the same painter band. Dependencies rebuild only affected
+fragments, preserving other rasters/leases. Affected existing tiles install in one
+native transaction. Old pixels may remain as explicit history, not new-version
+readiness.
 
-Состав любого режима, включая вложенную `board`, не подготавливает невидимую
-родительскую доску. После перехода на явный «Назад» прежнее окно неявного
-zoom-выхода удалено: родитель готовится только по настоящей навигации.
-Родительские чернила не могут блокировать показ текущей бумаги своей пассивной
-квотой. Это ограничение области подготовки, не увеличение бюджета или снятие
-учёта памяти: видимые доска/обложка и принятый контакт сохраняют своих владельцев.
+Published objects are not shown evidence. Weak `SceneCameraPlaneInstallation`
+validates active window, geometry and completed layout. Static dependencies also
+need exact `SceneSourceInstallation` / `RasterLease.entryID`; live sources need the
+visible native/WebKit owner. Replacement, hide, unmount or shutdown revokes proof.
+An old callback or retained cohort cannot confirm an absent consumer.
 
-`SceneCompositionCohort.geometryID` именует конечный набор физических владельцев,
-их геометрию и порядок. `paintID` именует конкретную публикацию изображений.
-Готовность принадлежит источнику `(plane, elementID)`, его точному содержанию,
-состоянию, области снимка и требуемой плотности. Медленный или неисправный HTML
-не задерживает готового соседа, даже если они входят в один painter-band тайл.
+## Raster leases and runtime admission
 
-`SceneCompositionRenderer` записывает зависимости тайла от источников. Готовый
-источник приводит к пересборке только затронутых фрагментов; остальные растр и
-нативные владельцы сохраняют leases. Фрагмент показывает текущие пиксели либо
-явное локальное ожидание/ошибку; прежние пиксели того же физического размера
-могут временно сохраняться, но не подтверждают новую версию. Установка всех
-затронутых существующих тайлов проходит одной нативной транзакцией. Вызовы
-камеры и принятый Pencil не получают новой геометрии из завершения WebKit.
+A remounted consumer first takes exact ready pixels at the required density.
+Otherwise it may borrow the preceding cohort's raster for the same physical
+address, validated kind, size, provenance and original crop. This neither returns
+render-ready nor acknowledges new content. Exact completion refines the same
+consumer without another bitmap or executor.
 
-Опубликованный объект ещё не означает показ. `SceneCameraPlaneInstallation`
-хранит слабую связь с текущим нативным владельцем и проверяет его окно,
-геометрию и выполненный layout. Замена, снятие или завершение владельца
-немедленно отзывает эту связь. Статический источник дополнительно требует
-слабого `SceneSourceInstallation` каждого зависимого тайла с его точным
-`RasterLease.entryID`; живой — такой же связи с действительно видимым
-WebKit/растровым владельцем. Overscan-тайл может находиться вне viewport, но его
-нативный потребитель должен оставаться смонтированным и хранить эти байты.
-Старый callback и удержанный объект когорты не могут подтвердить изображение
-после замены, скрытия или снятия его потребителя.
+iPad source pixels and precomputed reduction levels share one `RasterEntry`.
+Preflight and actual capture charge CPU/GPU copies of all levels.
+Camera motion selects an existing level without allocation or implicit animation.
+Composition/export read the immutable original. Retaining an older receipt affects
+eviction priority, not publication order or which frame is newest.
+All levels release after the final lease. Movement permits only bounded √2
+upsampling; stationary refinement must meet real pixel density.
 
-При новом монтировании проекции `PreparedAgentElementView` сначала принимает
-готовое изображение требуемой плотности. Если оно ещё готовится, потребитель
-удерживает предыдущий `sourceRasters` из опубликованной когорты по единственному
-физическому адресу и её квитанции. Проверяются идентичность, вид и размер
-элемента, происхождение прежнего изображения и границы его области. Эта
-область сохраняет собственные координаты даже при изменении нового запроса.
-Прежнее содержание допускается только как такая явная история когорты;
-оно не даёт `onRenderReady(true)` и не подтверждает показ новой версии.
-Приход точных пикселей уточняет неподвижного потребителя обычным уведомлением
-владельца ресурсов. Передача retained lease не создаёт вторую копию bitmap
-или второго исполнителя WebKit.
+`AgentWebSourceFailure` binds source, lease, load token and capture policy.
+A changed crop/density cannot inherit an old failure. Program failure revokes input
+and live-installation proof; capture-only failure may retain a healthy runtime.
+The composition owner retains bounded attempt identities. Explicit Retry creates
+a new attempt; resource release does not rerun broken code automatically.
 
-На iPad снимок WebKit хранит исходные точные пиксели и собственную пирамиду
-уменьшения в одном `RasterEntry`. Это не кеш по камерам или отдельным views:
-все leases разделяют те же уровни. До захвата `webSnapshotBudget` учитывает
-CPU/GPU-копии исходника и каждого уровня; тот же расчёт используют preflight,
-исполнение и повтор после освобождения памяти. Композиция и экспорт читают
-неизменный исходник. `AgentSnapshotRasterView` выбирает готовый уровень по
-уже установленной нативной проекции, включая crop и scale экрана; смена камеры
-не выделяет и не пересчитывает изображения. Уровень заменяется без неявной
-анимации. Выбор mip не увеличивает меньший уровень, пока существует уже
-подготовленный более чёткий. Растер и его уровни освобождаются вместе после
-последнего lease. Проверка покрытия учитывает плотность полного снимка так же,
-как crop; во время движения допускается только ограниченное увеличение √2,
-а не произвольный zoom старого изображения.
+`SceneRasterCaptureRequest` owns the latest crop/density of one source job.
+Updates reach that executor directly without cache polling or restarting code.
+Load and first capture share one absolute deadline. Event delivery rechecks token,
+generation and current request state; queued ready cannot follow a later failure.
+Cancel completes readers but submitted backing remains leased until real completion.
 
-Терминальный отказ живого WebKit проходит через того же владельца композиции,
-что и отказ статического задания. `AgentWebSourceFailure` сохраняет источник,
-lease, load token и исходную политику неудавшегося захвата; смена crop/плотности
-не позволяет старому callback пометить новый запрос ошибкой. `SceneCompositionTiles`
-учитывает ограниченный набор физических runtime attempts. Снятый или заменённый
-исполнитель теряет право публиковать; смена `paintID` сама это право не отзывает.
-Отказ попадает в адресную квитанцию, сохраняет предыдущие пиксели и не становится
-готовностью из-за наличия кеша. Явный Retry проходит через владельца композиции
-и создаёт новый attempt; чужое освобождение ресурсов не повторяет ошибочный код.
-Отказ захвата допускает уточнение после изменения запроса или реального улучшения
-допуска, а отказ программы сохраняется до Retry или смены её источника.
-Нативный контракт проверяет настоящий отвергнутый `notebook.ready` Promise после
-предыдущего SVG, адресный отказ, Retry и отклонение старого completion. Завершение
-WK проверяется по physical source в allocator: его lease остаётся активным до
-последнего submitted borrow. Последний номер реального допуска и доступность
-свободных слотов — разные наблюдения; второе не служит счётчиком повторов.
+A memory retry requires genuinely improved capacity and room for the **whole**
+request. The mounted coordinator owns retry; after unmount the composition/page
+consumer does, using the same admission predicate. Releasing one's own scratch
+does not cause an infinite failure/retry loop.
 
-Отказ программы отзывает и уже выданное право взаимодействия, и квитанцию живой
-установки; исправный runtime сохраняется только при отказе его отдельного захвата.
-Ожидание свободного фонового WebKit не расходует время выполнения программы:
-поставленный запрос завершается фактическим допуском либо отменой его владельца.
-`SceneRasterCaptureRequest` хранит последнюю область и плотность одного source job;
-после допуска и во время исполнения её изменения поступают прямо тому же
-исполнителю, без опроса кеша и без перезапуска программы. Готовый снимок удерживается
-в реальном capture completion; событийная доставка проверяет load token и generation
-и передаёт этот lease читателю. Закрытие завершает ожидающего читателя отменой,
-но освобождает submitted backing/WebKit только по завершении настоящего захвата.
-Время ожидания загрузки и первого захвата остаётся одним абсолютным окном: переход
-к захвату меняет происхождение ошибки на конкретные source/crop/density, но не
-продлевает deadline. Отменённый deadline и отложенная доставка прежней ошибки
-не могут вернуть отказ после нового запроса или успешного уточнения.
-Отложенное уведомление о готовности проверяет также текущее состояние
-этого же запроса: ранее поставленный в очередь `true` не проходит после
-его отказа. Уже полученные до отказа пиксели при этом остаются допустимым
-предыдущим изображением; отменяется уведомление, а не его законная история.
+## Pool and input priority
 
-Изображения одинаковой плотности и версии источника выбираются по неизменному
-порядку их публикации. Удержание старой квитанции меняет только приоритет
-вытеснения, а не возвращает её пиксели в роль последнего захвата. Запрошенная
-плотность, версия содержания/состояния и область остаются отдельными условиями;
-старый удержанный носитель живёт до освобождения последнего lease.
+The shared allocator defaults to six WebKit surfaces, at most two background
+surfaces, 32 pending requests and two reserved interactive slots. A live input
+program does not consume the passive quota that reserves input for it. Persistent
+programs leave preparation capacity. Physical source identity prevents duplicate
+execution until the final submitted borrower releases.
 
-Отказ из-за памяти сохраняет фактический допуск при неудачном захвате в адресном
-владельце композиции. Поэтому пересоздание потребителя не теряет основания для
-повтора. Единая проверка допуска требует улучшения числа свободных мест либо
-байтов и места для всего захвата; малое освобождение памяти не повторяет заведомо
-невозможный запрос. Пока runtime смонтирован, захват повторяет его координатор;
-после его снятия повтором владеет композиция, а для отдельной страницы — её
-потребитель. Оба пути используют одну проверку допуска.
+Priority follows accepted contact, visible input programs, then visible paper of
+the current board, then optional labels/static images. Offscreen portals and labels
+do not impersonate input programs. Demoted material returns to its painter range,
+preserving content and stacking order. Actual exhaustion yields local bounded
+waiting/failure and Retry, never a screenshot pretending to be an interactive button.
+Headless requests prepare sources because they have no mounted input owner.
 
-Общий фрагмент с живым `.web` снимается из текущего установленного нативного
-WebKit в самом событии Send через `AgentWebCoordinator.capturePresented`.
-Ожидание нового кадра WebKit относится к переходу live/static через
-`captureCurrent`, а не переименовывает более поздний кадр моментом Send. Слабый
-реестр проверяет адрес, источник, применённое состояние, навигацию и видимость.
-Повторный запуск программы и подмена кешем запрещены.
-`storeAndRetain` возвращает именно новую запись: более подробный старый кеш
-того же источника не может заменить только что наблюдённый кадр.
+Only proven static SVG can use a temporary snapshot producer and release WebKit.
+CSS, handlers, external use/image or active/unverified content remain conservative
+live input. This is presentation classification, not another SVG renderer.
 
-Видимый `.web` с контролами, ссылками, JavaScript, анимацией или непроверенной
-разметкой сохраняет живого исполнителя до первого касания. Только доказанный
-статический SVG (без CSS, обработчиков, внешних use/image и активных узлов)
-проходит существующего временного производителя снимка и затем освобождает WK.
-Это консервативная классификация представления, не отдельный SVG-рендерер и не
-санитизация: сомнительный HTML остаётся живым, а не теряет свои контролы.
+`capturePresented` freezes the actual installed live surface at Send with source,
+state, navigation and visibility guards. `captureCurrent` obtains a later frame
+for live/static handoff. Neither restart nor cache may replace historical Send
+pixels. `storeAndRetain` returns the new capture, not an older higher-resolution one.
 
-`.liveProgram` — уже владелец ввода, а не фоновый сосед. Поэтому он не расходует
-пассивную квоту, которая одновременно резервировала ввод для него самого.
-Это правило начинается до выделения WK: при выборе физических владельцев
-композиции видимая input-программа предшествует необязательному статическому
-материалу, а не соревнуется с заголовком по строковому ID. Закреплённый контакт
-остаётся первым. Планировщик и назначение runtime используют одно правило
-видимости `SceneCompositionPlane.demandsRuntime`; превью чужой доски и
-внеэкранный источник не получают приоритет ввода. Пассивный материал возвращается
-в свой painter-range, без исчезновения и изменения порядка наложения.
-Общий предел остаётся шесть WK, фоновые исполнители — не более двух. Постоянные
-программы оставляют как минимум один слот временной подготовке; четыре готовых
-программы, один фон и ещё один input помещаются одновременно. Отдельная квота
-«три пассивные программы» удалена. При реальном исчерпании общего пула ожидание
-смонтированного потребителя ограничено восемью секундами, после чего показан
-локальный отказ с Retry; освобождение ресурса пробуждает того же потребителя.
-Ни снимок кнопки, ни предварительное действие «Запустить» не подменяют ввод.
-В общем allocator ключ физического источника исключает второй исполнитель
-до возврата последнего submitted borrow. Ожидание свободного WK ограничено
-временем и общей очередью; отказ остаётся локальным. При смене роли готовый
-живой владелец удерживает свои пиксели до снимка текущего DOM, после чего тот
-же размер получает точную retained запись. Камера отдельно закрывает ввод,
-сохраняя выбранную программу и её контекст.
-Headless-профиль сам готовит источники, потому что смонтированного владельца
-ввода у него нет.
+## Allocation failure and density
 
-После закреплённого контакта и видимых программ слот физического владельца
-получает видимая бумага текущей доски, затем необязательные подписи и статические
-изображения. Порядок строковых ID не должен превращать документ с уже готовыми
-чернилами в тайлы только ради отдельного SVG: при расширении окна камеры такая
-бумага ждала бы повторной растеризации. Обложка и её нативные чернила остаются
-одним материалом; пассивный источник продолжает рисоваться в своём painter-range.
-Нативная подпись не является Web-программой, даже если адаптер её снимка
-возвращает web-источник. Бумага вне текущего viewport не получает этого
-приоритета. Общие пределы,
-допуск по байтам и уменьшение состава при реальном давлении не меняются.
+All native/raster work shares `SceneRenderResources`, including protected active
+input capacity. Native cover backing depends on physical page size, not overview
+tile count. Native-allocation failure therefore removes an optional native owner
+and must strictly reduce their count on the next attempt. Root, pinned and protected
+portal owners remain; if none can be removed, fail explicitly.
 
-Экранный путь не сохраняет частичные композиции в дисковый PNG-кеш. Повторное
-использование изображений остаётся у общего ограниченного `SceneRenderResources`.
-Экспорт работает через точный последовательный painter и не считает локальное
-ожидание законченным изображением.
+A failed source capture stays local. New-fragment allocation first lowers overview
+density, then removes optional live owners. Mounted visible programs retain their
+physical owner while still demanded. Preflight counts real incremental fragments
+and scratch alongside old leases, not a hypothetical second full scene.
 
-## Отказ выделения
+Coverage alone does not prove sharpness. Settled zoom requests actual screen density
+through the same owner. Occupancy first examines at most 256 metadata cells per
+plane and reads at most 64 addressed records per cell across bands. The 32-tile
+quota applies to occupied cells. Empty areas preserve coverage/order without
+consuming raster quota.
 
-`SceneCompositionTiles` получает отказ от конкретного вида подготовки:
-нативных чернил либо растров. У обоих один `SceneRenderResources`;
-эта классификация не создаёт нового бюджета и не ослабляет защищённую
-половину активного ввода.
+`SceneCompositionVectorRun` joins only proven adjacent elements. Unknown/hidden
+neighbors retain boundaries. Before allocation, limits remain 32 tiles and
+96 primitives; optional vector runs can return to static ranges without disappearing.
+Density uses actual pixelSize/worldSize, not a level name.
 
-Размер нативной обложки определяется физическим листом и плотностью экрана.
-Уменьшение числа обзорных тайлов не уменьшает её Metal backing. Поэтому после
-отказа нативного выделения `SceneCompositionPlan.reducingNativeOwners` убирает
-только необязательный физический носитель. Следующая попытка обязана иметь
-меньше нативных владельцев. Корневая поверхность, закреплённые предметы и
-защищённые порталы остаются; если снять никого нельзя, подготовка отказывает.
-Необязательный растровый элемент не снимается ради отказа чужого нативного
-холста. Снятый носитель возвращается в свой исходный диапазон общего рендера,
-а не исчезает из содержания.
+Large SVG keeps canonical viewport dimensions. Visible crops are pixel-grid rounded,
+bounded by 4,096 px per side and 8,388,608 pixels, and retain their original local
+origin. Crop/density updates do not restart JavaScript. Open paper requests its
+inner scale × fitScale × screen density; overview's 2,048 px policy does not cap
+readable full-paper density.
 
-Отказ отдельного снимка принадлежит его источнику и не снимает исправных соседей.
-При отказе выделения нового фрагмента сначала снижается плотность обзорного
-покрытия, затем снимаются необязательные живые элементы. Уже смонтированная
-видимая программа защищает своего физического владельца независимо от фокуса:
-появление соседа и качество тайлов не могут заменить её ожидающим снимком.
-Защита вычисляется по текущему workset и общей геометрии; удаление источника
-или его выход из видимой области не удерживает старый объект.
-Общее число попыток по-прежнему ограничено убывающим числом необязательных
-владельцев и тайлов. До готовности замены остаётся ранее установленный фрагмент.
-Preflight учитывает реальные дополнительные фрагменты и scratch при уже
-учтённых старых leases; гипотетическая повторная копия всей сцены не задерживает
-один исправный источник.
+Refinement debt is awakened by contact completion, source readiness or actual
+capacity improvement, even with a stationary camera. Accepted Pencil still gates
+background geometry publication. Screen partial composition is not written into a
+second disk PNG cache; exact export uses sequential painter completion.
 
-## Покрытие и чёткость при увеличении
+## Camera, geometry and contact
 
-`SceneCompositionTiles` переиспользует готовую композицию при движении внутри
-её покрытия и при уменьшении, но не увеличивает её сверх подготовленного
-масштаба. Совпадение области не доказывает достаточное число пикселей текста
-или схемы. После завершения увеличения прежний владелец подготовки запрашивает
-экранную плотность и заменяет готовые фрагменты без изменения содержания или
-камеры. Пустые painter-band диапазоны и пустые ячейки сохраняют покрытие и
-порядок, но не делят бюджет растров с занятыми ячейками. Сначала план проверяет
-конечную сетку целевой плотности (не более 256 метаданных ячеек на плоскость),
-читая не более 64 адресных записей на ячейку сразу для всех её диапазонов.
-Затем квота 32 применяется к реально занятым ячейкам. Только переполненная
-сетка укрупняется; площадь пустого viewport не превращается в дорогой растр.
+Opened paper is temporarily above closed covers and below a finger-lifted item.
+`WorkspaceSceneProjection` derives this for both native rendering and attention.
+Closing restores order without a content/stack write.
 
-Нативная графика использует тот же порядок: `SceneCompositionVectorRun`
-объединяет только доказанно соседние авторские элементы в один Canvas.
-Неизвестный, скрытый или off-window сосед сохраняет границу диапазона. Отдельного
-WebKit/UIViewController на фигуру нет; живые программы остаются в прежнем пуле.
-Число metadata bands не равно числу растров: консервативные кандидаты сначала
-проходят пробу заполненности. До выдачи ресурсов остаются прежние пределы
-32 тайла и 96 примитивов. Если разрывы порядка не помещаются, необязательный
-векторный run возвращается в статический диапазон; его содержание не исчезает.
+A selected closed cover loads metadata/catalog only. Actual opening loads bodies,
+state and drafts. Returning releases paper/WebKit through their owners without
+clearing the shared pool or moving the camera.
 
-Чёткость вычисляется по реальным
-`pixelSize / worldSize`, а не по имени уровня. Ограниченная сетка содержит не
-более 32 тайлов; нужное число пикселей каждого тайла выбирается отдельно.
+Pan uses recognizer translation from first contact; a second finger does not reset
+single-pan origin. New pan can interrupt spring from the last displayed camera.
+Ink's stored camera names installed Metal pixels. New camera samples project those
+pixels using the same native matrix as SVG/WebKit; drawable and its basis install
+atomically. An accepted contact retains its basis through completion.
 
-Недостаточная плотность остаётся явным долгом уточнения. Завершение контакта,
-готовность источника и фактическое улучшение доступной памяти пробуждают того
-же владельца даже при неподвижной камере. Освобождение собственного временного
-буфера без улучшения доступного бюджета не запускает повторный отказ по кругу.
-Принятый Pencil по-прежнему
-закрывает фоновую подготовку на время контакта; новый растр не создаёт второго
-нативного владельца. Достаточное более подробное изображение берётся из общего
-пула без нового WebKit, границы памяти остаются прежними.
+Every accepted model presence synchronously reaches `SceneNativeCameraProjection`
+and mounted native planes in one bounded transaction. It is not a second logical
+camera. Delayed SwiftUI publication uses the latest sample rather than restoring
+an older matrix.
 
-Большой SVG сохраняет канонические размеры WebKit. Снимок адресует видимую
-локальную область и её плотность; ключ включает источник, область и масштаб.
-Область округляется по сетке выходных пикселей и ограничена 4096 px на сторону
-и 8 388 608 px площади. Растр переносится в исходную локальную позицию и не
-индексируется как полное изображение источника. Смена области/масштаба меняет
-политику уже работающего WebKit, не создаёт новый JavaScript-контекст.
+Missing coverage may prepare during camera movement; accepted Pencil, editing
+contact and remote active input still gate new geometry/publication. The current
+geometry job completes toward an admissible result while only the latest next
+view is retained. Compatible source jobs survive changing demand and maintain
+their original readiness/deadline. Gesture completion separately requests refinement.
 
-Лист тетради передаёт тому же исполнителю внутренний масштаб страницы и
-конечный читаемый `fitScale` существующего владельца бумаги, умноженные на
-плотность экрана. Этот базовый растр покрывает открытие до fit без
-переподготовки на каждом жесте; fit не ограничивает камеру раскрытой бумаги.
-Его плотность сама по себе не доказывает пиксельную точность при увеличении
-выше fit.
-Полный физический элемент сохраняет
-каноническую идентичность `.agent`; обрезанный фрагмент получает региональный
-ключ и исходное локальное начало. Предел обзорной политики 2048 px не снижает
-качество читаемого листа: например, обычные 834×1194 pt при плотности 2 уже
-требуют 2388 px по высоте. Канонический CSS viewport при этом не меняется,
-а размеры самого SVG viewBox не определяют размер растрового выделения.
-После отказа пассивного снимка его WK освобождается. Оставшийся физический
-потребитель возобновляет подготовку только при фактическом улучшении общего
-бюджета, когда целиком помещается прежний запрос; движение камеры или ручной
-повтор для этого не требуются.
+`NotebookLiveScenePublication` projects already-admitted addresses from current
+logical geometry. Composition owns pixels/workset, not a second current position.
+After release, body, frame and hit target immediately use accepted geometry.
+Absence from a bounded read is not deletion; explicit deletion or complete addressed
+coverage is required. Background work does not steal an accepted contact.
 
-`AgentTableRenderingTests` проходит обзор → чтение → небольшое увеличение
-внутри прежнего порога 1,6 → уменьшение. Он проверяет плотность смонтированного
-изображения и пиксели тонких полос, неизменность источника, камеры и чернил.
+Mixed web content uses versioned DOM input regions through
+`AgentWebCoordinator` / `PhysicalWebViewport`, not accessibility frames.
+The first owner is fixed by `NotebookInputGate`. Links retain native tap while
+allowing pan/pinch cancellation; fields/custom handlers keep their input.
+Document-wide handlers own their full region. DOM/listener/size events update the
+map without polling. Until a valid matching map exists, WebKit conservatively keeps
+input. Coordinates and synthetic clicks are never replayed.
 
-## Новая область во время движения камеры
+## Detachment and verification
 
-Раскрытая бумага имеет временный порядок показа над закрытыми обложками,
-но под явно поднятым пальцем предметом. Его выводит `WorkspaceSceneProjection`
-из текущего открытия; тот же порядок используют native surface и выбор
-фрагмента внимания. Статические диапазоны продолжают исключать прежнюю позицию
-живого владельца, поэтому второго изображения не появляется. Закрытие возвращает
-исходный порядок без записи перемещения, изменения стопки или причинных вершин.
+View updates deliver current handlers even when geometry is unchanged; obsolete
+manual equality must not retain old captures. Detached thumbnail hosts remove page
+demand and raster pins even while UIKit retains their identity; real page handoff
+keeps its proper lease. Preflight invokes the same makeRoom eviction owner as actual
+allocation but grants no reservation across await.
 
-Выбранная закрытая обложка не удерживает невидимые страницы документа или
-тетради. `NotebookSceneState` и при старте, и при внешнем обновлении сначала
-разрешает фактическое положение: выбор закрытого предмета читает заголовок,
-геометрию и каталог страниц; тело, состояние и черновики читает открытый лист.
-`SpatialWorkspaceView` готовит страницы при настоящем приближении
-к открытию и сохраняет их, пока бумага раскрыта. Возврат к доске освобождает
-нативные страницы и WebKit у прежних владельцев, без очистки общего пула,
-сброса камеры или снижения плотности чернил. Проверка таблицы проходит через
-чтение настоящего документа и обратно: после закрытия не остаётся скрытого
-WebKit, а тонкие линии и текст снова проверяются на смонтированном изображении.
-
-`BoardPanView` получает смещение из `UIPanGestureRecognizer.translation`,
-а не вычисляет его из меняющегося центра касаний. Второе касание не задаёт
-новое начало одиночному переносу. Двухпальцевый жест по-прежнему начинает
-свою траекторию от установленной пары и последней показанной камеры.
-
-У чернил `InkCanvasView.spatialCamera` именует basis уже установленных Metal
-пикселей. Новый образец камеры проецирует эти пиксели обычной нативной матрицей
-`SceneCameraProjection`, той же, что используют SVG и WebKit. Он не создаёт
-drawable и не переименовывает прежний GPU-кадр новым basis. Подготовленный
-кадр хранит собственную камеру; замена drawable и соответствующей нативной
-проекции проходит одной установкой. Принятый контакт удерживает прежний
-владелец и его преобразование до последнего освобождения. Уточнение конечного
-окна использует существующие буферы и общий бюджет, а при неподвижной камере
-заканчивается на действительно установленном покрытии.
-
-Однопальцевый pan доступен и во время доводящей анимации камеры. Его начало
-отменяет spring и продолжает от последнего действительно показанного образца;
-анимация не является причиной отбросить новый контакт или позднее затереть его
-движение своим прежним целевым положением.
-
-Каждая принятая `NotebookAppModel.presence` синхронно проходит через
-`SceneNativeCameraProjection`. Слабая регистрация связывает уже смонтированные
-`SceneCameraPlaneController` и `SpatialInkPhysicalMountView` одной нативной
-транзакцией; обход ограничен физическими владельцами, а не числом предметов.
-Она не хранит отдельную логическую камеру. Отложенное обновление SwiftUI
-публикует содержание с последним принятым образцом и не возвращает прежнюю
-матрицу. Перебазирование выполняет layout уже под итоговой матрицей, а обычная
-публикация элемента не меняет его basis во время жеста. Координатор ввода
-получает тот же образец; геометрия уже принятого контакта остаётся закреплённой.
-Снятие владельца удаляет регистрацию, `presence = nil` очищает последний образец.
-
-`NotebookAppModel.permitsScenePreparation` разрешает готовить недостающее
-покрытие во время движения камеры. Это не разрешение на прочую фоновую работу:
-принятый Pencil, контакт с содержимым и активный ввод второго устройства
-по-прежнему закрывают новую геометрию и её установку. Уже допущенный исполнитель
-источника сохраняет свой readiness promise при временном закрытии этого окна;
-готовое изображение ждёт разрешённой публикации. Расширение адресного окна того
-же содержания не отменяет уже начатую подготовку изображения.
-
-`SceneCompositionTiles` доводит текущий запрос геометрии до допустимой публикации
-и хранит только последний следующий вид. Новая координата камеры заменяет
-ожидающий вид, а не перезапускает чтение и WebKit. Плотность и область снимка
-меняются в том же исполнителе: его HTML, readiness promise и первоначальный
-срок ожидания не перезапускаются при каждом pinch. Несовместимая геометрия
-отменяет её кандидата; совместимые независимые задания источников продолжаются.
-Завершение старой версии источника не записывает готовность его новой версии.
-Отмена и завершение модели удаляют также ожидающий запрос; ранее принятая
-работа освобождает свои ресурсы после фактического окончания.
-
-Во время контакта уже нарисованная область только проецируется. Подробность
-изображений и состав живых владельцев уточняются после отпускания; завершение
-жеста входит в запрос отдельно от координат. Поэтому остановка на том же
-месте не оставляет увеличенный текст размытым. Расширение покрытия и его
-публикация не записывают камеру и не создают второй слой чернил.
-
-## Принятое положение не принадлежит подготовке изображения
-
-Опубликованная композиция владеет готовыми пикселями и конечным набором
-допущенных нативных представлений. Она не хранит второе текущее положение
-этих предметов. `NotebookLiveScenePublication` проецирует только уже допущенные
-адреса из текущих `boardHierarchy` и `workspace`. Статические диапазоны и
-лимиты остаются у прежней композиции; новый предмет не получает чужой допуск.
-
-После отпускания контакт заканчивается, а сохранённая модель сразу определяет
-положение тела, рамки и области касания. Второе движение не ждёт подготовки
-SQL-окна, WebKit или обзорных тайлов. `SceneCameraPlane` и `WorkspaceSceneItem`
-сравнивают реальные значения представляемых предметов, а не только список ID.
-Распад стопки и её проекция используют одну формулу для модели и индекса.
-
-Отсутствие в ограниченном окне не означает удаление: учитываются явная версия
-удаления, результат адресного чтения и полное покрытие соответствующей
-поверхности. Невидимая часть архива не превращается в пустую доску. Старое
-представление не вправе восстановить известное удаление или перенос владельца.
-
-Фоновая подготовка не закрывает уже допущенный ввод. Палец сохраняет обработчики
-и физического владельца от начала до отпускания; новый SwiftUI-проход не
-перенаправляет его. Удаление, снятие владельца, Pencil, второй палец или настоящая
-отмена UIKit освобождают контакт. Обычное обновление другого предмета не является
-ни одной из этих причин. Интерактивная программа продолжает получать ввод,
-пока её собственный источник и разрешённое живое представление совпадают.
-Видимая текущая страница подготавливает программу до первого нажатия. Движение
-камеры или curl отдельно закрывает `inputEnabled`, сохраняя контекст и таймеры;
-фокус определяет право сохранять состояние. Пассивный соседний лист сохраняет
-изображение и освобождает исполняющий контекст.
-
-Внутри смешанного web-материала наличие JavaScript, ссылки или одного поля не
-передаёт программе всю прямоугольную поверхность. `AgentWebCoordinator` принимает
-версионные области полей и фактических обработчиков из DOM; `PhysicalWebViewport`
-переводит начало контакта через свою нативную проекцию. AX-рамки не участвуют.
-Первый владелец замораживается в `NotebookInputGate` до окончания контакта.
-Фон обрабатывает сам viewport, не пропуская касание в WebKit и не отнимая фокус
-у соседнего редактора. Ссылка сохраняет нативный tap, но допускает pan/pinch:
-при распознанном движении UIKit отменяет исходный контакт, без воспроизведения
-координат или синтетического click. Поля и пользовательские input-обработчики
-сохраняют собственный ввод; обработчик на всём документе сохраняет всю его область.
-Подгонка размера и прочий код без ввода сами по себе жест не удерживают. Изменение
-DOM, размеров и регистрации обработчиков обновляет области событиями, без опроса;
-старая версия не заменяет новую. До готовой карты или при несовпадении размера
-WebKit консервативно сохраняет ввод, а не отдаёт непроверенную область камере.
-
-## Проверка 10 сентября 2026
-
-Общий прогон `b480dac` оставил плотную доску без первой композиции за 10 секунд.
-Отдельный неизменённый контроль с диагностической квитанцией прошёл 2/2,
-но показал шесть подряд отказов нативной подготовки с теми же семью обложками
-и 133 454 592 занятыми байтами пассивного бюджета. Между ними менялись только
-обзорные тайлы — от 31 до 16. Это доказанная бесполезная повторная работа,
-но не доказательство единственной причины общего таймаута.
-
-После исправления прошли **31/31 iPad runtime-теста**, без пропусков и
-предупреждений xcresult: камера, композиция, SQL-источники и Metal-пулы.
-Новая проверка плана сохраняет закреплённый носитель, корневые чернила,
-растровый элемент и единственную позицию каждого источника в общем рендере.
-Проверка плотной доски требует уменьшения числа нативных владельцев между
-их отказами; полученная последовательность — 8, 7, 6, без повторения того же
-набора. Все прежние таймауты и условия камеры сохранены.
-
-Доказательства: `.build/camera-cohort-diagnostic.xcresult`,
-`.build/camera-cohort-diagnostic-attachments`,
-`.build/camera-pressure-final-profile.xcresult`,
-`.build/camera-pressure-final-attachments` и
-`/tmp/notebook-camera-pressure-final-profile.log`.
-Начальная новая фикстура не компилировалась из-за ошибочного имени `.text`
-вместо `.nativeText`; отказ до запуска тестов сохранён отдельно в
-`.build/camera-pressure-profile.xcresult`. Он не засчитан успешным прогоном.
-Этот срез не заменяет общий `verify.sh`, системные представления кадров,
-измерения CPU/GPU/RSS или физическую приёмку iPad.
-
-## Срок жизни обработчиков материала
-
-`WorkspaceSceneItem` получает очередные обработчики вместе с опубликованной
-сценой обычным обновлением SwiftUI. Ручной `Equatable`, игнорировавший эти
-обработчики, удалён: неизменная геометрия предмета не означала неизменность
-захваченного им отображения. Такая мемоизация удерживала растры прежней доски
-даже после установки новой плотности. Физический `WorkspaceItemPose` и его
-identity при обновлении остаются теми же; камера по-прежнему преобразует
-установленный нативный слой. Старые независимые leases живут ровно столько,
-сколько их действительно показывают или удерживают принятые контакты.
-
-### Отсоединённый обзор и предварительный допуск
-
-Закрытая, но ещё удерживаемая UIKit миниатюра не является читателем документа.
-`DocumentWebHost.didMoveToWindow` сообщает существующему владельцу страницы
-изменение attachment: отсоединённые thumbnail hosts снимают свои page demands,
-растровые pins и off-window подготовку; присоединение той же native-идентичности
-вновь предъявляет demand. Полноразмерная физическая страница сохраняет lease
-обычного UIKit handoff и не приравнивается к закрытой миниатюре.
-
-Оценка нового состава холста обращается к тому же `makeRoom`, что реальные
-растровые выдачи: сначала существующие владельцы могут освободить предложенные
-невидимые ресурсы, затем читается фактическая вместимость. Предварительная
-оценка не является резервированием и не даёт кредита через await; очереди,
-лимиты и последующая выдача ресурсов остаются у `SceneRenderResources`.
+Tests exercise allocation failure, strict reduction, pixel density, crop identity,
+first interaction, stale callbacks and release. Historical diagnostic timing is in
+[the original record](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/scene-allocation-contract.md).
+It does not establish current CPU/GPU/RSS or physical acceptance:
+[verification](verification.md).

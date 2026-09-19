@@ -1,41 +1,40 @@
 # Notebook
 
-Общее пространство для рукописи, документов и интерактивных моделей на iPad и Mac.
-Тетради и документы лежат на бесконечной доске; порталы связывают вложенные доски.
+A shared space for handwriting, documents, and interactive models on iPad and Mac.
+Notebooks and documents live on an infinite board; portals connect nested boards.
 
-- **Тетради** — письмо Apple Pencil, рисунки и схемы.
-- **Документы** — Markdown, LaTeX, формулы и интерактивные программы.
-- **Совместная работа** — общие материалы на Mac и iPad, обсуждение и правки с Codex.
-  Страница, камера и выделение остаются независимыми на каждом устройстве.
+- **Notebooks** — Apple Pencil writing, drawings, and diagrams.
+- **Documents** — Markdown, LaTeX, formulas, and interactive programs.
+- **Collaboration** — shared materials across Mac and iPad, with Codex discussions and edits.
+  Each device keeps its own page, camera, and selection.
 
-Принципы продукта — в [философии Notebook](PHILOSOPHY.md).
+Read the [Notebook philosophy](PHILOSOPHY.md) for the product principles.
 
-## Разработка
+## Development
 
-Нужны Xcode 27, XcodeGen 2.46+ и Node.js 20+. Приложения рассчитаны на
-macOS 27 и iPadOS 27.
+Requires Xcode 27, XcodeGen 2.46+, and Node.js 20+. Application targets are
+macOS 27 and iPadOS 27.
 
-Начните с [карты проекта](AGENTS.md): она указывает владельцев кода и проверки
-для конкретной задачи. Из корня репозитория можно посмотреть предлагаемый набор:
+Start with the [project map](AGENTS.md) for code ownership and task-specific checks.
+From the repository root, inspect the proposed verification scope:
 
 ```sh
 ./verify.sh --plan
 ```
 
-Подготовка ресурсов, сборка, подпись и обновление приложений описаны в
-[контракте выпуска](docs/release-build-contract.md). Обновление должно сохранять
-текущие данные, идентичности и ключи; исторические архивы не восстанавливаются
-автоматически.
+Resource preparation, builds, signing, and application updates follow the
+[release contract](docs/release-build-contract.md). Updates preserve current
+data, identities, and keys. Historical archives are not restored automatically.
 
-## Документация
+## Documentation
 
-| Тема | Где читать |
+| Topic | Start here |
 |---|---|
-| Подключение Mac и iPad | [Устройства и пространства](docs/installation-pairing.md) |
-| Документы и интерактивные блоки | [Устройство документа](docs/document-page-fragments.md), [программы](docs/document-program-fragments.md) |
-| Работа с агентом | [Совместная работа](docs/collaboration.md), [Codex](docs/codex-remote-work.md) |
-| Создание материалов через MCP | [Навык Notebook](MCP/skills/notebook/SKILL.md), [JavaScript API](docs/notebook-javascript-api.md) |
-| Результаты и ограничения проверок | [Журнал проверки](docs/verification.md) |
+| Mac and iPad connection | [Devices and workspaces](docs/installation-pairing.md) |
+| Documents and interactive blocks | [Document layout](docs/document-page-fragments.md), [programs](docs/document-program-fragments.md) |
+| Working with an agent | [Collaboration](docs/collaboration.md), [Codex](docs/codex-remote-work.md) |
+| Authoring through MCP | [Notebook skill](MCP/skills/notebook/SKILL.md), [JavaScript API](docs/notebook-javascript-api.md) |
+| Verification results and limitations | [Verification record](docs/verification.md) |
 
-Задачи и фактический статус разработки ведутся в проекте **Notebook** в Linear.
-Успешная сборка не означает, что все пользовательские сценарии приняты.
+Tasks and their actual status are tracked in the **Notebook** project in Linear.
+A successful build establishes only its stated verification scope.

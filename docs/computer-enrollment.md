@@ -1,138 +1,54 @@
-# Дополнительный Mac в текущем пространстве
+# Adding another Mac
 
-Новый Mac получает свою идентичность и текущее содержание Notebook, а не
-идентичность, черновики, процессы или ключи первого компьютера. Установленная
-пара не меняет архив, допуск, журнал или Keychain. Исторические архивы не входят
-в этот маршрут.
+For normal setup, open Notebook on the new Mac using the same Apple Account.
+The [account-owned connection](installation-pairing.md) establishes trust and
+workspace discovery. Each Mac keeps its own identity, local drafts, processes,
+and window state. Historical archives are outside this route.
 
-`ArchiveComputerPreparation` принимает независимую свежую копию **нынешнего iPad**
-и его действующего допуска. Она проверяет активную квитанцию, делает отдельную
-рабочую копию и вызывает `prepareDeviceSnapshot`. Сохраняются все текущие общие
-записи; локальные поручения, окна, черновики файлов, команды и вывод терминала
-не переходят на другой компьютер. Исходные файлы и допуск сверяются после
-подготовки. Непустое назначение и повтор идентичности устройства дают отказ.
+Never clone another Mac's actor identity or copy its trust keys to impersonate it.
+Adding a machine does not authorize replacing the current iPad workspace.
 
-Новый журнал Mac начинается целым текущим набором. Его входящий курсор iPad
-указывает **после** включённого в копию состояния: прежние изменения не
-воспроизводятся поверх уже актуального материала. Дальнейшие правки доставляет
-тот же `NearbySync`. Камера iPad и его локальная работа не заменяются новым Mac.
+## Explicit current-workspace preparation
 
-`NotebookArchiveAdmission.enrollment` различает добавление компьютера и
-одновременную активацию первой пары. Сохраняются проверяемые квитанции прежней
-пары, текущего содержания и нового Mac. Такой допуск разрешён только новому Mac:
-его нельзя опубликовать как замену допуску iPad. Он не создаёт доверия к сети
-и не является разрешением автоматического сопряжения. Новый Mac затем выдаёт
-обычное приглашение; iPad и Mac подтверждают его существующим механизмом.
+The external converter retains an explicit enrollment route for an authorized,
+independent copy of the current workspace. It is not an automatic startup step
+or a requirement to restore a historical archive.
 
-## Установка дополнительного компьютера
+`ArchiveComputerPreparation` accepts a fresh independent copy of the current
+iPad and its valid admission receipt, creates a separate working destination,
+and calls `prepareDeviceSnapshot`. Shared records are preserved; local jobs,
+windows, file drafts, terminal input, and output do not move to the new computer.
+The source and admission are checked afterward. Nonempty destinations and reused
+device identities are rejected.
 
-Эти действия требуют разрешённого доступа к новому Mac. Они не исполняются
-просто из-за обнаружения машины в сети.
+The new journal starts with a complete current baseline. Its incoming iPad cursor
+follows the copied state, so old changes are not replayed over current content.
+`NotebookArchiveAdmission.enrollment` binds the original pair, current content,
+and new Mac. It admits only that new Mac's data; it does not establish network trust.
 
-1. После сохранения ввода получить свежую независимую копию текущего iPad.
-   В рабочем каталоге копии `Notebook` и `Notebook.activation` расположены рядом;
-   саму резервную копию не открывать новым писателем. У нового Mac отдельно
-   определить собственный `notebook.actor-id`; он не совпадает ни с одним
-   устройством пары. Его каталог назначения должен быть пустым.
-2. `notebook-archive-transfer --prepare-computer REQUEST --output NEW_DIRECTORY`
-   читает JSON с полями `currentIPad`, `freshMac` и `mac` (`role: "mac"`,
-   `bundleID: "com.amirtlinov.notebook.mac"`, собственный `actorID`). Все пути
-   абсолютные. На выходе `mac/` — пакет активации, `report.json` — проверенная
-   связь с текущим содержанием и точной границей доставки. Приложения не изменены.
-3. Установить проверенный подписанный Notebook на новый Mac, доставить `mac/`
-   как его `Notebook.activation` и сохранить **его собственный** actor ID в
-   предпочтениях. Создать пустой каталог `Notebook` рядом с `Notebook.activation`:
-   атомарная активация обменивает два существующих каталога, а не подставляет
-   отсутствие каталога вместо проверенного пустого назначения. Не запускать
-   приложение над посторонним непустым архивом.
-   Первый запуск активирует копию и ждёт допуска, не создавая модель или агента.
-4. Получить фактический `activation.json` нового Mac. Команда
-   `notebook-archive-transfer --admit-computer REPORT RECEIPT --output NEW_JSON`
-   сверяет его с подготовкой. Доставить результат как `admission.json` **только
-   новому Mac**. Он продолжит запуск; холодный повтор не откатывает новые записи.
-5. Сопрячь новый Mac с текущим iPad обычным приглашением и подтверждениями.
-   Выбрать его в меню компьютеров чата. Прежний компьютер остаётся доступным;
-   совпадающие пути не объединяют документы или команды.
+The converter's explicit commands are:
 
-## Проверка
+```text
+notebook-archive-transfer --prepare-computer ABSOLUTE_REQUEST --output NEW_ABSOLUTE_DIRECTORY
+notebook-archive-transfer --admit-computer ABSOLUTE_REPORT ABSOLUTE_NEW_MAC_RECEIPT --output NEW_ABSOLUTE_JSON
+```
 
-### Текущее состояние — 16 сентября, 06:52 UTC
+The request uses `currentIPad`, `freshMac`, and `mac` with role, bundle ID, and a
+new actor ID. Preparation is offline and performs no installation or pairing.
+Activation requires the verified empty destination and an actual activation receipt
+before admission. Follow [archive-transfer](archive-transfer.md) for its safeguards.
+Distribute admission only to the new Mac. Network trust follows the current
+Apple Account mechanism; the former invitation/confirmation instructions are retired.
 
-На `MacBook-Air-Amir.local` установлен тот же подписанный Release `f1d8286`,
-source `13e3d53c00b1d54949a55a5e97328207fe80ab52602751c735cad655a325bf4b`,
-Mac UUID `713A1029-4771-33D0-91E8-C5CFAED00F87`. SSH использовал прежде
-доверенный host key; перед установкой app, root и admission отсутствовали.
-ZIP-хеш и `codesign --verify --deep --strict` проверены на самом назначении.
+## Historical evidence and remaining scope
 
-После сохранения и остановки текущего iPad получена свежая копия его нынешних
-`Notebook` и `Notebook.activation`; исходное приложение затем вновь запущено.
-Конвертер подготовил 1844 общих записи, курсор 327. Исторический архив не
-использовался. Новый actor `70F05522-477F-43B0-ABDB-AC4268A764FA` не совпадает
-с устройствами прежней пары. Настоящее установленное приложение выполнило
-активацию: transition `2422BBB3-EADA-4660-8B70-07991ACA821F`, shared-record hash
-`18ccade53ed958ef2a8f82c7a633a94ec8d52195673064a07216515e23c870a9`.
-Только после чтения этой квитанции `--admit-computer` выпустил допуск, который
-доставлен **только новому Mac**. Доказательства:
-`.build/seven-slices-second-mac/activation-receipt.json`, `admission.json`,
-`admitted.json` и исходная `prepared/report.json`.
-Последующее чтение через **установленный на новом Mac MCP sidecar** вернуло
-`notebook_context` / `notebook_execute` и `observe: ready` с тем же workspace,
-`connection: disconnected`.
-Это чтение допущенной текущей копии, не доказательство сетевого сопряжения или
-свежего показа iPad. `.build/seven-slices-second-mac/assessment.json` сохраняет
-эту границу отдельно от `public-installed-response.json`.
+On September 16, a second Mac received a signed build and a prepared current-workspace
+copy. Its installed MCP returned a ready observation with the expected workspace but
+a disconnected connection. A real ScriptService run completed through that MCP.
+This established local activation and execution, not network pairing or display
+on iPad. Evidence lived under `.build/seven-slices-second-mac/`.
 
-На том же установленном Mac завершён настоящий запуск ScriptService через
-его публичный MCP: `aba68e8c-8220-40fa-a2e3-622b7b6353ea`, `completed`, один
-`script-service-readiness: ready`, `error: null`, `effects: []`. Завершение
-прочитано повторным `resume` того же запуска, не повторным исполнением.
-`.build/seven-slices-second-mac/script-readiness-assessment.json` и
-`public-script-readiness-final.json` сохраняют результат. Это подтверждает
-работу подписанного XPC-исполнителя на новом компьютере; первый Mac всё ещё
-ждёт системного доступа к старому контейнеру. Проверка не изменяет содержание
-и не закрывает сопряжение или показ на iPad. Собственные доставочные ZIP после
-проверенной установки удалены; квитанции и подготовленная копия сохранены.
-
-Первый установочный шаг пропустил создание пустого назначения, поэтому
-bootstrap не активировал архив. Пустой каталог создан до допуска/модели;
-перезапущен только этот неактивированный bootstrap. Это ошибка шага установки,
-не замена принятой базы. Уточнение шага 3 выше предотвращает её повтор.
-
-**Сопряжение и работа со вторым Mac ещё не приняты.** Приглашение и подтверждения
-не подменялись installation grant, записью trust или копированием ключей.
-Доступ CUA к штатному Screen Sharing дважды отказал с ScreenCaptureKit -3811;
-физический iPad отдельно требует разрешить XCTest UI Automation код-паролем.
-Выбор второго компьютера, реальные одинаковые пути, reconnect и отзыв доступа
-остаются открытыми. Нижние записи сохраняют историю прежних границ доступа;
-«SSH не отвечает», «копия не получена» и «Mac не установлен» уже не актуальны.
-
-### Предшествующие проверки и границы доступа
-
-`.build/computer-enrollment-second` прошёл 21 Core, 2 проверки внешней подготовки,
-10 нативных проверок запуска/Keychain, 40 проверок сборщика и 25 проверок выбора
-тестов. Три изолированных назначения проходят подготовку нового Mac, настоящий
-обмен каталога при активации, отказ допуска до квитанции, холодный повтор и
-дальнейшую доставку в обоих направлениях. Исходные архивы и допуски остаются
-побайтно прежними; камера и локальный черновик iPad сохранены. Непустое назначение,
-копирование идентичности и попытка заменить допуск iPad отклоняются.
-
-Это реализация и проверка подготовки. Установка и сопряжение физического
-MacBook-Air-Amir.local ещё не выполнены. 12 сентября Амир разрешил подключение;
-машина обнаруживается по mDNS, но SSH на порт 22 не отвечает. Это недоступность
-компьютера, не отсутствие согласия. Его архив, настройки и ключи не изменены.
-
-16 сентября SSH `MacBook-Air-Amir.local` проверен повторно: подключение прошло
-с проверкой ранее доверенного host key, macOS 27.0 / arm64. Удалённая машина
-не изменялась. Прежняя причина недоступности SSH больше не актуальна. Установка
-второго Mac всё ещё не выполнена: повторный `devicectl` в 00:30 UTC знает
-физический iPad как paired, но его tunnel unavailable и DDI недоступен;
-реальный запрос lockState отвергнут CoreDevice 4016. Поэтому свежая копия
-текущего пространства iPad и допуска для этого маршрута не получена.
-Старый архив не использован вместо неё.
-
-Последующая проверка 16 сентября 04:04 UTC изменила эту границу: физический
-iPad доступен через проводной CoreDevice, DDI готов. Это не результат
-сопряжения второго Mac: свежая копия текущего пространства ещё не подготовлена,
-новый компьютер не установлен и не допущен. Прежний отказ tunnel не является
-актуальным объяснением незавершённого маршрута. Производственная пара пока
-сохранена без обновления; общий Release и физическая приёмка ещё не завершены.
+Earlier SSH/tunnel failures were superseded by that run. They are not current
+blockers. Real second-Mac switching, reconnection, equal-path isolation, and trust
+revocation require their own up-to-date physical evidence.
+See [verification](verification.md) for history and current release boundaries.

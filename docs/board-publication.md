@@ -1,129 +1,64 @@
-# Сохранение, доставка и показ доски
+# Board persistence, delivery and display
 
-`NotebookStore` сохраняет действие и журнал доставки. `NotebookDiskRefresh`
-принимает текущий рабочий набор и квитанцию iPad; это ещё не показ изображения.
-`NotebookAppModel` запрашивает композицию именно прочитанного состояния.
-Если между адресными чтениями писатель продвинул журнал, `SceneCompositionSource`
-отклоняет целиком ещё не показанного кандидата. `SceneCompositionTiles` сообщает
-об этом модели, которая через существующее объединённое чтение запрашивает
-новое состояние. До его готовности остаётся прежняя целая композиция.
-Ни таймер повтора, ни переход в тетрадь, ни изменение камеры для этого не нужны.
-Отказ памяти и ошибка содержания не превращаются в бесконечный повтор.
+`NotebookStore` commits actions and the delivery journal. `NotebookDiskRefresh`
+admits the current workset and iPad receipt, but that alone is not display.
+`NotebookAppModel` requests composition of the exact read state.
+If the journal advances across addressed reads, `SceneCompositionSource` rejects
+the unshown candidate and `SceneCompositionTiles` requests a coalesced refresh.
+The previous complete composition remains until replacement. No camera change,
+notebook visit or retry timer is required. Content/memory failures do not become
+unbounded retries.
 
-Квитанция показа чернил требует установленного нативного источника той же
-ревизии и законченного кадра в активном окне. Прочитанный журнал и готовый
-пространственный индекс сами по себе этого не подтверждают. Последующие
-изменения человека не обходят проверку рассмотренной версии.
-MCP сравнивает значения квитанций структурно: порядок полей независимых
-JSON-ответов не меняет факт получения. Новая версия чернил, напротив,
-не считается подтверждением прежней квитанции.
+Shown ink requires the installed native source at the same revision and a completed
+frame in an active window. Journal/index readiness is insufficient. MCP compares
+receipts structurally, so JSON property order is irrelevant; a different ink version
+cannot acknowledge an earlier receipt.
 
-## Память точного снимка
+## Exact snapshot memory
 
-`SceneRasterCompositor` сохраняет нативную сетку 2× и растровый бюджет.
-При целочисленном положении без пересчёта плотности непересекающиеся тайлы
-чернил входят прямо в итоговое изображение. Каждый тайл сначала независимо
-исполняет ручку и ластик: ластик не удаляет бумагу или чужой текст.
-Второй полный прозрачный буфер здесь не нужен. При дробной проекции остаётся
-единая маска, чтобы фильтрация не создавала швы между тайлами.
+`SceneRasterCompositor` preserves the native 2× grid and existing budget.
+For integer-position, unchanged-density projection, disjoint ink tiles composite
+directly into output after independently applying pen/eraser. Eraser affects ink,
+not paper or foreign text. Fractional projection retains a unified mask to avoid
+filtering seams.
 
-Фон `SpatialBoardGrid` также рисуется участками до 512 pixels в тот же выходной
-буфер: отдельное изображение размером со всю область больше не выделяется.
-Разметка и масштаб исходного фона остаются целыми; меняется только область
-его копирования. Обложки с тенями и остальные SwiftUI-представления продолжают
-рисоваться целиком: их эффекты нельзя безусловно обрезать на границах тайлов.
+`SpatialBoardGrid` draws in at most 512-pixel pieces into that output, avoiding a
+second full-size background bitmap. Covers/shadows and other effect-bearing SwiftUI
+views still render whole where clipping would change appearance.
 
-Устойчивый адрес снимка доски или обложки включает `NotebookSpatialComposition/2`
-в существующий `TargetRenderRequest`. Неизменное содержание после исправления
-отрисовки не должно возвращать прежний PNG или сохранённый `resource_limit`.
-Новый запрос и прежняя квитанция имеют разные адреса; старый результат и
-рассмотренный материал не удаляются. Повтор текущего запроса и холодный запуск
-возвращают тот же адрес, а исполнитель не публикует новые пиксели под прежним.
-Это продолжение уже существующего версионирования отрисовки документов,
-не очистка кеша и не автоматический повтор ошибочной работы.
+`NotebookSpatialComposition/2` is part of `TargetRenderRequest` identity.
+A new renderer cannot reuse an old PNG/error receipt merely because content is
+unchanged. Old results/reviewed material remain immutable; current retry and cold
+reopen use the same new address.
 
-## Проверяемая граница
+## Prepared material and selection
 
-`BoardPublicationTests` воспроизводит продвижение журнала после чтения правки
-агента. Без обратного сообщения об устаревшем источнике смонтированная доска
-не показывает линию за пять секунд; это зафиксировано в
-`.build/board-eraser-repro`. После исправления тот же сценарий видит линию,
-стирает её настоящим обработчиком Pencil, сохраняет UUID ластика и повторно
-читает оба действия в новой модели. Пиксели остаются стёртыми, камера прежняя.
-Отдельный случай запрещает подтверждать ещё не показанный нативный холст.
+Native diagrams project the admitted raster without a second Core Animation cache.
+Mounted consumers refine when the existing resource owner publishes sufficient
+density. Scheduler and view share `WorkspaceSceneFrame.pixelScales`; zoomed-out
+items may need less than one pixel per local point. Canonical SVG dimensions,
+overview limits and Pencil reserves remain unchanged. Exact export separately
+requests its own density.
 
-Mac проверяет полную доску 2048×2048 points в прежней плотности 2× с бюджетом
-160 МиБ, включая фон и ластик на стыках. Воспроизведение без исправления фона
-в `.build/board-background-failure` получило `resource_limit`, как установленная
-0.3.30. `.build/board-grid-release-checked` проверяет исправление: 7 Mac и 15
-iPad, без ошибок, пропусков или предупреждений. Дробная сетка совпадает с целым
-изображением с точностью одного уровня 8-bit сглаживания, повтор той же области
-даёт идентичный PNG. Дробная проекция чернил и точный хеш PNG их прежнего
-источника проверяются независимо. Тест MCP меняет порядок полей и затем реально
-меняет версию: подтверждается только первый случай.
+`NotebookAgentFeedback` begins Shimmer/Mesh only after exact visible content is
+installed. Feedback neither receives input nor moves camera and is not a display
+receipt. See [presentation](agent-presentation-contract.md).
 
-На финальных исходниках `.build/board-recipe-core/test.log` подтверждает семь
-Core-тестов, включая сохранение прежней квитанции ошибки/успеха доски и обложки,
-новый адрес и повтор после холодного запуска. `.build/board-recipe-native-checked`
-проверяет настоящий `CurrentViewPreviewWriter.writeTarget` полной доски и показ
-чернил: 2 Mac и 2 iPad, без ошибок, пропусков или предупреждений.
+`NotebookSelectionGesture` observes the existing native window, without an overlay
+that steals board touches. Tap selects; a 350 ms stationary hold can begin region
+selection, while earlier movement remains navigation. Selection and manipulation
+use [one shared owner](shared-context-contract.md).
 
-Установленная пара **0.3.32 (35)** проверена на неизменённом источнике настоящей
-доски: `.build/board-recipe-install/installed-render.json` возвращает `ready`
-за **1493 мс**, **4096×4096 pixels**, без диагностик. Это та же область
-2048×2048 points, которая ранее возвращала `resource_limit`; её новый запрос
-`35475BCC-ED05-420B-819E-0CFF5CDE1498` не переиспользует прежнюю ошибку.
-PNG с существующим графиком просмотрен. Поиск свободного места на том же
-источнике также вернул `ready` (`installed-placement.json`), без применения
-нового содержания. Обратное чтение после запроса снимка подтверждает
-неизменность камеры и всех прежних записей содержания.
+## Evidence scope
 
-Это воспроизведение сбоя показа и проверки сохранения, а не утверждение,
-что найдены все причины конкретного возврата стёртого на физическом
-iPad. Отчёт пользователя остаётся в GUI-196 до проверки обновлённой пары.
-Старые отказы доступа из голосовой задачи зарегистрированы в 08:22 UTC,
-до установки 0.3.29; в запуске 09:39 уже объявлен полный доступ. Голосовая
-фраза не подменяет нативную выдачу прав. Настоящее изменение чернил между
-чтением и командой продолжает возвращать конфликт, а не затирать человека.
+`BoardPublicationTests` reproduces a journal advance after an agent edit, checks
+event-driven refresh, real Pencil-handler erasure, saved UUIDs/readback and rejection
+of unshown canvases. Raster checks cover a 2048×2048-point board at 2× inside
+160 MiB, fractional seams and deterministic repeated PNGs.
 
-## Показ подготовленного материала
-
-Нативное представление схемы проецирует уже допущенный растр напрямую, без
-второго кеша Core Animation. Перемена масштаба не меняет физический размер
-источника и не создаёт новое изображение. Смонтированная схема принимает
-готовый растр достаточной плотности, когда существующий владелец ресурсов
-публикует его: ранний малый снимок не остаётся окончательным изображением.
-
-Для живого предмета планировщик и представление используют одну проекцию
-`WorkspaceSceneFrame.pixelScales`: плотность экрана умножается на размер
-предмета в показанной композиции. При уменьшении допустима плотность меньше
-одного пикселя на локальную точку. Канонический размер SVG не переписывается,
-граница в 2048 pixels и общий запас для Pencil остаются прежними. Новая
-композиция после увеличения готовит соответствующий источник; точный экспорт
-независимо запрашивает свою плотность. Иначе маленькая таблица требовала
-десятки мегабайт невидимых пикселей и проигрывала обложкам при распределении
-памяти, превращаясь в непригодный увеличенный обзорный тайл.
-
-Изменение агента не создаёт уведомление «Продолжение мысли». Новые действия
-получают краткий Shimmer по чернилам и Mesh по заливкам только после установки
-точного видимого источника. История и причинная отмена доступны из меню чата.
-Вниманием и временем эффекта владеет один `NotebookAgentFeedback`, независимо
-от открытия истории; [контракт представления](agent-presentation-contract.md)
-определяет ожидание источника, объединение серии и отсутствие повторного показа.
-Подсветка не принимает касания, не меняет камеру и не является квитанцией
-показа. Последняя по-прежнему требует проверки установленного содержания.
-
-## Выбор материала пальцем
-
-`NotebookSelectionGesture` наблюдает прямое касание через существующее окно,
-не перекрывая доску принимающим касания представлением. Короткое касание
-выбирает материал; удержание 350 мс с перемещением задаёт область контекста.
-Движение до удержания остаётся навигацией, второй палец и принятый Pencil
-отменяют выбор. Кнопки, редакторы, чат и ручки изменения предмета исключены
-из этого жеста. Закрытая тетрадь сохраняет собственное поднятие и перенос.
-
-Выбор использует прежнюю проекцию рассмотренного материала и редактор предмета:
-контекст, удаление и изменение размеров не получают второго владельца.
-Выбранный предмет не отключает Pencil. Интерактивный документ сохраняет свои
-обычные касания; удержание позволяет указать его агенту. Отдельного режима
-«выделение» в панели ручки больше нет.
+Historical installed build 0.3.32 (35) rendered the formerly failing unchanged
+board to 4096×4096 pixels in 1,493 ms, with camera/content unchanged on readback.
+That establishes the named reproduction, not every physical erased-ink report or
+current performance. GUI-196 remains separately tracked.
+[Original evidence](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/board-publication.md);
+[current verification](verification.md).

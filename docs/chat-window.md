@@ -1,28 +1,26 @@
-# Свободный чат
+# Floating chat window
 
-`NotebookChatWindow` хранит выбранные размер и положение панели в локальных
-настройках рабочего окна, отдельно от разговора, черновика и `SessionPresence`.
-`NotebookChatWindowLayout` переводит привязку к краям в рамку доступной области.
-Клавиатура и поворот ограничивают только показанную рамку: предпочтение не
-перезаписывается, а доска остаётся смонтированной с прежней камерой.
+`NotebookChatWindow` stores preferred position and size in local window settings,
+separate from the conversation, draft, and `SessionPresence`.
+`NotebookChatWindowLayout` projects edge anchors into available window space.
+Keyboard and rotation constrain the displayed frame temporarily while preserving
+the preference and the board's mounted camera.
 
-Заголовок и свёрнутая кнопка переносят окно; захват справа снизу меняет размер.
-Перенос не нажимает находящуюся под ним кнопку выбора разговора. Начальная
-рамка закрепляется на время жеста. Смена доступной области завершает измеренную
-часть, а отмена системного жеста освобождает следующий контакт. Границы области
-оставляют доступными верхние инструменты и нижнюю навигацию бумаги.
+The header and collapsed companion move the window. The outer rims at all four
+corners resize it through `NotebookChatResizeCorner`; nearby controls retain
+their central hit targets. The gesture holds its starting frame. An available-area
+change finishes the measured portion, and system cancellation releases input.
+Top tools, the composer, and paper navigation remain reachable.
 
-В меню «Действия чата» находятся подключения и общая история. Недоступный Mac
-также можно подключить прямо из списка разговоров. Постоянных кнопок подключения
-и «Совместные ходы» на доске нет; указанный фрагмент и временное уведомление
-сохраняют свои действия у материала. Доверие и автоматическое подключение не
-менялись. Содержание, чернила и принятый Pencil продолжают использовать прежних
-владельцев записи и ввода.
+The terminal divides chat-window space using `NotebookTerminalSplit`; its saved
+fraction survives temporary keyboard constraints. Files remain in the conversation's
+collapsible side panel. These presentations never publish a board-camera change.
 
-`NotebookChatWindowTests` проверяет рамку, границы, сохранение предпочтения и
-временное ограничение размера. Жестовый сценарий
-`testChatMovesResizesAndOpensSettingsWithoutMovingPaper` переносит и меняет
-панель, открывает оба меню и возвращает размер после холодного запуска.
-Клавиатура, поворот и полная область кнопки сворачивания проверяются отдельными
-сценариями `DrawingResponsivenessTests`. Результаты и физическая граница —
-[verification.md](verification.md).
+Account access is provided by the current chat/account surfaces; devices and
+workspace history belong to the workspace library. The retired shared
+“Chat actions” menu is not an additional owner.
+
+`NotebookChatWindowTests` checks layout, bounds, saved preference, corner resizing,
+and temporary constraints. Gesture scenarios cover moving, resizing, keyboard,
+rotation, collapse, and cold restoration. See [verification](verification.md)
+for the exact tested slice and physical acceptance limits.

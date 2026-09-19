@@ -1,269 +1,141 @@
-# Один сохраняющий путь листа и отказ конфликтующего штриха
+# Page persistence, ink identity and drawing tools
 
-## Владелец и результат
+## One persistence path
 
-`NotebookStore.savePage` — единственный обычный сохраняющий API листа.
-Он возвращает результат слияния с устойчивым значением, а не подменяет его
-входящей копией. Прямой заменяющий метод и отдельное имя `saveMergedPage`
-удалены; все нативные вызовы и фикстуры используют один API. Повтор старой
-копии не стирает последующий контакт или вычисление.
+`NotebookStore.savePage` is the ordinary page-saving API and returns the durable
+merged value, not the submitted copy. `PageDocument.merging` prepares the entire
+result before assignment. Invalid ink rejects elements/computations in that same
+candidate. Native merge preserves the old value and reports failure; store callers
+receive an error. Workspace membership and new-page publication share one SQL
+transaction, so a failed page also rolls back prepared notebook creation.
 
-`PageDocument.merging` готовит весь результат до назначения. Ошибка чернил
-отклоняет также элементы и вычисления из того же кандидата. Нативный `merge`
-при отказе сохраняет значение целиком и возвращает `false`; сохраняющие
-владельцы получают ошибку. Это относится к отдельному листу, переносимому
-состоянию, входящей доставке и общему сохранению рабочего пространства.
-`saveWorkspaceEdits` публикует членство перед вызовом владельца нового листа,
-но обе части остаются внутри одной транзакции: отказ листа откатывает также
-уже подготовленное создание тетради.
+`PageInkDrawing` binds each UUID to measured points, tool, color and assigned order.
+An exact replay retains that order and cannot revive an undone contact.
+Different points under the same UUID or exhausted order fail.
+`writeFragment` validates immutable headers and prevents false→true activity revival.
+Row position is an order index, not mutable author content.
 
-`PageInkDrawing` связывает UUID с измеренными точками, инструментом, цветом
-и назначенным порядком. Точный повтор нативного измерения получает прежний
-порядок и не возвращает отменённый контакт. Другие точки под тем же UUID и
-исчерпание порядка дают ошибку, а не успешное «нет изменений».
-`writeFragment` проверяет неизменность сохранённого заголовка при адресной
-записи и запрещает возврат `isActive` из `false` в `true`. Позиция строки
-остаётся индексом порядка, не частью изменяемого авторского заголовка.
+Failure publishes no content, receipt or delivery cursor. Imported raster-base
+revision is separate and cannot resolve conflicting action UUIDs through last-write-wins.
 
-Курсор доставки, квитанция и содержание не публикуются при отказе. Внешний
-импорт растровой основы остаётся отдельной ревизией основы; он не превращает
-конфликт UUID на одной основе в выбор более позднего пакета.
+## Tools and accepted contact
 
-## Инструменты и сохранённая рукопись
+`DrawingTool` / `NotebookDrawingToolSettings` describe intention and local settings,
+not content. One nonmodal parameter presenter handles tool settings and color.
+First tap selects, repeated tap opens settings. A tap on another real toolbar button
+closes settings and selects it in one action. Tapping outside the panel/toolbar only
+dismisses; it neither draws nor moves the canvas. Fill is a separate shape setting.
 
-`DrawingTool` и `NotebookDrawingToolSettings` описывают намерение и локальные
-настройки, не содержание. Панель имеет один presenter настроек: первое нажатие
-выбирает инструмент, повторное открывает его компактные параметры без заголовка.
-Тот же presenter открывает палитру по кругу основного цвета на панели; цвет
-проецируется из настроек активного инструмента, отдельной копии нет. Заливка
-остаётся самостоятельной настройкой фигуры. Панель немодальная: область
-toolbar пропускает исходный touch к настоящей кнопке, поэтому один тап по
-другому инструменту закрывает параметры и выбирает его. Нажатие вне панели
-и toolbar только закрывает параметры, не рисует и не двигает холст. Существующие Pencil
-recognizers передают нечернильный контакт в `NotebookToolInputContact`; адаптер
-фиксирует координаты, удерживает `NotebookInputGate` и владеет только временным
-следом. `NotebookDrawingToolController` фиксирует физического владельца и
-параметры контакта, готовит preview и передаёт создание в существующую очередь
-нативных причинных команд. Отмена или смена инструмента освобождает контакт.
+Non-ink Pencil input flows through `NotebookToolInputContact` and
+`NotebookDrawingToolController`, fixing physical owner/settings, holding
+`NotebookInputGate`, preparing preview and submitting ordinary causal commands.
+Cancel or tool change releases it.
 
-Маркер — измеренное перо с постоянной непрозрачностью, не второй журнал.
-Диаметр ластика фиксируется при касании и не пульсирует от давления Pencil.
-Размер выбирается логарифмически от2пт, с числовым значением и пресетами.
-Ластик использует круглую swept-disk сетку без miter-соединений пера; её
-общий Core-владелец обслуживает живой инкрементальный хвост, сохранённую
-рукопись, маски элементов и удержанные слои лассо.
-Фигуры и стрелки — обычные `NotebookGraphic`; текст использует общий
-нативный редактор и адресное сохранение страницы/доски/обложки. Линия без
-наконечников — настройка стрелки, не дублирующий инструмент среди фигур.
-Заливка и обводка имеют независимые цвета. При рисовании поверх замкнутых
-фигур boolean-режим заменяет пересекающиеся операнды одним Bézier-контуром
-с сохранением отверстий, через общую причинную команду и undo; отдельного
-растрового слоя или дерева операций нет. Новый контакт читает принятые
-рабочие фигуры и очередные drafts логической модели, а не запаздывающий
-raster cohort. Логический content cursor отделён от header-only refresh и установленного
-кадра; удержанный live host вставки рисует уже принятую геометрию, а не старую
-копию фигуры. Исходники команд по-прежнему связывает общая причинная очередь.
-В отсутствие пересекающегося операнда контакт создаёт новую базовую фигуру.
+Marker is measured ink with constant opacity. Eraser diameter is fixed at contact
+rather than pressure-driven, selected logarithmically from 2 pt with numeric values/
+presets. One swept-disk geometry without pen miter joints serves live tails, persisted
+ink, masks and lasso layers.
 
-Линейка — временная поза одного контроллера в координатах владельца:
-пальцем она перемещается, за круглый конец поворачивается; Pencil продолжает
-идти через обычный измеритель. Деления используют `PhysicalPaper`: 1 см =
-2 клетки. Проведённая по краю линия сохраняется обычной графикой. Лазер не
-создаёт содержания: его мировые точки и ширина перепроецируются камерой,
-а хронологический хвост убывает по времени каждой точки, не общей opacity.
-TimelineView передаёт время прямо в значение Canvas: после lift или отмены
-контакта хвост продолжает перерисовываться без следующего события Pencil.
-Очистка удаляет trace только после истечения последней точки.
+Shapes/arrows are `NotebookGraphic`; a line is an arrow setting without endpoints.
+Fill and stroke colors are independent. Boolean drawing replaces intersecting closed
+operands with one Bezier contour preserving holes, through existing causal undo.
+New contact reads accepted logical content and queued drafts, not stale raster cohorts.
+Without an operand it creates a normal shape.
 
-Лассо выбирает при любом пересечении, включая границу, а не только при полном
-вложении. Элементы и карточки тетрадей/досок/документов получают выделение
-сразу при отпускании; подготовка рукописи не задерживает их. На общей доске
-начало внутри закрытой карточки не переключает адрес лассо на её обложку.
-Смешанное выделение имеет одного владельца `NotebookSelectionSession` и общий
-лимит32; групповые преобразования графики не выдаются за преобразования карточек.
-Для рукописи лассо фиксирует принятый хвост чернил, вне main actor
-строит векторную сетку общим `InkStrokeGeometry` и сохраняет её как `freehand`
-с исходными ID, давлением и хронологическими слоями пера/ластика. Отрисовкой
-владеет тот же `InkRasterRenderer`/Metal, что и измеренными чернилами: он
-сохраняет coverage треугольников и смешивание при самопересечении. Отдельного
-CPU-перерисовывателя рукописи и второго image cache нет. Временный растр
-ограничен видимым clip и 4 мегапикселями; удержанные пиксели принадлежат сцене. Admission сверяет ревизию:
-устаревшее выделение не подменяет новые чернила. Исходный журнал не переписывается;
-копия не получает повторных прав на его ID. Перенос/масштаб/поворот идут через
-общие selection, геометрию, стирание и undo. Лимиты выделения проверяются до
-разрастания подготовки (1024 штриха, 10 000 samples, 65 536 mesh vertices).
+Ruler is temporary owner-local pose, moved by finger and rotated at its round end.
+Pencil uses the ordinary measurer. `PhysicalPaper` defines 1 cm as two grid cells;
+an edge-drawn line becomes normal graphics. Laser writes no content: world points
+reproject with camera and decay by per-point time. Its timeline continues after
+lift/cancel until the final point expires.
 
-Текст создаётся касанием непосредственно на поверхности, без modal composer,
-кнопки добавления и распознавания типа исходника. Его начальный размер задан
-в экранных пунктах и точно переводится через масштаб камеры; после создания
-это обычный масштабируемый объект. Нативный UITextView отвечает за каретку,
-выделение и измерение строк TextKit, а не за хранилище. Создание, ввод и undo
-используют одну причинную очередь элементов; отдельный spatial-text writer
-удалён. Принятый исходник удерживается до завершения ввода, чтобы публикация
-кадра или уход со страницы не разорвали цепочку собственных правок. Пустое
-завершение удаляет объект; поздний ввод не восстанавливает удалённое.
+## Lasso and native text
 
-## Стирание элементов
+Lasso selects on any intersection, including boundaries. Items/cards select at lift
+without waiting for ink preparation. Starting inside a closed card on a board does
+not retarget the lasso to its cover. Mixed selection has one
+`NotebookSelectionSession` and a 32-target limit; graphics transforms do not pretend
+to transform notebook cards.
 
-Нативную геометрию ластик стирает по измеренному пути, не переводя её в растр.
-HTML/SVG-программа — цельный объект: первое пересечение ластика записывает
-`wholeElement` в ту же цель действия и убирает всю программу. Проверяется
-пересечение swept-контакта, не только его прямоугольных границ. Её WebKit
-демонтируется, а не продолжает исполняться под маской. Ни объединение тысяч
-треугольников, ни захват стёртого источника для неё не запускаются.
-Старые сохранённые действия без этого флага сохраняют свой измеренный смысл.
-`elementTargets`
-в `PageInkAction` и `SpatialInkSpan` фиксирует затронутые видимые ID и их
-локальные рамки на начало контакта. Для доски сохраняется точное tiled-world
-основание. Измеренные точки и ширина остаются единожды в том же действии чернил;
-отдельного журнала фигур, LWW-поля маски или второго сохраняющего API нет.
+Ink conversion fixes the accepted tail and prepares shared `InkStrokeGeometry`
+off-main as freehand with source IDs, pressure and ordered pen/eraser layers.
+The existing InkRasterRenderer/Metal path preserves triangle coverage and overlap,
+using bounded batches rather than pathological CoreGraphics union paths.
+Temporary raster is clipped to visibility and at most four megapixels.
+Admission rechecks revision; stale selection cannot replace new ink.
+Original journal entries remain immutable; a copy gains no authority over their IDs.
+Move/scale/rotate use ordinary selection, geometry, erasure and undo.
+Preparation limits are 1,024 strokes, 10,000 samples and 65,536 mesh vertices.
 
-Рендер вычитает объединение измеренных полос из контура/заливки/подписи и
-других элементов. Маска масштабируется с локальной рамкой элемента и движется
-вместе с ним. Новые ID не наследуют старый ластик. Прогнозные Pencil-сэмплы
-не становятся содержимым. Нативный контакт публикует вырез сразу; модель
-удерживает принятый вырез после подъёма до публикации чернил. Отмена активности
-одного действия восстанавливает одновременно его стирание рукописи и элементов.
+Text is created directly by a surface tap, initially sized in screen points then
+converted through camera scale. UITextView/TextKit owns caret, selection and line
+measurement; the common element queue owns content/undo. Accepted source persists
+through editing so scene publication cannot break causal continuation.
+Empty completion deletes; late input cannot revive deletion.
+Current native text uses fitted geometry consistently for rendering, selection,
+hit testing and manipulation, with one clipboard menu. Layer actions share the
+ordinary selection UI; exact installed behavior is recorded in verification.
 
-Точный повтор UUID обязан сохранять также targets. Независимые действия
-объединяются, пересекающиеся полосы не возвращают стёртые пиксели. Живая сцена,
-экспорт и закреплённые изображения используют один paint-путь; растровая полоса
-пассивных элементов не переносится в новую когорту, если её элемент затронут
-ластиком. Whole-object семантика требует обеих новых версий приложения —
-protocol 26, новые manifest 9; прежняя очередь manifest 4–8 читается без переписывания. Структура SQLite и существующие идентичности не меняются.
+## Erasure semantics
 
-## Проверка
+Native geometry is erased by measured paths without raster conversion.
+HTML/SVG programs are whole objects: the first actual swept-path intersection sets
+`wholeElement` on the action target and unmounts the runtime. Bounding-box overlap
+alone is insufficient. Historical actions without the flag retain measured semantics.
 
-11 сентября 2026, 12:09 МСК, связанный Core-профиль прошёл **91 тест / 7 suites**
-за **3.957 s**. Он включает **11 новых тестов / 35 вариантов входа**: точки,
-инструмент, цвет, порядок, повреждение, точный повтор после отмены, исчерпание
-порядка, позднюю копию листа, прямую запись строки, создание тетради, объединение
-архива, доставку и повтор отклонённой команды. Исходный лист, оба курсора,
-состав пространства и точки после повторного открытия сравниваются явно.
+`elementTargets` in `PageInkAction` / `SpatialInkSpan` freezes visible target IDs
+and local frames at contact start, including exact tiled-world basis for boards.
+Points/width live once in that same action, not a second mask journal.
 
-До и после профиля совпали 520 исходных файлов, SHA-256
-`a7374e9fb306322133690bd835588e785c33260e96168d54cd3fe717ae544187`.
-Журнал — `/tmp/notebook-single-page-owner-intent-profile.log`, статус 0;
-описи — соседние `intent-source-{before,after}.json`.
-Те же 11 регрессий на прежнем Core дают **91 нарушение**, статус 1:
-`/tmp/notebook-single-page-owner-final-red.log`. Код прежнего Core в контрольной
-копии не исправлялся; это отрицательный контроль, а не повтор до удачи.
-MCP прошёл 44 теста и smoke. На том же общем коде iPad-профиль прошёл
-**86 тестов** за **212.531 s**, включая 100 000 страниц, без ошибок, пропусков
-и runtime warnings (`single-page-owner-intent-ipad.xcresult`).
-После исправления только Mac-фикстуры адресного архива профиль Mac прошёл
-**10 тестов** за **26.999 s**, также без ошибок, пропусков и runtime warnings
-(`single-page-owner-atomic-fixture-mac.xcresult`). Опись этого профиля 520 файлов:
-`39552c12fa0408cd4c6693825a61000877f6e1e7c11dfdd18a4d5c35912ed16d`.
-Последующий полный `single-page-owner-full-cut` завершился с кодом 1:
-510 Core-тестов, 17 отказов подготовки архивов за 391.283 s. Причина и
-исправление ниже; этот маршрут не является PASS. Новый срез 520 файлов:
-`0ae09d3803e238807a5b4df4b44ab2d895fedf9358982ec404b37b91a8b74565`,
-`.build/single-page-owner-member-first-full-cut`; его полный PASS получен
-11 сентября, 13:17 МСК: 510 Core, 26 Codex, 26 external, 44 MCP, 113 Mac
-и 483 iPad. Квитанция связывает 520 исходников и 1885 файлов свидетельств.
-Оба xcresult без ошибок, пропусков и runtime warnings; независимая проверка
-квитанции и совпадения основного дерева прошла.
-Профиль исправленного порядка прошёл 37 тестов / 4 suites за 170.878 s,
-включая добавление среди 100 000 страниц: 5651 SQL-инструкций и 12 адресов.
-Журнал — `/tmp/notebook-single-page-owner-member-first-profile.log`, статус 0.
-Исходная опись профиля и нового полного маршрута совпадает.
+Rendering subtracts measured strips from contour, fill, label and other target
+parts. Masks scale/move with the element; new IDs do not inherit them. Prediction
+never becomes content. Accepted cuts remain visible through lift until durable ink
+publication. Undoing one action restores both its ink and element erasure.
 
-## Что выявили отрицательные проверки
+Exact UUID retries must preserve targets. Independent erasures merge without
+restoring erased pixels. Scene, export and pinned images use one painter.
+Affected passive raster bands cannot carry into a new cohort. Current compatibility
+is defined by [transport](transport-contract.md), not the historical version in
+which whole-element erasure first appeared.
 
-Прежний `PageDocument.merge` поглощал отказ чернил и мог принять соседние поля;
-сохраняющий путь после этого использовал входящий кандидат. SQL уже защищал
-байты массива точек, но не инструмент, цвет и порядок. Отдельный прямой метод
-сохранения мог удалить поздний контакт из старой копии. Новый контракт закрывает
-оба пути, а не только частный случай сетевого пакета.
+## Pencil above agent material
 
-- Первый сетевой пример пытался изменить уже сохранённые точки у отправителя
-  и получил правильный отказ его SQL. В окончательном примере два независимых
-  контакта называют общий UUID до обмена: конфликт обнаруживает получатель.
-  Первый отрицательный журнал — `/tmp/notebook-page-ink-conflict-green.log`;
-  исходная фикстура — `/tmp/notebook-page-ink-conflict-first-fixture.swift`.
-- Проверка повреждённого порядка теперь портит строку изолированной базы прямым
-  SQL, вне обычного писателя, который обязан отказать. Проверка чтения повреждения
-  сохранена. Предшествующие отказы — `single-page-owner-core`,
-  `single-page-owner-checked-core` и `single-page-owner-damage-diagnostic` в `/tmp`.
-- Изменение каталога вынесено из `#require` перед проверкой результата:
-  Swift Testing не вызывает mutating-метод на своей неизменяемой копии.
-  Ошибка компиляции сохранена в `/tmp/notebook-single-page-owner-publication-profile.log`.
-- MCP smoke прежде имитировал человеческую правку подменой общего счётчика,
-  оставляя прежние причинные версии полей. Теперь тест передаёт человеческое
-  намерение в `PageDocument.replaceElements`, затем в обычный `savePage`.
-  Требования к продолжению смысла и отмене не ослаблены. Предшествующий отказ
-  smoke сохранён в `/tmp/notebook-single-page-owner-mcp.log`.
+Paper composition is paper → material → final ink. A window-level
+`PaperPencilGestureRecognizer` receives typed Pencil contacts in installed geometry;
+early hitTest does not depend on possibly absent UIEvent touches. Finger reaches
+material/scene gestures; accepted Pencil cancels the underlying contact so drawing
+over a button cannot also activate it. System panels stay outside paper input.
 
-Mac-фикстура ранее сохраняла 63 новых листа до членства в уже существующем
-архиве. Единственный писатель правильно отказал; XCTest завис при оформлении
-ошибки в CoreSymbolicationDT. Образец стека и журнал —
-`/tmp/notebook-single-page-owner-intent-mac-sample.txt` и соседний `.log`, статус 75.
-Теперь фикстура публикует состав, размещение и все новые листы одной обычной
-командой. Проверки выбранного листа и запрета фонового запуска программ сохранены.
+The same code-ink route accepts only actual text-view descendants, not an overlaid
+chat button. Removing/reparenting an owner finishes accepted action; ordinary lift
+retains pressure-estimation completion. UUID reservation, persistence and causal undo
+remain with the existing canvas/queue.
 
-Полный Core обнаружил такой же порядок в двух фикстурах каталога. Теперь
-членство записывается перед листом внутри той же транзакции, а итоговый
-валидатор проверяет порядок и все зависимости. Размеры 1 024 и 100 000,
-измерения SQL и проверки отказов не сокращены. Прежний публичный
-`publishRemoteWorkspace` не имел производственных вызовов и требовал
-предварительно сохранить зависимость; он удалён, не оставлен адаптером.
-Проверка смешанного изменения каталога использует `saveWorkspaceBundle`,
-сверяет сохранённый новый лист и удаление заменённого документа.
+Object manipulation uses the shown source and one pending selection offset. A tap
+selects; actual movement starts the drag. Holding alone does not select or move
+material. Pencil cancels the drag preview without writing it. Browser links,
+fields, buttons, and authored input regions retain their native input ownership;
+no synthetic tap is replayed.
 
-Полный `page-ink-refusal-full-cut` со старшим промежуточным SHA `26dab6d8…`
-остановлен во время Core с кодом **130** после обнаружения прямого писателя;
-запись причины — `/tmp/notebook-page-ink-refusal-full-interruption.txt`.
-Это не завершённый PASS и не свидетельство текущих исходников.
+`NotebookPageComposition/2` separates changed painter output from historical
+snapshots without rewriting content history.
 
-Адресное слияние тяжёлого листа остаётся обязательным условием: входящий путь
-пока восстанавливает полный `PageDocument`. Установка, настоящие архивы и
-удаление старого Notebook этим изменением не выполнялись.
+## Polygon corners and quick shape
 
-## Pencil и агентский материал на одном листе
+Triangle/diamond vertices are 3/4 normalized convex corners, one causal field;
+absence means the standard contour. Rendering, picking, snapping and partial
+erasure share it. Explicit clear/change and undo preserve authorship.
 
-В `PageSurface` чернила находятся над агентскими элементами, как и в
-`PageCompositionRenderer`: бумага → материал → окончательные чернила.
-Прозрачный `PaperCanvasContainerView` не классифицирует контакт в `hitTest`:
-на физическом iPad первый вызов может ещё не содержать `UIEvent.allTouches`.
-Один `PaperPencilGestureRecognizer` окна принимает уже типизированный Pencil
-в установленной геометрии листа и передаёт его существующему `PaperInputView`.
-Палец проходит к материалу и сценовым жестам; принятый Pencil отменяет контакт
-подлежащего вида. Поэтому HTML-кнопка программы, выделенный элемент и его
-непрозрачная подложка не перекрывают рисование и не выполняют второе действие.
-Системные панели и исключённые области ввода не принадлежат листу. В коде тот
-же маршрут принимает только контакт настоящего потомка текстового вида, а не
-перекрывающей его кнопки чата. Снятие или перенос владельца завершает уже
-принятое действие; обычное отпускание сохраняет ожидание уточнения нажима.
-Резервирование UUID, запись, ластик и причинная отмена остаются у
-`PencilCanvasView` и очереди приложения; отдельной копии чернил артефакта нет.
+`NotebookQuickShapeSession` fixes the nearest line/arrow endpoint before first
+presentation. That endpoint follows Pencil and snaps to the node point, not a
+guessed center/border. Compound recognition hides complete accepted source strokes
+without rewriting measured history; shown object/ID survives lift.
 
-Удержание разрешается в `SceneSelectionRecognizer` по показанному источнику.
-`NotebookSelectionSession` хранит только выбор и незавершённое смещение; отпускание
-записывает положение прежним владельцем страницы или доски. Начало Pencil
-отменяет только предварительное перемещение. Кнопка перемещения удалена;
-действия удаления, размера и доступное с клавиатуры перемещение сохраняются.
-Картинка-ссылка сохраняет исходный WebKit tap, но её удержание поднимает
-материал тем же `SceneSelectionRecognizer`. После подъёма он исключает
-конкурирующие распознаватели только внутри принятого web-владельца: выделение
-текста или меню ссылки не выполняются вторым действием того же контакта.
-Поля, кнопки и собственные обработчики программы сохраняют нативный ввод;
-короткий tap не заменяется синтетическим событием. Удаление проверяется снятием
-самого материала, не только рамки выбора.
-Изменение порядка рисования получает адрес `NotebookPageComposition/2`:
-старый снимок не выдаётся за новое изображение, история содержания не меняется.
+## Checks
 
-## Углы многоугольников и удерживаемый конец Pencil
+Core regressions cover duplicate/conflicting UUIDs, order exhaustion, stale pages,
+row writes, workspace rollback, replication and replay after undo. Native checks
+exercise accepted recognizers, visible erase, selection and publication, with actual
+pixel/readback comparisons. Synthetic contacts are not hardware calibration.
 
-Треугольник и ромб — `NotebookGraphic`, не контуры WebKit и не новый вид
-журнала. `vertices` хранит 3/4 выпуклых угла в нормализованной рамке; отсутствие
-означает стандартный контур. Один контур обслуживает рисование, выбор,
-привязку и частичное стирание. Углы — одно причинное поле; независимая правка
-или явная очистка принимает фигуру, отмена такой правки возвращает авторство.
-
-Общий `NotebookQuickShapeSession` до первого показа закрепляет ближайший
-конец линии/стрелки под Pencil. Этот же конец следует за последующим движением;
-привязка к узлу сохраняет точку, а не тянет её к центру или границе. Палец
-по-прежнему редактирует связи через существующий механизм привязок.
-Составная стрелка скрывает все принятые исходные штрихи целиком; распознавание
-не меняет журнал измерений. Показанный объект и его ID сохраняются при отрыве.
+[Historical negative controls and profiles](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/page-ink-conflict-contract.md);
+[current installed evidence](verification.md).

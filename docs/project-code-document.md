@@ -1,118 +1,67 @@
-# Файл проекта и вертикальный документ
+# Project files and the vertical code document
 
-`NotebookFileAddress` связывает файл с UUID компьютера, ID проекта Codex,
-разрешённым корнем и относительным путём. Рабочая копия остаётся на Mac.
-`MacNotebookProjectFiles` читает и записывает её напрямую; это не поручение модели
-и не копия проекта в каталоге Notebook. Текущие корни перед каждой операцией
-возвращает существующее подключение Codex. Относительный путь не допускает
-`..`, пустых компонентов или абсолютного адреса. Обход удерживает дескрипторы
-папок и не проходит символические ссылки; специальные файлы не читаются,
-файлы с несколькими жёсткими ссылками не заменяются.
+`NotebookFileAddress` binds a file to computer UUID, Codex project ID, authorized
+root, and relative path. The working copy stays on Mac.
+`MacNotebookProjectFiles` performs direct file operations, using current roots from
+the Codex connection. Relative paths reject `..`, empty components, and absolute
+paths. Descriptor-based traversal rejects symlinks and special files; multiply
+hard-linked files cannot be replaced.
 
-`MacNotebookProjectFiles` владеет одним последовательным файловым потоком, а не
-очередью SQLite. Ожидание `open` или другого редактора не удерживает сохранение
-заметок, чтение MCP и доставку. Только короткие шаги журнала входят в существующую
-`NotebookPersistenceQueue`: намерение предшествует файловой операции, результат
-следует за проверкой. Второго писателя SQLite нет.
+One serial file worker owns filesystem operations, independently of SQLite.
+Only short intent/result journal steps enter `NotebookPersistenceQueue`.
+A request waiting ten seconds reports a timeout while the single worker remains
+responsible for the outstanding system call. Retry does not create more blocked
+threads. Shutdown cancels pending coordination and prevents new publication.
+An already started system call may remain blocked; its durable intent must be
+resolved rather than replayed blindly.
 
-Через десять секунд ожидания запрос получает понятную ошибку; занятый файловый
-поток остаётся единственным до возвращения системного вызова. Повтор не создаёт
-новых зависших потоков. Остановка отменяет ожидающий `NSFileCoordinator`,
-освобождает вызывающего и запрещает ещё не начатую публикацию. Ядро может
-удерживать уже начатый `open` до ответа системы: приложение не выдаёт тайм-аут
-за завершение этого вызова. Если файловая операция уже началась, её устойчивое
-намерение сохраняется для выяснения исхода без повторного исполнения.
+## Presentation and refresh
 
-Справа от переписки и поля сообщения находится сворачиваемое дерево, отделённое
-одним вертикальным разделителем без собственной подложки. Каждая раскрытая папка возвращает
-до 64 записей и продолжение. Нажатие открывает `NotebookCodeDocumentView` над
-существующей доской и под `NotebookChatWindow`. Это отдельное представление
-окна, не пространственный предмет. В `NotebookFileController` нет обращения
-к камере или выбору бумаги. Закрытие скрывает документ; черновик, адрес и место
-чтения остаются в SQLite. Поздний callback редактора проверяет полный адрес и
-не может записать старое содержание в новый открытый файл.
+A collapsible tree sits beside the conversation/composer. Each expanded folder
+returns at most 64 entries and a continuation. `NotebookCodeDocumentView` opens
+above the mounted board and below the chat window. `NotebookFileController`
+does not move the paper camera. Closing preserves address, draft, and reading position.
+Late callbacks must match the complete file address.
 
-Неудавшееся чтение относится к своей папке, а не к открытому документу или
-разговору. Видимая папка повторяет чтение не чаще чем через 15 секунд; закрытая
-панель и скрытые потомки не опрашиваются. Один запрос удерживает папку до ответа.
-Смена проекта, компьютера и остановка отвергают поздний ответ прежнего дерева.
-Разрешение доступа на Mac поэтому возвращает дерево без перезапуска iPad;
-записи файлов не входят в этот повтор и сохраняют прежние идентичности команд.
+The native text view owns vertical scrolling, selection, search, keyboard, and text
+undo. The supported file is UTF-8 up to 2 MiB; unsupported encoding, binary data,
+or excess size produces an explicit error without truncation.
 
-`UITextView` владеет вертикальной прокруткой, системным выделением, поиском,
-клавиатурой и отменой текста. Текст не превращается в изображения или страницы
-тетради. Обычное перелистывание тетрадей не изменяется. Код в этой первой
-реализации — UTF-8 до 2 МиБ; бинарный, иной по кодировке или более крупный файл
-получает явное сообщение без попытки преобразовать либо обрезать содержание.
-Рукопись и привязка пометок описаны в [code-annotations.md](code-annotations.md).
-Обсуждение выбранного материала относится к GUI-188, а запуск процесса —
-к GUI-187; наличие текстового редактора их не подменяет.
+The existing visible-chat loop checks eligible folders every three seconds.
+A folder refresh is due no earlier than ten seconds after success or fifteen after
+failure. Hidden descendants are not polled. A refresh replaces the already loaded
+page window and preserves its loaded extent. It performs no file writes and never
+retries an unknown save. Computer/project changes fence late replies.
 
-## Обновление без ручных кнопок
+## Drafts, transfer, and saving
 
-Открытый документ продолжает проверять версию файла через существующее чтение;
-черновик и конфликт сохраняют тех же владельцев. Ручного обновления документа
-и дерева больше нет. Пока чат и файловая панель видимы, существующий цикл раз
-в три секунды выбирает папку, которую пора перечитать: не чаще раза в десять
-секунд после успеха либо через пятнадцать секунд после ошибки. Проверяются
-корни и действительно видимые раскрытые папки, не скрытые или удалённые ветви.
-Перечитывается только ранее подгруженное окно страниц папки; оно заменяется
-целиком, не теряя дочитанный конец и не мигая индикатором на каждом опросе.
-Создание и удаление файла на Mac поэтому отражаются без сворачивания панели.
-Никакой файловой записи или повтора неизвестного сохранения этот путь не делает.
+`file_drafts` and `file_window` are local state, separate from scene content and
+presence. The existing persistence queue orders and coalesces addressed draft/read
+position updates. Switching files preserves accepted drafts.
 
-## Черновик, версии и доставка
+Responses carry at most 48 KiB. Chunks bind one snapshot's SHA-256, length, offsets,
+and full file address. Saving stages base and edited content under one ID/hash.
+Exact repeats are idempotent; another author or body under that ID is rejected.
+Only completed staging creates the durable `chat_job` linked to the draft.
+Staging itself does not modify the working file.
 
-`NotebookStore` хранит локальные `file_drafts` и `file_window` отдельно от
-содержания доски и `SessionPresence`. Существующая `NotebookPersistenceQueue`
-упорядочивает запись; обновления черновика и места чтения объединяются по
-своему адресу, не меняют ревизию сцены и не публикуют сетевую композицию.
-Смена файла не отменяет уже принятый черновик. Нет нового общего архива или
-второй истории разговоров.
+Mac merges nonoverlapping line edits. Equal edits count once; overlapping or
+ambiguous large rewrites retain both versions. Conflict resolution applies to the
+observed Mac version and is rechecked on the next save. Typing during save merges
+against the accepted version instead of being replaced by a stale response.
 
-Один ответ содержит до 48 КиБ. Части читаются по SHA-256 и длине одного
-снимка; получатель проверяет смещение, длину и итоговый хеш. Доступ к снимку
-связан с тем же полным адресом, а не только с известным хешем. Тот же
-последовательный канал чата передаёт подготовку записи и не конкурирует
-со своей ожидающей квитанцией. Камера и контакт сохраняют более высокий
-приоритет. Протокол пары — 6; прежний peer не получает неизвестную команду.
+`NSFileCoordinator(.forMerging)` asks cooperating editors to flush. Descriptor,
+size, times, and contents are rechecked before atomic replacement; permissions and
+metadata are retained. SQLite records intent first and confirmed readback afterward.
+After an unknown outcome, Mac compares hashes rather than repeating the write.
+Uncoordinated external writers remain outside a global filesystem CAS guarantee.
 
-Перед сохранением iPad отправляет базовую и изменённую версии частями с одним
-ID и хешем. Точный повтор части идемпотентен; разрыв, иной автор или иное
-содержание под этим ID дают отказ. Только завершённая отправка создаёт
-обычный устойчивый `chat_job`, атомарно связанный с черновиком. Подготовка
-никогда сама не пишет в рабочий файл.
+## Related contracts and checks
 
-Mac читает текущий файл и совмещает непересекающиеся изменения строк.
-Совпадающая доработка учитывается один раз; пересечение либо неоднозначное
-большое переписывание оставляет обе версии. Интерфейс показывает конфликт,
-а выбор версии или собственного исправления относится именно к прочитанной
-версии Mac. Следующее внешнее изменение снова проверяется при сохранении.
-Автоматическое обновление открытого документа также сохраняет несохранённый
-черновик; ввод, продолженный во время сохранения, совмещается с принятой
-версией, а не заменяется старым ответом.
-
-`NSFileCoordinator` с `.forMerging` просит участвующих редакторов сохранить
-изменения перед чтением и объединением. Дескриптор,
-размер, времена и содержание повторно проверяются до атомарной замены;
-права и метаданные переносятся. SQLite фиксирует намерение до замены и
-результат после чтения обратно. После неизвестного исхода Mac только сверяет
-хеш, а не повторяет запись. Несогласованный внешний писатель не участвует
-в блокировке `NSFileCoordinator`: эта граница не является файловой системой
-с общей атомарной compare-and-swap для произвольных процессов.
-
-## Проверки
-
-`NotebookProjectFileTests` проверяет идентичность машины, границы пути,
-трёхстороннее объединение, части передачи, изоляцию черновика и сохранность
-камеры. `NotebookProjectFilesTests` выполняет настоящую запись в частной
-папке Mac, проверяет конфликт, права, ссылку за пределы корня, продолжение
-папки и восстановление без повторной записи. Настоящий `NSFilePresenter`
-удерживает запись, пока та же очередь Notebook сохраняет независимый черновик;
-остановка отменяет координацию. Отдельно проверены зависший доступ без нового
-потока, запрет поздней записи и холодное завершение уже выполненного переноса.
-`NotebookFileControllerTests`
-проверяет большой файл, смену редактора и нативный документ над смонтированной
-доской. Жест `testCodeDocumentScrollsEditsAndClosesWithoutMovingPaper`
-проверяет прокрутку, системную клавиатуру, закрытие и возврат к черновику.
-Фактические результаты и физическая приёмка — в `verification.md`.
+See [annotations](code-annotations.md), [discussion](code-discussion.md),
+[terminal](project-runs.md), and current [transport](transport-contract.md).
+`NotebookProjectFileTests`, `NotebookProjectFilesTests`, and
+`NotebookFileControllerTests` cover addressing, real coordinated writes,
+conflicts, chunks, draft isolation, recovery, and camera preservation.
+The document gesture scenario checks scrolling, keyboard, close, and draft return.
+Actual evidence is in [verification](verification.md).

@@ -1,124 +1,98 @@
-# Одна задача Codex: Mac, iPad и интернет
+# One Codex task across Mac, iPad and remote transport
 
-## Владение
+## Ownership and runtime
 
-`NotebookApplicationLaunch.codexHost` владеет одним официальным App Server по stdio.
-`NotebookCodexSidecar` хранит доставку своего пространства в прежних `chat_jobs`;
-не владеет отдельным процессом модели. На Mac окно «Задачи Codex» вызывает этот
-маршрут напрямую. iPad вызывает тот же маршрут по аутентифицированному транспорту.
-Проекты (`project/list/create/read/update`), задачи, история, настройки и процессы
-принадлежат Codex. Добавление папки на Mac использует официальный idempotencyKey
-из существующей записи доставки, а не свой каталог или новый worktree.
+`NotebookApplicationLaunch.codexHost` owns one official stdio App Server.
+Workspace sidecars own existing `chat_jobs` delivery; Mac task windows and iPad
+use the same route. Codex owns projects, tasks, history, settings and processes.
+Adding a Mac folder uses the official idempotency key from the durable action,
+not a second project catalog or unsolicited worktree.
 
-До восьми пространств сохраняют своих владельцев/IPC; при необходимости вытесняется
-только неактивное пространство. Нельзя удалить пространство с незавершёнными
-командами, неопределёнными исходами или работающим исполнителем. Каждый активный
-thread закреплён за своим пространством: выбор другого окна не меняет MCP-адрес
-работающего агента. Глобальный Notebook IPC остаётся адресом выбранного пространства
-для внешних инструментов; Notebook-owned threads получают свой адрес при create/resume.
+Up to eight workspace/IPC owners may remain open. Only inactive ones can be evicted.
+Unfinished commands, uncertain outcomes or active execution block workspace deletion.
+An active task is pinned to its workspace. External tools use the selected global
+Notebook socket; Notebook-owned tasks receive their workspace socket at create/resume.
 
-Другой активный writer Codex — **явный отказ продолжения**, не захват и не копия
-задачи. Читать историю можно. Публичное присоединение к работающему Desktop daemon
-не подтверждено и не является скрытым fallback. Полностью закрытое окно Desktop
-для Notebook не требуется. Закрытие окна Notebook также не завершает исполнителя.
+Another active Codex writer is a refusal, not takeover or cloning. History is still
+readable. Attaching to a Desktop daemon is not a hidden fallback; the Desktop window
+need not be closed, and closing Notebook's last window does not stop execution.
 
-## Официальный runtime и вход
-
-Mac-сборка содержит полный официальный Codex package **0.155.0** и Node **24.21.0**,
-проверенные по SHA-256 архивов и подписям производителей. `prepare_notebook_codex.py`
-допускает сейчас arm64; выходной inventory проверяется до упаковки. Старая версия
-пакета заменяется целиком, не накапливает исполняемые файлы. При отсутствии bundled
-runtime допускается подписанный CLI в стандартном месте; его версия также проверяется
-до подключения. Приватный Node из Codex Desktop больше не используется.
+The bundled runtime pins official Codex **0.155.0** and Node **24.21.0**, validated
+by archive hashes and vendor signatures. `prepare_notebook_codex.py` currently
+admits arm64 and validates inventory before bundling:
 
 ```sh
 python3 Applications/prepare_notebook_codex.py --stage "$PWD/.build/notebook-codex-runtime"
 ```
 
-Notebook не обновляет выполняющийся runtime на месте. Обновление пары должно
-выполняться после явного завершения активных задач/терминалов. Обе стороны требуют
-протокол 37; несовместимый peer не получает старый небезопасный путь. Контейнеры,
-ключи и идентичности не пересоздаются.
+Replacement removes the old runtime as a unit. A permitted standard-location signed
+CLI fallback is version-checked; private Desktop Node is not used. Never update a
+running runtime in place: finish active tasks/terminals before pair replacement.
+Current transport is wire 37; containers, keys and identities remain unchanged.
 
-«Аккаунт Codex» есть в меню Mac и заголовке чата iPad. Используется только публичный
-`account/login/start` с `chatgptDeviceCode`; проверяется официальный HTTPS URL.
-Код и ссылка показываются на iPad; токены получает и хранит Codex на Mac.
-Доступны отмена входа по loginId, состояние аккаунта, реальные remaining limits и
-явный logout с подтверждением. Повтор прежнего attempt/logout revision не запускает
-новую церемонию и не выходит из позже выбранного аккаунта. Неизвестные лимиты не
-показываются как нулевые. Активная работа блокирует смену аккаунта.
+## Account
 
-Перед принятием/исполнением новой команды проверяется публичная идентичность
-аккаунта. Смена type/email отклоняет ещё не начатые сохранённые команды; попытки
-с неизвестным исходом не становятся новыми. Изменение тарифа не меняет личность.
-Проверка admission не ждёт rate-limit запроса. Отключить iPad, выйти из общего
-аккаунта и остановить ход — три разных действия.
+Mac and iPad account UI uses `account/login/start` with `chatgptDeviceCode` and
+validates the official HTTPS URL. iPad displays the code/link; Codex on Mac receives
+and stores tokens. Login cancellation uses loginId; logout is explicit and confirmed.
+Replaying an attempt/revision neither starts a new ceremony nor signs out a later
+account. Unknown limits remain unknown. Active work blocks account switching.
 
-## Интернет и переключение
+Admission and execution check public account identity. Changed type/email rejects
+unstarted saved commands; a plan change is not an identity change. Uncertain
+attempts never become fresh commands. Account validation does not wait for rate-limit
+lookup. Revoking a device, signing out and stopping a turn are distinct actions.
 
-1. Уже сопряжённые Mac/iPad получают ключи из существующего Notebook trust owner.
-2. В «Устройствах» Mac → устройство → «Интернет-доступ» импортируется выданный
-   администратором JSON маршрута. Routing capabilities сохраняются в Keychain,
-   не в Notebook SQLite/материалах. Client capability выдаётся iPad по доверенному
-   прямому соединению; первое подключение только через интернет не поддерживается.
-3. Mac сам открывает исходящий TLS/443 CONNECT uplink. iPad использует нативный
-   app-scoped Network.framework HTTP CONNECT proxy. Внутри остаются прежний TLS
-   ECDHE-PSK/ChaCha20-Poly1305 и Notebook proof/ready, без собственной криптографии.
-4. Relay соединяет только две роли одного выданного маршрута. Он не имеет ключа
-   пары, токенов ChatGPT, Notebook-команд или адреса SSH/App Server.
+## Internet route and selection
 
-LAN ищется первым; P2P discovery включается только на ограниченные 12 секунд после
-4 секунд LAN. Затем остаётся LAN-only поиск. При выбранном прямом канале поиск
-останавливается. Изменение сети имеет debounce 3 секунды; reconnect — backoff до
-32 секунд. Статус `рядом` берётся с resolved endpoint установленного канала
-на обеих сторонах, а не из Bonjour hint или одного includePeerToPeer. Системный
-DataTransferReport сохраняет в диагностике фактический интерфейс и счётчики
-пакетов без содержимого/ключей. Потеря default IP path тоже запускает ограниченный
-поиск: отсутствие интернета не означает отсутствие AWDL. Старый TCP/relay не
-блокирует кандидата нового сетевого поколения. Возврат приложения из сна открывает
-новое bounded окно только при отсутствии выбранного канала.
+1. Establish existing account trust first.
+2. Import an administrator-issued route JSON on Mac under Devices → iPad →
+   Internet access. Routing capabilities live in Keychain, not content/SQL.
+   The client capability reaches iPad over the already-trusted direct channel.
+   Internet-only first enrollment is unsupported.
+3. Mac opens an outbound TLS/443 CONNECT uplink. iPad uses app-scoped
+   Network.framework HTTP CONNECT. Inside remains existing ECDHE-PSK/
+   ChaCha20-Poly1305 TLS and proof/ready.
+4. Relay connects only the two roles of one provisioned route. It has no pair key,
+   ChatGPT tokens, Notebook commands or SSH/App Server endpoint.
 
-Bonjour TXT содержит workspace ID: сохранённые фоновые пространства имеют тот
-же device ID Mac, но не должны перехватывать соединение другого пространства.
-TXT только выбирает адрес; допуск по-прежнему проверяется внутри TLS.
+LAN is tried first. After four seconds, peer-to-peer discovery gets a bounded
+12-second window, then returns to LAN-only. Discovery stops once direct transport
+is selected. Network changes debounce for three seconds; reconnect backs off to
+32 seconds. Nearby status comes from the resolved selected endpoint, not Bonjour
+hints. DataTransferReport records interface/counters without payloads or keys.
+Loss of default internet path can still trigger bounded AWDL discovery.
 
-iPad — единственный выбирающий канал конец. Новый кандидат сначала проходит TLS,
-идентичность, workspace/protocol и ready. В пределах одного сетевого поколения
-предпочтение LAN → nearby → relay; новый подтверждённый сетевой путь может заменить
-устаревший. Mac паркует кандидата до первого transient выбранного iPad, а не
-ветирует его из-за ещё не умершего старого TCP. Именно Mac закрывает старый
-socket после получения выбранного transient: iPad не посылает преждевременный EOF,
-который мог бы обогнать выбор нового канала. Поздняя ошибка прежнего поколения
-не отключает новое и не запускает reconnect; команды сохраняют исходный durable ID.
+Bonjour workspace TXT selects the proper listener among background owners sharing
+a device ID; authentication still happens inside TLS.
 
-## Очереди и отказы
+iPad alone selects a channel. A candidate must pass TLS, identity, workspace,
+protocol and ready. Within one network generation preference is LAN → nearby →
+relay; a new authenticated network path may replace a stale one. Mac parks candidates
+until the first selected iPad transient, then closes the old socket. This avoids
+old EOF overtaking new selection. Stale errors cannot disconnect the new generation;
+durable command IDs survive switching.
 
-- Независимые задачи выполняются параллельно (до восьми workers маршрута), а не
-  ждут медленного создания другого thread. Остановка/решение обходят queued next-turn text.
-- iPad имеет один обычный запрос и один зарезервированный human-control запрос.
-  Задержанный файловый ответ не удерживает отмену/разрешение. Повтор использует
-  прежние envelope ID и command ID. Native request дополнительно fenced до await:
-  два устройства не могут одновременно отправить одно разрешение.
-- Blob-порция — 32 КиБ; encoded queued bytes ≤ 1 МиБ; unacknowledged ≤ 512 КиБ,
-  из них 256 КиБ зарезервированы для control; одновременно до двух manifests.
-  Credits и durable acknowledgement по-прежнему различаются. Публичные события
-  Codex coalesce каждые 100 мс. Второго bulk-канала и второго blob store нет.
-- Файлы, черновики с конфликтами, PTY, голос и материалы используют прежних
-  владельцев. Сеть не меняет файловые адреса, версионность или права проекта.
-- Отзыв iPad немедленно закрывает его локальные каналы и запрещает новые/сохранённые
-  неисполненные команды; поздний cloud refresh не снимает запрет. Отзыв relay
-  закрывает активные тоннели и старые client credentials. Уже принятую native
-  работу это **не** прерывает; для неё есть отдельная остановка.
-- Сон iPad/обрыв сети отключает отображение, не процесс Mac. Сон/выключение Mac
-  делает его недоступным; обходного облачного executor или обещания wake-on-WAN нет.
-- Смерть App Server прерывает живые процессы с сохранением вывода. Reconnect сети
-  не равен запуску нового shell. Неизвестный исход остаётся неизвестным до
-  положительной native квитанции; произвольная shell-команда не повторяется.
-- Явный quit Mac предупреждает об активной работе; закрытие последнего окна — нет.
+## Queues and failures
 
-Публичные API: [OpenAI App Server](https://learn.chatgpt.com/docs/app-server),
-[авторизация Codex](https://learn.chatgpt.com/docs/auth),
-[Apple Network.framework/P2P](https://developer.apple.com/documentation/technotes/tn3213-moving-from-multipeer-connectivity-to-network-framework).
-Эксплуатация — [Relay/README.md](../Relay/README.md), фактическая область проверки —
-[verification.md](verification.md). Simulator/loopback не доказывают AWDL или работу
-двух физических сетей; device-code start/cancel не заменяет завершённый человеком вход.
+- Up to eight route workers let independent tasks proceed without waiting for
+  another task's slow creation. Stop/decision bypass queued next-turn text.
+- iPad has one ordinary request and one reserved human-control request. Retries
+  preserve envelope/command IDs; native approval is fenced before await so two
+  devices cannot send it twice.
+- Existing transport limits apply: 32 KiB chunks, 1 MiB queued, 512 KiB unacknowledged
+  with 256 KiB reserved control capacity, two manifests. Events coalesce at 100 ms.
+  Credits are not durable acknowledgments; no second bulk store/channel exists.
+- Files, conflicts, PTY, voice and content retain their existing owners and rights.
+- Revocation closes channels and rejects new/unstarted commands, surviving cloud
+  refresh. Relay revocation closes tunnels and old client credentials. Already
+  accepted native work requires a separate Stop.
+- iPad sleep/disconnect ends display, not Mac work. A sleeping/offline Mac is
+  unavailable; there is no cloud executor or promised wake-on-WAN.
+- App Server death ends live processes while preserving output. Reconnect never
+  reruns arbitrary shell input. Unknown stays unknown until positive native evidence.
+- Explicit Mac quit warns about active work; closing the last window does not.
+
+Operations: [relay guide](../Relay/README.md). Evidence: [verification](verification.md).
+Simulator/loopback does not prove AWDL or two physical networks; device-code
+start/cancel does not prove a human-completed login.

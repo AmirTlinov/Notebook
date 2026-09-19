@@ -1,12 +1,16 @@
-# Внешняя подготовка архива
+# External archive preparation
 
-`notebook-archive-transfer` читает **независимую копию** прежнего файлового
-архива и готовит новый каталог вне установленных приложений. Этот executable
-не входит в зависимости `NotebookCore`, iPad, Mac или MCP. В приложениях нет
-чтения прежнего формата или файлового писателя содержания. Подготовленный
-внешне архив активирует общий bootstrap до создания модели.
+This is an **explicit offline conversion procedure**, not part of an ordinary
+application update. On September 11, 2026, Amir canceled restoration of historical
+archives. They remain independent backups and must not be imported, merged or
+deleted without a new request. Current application data continues in place.
 
-## Исполняемый контракт
+`notebook-archive-transfer` reads an independent copy of an old file archive and
+prepares a new directory outside installed apps. It is not a dependency of Core,
+iPad, Mac or MCP. Applications read the current format only; a separately prepared
+archive is admitted by bootstrap before model creation.
+
+## Single archive
 
 ```sh
 swift run notebook-archive-transfer \
@@ -15,54 +19,43 @@ swift run notebook-archive-transfer \
   --workspace-id 11111111-2222-4333-8444-555555555555
 ```
 
-UUID здесь — пример: реальный ID назначения выбирается один раз для подготовки
-нового рабочего пространства. Команда не сопрягает устройства. Выходной каталог
-не должен существовать, лежать внутри исходной копии или действующего архива.
-Символические ссылки внутри копии отклоняются. Исходные файлы не меняются.
+The UUID is illustrative. Select a destination identity once. The output must not
+exist or lie inside the source/live archive. Symlinks are rejected; inputs remain
+unchanged. This command does not pair devices.
 
-- Вход: полный `WorkspaceIndex/3`, `SessionPresence/4`, история сотрудничества
-  формата 2 и пустые чернила либо `NotebookInk/1` на живых листах. Неизвестный
-  формат, отсутствующий владелец и неподдерживаемый журнал дают отказ, а не
-  неполный результат. Предел конвертера — 100 000 предметов, 100 000 листов и
-  512 МиБ одного читаемого владельца; это ограничение допуска, не доказательство
-  времени работы или памяти на таком размере.
-- Каталог строится конструкторами Core: физические UUID, состав и порядок
-  сохраняются; новые причинные поля и узлы порядка принадлежат новому каталогу.
-  Выбор переносится из старого каталога в `SessionPresence/5`.
-- Бинарные чернила переводятся в `NotebookInk/2` без перерисовки. PNG основы,
-  число исходных действий, UUID, точки, свойства пера и отменённые действия
-  сохраняются. Только отсутствующие в прежнем формате sequence/isActive
-  получают свои исторические значения: позиция в массиве и активность.
-  Живой raw PencilKit не принимается этим маршрутом.
-- Пустая служебная запись агента получает **существующее описание своего
-  действия** только при точном совпадении UUID, контекста, даты, автора и
-  исходного причинного счётчика. Текст не генерируется. Пустой человеческий
-  вопрос или запись без соответствующей квитанции отклоняются. Изменённые
-  служебные записи перечислены в отчёте.
-- Файлы листов и документов вне канонического состава не воскрешаются.
-  Они остаются в исходной копии и перечисляются отдельно. Хеши всех исходных
-  файлов, включая прежние резервные копии и производные изображения, входят
-  в отчёт. **Исходную копию нужно сохранять вместе с результатом.**
+Input requires complete `WorkspaceIndex/3`, `SessionPresence/4`, collaboration
+history format 2 and empty or `NotebookInk/1` ink on live sheets. Unknown formats,
+missing owners and unsupported journals fail. Admission limits are 100,000 items,
+100,000 sheets and 512 MiB per owner; these are not performance guarantees.
 
-`NotebookCheckpoint` проверяет полный состав тел, геометрию, порядок,
-присутствие и зависимости истории. `NotebookStore.installCheckpoint` допускает
-только пустое назначение с тем же workspace ID. Одна обычная транзакция SQLite
-публикует содержание, историю, присутствие, происхождение и журнал доставки.
-Сбой до commit не оставляет принятой части. Ошибка после commit оставляет
-читаемый полный результат; повтор не перезаписывает существующий архив.
+Core constructors preserve physical UUIDs, membership and order while introducing
+the current causal/order fields. Selection moves to `SessionPresence/5`.
+Binary ink becomes `NotebookInk/2` without redrawing: PNG bases, original action
+counts, UUIDs, points, pen properties and undone actions survive. Missing legacy
+sequence/activity fields receive their historical meaning. Raw live PencilKit is
+not accepted as current app storage.
 
-Конвертер читает каждое полученное значение обратно и сравнивает с подготовленным
-содержанием, затем повторно проверяет хеши исходной копии. Только после этого
-закрытый временный каталог переименовывается в указанное новое назначение.
-Чужое назначение, появившееся во время подготовки, не заменяется. При отказе
-удаляется только собственный временный каталог.
+An empty service entry may recover only the existing action description matched
+by UUID, context, date, author and original causal clock. No text is generated.
+An empty human question or unmatched entry fails. Changes are listed in the report.
+Orphan sheet/document files remain in the source copy and are reported, not revived.
+All source-file hashes, including derived images and old backups, are inventoried.
+Keep the independent source together with the result.
 
-Результат состоит из `archive/` с новой SQLite-базой и `report.json` с квитанцией,
-исходными хешами и перечнем преобразований. `inputQuiescenceProven: false` и
-`installedApplicationsChanged: false` намеренно остаются ложными: команда не
-имеет механизма, способного подтвердить или исполнить эти действия.
+`NotebookCheckpoint` validates complete bodies, geometry, order, presence and
+history dependencies. `installCheckpoint` accepts an empty destination with the
+same workspace ID. One SQL transaction publishes content, history, provenance and
+delivery state. Before-commit failure rolls back; after-commit ambiguity leaves a
+complete readable result and never permits overwriting it.
 
-## Объединение с новым приложением, в котором уже есть записи
+Every prepared value is read back and compared, then source hashes are rechecked.
+Only then is the private temporary directory renamed to the new destination.
+A concurrently created destination is preserved; failure deletes only the
+converter's own temporary directory. Output contains `archive/` and `report.json`.
+The report deliberately keeps `inputQuiescenceProven: false` and
+`installedApplicationsChanged: false`.
+
+## Combining independent legacy and current copies
 
 ```sh
 swift run notebook-archive-transfer \
@@ -72,158 +65,95 @@ swift run notebook-archive-transfer \
   --output /absolute/path/to/new-combined-directory
 ```
 
-Этот режим не заменяет существующий архив неполным `CollaborationEnvelope`.
-Он копирует **весь** новый архив, сохраняет его workspace ID и добавляет
-старое содержание через обычную транзакцию `NotebookStore.receiveCollaboration`.
-Исходные копии остаются неизменными. Выбор листа, камеры и контекста не импортируется:
-сохраняется присутствие нового приложения. Запросы агента, закреплённые исходники,
-остановки, черновики и остальные существующие записи вне трёх объединяемых
-владельцев проверяются по адресам и хешам — они не могут измениться или исчезнуть.
+This explicitly authorized mode copies the entire current archive, preserves its
+workspace ID and adds legacy content through `receiveCollaboration`. It preserves
+current presence rather than importing old selection/camera/context. Existing
+requests, pinned sources, stops, drafts and unknown addressed records outside the
+three merged owners must retain their hashes.
 
-Старые Mac и iPad должны иметь одинаковые каталог, дерево, документы, состояния
-и историю. Каждый UUID пространственных чернил Mac обязан присутствовать на
-iPad с теми же неизменяемыми точками; разрешается только более позднее состояние
-того же действия. У различающихся PNG-основ нужны одинаковые сохранённые до миграции
-PencilKit-байты, размер и версия рисунка, одинаковое число действий основы и
-отсутствие последующих действий в обеих основах. В этом случае **явно выбирается
-PNG iPad**, а отчёт сохраняет хеши обеих основ и общего исходника. Это решение
-о происхождении рисунка, не утверждение о побайтовом или визуальном равенстве PNG.
-Отсутствующее доказательство или независимая правка Mac дают отказ всего переноса.
-Исходные байты также декодируются настоящим `PKDrawing`, число его штрихов
-должно совпадать с числом действий основы. Одинаковые повреждённые байты не
-считаются доказательством общего рисунка. PencilKit здесь связан только с внешним
-конвертером; raw PencilKit не становится допустимым живым форматом приложения.
+Legacy Mac/iPad catalogs, trees, documents, states and history must agree. Each Mac
+spatial-ink UUID must exist on iPad with identical immutable points; only a later
+state of the same action is allowed. Different PNG bases require matching retained
+pre-migration PencilKit bytes, dimensions, drawing version and base-action count,
+with no later actions. The converter explicitly selects the iPad PNG and records
+both hashes and the common source. Real `PKDrawing` decoding and stroke-count
+validation reject identical corrupt bytes. This proves common provenance, not
+pixel or visual equality.
 
-Общий заводской корень — единственная разрешённая общая физическая идентичность.
-Совпадающие предметы, листы, штрихи, члены корневой доски и история дают отказ;
-старое указание не может начать ссылаться на случайно одноимённый предмет нового
-архива. Проверка консервативна: даже неоднозначное упоминание UUID в тексте
-останавливает импорт, а не переписывает текст или состояние программы.
+The factory root is the only permitted shared physical identity. Colliding items,
+sheets, strokes, root members or history fail; even ambiguous UUID mentions in text
+are conservatively rejected rather than rewritten. `importingIndependent`
+preserves owner geometry and versions. Only added root membership and combined
+order receive a new human import version.
 
-`CollaborationContent.importingIndependent` подготавливает независимых владельцев,
-а `BoardDocument.importingIndependent` сохраняет их положения и версии полей.
-Только добавляемое членство корневой доски и объединённый порядок получают
-новую человеческую причинную версию импорта. Поэтому первоначальные нулевые
-часы не теряют предмет при доставке, а отмена прежнего создания не отменяет
-последующее принятие этого предмета при импорте. Это не изменение обычного
-алгоритма репликации и не декодер прежнего формата в приложении.
+Complete readback compares both sources' content. Current records outside
+`workspace.json`, `board.json` and `spatial-ink.json` retain their original hashes.
+All three source copies are rehashed. The result is an offline candidate, not a
+device identity, pairing grant, installed app or proof that in-memory input drained.
 
-Перед публикацией сравниваются все предметы, тела листов, документы, состояния,
-штрихи, положения и история обоих источников с полным readback. Все записи
-нового архива вне `workspace.json`, `board.json`, `spatial-ink.json` должны
-сохранить исходные хеши. Проверка не ограничивается известными импортёру видами
-запросов. Хеши трёх исходных копий сверяются повторно. `report.json` содержит
-исходные описи, адресные доказательства до/после и явные решения по PNG.
+## Preparing and admitting a pair
 
-Выход всё ещё **offline-кандидат для нового iPad-приложения**, а не архив,
-который можно безусловно скопировать на оба устройства. Он не переносит
-устройство, его ключи или допуск к сети, не устанавливает приложение, не
-доказывает сохранение ещё находящегося в памяти ввода и не разрешает удаление
-старого приложения. Сам по себе этот режим не активирует результат; для пары служит следующий маршрут.
+`--prepare-pair /absolute/request.json --output /absolute/new-pair` accepts
+`legacyIPad`, `legacyMac`, `currentIPad`, one `transitionID` and explicit
+`iPad` / `mac` destinations with `role`, `bundleID` and `actorID`.
 
-## Подготовка и атомарная активация пары
+Retained identities are `com.amirtlinov.notebook.preview` and
+`com.amirtlinov.notebook.mac`; actors come from each destination's own settings.
+The Mac candidate preserves all shared addressed records, including unknown ones,
+but does not inherit another device's drafts, jobs, actor, network cursors,
+settings or Keychain. This is initial archive conversion, not replacement of a
+working current Mac with its later local history.
 
-`--prepare-pair /absolute/request.json --output /absolute/new-pair` принимает
-явные пути `legacyIPad`, `legacyMac`, `currentIPad`, один `transitionID` и
-назначения `iPad`, `mac`: `role`, `bundleID`, `actorID`. Сохраняемое iPad-приложение
-имеет bundle ID `com.amirtlinov.notebook.preview`, Mac —
-`com.amirtlinov.notebook.mac`; разные actor ID берутся из существующих настроек
-этих приложений, а не из содержимого другого устройства.
+Each destination contains `candidate/` and `transition.json`. The manifest binds
+destination, source/prepared file hashes, workspace and shared logical content.
+SQL integrity, blobs and the complete checkpoint are checked before publication.
 
-Внешняя команда заново объединяет три независимые копии. `NotebookStore`
-готовит Mac из полной SQLite-копии: сохраняет все общие адресованные значения,
-включая неизвестные конвертеру записи, вопросы, остановки и закреплённые
-фрагменты. Чужие локальные черновики, задания чата, actor и сетевые курсоры
-не переходят на Mac; собственное положение Mac передаётся явно. Это начальный
-переход старого Mac, не замена уже работающего нового Mac с его локальной
-историей доставки. Настройки приложения и Keychain не копируются.
+`NotebookApplicationLaunch` waits for `NotebookArchiveActivation` before creating
+a model. Its sibling control directory is `Notebook.activation/`. Bootstrap checks
+destination, inputs and free space, then durably flushes files, manifest and
+directories **on the destination device**. Matching hashes or a Mac copy do not
+replace destination `fsync` / `F_FULLFSYNC`.
 
-Выход `ipad/` и `mac/` содержит `candidate/` и `transition.json`. Манифест
-закрепляет назначение, отпечатки всех файлов исходного и подготовленного
-архивов, workspace ID и общий хеш адресов, значений и их положения. До публикации
-проверяются SQLite, неизменяемые значения по хешам и полный checkpoint.
-Ошибки и изменение любого источника запрещают публикацию пары.
+One same-volume `RENAME_SWAP` exchanges directories after revalidation. The
+original remains in `Notebook.activation/candidate/`; independent backups remain
+untouched. A marker identifies whether the swap occurred. Recovery completes
+forward, re-flushing files if needed; it never swaps a later archive backward.
 
-`NotebookApplicationLaunch` не создаёт модель до завершения
-`NotebookArchiveActivation`. Управляющий каталог располагается рядом с корнем
-архива: `Notebook.activation/`. Обновление приложения должно сохранить его
-контейнер и существующий actor ID. При первом запуске bootstrap сверяет
-назначение, исходник, подготовленное содержание и свободное место; затем
-**на самом устройстве** принудительно сохраняет каждый файл исходного и
-подготовленного архивов, манифест и содержащие их каталоги. Копирование с Mac
-и совпадение хешей не заменяют `fsync`/`F_FULLFSYNC` назначения. Ошибка этой
-границы запрещает обмен. После повторной сверки bootstrap
-одним `RENAME_SWAP` меняет две директории на одном томе. Оригинал остаётся в
-`Notebook.activation/candidate/`, независимые резервные копии не затрагиваются.
-Данные и управляющие записи принудительно сохраняются до подтверждения.
+Durable `activation.json` receipts from both devices are admitted using:
 
-Метка внутри нового архива определяет, произошёл ли обмен при прерывании.
-Восстановление завершает начатую активацию вперёд; обратного обмена нет.
-Если обмен уже состоялся, но квитанция ещё не опубликована, восстановление
-снова сохраняет файлы на этом устройстве до квитанции. Ошибка не возвращает
-прежний архив на место нового.
-`activation.json` — устойчивая квитанция конкретного устройства. Пока нет
-квитанций обоих устройств, модель, синхронизация и агент не запускаются.
-`--admit-pair /absolute/ipad-activation.json /absolute/mac-activation.json
---output /absolute/new-admission.json` проверяет фактические квитанции:
-разные роли и actor ID, один переход и одинаковое общее содержание.
-Полученное `admission.json` помещается в оба управляющих каталога.
-Прочитанный допуск также принудительно сохраняется локально до запуска модели,
-сети и агента; ошибка записи оставляет приложение на границе активации.
+```sh
+swift run notebook-archive-transfer \
+  --admit-pair /absolute/ipad-activation.json /absolute/mac-activation.json \
+  --output /absolute/new-admission.json
+```
 
-Последующие запуски читают только небольшие квитанции и метку: новая запись
-SQLite не сравнивается с прежним отпечатком и никогда не заменяется старой
-подготовленной копией. Повреждённый допуск даёт отказ, не откат.
-Производственная регистрация Codex разрешена только активированному Mac в
-`~/Applications/Notebook.app` над его настоящим архивом; тестовые модели
-не регистрируют установленные инструменты.
+Roles/actors must differ and transition/shared content must match. Each device
+durably saves `admission.json` before model, sync or agent starts. Subsequent
+launches read small receipts and the marker; later SQL writes are not compared to
+or replaced by the old prepared snapshot. Corrupt admission fails without rollback.
 
-`Applications/install-preview.sh` остаётся установщиком **первого** Lab.
-Этот механизм не отменяет его отказ при существующем приложении и сам не
-собирает, не устанавливает, не удаляет и не сопрягает приложения.
+Production MCP registration belongs only to the admitted installed Mac at
+`~/Applications/Notebook.app`; test models do not register production tools.
+`Applications/install-preview.sh` remains a first-Lab installer and rejects an
+existing installation. Transfer itself neither builds nor installs applications.
 
-## Критерий старого ввода и оставшаяся приёмка
+## Verification and historical limits
 
-Амир согласовал для старой сборки независимые свежие резервные копии,
-проверенное сохранение всех обнаруженных данных и свою визуальную сверку
-перенесённых страниц на физическом iPad. Это заменяет недоступный программный
-учёт каждого исторически принятого UUID как критерий удаления старого bundle,
-но **не является доказательством**, что такой учёт существовал.
-Прежние резервные копии сохраняются; свежие снимаются только после новой
-согласованной короткой паузы рисования.
+`NotebookArchiveActivationTests`, `ArchivePairPreparationTests`,
+`NotebookArchiveLaunchTests`, `NotebookCheckpointTests` and
+`ArchiveTransferTests` use synthetic inputs to check atomicity, recovery, strict
+readback, identities, source preservation and refusal of corrupt or ambiguous
+data. They do not prove installation or historical input completeness.
 
-Подготовленная пара не считается установленной. До удаления старого
-`com.amirtlinov.notebook` нужны обновление Lab на месте, активация обоих архивов,
-новое подтверждённое сопряжение, работающий MCP с квитанцией и обратным чтением,
-физическая проверка и визуальная сверка Амира. Старый bundle удаляется последним;
-затем проверяются список приложений и холодный запуск оставшегося.
-Открытые адресные, документные и ресурсные границы и системный сбой InputUI
-остаются в [карте перехода](reliability-transition.md). Синтетические тесты
-активации не закрывают их и не подтверждают установку.
+The September 11 clean-install decision superseded the old migration checklist:
+historical content was preserved independently, not imported. Old requirements for
+a fresh paused copy, Amir's visual comparison and final old-bundle removal describe
+that abandoned transition, not completed migration evidence or current release
+prerequisites. See [preservation provenance](current-mac-preservation.md),
+[verification](verification.md) and the
+[original transfer record](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/archive-transfer.md).
 
-## Проверки
-
-`NotebookArchiveActivationTests` проверяет подготовку, каждую границу обмена
-и квитанции, отказ при изменении исходника, повреждении, чужом назначении и
-недостатке места, повтор и сохранение новой записи после активации.
-`ArchivePairPreparationTests` исполняет полный синтетический маршрут двух
-назначений, сохраняя остановленный вопрос и разные локальные идентичности.
-`NotebookArchiveLaunchTests` запрещает создание модели до допуска пары;
-ошибка bootstrap не открывает исходную SQLite. Это профильные проверки,
-а не полный проход `verify.sh` или физическая приёмка.
-
-`NotebookCheckpointTests` проверяет одну публикацию, устойчивое чтение,
-неполные зависимости, чужую идентичность, отказ замены, rollback и неоднозначный
-ответ после commit. `ArchiveTransferTests` использует только синтетические
-входы: сохранение UUID/точек/отмены/PNG, перенос истории, отказ неизвестному
-владельцу, исчезнувшему листу, изменившемуся источнику, ссылкам и конкурентному
-назначению. Все эти тесты входят в обычный `swift test` и `verify.sh`.
-
-## Автоматическое подключение установленной пары
-
-Активация архива и допуск устройства — разные границы. После допуска архива приложения находят свои устройства через private directory Apple Account; установщик больше не создаёт и не переносит pairing grants. Допущенный transitionID сохраняет отдельную область device-only Keychain, а новая активация получает ключ от единственного account owner. Контракт и точные границы проверки: [installation-pairing.md](installation-pairing.md).
-
-
-## Решение об установке 11 сентября 2026
-
-После подготовки механизма Амир отдельно отменил перенос прежнего содержания и разрешил чистую установку. Для этого установленного пространства исторические требования переноса выше не выдаются за выполненный перенос: старые архивы сохранены независимо, но не импортированы. Новый Lab и Mac 0.3.15 (18) обновлены на месте; старый bundle удалён. Автоматическое сопряжение, живой MCP и холодное повторное подключение проверены отдельно в [истории проверок установленного среза](verification.md). Открытая полная физическая приёмка перехода этим не закрывается.
+Archive admission and device trust are separate. Once admitted, devices connect
+through the private Apple Account directory; installers do not generate pairing
+grants. See [automatic connection](installation-pairing.md) and
+[additional-computer preparation](computer-enrollment.md).

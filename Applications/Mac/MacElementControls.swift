@@ -9,7 +9,7 @@ struct MacElementControls: View {
   @State private var contact: UUID?
 
   var body: some View {
-    let rect = frame
+    let rect = frame, availableLayers = model.availableLayerMoves
     ZStack(alignment: .topLeading) {
       Rectangle().stroke(.tint, lineWidth: 1).frame(width: rect.width, height: rect.height)
         .position(x: rect.midX, y: rect.midY).allowsHitTesting(false)
@@ -29,7 +29,14 @@ struct MacElementControls: View {
       }
       HStack(spacing: 8) {
         Button { model.editSelectedElement(reference) } label: { Image(systemName: "pencil") }.help("Редактировать")
-        Button { model.arrangeElement(reference, front: true) } label: { Image(systemName: "square.3.layers.3d.top.filled") }.help("На передний план")
+        Menu {
+          ForEach(NotebookElementLayerMove.allCases,id:\.self) { move in
+            Button(move.title) {
+              guard model.selectionSession.element == reference else { return }
+              model.arrangeSelection(move)
+            }.disabled(!availableLayers.contains(move))
+          }
+        } label: { Image(systemName:"square.3.layers.3d") }.help("Порядок слоёв")
         Button(role: .destructive) { model.deleteElement(reference) } label: { Image(systemName: "trash") }.help("Удалить")
       }.buttonStyle(.borderless).padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
         .position(x: max(70, rect.midX), y: max(22, rect.minY - 24))

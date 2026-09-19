@@ -28,8 +28,8 @@ final class NotebookInputTests: XCTestCase {
     XCTAssertTrue(move(.init(center: .init(x: 300, y: 0), scale: 0.3), 3))
     try await Task.sleep(for: .milliseconds(100))
     let pan = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }
-      .first { $0.delegate is BoardPanView.Coordinator })
-    let owner = try XCTUnwrap(pan.delegate as? BoardPanView.Coordinator)
+      .first { $0.delegate is WorkspacePanView.Coordinator })
+    let owner = try XCTUnwrap(pan.delegate as? WorkspacePanView.Coordinator)
     XCTAssertTrue(pan.isEnabled, "A spring is not a reason to discard the next finger contact")
     host.view.layoutIfNeeded()
     let finger = InputTouch(); finger.inputType = .direct
@@ -76,7 +76,7 @@ final class NotebookInputTests: XCTestCase {
     let camera = WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn: false,
       isEnabled: true, inputGate: gate, onCamera: { _ in }, onUndo: {})
     camera.install(on: window, inside: anchor)
-    let pan = BoardPanView.Coordinator(isEnabled: true, inputGate: gate,
+    let pan = WorkspacePanView.Coordinator(isEnabled: true, inputGate: gate,
       onBegan: {}, onChanged: { _ in }, onEnded: { _ in }, onCancelled: {})
     pan.install(on: window, inside: anchor)
     defer { camera.uninstall(); pan.uninstall(); ink.uninstall(); window.isHidden = true }
@@ -261,7 +261,7 @@ final class NotebookInputTests: XCTestCase {
     let anchor = UIView(frame: .init(x: 0, y: 0, width: 600, height: 800))
     window.rootViewController = host; host.view.addSubview(anchor); window.makeKeyAndVisible()
     var shown = CGPoint.zero, cancellations = 0, commits = 0
-    let owner = BoardPanView.Coordinator(isEnabled: true, inputGate: gate,
+    let owner = WorkspacePanView.Coordinator(isEnabled: true, inputGate: gate,
       onBegan: {}, onChanged: { shown = $0 }, onEnded: { shown = $0; commits += 1 },
       onCancelled: { cancellations += 1 })
     owner.install(on: window, inside: anchor)
@@ -297,7 +297,7 @@ final class NotebookInputTests: XCTestCase {
     let anchor = UIView(frame: .init(x: 0, y: 0, width: 600, height: 800))
     window.rootViewController = host; host.view.addSubview(anchor); window.makeKeyAndVisible()
     var samples: [CGPoint] = []
-    let owner = BoardPanView.Coordinator(isEnabled: true, inputGate: NotebookInputGate(),
+    let owner = WorkspacePanView.Coordinator(isEnabled: true, inputGate: NotebookInputGate(),
       onBegan: {}, onChanged: { samples.append($0) },
       onEnded: { samples.append($0) }, onCancelled: {})
     owner.install(on: window, inside: anchor)
@@ -333,7 +333,7 @@ final class NotebookInputTests: XCTestCase {
     window.rootViewController = host; host.view.addSubview(anchor); window.makeKeyAndVisible()
     var isUpdatingView = false, begins = 0, cancellations = 0, successorCancellations = 0
     var shown = CGPoint.zero
-    let owner = BoardPanView.Coordinator(isEnabled: true, inputGate: gate,
+    let owner = WorkspacePanView.Coordinator(isEnabled: true, inputGate: gate,
       onBegan: { begins += 1 }, onChanged: { shown = $0 }, onEnded: { shown = $0 },
       onCancelled: {
         XCTAssertFalse(isUpdatingView, "SwiftUI completion must not run inside native configuration")
@@ -394,7 +394,7 @@ final class NotebookInputTests: XCTestCase {
     let window = UIWindow(windowScene: scene), host = UIViewController()
     let anchor = UIView(frame: .init(x: 0, y: 0, width: 600, height: 800))
     window.rootViewController = host; host.view.addSubview(anchor); window.makeKeyAndVisible()
-    let owner = BoardPanView.Coordinator(isEnabled: true,
+    let owner = WorkspacePanView.Coordinator(isEnabled: true,
       inputGate: gate,
       onBegan: {}, onChanged: { _ in }, onEnded: { _ in }, onCancelled: {})
     owner.install(on: window, inside: anchor)

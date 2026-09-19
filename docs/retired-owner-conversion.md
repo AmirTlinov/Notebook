@@ -1,44 +1,31 @@
-# Старые владельцы преобразуются до запуска приложения
+# Convert retired owner formats outside the application
 
-`BoardDocument` принимает только свой текущий формат, `DocumentDocument` —
-только документ с явным размером бумаги. `BoardNode` требует собственные
-`portalCamera` и `portalStamp`; живой декодер больше не восстанавливает их по
-доске. Прежние структуры размещений, ветвление Board/1 и выбор A4 для
-Document/1 удалены из NotebookCore.
+`BoardDocument` accepts its current format; `DocumentDocument` requires an explicit
+paper size. `BoardNode` requires its own `portalCamera` and `portalStamp`.
+The live decoder does not reconstruct them from a board or supply A4 for an old
+document.
 
-Эти исторические значения принадлежат только внешнему
-`NotebookArchiveTransfer/LegacyDocumentAndBoard.swift`. Он переименовывает
-`notebookID`/`notebookIDs` у типизированных размещений и стопок, назначает
-опубликованное значение A4 старому документу и восстанавливает прежнее значение
-камеры только при отсутствии её полей. Явно повреждённое значение и неизвестный
-формат вызывают отказ. Одноимённые поля внутри программы не переписываются.
-Оригинальные файлы остаются в независимой копии.
+Historical conversion belongs to the separate
+`NotebookArchiveTransfer/LegacyDocumentAndBoard.swift`. It renames
+`notebookID` / `notebookIDs` in typed placements and stacks, assigns the published
+A4 value to an old document and restores an old camera only when its fields are
+absent. Corrupt explicit values and unknown formats fail. Same-named fields inside
+program source are untouched. Original files remain in their independent copy.
 
-Прямая проверка полного переноса выявила прежнее расхождение: SQLite делал
-неявные часы нового документа явными уже при публикации, поэтому подготовленный
-checkpoint с `collaboration == nil` не совпадал с обратным чтением. Теперь этим
-преобразованием владеет `DocumentDocument.materializingCausalVersions`.
-И SQLite, и внешняя подготовка вызывают один метод, без новой правки источника
-или увеличения часов. Условие точного readback не ослаблено. Отчёты отдельного
-переноса и объединения перечисляют преобразованные доски/документы с SHA-256
-исходного файла и подготовленного логического владельца.
+`DocumentDocument.materializingCausalVersions` is the single owner for making
+implicit initial clocks explicit. SQL publication and external preparation both
+call it without adding an edit or incrementing clocks. Prepared checkpoint and
+readback must match exactly. Transfer reports identify each converted owner using
+the source-file SHA-256 and prepared logical-owner SHA-256.
 
-## Проверка 10 сентября 2026
+## Historical verification
 
-Неизменный профиль в `.build/strict-document-board-development` прошёл
-62 Core-теста в шести наборах (1.723 s) и 26 external-тестов в четырёх наборах
-(0.714 s). Команда: `swift test --filter
-'NotebookArchiveTransferTests|legacy|currentDocument|boardNodeRequires|document|portal|Portal|boardHierarchy|NotebookCheckpointTests|NotebookArchive'`.
-Журнал `/tmp/notebook-strict-document-board-final.log`, exit 0.
-Проверены UUID, порядок стопки, координаты, часы, исходник и состояние программы,
-полный архив с обоими старыми форматами, неизменность файлов источника,
-отказ текущих декодеров и восстановление активации пары.
+The September 10 immutable development profile passed 62 Core tests and
+26 external-transfer tests, covering identities, stack order, coordinates, clocks,
+program source/state, source-file preservation, strict decoder refusal and
+activation recovery. The first compile failure and subsequent implicit-clock
+readback failure were retained before the final pass. This was a focused
+implementation check, not installation or physical acceptance.
 
-Первый новый тест использовал несуществующий метод создания стопки;
-`/tmp/notebook-strict-document-board-compile-failed.log` сохраняет этот отказ.
-Следующий полный перенос выявил расхождение неявных часов;
-`/tmp/notebook-strict-document-board-readback-failed.log` и
-`/tmp/notebook-strict-document-board-diagnostic.log` сохраняют отрицательную
-проверку и точную разницу. После переноса преобразования к владельцу та же
-проверка проходит. Это профиль реализации, не общий `verify.sh` и не установка
-или физическая приёмка пользовательских архивов.
+[Original detailed evidence](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/retired-owner-conversion.md).
+Current execution rules: [archive transfer](archive-transfer.md).

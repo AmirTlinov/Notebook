@@ -99,10 +99,31 @@ public struct NotebookFreehand: Codable, Equatable, Sendable {
   public func contains(_ point: CGPoint, size: CGSize, transform: NotebookGraphicTransform?, tolerance: Double = 0) -> Bool {
     guard CGRect(origin:.zero,size:size).insetBy(dx:-tolerance,dy:-tolerance).contains(point) else { return false }
     for layer in layers.reversed() {
-      let path = Self.path(layer.renderVertices,size:size,transform:transform)
-      if path.contains(point) { return layer.tool != .eraser }
-      if layer.tool == .pen, tolerance > 0,
-        path.copy(strokingWithWidth:tolerance*2,lineCap:.round,lineJoin:.round,miterLimit:10).contains(point) { return true }
+      // One point needs triangle containment/distance, not an enormous
+      // overlapping CGPath plus its stroked Boolean outline on the UI thread.
+      let vertices = layer.renderVertices
+      let padding = layer.tool == .pen ? max(0,tolerance) : 0
+      func projected(_ vertex: Vertex) -> CGPoint {
+        let p = (transform ?? .identity).applying(.init(x:vertex.x,y:vertex.y))
+        return .init(x:p.x*size.width,y:p.y*size.height)
+      }
+      func cross(_ a: CGPoint, _ b: CGPoint, _ p: CGPoint) -> Double {
+        (b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x)
+      }
+      func near(_ a: CGPoint, _ b: CGPoint) -> Bool {
+        let dx = b.x-a.x, dy = b.y-a.y, length = dx*dx+dy*dy
+        let t = length > 0 ? min(1,max(0,((point.x-a.x)*dx+(point.y-a.y)*dy)/length)) : 0
+        return hypot(point.x-a.x-t*dx,point.y-a.y-t*dy) <= padding
+      }
+      for i in stride(from:0,to:vertices.count,by:3) {
+        let a = projected(vertices[i]), b = projected(vertices[i+1]), c = projected(vertices[i+2])
+        guard point.x >= min(a.x,b.x,c.x)-padding, point.x <= max(a.x,b.x,c.x)+padding,
+          point.y >= min(a.y,b.y,c.y)-padding, point.y <= max(a.y,b.y,c.y)+padding else { continue }
+        let ab = cross(a,b,point), bc = cross(b,c,point), ca = cross(c,a,point)
+        let inside = abs(cross(a,b,c)) > 1e-12
+          && ((ab >= 0 && bc >= 0 && ca >= 0) || (ab <= 0 && bc <= 0 && ca <= 0))
+        if inside || (padding > 0 && (near(a,b) || near(b,c) || near(c,a))) { return layer.tool != .eraser }
+      }
     }
     return false
   }

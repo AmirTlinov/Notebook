@@ -1,64 +1,59 @@
-# Автономная типографика: физический инженерный прототип GUI-238
+# Historical physical-iPad typesetting probe
 
-Это **не второй редактор Notebook и не включённая функция**. Отдельный подписанный
-bundle ID проверяет необходимую границу будущего единого макета: существующий
-конвертер Markdown → TeX и Tectonic 0.16.9 выполняются непосредственно на iPad.
-PDFKit показывает ровно полученный PDF. Живое содержание Notebook, сопряжение,
-ключи и контейнеры не читаются и не меняются. Simulator не используется.
+This is the **historical GUI-238 feasibility prototype**, preserved as evidence
+of the limits of an earlier approach. It is not the current Notebook editor,
+typesetter, or a supported build route for this checkout.
+
+The prototype ran the Markdown-to-TeX converter and Tectonic 0.16.9 directly on a
+physical iPad and displayed its PDF through PDFKit. Its separate signed bundle,
+`com.amirtlinov.notebook.typeset-probe`, did not access the live Notebook
+container, pairing, keys, or content. It used no Simulator.
+
+## Historical reproduction
+
+The retained `run.py` refers to the retired
+`Sources/NotebookMarkupService/TeXResources.lock.json` and the old TeX runtime.
+Those dependencies are absent from the current tree. Use a matching historical
+checkout and its recorded runtime to reproduce the original experiment; do not
+run these commands as current application setup:
 
 ```sh
 python3 Tests/NotebookTypesetterProbe/run.py --build --tex-runtime /path/to/notebook-tex-runtime
-python3 Tests/NotebookTypesetterProbe/run.py --run --device <physical-UDID>
+python3 Tests/NotebookTypesetterProbe/run.py --run --device PHYSICAL_DEVICE_UDID
 ```
 
-`--build` готовит закреплённые исходники и зависимости в `.build/print-layout-spike`,
-собирает только iOS. Требуются Rust с `aarch64-apple-ios`, Xcode, XcodeGen, CMake,
-automake/pkg-config и разрешённая подпись команды проекта. Полный закреплённый
-Исторический нативный прототип не является приложением. Текущая подготовка
-того же полного bundle находится в `Applications/prepare_notebook_distribution.py`; его контрольная
-сумма проверяется, пакеты пользователя и сеть во время вёрстки недоступны.
-Первичная подготовка зависимостей использует сеть. Xcode/device слот необходимо
-согласовать с остальной работой над проектом; второй runner не запускается.
+Historically, build preparation used `.build/print-layout-spike`, Rust with
+`aarch64-apple-ios`, Xcode, XcodeGen, CMake, automake/pkg-config, and project
+signing. Initial dependency preparation required network access; typesetting
+verified the pinned bundle and denied user packages/network. Its full initial
+bundle occupied about 1.4 GiB. The shared native runner slot must remain exclusive.
 
-`--run` устанавливает **com.amirtlinov.notebook.typeset-probe**, запускает
-проверку и сохраняет device log, отчёт и PDF в каталоге сборки. Удаление прототипа
-производится явно, не вместе с рабочим Notebook.
+The run installed only the probe bundle and retained device logs, reports, and
+PDFs. Removing that prototype is an explicit action independent of Notebook.
 
-## Что именно проверяется
+## What the experiment measured
 
-- A4/Letter с проверкой MediaBox, кириллица, формулы, таблица, подключённый
-  пакет и действующая PDF-ссылка через существующий `notebook-markup.js`;
-- запрет чтения тестового частного файла контейнера из TeX;
-- десять циклов бесконечного макроса, deadline и новой успешной вёрстки без
-  перезапуска, восстановление после ошибки TeX; сохранённый PDF остаётся
-  текстовым/векторным;
-- время всей локальной компиляции и **phys_footprint после операции**, не FPS
-  и не максимальная память. Это наблюдения, не доказательство долгой стабильности.
+- A4/Letter MediaBox, Cyrillic text, formulas, a table, a package, and a live PDF
+  link through `notebook-markup.js`.
+- Denial of a test private container file from TeX.
+- Ten infinite-macro/deadline/success cycles and recovery after TeX errors
+  without process restart; PDF text and vectors remained intact.
+- Whole local compilation time and post-operation `phys_footprint`, not peak
+  memory, FPS, or long-session stability.
 
-Порт CoreText, заменяемый input provider и экспериментальный `get_next` checkpoint
-находятся в одном небольшом patch закреплённого Tectonic. Файловый provider даёт
-доступ только к каноническим системным font-файлам; он не использует штатный
-`FilesystemIo`, который допускает абсолютные пути и выход через `..`.
-Тестовый checkpoint проверяет deadline каждые 1024 вызова `get_next`, **но не
-гарантирует остановку всех фаз двигателя**. Нельзя использовать его как готовую
-границу безопасности в основном приложении.
+One patch supplied CoreText integration, a replacement input provider, and an
+experimental deadline check every 1,024 `get_next` calls. The provider allowed
+canonical system-font files without the upstream unrestricted filesystem
+provider. The checkpoint did not bound every engine phase and was not a
+production security boundary.
 
-## До допуска в Notebook остаётся
+The probe did not establish bounded cancellation/memory in PDF/font/BibTeX,
+cross-device font/package identity, source maps, causal undo, canonical-layout
+persistence, full document compatibility, or complete user/performance acceptance.
+Those limitations remain properties of this experiment, not a current product
+roadmap. GUI-199/205 were not closed by its results.
 
-- ограниченная отмена и память во всех фазах, включая PDF/font/BibTeX, не только
-  бесконечный TeX-макрос; корректная очистка после ошибок;
-- точная идентичность шрифтов/пакетов между устройствами: одинаковый номер
-  Tectonic не доказывает одинаковую геометрию;
-- source map, действия общего исполнителя, causal undo, сохранение канонического
-  макета и повторное открытие; текущий тестовый редактор этого не проверяет;
-- изображения, preamble/packages, ссылки, таблицы и живые программы на отложенном
-  корпусе, отрицательные примеры и проверка сохранения текущих возможностей;
-- интеграция в нынешнего владельца документов с заменой старой пагинации, а не
-  добавлением параллельного редактора/камеры;
-- системные измерения, десять пользовательских повторов и 30 минут смешанной
-  работы. GUI-199/205 этой проверкой не закрываются.
-
-Этот прототип сохранён как историческое свидетельство ограничений, не как
-исполняемый путь Notebook. Текущая реализация описана в
-`docs/document-page-fragments.md`. Первичный полный bundle занимает около 1.4 ГиБ на диске;
-его нельзя представлять как бесплатное добавление к приложению.
+The current single-owner implementation is documented in
+[canonical document pages](../../docs/document-page-fragments.md).
+Historical outcomes and subsequent replacements are indexed in
+[verification](../../docs/verification.md).

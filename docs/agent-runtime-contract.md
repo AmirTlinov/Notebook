@@ -1,270 +1,113 @@
-# Codex в Notebook: владелец разговора и доставка
+# Codex in Notebook: conversation ownership and delivery
 
-Notebook не исполняет модель. `NotebookCodexHost` держит один комплектный официальный
-Codex App Server; маршруты `NotebookCodexSidecar` обращаются к нему через проверенный `CodexAppServer`; история, модель, рабочая папка,
-инструменты и разрешения остаются у той же задачи Codex. Отдельные исполнитель,
-профиль с закреплённой моделью и собственный OAuth удалены. Вход Notebook вызывает
-штатный device-code API Codex; токены не покидают его профиль на Mac.
-Архивные `AgentRequest` и их причинные записи остаются читаемыми для переноса
-настоящих архивов. `AgentArchive` читает их адресно, а `NotebookAgentArchive`
-проверяет перенос и слияние; создание, захват исполнения, поток и остановка
-прежних запросов удалены из Core вместе с частным диспетчером инструментов.
-Архивный request ID не разрешает новую правку. Новые действия Codex проходят
-единственный обычный `CollaborationStore`, его версии и причинную отмену.
+Notebook does not execute a model. One `NotebookCodexHost` owns the bundled official
+Codex App Server; workspace-scoped `NotebookCodexSidecar` routes use that host.
+Codex owns task history, model, working directory, tools and permission policy.
+Notebook has no separate model executor or OAuth implementation. Device-code login
+is handled by Codex; credentials remain on Mac.
 
-## Владельцы
+Historical `AgentRequest` records remain address-readable for archive transfer via
+`AgentArchive` / `NotebookAgentArchive`. Their retired dispatcher is not a live
+execution path, and an old request ID authorizes no new edit. Current edits use
+the ordinary `CollaborationStore`, versions and causal undo.
 
-- `NotebookChatController` хранит выбор задачи, черновик и ограниченную проекцию.
-  Его жизнь принадлежит модели, не видимости панели. Сворачивание не отменяет ход.
-- `NotebookStore` хранит локальные `chat_jobs` и `chat_panel` в той же SQLite WAL;
-  `NotebookPersistenceQueue` сохраняет их без обхода принятого Pencil. Эти записи
-  не публикуют контентную ревизию и не являются копией истории Codex.
-- `SharedContext` сохраняет человеческое указание. Неизменяемые исходники и PNG
-  адресованы `collaboration/attention/<context>/<reference>.json` и передаются
-  обычным журналом с квитанциями. Текущая камера не переадресует эти значения.
-  `nb.attention` в `notebook_execute` читает их через существующий Mac IPC, проверяет хеш PNG
-  и возвращает явное отсутствие исторических пикселей вместо нового снимка.
-- `NearbySync` передаёт чат только после прежнего TLS/двустороннего доверия.
-  Протокол пары версии 30; несовместимая пара отказывается от обмена.
-  Один срочный control-запрос имеет отдельный слот выше присутствия; обычные
-  запросы и ответы чата идут ниже контакта и присутствия; события разговора
-  имеют отдельную ещё более низкую позицию, не вытесняющую квитанцию.
-- `NotebookCodexSidecar` хранит попытку до native RPC. Новая задача не получает
-  настроек модели/прав из Notebook; существующая сохраняет свой native UUID.
+## Owners
 
-## Сообщение и сбой
+- `NotebookChatController`: selected task, draft and bounded presentation; owned
+  by the model rather than panel visibility. Collapsing chat does not stop a turn.
+- `NotebookStore` / `NotebookPersistenceQueue`: local `chat_jobs` and `chat_panel`
+  in the same WAL, respecting accepted Pencil priority. These are delivery/UI state,
+  not shared content revisions or a second Codex history.
+- `SharedContext` / `AgentPinnedSource`: immutable human-indicated content and PNG
+  evidence at `collaboration/attention/<context>/<reference>.json`, delivered through
+  normal content replication. `nb.attention` validates the image hash and reports
+  unavailable historical pixels rather than substituting a fresh screenshot.
+- `NearbySync`: authenticated chat delivery through the current
+  [wire contract](transport-contract.md). A reserved human-control slot precedes
+  ordinary chat; coalesced conversation events have lower priority than receipts,
+  contact and presence.
+- `NotebookCodexSidecar`: durable attempts before native RPC. Existing tasks retain
+  native UUIDs; creating one does not invent a Notebook-specific permission profile.
 
-На iPad нажатие отправки синхронно закрепляет текст, задачу и физическое указание,
-до первого ожидания. Модель удерживает принятую подготовку и дожидается её при
-закрытии; смена задачи и более поздний черновик не переадресуют сообщение.
-Исходящий ввод получает UUID и сохраняется до отправки. Повтор одного
-UUID с другим содержанием — ошибка. Порядок первой передачи задаёт приём SQLite,
-не часы iPad; исчезновение уже принятых записей не переставляет оставшуюся очередь. Sidecar сохраняет тот же ввод и переводит
-`saved → attempting` до обращения к Codex. Принятый ход записывается как
-`accepted` с настоящим turn ID. Повтор запроса доставки читает прежнюю квитанцию.
+## Sending and uncertain outcomes
 
-При старте sidecar незавершённая попытка становится `uncertain`. Каноническая
-история сверяется по `clientUserMessageId`, постранично. Найденное принятие
-закрывает попытку; отсутствие ID, обрыв и ошибка не разрешают повторное исполнение.
-Неоднозначное создание задачи или ответ на разрешение также не повторяются
-автоматически. Очередь ограничена 128 незавершёнными вводами; переполнение явно
-отказывает, а не удаляет неизвестные сообщения. Очередь занятой задачи не
-использует steer и не посылает interrupt. Остановка называет конкретный ход.
+Send synchronously fixes text, task and physical indication before the first await.
+The model retains accepted preparation through closure; later draft/task changes
+cannot redirect it. Input UUID and payload are persisted before transmission.
+Reusing a UUID with different content fails. SQLite acceptance order, not device
+wall time, orders first delivery.
 
-Запросы command/file/permissions и уточнения показаны в панели. Разрешение
-отправляется только по явной кнопке человека и только один раз на запрошенный ход.
-UUID решения выводится из автора, задачи, хода и настоящего запроса Codex,
-а UUID остановки — из автора, задачи и хода. Повторное нажатие, сворачивание
-и перезапуск читают прежнюю запись; противоположное решение не заменяет первое.
-Кнопка закрепляет показанную задачу, а не выбор после ожидания. Определённый
-отказ до отправки закрывает устаревшее действие как `rejected`; неоднозначная
-передача остаётся `uncertain` и не разрешает новый ход.
-Неизвестные формы не получают автоматического согласия; MCP elicitation можно отклонить,
-но универсальное заполнение формы пока не реализовано.
+Sidecar records `saved → attempting` before RPC and `accepted` with the real turn
+ID afterward. Retrying delivery reads the existing receipt. On restart an unfinished
+attempt becomes `uncertain`. Reconciliation pages canonical history for the exact
+`clientUserMessageId`; a positive match resolves it. Missing IDs, read failures or
+absence from one page never authorize another execution.
 
-## Интерфейс и содержание
+The queue admits at most 128 unfinished inputs and fails explicitly when full.
+Ordinary input to a busy task waits. Explicit steer names `expectedTurnId`;
+completion of that turn cannot turn it into a new turn. Stop names one exact turn.
 
-`NotebookChatPanel` показывает белую панель с исходным размером 560 × 640 points и радиусом 28,
-тихой шапкой и закреплённым снизу редактором. Начальный вид оставляет свободное
-место над тремя недавними чатами; «Показать все» открывает тот же адресный каталог,
-без копии истории. Даты и модель не имитируются. Микрофон записывает речь для диктовки через текущий вход Codex и
-добавляет результат в черновик; кнопка волны начинает голосовой разговор. UUID задачи остаётся адресом доставки,
-а не постоянной строкой интерфейса. Новая задача, выбор, история и остановка
-вызывают прежнего владельца; остановка в шапке не блокирует сохранение следующего
-сообщения. Закреплённый фрагмент снимается прежним `dismissAgentQuestion`.
+Permissions, commands, file approvals and questions require an explicit human
+decision. Decision identity binds author/task/turn/native request; stop identity
+binds author/task/turn. Repeated taps, collapse or restart read the same action.
+A contrary decision cannot overwrite the first. Definitive pre-send rejection
+closes as rejected; ambiguous delivery remains uncertain. Unsupported forms never
+auto-approve. Current question and permission rendering belongs to
+[the bridge](codex-desktop-bridge.md).
 
-Системный ввод и Scribble относятся к обычному TextField. Редактор закреплён
-отдельно от прокрутки разговора, списка и исходящей очереди. Клавиатура изменяет
-только свободную область открытой панели, не геометрию бумаги. Свернувшаяся кнопка
-снова принадлежит физической области инструментов и не едет вслед за исчезающей
-клавиатурой; быстрое повторное открытие попадает в тот же видимый hit target.
-Контейнеры доступности панели и редактора сохраняют самостоятельные адреса кнопок
-и поля ввода. `NotebookChatWindow` сохраняет положение и размер отдельно от камеры;
-доступная область оставляет навигацию бумаги и инструменты. Подключение
-и общая история доступны в меню, не постоянными кнопками доски.
+## Interface and context
 
-Один WebKit с арендой общего бюджета показывает Markdown/MathJax; поток не
-создаёт браузер для каждого ответа. Человеческие сообщения имеют мягкую серую
-подложку справа; ответы читаются прямо на белом фоне. Имена говорящих остаются
-в доступном документе без повторяющихся видимых заголовков. Проверка TeX и
-очистка недоверенного HTML не меняются. После очистки редактора ещё не принятый
-текст виден из той же устойчивой очереди: до четырёх последних карточек, общий
-счётчик и явное наличие более ранних сообщений. Native client ID или квитанция
-снимают карточку; это не вторая редактируемая история. Ошибки и отсутствие Mac
-показываются по факту, не постоянной технической шапкой.
+The native chat window preserves position and size separately from paper camera.
+The composer stays outside conversation scrolling; keyboard appearance changes
+available chat area, not paper geometry. Collapsed controls return to the tool
+region rather than following a disappearing keyboard. See [chat window](chat-window.md).
 
-Агент получает текущий физический предмет/камеру и при наличии — фиксированное
-указание. Выделение не ограничивает инструменты всего пространства. Нет режима
-«спросить/сделать», классификатора или сценария рисования. Запись, размещение,
-штрихи и отмена проходят существующие инструменты/проверки Core; камера не
-становится следствием ответа. Явное визуальное объяснение использует
-[временный показ](agent-presentation-contract.md): короткий сценарий камеры
-и исчезающих SVG, прерываемый человеком. Текущий контракт поверхности поступает
-в уже существующую задачу после допуска её исполнителя, а не только при создании.
-Используется документированный [thread/inject_items](https://learn.chatgpt.com/docs/app-server#inject-items-into-a-thread),
-который не начинает пользовательский ход; чтение готовой задачи и изменение
-размера чата его не повторяют. Права и настройки задачи не заменяются.
+One budgeted WebKit renders sanitized Markdown/MathJax for the conversation.
+Messages retain native IDs, accessibility speaker labels and explicit truncation.
+Pending outgoing cards come from the same durable queue, not another editable
+history; accepted client ID/receipt removes them.
 
-## Проекты и публичный ход работы
+The agent receives current physical context and any fixed indication. Selection
+does not implicitly restrict all tools or move the camera after a reply.
+Explicit visual explanation uses [temporary presentation](agent-presentation-contract.md).
+The surface contract is injected into an admitted task without starting a user
+turn; reads and window resizing do not reinject it.
 
-Панель показывает сохранённые проекты Codex и текущие задачи показанной страницы.
-Статус и краткое действие приходят от живого владельца; неизвестное состояние
-не подменяется спиннером. Проекты находятся в горизонтальной полосе под шапкой, над самим разговором;
-«Все проекты» снимает фильтр. Состояние показанных задач обновляется и во время
-чтения выбранного чата, а не остаётся снимком прежнего списка. Меню проекта
-включает canonical задачи worktree и задачи корневой папки без projectId.
-Контроллер владеет выбором проекта и просмотром списка, а View не хранит второй
-выбор чата. Открытие и переключение не создают ход; редактор в просмотре проектов
-не может случайно отправить текст ранее выбранной задаче.
+Projects, catalogs, public work status, model selection, structured attachments and
+history paging use native Codex identities. Project edits send only changed fields
+through a durable job and `project/update`. After an uncertain update, `project/read`
+may confirm the requested state; mismatch does not authorize overwriting later
+changes. Renaming roots in settings does not move files.
 
-Настоящий разговор содержит публичные сообщения и компактные строки действий
-Codex. У раскрытия есть реальное содержание и native item ID; открытое состояние
-сохраняется при поступлении следующего обновления. История идёт по 32 native items,
-а не по огромным полным ходам. Live tail и история ограничены, а каноническое
-содержание остаётся у Codex. Точные пределы и граница независимо работающего CLI:
-[codex-desktop-bridge.md](codex-desktop-bridge.md).
+Dictation inserts once into the originating draft; voice uses that same selected
+conversation. Both retain their own explicit lifecycle under the chat owner:
+[voice contract](codex-voice.md).
 
-### Настройки настоящего проекта
+## Distribution and external setup
 
-Меню у полосы и контекстное меню вкладки открывают название и корневые папки
-того же проекта Codex. `CodexProjectEdit` содержит только явно изменённые поля;
-неизменённые metadata и настройки исполнения не отправляются и не заменяются.
-Правка сохраняется как прежний `chat_job`, затем то же постоянное подключение Codex
-выполняет `project/update`. Native ответ связывает тот же ID и принятые поля.
-При потерянном ответе `project/read` может подтвердить запрошенное состояние,
-но несовпадение не разрешает повторно затереть более поздние изменения.
-Обновление настроек не запускает ход и не переадресует уже выбранный разговор.
-Название и пути не являются перемещением файлов. Незавершённая правка видна в
-панели и не допускает второй правки этого проекта до подтверждения.
+Mac bundles official Codex, Node and a self-contained Notebook MCP package.
+Embedded chat uses workspace-scoped MCP without changing global configuration.
+Before native start/resume it reads effective Codex policy for cwd: disabled tools,
+filters and restrictions remain enforced. Catalog/account access does not require
+external MCP registration.
 
-### Голосовой черновик
+External Desktop/CLI → Notebook setup is an explicit Mac menu action.
+`registerNotebookTools` uses official `config/batchWrite` with expectedVersion and
+readback, changing only command, args and NOTEBOOK_SOCKET. Filters, timeouts and
+preferences survive. Startup does not rewrite global MCP configuration; isolated
+builds cannot run production setup.
 
-`NotebookDictationController` владеет записью iPad, `MacNotebookDictation` —
-её ограниченной доставкой, `CodexAppServer` — распознаванием через текущую
-авторизацию Codex. Результат и квитанция атомарно сохраняются в черновик
-исходного чата. Запись переживает обрыв и перезапуск; отправка остаётся
-отдельным действием человека. Контракт, отмена, пределы и граница живой
-проверки описаны в [codex-voice.md](codex-voice.md).
+Catalog auth reads use `account/read` with `refreshToken: false` and expose only the
+needed sign-in state, not email/tokens. Explicit account UI is host-owned. Missing
+auth rejects new-task creation before `thread/start` without changing providers
+or closing existing tasks.
 
-## Поставка и честная граница
+## Verification scope
 
-Mac build собирает автономный JS-пакет Notebook MCP в ресурс приложения.
-Комплект содержит официальный подписанный Codex и Node; Desktop не обязателен.
-Встроенная панель использует workspace-scoped MCP без записи общего конфига.
-Перед новым native start/resume читается эффективная политика Codex для cwd:
-`enabled=false` даёт точную причину отказа, tool filters и прочие ограничения
-переносятся без расширения. Каталог/аккаунт не зависят от внешней регистрации.
+Focused checks cover TLS delivery, duplicate/uncertain attempts, exact approvals/
+stops, draft persistence, context images, rendering and native adapter behavior.
+Historical full runs and installed builds prove only their own source snapshots.
+Current installation, open GUI-183 acceptance and physical voice/Pencil limits are
+reported in [verification](verification.md), not inferred from local PASS.
 
-В меню Codex → «Подключение внешнего Codex…» пользователь отдельно настраивает
-Desktop/CLI → Notebook. Единственный writer `registerNotebookTools` использует
-официальный `config/batchWrite` с expectedVersion и readback: меняются только
-command, args и NOTEBOOK_SOCKET. Фильтры, таймауты и прочие предпочтения
-не теряются. Старый заменяющий всю запись `mcp add` удалён; startup больше
-не обслуживает глобальную регистрацию. Изолированная сборка не может запустить
-этот внешний setup.
-Каталог читает [статус входа Codex](https://learn.chatgpt.com/docs/app-server#1-check-auth-state)
-через `account/read` только с `refreshToken: false`. В панель попадает лишь признак
-необходимости входа у провайдера новых задач, не email, токены или настройки.
-Отдельное окно аккаунта Notebook использует штатный device-code flow Codex;
-служебное чтение каталога не начинает вход само. Отсутствие входа отклоняет
-создание до `thread/start`; оно не меняет провайдера и не закрывает существующую
-задачу, которая может использовать собственные настройки. Явные вход/выход
-принадлежат host-level владельцу аккаунта, не открытию пространства.
-Изолированная сборка не меняет регистрацию: запуск из iPad закрыт до допуска
-безопасной активации пары, правильного корня и установленного bundle.
-
-Внутренний протокол и его отдельное живое доказательство описаны в
-[codex-desktop-bridge.md](codex-desktop-bridge.md). Проверка открытия пустой задачи
-16:16 UTC не сохранила фокус: владелец найден, но наблюдалась активация Codex.
-Это незакрытое условие выпуска; фокус не возвращается обратно обходным действием.
-Обычное членство новых projectless-задач, перезагрузка регистрации в уже
-работающей задаче и большая история требуют живой проверки. Панель показывает
-усечённый текст явно; слишком большой кадр не выдаётся за полную историю.
-Физическое занятие на iPad, десять повторов и 30 минут совместной работы не
-подтверждены. Этот срез не разрешает устанавливать пару поверх настоящих данных.
-
-## Проверенный срез 10 сентября 2026
-
-Общий неизменный срез `3563d0c` прошёл весь `./verify.sh`: **410 Core,
-26 Codex, 23 external, 95 Mac, 461 iPad**, без ошибок, пропусков и runtime
-warnings. Отпечатки всех 492 файлов до и после совпали; точные пути и SHA —
-в [verification.md](verification.md). Это не приёмка установленной пары и не
-закрытие перечисленных выше условий Codex. Панель и доступность прошли также
-19 профильных проверок и отдельный системный захват четырёх состояний интерфейса.
-
-Предыдущий общий срез `b480dac` дошёл до iPad и завершился отказом:
-402 Core, 26 Codex, 23 external и 95 Mac прошли; iPad — 449 из 459.
-[verification.md](verification.md) фиксирует источник и все десять отказов.
-Это не готовность чата к установке. На том же Simulator `24A434` отдельный
-сценарий ввода с открытой клавиатурой и поворотом прошёл десять последовательных
-повторов: полная строка, настоящий курсор и геометрия клавиатуры проверяются
-без отключения автокоррекции. Эти повторы не являются физическим занятием.
-
-
-Отображение исходящих и чтение статуса входа проверены на изолированном дереве
-от `d20b6d9`: 9 iPad runtime, 9 Mac runtime, 10 Core и 26 Codex-проверок прошли
-без пропусков. Каталог установленного Codex вернул 32 задачи и признак входа
-через новый read-only вызов; окно не открывалось, новые ходы не запускались.
-Новая задача при отсутствии входа отклоняется до её создания; вход не повторяет
-ранее отклонённую попытку. Проверка отсутствующего аккаунта синтетическая:
-настоящий пользователь из Codex не выходил.
-
-Профиль управления сообщениями на изолированном дереве от `3c17de1` прошёл
-23 iPad runtime и 8 Mac runtime-проверок без пропусков и предупреждений.
-Проверены TLS-круг, потерянная квитанция, очередь с обратными часами, повтор
-решения после перезапуска, смена выбранной задачи, устаревшая остановка,
-сохранение принятой отправки при закрытии, неизменное указание и три формы TeX.
-Отдельно прошли 10 Core-проверок доставки/указаний и 25 проверок адаптера Codex.
-Полный Core-профиль на изолированном предшествующем дереве от `ebbbe43` прошёл
-374 Core и 25 Codex; он не удостоверяет последующие изменения хранения.
-
-Сильная UI-проверка на Simulator iOS 27 `24A434` подтвердила геометрию панели
-над открытой клавиатурой и сохранение текста через поворот, но весь тест **не
-прошёл**: системная команда установки курсора не гарантировала конец строки,
-и следующий ввод заменил выделенное слово. Это не засчитано как готовность
-клавиатурного маршрута; тест и полный неизменный `./verify.sh` остаются открытыми.
-
-Удаление прежнего исполнителя прошло 88 профильных Core и 12 проверок переноса;
-TypeScript check и 40 MCP-тестов включают запуск поставляемого JS без внешнего
-`node_modules`. Архивные запросы в тестах задаются типизированными значениями,
-а не запуском удалённого исполнителя.
-
-Живая проверка адаптера в 13:39 UTC использовала настоящую задачу Codex
-`01a08b8b-80a4-72a2-a57f-a6a33366686c`: ответ, явный отказ разрешению, остановка
-точного хода и каноническая история. После проверки задача архивирована.
-Квитанция моста хранит именно исходники этого запуска, не всего текущего проекта.
-Регистрация живого Notebook, установленная пара и настоящие данные не менялись.
-Физическая приёмка не выполнена.
-
-
-## Оформление по образцу Амира — 11 сентября 2026
-
-Два нативных снимка проверяют начальный вид 560 × 640 и тесную область 320 × 210.
-Проверка рендера сохраняет три формы TeX, запрет исполняемого HTML, подписи
-говорящих и отсутствие горизонтального переполнения. Два системных UI-сценария
-прошли после исправления владельца закрытой кнопки: инструменты доступны в обеих
-ориентациях, черновик переживает сворачивание и поворот с настоящей клавиатурой,
-а редактор не требует прокрутки панели. Первый тест обнаружил наследование
-идентификатора контейнера кнопкой, следующий — полем; отдельные контейнеры
-доступности исправили оба отказа. Затем проверка обнаружила перемещение закрытой
-кнопки при уходе клавиатуры: исправлена её область layout, не добавлены задержки,
-повторные нажатия или отключение автокоррекции. Финальный неизменный `verify.sh`
-прошёл: 526 Core, 26 Codex, 26 external, 44 MCP, 119 Mac и 491 iPad;
-оба нативных профиля без ошибок, пропусков и runtime warnings. Версия 0.3.16 (19)
-установлена на iPad и Mac без замены архивов или повторного сопряжения.
-Установленный MCP 0.3.16 видит физический iPad (`ready/connected`).
-[verification.md](verification.md) связывает точные исходники, подписи,
-независимые копии и границу проверки: раскрытый чат визуально сверён на Simulator,
-не выдан за принятую Амиром физическую панель.
-
-
-## Установленные проекты и голосовой черновик — 11 сентября 2026
-
-Версия 0.3.17 (20) установлена на iPad и Mac после неизменного полного маршрута:
-527 Core, 36 Codex, 26 external, 44 MCP, 120 Mac и 495 iPad/UI, без ошибок,
-пропусков и runtime warnings. Микрофон, вкладки и настройки проекта входят в
-подписанный iPad bundle; новый Mac и MCP используют тех же владельцев данных
-и сопряжения. Живой MCP 0.3.17 подтвердил 19 инструментов и `ready/connected`.
-Подробная квитанция, первый отрицательный прогон и граница проверки настоящей
-речи — [verification.md](verification.md). Физическое распознавание не заявляется
-пройденным по тестовой подаче текста.
+[Detailed historical runtime evidence](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/agent-runtime-contract.md).

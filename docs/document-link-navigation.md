@@ -1,107 +1,64 @@
-# Ссылка документа — адрес его физического листа
+# Document links address physical pages
 
-## Передача подготовленной дальней страницы
+`DocumentPrintNavigation` reads actual PDF annotations and GoTo destinations after
+canonical compilation. URI targets and page numbers come from that PDF, not an
+independently measured DOM. Rectangles convert from PDF points into installed page
+geometry. SyncTeX separately maps source lines.
 
-Нативная потребность `PageTurnActivity.PreparationDemand` различает снимок
-для curl и живую поверхность для дальней документной навигации. Для страницы
-без встроенных программ существующий вспомогательный `DocumentWebCoordinator`
-готовит канонический фрагмент непосредственно в целевом контейнере. После
-готовности он становится текущим бумажным координатором, а прежний — свободным
-вспомогательным. Полноразмерный снимок и повторная установка того же фрагмента
-JavaScript в другом WebKit не требуются. Это два прежних исполнителя бумаги,
-не новый движок содержания; безусловного удержания их ресурсов нет.
+Limits: 16,384 links, 4,096 bytes per URI and 1 MiB total URI bytes.
+Markdown/LaTeX navigation is supported when represented in the canonical output;
+arbitrary browser navigation is not silently treated as a printable link.
 
-Пока цель готовится, исходная бумага остаётся установленной и принимает ввод.
-Подготовленная цель не получает ввод до нативной установки и публикации её
-текущей роли. `didInstall` сохраняет идентичность действительно завершённой
-потребности через промежуток до обновления SwiftUI. Замена цели до установки,
-версии источника или закрытие освобождает именно её подготовку; запоздалое
-завершение не подтверждает новую потребность. Принятый контакт по-прежнему
-защищён существующим владельцем ввода.
+## Activation
 
-Внутренняя прокрутка `WKWebView.scrollView` физического листа отключена целиком:
-одноразовое выключение pan-распознавателя WebKit не сохранялось после загрузки.
-Нативный редактор исходника имеет свою прокрутку; curl и камера принадлежат UIKit.
+A canonical fragment sends the original href with document/source/state/runtime,
+generation, page and pixel identity. Terminal clicks carry a monotonically
+increasing number; `userActivated` comes only from `event.isTrusted`.
+`DocumentWebCoordinator` rejects repeated sequence, stale source, neighboring
+pages and unmounted hosts.
 
-Обычный curl и страницы с программами сохраняют существующий снимковый путь:
-обрезки одного живого контекста не переносятся между двумя одновременно
-показываемыми листами. Подготовкой и её задачей владеет
-`DocumentPagePresentationOwner`; независимые checkpoint-задачи остаются у
-`DocumentProgramOwner` и не включены в последовательную очередь бумаги.
+New input admission and completion of an accepted click are distinct. Closing input
+policy stops new hit tests immediately while retaining an accepted touch's UIKit
+subtree through delivery. A late trusted click can complete only on that same
+previously admitted canonical surface. Programmatic clicks require current admission;
+they inherit no human completion right. There is no deferred coordinate replay.
 
-`DocumentLayoutRecord` владеет порядком листов, областями блоков и индексом
-`anchorPages` одного неизменного источника. Ссылка не открывает вторую копию
-книги и не прокручивает WebKit, в котором установлен лишь один DOM-фрагмент.
+`NotebookAppModel.activateDocumentLink` validates current content, open document
+and originating page, resolves canonical layout and changes device-local reading
+position through the existing presence owner. A preceding state commit is preserved
+and does not falsely invalidate an unchanged source. Double-clicking a link does
+not open the source editor.
 
-## Подготовка адресов
+`#` targets the first page; a named fragment targets its measured destination.
+A missing destination reports an unavailable link rather than pretending success.
+HTTP(S)/mailto uses system opening only after real user activation. Passive
+preparation and scripted clicks cannot launch another application. File, executable
+and relative cross-document URLs are rejected.
 
-`DocumentPrintNavigation` читает фактические PDF-аннотации и GoTo-цели после
-компиляции. Внешние URI и внутренние номера листов приходят из того же PDF,
-не из независимо измеренного DOM. Прямоугольники переводятся из PDF points
-в установленную геометрию страницы. SyncTeX даёт адреса исходных строк отдельно:
-ссылка и переход в исходник не конкурируют за одно касание.
+## Page preparation and handoff
 
-Пределы: 16 384 ссылки, 4096 байт URI и 1 МиБ URI суммарно. Произвольная
-непечатная HTML-навигация не превращается молча в PDF-ссылку. Поддержка конкретного
-Markdown/LaTeX-адреса определяется результатом канонического преобразования.
+`PageTurnActivity.PreparationDemand` distinguishes curl snapshots from live distant
+navigation. `DocumentPagePresentationOwner` prepares the target, while
+`DocumentProgramOwner` independently owns program checkpoints.
 
-## Нажатие и показ
+The current paper remains interactive during preparation. The target gains input
+only after native installation and publication of its current role.
+`didInstall` retains the completed demand identity across SwiftUI updates.
+Replacing source/target or closing cancels only that preparation; late completion
+cannot acknowledge a newer demand.
 
-Текущий канонический фрагмент передаёт исходный `href` вместе с идентичностью
-документа, источника, состояния, runtime, поколения, страницы и показанных
-пикселей. Терминальный `click` получает монотонный номер внутри runtime;
-`userActivated` берётся только из `event.isTrusted`. `DocumentWebCoordinator`
-сверяет полную квитанцию с фактически установленным каноническим фрагментом
-и отклоняет повтор номера, заменённый источник, соседний лист и снятый host.
+Live handoff installs prepared paper, then mounts required program runtimes.
+An interactive-block failure does not prevent reading text. A complete curl image
+still requires every program's pixels; a failed composite does not poison later
+live handoff. Internal paper WebKit scrolling is disabled; native camera/curl and
+the source editor each retain their own scrolling owner.
 
-Допуск нового касания и завершение принятого нажатия разделены. Закрытие
-политики ввода немедленно запрещает новый native hit-test; уже принятые
-касания сохраняют свой UIKit subtree до окончания native-доставки. Поздний
-терминальный пользовательский `click` допустим только для той же канонической
-поверхности, которая ранее допускала ввод. Хранится одна её идентичность, без
-очереди ожидающих `pointerup`, таймера и воспроизведения координат. Программный
-`click` требует действующего допуска в момент доставки; он не наследует
-пользовательское разрешение завершить нажатие.
+## Checks
 
-Разрешённая цель передаётся как `DocumentLinkActivation` единственному
-`NotebookAppModel.activateDocumentLink`. Модель сверяет актуальные содержание,
-открытый документ и исходную страницу, берёт диапазон из канонической разметки
-и меняет страницу через `SessionPresence`. Временные значения SwiftUI
-`isCurrent`, `contentIsInteractive` и прежнее число страниц не управляют
-завершением нажатия. Изменение состояния программы непосредственно перед
-переходом сохраняется; оно не заменяет источник документа и не запрещает
-актуальную цель. Подготовкой дальнего листа и показом продолжает владеть
-`PageTurnSurface`. Двойное нажатие по ссылке не открывает редактор исходника.
-
-`#` ведёт к первому листу; именованный фрагмент — к измеренной цели, в том
-числе обратно к оглавлению или сноске. Отсутствующая цель показывает «Ссылка
-недоступна», не имитирует успешный переход. Внешние HTTP(S) и mailto передаются
-системному открытию только после настоящего пользовательского нажатия;
-пассивная подготовка и программный click не запускают приложение. Файловые,
-исполняемые и относительные междокументные адреса не поддерживаются и явно
-отклоняются. Это не обещание произвольной браузерной навигации внутри книги.
-
-## Проверяемая граница
-
-`DocumentLinkNavigationTests` проверяет фактический индекс WebKit, адреса разных
-видов, первые дубликаты, удаление полного DOM, допустимые схемы и запрет поздних
-команд. `DocumentLinkActivationTests` проверяет реальную квитанцию JS → native,
-доставку модели после смены политики, сохранение state commit перед переходом,
-замену источника и закрытие исходного документа. Программный click в этих
-тестах не является trusted-вводом; получение позднего trusted click после
-окончания native-касания проверяется отдельным настоящим UI-сценарием.
-Один UI-сценарий `testDocumentLinksOpenTheMeasuredDistantPageAndReturnToContents`
-настоящим касанием проходит от оглавления к дальней главе и назад, затем проверяет
-ошибку отсутствующего раздела. До исправления этот сценарий не находил дальнюю
-цель: `/tmp/notebook-links-before.xcresult`. Полная общая приёмка приложения и
-физический переход установленного iPad не подменяются этим результатом.
-
-После проверки переходов отдельно проверена линейная выдача адресов: 80
-одинаковых заголовков требуют ровно 80 проверок занятости имени, не 3240.
-`DocumentLinkNavigationTests` прошёл на Mac и iPad (по четыре случая) в
-`.build/document-links-linear`; ранее пройденный UI-путь не исполнялся снова.
-
-Пара 0.3.22 (25) установлена без замены данных и доверия. Амир подтвердил
-переход по оглавлению на физическом iPad: «нажал - перешло». Эта проверка
-закрывает установленный сценарий ссылки, не общую ресурсную приёмку приложения;
-свидетельства установки и живого MCP — в [verification.md](verification.md).
+`DocumentLinkNavigationTests` and `DocumentLinkActivationTests` cover destination
+indexing, schemes, generation guards, accepted-click completion and state-before-link
+ordering. The UI scenario
+`testDocumentLinksOpenTheMeasuredDistantPageAndReturnToContents` uses real taps,
+including a missing target. A historical installed-pair check on 0.3.22 (25)
+confirmed the contents-to-chapter gesture with Amir. It does not prove current
+whole-system performance; see [verification](verification.md).

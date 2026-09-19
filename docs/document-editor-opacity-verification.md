@@ -1,20 +1,22 @@
-# Непрозрачный редактор исходника — 14 сентября 2026
+# Historical source-editor opacity check — September 14, 2026
 
-Редактор расширяется поверх соседних блоков документа. Его фон с alpha0.7
-пропускал их текст, мешая чтению исходника. Поле теперь владеет непрозрачной
-белой поверхностью; геометрия, фокус и протокол сохранения не изменены.
+The former expanding source editor used a 0.7-alpha background, letting neighboring
+paragraphs show through. An opaque white surface fixed legibility without changing
+geometry, focus or persistence.
 
-Проверка: настоящий ввод с экранной клавиатурой в iPad Simulator, original
-PNG до и после исправления; root и независимый помощник подтвердили отсутствие
-просвечивающих соседних абзацев. Квитанция и SHA снимков:
+Real on-screen keyboard input and original before/after Simulator PNGs were visually
+reviewed. Evidence:
 `.build/document-editor-opacity-fix-v1/post-fix-visual-receipt.json`.
 
-- До: build source `1504a41289cc91b82f5bb420443cf333fe6449b670533172e41519bc9fb9501e`,
-  actual `13fb85af-0e31-4acd-b00d-12a7985ffe89`, PNG `6085C372-A84D-4575-BDF1-4CAD33E84B51`.
-- После: build source `a8ddbd4924f128d9e3a77b8e0f510bd62659508255281c692133fa348113e807`,
-  actual `e86a91fe-8ef5-44d2-bdf2-2c8640f43df1`, PNG `D2886B48-41BA-4A2F-B83C-B1C1F187A2A5`.
-  Сборка выполнена при HEAD `142b9f2`; более поздний commit ей не приписывается.
+- Before source hash:
+  `1504a41289cc91b82f5bb420443cf333fe6449b670533172e41519bc9fb9501e`.
+- After source hash:
+  `a8ddbd4924f128d9e3a77b8e0f510bd62659508255281c692133fa348113e807`.
+  Built at HEAD `142b9f2`; no later commit is attributed to that build.
 
-Это узкая визуальная проверка, не полная приёмка документа. Полный повтор
-получил0/1 UI: после Save новая страница не подготовилась. Этот отдельный
-блокер остаётся открытым; рабочая пара iPad/Mac не обновлялась.
+This was a narrow visual check. A separate full UI retry failed because the next
+page did not prepare after Save; no working pair was updated by this attempt.
+That historical failure is not a claim about the current native editor, whose
+contract is [canonical paper and source](document-page-fragments.md).
+
+[Original image identities and report](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/document-editor-opacity-verification.md).

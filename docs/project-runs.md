@@ -1,81 +1,56 @@
-# Скрипт и терминал в чате
+# Project commands and terminal in chat
 
-Терминал выдвигается под перепиской и её полем ввода, не заменяя разговор.
-При первом раскрытии занимает половину пространства под заголовком; один
-разделитель меняет его высоту, оставляя место полю сообщения и читаемому ответу.
-Доля хранится в существующем состоянии окна
-выбранного компьютера. Клавиатура временно ограничивает размеры, не переписывает
-предпочтение и не обращается к камере. Файлы остаются справа от верхней части.
+The terminal expands below the conversation and composer. `NotebookTerminalSplit`
+starts at half the available height and preserves the chosen fraction for the
+selected computer. Keyboard constraints are temporary and do not move the camera.
 
-Явное открытие возвращает работающий сеанс либо создаёт интерактивный `zsh -il`
-в корне проекта. `NotebookRunRequest.command == nil` означает именно оболочку;
-пустая строка не считается командой. Обычный mount, восстановление и смена
-компьютера только читают прежний запуск. После завершённого сеанса новая оболочка
-открывается человеком, не автоматически. Отдельная «Команда проекта» хранит
-введённый текст и явно запускает его; имя скрипта не угадывается, кнопки play
-и подстановки `python3 main.py` в терминале нет. Неподтверждённое открытие
-не создаёт ещё один запрос. Транспорт пары — 8.
+Explicit opening reuses a live session or creates `zsh -il` in the project root.
+`NotebookRunRequest.command == nil` means an interactive shell; an empty string is
+not a command. Mount, restoration, and computer switching only read existing runs.
+After exit, starting another shell is explicit. A project command stores and executes
+the entered text under its full computer/project/root address.
 
-`MacNotebookProjectRuns` принимает команды запуска через прежний защищённый
-транспорт и очередь `NotebookPersistenceQueue`. UUID запуска равен UUID
-первого `NotebookChatInput`; повтор получения квитанции не создаёт процесс.
-Попытка ввода с неизвестным исходом не повторяется. Ещё не отправленный ввод
-остаётся у контроллера; после ошибки продолжение не воспроизводит неизвестный
-пакет. Команда хранится отдельно для полного адреса компьютер/проект/корень.
+`MacNotebookProjectRuns` accepts requests through the existing trusted transport
+and persistence queue. Run UUID equals the first `NotebookChatInput` UUID.
+Receipt retry cannot create another process. Input whose outcome is unknown is
+not replayed; unsent input remains local.
 
-`CodexAppServer` исполняет документированный `command/exec` с PTY на том же
-постоянном соединении. Настройки разрешений остаются у Codex, модель не
-вызывается. Рабочая папка сверяется с настоящим проектом этого Mac. До четырёх
-активных процессов, по одному на корень. Перезапуск сначала дожидается выхода
-предыдущего процесса; устаревшая ссылка на запуск не останавливает новый.
+## Execution and output
 
-Mac сохраняет вывод порциями по 8192 байта, до 1 МиБ на запуск; ответ iPad
-содержит до 48 КиБ из не более 64 записей и точный десятичный курсор последней
-прочитанной записи; мелкие события клавиатуры не растягиваются на отдельные
-запросы. Видимый активный сеанс читает следующий вывод через 80 мс. Удалённое начало буфера помечается
-явно. Чтение, ввод и завершение не меняют камеру или ревизию содержания доски.
-Выполненные запуски ограничены последними 24 записями; квитанции команд остаются
-в прежнем журнале, срок его хранения этим срезом не меняется.
+`CodexAppServer` uses documented `command/exec` with PTY on its persistent
+connection; no model call is needed. Codex owns permissions. The working directory
+must match a real project on that Mac. There are at most four active processes,
+one per root. Restart waits for the previous process to exit; an old run reference
+cannot stop a newer process.
 
-Терминал в чате использует локально включённый xterm.js 6.0.0, без CDN,
-дополнений изображений, буфера обмена или открытия ссылок. Вывод передаётся
-байтами, а не HTML. Его разбор завершается до получения следующего блока;
-WebKit получает обычную аренду ресурсов и освобождается при сворачивании.
-Обратные последовательности из восстановленного вывода не отправляются в
-процесс. Обычный живой вывод не подавляет параллельное печатание. Касание
-поверхности фокусирует собственный textarea xterm внутри события человека,
-поэтому экранная клавиатура не зависит от асинхронного вызова WebKit с Mac.
-Неподтверждённый ввод блокирует свой UUID процесса и не разрешается молча
-после повторного открытия; другой процесс не получает оставшиеся клавиши. Первый проверенный сценарий — интерактивный скрипт с вводом и ANSI;
-восстановление произвольного полноэкранного TUI из усечённого вывода не обещано.
+Mac stores output in 8,192-byte pieces, up to 1 MiB per run. A response contains
+at most 48 KiB across 64 records with an exact decimal cursor. A visible active
+session polls the next output after 80 ms. Dropped buffer prefixes are explicit.
+Completed runs retain the latest 24 entries; command receipt retention is separate.
 
-Сворачивание, доска и обрыв iPad прекращают только наблюдение. Повторное открытие
-читает прежний запуск на Mac. Завершение самого Mac-помощника закрывает
-соединение App Server, которому принадлежит процесс; после перезапуска
-сохранённый запуск становится прерванным и не исполняется автоматически.
-Отказ сохранения вывода останавливает соответствующий процесс, сохраняя
-неподтверждённое завершение для следующей попытки записи, а не объявляя успех.
+The bundled xterm.js consumes bytes, not HTML, without CDN, image, clipboard, or
+link-opening add-ons. Parsing a block finishes before the next one is delivered.
+WebKit holds a normal resource lease and retires when collapsed. Restored output
+cannot send terminal response sequences back into the process. Human contact focuses
+xterm's own textarea; live output preserves concurrent typing.
+Unknown input remains fenced to its process UUID, including after reopen.
+A truncated buffer does not promise reconstruction of every full-screen TUI.
 
-Закрытое представление не скрывает существование процесса: на кнопке терминала
-остаётся небольшой индикатор, в том числе рядом со свёрнутым чатом. Прежний
-цикл синхронизации чата читает состояние раз в секунду при активном запуске и
-раз в десять секунд без него. Это чтение по полному адресу проекта, без создания
-процесса, дополнительного таймера или скрытого WebKit. После холодного запуска
-оно находит прежний сеанс; подтверждённый выход убирает индикатор. Новый читатель
-вывода имеет собственный идентификатор: отмена старого не освобождает нового.
+Collapse, board navigation, and iPad disconnect end observation only. Mac-helper
+shutdown closes the process-owning App Server connection; restored runs become
+interrupted and do not restart automatically. Failed output persistence stops the
+affected process and retains unconfirmed completion for later storage.
 
-## Проверка
+The terminal control shows active-process status even when collapsed. The existing
+chat loop checks every second during activity and every ten seconds otherwise.
+Each output subscription has its own identity; cancelling an old one cannot release
+a replacement reader.
 
-`project-runs` проверяет приём, повтор, неопределённый ввод, перезапуск,
-адрес другого компьютера, ограничение вывода и независимость камеры.
-`NotebookRunControllerTests` проводит данные через настоящий WebKit/xterm,
-кириллический ввод, сворачивание и повторное подключение к тому же UUID.
-`notebook-codex-proof run <новая-квитанция.json>` запускает изолированный
-настоящий PTY в установленном Codex: UTF-8, изменение размера, ожидание дольше
-обычного RPC, холодное чтение, нормальный выход и остановка процесса. Отдельно
-проверяет интерактивную оболочку в физическом корне проекта, `stty size` и
-возврат к приглашению после Ctrl-C. Жестовый сценарий использует настоящую
-экранную клавиатуру и проверяет высоту, текст разговора, повторное открытие,
-сохранность камеры и чернил; удалённую сторону там представляет изолированный
-эхо-участник проверки, не настоящая оболочка Mac.
-Это локальное доказательство, не физическая приёмка всей пары.
+## Verification
+
+The `project-runs` profile checks admission, replay, unknown input, restart, bounds,
+computer addressing, and camera independence. `NotebookRunControllerTests` uses
+real WebKit/xterm. `notebook-codex-proof run <new-receipt.json>` exercises an isolated
+real PTY, UTF-8, resize, long execution, exit, shell prompt, and Ctrl-C.
+Gesture fixtures may use an isolated echo peer; that is not a real remote-shell or
+full physical-pair receipt. See [verification](verification.md).

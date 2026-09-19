@@ -3,6 +3,50 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookSceneSelectionTests: XCTestCase {
+  func testPageCurlAdmissionResolvesOwnershipBeforeMotion() {
+    let view = UIView(), owner = PageTurnAdmissionRecognizer(), touch = SelectionTouch()
+    view.addGestureRecognizer(owner)
+    var allowed = true
+    owner.canBeginNavigation = { allowed }
+    owner.touchesBegan([touch],with:UIEvent())
+    XCTAssertEqual(owner.state,.possible)
+    // Selection refines the owner later in the same touchdown dispatch.
+    allowed = false; touch.point.x += 20
+    owner.touchesMoved([touch],with:UIEvent())
+    XCTAssertEqual(owner.state,.began,"Dependent curl cannot begin after the object reserves this finger")
+    XCTAssertFalse(owner.canPrevent(UIPanGestureRecognizer()),"Admission does not block the object's own recognizer")
+    owner.isEnabled = false; owner.isEnabled = true; allowed = true
+    owner.touchesBegan([touch],with:UIEvent()); touch.point.x += 20
+    owner.touchesMoved([touch],with:UIEvent())
+    XCTAssertEqual(owner.state,.failed,"A fitted empty-paper swipe belongs to UIKit")
+    let zoomed = PageTurnAdmissionRecognizer(); view.addGestureRecognizer(zoomed)
+    zoomed.canBeginNavigation = { false }
+    zoomed.touchesBegan([touch],with:UIEvent())
+    XCTAssertEqual(zoomed.state,.began,"Zoomed paper denies curl from touchdown")
+  }
+
+  func testKeyboardLayoutShiftIsNotFingerMotion() {
+    let window = UIWindow(frame:.init(x:0,y:0,width:600,height:800)), anchor = UIView(frame:.init(x:0,y:0,width:600,height:800))
+    window.addSubview(anchor)
+    let recognizer = SceneSelectionRecognizer(), gate = NotebookInputGate()
+    window.addGestureRecognizer(recognizer); recognizer.coordinateView = anchor; recognizer.gate = gate
+    let touch = WindowSelectionTouch(window:window)
+    var begins = 0, drops = 0, taps = 0, delta = CGPoint.zero
+    recognizer.onPoint = { _,_ in taps += 1 }
+    recognizer.onLift = { _ in .init(begin:{ begins += 1 },change:{ delta = $0 },end:{ delta = $0; drops += 1 },cancel:{}) }
+    recognizer.touchesBegan([touch],with:UIEvent())
+    anchor.frame.origin = .init(x:70,y:-176)
+    recognizer.touchesMoved([touch],with:UIEvent())
+    recognizer.touchesEnded([touch],with:UIEvent())
+    XCTAssertEqual(begins,0); XCTAssertEqual(drops,0); XCTAssertEqual(taps,1)
+    recognizer.isEnabled = false; recognizer.isEnabled = true
+    recognizer.touchesBegan([touch],with:UIEvent())
+    anchor.frame.origin = .zero; touch.point = .init(x:140,y:160)
+    recognizer.touchesMoved([touch],with:UIEvent())
+    recognizer.touchesEnded([touch],with:UIEvent())
+    XCTAssertEqual(begins,1); XCTAssertEqual(drops,1); XCTAssertEqual(delta,.init(x:40,y:60))
+  }
+
   func testLinkKeepsItsTapAndOnlyDraggingLiftsItsMaterial() async throws {
     let gate = NotebookInputGate(), recognizer = SceneSelectionRecognizer(), touch = SelectionTouch()
     let view = UIView(); view.addGestureRecognizer(recognizer); recognizer.gate = gate
@@ -114,4 +158,12 @@ import XCTest
   var point = CGPoint(x: 100, y: 100)
   override var type: UITouch.TouchType { .direct }
   override func location(in view: UIView?) -> CGPoint { point }
+}
+
+@MainActor private final class WindowSelectionTouch: UITouch {
+  let coordinateWindow: UIWindow
+  var point = CGPoint(x:100,y:100)
+  init(window: UIWindow) { coordinateWindow = window; super.init() }
+  override var type: UITouch.TouchType { .direct }
+  override func location(in view: UIView?) -> CGPoint { coordinateWindow.convert(point,to:view) }
 }
