@@ -79,6 +79,10 @@ actor SceneCompositionSource {
     case values(WorkspaceSceneIndex, BoardHierarchy, SpatialInkJournal)
   }
   private let origin: Origin
+  // Only the last painted erased element is retained. Adjacent tiles often
+  // revisit it; a source reader must not accumulate an archive of derived paths.
+  private var preparedAppearance: (NotebookElementErasureCache.Input, NotebookElementAppearance)?
+  private var paintIdentities: [SceneCompositionPlane: String] = [:]
   private var erasureProjection: [SurfaceID: [String: [InkElementErasure]]] = [:]
 
   init(store: NotebookStore, revision: UInt64, workspaceID: UUID) {
@@ -292,6 +296,20 @@ actor SceneCompositionSource {
     return try cachedElementErasures(element)
   }
 
+  func elementAppearance(_ element: SpatialElement, layout: NotebookGraphicLayout?) throws -> NotebookElementAppearance? {
+    let erasures = try elementErasures(element)
+    guard !erasures.isEmpty else { return nil }
+    let frame = layout?.frame ?? .init(x: 0, y: 0, width: element.frame.width, height: element.frame.height)
+    let input = NotebookElementErasureCache.Input(graphic: element.graphic, layout: layout,
+      size: .init(width: frame.width, height: frame.height), erasures: erasures)
+    if let cached = preparedAppearance, cached.0 == input { return cached.1 }
+    // This actor, not ImageRenderer/MainActor, owns boolean normalization.
+    let value = input.prepare()
+    try validate()
+    preparedAppearance = (input, value)
+    return value
+  }
+
   /// Planning must not reload the entire board ink for every camera window.
   /// The existing target index addresses only the actions that can erase these
   /// programs. One checked WAL read covers this bounded workset.
@@ -391,7 +409,16 @@ actor SceneCompositionSource {
     if case .sql(let store) = origin {
       // All cells belong to one source cut. Nested addressed reads borrow this
       // connection instead of reopening SQLite for each cell and painter band.
-      return try checked(store) { _ in try populatedTiles(tiles) }
+      return try checked(store) { store in
+        try populatedTiles(tiles).map { key in
+          if paintIdentities[key.plane] == nil {
+            let target = key.plane.coverID.map { CollaborationTarget(kind: .cover, id: $0, boardID: key.plane.boardID) }
+              ?? .init(kind: .board, id: key.plane.boardID)
+            paintIdentities[key.plane] = try store.scenePaintRevision(target: target)
+          }
+          return key.withContentRevision(paintIdentities[key.plane])
+        }
+      }
     }
     return try populatedTiles(tiles)
   }

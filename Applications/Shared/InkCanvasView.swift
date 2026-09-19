@@ -1,3 +1,4 @@
+import ImageIO
 import MetalKit
 import NotebookCore
 import PencilKit
@@ -159,29 +160,21 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   fileprivate struct CommittedBatch {
     let mesh: SpatialInkMesh.Batch
     var buffers: [Int: GeometryBuffer] = [:]
+    var pageAction: PageInkAction?
+    var pageCommit: UInt64 = 0
     var operation: RenderOperation { mesh.tool == .pen ? .ink : .erase }
     init(_ mesh: SpatialInkMesh.Batch) {
       self.mesh = mesh
     }
   }
 
-  private struct StableRasterKey: Equatable {
-    let drawingRevision: UInt64
-    let size: CGSize
-  }
-
-  private struct StableRaster: @unchecked Sendable {
-    let image: CGImage
-  }
-
   private static let framesInFlight = 3
   /// A retained surface submits one GPU frame at a time beside its shown frame.
   /// Preparation uses that same second slot, never a second full drawable pool.
   nonisolated static let spatialFramesInFlight = 2
-  nonisolated private static let stableRasterScale: CGFloat = 2
 
   private let commandQueue: (any MTLCommandQueue)?
-  private let stableInkPipelineState: (any MTLRenderPipelineState)?
+  private let baselinePipelineState: (any MTLRenderPipelineState)?
   private let inkPipelineState: (any MTLRenderPipelineState)?
   private let eraserPipelineState: (any MTLRenderPipelineState)?
   private let textureLoader: MTKTextureLoader?
@@ -213,13 +206,17 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var spatialHandoffIsStopping = false
   private var spatialStagingID: UUID?
   private weak var stagedSpatialFrame: PreparedSpatialFrame?
-  private var stableDrawing: PageInkDrawing?
+  private var pageDrawing: PageInkDrawing?
   private var drawingIsPreparing = false
-  private var stableDrawingRevision: UInt64 = 0
-  private var stableTexture: (any MTLTexture)?
-  private var installedStableRasterKey: StableRasterKey?
-  private var pendingStableRasterKey: StableRasterKey?
-  private var stableRasterTask: Task<Void, Never>?
+  private var pageRevision: UInt64 = 0
+  private var installedPageRevision: UInt64?
+  private var pendingPageRevision: UInt64?
+  private var pageMeshTask: Task<Void, Never>?
+  private var pageCommit: UInt64 = 0
+  private(set) var pageMeshBuildCount = 0
+  private var baselineTexture: (any MTLTexture)?
+  private var baselineReservation: RasterReservation?
+  private var baselinePNG: Data?
 
   private var activeInkStroke: ActiveInkStroke?
   private var activeEraserStroke: ActiveEraserStroke?
@@ -282,7 +279,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     // Display work has its own queue; a background readback cannot sit ahead of every live frame.
     commandQueue = device?.makeCommandQueue()
     textureLoader = device.map(MTKTextureLoader.init(device:))
-    stableInkPipelineState = gpu.baseline
+    baselinePipelineState = gpu.baseline
     inkPipelineState = gpu.ink
     eraserPipelineState = gpu.eraser
 
@@ -321,7 +318,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     fatalError("init(coder:) is unavailable")
   }
 
-  isolated deinit { stableRasterTask?.cancel() }
+  isolated deinit { pageMeshTask?.cancel() }
 
   #if os(iOS)
   override func didMoveToWindow() {
@@ -329,11 +326,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     if let screen = window?.windowScene?.screen { preferredFramesPerSecond = screen.maximumFramesPerSecond }
     mounted()
   }
-  override func layoutSubviews() { super.layoutSubviews(); scheduleStableRasterIfNeeded() }
+  override func layoutSubviews() { super.layoutSubviews(); schedulePageMeshIfNeeded() }
   #else
   override var isOpaque: Bool { false }
   override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); mounted() }
-  override func layout() { super.layout(); scheduleStableRasterIfNeeded() }
+  override func layout() { super.layout(); schedulePageMeshIfNeeded() }
   #endif
 
   private func mounted() {
@@ -341,7 +338,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       // UIKit can retain a culled canvas beyond the end of its visible use.
       // Stop its timer even when no drawable arrives to finish the last draw.
       isPaused = true
-      cancelPendingStableRaster()
+      cancelPendingPageMesh()
       if spatialHandoffRetains == 0 {
         releaseDrawables()
         releaseGeometryBuffers()
@@ -358,7 +355,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     } else {
       requestFrame()
     }
-    scheduleStableRasterIfNeeded()
+    schedulePageMeshIfNeeded()
   }
 
   /// The same physical board layer moves between the active scene, its portal
@@ -379,9 +376,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     // A dismantled UIKit configuration may still retain this Canvas. Terminal
     // drain must release its source and CPU mesh too. Temporary unmount and
     // parking never enter this terminal path.
-    cancelPendingStableRaster()
-    stableDrawing = nil; stableTexture = nil
-    installedStableRasterKey = nil; pendingStableRasterKey = nil
+    cancelPendingPageMesh()
+    pageDrawing = nil; baselineTexture = nil; baselinePNG = nil; baselineReservation = nil
+    installedPageRevision = nil; pendingPageRevision = nil
     committedBatches.removeAll(); spatialActionBase = nil
     discardActiveAction()
     installedSpatialSource = nil; spatialSourceGeneration &+= 1
@@ -524,9 +521,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     drawingIsPreparing = false
     spatialMeshInstallCount += 1
     beginStableContentUpdate()
-    stableRasterTask?.cancel(); stableRasterTask = nil
-    stableDrawing = nil; stableTexture = nil
-    installedStableRasterKey = nil; pendingStableRasterKey = nil
+    pageMeshTask?.cancel(); pageMeshTask = nil
+    pageDrawing = nil; baselineTexture = nil; baselinePNG = nil; baselineReservation = nil
+    installedPageRevision = nil; pendingPageRevision = nil
     committedBatches = mesh.batches.map(CommittedBatch.init)
     discardActiveAction()
     requestFrame()
@@ -552,32 +549,30 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   func apply(_ drawing: PageInkDrawing) {
     installedSpatialSource = nil
+    cancelPendingPageMesh()
+    pageRevision &+= 1
+    pageDrawing = drawing
     drawingIsPreparing = false
     beginStableContentUpdate()
-    stableRasterTask?.cancel()
-    stableRasterTask = nil
-    stableDrawingRevision &+= 1
-    stableDrawing = drawing
-    stableTexture = nil
-    installedStableRasterKey = nil
-    pendingStableRasterKey = nil
+    baselineTexture = nil; baselinePNG = nil; baselineReservation = nil
+    installedPageRevision = nil
+    // Capture reusable action meshes before clearing the old page's display.
+    // Shared IDs are validated off-main, so undo/sync reuse surviving history
+    // while a different physical page never displays its predecessor.
+    schedulePageMeshIfNeeded()
     committedBatches.removeAll(keepingCapacity: true)
     discardActiveAction()
-    scheduleStableRasterIfNeeded()
   }
 
-  /// Replaces finished live batches after InkRasterRenderer has produced the
-  /// exact durable pixels for the same drawing. A newer active gesture keeps
-  /// the existing base and batches until its own durable drawing settles.
+  /// Durable delivery changes source ownership, not the pixels of a measured
+  /// contact. Retain its mesh/buffers; prepare only newly received actions.
   func settle(_ drawing: PageInkDrawing) {
+    cancelPendingPageMesh()
+    pageRevision &+= 1
+    pageDrawing = drawing
     drawingIsPreparing = false
     beginStableContentUpdate()
-    stableRasterTask?.cancel()
-    stableRasterTask = nil
-    stableDrawingRevision &+= 1
-    stableDrawing = drawing
-    pendingStableRasterKey = nil
-    scheduleStableRasterIfNeeded()
+    schedulePageMeshIfNeeded()
   }
 
   func beginSpatialAction() {
@@ -596,7 +591,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   func displayActiveStroke(_ stroke: ActiveInkStroke) {
     if activeInkStroke !== stroke {
       beginStableContentUpdate()
-      cancelPendingStableRaster()
       activeInkStroke = stroke
       activeEraserStroke = nil
       builtActiveIdentity = nil
@@ -609,7 +603,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   func displayActiveEraser(_ stroke: ActiveEraserStroke) {
     if activeEraserStroke !== stroke {
       beginStableContentUpdate()
-      cancelPendingStableRaster()
       activeEraserStroke = stroke
       activeInkStroke = nil
       builtActiveIdentity = nil
@@ -620,11 +613,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   /// Finish only the measured tail of the live mesh. Predictions never enter
   /// the durable batch, and a long contact is not rebuilt at Pencil-up.
-  func commitActiveStroke() { guard activeInkStroke != nil else { return }; commitMeasuredMesh() }
-  func commitActiveEraser() { guard activeEraserStroke != nil else { return }; commitMeasuredMesh() }
+  func commitActiveStroke(_ action: PageInkAction? = nil) { guard activeInkStroke != nil else { return }; commitMeasuredMesh(action) }
+  func commitActiveEraser(_ action: PageInkAction? = nil) { guard activeEraserStroke != nil else { return }; commitMeasuredMesh(action) }
   func commitActiveSpatialAction() { commitMeasuredMesh() }
 
-  private func commitMeasuredMesh() {
+  private func commitMeasuredMesh(_ action: PageInkAction? = nil) {
     let identity: ObjectIdentifier
     let points: [PKStrokePoint]
     let color: SIMD4<Float>
@@ -641,7 +634,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     } else { return }
     if builtActiveIdentity != identity { activeMesh = IncrementalInkMesh(eraser:operation == .erase) }
     activeMesh.update(points: points, changedFrom: builtActiveIdentity == identity ? changed : 0, color: color)
-    appendCommitted(activeMesh, operation: operation)
+    appendCommitted(activeMesh, operation: operation, action: action)
     discardActiveAction()
     requestFrame()
   }
@@ -656,7 +649,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     _ view: MTKView,
     drawableSizeWillChange size: CGSize
   ) {
-    scheduleStableRasterIfNeeded()
+    schedulePageMeshIfNeeded()
     requestFrame()
   }
 
@@ -701,10 +694,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       descriptor.colorAttachments[0].clearColor = clearColor
       guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
       if let viewport { encoder.setViewport(viewport) }
-      if let stableTexture, let stableInkPipelineState {
-        encoder.label = "Stable Notebook Ink"
-        encoder.setRenderPipelineState(stableInkPipelineState)
-        encoder.setFragmentTexture(stableTexture, index: 0)
+      if let baselineTexture, let baselinePipelineState {
+        encoder.label = "Imported Notebook Ink Baseline"
+        encoder.setRenderPipelineState(baselinePipelineState)
+        encoder.setFragmentTexture(baselineTexture, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
       }
       encodeSpatial(batches: committedBatches, visible: visible, active: active,
@@ -717,11 +710,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     let presentedRevision: UInt64? =
       activeInkStroke == nil
         && activeEraserStroke == nil
-        && stableRasterIsReady
+        && pageGeometryIsReady
       ? stableContentRevision : nil
     let submittedRevision = stableContentRevision
     let heldGeometry = visible.compactMap { committedBatches[$0.0].buffers[$0.1]?.reservation }
       + (activeBufferReservations[frameSlot].map { [$0] } ?? [])
+      + (baselineReservation.map { [$0] } ?? [])
     submittedFrameCount += 1
     let physical = physicalAdmission
     let target = spatialTarget
@@ -930,8 +924,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     frame.installed = true
     spatialSourceGeneration &+= 1; stableContentRevision &+= 1
     if frame.replacesMesh { spatialMeshInstallCount += 1 }
-    stableDrawing = nil; stableTexture = nil; drawingIsPreparing = false
-    installedStableRasterKey = nil; pendingStableRasterKey = nil
+    cancelPendingPageMesh()
+    pageDrawing = nil; baselineTexture = nil; baselinePNG = nil; baselineReservation = nil; drawingIsPreparing = false
+    installedPageRevision = nil; pendingPageRevision = nil
     committedBatches = frame.batches; discardActiveAction()
     installedSpatialSource = .init(surface: surface, journal: journal, suppressedInkIDs: suppressedInkIDs)
     let revision = stableContentRevision, generation = spatialSourceGeneration
@@ -992,124 +987,77 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     onRenderReadinessChange?(false)
   }
 
-  private var stableRasterIsReady: Bool {
-    guard !drawingIsPreparing else { return false }
-    guard stableDrawing != nil else { return true }
-    guard let key = desiredStableRasterKey else { return false }
-    return installedStableRasterKey == key
+  var pageGeometryIsReady: Bool {
+    !drawingIsPreparing && (pageDrawing == nil || installedPageRevision == pageRevision)
   }
 
-  private var desiredStableRasterKey: StableRasterKey? {
-    guard stableDrawing != nil,
-      bounds.width > 0,
-      bounds.height > 0
-    else { return nil }
-    return StableRasterKey(
-      drawingRevision: stableDrawingRevision,
-      size: bounds.size
-    )
+  private func cancelPendingPageMesh() {
+    // An unmount may immediately remount the same source. Its cancelled
+    // continuation must not clear or publish the replacement preparation.
+    if pendingPageRevision != nil { pageRevision &+= 1 }
+    pageMeshTask?.cancel(); pageMeshTask = nil
+    pendingPageRevision = nil
   }
 
-  private func cancelPendingStableRaster() {
-    stableRasterTask?.cancel()
-    stableRasterTask = nil
-    pendingStableRasterKey = nil
-  }
-
-  private func scheduleStableRasterIfNeeded() {
-    guard activeInkStroke == nil,
-      activeEraserStroke == nil,
-      let drawing = stableDrawing,
-      let key = desiredStableRasterKey,
-      installedStableRasterKey != key,
-      pendingStableRasterKey != key
-    else { return }
-
-    stableRasterTask?.cancel()
-    pendingStableRasterKey = key
-
-    if drawing.isEmpty {
-      installStableRaster(nil, for: key)
-      return
+  private func schedulePageMeshIfNeeded() {
+    guard let drawing = pageDrawing, installedPageRevision != pageRevision,
+      pendingPageRevision != pageRevision else { return }
+    let revision = pageRevision, commit = pageCommit
+    pendingPageRevision = revision
+    // The source arrays and mesh buffers are immutable COW values. MainActor
+    // neither walks old samples nor copies their vertices at Pencil-up.
+    let old = committedBatches.compactMap { batch in
+      batch.pageAction.map { PageInkMesh.Entry(action: $0, mesh: batch.mesh, reusedIndex: nil) }
     }
-
-    let rasterBounds = CGRect(origin: .zero, size: key.size)
-    let worker = Task.detached(priority: .userInitiated) {
-      guard !Task.isCancelled else { return nil as StableRaster? }
-      return Self.makeStableRaster(
-          from: drawing,
-          bounds: rasterBounds,
-          scale: Self.stableRasterScale
-        )
-    }
-    stableRasterTask = Task { [weak self] in
-      let raster = await withTaskCancellationHandler {
-        await worker.value
-      } onCancel: { worker.cancel() }
-      guard let self else { return }
-      guard acceptsStableRaster(for: key),
-        let raster,
-        let texture = await makeTexture(from: raster),
-        acceptsStableRaster(for: key)
-      else {
-        if pendingStableRasterKey == key {
-          stableRasterTask = nil
-          pendingStableRasterKey = nil
+    let oldBatches = committedBatches.filter { $0.pageAction != nil }
+    let worker = Task.detached(priority: .userInitiated) { try PageInkMesh.prepare(drawing, reusing: old) }
+    pageMeshTask = Task { [weak self] in
+      do {
+        let mesh = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+        guard let self, acceptsPageMesh(revision) else { return }
+        try await prepareBaseline(drawing.baselinePNG, revision: revision)
+        guard acceptsPageMesh(revision) else { return }
+        var batches = mesh.entries.map { entry in
+          var batch = entry.reusedIndex.map { oldBatches[$0] } ?? CommittedBatch(entry.mesh)
+          batch.pageAction = entry.action
+          return batch
         }
-        return
+        // Preparation may finish between two contacts. A newer measured tail
+        // and the currently active contact are never replaced by an older cut.
+        let ids = Set(drawing.actions.map(\.id))
+        batches += committedBatches.filter { $0.pageCommit > commit && ($0.pageAction.map { !ids.contains($0.id) } ?? true) }
+        committedBatches = batches
+        pageMeshBuildCount += mesh.builtActionCount
+        installedPageRevision = revision; pendingPageRevision = nil; pageMeshTask = nil
+        requestFrame()
+      } catch {
+        guard let self, pendingPageRevision == revision else { return }
+        pendingPageRevision = nil; pageMeshTask = nil
+        if !(error is CancellationError) { renderFailure = (error as? SceneRenderError) ?? .snapshotPending("page_ink_geometry") }
       }
-      installStableRaster(texture, for: key)
     }
   }
 
-  private func acceptsStableRaster(for key: StableRasterKey) -> Bool {
-    !Task.isCancelled
-      && pendingStableRasterKey == key
-      && desiredStableRasterKey == key
-      && activeInkStroke == nil
-      && activeEraserStroke == nil
+  private func acceptsPageMesh(_ revision: UInt64) -> Bool {
+    !Task.isCancelled && !spatialHandoffIsStopping && pendingPageRevision == revision && pageRevision == revision
   }
 
-  private func makeTexture(
-    from raster: StableRaster
-  ) async -> (any MTLTexture)? {
-    guard let textureLoader else { return nil }
-    return try? await textureLoader.newTexture(
-      cgImage: raster.image,
-      options: [
-        .SRGB: false,
-        .origin: MTKTextureLoader.Origin.topLeft.rawValue,
-      ]
-    )
-  }
-
-  private func installStableRaster(
-    _ texture: (any MTLTexture)?,
-    for key: StableRasterKey
-  ) {
-    guard desiredStableRasterKey == key,
-      activeInkStroke == nil,
-      activeEraserStroke == nil
-    else { return }
-    stableTexture = texture
-    installedStableRasterKey = key
-    pendingStableRasterKey = nil
-    stableRasterTask = nil
-    committedBatches.removeAll(keepingCapacity: true)
-    requestFrame()
-  }
-
-  nonisolated private static func makeStableRaster(
-    from drawing: PageInkDrawing,
-    bounds: CGRect,
-    scale: CGFloat
-  ) -> StableRaster? {
-    autoreleasepool {
-      guard let image = InkRasterRenderer.shared.page(drawing,size:bounds.size,scale:scale) else {
-        return nil
-      }
-      return StableRaster(image: image)
-    }
+  /// Only a genuinely imported image is a texture. New handwriting never
+  /// replaces geometry with a flattened page image or a fixed 2x resolution.
+  private func prepareBaseline(_ png: Data?, revision: UInt64) async throws {
+    guard baselinePNG != png else { return }
+    guard let png else { baselineTexture = nil; baselinePNG = nil; baselineReservation = nil; return }
+    guard let textureLoader,
+      let source = CGImageSourceCreateWithData(png as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+      let values = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+      let width = values[kCGImagePropertyPixelWidth] as? Int, let height = values[kCGImagePropertyPixelHeight] as? Int,
+      width > 0, height > 0, width <= 8192, height <= 8192,
+      let allocation = resources.reserveRaster(pixelWidth: width, pixelHeight: height, backingCount: 2)
+    else { throw SceneRenderError.resourceLimit }
+    let texture = try await textureLoader.newTexture(data: png,
+      options: [.SRGB: false, .origin: MTKTextureLoader.Origin.topLeft.rawValue])
+    guard acceptsPageMesh(revision) else { throw CancellationError() }
+    baselineTexture = texture; baselinePNG = png; baselineReservation = allocation
   }
 
   private func requestFrame() {
@@ -1121,7 +1069,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   @discardableResult
   private func presentEmptyContentIfReady() -> Bool {
-    guard !spatialHandoffIsStopping, spatialStagingID == nil, stableRasterIsReady, stableTexture == nil,
+    guard !spatialHandoffIsStopping, spatialStagingID == nil, pageGeometryIsReady, baselineTexture == nil,
       activeInkStroke == nil, activeEraserStroke == nil,
       committedBatches.allSatisfy({ batch in
         if batch.mesh.vertices.isEmpty { return true }
@@ -1153,7 +1101,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     // SwiftUI may be updating this owner now. Empty is a complete transparent
     // result, but readiness is delivered after the current publication pass.
     Task { @MainActor [weak self] in
-      guard let self, !spatialHandoffIsStopping, stableContentRevision == revision, stableRasterIsReady,
+      guard let self, !spatialHandoffIsStopping, stableContentRevision == revision, pageGeometryIsReady,
         activeInkStroke == nil, activeEraserStroke == nil,
         presentedStableContentRevision != revision else { return }
       presentedStableContentRevision = revision
@@ -1271,14 +1219,18 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   private func appendCommitted(
     _ active: IncrementalInkMesh,
-    operation: RenderOperation
+    operation: RenderOperation,
+    action: PageInkAction?
   ) {
     guard !active.vertices.isEmpty else { return }
     let projection = spatialCamera.map { SpatialInkMesh.Projection.screen($0, spatialViewport) } ?? .local
     // The contact already indexed its mutable tail on display frames. Sealing
     // it retains those arrays; it neither rescans nor copies the older history.
-    committedBatches.append(.init(.init(tool: operation == .ink ? .pen : .eraser,
-      vertices: active.vertices, chunks: active.chunks, projection: projection)))
+    var batch = CommittedBatch(.init(tool: operation == .ink ? .pen : .eraser,
+      vertices: active.vertices, chunks: active.chunks, projection: projection))
+    pageCommit &+= 1
+    batch.pageAction = action; batch.pageCommit = pageCommit
+    committedBatches.append(batch)
   }
 
   private func prepareCommittedBuffers() -> [(Int, Int)]? {

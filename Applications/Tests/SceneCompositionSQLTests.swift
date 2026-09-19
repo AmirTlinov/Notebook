@@ -4,6 +4,67 @@ import XCTest
 @testable import Notebook
 
 final class SceneCompositionSQLTests: XCTestCase {
+  @MainActor
+  func testBoardReturnReusesPixelsAcrossPresenceAndEntryCameraCommitsButNotContentEdits() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let before = try store.loadIndex(), treeBefore = try store.loadBoard(items: before.items)
+    var workspace = before, tree = treeBefore
+    let child = UUID()
+    XCTAssertNotNil(workspace.createBoard(title: "A", actor: actor, boardID: child))
+    XCTAssertTrue(tree.createBoard(child, in: header.rootBoardID, near: .zero, actor: actor))
+    for index in 0..<8 {
+      XCTAssertTrue(tree.upsertElement(.init(id: "text-\(index)", surface: .board(child), kind: .nativeText,
+        frame: .init(x: Double(index % 4) * 40, y: Double(index / 4) * 40, width: 32, height: 32),
+        worldOrigin: .zero, source: "\(index)", stamp: workspace.stamp), in: child, expected: nil, actor: actor))
+    }
+    _ = try store.saveWorkspaceEdits(before: before, after: workspace, boardBefore: treeBefore, boardAfter: tree)
+    let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    let home = SessionPresence(boardID: child, mode: .board,
+      camera: .init(center: .init(x: 80, y: 40), scale: 1), viewport: .init(x: 320, y: 256))
+    func prepare(_ presence: SessionPresence) async throws {
+      try store.savePresence(presence)
+      let current = try store.workspaceHeader()
+      let hierarchy = try store.loadBoard(items: workspace.items)
+      let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+      let oldPaint = coordinator.published?.paintID
+      coordinator.prepare(source: .init(store: store, revision: current.cursor, workspaceID: current.workspaceID),
+        presence: presence, frame: .init(index: index, presence: presence, portalCamera: hierarchy.portalCamera), pinned: [], displayScale: 1)
+      let deadline = ContinuousClock.now + .seconds(5)
+      while coordinator.published?.paintID == oldPaint, coordinator.failure == nil, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      XCTAssertNotEqual(coordinator.published?.paintID, oldPaint)
+      XCTAssertNil(coordinator.failure)
+    }
+    try await prepare(home)
+    let ids = Set(try XCTUnwrap(coordinator.published).rasters.values.map(\.entryID))
+    XCTAssertFalse(ids.isEmpty, "Eight text owners require at least one passive tile")
+    // Keep only IDs, not an old cohort or lease: eviction must remain real.
+    try await prepare(.init(boardID: header.rootBoardID, mode: .board,
+      camera: .init(center: .init(x: 20000, y: 20000), scale: 1), viewport: home.viewport))
+    var moved = tree
+    XCTAssertTrue(moved.updatePortalCamera(.init(center: .init(x: 80, y: 40), scale: 1.2), for: child, actor: actor))
+    _ = try store.saveBoardEdits(before: tree, after: moved)
+    let start = ContinuousClock.now
+    try await prepare(home)
+    XCTAssertEqual(Set(try XCTUnwrap(coordinator.published).rasters.values.map(\.entryID)), ids)
+    let warm = start.duration(to: .now)
+    var edited = moved
+    let old = try XCTUnwrap(moved.board(child)?.elements.first { $0.id == "text-7" })
+    var replacement = old
+    XCTAssertTrue(replacement.update(source: "Changed content", actor: actor))
+    XCTAssertTrue(edited.upsertElement(replacement, in: child, expected: old.stamp, actor: actor))
+    _ = try store.saveBoardEdits(before: moved, after: edited)
+    try await prepare(home)
+    XCTAssertTrue(ids.isDisjoint(with: try XCTUnwrap(coordinator.published).rasters.values.map(\.entryID)), "Real content cannot reuse the old pixels")
+    let proof = XCTAttachment(string: "SQL A→parent→A: reusedTiles=\(ids.count); warmPublication=\(warm)")
+    proof.name = "sql-board-return"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testPassiveConnectionDemotionIncludesItsMovableEndpointsAcrossPainterRuns() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

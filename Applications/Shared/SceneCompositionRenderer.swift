@@ -68,8 +68,8 @@ final class SceneCompositionRenderer {
   /// them. Only fragments actually redrawn in this pass replace those values.
   func carrySources(from previous: SceneCompositionCohort?, tiles: [SceneCompositionTileKey: RasterLease]) {
     for (key, raster) in tiles {
-      let oldKey = previous.map { key.atRevision($0.plan.revision) }
-      let fromPrevious = oldKey.flatMap { previous?.rasters[$0]?.entryID } == raster.entryID
+      let oldKey = previous?.rasters.first { $0.value.entryID == raster.entryID }?.key
+      let fromPrevious = oldKey != nil
       let receipts = fromPrevious ? previous?.sourceReceipts ?? [:] : resources.compositionReceipts(for: raster) ?? [:]
       let dependencies = fromPrevious ? oldKey.flatMap { previous?.tileSources[$0] } ?? [] : Set(receipts.keys)
       tileSources[key] = dependencies
@@ -375,16 +375,19 @@ final class SceneCompositionRenderer {
     try checkPreparation()
     let erasures = try await source.elementErasures(element)
     guard !erasures.contains(where: { $0.target.wholeElement }) else { return }
+    let appearance = element.graphic != nil || element.kind == .nativeText
+      ? try await source.elementAppearance(element, layout: graphicLayout) : nil
+    try checkPreparation()
     if let graphic = element.graphic {
       if graphic.showsGeometry {
         let size = graphicLayout?.frame ?? .init(x:0,y:0,width:element.frame.width,height:element.frame.height)
-        try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:graphicLayout, erasures: erasures),
+        try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:graphicLayout, erasures: erasures, appearance: appearance),
           size: .init(width: size.width, height: size.height), in: frame)
       }
       return
     }
     if element.kind == .nativeText {
-      try await canvas.drawView(SpatialTextSnapshot(element: element).erased(by: erasures),
+      try await canvas.drawView(SpatialTextSnapshot(element: element).erased(by: erasures, appearance: appearance),
         size: .init(width: element.frame.width, height: element.frame.height), in: frame)
       return
     }

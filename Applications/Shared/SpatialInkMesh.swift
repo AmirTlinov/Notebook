@@ -156,6 +156,48 @@ struct SpatialInkMesh: Sendable {
   }
 }
 
+/// Page actions use exactly the board/live triangle generator. Durable delivery
+/// reuses finished measured meshes; undo removes a batch rather than baking a PNG.
+struct PageInkMesh: Sendable {
+  struct Entry: Sendable {
+    let action: PageInkAction
+    let mesh: SpatialInkMesh.Batch
+    let reusedIndex: Int?
+  }
+  let entries: [Entry]
+  var builtActionCount: Int { entries.filter { $0.reusedIndex == nil }.count }
+
+  static func prepare(_ drawing: PageInkDrawing, reusing old: [Entry]) throws -> Self {
+    let byID = Dictionary(old.enumerated().map { ($0.element.action.id, $0.offset) }, uniquingKeysWith: { _, last in last })
+    var entries: [Entry] = []
+    for action in drawing.actions where action.isActive {
+      try Task.checkCancellation()
+      if let index = byID[action.id] {
+        let previous = old[index]
+        // Ordering/tombstones belong to the drawing, not the measured mesh.
+        if previous.action.tool == action.tool, previous.action.color == action.color,
+          previous.action.samples == action.samples {
+          entries.append(.init(action: action, mesh: previous.mesh, reusedIndex: index))
+          continue
+        }
+      }
+      let points = action.samples.map { sample in
+        PKStrokePoint(location: .init(x: sample.point.x, y: sample.point.y), timeOffset: sample.timeOffset,
+          size: .init(width: sample.width, height: sample.width), opacity: sample.opacity,
+          force: sample.force, azimuth: sample.azimuth, altitude: sample.altitude)
+      }
+      var vertices: [SpatialInkGeometry.Vertex] = []
+      let color = action.color
+      SpatialInkGeometry.appendStrokeVertices(points: points,
+        color: action.tool == .pen ? .init(Float(color.red), Float(color.green), Float(color.blue), 1) : .init(1, 1, 1, 1),
+        eraser: action.tool == .eraser, to: &vertices)
+      try Task.checkCancellation()
+      entries.append(.init(action: action, mesh: .init(tool: action.tool, vertices: vertices, projection: .local), reusedIndex: nil))
+    }
+    return .init(entries: entries)
+  }
+}
+
 /// Ready geometry belongs to its physical surface and exact source, not to the
 /// preview or active canvas mounting it. Both use the same bounded cache.
 @MainActor
