@@ -95,6 +95,14 @@ vertex DirectOut directInkVertex(device const Node *nodes [[buffer(0)]],
   float2 unit = v.position/u.viewport;
   return {float4(unit.x*2.0f-1.0f,1.0f-unit.y*2.0f,0,1),v.color};
 }
+struct TileUniforms { float2 viewport; float2 origin; uint2 counts; };
+vertex DirectOut tileInkVertex(device const Node *nodes [[buffer(0)]],
+  device const float *shapes [[buffer(1)]], device const uint2 *caps [[buffer(2)]],
+  constant TileUniforms &u [[buffer(3)]], uint vertexID [[vertex_id]]) {
+  Evaluated v = evaluate(vertexID,nodes,shapes,caps,u.counts.x);
+  float2 unit = (v.position-u.origin)/u.viewport;
+  return {float4(unit.x*2.0f-1.0f,1.0f-unit.y*2.0f,0,1),v.color};
+}
 kernel void inspectPositions(device const Node *nodes [[buffer(0)]],
   device const float *shapes [[buffer(1)]], device const uint2 *caps [[buffer(2)]],
   constant Uniforms &u [[buffer(3)]], device const uint *indices [[buffer(4)]],
