@@ -25,7 +25,6 @@
     static let selectionTransitionArgument = "--notebook-selection-transition-fixture"
     static let agentElementArgument = "--notebook-agent-element-fixture"
     static let collaborationArgument = "--notebook-collaboration-fixture"
-    static let historyArgument = "--notebook-history-performance-fixture"
     static let pointerArgument = "--notebook-pointer-fixture"
     static let passiveSVGArgument = "--notebook-passive-svg-fixture"
     static let mixedWebArgument = "--notebook-mixed-web-fixture"
@@ -94,8 +93,7 @@
         fixtureName = "MixedWebCamera"
       } else if ProcessInfo.processInfo.arguments.contains(passiveSVGArgument) {
         fixtureName = "PassiveSVGCamera"
-      } else if ProcessInfo.processInfo.arguments.contains(historyArgument) {
-        fixtureName = "HistoryPerformance"
+
       } else if ProcessInfo.processInfo.arguments.contains(collaborationArgument) {
         fixtureName = "SharedCollaboration"
       } else if ProcessInfo.processInfo.arguments.contains(pointerArgument) {
@@ -552,20 +550,6 @@
                 "kind":.string("web"),"source":.string("<div>Продолжение мысли</div>"),
                 "css":.string("body{display:grid;place-items:center;font:700 32px -apple-system;color:#263746;background:#f6c85f;border:5px solid #263746;border-radius:28px}"),
                 "frame":.object(["x":.number(180),"y":.number(280),"width":.number(360),"height":.number(220)])])]),actor:UUID())
-        }
-        if ProcessInfo.processInfo.arguments.contains(historyArgument) {
-          let target = CollaborationTarget(kind: .page, id: pageID)
-          let revision = try store.referenceRevision(target: target, elementID: "shared-element")
-          for index in 0..<120 {
-            let captured = try store.appendContext(references: [.init(target: target, elementID: "shared-element",
-              revision: revision, label: "Фрагмент \(index + 1)")], author: .human, actor: actor, select: index == 119)
-            if index == 119, ProcessInfo.processInfo.arguments.contains("--notebook-history-pages-fixture") {
-              for reply in 1...40 {
-                _ = try store.appendContext(references: [], author: .agent, actor: actor,
-                  contextID: captured.id, replyTo: captured.entry.id, text: "Ответ \(reply)")
-              }
-            }
-          }
         }
         let model = NotebookAppModel(store: store, startsNearbySync: false)
         if ProcessInfo.processInfo.arguments.contains("--notebook-chat-conversation-fixture") {

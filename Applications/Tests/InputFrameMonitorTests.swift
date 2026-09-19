@@ -4,7 +4,7 @@ import XCTest
 
 @MainActor
 final class InputFrameMonitorTests: XCTestCase {
-  func testFreshSQLWorkspaceRecordsShortContactsAndHistoryWithoutAnExistingRuntimeDirectory() async throws {
+  func testFreshSQLWorkspaceRecordsShortContactsWithoutAnExistingRuntimeDirectory() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     _ = try await Task.detached {
@@ -15,20 +15,15 @@ final class InputFrameMonitorTests: XCTestCase {
     let monitor = InputFrameMonitor(root: root)
     monitor.begin(mode: "board")
     monitor.end()
-    monitor.recordHistoryMount(durationMS: 137)
     let contactURL = runtime.appendingPathComponent("input-frames.json")
-    let historyURL = runtime.appendingPathComponent("collaboration-ui.json")
-    try await waitUntil { FileManager.default.fileExists(atPath: contactURL.path)
-      && FileManager.default.fileExists(atPath: historyURL.path) }
+    try await waitUntil { FileManager.default.fileExists(atPath: contactURL.path) }
     XCTAssertNil(monitor.writeFailure)
-    let contacts = try rows(at: contactURL), history = try rows(at: historyURL)
+    let contacts = try rows(at: contactURL)
     XCTAssertEqual(contacts.count, 1)
     XCTAssertEqual(contacts.first?["mode"] as? String, "board")
     let cadence = try XCTUnwrap(contacts.first?["cadence"] as? [String: Any])
     XCTAssertEqual(cadence["totalIntervals"] as? Int, 0,
       "A contact with no display callback is retained, not mistaken for a missing measurement or FPS")
-    XCTAssertEqual(history.count, 1)
-    XCTAssertEqual(history.first?["tapToMountMS"] as? Double, 137)
   }
 
   func testFailedDiagnosticWriteIsReportedAndALaterContactCanRecover() async throws {

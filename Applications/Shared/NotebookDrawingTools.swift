@@ -31,7 +31,7 @@ enum DrawingShape: String, CaseIterable, Codable, Sendable {
     switch self { case .rectangle: "Прямоугольник"; case .ellipse: "Эллипс"; case .triangle: "Треугольник" }
   }
   var symbol: String {
-    switch self { case .rectangle: "rectangle"; case .ellipse: "oval"; case .triangle: "triangle" }
+    switch self { case .rectangle: "square"; case .ellipse: "circle"; case .triangle: "triangle" }
   }
 }
 
@@ -58,8 +58,10 @@ struct NotebookDrawingToolSettings: Codable, Equatable, Sendable {
   var preservesAspect = false
   var textColor: PenColor = .black
   var textSize = 24.0
+  var textFontName: String?
   var connectionColor: PenColor = .blue
   var connectionWidth = 2.0
+  var connectionDash: NotebookGraphic.Style.Dash?
   var connectionStart: NotebookGraphicConnection.Arrowhead?
   var connectionEnd: NotebookGraphicConnection.Arrowhead?
   var connectionRouting: NotebookGraphicConnection.Routing = .straight

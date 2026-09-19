@@ -29,6 +29,7 @@ struct NotebookSelectionSession: Equatable, Sendable {
   var context: NotebookAgentQuestion?
   var preview: CGRect?
   var manipulation: NotebookElementManipulation?
+  var nativeText: NotebookNativeTextTarget?
   var isInteractive = false
   var isResolvingContext = false
 
@@ -56,4 +57,16 @@ struct NotebookSelectionSession: Equatable, Sendable {
   var highlightedReference: CollaborationReference? {
     if case .reference(let reference) = target { return reference }; return nil
   }
+}
+
+/// The editor is mounted once above the page-turn host. Its initial content and
+/// physical address are available at admission, before the insert is durable.
+struct NotebookNativeTextTarget: Equatable, Sendable {
+  let reference: EditableElementReference
+  let address: NotebookToolAddress
+  var frame: PageRect
+  let source: String
+  let style: NativeTextStyle
+  var page: AgentElement?
+  var spatial: SpatialElement?
 }

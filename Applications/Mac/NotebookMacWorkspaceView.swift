@@ -11,7 +11,7 @@ struct NotebookMacWorkspaceRoot: View {
   var body: some View {
     Group {
       if let model = lifecycle.launch.model {
-        NotebookMacWorkspaceView(showDevices: lifecycle.showDevices, showPaste: lifecycle.showPaste)
+        NotebookMacWorkspaceView(showPaste: lifecycle.showPaste)
           .environment(model).id(ObjectIdentifier(model))
           .disabled(model.shutdownPhase != .running)
           .onChange(of: scenePhase, initial: true) { _, phase in
@@ -43,7 +43,6 @@ struct NotebookMacWorkspaceRoot: View {
 
 struct NotebookMacWorkspaceView: View {
   @Environment(NotebookAppModel.self) private var model
-  let showDevices: () -> Void
   let showPaste: () -> Void
   @State private var showsSearch = false
   @State private var documentLayout: DocumentPageLayout?
@@ -56,7 +55,7 @@ struct NotebookMacWorkspaceView: View {
       case .loading:
         VStack(spacing: 12) {
           ProgressView(model.awaitingAccountContent ? "Открываем ваши материалы…" : "Открываем пространство…")
-          Button("Пространства") { model.openWorkspaceLibrary?() }
+          Button("Пространства") { model.openWorkspaceLibrary?(.spaces) }
         }
       case .failed(let message):
         ContentUnavailableView("Не удалось открыть пространство", systemImage: "exclamationmark.triangle", description: Text(message))
@@ -79,7 +78,7 @@ struct NotebookMacWorkspaceView: View {
         Button(action: model.macGoBack) { Label("Назад", systemImage: "chevron.left") }
           .disabled(!model.macCanGoBack).keyboardShortcut("[", modifiers: .command)
           .accessibilityIdentifier("mac-workspace-back")
-        Button { model.openWorkspaceLibrary?() } label: {
+        Button { model.openWorkspaceLibrary?(.spaces) } label: {
           Text(model.workspaceName).lineLimit(1)
         }.accessibilityIdentifier("workspaces-open")
       }
@@ -133,7 +132,6 @@ struct NotebookMacWorkspaceView: View {
           .disabled(model.pasteDestinations.isEmpty)
         Button { showsSearch = true } label: { Label("Найти", systemImage: "magnifyingglass") }
           .keyboardShortcut("f", modifiers: .command)
-        Button(action: showDevices) { Label(model.deviceStatusMessage, systemImage: model.isPeerConnected ? "ipad.and.arrow.forward" : "network") }
       }
     }
     .sheet(isPresented: $showsSearch) { NotebookSearchView().environment(model).frame(width: 560, height: 500) }

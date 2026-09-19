@@ -81,13 +81,18 @@ extension CodexAppServer {
   }
 
   static func composerInput(text: String, attachments: [CodexInputAttachment]) throws -> [JSONValue] {
-    guard CodexInputAttachment.valid(attachments) else { throw CodexBridgeError.invalidInput }
+    guard CodexInputAttachment.valid(attachments), attachments.allSatisfy({ $0.kind != .image || $0.imagePNG != nil }) else { throw CodexBridgeError.invalidInput }
     // Files remain references to the Mac working copy, not snapshots secretly uploaded into the prompt.
     let paths = attachments.filter { $0.kind == .file || $0.kind == .folder }.map { $0.path }
-    let names = attachments.filter { $0.kind != .file && $0.kind != .folder }.map { ($0.kind == .plugin ? "@" : "$") + $0.name }
+    let names = attachments.filter { $0.kind != .file && $0.kind != .folder && $0.kind != .image }.map { ($0.kind == .plugin ? "@" : "$") + $0.name }
     let message = text + (names.isEmpty ? "" : "\n\n" + names.joined(separator: " "))
       + (paths.isEmpty ? "" : "\n\nФайлы и папки:\n" + paths.joined(separator: "\n"))
-    return [.textInput(message)] + attachments.map { .object([
-      "type": .string($0.kind == .skill ? "skill" : "mention"), "name": .string($0.name), "path": .string($0.path)]) }
+    return [.textInput(message)] + attachments.map { attachment in
+      if attachment.kind == .image, let png = attachment.imagePNG {
+        return .object(["type":.string("image"),"url":.string("data:image/png;base64,"+png.base64EncodedString())])
+      }
+      return .object(["type": .string(attachment.kind == .skill ? "skill" : "mention"),
+        "name":.string(attachment.name),"path":.string(attachment.path)])
+    }
   }
 }

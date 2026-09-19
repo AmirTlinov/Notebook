@@ -4,6 +4,24 @@ import NotebookCore
 @testable import NotebookCodex
 
 @Suite("Native composer contract") struct CodexComposerTests {
+  @Test func laserCropsAreBoundedNativeImagesNotPersistentMentions() throws {
+    let png = try #require(Data(base64Encoded:"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jU1sAAAAASUVORK5CYII="))
+    func crop(_ bytes: Data = png) -> CodexInputAttachment {
+      .init(kind:.image,name:"Показано лазером",path:"notebook-laser:"+UUID().uuidString+"/"+UUID().uuidString,imagePNG:bytes)
+    }
+    let images = (0..<5).map { _ in crop() }
+    let input = try CodexAppServer.composerInput(text:"Объясни",attachments:images)
+    #expect(input.count == 6)
+    #expect(input[0]["text"] == .string("Объясни"))
+    #expect(input[1]["type"] == .string("image"))
+    #expect(input[1]["url"] == .string("data:image/png;base64,"+png.base64EncodedString()))
+    #expect(!CodexInputAttachment.valid(images+[crop()]))
+    #expect(!crop(Data()).isValid)
+    var oversized = png; oversized[16] = 127
+    #expect(!crop(oversized).isValid)
+    #expect(!CodexInputAttachment(kind:.file,name:"bad",path:"/tmp/image",imagePNG:png).isValid)
+    #expect(try JSONDecoder().decode([CodexInputAttachment].self,from:JSONEncoder().encode(images)) == images)
+  }
   @Test func cataloguePreservesServerEffortsAndDefaultInsteadOfInventingOptions() throws {
     let row: JSONValue = .object(["model": .string("future-model"), "displayName": .string("Future Model"),
       "defaultReasoningEffort": .string("new-effort"), "isDefault": .bool(true),

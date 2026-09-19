@@ -13390,3 +13390,72 @@ inkStamp и остальные поля не изменились. Долгая 
 длительность отдельной raster operation не измерена. Полная физическая
 приёмка по-прежнему не заявляется; scoped layout UI и финальный MCP readback
 зафиксированы отдельно.
+
+## GUI-266: инструменты, inline-текст и контекст лазера, 19 сентября — 125
+
+Срез **0.3.122(125), wire34/manifest16** сохраняет один путь каждого поведения:
+типографика преобразует native text/runs для редактора и статического отображения;
+iPad допускает UITextView над page-turn host немедленно, ещё до публикации
+вставки; адресная очередь атомарно сохраняет текст и его стиль. Удержание
+не редактируемого текста резервирует контакт, а не конкурирует с page curl.
+Добавлены шрифты и настройка шрифта новых надписей, bold/italic, ссылка,
+highlight. Отдельного модального редактора текста нет; URL редактирует только
+метаданные ссылки. Старые пути отображения и отдельная история удалены.
+
+Круг/квадрат изменены в значках, свободные пропорции фигур сохранены. Начало
+и конец стрелки находятся в одной строке; routing и четыре line styles
+выбираются по иконкам и отображаются на toolbar. Devices теперь вкладка
+Spaces, создание чата — плюс в списке чатов либо конкретном проекте, не
+сосед кнопки закрытия. Отдельный Mac devices-window удалён.
+
+Лазер хранит максимум пять временных frozen capture в том же chat/computer
+scope. Следующая фактическая отправка забирает их один раз, только моложе
+30 секунд по монотонным часам; старт диктовки не расходует очередь. На wire
+идут маленькие ссылки на evidence, а PNG — прежним blob-каналом. Mac ждёт
+именно эти evidence и разворачивает PNG только в native model input. Лимиты
+96 KiB chat input / 256 KiB transport frame не расширены; draft attachments
+и общий выбранный контекст не загрязняются. GUI-240 package/TeX формат15 не
+подставлен в decoder этого среза, где соответствующей реализации ещё нет.
+
+Core/Codex: **24 PASS**, `.build/gui266-core.log`, включая UTF-16 runs,
+валидность web links, wire descriptor, 300 KB PNG вне chat packet, отсутствие
+повторного attachment и native Codex image input. Локальная схема установленного
+Codex подтверждает image/url; отправка реальному агенту в этой проверке не делалась.
+
+Physical iPad `.build/gui266-native125d`: **10 PASS / 1 FAIL**, без skips и
+runtime warnings. Прошли icons/settings, Spaces/Devices/search, project browser,
+inline на доске/странице, ранний текст до store publication, native formatting,
+TTL/limit лазера и hold/page-curl arbitration. Последний отказ обнаружил двойное
+закрытие UIAlert ссылки, нарушавшее переход UIKit. Ручное dismissal удалено;
+Done явно завершает текущую сессию редактирования.
+
+Финальный неизменный `.build/gui266-native125e/verification.json`:
+**1/1 physical iPad UI + 1/1 Mac native PASS**, без skips/runtime warnings.
+Полный UI-сценарий: bold/italic/highlight → web link → текст → Done →
+hold/drag без сдвига/перелистывания бумаги → повторное открытие с тем же
+текстом и четырьмя стилями. Mac native проверяет durable descriptor → exact
+PNG в одном native message → следующий message без PNG. Экспортированные
+скриншоты оформления, стрелок и browser просмотрены; это не замер FPS.
+
+Это выбранная регрессия и реальные finger/UI-жесты на физическом iPad, а не
+полный suite и не аппаратная приёмка Apple Pencil. Доставка production crop
+реальному агенту, системные FPS/CPU/GPU, десять повторов и 30 минут совместной
+работы не заявляются пройденными.
+
+Подписанная пара125 `.build/gui266-build125/build.json` построена из source
+`de20f361cc2554d5f32c2832868119b4d9c3f8ef2acfe7d4196211e504d74a46`.
+В16:05UTC установлена поверх124 без uninstall/reset: штатный Mac terminate
+дренировал PID81557; store/spaces/registry/activation bytes до relaunch
+совпали, registry iPad совпал. `.build/gui266-install125/installation.json`
+фиксирует подписи и инварианты. Версии125 прочитаны на обоих устройствах;
+запущены Mac PID3895 и physical iPad PID12390. Private GUI183/GUI240 apps,
+сеть, identities и ключи не менялись.
+
+Installed MCP readback в16:05:47UTC — ready20779/20780: page header и board
+revision вместе с basis совпали с baseline20766; известная selection от
+прежнего iPad actor с новой session86597A6E-5ACD-43CA-9256-B295E04CBD4C.
+Отдельный `observe(includeImage:true)` затем дал ipc_timeout; он не отменяет
+успешного readback, но новый production screenshot этим вызовом не получен.
+В16:06:50UTC снят 1s sample того же Mac (`mac-startup.sample.txt`): main
+преимущественно ждёт run loop, часть samples проходит SceneCompositionTiles /
+ImageRenderer. Полный startup/performance PASS из этого не следует.

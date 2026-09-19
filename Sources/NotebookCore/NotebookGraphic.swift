@@ -7,7 +7,15 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
   public enum Shape: String, Codable, Sendable { case ellipse, rectangle, triangle, diamond, plus, connector, freehand, path }
   public enum Representation: String, Codable, Sendable { case ink, geometry }
   public struct Style: Codable, Equatable, Sendable {
-    public enum Dash: String, Codable, Sendable { case solid, dashed, dotted }
+    public enum Dash: String, Codable, CaseIterable, Sendable { case solid, dashed, dotted, dashDot }
+    public var dashPattern: [CGFloat] {
+      switch dash ?? .solid {
+      case .solid: []
+      case .dashed: [strokeWidth*4,strokeWidth*3]
+      case .dotted: [0,strokeWidth*3]
+      case .dashDot: [strokeWidth*4,strokeWidth*3,0,strokeWidth*3]
+      }
+    }
     public var stroke: SpatialInkColor
     public var strokeWidth: Double
     public var fill: SpatialInkColor?

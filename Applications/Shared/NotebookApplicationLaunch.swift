@@ -13,6 +13,7 @@ final class NotebookApplicationLaunch {
   private(set) var failure: String?
   private(set) var isChecking = false
   var showsWorkspaces = false
+  var workspaceTab: NotebookWorkspaceTab = .spaces
   private(set) var workspaceList: [Workspace] = []
   private(set) var workspaceError: String?
   private(set) var catalogError: String?
@@ -47,6 +48,7 @@ final class NotebookApplicationLaunch {
   init(fixture model: NotebookAppModel?) {
     self.model = model; root = URL(fileURLWithPath: "/unused-notebook-fixture")
     target = nil; makeModel = nil; isFixture = true
+    installWorkspaceSelection()
   }
 
   init(failure: String) {
@@ -107,7 +109,9 @@ final class NotebookApplicationLaunch {
   }
 
   private func installWorkspaceSelection() {
-    guard !isFixture, let model else { return }
+    guard let model else { return }
+    model.openWorkspaceLibrary = { [weak self] tab in self?.workspaceTab = tab; self?.showsWorkspaces = true }
+    guard !isFixture else { return }
     if let id = try? model.store.storedWorkspaceID(), let entry = try? library.catalog().entries.first(where: { $0.id == id }) {
       model.workspaceName = entry.name
       model.publishesWorkspaceName = entry.needsNamePublication
@@ -121,7 +125,6 @@ final class NotebookApplicationLaunch {
         if !pending { model.workspaceName = name; model.publishesWorkspaceName = false; model.accountConnection?.publishName = false }
       } catch { self.workspaceError = error.localizedDescription }
     }
-    model.openWorkspaceLibrary = { [weak self] in self?.showsWorkspaces = true }
     model.workspaceDeleted = { [weak self, weak model] in
       guard let self, let model, let id = try? model.store.storedWorkspaceID() else { return }
       self.retireWorkspace(id)

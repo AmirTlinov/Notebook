@@ -9,8 +9,6 @@ struct NotebookChatPanel: View {
   @Environment(NotebookAppModel.self) private var model
   @Bindable var chat: NotebookChatController
   let size: CGSize
-  let openDevices: () -> Void
-  let openHistory: () -> Void
   let companion: NotebookCompanionPlacement
   let onCompanionControlsSize: (CGSize) -> Void
   let move: (CGSize, Bool) -> Void
@@ -39,8 +37,8 @@ struct NotebookChatPanel: View {
                   VStack(spacing: 0) {
                     if chat.threadID == nil || chat.browsesChats {
                       browserToolbar
-                      NotebookChatBrowser(chat: chat, openDevices: openDevices,
-                        editProject: { editingProject = $0 }, createInProject: { project in
+                      NotebookChatBrowser(chat: chat,
+                        editProject: { editingProject = $0 }, createChat: { project in
                           chat.selectProject(project); createChat()
                         })
                     } else { conversation(height: height) }
@@ -136,34 +134,6 @@ struct NotebookChatPanel: View {
 
   private var header: some View {
     HStack(spacing: 0) {
-      Menu {
-        if chat.computers.count > 1 {
-          Section("Компьютер") {
-            ForEach(chat.computers, id: \.deviceID) { computer in
-              Button { model.chooseChatComputer(computer.deviceID) } label: {
-                Label(computer.displayName + (chat.onlineComputers.contains(computer.deviceID) ? "" : " · не в сети"),
-                  systemImage: chat.computerID == computer.deviceID ? "checkmark" : "laptopcomputer")
-              }.disabled(chat.switchingComputer)
-            }
-          }
-        }
-        if !chat.projects.isEmpty {
-          Section("Настройки проектов") {
-            ForEach(chat.projects) { project in
-              Button(project.name, systemImage: "folder") { editingProject = project }
-                .accessibilityIdentifier("notebook-chat-project-settings-" + project.id)
-            }
-          }
-        }
-        Section {
-          Button("Совместные ходы", systemImage: "clock.arrow.circlepath", action: openHistory)
-            .accessibilityIdentifier("collaboration-history")
-          Button("Устройства", systemImage: "link", action: openDevices)
-            .accessibilityIdentifier("devices-settings")
-        }
-      } label: {
-        Image(systemName: "line.3.horizontal").font(NotebookChrome.iconFont).frame(width: 44, height: 44).contentShape(Rectangle())
-      }.accessibilityLabel("Действия чата").accessibilityIdentifier("notebook-chat-menu")
       Button {
         chat.browsesChats.toggle()
       } label: {
@@ -196,11 +166,6 @@ struct NotebookChatPanel: View {
       Button { chat.files.toggleSidebar() } label: {
         Image(systemName: "sidebar.right").frame(width: 44, height: 44).contentShape(Rectangle())
       }.accessibilityLabel("Файлы проекта").accessibilityIdentifier("notebook-files-toggle")
-      Button(action: createChat) {
-        Image(systemName: "square.and.pencil").frame(width: 44, height: 44).contentShape(Rectangle())
-      }
-        .accessibilityLabel("Новый чат").accessibilityIdentifier("notebook-chat-new")
-        .disabled(chat.saving || chat.voice.capturing)
       Button { draftFocused = false; chat.expanded = false } label: {
         Image(systemName: "xmark").frame(width: 44, height: 44).contentShape(Rectangle())
       }
@@ -270,6 +235,14 @@ struct NotebookChatPanel: View {
   private var composer: some View {
     VStack(alignment: .leading, spacing: 8) {
       NotebookVoiceControls(voice: chat.voice)
+      if let thread = chat.threadID, case let count = model.laserContext.count(scope:.init(computer:chat.computerID,thread:thread)), count > 0 {
+        HStack {
+          Label("Лазер · \(count)",systemImage:"cursorarrow.rays").font(.caption)
+          Spacer()
+          Button { model.laserContext.clear() } label: { Image(systemName:"xmark").frame(width:32,height:32) }
+            .accessibilityLabel("Не прикреплять показанное лазером").accessibilityIdentifier("laser-context-clear")
+        }.padding(.horizontal,12).accessibilityIdentifier("laser-context-pending")
+      }
       if let notice {
         Text(notice).font(.caption).foregroundStyle(chat.error != nil || model.agentRequestError != nil ? .red : .secondary)
           .lineLimit(3).padding(.horizontal, 12).accessibilityIdentifier("notebook-chat-notice")

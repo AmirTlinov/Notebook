@@ -98,7 +98,7 @@ struct PenControlsView: View {
       Group {
         if drawingTool == .connector {
           Image(uiImage:NotebookConnectionGlyph.image(routing:model.drawingToolSettings.connectionRouting,
-            start:model.drawingToolSettings.connectionStart ?? .none,end:model.drawingToolSettings.connectionEnd ?? .arrow,size:.init(width:30,height:26)))
+            start:model.drawingToolSettings.connectionStart ?? .none,end:model.drawingToolSettings.connectionEnd ?? .arrow,dash:model.drawingToolSettings.connectionDash ?? .solid,size:.init(width:30,height:26)))
         } else { Image(systemName:drawingTool.symbol) }
       }
       .font(NotebookChrome.iconFont).foregroundStyle(Color.primary).frame(width:32,height:32)

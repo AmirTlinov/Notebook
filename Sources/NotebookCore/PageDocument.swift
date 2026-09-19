@@ -224,7 +224,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
         !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
           && $0.frame.isContained(in: size)
           && $0.state.isValid
-          && ($0.textStyle?.isValid ?? true)
+          && ($0.textStyle?.isValid(for:$0.source) ?? true)
           && ($0.kind == .nativeText || $0.textStyle == nil)
           && ($0.kind == .graphic ? $0.graphic?.isValid == true : $0.graphic == nil)
       }

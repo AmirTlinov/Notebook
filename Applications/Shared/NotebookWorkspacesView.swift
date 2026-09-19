@@ -1,11 +1,14 @@
 import SwiftUI
 import CloudKit
 
+enum NotebookWorkspaceTab: String, CaseIterable { case spaces = "Пространства", devices = "Устройства" }
+
 /// Space lifecycle belongs to launch; this view never creates or deletes stores.
 struct NotebookWorkspacesView: View {
   @Environment(\.scenePhase) private var scenePhase
-  let launch: NotebookApplicationLaunch
+  @Bindable var launch: NotebookApplicationLaunch
   var close: (() -> Void)?
+  @State private var deviceQuery = ""
   @State private var editor: Editor?
   @State private var removal: Removal?
   private struct Editor: Identifiable { let id = UUID(); let spaceID: UUID?; var name: String }
@@ -13,6 +16,27 @@ struct NotebookWorkspacesView: View {
 
   var body: some View {
     NavigationStack {
+      VStack(spacing:0) {
+        if launch.model != nil {
+          Picker("Раздел",selection:$launch.workspaceTab) {
+            ForEach(NotebookWorkspaceTab.allCases,id:\.self) { Text($0.rawValue).tag($0) }
+          }.pickerStyle(.segmented).padding().accessibilityIdentifier("workspace-tabs")
+        }
+        if launch.workspaceTab == .devices, let model = launch.model {
+          Form { NotebookDevicesContent(model:model,query:deviceQuery) }
+            .searchable(text:$deviceQuery,prompt:"Найти устройство")
+            .accessibilityIdentifier("workspace-devices")
+        } else { workspaceList }
+      }
+      .navigationTitle("Пространства")
+      .toolbar {
+        if let close, launch.model != nil { ToolbarItem(placement: .confirmationAction) { Button("Готово", action: close) } }
+      }
+      .task { await launch.refreshWorkspaces() }
+    }
+  }
+
+  private var workspaceList: some View {
       List {
         if let error = launch.workspaceError ?? launch.catalogError {
           Section { Text(error).font(.callout).foregroundStyle(.secondary).accessibilityIdentifier("workspace-error") }
@@ -63,11 +87,6 @@ struct NotebookWorkspacesView: View {
         }
       }
       .disabled(launch.isChecking)
-      .navigationTitle("Пространства")
-      .toolbar {
-        if let close, launch.model != nil { ToolbarItem(placement: .confirmationAction) { Button("Готово", action: close) } }
-      }
-      .task { await launch.refreshWorkspaces() }
       .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await launch.refreshWorkspaces() } } }
       .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)) { _ in Task { await launch.refreshWorkspaces() } }
       .onChange(of: launch.model?.accountConnection?.spaces) { _, _ in Task { await launch.refreshWorkspaces() } }
@@ -88,7 +107,6 @@ struct NotebookWorkspacesView: View {
             ? "Локальная копия «\(value.space.name)» будет удалена. Сохранённая копия в iCloud и другие устройства останутся; неотправленные изменения будут потеряны."
             : "«\(value.space.name)» и все материалы на этом устройстве будут удалены. Это нельзя отменить.")
       }
-    }
   }
 }
 

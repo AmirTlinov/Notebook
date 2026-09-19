@@ -37,7 +37,7 @@ extension NotebookStore {
       let job = try saveChatInput(input, to: computer)
       if let (thread, text, _) = input.action.message {
         var panel = try chatPanel(author: input.author, computer: computer)
-        if panel.threadID == thread, panel.draft == text, (panel.attachments ?? []) == (input.attachments ?? []) {
+        if panel.threadID == thread, panel.draft == text, (panel.attachments ?? []) == (input.attachments ?? []).filter { $0.kind != .image } {
           panel.draft = ""; panel.attachments = nil; try saveChatPanel(panel, author: input.author)
         }
       }

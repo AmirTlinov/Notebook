@@ -1,9 +1,34 @@
 import Foundation
+import CryptoKit
 import Testing
 @testable import NotebookCore
 
 @Suite("Codex delivery survives lost acknowledgements without a second executor")
 struct NotebookChatStoreTests {
+  @Test func largeLaserPixelsUseEvidenceBlobsWhileTheJobRemainsASmallPacket() throws {
+    try fixture { store, author in
+      let region = PageRect(x:0,y:0,width:1,height:1)
+      let reference = CollaborationReference(target:.init(kind:.page,id:UUID()),region:region,revision:"frozen-laser-source")
+      var png = try #require(Data(base64Encoded:"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="))
+      png.append(Data(repeating:0,count:300_000)) // Artificial oversized payload exercises framing, not PNG rendering.
+      let image = try AgentPinnedImage(referenceID:reference.id,sourceRevision:reference.revision,region:region,
+        worldOrigin:nil,pageIndex:nil,pixelWidth:1,pixelHeight:1,pixelsPerPoint:1,png:png,
+        sha256:SHA256.hash(data:png).map { String(format:"%02x",$0) }.joined())
+      let before = try store.readContextSelection()
+      let attachments = try store.saveChatImageAttachments([.init(reference:reference,image:image)],author:author)
+      #expect(attachments.count == 1); #expect(attachments[0].imagePNG == nil)
+      #expect(try store.readContextSelection() == before)
+      let input = NotebookChatInput(author:author,action:.send(threadID:UUID().uuidString,text:"Explain",context:""),attachments:attachments)
+      #expect(input.isValid)
+      #expect(try JSONEncoder().encode(input).count < 2048)
+      let resolved = try #require(try store.resolvedChatImageAttachments(attachments))
+      #expect(resolved[0].imagePNG == png)
+      #expect(!NotebookChatInput(author:author,action:input.action,attachments:resolved).isValid,
+        "Resolved pixels cannot accidentally go back through the short chat packet")
+      let missing = CodexInputAttachment(kind:.image,name:"missing",path:"notebook-laser:"+UUID().uuidString+"/"+UUID().uuidString)
+      #expect(try store.resolvedChatImageAttachments([missing]) == nil)
+    }
+  }
   enum Fault: Error { case injected }
   func fixture(_ body: (NotebookStore, UUID) throws -> Void) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-chat-" + UUID().uuidString)
@@ -32,6 +57,23 @@ struct NotebookChatStoreTests {
       #expect(try store.chatPanel(author: author, computer: computer).attachments == [plugin])
       #expect(try store.chatPanel(author: author, computer: computer).draft == "Read")
       #expect(try store.chatPanel(author: author, computer: UUID()).attachments == nil)
+    }
+  }
+
+  @Test func oneShotImagesStayInTheirDurableMessageButNeverInTheNextDraft() throws {
+    try fixture { store, author in
+      let thread = UUID().uuidString, computer = UUID()
+      let file = CodexInputAttachment(kind:.file,name:"code.swift",path:"/tmp/code.swift")
+      let image = CodexInputAttachment(kind:.image,name:"Лазер",path:"notebook-laser:"+UUID().uuidString+"/"+UUID().uuidString)
+      try store.saveChatPanel(.init(threadID:thread,draft:"Explain",sidecarID:computer,attachments:[file]),author:author)
+      let input = NotebookChatInput(author:author,action:.send(threadID:thread,text:"Explain",context:""),attachments:[file,image])
+      _ = try store.saveChatSubmission(input,to:computer)
+      let panel = try store.chatPanel(author:author,computer:computer)
+      #expect(panel.draft.isEmpty); #expect(panel.attachments == nil)
+      #expect(try store.chatJob(input.id)?.input.attachments == [file,image])
+      _ = try store.saveChatSubmission(input,to:computer)
+      #expect(try store.chatJob(input.id)?.input == input)
+      #expect(try store.chatPanel(author:author,computer:computer).attachments == nil)
     }
   }
 

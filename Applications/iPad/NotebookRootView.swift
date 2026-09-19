@@ -3,8 +3,6 @@ import NotebookCore
 
 struct NotebookRootView: View {
   @Environment(NotebookAppModel.self) private var model
-  @State private var showsDevices = false
-  @State private var showsHistory = false
   @State private var penControlsFrame = CGRect.zero
 
   var body: some View {
@@ -19,8 +17,8 @@ struct NotebookRootView: View {
             VStack(spacing: 14) {
               ProgressView("Открываем ваши материалы…")
               Text(model.deviceStatusMessage).font(.callout).foregroundStyle(.secondary)
-              Button("Состояние устройств") { showsDevices = true }
-              if let open = model.openWorkspaceLibrary { Button("Выбрать пространство", action: open) }
+              Button("Состояние устройств") { model.openWorkspaceLibrary?(.devices) }
+              if let open = model.openWorkspaceLibrary { Button("Выбрать пространство") { open(.spaces) } }
             }.padding(24)
           } else { Color.clear }
         case .ready:
@@ -80,9 +78,6 @@ struct NotebookRootView: View {
     .ignoresSafeArea()
     // Only the composer follows the keyboard safe area. The drawing geometry
     // remains the full physical viewport while system input is open.
-    NotebookCollaborationView(showsHistory: $showsHistory)
-      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-      .padding(18)
     if let chat = model.chat, chat.files.window.isOpen, chat.files.document != nil {
       GeometryReader { geometry in
         let top = max(18, penControlsFrame.maxY - geometry.frame(in: .global).minY + 12)
@@ -98,9 +93,7 @@ struct NotebookRootView: View {
         // keyboard avoidance never publishes a SessionPresence or remounts paper.
         let available = CGRect(x: 18, y: top, width: max(44, geometry.size.width - 36),
           height: max(44, geometry.size.height - 80 - top))
-        NotebookChatWindow(chat: chat, available: available,
-          openDevices: { showsDevices = true },
-          openHistory: { showsHistory = true })
+        NotebookChatWindow(chat: chat, available: available)
       }
       // Both task presentations use available window space. A widget may own
       // the keyboard while the companion must remain reachable. The separate
@@ -115,7 +108,13 @@ struct NotebookRootView: View {
       if let panel { NotebookToolPopover(panel:panel) }
     }
     .coordinateSpace(name: "notebook-window")
-    .sheet(isPresented: $showsDevices) { NotebookDevicesView().environment(model) }
+    .task(id: model.collaborationPreparationKey) { await model.refreshCollaborationDetails() }
+    .task {
+      while !Task.isCancelled {
+        await model.refreshReferenceStatuses()
+        do { try await Task.sleep(for: .seconds(2)) } catch { return }
+      }
+    }
     .sheet(item: Binding(get: { model.chat?.files.notes.reviewed }, set: { model.chat?.files.notes.reviewed = $0 })) { fragment in
       if let notes = model.chat?.files.notes { NotebookCodeReviewView(notes: notes, fragment: fragment).environment(model) }
     }

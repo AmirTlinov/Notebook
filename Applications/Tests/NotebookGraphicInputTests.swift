@@ -320,6 +320,25 @@ import XCTest
     }
   }
 
+  func testTextHoldReservesPageContactBeforeItsDragBegins() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let gate = NotebookInputGate(), selection = SceneSelectionRecognizer(), window = UIWindow(windowScene:scene)
+    let anchor = UIView(frame:.init(x:0,y:0,width:600,height:800))
+    window.addSubview(anchor); window.addGestureRecognizer(selection)
+    selection.coordinateView = anchor; selection.gate = gate
+    let curl = UIPanGestureRecognizer(); anchor.addGestureRecognizer(curl)
+    var began = false
+    selection.onLift = { _ in .init(requiresHold:true,begin:{ began = true },change:{ _ in },end:{ _ in },cancel:{}) }
+    let touch = GraphicFingerTouch()
+    selection.touchesBegan([touch],with:UIEvent())
+    XCTAssertFalse(gate.permitsPageNavigation,"Paper curl cannot steal the hold's first movement")
+    XCTAssertFalse(began)
+    try await Task.sleep(for:.seconds(NotebookInteractionTouchView.liftDelay+0.1))
+    XCTAssertTrue(began); XCTAssertTrue(selection.canPrevent(curl))
+    selection.touchesEnded([touch],with:UIEvent()); gate.endFingerContacts([ObjectIdentifier(touch)])
+    XCTAssertTrue(gate.permitsPageNavigation)
+  }
+
   func testNativeControlOwnershipCannotBeRefinedIntoAnObjectDrag() {
     let gate = NotebookInputGate(), touch = GraphicFingerTouch(), control = UITextField()
     let id = ObjectIdentifier(touch), owner = NotebookInputGate.FingerContactOwner.nativeInput(ObjectIdentifier(control))

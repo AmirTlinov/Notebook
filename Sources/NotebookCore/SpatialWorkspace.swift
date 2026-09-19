@@ -518,6 +518,8 @@ public struct NativeTextStyle: Codable, Equatable, Sendable {
   public let green: Double
   public let blue: Double
   public let alpha: Double
+  public var format: NativeTextFormat?
+  public var runs: [NativeTextRun]?
 
   public init(
     fontSize: Double = 34,
@@ -525,7 +527,8 @@ public struct NativeTextStyle: Codable, Equatable, Sendable {
     red: Double = 0.09,
     green: Double = 0.09,
     blue: Double = 0.08,
-    alpha: Double = 1
+    alpha: Double = 1,
+    format: NativeTextFormat? = nil, runs: [NativeTextRun]? = nil
   ) {
     precondition(fontSize.isFinite && fontSize >= 3 && fontSize <= 5760)
     precondition(weight.isFinite && weight >= 0 && weight <= 1)
@@ -536,12 +539,28 @@ public struct NativeTextStyle: Codable, Equatable, Sendable {
     self.green = green
     self.blue = blue
     self.alpha = alpha
+    self.format = format; self.runs = runs
   }
 
   public static let standard = NativeTextStyle()
 
+  private var validRuns: Bool {
+    guard let runs else { return true }
+    guard runs.count <= 2048 else { return false }
+    var end = 0
+    for run in runs {
+      guard run.location >= end, run.length > 0, run.location <= 100_000,
+        run.length <= 100_000-run.location, run.format.isValid else { return false }
+      end = run.location+run.length
+    }
+    return true
+  }
+  func isValid(for text: String) -> Bool {
+    isValid && (runs?.last.map { $0.location+$0.length <= text.utf16.count } ?? true)
+  }
+
   var isValid: Bool {
-    fontSize.isFinite && fontSize >= 3 && fontSize <= 5760
+    (format?.isValid ?? true) && validRuns && fontSize.isFinite && fontSize >= 3 && fontSize <= 5760
       && weight.isFinite && weight >= 0 && weight <= 1
       && [red, green, blue, alpha].allSatisfy {
         $0.isFinite && $0 >= 0 && $0 <= 1
@@ -625,7 +644,7 @@ public struct SpatialElement: Codable, Equatable, Identifiable, Sendable {
   var isValid: Bool {
     !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       && surface.isValid && surface.kind != .page
-      && frame.isValid && state.isValid && textStyle.isValid
+      && frame.isValid && state.isValid && textStyle.isValid(for:source)
       && (kind == .graphic ? graphic?.isValid == true : graphic == nil)
       && (surface.kind == .board
         ? worldOrigin?.isValid == true

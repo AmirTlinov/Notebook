@@ -472,10 +472,16 @@ struct SpatialTextSnapshot: View {
   }
 
   static func text(_ element: SpatialElement, mask: Bool = false) -> Text {
-    Text(element.source)
-      .font(.system(size: element.textStyle.fontSize, weight: element.textStyle.fontWeight))
-      .foregroundStyle(mask ? Color.white.opacity(element.textStyle.alpha) : Color(red: element.textStyle.red, green: element.textStyle.green,
-        blue: element.textStyle.blue, opacity: element.textStyle.alpha))
+    let attributed = NSMutableAttributedString(attributedString:NotebookTextTypography.attributed(element.source,style:element.textStyle))
+    if mask {
+      #if os(iOS)
+      let white = UIColor.white.withAlphaComponent(element.textStyle.alpha)
+      #else
+      let white = NSColor.white.withAlphaComponent(element.textStyle.alpha)
+      #endif
+      attributed.addAttribute(.foregroundColor,value:white,range:.init(location:0,length:attributed.length))
+    }
+    return Text(AttributedString(attributed))
   }
 
 }

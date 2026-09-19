@@ -4,6 +4,29 @@ import UIKit
 @testable import Notebook
 
 @MainActor final class NotebookDrawingToolsTests: XCTestCase {
+  func testTextEditorIsAdmittedBeforeInsertPublicationAndKeepsEarlyStyledTyping() async throws {
+    try await fixture { model in
+      let page = try XCTUnwrap(model.activePage)
+      let address = NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,
+        bounds:.init(x:0,y:0,width:page.size.width,height:page.size.height))
+      var settings = model.drawingToolSettings; settings.textFontName = "Georgia"
+      model.drawingToolSettings = settings
+      let id = try XCTUnwrap(model.beginToolText(at:.init(x:80,y:120),address:address,screenScale:1))
+      let target = try XCTUnwrap(model.selectionSession.nativeText)
+      XCTAssertTrue(model.selectionSession.isInteractive)
+      XCTAssertEqual(target.reference,address.reference(id)); XCTAssertEqual(target.frame.x,80)
+      XCTAssertEqual(target.frame.y,120); XCTAssertEqual(target.style.format?.fontName,"Georgia")
+      XCTAssertFalse(model.activePage?.elements.contains { $0.id == id } ?? false,
+        "The editable target exists synchronously before the addressed insert publishes")
+      var style = target.style
+      style.runs = [.init(location:0,length:5,format:.init(fontName:"Georgia",bold:true,italic:true,link:"https://example.com"))]
+      model.commitNativeText(reference:target.reference,text:"Hello",finish:true,style:style,editingFrame:target.frame)
+      model.clearSelection()
+      await assertSaved(model)
+      let saved = try XCTUnwrap(model.store.loadPage(page.id).elements.first { $0.id == id })
+      XCTAssertEqual(saved.source,"Hello"); XCTAssertEqual(saved.textStyle,style)
+    }
+  }
   func testMarkerUsesConstantOpacityAndKeepsIndependentStyle() {
     let settings = NotebookDrawingToolSettings(), marker = settings.marker
     XCTAssertEqual(marker.width,18)

@@ -157,6 +157,7 @@ struct SpatialWorkspaceView: View {
         NotebookAttentionMarks(presence:presence)
         NotebookGraphicBindingHint(presence:presence)
         NotebookTransientToolsOverlay(presence:presence)
+        NotebookNativeTextEditingOverlay(presence:presence)
         NotebookPresentationOverlay(player: model.presentationPlayer, presence: presence,
           cameraIsActive: model.presencePhase == .active)
         if let reference = model.selectionSession.editingElement,
@@ -244,7 +245,7 @@ struct SpatialWorkspaceView: View {
           }
           model.publishHumanContext(capture, target: target)
         }, onLift: { point in
-          guard model.drawingTool != .text, cameraGesture == nil, !settling, let cohort else { return nil }
+          guard cameraGesture == nil, !settling, let cohort else { return nil }
           let selected = selectedElement(at: point, presence: presence)
           let capture = selected == nil ? NotebookAttentionProjection.capture(start: point, end: point, model: model, presence: presence,
             cohort: cohort, installedInk: spatialInkSurfaces.installedSources(),
@@ -1442,7 +1443,7 @@ private struct WorkspaceSceneItem: View {
         navigationIsEnabled: pageNavigationIsEnabled,
         pageIsInteractive: contentIsInteractive,
         canBeginNavigation: {
-          model.inputGate.permitsPageNavigation && paperFitsViewport
+          model.inputGate.permitsPageNavigation && !model.selectionSession.isInteractive && paperFitsViewport
         },
         page: { index, isCurrent, readiness in
           notebookPage(

@@ -70,9 +70,9 @@ final class NotebookElementStyleController: UIViewController, UIPopoverPresentat
     weightLabel.font = .monospacedDigitSystemFont(ofSize:13,weight:.regular)
     stack.addArrangedSubview(widths)
     let dashes = UIStackView(); dashes.distribution = .fillEqually; dashes.spacing = 6
-    for (index, title) in ["Сплошная","Пунктир","Точки"].enumerated() {
+    for (index, dash) in Self.dashes.enumerated() {
       let button = UIButton(type:.system); button.tag = index; button.setImage(Self.line(width:2,dash:index),for:.normal)
-      button.accessibilityLabel = title; button.accessibilityIdentifier = "element-dash-\(index)"
+      button.accessibilityLabel = dash.controlTitle; button.accessibilityIdentifier = "element-dash-\(index)"
       button.addTarget(self,action:#selector(chooseDash(_:)),for:.touchUpInside)
       button.heightAnchor.constraint(equalToConstant:42).isActive = true
       patterns.append(button); dashes.addArrangedSubview(button)
@@ -102,7 +102,7 @@ final class NotebookElementStyleController: UIViewController, UIPopoverPresentat
     button.backgroundColor = selected ? UIColor(NotebookChrome.selectionSurface) : .clear; button.layer.cornerRadius = 10
     button.tintColor = .label; button.accessibilityTraits = selected ? [.button,.selected] : .button
   }
-  private static let dashes: [NotebookGraphic.Style.Dash] = [.solid,.dashed,.dotted]
+  private static let dashes = NotebookGraphic.Style.Dash.allCases
   @objc private func channelChanged() { refresh() }
   @objc private func chooseColor(_ sender: UIButton) { applyColor(Self.colors[sender.tag].1) }
   private func applyColor(_ color: SpatialInkColor) {
@@ -129,8 +129,8 @@ final class NotebookElementStyleController: UIViewController, UIPopoverPresentat
     UIGraphicsImageRenderer(size:.init(width:42,height:24)).image { _ in
       UIColor.label.setStroke(); let line = UIBezierPath(); line.move(to:.init(x:5,y:12)); line.addLine(to:.init(x:37,y:12))
       line.lineWidth = width; line.lineCapStyle = .round
-      if dash == 1 { line.setLineDash([6,5],count:2,phase:0) }
-      if dash == 2 { line.setLineDash([0,5],count:2,phase:0) }
+      let pattern = NotebookGraphic.Style(strokeWidth:width,dash:Self.dashes[dash]).dashPattern
+      if !pattern.isEmpty { line.setLineDash(pattern,count:pattern.count,phase:0) }
       line.stroke()
     }.withRenderingMode(.alwaysTemplate)
   }

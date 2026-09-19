@@ -5,11 +5,11 @@ import UIKit
 enum NotebookConnectionGlyph {
   static func image(routing: NotebookGraphicConnection.Routing = .straight,
     start: NotebookGraphicConnection.Arrowhead = .none, end: NotebookGraphicConnection.Arrowhead = .none,
-    size: CGSize = .init(width:28,height:18)) -> UIImage {
+    dash: NotebookGraphic.Style.Dash = .solid, size: CGSize = .init(width:28,height:18)) -> UIImage {
     let connection = NotebookGraphicConnection(start:.init(point:.init(x:5,y:routing == .elbow ? 20 : 12)),
       end:.init(point:.init(x:55,y:routing == .elbow ? 4 : 12)),bend:routing == .curved ? -9 : 0,
       startArrowhead:start,endArrowhead:end,routing:routing)
-    let graphic = NotebookGraphic(shape:.connector,style:.init(strokeWidth:1.8),connection:connection)
+    let graphic = NotebookGraphic(shape:.connector,style:.init(strokeWidth:1.8,dash:dash),connection:connection)
     let layout = NotebookGraphicGraph([.init(id:"glyph",graphic:graphic,frame:.init(x:0,y:0,width:60,height:24),
       surface:.page(UUID()),shown:true)]).resolve("glyph").layout!
     return UIGraphicsImageRenderer(size:size).image { renderer in
@@ -117,4 +117,10 @@ final class NotebookConnectionController: UIViewController, UIPopoverPresentatio
 
 extension NotebookGraphicConnection.Routing {
   var controlTitle: String { switch self { case .straight: "Прямая"; case .elbow: "Угловая"; case .curved: "Кривая" } }
+}
+
+extension NotebookGraphic.Style.Dash {
+  var controlTitle: String {
+    switch self { case .solid: "Сплошная"; case .dashed: "Пунктир"; case .dotted: "Точки"; case .dashDot: "Штрихпунктир" }
+  }
 }

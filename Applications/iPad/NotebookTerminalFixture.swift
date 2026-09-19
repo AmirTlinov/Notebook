@@ -1,12 +1,13 @@
-#if DEBUG && targetEnvironment(simulator)
+#if DEBUG
 import Foundation
 import NotebookCore
 
 /// UI gestures use the real controller, transport envelopes and xterm input.
 /// Only the remote PTY is replaced by a bounded echo peer in this isolated app.
-@MainActor enum SimulatorTerminalFixture {
+@MainActor enum NotebookTerminalFixture {
   static func make(persistence: NotebookPersistenceQueue, author: UUID, directory: URL) async throws -> NotebookChatController? {
-    guard ProcessInfo.processInfo.arguments.contains("--notebook-terminal-fixture") else { return nil }
+    guard ProcessInfo.processInfo.arguments.contains("--notebook-terminal-fixture"),
+      ProcessInfo.processInfo.arguments.contains("--notebook-drawing-responsiveness-fixture") else { return nil }
     let peer = UUID(uuidString: "7E7A1000-0000-4000-8000-000000000099")!
     let project = CodexProject(id: "terminal-fixture", name: "Notebook", roots: ["/tmp/terminal-fixture"])
     let task = CodexTask(id: "7e7a1000-0000-4000-8000-000000000088", title: "Работа с терминалом", cwd: project.roots[0], projectID: project.id)

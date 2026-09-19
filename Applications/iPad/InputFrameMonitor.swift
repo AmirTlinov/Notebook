@@ -14,12 +14,6 @@ final class InputFrameMonitor: NSObject {
     let lastServiceToEndMS: Double?
   }
 
-  private struct HistorySample: Codable, Sendable {
-    let endedAt: Date
-    let build: String
-    let tapToMountMS: Double
-  }
-
   private static let signposter = OSSignposter(subsystem: "com.amirtlinov.notebook", category: "Input")
   private static let logger = Logger(subsystem: "com.amirtlinov.notebook", category: "Input")
   private var span: OSSignpostIntervalState?
@@ -31,7 +25,6 @@ final class InputFrameMonitor: NSObject {
   private var lastServiceAt: Double?
   private var mode = "unknown"
   private var pending: Sample?
-  private var pendingHistory: HistorySample?
   private var writeTask: Task<Void, Never>?
   private(set) var writeFailure: String?
   @MainActor private final class Callback: NSObject {
@@ -81,19 +74,13 @@ final class InputFrameMonitor: NSObject {
     flush()
   }
 
-  func recordHistoryMount(durationMS: Double) {
-    pendingHistory = .init(endedAt: Date(),
-      build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown", tapToMountMS: durationMS)
-    flush()
-  }
-
   private func flush() {
     guard writeTask == nil else { return }
     writeTask = Task { [weak self] in
       guard let self else { return }
-      while pending != nil || pendingHistory != nil {
-        let sample = pending, history = pendingHistory
-        pending = nil; pendingHistory = nil
+      while pending != nil {
+        let sample = pending
+        pending = nil
         let root = root
         let failure = await Task.detached(priority: .utility) { () -> String? in
           do {
@@ -106,12 +93,6 @@ final class InputFrameMonitor: NSObject {
               var samples = (try? JSONDecoder().decode([Sample].self, from: Data(contentsOf: url))) ?? []
               samples.append(sample)
               try JSONEncoder().encode(Array(samples.suffix(64))).write(to: url, options: .atomic)
-            }
-            if let history {
-              let url = directory.appendingPathComponent("collaboration-ui.json")
-              var samples = (try? JSONDecoder().decode([HistorySample].self, from: Data(contentsOf: url))) ?? []
-              samples.append(history)
-              try JSONEncoder().encode(Array(samples.suffix(32))).write(to: url, options: .atomic)
             }
             return nil
           } catch {

@@ -126,7 +126,11 @@ final class NotebookDrawingToolController {
     case .lasso: finishLasso(current)
     case .text:
       model.beginToolText(at:current.points[0],address:current.address,screenScale:current.screenScale)
-    case .laser: expireLaser(current.id)
+    case .laser:
+      #if os(iOS)
+      model.captureLaserContext(current)
+      #endif
+      expireLaser(current.id)
     case .pen,.marker,.eraser: assertionFailure("Ink belongs to the measured journal adapter")
     }
   }
@@ -224,7 +228,8 @@ final class NotebookDrawingToolController {
     let fill = (settings.shapeFillColor ?? .yellow).components
     let stroke = SpatialInkColor(red:color.red,green:color.green,blue:color.blue)
     let graphic = NotebookGraphic(shape:fit.shape,style:.init(stroke:stroke,strokeWidth:width,
-      fill:tool == .shape && settings.shapeFilled && fit.connection == nil ? .init(red:fill.red,green:fill.green,blue:fill.blue) : nil),connection:fit.connection,vertices:fit.vertices)
+      fill:tool == .shape && settings.shapeFilled && fit.connection == nil ? .init(red:fill.red,green:fill.green,blue:fill.blue) : nil,
+      dash:tool == .connector ? settings.connectionDash : nil),connection:fit.connection,vertices:fit.vertices)
     return .init(id:current.id,surface:current.address.surface,frame:fit.frame,worldOrigin:current.address.worldOrigin,graphic:graphic)
   }
 }
@@ -253,7 +258,7 @@ extension NotebookAppModel {
     guard (3...5760).contains(fontSize) else { return nil }
     let color = drawingToolSettings.textColor.components
     let style = NativeTextStyle(fontSize:fontSize,
-      red:color.red,green:color.green,blue:color.blue)
+      red:color.red,green:color.green,blue:color.blue,format:.init(fontName:drawingToolSettings.textFontName))
     let width = min(320/screenScale,address.bounds.map { $0.maxX-point.x } ?? .greatestFiniteMagnitude)
     let height = min(64/screenScale,address.bounds.map { $0.maxY-point.y } ?? .greatestFiniteMagnitude)
     guard width > 0, height > 0 else { return nil }
@@ -265,11 +270,15 @@ extension NotebookAppModel {
       guard performElementOperations([.init(reference:reference,kind:.insertElement,values:values)],
         summary:"Добавить текст",insertionTarget:address.target) else { return nil }
       selectElement(reference)
+      prepareNativeTextEditing(.init(reference:reference,address:address,
+        frame:.init(x:point.x,y:point.y,width:width,height:height),source:"",style:style))
       editSelectedElement(reference)
-      let selection = selectionSession.id, accepted = elementCommandSources[reference]?.task
+      let selection = selectionSession.id, creation = elementCommandSources[reference]?.id,
+        accepted = elementCommandSources[reference]?.task
       Task { [weak self] in
         guard let self, let result = await accepted?.value else { return }
         guard selectionSession.id == selection else {
+          guard elementCommandSources[reference]?.id == creation else { return }
           // Never remove text that has already received accepted input.
           let currentText: String?
           switch reference {

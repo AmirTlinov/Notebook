@@ -53,6 +53,7 @@ final class NotebookInputGate {
 
   var permitsPageNavigation: Bool {
     permitsNewContact && !hasActivePencil && !hasSceneObjectContact
+      && !fingerContactOwners.values.contains { if case .nativeInput = $0 { return true }; return false }
   }
 
   func fingerContactOwner(for contact: ObjectIdentifier,

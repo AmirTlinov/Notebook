@@ -574,8 +574,31 @@ final class NotebookAppModel {
       case .board(let boardID, let id): reference = .spatial(boardID: boardID, elementID: id)
       }
       selectElement(reference)
+      if let value = nativeElementSource(reference) {
+        if let page = value.page, page.kind == .nativeText {
+          prepareNativeTextEditing(.init(reference:reference,address:.init(surface:.page(value.target.id),boardID:nil,
+            worldOrigin:nil,bounds:pages[value.target.id].map { .init(x:0,y:0,width:$0.size.width,height:$0.size.height) }),
+            frame:page.frame,source:page.source,style:page.textStyle ?? .standard,page:page))
+        } else if let spatial = value.spatial, spatial.kind == .nativeText {
+          prepareNativeTextEditing(.init(reference:reference,address:.init(surface:spatial.surface,boardID:value.target.boardID ?? value.target.id,
+            worldOrigin:spatial.worldOrigin,bounds:nil),frame:.init(x:spatial.frame.x,y:spatial.frame.y,width:spatial.frame.width,height:spatial.frame.height),
+            source:spatial.source,style:spatial.textStyle,spatial:spatial))
+        }
+      }
       selectionSession.isInteractive = true
     }
+  }
+  func prepareNativeTextEditing(_ target: NotebookNativeTextTarget) {
+    guard selectionSession.element == target.reference else { return }
+    selectionSession.nativeText = target
+  }
+  func measureNativeText(_ reference: EditableElementReference, height: Double) {
+    guard selectionSession.nativeText?.reference == reference, var target = selectionSession.nativeText,
+      height.isFinite, height > 0 else { return }
+    let height = min(height,target.address.bounds.map { $0.maxY-target.frame.y } ?? .greatestFiniteMagnitude)
+    guard abs(target.frame.height-height) > 0.5 else { return }
+    target.frame = .init(x:target.frame.x,y:target.frame.y,width:target.frame.width,height:max(1,height))
+    selectionSession.nativeText = target
   }
   /// A disappearing editor can release only the selection that admitted it.
   func finishInteractiveElementInput(_ reference: EditableElementReference, selectionID: UUID) {
@@ -773,6 +796,7 @@ final class NotebookAppModel {
 
   let store: NotebookStore
   let actorID: UUID
+  let laserContext = NotebookLaserContext()
   let inputGate: NotebookInputGate
 
   private(set) var notebookPageSize = defaultPageSize
@@ -889,7 +913,7 @@ final class NotebookAppModel {
   var publishesWorkspaceName = false
   @ObservationIgnored var accountWorkspaceNameSaved: (@MainActor (String, Set<UUID>) -> Void)?
   @ObservationIgnored var workspaceDeleted: (@MainActor () -> Void)?
-  @ObservationIgnored var openWorkspaceLibrary: (@MainActor () -> Void)?
+  @ObservationIgnored var openWorkspaceLibrary: (@MainActor (NotebookWorkspaceTab) -> Void)?
   @ObservationIgnored var openDefaultAccountWorkspace: (@MainActor (UUID) -> Void)?
   private let requiresExistingAccountContent: Bool
   private(set) var awaitingAccountContent = false
@@ -1445,9 +1469,13 @@ final class NotebookAppModel {
         startPreviewPublication()
       #endif
       #if os(iOS)
-        #if DEBUG && targetEnvironment(simulator)
+        #if DEBUG
+        #if targetEnvironment(simulator)
         let syncFixture = try await SimulatorChatFixture.make(persistence: persistence, author: actorID)
-        let terminalFixture = try await SimulatorTerminalFixture.make(persistence: persistence, author: actorID, directory: store.root)
+        #else
+        let syncFixture: NotebookChatController? = nil
+        #endif
+        let terminalFixture = try await NotebookTerminalFixture.make(persistence: persistence, author: actorID, directory: store.root)
         let fixtureChat = syncFixture ?? terminalFixture
         #else
         let fixtureChat: NotebookChatController? = nil
@@ -2378,7 +2406,8 @@ final class NotebookAppModel {
   /// Creation, typing and geometry share the same addressed causal queue.
   /// Late editor teardown can finish its original object, never the new page.
   func commitNativeText(reference: EditableElementReference, text: String, finish: Bool,
-    retainedPage: AgentElement? = nil, retainedSpatial: SpatialElement? = nil, height: Double? = nil) {
+    retainedPage: AgentElement? = nil, retainedSpatial: SpatialElement? = nil, height: Double? = nil,
+    style: NativeTextStyle? = nil, editingFrame: PageRect? = nil) {
     defer { if finish { endNativeTextEditing(reference) } }
     let retained: NotebookNativeElementSource?
     switch reference {
@@ -2389,9 +2418,10 @@ final class NotebookAppModel {
     }
     }
     var values: [String:JSONValue] = ["source":.string(text),"html":.string(text)]
+    if let style { values["textStyle"] = try? .encode(style) }
     let live = nativeElementSource(reference)
     let source = live?.page != nil || live?.spatial != nil ? live : retained ?? live
-    let currentFrame = source?.page?.frame ?? source?.spatial.map { PageRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height) }
+    let currentFrame = editingFrame ?? source?.page?.frame ?? source?.spatial.map { PageRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height) }
     if let height, let frame = currentFrame, height.isFinite, height > 0 {
       values["frame"] = try? .encode(PageRect(x:frame.x,y:frame.y,width:frame.width,height:height))
     }
@@ -2406,7 +2436,7 @@ final class NotebookAppModel {
       else {
         let stamp = element.stamp
         let frame = try? values["frame"]?.decode(SpatialRect.self)
-        if element.update(source:text,frame:frame,actor:actorID) { _ = hierarchy.upsertElement(element,in:boardID,expected:stamp,actor:actorID) }
+        if element.update(source:text,frame:frame,textStyle:style,actor:actorID) { _ = hierarchy.upsertElement(element,in:boardID,expected:stamp,actor:actorID) }
       }
       boardHierarchy = hierarchy
     }
@@ -3929,14 +3959,21 @@ final class NotebookAppModel {
       if steering && submittedTurn == nil { onSaved?(false); return nil }
       isSavingAgentQuestion = true
       let captured = captured ?? captureChatSubmissionContext(chat)
+      let laser = laserContext.take(scope:.init(computer:submittedComputer,thread:submittedThread))
       let task = Task { [self] in
         var saved = false
         defer { isSavingAgentQuestion = false; chatSubmissionTask = nil; onSaved?(saved) }
         do {
           let context = try await captured.prepare()
+          let images = Array((await NotebookLaserContext.images(laser)).prefix(max(0,16-captured.attachments.count)))
+          let author = actorID
+          let imageAttachments = images.isEmpty ? [] : try await persistence.submit(publishesChanges:true) {
+            try $0.saveChatImageAttachments(images,author:author)
+          }
+          let attachments = captured.attachments + imageAttachments
           guard chat.computerID == submittedComputer else { throw NotebookTransportError.disconnected }
           saved = await chat.sendMessage(threadID: submittedThread, text: submittedText, context: context.text,
-            attentionContextID: context.attentionContextID, steeringTurnID: submittedTurn, attachments: captured.attachments,
+            attentionContextID: context.attentionContextID, steeringTurnID: submittedTurn, attachments: attachments,
             dictationID: dictationID)
         } catch { agentRequestError = error.localizedDescription }
       }
@@ -4017,13 +4054,6 @@ final class NotebookAppModel {
 
   var collaborationDetailsAreCurrent: Bool {
     collaborationReadSnapshot != nil && preparedCollaborationVersion == collaborationContentEpoch
-  }
-
-  func collaborationHistoryMounted(after duration: Duration) {
-    #if os(iOS)
-      let parts = duration.components
-      inputFrameMonitor.recordHistoryMount(durationMS: Double(parts.seconds) * 1000 + Double(parts.attoseconds) / 1e15)
-    #endif
   }
 
   func refreshCollaborationDetails() async {

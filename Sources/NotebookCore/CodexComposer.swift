@@ -31,23 +31,43 @@ public struct CodexContextUsage: Codable, Equatable, Sendable {
 }
 
 public struct CodexInputAttachment: Codable, Equatable, Sendable, Identifiable {
-  public enum Kind: String, Codable, Sendable { case file, folder, skill, plugin, app }
+  public enum Kind: String, Codable, Sendable { case file, folder, skill, plugin, app, image }
   public let kind: Kind
   public let name: String
   public let path: String
+  public let imagePNG: Data?
+  /// The wire carries a frozen-evidence address. PNG bytes exist only after
+  /// the Mac resolves that address for its native Codex input.
+  public var imageReference: (contextID: UUID, referenceID: UUID)? {
+    guard kind == .image, path.hasPrefix("notebook-laser:") else { return nil }
+    let parts = path.dropFirst("notebook-laser:".count).split(separator:"/",omittingEmptySubsequences:false)
+    guard parts.count == 2, let context = UUID(uuidString:String(parts[0])), let reference = UUID(uuidString:String(parts[1])) else { return nil }
+    return (context,reference)
+  }
   public var id: String { kind.rawValue + ":" + path }
-  public init(kind: Kind, name: String, path: String) { self.kind = kind; self.name = name; self.path = path }
+  public init(kind: Kind, name: String, path: String, imagePNG: Data? = nil) { self.kind = kind; self.name = name; self.path = path; self.imagePNG = imagePNG }
   public var isValid: Bool {
     guard !name.isEmpty, name.utf8.count <= 256, path.utf8.count <= 4096,
       !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return false }
+    guard kind == .image || imagePNG == nil else { return false }
     switch kind {
+    case .image:
+      return imageReference != nil && (imagePNG.map(Self.validPNG) ?? true)
     case .file, .folder, .skill: return path.hasPrefix("/") && URL(fileURLWithPath: path).standardizedFileURL.path == path
     case .plugin: return path.hasPrefix("plugin://") && path.count > 9
     case .app: return path.hasPrefix("app://") && path.count > 6
     }
   }
+  private static func validPNG(_ png: Data) -> Bool {
+    guard (33...2_097_152).contains(png.count), png.starts(with:[137,80,78,71,13,10,26,10]),
+      String(data:png.subdata(in:12..<16),encoding:.ascii) == "IHDR" else { return false }
+    let width = png[16..<20].reduce(0) { ($0 << 8) | Int($1) }
+    let height = png[20..<24].reduce(0) { ($0 << 8) | Int($1) }
+    return (1...4096).contains(width) && (1...4096).contains(height) && width <= 4_000_000/height
+  }
   public static func valid(_ values: [Self]) -> Bool {
-    values.count <= 16 && values.allSatisfy(\.isValid) && Set(values.map(\.id)).count == values.count
+    values.count <= 16 && values.filter { $0.kind == .image }.count <= 5
+      && values.reduce(0) { $0+($1.imagePNG?.count ?? 0) } <= 4*1024*1024 && values.allSatisfy(\.isValid) && Set(values.map(\.id)).count == values.count
   }
 }
 

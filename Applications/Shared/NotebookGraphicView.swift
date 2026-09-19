@@ -33,12 +33,7 @@ struct NotebookGraphicView: View {
       }
       let stroke = layer == .content ? graphic.style.stroke.swiftUIColor : .white
       let width = graphic.style.strokeWidth
-      let dash: [CGFloat] = switch graphic.style.dash ?? .solid {
-      case .solid: []
-      case .dashed: [width*4, width*3]
-      case .dotted: [0, width*3]
-      }
-      let style = StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round, dash: dash)
+      let style = StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round, dash: graphic.style.dashPattern)
       if graphic.shape != .connector {
         let inset = min(width / 2, min(size.width, size.height) / 2 - 0.01)
         let rect = CGRect(origin: .zero, size: size).insetBy(dx: max(0, inset), dy: max(0, inset))

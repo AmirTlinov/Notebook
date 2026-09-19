@@ -67,7 +67,6 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
   let launch: NotebookApplicationLaunch
   @ObservationIgnored var openWorkspace: (() -> Void)?
   private var launchTask: Task<Void, Never>?
-  @ObservationIgnored private(set) var devicesWindowController: NotebookMacDevicesWindowController?
   @ObservationIgnored private var workspacesWindow: NSWindow?
   @ObservationIgnored private var pasteWindow: NotebookMacPasteWindow?
   private(set) var launchesAtLogin = false
@@ -158,10 +157,8 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
   }
 
   func showDevices() {
-    if devicesWindowController == nil {
-      devicesWindowController = NotebookMacDevicesWindowController(launch: launch) { [weak self] in self?.start() }
-    }
-    devicesWindowController?.showDevices()
+    launch.workspaceTab = .devices
+    showWorkspaces()
   }
 
   func setLaunchesAtLogin(_ enabled: Bool) {

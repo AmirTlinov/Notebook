@@ -6,9 +6,8 @@ import NotebookCore
 struct NotebookChatBrowser: View {
   @Environment(NotebookAppModel.self) private var model
   @Bindable var chat: NotebookChatController
-  let openDevices: () -> Void
   let editProject: (CodexProject) -> Void
-  let createInProject: (CodexProject) -> Void
+  let createChat: (CodexProject?) -> Void
 
   var body: some View {
     ScrollView {
@@ -23,10 +22,15 @@ struct NotebookChatBrowser: View {
         if !chat.connected {
           VStack(alignment: .leading, spacing: 6) {
             Text(model.deviceStatusMessage).foregroundStyle(.secondary)
-            Button("Подробнее", action: openDevices).accessibilityIdentifier("notebook-chat-devices")
+            Button("Устройства пространства") { model.openWorkspaceLibrary?(.devices) }.accessibilityIdentifier("notebook-chat-devices")
           }.font(.system(size: 14)).padding(.vertical, 10)
         }
         if chat.browserMode == .chats {
+          HStack {
+            Text("Чаты").font(.system(size:14,weight:.medium))
+            Spacer()
+            createButton(project:nil)
+          }
           taskRows(chat.catalogues[.chats], project: nil)
         } else {
           if chat.projects.isEmpty {
@@ -35,6 +39,7 @@ struct NotebookChatBrowser: View {
           }
           ForEach(chat.projects) { project in
             let expanded = chat.expandedProjects.contains(project.id)
+            HStack(spacing:0) {
             Button { chat.toggleProject(project) } label: {
               HStack(spacing: 10) {
                 Image(systemName: expanded ? "folder.fill" : "folder").font(.system(size: 15))
@@ -48,8 +53,10 @@ struct NotebookChatBrowser: View {
             .accessibilityValue(expanded ? "Раскрыт" : "Свёрнут")
             .accessibilityIdentifier("notebook-chat-project-" + project.id)
             .contextMenu {
-              Button("Новый чат в проекте", systemImage: "square.and.pencil") { createInProject(project) }
+              Button("Новый чат в проекте", systemImage: "square.and.pencil") { createChat(project) }
               Button("Настроить проект", systemImage: "slider.horizontal.3") { editProject(project) }
+            }
+            createButton(project:project)
             }
             if expanded {
               taskRows(chat.catalogues[.project(project.id)], project: project).padding(.leading, 30)
@@ -67,6 +74,15 @@ struct NotebookChatBrowser: View {
     .accessibilityElement(children: .contain).accessibilityIdentifier("notebook-chat-recents")
   }
 
+  private func createButton(project: CodexProject?) -> some View {
+    Button { createChat(project) } label: {
+      Image(systemName:"plus").frame(width:44,height:44).contentShape(Rectangle())
+    }
+    .accessibilityLabel(project.map { "Новый чат в «"+$0.name+"»" } ?? "Новый чат без проекта")
+    .accessibilityIdentifier(project.map { "notebook-chat-new-project-"+$0.id } ?? "notebook-chat-new")
+    .disabled(chat.saving || chat.voice.capturing || chat.switchingComputer)
+  }
+
   @ViewBuilder private func taskRows(_ window: NotebookChatController.CatalogueWindow?, project: CodexProject?) -> some View {
     let tasks = window?.tasks ?? []
     if let error = window?.error {
@@ -77,11 +93,7 @@ struct NotebookChatBrowser: View {
         HStack {
           Text("Нет чатов").foregroundStyle(.secondary)
           Spacer(minLength: 4)
-          if let project {
-            Button { createInProject(project) } label: {
-              Image(systemName: "plus").frame(width: 44, height: 44).contentShape(Rectangle())
-            }.accessibilityLabel("Новый чат в «" + project.name + "»")
-          }
+
         }.font(.system(size: 13)).frame(minHeight: 36)
           .accessibilityIdentifier("notebook-project-empty-" + (project?.id ?? "chats"))
       } else {

@@ -495,7 +495,10 @@ final class NotebookChatController {
     let computer = peer
     let action: NotebookChatAction = steeringTurnID.map { .steer(threadID: submittedThread, turnID: $0, text: text, context: context) } ?? .send(threadID: submittedThread, text: text, context: context)
     if await submit(action, attentionContextID: attentionContextID, attachments: submittedAttachments.isEmpty ? nil : submittedAttachments, messageID: dictationID) {
-      if dictationID == nil, peer == computer, draft == text, threadID == submittedThread, attachments == submittedAttachments { attachments = []; draft = "" }; return true
+      if dictationID == nil, peer == computer, draft == text, threadID == submittedThread {
+        let submitted = Set(submittedAttachments.map(\.id))
+        attachments.removeAll { submitted.contains($0.id) }; draft = ""
+      }; return true
     }
     return false
   }

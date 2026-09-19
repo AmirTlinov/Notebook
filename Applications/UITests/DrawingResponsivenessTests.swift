@@ -5,6 +5,61 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testInlineFormattingAndTextDragStayOnTheirPaper() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture","--notebook-native-graphic-page"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout:5)); let originalPaper = paper.frame, ink = paper.value as? String
+    app.buttons["drawing-tools-more"].tap(); app.buttons["drawing-tool-text"].tap()
+    app.coordinate(withNormalizedOffset:.init(dx:0.55,dy:0.15)).tap()
+    let editor = app.textViews["native-text-editor"]
+    XCTAssertTrue(editor.waitForExistence(timeout:2))
+    for id in ["native-text-bold","native-text-italic","native-text-highlight"] {
+      XCTAssertTrue(app.buttons[id].waitForExistence(timeout:3)); app.buttons[id].tap()
+    }
+    app.buttons["native-text-link"].tap()
+    let url = app.textFields["native-text-link-url"]
+    XCTAssertTrue(url.waitForExistence(timeout:2)); url.typeText("https://example.com")
+    app.buttons["Применить"].tap()
+    editor.typeText("Styled text")
+    XCTAssertEqual(editor.value as? String,"Styled text")
+    let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "inline-native-formatting"; proof.lifetime = .keepAlways; add(proof)
+    app.buttons["native-text-done"].tap()
+    XCTAssertTrue(editor.waitForNonExistence(timeout:3))
+    let text = app.staticTexts["Styled text"]
+    XCTAssertTrue(text.waitForExistence(timeout:5)); let before = text.frame
+    text.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.5,thenDragTo:text.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).withOffset(.init(dx:-60,dy:80)))
+    XCTAssertGreaterThan(text.frame.midY,before.midY+40)
+    XCTAssertEqual(paper.frame,originalPaper); XCTAssertEqual(paper.value as? String,ink)
+    XCTAssertFalse(editor.exists,"Holding text moves it instead of creating another editor or curling paper")
+    text.doubleTap(); XCTAssertTrue(editor.waitForExistence(timeout:3))
+    XCTAssertEqual(editor.value as? String,"Styled text")
+    for id in ["native-text-bold","native-text-italic","native-text-highlight","native-text-link"] { XCTAssertTrue(app.buttons[id].isSelected,id) }
+    app.buttons["native-text-done"].tap()
+  }
+
+  func testArrowSettingsUseTwoEndsAndIconLinePatterns() {
+    continueAfterFailure = false
+    let app = XCUIApplication(); app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    launchPortraitFixture(app)
+    app.buttons["drawing-tools-more"].tap(); app.buttons["drawing-tool-connector"].tap()
+    app.buttons["drawing-tool-connector"].tap()
+    let start = app.buttons["connector-head-start"], end = app.buttons["connector-head-end"]
+    XCTAssertTrue(start.waitForExistence(timeout:3)); XCTAssertEqual(start.frame.midY,end.frame.midY,accuracy:1)
+    for routing in ["straight","elbow","curved"] {
+      let choice = app.buttons["connector-routing-"+routing]; choice.tap(); XCTAssertTrue(choice.isSelected)
+    }
+    for dash in ["solid","dashed","dotted","dashDot"] {
+      let choice = app.buttons["connector-dash-"+dash]; choice.tap(); XCTAssertTrue(choice.isSelected)
+    }
+    let shot = XCTAttachment(screenshot:app.screenshot()); shot.name = "arrow-icon-settings"; shot.lifetime = .keepAlways; add(shot)
+    dismissDrawingSettings(app); app.buttons["drawing-tool-connector"].tap()
+    XCTAssertTrue(app.buttons["connector-routing-curved"].isSelected)
+    XCTAssertTrue(app.buttons["connector-dash-dashDot"].isSelected)
+  }
+
   func testTextToolEditsInlineAndPersistsOnBoard() { inlineText(onPage:false) }
   func testTextToolEditsInlineAndPersistsOnPage() { inlineText(onPage:true) }
   func testTextToolEditsInlineAtDeepBoardZoom() { inlineText(onPage:false,deepZoom:true) }
@@ -1337,12 +1392,17 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(modes.waitForExistence(timeout: 5))
     XCTAssertFalse(app.buttons["notebook-chat-project-all"].exists)
     modes.buttons["Чаты"].tap()
+    XCTAssertTrue(app.buttons["notebook-chat-new"].exists)
+    XCTAssertGreaterThan(app.buttons["notebook-chat-new"].frame.minY,app.buttons["notebook-chat-toggle"].frame.maxY)
     let first = app.buttons["notebook-chat-task-7e7a1000-0000-4000-8000-000000000088"]
     let other = app.buttons["notebook-chat-task-7e7a1000-0000-4000-8000-000000000089"]
     XCTAssertTrue(first.waitForExistence(timeout: 5)); XCTAssertTrue(other.waitForExistence(timeout: 5))
     modes.buttons["Проекты"].tap()
     let folder = app.buttons["notebook-chat-project-terminal-fixture"]
     XCTAssertTrue(folder.waitForExistence(timeout: 5))
+    let addChat = app.buttons["notebook-chat-new-project-terminal-fixture"]
+    XCTAssertTrue(addChat.exists); XCTAssertEqual(addChat.frame.midY,folder.frame.midY,accuracy:1)
+    XCTAssertFalse(app.buttons["notebook-chat-menu"].exists)
     // The selected project's folder was opened when this fixture selected it.
     if first.exists { folder.tap(); XCTAssertTrue(first.waitForNonExistence(timeout: 3)) }
     folder.tap(); XCTAssertTrue(first.waitForExistence(timeout: 5))
@@ -1364,93 +1424,15 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
   }
 
-  func testHistoryOpensAndClosesRepeatedlyWithManySharedFragments() {
-    continueAfterFailure = false
-    XCUIDevice.shared.orientation = .portrait
-    let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture", "--notebook-history-performance-fixture"]
-    launchPortraitFixture(app)
-    for _ in 0..<5 {
-      openSharedHistory(in: app)
-      XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 2))
-      XCTAssertTrue(app.buttons["Готово"].isHittable)
-      app.buttons["Готово"].tap()
-      XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForNonExistence(timeout: 2))
-    }
-    let proof = XCTAttachment(screenshot: app.screenshot())
-    proof.name = "history-remains-dismissible-after-five-openings"; proof.lifetime = .keepAlways; add(proof)
-  }
 
-  func testSharedActionUndoKeepsTheDrawingAndHumanPlacement() {
-    continueAfterFailure = false
-    XCUIDevice.shared.orientation = .portrait
-    let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture", "--notebook-simulator-finger-gestures"]
-    launchPortraitFixture(app)
-    let paper = app.otherElements["paper-input"]
-    XCTAssertTrue(paper.waitForExistence(timeout:8))
-    let drawing = paper.value as? String
-    XCTAssertNotNil(drawing)
-    let element = app.descendants(matching:.any).matching(identifier:"agent-element-shared-element").firstMatch
-    XCTAssertTrue(element.waitForExistence(timeout:8))
-    app.coordinate(withNormalizedOffset:.init(dx:0.22,dy:0.18)).press(forDuration:0.45,
-      thenDragTo:app.coordinate(withNormalizedOffset:.init(dx:0.45,dy:0.25)))
-    XCTAssertFalse(app.staticTexts["Укажите фрагмент · протяните для области"].exists)
-    openSharedHistory(in: app)
-    XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 3))
-    let history = app.collectionViews["collaboration-history-list"]
-    let result = app.buttons["show-action-result"].firstMatch
-    // The newer human indication precedes the older action in the same history.
-    // Scroll the real list to that action rather than assuming all rows are mounted.
-    for _ in 0..<3 where !result.isHittable { history.swipeUp() }
-    XCTAssertTrue(result.isHittable)
-    result.tap()
-    let showProof = XCTAttachment(screenshot: app.screenshot())
-    showProof.name = "after-history-show"; showProof.lifetime = .keepAlways; add(showProof)
-    XCTAssertTrue(element.waitForExistence(timeout:5))
-    app.buttons["notebook-chat-toggle"].tap()
-    element.tap()
-    XCTAssertTrue(app.buttons["delete-agent-element"].waitForExistence(timeout:3))
-    let card = app.descendants(matching: .any).matching(identifier: "notebook-context-count").firstMatch
-    XCTAssertTrue(card.waitForExistence(timeout: 3), "Finger selection pins the object while the chat stays collapsed")
-    for id in ["delete-agent-element", "resize-agent-element-bottomTrailing"] {
-      let handle = app.descendants(matching: .any).matching(identifier: id).firstMatch
-      let reachable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in handle.isHittable }, object: nil)
-      XCTAssertEqual(XCTWaiter.wait(for: [reachable], timeout: 3), .completed, "\(id): \(handle.debugDescription)")
-    }
-    let editingProof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-    editingProof.name = "finger-selection-keeps-editing-handles-reachable"
-    editingProof.lifetime = .keepAlways; add(editingProof)
-    let initial = element.frame
-    element.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.3,
-      thenDragTo:element.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).withOffset(.init(dx:100,dy:60)),withVelocity:.slow,thenHoldForDuration:0)
-    XCTAssertGreaterThan(element.frame.midX,initial.midX + 20)
-    let moved = element.frame
-    openSharedHistory(in: app)
-    XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 3))
-    let continuation = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Ваша доработка'")).firstMatch
-    for _ in 0..<3 where !continuation.isHittable { history.swipeUp() }
-    XCTAssertTrue(continuation.isHittable)
-    app.buttons["Отменить этот ход"].firstMatch.tap()
-    app.buttons["Готово"].tap()
-    XCTAssertFalse(app.staticTexts["Ход отменён"].exists, "Undo does not add a board notification")
-    XCTAssertTrue(element.exists)
-    XCTAssertEqual(element.frame.midX,moved.midX,accuracy:2)
-    app.buttons["drawing-tool-eraser"].tap()
-    XCTAssertTrue(paper.waitForExistence(timeout:3))
-    XCTAssertEqual(paper.value as? String,drawing,"Рукопись принадлежит человеку при указании, показе и отмене")
-  }
 
-  func testAgentChangesStayQuietAndHistoryKeepsItsActions() {
+  func testAgentChangesStayQuiet() {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture"]
     launchPortraitFixture(app)
     let notice = app.buttons["collaboration-dismiss"]
     XCTAssertFalse(notice.exists, "Agent work is highlighted on the object, not announced in a banner")
-    openSharedHistory(in: app)
-    XCTAssertTrue(app.buttons["Отменить этот ход"].firstMatch.waitForExistence(timeout:3))
-    XCTAssertTrue(app.buttons["show-action-result"].firstMatch.exists)
   }
 
   func testFingerHoldSelectsARegionWithoutSwitchingTools() {
@@ -1474,16 +1456,12 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertFalse(app.staticTexts["Укажите фрагмент · протяните для области"].exists)
     XCTAssertTrue(app.buttons["drawing-tool-eraser"].isHittable)
     XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "notebook-context-count").firstMatch.waitForExistence(timeout: 3))
-    openSharedHistory(in: app)
-    XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 2))
-    XCTAssertTrue(app.staticTexts["Область"].firstMatch.exists)
     let proof = XCTAttachment(screenshot: app.screenshot())
     proof.name = "human-pointer-prepared-source"; proof.lifetime = .keepAlways; add(proof)
-    app.buttons["Готово"].tap()
     XCTAssertTrue(app.buttons["drawing-tool-eraser"].isHittable)
   }
 
-  func testClosingQuestionRemovesVisibleIndicationAndHistoryCanResumeIt() {
+  func testClosingQuestionRemovesVisibleIndicationWithoutErasingInk() {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-pointer-fixture", "--notebook-simulator-finger-gestures"]
@@ -1499,7 +1477,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       .press(forDuration: 0.45, thenDragTo: app.coordinate(withNormalizedOffset: .init(dx: 0.48, dy: 0.34)))
     let card = app.descendants(matching: .any).matching(identifier: "notebook-context-count").firstMatch
     XCTAssertTrue(card.waitForExistence(timeout: 5))
-    for attempt in 0..<2 {
+    for attempt in 0..<1 {
       let indicated = app.screenshot()
       let indicatedProof = XCTAttachment(screenshot: indicated)
       indicatedProof.name = "indication-visible-\(attempt)"; indicatedProof.lifetime = .keepAlways; add(indicatedProof)
@@ -1514,45 +1492,10 @@ final class DrawingResponsivenessTests: XCTestCase {
       XCTAssertLessThan(changedPixelShare(from: baseline, to: closed, normalizedRect: edge), 0.02,
         "Closing removes the actual selection pixels, not just the question card")
       XCTAssertEqual(paper.value as? String, drawing, "Removing indication never erases handwriting")
-      if attempt == 0 {
-        openSharedHistory(in: app)
-        XCTAssertTrue(app.staticTexts["Область"].firstMatch.waitForExistence(timeout: 3))
-        let resume = app.buttons["Продолжить этот фрагмент"]
-        XCTAssertTrue(resume.waitForExistence(timeout: 2))
-        resume.tap()
-        app.buttons["Готово"].tap()
-        // History opens from the expanded chat. Compare the same unobscured
-        // paper as the baseline, not pixels covered by that unrelated window.
-        app.buttons["notebook-chat-toggle"].tap()
-        XCTAssertTrue(card.waitForExistence(timeout: 3))
-      }
+
     }
   }
 
-  func testHistoryReadsOlderContextsAndContinuesOneAddressedEntryPage() {
-    continueAfterFailure = false
-    let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-collaboration-fixture",
-      "--notebook-history-performance-fixture", "--notebook-history-pages-fixture"]
-    launchPortraitFixture(app)
-    openSharedHistory(in: app)
-    let nextContexts = app.buttons["context-directory-next"]
-    XCTAssertTrue(nextContexts.waitForExistence(timeout: 5))
-    nextContexts.tap()
-    XCTAssertTrue(app.staticTexts["Фрагмент 88"].waitForExistence(timeout: 5))
-    app.buttons["К новым фрагментам"].tap()
-    let open = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "context-history-")).firstMatch
-    XCTAssertTrue(open.waitForExistence(timeout: 5)); open.tap()
-    XCTAssertTrue(app.staticTexts["Ответ 1"].waitForExistence(timeout: 5))
-    let nextEntries = app.buttons["context-history-next"]
-    XCTAssertTrue(nextEntries.exists); nextEntries.tap()
-    XCTAssertTrue(app.staticTexts["Ответ 32"].waitForExistence(timeout: 5))
-    XCTAssertFalse(nextEntries.exists, "The last bounded page does not invent another continuation")
-    app.buttons["В начало"].tap()
-    XCTAssertTrue(app.staticTexts["Ответ 1"].waitForExistence(timeout: 5))
-    let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-    proof.name = "addressed-context-history"; proof.lifetime = .keepAlways; add(proof)
-  }
 
   func testCodexPanelLeavesNavigationAndToolsReachableInBothOrientations() {
     continueAfterFailure = false
@@ -1772,14 +1715,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(paper.value as? String, drawing)
     let proof = XCTAttachment(screenshot: app.screenshot())
     proof.name = "floating-chat-moved-and-resized"; proof.lifetime = .keepAlways; add(proof)
-    openSharedHistory(in: app)
-    XCTAssertTrue(app.navigationBars["Совместные ходы"].waitForExistence(timeout: 3))
-    app.buttons["Готово"].tap()
-    app.buttons["notebook-chat-menu"].tap()
-    XCTAssertTrue(app.buttons["Устройства"].waitForExistence(timeout: 2))
-    app.buttons["Устройства"].tap()
-    XCTAssertTrue(app.navigationBars["Устройства"].waitForExistence(timeout: 3))
-    app.buttons["Готово"].tap()
+    XCTAssertFalse(app.buttons["notebook-chat-menu"].exists)
     XCTAssertEqual(paper.frame, paperFrame)
     XCTAssertEqual(paper.value as? String, drawing)
     app.terminate()
@@ -1821,6 +1757,7 @@ final class DrawingResponsivenessTests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4))
       }
+      if !app.buttons["notebook-chat-new"].exists { app.buttons["notebook-chat-tasks"].tap() }
       let create = app.buttons["notebook-chat-new"]
       XCTAssertTrue(create.waitForExistence(timeout: 3)); create.tap()
       XCTAssertTrue(toggle.isEnabled)
@@ -2942,15 +2879,6 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(compose.waitForExistence(timeout: 3))
     compose.tap()
     XCTAssertTrue(app.buttons["notebook-chat-toggle"].waitForExistence(timeout: 3))
-  }
-
-  private func openSharedHistory(in app: XCUIApplication) {
-    let menu = app.buttons["notebook-chat-menu"]
-    if !menu.exists { app.buttons["notebook-companion-compose"].tap() }
-    XCTAssertTrue(menu.waitForExistence(timeout: 3))
-    menu.tap()
-    XCTAssertTrue(app.buttons["Совместные ходы"].waitForExistence(timeout: 3))
-    app.buttons["Совместные ходы"].tap()
   }
 
   private func launchPortraitFixture(_ app: XCUIApplication) {

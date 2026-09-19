@@ -2,8 +2,8 @@ import SwiftUI
 import UIKit
 
 /// Finger selection observes the existing scene without an overlay that can
-/// intercept Pencil. Movement before the hold belongs to the camera; after
-/// the hold it moves an artifact or describes an empty-paper region.
+/// intercept Pencil. An object reserves its contact before the hold; blank
+/// paper still admits camera motion or a held regional indication.
 /// A second finger or Pencil cancels selection.
 struct NotebookSelectionGesture: UIViewRepresentable {
   let inputGate: NotebookInputGate
@@ -95,7 +95,7 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
   }
   convenience init() { self.init(target: nil, action: nil) }
   override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
-    if lift?.requiresHold == false, state == .began || state == .changed,
+    if lift != nil, state == .began || state == .changed,
       let scope = view, let other = preventedGestureRecognizer.view,
       other !== scope, other.isDescendant(of: scope) {
       // Native content owns the contact before a system page curl can begin.
@@ -134,8 +134,8 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
     // must fail this observer instead, so its native link is delivered once.
     cancelsTouchesInView = nativeTapOwner != nil
     if nativeTapOwner != nil && lift == nil { cancelSelection(); return }
+    if lift != nil { gate?.claimSceneObjectContact(ObjectIdentifier(first)) }
     if lift?.requiresHold == false {
-      gate?.claimSceneObjectContact(ObjectIdentifier(first))
       // Recognition is not a content mutation. Tap selection waits for lift;
       // manipulation still waits for slop. Early ownership prevents UIKit's
       // curl from entering an animation that would need a late cancellation.

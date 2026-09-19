@@ -38,16 +38,30 @@ struct NotebookDrawingToolSettingsView: View {
       }
       Toggle("Фиксированные пропорции",isOn:binding(\.preservesAspect)).accessibilityIdentifier("shape-aspect")
     case .text:
+      Picker("Шрифт новых надписей",selection:Binding(get:{ model.drawingToolSettings.textFontName ?? "" },set:{ model.drawingToolSettings.textFontName = $0.isEmpty ? nil : $0 })) {
+        ForEach(NotebookTextTypography.fonts,id:\.title) { font in Text(font.title).tag(font.name ?? "") }
+      }.accessibilityIdentifier("text-default-font")
       slider("Размер текста",path:\.textSize,range:12...72,id:"text-size")
     case .connector:
       slider("Толщина стрелки",path:\.connectionWidth,range:0.25...128,id:"connector-width",logarithmic:true)
-      Picker("Линия",selection:binding(\.connectionRouting)) {
-        Text("Прямая").tag(NotebookGraphicConnection.Routing.straight)
-        Text("Угловая").tag(NotebookGraphicConnection.Routing.elbow)
-        Text("Кривая").tag(NotebookGraphicConnection.Routing.curved)
-      }.accessibilityIdentifier("connector-routing")
-      arrowhead("Начало", path:\.connectionStart, defaultValue:.none)
-      arrowhead("Конец", path:\.connectionEnd, defaultValue:.arrow)
+      HStack(spacing:8) {
+        arrowhead("Начало",path:\.connectionStart,defaultValue:.none,terminal:.start)
+        arrowhead("Конец",path:\.connectionEnd,defaultValue:.arrow,terminal:.end)
+      }
+      HStack(spacing:0) {
+        ForEach(NotebookGraphicConnection.Routing.allCases,id:\.self) { routing in
+          glyphChoice(NotebookConnectionGlyph.image(routing:routing,size:.init(width:48,height:22)),
+            title:routing.controlTitle,id:"connector-routing-"+routing.rawValue,
+            selected:model.drawingToolSettings.connectionRouting == routing) { model.drawingToolSettings.connectionRouting = routing }
+        }
+      }
+      HStack(spacing:0) {
+        ForEach(NotebookGraphic.Style.Dash.allCases,id:\.self) { dash in
+          glyphChoice(NotebookConnectionGlyph.image(dash:dash,size:.init(width:42,height:22)),
+            title:dash.controlTitle,id:"connector-dash-"+dash.rawValue,
+            selected:(model.drawingToolSettings.connectionDash ?? .solid) == dash) { model.drawingToolSettings.connectionDash = dash }
+        }
+      }
     case .ruler:
       slider("Угол: \(Int(model.drawingToolSettings.rulerAngle))°",path:\.rulerAngle,range:-180...180,id:"ruler-angle",step:1)
       HStack {
@@ -68,15 +82,37 @@ struct NotebookDrawingToolSettingsView: View {
   private func binding<T>(_ path: WritableKeyPath<NotebookDrawingToolSettings,T>) -> Binding<T> {
     .init(get:{ model.drawingToolSettings[keyPath:path] },set:{ model.drawingToolSettings[keyPath:path] = $0 })
   }
-  private func arrowhead(_ title: String, path: WritableKeyPath<NotebookDrawingToolSettings,NotebookGraphicConnection.Arrowhead?>,
-    defaultValue: NotebookGraphicConnection.Arrowhead) -> some View {
-    HStack {
-      Text(title).font(.caption).foregroundStyle(.secondary)
-      Spacer()
-      Picker(title,selection:Binding(get:{ model.drawingToolSettings[keyPath:path] ?? defaultValue },set:{ model.drawingToolSettings[keyPath:path] = $0 })) {
-        ForEach(NotebookGraphicConnection.Arrowhead.allCases,id:\.self) { Text($0.controlTitle).tag($0) }
-      }.labelsHidden()
+  private func glyphChoice(_ image: UIImage, title: String, id: String, selected: Bool,
+    action: @escaping () -> Void) -> some View {
+    Button(action:action) {
+      Image(uiImage:image).frame(maxWidth:.infinity,minHeight:40)
+        .background(selected ? NotebookChrome.selectionSurface : .clear,in:RoundedRectangle(cornerRadius:6))
+        .contentShape(Rectangle())
     }
+    .accessibilityLabel(title).accessibilityIdentifier(id)
+    .accessibilityAddTraits(selected ? .isSelected : [])
+  }
+  private func arrowhead(_ title: String, path: WritableKeyPath<NotebookDrawingToolSettings,NotebookGraphicConnection.Arrowhead?>,
+    defaultValue: NotebookGraphicConnection.Arrowhead, terminal: NotebookGraphicConnection.Terminal) -> some View {
+    let current = model.drawingToolSettings[keyPath:path] ?? defaultValue
+    return Menu {
+      Picker(title,selection:Binding(get:{ model.drawingToolSettings[keyPath:path] ?? defaultValue },set:{ model.drawingToolSettings[keyPath:path] = $0 })) {
+        ForEach(NotebookGraphicConnection.Arrowhead.allCases,id:\.self) { head in
+          Label { Text(head.controlTitle) } icon: {
+            Image(uiImage:NotebookConnectionGlyph.image(start:terminal == .start ? head : .none,
+              end:terminal == .end ? head : .none,size:.init(width:48,height:20)))
+          }.tag(head)
+        }
+      }.pickerStyle(.inline)
+    } label: {
+      HStack(spacing:6) {
+        Image(uiImage:NotebookConnectionGlyph.image(start:terminal == .start ? current : .none,
+          end:terminal == .end ? current : .none,size:.init(width:68,height:22)))
+        Image(systemName:"chevron.up.chevron.down").font(.caption2)
+      }.frame(maxWidth:.infinity,minHeight:40).contentShape(Rectangle())
+    }
+    .accessibilityLabel(title).accessibilityValue(current.controlTitle)
+    .accessibilityIdentifier("connector-head-"+terminal.rawValue)
   }
   private func slider(_ title: String, path: WritableKeyPath<NotebookDrawingToolSettings,Double>, range: ClosedRange<Double>, id: String, step: Double = 0.01, logarithmic: Bool = false) -> some View {
     VStack(alignment:.leading,spacing:6) {

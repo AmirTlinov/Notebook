@@ -234,6 +234,7 @@ final class NotebookCodexSidecar {
     if let contextID = job.input.attentionContextID {
       guard try await persistence.submit({ try $0.hasAttentionEvidence(contextID: contextID) }) else { return }
     }
+    guard let attachments = try await persistence.submit({ try $0.resolvedChatImageAttachments(job.input.attachments ?? []) }) else { return }
     do {
       if let thread = job.input.action.threadID {
         try await observe(thread)
@@ -270,9 +271,9 @@ final class NotebookCodexSidecar {
         if project == nil { try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true) }
         result = .created(try await metadata.create(directory: target, title: title, workspaceID: workspaceID, project: project))
       case .send(let thread, let text, let context):
-        result = .turn(try await bridge.send(threadID: thread, clientMessageID: job.id, text: text, context: context, attachments: job.input.attachments ?? []))
+        result = .turn(try await bridge.send(threadID: thread, clientMessageID: job.id, text: text, context: context, attachments: attachments))
       case .steer(let thread, let turn, let text, let context):
-        result = .turn(try await bridge.steer(threadID: thread, turnID: turn, clientMessageID: job.id, text: text, context: context, attachments: job.input.attachments ?? []))
+        result = .turn(try await bridge.steer(threadID: thread, turnID: turn, clientMessageID: job.id, text: text, context: context, attachments: attachments))
       case .stop(let thread, let turn):
         try await bridge.interrupt(threadID: thread, turnID: turn); result = .acknowledged
       case .respond(let thread, let request, let decision):

@@ -176,9 +176,7 @@ extension NotebookGraphicGeometry {
     let width = graphic.style.strokeWidth
     func add(_ path: CGPath) { result = result.union(path) }
     func stroke(_ path: CGPath, dashed: Bool = true) {
-      let dash: [CGFloat] = switch (dashed ? graphic.style.dash ?? .solid : .solid) {
-      case .solid: []; case .dashed: [width*4,width*3]; case .dotted: [0,width*3]
-      }
+      let dash = dashed ? graphic.style.dashPattern : []
       let line = dash.isEmpty ? path : path.copy(dashingWithPhase:0,lengths:dash)
       add(line.copy(strokingWithWidth:width,lineCap:.round,lineJoin:.round,miterLimit:10))
     }

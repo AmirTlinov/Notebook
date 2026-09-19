@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 import NotebookCore
 import NotebookCodex
 @testable import Notebook
@@ -76,6 +77,28 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
 
 @MainActor
 final class NotebookCodexSidecarTests: XCTestCase {
+  func testLaserEvidenceIsResolvedOnlyForItsOneNativeMessage() async throws {
+    try await fixture { store, queue, native, peer in
+      let reference = CollaborationReference(target:.init(kind:.page,id:UUID()),region:.init(x:0,y:0,width:1,height:1),revision:"frozen")
+      let png = try XCTUnwrap(Data(base64Encoded:"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="))
+      let image = try AgentPinnedImage(referenceID:reference.id,sourceRevision:reference.revision,region:reference.region!,
+        worldOrigin:nil,pageIndex:nil,pixelWidth:1,pixelHeight:1,pixelsPerPoint:1,png:png,
+        sha256:SHA256.hash(data:png).map { String(format:"%02x",$0) }.joined())
+      let attachments = try await queue.submit { try $0.saveChatImageAttachments([.init(reference:reference,image:image)],author:peer) }
+      let service = try sidecar(store,queue,native)
+      let input = NotebookChatInput(author:peer,action:.send(threadID:native.thread,text:"Show",context:""),attachments:attachments)
+      _ = await service.receive(.init(body:.request(.job(input))),peerID:peer); service.start()
+      try await wait { try await queue.submit { try $0.chatJob(input.id)?.state == .accepted } }
+      let received = await native.submittedAttachments
+      XCTAssertEqual(received.first?.imagePNG,png)
+      XCTAssertNil(try store.chatJob(input.id)?.input.attachments?.first?.imagePNG)
+      let next = NotebookChatInput(author:peer,action:.send(threadID:native.thread,text:"Next",context:""))
+      _ = await service.receive(.init(body:.request(.job(next))),peerID:peer)
+      try await wait { try await queue.submit { try $0.chatJob(next.id)?.state == .accepted } }
+      let after = await native.submittedAttachments; XCTAssertTrue(after.isEmpty)
+      await service.stop()
+    }
+  }
   private func fixture(_ body: (NotebookStore, NotebookPersistenceQueue, NativeOwner, UUID) async throws -> Void) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-sidecar-test-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

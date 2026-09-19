@@ -43,7 +43,7 @@ struct NotebookNavigationView: View {
         VStack(alignment: .leading, spacing: 2) {
           if path.count > 1 { Text(path.dropLast().joined(separator: " › ")).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
           if let open = model.openWorkspaceLibrary {
-            Button(action: open) {
+            Button { open(.spaces) } label: {
               HStack(spacing: 5) {
                 Text(presence.mode == .board && presence.boardID == model.workspace?.rootBoardID
                   ? model.workspaceName : path.last ?? model.workspaceName).lineLimit(1)

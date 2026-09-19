@@ -227,6 +227,7 @@ public struct NotebookChatInput: Codable, Equatable, Sendable, Identifiable {
   }
   public var isValid: Bool {
     guard createdAt.timeIntervalSince1970.isFinite, CodexInputAttachment.valid(attachments ?? []),
+      attachments?.allSatisfy({ $0.imagePNG == nil }) != false,
       attachments == nil || action.message != nil,
       let bytes = try? JSONEncoder().encode(self), bytes.count <= 96 * 1024 else { return false }
     if let id = action.threadID, UUID(uuidString: id) == nil { return false }

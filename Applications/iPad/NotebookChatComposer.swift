@@ -83,5 +83,5 @@ struct NotebookChatComposer: View {
 }
 
 extension CodexInputAttachment {
-  var icon: String { switch kind { case .file: "doc.text"; case .folder: "folder"; case .skill: "sparkles"; case .plugin: "puzzlepiece.extension"; case .app: "square.stack.3d.up" } }
+  var icon: String { switch kind { case .file: "doc.text"; case .folder: "folder"; case .skill: "sparkles"; case .plugin: "puzzlepiece.extension"; case .app: "square.stack.3d.up"; case .image: "photo" } }
 }
