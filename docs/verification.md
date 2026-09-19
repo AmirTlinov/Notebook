@@ -1,5 +1,34 @@
 # Проверка Notebook
 
+## 19 сентября, 14:00 МСК — GUI-250: WebKit AX исправлен, ввод ещё не принят
+
+Private development v9 собран на неизменном source
+`2fe373dd6b0f0bee370aa9664be0fabab54931b3986da3a1cf39fa56ce6a6fec` и установлен
+через прежний upgrade. Stores, manifests, runtime/identities сохранены.
+Mac host переносит масштаб существующей камеры в `WKWebView.pageZoom`, оставляя
+CSS viewport каноническим. Native **4 PASS**, runtime warnings/skips0:
+`.build/gui250-webkit-projection-mac-v3/`; Release содержит прежние C/SDK warnings.
+Route **81 PASS**: `/tmp/gui250-webkit-ui-route-v1.log`.
+
+Installed read-only AX подтвердил range **271×15**, а не прежние613×33 при44%.
+Нативный текст, формула и график видны в записи v9. Но реальный UI attempt
+`eddcf2cf-1f88-4b8c-b65a-03741dc0c726` **не принят**: значение не изменилось.
+После нажатий foreground также переключился в Codex; это не основание списать
+весь сбой на окружение. Повтор `ab30d52a-ad03-4751-905b-f02f6ae83fe1` остановился
+на активации окна: мой read-only debugger attach задержал приложение. Никаких
+выводов о ползунке из этого повтора. Debugger detached; исходники, content/store
+и trust через него не изменялись, UI events не синтезировались.
+
+Read-only native hitTest в точке AX-центра вернул тот же `WKWebView`, что и
+firstResponder; camera/background не забрали эту точку. Дополнительный native
+прогон с настоящим SwiftUI scaleEffect: **5 PASS**, runtime warnings/skips0,
+source `f61ef073631c167c760012cc4a83c5c46089a21fd52462c1a1090ff7cbe32e2a`,
+`.build/gui250-webkit-projection-mac-v4/`. Он подтверждает native hit routing,
+но не browser-level ввод. Исправление геометрии фиксируется отдельно;
+незавершённый UI-сценарий и его foreground guard не входят в этот commit.
+Evidence: `.build/gui250-private-author-v9/`, `.build/gui250-release-v9/runs/`.
+GUI-240/250 и остальные обязательные installed/shared/system/reference gates открыты.
+
 ## 19 сентября, 13:25 МСК — GUI-250: установленная диагностика и отрицательный camera повтор
 
 `3560ba4` установлен в private development v8, source

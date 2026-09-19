@@ -2424,6 +2424,28 @@ private enum DocumentWebViewFactory {
 #elseif os(macOS)
   @MainActor
   final class DocumentWebHost: NSView {
+    private var canonicalSize = CGSize(width: 1, height: 1)
+    private var projectionScale = 1.0
+    func setProjectionScale(_ scale: Double) {
+      guard scale.isFinite, scale > 0, scale != projectionScale else { return }
+      projectionScale = scale; projectSurface()
+    }
+    override func setFrameSize(_ newSize: NSSize) {
+      super.setFrameSize(newSize)
+      projectSurface()
+    }
+    private func projectSurface() {
+      guard web != nil else { return }
+      let size = CGSize(width: canonicalSize.width * projectionScale, height: canonicalSize.height * projectionScale)
+      // WebKit's remote accessibility scales its content, not ancestor NSView
+      // bounds. Keep this leaf in screen points and let pageZoom express the
+      // existing camera scale; its CSS viewport remains the canonical paper.
+      if bounds.size != size { setBoundsSize(size) }
+      let rect = CGRect(origin: .zero, size: size)
+      if web?.frame != rect { web?.frame = rect }
+      if web?.pageZoom != CGFloat(projectionScale) { web?.pageZoom = projectionScale }
+      if paper?.frame != rect { paper?.frame = rect; paper?.refine() }
+    }
     private weak var paper: DocumentPaperView?
     func installPaper(_ paper: DocumentPaperView) {
       self.paper = paper
@@ -2473,11 +2495,11 @@ private enum DocumentWebViewFactory {
       self.web = web; addSubview(web, positioned: .below, relativeTo: fallback)
       // NSWindow rounds its content size to points. Paper, pagination and
       // snapshot density belong to this canonical viewport, not that rounding.
-      web.frame = .init(origin: .zero, size: size); web.autoresizingMask = []
+      canonicalSize = size; web.autoresizingMask = []; projectSurface()
     }
     func configure(size: CGSize, interactive: Bool) {
       inputEnabled = interactive
-      if web?.frame.size != size { web?.setFrameSize(size); paper?.setFrameSize(size); paper?.refine() }
+      canonicalSize = size; projectSurface()
       web?.setAccessibilityHidden(!interactive)
     }
     func ownsSurface(_ web: WKWebView) -> Bool { self.web === web && web.superview === self }
@@ -2500,6 +2522,7 @@ private enum DocumentWebViewFactory {
   }
 
   private struct PlatformDocumentWebView: NSViewRepresentable {
+    @Environment(\.scenePlaneProjection) private var projection
     let document: DocumentDocument
     let state: DocumentStateJournal
     let isInteractive: Bool
@@ -2524,6 +2547,7 @@ private enum DocumentWebViewFactory {
     }
     func makeNSView(context: Context) -> DocumentWebHost { DocumentWebHost() }
     func updateNSView(_ view: DocumentWebHost, context: Context) {
+      view.setProjectionScale(projection?.current.camera.scale ?? 1)
       context.coordinator.programStore = programStore
       context.coordinator.ownsProgramState = snapshotPixelWidth == nil
       context.coordinator.setProgramsVisible(isVisible)
