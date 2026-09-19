@@ -1291,7 +1291,14 @@ final class NotebookAppModel {
   func refreshDeviceConnection() { accountConnection?.refresh() }
 
   private func startAccountConnection(_ connection: NearbySync) async {
-    guard acceptance == nil else { return }
+    let service: any NotebookAccountService
+    if let acceptance {
+      guard let pair = acceptance.pair else { return }
+      service = NotebookAcceptanceAccountService(configuration: acceptance, pair: pair)
+    } else {
+      guard let cloudSync else { return }
+      service = NotebookAccountCloud(cloud: cloudSync)
+    }
     #if os(iOS)
       let platform = NotebookAccountDirectory.Device.Platform.iPad
     #else
@@ -1305,9 +1312,9 @@ final class NotebookAppModel {
       connectionState = .failed("Не удалось проверить настройки устройств. Локальное сохранение доступно.")
       return
     }
-    guard !isClosing, let cloudSync else { return }
+    guard !isClosing else { return }
     let account = NotebookAccountConnection(
-      device: .init(identity: connection.identity, platform: platform, activation: pairingActivationID), sync: connection, service: NotebookAccountCloud(cloud: cloudSync), initialBoundAccount: bound, spaceName: workspaceName, publishName: publishesWorkspaceName,
+      device: .init(identity: connection.identity, platform: platform, activation: pairingActivationID), sync: connection, service: service, initialBoundAccount: bound, spaceName: workspaceName, publishName: publishesWorkspaceName,
       workspaceDeleted: { [weak self] in self?.workspaceDeleted?() },
       shouldOpenDefault: { [weak self] in
         await self?.mayAutomaticallySwitchWorkspace() ?? false

@@ -42,9 +42,17 @@ import NotebookCore
     let iPadReceipt = try NotebookStore(root: iPadRoot).installCheckpoint(checkpoint)
     guard macReceipt == iPadReceipt else { throw failure("checkpoint receipts differ") }
     let socket = "/tmp/notebook-acceptance-\(runID.uuidString.lowercased())/bridge.sock"
+    var account = NotebookAccountDirectory(space: .init(id: workspaceID, name: "Acceptance"))
+    for (id, platform) in [(macActor, NotebookAccountDirectory.Device.Platform.mac), (iPadActor, .iPad)] {
+      try account.enroll(.init(identity: .init(deviceID: id, workspaceID: workspaceID, displayName: platform.rawValue),
+        platform: platform, activation: nil), retained: [], spaceName: "Acceptance")
+    }
+    guard let credential = account.pairs.first, account.pairs.count == 1 else { throw failure("isolated pair missing") }
+    let pair: [String: Any] = ["macActorID": macActor.uuidString, "iPadActorID": iPadActor.uuidString,
+      "credentialID": credential.id.uuidString, "secret": credential.secret.base64EncodedString()]
     func manifest(role: String, actor: UUID, bundle: String, root: URL) -> [String: Any] {
       var result: [String: Any] = ["version": 1, "runID": runID.uuidString, "workspaceID": workspaceID.uuidString,
-        "actorID": actor.uuidString, "role": role, "bundleID": bundle, "sourceRevision": args[3], "root": root.path]
+        "actorID": actor.uuidString, "role": role, "bundleID": bundle, "sourceRevision": args[3], "root": root.path, "pair": pair]
       if role == "mac" { result["socket"] = socket; result["codexDirectory"] = root.appendingPathComponent("Codex").path }
       return result
     }

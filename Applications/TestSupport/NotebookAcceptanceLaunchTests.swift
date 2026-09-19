@@ -47,6 +47,57 @@ import XCTest
     XCTAssertThrowsError(try invalid.validate(bundle: invalid.bundleID, enabled: true))
   }
 
+  func testAcceptancePairMustMatchTheAdmittedActorAndRole() throws {
+    var value = configuration()
+    value.pair = .init(macActorID: UUID(), iPadActorID: UUID(), credentialID: UUID(), secret: Data(repeating: 1, count: 32))
+    XCTAssertThrowsError(try value.validate(bundle: value.bundleID, enabled: true))
+    value.pair = .init(macActorID: value.actorID, iPadActorID: UUID(), credentialID: UUID(), secret: Data(repeating: 1, count: 31))
+    XCTAssertThrowsError(try value.validate(bundle: value.bundleID, enabled: true))
+    value.pair = .init(macActorID: value.actorID, iPadActorID: value.actorID, credentialID: UUID(), secret: Data(repeating: 1, count: 32))
+    XCTAssertThrowsError(try value.validate(bundle: value.bundleID, enabled: true))
+    value.pair = .init(macActorID: value.actorID, iPadActorID: UUID(), credentialID: UUID(), secret: Data(repeating: 1, count: 32))
+    XCTAssertNoThrow(try value.validate(bundle: value.bundleID, enabled: true))
+    XCTAssertThrowsError(try value.validate(bundle: "com.amirtlinov.notebook.mac", enabled: true))
+  }
+
+  func testIsolatedAccountUsesOneCredentialThroughTheNormalDirectoryContract() async throws {
+    var mac = configuration()
+    let pair = NotebookAcceptanceConfiguration.Pair(macActorID: mac.actorID, iPadActorID: UUID(),
+      credentialID: UUID(), secret: Data(repeating: 42, count: 32))
+    mac.pair = pair
+    let ipad = NotebookAcceptanceConfiguration(version: 1, runID: mac.runID, workspaceID: mac.workspaceID,
+      actorID: pair.iPadActorID, role: .iPad, bundleID: "com.amirtlinov.notebook.acceptance", sourceRevision: mac.sourceRevision,
+      root: mac.rootURL.deletingLastPathComponent().appendingPathComponent("ipad").path, socket: nil, codexDirectory: nil, pair: pair)
+    var results: [NotebookAccountSnapshot] = []
+    for config in [mac, ipad] {
+      let service = NotebookAcceptanceAccountService(configuration: config, pair: pair)
+      let device = NotebookAccountDirectory.Device(identity: .init(deviceID: config.actorID,
+        workspaceID: config.workspaceID, displayName: "Actual device name"),
+        platform: config.role == .mac ? .mac : .iPad, activation: nil)
+      let first = try await service.exchange(device: device, boundAccount: nil, retained: [], spaceName: "unused", publishName: false)
+      let credentials = first.directory.credentials(for: device)
+      XCTAssertEqual(credentials.count, 1)
+      XCTAssertEqual(credentials.first?.1.id, pair.credentialID)
+      XCTAssertEqual(credentials.first?.1.secret, pair.secret)
+      let second = try await service.exchange(device: device, boundAccount: first.account,
+        retained: credentials.map(\.1), spaceName: "unused", publishName: false)
+      XCTAssertEqual(first.directory, second.directory, "Reopening must not rotate the installed test credential")
+      do {
+        _ = try await service.exchange(device: device, boundAccount: "foreign", retained: [], spaceName: "unused", publishName: false)
+        XCTFail("A different account must not adopt the retained key")
+      } catch { XCTAssertEqual(error as? NotebookAccountError, .changed) }
+      do {
+        let stale = NotebookAccountDirectory.Pair(id: UUID(), workspaceID: config.workspaceID,
+          first: pair.macActorID, second: pair.iPadActorID, secret: pair.secret)
+        _ = try await service.exchange(device: device, boundAccount: first.account, retained: [stale], spaceName: "unused", publishName: false)
+        XCTFail("A mismatched installed credential must not be silently overwritten")
+      } catch { XCTAssertEqual(error as? NotebookAccountError, .invalidDirectory) }
+      results.append(first)
+    }
+    XCTAssertEqual(results[0].account, results[1].account)
+    XCTAssertEqual(results[0].directory.pairs, results[1].directory.pairs)
+  }
+
   func testRejectedLaunchNeverFallsBackToTheDefaultWorkspace() async {
     let launch = NotebookApplicationLaunch(failure: "rejected isolated launch")
     await launch.waitForAdmission()
