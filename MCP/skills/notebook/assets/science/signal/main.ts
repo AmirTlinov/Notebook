@@ -195,20 +195,32 @@ notebook.exportFrame(async ({format,state: saved,signal,pixelRatio}) => {
     if(signal.aborted)throw new DOMException('Aborted','AbortError');
     if(format==='raster')return null;
     const source=detail.querySelector('svg');if(!source)throw Error('График не готов');
-    const svg=source.cloneNode(true) as SVGSVGElement;
-    const original=[source,...source.querySelectorAll('*')],copy=[svg,...svg.querySelectorAll('*')];
-    const properties=['fill','fill-opacity','stroke','stroke-width','stroke-opacity','opacity','font-family','font-size','font-weight','font-style','text-anchor','dominant-baseline'];
-    original.forEach((node,index)=>{const style=getComputedStyle(node),target=copy[index]!;
-      for(const property of properties){const value=style.getPropertyValue(property);if(value&&!value.includes('url('))target.setAttribute(property,value);}
-      target.removeAttribute('style');target.removeAttribute('class');});
-    svg.querySelectorAll('style').forEach(node=>node.remove());
-    svg.setAttribute('xmlns','http://www.w3.org/2000/svg');svg.setAttribute('xml:space','preserve');
-    const background=document.createElementNS('http://www.w3.org/2000/svg','rect');
-    background.setAttribute('width','100%');background.setAttribute('height','100%');background.setAttribute('fill',getComputedStyle(canvas).getPropertyValue('--paper').trim()||'#fff');svg.prepend(background);
-    const title=document.createElementNS('http://www.w3.org/2000/svg','title');title.textContent=get('detail-caption').textContent;svg.prepend(title);
-    return new XMLSerializer().serializeToString(svg);
+    function vector(source: SVGSVGElement) {
+      const svg=source.cloneNode(true) as SVGSVGElement, r=source.getBoundingClientRect();
+      svg.setAttribute('width',String(r.width));svg.setAttribute('height',String(r.height));
+      const original=[source,...source.querySelectorAll('*')],copy=[svg,...svg.querySelectorAll('*')];
+      const properties=['fill','fill-opacity','stroke','stroke-width','stroke-opacity','opacity','font-family','font-size','font-weight','font-style','text-anchor','dominant-baseline'];
+      original.forEach((node,index)=>{const style=getComputedStyle(node),target=copy[index]!;
+        for(const property of properties){const value=style.getPropertyValue(property);if(value&&!value.includes('url('))target.setAttribute(property,value);}
+        for(const attribute of [...target.attributes])if(attribute.name.startsWith('data-')||['style','class'].includes(attribute.name))target.removeAttribute(attribute.name);});
+      svg.querySelectorAll('style').forEach(node=>node.remove());
+      svg.setAttribute('xmlns','http://www.w3.org/2000/svg');svg.setAttribute('xml:space','preserve');
+      const background=document.createElementNS('http://www.w3.org/2000/svg','rect');
+      const box=source.viewBox.baseVal;
+      background.setAttribute('x',String(box.x));background.setAttribute('y',String(box.y));
+      background.setAttribute('width',String(box.width||r.width));background.setAttribute('height',String(box.height||r.height));background.setAttribute('fill',getComputedStyle(canvas).getPropertyValue('--paper').trim()||'#fff');svg.prepend(background);
+      const title=document.createElementNS('http://www.w3.org/2000/svg','title');title.textContent=get('detail-caption').textContent;svg.prepend(title);
+      return {svg:new XMLSerializer().serializeToString(svg),frame:{x:r.left,y:r.top,width:r.width,height:r.height}};
+    }
+    const plot=vector(source);
+    if(format==='pdf') {
+      const formula=get('formula').querySelector('svg');if(!formula)throw Error('Формула не готова');
+      return [plot,vector(formula)];
+    }
+    const serialized=plot.svg;
+    return serialized;
   } finally {signal.removeEventListener('abort',cancel);pause();}
-});
+},{vectors:true});
 notebook.lifecycle({pause,checkpoint:() => {pause();return {...state};},resume:async () => {
   if (disposed) return;suspended = false;syncControls();drawOverview();await loadWindow();
 },dispose:() => {pause();disposed = true;events.abort();resize.disconnect();data = undefined;bins = new Float32Array();}});

@@ -7,6 +7,7 @@ import XCTest
 import UIKit
 #else
 import AppKit
+import PDFKit
 #endif
 @testable import Notebook
 
@@ -220,6 +221,14 @@ final class ProgramAssetTests: XCTestCase {
     XCTAssertEqual(publication.cut, cut)
     let attachment = XCTAttachment(data: bytes, uniformTypeIdentifier: "public.svg-image")
     attachment.name = "saved-signal-37125-vector"; attachment.lifetime = .keepAlways; add(attachment)
+    do {
+      let pdfResult = try await DocumentCanonicalExport.publication(cut: cut, options: .init(format: .pdf), jobID: UUID(), store: f.store, persistence: NotebookPersistenceQueue(store: f.store))
+      let pdfBytes = try readExportBytes(pdfResult.artifact, store: f.store)
+      XCTAssertGreaterThan(try XCTUnwrap(PDFDocument(data: pdfBytes)).pageCount, 0)
+      XCTAssertEqual(pdfResult.cut, cut)
+      let pdfAttachment = XCTAttachment(data: pdfBytes, uniformTypeIdentifier: "com.adobe.pdf")
+      pdfAttachment.name = "saved-signal-vector-Plot-MathJax-raster-overview"; pdfAttachment.lifetime = .keepAlways; add(pdfAttachment)
+    } catch { XCTFail("Signal mixed PDF: \(error)") }
   }
 
   func testScientificRasterExportsRenderSavedModelsAtRequestedScaleWithoutLiveCommits() async throws {

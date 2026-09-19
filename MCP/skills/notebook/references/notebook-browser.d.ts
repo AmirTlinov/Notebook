@@ -27,8 +27,13 @@ declare const notebook: {
   /** Render the exact supplied saved state. Raster: redraw Canvas/WebGL at pixelRatio,
    * await workers/media and return null only once the stopped frame is ready.
    * SVG: return a self-contained passive vector image.
+   * PDF with vectors:true: return nonoverlapping SVG replacement rectangles in
+   * local CSS pixels. Rectangles must fit the block and replace, not cover, raster.
+   * Include any opaque background needed; remaining regions stay raster.
    * Runs only in an isolated export executor, after pause; commits are disabled.
    * Missing or failed author export is an error, not a raster disguised as SVG. */
-  exportFrame(render: (request: {format: 'svg' | 'raster'; state: NotebookJSON; pixelRatio?: number; time?: number; signal: AbortSignal}) => string | null | Promise<string | null>, options?: {timeline?: boolean}): void;
+  exportFrame(render: (request: {format: 'svg' | 'raster' | 'pdf'; state: NotebookJSON; pixelRatio?: number; time?: number; signal: AbortSignal}) => string | null | NotebookVectorLayer[] | Promise<string | null | NotebookVectorLayer[]>, options?: {timeline?: boolean; vectors?: boolean}): void;
   lifecycle(hooks: NotebookProgramLifecycle): void;
 };
+
+interface NotebookVectorLayer { svg: string; frame: {x: number; y: number; width: number; height: number}; }

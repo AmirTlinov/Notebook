@@ -299,6 +299,17 @@ notebook.exportFrame(async ({format,state,pixelRatio,signal}) => {
 Рецепты signal/gears/wave и шесть inline science examples уже поддерживают raster;
 Plot signal также поддерживает SVG.
 
+Для PDF callback может объявить `{vectors:true}` и при `format==='pdf'` вернуть
+`[{svg,frame:{x,y,width,height}}]`: до 16 непересекающихся прямоугольников в CSS
+пикселях локальной программы, внутри её размеров, общий JSON до 524288 UTF-16.
+Это **замена** соответствующих pixels, не прозрачный слой поверх растровой копии.
+Замкнутый SVG задаёт нужный фон сам. Native проверяет SVG/границы, тот же data-only
+SVG kernel canonical typesetter превращает его в PDF, прежний макет GUI-238
+задаёт physical coordinates и обрезку на границах страниц. Остальной Canvas/WebGL
+остаётся raster при целевых 300 DPI листа, независимо от дисплея Mac. Signal возвращает настоящий Plot и MathJax glyph paths; весь
+документ не преобразуется в картинку. Необъявленная возможность — raster;
+объявленная, но повреждённая область — ошибка, а не тихая потеря качества.
+
 
 Для компактной inline программы `nb.export(key,{documentID,format:'html',blockID})`
 возвращает один автономный offline HTML. Открытие запускает ту же программу с

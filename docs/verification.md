@@ -1,5 +1,47 @@
 # Проверка Notebook
 
+## 19 сентября, 09:53 МСК — GUI-249: Plot и MathJax остаются векторными внутри PDF
+
+PDF использует тот же canonical layout и потоковый Quartz compositor. Автор
+может объявить vectors:true и вернуть непересекающиеся SVG replacement regions;
+native проверяет закрытый SVG, локальные границы/пересечения и лимиты. Один
+существующий data-only SVG kernel типовщика конвертирует регионы; второй PDF
+renderer/layout не добавлен. Raster под регионами исключается, перенос через
+sourceOffset/clip сохраняет геометрию нескольких страниц. Canvas/WebGL остаются
+кадром точного saved cut при 300 DPI физического листа, независимо от дисплея.
+Векторные buffers учитываются в прежнем resource pool (<=8 МиБ/page).
+
+Реальный signal экспортирует Plot и MathJax glyph paths; Canvas overview остаётся
+raster. Финальный A4 PDF осмотрен: sample37125/37.125s, исходные50отсчётов,
+формула min/max0.273/0.558, подписи/цвет/обрезка сохранены. PDF содержит selectable
+Plot glyphs (встроенный Libertinus Sans, не зависимость от системного шрифта),
+векторные paths MathJax, растровую часть2481×3509. PNG-preview самого PDF:
+`.build/gui249-vectors-preview-v6/7F61AFBA-5B06-498F-BD37-C95AF80F3DCD.pdf.png`.
+
+Проверки:
+- **Mac4 PASS**, `.build/gui249-vectors-mac-v6/verification.json`, source
+  `aac4f443d9e1485d3da9a7ecc843b4d58e1b71bb9bcc234e9421d7026945fdea`:
+  реальный Plot/MathJax, две canonical страницы с разными vector regions,
+  прежние SVG/PNG/JPEG image assets, saved vs live raster + PDF text/links.
+- **JS22 PASS**, `/tmp/gui249-vectors-js-final.log`: opt-in, copied data,
+  limits/finite bounds и отказ объявленного повреждённого экспорта.
+- **Simulator1 PASS**, `.build/gui249-vectors-sim-v2.xcresult`: offline
+  Plot/MathJax/ranges/checkpoint; source предыдущего native v5
+  `ab173e9014b03e15062d81eaf9e4b410cd34fd60cbbbaf7c27f8cf9c5faca323`.
+  После него изменены Mac-only PDF DPI, комментарий/whitespace; iPad code и
+  signal fixture не менялись. Runtime warnings0, skips0.
+
+Отрицательный v2/v3 не скрыт: MathJax data-latex содержал TeX escapes,
+запрещённые passive validator. Рецепт теперь удаляет служебные data attributes,
+не ослабляя валидатор. XCTest маскировал ошибку как InvalidTransition; явная
+диагностика показала invalid_export_svg. Тест цветовой области скорректирован
+по фактическому color-managed RGB; y1400 действительно лежит на второй странице,
+в отличие от ошибочного ожидания для y1150. Product layout не менялся ради теста.
+
+Presentеd cut и installed/system acceptance GUI-250 остаются открытыми.
+Физическая пользовательская пара не изменена; GUI-249/240 не Done.
+
+
 ## 19 сентября, 09:32 МСК — GUI-249: restart не теряет смысл export job
 
 При переходе queued/running → interrupted прежний export owner теперь сохраняет

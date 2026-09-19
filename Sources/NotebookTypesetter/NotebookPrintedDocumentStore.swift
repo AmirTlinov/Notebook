@@ -73,6 +73,7 @@ public actor NotebookPrintedDocumentStore {
       assets: assets, log: meta.log, guestMemoryBytes: meta.guestMemoryBytes)
   }
   private static func hash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+  public func vectorPDF(_ svg: Data) async throws -> Data { try await compiler.convertSVG(svg) }
   public func trimIdleCompiler() async { await compiler.trimIdle() }
   private func read(_ url: URL, limit: Int) throws -> Data {
     try Task.checkCancellation()

@@ -174,6 +174,44 @@ import WebKit
     let attachment = XCTAttachment(data: pdfBytes, uniformTypeIdentifier: "com.adobe.pdf")
     attachment.name = "saved-red-cut-with-vector-text-not-live-blue"; attachment.lifetime = .keepAlways; add(attachment)
   }
+  func testPDFVectorReplacementsFollowCanonicalFragmentsWithoutRasterUnderlays() async throws {
+    let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    defer { try? FileManager.default.removeItem(at: store.root) }
+    let script = """
+      notebook.ready(Promise.resolve());
+      notebook.exportFrame(({format})=>format==='raster'?null:[100,1400].map((y,i)=>({
+        svg:`<svg xmlns="http://www.w3.org/2000/svg" width="100" height="60"><path fill="${i?'#0000ff':'#00ff00'}" d="M0 0H100V60H0Z"/></svg>`,
+        frame:{x:20,y,width:100,height:60}
+      })),{vectors:true});
+      """
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "heading", source: "# Vector fragments\n\nSelectable text and $x^2$."),
+      .interactive(id: "model", html: "<div style='height:1500px;background:#ff0000'></div>", javaScript: script, height: 1500)])
+    let cut = try NotebookExportCut(document: document, state: .init(id: document.id, actor: UUID()))
+    let publication = try await DocumentCanonicalExport.publication(cut: cut, jobID: UUID(), store: store, persistence: NotebookPersistenceQueue(store: store))
+    let bytes = try readExportBytes(publication.artifact, store: store), pdf = try XCTUnwrap(PDFDocument(data: bytes))
+    XCTAssertGreaterThanOrEqual(pdf.pageCount, 2)
+    XCTAssertTrue(pdf.string?.contains("Vector fragments") == true)
+    var greenPages: [Int] = [], bluePages: [Int] = []
+    for index in 0..<pdf.pageCount {
+      let page = try XCTUnwrap(pdf.page(at: index)), thumbnail = page.thumbnail(of: .init(width: 1190, height: 1684), for: .mediaBox)
+      let bitmap = NSBitmapImageRep(cgImage: try XCTUnwrap(thumbnail.cgImage(forProposedRect: nil, context: nil, hints: nil)))
+      var green = 0, blue = 0, red = 0
+      for y in stride(from: 0, to: bitmap.pixelsHigh, by: 3) { for x in stride(from: 0, to: bitmap.pixelsWide, by: 3) {
+        if let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) {
+          if c.greenComponent > 0.7 && c.greenComponent > c.redComponent * 1.5 && c.greenComponent > c.blueComponent * 1.5 { green += 1 }
+          if c.blueComponent > 0.7 && c.redComponent < 0.3 && c.greenComponent < 0.3 { blue += 1 }
+          if c.redComponent > 0.7 && c.greenComponent < 0.3 && c.blueComponent < 0.3 { red += 1 }
+        }
+      } }
+      if green > 100 { greenPages.append(index) }; if blue > 100 { bluePages.append(index) }
+      XCTAssertGreaterThan(red, 100, "Nonvector regions retain their actual raster")
+    }
+    XCTAssertEqual(greenPages, [0]); XCTAssertEqual(bluePages, [1], "Authored y is split through the existing sourceOffset, not relocated to page one")
+    let attachment = XCTAttachment(data: bytes, uniformTypeIdentifier: "com.adobe.pdf")
+    attachment.name = "vector-fragments-replace-red-raster"; attachment.lifetime = .keepAlways; add(attachment)
+  }
+
   func testRasterExportWaitsForTheExactAuthoredStateAndRefusesUnknownFrames() async throws {
     let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
     _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))

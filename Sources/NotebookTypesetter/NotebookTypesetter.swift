@@ -102,6 +102,14 @@ public final class NotebookTypesetter: @unchecked Sendable {
   }
 
   public func compile(_ document: DocumentDocument) async throws -> NotebookPrintedDocument {
+    try await perform { try self.compile(document, work: $0) }
+  }
+  /// Same bounded data-only SVG kernel as canonical document images. No TeX,
+  /// layout, JavaScript or second compiler is created for an export overlay.
+  public func convertSVG(_ data: Data) async throws -> Data {
+    try await perform { try self.convertSVG(data, work: $0) }
+  }
+  private func perform<T: Sendable>(_ operation: @escaping @Sendable (Work) throws -> T) async throws -> T {
     let work = Work()
     return try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in
@@ -114,7 +122,7 @@ public final class NotebookTypesetter: @unchecked Sendable {
               self.discardRuntime()
             }
           }
-          do { continuation.resume(returning: try autoreleasepool { try compile(document, work: work) }) }
+          do { continuation.resume(returning: try autoreleasepool { try operation(work) }) }
           catch { continuation.resume(throwing: error) }
         }
       }
@@ -148,33 +156,44 @@ public final class NotebookTypesetter: @unchecked Sendable {
       return try JSONDecoder().decode(Preparation.self, from: Data(bytes: raw, count: strlen(raw)))
     }
   }
-  private func compile(_ document: DocumentDocument, work: Work) throws -> NotebookPrintedDocument {
-    try work.check()
-    let prepared = try prepare(document, work: work)
-    try work.check()
+  private func preparedRuntime() throws -> OpaquePointer {
     if runtime == nil {
       runtime = nb_typesetter_create(resources.appendingPathComponent("texlive.zip").path,
         resources.appendingPathComponent("latex.fmt").path, resources.appendingPathComponent("fonts.tsv").path)
     }
     guard let runtime else { throw NotebookTypesetterError("typesetter_resources_unavailable") }
+    return runtime
+  }
+  private func convertSVG(_ imageSource: Data, work: Work) throws -> Data {
+    try work.check()
+    guard !imageSource.isEmpty, imageSource.count <= 8*1024*1024 else { throw NotebookTypesetterError("print_image_input_limit") }
+    let runtime = try preparedRuntime()
+    return try work.withTeX { ticket in
+      let timeout = try work.remainingMilliseconds()
+      let output = imageSource.withUnsafeBytes { raw in nb_typesetter_svg(runtime,
+        raw.bindMemory(to: UInt8.self).baseAddress, imageSource.count, timeout, ticket) }
+      guard let output else { throw NotebookTypesetterError("print_image_failed") }
+      defer { nb_typesetter_output_destroy(output) }
+      var count = 0
+      let error = nb_typesetter_output_bytes(output, 3, &count)!
+      guard count == 0 else { throw NotebookTypesetterError(String(decoding: UnsafeBufferPointer(start: error, count: count), as: UTF8.self)) }
+      let bytes = nb_typesetter_output_bytes(output, 0, &count)!
+      return Data(bytes: bytes, count: count)
+    }
+  }
+
+  private func compile(_ document: DocumentDocument, work: Work) throws -> NotebookPrintedDocument {
+    try work.check()
+    let prepared = try prepare(document, work: work)
+    try work.check()
+    let runtime = try preparedRuntime()
     // Converted assets are frozen with the source before the VM starts.
     var assets: [NotebookPrintedAsset] = [], total = 0
     for asset in prepared.assets {
       try work.check()
       guard let data = Data(base64Encoded: asset.data) else { throw NotebookTypesetterError("print_image_invalid") }
       let imageSource = asset.mediaType == "image/svg+xml" ? data : try NotebookPrintImage.embeddedSVG(data, mediaType: asset.mediaType)
-      let pdf = try work.withTeX { ticket in
-          let timeout = try work.remainingMilliseconds()
-          let output = imageSource.withUnsafeBytes { raw in nb_typesetter_svg(runtime,
-            raw.bindMemory(to: UInt8.self).baseAddress, imageSource.count, timeout, ticket) }
-          guard let output else { throw NotebookTypesetterError("print_image_failed") }
-          defer { nb_typesetter_output_destroy(output) }
-          var count = 0
-          let error = nb_typesetter_output_bytes(output, 3, &count)!
-          guard count == 0 else { throw NotebookTypesetterError(String(decoding: UnsafeBufferPointer(start: error, count: count), as: UTF8.self)) }
-          let bytes = nb_typesetter_output_bytes(output, 0, &count)!
-          return Data(bytes: bytes, count: count)
-        }
+      let pdf = try convertSVG(imageSource, work: work)
       total += pdf.count
       guard total <= 8*1024*1024 else { throw NotebookTypesetterError("print_images_output_limit") }
       assets.append(.init(name: asset.name, data: pdf))

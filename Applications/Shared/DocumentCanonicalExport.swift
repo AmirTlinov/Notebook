@@ -9,7 +9,8 @@ import NotebookTypesetter
 import PDFKit
 
 /// Export reads the same ready print artifact as paper. Only live program
-/// rectangles are frozen as images; all typeset text, paths and links remain
+/// rectangles are frozen as images with optional authored vector replacements;
+/// all typeset text, paths and links remain
 /// vector PDF, at their already installed physical coordinates.
 @MainActor enum DocumentCanonicalExport {
   static func publish(cut: NotebookExportCut, options: NotebookExportOptions = .init(), jobID: UUID, store: NotebookStore, persistence: NotebookPersistenceQueue) async throws -> NotebookExportReceipt {
@@ -113,16 +114,21 @@ import PDFKit
         try Task.checkCancellation()
         let locations = byPage[pageIndex] ?? []
         if locations.isEmpty { try await composer.append(pageIndex: pageIndex, image: nil, regions: []); continue }
-        let raster = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: pageIndex,
-          programStore: store, isolationID: jobID)
-        defer { raster.release() }
-        var rect = CGRect(origin: .zero, size: raster.image.size)
-        guard let image = raster.image.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { throw SceneRenderError.resourceLimit }
-        var regions: [CGRect] = []
-        for group in Dictionary(grouping: locations, by: \.blockID).values {
-          regions.append(group.reduce(CGRect.null) { $0.union(CGRect(x: $1.x, y: $1.y, width: $1.width, height: $1.height)) })
+        let geometry = WorkspaceItemGeometry.document(document.paperSize)
+        try await DocumentSnapshotCache.shared.withPreparedPage(document: document, state: state, pageIndex: pageIndex,
+          resources: .shared, programStore: store, isolationID: jobID) { coordinator in
+          let raster = try await coordinator.retainPreparedSnapshot(pixelWidth: Int(ceil(document.paperSize.widthPoints * 300 / 72)),
+            force: true, waitsForRasterAdmission: true)
+          defer { raster.release() }
+          let vectors = try await coordinator.exportPDFVectors(pointScale: document.paperSize.widthPoints / geometry.width)
+          defer { vectors.storage?.release() }
+          var rect = CGRect(origin: .zero, size: raster.image.size)
+          guard let image = raster.image.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { throw SceneRenderError.resourceLimit }
+          let regions = Dictionary(grouping: locations, by: \.blockID).values.map { group in
+            group.reduce(CGRect.null) { $0.union(CGRect(x: $1.x, y: $1.y, width: $1.width, height: $1.height)) }
+          }
+          try await composer.append(pageIndex: pageIndex, image: image, regions: regions, vectors: vectors.values)
         }
-        try await composer.append(pageIndex: pageIndex, image: image, regions: regions)
       }
       try await composer.finish()
     }
@@ -210,7 +216,7 @@ final class PrintedPDFComposer: @unchecked Sendable {
       do { continuation.resume(returning: try autoreleasepool(invoking: body)) } catch { continuation.resume(throwing: error) }
     } }
   }
-  func append(pageIndex: Int, image: CGImage?, regions: [CGRect]) async throws {
+  func append(pageIndex: Int, image: CGImage?, regions: [CGRect], vectors: [DocumentPDFVector] = []) async throws {
     try await perform { [self] in
       guard let page = input?.page(at: pageIndex+1), let context else { throw SceneRenderError.resourceLimit }
       let box = page.getBoxRect(.mediaBox)
@@ -219,9 +225,23 @@ final class PrintedPDFComposer: @unchecked Sendable {
       if let image {
         for region in regions {
           let physical = CGRect(x: region.minX, y: box.height-region.maxY, width: region.width, height: region.height)
-          context.saveGState(); context.clip(to: physical)
+          context.saveGState()
+          let mask = CGMutablePath(); mask.addRect(physical)
+          for vector in vectors {
+            let cut = vector.frame.intersection(vector.clip).intersection(region)
+            if !cut.isNull && !cut.isEmpty { mask.addRect(CGRect(x: cut.minX, y: box.height-cut.maxY, width: cut.width, height: cut.height)) }
+          }
+          context.addPath(mask); context.clip(using: .evenOdd)
           context.draw(image, in: box); context.restoreGState()
         }
+      }
+      for vector in vectors {
+        guard let provider = CGDataProvider(data: vector.pdf as CFData), let pdf = CGPDFDocument(provider), let page = pdf.page(at: 1), pdf.numberOfPages == 1 else { throw SceneRenderError.resourceLimit }
+        let frame = CGRect(x: vector.frame.minX, y: box.height-vector.frame.maxY, width: vector.frame.width, height: vector.frame.height)
+        let clip = CGRect(x: vector.clip.minX, y: box.height-vector.clip.maxY, width: vector.clip.width, height: vector.clip.height)
+        context.saveGState(); context.clip(to: clip)
+        context.concatenate(page.getDrawingTransform(.mediaBox, rect: frame, rotate: 0, preserveAspectRatio: false))
+        context.drawPDFPage(page); context.restoreGState()
       }
       if let original = links?.page(at: pageIndex) {
         for target in destinations[pageIndex] ?? [] { context.addDestination(target.name as CFString, at: target.point) }

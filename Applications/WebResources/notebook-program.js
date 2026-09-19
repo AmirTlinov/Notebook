@@ -9,7 +9,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
   const copy = value => JSON.parse(JSON.stringify(value));
   let value = copy(state), revision = 0n, disposed = false, suspended = false, frozen = false;
   let hooks = {}, registered = false, generation = 0, operation = null, started = null;
-  let semantic = null, semanticValue = null, exportFrame = null, exportTimeline = false;
+  let semantic = null, semanticValue = null, exportFrame = null, exportTimeline = false, exportVectors = false;
   const readiness = [];
   const error = code => new Error(code);
   const alive = () => { if (disposed) throw error('program_disposed'); };
@@ -53,10 +53,10 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
     },
     // An author-owned static representation, not serialization of arbitrary
     // heap/DOM. Native invokes this only in an isolated export executor.
-    exportFrame(callback, {timeline = false} = {}) {
+    exportFrame(callback, {timeline = false, vectors = false} = {}) {
       alive();
-      if (exportFrame || typeof callback !== 'function' || typeof timeline !== 'boolean') throw error('program_export_invalid');
-      exportFrame = callback; exportTimeline = timeline;
+      if (exportFrame || typeof callback !== 'function' || typeof timeline !== 'boolean' || typeof vectors !== 'boolean') throw error('program_export_invalid');
+      exportFrame = callback; exportTimeline = timeline; exportVectors = vectors;
     },
     lifecycle(callbacks) {
       alive();
@@ -100,7 +100,8 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
     },
     async exportFrame(request) {
       alive();
-      if (!exportFrame || !['svg','raster'].includes(request?.format)) throw error('program_export_unavailable');
+      if(request?.format==='pdf'&&!exportVectors)return [];
+      if (!exportFrame || !['svg','raster','pdf'].includes(request?.format)) throw error('program_export_unavailable');
       if(request.format==='raster'&&(!Number.isFinite(request.pixelRatio)||request.pixelRatio<=0||request.pixelRatio>8))throw error('program_export_extent');
       if(request.time!==undefined&&(!exportTimeline||!Number.isFinite(request.time)||request.time<0))throw error('program_export_timeline_unavailable');
       const input = copy(request.state);
@@ -114,6 +115,15 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
         }, operationRequest.signal, 'program_export');
         alive();
         if (expected !== generation) throw error('program_superseded');
+        if(request.format==='pdf') {
+          if(!Array.isArray(result)||result.length>16||JSON.stringify(result).length>524288)throw error('program_export_limit');
+          for(const layer of result) {
+            const r=layer?.frame;
+            if(typeof layer?.svg!=='string'||!r||!['x','y','width','height'].every(k=>Number.isFinite(r[k]))
+              ||r.x<0||r.y<0||r.width<=0||r.height<=0)throw error('program_export_vector_invalid');
+          }
+          return copy(result);
+        }
         if(request.format==='svg') {
           if(typeof result!=='string'||result.length>524288)throw error('program_export_limit');
           return result;
