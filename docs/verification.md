@@ -1,5 +1,13 @@
 # Проверка Notebook
 
+## 19 сентября, 03:05 МСК — GUI-242: prepare не ждёт FIFO producer
+
+После adapter-среза проверен ещё один локальный file boundary: Node prepare теперь
+открывает файл с O_NONBLOCK/O_NOFOLLOW, затем проверяет regular file. Named pipe
+отвергается до чтения, а не зависает до появления writer. Изменены только prepare
+и его тест; native исходники не менялись. **5 MCP PASS** плюс pinned SDK check,
+`/tmp/gui-242-prepare-fifo.log`, `/tmp/gui-242-prepare-fifo-check.log`.
+
 ## 19 сентября, 03:03 МСК — GUI-242: scoped WebKit reader на Mac и Simulator
 
 Один `NotebookProgramAssets` обслуживает существующие spatial, document и passive

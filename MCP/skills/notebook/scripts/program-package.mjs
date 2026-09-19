@@ -1,4 +1,5 @@
 import {open, realpath} from 'node:fs/promises';
+import {constants} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {resolve, sep, extname} from 'node:path';
 
@@ -34,7 +35,8 @@ export async function prepareProgramPackage({directory, files, html, css, javaSc
     signal?.throwIfAborted();
     const sourcePath = await realpath(resolve(root, path));
     if (!sourcePath.startsWith(root + sep)) throw new Error('Program source escapes its directory');
-    const file = await open(sourcePath, 'r');
+    // Opening a FIFO must not wait for a writer before isFile() can reject it.
+    const file = await open(sourcePath, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
     try {
       const before = await file.stat({bigint:true}), parts = [];
       if (!before.isFile() || before.size > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Program sources must be regular files');

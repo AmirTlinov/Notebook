@@ -42,6 +42,19 @@ test('namespace, MIME, symlink escape and cancellation are rejected before stagi
   } finally { await rm(root,{recursive:true,force:true}); }
 });
 
+test('file preparation rejects a FIFO without waiting for its producer', async () => {
+  const {execFileSync,execFile}=await import('node:child_process');
+  const {promisify}=await import('node:util'),{fileURLToPath}=await import('node:url');
+  const root=await mkdtemp(join(tmpdir(),'notebook-program-fifo-'));
+  try {
+    execFileSync('/usr/bin/mkfifo',[join(root,'main.js')]);
+    await writeFile(join(root,'input.json'),JSON.stringify({directory:'.',javaScript:'main.js',files:['main.js']}));
+    await assert.rejects(promisify(execFile)(process.execPath,[fileURLToPath(new URL('../skills/notebook/scripts/prepare.mjs',import.meta.url)),
+      'program',join(root,'input.json'),join(root,'prepared.json')],{timeout:3000}),
+      (error:any)=>!error.killed && /regular files/.test(error.stderr));
+  } finally { await rm(root,{recursive:true,force:true}); }
+});
+
 test('trusted import tool forwards only its typed local capability, outside QuickJS', async () => {
   const {createServer:createSocketServer}=await import('node:net');
   const {chmod}=await import('node:fs/promises');
