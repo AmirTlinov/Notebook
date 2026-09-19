@@ -95,6 +95,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       startTask?.cancel(); startTask = nil
     }
     let request = UUID(); startID = request; requestedPriority = priority
+    observe("program_admission_requested")
     startTask = Task { @MainActor [weak self] in
       guard let self else { return }
       do {
@@ -102,6 +103,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
           documentID: documentID, blockID: block.id)
         guard !stopped, !Task.isCancelled, startID == request else { acquired.release(); return }
         lease = acquired
+        observe("program_admitted")
         let content = WKUserContentController(); content.add(self, name: "documentProgram")
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent(); configuration.userContentController = content
@@ -112,6 +114,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
         web.scrollView.bounces = false; web.scrollView.contentInsetAdjustmentBehavior = .never
         web.scrollView.pinchGestureRecognizer?.isEnabled = false; web.scrollView.panGestureRecognizer.isEnabled = false
         web.navigationDelegate = self; webView = web; onMount(web, size)
+        observe("program_mounted")
         if let hash = block.programPackage {
           guard let store = programStore else { throw SceneRenderError.snapshotPending("program_store") }
           let package = try await Task.detached(priority: .userInitiated) { try store.readProgramPackage(hash) }.value
@@ -262,6 +265,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     switch body["kind"] as? String {
     case "ready":
       guard failure == nil else { return }
+      observe("program_ready")
       readinessDeadline?.cancel(); readinessDeadline = nil
       ready = true
       if let value = body["revision"] as? String, UInt64(value) == revision { presentedRevision = revision }
@@ -289,6 +293,22 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     guard self.webView === webView else { return }
     ready = false; focused = false; revision = 0; presentedRevision = nil; onFocus(false)
     releaseSurface(); failure = nil; start(priority: .liveProgram); onChange()
+  }
+
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    guard self.webView === webView else { return }
+    observe("program_navigation_finished")
+  }
+
+  private func observe(_ stage: String) {
+    guard NotebookNavigationObservation.enabled else { return }
+    let web = webView, window = web?.window
+    let intersectsWindow = if let web, let window { !web.convert(web.bounds, to: window).intersection(window.bounds).isEmpty } else { false }
+    NotebookNavigationObservation.recordDocument(stage, ownerID: id, documentID: documentID, fields: [
+      "blockID": .string(block.id), "webID": web.map { .string(String(describing: ObjectIdentifier($0))) } ?? .null,
+      "hasWindow": .bool(window != nil), "intersectsWindow": .bool(intersectsWindow),
+      "activeWebSurfaces": .number(Double(resources.activeWebSurfaceCount)),
+      "pendingWebRequests": .number(Double(resources.pendingWebRequestCount))])
   }
 
   func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,

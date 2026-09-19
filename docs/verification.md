@@ -1,5 +1,37 @@
 # Проверка Notebook
 
+## 19 сентября, 20:35 МСК — GUI-248: cold stages и перекрытие подготовки (пока не принято)
+
+Private Simulator V22 source
+`bc65d5d103a5c471498526d9b5b611e268abafec8060ab041dc451fc6d64fd41`
+установлен поверх V20: store и прежний manifest сохранены побайтно; Mac остаётся
+V21. Это диагностическая mixed-source пара, не release. Пять новых opt-in
+navigation events отделяют admission, mount, navigation и ready программы;
+содержимое/состояние не журналируются. В двух **cold restoration**, не жестах
+открытия, program request→ready491,5/452,9мс; admission3,24/0,64мс, очередь0.
+Owner→installed2321,7/1447,4мс. Offscreen положение не доказывает throttling:
+контроль с ручным model-ready даёт47,7мс до установки. Его ошибочное требование
+видимого pending-frame удалено, старый отрицательный результат сохранён.
+Артефакты: `.build/gui250-program-mount-v1`, `gui250-program-stages-v1`,
+`gui250-program-cold-v22` (все внутри `.build/`).
+
+В native Sound обнаружено последовательное ожидание независимых PDF preparation
+и shell navigation. WIP оставляет один frame sender, но начинает подготовку
+сразу после получения WebKit admission; JS-frame ждёт current-shell barrier,
+который отменяется вместе с владельцем. Immutable source
+`88734ae944552de5ae6b23839e6045065d41b198fec60e2e991529a2213725c6`,
+`.build/gui250-overlapped-paper-v1`: сборка PASS, **28/31 native PASS,3 FAIL**,
+0 skips/runtime warnings. Новый Sound test проходит: start15мс, shellReady745мс,
+paperReady1471мс; первый request→installed2013мс против3191мс до изменения.
+Cached same-process reopen1243мс против1241мс — улучшения нет. Это отдельные
+наблюдения, не p95 и не выполненная цель500мс.
+
+Три отказа не скрыты: устаревший browser-source fixture ждёт удалённый callback;
+повторный curl и набор thumbnails требуют отдельного baseline. Изменение
+runtime пока **не принято, не закоммичено и не установлено**; native failures
+не являются automation/auth failure. Физический iPad, production, trust,
+архивы и сеть этой задачей не менялись. Полная GUI-240/250 приёмка открыта.
+
 ## 19 сентября, 20:03 МСК — GUI-248: нижний край бумаги и видимый исходник программы
 
 У Mac reader удалён обязательный вертикальный gutter24pt; боковые поля остались.
