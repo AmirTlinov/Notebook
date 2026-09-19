@@ -527,7 +527,7 @@ public struct NativeTextStyle: Codable, Equatable, Sendable {
     blue: Double = 0.08,
     alpha: Double = 1
   ) {
-    precondition(fontSize.isFinite && fontSize >= 8 && fontSize <= 240)
+    precondition(fontSize.isFinite && fontSize >= 3 && fontSize <= 5760)
     precondition(weight.isFinite && weight >= 0 && weight <= 1)
     precondition([red, green, blue, alpha].allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 })
     self.fontSize = fontSize
@@ -541,7 +541,7 @@ public struct NativeTextStyle: Codable, Equatable, Sendable {
   public static let standard = NativeTextStyle()
 
   var isValid: Bool {
-    fontSize.isFinite && fontSize >= 8 && fontSize <= 240
+    fontSize.isFinite && fontSize >= 3 && fontSize <= 5760
       && weight.isFinite && weight >= 0 && weight <= 1
       && [red, green, blue, alpha].allSatisfy {
         $0.isFinite && $0 >= 0 && $0 <= 1

@@ -96,7 +96,7 @@ struct AgentOverlayView: View {
             NotebookGraphicElementView(graphic: graphic, reference: reference, layout: layout)
           } else if element.kind == .nativeText {
             NotebookNativeTextView(source:element.source,style:element.textStyle ?? .standard,reference:reference,
-              isEditing:allowsInteraction && model.interactiveElementFocus == interactiveReference,
+              frame:frame,maximumHeight:pageSize.height-frame.y,isEditing:allowsInteraction && model.interactiveElementFocus == interactiveReference,
               onEditingEnded:{ if model.interactiveElementFocus == interactiveReference { model.interactiveElementFocus = nil } },retainedPage:element)
           } else {
           PreparedAgentElementView(

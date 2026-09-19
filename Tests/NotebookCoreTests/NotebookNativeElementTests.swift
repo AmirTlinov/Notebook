@@ -24,7 +24,7 @@ struct NotebookNativeElementTests {
         #expect(try store.readSpatialElement(boardID: board, elementID: id) == element)
         let window = try store.readSceneWindow(boardID: board, bounds: .init(origin: .zero, width: 1, height: 1), limit: 2, pinnedElementIDs: [id])
         #expect(window.boards[0].board.elements.map(\.id) == [id])
-        #expect(try store.updateNativeSpatialText(boardID: board, elementID: id, text: "changed", finish: false, actor: actor)?.source == "changed")
+        #expect(try updateTestNativeText(store:store,boardID: board, elementID: id, text: "changed", finish: false, actor: actor)?.source == "changed")
         if UUID(uuidString: id) == nil { #expect(try store.readSpatialElement(boardID: board, elementID: id.lowercased()) == nil) }
       }
     }
@@ -33,14 +33,14 @@ struct NotebookNativeElementTests {
   @Test func finishingTextWorksWithoutAMountedOwnerAndLateInputCannotRecreateIt() throws {
     try fixture { store, actor, board, _ in
       let start = try store.currentChangeCursor()
-      let updated = try store.updateNativeSpatialText(boardID: board, elementID: "editor", text: "after navigation", finish: true, actor: actor)
+      let updated = try updateTestNativeText(store:store,boardID: board, elementID: "editor", text: "after navigation", finish: true, actor: actor)
       #expect(updated?.source == "after navigation")
       #expect(try store.readSpatialElement(boardID: board, elementID: "editor") == updated)
-      _ = try store.updateNativeSpatialText(boardID: board, elementID: "editor", text: "", finish: false, actor: actor)
+      _ = try updateTestNativeText(store:store,boardID: board, elementID: "editor", text: "", finish: false, actor: actor)
       #expect(try store.readSpatialElement(boardID: board, elementID: "editor")?.source == "")
-      #expect(try store.updateNativeSpatialText(boardID: board, elementID: "editor", text: "", finish: true, actor: actor) == nil)
+      #expect(try updateTestNativeText(store:store,boardID: board, elementID: "editor", text: "", finish: true, actor: actor) == nil)
       let deleted = try store.currentChangeCursor()
-      #expect(try store.updateNativeSpatialText(boardID: board, elementID: "editor", text: "late", finish: true, actor: actor) == nil)
+      #expect(try updateTestNativeText(store:store,boardID: board, elementID: "editor", text: "late", finish: true, actor: actor) == nil)
       #expect(try store.currentChangeCursor() == deleted)
       let addresses = try store.readChangedAddresses(after: start, through: deleted, limit: 1)
       #expect(addresses.addresses.count == 1 && addresses.hasMore)
@@ -59,7 +59,7 @@ struct NotebookNativeElementTests {
       let state: JSONValue = .object(["value": .number(19)])
       let committed = try store.commitSpatialElementState(boardID: board, rendered: rendered, state: state, actor: actor)
       #expect(committed?.state == state && committed?.frame == frame)
-      _ = try store.updateNativeSpatialText(boardID: board, elementID: rendered.id, text: "new source", finish: false, actor: actor)
+      _ = try updateTestNativeText(store:store,boardID: board, elementID: rendered.id, text: "new source", finish: false, actor: actor)
       let cursor = try store.currentChangeCursor()
       #expect(throws: CollaborationError.self) { try store.commitSpatialElementState(boardID: board, rendered: rendered, state: .number(20), actor: actor) }
       #expect(try store.currentChangeCursor() == cursor)
@@ -70,12 +70,12 @@ struct NotebookNativeElementTests {
     try fixture { store, actor, boardID, element in
       let board = try #require(store.loadBoard(items: store.loadIndex().items).board(boardID))
       let identity = try #require(board.elementIdentityStamp(element.id))
-      _ = try store.updateNativeSpatialText(boardID: boardID, elementID: element.id, text: "Concurrent source", finish: false, actor: UUID())
+      _ = try updateTestNativeText(store:store,boardID: boardID, elementID: element.id, text: "Concurrent source", finish: false, actor: UUID())
       let frame = SpatialRect(x: 60, y: 70, width: 200, height: 90)
       let moved = try store.commitSpatialElementFrame(boardID: boardID, elementID: element.id, identity: identity,
         original: element.frame, frame: frame, origin: nil, actor: actor)
       #expect(moved?.element.frame == frame && moved?.element.source == "Concurrent source")
-      _ = try store.updateNativeSpatialText(boardID: boardID, elementID: element.id, text: "", finish: true, actor: actor)
+      _ = try updateTestNativeText(store:store,boardID: boardID, elementID: element.id, text: "", finish: true, actor: actor)
       let cursor = try store.currentChangeCursor()
       #expect(try store.commitSpatialElementFrame(boardID: boardID, elementID: element.id, identity: identity,
         original: frame, frame: element.frame, origin: nil, actor: actor) == nil)
@@ -106,9 +106,9 @@ struct NotebookNativeElementTests {
       let start = try store.currentChangeCursor()
       let address = "board.json#/boards/@" + board.uuidString.lowercased() + "/board/elements/@editor"
       let original = try #require(try store.currentRecordHash(address))
-      _ = try store.updateNativeSpatialText(boardID: board, elementID: "editor", text: "updated", finish: false, actor: actor)
+      _ = try updateTestNativeText(store:store,boardID: board, elementID: "editor", text: "updated", finish: false, actor: actor)
       let updatedCursor = try store.currentChangeCursor(), updated = try #require(try store.currentRecordHash(address))
-      _ = try store.updateNativeSpatialText(boardID: board, elementID: "editor", text: "", finish: true, actor: actor)
+      _ = try updateTestNativeText(store:store,boardID: board, elementID: "editor", text: "", finish: true, actor: actor)
       let deletedCursor = try store.currentChangeCursor()
       let historical = try #require(try store.readChangedAddresses(after: start, through: updatedCursor).records.first { $0.address == address })
       #expect(historical.beforeHash == original && historical.afterHash == updated)
@@ -124,4 +124,16 @@ private extension NotebookStore {
   func currentRecordHash(_ address: String) throws -> String? {
     try sqlRead { try $0.rows("SELECT hash FROM records WHERE address=?", [.text(address)]).first?[0].text }
   }
+}
+
+func updateTestNativeText(store: NotebookStore, boardID: UUID, elementID: String, text: String,
+  finish: Bool, actor: UUID) throws -> SpatialElement? {
+  guard let element = try store.readSpatialElement(boardID:boardID,elementID:elementID), element.kind == .nativeText else { return nil }
+  let target = CollaborationTarget(kind:element.surface.kind == .cover ? .cover : .board,
+    id:element.surface.kind == .cover ? element.surface.ownerID! : boardID,boardID:element.surface.kind == .cover ? boardID : nil)
+  let remove = finish && text.isEmpty
+  let result = try store.applyNativeElementEdits([.init(kind:remove ? .removeElement : .updateElement,target:target,id:elementID,
+    values:remove ? [:] : ["source":.string(text),"html":.string(text)])],summary:"Test text edit",
+    sources:[.init(target:target,id:elementID,spatial:element)],actor:actor)
+  return result.sources.first?.spatial
 }

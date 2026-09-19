@@ -4,9 +4,9 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Native page text, retained ink meshes and affine eraser bases require the same renderer.
+  // Canvas text sizes cover the complete camera scale range on both renderers.
   // Both applications update together; identities and queued history stay intact.
-  public static let protocolVersion = 29
+  public static let protocolVersion = 30
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16

@@ -411,8 +411,14 @@ final class NotebookAppModel {
       onSourceInvalidated: { [weak self] in self?.reloadExternalChanges() })
   }
 
-  private func clearRemovedElementPins(_ missing: [UUID: Set<String>]) {
-    for (boardID, ids) in missing {
+  private func clearRemovedElementPins(_ missing: [UUID: Set<String>], through cursor: UInt64) {
+    for (boardID, missingIDs) in missing {
+      // A coverage read made before an accepted insertion cannot declare its
+      // new editing pin deleted. The existing causal command owns that frontier.
+      let ids = missingIDs.filter { id in
+        guard let command = elementCommandSources[.spatial(boardID:boardID,elementID:id)] else { return true }
+        return command.cursor.map { $0 <= cursor } ?? false
+      }
       scenePinnedElements[boardID] = scenePinnedElements[boardID]?.filter { !ids.contains($0) }
       if selectionSession.elements.contains(where: { reference in
         if case .spatial(let selectedBoard,let id) = reference { return selectedBoard == boardID && ids.contains(id) }; return false
@@ -485,7 +491,7 @@ final class NotebookAppModel {
           truncatedSceneBoards = state.truncatedBoards
           completeSceneCoverOwners = state.completeCoverElementOwners
           missingSceneElements = state.missingPinnedElements
-          clearRemovedElementPins(state.missingPinnedElements)
+          clearRemovedElementPins(state.missingPinnedElements,through:state.header.cursor)
           spatialInk = state.ink
           loadedInkSurfaces = state.inkSurfaces
           alignWorkspaceSelection()
@@ -809,6 +815,7 @@ final class NotebookAppModel {
   // Lift transfers its final draft to the accepted command. It is retired by
   // a scene read at/after the durable cursor, not by lift or receipt delivery.
   var graphicCommandDrafts: [EditableElementReference: NotebookGraphicCommandDraft] = [:]
+  @ObservationIgnored var editingNativeTextReferences: Set<EditableElementReference> = []
   @ObservationIgnored var elementCommandSources: [EditableElementReference: NotebookElementCommand] = [:]
   var graphicCommandPending: Bool {
     graphicCommandTask != nil || !graphicCommandDrafts.isEmpty || workingGraphics.contains { $0.accepted && $0.publicationCursor == nil }
@@ -1006,7 +1013,7 @@ final class NotebookAppModel {
       self?.sync?.notifyDurableChanges()
       if let cloud = self?.cloudSync { Task { await cloud.notifyLocalChanges() } }
       switch owner {
-      case .page, .document, .documentState, .board, .spatialInk, .nativeText, .elementState:
+      case .page, .document, .documentState, .board, .spatialInk, .elementState:
         self?.refreshCommittedHeader()
       case nil, .presence, .peerPresence, .inputActivity, .documentDraft, .documentReading, .fileDraft, .fileWindow, .chatPanel, .runCommand: break
       }
@@ -2366,35 +2373,45 @@ final class NotebookAppModel {
     return id
   }
 
-  /// Editing retains its admitted address even after navigation evicts its view.
-  func commitNativeText(reference: EditableElementReference, text: String, finish: Bool, retainedPage: AgentElement? = nil) {
-    guard case .spatial(let boardID,let elementID) = reference else {
-      guard case .page(let pageID,let id) = reference else { return }
-      let snapshot = retainedPage.map { NotebookNativeElementSource(target:.init(kind:.page,id:pageID),id:id,page:$0) }
-      _ = performElementOperations([.init(reference:reference,kind:finish && text.isEmpty ? .removeElement : .updateElement,
-        values:finish && text.isEmpty ? [:] : ["source":.string(text),"html":.string(text)])],summary:"Изменить текст",
-        retainedSources:snapshot.map { [reference:$0] } ?? [:])
-      return
+  /// Creation, typing and geometry share the same addressed causal queue.
+  /// Late editor teardown can finish its original object, never the new page.
+  func commitNativeText(reference: EditableElementReference, text: String, finish: Bool,
+    retainedPage: AgentElement? = nil, retainedSpatial: SpatialElement? = nil, height: Double? = nil) {
+    defer { if finish { endNativeTextEditing(reference) } }
+    let retained: NotebookNativeElementSource?
+    switch reference {
+    case .page(let owner,let id): retained = retainedPage.map { .init(target:.init(kind:.page,id:owner),id:id,page:$0) }
+    case .spatial(let owner,let id): retained = retainedSpatial.map {
+      .init(target:.init(kind:$0.surface.kind == .cover ? .cover : .board,id:$0.surface.kind == .cover ? $0.surface.ownerID! : owner,
+        boardID:$0.surface.kind == .cover ? owner : nil),id:id,spatial:$0)
     }
-    guard !isItemBeingDeleted(boardID) else { return }
-    if var hierarchy = boardHierarchy,
-      var element = hierarchy.board(boardID)?.elements.first(where: { $0.id == elementID }),
-      element.kind == .nativeText {
-      guard surfaceAcceptsChanges(element.surface) else { return }
-      if finish && text.isEmpty {
-        _ = hierarchy.removeElements(ids: [elementID], from: boardID, actor: actorID)
-      } else {
-        let expected = element.stamp
-        if element.update(source: text, actor: actorID) {
-          _ = hierarchy.upsertElement(element, in: boardID, expected: expected, actor: actorID)
-        }
+    }
+    var values: [String:JSONValue] = ["source":.string(text),"html":.string(text)]
+    let live = nativeElementSource(reference)
+    let source = live?.page != nil || live?.spatial != nil ? live : retained ?? live
+    let currentFrame = source?.page?.frame ?? source?.spatial.map { PageRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height) }
+    if let height, let frame = currentFrame, height.isFinite, height > 0 {
+      values["frame"] = try? .encode(PageRect(x:frame.x,y:frame.y,width:frame.width,height:height))
+    }
+    let removes = finish && text.isEmpty
+    guard performElementOperations([.init(reference:reference,kind:removes ? .removeElement : .updateElement,
+      values:removes ? [:] : values)],summary:"Изменить текст",retainedSources:retained.map { [reference:$0] } ?? [:]) else { return }
+    if !finish { editingNativeTextReferences.insert(reference) }
+    // Keep an admitted spatial editor responsive while its command is queued.
+    if case .spatial(let boardID,let id) = reference, var hierarchy = boardHierarchy,
+      var element = hierarchy.board(boardID)?.elements.first(where:{ $0.id == id }), element.kind == .nativeText {
+      if removes { _ = hierarchy.removeElements(ids:[id],from:boardID,actor:actorID) }
+      else {
+        let stamp = element.stamp
+        let frame = try? values["frame"]?.decode(SpatialRect.self)
+        if element.update(source:text,frame:frame,actor:actorID) { _ = hierarchy.upsertElement(element,in:boardID,expected:stamp,actor:actorID) }
       }
-      if hierarchy != boardHierarchy { boardHierarchy = hierarchy }
+      boardHierarchy = hierarchy
     }
-    let actor = actorID
-    enqueueStoreWrite(owner: finish ? nil : .nativeText(boardID, elementID), reload: true) {
-      _ = try $0.updateNativeSpatialText(boardID: boardID, elementID: elementID, text: text, finish: finish, actor: actor)
-    }
+  }
+
+  func endNativeTextEditing(_ reference: EditableElementReference) {
+    editingNativeTextReferences.remove(reference)
   }
 
   /// Geometry/state changes do not revoke a program's accepted message. A
@@ -3189,7 +3206,8 @@ final class NotebookAppModel {
     let insertionTarget = explicitTarget ?? readSources.first.flatMap { nativeElementSource($0)?.target }
     var originals: [EditableElementReference: NotebookNativeElementSource] = [:]
     for reference in references {
-      guard let source = nativeElementSource(reference) ?? retainedSources[reference] else { return false }
+      let live = nativeElementSource(reference)
+      guard let source = live?.page != nil || live?.spatial != nil ? live : retainedSources[reference] ?? live else { return false }
       originals[reference] = source.page == nil && source.spatial == nil && insertionTarget != nil
         ? .init(target:insertionTarget!,id:source.id) : source
     }
@@ -3549,7 +3567,7 @@ final class NotebookAppModel {
           persistenceFailure = error.localizedDescription
           // A failed publication cannot masquerade as a still-pending write.
           // Its durable command remains available to undo/reopen normally.
-          for (reference, command) in elementCommandSources where command.cursor != nil {
+          for (reference, command) in elementCommandSources where command.cursor != nil && !editingNativeTextReferences.contains(reference) {
             graphicCommandDrafts[reference] = nil; elementCommandSources[reference] = nil
           }
           return
@@ -4729,7 +4747,7 @@ final class NotebookAppModel {
     if shutdownPhase == .stopped { return true }
     if shutdownPhase == .running { shutdownPhase = .closing }
     let task = Task { [self] in
-      drawingTools.cancel(); drawingTools.textDraft = nil
+      drawingTools.cancel()
       cancelRequestedNavigation()
       cancelDocumentOpening()
       documentShellPreparation?.stop(); documentShellPreparation = nil

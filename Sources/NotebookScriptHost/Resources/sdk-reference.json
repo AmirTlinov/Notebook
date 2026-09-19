@@ -754,8 +754,8 @@
                                   "properties": {
                                     "fontSize": {
                                       "type": "number",
-                                      "minimum": 8,
-                                      "maximum": 240
+                                      "minimum": 3,
+                                      "maximum": 5760
                                     },
                                     "weight": {
                                       "type": "number",
@@ -4937,8 +4937,8 @@
             "properties": {
               "fontSize": {
                 "type": "number",
-                "minimum": 8,
-                "maximum": 240
+                "minimum": 3,
+                "maximum": 5760
               },
               "weight": {
                 "type": "number",
@@ -9424,8 +9424,8 @@
             "properties": {
               "fontSize": {
                 "type": "number",
-                "minimum": 8,
-                "maximum": 240
+                "minimum": 3,
+                "maximum": 5760
               },
               "weight": {
                 "type": "number",
@@ -11660,8 +11660,8 @@
                                 "properties": {
                                   "fontSize": {
                                     "type": "number",
-                                    "minimum": 8,
-                                    "maximum": 240
+                                    "minimum": 3,
+                                    "maximum": 5760
                                   },
                                   "weight": {
                                     "type": "number",
@@ -13265,8 +13265,8 @@
                 "properties": {
                   "fontSize": {
                     "type": "number",
-                    "minimum": 8,
-                    "maximum": 240
+                    "minimum": 3,
+                    "maximum": 5760
                   },
                   "weight": {
                     "type": "number",
@@ -20943,8 +20943,8 @@
                       "properties": {
                         "fontSize": {
                           "type": "number",
-                          "minimum": 8,
-                          "maximum": 240
+                          "minimum": 3,
+                          "maximum": 5760
                         },
                         "weight": {
                           "type": "number",
@@ -23775,8 +23775,8 @@
             "properties": {
               "fontSize": {
                 "type": "number",
-                "minimum": 8,
-                "maximum": 240
+                "minimum": 3,
+                "maximum": 5760
               },
               "weight": {
                 "type": "number",
@@ -25962,8 +25962,8 @@
             "properties": {
               "fontSize": {
                 "type": "number",
-                "minimum": 8,
-                "maximum": 240
+                "minimum": 3,
+                "maximum": 5760
               },
               "weight": {
                 "type": "number",
@@ -29973,8 +29973,8 @@
                             "properties": {
                               "fontSize": {
                                 "type": "number",
-                                "minimum": 8,
-                                "maximum": 240
+                                "minimum": 3,
+                                "maximum": 5760
                               },
                               "weight": {
                                 "type": "number",
@@ -32832,8 +32832,8 @@
           "properties": {
             "fontSize": {
               "type": "number",
-              "minimum": 8,
-              "maximum": 240
+              "minimum": 3,
+              "maximum": 5760
             },
             "weight": {
               "type": "number",
@@ -33328,8 +33328,8 @@
                           "properties": {
                             "fontSize": {
                               "type": "number",
-                              "minimum": 8,
-                              "maximum": 240
+                              "minimum": 3,
+                              "maximum": 5760
                             },
                             "weight": {
                               "type": "number",
@@ -34264,8 +34264,8 @@
                 "properties": {
                   "fontSize": {
                     "type": "number",
-                    "minimum": 8,
-                    "maximum": 240
+                    "minimum": 3,
+                    "maximum": 5760
                   },
                   "weight": {
                     "type": "number",
@@ -35279,8 +35279,8 @@
                   "properties": {
                     "fontSize": {
                       "type": "number",
-                      "minimum": 8,
-                      "maximum": 240
+                      "minimum": 3,
+                      "maximum": 5760
                     },
                     "weight": {
                       "type": "number",
@@ -37324,8 +37324,8 @@
                         "properties": {
                           "fontSize": {
                             "type": "number",
-                            "minimum": 8,
-                            "maximum": 240
+                            "minimum": 3,
+                            "maximum": 5760
                           },
                           "weight": {
                             "type": "number",
@@ -38161,8 +38161,8 @@
               "properties": {
                 "fontSize": {
                   "type": "number",
-                  "minimum": 8,
-                  "maximum": 240
+                  "minimum": 3,
+                  "maximum": 5760
                 },
                 "weight": {
                   "type": "number",
@@ -39001,8 +39001,8 @@
                           "properties": {
                             "fontSize": {
                               "type": "number",
-                              "minimum": 8,
-                              "maximum": 240
+                              "minimum": 3,
+                              "maximum": 5760
                             },
                             "weight": {
                               "type": "number",
@@ -45831,8 +45831,8 @@
                 "properties": {
                   "fontSize": {
                     "type": "number",
-                    "minimum": 8,
-                    "maximum": 240
+                    "minimum": 3,
+                    "maximum": 5760
                   },
                   "weight": {
                     "type": "number",
@@ -47178,8 +47178,8 @@
                 "properties": {
                   "fontSize": {
                     "type": "number",
-                    "minimum": 8,
-                    "maximum": 240
+                    "minimum": 3,
+                    "maximum": 5760
                   },
                   "weight": {
                     "type": "number",

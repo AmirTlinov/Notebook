@@ -418,7 +418,9 @@ struct SpatialElementContent: View {
     case .nativeText:
       NotebookNativeTextView(source:element.source,style:element.textStyle,
         reference:.spatial(boardID:sourceBoardID ?? WorkspaceRoot.boardID,elementID:element.id),
-        isEditing:isTextEditing && commitsState && sourceBoardID != nil,onEditingEnded:onTextEditingEnded)
+        frame:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height),
+        maximumHeight:element.surface.kind == .cover ? model.itemGeometry(element.surface.ownerID).height-element.frame.y : .greatestFiniteMagnitude,
+        isEditing:isTextEditing && commitsState && sourceBoardID != nil,onEditingEnded:onTextEditingEnded,retainedSpatial:element)
     case .markdown, .web:
       let sourceBoardID = self.sourceBoardID
       PreparedAgentElementView(element: agentElement,

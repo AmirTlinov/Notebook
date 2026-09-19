@@ -35,9 +35,7 @@ struct PenControlsView: View {
     .onChange(of:inkOnly,initial:true) { _,onlyInk in
       if onlyInk && !model.drawingTool.usesInkJournal { settingsTool = nil; model.selectDrawingTool(.pen) }
     }
-    .sheet(isPresented:Binding(get:{ model.drawingTools.textDraft != nil },set:{ if !$0 { model.drawingTools.textDraft = nil } })) {
-      NotebookToolTextComposer()
-    }
+
   }
 
   private var settings: some View {

@@ -24,7 +24,7 @@ struct NotebookGraphicCommandDraft: Equatable {
 extension NotebookAppModel {
   func retireGraphicCommands(through cursor: UInt64) {
     for (reference, command) in elementCommandSources {
-      guard let accepted = command.cursor, cursor >= accepted else { continue }
+      guard !editingNativeTextReferences.contains(reference), let accepted = command.cursor, cursor >= accepted else { continue }
       elementCommandSources[reference] = nil
       graphicCommandDrafts[reference] = nil
     }

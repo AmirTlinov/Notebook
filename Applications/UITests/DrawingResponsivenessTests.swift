@@ -5,6 +5,45 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testTextToolEditsInlineAndPersistsOnBoard() { inlineText(onPage:false) }
+  func testTextToolEditsInlineAndPersistsOnPage() { inlineText(onPage:true) }
+  func testTextToolEditsInlineAtDeepBoardZoom() { inlineText(onPage:false,deepZoom:true) }
+
+  private func inlineText(onPage: Bool, deepZoom: Bool = false) {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture"]
+      + (onPage ? ["--notebook-native-graphic-page"] : [])
+    launchPortraitFixture(app)
+    XCTAssertTrue(app.buttons["drawing-tools-more"].waitForExistence(timeout:10))
+    if deepZoom { app.pinch(withScale:0.1,velocity:-1); app.pinch(withScale:0.4,velocity:-1) }
+    app.buttons["drawing-tools-more"].tap(); app.buttons["drawing-tool-text"].tap()
+    let point = app.coordinate(withNormalizedOffset:.init(dx:0.55,dy:0.15))
+    point.tap()
+    let editor = app.textViews["native-text-editor"]
+    XCTAssertTrue(editor.waitForExistence(timeout:10),"A real text object must mount its inline editor at the tapped place")
+    XCTAssertEqual(editor.frame.width,320,accuracy:4)
+    XCTAssertEqual(editor.frame.height,64,accuracy:4,"Text entry keeps its explicit screen size at any board zoom")
+    XCTAssertFalse(app.buttons["drawing-tool-text-save"].exists)
+    XCTAssertFalse(app.textViews["drawing-tool-text-editor"].exists)
+    XCTAssertLessThan(abs(editor.frame.minX-point.screenPoint.x),8)
+    XCTAssertLessThan(abs(editor.frame.minY-point.screenPoint.y),8)
+    editor.typeText("Inline 123\nSecond line")
+    XCTAssertEqual(editor.value as? String,"Inline 123\nSecond line")
+    let shot = XCTAttachment(screenshot:app.screenshot()); shot.name = "inline-text-\(onPage ? "page" : deepZoom ? "deep-board" : "board")"; shot.lifetime = .keepAlways; add(shot)
+    app.buttons["pen-controls-toggle"].tap()
+    app.coordinate(withNormalizedOffset:.init(dx:0.35,dy:0.60)).tap()
+    XCTAssertTrue(editor.waitForNonExistence(timeout:5))
+    let text = app.staticTexts["Inline 123\nSecond line"]
+    XCTAssertTrue(text.waitForExistence(timeout:10),"Leaving the editor must keep the same text visible")
+    app.coordinate(withNormalizedOffset:.zero).withOffset(.init(dx:text.frame.midX,dy:text.frame.midY)).doubleTap()
+    XCTAssertTrue(editor.waitForExistence(timeout:5))
+    XCTAssertEqual(editor.value as? String,"Inline 123\nSecond line","Reopening must read persisted source, not a modal draft")
+    editor.typeText("!")
+    app.coordinate(withNormalizedOffset:.init(dx:0.35,dy:0.60)).tap()
+    XCTAssertTrue(app.staticTexts["Inline 123\nSecond line!"].waitForExistence(timeout:10))
+  }
+
   func testErasedFiguresKeepOpeningAndPickingResponsive() {
     continueAfterFailure = false
     let app = XCUIApplication()

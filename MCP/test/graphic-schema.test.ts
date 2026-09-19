@@ -69,3 +69,11 @@ test("geometry edits admit a physical radius and longitudinal bend position", ()
     assert.throws(() => operationSchema.parse({kind:"updateElement",target,id:"shape",values:{graphic}}));
   }
 });
+
+test("native text size covers explicit screen points across the full camera range", () => {
+  const values = (fontSize: number) => ({textStyle:{fontSize,weight:0.5,red:0,green:0,blue:0,alpha:1}});
+  for (const size of [12/4,24/0.03787425024543671,72/0.0125]) {
+    assert.deepEqual(operationSchema.parse({kind:"updateElement",target,id:"text",values:values(size)}).values,values(size));
+  }
+  for (const size of [2.99,5761]) assert.throws(() => operationSchema.parse({kind:"updateElement",target,id:"text",values:values(size)}));
+});

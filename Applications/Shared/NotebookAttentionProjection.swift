@@ -195,10 +195,16 @@ enum NotebookAttentionProjection {
     let appearance: (SurfaceID, String, NotebookGraphic?, NotebookGraphicLayout?, CGSize, [InkElementErasure]) -> NotebookElementAppearance?
   }
 
-  static func capture(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence,
-    cohort: SceneCompositionCohort, installedInk: [SurfaceID: SpatialInkInstalledSource], itemID: UUID? = nil,
-    selectedElements: [EditableElementReference]? = nil,
-    acceptsFirstFragment: (NotebookAttentionSelection.Fragment) -> Bool = { _ in true }) -> NotebookAttentionSelection? {
+  /// Resolve the painted contact without freezing pixels or constructing a
+  /// shared attention selection. Local authoring does not borrow the scene.
+  static func textContact(at point: CGPoint, model: NotebookAppModel, presence: SessionPresence,
+    cohort: SceneCompositionCohort) -> NotebookAttentionSelection.Fragment? {
+    guard let sources = contactSources(model:model,presence:presence,cohort:cohort) else { return nil }
+    return fragment(start:point,end:point,sources:sources,presence:presence,dragged:false)
+  }
+
+  private static func contactSources(model: NotebookAppModel, presence: SessionPresence,
+    cohort: SceneCompositionCohort) -> CaptureSources? {
     guard cohort.isPaintInstalled, cohort.plan.presentations[.board(presence.boardID)] != nil else { return nil }
     var sources = CaptureSources(workset: model.presentedWorkset(cohort: cohort, boardID: presence.boardID, presence: presence),
       workspace: model.presentedWorkspace(cohort: cohort), hierarchy: model.presentedHierarchy(cohort: cohort), ink: cohort.liveData.ink,
@@ -217,6 +223,14 @@ enum NotebookAttentionProjection {
         sources.documents[focused] = document; sources.states[focused] = state
       }
     }
+    return sources
+  }
+
+  static func capture(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence,
+    cohort: SceneCompositionCohort, installedInk: [SurfaceID: SpatialInkInstalledSource], itemID: UUID? = nil,
+    selectedElements: [EditableElementReference]? = nil,
+    acceptsFirstFragment: (NotebookAttentionSelection.Fragment) -> Bool = { _ in true }) -> NotebookAttentionSelection? {
+    guard let sources = contactSources(model:model,presence:presence,cohort:cohort) else { return nil }
     let fragments: [NotebookAttentionSelection.Fragment]
     if let selectedElements {
       guard (1...32).contains(selectedElements.count), Set(selectedElements).count == selectedElements.count,

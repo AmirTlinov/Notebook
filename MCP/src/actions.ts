@@ -17,7 +17,7 @@ const frame = z.object({ x: z.number().finite(), y: z.number().finite(), width: 
 export const referenceSchema = z.object({ id: z.uuid(), target: targetSchema, elementID: z.string().optional(), region: frame.optional(), worldOrigin: point.optional(), pageIndex: z.number().int().nonnegative().optional(), revision: z.string(), label: z.string().max(1000).default("") }).strict();
 export const expectationSchema = z.object({ target: targetSchema, revision: z.string().min(1), stateRevision:z.string().optional(), sourceRevision:z.string().optional(), lifecycleRevision:z.string().regex(/^[a-f0-9]{64}$/).optional().describe("Complete item extent from an explicit itemLifecycle read; covers off-screen content and is not mutation authority."), inkRevision:z.string().optional().describe("For appendInkStroke: drawingRevision of a page, spatialInkRevision of a board/cover, or inkRevision returned by nb.code.") }).strict();
 const source = z.string().max(1_000_000);
-export const textStyleSchema = z.object({fontSize:z.number().min(8).max(240),weight:z.number().min(0).max(1),
+export const textStyleSchema = z.object({fontSize:z.number().min(3).max(5760),weight:z.number().min(0).max(1),
   red:z.number().min(0).max(1),green:z.number().min(0).max(1),blue:z.number().min(0).max(1),alpha:z.number().min(0).max(1)}).strict();
 const block = z.discriminatedUnion("kind", [
   z.object({ id: z.string().min(1).max(120), kind: z.enum(["markdown", "latex"]), source }).strict(),

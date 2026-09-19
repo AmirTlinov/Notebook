@@ -12,18 +12,19 @@ final class AgentStateTests: XCTestCase {
     let boardA = try XCTUnwrap(model.presence?.boardID)
     let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
     let elementID = try XCTUnwrap(model.addNativeText(boardID: boardA, on: notebook, at: .init(x: 100, y: 100)))
+    let retained = try XCTUnwrap(model.boardHierarchy?.board(boardA)?.elements.first { $0.id == elementID })
     let boardB = try XCTUnwrap(model.createBoard(at: .init(x: 2000, y: 0)))
     model.updatePresence(.init(boardID: boardB, mode: .board, camera: .init(),
       viewport: .init(x: 1194, y: 834)), settled: true)
     // The editor's debounce or onDisappear can finish after camera ownership changes.
-    model.commitNativeText(reference:.spatial(boardID:boardA,elementID:elementID),text:"Продолжение у исходника",finish:true)
+    model.commitNativeText(reference:.spatial(boardID:boardA,elementID:elementID),text:"Продолжение у исходника",finish:false,retainedSpatial:retained)
     await model.finishPendingPersistence()
     let saved = try model.store.loadBoard(items: model.store.loadIndex().items)
     XCTAssertEqual(saved.board(boardA)?.elements.first { $0.id == elementID }?.source,
       "Продолжение у исходника")
     XCTAssertTrue(saved.board(boardB)?.elements.isEmpty == true)
-    model.commitNativeText(reference:.spatial(boardID:boardA,elementID:elementID),text:"",finish:true)
-    model.commitNativeText(reference:.spatial(boardID:boardA,elementID:elementID),text:"Не возвращать удалённый предмет",finish:false)
+    model.commitNativeText(reference:.spatial(boardID:boardA,elementID:elementID),text:"",finish:true,retainedSpatial:retained)
+    model.commitNativeText(reference:.spatial(boardID:boardA,elementID:elementID),text:"Не возвращать удалённый предмет",finish:false,retainedSpatial:retained)
     await model.finishPendingPersistence()
     let afterDeletion = try model.store.loadBoard(items: model.store.loadIndex().items)
     XCTAssertFalse(afterDeletion.board(boardA)?.elements.contains { $0.id == elementID } ?? true)

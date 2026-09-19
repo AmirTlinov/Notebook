@@ -128,6 +128,30 @@ import UIKit
     }
   }
 
+  func testInlineTextKeepsItsTappedOriginAndScreenSizeAtDeepZoom() async throws {
+    try await fixture { model in
+      let board = try XCTUnwrap(model.presence?.boardID)
+      let origin = WorldPoint.zero.offsetBy(x:2000,y:-8000)
+      let address = NotebookToolAddress(surface:.board(board),boardID:board,worldOrigin:origin,bounds:nil)
+      let id = try XCTUnwrap(model.beginToolText(at:.init(x:0,y:0),address:address,screenScale:0.03787425024543671))
+      XCTAssertTrue(model.selectionSession.isInteractive)
+      await assertSaved(model); await model.reloadExternalChanges()?.value
+      let element = try XCTUnwrap(model.store.loadBoard(items:model.store.loadIndex().items).board(board)?.elements.first { $0.id == id })
+      XCTAssertEqual(element.worldOrigin,origin)
+      XCTAssertEqual(element.frame.x,0); XCTAssertEqual(element.frame.y,0)
+      XCTAssertEqual(element.textStyle.fontSize*0.03787425024543671,24,accuracy:0.000001)
+      let fitted = PageRect(x:0,y:0,width:element.frame.width,height:element.textStyle.fontSize*2.5)
+      model.commitNativeText(reference:address.reference(id),text:"Plain **text**",finish:false,retainedSpatial:element,height:fitted.height)
+      await assertSaved(model)
+      let saved = try XCTUnwrap(model.store.loadBoard(items:model.store.loadIndex().items).board(board)?.elements.first { $0.id == id })
+      XCTAssertEqual(saved.source,"Plain **text**"); XCTAssertEqual(saved.kind,.nativeText)
+      XCTAssertEqual(saved.frame.height,fitted.height)
+      model.commitNativeText(reference:address.reference(id),text:"",finish:true)
+      await assertSaved(model)
+      XCTAssertFalse(try model.store.loadBoard(items:model.store.loadIndex().items).board(board)?.elements.contains { $0.id == id } ?? true)
+    }
+  }
+
   func testAuthoredToolsPersistOnPageBoardAndCoverThroughOneUndoQueue() async throws {
     try await fixture { model in
       let page = try XCTUnwrap(model.activePage), board = try XCTUnwrap(model.presence?.boardID)
@@ -146,15 +170,21 @@ import UIKit
         }
         model.selectDrawingTool(.text)
         XCTAssertTrue(model.drawingTools.begin(at:.init(x:160,y:280),address:address,screenScale:1))
-        model.drawingTools.finish(); model.drawingTools.textDraft?.text = "Текст на своей поверхности"
-        model.drawingTools.saveText(); XCTAssertNil(model.drawingTools.textDraft)
+        model.drawingTools.finish()
+        let reference = try XCTUnwrap(model.selectionSession.element)
+        XCTAssertTrue(model.selectionSession.isInteractive)
+        await assertSaved(model); await model.reloadExternalChanges()?.value
+        model.commitNativeText(reference:reference,text:"Текст на своей поверхности",finish:true)
         await assertSaved(model); await model.reloadExternalChanges()?.value
       }
       let saved = try model.store.loadPage(page.id)
       XCTAssertEqual(saved.elements.count,4); XCTAssertEqual(saved.elements.last?.kind,.nativeText)
       XCTAssertEqual(saved.elements.last?.textStyle?.fontSize,24)
       XCTAssertEqual(try model.store.loadBoard(items:model.store.loadIndex().items).board(board)?.elements.count,8)
-      let action = try XCTUnwrap(model.store.collaborationActions(afterID:nil).first { $0.action.summary == "Добавить текст" })
+      let actions = try model.store.collaborationActions(afterID:nil)
+      let edit = try XCTUnwrap(actions.first { $0.action.summary == "Изменить текст" })
+      model.undoCollaboration(edit.id); await assertSaved(model)
+      let action = try XCTUnwrap(actions.first { $0.action.summary == "Добавить текст" })
       model.undoCollaboration(action.id); await assertSaved(model)
       XCTAssertEqual(try model.store.loadBoard(items:model.store.loadIndex().items).board(board)?.elements.count,7)
     }

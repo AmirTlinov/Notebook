@@ -178,6 +178,32 @@ struct SpatialWorkspaceView: View {
         NotebookSelectionGesture(inputGate: model.inputGate, onPreview: model.updateSelectionPreview,
           onPoint: { start, end, held, tapCount in
           guard cameraGesture == nil, !settling, let cohort else { return }
+          if !held, model.drawingTool == .text {
+            guard let fragment = NotebookAttentionProjection.textContact(at:end,model:model,presence:presence,
+              cohort:cohort) else { return }
+            if let reference = editableReference(fragment,boardID:presence.boardID) {
+              let isText: Bool
+              switch reference {
+              case .page(let page,let id): isText = model.pages[page]?.elements.first { $0.id == id }?.kind == .nativeText
+              case .spatial: isText = model.presentedElement(reference,cohort:cohort)?.kind == .nativeText
+              }
+              if isText { model.selectElement(reference); model.editSelectedElement(reference); return }
+            }
+            let address: NotebookToolAddress, point: SpatialPoint
+            if fragment.target.kind == .board {
+              address = .init(surface:.board(presence.boardID),boardID:presence.boardID,
+                worldOrigin:presence.camera.screenToWorld(.init(x:end.x,y:end.y),viewport:presence.viewport),bounds:nil)
+              point = .zero
+            } else if [.page,.cover].contains(fragment.target.kind),
+              let rect = NotebookAttentionProjection.frame(.init(target:fragment.target,revision:""),model:model,presence:presence) {
+              let scale = presence.camera.scale
+              address = .init(surface:fragment.target.kind == .page ? .page(fragment.target.id) : .cover(fragment.target.id),
+                boardID:presence.boardID,worldOrigin:nil,bounds:.init(x:0,y:0,width:rect.width/scale,height:rect.height/scale))
+              point = .init(x:(end.x-rect.minX)/scale,y:(end.y-rect.minY)/scale)
+            } else { return }
+            model.beginToolText(at:point,address:address,screenScale:presence.camera.scale)
+            return
+          }
           if !held, let selected = selectedElement(at: end, presence: presence) {
             if model.selectionSession.addingElements { toggleGraphicSelection(selected,presence:presence,cohort:cohort); return }
             if tapCount > 1 { model.selectElement(selected); model.editSelectedElement(selected) }; return
@@ -212,7 +238,7 @@ struct SpatialWorkspaceView: View {
           }
           model.publishHumanContext(capture, target: target)
         }, onLift: { point in
-          guard cameraGesture == nil, !settling, let cohort else { return nil }
+          guard model.drawingTool != .text, cameraGesture == nil, !settling, let cohort else { return nil }
           let selected = selectedElement(at: point, presence: presence)
           let capture = selected == nil ? NotebookAttentionProjection.capture(start: point, end: point, model: model, presence: presence,
             cohort: cohort, installedInk: spatialInkSurfaces.installedSources(),
@@ -1633,8 +1659,14 @@ private struct WorkspaceSceneItem: View {
     )
   }
 
-  private func handleTap(_: CGPoint, tapCount: Int) {
+  private func handleTap(_ point: CGPoint, tapCount: Int) {
     guard openProgress < 0.999, !model.isItemBeingDeleted(rendered.id) else { return }
+    if model.drawingTool == .text {
+      model.beginToolText(at:.init(x:point.x,y:point.y),address:.init(surface:.cover(rendered.id),
+        boardID:boardID,worldOrigin:nil,bounds:.init(x:0,y:0,width:rendered.geometry.width,height:rendered.geometry.height)),
+        screenScale:projectedScale)
+      return
+    }
     onSelect(rendered.id)
     if let editingTextID {
       onTextEditingEnded(editingTextID)

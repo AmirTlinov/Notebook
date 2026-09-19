@@ -21,13 +21,6 @@ struct NotebookToolAddress: Equatable, Sendable {
 
 @MainActor @Observable
 final class NotebookDrawingToolController {
-  struct TextDraft: Identifiable {
-    let id = UUID()
-    let address: NotebookToolAddress
-    let point: SpatialPoint
-    let style: NativeTextStyle
-    var text = ""
-  }
   struct Contact: Sendable {
     let id: UUID
     let tool: DrawingTool
@@ -41,7 +34,6 @@ final class NotebookDrawingToolController {
   }
   private unowned let model: NotebookAppModel
   private(set) var contact: Contact?
-  var textDraft: TextDraft?
   @ObservationIgnored private var lassoTask: Task<Void,Never>?
   @ObservationIgnored var onContactCancellation: (() -> Void)?
   init(model: NotebookAppModel) { self.model = model }
@@ -95,9 +87,7 @@ final class NotebookDrawingToolController {
       } else { model.updateWorkingGraphic(nil,strokeID:current.id) }
     case .lasso: finishLasso(current)
     case .text:
-      let color = current.settings.textColor.components
-      textDraft = .init(address:current.address,point:current.points[0],style:.init(fontSize:current.settings.textSize,
-        red:color.red,green:color.green,blue:color.blue))
+      model.beginToolText(at:current.points[0],address:current.address,screenScale:current.screenScale)
     case .laser: break
     case .pen,.marker,.eraser: assertionFailure("Ink belongs to the measured journal adapter")
     }
@@ -137,11 +127,6 @@ final class NotebookDrawingToolController {
         model.selectElements(references)
       } catch is CancellationError {} catch { self?.model.showCue(error.localizedDescription) }
     }
-  }
-
-  func saveText() {
-    guard let draft = textDraft, !draft.text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { return }
-    if model.insertToolText(draft) { textDraft = nil }
   }
 
   private func figure(_ current: Contact) -> NotebookWorkingGraphic? {
@@ -200,17 +185,46 @@ extension NotebookAppModel {
     return true
   }
 
-  func insertToolText(_ draft: NotebookDrawingToolController.TextDraft) -> Bool {
-    let address = draft.address, width = min(320,address.bounds?.width ?? 320), height = min(address.bounds?.height ?? .greatestFiniteMagnitude,max(64,draft.style.fontSize*3))
-    let x = address.bounds.map { min(max($0.minX,draft.point.x),$0.maxX-width) } ?? draft.point.x
-    let y = address.bounds.map { min(max($0.minY,draft.point.y),$0.maxY-height) } ?? draft.point.y
+  /// A tap creates the real addressed object and focuses its ordinary inline
+  /// editor. No modal draft, placeholder string or content-type guessing.
+  @discardableResult
+  func beginToolText(at point: SpatialPoint, address: NotebookToolAddress, screenScale: Double) -> String? {
+    guard screenScale.isFinite, screenScale > 0 else { return nil }
+    let fontSize = drawingToolSettings.textSize/screenScale
+    guard (3...5760).contains(fontSize) else { return nil }
+    let color = drawingToolSettings.textColor.components
+    let style = NativeTextStyle(fontSize:fontSize,
+      red:color.red,green:color.green,blue:color.blue)
+    let width = min(320/screenScale,address.bounds.map { $0.maxX-point.x } ?? .greatestFiniteMagnitude)
+    let height = min(64/screenScale,address.bounds.map { $0.maxY-point.y } ?? .greatestFiniteMagnitude)
+    guard width > 0, height > 0 else { return nil }
+    let id = "text-" + UUID().uuidString.lowercased(), reference = address.reference(id)
     do {
-      var values: [String:JSONValue] = ["kind":.string("nativeText"),"source":.string(draft.text),
-        "frame":try .encode(PageRect(x:x,y:y,width:width,height:height)),"textStyle":try .encode(draft.style)]
+      var values: [String:JSONValue] = ["kind":.string("nativeText"),"source":.string(""),
+        "frame":try .encode(PageRect(x:point.x,y:point.y,width:width,height:height)),"textStyle":try .encode(style)]
       if let origin = address.worldOrigin { values["worldOrigin"] = try .encode(origin) }
-      return performElementOperations([.init(reference:address.reference(draft.id.uuidString.lowercased()),kind:.insertElement,values:values)],
-        summary:"Добавить текст",insertionTarget:address.target)
-    } catch { showCue(error.localizedDescription); return false }
+      guard performElementOperations([.init(reference:reference,kind:.insertElement,values:values)],
+        summary:"Добавить текст",insertionTarget:address.target) else { return nil }
+      selectElement(reference)
+      editSelectedElement(reference)
+      let selection = selectionSession.id, accepted = elementCommandSources[reference]?.task
+      Task { [weak self] in
+        guard let self, let result = await accepted?.value else { return }
+        guard selectionSession.id == selection else {
+          // Never remove text that has already received accepted input.
+          let currentText: String?
+          switch reference {
+          case .page(let owner,let id): currentText = pages[owner]?.elements.first { $0.id == id }?.source
+          case .spatial(let owner,let id): currentText = boardHierarchy?.board(owner)?.elements.first { $0.id == id }?.source
+          }
+          guard currentText?.isEmpty != false else { return }
+          _ = performElementOperations([.init(reference:reference,kind:.removeElement,values:[:])],summary:"Отменить ввод текста",
+            retainedSources:[reference:.init(target:address.target,id:id,page:result.page,spatial:result.spatial)])
+          return
+        }
+      }
+      return id
+    } catch { showCue(error.localizedDescription); return nil }
   }
 
   func lassoElements(_ polygon: [SpatialPoint], at address: NotebookToolAddress, graph: NotebookGraphicGraph) -> [EditableElementReference] {
