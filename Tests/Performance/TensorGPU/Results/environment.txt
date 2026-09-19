@@ -1,0 +1,19 @@
+4984db649078297bd952ee5e4ba2c7fc552ecc2f
+df95062cee958a455e31d82e4f9e6f598c0a1bda8597af2fd126904364f5cb87  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Sources/NotebookCore/InkStrokeGeometry.swift
+9987ea6fe2581e95e88e1bdb8c4f320a3239afcfacb399e651014eec88e0bdd2  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Applications/Shared/InkShaders.metal
+8b8806c4156736a888f066cfdcc6e481e20407af58d21255150f2a669475ca56  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Tests/Performance/TensorGPU/TensorInk.metal
+9529ee0c97197b8ee2b39ae4df2c60b41271812a9438043f277db671ff2f3d84  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Tests/Performance/TensorGPU/main.swift
+4383cad02485cedb7fc7ec2d90c9f5fe2d789d98b530866f995623dae3260a14  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Tests/Performance/TensorGPU/run.sh
+cd6bb2fb5da1bf4489b205c2e843e35fa1c3f625fc97822ff44c5121b760f5dc  /Users/amir/.codex/worktrees/relational-ink-probe/Notebook/Tests/NotebookCoreTests/Resources/QuickShapeMeasured.json
+Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)
+Target: arm64-apple-macosx27.0.0
+Apple metal version 32023.921 (metalfe-32023.921.6)
+Target: air64-apple-darwin27.0.0
+Thread model: posix
+InstalledDir: /private/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v27.1.266.1.bYNAsp/Metal.xctoolchain/usr/metal/current/bin
+ProductName:		macOS
+ProductVersion:		27.0
+BuildVersion:		26A428
+Mac17,6
+137438953472
+Apple M5 Max
