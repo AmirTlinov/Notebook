@@ -170,7 +170,7 @@ public struct NotebookGraphicGraph: Sendable {
       .init(graphic:graphic,layout:nil,size:size,erasures:cuts)
     }) -> NotebookGraphicConnection.Binding? {
     var candidates: [(node: Node, distance: Double, inside: Bool, point: SpatialPoint)] = []
-    for node in nodes.values where node.shown && node.graphic.shape != .connector && node.surface == surface && node.id != id {
+    for node in nodes.values where node.shown && ![.connector,.freehand].contains(node.graphic.shape) && node.surface == surface && node.id != id {
       let delta = origin.delta(to:node.origin), frame = node.frame
       let p = SpatialPoint(x:point.x-delta.x-frame.x,y:point.y-delta.y-frame.y)
       let edge = NotebookGraphicGeometry.outlineDistance(node.graphic,width:frame.width,height:frame.height,x:p.x,y:p.y)

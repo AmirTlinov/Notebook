@@ -4,6 +4,7 @@ import SwiftUI
 import UIKit
 
 struct PencilCanvasView: UIViewRepresentable {
+  @Environment(NotebookAppModel.self) private var model: NotebookAppModel?
   let pageID: UUID
   let drawingData: Data
   var suppressedInkIDs: Set<UUID> = []
@@ -32,6 +33,8 @@ struct PencilCanvasView: UIViewRepresentable {
 
   func makeUIView(context: Context) -> PaperCanvasContainerView {
     let paper = PaperCanvasContainerView()
+    paper.touchView.toolController = model?.drawingTools
+    paper.touchView.toolInputGate = inputGate
     paper.touchView.quickShapePageID = pageID
     paper.touchView.resolveQuickShape = resolveQuickShape
     paper.touchView.onWorkingGraphic = onWorkingGraphic
@@ -54,6 +57,8 @@ struct PencilCanvasView: UIViewRepresentable {
   }
 
   func updateUIView(_ paper: PaperCanvasContainerView, context: Context) {
+    paper.touchView.toolController = model?.drawingTools
+    paper.touchView.toolInputGate = inputGate
     paper.touchView.quickShapePageID = pageID
     paper.touchView.resolveQuickShape = resolveQuickShape
     paper.touchView.onWorkingGraphic = onWorkingGraphic
@@ -564,7 +569,10 @@ final class PaperInputView: UIView {
   var eraserTargets: () -> [InkElementTarget] = { [] }
   var onElementErasing: ([NotebookElementErasing], UUID) -> Void = { _, _ in }
 
-  var hasActiveAction: Bool { actionTool != nil }
+  weak var toolController: NotebookDrawingToolController?
+  weak var toolInputGate: NotebookInputGate?
+  private var toolContact: NotebookToolInputContact?
+  var hasActiveAction: Bool { actionTool != nil || toolContact != nil }
   private let quickShape = NotebookQuickShapeSession()
   var quickShapePageID: UUID? { didSet { if oldValue != quickShapePageID { quickShape.cancel() } } }
   private(set) var completedQuickShape: NotebookQuickShapeFit?
@@ -658,6 +666,7 @@ final class PaperInputView: UIView {
   func endShapeSequence() { quickShape.cancel() }
 
   func finishCurrentAction(completion: @escaping () -> Void) {
+    if let contact = toolContact { toolContact = nil; activeTouch = nil; contact.finish(cancelled:true) }
     if activeTouch != nil { quickShape.cancel(); actionEndedNormally = false }
     // The input gate calls this at every ordinary lift to join publication.
     // Draining a completed stroke is not a navigation/cancellation boundary.
@@ -699,6 +708,10 @@ final class PaperInputView: UIView {
     guard let touch = drawingTouch(in: touches), touch === activeTouch else {
       return
     }
+    if let contact = toolContact {
+      toolContact = nil; activeTouch = nil
+      contact.move(to:touch.preciseLocation(in:self)); contact.finish(); return
+    }
     updateAction(with: touch, event: event)
     activeTouch = nil
     actionHasEnded = true
@@ -717,6 +730,7 @@ final class PaperInputView: UIView {
     guard let touch = drawingTouch(in: touches), touch === activeTouch else {
       return
     }
+    if let contact = toolContact { toolContact = nil; activeTouch = nil; contact.finish(cancelled:true); return }
     quickShape.cancel()
     actionEndedNormally = false
     activeTouch = nil
@@ -739,10 +753,7 @@ final class PaperInputView: UIView {
       let timestamp = samples[sampleIndex].timestamp
       let updated = makeSample(from: touch, timestamp: timestamp)
       if samples[sampleIndex].point.location != updated.point.location { quickShape.cancel() }
-      samples[sampleIndex] = reconciledSample(
-        previous: samples[sampleIndex],
-        updated: updated
-      )
+      samples[sampleIndex] = updated
       firstChangedIndex = min(firstChangedIndex ?? sampleIndex, sampleIndex)
 
       if !touch.estimatedPropertiesExpectingUpdates.contains(.force) {
@@ -772,6 +783,17 @@ final class PaperInputView: UIView {
     if actionTool != nil {
       finalizeAction()
     }
+    if !drawingTool.usesInkJournal {
+      guard let controller = toolController, let gate = toolInputGate, let pageID = quickShapePageID else { return }
+      let a = convert(CGPoint.zero,to:window), b = convert(CGPoint(x:1,y:0),to:window)
+      toolContact = .init(controller:controller,gate:gate,view:self,
+        address:.init(surface:.page(pageID),boardID:nil,worldOrigin:nil,bounds:bounds),
+        point:touch.preciseLocation(in:self),screenScale:max(0.001,hypot(b.x-a.x,b.y-a.y)),
+        toOwner:{ .init(x:$0.x,y:$0.y) })
+      toolContact?.onFinish = { [weak self] in self?.toolContact = nil; self?.activeTouch = nil }
+      if toolContact != nil { activeTouch = touch }
+      return
+    }
     guard onActionWillBegin?() != false else { return }
 
     activeTouch = touch
@@ -786,7 +808,7 @@ final class PaperInputView: UIView {
     samples = []
     predictedSamples = []
     activePenStroke =
-      actionTool == .pen
+      actionTool?.drawsInk == true
       ? actionPenStyle.map { ActiveInkStroke(style: $0) }
       : nil
     activeEraserStroke =
@@ -813,6 +835,7 @@ final class PaperInputView: UIView {
   }
 
   private func updateAction(with touch: UITouch, event: UIEvent?) {
+    if let contact = toolContact { contact.move(to:touch.preciseLocation(in:self)); return }
     if quickShape.fit != nil {
       let point = touch.preciseLocation(in: self)
       quickShape.move(to: .init(x: point.x, y: point.y)); return
@@ -851,10 +874,7 @@ final class PaperInputView: UIView {
     if let lastIndex = samples.indices.last,
       abs(samples[lastIndex].timestamp - timestamp) < 0.000_001
     {
-      samples[lastIndex] = reconciledSample(
-        previous: samples[lastIndex],
-        updated: sample
-      )
+      samples[lastIndex] = sample
       pendingForceEstimates = pendingForceEstimates.filter {
         $0.value != lastIndex
       }
@@ -871,38 +891,6 @@ final class PaperInputView: UIView {
     return sampleIndex
   }
 
-  private func reconciledSample(
-    previous: Sample,
-    updated: Sample
-  ) -> Sample {
-    guard actionTool == .eraser else { return updated }
-    let point = PKStrokePoint(
-      location: updated.point.location,
-      timeOffset: updated.point.timeOffset,
-      size: CGSize(
-        width: CGFloat(
-          PencilEraserContact.reconciledWidth(
-            previous: Double(previous.point.size.width),
-            updated: Double(updated.point.size.width)
-          )
-        ),
-        height: CGFloat(
-          PencilEraserContact.reconciledWidth(
-            previous: Double(previous.point.size.height),
-            updated: Double(updated.point.size.height)
-          )
-        )
-      ),
-      opacity: 1,
-      force: max(previous.point.force, updated.point.force),
-      azimuth: updated.point.azimuth,
-      altitude: updated.point.altitude,
-      secondaryScale: updated.point.secondaryScale,
-      threshold: updated.point.threshold
-    )
-    return Sample(point: point, timestamp: updated.timestamp)
-  }
-
   private func registerForceEstimate(for touch: UITouch, at sampleIndex: Int) {
     guard touch.estimatedPropertiesExpectingUpdates.contains(.force),
       let updateIndex = touch.estimationUpdateIndex
@@ -911,7 +899,7 @@ final class PaperInputView: UIView {
   }
 
   private func updatePredictions(for touch: UITouch, event: UIEvent?) {
-    guard actionTool == .pen else {
+    guard actionTool?.drawsInk == true else {
       // A corrected pen prediction replaces temporary ink. A corrected eraser
       // prediction would make cleared ink flash back into existence.
       predictedSamples = []
@@ -933,25 +921,19 @@ final class PaperInputView: UIView {
     let width: CGFloat
     let opacity: CGFloat
     switch tool {
-    case .pen:
+    case .pen, .marker:
       let style = actionPenStyle ?? penStyle
       width = CGFloat(style.width)
       opacity = CGFloat(
-        PencilPressureOpacity.value(
-          force: Double(normalizedForce),
-          minimum: style.minimumOpacity
-        )
+        style.opacity(force:Double(normalizedForce))
       )
     case .eraser:
       let style = actionEraserStyle ?? eraserStyle
       width = CGFloat(
-        PencilPressureWidth.value(
-          force: Double(normalizedForce),
-          minimum: EraserStyle.minimumContactWidth,
-          maximum: style.maximumWidth
-        )
+        style.maximumWidth
       )
       opacity = 1
+    default: preconditionFailure("Non-ink contact entered the ink sampler")
     }
     let point = PKStrokePoint(
       location: touch.preciseLocation(in: self),
@@ -987,7 +969,7 @@ final class PaperInputView: UIView {
       return
     }
 
-    guard actionTool == .pen,
+    guard actionTool?.drawsInk == true,
       let style = actionPenStyle,
       let activePenStroke
     else { return }
@@ -1033,7 +1015,7 @@ final class PaperInputView: UIView {
   }
 
   private func processedPredictedPenPoints() -> [PKStrokePoint] {
-    guard actionTool == .pen, let style = actionPenStyle else { return [] }
+    guard actionTool?.drawsInk == true, let style = actionPenStyle else { return [] }
     var result: [PKStrokePoint] = []
     result.reserveCapacity(predictedSamples.count)
     var previousForce = filteredPenForces.last
@@ -1082,10 +1064,7 @@ final class PaperInputView: UIView {
       timeOffset: point.timeOffset,
       size: point.size,
       opacity: CGFloat(
-        PencilPressureOpacity.value(
-          force: Double(filteredForce),
-          minimum: style.minimumOpacity
-        )
+        style.opacity(force:Double(filteredForce))
       ),
       force: point.force,
       azimuth: point.azimuth,
@@ -1131,12 +1110,12 @@ final class PaperInputView: UIView {
 
   private func actionMutation() -> PageInkAction? {
     guard let actionTool else { return nil }
-    let allPoints = actionTool == .pen ? (activePenStroke?.measuredPoints ?? []) : samples.map(\.point)
+    let allPoints = actionTool.drawsInk ? (activePenStroke?.measuredPoints ?? []) : samples.map(\.point)
     let points = quickShape.fit.map { Array(allPoints.prefix($0.sampleCount)) } ?? allPoints
     guard !points.isEmpty else { return nil }
     let components = (actionPenStyle ?? penStyle).color.components
     return PageInkAction(
-      id: actionStrokeID, tool: actionTool == .pen ? .pen : .eraser,
+      id: actionStrokeID, tool: actionTool.drawsInk ? .pen : .eraser,
       color: .init(red: components.red, green: components.green, blue: components.blue),
       points: points).erasingElements(actionElementTargets)
   }
@@ -1166,7 +1145,7 @@ final class PaperInputView: UIView {
     let fit = quickShape.finish()
     let tool = actionTool
     let continuesSequence = actionEndedNormally && tool == .pen && actionPenStyle == penStyle
-    if tool == .pen, fit == nil {
+    if tool?.drawsInk == true, fit == nil {
       commitActivePen?()
     } else if tool == .eraser {
       commitActiveEraser?()
@@ -1196,6 +1175,7 @@ final class PaperInputView: UIView {
   }
 
   private func cancelCurrentAction() {
+    if let contact = toolContact { toolContact = nil; contact.finish(cancelled:true) }
     finalizationTask?.cancel()
     finalizationTask = nil
     let reportedPencilActivity = clearAction()

@@ -58,21 +58,6 @@ func pencilPressureSmoothingHasAStableTimeResponse() {
   #expect(abs(oneResponseTime - (1 - exp(-1))) < 0.000_001)
 }
 
-@Test("Нажим Pencil расширяет ластик до выбранной толщины")
-func pencilPressureControlsEraserWidth() {
-  #expect(PencilPressureWidth.value(force: 0, minimum: 3, maximum: 21) == 3)
-  #expect(PencilPressureWidth.value(force: 0.5, minimum: 3, maximum: 21) == 12)
-  #expect(PencilPressureWidth.value(force: 1, minimum: 3, maximum: 21) == 21)
-  #expect(PencilPressureWidth.value(force: 2, minimum: 3, maximum: 21) == 21)
-  #expect(PencilPressureWidth.value(force: -1, minimum: 3, maximum: 21) == 3)
-}
-
-@Test("Уточнение одного замера Pencil может только расширить уже стёртое место")
-func eraserForceCorrectionKeepsErasureMonotonic() {
-  #expect(PencilEraserContact.reconciledWidth(previous: 18, updated: 7) == 18)
-  #expect(PencilEraserContact.reconciledWidth(previous: 18, updated: 24) == 24)
-}
-
 private func undoTestStroke() -> PageInkAction {
   .init(tool: .pen, samples: [.init(point: .init(x: 10, y: 20), timeOffset: 0,
     width: 2, opacity: 1, force: 1, azimuth: 0, altitude: 1)])

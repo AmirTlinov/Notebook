@@ -39,27 +39,3 @@ public enum PencilPressureOpacity {
     return floor + ((1 - floor) * response)
   }
 }
-
-public enum PencilPressureWidth {
-  public static func value(
-    force: Double,
-    minimum: Double,
-    maximum: Double
-  ) -> Double {
-    let lowerBound = max(minimum, 0)
-    let upperBound = max(maximum, lowerBound)
-    return lowerBound
-      + ((upperBound - lowerBound) * PencilPressure.level(force: force))
-  }
-}
-
-public enum PencilEraserContact {
-  /// A late correction belongs to the same physical sample. Keeping its
-  /// widest observed contact makes a live erasure monotonic.
-  public static func reconciledWidth(
-    previous: Double,
-    updated: Double
-  ) -> Double {
-    max(previous, updated)
-  }
-}

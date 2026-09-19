@@ -639,7 +639,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       identity = ObjectIdentifier(stroke); points = stroke.measuredPoints
       color = .init(1, 1, 1, 1); operation = .erase; changed = stroke.consumeChangedStart()
     } else { return }
-    if builtActiveIdentity != identity { activeMesh = IncrementalInkMesh() }
+    if builtActiveIdentity != identity { activeMesh = IncrementalInkMesh(eraser:operation == .erase) }
     activeMesh.update(points: points, changedFrom: builtActiveIdentity == identity ? changed : 0, color: color)
     appendCommitted(activeMesh, operation: operation)
     discardActiveAction()
@@ -1225,7 +1225,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     if builtActiveIdentity != identity || builtActiveRevision != revision {
       let changed = activeInkStroke?.consumeChangedStart() ?? activeEraserStroke?.consumeChangedStart() ?? 0
       if builtActiveIdentity != identity {
-        activeMesh = IncrementalInkMesh()
+        activeMesh = IncrementalInkMesh(eraser:operation == .erase)
         activeBufferDirtyStarts = Array(repeating: 0, count: Self.framesInFlight)
       }
       activeMesh.update(measured: measured, predicted: predicted, changedFrom: changed, color: color)

@@ -185,30 +185,6 @@ extension NotebookStore {
     return try NotebookRecordCodec.decode(rows, root: "board.json#").decode(BoardHierarchy.self)
   }
 
-  /// Editor completion retains its durable target after navigation evicts it
-  /// from the UI working set. A deleted owner is never recreated by a late edit.
-  @discardableResult
-  public func updateNativeSpatialText(boardID: UUID, elementID: String, text: String,
-    finish: Bool, actor: UUID) throws -> SpatialElement? {
-    try commandTransaction {
-      guard let before = try spatialElementProjection(boardID: boardID, elementID: elementID),
-        var element = before.board(boardID)?.elements.first, element.kind == .nativeText else { return nil }
-      var after = before
-      if finish && text.isEmpty {
-        guard after.removeElements(ids: [element.id], from: boardID, actor: actor) == 1 else { throw NotebookStorageError.transactionConflict }
-        _ = try saveBoardEdits(before: before, after: after)
-        return nil
-      }
-      guard element.source != text else { return element }
-      let expected = element.stamp
-      guard element.update(source: text, actor: actor), after.upsertElement(element, in: boardID, expected: expected, actor: actor) else {
-        throw NotebookStorageError.transactionConflict
-      }
-      _ = try saveBoardEdits(before: before, after: after)
-      return element
-    }
-  }
-
   /// The rendered program, not its former frame or state, authorizes an input
   /// message. Geometry and independent state already on disk are read here.
   @discardableResult

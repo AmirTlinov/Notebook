@@ -58,18 +58,19 @@ public struct PageRect: Codable, Equatable, Sendable {
 }
 
 public enum AgentElementKind: String, Codable, Sendable {
+  case nativeText
   case markdown
   case web
   case graphic
 }
 
 public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
-  static func causalFieldKeys(id: String, graphic: NotebookGraphic? = nil, allGraphicFields: Bool = false) -> [String] {
+  static func causalFieldKeys(id: String, graphic: NotebookGraphic? = nil, textStyle: NativeTextStyle? = nil, allGraphicFields: Bool = false) -> [String] {
     let base = ["exists", "id", "frame", "content", "css", "javaScript", "state"].map {
       fieldKey(["elements", collaborationIdentity(id), $0])
     }
     let paths = allGraphicFields ? NotebookGraphic.allCausalPaths : (graphic?.causalPaths ?? [])
-    return base + paths.map {
+    return base + (textStyle != nil || allGraphicFields ? [fieldKey(["elements",collaborationIdentity(id),"textStyle"])] : []) + paths.map {
       fieldKey(["elements", collaborationIdentity(id), "graphic"] + $0)
     }
   }
@@ -84,6 +85,7 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
   public let programPackage: String?
   public let state: JSONValue
   public let graphic: NotebookGraphic?
+  public let textStyle: NativeTextStyle?
 
   public init(
     id: String,
@@ -95,7 +97,8 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
     javaScript: String = "",
     programPackage: String? = nil,
     state: JSONValue = .object([:]),
-    graphic: NotebookGraphic? = nil
+    graphic: NotebookGraphic? = nil,
+    textStyle: NativeTextStyle? = nil
   ) {
     precondition(!id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     self.id = id
@@ -108,6 +111,7 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
     self.programPackage = programPackage
     self.state = state
     self.graphic = graphic
+    self.textStyle = textStyle
   }
 
   public func updating(state: JSONValue) -> Self {
@@ -121,7 +125,7 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
       javaScript: javaScript,
       programPackage: programPackage,
       state: state,
-      graphic: graphic
+      graphic: graphic, textStyle: textStyle
     )
   }
 
@@ -136,7 +140,7 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
       javaScript: javaScript,
       programPackage: programPackage,
       state: state,
-      graphic: graphic
+      graphic: graphic, textStyle: textStyle
     )
   }
 }
@@ -199,7 +203,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     drawingStamp = VersionStamp(counter: 0, actor: actor)
     self.elements = elements
     agentStamp = VersionStamp(counter: 0, actor: actor)
-    let keys = ["elements/order"] + elements.flatMap { AgentElement.causalFieldKeys(id: $0.id, graphic: $0.graphic) }
+    let keys = ["elements/order"] + elements.flatMap { AgentElement.causalFieldKeys(id: $0.id, graphic: $0.graphic, textStyle: $0.textStyle) }
     collaboration = .init(fields: Dictionary(keys.map { ($0, ContentFieldVersion(stamp: agentStamp, human: true)) },
       uniquingKeysWith: { first, _ in first }))
     precondition(isValid)
@@ -226,6 +230,8 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
           && $0.frame.isContained(in: size)
           && $0.state.isValid
           && NotebookProgramPackage.validSourceReference($0.programPackage, isProgram: $0.kind == .web, source: $0.source, html: $0.html, css: $0.css, javaScript: $0.javaScript)
+          && ($0.textStyle?.isValid ?? true)
+          && ($0.kind == .nativeText || $0.textStyle == nil)
           && ($0.kind == .graphic ? $0.graphic?.isValid == true : $0.graphic == nil)
       }
   }

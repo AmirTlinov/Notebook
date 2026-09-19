@@ -83,7 +83,7 @@ final class NotebookFrozenVisualSources {
       case .page:
         guard let page = pages[fragment.target.id] else { continue }
         for element in PageCompositionRenderer.elements(in: page, region: fragment.region, elementID: fragment.elementID) {
-          if element.kind == .graphic { continue }
+          if [.graphic,.nativeText].contains(element.kind) { continue }
           retain(.agent(element), fragmentID: fragment.id, key: element.id)
           #if os(iOS)
           if capturesLivePrograms, element.kind == .web, admits(fragment.id, element.id) {

@@ -58,7 +58,7 @@ struct PageSurface: View {
             drawingData: page.drawingData,
             suppressedInkIDs: model.pageSuppressedInkIDs(page),
             isInputEnabled: isInteractive,
-            penStyle: model.penStyle,
+            penStyle: model.activePenStyle,
             eraserStyle: model.eraserStyle,
             drawingTool: model.drawingTool,
             inputGate: model.inputGate,

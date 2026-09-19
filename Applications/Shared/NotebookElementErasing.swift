@@ -155,7 +155,7 @@ extension NotebookAppModel {
       if element.graphic != nil {
         guard let layout = graph.resolve(element.id).layout else { return nil }; frame = layout.frame
       } else { frame = element.frame }
-      return .init(elementID: element.id, frame: frame, wholeElement: element.kind == .web)
+      return .init(elementID: element.id, frame: frame, wholeElement: element.kind == .web,graphicTransform:element.graphic?.transform)
     }
   }
 
@@ -166,12 +166,12 @@ extension NotebookAppModel {
     for element in board?.elements ?? [] where element.graphic == nil {
       result[element.surface, default: []].append(.init(elementID: element.id,
         frame: .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height),
-        worldOrigin: element.worldOrigin, wholeElement: element.kind == .web))
+        worldOrigin: element.worldOrigin, wholeElement: element.kind == .web,graphicTransform:element.graphic?.transform))
     }
     for node in graph.nodes.values {
       guard let layout = graph.resolve(node.id).layout else { continue }
       result[node.surface, default: []].append(.init(elementID: node.id, frame: layout.frame,
-        worldOrigin: node.surface.kind == .board ? node.origin : nil))
+        worldOrigin: node.surface.kind == .board ? node.origin : nil,graphicTransform:node.graphic.transform))
     }
     return result
   }

@@ -21,6 +21,10 @@ struct NotebookWorkingGraphic: Equatable, Identifiable {
       sourceInkIDs: fit.precedingStrokeIDs + [strokeID], connection: fit.connection, vertices: fit.vertices)
   }
 
+  init(id: UUID, surface: SurfaceID, frame: PageRect, worldOrigin: WorldPoint?, graphic: NotebookGraphic) {
+    strokeID = id; self.surface = surface; self.frame = frame; self.worldOrigin = worldOrigin; self.graphic = graphic
+  }
+
   var pageElement: AgentElement {
     .init(id: id, kind: .graphic, frame: frame, source: "", html: "", graphic: graphic)
   }
@@ -38,6 +42,22 @@ struct NotebookWorkingGraphic: Equatable, Identifiable {
 }
 
 extension NotebookAppModel {
+  /// Rendering may retain an insertion until its raster is installed. Authoring
+  /// stops overlaying that original as soon as the logical model admits it.
+  var pendingModelGraphics: [NotebookWorkingGraphic] {
+    workingGraphics.filter { $0.accepted && ($0.publicationCursor.map { sceneContentCursor < $0 } ?? true) }
+  }
+
+  func acceptedWorkingGraphic(_ reference: EditableElementReference) -> NotebookWorkingGraphic? {
+    pendingModelGraphics.first { graphic in
+      switch reference {
+      case .page(let owner,let id): return graphic.surface == .page(owner) && graphic.id == id
+      case .spatial(let board,let id): return graphic.id == id && (graphic.surface == .board(board) ||
+        (graphic.surface.kind == .cover && graphic.surface.ownerID.flatMap { boardHierarchy?.ownerBoardID(of:$0) } == board))
+      }
+    }
+  }
+
   func updateWorkingGraphic(_ graphic: NotebookWorkingGraphic?, strokeID: UUID) {
     // Late cancellation belongs to the old contact, never to accepted input.
     guard workingGraphics.first(where: { $0.strokeID == strokeID })?.accepted != true else { return }
@@ -59,27 +79,28 @@ extension NotebookAppModel {
       workingGraphics.filter { $0.surface == .page(page.id) }.flatMap { $0.graphic.sourceInkIDs })
   }
 
-  func workingBoardGraphics(boardID: UUID, cohort: SceneCompositionCohort) -> [NotebookWorkingGraphic] {
+  func workingGraphics(on surface: SurfaceID, cohort: SceneCompositionCohort) -> [NotebookWorkingGraphic] {
     workingGraphics.filter { graphic in
-      graphic.surface == .board(boardID)
+      graphic.surface == surface
         && (graphic.publicationCursor.map { cohort.plan.revision < $0 } ?? true)
     }
   }
 
   /// One temporary vector run in the existing element plane, below ink/covers.
   /// It uses the ordinary graphic painter, not an input-layer preview renderer.
-  func workingGraphicRun(boardID: UUID, cohort: SceneCompositionCohort) -> SceneCompositionVectorRun? {
-    let owners = workingBoardGraphics(boardID: boardID, cohort: cohort).map { graphic in
-      SceneCompositionLiveOwner(plane: .board(boardID), id: .element(graphic.id),
+  func workingGraphicRun(plane: SceneCompositionPlane, cohort: SceneCompositionCohort) -> SceneCompositionVectorRun? {
+    let surface = plane.coverID.map(SurfaceID.cover) ?? .board(plane.boardID)
+    let owners = workingGraphics(on:surface, cohort: cohort).map { graphic in
+      SceneCompositionLiveOwner(plane: plane, id: .element(graphic.id),
         position: .init(layer: .elements, zIndex: Double.greatestFiniteMagnitude, key: graphic.id))
     }
-    return owners.isEmpty ? nil : .init(plane: .board(boardID), owners: owners)
+    return owners.isEmpty ? nil : .init(plane: plane, owners: owners)
   }
 
   func retireWorkingGraphics(in cohort: SceneCompositionCohort) {
     guard cohort.isPaintInstalled else { return }
     workingGraphics.removeAll { graphic in
-      graphic.surface.kind == .board
+      graphic.surface.kind != .page
         && (graphic.publicationCursor.map { cohort.plan.revision >= $0 } ?? false)
     }
   }

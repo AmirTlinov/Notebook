@@ -833,6 +833,7 @@ struct CollaborationWorkspace {
         else if !graphic.sourceInkIDs.isEmpty { throw invalid("Исходные штрихи назначает только преобразование.") }
         value["graphic"] = try .encode(graphic)
       } else if op.kind == .convertInkToElement || op.values["graphic"] != nil { throw invalid("Преобразование создаёт нативный элемент.") }
+      if kind == "nativeText" { value["textStyle"] = try .encode(op.values["textStyle"]?.decode(NativeTextStyle.self) ?? .standard) }
       if op.target.kind != .page {
         let surface: SurfaceID = op.target.kind == .cover ? .cover(op.target.id) : .board(op.target.id)
         value["surface"] = try .encode(surface)
@@ -848,8 +849,8 @@ struct CollaborationWorkspace {
           try surface.decode(SurfaceID.self) == (op.target.kind == .cover ? .cover(op.target.id) : .board(op.target.id)) else { throw missing(op.target) }
       }
       let allowed = op.kind == .setElementState ? Set(["state"])
-        : Set(["frame", "source", "html", "css", "javaScript", "programPackage", "graphic"]
-          + (op.target.kind == .page ? [] : ["worldOrigin", "textStyle"]))
+        : Set(["frame", "source", "html", "css", "javaScript", "programPackage", "graphic", "textStyle"]
+          + (op.target.kind == .page ? [] : ["worldOrigin"]))
       guard !op.values.isEmpty, Set(op.values.keys).isSubset(of: allowed) else { throw invalid("Поля изменения принадлежат выбранной операции.") }
       for (key, value) in op.values {
         if key == "graphic" {

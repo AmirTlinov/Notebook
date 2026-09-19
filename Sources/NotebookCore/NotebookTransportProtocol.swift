@@ -4,9 +4,9 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Full TeX blocks, whole-object erasing and program packages share one decoder.
+  // Program packages, full TeX and native drawing tools require the same owners.
   // Both applications update together; identities and queued history stay intact.
-  public static let protocolVersion = 28
+  public static let protocolVersion = 33
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16

@@ -97,7 +97,7 @@ struct NotebookReferenceIndexTests {
     let secondPage = try store.targetRenderRequests(target: target, afterID: firstPage[0].id, limit: 1)
     #expect(secondPage.count == 1 && secondPage[0].id != firstPage[0].id)
     #expect(try store.targetRenderRequests(target: target, afterID: secondPage[0].id, limit: 1).isEmpty)
-    _ = try store.updateNativeSpatialText(boardID: header.rootBoardID, elementID: ids[20], text: "", finish: true, actor: actor)
+    _ = try updateTestNativeText(store:store,boardID: header.rootBoardID, elementID: ids[20], text: "", finish: true, actor: actor)
     #expect(try store.referenceRevision(target: target) == NotebookStore.referenceRevision(target: target, files: store.collaborationSnapshot()))
   }
 

@@ -63,7 +63,7 @@ struct NotebookCodeDocumentView: View {
           }.padding(10).background(Color(.secondarySystemBackground))
         }
         Divider()
-        NotebookCodeEditor(files: files, document: document, editing: editing && document.rename == nil && files.notes.changingFile == nil, findRequest: findRequest, undoRequest: undoRequest, inputGate: model.inputGate, pen: model.penStyle, eraser: model.eraserStyle, tool: model.drawingTool)
+        NotebookCodeEditor(files: files, document: document, editing: editing && document.rename == nil && files.notes.changingFile == nil, findRequest: findRequest, undoRequest: undoRequest, inputGate: model.inputGate, pen: model.activePenStyle, eraser: model.eraserStyle, tool: model.drawingTool)
           .id(document.address.id)
       }
       .background(NotebookChrome.surface).notebookPanel()

@@ -81,9 +81,9 @@ test("lifecycle help obtains an explicit frozen extent and declares the exact co
 test("operation discovery is compact and every exact schema reference resolves locally",()=>{
   const bytes=(value:unknown)=>Buffer.byteLength(JSON.stringify(value));
   assert.ok(bytes(sdkReference.operations)<6*1024,"The operation index must not repeat full schemas");
-  // Shared package references add 245 bytes beyond the previous 25 KiB bound.
-  // Keep this help compact without deleting the source/clear contract.
-  assert.ok(bytes(sdkReference.methods.transaction!.input)<26*1024,"Atomic action help must remain compact");
+  // Package references plus native paths/freehand add shared typed definitions.
+  // Keep the complete 22-operation schema below 28 KiB; never inline targets.
+  assert.ok(bytes(sdkReference.methods.transaction!.input)<28*1024,"Atomic action help must remain compact");
   const targetReferences=new Set<string>();
   const collectTargets=(value:any):void=>{
     if(!value||typeof value!=="object")return;

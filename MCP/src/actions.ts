@@ -18,7 +18,7 @@ export const referenceSchema = z.object({ id: z.uuid(), target: targetSchema, el
 export const expectationSchema = z.object({ target: targetSchema, revision: z.string().min(1), stateRevision:z.string().optional(), sourceRevision:z.string().optional(), lifecycleRevision:z.string().regex(/^[a-f0-9]{64}$/).optional().describe("Complete item extent from an explicit itemLifecycle read; covers off-screen content and is not mutation authority."), inkRevision:z.string().optional().describe("For appendInkStroke: drawingRevision of a page, spatialInkRevision of a board/cover, or inkRevision returned by nb.code.") }).strict();
 const source = z.string().max(1_000_000);
 const programPackage = z.string().regex(/^[a-f0-9]{64}$/).nullable().describe("Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline.");
-export const textStyleSchema = z.object({fontSize:z.number().min(8).max(240),weight:z.number().min(0).max(1),
+export const textStyleSchema = z.object({fontSize:z.number().min(3).max(5760),weight:z.number().min(0).max(1),
   red:z.number().min(0).max(1),green:z.number().min(0).max(1),blue:z.number().min(0).max(1),alpha:z.number().min(0).max(1)}).strict();
 const block = z.discriminatedUnion("kind", [
   z.object({ id: z.string().min(1).max(120), kind: z.enum(["markdown", "latex", "tex"]), source }).strict(),
@@ -37,8 +37,13 @@ const graphicConnection = z.object({start:graphicEndpoint, end:graphicEndpoint,
   bend:z.number().finite().min(-1e6).max(1e6), startArrowhead:arrowhead, endArrowhead:arrowhead,
   routing:z.enum(["straight","elbow","curved"]).optional(),
   labelPosition:z.number().min(0).max(1), bendPosition:z.number().min(0).max(1).optional()}).strict();
-export const graphicSchema = z.object({ shape: z.enum(["ellipse", "rectangle", "triangle", "diamond", "plus", "connector"]), style: graphicStyle, label: z.string().max(100_000),
-  representation: z.enum(["ink", "geometry"]), visible: z.boolean(), sourceInkIDs: z.array(z.uuid()).max(16), connection:graphicConnection.optional(),
+const graphicTransform = z.object({a:z.number().finite(),b:z.number().finite(),c:z.number().finite(),d:z.number().finite(),tx:z.number().finite(),ty:z.number().finite()}).strict();
+const inkVertex = graphicPoint.extend({opacity:z.number().min(0).max(1)}).strict();
+const freehand = z.object({layers:z.array(z.object({tool:z.enum(["pen","eraser"]),color:graphicColor,vertices:z.array(inkVertex).min(3).max(65536)}).strict()).min(1).max(2048)}).strict();
+export const graphicSchema = z.object({ shape: z.enum(["ellipse", "rectangle", "triangle", "diamond", "plus", "connector", "freehand", "path"]), style: graphicStyle, label: z.string().max(100_000),
+  representation: z.enum(["ink", "geometry"]), visible: z.boolean(), sourceInkIDs: z.array(z.uuid()).max(1024), connection:graphicConnection.optional(),
+  path:z.object({commands:z.array(z.object({kind:z.enum(["move","line","quad","curve","close"]),points:z.array(graphicPoint).max(3)}).strict()).min(1).max(8192)}).strict().nullable().optional(),
+  transform:graphicTransform.nullable().optional(),freehand:freehand.nullable().optional(),
   cornerRadius:z.number().finite().min(0).max(1e6).nullable().optional(),
   vertices:z.array(z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1)}).strict()).min(3).max(4).nullable().optional() }).strict();
 const graphicEdit = graphicSchema.omit({ sourceInkIDs: true, connection: true }).partial().extend({connection:graphicConnection.partial().strict().optional()}).strict();

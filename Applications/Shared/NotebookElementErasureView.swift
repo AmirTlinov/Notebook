@@ -3,16 +3,16 @@ import SwiftUI
 
 /// Paint and interaction consume the same measured cutout geometry.
 enum NotebookElementErasurePaint {
-  static func clip(_ erasures: [InkElementErasure], context: inout GraphicsContext, size: CGSize) {
+  static func clip(_ erasures: [InkElementErasure], context: inout GraphicsContext, size: CGSize,transform:NotebookGraphicTransform? = nil) {
     guard !erasures.isEmpty else { return }
     context.clipToLayer(options:.inverse) { mask in
-      mask.fill(Path(NotebookElementAppearance.measuredErasurePath(erasures,size:size)),with:.color(.white))
+      mask.fill(Path(NotebookElementAppearance.measuredErasurePath(erasures,size:size,transform:transform)),with:.color(.white))
     }
   }
 }
 
 extension View {
-  @ViewBuilder func erased(by erasures: [InkElementErasure], appearance: NotebookElementAppearance? = nil) -> some View {
+  @ViewBuilder func erased(by erasures: [InkElementErasure], appearance: NotebookElementAppearance? = nil,transform:NotebookGraphicTransform? = nil) -> some View {
     if erasures.isEmpty { self }
     else if appearance?.state == .erased || erasures.contains(where: { $0.target.wholeElement }) {
       // Retire WebKit and its input/capture leases, not a hidden running program.
@@ -24,7 +24,7 @@ extension View {
           if let appearance {
             context.clip(to: Path(appearance.mask), options: .inverse)
           } else {
-            NotebookElementErasurePaint.clip(erasures, context: &context, size: size)
+            NotebookElementErasurePaint.clip(erasures, context: &context, size: size,transform:transform)
           }
           context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
         }

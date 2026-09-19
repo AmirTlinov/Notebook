@@ -7,8 +7,9 @@ struct NotebookGraphicView: View {
   let graphic: NotebookGraphic
   var layout: NotebookGraphicLayout? = nil
   var erasures: [InkElementErasure] = []
+  var appearance: NotebookElementAppearance? = nil
   var body: some View {
-    Canvas { context, size in Self.paint(graphic, layout: layout, in: context, size: size, erasures: erasures) }
+    Canvas { context, size in Self.paint(graphic, layout: layout, in: context, size: size, erasures: erasures, appearance: appearance) }
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(graphic.label.isEmpty ? graphic.shape.displayName : graphic.label)
     .accessibilityAddTraits(.isImage)
@@ -22,7 +23,14 @@ struct NotebookGraphicView: View {
       guard graphic.showsGeometry, appearance?.state != .erased else { return }
       var context = context
       if let appearance { context.clip(to:Path(appearance.mask),options:.inverse) }
-      else { NotebookElementErasurePaint.clip(erasures, context: &context, size: size) }
+      else { NotebookElementErasurePaint.clip(erasures, context: &context, size: size,transform:graphic.transform) }
+      if let ink = graphic.freehand {
+        if layer != .fillMask { NotebookFreehandPaint.paint(ink,transform:graphic.transform,context:context,size:size,mask:layer != .content) }
+        if !graphic.label.isEmpty, layer != .fillMask {
+          context.draw(Text(graphic.label).font(.system(size:24)).foregroundStyle(graphic.style.stroke.swiftUIColor),at:.init(x:size.width/2,y:size.height/2))
+        }
+        return
+      }
       let stroke = layer == .content ? graphic.style.stroke.swiftUIColor : .white
       let width = graphic.style.strokeWidth
       let dash: [CGFloat] = switch graphic.style.dash ?? .solid {
@@ -72,7 +80,7 @@ struct NotebookGraphicView: View {
 
 extension NotebookGraphic.Shape {
   var displayName: String {
-    switch self { case .ellipse: "Эллипс"; case .rectangle: "Прямоугольник"; case .triangle: "Треугольник"; case .diamond: "Ромб"; case .plus: "Плюс"; case .connector: "Связь" }
+    switch self { case .ellipse: "Эллипс"; case .rectangle: "Прямоугольник"; case .triangle: "Треугольник"; case .diamond: "Ромб"; case .plus: "Плюс"; case .connector: "Стрелка"; case .freehand: "Рукопись"; case .path: "Контур" }
   }
 }
 

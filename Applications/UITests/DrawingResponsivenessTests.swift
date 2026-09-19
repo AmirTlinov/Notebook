@@ -5,6 +5,45 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testTextToolEditsInlineAndPersistsOnBoard() { inlineText(onPage:false) }
+  func testTextToolEditsInlineAndPersistsOnPage() { inlineText(onPage:true) }
+  func testTextToolEditsInlineAtDeepBoardZoom() { inlineText(onPage:false,deepZoom:true) }
+
+  private func inlineText(onPage: Bool, deepZoom: Bool = false) {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture"]
+      + (onPage ? ["--notebook-native-graphic-page"] : [])
+    launchPortraitFixture(app)
+    XCTAssertTrue(app.buttons["drawing-tools-more"].waitForExistence(timeout:10))
+    if deepZoom { app.pinch(withScale:0.1,velocity:-1); app.pinch(withScale:0.4,velocity:-1) }
+    app.buttons["drawing-tools-more"].tap(); app.buttons["drawing-tool-text"].tap()
+    let point = app.coordinate(withNormalizedOffset:.init(dx:0.55,dy:0.15))
+    point.tap()
+    let editor = app.textViews["native-text-editor"]
+    XCTAssertTrue(editor.waitForExistence(timeout:10),"A real text object must mount its inline editor at the tapped place")
+    XCTAssertEqual(editor.frame.width,320,accuracy:4)
+    XCTAssertEqual(editor.frame.height,64,accuracy:4,"Text entry keeps its explicit screen size at any board zoom")
+    XCTAssertFalse(app.buttons["drawing-tool-text-save"].exists)
+    XCTAssertFalse(app.textViews["drawing-tool-text-editor"].exists)
+    XCTAssertLessThan(abs(editor.frame.minX-point.screenPoint.x),8)
+    XCTAssertLessThan(abs(editor.frame.minY-point.screenPoint.y),8)
+    editor.typeText("Inline 123\nSecond line")
+    XCTAssertEqual(editor.value as? String,"Inline 123\nSecond line")
+    let shot = XCTAttachment(screenshot:app.screenshot()); shot.name = "inline-text-\(onPage ? "page" : deepZoom ? "deep-board" : "board")"; shot.lifetime = .keepAlways; add(shot)
+    app.buttons["pen-controls-toggle"].tap()
+    app.coordinate(withNormalizedOffset:.init(dx:0.35,dy:0.60)).tap()
+    XCTAssertTrue(editor.waitForNonExistence(timeout:5))
+    let text = app.staticTexts["Inline 123\nSecond line"]
+    XCTAssertTrue(text.waitForExistence(timeout:10),"Leaving the editor must keep the same text visible")
+    app.coordinate(withNormalizedOffset:.zero).withOffset(.init(dx:text.frame.midX,dy:text.frame.midY)).doubleTap()
+    XCTAssertTrue(editor.waitForExistence(timeout:5))
+    XCTAssertEqual(editor.value as? String,"Inline 123\nSecond line","Reopening must read persisted source, not a modal draft")
+    editor.typeText("!")
+    app.coordinate(withNormalizedOffset:.init(dx:0.35,dy:0.60)).tap()
+    XCTAssertTrue(app.staticTexts["Inline 123\nSecond line!"].waitForExistence(timeout:10))
+  }
+
   func testErasedFiguresKeepOpeningAndPickingResponsive() {
     continueAfterFailure = false
     let app = XCUIApplication()
@@ -1813,7 +1852,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       for expanded in [false, true] {
         if expanded { openChat(in: app) }
         let controls = ["previous-page", "page-overview", "next-page",
-          "pen-controls-toggle", "drawing-tool-eraser", "pen-settings"]
+          "pen-controls-toggle", "drawing-tool-eraser"]
         let unobstructed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
           let window = app.frame, frame = panel.frame
           guard (window.width > window.height) == landscape,
@@ -2136,7 +2175,122 @@ final class DrawingResponsivenessTests: XCTestCase {
     proof.name = "codex-panel-keyboard-landscape"; proof.lifetime = .keepAlways; add(proof)
   }
 
-  func testEraserAndPenSelectDirectlyBeforeOpeningPenSettings() {
+  private func dismissDrawingSettings(_ app: XCUIApplication) {
+    app.coordinate(withNormalizedOffset:.zero).withOffset(.init(dx:40,dy:40)).tap()
+    XCTAssertTrue(app.descendants(matching:.any).matching(identifier:"drawing-tool-options").firstMatch.waitForNonExistence(timeout:2))
+  }
+
+  func testPhysicalRulerMovesAndRotatesWithFingerWithoutMovingPaper() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"], original = paper.frame
+    app.buttons["drawing-tools-more"].tap(); app.buttons["drawing-tool-ruler"].tap()
+    // Preferences survive launches; establish the pose through the real UI.
+    app.buttons["drawing-tool-ruler"].tap(); app.buttons["0°"].tap()
+    dismissDrawingSettings(app)
+    let ruler = app.descendants(matching:.any).matching(identifier:"physical-ruler").firstMatch
+    XCTAssertTrue(ruler.waitForExistence(timeout:5))
+    let before = ruler.frame, previous = ruler.value as? String
+    let center = ruler.coordinate(withNormalizedOffset:.init(dx:0.4,dy:0.5))
+    center.press(forDuration:0.05,thenDragTo:center.withOffset(.init(dx:30,dy:50)))
+    XCTAssertTrue(waitUntil { (ruler.value as? String) != previous })
+    XCTAssertEqual(ruler.frame.minX,before.minX+30,accuracy:4)
+    XCTAssertEqual(ruler.frame.minY,before.minY+50,accuracy:4)
+    let end = ruler.coordinate(withNormalizedOffset:.init(dx:0.99,dy:0.5)), moved = ruler.frame
+    end.press(forDuration:0.05,thenDragTo:end.withOffset(.init(dx:-100,dy:140)))
+    XCTAssertTrue(waitUntil { ruler.frame.height > moved.height+60 })
+    XCTAssertEqual(paper.frame,original,"Ruler gestures must not navigate the scene")
+    let shot = XCTAttachment(screenshot:app.screenshot()); shot.name = "physical-ruler-rotated"; shot.lifetime = .keepAlways; add(shot)
+  }
+
+  func testAllDrawingToolsUseRepeatedTapSettingsWithoutExtraToolbarButton() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    launchPortraitFixture(app)
+    let marker = app.buttons["drawing-tool-marker"]
+    XCTAssertTrue(marker.waitForExistence(timeout:5))
+    marker.tap(); XCTAssertTrue(marker.isSelected); XCTAssertFalse(app.sliders["marker-width"].exists)
+    app.buttons["drawing-primary-color"].tap(); app.buttons["drawing-color-green"].tap()
+    marker.tap(); XCTAssertTrue(app.sliders["marker-width"].waitForExistence(timeout:2))
+    app.sliders["marker-width"].adjust(toNormalizedSliderPosition:0.6)
+    let chosen = app.sliders["marker-width"].value as? String
+    dismissDrawingSettings(app)
+    app.buttons["drawing-tool-eraser"].tap(); marker.tap(); marker.tap()
+    XCTAssertTrue(app.sliders["marker-width"].waitForExistence(timeout:2))
+    XCTAssertEqual(app.sliders["marker-width"].value as? String,chosen)
+    XCTAssertEqual(app.buttons["drawing-primary-color"].value as? String,"Зелёная")
+    dismissDrawingSettings(app)
+    for (tool,setting) in [("lasso","lasso-adds-selection"),("shape","shape-width"),("text","text-size"),
+      ("connector","connector-width"),("ruler","ruler-angle"),("laser","laser-duration")] {
+      if tool != "lasso" {
+        app.buttons["drawing-tools-more"].tap()
+        let menuItem = app.buttons["drawing-tool-"+tool].firstMatch
+        XCTAssertTrue(menuItem.waitForExistence(timeout:2)); menuItem.tap()
+      } else { app.buttons["drawing-tool-lasso"].tap() }
+      let button = app.buttons["drawing-tool-"+tool]
+      XCTAssertTrue(button.waitForExistence(timeout:2)); XCTAssertTrue(button.isSelected)
+      XCTAssertFalse(app.descendants(matching:.any).matching(identifier:setting).firstMatch.exists)
+      button.tap()
+      XCTAssertTrue(app.descendants(matching:.any).matching(identifier:setting).firstMatch.waitForExistence(timeout:2))
+      let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "tool-settings-"+tool; proof.lifetime = .keepAlways; add(proof)
+      dismissDrawingSettings(app)
+      XCTAssertTrue(button.isSelected)
+      XCTAssertFalse(app.buttons["pen-settings"].exists)
+    }
+    let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "compact-drawing-tools-toolbar"; proof.lifetime = .keepAlways; add(proof)
+  }
+
+  func testOpenToolSettingsLetOneTapSelectAnotherTool() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    launchPortraitFixture(app)
+    let eraser = app.buttons["drawing-tool-eraser"], marker = app.buttons["drawing-tool-marker"]
+    let pen = app.buttons["pen-controls-toggle"], color = app.buttons["drawing-primary-color"]
+    XCTAssertTrue(eraser.waitForExistence(timeout:5))
+    // Literal screen taps, not an accessibility activation that could bypass
+    // the panel's outside-tap layer and conceal the two-tap regression.
+    let markerPoint = marker.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+    let penPoint = pen.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+    eraser.tap(); eraser.tap()
+    XCTAssertTrue(app.sliders["eraser-width"].waitForExistence(timeout:2))
+    markerPoint.tap()
+    XCTAssertTrue(marker.isSelected,"The first tap must select the real toolbar button")
+    XCTAssertTrue(app.sliders["eraser-width"].waitForNonExistence(timeout:2))
+    XCTAssertFalse(app.sliders["marker-width"].exists,"Switching selects, but does not open the new settings")
+    marker.tap()
+    XCTAssertTrue(app.sliders["marker-width"].waitForExistence(timeout:2))
+    color.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).tap()
+    XCTAssertTrue(app.buttons["drawing-color-green"].waitForExistence(timeout:2))
+    XCTAssertFalse(app.sliders["marker-width"].exists)
+    penPoint.tap()
+    XCTAssertTrue(pen.isSelected)
+    XCTAssertTrue(app.buttons["drawing-color-green"].waitForNonExistence(timeout:2))
+    pen.tap()
+    XCTAssertTrue(app.sliders["pen-width"].waitForExistence(timeout:2))
+    penPoint.tap()
+    XCTAssertTrue(app.sliders["pen-width"].waitForNonExistence(timeout:2),"Repeated tap also closes the current panel")
+    XCTAssertTrue(pen.isSelected)
+    pen.tap()
+    XCTAssertTrue(app.sliders["pen-width"].waitForExistence(timeout:2))
+    app.buttons["drawing-tools-more"].coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).tap()
+    let shape = app.buttons["drawing-tool-shape"].firstMatch
+    XCTAssertTrue(shape.waitForExistence(timeout:2)); shape.tap()
+    XCTAssertTrue(app.buttons["drawing-tool-shape"].isSelected)
+    XCTAssertFalse(app.sliders["pen-width"].exists)
+    app.buttons["drawing-tool-shape"].tap()
+    XCTAssertTrue(app.sliders["shape-width"].waitForExistence(timeout:2))
+    eraser.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).tap()
+    XCTAssertTrue(eraser.isSelected)
+    XCTAssertTrue(app.sliders["shape-width"].waitForNonExistence(timeout:2))
+    let proof = XCTAttachment(screenshot:app.screenshot())
+    proof.name = "one-tap-tool-switch-through-open-settings"; proof.lifetime = .keepAlways; add(proof)
+  }
+
+  func testToolSettingsOpenOnRepeatedTapAndPreserveSelection() {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
@@ -2155,14 +2309,40 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertFalse(pen.frame.intersects(eraser.frame))
     XCTAssertEqual(pen.frame.midY, eraser.frame.midY, accuracy: 1)
     XCTAssertLessThanOrEqual(
-      abs(eraser.frame.minX - pen.frame.maxX),
+      abs(eraser.frame.minX - app.buttons["drawing-tool-marker"].frame.maxX),
       10,
-      "Ластик должен стоять отдельной кнопкой непосредственно рядом с ручкой"
+      "Ластик стоит рядом с маркером в компактном ряду инструментов"
     )
 
     let settings = app.sliders["pen-width"]
+    let eraserSettings = app.sliders["eraser-width"]
+    XCTAssertFalse(app.buttons["pen-settings"].exists, "Настройки не занимают отдельное место на панели")
+    XCTAssertFalse(settings.exists)
     eraser.tap()
     XCTAssertTrue(eraser.isSelected)
+    XCTAssertFalse(eraserSettings.exists, "Первое нажатие только выбирает ластик")
+    eraser.coordinate(withNormalizedOffset: .init(dx: 0.1, dy: 0.1)).tap()
+    XCTAssertTrue(eraserSettings.waitForExistence(timeout: 2))
+    XCTAssertFalse(settings.exists, "У ластика открываются только его настройки")
+    XCTAssertFalse(app.staticTexts["Ластик"].exists,"No redundant title in the compact panel")
+    XCTAssertFalse(app.buttons["Закрыть настройки"].exists)
+    app.buttons["eraser-size-16"].tap()
+    XCTAssertEqual(eraserSettings.value as? String,"16 пунктов")
+    eraserSettings.adjust(toNormalizedSliderPosition: 0.1)
+    let initialEraserWidth = eraserSettings.value as? String
+    eraserSettings.adjust(toNormalizedSliderPosition: 0.7)
+    let chosenEraserWidth = eraserSettings.value as? String
+    XCTAssertNotEqual(chosenEraserWidth, initialEraserWidth)
+    let eraserProof = XCTAttachment(screenshot: app.screenshot())
+    eraserProof.name = "eraser-settings-from-repeated-tap"; eraserProof.lifetime = .keepAlways; add(eraserProof)
+    dismissDrawingSettings(app)
+    XCTAssertTrue(eraserSettings.waitForNonExistence(timeout: 2))
+    XCTAssertTrue(eraser.isSelected)
+    eraser.tap()
+    XCTAssertTrue(eraserSettings.waitForExistence(timeout: 2))
+    XCTAssertEqual(eraserSettings.value as? String, chosenEraserWidth)
+    dismissDrawingSettings(app)
+    XCTAssertTrue(eraserSettings.waitForNonExistence(timeout: 2))
     let inactivePen = pen.screenshot()
     pen.tap()
     XCTAssertFalse(settings.exists, "Первое касание выбирает ручку и сохраняет компактную панель")
@@ -2182,26 +2362,30 @@ final class DrawingResponsivenessTests: XCTestCase {
     penProof.lifetime = .keepAlways
     add(penProof)
 
+    pen.coordinate(withNormalizedOffset: .init(dx: 0.1, dy: 0.1)).tap()
+    XCTAssertTrue(settings.waitForExistence(timeout: 2), "Повторное нажатие всей областью инструмента открывает настройки")
+    XCTAssertFalse(eraserSettings.exists)
+    XCTAssertTrue(app.sliders["pen-minimum-opacity"].exists)
+    XCTAssertFalse(app.buttons["pen-color-red"].exists,"The primary palette belongs only to the toolbar")
+    dismissDrawingSettings(app)
+    app.buttons["drawing-primary-color"].tap(); app.buttons["drawing-color-red"].tap()
+    XCTAssertEqual(app.buttons["drawing-primary-color"].value as? String,"Красная")
     pen.tap()
-    XCTAssertFalse(settings.exists, "Повторное касание тоже только выбирает ручку")
-    let settingsButton = app.buttons["pen-settings"]
-    XCTAssertEqual(settingsButton.frame.width,44,accuracy:1); XCTAssertEqual(settingsButton.frame.height,44,accuracy:1)
-    settingsButton.coordinate(withNormalizedOffset:.init(dx:0.1,dy:0.1)).tap()
-    XCTAssertTrue(settings.waitForExistence(timeout: 2), "Вся область кнопки открывает настройки, не только штрихи иконки")
     XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "pen-stroke-preview").firstMatch.waitForExistence(timeout: 2))
     let previewProof = XCTAttachment(screenshot: app.screenshot())
     previewProof.name = "actual-pen-pressure-preview"; previewProof.lifetime = .keepAlways; add(previewProof)
-    app.buttons["Закрыть настройки"].tap()
+    dismissDrawingSettings(app)
     XCTAssertTrue(settings.waitForNonExistence(timeout: 2))
     XCTAssertTrue(pen.isSelected, "Закрытие настроек сохраняет выбранную ручку")
 
     XCTAssertFalse(app.buttons["drawing-tool-pointer"].exists)
     XCTAssertTrue(pen.isSelected, "Selection by finger does not add a drawing mode")
 
-    app.buttons["pen-settings"].tap()
+    pen.tap()
     XCTAssertTrue(settings.waitForExistence(timeout: 2))
-    app.buttons["Закрыть настройки"].tap()
-    XCTAssertTrue(settings.waitForNonExistence(timeout: 2))
+    XCTAssertEqual(app.buttons["drawing-primary-color"].value as? String,"Красная", "Повторное открытие сохраняет параметры ручки")
+    app.otherElements["paper-input"].coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.6)).tap()
+    XCTAssertTrue(settings.waitForNonExistence(timeout: 2), "Нажатие вне настроек закрывает их")
     XCTAssertTrue(pen.isSelected, "Настройки не создают скрытого инструмента редактирования")
   }
 
@@ -4190,7 +4374,6 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let controls = app.buttons["pen-controls-toggle"]
     XCTAssertTrue(controls.waitForExistence(timeout: 5))
-    controls.tap()
 
     let eraser = app.buttons["drawing-tool-eraser"]
     XCTAssertTrue(eraser.waitForExistence(timeout: 2))

@@ -5,7 +5,9 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {operationSchema} from '../src/actions.js';
+// @ts-expect-error Authored file tooling is plain executable JavaScript.
 import {canonicalProgramJSON} from '../skills/notebook/scripts/program-package.mjs';
+// @ts-expect-error Authored file tooling is plain executable JavaScript.
 import {readPortable,portableRequest,submitPortable} from '../skills/notebook/scripts/portable-document.mjs';
 const hash=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
 async function fixture(t:any){
@@ -45,13 +47,15 @@ test('portable import stages original parts then one ordinary transaction withou
   assert.equal(result.status,'completed');assert.deepEqual(calls,['notebook_import_program','notebook_execute']);
   assert.equal(transactions.length,1);assert.equal(transactions[0].base,'fresh-basis');
   const op=operationSchema.parse(transactions[0].operations[0]);assert.equal(op.kind,'createDocument');assert.equal(op.id,request.args.documentID);
-  assert.deepEqual(op.values.blocks[0].initialState,{phase:0.625});assert.equal(op.values.blocks[0].programPackage,f.sha256);
+  const imported=op.values.blocks[0];assert.ok(imported);assert.equal(imported.kind,'interactive');
+  assert.deepEqual(imported.initialState,{phase:0.625});assert.equal(imported.programPackage,f.sha256);
   assert.notEqual(op.id,f.portable.cut.document.id);
 });
 test('portable input rejects altered manifests, missing closure and symlinks before staging',async t=>{
   const f=await fixture(t);
   const link=join(f.root,'link.package');await symlink(f.path,link);await assert.rejects(readPortable(link));
-  f.portable.packages[0].value.files[0].path='../escape';await writeFile(f.path,JSON.stringify(f.portable));await assert.rejects(readPortable(f.path),/identity mismatch/);
+  const firstPackage=f.portable.packages[0];assert.ok(firstPackage);
+  const firstFile=firstPackage.value.files[0];assert.ok(firstFile);firstFile.path='../escape';await writeFile(f.path,JSON.stringify(f.portable));await assert.rejects(readPortable(f.path),/identity mismatch/);
   f.portable.packages=[];await writeFile(f.path,JSON.stringify(f.portable));await assert.rejects(readPortable(f.path),/Incomplete/);
 });
 test('explicit null saved state does not resurrect initialState; failed or cancelled staging creates no document',async t=>{

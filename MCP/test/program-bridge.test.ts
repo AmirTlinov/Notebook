@@ -232,11 +232,11 @@ test('video requires explicit author timeline, receives absolute times and never
 test('PDF vectors are opt-in, bounded copied replacement regions; declared author failures never fall back',async()=>{
   const unsupported=fixture();unsupported.api.exportFrame(()=>{throw Error('Must not request undeclared vectors')});
   assert.deepEqual(unsupported.json(await unsupported.program.exportFrame({format:'pdf',state:null})),[]);
-  const {program,api,json,commits}=fixture();const layers=[{svg:'<svg/>',frame:{x:1,y:2,width:30,height:40}}];
+  const {program,api,commits}=fixture();const layer={svg:'<svg/>',frame:{x:1,y:2,width:30,height:40}},layers=[layer];
   api.exportFrame(({format,state}:any)=>{assert.equal(format,'pdf');assert.equal(state.phase,.75);return layers;},{vectors:true});
   const copied=await program.exportFrame({format:'pdf',state:{phase:.75}});
-  layers[0].frame.x=9;assert.equal(copied[0].frame.x,1);assert.equal(commits.length,0);
-  for(const value of [null,Array(17).fill(layers[0]),[{svg:'x'.repeat(524288),frame:layers[0].frame}],
+  layer.frame.x=9;assert.equal(copied[0].frame.x,1);assert.equal(commits.length,0);
+  for(const value of [null,Array(17).fill(layer),[{svg:'x'.repeat(524288),frame:layer.frame}],
     [{svg:'<svg/>',frame:{x:NaN,y:0,width:1,height:1}}],[{svg:'<svg/>',frame:{x:0,y:0,width:-1,height:1}}]]) {
     const f=fixture();f.api.exportFrame(()=>value,{vectors:true});
     await assert.rejects(f.program.exportFrame({format:'pdf',state:null}),/export_limit|vector_invalid/);

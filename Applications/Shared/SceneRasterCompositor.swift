@@ -138,7 +138,9 @@ final class SceneRasterCompositor {
     guard let allocation = resources.reserveRaster(pixelWidth: width + 2, pixelHeight: height + 2)
     else { throw SceneRenderError.resourceLimit }
     defer { allocation.release() }
-    let renderer = ImageRenderer(content: content.frame(width: size.width, height: size.height)
+    let renderer = ImageRenderer(content: content
+      .environment(\.displayScale,scale * max(frame.width / size.width,frame.height / size.height))
+      .frame(width: size.width, height: size.height)
       .scaleEffect(x: frame.width / size.width, y: frame.height / size.height)
       .position(x: frame.midX - capture.minX, y: frame.midY - capture.minY)
       .frame(width: capture.width, height: capture.height).clipped())

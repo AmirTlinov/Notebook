@@ -6,6 +6,113 @@ import XCTest
 /// Exercise the installed scene's Pencil owner, not a direct fit/model call.
 /// Synthetic UIKit contacts do not substitute for physical Pencil calibration.
 @MainActor final class NotebookGraphicSceneTests: XCTestCase {
+  func testLaserPixelsRecedeAfterLiftWithoutAnotherInputEvent() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("laser-scene-\(UUID())")
+    let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false,preferences:UserDefaults(suiteName:UUID().uuidString)!)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
+    let board = try XCTUnwrap(model.presence?.boardID)
+    model.updatePresence(.init(boardID:board,mode:.board,camera:.init(center:.init(x:9000,y:-12000),scale:0.6),viewport:.init(x:834,y:1194)),settled:true)
+    model.selectDrawingTool(.laser); model.drawingToolSettings.laserDuration = 0.9
+    model.selectDrawingColor(.red)
+    await model.finishPendingPersistence(); await model.reloadExternalChanges()?.value
+    let window = try await mountNotebookScene(model)
+    let receiver = try XCTUnwrap(window.gestureRecognizers?.first { $0 is SpatialPencilGestureRecognizer })
+    let touch = SceneGraphicTouch(window:window), event = SceneGraphicEvent()
+    touch.point = .init(x:210,y:450); touch.sourceView = window.hitTest(touch.point,with:event)
+    receiver.touchesBegan([touch],with:event)
+    for index in 1...5 {
+      try await Task.sleep(for:.milliseconds(120))
+      touch.point.x = 210+Double(index)*70; touch.sampleTime += 0.12
+      receiver.touchesMoved([touch],with:event)
+    }
+    receiver.touchesEnded([touch],with:event)
+    XCTAssertFalse(model.inputGate.hasActivePencil)
+    func snapshot(_ name: String) -> CGRect {
+      let image = UIGraphicsImageRenderer(size:window.bounds.size).image { _ in window.drawHierarchy(in:window.bounds,afterScreenUpdates:true) }
+      let shot = XCTAttachment(image:image); shot.name = name; shot.lifetime = .keepAlways; add(shot)
+      guard let cg = image.cgImage else { XCTFail("Missing image"); return .null }
+      let width = cg.width, height = cg.height
+      var bytes = [UInt8](repeating:0,count:width*height*4)
+      let context = CGContext(data:&bytes,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
+      context.draw(cg,in:.init(x:0,y:0,width:width,height:height))
+      var minX = width, maxX = -1, minY = height, maxY = -1
+      // Inspect the contact band, not the red primary-color button.
+      for y in Int(425*image.scale)..<min(height,Int(475*image.scale)) { for x in Int(190*image.scale)..<min(width,Int(585*image.scale)) {
+        let i = (y*width+x)*4
+        if bytes[i] > 150 && bytes[i+1] < 80 && bytes[i+2] < 100 {
+          minX = min(minX,x); maxX = max(maxX,x); minY = min(minY,y); maxY = max(maxY,y)
+        }
+      } }
+      return maxX < 0 ? .null : .init(x:Double(minX)/image.scale,y:Double(minY)/image.scale,width:Double(maxX-minX+1)/image.scale,height:Double(maxY-minY+1)/image.scale)
+    }
+    try await Task.sleep(for:.milliseconds(30))
+    let released = snapshot("laser-after-lift")
+    XCTAssertGreaterThan(released.width,250,"Lift keeps the measured trace")
+    try await Task.sleep(for:.milliseconds(420))
+    let receded = snapshot("laser-tail-receded")
+    XCTAssertGreaterThan(receded.width,25)
+    XCTAssertLessThan(receded.width,released.width-50,"The tail must advance without another Pencil event")
+    XCTAssertGreaterThan(receded.minX,released.minX+50)
+    XCTAssertEqual(receded.maxX,released.maxX,accuracy:3)
+    try await Task.sleep(for:.milliseconds(950))
+    XCTAssertTrue(snapshot("laser-expired").isNull)
+    XCTAssertTrue(model.drawingTools.laserTraces.isEmpty)
+  }
+
+  func testLassoContactSelectsNotebookBoardDocumentAndTextByIntersection() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("lasso-scene-\(UUID())")
+    let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
+    let board = try XCTUnwrap(model.presence?.boardID), notebook = try XCTUnwrap(model.workspace?.selectedItemID)
+    let nested = try XCTUnwrap(model.createBoard(at:.init(x:1500,y:0)))
+    let document = try XCTUnwrap(model.createDocument(at:.init(x:3000,y:0),paperSize:.a4))
+    let address = NotebookToolAddress(surface:.board(board),boardID:board,worldOrigin:.zero,bounds:nil)
+    let text = try XCTUnwrap(model.beginToolText(at:.init(x:-750,y:0),address:address,screenScale:1))
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    await model.reloadExternalChanges()?.value
+    let renderedText = try XCTUnwrap(model.store.readSpatialElement(boardID:board,elementID:text))
+    model.commitNativeText(reference:address.reference(text),text:"Lasso text",finish:true,retainedSpatial:renderedText)
+    let textSaved = await model.finishPendingPersistence(); XCTAssertTrue(textSaved)
+    XCTAssertEqual(try model.store.readSpatialElement(boardID:board,elementID:text)?.source,"Lasso text")
+    await model.reloadExternalChanges()?.value
+    model.updatePresence(.init(boardID:board,mode:.board,camera:.init(center:.init(x:1500,y:0),scale:0.14),viewport:.init(x:834,y:1194)),settled:true)
+    model.selectDrawingTool(.lasso)
+    await model.finishPendingPersistence()
+    await model.reloadExternalChanges()?.value
+    let window = try await mountNotebookScene(model)
+    let presented = ContinuousClock.now + .seconds(5)
+    while model.compositionTiles.published?.frame.index.element(id:text,boardID:board) == nil, ContinuousClock.now < presented {
+      try await Task.sleep(for:.milliseconds(10))
+    }
+    let presence = try XCTUnwrap(model.presence)
+    XCTAssertNotNil(model.compositionTiles.published?.frame.index.element(id:text,boardID:board))
+    let receiver = try XCTUnwrap(window.gestureRecognizers?.first { $0 is SpatialPencilGestureRecognizer })
+    let touch = SceneGraphicTouch(window:window), event = SceneGraphicEvent()
+    func screen(_ p: SpatialPoint) -> CGPoint {
+      let p = presence.camera.worldToScreen(WorldPoint(x:p.x,y:p.y),viewport:presence.viewport)
+      return .init(x:p.x,y:p.y)
+    }
+    let polygon = [SpatialPoint(x:-1000,y:-60),.init(x:4000,y:-60),.init(x:4000,y:100),.init(x:-1000,y:100)]
+    touch.point = screen(polygon[0]); touch.sourceView = window.hitTest(touch.point,with:event)
+    receiver.touchesBegan([touch],with:event)
+    XCTAssertEqual(model.drawingTools.contact?.tool,.lasso)
+    XCTAssertEqual(model.drawingTools.contact?.address.surface,.board(board))
+    for point in polygon.dropFirst() { touch.point = screen(point); touch.sampleTime += 0.02; receiver.touchesMoved([touch],with:event) }
+    receiver.touchesEnded([touch],with:event)
+    XCTAssertEqual(Set(model.selectionSession.items.map(\.itemID)),Set([notebook,nested,document]))
+    XCTAssertTrue(model.selectionSession.contains(address.reference(text)))
+    XCTAssertEqual(model.selectionSession.count,4)
+    let crossing = [SpatialPoint(x:0,y:-60),.init(x:4000,y:-60),.init(x:4000,y:100),.init(x:0,y:100)]
+    touch.point = screen(crossing[0]); touch.sourceView = window.hitTest(touch.point,with:event); touch.sampleTime += 0.1
+    receiver.touchesBegan([touch],with:event)
+    XCTAssertEqual(model.drawingTools.contact?.address.surface,.board(board),"A workspace lasso starts on a card without becoming cover ink")
+    for point in crossing.dropFirst() { touch.point = screen(point); touch.sampleTime += 0.02; receiver.touchesMoved([touch],with:event) }
+    receiver.touchesEnded([touch],with:event)
+    XCTAssertEqual(Set(model.selectionSession.items.map(\.itemID)),Set([notebook,nested,document]))
+  }
+
   func testRestingHandDoesNotStrandDoubleTapOpeningBetweenBoardAndPaper() async throws {
     try await exerciseOpening(.doubleTap)
   }

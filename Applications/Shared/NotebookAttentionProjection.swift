@@ -113,7 +113,7 @@ enum NotebookAttentionProjection {
     case .spatial(let boardID, let elementID):
       guard boardID == presence.boardID,
         let cohort = model.compositionTiles.published,
-        let element = model.presentedElement(reference, cohort: cohort), let owner = element.surface.ownerID else { return nil }
+        let element = model.presentedElement(reference, cohort: cohort) ?? cohort.frame.index.element(id:elementID,boardID:boardID), let owner = element.surface.ownerID else { return nil }
       target = .init(kind: element.surface.kind == .cover ? .cover : .board, id: owner, boardID: boardID); id = elementID
     }
     return frame(target: target, elementID: id, region: nil, worldOrigin: nil, pageIndex: nil, model: model, presence: presence, minimumSide: 0, graphicLayout:layout)
@@ -129,7 +129,7 @@ enum NotebookAttentionProjection {
       guard target.id == presence.boardID else { return nil }
       var origin = worldOrigin ?? .zero
       if let id = elementID {
-        guard let element = model.presentedElement(.spatial(boardID: presence.boardID, elementID: id), cohort: cohort),
+        guard let element = model.presentedElement(.spatial(boardID: presence.boardID, elementID: id), cohort: cohort) ?? index.element(id:id,boardID:presence.boardID),
           element.surface == .board(target.id) else { return nil }
         local = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
         if element.graphic != nil {
@@ -245,10 +245,16 @@ enum NotebookAttentionProjection {
   }
   #endif
 
-  static func capture(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence,
-    cohort: SceneCompositionCohort, installedInk: [SurfaceID: SpatialInkInstalledSource], itemID: UUID? = nil,
-    selectedElements: [EditableElementReference]? = nil,
-    acceptsFirstFragment: (NotebookAttentionSelection.Fragment) -> Bool = { _ in true }) -> NotebookAttentionSelection? {
+  /// Resolve the painted contact without freezing pixels or constructing a
+  /// shared attention selection. Local authoring does not borrow the scene.
+  static func textContact(at point: CGPoint, model: NotebookAppModel, presence: SessionPresence,
+    cohort: SceneCompositionCohort) -> NotebookAttentionSelection.Fragment? {
+    guard let sources = contactSources(model:model,presence:presence,cohort:cohort) else { return nil }
+    return fragment(start:point,end:point,sources:sources,presence:presence,dragged:false)
+  }
+
+  private static func contactSources(model: NotebookAppModel, presence: SessionPresence,
+    cohort: SceneCompositionCohort) -> CaptureSources? {
     guard cohort.isPaintInstalled, cohort.plan.presentations[.board(presence.boardID)] != nil else { return nil }
     var sources = CaptureSources(workset: model.presentedWorkset(cohort: cohort, boardID: presence.boardID, presence: presence),
       workspace: model.presentedWorkspace(cohort: cohort), hierarchy: model.presentedHierarchy(cohort: cohort), ink: cohort.liveData.ink,
@@ -267,6 +273,14 @@ enum NotebookAttentionProjection {
         sources.documents[focused] = document; sources.states[focused] = state
       }
     }
+    return sources
+  }
+
+  static func capture(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence,
+    cohort: SceneCompositionCohort, installedInk: [SurfaceID: SpatialInkInstalledSource], itemID: UUID? = nil,
+    selectedElements: [EditableElementReference]? = nil,
+    acceptsFirstFragment: (NotebookAttentionSelection.Fragment) -> Bool = { _ in true }) -> NotebookAttentionSelection? {
+    guard let sources = contactSources(model:model,presence:presence,cohort:cohort) else { return nil }
     let fragments: [NotebookAttentionSelection.Fragment]
     if let selectedElements {
       guard (1...32).contains(selectedElements.count), Set(selectedElements).count == selectedElements.count,

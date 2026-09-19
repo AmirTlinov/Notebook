@@ -6,6 +6,30 @@ import XCTest
 
 @MainActor
 final class NotebookLiveScenePublicationTests: XCTestCase {
+  func testBooleanResultDoesNotRevertWhileItsInsertionCohortIsRetained() async throws {
+    let fixture = try await fixture(), model = fixture.model
+    let board = fixture.presence.boardID
+    let address = NotebookToolAddress(surface:.board(board),boardID:board,worldOrigin:.zero,bounds:nil)
+    model.selectDrawingTool(.shape)
+    model.drawingToolSettings.shape = .rectangle
+    model.drawingToolSettings.shapeOperation = .normal
+    XCTAssertTrue(model.drawingTools.begin(at:.init(x:300,y:100),address:address,screenScale:1))
+    model.drawingTools.move(to:.init(x:600,y:400)); model.drawingTools.finish()
+    let id = try XCTUnwrap(model.workingGraphics.last?.id)
+    model.drawingToolSettings.shapeOperation = .subtract
+    XCTAssertTrue(model.drawingTools.begin(at:.init(x:400,y:200),address:address,screenScale:1))
+    model.drawingTools.move(to:.init(x:500,y:300)); model.drawingTools.finish()
+    let expected = try XCTUnwrap(model.graphicElement(address.reference(id)))
+    XCTAssertEqual(expected.shape,.path)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    await model.reloadExternalChanges()?.value
+    XCTAssertTrue(model.compositionTiles.published === fixture.cohort)
+    XCTAssertNotNil(model.workingGraphics.first { $0.id == id },"Original insertion is still retained for the old raster")
+    XCTAssertNil(model.graphicCommandDrafts[address.reference(id)],"The logical model has admitted the edits")
+    XCTAssertEqual(model.presentedGraphicGraph(boardID:board,cohort:fixture.cohort).nodes[id]?.graphic,expected,
+      "The retained live host must paint the accepted hole, not resurrect the original rectangle")
+  }
+
   func testUnadmittedGraphicCannotCommitAnInvisibleMoveOrResize() async throws {
     let fixture = try await fixture(), model = fixture.model
     let target = CollaborationTarget(kind: .board, id: fixture.presence.boardID)

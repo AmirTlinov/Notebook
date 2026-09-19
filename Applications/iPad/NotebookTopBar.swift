@@ -16,12 +16,12 @@ struct NotebookTopBar: View {
         navigation.frame(minWidth: 200, maxWidth: .infinity)
         if model.activeDocument != nil { DocumentViewModePicker(mode: $documentMode, allowsBeside: allowsBeside).frame(width: allowsBeside ? 240 : 176) }
         Divider().frame(height: 20)
-        PenControlsView(embedded: true).fixedSize()
+        tools
       }
       VStack(spacing: 4) {
         HStack(spacing: 8) {
           NotebookNavigationHeader(presence: presence, onBack: onBack, showsActions: false)
-          PenControlsView(embedded: true).fixedSize()
+          tools
         }
         HStack(spacing: 8) {
           if model.activeDocument != nil { DocumentViewModePicker(mode: $documentMode, allowsBeside: allowsBeside) }
@@ -29,12 +29,22 @@ struct NotebookTopBar: View {
           NotebookNavigationActions().fixedSize()
         }.padding(.horizontal, 4).padding(.bottom, 2)
       }
+      VStack(spacing: 4) {
+        navigation
+        if model.activeDocument != nil { DocumentViewModePicker(mode: $documentMode, allowsBeside: allowsBeside) }
+        // Keep full-size controls, including an additional selected tool, in
+        // narrow split windows. Only the tool row scrolls, never the paper.
+        ScrollView(.horizontal) { tools }.scrollIndicators(.hidden).frame(height: 44)
+      }
     }
     .font(NotebookChrome.iconFont).buttonStyle(.plain).foregroundStyle(.primary)
     .padding(.horizontal, 8).padding(.vertical, 2)
     .notebookPanel(radius: NotebookChrome.panelRadius)
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("notebook-top-bar")
+  }
+  private var tools: some View {
+    PenControlsView(inkOnly: model.chat?.files.window.isOpen == true && model.chat?.files.document != nil, embedded: true).fixedSize()
   }
   private var navigation: some View { NotebookNavigationHeader(presence: presence, onBack: onBack) }
 }

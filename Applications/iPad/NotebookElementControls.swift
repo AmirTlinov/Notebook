@@ -81,6 +81,7 @@ struct NotebookElementControls: UIViewRepresentable {
         }
       ]))
     }
+    if graphic != nil { menus.append(selectionTransformMenu(model:model,selectionID:selectionID)) }
     menus.append(UIMenu(options: .displayInline, children: [
       UIAction(title: "На задний план", image: UIImage(systemName:"square.3.layers.3d.bottom.filled"),
         attributes: order?.first == id ? .disabled : []) { _ in
@@ -122,9 +123,18 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
     view.configure(selectionID:selectionID,frame:frame,manipulating:model.selectionSession.manipulation != nil,subject:.elements(frames.count))
     view.editElement = { if model.selectionSession.id == selectionID { model.finishMultipleSelection() } }
     view.deleteElement = { if model.selectionSession.id == selectionID { model.deleteGraphicSelection() } }
+    guard model.selectionSession.items.isEmpty,
+      model.selectionSession.elements.allSatisfy({ model.graphicElement($0) != nil }) else {
+      view.setActionsMenu([UIAction(title:"Снять выделение",image:UIImage(systemName:"xmark")) { _ in
+        guard model.selectionSession.id == selectionID else { return }; model.clearSelection()
+      }])
+      view.deleteElement = { if model.selectionSession.id == selectionID { model.deleteSelectedContent() } }
+      return
+    }
     let alignments: [(NotebookGraphicSelection.Alignment,String)] = [(.left,"По левому краю"),(.center,"По центру горизонтально"),
       (.right,"По правому краю"),(.top,"По верхнему краю"),(.middle,"По центру вертикально"),(.bottom,"По нижнему краю")]
     view.setActionsMenu([
+      selectionTransformMenu(model:model,selectionID:selectionID),
       UIAction(title:model.selectionSession.addingElements ? "Завершить выбор" : "Добавить к выбору",image:UIImage(systemName:"checkmark.circle")) { _ in
         guard model.selectionSession.id == selectionID else { return }; model.setMultipleSelectionAdding(!model.selectionSession.addingElements)
       },
@@ -188,9 +198,9 @@ private enum ElementHandle: Hashable {
   var label: String {
     switch self {
     case .corner(let value): "Изменить размер за " + value.label
-    case .start: "Начало связи"
-    case .end: "Конец связи"
-    case .bend: "Изгиб связи"
+    case .start: "Начало стрелки"
+    case .end: "Конец стрелки"
+    case .bend: "Изгиб стрелки"
     case .vertex(let index): "Вершина \(index+1)"
     case .rounding: "Радиус углов"
     }
@@ -239,8 +249,8 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   var changeArrowhead: ((NotebookGraphicConnection.Arrowhead,NotebookGraphicConnection.Terminal) -> Void)?
   var graphic: NotebookGraphic? {
     didSet {
-      styleButton.isHidden = graphic == nil; divider.isHidden = graphic == nil
-      modeButton.isHidden = graphic.flatMap(NotebookGraphicGeometry.polygon) == nil
+      styleButton.isHidden = graphic == nil || graphic?.freehand != nil; divider.isHidden = styleButton.isHidden
+      modeButton.isHidden = graphic?.transform != nil || graphic.flatMap(NotebookGraphicGeometry.polygon) == nil
       routingButton.isHidden = graphic?.connection == nil; endsButton.isHidden = graphic?.connection == nil
       if let connection = graphic?.connection {
         routingButton.setImage(NotebookConnectionGlyph.image(routing:connection.resolvedRouting),for:.normal)
@@ -376,7 +386,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
       moreButton.isHidden = true
     }
     editButton.configuration = primary
-    let vertices = graphic.flatMap(NotebookGraphicGeometry.polygon)
+    let vertices = graphic.flatMap({ $0.transform == nil ? NotebookGraphicGeometry.polygon($0) : nil })
     geometryMode = vertices == nil ? .transform : mode
     var modeConfiguration = modeButton.configuration!
     modeConfiguration.image = UIImage(systemName:geometryMode.controlSymbol)
@@ -449,7 +459,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   }
   private func point(_ handle: ElementHandle) -> CGPoint {
     if case .corner(let corner) = handle { return corner.point(in:frameRect) }
-    if case .vertex(let index) = handle, let vertices = graphic.flatMap(NotebookGraphicGeometry.polygon), vertices.indices.contains(index) {
+    if case .vertex(let index) = handle, let vertices = graphic.flatMap({ $0.transform == nil ? NotebookGraphicGeometry.polygon($0) : nil }), vertices.indices.contains(index) {
       return .init(x:frameRect.minX+vertices[index].x*frameRect.width,y:frameRect.minY+vertices[index].y*frameRect.height)
     }
     if handle == .rounding, let graphic {
@@ -504,7 +514,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     tintColor.withAlphaComponent(0.7).setStroke()
     if connectionLayout == nil {
       let outline: UIBezierPath
-      if geometryMode != .transform, let vertices = graphic.flatMap(NotebookGraphicGeometry.polygon) {
+      if geometryMode != .transform, let vertices = graphic.flatMap({ $0.transform == nil ? NotebookGraphicGeometry.polygon($0) : nil }) {
         outline = UIBezierPath()
         for (index,p) in vertices.enumerated() {
           let point = CGPoint(x:frameRect.minX+p.x*frameRect.width,y:frameRect.minY+p.y*frameRect.height)
@@ -665,4 +675,21 @@ private final class ElementHandleAccessibility: UIAccessibilityElement {
   var adjust: ((Bool) -> Void)?
   override func accessibilityIncrement() { adjust?(true) }
   override func accessibilityDecrement() { adjust?(false) }
+}
+
+@MainActor private func selectionTransformMenu(model: NotebookAppModel, selectionID: UUID) -> UIMenu {
+  UIMenu(title:"Поворот и масштаб",image:UIImage(systemName:"rotate.right"),children:[
+    UIMenu(title:"Повернуть",children:[-90.0,-15,15,90].map { angle in
+      UIAction(title:"\(angle > 0 ? "+" : "")\(Int(angle))°") { _ in
+        guard model.selectionSession.id == selectionID else { return }
+        model.transformGraphicSelection(radians:angle * .pi/180)
+      }
+    }),
+    UIAction(title:"Увеличить на 25%",image:UIImage(systemName:"plus.magnifyingglass")) { _ in
+      guard model.selectionSession.id == selectionID else { return }; model.transformGraphicSelection(scale:1.25)
+    },
+    UIAction(title:"Уменьшить на 20%",image:UIImage(systemName:"minus.magnifyingglass")) { _ in
+      guard model.selectionSession.id == selectionID else { return }; model.transformGraphicSelection(scale:0.8)
+    }
+  ])
 }

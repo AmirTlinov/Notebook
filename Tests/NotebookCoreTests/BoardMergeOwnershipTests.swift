@@ -293,7 +293,7 @@ struct BoardMergeOwnershipTests {
     let framePublished = after.upsertElement(moved, in: header.rootBoardID, expected: expected, actor: localActor)
     #expect(frameChanged && framePublished)
     _ = try local.saveBoardEdits(before: before, after: after)
-    _ = try remote.updateNativeSpatialText(boardID: header.rootBoardID, elementID: element.id,
+    _ = try updateTestNativeText(store:remote,boardID: header.rootBoardID, elementID: element.id,
       text: "Independent remote edit", finish: false, actor: remoteActor)
     try transferAll(from: remote, to: local, peer: remoteActor)
     try transferAll(from: local, to: remote, peer: localActor)

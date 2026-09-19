@@ -84,6 +84,18 @@ extension NotebookGraphicGeometry {
 
   /// Flatten the same cubics only for geometric queries, within 0.1 owner point.
   public static func outlinePolygon(_ graphic: NotebookGraphic, width: Double, height: Double) -> [SpatialPoint]? {
+    if let transform = graphic.transform {
+      var base = graphic; base.transform = nil
+      if base.shape == .ellipse {
+        let segments = max(32,min(4096,Int(ceil(.pi*sqrt(max(width,height)/0.05)))))
+        return (0..<segments).map { index in
+          let angle = Double(index)*2 * .pi/Double(segments)
+          return transform.applying(.init(x:(1+cos(angle))/2,y:(1+sin(angle))/2))
+        }
+      }
+      let size = transform.contentSize(in:.init(width:width,height:height))
+      return outlinePolygon(base,width:size.width,height:size.height)?.map(transform.applying)
+    }
     guard let polygon = polygon(graphic), width > 0, height > 0 else { return nil }
     guard (graphic.cornerRadius ?? 0) > 0 else { return polygon }
     var points: [SpatialPoint] = []

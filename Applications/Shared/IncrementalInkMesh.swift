@@ -1,3 +1,4 @@
+import NotebookCore
 import PencilKit
 import simd
 
@@ -11,6 +12,8 @@ struct IncrementalInkMesh {
   private var normalized: [SpatialInkGeometry.RenderPoint] = []
   private var rawToNormalized: [Int] = []
   private var color: SIMD4<Float>?
+  let eraser: Bool
+  init(eraser: Bool = false) { self.eraser = eraser }
   private static var capVertexCount: Int { SpatialInkGeometry.roundCapVertexCount }
 
   mutating func update(points: [PKStrokePoint], changedFrom: Int, color: SIMD4<Float>) {
@@ -54,7 +57,13 @@ struct IncrementalInkMesh {
     }
 
     let firstSegment = max(0, min(changed, oldCount) - 2)
-    if firstSegment == 0 || oldCount < 3 || normalized.count < 3 {
+    if eraser {
+      let segment = max(0,min(changed,oldCount)-1)
+      rebuiltVertexStart = segment == 0 ? 0 : InkStrokeGeometry.roundDiskVertexCount + segment * InkStrokeGeometry.roundSweepSegmentVertexCount
+      vertices.removeSubrange(min(rebuiltVertexStart,vertices.count)...)
+      InkStrokeGeometry.appendEraserVertices(renderPoints:Array(normalized.dropFirst(segment)),includesStart:segment == 0,to:&vertices)
+      rebuiltPointCount = normalized.count-segment
+    } else if firstSegment == 0 || oldCount < 3 || normalized.count < 3 {
       vertices.removeAll(keepingCapacity: true)
       SpatialInkGeometry.appendStrokeVertices(renderPoints: normalized, to: &vertices)
       rebuiltPointCount = normalized.count

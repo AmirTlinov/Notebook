@@ -1,9 +1,10 @@
 import Foundation
+import CoreGraphics
 
 /// Native content on a physical page or board, not an embedded document.
 /// Measurements remain in that owner's ink journal; presentation only names them.
 public struct NotebookGraphic: Codable, Equatable, Sendable {
-  public enum Shape: String, Codable, Sendable { case ellipse, rectangle, triangle, diamond, plus, connector }
+  public enum Shape: String, Codable, Sendable { case ellipse, rectangle, triangle, diamond, plus, connector, freehand, path }
   public enum Representation: String, Codable, Sendable { case ink, geometry }
   public struct Style: Codable, Equatable, Sendable {
     public enum Dash: String, Codable, Sendable { case solid, dashed, dotted }
@@ -30,13 +31,16 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
   public var vertices: [SpatialPoint]?
   /// Circular corner radius in physical owner points. Nil leaves sharp corners.
   public var cornerRadius: Double?
+  public var freehand: NotebookFreehand?
+  public var path: NotebookVectorPath?
+  public var transform: NotebookGraphicTransform?
 
   public init(shape: Shape = .ellipse, style: Style = .init(), label: String = "",
     representation: Representation = .geometry, visible: Bool = true, sourceInkIDs: [UUID] = [],
-    connection: NotebookGraphicConnection? = nil, vertices: [SpatialPoint]? = nil, cornerRadius: Double? = nil) {
+    connection: NotebookGraphicConnection? = nil, vertices: [SpatialPoint]? = nil, cornerRadius: Double? = nil, freehand: NotebookFreehand? = nil, transform: NotebookGraphicTransform? = nil, path: NotebookVectorPath? = nil) {
     self.shape = shape; self.style = style; self.label = label
     self.representation = representation; self.visible = visible; self.sourceInkIDs = sourceInkIDs
-    self.connection = connection; self.vertices = vertices; self.cornerRadius = cornerRadius
+    self.connection = connection; self.vertices = vertices; self.cornerRadius = cornerRadius; self.freehand = freehand; self.transform = transform; self.path = path
   }
 
   /// A native accepted edit and a delivered action interpret the same field
@@ -53,24 +57,27 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
           throw CollaborationError("invalid_operation", "Правка связи называет её концы, изгиб, наконечники или положение подписи.")
         }
         value = value.setting(part, .object(previous.object.merging(supplied.object) { _, latest in latest }))
-      } else { value = value.setting(part, ["vertices", "cornerRadius"].contains(part) && supplied == .null ? nil : supplied) }
+      } else { value = value.setting(part, ["vertices", "cornerRadius", "freehand", "transform", "path"].contains(part) && supplied == .null ? nil : supplied) }
     }
     let result = try value.decode(Self.self)
     guard result.isValid else { throw CollaborationError("invalid_operation", "Недопустимая геометрия.") }
     return result
   }
 
-  static let causalFields = ["shape", "style", "label", "representation", "visible", "sourceInkIDs", "vertices", "cornerRadius"]
+  static let causalFields = ["shape", "style", "label", "representation", "visible", "sourceInkIDs", "vertices", "cornerRadius", "freehand", "transform", "path"]
   static let allCausalPaths = causalFields.map { [$0] } + NotebookGraphicConnection.causalFields.map { ["connection", $0] }
   var causalPaths: [[String]] {
-    Self.causalFields.filter { ($0 != "vertices" || vertices != nil) && ($0 != "cornerRadius" || cornerRadius != nil) }.map { [$0] } + (connection == nil ? [] : NotebookGraphicConnection.causalFields.filter { ($0 != "bendPosition" || connection?.bendPosition != nil) && ($0 != "routing" || connection?.routing != nil) }.map { ["connection", $0] })
+    Self.causalFields.filter { ($0 != "vertices" || vertices != nil) && ($0 != "cornerRadius" || cornerRadius != nil) && ($0 != "freehand" || freehand != nil) && ($0 != "transform" || transform != nil) && ($0 != "path" || path != nil) }.map { [$0] } + (connection == nil ? [] : NotebookGraphicConnection.causalFields.filter { ($0 != "bendPosition" || connection?.bendPosition != nil) && ($0 != "routing" || connection?.routing != nil) }.map { ["connection", $0] })
   }
   public var showsGeometry: Bool { visible && representation == .geometry }
   var isValid: Bool {
-    style.isValid && label.utf16.count <= 100_000 && sourceInkIDs.count <= 16
+    style.isValid && label.utf16.count <= 100_000 && sourceInkIDs.count <= (shape == .freehand ? 1024 : 16)
       && Set(sourceInkIDs).count == sourceInkIDs.count
       && (representation != .ink || !sourceInkIDs.isEmpty)
       && (shape == .connector ? connection?.isValid == true : connection == nil)
+      && (shape == .freehand ? freehand?.isValid == true : freehand == nil)
+      && (shape == .path ? path?.isValid == true : path == nil)
+      && (transform?.isValid ?? true) && (shape != .connector || transform == nil)
       && validVertices
       && (cornerRadius == nil || (NotebookGraphicGeometry.polygon(self) != nil && cornerRadius!.isFinite && (0...1_000_000).contains(cornerRadius!)))
   }
@@ -91,6 +98,14 @@ public enum NotebookGraphicGeometry {
   public static func containsInterior(_ graphic: NotebookGraphic, width: Double, height: Double,
     x: Double, y: Double) -> Bool {
     guard graphic.showsGeometry, width > 0, height > 0 else { return false }
+    if graphic.shape == .freehand { return graphic.freehand?.paintPath(size:.init(width:width,height:height),transform:graphic.transform).contains(.init(x:x,y:y)) ?? false }
+    if let transform = graphic.transform {
+      var base = graphic; base.transform = nil
+      let p = transform.unapplying(.init(x:x/width,y:y/height))
+      let size = transform.contentSize(in:.init(width:width,height:height))
+      return containsInterior(base,width:size.width,height:size.height,x:p.x*size.width,y:p.y*size.height)
+    }
+    if graphic.shape == .path { return graphic.path?.path(in:.init(x:0,y:0,width:width,height:height)).contains(.init(x:x,y:y)) ?? false }
     if graphic.shape == .ellipse { return hypot((x-width/2)/(width/2),(y-height/2)/(height/2)) <= 1 }
     guard let vertices = outlinePolygon(graphic, width: width, height: height) else { return false }
     var inside = false
@@ -104,12 +119,17 @@ public enum NotebookGraphicGeometry {
     case .triangle: return graphic.vertices ?? [.init(x:0.5,y:0),.init(x:1,y:1),.init(x:0,y:1)]
     case .diamond: return graphic.vertices ?? [.init(x:0.5,y:0),.init(x:1,y:0.5),.init(x:0.5,y:1),.init(x:0,y:0.5)]
     case .rectangle: return graphic.vertices ?? [.init(x:0,y:0),.init(x:1,y:0),.init(x:1,y:1),.init(x:0,y:1)]
-    case .ellipse, .plus, .connector: return nil
+    case .ellipse, .plus, .connector, .freehand, .path: return nil
     }
   }
   public static func hitTest(_ graphic: NotebookGraphic, width: Double, height: Double,
     x: Double, y: Double, tolerance: Double) -> Bool {
     guard graphic.showsGeometry, graphic.shape != .connector, width > 0, height > 0 else { return false }
+    if graphic.transform != nil || graphic.shape == .freehand || graphic.shape == .path {
+      let path = paintPath(graphic,layout:nil,size:.init(width:width,height:height))
+      let p = CGPoint(x:x,y:y)
+      return path.contains(p) || (tolerance > 0 && path.copy(strokingWithWidth:tolerance*2,lineCap:.round,lineJoin:.round,miterLimit:10).contains(p))
+    }
     let dx = (x - width / 2) / (width / 2), dy = (y - height / 2) / (height / 2)
     let radius = hypot(dx, dy)
     if !graphic.label.isEmpty, abs(x - width / 2) <= min(width / 2, Double(graphic.label.count) * 8 + tolerance),
@@ -129,6 +149,9 @@ public enum NotebookGraphicGeometry {
       let t = square > 0 ? min(1,max(0,((x-ax)*dx+(y-ay)*dy)/square)) : 0
       return hypot(x-ax-t*dx,y-ay-t*dy)
     }
+    if graphic.transform != nil, let vertices = outlinePolygon(graphic,width:width,height:height) {
+      return zip(vertices,vertices.dropFirst()+vertices.prefix(1)).map { segment($0.x*width,$0.y*height,$1.x*width,$1.y*height) }.min() ?? .infinity
+    }
     switch graphic.shape {
     case .ellipse:
       return abs(hypot((x-width/2)/(width/2),(y-height/2)/(height/2))-1)*min(width,height)/2
@@ -139,7 +162,7 @@ public enum NotebookGraphicGeometry {
       }.min()!
     case .plus:
       return min(segment(0,height/2,width,height/2),segment(width/2,0,width/2,height))
-    case .connector: return .infinity
+    case .connector, .freehand, .path: return .infinity
     }
   }
 }

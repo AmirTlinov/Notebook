@@ -24,7 +24,7 @@ public struct NotebookElementAppearance: @unchecked Sendable {
       mask = CGPath(rect: .zero, transform: nil); remaining = mask; state = .erased
       return
     }
-    mask = Self.erasurePath(erasures, size:size)
+    mask = Self.erasurePath(erasures, size:size,transform:graphic?.transform)
     if mask.isEmpty { remaining = paint.copy()!; state = .intact }
     else {
       remaining = paint.subtracting(mask)
@@ -45,7 +45,7 @@ public struct NotebookElementAppearance: @unchecked Sendable {
   }
 
   /// Exactly the positive-winding triangles that the live renderer erases.
-  public static func erasurePath(_ erasures: [InkElementErasure], size: CGSize) -> CGPath {
+  public static func erasurePath(_ erasures: [InkElementErasure], size: CGSize, transform: NotebookGraphicTransform? = nil) -> CGPath {
     if erasures.contains(where: { $0.target.wholeElement }) {
       return CGPath(rect: CGRect(origin: .zero, size: size), transform: nil)
     }
@@ -79,7 +79,7 @@ public struct NotebookElementAppearance: @unchecked Sendable {
         batch.closeSubpath()
       }
     }
-    forEachErasureTriangle(erasures, size: size) { triangle in
+    forEachErasureTriangle(erasures, size: size,transform:transform) { triangle in
       lastTriangle = triangle
       batch.move(to: triangle[0])
       for p in triangle.dropFirst() { batch.addLine(to:p) }
@@ -94,12 +94,12 @@ public struct NotebookElementAppearance: @unchecked Sendable {
   /// Nonzero fill of the same positive triangles is already their union.
   /// Painting does not need CoreGraphics boolean normalization. This linear
   /// path is also the exact live eraser while semantic preparation is pending.
-  public static func measuredErasurePath(_ erasures: [InkElementErasure], size: CGSize) -> CGPath {
+  public static func measuredErasurePath(_ erasures: [InkElementErasure], size: CGSize, transform: NotebookGraphicTransform? = nil) -> CGPath {
     if erasures.contains(where: { $0.target.wholeElement }) {
       return CGPath(rect: CGRect(origin: .zero, size: size), transform: nil)
     }
     let path = CGMutablePath()
-    forEachErasureTriangle(erasures, size: size) { triangle in
+    forEachErasureTriangle(erasures, size: size,transform:transform) { triangle in
       path.move(to:triangle[0])
       for p in triangle.dropFirst() { path.addLine(to:p) }
       path.closeSubpath()
@@ -107,7 +107,7 @@ public struct NotebookElementAppearance: @unchecked Sendable {
     return path.copy()!
   }
 
-  private static func forEachErasureTriangle(_ erasures: [InkElementErasure], size: CGSize,
+  private static func forEachErasureTriangle(_ erasures: [InkElementErasure], size: CGSize,transform:NotebookGraphicTransform?,
     visit: ([CGPoint]) -> Void) {
     for erasure in erasures {
       if Task.isCancelled { return }
@@ -120,9 +120,13 @@ public struct NotebookElementAppearance: @unchecked Sendable {
         else { points.append(next) }
       }
       var vertices: [InkStrokeGeometry.Vertex] = []
-      InkStrokeGeometry.appendStrokeVertices(renderPoints:points,to:&vertices)
-      let sx = size.width/erasure.target.frame.width, sy = size.height/erasure.target.frame.height
-      func point(_ p: SIMD2<Float>) -> CGPoint { .init(x:Double(p.x)*sx,y:Double(p.y)*sy) }
+      InkStrokeGeometry.appendEraserVertices(renderPoints:points,to:&vertices)
+      func point(_ p: SIMD2<Float>) -> CGPoint {
+        let normalized = SpatialPoint(x:Double(p.x)/erasure.target.frame.width,y:Double(p.y)/erasure.target.frame.height)
+        let content = (erasure.target.graphicTransform ?? .identity).unapplying(normalized)
+        let current = (transform ?? .identity).applying(content)
+        return .init(x:current.x*size.width,y:current.y*size.height)
+      }
       for i in stride(from:0,to:vertices.count,by:3) {
         if i.isMultiple(of: 768), Task.isCancelled { return }
         let a = vertices[i].position, b = vertices[i+1].position, c = vertices[i+2].position
@@ -135,6 +139,11 @@ public struct NotebookElementAppearance: @unchecked Sendable {
 
 extension NotebookGraphicGeometry {
   public static func outlinePath(_ graphic: NotebookGraphic, in rect: CGRect) -> CGPath {
+    if let basis = graphic.transform {
+      var base = graphic; base.transform = nil
+      var transform = basis.contentTransform(in:rect)
+      return outlinePath(base,in:CGRect(origin:.zero,size:basis.contentSize(in:rect.size))).copy(using:&transform)!
+    }
     let path = CGMutablePath()
     func p(_ value: SpatialPoint) -> CGPoint { .init(x:rect.minX+value.x,y:rect.minY+value.y) }
     switch graphic.shape {
@@ -147,7 +156,8 @@ extension NotebookGraphicGeometry {
     case .plus:
       path.move(to:.init(x:rect.minX,y:rect.midY)); path.addLine(to:.init(x:rect.maxX,y:rect.midY))
       path.move(to:.init(x:rect.midX,y:rect.minY)); path.addLine(to:.init(x:rect.midX,y:rect.maxY))
-    case .connector: break
+    case .path: if let vector = graphic.path { path.addPath(vector.path(in:rect)) }
+    case .connector, .freehand: break
     }
     return path
   }
@@ -162,7 +172,7 @@ extension NotebookGraphicGeometry {
   /// their content envelope conservatively; partial source is explicitly marked.
   public static func paintPath(_ graphic: NotebookGraphic, layout: NotebookGraphicLayout?, size: CGSize) -> CGPath {
     guard graphic.showsGeometry else { return CGMutablePath() }
-    var result: CGPath = CGMutablePath()
+    var result: CGPath = graphic.freehand?.paintPath(size:size,transform:graphic.transform) ?? CGMutablePath()
     let width = graphic.style.strokeWidth
     func add(_ path: CGPath) { result = result.union(path) }
     func stroke(_ path: CGPath, dashed: Bool = true) {
@@ -181,7 +191,7 @@ extension NotebookGraphicGeometry {
         if head.closed { path.closeSubpath() }
         if head.filled { add(path) }; stroke(path,dashed:false)
       }
-    } else {
+    } else if graphic.freehand == nil {
       let inset = max(0,min(width/2,min(size.width,size.height)/2-0.01))
       let path = outlinePath(graphic,in:CGRect(origin:.zero,size:size).insetBy(dx:inset,dy:inset))
       if graphic.shape != .plus, graphic.style.fill != nil { add(path) }; stroke(path)

@@ -25,8 +25,8 @@ import XCTest
       let host = UIHostingController(rootView: view)
       let size = host.sizeThatFits(in: CGSize(width: width, height: 200))
       XCTAssertLessThanOrEqual(size.width, width+0.5)
-      XCTAssertLessThan(size.height, 110)
-      if width < 500 { XCTAssertGreaterThan(size.height, 70) }
+      XCTAssertLessThan(size.height, 155)
+      if width < 400 { XCTAssertGreaterThan(size.height, 115) }
       else { XCTAssertLessThan(size.height, 60) }
       window.frame = CGRect(origin: .zero, size: size); window.rootViewController = host; window.makeKeyAndVisible()
       host.view.frame = window.bounds; host.view.layoutIfNeeded()

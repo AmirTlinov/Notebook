@@ -94,6 +94,10 @@ struct AgentOverlayView: View {
         EditableElementContainer(reference: reference, coordinateScale: 1) {
           if let graphic = graph.nodes[element.id]?.graphic {
             NotebookGraphicElementView(graphic: graphic, reference: reference, layout: layout)
+          } else if element.kind == .nativeText {
+            NotebookNativeTextView(source:element.source,style:element.textStyle ?? .standard,reference:reference,
+              frame:frame,maximumHeight:pageSize.height-frame.y,isEditing:allowsInteraction && model.interactiveElementFocus == interactiveReference,
+              onEditingEnded:{ if model.interactiveElementFocus == interactiveReference { model.interactiveElementFocus = nil } },retainedPage:element)
           } else {
           PreparedAgentElementView(
             element: element,
@@ -116,7 +120,7 @@ struct AgentOverlayView: View {
           width: frame.width,
           height: frame.height
         )
-        .erased(by: cuts, appearance: appearance)
+        .erased(by: cuts, appearance: appearance,transform:graph.nodes[element.id]?.graphic.transform)
         .offset(x: frame.x, y: frame.y)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent-element-\(element.id)")
@@ -169,6 +173,6 @@ struct AgentOverlayReadiness {
   }
 
   func isReady(for elements: [AgentElement]) -> Bool {
-    elements.allSatisfy { $0.kind == .graphic || sources[$0.id] == $0 }
+    elements.allSatisfy { [.graphic,.nativeText].contains($0.kind) || sources[$0.id] == $0 }
   }
 }

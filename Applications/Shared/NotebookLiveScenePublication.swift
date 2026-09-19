@@ -25,9 +25,20 @@ extension NotebookAppModel {
     let board = presentedBoard(captured, boardID:boardID,cohort:cohort)
     let graph = board.graphicGraph()
     guard preview else { return graph }
-    let working = workingBoardGraphics(boardID: boardID, cohort: cohort)
+    let working = workingGraphics.filter {
+      ($0.surface == .board(boardID) || ($0.surface.kind == .cover && $0.surface.ownerID.flatMap { cohort.frame.index.ownerBoard(itemID:$0) } == boardID))
+        && ($0.publicationCursor.map { cohort.plan.revision < $0 } ?? true)
+    }
     let ids = Set(working.map(\.id))
-    let combined = NotebookGraphicGraph(Array(graph.nodes.values).filter { !ids.contains($0.id) } + working.map(\.node))
+    // A retained insertion is a live host, not a frozen copy of its geometry.
+    // SQL may already contain subsequent edits while the original cohort waits.
+    let admitted = working.isEmpty ? nil : boardHierarchy?.board(boardID)?.graphicGraph()
+    let nodes = working.map { object in
+      if object.accepted, let cursor = object.publicationCursor, sceneContentCursor >= cursor,
+        let current = admitted?.nodes[object.id], current.surface == object.surface { return current }
+      return object.node
+    }
+    let combined = NotebookGraphicGraph(Array(graph.nodes.values).filter { !ids.contains($0.id) } + nodes)
     return projectingGraphicCommands(combined) { .spatial(boardID: boardID, elementID: $0) }
   }
   /// The cohort admits physical hosts and excludes their pixels from its tiles.

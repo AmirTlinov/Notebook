@@ -9,7 +9,7 @@ final class NotebookPersistenceQueue {
     case fileDraft(String), fileWindow(UUID?), chatPanel(UUID?), runCommand(String)
     case page(UUID), document(UUID), documentState(UUID), documentDraft(UUID), documentReading(UUID)
     case board, spatialInk(UUID), presence, peerPresence(UUID), inputActivity(UUID)
-    case nativeText(UUID, String), elementState(UUID, String)
+    case elementState(UUID, String)
   }
 
   private struct Outcome {

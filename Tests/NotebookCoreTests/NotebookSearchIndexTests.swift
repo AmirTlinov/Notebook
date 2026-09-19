@@ -46,11 +46,11 @@ struct NotebookSearchIndexTests {
       #expect(try store.search("Café").results.first?.target.id == document)
       let cursor = try store.currentChangeCursor()
       let failing = NotebookStore(root: store.root) { point in if point == .beforeCommit { throw CocoaError(.fileWriteUnknown) } }
-      #expect(throws: CocoaError.self) { try failing.updateNativeSpatialText(boardID: board, elementID: "CamelCaseElement", text: "Новый исходник", finish: false, actor: actor) }
+      #expect(throws: CocoaError.self) { try updateTestNativeText(store:failing,boardID: board, elementID: "CamelCaseElement", text: "Новый исходник", finish: false, actor: actor) }
       #expect(try store.currentChangeCursor() == cursor)
       #expect(try store.search("движения").total == 1)
       #expect(try store.search("Новый").total == 0)
-      _ = try store.updateNativeSpatialText(boardID: board, elementID: "CamelCaseElement", text: "Новый исходник", finish: false, actor: actor)
+      _ = try updateTestNativeText(store:store,boardID: board, elementID: "CamelCaseElement", text: "Новый исходник", finish: false, actor: actor)
       #expect(try store.search("движения").total == 0)
       #expect(try store.search("НОВ").total == 1)
       _ = try store.deleteWorkspaceItem(itemID: document, actor: actor)
@@ -97,7 +97,7 @@ struct NotebookSearchIndexTests {
   @Test func sourceChangesInvalidateContinuationRatherThanMixingSnapshots() throws {
     try fixture { store, actor, board, _, _ in
       let page = try store.search("р", limit: 1), next = try #require(page.coverage.next)
-      _ = try store.updateNativeSpatialText(boardID: board, elementID: "CamelCaseElement", text: "Другой материал", finish: false, actor: actor)
+      _ = try updateTestNativeText(store:store,boardID: board, elementID: "CamelCaseElement", text: "Другой материал", finish: false, actor: actor)
       do { _ = try store.search("р", limit: 1, next: next); Issue.record("A stale cursor was accepted") }
       catch let error as CollaborationError { #expect(error.code == "search_cursor_stale") }
     }

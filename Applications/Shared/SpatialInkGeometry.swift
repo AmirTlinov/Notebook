@@ -100,19 +100,21 @@ enum SpatialInkGeometry {
   static var roundCapVertexCount: Int { InkStrokeGeometry.roundCapVertexCount }
   static func areCoincident(_ a: RenderPoint, _ b: RenderPoint) -> Bool { InkStrokeGeometry.areCoincident(a,b) }
   static func appendStrokeVertices(renderPoints: [RenderPoint], roundsStart: Bool = true,
-    roundsEnd: Bool = true, to vertices: inout [Vertex]) {
-    InkStrokeGeometry.appendStrokeVertices(renderPoints:renderPoints,roundsStart:roundsStart,roundsEnd:roundsEnd,to:&vertices)
+    roundsEnd: Bool = true, eraser: Bool = false, to vertices: inout [Vertex]) {
+    if eraser { InkStrokeGeometry.appendEraserVertices(renderPoints:renderPoints,includesStart:roundsStart,to:&vertices) }
+    else { InkStrokeGeometry.appendStrokeVertices(renderPoints:renderPoints,roundsStart:roundsStart,roundsEnd:roundsEnd,to:&vertices) }
   }
   static func appendStrokeVertices(
     points: [PKStrokePoint],
     color: SIMD4<Float>,
     roundsStart: Bool = true,
     roundsEnd: Bool = true,
+    eraser: Bool = false,
     to vertices: inout [Vertex]
   ) {
     let renderPoints = renderPoints(from: points, color: color)
     appendStrokeVertices(renderPoints: renderPoints, roundsStart: roundsStart,
-      roundsEnd: roundsEnd, to: &vertices)
+      roundsEnd: roundsEnd, eraser: eraser, to: &vertices)
   }
 
   private static func renderPoints(
