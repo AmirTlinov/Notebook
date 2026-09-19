@@ -1,5 +1,42 @@
 # Проверка Notebook
 
+## 19 сентября, 10:29 МСК — GUI-250: dependency admission и интеграционные расхождения
+
+Первый full MCP run: 147/151. Три scientific/native fixture содержали устаревший
+`notebook-build.json` (bridge identity); generated JS/worker/assets уже совпадали.
+Они пересозданы прежними генераторами. SDK types test теперь находит pinned tsc
+от своего модуля, не от cwd; root invocation больше не даёт ENOENT.
+**Full MCP151 PASS**, `/tmp/gui250-mcp-full-v2.log`; отдельные compiler/science/SDK
+**20 PASS**, `/tmp/gui250-fixtures-js-v1.log`. Нативная начальная справка теперь
+называет MP4 и saved/presented, а не устаревший список форматов.
+
+Full Swift run на 9729c7e не принят: выявлены несовпадения старых тестов с API2,
+22 operations/26 KiB discovery, DB12 и manifest11. Они приведены к действующему
+контракту (лимиты продукта не изменены): **Host2/Core17 PASS**,
+`/tmp/gui250-contracts-core-v2.log`. Первый целевой запуск не скомпилировал
+новую test-only проверку из-за внутреннего JSONValue API; исправлено без
+изменения production contract.
+
+Прогон нашёл и настоящий GUI-242 regression: package dependency discovery
+декодировал document block до прежнего admission 4096 fragments/16 MiB. Теперь
+discovery и source merger используют один bounded SQL metadata gate до первого
+body decode. Initial-state children не сканируются как package owners. Проверки
+oversized и слишком дробного повреждённого тела отклоняют discovery/delivery до
+decode; прежние большие package closure/retry/offline правила сохранены.
+**Core8/Host2 PASS**, `/tmp/gui250-admission-core-v2.log`.
+**Simulator3 PASS**, `.build/gui250-admission-sim-v1.xcresult`: compiler package,
+real offline 3D resources/recovery и worker/media/checkpoint через native owners;
+warnings0/skips0. Source `790b0b14d9dd97922294309795143a91311bb71c66bc8c060d30436eabfb0843`.
+
+Full Swift ещё не PASS: сохранены отрицательные результаты в
+`/tmp/gui250-swift-full-v1.log` (retained deleted sources, старые domain transfer
+fixtures без inverse blobs, UUID source edit, projection retry, PageVision,
+late computation). Core runner остановлен после получения этих ошибок во время
+100k нагрузок, остальные targets закончили; незавершённая нагрузка не считается
+PASS. Первая Release сборка `.build/gui250-release-v1` явно остановлена после
+выявления integration дефекта; ничего из неё не установлено/не принято.
+GUI-250/240 остаются In Progress, физическая пара не изменена.
+
 ## 19 сентября, 10:17 МСК — GUI-249: frozen model связан с настоящим capture
 
 Native document owner добавляет optional program proof только при явной

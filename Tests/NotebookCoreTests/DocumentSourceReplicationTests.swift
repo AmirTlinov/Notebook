@@ -358,6 +358,9 @@ struct DocumentSourceReplicationTests {
           manifestHash: try b.currentSQL!.putBlob(bytes), byteCount: bytes.count)
       }
       #expect(throws: NotebookStorageError.limitExceeded("document_replication_block")) {
+        try b.missingBlobHashes(for: packet)
+      }
+      #expect(throws: NotebookStorageError.limitExceeded("document_replication_block")) {
         try b.applyRemoteChange(packet, peerID: peer)
       }
       #expect(try b.loadDocument(id) == before)

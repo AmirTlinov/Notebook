@@ -60,11 +60,11 @@ extension NotebookStore {
     try prepareProgramDependencies()
     let db = currentSQL!, manifest = change.manifestHash
     if try db.rows("SELECT 1 FROM manifest_program_discovery WHERE manifest_hash=?", [.text(manifest)]).isEmpty {
-      var after = ""
+      var after = "", admittedDocumentProgram: String?
       while true {
         try Task.checkCancellation()
         let rows = try db.rows("""
-          SELECT address,blob_hash FROM manifest_records WHERE manifest_hash=? AND address>? AND blob_hash IS NOT NULL AND (
+          SELECT address,blob_hash,(SELECT length(data) FROM blobs WHERE hash=blob_hash) FROM manifest_records WHERE manifest_hash=? AND address>? AND blob_hash IS NOT NULL AND (
             address GLOB 'pages/*#/elements/@*' OR address GLOB 'documents/*#/blocks/@*' OR
             address GLOB 'board.json#/boards/@*/board/elements/@*' OR
             address GLOB 'pages/*#/collaboration/fields/@*' OR address GLOB 'documents/*#/collaboration/fields/@*' OR
@@ -73,6 +73,21 @@ extension NotebookStore {
           """, [.text(manifest), .text(after)])
         guard let last = rows.last else { break }
         for row in rows {
+          let address = row[0].text!
+          if address.hasPrefix("documents/") {
+            if let block = address.range(of: "#/blocks/@") {
+              let end = address[block.upperBound...].firstIndex(of: "/") ?? address.endIndex
+              let root = String(address[..<end])
+              if admittedDocumentProgram != root {
+                _ = try incomingDocumentProgramRecords(root, manifestHash: manifest)
+                admittedDocumentProgram = root
+              }
+              // initialState children do not own programPackage references.
+              guard address == root else { continue }
+            }
+            guard let bytes = row[2].integer else { throw NotebookStorageError.blobMissing(row[1].text!) }
+            guard bytes <= Self.documentProgramReplicationBytes else { throw NotebookStorageError.limitExceeded("document_replication_block") }
+          }
           let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: db.blob(row[1].text!))
           guard fragment.address == row[0].text else { throw NotebookStorageError.invalidTransaction("program dependency address") }
           try noteProgramDependencies(manifestHash: manifest, fragment: fragment)

@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFile,mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join,resolve} from 'node:path';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {sdkReference,sdkInputs,sdkOutputs} from '../src/sdk-contracts.js';
@@ -192,7 +193,7 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
       const wrong:number=d.data?.block.kind;
     }`);
     await writeFile(join(root,'tsconfig.json'),JSON.stringify({compilerOptions:{strict:true,noEmit:true,noEmitOnError:true,skipLibCheck:false,lib:['ES2023'],types:[],target:'ES2023',module:'esnext'},files:['notebook-sdk.d.ts','script.ts']}));
-    const compiler=resolve('node_modules/.bin/tsc');
+    const compiler=fileURLToPath(new URL('../node_modules/.bin/tsc',import.meta.url));
     await run(compiler,['--project',join(root,'tsconfig.json')],{maxBuffer:1024*1024});
   } finally { await rm(root,{recursive:true,force:true}); }
 });
