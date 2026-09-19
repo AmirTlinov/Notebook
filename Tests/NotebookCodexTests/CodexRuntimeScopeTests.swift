@@ -5,6 +5,20 @@ import NotebookCore
 
 @Suite("Isolated Codex endpoint and catalogue admission")
 struct CodexRuntimeScopeTests {
+  @Test func workspaceEndpointKeepsToolPolicyAndNeverEnablesAnExplicitlyDisabledServer() throws {
+    let endpoint: JSONValue = .object(["command": .string("/signed/node"), "args": .array([.string("/bundled/notebook")]),
+      "env": .object(["NOTEBOOK_SOCKET": .string("/workspace/bridge.sock")]), "enabled": .bool(true), "required": .bool(true)])
+    let inherited: JSONValue = .object(["enabled_tools": .array([.string("notebook_context")]),
+      "disabled_tools": .array([.string("notebook_execute")]), "tool_timeout_sec": .number(35),
+      "url": .string("https://old.invalid"), "http_headers": .object(["Authorization": .string("not-forwarded")])])
+    let scoped = try CodexNotebookToolPolicy.scoped(endpoint, inheriting: .object(["config": .object(["mcp_servers": .object(["notebook": inherited])])]))
+    for key in ["enabled_tools", "disabled_tools", "tool_timeout_sec"] { #expect(scoped[key] == inherited[key]) }
+    #expect(scoped["command"] == endpoint["command"]); #expect(scoped["url"] == nil); #expect(scoped["http_headers"] == nil)
+    let disabled: JSONValue = .object(["config": .object(["mcp_servers": .object(["notebook": .object(["enabled": .bool(false)])])])])
+    #expect(throws: CodexNotebookToolPolicy.disabled) { try CodexNotebookToolPolicy.scoped(endpoint, inheriting: disabled) }
+    #expect(try CodexNotebookToolPolicy.scoped(endpoint, inheriting: .object(["config": .object([:])])) == endpoint)
+  }
+
   private func configuration() throws -> CodexScopedConfiguration {
     let scope = try CodexRuntimeScope(directory: URL(fileURLWithPath: "/tmp/acceptance-test/run"),
       toolsEntry: URL(fileURLWithPath: "/tmp/acceptance-test/tools.mjs"), socket: URL(fileURLWithPath: "/tmp/acceptance-test/bridge.sock"))

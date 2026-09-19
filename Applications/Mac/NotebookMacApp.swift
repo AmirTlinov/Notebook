@@ -26,6 +26,11 @@ struct NotebookMacApp: App {
         NotebookMacCodexView(model: model).id(model.workspaceHeader?.workspaceID)
       } else { Text(lifecycle.launch.message).padding() }
     }.defaultSize(width: 980, height: 720)
+    Window("Подключение внешнего Codex", id: "codex-integration") {
+      if let model = lifecycle.launch.model {
+        NotebookMacCodexIntegrationView(model: model)
+      } else { Text(lifecycle.launch.message).padding() }
+    }.defaultSize(width: 480, height: 280)
     MenuBarExtra("Notebook", image: "NotebookStatusIcon") {
       Button("Открыть Notebook") { openWindow(id: "workspace"); NSApp.activate() }
       Divider()
@@ -43,6 +48,7 @@ struct NotebookMacApp: App {
           .disabled(model.pasteDestinations.isEmpty)
         Menu("Codex") {
           Button("Задачи Codex…") { openWindow(id: "codex-tasks"); NSApp.activate() }
+          Button("Подключение внешнего Codex…") { openWindow(id: "codex-integration"); NSApp.activate() }
           if let error = model.agentStartupError { Text(error) }
           Text("Разговор, модель и разрешения принадлежат Codex")
         }
@@ -217,5 +223,28 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
       sender.reply(toApplicationShouldTerminate: saved)
     }
     return .terminateLater
+  }
+}
+
+
+private struct NotebookMacCodexIntegrationView: View {
+  let model: NotebookAppModel
+  @State private var busy = false
+  @State private var message: String?
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text("Codex Desktop / CLI → Notebook").font(.headline)
+      Text("Настроить инструменты Notebook в общем профиле Codex. Это нужно только для работы из внешнего Codex; встроенная панель Notebook работает независимо.")
+      Text("Настройка обновляет адрес MCP, сохраняя ограничения инструментов. Уже открытой внешней задаче может потребоваться повторное подключение MCP.").font(.callout).foregroundStyle(.secondary)
+      if let message { Text(message).textSelection(.enabled) }
+      Button(busy ? "Настраиваю…" : "Настроить внешнее подключение") {
+        busy = true; message = nil
+        Task {
+          defer { busy = false }
+          do { try await model.registerExternalCodexTools(); message = "Подключение настроено. Ограничения общего профиля сохранены." }
+          catch { message = NotebookCodexSidecar.message(error) }
+        }
+      }.disabled(busy).accessibilityIdentifier("notebook-external-codex-setup")
+    }.padding(24).frame(minWidth: 420)
   }
 }

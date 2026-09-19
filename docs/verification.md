@@ -13388,3 +13388,57 @@ Resize + Stop 0.00105 s при writer delay 2 s; после close сохранё
 `slice4-tests.log`, `native-output-probe.swift`, `approval-probe.swift`.
 Физический picker/жест после этой правки ещё не проверен; ожидается один общий
 Xcode/device слот. Ни login, ни длительная приёмка, ни полный suite не повторялись.
+
+
+## GUI-271 — независимое встроенное подключение и явная внешняя настройка
+
+Startup больше не вызывает глобальную регистрацию MCP. Встроенный native
+start/resume получает workspace endpoint и сохраняет эффективные tool filters
+Codex; disabled notebook даёт точное сообщение, не блокируя каталог/аккаунт.
+Внешняя настройка доступна отдельным действием в меню Codex. Старый `mcp add`,
+стирающий фильтры/таймауты, заменён адресным `config/batchWrite` с expectedVersion
+и readback; второго writer или фоновой repair-службы нет.
+
+Прицельный policy test PASS; 8 существующих scope tests PASS (один отдельный
+старый opt-in тест не запускался). Настоящий подписанный Codex 0.155.0, временный
+CODEX_HOME, изолированный store + настоящий NotebookScriptCoordinator/IPC/MCP:
+встроенный notebook_context/observe выполнен без внешней регистрации и без
+создания config.toml; явный first setup создал адрес; repair сохранил
+`enabled_tools`, `disabled_tools`, timeout 35 s. И внешний, и встроенный runtime
+после repair выдали только notebook_context, без запрещённого notebook_execute;
+оба реально прочитали тот же workspaceID/cursor. При enabled=false каталог
+открылся, подключение задачи отказало без изменения config. Модель, login и
+пользовательские токены не использовались. Доказательство:
+`.build/gui-183/audit/policy-probe.{swift,log}`. Физический UI ожидает общего слота.
+
+GUI-272 не реализуется: 19 сентября Амир явно выбрал оставить диктовку как есть.
+Это не утверждение о публичности её нынешнего private HTTP/JWT-пути; задача
+оставлена в Backlog. Длительную совместную работу Амир проверяет самостоятельно.
+
+
+### Итоговая проверка GUI-270–271, 19 сентября 2026, 19:53 UTC
+
+Private Notebook Remote Test Mac+iPad собраны и установлены тестовым runner,
+production-пара не заменялась. Mac native `testLargeRequestsStayAddressableAndEachDecisionExecutesOnce`
+— 1/1 PASS; физический iPad UI
+`testEveryLargeApprovalIsReachableAndDecidesOnlyItsNativeQuestion` — 1/1 PASS.
+Реальным UI tap выбран четвёртый вопрос из четырёх (по 60 KB), прочитан полный
+его текст/command, затем адресно отклонены все четыре; итоговый счётчик ровно4.
+Скриншот просмотрен, picker и кнопки не перекрыты. Quoting большого payload не
+обрезает вопрос; детали запроса также идут по зарезервированной control-полосе.
+Отдельный Core test проверил этот приоритет и generation-bound control ID.
+Квитанции: `.build/gui-183/audit/slice45-mac.xcresult`,
+`slice45-r2-ipad.xcresult`, `physical-approvals/` и `approval-control-test.log`.
+В обоих итоговых xcresult нет skips, failures и runtime warnings.
+
+Первый UI запуск не дошёл до сценария: acceptance bundle требовал manifest
+раньше явного DEBUG fixture. Порядок запуска теперь как на Mac: только явно
+запрошенный disposable fixture имеет собственный store; обычный private launch
+по-прежнему требует manifest. Это исправлено и проверено повторным физическим
+запуском; первый failure не скрыт (`slice45-ipad.xcresult`). Simulator не использовался.
+
+Новое окно внешней настройки Mac скомпилировано, backend setup/repair реально
+проверен выше. Прямой UI click этой кнопки не подтверждён: Computer Use дважды
+вернул ScreenCaptureKit -3811 до получения UI. Это оставлено отдельной границей,
+а не записано как PASS. Повторного login, WAN-теста и длительного прогона не было.
+GUI-272/диктовка не менялась; GUI-183 не объявляется полной release-приёмкой.

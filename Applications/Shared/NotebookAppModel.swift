@@ -3619,6 +3619,16 @@ final class NotebookAppModel {
       return try await persistence.submit { try $0.routedChatJobs(author: author, computer: author) }
     }
 
+    /// Deliberate external integration, never a prerequisite for opening a task.
+    func registerExternalCodexTools() async throws {
+      guard allowsCodexRegistration, acceptance == nil else {
+        throw NotebookPersistenceQueue.Failure(message: "Тестовая или неактивированная сборка не меняет общие инструменты Codex. Откройте установленный Notebook.")
+      }
+      let installation = try await Task.detached { try CodexRuntimeInstallation.discover() }.value
+      guard let entry = Bundle.main.resourceURL?.appendingPathComponent("NotebookTools/dist/index.mjs") else { throw CodexBridgeError.notInstalled }
+      try await installation.registerNotebookTools(entry: entry, socket: NotebookIPC.defaultSocketURL)
+    }
+
     private func startCodexSidecar() async {
       guard codexSidecar == nil, let workspaceID = workspaceHeader?.workspaceID else { return }
       do {
@@ -3637,7 +3647,6 @@ final class NotebookAppModel {
             attributes: [.posixPermissions: 0o700])
           scope = try CodexRuntimeScope(directory: directory, toolsEntry: entry, socket: commandSocketURL)
         } else {
-          try await installation.registerNotebookTools(entry: entry, socket: NotebookIPC.defaultSocketURL)
           directory = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Notebook/Codex", isDirectory: true)
           scope = nil

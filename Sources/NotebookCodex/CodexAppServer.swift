@@ -505,8 +505,17 @@ public actor CodexAppServer {
     guard runtimeScope != nil else {
       let workspace = workspaceID ?? original["threadId"]?.string.flatMap { threadWorkspaces[$0] }
       guard let workspace, let tools = workspaceTools[workspace] else { return original }
+      let cwd: String
+      if let path = original["cwd"]?.string { cwd = path }
+      else if let id = original["threadId"]?.string {
+        let thread = try await rpc.request("thread/read", params: .object(["threadId": .string(id), "includeTurns": .bool(false)]))
+        guard let path = thread["thread"]?["cwd"]?.string else { throw CodexBridgeError.invalidResponse }
+        cwd = path
+      } else { throw CodexBridgeError.invalidInput }
+      let effective = try await rpc.request("config/read", params: .object(["includeLayers": .bool(false), "cwd": .string(cwd)]))
+      let scopedTools = try CodexNotebookToolPolicy.scoped(tools, inheriting: effective)
       var result = original
-      result["config"] = .object(["mcp_servers": .object(["notebook": tools])])
+      result["config"] = .object(["mcp_servers": .object(["notebook": scopedTools])])
       return result
     }
     guard let configuration = scopedConfiguration, self.rpc === rpc else { throw CodexBridgeError.unsafeEndpoint }
