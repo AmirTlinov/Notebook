@@ -1,5 +1,31 @@
 # Проверка Notebook
 
+## 19 сентября, 13:09 МСК — GUI-250: большой ресурс и понятный отказ exportFrame
+
+Installed private v7 получил настоящий файл 300 MiB через обычный MCP staging.
+WebKit прочитал и сверил 104 байта четырьмя HTTP Range запросами, включая границу
+4 MiB частей и конец файла. Прежний отказ PNG вызван отсутствующим авторским
+`notebook.exportFrame`, а не лимитом ресурса. После добавления явного static-raster
+контракта PNG сохранён и осмотрен: SHA256
+`7c392144f0d020554e912911a56cca89541fd7158b21805d1d7e179990a989be`.
+Portable export содержит 77 частей (314574135 байт), все hashes проверены потоково;
+обычный import создал `98249ce9-5d95-51e2-a3d8-7183264f44ed`, сохранил предыдущие
+материалы и дал побайтно тот же PNG. Receipts: `.build/gui250-large-public/`.
+Это локальный saved/exported roundtrip, не delivery, offline-device или memory gate.
+
+Единственный native lifecycle bridge теперь переносит bounded author exception
+в публичное сообщение ошибки, вместо теряющего причину WebKit localized error.
+Требование exportFrame не ослаблено. Native export positive/negative и lifecycle
+проверены вместе с camera regressions: **7 PASS**, warnings/skips **0**,
+`.build/gui250-camera-diagnostics-mac-v4/verification.json`, source
+`291c8838776925686422245b2f7ac5c2b29eb05e82ea767da37b78c7e16b30ab`.
+Installed camera/control повтор ещё не принят; прежние UI FAIL не отменены.
+
+Run Loops + Thread Activity + Hangs probe остановлен после 371.9 s финализации
+5-секундной записи: live sample показывает работу CoreSymbolicationDT, trace
+не открывается (`Document Missing Template`). `.build/gui250-runloop-probe-v1/`
+содержит отрицательную квитанцию и sample; это не performance acceptance.
+
 ## 19 сентября, 12:43 МСК — GUI-250: независимая Mac identity и пустое назначение portable import
 
 Mac acceptance application/UI runner получили стабильный суффикс checkout

@@ -354,7 +354,10 @@ import WebKit
     do {
       _ = try await DocumentCanonicalExport.publication(cut: .init(document: document, state: .init(id: document.id, actor: UUID())), options: .init(format: .png), jobID: UUID(), store: store, persistence: persistence)
       XCTFail("A running frame with no author export contract cannot be called the saved state")
-    } catch { XCTAssertTrue(String(describing: error).contains("program_export_unavailable"), "\(error)") }
+    } catch {
+      XCTAssertEqual((error as? CollaborationError)?.code, "program_runtime_error")
+      XCTAssertTrue(error.localizedDescription.contains("program_export_unavailable"), "The public job must retain the author's refusal: \(error)")
+    }
   }
 
   func testStandaloneHTMLReopensTheRealSoundModelOfflineAtItsSavedPhase() async throws {

@@ -84,14 +84,26 @@ enum NotebookProgramBridge {
         guard !completed else { return }; completed = true
         continuation.resume(throwing: SceneRenderError.snapshotPending("program_\(operation)_timeout"))
       }
-      web.callAsyncJavaScript("return await window[controller][operation](JSON.parse(argument));",
+      // WebKit's localized exception hides the author's reason. Carry a bounded
+      // diagnostic through the same bridge so public jobs can explain refusal.
+      web.callAsyncJavaScript("""
+        try { return {ok:true,value:(await window[controller][operation](JSON.parse(argument)))??null}; }
+        catch(error) { return {ok:false,message:String(error).slice(0,1024)}; }
+        """,
         arguments: ["controller": controller, "operation": operation, "argument": encoded], in: nil, in: .page) { result in
         guard !completed else { return }; completed = true; deadline.cancel()
         switch result {
         case .success(let value):
           do {
             let data = try JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed])
-            continuation.resume(returning: try JSONDecoder().decode(JSONValue.self, from: data))
+            let reply = try JSONDecoder().decode(JSONValue.self, from: data)
+            if reply["ok"] == .bool(false), case .string(let message) = reply["message"] {
+              throw CollaborationError("program_runtime_error", "\(operation): \(message)")
+            }
+            guard reply["ok"] == .bool(true), let value = reply["value"] else {
+              throw CollaborationError("program_runtime_error", "\(operation): invalid lifecycle reply")
+            }
+            continuation.resume(returning: value)
           } catch { continuation.resume(throwing: error) }
         case .failure(let error): continuation.resume(throwing: error)
         }
