@@ -16087,3 +16087,16 @@ Aa/ссылка/clipboard/сохранение/повторное открыти
 strict TypeScript PASS; полный test TypeScript не заявлен.
 Это адресные жесты на физическом устройстве и synthetic UIKit Pencil
 через установленный scene owner; не hardware-Pencil/30мин/full acceptance.
+
+В20:22UTC signed130 из `.build/gui266-build130/build.json` установлен поверх
+129 на production Mac и physical iPad. `.build/gui266-install130/installation.json`:
+normal termination/drain, byte-for-byte Mac store/spaces/registry/activation до
+relaunch и iPad registry сохранены; без uninstall/reset. Обе версии130
+прочитаны из установленной пары. Installed MCP ready23103: presence,
+pageHeader и boardContentRevision data/basis/coverage совпали с последним
+успешным baseline23097 (20:12UTC). Непосредственно перед обновлением IPC129
+был недоступен; это отдельно сохранено в live-before.json, не названо PASS.
+После обновления канал готов. Production screenshot просмотрен, но содержит
+lock-screen overlay: unlocked postinstall gesture и аппаратный Pencil не
+заявлены. Живое содержание для проверки не изменялось. Xcode/device окно
+освобождено; пользовательская приёмка GUI-266 остаётся открытой.
