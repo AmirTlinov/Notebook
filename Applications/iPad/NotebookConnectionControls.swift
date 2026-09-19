@@ -24,22 +24,20 @@ enum NotebookConnectionGlyph {
   }
 }
 
-final class NotebookConnectionController: UIViewController, UIPopoverPresentationControllerDelegate {
+final class NotebookConnectionController: UIViewController {
   enum Mode { case routing, ends }
   let mode: Mode
   private var connection: NotebookGraphicConnection
   private var routes: [UIButton] = []
-  private let startButton = ElementMenuButton(type:.system)
-  private let endButton = ElementMenuButton(type:.system)
+  private let startButton = NotebookContextMenuButton(type:.system)
+  private let endButton = NotebookContextMenuButton(type:.system)
   var setRouting: ((NotebookGraphicConnection.Routing) -> Void)?
   var setHead: ((NotebookGraphicConnection.Arrowhead,NotebookGraphicConnection.Terminal) -> Void)?
-  var onDismiss: (() -> Void)?
   init(mode: Mode, connection: NotebookGraphicConnection) {
     self.mode = mode; self.connection = connection
     super.init(nibName:nil,bundle:nil)
     modalPresentationStyle = .popover
     preferredContentSize = .init(width:280,height:100)
-    popoverPresentationController?.delegate = self
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
   override func loadView() {
@@ -109,10 +107,6 @@ final class NotebookConnectionController: UIViewController, UIPopoverPresentatio
     }
   }
   @objc private func routeChanged(_ button: UIButton) { setRouting?(NotebookGraphicConnection.Routing.allCases[button.tag]) }
-  func adaptivePresentationStyle(for controller: UIPresentationController) -> UIModalPresentationStyle { .none }
-  func popoverPresentationControllerDidDismissPopover(_ popoverPresentationController: UIPopoverPresentationController) { onDismiss?() }
-  func presentationControllerDidDismiss(_ presentationController: UIPresentationController) { onDismiss?() }
-  override func viewDidDisappear(_ animated: Bool) { super.viewDidDisappear(animated); onDismiss?() }
 }
 
 extension NotebookGraphicConnection.Routing {

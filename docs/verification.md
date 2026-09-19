@@ -13575,3 +13575,57 @@ Installed MCP ready22139: presence, page header, board revision и их basis
 Версии прочитаны с обоих устройств; свежий physical screenshot127 просмотрен:
 существующая страница2/4 и её текст сохранены. Live content для тестов не менялся.
 Xcode/device слот после readback освобождён.
+
+
+## GUI-266: единый владелец контекстных меню холста — 128
+
+Срез0.3.125(128), wire34/manifest16. `NotebookContextMenus` принадлежит одному
+`SpatialWorkspaceView` и имеет один native host/surface для текста, объектов,
+групп и workspace cards. Поставщики передают действия/якорь; показ, стиль,
+размещение, native menu и палитры, input exclusion и cleanup принадлежат
+этому владельцу. Старые object toolbarSurface/layout и text panel host/layout
+удалены; `ElementMenuButton` заменён общим `NotebookContextMenuButton`, который
+используется также меню Aa и концов стрелки. Рамки/resize остаются у geometry
+controls, TextKit сохраняет владение диапазоном и текстовыми командами.
+Поздний hide старого source не может закрыть новый контекст.
+
+Регрессии обновлены на общий host и добавляют фактический переход
+object → text selection, один экземпляр панели, native Aa/clipboard,
+палитры/подменю, группы и карточки. Проверка/установка ещё не выполнялась:
+Xcode runner занят отдельной задачей GUI240, запрошена передача слота.
+
+128a:10/12 PASS,0 runtime warnings. Два старых сценария ожидали label «Связь»
+вместо «Стрелка» и удалённые кнопки толщины вместо действующего slider.
+128b:10/12 PASS,0 warnings; палитра, изменение/повторное открытие, native
+endpoint/routing menus прошли. Reopen-тест нажимал в пустой центр bounding box
+угловой стрелки, а не на stroke; clipboard assertion читала значение сразу
+после touch, не ожидая фактического результата UITextView. Тесты исправлены
+по наблюдаемому UI; runtime между a/b/c не менялся.128c повторяет тот же
+полный выбранный набор с ожиданием фактического результата вставки.
+
+128c:11/12 PASS,0warnings. Endpoint reopen/clipboard подтвердились; native
+Aa выявил настоящий конфликт: временная потеря first responder при открытии
+UIKit menu вызывала finishEditing и переключала текст в object selection.
+В128d этот второй владелец завершения удалён: модель владеет editing session,
+внешний canvas tap/navigation снимает editor, SwiftUI onDisappear сохраняет
+черновик. UIKit focus и текстовый диапазон больше не завершают model session.
+
+Финальный128d `.build/gui266-context128d/verification.json`: **12/12 physical
+iPad PASS** (6 native + 6 UI),0skips/runtime warnings. Source SHA256
+`42fc8fc742855f48f680bd1ad9fd9ebee036f298e8fb3a209164dcea30355d69`.
+Проверены single shared surface/source cleanup/input boundary/44pt targets,
+Aa/fonts/style/link/save/reopen, прямой clipboard, object↔text selection,
+цвет/толщина/dash и повторное открытие палитры, native endpoint/routing menus,
+их сохранение, группы и workspace card. Финальные screenshots текста/объекта/
+палитры из `gui266-context128d-images` просмотрены. Это scoped physical UI,
+не hardware Pencil, FPS/CPU/GPU или30-minute full acceptance.
+В19:13UTC signed0.3.125(128) из `.build/gui266-build128/build.json` установлен
+поверх127 на production Mac и physical iPad. `.build/gui266-install128`:
+ordinary terminate drained PID39931; Mac store/spaces/registry/activation
+bytes до relaunch и iPad registry неизменны, без force quit/uninstall/reset.
+Версии128 прочитаны на обеих сторонах; installed MCP ready22926: presence,
+pageHeader и boardContentRevision data/basis совпали с baseline22869;
+selection заново опубликована в новом сеансе. Production screenshot iPad
+просмотрен: прежняя страница2/4 с «ПриветПривет». Live content для проверки
+не менялся. Xcode/device окно освобождено после readback; GUI240 согласовал
+следующий краткий Mac UI-only проход перед GUI183.

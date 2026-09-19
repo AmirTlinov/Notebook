@@ -3,9 +3,8 @@ import UIKit
 
 /// Native anchored palette. The model owns edits; this controller owns only
 /// which part of the style the person is choosing and the system colour picker.
-final class NotebookElementStyleController: UIViewController, UIPopoverPresentationControllerDelegate, UIColorPickerViewControllerDelegate {
+final class NotebookElementStyleController: UIViewController, UIColorPickerViewControllerDelegate {
   var updateStyle: ((inout NotebookGraphic.Style) -> Void) -> Void = { _ in }
-  var onDismiss: (() -> Void)?
   private var style: NotebookGraphic.Style
   private let permitsFill: Bool
   private let channel = UISegmentedControl(items: ["Линия", "Заливка"])
@@ -27,7 +26,6 @@ final class NotebookElementStyleController: UIViewController, UIPopoverPresentat
     super.init(nibName:nil,bundle:nil)
     modalPresentationStyle = .popover
     preferredContentSize = .init(width: 304, height: permitsFill ? 326 : 286)
-    popoverPresentationController?.delegate = self
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
   override func loadView() {
@@ -121,9 +119,6 @@ final class NotebookElementStyleController: UIViewController, UIPopoverPresentat
     var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
     if viewController.selectedColor.getRed(&r,green:&g,blue:&b,alpha:&a) { applyColor(.init(red:r,green:g,blue:b)) }
   }
-  func popoverPresentationControllerDidDismissPopover(_ popoverPresentationController: UIPopoverPresentationController) { onDismiss?() }
-  func presentationControllerDidDismiss(_ presentationController: UIPresentationController) { onDismiss?() }
-  func adaptivePresentationStyle(for controller: UIPresentationController) -> UIModalPresentationStyle { .none }
   private static func color(_ value: SpatialInkColor) -> UIColor { .init(red:value.red,green:value.green,blue:value.blue,alpha:1) }
   private static func line(width: Double, dash: Int = 0) -> UIImage {
     UIGraphicsImageRenderer(size:.init(width:42,height:24)).image { _ in

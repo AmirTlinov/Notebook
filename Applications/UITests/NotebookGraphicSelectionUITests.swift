@@ -22,6 +22,7 @@ import XCTest
     b.tap()
     XCTAssertTrue(app.buttons["finish-graphic-selection"].waitForExistence(timeout:3))
     XCTAssertEqual(app.buttons["finish-graphic-selection"].label,"Завершить выбор: 2")
+    XCTAssertEqual(app.otherElements.matching(identifier:"notebook-context-menu").count,1)
     link.tap()
     let three = XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in app.buttons["finish-graphic-selection"].label == "Завершить выбор: 3" },object:nil)
     XCTAssertEqual(XCTWaiter.wait(for:[three],timeout:3),.completed)

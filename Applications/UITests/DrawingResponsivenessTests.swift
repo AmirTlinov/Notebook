@@ -26,7 +26,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     let format = app.buttons["native-text-format"]
     XCTAssertTrue(format.waitForExistence(timeout:3))
     XCTAssertLessThan(abs(format.frame.midY-editor.frame.midY),140,"The menu belongs beside the selected text, not to the keyboard")
-    XCTAssertLessThanOrEqual(app.otherElements["native-text-selection-panel"].frame.width,200)
+    XCTAssertLessThanOrEqual(app.otherElements["notebook-context-menu"].frame.width,200)
+    XCTAssertEqual(app.otherElements.matching(identifier:"notebook-context-menu").count,1)
+    XCTAssertFalse(app.buttons["edit-agent-element"].exists)
     for id in ["native-text-cut","native-text-copy","native-text-paste"] { XCTAssertTrue(app.buttons[id].exists) }
     XCTAssertFalse(app.buttons["native-text-actions"].exists)
     format.tap(); XCTAssertTrue(app.buttons["Шрифт"].waitForExistence(timeout:3)); app.buttons["Шрифт"].tap()
@@ -53,6 +55,10 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertGreaterThan(text.frame.midY,before.midY+40)
     XCTAssertEqual(paper.frame,originalPaper); XCTAssertEqual(paper.value as? String,ink)
     XCTAssertFalse(editor.exists,"Holding text moves it instead of creating another editor or curling paper")
+    XCTAssertTrue(app.buttons["edit-agent-element"].waitForExistence(timeout:3))
+    XCTAssertEqual(app.otherElements.matching(identifier:"notebook-context-menu").count,1)
+    XCTAssertFalse(format.exists,"Object selection replaces text-selection actions in the same context host")
+    let objectMenu = XCTAttachment(screenshot:app.screenshot()); objectMenu.name = "shared-object-context"; objectMenu.lifetime = .keepAlways; add(objectMenu)
     app.coordinate(withNormalizedOffset:.zero).withOffset(.init(dx:text.frame.midX,dy:text.frame.midY)).doubleTap()
     XCTAssertTrue(editor.waitForExistence(timeout:3))
     XCTAssertEqual(editor.value as? String,"Styled")
@@ -90,6 +96,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     editor.coordinate(withNormalizedOffset:.init(dx:0.05,dy:0.5)).doubleTap()
     let paste = app.buttons["native-text-paste"]
     XCTAssertTrue(paste.waitForExistence(timeout:3)); paste.tap()
+    // Observe the completed text update, not just the synthesized touch event.
+    let pasted = XCTNSPredicateExpectation(predicate:NSPredicate(format:"value == %@","Second "),object:editor)
+    XCTAssertEqual(XCTWaiter.wait(for:[pasted],timeout:3),.completed)
     XCTAssertEqual(editor.value as? String,"Second ")
     app.coordinate(withNormalizedOffset:.init(dx:0.35,dy:0.60)).tap()
     XCTAssertTrue(editor.waitForNonExistence(timeout:3))
@@ -305,7 +314,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture",
       "--notebook-native-connector","--notebook-native-geometry-edit"] + (onPage ? ["--notebook-native-graphic-page"] : [])
     launchPortraitFixture(app)
-    let line = app.images["Связь"]
+    let line = app.images["Стрелка"]
     XCTAssertTrue(line.waitForExistence(timeout:10)); line.tap()
     let ends = app.buttons["graphic-ends-menu"], routing = app.buttons["graphic-routing-menu"]
     XCTAssertTrue(ends.waitForExistence(timeout:5)); XCTAssertTrue(routing.isHittable)
@@ -345,7 +354,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(neighbour.frame,neighbourFrame)
     proof("connection-compact-capsule")
     app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
-    XCTAssertTrue(line.waitForExistence(timeout:10)); line.tap()
+    XCTAssertTrue(line.waitForExistence(timeout:10))
+    // The elbow's bounding-box center is empty paper, not its hit path.
+    line.coordinate(withNormalizedOffset:.init(dx:0.1,dy:0.02)).tap()
     XCTAssertTrue(ends.waitForExistence(timeout:3)); XCTAssertEqual(routing.value as? String,"Угловая")
     ends.tap(); XCTAssertTrue(start.waitForExistence(timeout:3))
     XCTAssertEqual(start.value as? String,"Круг"); XCTAssertEqual(end.value as? String,"Треугольник")
@@ -448,6 +459,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.6)).tap()
     let style = app.buttons["graphic-style-menu"], more = app.buttons["element-actions-menu"], remove = app.buttons["delete-agent-element"]
     XCTAssertTrue(style.waitForExistence(timeout:5)); XCTAssertTrue(style.isHittable)
+    XCTAssertEqual(app.otherElements.matching(identifier:"notebook-context-menu").count,1)
     XCTAssertEqual(style.frame.midY,remove.frame.midY,accuracy:1)
     XCTAssertEqual(more.frame.midY,remove.frame.midY,accuracy:1)
     XCTAssertLessThan(more.frame.maxX-style.frame.minX,222)
@@ -459,8 +471,10 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(blue.waitForExistence(timeout:5)); blue.tap()
     XCTAssertFalse(app.popovers.firstMatch.frame.intersects(triangle.frame), "The palette leaves the edited shape visible")
     XCTAssertTrue(blue.isSelected)
-    app.buttons["element-width-4"].tap()
-    XCTAssertTrue(app.buttons["element-width-4"].isSelected)
+    let width = app.sliders["element-width"], originalWidth = app.sliders["element-width"].value as? String
+    width.adjust(toNormalizedSliderPosition:0.4)
+    let selectedWidth = width.value as? String
+    XCTAssertNotEqual(selectedWidth,originalWidth)
     app.buttons["element-dash-1"].tap()
     XCTAssertTrue(app.buttons["element-dash-1"].isSelected)
     let palette = XCTAttachment(screenshot:app.screenshot()); palette.name = "native-element-palette"; palette.lifetime = .keepAlways; add(palette)
@@ -475,6 +489,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(triangle.frame,before); XCTAssertEqual(paper.frame,paperFrame)
     // The dismissed palette can be opened again; no retained dead presentation owner.
     style.tap(); XCTAssertTrue(blue.waitForExistence(timeout:3)); XCTAssertTrue(blue.isSelected)
+    XCTAssertEqual(width.value as? String,selectedWidth)
+    XCTAssertTrue(app.buttons["element-dash-1"].isSelected)
     app.coordinate(withNormalizedOffset:.init(dx:0.8,dy:0.7)).tap()
     XCTAssertTrue(blue.waitForNonExistence(timeout:3))
     remove.tap(); XCTAssertTrue(triangle.waitForNonExistence(timeout:5))
@@ -3304,6 +3320,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(card.waitForExistence(timeout:5)); card.tap()
     let open = app.buttons["open-workspace-item"], remove = app.buttons["delete-workspace-item"]
     XCTAssertTrue(open.waitForExistence(timeout:3)); XCTAssertTrue(remove.isHittable)
+    XCTAssertEqual(app.otherElements.matching(identifier:"notebook-context-menu").count,1)
     XCTAssertEqual(open.frame.width,44,accuracy:1); XCTAssertEqual(open.frame.height,44,accuracy:1)
     XCTAssertEqual(remove.frame.midY,open.frame.midY,accuracy:1)
     XCTAssertFalse(app.buttons["graphic-style-menu"].exists)

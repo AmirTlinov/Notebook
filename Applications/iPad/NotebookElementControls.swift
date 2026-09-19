@@ -25,12 +25,13 @@ struct NotebookGraphicBindingHint: View {
 /// nor a portal duplicates their touch regions.
 struct NotebookElementControls: UIViewRepresentable {
   @Environment(NotebookAppModel.self) private var model
+  let contextMenus: NotebookContextMenus
   let reference: EditableElementReference
   let selectionID: UUID
   let frame: CGRect
   let scale: Double
 
-  func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate: model.inputGate) }
+  func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate: model.inputGate,contextMenus:contextMenus) }
   func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
     var graphic = model.graphicElement(reference)
     if let contact = model.selectionSession.manipulation, contact.reference == reference {
@@ -114,9 +115,10 @@ struct NotebookElementControls: UIViewRepresentable {
 /// The same control owner renders one capsule and the installed member frames.
 struct NotebookMultipleElementControls: UIViewRepresentable {
   @Environment(NotebookAppModel.self) private var model
+  let contextMenus: NotebookContextMenus
   let selectionID: UUID
   let frames: [CGRect]
-  func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate:model.inputGate) }
+  func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate:model.inputGate,contextMenus:contextMenus) }
   func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
     view.graphic = nil; view.memberFrames = frames
     let frame = frames.reduce(CGRect.null) { $0.union($1) }
@@ -159,13 +161,14 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
 /// Only supported actions are exposed; card movement remains with WorkspaceItemPose.
 struct NotebookItemControls: UIViewRepresentable {
   @Environment(NotebookAppModel.self) private var model
+  let contextMenus: NotebookContextMenus
   let item: WorkspaceItem
   let boardID: UUID
   let selectionID: UUID
   let frame: CGRect
   let open: () -> Void
 
-  func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate:model.inputGate) }
+  func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate:model.inputGate,contextMenus:contextMenus) }
   func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
     view.graphic = nil
     view.configure(selectionID:selectionID,frame:frame,subject:.item(item.kind))
@@ -212,14 +215,16 @@ private enum ElementHandle: Hashable {
   }
 }
 
-/// One owner of capsule appearance, placement, menu lifetime and touch exclusion.
+/// Element geometry and actions only. Context presentation belongs to the workspace.
 final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegate {
   enum Subject { case element, elements(Int), item(WorkspaceItemKind) }
   private var subject: Subject = .element
   var memberFrames: [CGRect] = []
   override var isEnabled: Bool {
-    didSet { toolbar.isUserInteractionEnabled = isEnabled; toolbar.alpha = isEnabled ? 1 : 0.45 }
+    didSet { setNeedsLayout() }
   }
+  private let contextMenus: NotebookContextMenus
+  private var manipulating = false
   private let gate: NotebookInputGate
   private let source = UUID()
   private let pan = ElementHandlePan()
@@ -230,26 +235,21 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   private var pointingHandle: ElementHandle?
   private var pencilRevision: UInt64?
   private var contactOrigin = CGPoint.zero
-  private let toolbar = UIView()
-  private let toolbarSurface = UIView()
-  private let toolbarStack = UIStackView()
-  private let divider = UIView()
   private let deleteButton = UIButton(type: .system)
   private let styleButton = UIButton(type: .system)
   private let editButton = UIButton(type: .system)
   private let modeButton = UIButton(type: .system)
   private let routingButton = UIButton(type: .system)
   private let endsButton = UIButton(type: .system)
-  private let moreButton = ElementMenuButton(type: .system)
-  private var menuButtons: [ElementMenuButton] { [moreButton] }
+  private let moreButton = NotebookContextMenuButton(type: .system)
   private var toolbarButtons: [UIButton] { [styleButton,editButton,modeButton,routingButton,endsButton,deleteButton,moreButton] }
-  private var palette: NotebookElementStyleController?
-  private var connectionPalette: NotebookConnectionController?
+  private var palette: NotebookElementStyleController? { contextMenus.presentedPopover(for:source) as? NotebookElementStyleController }
+  private var connectionPalette: NotebookConnectionController? { contextMenus.presentedPopover(for:source) as? NotebookConnectionController }
   var changeRouting: ((NotebookGraphicConnection.Routing) -> Void)?
   var changeArrowhead: ((NotebookGraphicConnection.Arrowhead,NotebookGraphicConnection.Terminal) -> Void)?
   var graphic: NotebookGraphic? {
     didSet {
-      styleButton.isHidden = graphic == nil || graphic?.freehand != nil; divider.isHidden = styleButton.isHidden
+      styleButton.isHidden = graphic == nil || graphic?.freehand != nil
       modeButton.isHidden = graphic?.transform != nil || graphic.flatMap(NotebookGraphicGeometry.polygon) == nil
       routingButton.isHidden = graphic?.connection == nil; endsButton.isHidden = graphic?.connection == nil
       if let connection = graphic?.connection {
@@ -278,24 +278,10 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   var beginManipulation: ((NotebookElementManipulation.Kind) -> SceneSelectionLift?)?
   var deleteElement: (() -> Void)?
 
-  init(gate: NotebookInputGate) {
-    self.gate = gate
+  init(gate: NotebookInputGate, contextMenus: NotebookContextMenus) {
+    self.gate = gate; self.contextMenus = contextMenus
     super.init(frame: .zero)
     backgroundColor = .clear; isOpaque = false
-    toolbarSurface.backgroundColor = UIColor(NotebookChrome.surface)
-    toolbarSurface.layer.cornerRadius = NotebookChrome.barHeight / 2
-    toolbarSurface.layer.cornerCurve = .continuous
-    toolbarSurface.layer.borderColor = UIColor(NotebookChrome.border).cgColor; toolbarSurface.layer.borderWidth = 0.5
-    toolbarSurface.layer.shadowColor = UIColor.black.cgColor; toolbarSurface.layer.shadowOpacity = 0.07
-    toolbarSurface.layer.shadowRadius = 8; toolbarSurface.layer.shadowOffset = .init(width:0,height:2)
-    toolbarSurface.isUserInteractionEnabled = false; toolbar.addSubview(toolbarSurface)
-    toolbarStack.axis = .horizontal; toolbarStack.alignment = .center; toolbarStack.spacing = 0
-    toolbarStack.translatesAutoresizingMaskIntoConstraints = false
-    toolbar.addSubview(toolbarStack); addSubview(toolbar)
-    NSLayoutConstraint.activate([toolbarStack.leadingAnchor.constraint(equalTo:toolbar.leadingAnchor,constant:4),
-      toolbarStack.trailingAnchor.constraint(equalTo:toolbar.trailingAnchor,constant:-4),
-      toolbarStack.topAnchor.constraint(equalTo:toolbar.topAnchor),
-      toolbarStack.bottomAnchor.constraint(equalTo:toolbar.bottomAnchor)])
     let buttons: [(UIButton,String,String,String)] = [
       (styleButton,"paintbrush.pointed","Оформление фигуры","graphic-style-menu"),
       (editButton,"character.cursor.ibeam","Подпись фигуры","edit-agent-element"),
@@ -305,22 +291,9 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
       (deleteButton,"trash","Удалить элемент","delete-agent-element"),
       (moreButton,"ellipsis","Действия с элементом","element-actions-menu")]
     for (button, symbol, label, identifier) in buttons {
-      var configuration = UIButton.Configuration.plain()
-      configuration.image = UIImage(systemName:symbol)
-      configuration.preferredSymbolConfigurationForImage = .init(pointSize:NotebookChrome.iconSize,weight:.regular)
-      configuration.contentInsets = .zero
-      configuration.baseForegroundColor = button === deleteButton ? .systemRed : .label
-      button.configuration = configuration
-      button.tintColor = button === deleteButton ? .systemRed : .label
-      button.accessibilityLabel = label; button.accessibilityIdentifier = identifier
-      button.widthAnchor.constraint(equalToConstant:44).isActive = true; button.heightAnchor.constraint(equalToConstant:44).isActive = true
-      toolbarStack.addArrangedSubview(button)
-      if button === styleButton {
-        divider.backgroundColor = .separator; divider.widthAnchor.constraint(equalToConstant:0.5).isActive = true
-        divider.heightAnchor.constraint(equalToConstant:18).isActive = true; toolbarStack.addArrangedSubview(divider)
-      }
+      NotebookContextMenus.configure(button,symbol:symbol,title:label,id:identifier,destructive:button === deleteButton)
     }
-    styleButton.isHidden = true; divider.isHidden = true
+    styleButton.isHidden = true
     modeButton.isHidden = true; routingButton.isHidden = true; endsButton.isHidden = true
     routingButton.addTarget(self,action:#selector(showRouting),for:.touchUpInside)
     endsButton.addTarget(self,action:#selector(showEnds),for:.touchUpInside)
@@ -352,12 +325,12 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     updateAccessibilityElements()
   }
   private func updateAccessibilityElements() {
-    accessibilityElements = toolbarButtons.filter { !$0.isHidden } + handleAccessibility
+    accessibilityElements = handleAccessibility
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
   func configure(selectionID: UUID, frame: CGRect, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false, mode: NotebookSelectionSession.GeometryMode = .transform, manipulating: Bool = false, subject: Subject = .element) {
-    if self.selectionID != selectionID { cancel(); dismissPalette(); dismissMenus(); self.selectionID = selectionID }
+    if self.selectionID != selectionID { cancel(); contextMenus.hide(source:source); self.selectionID = selectionID }
     self.subject = subject
     var primary = editButton.configuration!
     switch subject {
@@ -408,7 +381,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     if handles != next { handles = next; rebuildAccessibility() }
     else { updateAccessibilityElements() }
     connectionLayout = layout; projectionScale = scale; self.hasLabel = hasLabel
-    frameRect = frame; toolbar.isHidden = manipulating
+    frameRect = frame; self.manipulating = manipulating
     setNeedsLayout(); setNeedsDisplay()
   }
   override func didMoveToWindow() {
@@ -418,44 +391,29 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     gate.registerControlRegion(source: source) { [weak self] point, kind in
       guard let self, let window = installedWindow, !isHidden else { return false }
       let local = convert(point, from: window)
-      // Dismissing a modal palette is native UI input too. The window's scene
-      // recognizer must not also select the paper beneath that same contact.
-      if palette != nil || connectionPalette != nil || menuButtons.contains(where: \.isMenuPresented) { return true }
-      return (!toolbar.isHidden && toolbar.frame.contains(local)) || (kind == .finger && handle(at: local) != nil)
+      return kind == .finger && handle(at:local) != nil
     }
     gate.registerFingerCancellation(source: source) { [weak self] in
       self?.cancel(); self?.pan.isEnabled = false; self?.pan.isEnabled = true
     }
   }
   func uninstall() {
-    cancel(); dismissPalette(); dismissMenus(); installedWindow?.removeGestureRecognizer(pan); installedWindow = nil
+    cancel(); contextMenus.hide(source:source); installedWindow?.removeGestureRecognizer(pan); installedWindow = nil
     gate.unregisterControlRegion(source: source); gate.unregisterFingerCancellation(source: source)
   }
   override func layoutSubviews() {
     super.layoutSubviews()
-    let visible = toolbarStack.arrangedSubviews.filter { !$0.isHidden }
-    let contentWidth = visible.reduce(0.0) { $0 + ($1 === divider ? 0.5 : 44) }
-      + Double(max(0,visible.count-1))*toolbarStack.spacing + 8
-    let width = min(bounds.width - 24,contentWidth), height = NotebookChrome.controlSize
-    let usable = bounds.inset(by: .init(top:max(12,safeAreaInsets.top + 76),left:12,
-      bottom:max(12,safeAreaInsets.bottom + 76),right:12))
-    let x = min(max(usable.minX,frameRect.midX-width/2),max(usable.minX,usable.maxX-width))
-    let candidates = [frameRect.minY - height - 30, frameRect.maxY + 30, usable.minY, usable.maxY-height]
-      .map { CGRect(x:x,y:min(max(usable.minY,$0),max(usable.minY,usable.maxY-height)),width:width,height:height) }
-    toolbar.frame = candidates.first { candidate in
-      !candidate.intersects(frameRect) && handles.allSatisfy { !handleAccessibilityFrame($0).intersects(candidate) }
-    } ?? candidates.first { candidate in handles.allSatisfy { !handleAccessibilityFrame($0).intersects(candidate) } } ?? candidates[0]
-    toolbarSurface.frame = toolbar.bounds.insetBy(dx:0,dy:(NotebookChrome.controlSize-NotebookChrome.barHeight)/2)
-    toolbarSurface.layer.shadowPath = UIBezierPath(roundedRect:toolbarSurface.bounds,cornerRadius:NotebookChrome.barHeight/2).cgPath
+    if manipulating { contextMenus.hide(source:source) }
+    else { contextMenus.show(source:source,anchor:frameRect,in:self,buttons:toolbarButtons.filter { !$0.isHidden },
+      avoiding:handles.map(handleAccessibilityFrame),enabled:isEnabled) }
     for (index, handle) in handles.enumerated() {
       handleAccessibility[index].accessibilityFrameInContainerSpace = handleAccessibilityFrame(handle)
     }
   }
   override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
     guard bounds.contains(point) else { return false }
-    let control = !toolbar.isHidden && toolbar.frame.contains(point)
-    if event?.allTouches?.contains(where: { $0.type == .pencil }) == true { return control }
-    return control || handle(at: point) != nil
+    if event?.allTouches?.contains(where: { $0.type == .pencil }) == true { return false }
+    return handle(at:point) != nil
   }
   private func point(_ handle: ElementHandle) -> CGPoint {
     if case .corner(let corner) = handle { return corner.point(in:frameRect) }
@@ -549,7 +507,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     // handle. The window-space control registry owns admission, not that
     // implementation-specific hit-view identity; other chrome still wins.
     guard let window = installedWindow, touch.view?.window === window, !isHidden, isEnabled,
-      palette == nil, connectionPalette == nil, !menuButtons.contains(where: \.isMenuPresented),
+      !contextMenus.hasPresentedMenu,
       gate.permitsSceneContact(at:touch.location(in:window),kind:.finger,excludingControl:source),
       let revision = gate.beginFingerSequence(),
       let handle = handle(at: touch.location(in: self)) else { return false }
@@ -578,72 +536,24 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   @objc private func removeElement() { dismissPalette(); deleteElement?() }
   @objc private func edit() { dismissPalette(); editElement?() }
   @objc private func cycleGeometryMode() { dismissPalette(); changeGeometryMode?(geometryMode.next) }
-  private func dismissMenus() { for button in menuButtons { button.contextMenuInteraction?.dismissMenu() } }
-  private func dismissPalette() { palette?.dismiss(animated:false); palette = nil; connectionPalette?.dismiss(animated:false); connectionPalette = nil }
+  private func dismissPalette() { contextMenus.dismissPopover(source:source) }
   @objc private func showRouting() { showConnection(.routing,anchor:routingButton) }
   @objc private func showEnds() { showConnection(.ends,anchor:endsButton) }
   private func showConnection(_ mode: NotebookConnectionController.Mode, anchor: UIView) {
     guard let connection = graphic?.connection, palette == nil, connectionPalette == nil else { return }
-    var responder: UIResponder? = self
-    while responder != nil && !(responder is UIViewController) { responder = responder?.next }
-    guard let owner = responder as? UIViewController else { return }
     let controller = NotebookConnectionController(mode:mode,connection:connection)
     controller.setRouting = { [weak self] in self?.changeRouting?($0) }
     controller.setHead = { [weak self] in self?.changeArrowhead?($0,$1) }
-    controller.onDismiss = { [weak self,weak controller] in
-      if self?.connectionPalette === controller { self?.connectionPalette = nil }
-    }
-    controller.popoverPresentationController?.sourceView = anchor
-    controller.popoverPresentationController?.sourceRect = anchor.bounds
-    controller.popoverPresentationController?.permittedArrowDirections = [.up,.down]
-    connectionPalette = controller; owner.present(controller,animated:true)
+    contextMenus.presentPopover(controller,source:source,from:anchor)
   }
+
   @objc private func showStyle() {
     guard let graphic, palette == nil, connectionPalette == nil else { return }
-    var responder: UIResponder? = self
-    while responder != nil && !(responder is UIViewController) { responder = responder?.next }
-    guard let owner = responder as? UIViewController else { return }
     let controller = NotebookElementStyleController(graphic:graphic)
     controller.updateStyle = { [weak self] update in self?.updateStyle(update) }
-    controller.onDismiss = { [weak self, weak controller] in
-      if self?.palette === controller { self?.palette = nil }
-    }
-    // Anchor around the selection, not just the small button: the system must
-    // leave the edited geometry visible while the person chooses its colour.
-    controller.popoverPresentationController?.sourceView = self
-    controller.popoverPresentationController?.sourceRect = frameRect.union(toolbar.frame)
-    controller.popoverPresentationController?.permittedArrowDirections = .any
-    palette = controller; owner.present(controller,animated:true)
-  }
-}
-
-/// UIKit owns one immutable menu during presentation. SwiftUI can update the
-/// next menu's contents without replacing the menu beneath an active touch.
-final class ElementMenuButton: UIButton {
-  var contents: [UIMenuElement] = []
-  private var presentedConfiguration: UIContextMenuConfiguration?
-  var isMenuPresented: Bool { presentedConfiguration != nil }
-  override init(frame: CGRect) {
-    super.init(frame:frame)
-    menu = UIMenu(children:[UIDeferredMenuElement.uncached { [weak self] completion in
-      completion(self?.contents ?? [])
-    }])
-    showsMenuAsPrimaryAction = true
-  }
-  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-  override func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
-    willDisplayMenuFor configuration: UIContextMenuConfiguration, animator: (any UIContextMenuInteractionAnimating)?) {
-    presentedConfiguration = configuration
-    super.contextMenuInteraction(interaction,willDisplayMenuFor:configuration,animator:animator)
-  }
-  override func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
-    willEndFor configuration: UIContextMenuConfiguration, animator: (any UIContextMenuInteractionAnimating)?) {
-    super.contextMenuInteraction(interaction,willEndFor:configuration,animator:animator)
-    let finish = { [weak self] in
-      guard self?.presentedConfiguration === configuration else { return }
-      self?.presentedConfiguration = nil
-    }
-    if let animator { animator.addCompletion(finish) } else { finish() }
+    // Keep the edited geometry visible, not just the small button.
+    contextMenus.presentPopover(controller,source:source,from:self,
+      rect:frameRect.union(contextMenus.frame(for:source,in:self)))
   }
 }
 

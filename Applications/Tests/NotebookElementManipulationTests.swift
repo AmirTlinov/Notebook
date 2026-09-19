@@ -292,7 +292,8 @@ import XCTest
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    let controls = NotebookSelectionControlsView(gate: gate)
+    let menus = mountContextMenus(in:controller.view,gate:gate)
+    let controls = NotebookSelectionControlsView(gate:gate,contextMenus:menus)
     controls.frame = controller.view.bounds
     controls.configure(selectionID: UUID(), frame: .init(x: 100, y: 150, width: 240, height: 180))
     controller.view.addSubview(controls); controls.layoutIfNeeded()
@@ -320,7 +321,8 @@ import XCTest
     let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    let controls = NotebookSelectionControlsView(gate:gate)
+    let menus = mountContextMenus(in:controller.view,gate:gate)
+    let controls = NotebookSelectionControlsView(gate:gate,contextMenus:menus)
     controls.frame = controller.view.bounds; controller.view.addSubview(controls)
     for size in [CGSize(width:40,height:32),.init(width:12,height:12),.init(width:64,height:100)] {
       let frame = CGRect(origin:.init(x:200,y:300),size:size)
@@ -341,7 +343,8 @@ import XCTest
     let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    let controls = NotebookSelectionControlsView(gate:gate)
+    let menus = mountContextMenus(in:controller.view,gate:gate)
+    let controls = NotebookSelectionControlsView(gate:gate,contextMenus:menus)
     controls.frame = controller.view.bounds; controller.view.addSubview(controls)
     let frame = CGRect(x:200,y:300,width:240,height:180)
     for mode in [NotebookSelectionSession.GeometryMode.transform,.vertices,.rounding] {
@@ -377,17 +380,19 @@ import XCTest
     let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    let controls = NotebookSelectionControlsView(gate:NotebookInputGate())
+    let gate = NotebookInputGate(), menus = mountContextMenus(in:controller.view,gate:gate)
+    let controls = NotebookSelectionControlsView(gate:gate,contextMenus:menus)
     controls.frame = .init(x:0,y:0,width:320,height:900)
     controller.view.addSubview(controls)
     let selection = UUID(), frame = CGRect(x:80,y:240,width:160,height:120)
     func button(_ id: String) throws -> UIButton {
       func descendants(_ view: UIView) -> [UIView] { view.subviews.flatMap { [$0] + descendants($0) } }
-      return try XCTUnwrap(descendants(controls).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == id })
+      return try XCTUnwrap(descendants(menus.view).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == id })
     }
     controls.graphic = .init(shape:.triangle)
     var selected: [NotebookSelectionSession.GeometryMode] = []
     controls.changeGeometryMode = { selected.append($0) }
+    controls.configure(selectionID:selection,frame:frame); controls.layoutIfNeeded(); menus.view.layoutIfNeeded()
     let mode = try button("graphic-geometry-mode")
     let modes: [(NotebookSelectionSession.GeometryMode,NotebookSelectionSession.GeometryMode)] = [(.transform,.vertices),(.vertices,.rounding),(.rounding,.transform)]
     for (current,next) in modes {
@@ -395,7 +400,7 @@ import XCTest
       XCTAssertFalse(mode.isHidden); XCTAssertNotNil(mode.configuration?.image)
       mode.sendActions(for:.touchUpInside); XCTAssertEqual(selected.last,next)
     }
-    XCTAssertTrue(try button("graphic-routing-menu").isHidden)
+    XCTAssertFalse(menuButtons(menus).contains { $0.accessibilityIdentifier == "graphic-routing-menu" })
     controls.graphic = .init(shape:.connector,connection:.init(start:.init(point:.zero),end:.init(point:.init(x:160,y:120))))
     controls.configure(selectionID:UUID(),frame:frame); controls.layoutIfNeeded()
     XCTAssertTrue(mode.isHidden)
@@ -403,12 +408,13 @@ import XCTest
     let start = try button("graphic-routing-menu"), end = try button("graphic-ends-menu")
     XCTAssertFalse(start.isHidden); XCTAssertFalse(end.isHidden)
     XCTAssertEqual(start.accessibilityValue,"Прямая"); XCTAssertEqual(end.accessibilityValue,"Нет, Стрелка")
-    let surfaces = controls.subviews.flatMap(\.subviews).filter { $0.backgroundColor == UIColor(NotebookChrome.surface) }
-    XCTAssertEqual(surfaces.count,1)
-    XCTAssertEqual(surfaces.first?.bounds.height,40)
+    menus.view.layoutIfNeeded()
+    let surfaces = menus.view.subviews.compactMap { $0 as? UIVisualEffectView }
+    XCTAssertEqual(surfaces.count,1); XCTAssertTrue(surfaces.first?.effect is UIGlassEffect)
+    XCTAssertEqual(surfaces.first?.bounds.height,44)
     XCTAssertLessThan(try XCTUnwrap(surfaces.first).bounds.width,274)
-    XCTAssertFalse(controls.subviews.contains { $0 is UIVisualEffectView },"No glass presentation around the same object controls")
-    let endpoint = ElementMenuButton(type:.system), menu = ElementMenuButton(type:.system)
+    XCTAssertTrue(controls.subviews.isEmpty,"Geometry controls no longer own a second context surface")
+    let endpoint = NotebookContextMenuButton(type:.system), menu = NotebookContextMenuButton(type:.system)
     let identity = endpoint.menu
     for _ in 0..<20 {
       endpoint.contents = [UIAction(title:"Круг") { _ in }]
@@ -416,8 +422,8 @@ import XCTest
       XCTAssertTrue(endpoint.menu === identity,"Model/layout updates cannot replace a displayed UIKit menu")
     }
     XCTAssertNotNil(menu.menu)
-    controls.layoutIfNeeded()
-    for button in (controls.accessibilityElements ?? []).compactMap({ $0 as? UIButton }).filter({ !$0.isHidden }) {
+    controls.layoutIfNeeded(); menus.view.layoutIfNeeded()
+    for button in menuButtons(menus) {
       let rect = button.convert(button.bounds,to:controls)
       XCTAssertTrue(controls.bounds.contains(rect)); XCTAssertEqual(rect.width,44); XCTAssertEqual(rect.height,44)
       XCTAssertLessThanOrEqual(try XCTUnwrap(button.imageView?.image).size.height,23,"Compact glyph, not a scaled-down touch target")
@@ -429,7 +435,8 @@ import XCTest
     let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    let controls = NotebookSelectionControlsView(gate:gate)
+    let menus = mountContextMenus(in:controller.view,gate:gate)
+    let controls = NotebookSelectionControlsView(gate:gate,contextMenus:menus)
     controls.frame = controller.view.bounds; controller.view.addSubview(controls)
     func descendants(_ view: UIView) -> [UIView] { view.subviews.flatMap { [$0] + descendants($0) } }
     let selection = UUID()
@@ -437,11 +444,12 @@ import XCTest
       controls.graphic = nil
       for frame in [CGRect(x:100,y:220,width:260,height:360), controls.bounds.insetBy(dx:-100,dy:-100)] {
         controls.configure(selectionID:selection,frame:frame,subject:.item(kind)); controls.layoutIfNeeded()
-        let buttons = try XCTUnwrap(controls.accessibilityElements).compactMap { $0 as? UIButton }
+        menus.view.layoutIfNeeded()
+        let buttons = menuButtons(menus)
         XCTAssertEqual(buttons.map(\.accessibilityIdentifier),["open-workspace-item","delete-workspace-item"])
-        XCTAssertEqual(controls.accessibilityElements?.count,2,"Cards expose no unsupported resize handles or styling")
-        let surface = try XCTUnwrap(descendants(controls).first { $0.backgroundColor == UIColor(NotebookChrome.surface) })
-        XCTAssertEqual(surface.bounds.height,40); XCTAssertEqual(surface.bounds.width,96)
+        XCTAssertEqual(controls.accessibilityElements?.count,0,"Cards expose no unsupported resize handles")
+        let surface = try XCTUnwrap(menus.view.subviews.first { $0 is UIVisualEffectView })
+        XCTAssertEqual(surface.bounds.height,44); XCTAssertEqual(surface.bounds.width,96)
         for button in buttons {
           let box = button.convert(button.bounds,to:controls)
           XCTAssertTrue(controls.bounds.contains(box)); XCTAssertEqual(box.width,44); XCTAssertEqual(box.height,44)
@@ -455,11 +463,45 @@ import XCTest
     }
     controls.graphic = .init(shape:.triangle)
     controls.configure(selectionID:UUID(),frame:.init(x:100,y:220,width:260,height:360)); controls.layoutIfNeeded()
-    let buttons = try XCTUnwrap(controls.accessibilityElements).compactMap { $0 as? UIButton }
+    menus.view.layoutIfNeeded()
+    let buttons = menuButtons(menus)
     XCTAssertTrue(buttons.contains { $0.accessibilityIdentifier == "graphic-style-menu" })
     XCTAssertTrue(buttons.contains { $0.accessibilityIdentifier == "edit-agent-element" })
     XCTAssertTrue(buttons.contains { $0.accessibilityIdentifier == "element-actions-menu" })
     XCTAssertFalse(buttons.contains { $0.accessibilityIdentifier == "open-workspace-item" })
+  }
+
+  func testContextMenuReplacementRetiresOnlyItsOwnSource() throws {
+    let gate = NotebookInputGate()
+    let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let menus = mountContextMenus(in:controller.view,gate:gate)
+    let object = UUID(), text = UUID(), button = UIButton(type:.system)
+    NotebookContextMenus.configure(button,symbol:"textformat",title:"Текст",id:"text")
+    menus.show(source:object,anchor:.init(x:100,y:300,width:240,height:44),in:controller.view,buttons:[UIButton(type:.system)])
+    menus.show(source:text,anchor:.init(x:140,y:400,width:180,height:44),in:controller.view,buttons:[button])
+    menus.view.layoutIfNeeded()
+    menus.hide(source:object) // A late dismantle must not hide the new text selection.
+    XCTAssertEqual(menuButtons(menus),[button]); XCTAssertEqual(menus.view.subviews.count,1)
+    XCTAssertFalse(menus.frame(for:text,in:controller.view).isNull)
+    let point = button.convert(.init(x:22,y:22),to:window)
+    XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.finger))
+    XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.pencil))
+    XCTAssertTrue(gate.permitsSceneContact(at:.init(x:30,y:600),kind:.finger))
+    menus.hide(source:text)
+    XCTAssertTrue(menus.frame(for:text,in:controller.view).isNull)
+    XCTAssertTrue(gate.permitsSceneContact(at:point,kind:.pencil))
+  }
+
+  private func mountContextMenus(in host: UIView, gate: NotebookInputGate) -> NotebookContextMenus {
+    let menus = NotebookContextMenus(); menus.use(gate)
+    menus.view.frame = host.bounds; host.addSubview(menus.view)
+    return menus
+  }
+  private func menuButtons(_ menus: NotebookContextMenus) -> [UIButton] {
+    func descendants(_ view: UIView) -> [UIView] { view.subviews.flatMap { [$0] + descendants($0) } }
+    return descendants(menus.view).compactMap { $0 as? UIButton }.filter { !$0.isHidden }
   }
 
   private func fixture(_ body: (NotebookAppModel, EditableElementReference) async throws -> Void) async throws {

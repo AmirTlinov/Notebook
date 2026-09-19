@@ -12,6 +12,7 @@ struct SpatialWorkspaceView: View {
   @Environment(\.displayScale) private var displayScale
   @Environment(NotebookAppModel.self) private var model
 
+  @State private var contextMenus = NotebookContextMenus()
   @State private var cameraGesture: CameraGestureSnapshot?
   @State private var panStart: SessionPresence?
   private var selectedItemID: UUID? { model.presence.flatMap { model.selectionSession.itemID(on: $0.boardID) } }
@@ -157,12 +158,12 @@ struct SpatialWorkspaceView: View {
         NotebookAttentionMarks(presence:presence)
         NotebookGraphicBindingHint(presence:presence)
         NotebookTransientToolsOverlay(presence:presence)
-        NotebookNativeTextEditingOverlay(presence:presence)
+        NotebookNativeTextEditingOverlay(presence:presence,contextMenus:contextMenus)
         NotebookPresentationOverlay(player: model.presentationPlayer, presence: presence,
           cameraIsActive: model.presencePhase == .active)
         if let reference = model.selectionSession.editingElement,
           let rect = NotebookAttentionProjection.editingFrame(reference, model: model, presence: presence) {
-          NotebookElementControls(reference: reference, selectionID: model.selectionSession.id,
+          NotebookElementControls(contextMenus:contextMenus,reference: reference, selectionID: model.selectionSession.id,
             frame: model.graphicElement(reference) != nil ? rect : model.selectionSession.manipulation?.projected(over: rect, scale: presence.camera.scale) ?? rect,
             scale: presence.camera.scale)
             .frame(width: viewport.x, height: viewport.y)
@@ -178,10 +179,11 @@ struct SpatialWorkspaceView: View {
             return .init(x:rect.x,y:rect.y,width:rect.width,height:rect.height)
           }
           if frames.count == model.selectionSession.count {
-            NotebookMultipleElementControls(selectionID:model.selectionSession.id,frames:frames)
+            NotebookMultipleElementControls(contextMenus:contextMenus,selectionID:model.selectionSession.id,frames:frames)
               .frame(width:viewport.x,height:viewport.y)
           }
         }
+        NotebookContextMenuHost(owner:contextMenus,gate:model.inputGate).zIndex(9_600)
         NotebookSelectionGesture(inputGate: model.inputGate, onPreview: model.updateSelectionPreview,
           onPoint: { start, end, held, tapCount in
           guard cameraGesture == nil, !settling, let cohort else { return }
@@ -465,7 +467,7 @@ struct SpatialWorkspaceView: View {
       let rendered = model.presentedItem(id: selectedItemID, cohort: cohort, presence: presence)
     {
       let box = rendered.geometry.screenFrame(center:rendered.center, camera:presence.camera, viewport:viewport)
-      NotebookItemControls(item:rendered.item,boardID:presence.boardID,selectionID:model.selectionSession.id,
+      NotebookItemControls(contextMenus:contextMenus,item:rendered.item,boardID:presence.boardID,selectionID:model.selectionSession.id,
         frame:.init(x:box.x,y:box.y,width:box.width,height:box.height),
         open:{ openItem(selectedItemID,viewport:viewport) })
         .frame(width:viewport.x,height:viewport.y)
