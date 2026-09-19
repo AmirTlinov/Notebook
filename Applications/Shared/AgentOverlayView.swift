@@ -132,15 +132,7 @@ struct AgentOverlayView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .onAppear { publishReadiness() }
     .onChange(of: elements) { _, updatedElements in
-      let liveIDs = Set(updatedElements.map(\.id))
       readiness.retain(updatedElements)
-      if case .page(let selectedPageID, let selectedElementID) =
-        model.selectionSession.element,
-        selectedPageID == pageID,
-        !liveIDs.contains(selectedElementID)
-      {
-        model.clearSelection()
-      }
       publishReadiness()
     }
     .onChange(of: pageSize) { _, _ in publishReadiness() }

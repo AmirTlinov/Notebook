@@ -4997,8 +4997,12 @@ final class NotebookAppModel {
     retireGraphicCommands(through: state.header.cursor)
     alignWorkspaceSelection()
     if selectionSession.elements.contains(where: { reference in
-      guard !ownsUnpublishedTextDraft(reference) else { return false }
-      if case .page(let pageID,let id) = reference, let page = pages[pageID] { return !page.elements.contains { $0.id == id } }; return false
+      // Accepted creation owns its presentation until its exact publication
+      // cursor arrives. An earlier scene cut cannot turn that absence into a
+      // deletion and silently discard a freshly completed lasso selection.
+      guard !ownsUnpublishedTextDraft(reference), acceptedWorkingGraphic(reference) == nil else { return false }
+      guard case .page(let pageID,let id) = reference, let page = pages[pageID] else { return false }
+      return !page.elements.contains { $0.id == id }
     }) { clearSelection() }
   }
 
