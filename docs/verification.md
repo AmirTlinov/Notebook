@@ -113,6 +113,28 @@ A=103.74.92.43, AAAA отсутствует; сертификат Let's Encrypt 
 именно на iPad, сохраняя hotspot. Сеть/VPN Mac, production-пара и ключи не менялись.
 WAN/AWDL переходы остаются открытыми, а не засчитываются по Simulator PASS.
 
+Дополнение 15:38 UTC — по поручению Амира relay перенесён на **92.255.79.47**.
+Исправлена A-запись корня: сначала новый адрес имел только `www`; теперь все
+четыре authoritative NS и публичный Google DNS возвращают новый IP для корня.
+На новом Ubuntu host системный Node 22.22.1 выполнил четыре relay tests: PASS;
+`relay.mjs` сохранил SHA `d97153d4…`. Из Keychain Mac перенесены только хеши
+действующих routing capabilities, без смены route ID/capabilities и без ключей
+пары. Старый VPS недоступен по SSH; его остановка **не подтверждена**.
+Новый HTTPS `/healthz`: 200, peer=92.255.79.47, TLS verify=0. Сертификат Let's Encrypt
+до 18 декабря 2026, certbot.timer включён. Deploy hook теперь допускает первичный
+выпуск до старта сервиса; проверены установка с inactive service и reload
+работающего сервиса без смены PID. Прежние host/client capabilities дают tickets 200;
+Mac сам возобновил host admission в 15:36:09 без перезапуска приложения, App Server,
+сети или VPN. Это проверка нового сервера и Mac uplink, ещё не физический iPad WAN PASS.
+`new-relay-certificate-renewal2.log`: настоящий certbot staging renewal с deploy hook —
+PASS; production-сертификат и PID relay сохранены. Первая dry-run попытка явно
+прервана только на штатной случайной задержке 384 s, повтор запускался с
+`--no-random-sleep-on-renew`, а не выдавался за завершение первой попытки.
+После возврата CoreDevice в 15:39 получен неизменённый iPad receipt
+`physical-wan-progress-returned.json`: исходная попытка закончилась
+`FAILED: Physical pair condition timed out` в 15:09:26, route=disconnected.
+Этот тайм-аут недоступного старого relay не переименовывается в PASS после миграции.
+
 Фактические свидетельства находятся в `.build/gui-183/` этого worktree:
 
 - `swift-final6.log`: 4 Core remote-control и 22 Codex/account/connection/scope — PASS.
