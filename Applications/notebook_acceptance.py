@@ -894,7 +894,7 @@ def lock_names(args):
     # and distinct Mac/Simulator stands need no machine-wide Xcode queue.
     if args.command in ("build", "ui-build"):
         return ["build-" + MAC_BUNDLE]
-    if args.command == "prepare":
+    if args.command in ("prepare", "upgrade"):
         built = read(args.build / "build.json")
     else:
         value = read(args.run / "run.json")

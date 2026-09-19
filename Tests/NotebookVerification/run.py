@@ -141,13 +141,14 @@ class SelectionTests(unittest.TestCase):
         built = {"simulator": {"udid": simulator}, "macApp": "/private/Notebook.app"}
         value = {"build": "/private/build"}
         args = SimpleNamespace(command="ui", run=Path("/private/run"), platform="mac")
-        with patch.object(acceptance, "read", side_effect=[value, built] * 3), \
+        with patch.object(acceptance, "read", side_effect=[value, built] * 2 + [built]) as read, \
              patch.object(acceptance, "info", return_value={"CFBundleIdentifier": acceptance.MAC_BUNDLE}):
             self.assertEqual(acceptance.lock_names(args), [acceptance.MAC_BUNDLE])
             args.platform = "ipad"
             self.assertEqual(acceptance.lock_names(args), ["simulator-" + simulator])
-            args.command = "upgrade"
+            args = SimpleNamespace(command="upgrade", from_run=Path("/private/run"), build=Path("/private/new-build"))
             self.assertEqual(acceptance.lock_names(args), sorted([acceptance.MAC_BUNDLE, "simulator-" + simulator]))
+            read.assert_called_with(args.build / "build.json")
         self.assertNotIn(acceptance.MAC_BUNDLE, acceptance.lock_names(SimpleNamespace(command="build")))
 
     def test_mac_acceptance_identity_is_stable_per_canonical_checkout_and_not_shared(self):

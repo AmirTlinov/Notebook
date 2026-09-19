@@ -1,5 +1,28 @@
 # Проверка Notebook
 
+## 19 сентября, 13:25 МСК — GUI-250: установленная диагностика и отрицательный camera повтор
+
+`3560ba4` установлен в private development v8, source
+`291c8838776925686422245b2f7ac5c2b29eb05e82ea767da37b78c7e16b30ab`,
+`workingTreeUnchanged=true`. Public export job
+`838cc4c7-8dd8-41ca-8c5b-9259394ffb77` теперь сообщает `program_runtime_error`
+с причиной `exportProgram: Error: Error: program_export_unavailable`.
+Отказ без авторского контракта остаётся отказом, успешный артефакт не подделан.
+Receipt: `.build/gui250-runtime-error-public/status.json`.
+
+Сам upgrade обнаружил ошибку нового owner-lock selector: CLI передаёт `from_run`,
+а не `run`. Upgrade теперь запирает Mac/Simulator назначения из `--build`;
+регрессия использует настоящий набор CLI attributes. Route **81 PASS**
+(`/tmp/gui250-upgrade-lock-route-v1.log`), реальный повтор upgrade сохранил байты
+обоих stores и прежних manifests; runtime/identities остались прежними.
+
+UI v8 снова **FAIL** на настоящем вводе range. Read-only AX подтвердил прежний
+размер 613×33 при видимом масштабе 44%; преобразование только native camera не
+решило WebKit AX. Эта попытка и её тест удалены из рабочего изменения, camera
+возвращена к прежнему владельцу. Проверяется более узкий путь в Mac WebKit host;
+его готовность ещё не заявляется. Запись/отрицательная квитанция —
+`.build/gui250-release-v8/runs/e6bc2672-bf28-4ccc-bd74-3d6034146723/`.
+
 ## 19 сентября, 13:09 МСК — GUI-250: большой ресурс и понятный отказ exportFrame
 
 Installed private v7 получил настоящий файл 300 MiB через обычный MCP staging.
