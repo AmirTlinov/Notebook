@@ -72,7 +72,9 @@ final class DocumentPaperView: PaperPlatformView {
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
   #endif
   func refine() {
-    guard refinement == nil, let raster, let resources, window != nil else { return }
+    // A window-attached offscreen executor needs only its admitted preparation
+    // pixels. Refining it to display density competes with its own snapshot.
+    guard refinement == nil, let raster, let resources, SceneSourceVisibility.isVisible(self) else { return }
     #if os(iOS)
     let size = convert(bounds, to: window).size
     let scale = window?.screen.scale ?? 2
@@ -90,7 +92,8 @@ final class DocumentPaperView: PaperPlatformView {
       defer { self?.refinement = nil }
       do {
         let image = try await raster.page.image(width: width)
-        guard !Task.isCancelled, let self, self.raster === raster else { charge.release(); return }
+        guard !Task.isCancelled, let self, self.raster === raster,
+          SceneSourceVisibility.isVisible(self) else { charge.release(); return }
         install(.init(page: raster.page, sourceKey: raster.sourceKey, image: image, reservation: charge), resources: resources)
       } catch { charge.release() }
     }

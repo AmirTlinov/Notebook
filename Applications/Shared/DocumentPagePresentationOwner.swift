@@ -209,7 +209,7 @@ final class DocumentPagePresentationOwner {
     let entries = owner.entries.values.map { entry in
       "\(entry.id):page=\(entry.input.pageIndex),current=\(entry.input.isCurrent),host=\(entry.host.map { String(describing: ObjectIdentifier($0)) } ?? "nil"),window=\(entry.host?.window != nil)"
     }.sorted()
-    return "current=\(String(describing: owner.current?.id)) mounted=\(String(describing: owner.mountedID)) entries=\(entries) paperPage=\(String(describing: owner.paper.payload?.pageIndex)) canonical=\(owner.paper.hasCanonicalPixels) paper=\(path(owner.paper.webView)) paperToken=\(owner.paper.payload?.renderToken ?? "nil") currentToken=\(owner.current?.input.token ?? "nil") work=\(String(describing: owner.workID)) needsWork=\(owner.needsWork) passivePage=\(String(describing: owner.passive?.payload?.pageIndex)) gesture=\(owner.gestureLocked) focused=\(owner.programOwner.hasFocus) terminal=\(owner.terminalFailures.keys.sorted()) pressure=\(owner.failures.keys.sorted())"
+    return "current=\(String(describing: owner.current?.id)) mounted=\(String(describing: owner.mountedID)) entries=\(entries) paperPage=\(String(describing: owner.paper.payload?.pageIndex)) canonical=\(owner.paper.hasCanonicalPixels) paper=\(path(owner.paper.webView)) paperToken=\(owner.paper.payload?.renderToken ?? "nil") currentToken=\(owner.current?.input.token ?? "nil") work=\(String(describing: owner.workID)) needsWork=\(owner.needsWork) passivePage=\(String(describing: owner.passive?.payload?.pageIndex)) passiveStage=\(owner.passiveStage) passiveCanonical=\(owner.passive?.hasCanonicalPixels == true) passiveError=\(String(describing: owner.passive?.acquisitionError)) passiveView=\(path(owner.passive?.webView)) pictures=\(owner.pictures.mapValues { "\($0.raster.image.cgImage?.width ?? 0)x\($0.raster.image.cgImage?.height ?? 0)" }) admission=\(owner.resources.rasterAdmission) pendingReaders=\(owner.source?.pendingPreparationReaderCount ?? 0) gesture=\(owner.gestureLocked) focused=\(owner.programOwner.hasFocus) terminal=\(owner.terminalFailures.keys.sorted()) pressure=\(owner.failures.keys.sorted())"
   }
 
   /// Submission freezes the installed native paper and all clipped program
@@ -915,6 +915,7 @@ final class DocumentPagePresentationOwner {
       onRenderReady: .init { _ in }, onPageLayout: { [weak self] layout in
         self?.entries.values.forEach { $0.input.onPageLayout(layout) }
       },  onStateChange: { _, _ in nil },
+      paperPreparationPixelWidth: input.snapshotPixelWidth ?? 1024,
       onLinkActivation: input.onLinkActivation,
       preparationRequestID: input.measurements?.preparationRequestID(documentID: documentID, pageIndex: page, token: input.token))
     if source !== renderer.payload?.source {

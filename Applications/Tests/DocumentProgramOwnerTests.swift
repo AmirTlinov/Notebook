@@ -7,6 +7,57 @@ import XCTest
 
 @MainActor
 final class DocumentProgramOwnerTests: XCTestCase {
+  func testShippedSoundOpeningReportsPaperNavigationAndProgramReadinessSeparately() async throws {
+    func source(_ name: String, _ ext: String) throws -> String {
+      try String(contentsOf: XCTUnwrap(Bundle(for: Self.self).url(forResource: name, withExtension: ext, subdirectory: "science")), encoding: .utf8)
+    }
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "sound", html: try source("sound", "html"),
+      css: try source("common", "css"), javaScript: try ["models", "runtime", "sound"].map { try source($0, "js") }.joined(separator: "\n"), height: 800)])
+    // The second open reuses canonical print artifacts, not a program or heap.
+    for attempt in 0..<2 {
+      let recorder = DocumentPresentationRecorder(enabled: true)
+      recorder.request(documentID: document.id, pageIndex: 0, cause: .open)
+      let start = ProcessInfo.processInfo.systemUptime
+      let fixture = try ProgramFixture(document: document, measurements: recorder, showsNeighbour: false)
+      defer { fixture.close() }
+      func program(_ view: UIView) -> WKWebView? {
+        if let web = view as? WKWebView, web.accessibilityIdentifier == "document-program-sound" { return web }
+        return view.subviews.lazy.compactMap(program).first
+      }
+      var phases: [String: Double] = [:]
+      let deadline = ContinuousClock.now + .seconds(15)
+      while ContinuousClock.now < deadline {
+        let elapsed = (ProcessInfo.processInfo.systemUptime-start)*1000
+        if fixture.installedPaper != nil, phases["paper"] == nil { phases["paper"] = elapsed }
+        if let web = program(fixture.hosts[0]) {
+          if phases["programAttached"] == nil { phases["programAttached"] = elapsed }
+          if web.url != nil, !web.isLoading, phases["navigationFinished"] == nil { phases["navigationFinished"] = elapsed }
+          if (web.navigationDelegate as? DocumentBlockRuntime)?.ready == true, phases["programReady"] == nil { phases["programReady"] = elapsed }
+        }
+        if fixture.isPresented { phases["installed"] = elapsed; break }
+        try await Task.sleep(for: .milliseconds(5))
+      }
+      XCTAssertTrue(fixture.isPresented, fixture.diagnostics)
+      let web = try XCTUnwrap(fixture.web(block: "sound"))
+      let proof: [String: Any] = ["attempt": attempt, "observationIntervalMS": 5, "nativeMS": phases,
+        "scope": "native window; second open has cached paper, not a cold app process"]
+      let data = try JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys])
+      let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+      attachment.name = "sound-opening-stages-\(attempt)"; attachment.lifetime = .keepAlways; add(attachment)
+      let paper = XCTAttachment(data: try JSONEncoder().encode(recorder.records), uniformTypeIdentifier: "public.json")
+      paper.name = "sound-opening-paper-\(attempt)"; paper.lifetime = .keepAlways; add(paper)
+      let preparation = try XCTUnwrap(recorder.records.last?.pagePreparationPhasesMS)
+      let shellReady = try XCTUnwrap([preparation["shellReadyMessageAt"], preparation["shellNavigationFinishedAt"]].compactMap { $0 }.min())
+      XCTAssertLessThan(try XCTUnwrap(preparation["preparedPageStartAt"]), shellReady,
+        "Canonical print must not wait for the independent browser shell")
+      XCTAssertGreaterThanOrEqual(try XCTUnwrap(preparation["frameEvaluationStartAt"]), shellReady,
+        "Submitting JS still requires the current shell")
+      XCTAssertTrue(web.isUserInteractionEnabled)
+      fixture.close()
+      try await wait(message: { fixture.diagnostics }) { fixture.resources.activeWebSurfaceCount == 0 }
+    }
+  }
+
   func testFrozenObjectIsBoundToPresentedDocumentPixelsAndNotTheResumedPage() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [
       .markdown(id: "heading", source: "# Exact selected frame"),

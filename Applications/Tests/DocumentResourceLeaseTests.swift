@@ -8,6 +8,47 @@ import XCTest
 
 @MainActor
 final class DocumentResourceLeaseTests: XCTestCase {
+  func testOffscreenPaperDoesNotRefineUntilItsNativeProjectionIsVisible() async throws {
+    let resources = SceneRenderResources(profile: .interactive)
+    let fixture = fixture(resources: resources, interactive: true)
+    let window = try show(fixture.host)
+    defer { fixture.coordinator.invalidate(); window.isHidden = true }
+    let geometry = WorkspaceItemGeometry.document(fixture.document.paperSize)
+    fixture.host.frame = CGRect(x: -20_000, y: 0, width: geometry.width, height: geometry.height)
+    fixture.host.layoutIfNeeded()
+    await waitUntil(timeout: .seconds(8)) { fixture.coordinator.hasCanonicalPixels }
+    func paper(in view: UIView) -> DocumentPaperView? {
+      if let paper = view as? DocumentPaperView { return paper }
+      return view.subviews.lazy.compactMap { paper(in: $0) }.first
+    }
+    let view = try XCTUnwrap(paper(in: fixture.host))
+    let prepared = try XCTUnwrap(view.raster)
+    XCTAssertFalse(SceneSourceVisibility.isVisible(view))
+    XCTAssertEqual(prepared.image.width, 1024, "Hidden paper keeps its bounded preparation, not a display-size copy")
+    let before = resources.reservedBytes
+    view.refine()
+    XCTAssertEqual(resources.reservedBytes, before, "Offscreen refinement cannot consume snapshot admission")
+    let web = try XCTUnwrap(fixture.coordinator.webView)
+    for width in [256, 1024] {
+      fixture.coordinator.update(document: fixture.document, state: fixture.state, selectedPageIndex: 0,
+        capturesSnapshot: false, onRenderReady: .init { _ in }, onPageLayout: { _ in },
+        onStateChange: { _, _ in nil }, paperPreparationPixelWidth: width)
+      await waitUntil(timeout: .seconds(3)) {
+        fixture.coordinator.hasCanonicalPixels && view.raster?.image.width == width
+      }
+      XCTAssertTrue(fixture.coordinator.webView === web,
+        "Thumbnail-to-paper promotion must honor resolution without replacing its browser")
+    }
+    fixture.host.frame.origin = .zero
+    fixture.host.layoutIfNeeded()
+    XCTAssertTrue(SceneSourceVisibility.isVisible(view))
+    view.refine()
+    await waitUntil(timeout: .seconds(3)) { (view.raster?.image.width ?? 0) > prepared.image.width }
+    XCTAssertEqual(view.raster?.sourceKey, prepared.sourceKey)
+    XCTAssertEqual(view.raster?.page.pageIndex, prepared.page.pageIndex)
+    XCTAssertTrue(fixture.coordinator.hasCanonicalPixels, "Visible refinement preserves the installed page")
+  }
+
   func testReusingRetiredPaperCannotDetachTheReplacementInItsPreviousHost() async throws {
     try await assertRetiredPaperLeavesReplacementMounted(reuse: true)
   }
@@ -267,37 +308,36 @@ final class DocumentResourceLeaseTests: XCTestCase {
     XCTAssertTrue(fixture.coordinator.renderIsReady)
   }
 
-  func testLateMessagesCannotPublishOrWriteAfterDismantleAndOldSourceTokenIsRejected() async throws {
+  func testLateMessagesCannotPublishOrWriteAfterDismantleAndOldProgramTokenIsRejected() async throws {
     let resources = SceneRenderResources(maximumWebSurfaces: 1)
-    var sources: [String] = [], states: [JSONValue] = [], readies: [Bool] = []
-    let fixture = fixture(resources: resources, interactive: true,
-      ready: { readies.append($0) }, source: { edit in sources.append(edit.source); return .committed }, state: { _, value in states.append(value); return nil })
+    var states: [JSONValue] = [], readies: [Bool] = []
+    let document = DocumentDocument(actor: UUID(), blocks: [
+      .interactive(id: "control", html: "<p>State owner</p>", height: 100)
+    ])
+    let fixture = fixture(resources: resources, interactive: true, document: document,
+      ready: { readies.append($0) }, state: { _, value in states.append(value); return nil })
     let window = try show(fixture.host)
     defer { fixture.coordinator.invalidate(); window.isHidden = true }
     await waitUntil(timeout: .seconds(8)) { fixture.coordinator.renderIsReady }
     let web = try XCTUnwrap(fixture.coordinator.webView)
-    let token = try XCTUnwrap(fixture.coordinator.payload?.runtimeID.uuidString)
-    func source(_ token: String, _ value: String) -> [String: Any] {
-      let edit = DocumentSourceEdit(sessionID: UUID(), documentID: fixture.document.id, blockID: "body",
-        baseSource: fixture.document.blocks[0].source, baseVersion: fixture.document.sourceVersion(blockID: "body"), source: value, sequence: 1)
-      return ["kind": "source", "documentID": fixture.document.id.uuidString, "runtimeID": token, "blockID": "body",
-        "edit": try! JSONSerialization.jsonObject(with: JSONEncoder().encode(edit))]
+    let payload = try XCTUnwrap(fixture.coordinator.payload)
+    let token = try XCTUnwrap(payload.blockTokens["control"])
+    func state(_ token: String, _ step: Int) -> [String: Any] {
+      ["kind": "state", "documentID": document.id.uuidString, "runtimeID": payload.runtimeID.uuidString,
+        "blockID": "control", "blockToken": token, "value": ["step": step]]
     }
-    fixture.coordinator.receive(body: source("old-token", "stale"), from: web)
-    XCTAssertTrue(sources.isEmpty)
-    fixture.coordinator.receive(body: source(token, "accepted"), from: web)
-    await waitUntil { sources == ["accepted"] }
+    fixture.coordinator.receive(body: state("old-token", 1), from: web)
+    XCTAssertTrue(states.isEmpty)
+    fixture.coordinator.receive(body: state(token, 2), from: web)
+    XCTAssertEqual(states, [.object(["step": .number(2)])], "The active program's real state route is connected")
     fixture.coordinator.invalidate()
     let readyCount = readies.count
-    fixture.coordinator.receive(body: source(token, "after teardown"), from: web)
-    fixture.coordinator.receive(body: ["kind": "state", "documentID": fixture.document.id.uuidString,
-      "renderToken": token, "blockID": "body", "value": ["step": 2]], from: web)
-    fixture.coordinator.receive(body: ["kind": "rendered", "documentID": fixture.document.id.uuidString,
-      "renderToken": token, "pageCount": 999], from: web)
+    fixture.coordinator.receive(body: state(token, 3), from: web)
+    fixture.coordinator.receive(body: ["kind": "rendered", "documentID": document.id.uuidString,
+      "renderToken": payload.renderToken, "pageCount": 999], from: web)
     fixture.coordinator.webView(web, didFinish: nil)
     try await Task.sleep(for: .milliseconds(60))
-    XCTAssertEqual(sources, ["accepted"])
-    XCTAssertTrue(states.isEmpty)
+    XCTAssertEqual(states, [.object(["step": .number(2)])])
     XCTAssertEqual(readies.count, readyCount)
     XCTAssertFalse(fixture.coordinator.renderIsReady)
     XCTAssertEqual(resources.activeWebSurfaceCount, 0)
@@ -347,7 +387,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
       let forward = expected > controller.displayedIndex
       var destination: UIViewController?
       await waitUntil(timeout: .seconds(10), message: {
-        "Landing \(expected) from \(controller.displayedIndex); active WebKit \(resources.activeWebSurfaceCount), passive \(resources.activePassiveWebSurfaceCount), queued \(resources.pendingWebRequestCount), live pages \(controller.cachedPageIdentities.keys.sorted()); geometry=\(DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document).lastPreparationLayoutMismatch ?? "none")"
+        "Landing \(expected) from \(controller.displayedIndex); active WebKit \(resources.activeWebSurfaceCount), passive \(resources.activePassiveWebSurfaceCount), queued \(resources.pendingWebRequestCount), live pages \(controller.cachedPageIdentities.keys.sorted()); geometry=\(DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document).lastPreparationLayoutMismatch ?? "none"); owner=\(DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: resources))"
       }) {
         destination = forward
           ? controller.pageViewController(controller.pageViewController, viewControllerAfter: previous)
@@ -526,14 +566,14 @@ final class DocumentResourceLeaseTests: XCTestCase {
     let window = UIWindow(windowScene: scene), controller = UIHostingController(rootView: content(previews: false))
     window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    await waitUntil(timeout: .seconds(10)) { liveReady.count == 3 }
+    await waitUntil(timeout: .seconds(10), message: { "Live pages \(liveReady.sorted()); \(DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: resources))" }) { liveReady.count == 3 }
     XCTAssertEqual(resources.activeWebSurfaceCount - resources.activeBackgroundWebSurfaceCount, 1)
     let sourceBytes = resources.reservedBytes
     XCTAssertGreaterThan(sourceBytes, 0)
     controller.rootView = content(previews: true)
     var peakWeb = 0, peakPreparation = 0
     await waitUntil(timeout: .seconds(20), message: {
-      "Ready previews \(previewReady.sorted()), web \(resources.activeWebSurfaceCount), preparation \(resources.activeBackgroundWebSurfaceCount), queue \(resources.pendingWebRequestCount)"
+      "Ready previews \(previewReady.sorted()), web \(resources.activeWebSurfaceCount), preparation \(resources.activeBackgroundWebSurfaceCount), queue \(resources.pendingWebRequestCount); \(DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: resources))"
     }) {
       peakWeb = max(peakWeb, resources.activeWebSurfaceCount)
       peakPreparation = max(peakPreparation, resources.activeBackgroundWebSurfaceCount)
@@ -568,11 +608,21 @@ final class DocumentResourceLeaseTests: XCTestCase {
     }
     XCTAssertTrue(source.retainedPageIndices.isSubset(of: Set(0...3)),
       "Removed thumbnail demand cannot retain far page packets")
+    let whileMounted = resources.reservedBytes
+    await source.discardIdlePreparation()
+    XCTAssertEqual(resources.reservedBytes, whileMounted,
+      "Mounted page demand protects the canonical source needed for native paper and navigation")
+    XCTAssertEqual(liveReady, Set(0..<3), "Reclaiming inactive preparation leaves all installed physical pages usable")
+    controller.rootView = AnyView(EmptyView())
+    await waitUntil {
+      resources.activeWebSurfaceCount == 0 && resources.pendingWebRequestCount == 0
+        && source.retainedPageIndices.isEmpty
+    }
     let beforeReclaim = resources.reservedBytes
+    XCTAssertGreaterThan(beforeReclaim, 0, "The retained source still owns its canonical index")
     await source.discardIdlePreparation()
     XCTAssertLessThan(resources.reservedBytes, beforeReclaim,
       "The canonical index and unused page packets have a real memory lifecycle")
-    XCTAssertEqual(liveReady, Set(0..<3), "Reclaiming inactive preparation leaves all installed physical pages usable")
   }
 
   func testInitialInteractiveCommitBelongsToTheActiveRuntimeBeforeItsFirstFrame() async throws {
@@ -673,7 +723,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
 
   private func fixture(resources: SceneRenderResources, interactive: Bool, document suppliedDocument: DocumentDocument? = nil,
     layout: @escaping (DocumentPageLayout) -> Void = { _ in },
-    ready: @escaping @MainActor @Sendable (Bool) -> Void = { _ in }, source: @escaping (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status = { _ in .committed },
+    ready: @escaping @MainActor @Sendable (Bool) -> Void = { _ in },
     state stateChange: @escaping (String, JSONValue) -> ContentFieldVersion? = { _,_ in nil })
       -> (document: DocumentDocument, state: DocumentStateJournal, coordinator: DocumentWebCoordinator, host: DocumentWebHost) {
     let document = suppliedDocument ?? DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# A real document page\n\nA bounded WebKit owner.")])

@@ -338,9 +338,13 @@ final class DocumentWebCoordinator: NSObject,
   private(set) var renderSession: DocumentRenderSession?
   private var frameTask: Task<Void, Never>?
   private var frameTaskID: UUID?
+  private var shellContinuation: CheckedContinuation<Void, Error>?
   private var frameEvaluationID: UUID?
   private var frameContinuation: CheckedContinuation<Void, Error>?
   private let printedView = DocumentPaperView()
+  // The physical owner can prepare a thumbnail at its actual requested width
+  // without turning this reusable paper executor into a snapshot-only owner.
+  private var paperPreparationPixelWidth = 1024
   private var printedSourceMatches: Bool {
     guard let raster = printedView.raster, let payload else { return false }
     return raster.sourceKey == payload.source.message.key && raster.page.pageIndex == min(payload.pageIndex, max(0, pageCount-1))
@@ -618,7 +622,7 @@ final class DocumentWebCoordinator: NSObject,
       trace.recordNativeVisibility(preparationVisibility(), at: stage)
     }
     #endif
-    if stage == .preparedPageStartAt || stage == .frameEvaluationStartAt {
+    if isReady, stage == .preparedPageStartAt || stage == .frameEvaluationStartAt {
       let identity = trace.identity
       // An opt-in scalar observation precedes the existing source/frame call
       // on this same WK queue. It does not request layout, pixels or readiness.
@@ -744,6 +748,7 @@ final class DocumentWebCoordinator: NSObject,
         let web = DocumentWebViewFactory.make(coordinator: self, lease: lease)
         host.install(web, size: self.physicalSize); host.installPaper(self.printedView)
         host.configure(size: self.physicalSize, interactive: acceptsInput)
+        prepareAndSendFrame()
       } catch {
         guard let self, !isInvalidated, acquisitionID == id else { return }
         acquisitionTask = nil
@@ -1096,6 +1101,7 @@ final class DocumentWebCoordinator: NSObject,
     webView = nil
     isReady = false
     frameTaskID = nil; frameTask?.cancel(); frameTask = nil
+    finishShellWait(throwing: CancellationError())
     finishFrameEvaluation(throwing: CancellationError())
     sentSourceKey = nil; sentSourcePage = nil; sentStateKey = nil; sentGeneration = nil; layoutAccepted = false
     pixelPresentation = nil; canonicalPixelEpoch = nil
@@ -1122,6 +1128,7 @@ final class DocumentWebCoordinator: NSObject,
     clearSnapshotWait(); wakeSnapshotWaiters(unavailable: true)
     snapshotTask?.cancel()
     frameTask?.cancel()
+    finishShellWait(throwing: CancellationError())
     finishFrameEvaluation(throwing: CancellationError())
     DocumentRenderRegistry.shared.unmountRenderer(hostID: hostID)
     finishReader(throwing: CancellationError())
@@ -1181,6 +1188,7 @@ final class DocumentWebCoordinator: NSObject,
     onPageLayout: @escaping (DocumentPageLayout) -> Void,
     onStateChange: @escaping (String, JSONValue) -> ContentFieldVersion?,
     snapshotPixelWidth: Int? = nil,
+    paperPreparationPixelWidth: Int = 1024,
     onPreparationFailure: @escaping (Error) -> Void = { _ in },
     onLinkActivation: @escaping (DocumentLinkActivation) -> Void = { _ in },
     preparationRequestID: UUID? = nil
@@ -1194,6 +1202,9 @@ final class DocumentWebCoordinator: NSObject,
     self.onLinkActivation = onLinkActivation
     self.onStateChange = onStateChange
     self.snapshotPixelWidth = snapshotPixelWidth.map { min(256, max(1, $0)) }
+    let paperWidth = self.snapshotPixelWidth ?? max(1, paperPreparationPixelWidth)
+    let paperWidthChanged = self.paperPreparationPixelWidth != paperWidth
+    self.paperPreparationPixelWidth = paperWidth
     self.onPreparationFailure = onPreparationFailure
     let nextPageIndex = max(0, selectedPageIndex)
     let pageChanged = requestedPageIndex != nextPageIndex
@@ -1228,7 +1239,7 @@ final class DocumentWebCoordinator: NSObject,
       let programMode = externallyHostedPrograms ? "external" : (snapshotPixelWidth == nil ? "live" : "snapshot")
     #endif
     if payload?.pageIndex != selectedPageIndex || payload?.programMode != programMode
-      || payload?.source !== nextSource || payload?.state !== nextState {
+      || payload?.source !== nextSource || payload?.state !== nextState || paperWidthChanged {
       clearSnapshotWait()
       generation &+= 1
       cancelSnapshotPreparation()
@@ -1268,7 +1279,7 @@ final class DocumentWebCoordinator: NSObject,
         editable: ownsEditing, renderToken: DocumentSnapshotCache.paperToken(sourceRevision: document.contentStamp.revision, pageIndex: selectedPageIndex),
         pageIndex: selectedPageIndex, runtimeID: runtimeID, blockTokens: blockTokens, programMode: programMode)
       beginPreparationObservation(configuredAt: configuredAt)
-      sendFrameIfReady()
+      prepareAndSendFrame()
     } else if pageChanged {
       setRenderReady(false)
     }
@@ -1284,9 +1295,10 @@ final class DocumentWebCoordinator: NSObject,
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     guard !isInvalidated, self.webView === webView else { return }
     isReady = true
+    finishShellWait()
     if !programsVisible { reconcileProgramVisibility() }
     recordPreparation(.shellNavigationFinishedAt)
-    sendFrameIfReady()
+    prepareAndSendFrame()
   }
 
   func webView(
@@ -1320,9 +1332,10 @@ final class DocumentWebCoordinator: NSObject,
 
     if kind == "ready" {
       isReady = true
+      finishShellWait()
       if !programsVisible { reconcileProgramVisibility() }
       recordPreparation(.shellReadyMessageAt)
-      sendFrameIfReady()
+      prepareAndSendFrame()
       return
     }
     // The common shell owns this promise. There is no native JS invocation
@@ -1532,8 +1545,14 @@ final class DocumentWebCoordinator: NSObject,
     return programURLs.mapValues { $0.url.absoluteString }
   }
 
-  private func sendFrameIfReady() {
-    guard !isInvalidated, isReady, webView != nil, payload != nil,
+  private func finishShellWait(throwing error: Error? = nil) {
+    let continuation = shellContinuation; shellContinuation = nil
+    if let error { continuation?.resume(throwing: error) }
+    else { continuation?.resume() }
+  }
+
+  private func prepareAndSendFrame() {
+    guard !isInvalidated, webView != nil, payload != nil,
       sentGeneration != generation else { return }
     // A latest frame needs its own deadline even while the single sender is
     // still encoding or evaluating its predecessor.
@@ -1541,20 +1560,31 @@ final class DocumentWebCoordinator: NSObject,
     // A newer native demand must revoke an old pending image's publication
     // before the single sender can drain that decode and submit the next page.
     // The scalar fence never starts a source/render or releases its owned tail.
-    webView?.evaluateJavaScript("window.notebookRenderer.requireFrame({runtimeID:'\(runtimeID.uuidString)',generation:'\(generation)'})", completionHandler: nil)
+    if isReady {
+      webView?.evaluateJavaScript("window.notebookRenderer.requireFrame({runtimeID:'\(runtimeID.uuidString)',generation:'\(generation)'})", completionHandler: nil)
+    }
     guard frameTask == nil else { return }
     let taskID = UUID(); frameTaskID = taskID
     frameTask = Task { @MainActor [weak self] in
       defer {
         if let self, frameTaskID == taskID { frameTask = nil; frameTaskID = nil }
       }
-      while let self, !Task.isCancelled, !isInvalidated, isReady, frameTaskID == taskID,
+      while let self, !Task.isCancelled, !isInvalidated, frameTaskID == taskID,
         let web = webView, let next = payload, sentGeneration != generation {
         let expected = generation
         let trace = pagePreparationTrace
         recordPreparation(.frameTaskAt, trace: trace)
         do {
           guard let lease = surfaceLease else { throw CancellationError() }
+          // A hidden executor has already handed its old pixels to the native
+          // snapshot owner. Retaining that paper while admitting a different
+          // page can make the replacement wait for its own obsolete backing.
+          if let retained = printedView.raster,
+            retained.sourceKey != next.source.message.key || retained.page.pageIndex != next.pageIndex
+              || retained.image.width != paperPreparationPixelWidth,
+            !SceneSourceVisibility.isVisible(printedView) {
+            printedView.clear()
+          }
           recordPreparation(.preparedPageStartAt, trace: trace)
           let admissionChanged: (Bool) -> Void = { [weak self] waiting in
             self?.preparationAdmissionChanged(waiting, generation: expected)
@@ -1572,9 +1602,10 @@ final class DocumentWebCoordinator: NSObject,
           admissionChanged(false)
           let paper: DocumentPaperRaster
           if let installed = printedView.raster, installed.sourceKey == next.source.message.key,
-            installed.page.pageIndex == prepared.fragment.pageIndex { paper = installed }
+            installed.page.pageIndex == prepared.fragment.pageIndex,
+            installed.image.width >= paperPreparationPixelWidth { paper = installed }
           else { paper = try await DocumentPaperRaster.prepare(page: prepared.printed, sourceKey: next.source.message.key,
-            pixelWidth: snapshotPixelWidth ?? 1024, resources: resources, waits: admissionChanged) }
+            pixelWidth: paperPreparationPixelWidth, resources: resources, waits: admissionChanged) }
           recordPreparation(.preparedPageReadyAt, trace: trace)
           let source = sentSourceKey == next.source.message.key && sentSourcePage == prepared.fragment.pageIndex
             ? nil : try await prepared.encodedMessage(resources: resources, onAdmissionWait: admissionChanged)
@@ -1583,6 +1614,12 @@ final class DocumentWebCoordinator: NSObject,
           let state = sentStateKey == next.state.message.key ? nil : try await next.state.encodedJSON()
           recordPreparation(.stateEncodedAt, trace: trace)
           let packages = try await prepareProgramPackages(next)
+          guard !Task.isCancelled, !isInvalidated, frameTaskID == taskID, webView === web else { return }
+          // PDF preparation needs no browser. The same bounded sender overlaps
+          // it with shell navigation, waiting only before the first JS frame.
+          if !isReady {
+            try await withCheckedThrowingContinuation { shellContinuation = $0 }
+          }
           guard !Task.isCancelled, !isInvalidated, frameTaskID == taskID, webView === web else { return }
           guard generation == expected else { continue }
           let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]

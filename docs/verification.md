@@ -1,5 +1,80 @@
 # Проверка Notebook
 
+## 19 сентября, 21:51 МСК — GUI-248: bounded paper, overlap и thumbnail promotion
+
+Immutable source `e7e4dd473cb8144f37deefb4f650b43fe4030e4b01b48f20b55ad9c526f81884`,
+`.build/gui250-visible-paper-v4`: private Simulator native **33/33 PASS**,
+Mac Release native **11/11 PASS**, skips/runtime warnings 0. Проверены повторные
+настоящие UIKit curl landings 1…7→0, 3 physical pages + 6 thumbnails, скрытая
+подготовка, повышение 256→1024 на том же WKWebView, visible refinement, source
+replacement/input/recovery/cancellation и Mac source/reader geometry. A4/Letter
+native PNG осмотрены; это не UI-жесты и не системная производительность.
+
+Причина двух baseline-отказов устранена на прежних владельцах: скрытый PDF-view
+не повышает плотность до экранной, освобождает заменяемый raster до admission,
+thumbnail preparation использует требуемые 256 px, а смена разрешения проходит
+через generation того же sender. Ни quota, ни full-resolution export не ослаблены.
+PDF подготовка перекрывает загрузку shell; JS отправляется только после ready.
+Sound native request→installed **1864/1174 ms**, preparation start13/6 ms,
+shellReady677/664 ms; второй open использует cached print, не готовый runtime.
+Это 2 наблюдения, не p95: **цель cold≤500 ms по-прежнему не выполнена**.
+
+Промежуточные v1/v2 дали32/33 PASS; v3 тоже32/33, но уже все thumbnails готовы.
+Единственный оставшийся assert неверно требовал reclaim канонического source
+при активном mounted demand. Исправлен lifecycle fixture: mounted source защищён,
+после удаления всех hosts canonical index действительно освобождается. В v4 оба
+условия проходят; лимиты/таймауты и assertions на готовность не ослаблены.
+
+Mac той же source установлен поверх V21: private store и manifest сохранены
+побайтно; public MCP readback подтверждает прежний workspace и human Sound state
+phase0.24050000000000246. Новая Mac UI попытка **0/3 PASS**: все три сценария
+остановились до открытия Sound — обложка вне текущего окна доски (AX показывает
+linear/wave/Gaussian). Это не automation-auth failure и не отказ scroll/source
+после открытия; эти жесты на новой версии пока не приняты. Pending screenshot
+attachments не являются изображениями и не выдаются за просмотр.
+
+Та же source установлена в private Simulator поверх V22 с побайтным сохранением
+store и прежнего launch manifest. Реальный cold open через поиск/двойное касание:
+**1/1 UI PASS**, skips/runtime warnings 0; приложение не переустановлено runner-ом,
+PNG осмотрен — Sound и человеческий Markdown видны без сжатия. Request→installed
+**2068.22 ms**, canonical content ready280.90 ms, cached print1.81 ms: улучшения
+cached cold относительно прежних1.74–1.92 s не заявляем. Теперь private Mac/Simulator
+имеют одну development source; это не интегрированный production release.
+Mac cdhash `bce0f4da81d4afcbbd9a4dcbd447baaae7947ebf`; Simulator bundle SHA
+`45fa942ffccfe6c8a959ea3df8aae1b4a874910d775e1d514017d7c3e2478e3d`.
+Runner освобождён21:50 и передан GUI266/128. Production, physical iPad, trust и
+архивы не менялись. Seven references/shared/recovery/system/10 repeats/30 min,
+Mac bottom-scroll и iPad source UI остаются открытыми; GUI-240/250 не закрыты.
+
+## 19 сентября, 21:07 МСК — GUI-248: baseline и скрытая PDF-подготовка (WIP)
+
+Неизменный pre-overlap binary/source
+`44962954a5a66ed06020cd6772d34d53d35222b83ddfc7c47fafd6ce8125189a`
+в `.build/gui250-overlap-baseline-v1` воспроизвёл **все 3/3 отказа** прежнего
+профиля, 0 runtime warnings/skips. Они предшествуют перекрытию подготовки.
+На source `96cd267eeab7e1feda3c95114f49e885dc2bc6a9df857c191c69a4d7b6876e69`
+(`.build/gui250-overlapped-paper-v2`) сборка PASS, **29/31 native PASS,2 FAIL**.
+Мёртвый browser-source fixture заменён реальным program-state positive control,
+отказом stale token и teardown: PASS. Sound проверяет подготовку до shellReady
+и JS-frame только после shellReady; обе попытки PASS. Замена source, input policy,
+recovery/cancellation не получили новых отказов. Это не полный native PASS.
+
+`.build/gui250-passive-pages-v1`, source
+`85b4d189016a448e31c7e33b08dda6348838f612932e852f35230daef974d8e0`,
+ещё раз воспроизвёл оба curl/thumbnail отказа. Canonical passive paper уже готова,
+но скрытый нативный PDF-view повышает плотность как экранный. В fixture без
+миниатюр удерживается108177325 reserved bytes; при curl учтённые held134194599
+почти исчерпывают passive134217728. Это учтённые ресурсы, **не RSS**.
+Подготовлена visibility-правка `DocumentPaperView.refine`, включая позднюю
+публикацию, и native negative/positive контроль offscreen→visible. Пока только
+parse/diff check: сборка/исполнение следующего профиля ещё не запускались.
+Лимиты, full-resolution export и readiness не ослаблены.
+
+Runner освобождён после диагностического повтора и передан GUI266/127.
+Mac остаётся V21, Simulator V22; новая реализация не установлена. CUA native
+capture в этом продолжении дважды вернул SCStreamError−3811; новую UI-приёмку
+не заявляем. Production, physical iPad, trust и архивы не изменялись.
+
 ## 19 сентября, 20:35 МСК — GUI-248: cold stages и перекрытие подготовки (пока не принято)
 
 Private Simulator V22 source
