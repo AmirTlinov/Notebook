@@ -137,6 +137,23 @@ final class ProgramAssetTests: XCTestCase {
   }
 
   #if os(macOS)
+  func testSignalExportsTheExactSavedSampleWindowAsOfflineVectors() async throws {
+    let f = try compiledFixture("signal-program"); defer { f.close() }
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "signal", html: "", programPackage: f.hash, height: 1000)])
+    var state = DocumentStateJournal(id: document.id, actor: UUID())
+    XCTAssertTrue(state.commit(blockID: "signal", value: .object(["center": .number(37.125), "span": .number(0.05), "sample": .number(37125)]), actor: UUID()))
+    let cut = try NotebookExportCut(document: document, state: state)
+    let publication = try await DocumentCanonicalExport.publication(cut: cut, options: .init(format: .svg, blockID: "signal"), jobID: UUID(), store: f.store, persistence: NotebookPersistenceQueue(store: f.store))
+    let bytes = try readExportBytes(publication.artifact, store: f.store)
+    try NotebookExportSVG.validate(bytes)
+    let svg = String(decoding: bytes, as: UTF8.self)
+    XCTAssertTrue(svg.contains("37125"), "Exact selected sample remains in the vector description")
+    XCTAssertTrue(svg.contains("<path")); XCTAssertTrue(svg.contains("Время")); XCTAssertFalse(svg.contains("data:image"))
+    XCTAssertEqual(publication.cut, cut)
+    let attachment = XCTAttachment(data: bytes, uniformTypeIdentifier: "public.svg-image")
+    attachment.name = "saved-signal-37125-vector"; attachment.lifetime = .keepAlways; add(attachment)
+  }
+
   func testSavedPDFExportsACompiledAssetPackageWithoutAProgramStoreFallback() async throws {
     let f = try compiledFixture(); defer { f.close() }
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "title", source: "# Offline asset export"),

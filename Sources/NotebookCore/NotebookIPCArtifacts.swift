@@ -55,19 +55,24 @@ public struct NotebookExportCut: Codable, Equatable, Sendable {
 }
 
 public struct NotebookExportOptions: Codable, Equatable, Sendable {
-  public enum Format: String, Codable, Sendable { case pdf, png }
+  public enum Format: String, Codable, Sendable { case pdf, png, svg }
   public let format: Format
   public let pageIndex: Int?
   public let pixelWidth: Int?
-  public init(format: Format = .pdf, pageIndex: Int? = nil, pixelWidth: Int? = nil) {
-    self.format = format; self.pageIndex = pageIndex; self.pixelWidth = pixelWidth
+  public let blockID: String?
+  public init(format: Format = .pdf, pageIndex: Int? = nil, pixelWidth: Int? = nil, blockID: String? = nil) {
+    self.format = format; self.pageIndex = pageIndex; self.pixelWidth = pixelWidth; self.blockID = blockID
   }
   public func validate() throws {
     switch format {
     case .pdf:
-      guard pageIndex == nil, pixelWidth == nil else { throw CollaborationError("invalid_export", "PDF сохраняет весь физический документ; размер пикселей относится к PNG.") }
+      guard pageIndex == nil, pixelWidth == nil, blockID == nil else { throw CollaborationError("invalid_export", "PDF сохраняет весь физический документ; размер пикселей относится к PNG.") }
+    case .svg:
+      guard let blockID, !blockID.isEmpty, blockID.utf8.count <= 120, pageIndex == nil, pixelWidth == nil else {
+        throw CollaborationError("invalid_export", "SVG требует ID программы с авторским exportFrame; пиксельный размер не задаётся.")
+      }
     case .png:
-      guard (0..<10_000).contains(pageIndex ?? 0), (128...4096).contains(pixelWidth ?? 1600) else {
+      guard blockID == nil, (0..<10_000).contains(pageIndex ?? 0), (128...4096).contains(pixelWidth ?? 1600) else {
         throw CollaborationError("invalid_export", "PNG требует номер страницы >=0 и ширину от 128 до 4096 пикселей; ресурсный бюджет проверяется отдельно.")
       }
     }

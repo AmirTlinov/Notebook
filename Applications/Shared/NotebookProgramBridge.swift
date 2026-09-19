@@ -75,16 +75,17 @@ enum NotebookProgramBridge {
   /// A parked WebKit can throttle its timers as well as rAF. The native owner
   /// bounds the lifecycle request independently and ignores a late completion.
   @MainActor
-  static func lifecycle(_ operation: String, controller: String, in web: WKWebView) async throws -> JSONValue {
-    try await withCheckedThrowingContinuation { continuation in
+  static func lifecycle(_ operation: String, controller: String, argument: JSONValue = .null, in web: WKWebView) async throws -> JSONValue {
+    let encoded = String(decoding: try JSONEncoder().encode(argument), as: UTF8.self)
+    return try await withCheckedThrowingContinuation { continuation in
       var completed = false
       let deadline = Task { @MainActor in
         do { try await Task.sleep(for: .milliseconds(4500)) } catch { return }
         guard !completed else { return }; completed = true
         continuation.resume(throwing: SceneRenderError.snapshotPending("program_\(operation)_timeout"))
       }
-      web.callAsyncJavaScript("return await window[controller][operation]();",
-        arguments: ["controller": controller, "operation": operation], in: nil, in: .page) { result in
+      web.callAsyncJavaScript("return await window[controller][operation](JSON.parse(argument));",
+        arguments: ["controller": controller, "operation": operation, "argument": encoded], in: nil, in: .page) { result in
         guard !completed else { return }; completed = true; deadline.cancel()
         switch result {
         case .success(let value):

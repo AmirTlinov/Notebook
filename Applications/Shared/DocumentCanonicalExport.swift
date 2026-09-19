@@ -33,6 +33,19 @@ import PDFKit
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-export-" + jobID.uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     defer { try? FileManager.default.removeItem(at: directory) }
+    if options.format == .svg {
+      guard let block = document.blocks.first(where: { $0.id == options.blockID && $0.kind == .interactive }) else {
+        throw CollaborationError("export_block_missing", "SVG exportFrame принадлежит явно названной программе.")
+      }
+      let locations = try await Task.detached { try artifact.locations() }.value
+      guard let page = locations.first(where: { $0.blockID == block.id })?.pageIndex else {
+        throw CollaborationError("export_block_missing", "Программы нет в принятом печатном макете.")
+      }
+      let svg = try await DocumentSnapshotCache.shared.exportSVG(document: document, state: state, block: block,
+        pageIndex: page, programStore: store, isolationID: jobID)
+      let file = try await stage(Data(svg.utf8), path: "document.svg", directory: directory, persistence: persistence)
+      return .init(cut: cut, source: "", artifact: file, log: artifact.log, options: options, jobID: jobID)
+    }
     if options.format == .png {
       let pageIndex = options.pageIndex ?? 0, width = options.pixelWidth ?? 1600
       let pages = try await Task.detached {

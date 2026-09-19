@@ -182,3 +182,25 @@ test('unbounded, asynchronous and throwing author semantics never fail the saved
   const {program,api} = fixture();api.semantic(() => ({objectID:'unsafe running'}));
   await program.checkpoint();assert.equal(program.semanticSelection(),null,'No author pause means no semantic promise');
 });
+
+
+test('author vector export pauses the isolated executor and receives the exact saved state without commits',async()=>{
+  const {program,api,commits,json}=fixture();let phase=99;const order:string[]=[];
+  api.lifecycle({pause:()=>{order.push('pause');},checkpoint:()=>{throw Error('Must not checkpoint the later phase');}});
+  api.exportFrame(({state,format,signal}:any)=>{assert.equal(format,'svg');assert.equal(signal.aborted,false);phase=state.phase;order.push('render');assert.equal(api.commit({phase:99}),false);return `<svg>${phase}</svg>`;});
+  assert.equal(await program.exportFrame({format:'svg',state:{phase:.25}}),'<svg>0.25</svg>');
+  assert.deepEqual(order,['pause','render']);assert.equal(commits.length,0);assert.equal(program.suspended,true);
+  assert.deepEqual(json(api.state),{phase:0},'An export frame is not a durable checkpoint');
+});
+
+test('missing, throwing, unbounded or cancelled author SVG is an error, never a raster fallback',async()=>{
+  await assert.rejects(fixture().program.exportFrame({format:'svg',state:null}),/export_unavailable/);
+  for(const render of [()=>{throw Error('render failed');},()=> 'x'.repeat(524289),()=>new Promise(()=>{})]){
+    const {program,api}=fixture();api.exportFrame(render);
+    await assert.rejects(program.exportFrame({format:'svg',state:null}),/render failed|export_limit|export_timeout/);
+  }
+  const {program,api}=fixture();let done!:(value:string)=>void;
+  api.exportFrame(()=>new Promise<string>(resolve=>{done=resolve}));
+  const pending=program.exportFrame({format:'svg',state:null});await new Promise(resolve=>setTimeout(resolve,0));
+  await program.dispose();done('<svg/>');await assert.rejects(pending,/superseded|disposed/);
+});

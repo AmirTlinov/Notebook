@@ -184,6 +184,29 @@ notebook.semantic(()=>{
 theme.addEventListener('change',onResize,{signal:events.signal});
 addEventListener('notebookstate',() => {state = selection(notebook.state);if (active()) {syncControls();drawOverview();void loadWindow().catch(showFailure);}},{signal:events.signal});
 function pause() {suspended = true;wanted = false;formulaWanted = false;request?.abort();cancelAnimationFrame(frame);frame = 0;syncControls();}
+// Export the chosen raw-sample Plot as vectors. Its computed presentation is
+// copied into the SVG, so no parent CSS, network font or browser heap is needed.
+notebook.exportFrame(async ({state: saved,signal}) => {
+  const cancel=()=>pause();signal.addEventListener('abort',cancel,{once:true});
+  try {
+    if(signal.aborted||disposed)throw Error('Экспорт отменён');
+    suspended=false;state=selection(saved);await loadWindow();
+    if(signal.aborted)throw Error('Экспорт отменён');
+    const source=detail.querySelector('svg');if(!source)throw Error('График не готов');
+    const svg=source.cloneNode(true) as SVGSVGElement;
+    const original=[source,...source.querySelectorAll('*')],copy=[svg,...svg.querySelectorAll('*')];
+    const properties=['fill','fill-opacity','stroke','stroke-width','stroke-opacity','opacity','font-family','font-size','font-weight','font-style','text-anchor','dominant-baseline'];
+    original.forEach((node,index)=>{const style=getComputedStyle(node),target=copy[index]!;
+      for(const property of properties){const value=style.getPropertyValue(property);if(value&&!value.includes('url('))target.setAttribute(property,value);}
+      target.removeAttribute('style');target.removeAttribute('class');});
+    svg.querySelectorAll('style').forEach(node=>node.remove());
+    svg.setAttribute('xmlns','http://www.w3.org/2000/svg');svg.setAttribute('xml:space','preserve');
+    const background=document.createElementNS('http://www.w3.org/2000/svg','rect');
+    background.setAttribute('width','100%');background.setAttribute('height','100%');background.setAttribute('fill',getComputedStyle(canvas).getPropertyValue('--paper').trim()||'#fff');svg.prepend(background);
+    const title=document.createElementNS('http://www.w3.org/2000/svg','title');title.textContent=get('detail-caption').textContent;svg.prepend(title);
+    return new XMLSerializer().serializeToString(svg);
+  } finally {signal.removeEventListener('abort',cancel);pause();}
+});
 notebook.lifecycle({pause,checkpoint:() => {pause();return {...state};},resume:async () => {
   if (disposed) return;suspended = false;syncControls();drawOverview();await loadWindow();
 },dispose:() => {pause();disposed = true;events.abort();resize.disconnect();data = undefined;bins = new Float32Array();}});

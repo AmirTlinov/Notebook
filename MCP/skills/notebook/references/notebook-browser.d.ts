@@ -24,5 +24,9 @@ declare const notebook: {
   /** Called synchronously after pause/checkpoint, before the native frozen raster.
    * At most 4096 UTF-16 units; never return a Promise or mutate the scene here. */
   semantic(selection: () => NotebookSemanticSelection | null): void;
+  /** Return a self-contained passive SVG for the exact supplied saved state.
+   * Runs only in an isolated export executor, after pause; commits are disabled.
+   * Missing or failed author export is an error, not a raster disguised as SVG. */
+  exportFrame(render: (request: {format: 'svg'; state: NotebookJSON; signal: AbortSignal}) => string | Promise<string>): void;
   lifecycle(hooks: NotebookProgramLifecycle): void;
 };

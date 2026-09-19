@@ -9,7 +9,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
   const copy = value => JSON.parse(JSON.stringify(value));
   let value = copy(state), revision = 0n, disposed = false, suspended = false, frozen = false;
   let hooks = {}, registered = false, generation = 0, operation = null, started = null;
-  let semantic = null, semanticValue = null;
+  let semantic = null, semanticValue = null, exportFrame = null;
   const readiness = [];
   const error = code => new Error(code);
   const alive = () => { if (disposed) throw error('program_disposed'); };
@@ -51,6 +51,13 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
       if (semantic || typeof callback !== 'function') throw error('program_semantic_invalid');
       semantic = callback;
     },
+    // An author-owned static representation, not serialization of arbitrary
+    // heap/DOM. Native invokes this only in an isolated export executor.
+    exportFrame(callback) {
+      alive();
+      if (exportFrame || typeof callback !== 'function') throw error('program_export_invalid');
+      exportFrame = callback;
+    },
     lifecycle(callbacks) {
       alive();
       if (registered || !callbacks || typeof callbacks !== 'object') throw error('program_lifecycle_invalid');
@@ -90,6 +97,25 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
       alive();
       if (!suspended || !frozen) throw error('program_semantic_pause_required');
       return copy(semanticValue);
+    },
+    async exportFrame(request) {
+      alive();
+      if (!exportFrame || request?.format !== 'svg') throw error('program_export_unavailable');
+      const input = copy(request.state);
+      suspended = true; frozen = false; abort();
+      const expected = generation, operationRequest = new AbortController(); operation = operationRequest;
+      try {
+        const svg = await bounded(async () => {
+          await hooks.pause?.({signal:operationRequest.signal});
+          if (operationRequest.signal.aborted) throw error('program_superseded');
+          return await exportFrame({format:'svg',state:copy(input),signal:operationRequest.signal});
+        }, operationRequest.signal, 'program_export');
+        alive();
+        if (expected !== generation) throw error('program_superseded');
+        if (typeof svg !== 'string' || svg.length > 524288) throw error('program_export_limit');
+        return svg;
+      } catch(reason) { operationRequest.abort(); announce(reason); throw reason; }
+      finally { if(operation === operationRequest) operation = null; }
     },
     async checkpoint() {
       alive();
@@ -141,7 +167,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
     },
     dispose() {
       if (disposed) return Promise.resolve();
-      disposed = true; suspended = true; semanticValue = null; semantic = null; abort();
+      disposed = true; suspended = true; semanticValue = null; semantic = null; exportFrame = null; abort();
       // Invoke synchronously before a native owner removes the browsing context.
       let result;
       try { result = hooks.dispose?.(); } catch (reason) { announce(reason); return Promise.reject(reason); }

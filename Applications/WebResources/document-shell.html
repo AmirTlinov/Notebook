@@ -250,13 +250,13 @@
 
       // Requests belong to the existing iframe, not to a second runtime or
       // global animation clock. Hidden-page and close fences share one pause.
-      const programRequest = (runtime, channel) => {
+      const programRequest = (runtime, channel, argument = null) => {
         if(channel==='notebook-suspend' && runtime.checkpointRequest)return runtime.checkpointRequest;
         const requestID=crypto.randomUUID();runtime.lifecycleRequests??=new Map();
         const request=new Promise((resolve,reject)=>{
           const timer=setTimeout(()=>{runtime.lifecycleRequests.delete(requestID);reject(new Error('program_lifecycle_timeout'));},4200);
           runtime.lifecycleRequests.set(requestID,{resolve:value=>{clearTimeout(timer);resolve(value)},reject:error=>{clearTimeout(timer);reject(error)}});
-          runtime.frame.contentWindow.postMessage({channel,token:runtime.token,requestID},'*');
+          runtime.frame.contentWindow.postMessage({channel,token:runtime.token,requestID,argument},'*');
         });
         if(channel==='notebook-suspend') {
           runtime.checkpointRequest=request;
@@ -276,6 +276,11 @@
         return Promise.all([...interactiveFrames].filter(([,runtime])=>runtime.isStarted)
         .map(async ([blockID,runtime])=>{try{return await freezeProgram(blockID,runtime)}
           catch(error){return {blockID,token:runtime.token,error:String(error)}}}));
+      };
+      const exportProgram = async (request) => {
+        const runtime=interactiveFrames.get(request?.blockID);
+        if(!runtime?.isStarted)throw new Error('program_export_not_ready');
+        return await programRequest(runtime,'notebook-export',request);
       };
       const resumePrograms = async () => {
         if(!programsVisible)return true;
@@ -725,6 +730,10 @@
           runtime.focused=message.focused===true;
           bridge({kind:'programFocus',blockID,blockToken:runtime.token,focused:message.focused===true});return;
         }
+        if(message.channel==='notebook-program-exported'){
+          const request=runtime.lifecycleRequests?.get(message.requestID);
+          runtime.lifecycleRequests?.delete(message.requestID);request?.resolve(message.result);return;
+        }
         if(message.channel==='notebook-program-flushed'||message.channel==='notebook-program-resumed'){
           const request=runtime.lifecycleRequests?.get(message.requestID);
           runtime.lifecycleRequests?.delete(message.requestID);request?.resolve(message.state??true);return;
@@ -749,7 +758,7 @@
         installPageSource, acceptSourceExtent,
         blurPrograms:()=>{for(const runtime of interactiveFrames.values())if(runtime.focused)
           runtime.frame.contentWindow.postMessage({channel:'notebook-navigation-blur',token:runtime.token},'*');return true;},
-        applyState, checkpointPrograms, resumePrograms, setProgramsVisible, acknowledgeProgramState, acknowledgeProgramCheckpoint,
+        applyState, checkpointPrograms, resumePrograms, exportProgram, setProgramsVisible, acknowledgeProgramState, acknowledgeProgramCheckpoint,
         presentPage, requireFrame, retirePresentation, observePreparation, observedPageReceipt,
         setPageIndex,
         pageReceipt,

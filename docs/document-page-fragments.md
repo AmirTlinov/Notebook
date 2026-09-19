@@ -138,7 +138,15 @@ Options входят в hash пакета: одинаковые пиксели �
 смысл выбора. При смешанной растеризации WebKit владеет только прямоугольниками
 программ из canonical map; его непрозрачный snapshot background не перекрывает
 PDF текст, формулы и SVG. Это тот же `DocumentPrintedPage`, не второй макет.
-Presented/SVG, portable и video пока относятся к незавершённой части GUI-249.
+`nb.export(key,{documentID,format:'svg',blockID:'signal'})` просит авторский
+`notebook.exportFrame(({format,state,signal})=>svg)` в отдельном executor той же
+программы. Перед callback выполнен pause, но не checkpoint текущего позднего
+момента: state — точно saved cut. Commit заблокирован, timeout/dispose отменяет
+операцию. Нет raster fallback под расширением SVG. Выход до 1 МиБ — пассивный
+замкнутый SVG с literal presentation attributes/local definitions; script,
+foreignObject, CSS styles, анимация и внешние ресурсы отклоняются, а не вырезаются.
+Signal экспортирует выбранное окно Plot и marker настоящими path/text, без PNG.
+Presented, portable и video пока относятся к незавершённой части GUI-249.
 
 Растр для агента подтверждает точные token, поколение и эпоху установки.
 Квитанция ready означает готовность артефакта, а не shown на iPad. Ключ нового

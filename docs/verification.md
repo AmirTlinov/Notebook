@@ -1,5 +1,29 @@
 # Проверка Notebook
 
+## 19 сентября, 08:25 МСК — GUI-249: настоящий SVG выбранного saved result
+
+format=svg + blockID проходят прежний export owner, immutable cut и V2 publication.
+Авторский exportFrame работает в отдельном executor после pause, получает именно
+сохранённый state, а не поздний checkpoint; commits запрещены. Ошибка/timeout/
+supersession не превращаются в PNG fallback. Passive SVG до 1 МиБ допускает
+геометрию/text/local definitions, но не script/foreignObject/CSS/external resources.
+Signal использует тот же Plot и точное окно исходных samples: path/text и marker
+37125. Настоящий SVG открыт через QuickLook и осмотрен: тонкая синяя кривая,
+отдельные точки, оранжевый выбранный sample, читаемые векторные оси/подписи.
+Artifact: `.build/gui249-svg-preview-v1/1F61BA03-E39F-427C-9EDA-E7F49F39E624.svg`.
+
+**Mac3 PASS**, `.build/gui249-svg-mac-v1/verification.json`: signal SVG и прежние
+PDF/реальный SDK PNG. После ужесточения SVG validator **Mac1 PASS**,
+`.build/gui249-svg-mac-v2/verification.json`, source **563477aa080f4a72ec63f26f270dfd3467da0c323e465f01c21cc74c5e6440f5**.
+**Core11 PASS**, `/tmp/gui249-svg-core-v2.log`: пассивность, внешние ссылки,
+CSS image-set и прежние export CAS/cancel/hash. **JS22 PASS + generated check**,
+`/tmp/gui249-svg-js-v2.log`: saved state, pause, no checkpoint/commit, missing/
+throwing/timeout/disposed provider, типизированный SVG API, exact signal build.
+**Simulator1 PASS**, `.build/gui249-svg-sim-v1.xcresult`: установка/запуск общего
+bridge и tall-program lifecycle, без изменения физической пары. Эти проверки
+не являются deterministic Canvas/WebGL, presented, portable или video acceptance;
+GUI-249/250 не закрыты.
+
 ## 19 сентября, 08:08 МСК — GUI-249: PNG canonical page и исправление composite
 
 В existing export добавлен format=png, pageIndex (default0), pixelWidth

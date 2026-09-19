@@ -41,6 +41,24 @@ final class DocumentSnapshotCache {
         token: Self.token(document: document, state: state, pageIndex: pageIndex), resources: resources, excluding: UUID()) {
         return try await producer.retainPreparedSnapshot(pixelWidth: Int(ceil(WorkspaceItemGeometry.document(document.paperSize).width * requiredScale)), force: true)
       }
+      return try await withPreparedPage(document: document, state: state, pageIndex: pageIndex, resources: resources,
+        programStore: programStore, isolationID: isolationID) { coordinator in
+          try await coordinator.retainPreparedSnapshot(pixelWidth: pixelWidth ?? Int(ceil(geometry.width * requiredScale)), force: true, waitsForRasterAdmission: true)
+        }
+    }
+
+    func exportSVG(document: DocumentDocument, state: DocumentStateJournal, block: DocumentBlock, pageIndex: Int,
+      programStore: NotebookStore, isolationID: UUID) async throws -> String {
+      try await withPreparedPage(document: document, state: state, pageIndex: pageIndex, resources: .shared,
+        programStore: programStore, isolationID: isolationID) { coordinator in
+          try await coordinator.exportSVG(block: block, state: state.value(for: block.id) ?? block.initialState)
+        }
+    }
+
+    private func withPreparedPage<T>(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int,
+      resources: SceneRenderResources, programStore: NotebookStore?, isolationID: UUID?,
+      operation: (DocumentWebCoordinator) async throws -> T) async throws -> T {
+      let geometry = WorkspaceItemGeometry.document(document.paperSize)
       let ready = PageTurnReadiness { _ in }
       let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: ready, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
       coordinator.programStore = programStore; coordinator.exportSnapshotID = isolationID
@@ -59,9 +77,7 @@ final class DocumentSnapshotCache {
         try await coordinator.awaitSurfaceAdmission()
         // This one reader returns its exact canonical capture; cache presence
         // and a second automatic capture are not completion notifications.
-        return try await coordinator.retainPreparedSnapshot(
-          pixelWidth: pixelWidth ?? Int(ceil(geometry.width * requiredScale)), force: true,
-          waitsForRasterAdmission: true)
+        return try await operation(coordinator)
       } onCancel: {
         Task { @MainActor in coordinator.invalidate() }
       }
@@ -1744,6 +1760,17 @@ final class DocumentWebCoordinator: NSObject,
 
   /// A thumbnail borrows pixels from the already mounted page. It neither
   /// starts that page's programs again nor revokes the page's input lease.
+  func exportSVG(block: DocumentBlock, state: JSONValue) async throws -> String {
+    guard exportSnapshotID != nil, let before = payload, !isInvalidated else { throw CancellationError() }
+    try await awaitPresentation(token: before.renderToken)
+    guard let webView, !isInvalidated, payload?.renderToken == before.renderToken else { throw CancellationError() }
+    let result = try await NotebookProgramBridge.lifecycle("exportProgram", controller: "notebookRenderer",
+      argument: .object(["format": .string("svg"), "blockID": .string(block.id), "state": state]), in: webView)
+    guard !isInvalidated, payload?.renderToken == before.renderToken, case .string(let svg) = result else { throw CancellationError() }
+    try NotebookExportSVG.validate(Data(svg.utf8))
+    return svg
+  }
+
   func retainPreparedSnapshot(pixelWidth: Int, nativeScale: Double? = nil, force: Bool = false,
     waitsForRasterAdmission: Bool = false, reservation granted: RasterReservation? = nil) async throws -> RasterLease {
     guard let payload, !isInvalidated else { throw CancellationError() }

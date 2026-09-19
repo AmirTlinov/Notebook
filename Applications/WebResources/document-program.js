@@ -18,6 +18,9 @@ function installNotebookDocumentProgram({blockID, token, state, requiresReady, s
         const state=await program.checkpoint();post({channel:'notebook-program-flushed',requestID:event.data.requestID,state});return;
       }
       if(event.data.channel==='notebook-resume'){resuming=program.resume();await resuming;post({channel:'notebook-program-resumed',requestID:event.data.requestID});return;}
+      if(event.data.channel==='notebook-export'){
+        const result=await program.exportFrame(event.data.argument);post({channel:'notebook-program-exported',requestID:event.data.requestID,result});return;
+      }
       if(event.data.channel==='notebook-dispose'){await program.dispose();return;}
       if(event.data.channel==='notebook-navigation-blur'){document.activeElement?.blur();reportFocus();return;}
       if(event.data.channel!=='notebook-state')return;

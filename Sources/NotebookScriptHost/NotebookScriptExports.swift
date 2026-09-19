@@ -9,7 +9,7 @@ extension NotebookScriptCoordinator {
       throw CollaborationError("export_limit", "Нужен documentID; на Mac одновременно собираются до двух экспортов.")
     }
     var optionFields: [String: JSONValue] = ["format": arguments["format"] ?? .string("pdf")]
-    for key in ["pageIndex", "pixelWidth"] { optionFields[key] = arguments[key] }
+    for key in ["pageIndex", "pixelWidth", "blockID"] { optionFields[key] = arguments[key] }
     let options = try JSONValue.object(optionFields).decode(NotebookExportOptions.self)
     try options.validate()
     exportAdmissions += 1

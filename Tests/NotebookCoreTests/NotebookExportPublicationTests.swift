@@ -207,4 +207,14 @@ struct NotebookExportPublicationTests {
     #expect(throws: CollaborationError.self) { try store.prepareDocumentExport(.init(cut: cut, source: "", artifact: image, log: "")) }
   }
 
+  @Test func vectorExportRejectsActiveOrExternalResourcesButKeepsLocalDefinitions() throws {
+    let prefix = "<svg xmlns='http://www.w3.org/2000/svg' width='200' height='100'>"
+    try NotebookExportSVG.validate(Data((prefix+"<defs><linearGradient id='paint'><stop stop-color='blue'/></linearGradient></defs><path d='M0 0L100 50' fill='url(#paint)'/><text x='10' y='30' font-size='14' font-family='sans-serif'>Vector</text></svg>").utf8))
+    for value in ["<style>text{fill:blue}</style>", "<rect style='background-image:image-set(\"https://example.com/x\" 1x)'/>", "<script>alert(1)</script>","<foreignObject/>","<animate attributeName='x'/>","<image href='https://example.com/a.png'/>","<path style='fill:url(https://example.com/paint)'/>","<path style='fill:url(https://example.com/paint'/>","<style>@import 'https://example.com/x';</style>","<path onload='fetch(1)'/>","<use href='#local' xml:base='https://example.com/'/>"] {
+      #expect(throws: CollaborationError.self) { try NotebookExportSVG.validate(Data((prefix+value+"</svg>").utf8)) }
+    }
+    #expect(throws: CollaborationError.self) { try NotebookExportSVG.validate(Data("<!DOCTYPE svg [<!ENTITY x 'boom'>]><svg xmlns='http://www.w3.org/2000/svg'>&x;</svg>".utf8)) }
+    #expect(throws: CollaborationError.self) { try NotebookExportOptions(format: .svg).validate() }
+  }
+
 }

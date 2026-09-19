@@ -27783,7 +27783,8 @@
           "key": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 120
+            "maxLength": 120,
+            "$ref": "#/$defs/__schema0"
           },
           "documentID": {
             "type": "string",
@@ -27794,8 +27795,15 @@
             "type": "string",
             "enum": [
               "pdf",
-              "png"
+              "png",
+              "svg"
             ]
+          },
+          "blockID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "$ref": "#/$defs/__schema0"
           },
           "pageIndex": {
             "type": "integer",
@@ -27812,9 +27820,14 @@
           "key",
           "documentID"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "$defs": {
+          "__schema0": {
+            "type": "string"
+          }
+        }
       },
-      "returns": "{status:queued,jobID,documentID,contentRevision,stateRevision,cutSHA256,moment:'saved',options}. PDF (default) keeps all pages vector; PNG exports one canonical page (pageIndex default 0, pixelWidth default 1600) including its isolated saved program frame. No silent downsampling: insufficient raster budget is an error. Queue acceptance reads source and state in one WAL snapshot. The native canonical print owner renders that immutable saved cut in isolation, never a later uncommitted live frame. Two admitted jobs; pinned embedded offline typesetter, same layout as paper. Source/formulas/SVG remain vector where possible; program regions are composited by the existing renderer with their local packages. Source or state changes before publication fail revision_conflict without replacing prior artifacts. TeX <=4 MiB. Composed PDF/assets stream through immutable 4 MiB parts and 1 MiB verification windows; only metadata crosses IPC. The V2 descriptor is <=1 MiB / 16384 parts, not a PDF byte limit.",
+      "returns": "{status:queued,jobID,documentID,contentRevision,stateRevision,cutSHA256,moment:'saved',options}. SVG requires blockID and author notebook.exportFrame, returning a self-contained passive vector for the exact saved state in an isolated executor; it never silently embeds a PNG. PDF (default) keeps all pages vector; PNG exports one canonical page (pageIndex default 0, pixelWidth default 1600) including its isolated saved program frame. No silent downsampling: insufficient raster budget is an error. Queue acceptance reads source and state in one WAL snapshot. The native canonical print owner renders that immutable saved cut in isolation, never a later uncommitted live frame. Two admitted jobs; pinned embedded offline typesetter, same layout as paper. Source/formulas/SVG remain vector where possible; program regions are composited by the existing renderer with their local packages. Source or state changes before publication fail revision_conflict without replacing prior artifacts. TeX <=4 MiB. Composed PDF/assets stream through immutable 4 MiB parts and 1 MiB verification windows; only metadata crosses IPC. The V2 descriptor is <=1 MiB / 16384 parts, not a PDF byte limit.",
       "example": "await emit(await nb.export('pdf',{documentID:args.documentID}));",
       "old": [
         "notebook_export_document"
@@ -27948,8 +27961,12 @@
                 "type": "string",
                 "enum": [
                   "pdf",
-                  "png"
+                  "png",
+                  "svg"
                 ]
+              },
+              "blockID": {
+                "$ref": "#/$defs/__schema1"
               },
               "pageIndex": {
                 "$ref": "#/$defs/__schema3"
@@ -28177,8 +28194,12 @@
                 "type": "string",
                 "enum": [
                   "pdf",
-                  "png"
+                  "png",
+                  "svg"
                 ]
+              },
+              "blockID": {
+                "$ref": "#/$defs/__schema1"
               },
               "pageIndex": {
                 "$ref": "#/$defs/__schema3"
@@ -28450,8 +28471,12 @@
                 "type": "string",
                 "enum": [
                   "pdf",
-                  "png"
+                  "png",
+                  "svg"
                 ]
+              },
+              "blockID": {
+                "$ref": "#/$defs/__schema1"
               },
               "pageIndex": {
                 "$ref": "#/$defs/__schema3"

@@ -36,6 +36,7 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
       const d=await nb.document({id:input.documentID,blockID:'one'});
       if(d.data) { const kind:'markdown'|'latex'|'tex'|'interactive'=d.data.block.kind; await emit(kind); }
       await nb.export('png',{documentID:input.documentID,format:'png',pageIndex:0,pixelWidth:1600});
+      await nb.export('svg',{documentID:input.documentID,format:'svg',blockID:'signal'});
       await nb.cancelExport('cancel-image',{jobID:input.documentID});
       const printed=await nb.exportStatus({jobID:input.documentID});
       for(const map of [printed.data.receipt?.artifact,printed.data.receipt?.source,printed.data.receipt?.cut,printed.data.receipt?.sourceMap,printed.data.receipt?.syncTeX]) {
