@@ -11,6 +11,7 @@ public struct NotebookSelection: Codable, Equatable, Sendable {
   public var elementID: String?
   public var elementIDs: [String]?
   public var itemID: UUID?
+  public var itemIDs: [UUID]?
   public var contextID: UUID?
   public var reference: CollaborationReference?
   public var resolving: Bool
@@ -30,14 +31,16 @@ public struct NotebookSelection: Codable, Equatable, Sendable {
     guard [.board, .cover, .page, .document].contains(surface.kind), validTarget(surface), target.map(validTarget) ?? true,
       pageIndex.map({ surface.kind == .document && (0...100_000).contains($0) }) ?? true,
       elementID.map({ !$0.isEmpty && $0.utf16.count <= 120 }) ?? true else { return false }
-    guard kind == .elements || elementIDs == nil else { return false }
+    guard kind == .elements || (elementIDs == nil && itemIDs == nil) else { return false }
     switch kind {
     case .empty: return target == nil && elementID == nil && itemID == nil && reference == nil && contextID == nil && !resolving
     case .item: return itemID != nil && surface.kind == .board && target == nil && elementID == nil && reference == nil
     case .element: return target.map { [.page, .board, .cover].contains($0.kind) } == true && elementID != nil && itemID == nil && reference == nil
     case .elements:
       return target.map { [.page,.board,.cover].contains($0.kind) } == true && elementID == nil && itemID == nil && reference == nil
-        && elementIDs.map { (2...32).contains($0.count) && Set($0).count == $0.count && $0.allSatisfy { !$0.isEmpty && $0.utf16.count <= 120 } } == true
+        && (2...32).contains((elementIDs?.count ?? 0)+(itemIDs?.count ?? 0))
+        && elementIDs.map { Set($0).count == $0.count && $0.allSatisfy { !$0.isEmpty && $0.utf16.count <= 120 } } == true
+        && (itemIDs.map { target?.kind == .board && Set($0).count == $0.count } ?? true)
     case .context: return (contextID != nil || resolving) && target == nil && elementID == nil && itemID == nil && reference == nil
     case .reference:
       return reference.map {

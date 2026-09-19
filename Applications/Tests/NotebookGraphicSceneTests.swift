@@ -6,6 +6,59 @@ import XCTest
 /// Exercise the installed scene's Pencil owner, not a direct fit/model call.
 /// Synthetic UIKit contacts do not substitute for physical Pencil calibration.
 @MainActor final class NotebookGraphicSceneTests: XCTestCase {
+  func testLassoContactSelectsNotebookBoardDocumentAndTextByIntersection() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("lasso-scene-\(UUID())")
+    let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
+    let board = try XCTUnwrap(model.presence?.boardID), notebook = try XCTUnwrap(model.workspace?.selectedItemID)
+    let nested = try XCTUnwrap(model.createBoard(at:.init(x:1500,y:0)))
+    let document = try XCTUnwrap(model.createDocument(at:.init(x:3000,y:0),paperSize:.a4))
+    let address = NotebookToolAddress(surface:.board(board),boardID:board,worldOrigin:.zero,bounds:nil)
+    let text = try XCTUnwrap(model.beginToolText(at:.init(x:-750,y:0),address:address,screenScale:1))
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    await model.reloadExternalChanges()?.value
+    let renderedText = try XCTUnwrap(model.store.readSpatialElement(boardID:board,elementID:text))
+    model.commitNativeText(reference:address.reference(text),text:"Lasso text",finish:true,retainedSpatial:renderedText)
+    let textSaved = await model.finishPendingPersistence(); XCTAssertTrue(textSaved)
+    XCTAssertEqual(try model.store.readSpatialElement(boardID:board,elementID:text)?.source,"Lasso text")
+    await model.reloadExternalChanges()?.value
+    model.updatePresence(.init(boardID:board,mode:.board,camera:.init(center:.init(x:1500,y:0),scale:0.14),viewport:.init(x:834,y:1194)),settled:true)
+    model.selectDrawingTool(.lasso)
+    await model.finishPendingPersistence()
+    await model.reloadExternalChanges()?.value
+    let window = try await mountNotebookScene(model)
+    let presented = ContinuousClock.now + .seconds(5)
+    while model.compositionTiles.published?.frame.index.element(id:text,boardID:board) == nil, ContinuousClock.now < presented {
+      try await Task.sleep(for:.milliseconds(10))
+    }
+    let presence = try XCTUnwrap(model.presence)
+    XCTAssertNotNil(model.compositionTiles.published?.frame.index.element(id:text,boardID:board))
+    let receiver = try XCTUnwrap(window.gestureRecognizers?.first { $0 is SpatialPencilGestureRecognizer })
+    let touch = SceneGraphicTouch(window:window), event = SceneGraphicEvent()
+    func screen(_ p: SpatialPoint) -> CGPoint {
+      let p = presence.camera.worldToScreen(WorldPoint(x:p.x,y:p.y),viewport:presence.viewport)
+      return .init(x:p.x,y:p.y)
+    }
+    let polygon = [SpatialPoint(x:-1000,y:-60),.init(x:4000,y:-60),.init(x:4000,y:100),.init(x:-1000,y:100)]
+    touch.point = screen(polygon[0]); touch.sourceView = window.hitTest(touch.point,with:event)
+    receiver.touchesBegan([touch],with:event)
+    XCTAssertEqual(model.drawingTools.contact?.tool,.lasso)
+    XCTAssertEqual(model.drawingTools.contact?.address.surface,.board(board))
+    for point in polygon.dropFirst() { touch.point = screen(point); touch.sampleTime += 0.02; receiver.touchesMoved([touch],with:event) }
+    receiver.touchesEnded([touch],with:event)
+    XCTAssertEqual(Set(model.selectionSession.items.map(\.itemID)),Set([notebook,nested,document]))
+    XCTAssertTrue(model.selectionSession.contains(address.reference(text)))
+    XCTAssertEqual(model.selectionSession.count,4)
+    let crossing = [SpatialPoint(x:0,y:-60),.init(x:4000,y:-60),.init(x:4000,y:100),.init(x:0,y:100)]
+    touch.point = screen(crossing[0]); touch.sourceView = window.hitTest(touch.point,with:event); touch.sampleTime += 0.1
+    receiver.touchesBegan([touch],with:event)
+    XCTAssertEqual(model.drawingTools.contact?.address.surface,.board(board),"A workspace lasso starts on a card without becoming cover ink")
+    for point in crossing.dropFirst() { touch.point = screen(point); touch.sampleTime += 0.02; receiver.touchesMoved([touch],with:event) }
+    receiver.touchesEnded([touch],with:event)
+    XCTAssertEqual(Set(model.selectionSession.items.map(\.itemID)),Set([notebook,nested,document]))
+  }
+
   func testRestingHandDoesNotStrandDoubleTapOpeningBetweenBoardAndPaper() async throws {
     try await exerciseOpening(.doubleTap)
   }

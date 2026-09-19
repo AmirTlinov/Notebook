@@ -77,3 +77,10 @@ test("native text size covers explicit screen points across the full camera rang
   }
   for (const size of [2.99,5761]) assert.throws(() => operationSchema.parse({kind:"updateElement",target,id:"text",values:values(size)}));
 });
+
+test("boolean contours carry native Bézier commands, not raster or recursive operations", () => {
+  const path = {commands:[{kind:"move",points:[{x:0,y:0}]},{kind:"curve",points:[{x:0.2,y:0},{x:1,y:0.8},{x:1,y:1}]},{kind:"close",points:[]}]};
+  const values = {graphic:{shape:"path",path,vertices:null,cornerRadius:null,transform:null}};
+  assert.deepEqual(operationSchema.parse({kind:"updateElement",target,id:"shape",values}).values,values);
+  assert.throws(()=>operationSchema.parse({kind:"updateElement",target,id:"shape",values:{graphic:{path:{commands:[{kind:"raster",points:[]}]}}}}));
+});

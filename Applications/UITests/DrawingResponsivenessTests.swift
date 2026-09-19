@@ -1892,6 +1892,31 @@ final class DrawingResponsivenessTests: XCTestCase {
     proof.name = "codex-panel-keyboard-landscape"; proof.lifetime = .keepAlways; add(proof)
   }
 
+  func testPhysicalRulerMovesAndRotatesWithFingerWithoutMovingPaper() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"], original = paper.frame
+    app.buttons["drawing-tools-more"].tap(); app.buttons["drawing-tool-ruler"].tap()
+    // Preferences survive launches; establish the pose through the real UI.
+    app.buttons["drawing-tool-ruler"].tap(); app.buttons["0°"].tap()
+    app.buttons["Закрыть настройки"].tap()
+    let ruler = app.descendants(matching:.any).matching(identifier:"physical-ruler").firstMatch
+    XCTAssertTrue(ruler.waitForExistence(timeout:5))
+    let before = ruler.frame, previous = ruler.value as? String
+    let center = ruler.coordinate(withNormalizedOffset:.init(dx:0.4,dy:0.5))
+    center.press(forDuration:0.05,thenDragTo:center.withOffset(.init(dx:30,dy:50)))
+    XCTAssertTrue(waitUntil { (ruler.value as? String) != previous })
+    XCTAssertEqual(ruler.frame.minX,before.minX+30,accuracy:4)
+    XCTAssertEqual(ruler.frame.minY,before.minY+50,accuracy:4)
+    let end = ruler.coordinate(withNormalizedOffset:.init(dx:0.99,dy:0.5)), moved = ruler.frame
+    end.press(forDuration:0.05,thenDragTo:end.withOffset(.init(dx:-100,dy:140)))
+    XCTAssertTrue(waitUntil { ruler.frame.height > moved.height+60 })
+    XCTAssertEqual(paper.frame,original,"Ruler gestures must not navigate the scene")
+    let shot = XCTAttachment(screenshot:app.screenshot()); shot.name = "physical-ruler-rotated"; shot.lifetime = .keepAlways; add(shot)
+  }
+
   func testAllDrawingToolsUseRepeatedTapSettingsWithoutExtraToolbarButton() {
     continueAfterFailure = false
     let app = XCUIApplication()

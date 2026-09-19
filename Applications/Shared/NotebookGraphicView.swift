@@ -79,7 +79,7 @@ struct NotebookGraphicView: View {
 
 extension NotebookGraphic.Shape {
   var displayName: String {
-    switch self { case .ellipse: "Эллипс"; case .rectangle: "Прямоугольник"; case .triangle: "Треугольник"; case .diamond: "Ромб"; case .plus: "Плюс"; case .connector: "Связь"; case .freehand: "Рукопись" }
+    switch self { case .ellipse: "Эллипс"; case .rectangle: "Прямоугольник"; case .triangle: "Треугольник"; case .diamond: "Ромб"; case .plus: "Плюс"; case .connector: "Стрелка"; case .freehand: "Рукопись"; case .path: "Контур" }
   }
 }
 

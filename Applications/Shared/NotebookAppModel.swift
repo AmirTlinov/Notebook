@@ -2655,6 +2655,7 @@ final class NotebookAppModel {
     drawingTools.cancel()
     clearSelection()
     drawingTool = tool
+    if tool == .ruler { drawingTools.placeRuler() }
   }
 
   /// All local admissions invalidate previous asynchronous selection work.
@@ -2690,10 +2691,13 @@ final class NotebookAppModel {
     if selectionSession.element != reference { replaceSelection(.element(reference)) }
   }
 
-  func selectElements(_ references: [EditableElementReference]) {
+  func selectElements(_ references: [EditableElementReference], items: [NotebookSelectedItem] = []) {
     let refs = Array(Set(references)).sorted { String(describing:$0) < String(describing:$1) }
-    guard refs.count <= 32 else { showCue("Выберите не более 32 объектов за один раз."); return }
-    replaceSelection(refs.isEmpty ? nil : refs.count == 1 ? .element(refs[0]) : .elements(refs))
+    let items = Array(Set(items)).sorted { $0.itemID.uuidString < $1.itemID.uuidString }
+    guard refs.count+items.count <= 32 else { showCue("Выберите не более 32 объектов за один раз."); return }
+    if items.isEmpty { replaceSelection(refs.isEmpty ? nil : refs.count == 1 ? .element(refs[0]) : .elements(refs)) }
+    else if refs.isEmpty, items.count == 1 { replaceSelection(.item(boardID:items[0].boardID,itemID:items[0].itemID)) }
+    else { replaceSelection(.elements(refs,items:items)) }
   }
 
   func beginMultipleSelection() {
@@ -2813,6 +2817,18 @@ final class NotebookAppModel {
       summary:front ? "На передний план" : "На задний план",moveToFront:front,readSources:selectionSession.elements)
   }
 
+  func deleteSelectedContent() {
+    let elements = selectionSession.elements, items = selectionSession.items, selection = selectionSession.id
+    if !elements.isEmpty {
+      guard performElementOperations(elements.map { .init(reference:$0,kind:.removeElement,values:[:]) },summary:"Удалить выделенное") else { return }
+    }
+    Task { [weak self] in
+      guard let self else { return }
+      for item in items { guard await deleteItem(item.itemID) else { return } }
+      if selectionSession.id == selection { clearSelection() }
+    }
+  }
+
   func deleteGraphicSelection() {
     guard selectedGraphicMembers() != nil else { return }
     if performElementOperations(selectionSession.elements.map { .init(reference:$0,kind:.removeElement,values:[:]) },summary:"Удалить выбранные фигуры") { clearSelection() }
@@ -2873,10 +2889,13 @@ final class NotebookAppModel {
       value.target = .init(kind: element.surface.kind == .cover ? .cover : .board, id: owner,
         boardID: element.surface.kind == .cover ? board : nil)
       value.elementID = id
-    case .elements(let refs):
-      guard let first = refs.first, let target = nativeElementSource(first)?.target,
-        refs.allSatisfy({ nativeElementSource($0)?.target == target }) else { return nil }
+    case .elements(let refs,let items):
+      let target = refs.first.flatMap { nativeElementSource($0)?.target }
+        ?? items.first.map { CollaborationTarget(kind:.board,id:$0.boardID) }
+      guard let target, refs.allSatisfy({ nativeElementSource($0)?.target == target }),
+        items.allSatisfy({ target.kind == .board && $0.boardID == target.id }) else { return nil }
       value.target = target; value.elementIDs = refs.compactMap { nativeElementSource($0)?.id }
+      value.itemIDs = items.isEmpty ? nil : items.map(\.itemID)
     case .reference(let reference): value.reference = reference
     }
     return value.isValid ? value : nil
@@ -2914,7 +2933,7 @@ final class NotebookAppModel {
   /// Navigation ends manipulation, but retains explicitly pinned material for
   /// the conversation. Only the resulting context target can show its outline.
   func endSurfaceEditing() {
-    guard !selectionSession.elements.isEmpty || selectionSession.target.map({
+    guard selectionSession.count > 0 || selectionSession.target.map({
       if case .item = $0 { return true }; return false
     }) == true else { return }
     cancelElementManipulation()

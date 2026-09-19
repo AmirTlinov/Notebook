@@ -393,7 +393,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       if !drawingTool.usesInkJournal {
         guard let controller = toolController, let boardID = boardSurface.ownerID else { return }
         let point = touch.preciseLocation(in:view)
-        let surface = SpatialSurfaceRouter.surface(at:point,covers:surfaces,board:boardSurface)
+        let surface = controller.selectsWorkspaceItems ? boardSurface : SpatialSurfaceRouter.surface(at:point,covers:surfaces,board:boardSurface)
         let address: NotebookToolAddress, toOwner: (CGPoint) -> SpatialPoint, scale: Double
         if let cover = surfaces.first(where:{ $0.id == surface }) {
           address = .init(surface:surface,boardID:boardID,worldOrigin:nil,bounds:cover.localBounds)
@@ -784,11 +784,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         opacity = style.opacity(force:Double(filtered))
       } else {
         let style = actionEraserStyle ?? eraserStyle
-        width = PencilPressureWidth.value(
-          force: Double(filtered),
-          minimum: EraserStyle.minimumContactWidth,
-          maximum: style.maximumWidth
-        )
+        width = style.maximumWidth
         opacity = 1
       }
       let coordinateView = view ?? window

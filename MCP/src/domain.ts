@@ -27,7 +27,7 @@ export type AgentElementKind = "markdown" | "web" | "graphic" | "nativeText";
 export type NotebookGraphicResolution = {state:"geometry";frame:PageRect} | {state:"hidden"} | {state:"pending";dependencies:string[]};
 
 export interface NotebookGraphic {
-  shape: "ellipse" | "rectangle" | "triangle" | "diamond" | "plus" | "connector" | "freehand";
+  shape: "ellipse" | "rectangle" | "triangle" | "diamond" | "plus" | "connector" | "freehand" | "path";
   style: { stroke: { red: number; green: number; blue: number }; strokeWidth: number; fill?: { red: number; green: number; blue: number }; dash?: "solid" | "dashed" | "dotted" };
   label: string;
   representation: "ink" | "geometry";
@@ -37,6 +37,7 @@ export interface NotebookGraphic {
   vertices?: { x: number; y: number }[] | null;
   cornerRadius?: number | null;
   transform?: {a:number;b:number;c:number;d:number;tx:number;ty:number} | null;
+  path?: {commands:{kind:"move"|"line"|"quad"|"curve"|"close";points:{x:number;y:number}[]}[]} | null;
   freehand?: {layers:{tool:"pen"|"eraser";color:{red:number;green:number;blue:number};vertices:{x:number;y:number;opacity:number}[]}[]} | null;
 }
 

@@ -123,6 +123,14 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
     view.configure(selectionID:selectionID,frame:frame,manipulating:model.selectionSession.manipulation != nil,subject:.elements(frames.count))
     view.editElement = { if model.selectionSession.id == selectionID { model.finishMultipleSelection() } }
     view.deleteElement = { if model.selectionSession.id == selectionID { model.deleteGraphicSelection() } }
+    guard model.selectionSession.items.isEmpty,
+      model.selectionSession.elements.allSatisfy({ model.graphicElement($0) != nil }) else {
+      view.setActionsMenu([UIAction(title:"Снять выделение",image:UIImage(systemName:"xmark")) { _ in
+        guard model.selectionSession.id == selectionID else { return }; model.clearSelection()
+      }])
+      view.deleteElement = { if model.selectionSession.id == selectionID { model.deleteSelectedContent() } }
+      return
+    }
     let alignments: [(NotebookGraphicSelection.Alignment,String)] = [(.left,"По левому краю"),(.center,"По центру горизонтально"),
       (.right,"По правому краю"),(.top,"По верхнему краю"),(.middle,"По центру вертикально"),(.bottom,"По нижнему краю")]
     view.setActionsMenu([
@@ -190,9 +198,9 @@ private enum ElementHandle: Hashable {
   var label: String {
     switch self {
     case .corner(let value): "Изменить размер за " + value.label
-    case .start: "Начало связи"
-    case .end: "Конец связи"
-    case .bend: "Изгиб связи"
+    case .start: "Начало стрелки"
+    case .end: "Конец стрелки"
+    case .bend: "Изгиб стрелки"
     case .vertex(let index): "Вершина \(index+1)"
     case .rounding: "Радиус углов"
     }

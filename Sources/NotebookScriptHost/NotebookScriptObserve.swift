@@ -41,11 +41,16 @@ extension NotebookScriptCoordinator {
             fields: try args["fields"]?.decode([NotebookObservationScope.Field].self) ?? defaults,
             expand: try args["expand"]?.decode([NotebookObservationScope.Relation].self) ?? [],
             bounds: try args["bounds"]?.decode(NotebookReadBounds.self))
-          let observed = try store.observeContent(scope: scope, since: args.string("since"), next: args.string("next"), limit: Int(requestedLimit))
-          data = try JSONValue.encode(observed).fields
-          data.removeValue(forKey: "coverage")
+          if ids?.isEmpty != true {
+            let observed = try store.observeContent(scope:scope,since:args.string("since"),next:args.string("next"),limit:Int(requestedLimit))
+            data = try JSONValue.encode(observed).fields
+            data.removeValue(forKey:"coverage"); coverage = observed.coverage
+          } else { data = ["mode":.string("snapshot"),"objects":.array([])] }
           data["target"] = try .encode(target)
-          coverage = observed.coverage
+          if let itemIDs = selected?.itemIDs {
+            data["containers"] = try .encode(itemIDs.compactMap { try store.readItemHeader($0) })
+          }
+
         }
         if args["target"] == nil && contextID == nil {
           data["presence"] = try .encode(presence)

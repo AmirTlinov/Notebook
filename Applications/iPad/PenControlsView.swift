@@ -1,4 +1,5 @@
 import SwiftUI
+import NotebookCore
 
 struct PenControlsView: View {
   @Environment(NotebookAppModel.self) private var model
@@ -70,7 +71,10 @@ struct PenControlsView: View {
         model.selectDrawingTool(drawingTool)
       }
     } label: {
-      Image(systemName: drawingTool.symbol)
+      Group {
+        if drawingTool == .connector { arrowIcon }
+        else { Image(systemName: drawingTool.symbol) }
+      }
         .font(NotebookChrome.iconFont)
         .foregroundStyle(Color.primary)
         .frame(width: 32, height: 32)
@@ -82,6 +86,12 @@ struct PenControlsView: View {
     .accessibilityIdentifier(drawingTool.accessibilityID)
     .accessibilityAddTraits(selected ? .isSelected : [])
     .accessibilityHint(selected ? "Нажмите ещё раз, чтобы открыть настройки" : "Выбрать инструмент")
+  }
+
+  private var arrowIcon: some View {
+    let settings = model.drawingToolSettings
+    return Image(uiImage:NotebookConnectionGlyph.image(routing:settings.connectionRouting,
+      start:settings.connectionStart ?? .none,end:settings.connectionEnd ?? .arrow,size:.init(width:30,height:26)))
   }
 
   private var colorChoices: some View {
@@ -107,20 +117,21 @@ struct PenControlsView: View {
         .fill(model.penStyle.color.displayColor)
         .frame(
           width: 26,
-          height: CGFloat(max(PenStyle.minimumWidth, model.penStyle.width))
+          height: CGFloat(min(26,max(PenStyle.minimumWidth, model.penStyle.width)))
         )
 
       Slider(
         value: Binding(
-          get: { model.penStyle.width },
-          set: model.selectPenWidth
+          get: { log2(model.penStyle.width) },
+          set: { model.selectPenWidth(pow(2,$0)) }
         ),
-        in: PenStyle.minimumWidth...PenStyle.maximumWidth
+        in: log2(PenStyle.minimumWidth)...log2(PenStyle.maximumWidth)
       )
       .tint(model.penStyle.color.displayColor)
       .frame(width: 112)
       .accessibilityLabel("Толщина ручки")
       .accessibilityIdentifier("pen-width")
+      Text(model.penStyle.width,format:.number.precision(.fractionLength(0...1))).monospacedDigit().font(.caption)
     }
   }
 

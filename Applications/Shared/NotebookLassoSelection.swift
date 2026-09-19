@@ -22,8 +22,13 @@ enum NotebookLassoInkSource: Sendable {
     func point(_ sample: SpatialInkSample) -> SpatialPoint {
       origin.flatMap { o in sample.worldPoint.map { o.delta(to:$0) } } ?? sample.point
     }
-    func enclosed(_ samples: [[SpatialInkSample]]) -> Bool {
-      !samples.isEmpty && samples.joined().allSatisfy { NotebookToolGeometry.contains(point($0),polygon:polygon) }
+    func intersects(_ samples: [[SpatialInkSample]]) -> Bool {
+      samples.contains { span in
+        span.contains { sample in
+          let p = point(sample), r = sample.width/2
+          return NotebookToolGeometry.intersects(.init(x:p.x-r,y:p.y-r,width:max(0.01,r*2),height:max(0.01,r*2)),polygon:polygon)
+        } || zip(span,span.dropFirst()).contains { NotebookToolGeometry.intersects(from:point($0),to:point($1),polygon:polygon) }
+      }
     }
     func retain(id: UUID, color: SpatialInkColor, samples: [[SpatialInkSample]]) throws {
       sampleCount += samples.reduce(0) { $0+$1.count }
@@ -38,7 +43,7 @@ enum NotebookLassoInkSource: Sendable {
       for action in drawing.actions where action.isActive {
         try Task.checkCancellation()
         if action.tool == .eraser { if !strokes.isEmpty { erasers.append(action.samples) } }
-        else if !suppressed.contains(action.id), enclosed([action.samples]) {
+        else if !suppressed.contains(action.id), intersects([action.samples]) {
           try retain(id:action.id,color:action.color,samples:[action.samples])
         }
       }
@@ -47,7 +52,7 @@ enum NotebookLassoInkSource: Sendable {
         try Task.checkCancellation()
         let samples = action.spans.filter { $0.surface == surface }.map(\.samples)
         if action.tool == .eraser { if !strokes.isEmpty { erasers += samples } }
-        else if !suppressed.contains(action.id), action.spans.allSatisfy({ $0.surface == surface }), enclosed(samples) {
+        else if !suppressed.contains(action.id), action.spans.allSatisfy({ $0.surface == surface }), intersects(samples) {
           try retain(id:action.id,color:action.color,samples:samples)
         }
       }
@@ -87,7 +92,7 @@ enum NotebookLassoInkSource: Sendable {
     }
     let ink = NotebookFreehand(layers:layers)
     guard ink.isValid else { throw CollaborationError("selection_limit","Выделите меньшую часть рукописи.") }
-    guard !ink.paintPath(size:box.size,transform:nil).isEmpty else { return nil }
+    if layers.contains(where:{ $0.tool == .eraser }), ink.paintPath(size:box.size,transform:nil).isEmpty { return nil }
     return .init(frame:frame,graphic:.init(shape:.freehand,sourceInkIDs:strokes.map(\.id),freehand:ink))
   }
 }

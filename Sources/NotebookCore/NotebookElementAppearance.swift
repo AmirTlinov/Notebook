@@ -156,6 +156,7 @@ extension NotebookGraphicGeometry {
     case .plus:
       path.move(to:.init(x:rect.minX,y:rect.midY)); path.addLine(to:.init(x:rect.maxX,y:rect.midY))
       path.move(to:.init(x:rect.midX,y:rect.minY)); path.addLine(to:.init(x:rect.midX,y:rect.maxY))
+    case .path: if let vector = graphic.path { path.addPath(vector.path(in:rect)) }
     case .connector, .freehand: break
     }
     return path

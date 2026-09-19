@@ -113,7 +113,7 @@ enum NotebookAttentionProjection {
     case .spatial(let boardID, let elementID):
       guard boardID == presence.boardID,
         let cohort = model.compositionTiles.published,
-        let element = model.presentedElement(reference, cohort: cohort), let owner = element.surface.ownerID else { return nil }
+        let element = model.presentedElement(reference, cohort: cohort) ?? cohort.frame.index.element(id:elementID,boardID:boardID), let owner = element.surface.ownerID else { return nil }
       target = .init(kind: element.surface.kind == .cover ? .cover : .board, id: owner, boardID: boardID); id = elementID
     }
     return frame(target: target, elementID: id, region: nil, worldOrigin: nil, pageIndex: nil, model: model, presence: presence, minimumSide: 0, graphicLayout:layout)
@@ -129,7 +129,7 @@ enum NotebookAttentionProjection {
       guard target.id == presence.boardID else { return nil }
       var origin = worldOrigin ?? .zero
       if let id = elementID {
-        guard let element = model.presentedElement(.spatial(boardID: presence.boardID, elementID: id), cohort: cohort),
+        guard let element = model.presentedElement(.spatial(boardID: presence.boardID, elementID: id), cohort: cohort) ?? index.element(id:id,boardID:presence.boardID),
           element.surface == .board(target.id) else { return nil }
         local = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
         if element.graphic != nil {

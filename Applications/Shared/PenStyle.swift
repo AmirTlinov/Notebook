@@ -40,8 +40,8 @@ enum PenColor: String, CaseIterable, Identifiable, Codable, Sendable {
 }
 
 struct PenStyle: Equatable, Sendable {
-  static let minimumWidth = 1.0
-  static let maximumWidth = 8.0
+  static let minimumWidth = 0.25
+  static let maximumWidth = 128.0
   static let lowestMinimumOpacity = 0.0
   static let highestMinimumOpacity = PencilPressureOpacity.maximumFloor
   static let standard = Self(color: .black, width: 2.2, minimumOpacity: 0.18)
@@ -55,7 +55,7 @@ struct PenStyle: Equatable, Sendable {
   init(color: PenColor, width: Double, minimumOpacity: Double, kind: Kind = .pen) {
     self.kind = kind
     self.color = color
-    self.width = min(max(width, Self.minimumWidth), kind == .marker ? 48 : Self.maximumWidth)
+    self.width = min(max(width, Self.minimumWidth), Self.maximumWidth)
     self.minimumOpacity = min(
       max(minimumOpacity, Self.lowestMinimumOpacity),
       kind == .marker ? 0.65 : Self.highestMinimumOpacity
@@ -67,7 +67,6 @@ struct PenStyle: Equatable, Sendable {
 }
 
 struct EraserStyle: Equatable, Sendable {
-  static let minimumContactWidth = 3.0
   static let minimumSelectableWidth = 9.0
   /// Twenty notebook cells, or ten physical centimetres on a full-size iPad.
   static let maximumSelectableWidth = PhysicalPaper.gridSpacing * 20

@@ -4,9 +4,9 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Canvas text sizes cover the complete camera scale range on both renderers.
+  // Native Bézier contours and mixed item/element selections have one vocabulary.
   // Both applications update together; identities and queued history stay intact.
-  public static let protocolVersion = 30
+  public static let protocolVersion = 31
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 180 * 1_024
   public static let maximumUnacknowledgedFrames = 16

@@ -753,10 +753,7 @@ final class PaperInputView: UIView {
       let timestamp = samples[sampleIndex].timestamp
       let updated = makeSample(from: touch, timestamp: timestamp)
       if samples[sampleIndex].point.location != updated.point.location { quickShape.cancel() }
-      samples[sampleIndex] = reconciledSample(
-        previous: samples[sampleIndex],
-        updated: updated
-      )
+      samples[sampleIndex] = updated
       firstChangedIndex = min(firstChangedIndex ?? sampleIndex, sampleIndex)
 
       if !touch.estimatedPropertiesExpectingUpdates.contains(.force) {
@@ -877,10 +874,7 @@ final class PaperInputView: UIView {
     if let lastIndex = samples.indices.last,
       abs(samples[lastIndex].timestamp - timestamp) < 0.000_001
     {
-      samples[lastIndex] = reconciledSample(
-        previous: samples[lastIndex],
-        updated: sample
-      )
+      samples[lastIndex] = sample
       pendingForceEstimates = pendingForceEstimates.filter {
         $0.value != lastIndex
       }
@@ -895,38 +889,6 @@ final class PaperInputView: UIView {
     let sampleIndex = samples.count - 1
     registerForceEstimate(for: touch, at: sampleIndex)
     return sampleIndex
-  }
-
-  private func reconciledSample(
-    previous: Sample,
-    updated: Sample
-  ) -> Sample {
-    guard actionTool == .eraser else { return updated }
-    let point = PKStrokePoint(
-      location: updated.point.location,
-      timeOffset: updated.point.timeOffset,
-      size: CGSize(
-        width: CGFloat(
-          PencilEraserContact.reconciledWidth(
-            previous: Double(previous.point.size.width),
-            updated: Double(updated.point.size.width)
-          )
-        ),
-        height: CGFloat(
-          PencilEraserContact.reconciledWidth(
-            previous: Double(previous.point.size.height),
-            updated: Double(updated.point.size.height)
-          )
-        )
-      ),
-      opacity: 1,
-      force: max(previous.point.force, updated.point.force),
-      azimuth: updated.point.azimuth,
-      altitude: updated.point.altitude,
-      secondaryScale: updated.point.secondaryScale,
-      threshold: updated.point.threshold
-    )
-    return Sample(point: point, timestamp: updated.timestamp)
   }
 
   private func registerForceEstimate(for touch: UITouch, at sampleIndex: Int) {
@@ -968,11 +930,7 @@ final class PaperInputView: UIView {
     case .eraser:
       let style = actionEraserStyle ?? eraserStyle
       width = CGFloat(
-        PencilPressureWidth.value(
-          force: Double(normalizedForce),
-          minimum: EraserStyle.minimumContactWidth,
-          maximum: style.maximumWidth
-        )
+        style.maximumWidth
       )
       opacity = 1
     default: preconditionFailure("Non-ink contact entered the ink sampler")

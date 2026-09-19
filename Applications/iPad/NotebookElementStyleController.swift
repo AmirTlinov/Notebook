@@ -10,7 +10,8 @@ final class NotebookElementStyleController: UIViewController, UIPopoverPresentat
   private let permitsFill: Bool
   private let channel = UISegmentedControl(items: ["Линия", "Заливка"])
   private var swatches: [UIButton] = []
-  private var weights: [UIButton] = []
+  private let weight = UISlider()
+  private let weightLabel = UILabel()
   private var patterns: [UIButton] = []
   private let clearFill = UIButton(type: .system)
   private static let colors: [(String, SpatialInkColor)] = [
@@ -61,14 +62,12 @@ final class NotebookElementStyleController: UIViewController, UIPopoverPresentat
     extras.addArrangedSubview(custom); stack.addArrangedSubview(extras)
     let separator = UIView(); separator.backgroundColor = .separator; separator.heightAnchor.constraint(equalToConstant:0.5).isActive = true
     stack.addArrangedSubview(separator)
-    let widths = UIStackView(); widths.distribution = .fillEqually; widths.spacing = 6
-    for (index, width) in [1.0,2.0,4.0,8.0].enumerated() {
-      let button = UIButton(type:.system); button.tag = index; button.setImage(Self.line(width:width),for:.normal)
-      button.accessibilityLabel = "Толщина \(Int(width))"; button.accessibilityIdentifier = "element-width-\(Int(width))"
-      button.addTarget(self,action:#selector(chooseWidth(_:)),for:.touchUpInside)
-      button.heightAnchor.constraint(equalToConstant:42).isActive = true
-      weights.append(button); widths.addArrangedSubview(button)
-    }
+    weight.minimumValue = -2; weight.maximumValue = 10; weight.isContinuous = false
+    weight.accessibilityLabel = "Толщина обводки"; weight.accessibilityIdentifier = "element-width"
+    weight.addTarget(self,action:#selector(chooseWidth(_:)),for:.valueChanged)
+    let widths = UIStackView(arrangedSubviews:[weight,weightLabel]); widths.spacing = 10
+    widths.heightAnchor.constraint(equalToConstant:42).isActive = true
+    weightLabel.font = .monospacedDigitSystemFont(ofSize:13,weight:.regular)
     stack.addArrangedSubview(widths)
     let dashes = UIStackView(); dashes.distribution = .fillEqually; dashes.spacing = 6
     for (index, title) in ["Сплошная","Пунктир","Точки"].enumerated() {
@@ -95,7 +94,8 @@ final class NotebookElementStyleController: UIViewController, UIPopoverPresentat
       button.accessibilityTraits = active ? [.button,.selected] : .button
     }
     clearFill.isHidden = channel.selectedSegmentIndex != 1
-    for (index, button) in weights.enumerated() { decorate(button, selected: style.strokeWidth == [1.0,2.0,4.0,8.0][index]) }
+    weight.value = Float(log2(style.strokeWidth))
+    weightLabel.text = String(format:"%.1f",style.strokeWidth)
     for (index, button) in patterns.enumerated() { decorate(button, selected: (style.dash ?? .solid) == Self.dashes[index]) }
   }
   private func decorate(_ button: UIButton, selected: Bool) {
@@ -110,7 +110,7 @@ final class NotebookElementStyleController: UIViewController, UIPopoverPresentat
     updateStyle { if fill { $0.fill = color } else { $0.stroke = color } }
   }
   @objc private func removeFill() { updateStyle { $0.fill = nil } }
-  @objc private func chooseWidth(_ sender: UIButton) { updateStyle { $0.strokeWidth = [1.0,2.0,4.0,8.0][sender.tag] } }
+  @objc private func chooseWidth(_ sender: UISlider) { let width = pow(2,Double(sender.value)); updateStyle { $0.strokeWidth = width } }
   @objc private func chooseDash(_ sender: UIButton) { updateStyle { $0.dash = Self.dashes[sender.tag] } }
   @objc private func customColor() {
     let picker = UIColorPickerViewController(); picker.delegate = self; picker.supportsAlpha = false

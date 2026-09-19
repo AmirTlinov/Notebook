@@ -39,8 +39,9 @@ const graphicConnection = z.object({start:graphicEndpoint, end:graphicEndpoint,
 const graphicTransform = z.object({a:z.number().finite(),b:z.number().finite(),c:z.number().finite(),d:z.number().finite(),tx:z.number().finite(),ty:z.number().finite()}).strict();
 const inkVertex = graphicPoint.extend({opacity:z.number().min(0).max(1)}).strict();
 const freehand = z.object({layers:z.array(z.object({tool:z.enum(["pen","eraser"]),color:graphicColor,vertices:z.array(inkVertex).min(3).max(65536)}).strict()).min(1).max(2048)}).strict();
-export const graphicSchema = z.object({ shape: z.enum(["ellipse", "rectangle", "triangle", "diamond", "plus", "connector", "freehand"]), style: graphicStyle, label: z.string().max(100_000),
+export const graphicSchema = z.object({ shape: z.enum(["ellipse", "rectangle", "triangle", "diamond", "plus", "connector", "freehand", "path"]), style: graphicStyle, label: z.string().max(100_000),
   representation: z.enum(["ink", "geometry"]), visible: z.boolean(), sourceInkIDs: z.array(z.uuid()).max(1024), connection:graphicConnection.optional(),
+  path:z.object({commands:z.array(z.object({kind:z.enum(["move","line","quad","curve","close"]),points:z.array(graphicPoint).max(3)}).strict()).min(1).max(8192)}).strict().nullable().optional(),
   transform:graphicTransform.nullable().optional(),freehand:freehand.nullable().optional(),
   cornerRadius:z.number().finite().min(0).max(1e6).nullable().optional(),
   vertices:z.array(z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1)}).strict()).min(3).max(4).nullable().optional() }).strict();

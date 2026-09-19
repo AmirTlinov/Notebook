@@ -156,6 +156,7 @@ struct SpatialWorkspaceView: View {
         NotebookAgentFeedbackOverlay(presence:presence)
         NotebookAttentionMarks(presence:presence)
         NotebookGraphicBindingHint(presence:presence)
+        NotebookTransientToolsOverlay(presence:presence)
         NotebookPresentationOverlay(player: model.presentationPlayer, presence: presence,
           cameraIsActive: model.presencePhase == .active)
         if let reference = model.selectionSession.editingElement,
@@ -165,12 +166,17 @@ struct SpatialWorkspaceView: View {
             scale: presence.camera.scale)
             .frame(width: viewport.x, height: viewport.y)
         }
-        if model.selectionSession.elements.count > 1 {
-          let layouts = model.graphicLayouts(model.selectionSession.elements)
+        if model.selectionSession.count > 1 {
           let frames = model.selectionSession.elements.compactMap { reference in
-            layouts[reference].flatMap { NotebookAttentionProjection.editingFrame(reference,model:model,presence:presence,layout:$0) }
+            NotebookAttentionProjection.editingFrame(reference,model:model,presence:presence)
+          } + model.selectionSession.items.compactMap { selected -> CGRect? in
+            guard selected.boardID == presence.boardID, let cohort,
+              let item = model.presentedItem(id:selected.itemID,cohort:cohort,presence:presence)
+                ?? cohort.frame.index.renderedItem(id:selected.itemID,presence:presence) else { return nil }
+            let rect = item.geometry.screenFrame(center:item.center,camera:presence.camera,viewport:presence.viewport)
+            return .init(x:rect.x,y:rect.y,width:rect.width,height:rect.height)
           }
-          if frames.count == model.selectionSession.elements.count {
+          if frames.count == model.selectionSession.count {
             NotebookMultipleElementControls(selectionID:model.selectionSession.id,frames:frames)
               .frame(width:viewport.x,height:viewport.y)
           }

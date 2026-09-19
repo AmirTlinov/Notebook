@@ -20,11 +20,14 @@ import UIKit
       XCTAssertEqual(fit.frame.width,80); XCTAssertEqual(fit.frame.height,80)
       XCTAssertEqual(fit.frame.x,x < 0 ? 20 : 100); XCTAssertEqual(fit.frame.y,y < 0 ? 20 : 100)
     }
-    let line = try XCTUnwrap(NotebookToolGeometry.figure(from:.init(x:80,y:70),to:.init(x:10,y:20),shape:.arrow,preservesAspect:false,width:2))
+    let line = try XCTUnwrap(NotebookToolGeometry.connection(from:.init(x:80,y:70),to:.init(x:10,y:20),width:2))
     XCTAssertEqual(line.connection?.start.point,.init(x:70,y:50)); XCTAssertEqual(line.connection?.end.point,.zero)
     XCTAssertEqual(line.connection?.endArrowhead,.arrow)
-    let point = NotebookToolGeometry.rulerEnd(from:.init(x:10,y:20),to:.init(x:87,y:45),angle:0,grid:10)
-    XCTAssertEqual(point,.init(x:90,y:20))
+    let address = NotebookToolAddress(surface:.page(UUID()),boardID:nil,worldOrigin:nil,bounds:nil)
+    let ruler = NotebookRuler(address:address,start:.init(x:10,y:20),angle:90,length:PhysicalPaper.pointsPerCentimeter*10)
+    let point = ruler.project(.init(x:87,y:20+PhysicalPaper.pointsPerCentimeter),from:address,snap:true)
+    XCTAssertEqual(point.x,10,accuracy:0.000001)
+    XCTAssertEqual(point.y,20+PhysicalPaper.gridSpacing*2,accuracy:0.000001)
   }
 
   func testTemporaryToolsDoNotCreateInkOrAuthoredObjectsAndCancellationDropsPreview() async throws {
@@ -230,6 +233,75 @@ import UIKit
       let actualFrame = saved.elements[0].frame
       let actual = NotebookGraphicGeometry.paintPath(saved.elements[0].graphic!,layout:nil,size:.init(width:actualFrame.width,height:actualFrame.height))
       XCTAssertFalse(actual.contains(.init(x:actualFrame.width/2,y:actualFrame.height/2)),"The cut rotates with ink")
+    }
+  }
+
+  func testLassoSelectsAnyIntersectionIncludingCrossedStrokeAndText() async throws {
+    let polygon = [SpatialPoint(x:90,y:90),.init(x:110,y:90),.init(x:110,y:110),.init(x:90,y:110)]
+    XCTAssertTrue(NotebookToolGeometry.intersects(.init(x:100,y:100,width:200,height:200),polygon:polygon))
+    XCTAssertTrue(NotebookToolGeometry.intersects(.init(x:0,y:0,width:200,height:200),polygon:polygon))
+    XCTAssertTrue(NotebookToolGeometry.intersects(from:.init(x:0,y:100),to:.init(x:200,y:100),polygon:polygon))
+    XCTAssertFalse(NotebookToolGeometry.intersects(.init(x:120,y:120,width:20,height:20),polygon:polygon))
+    try await fixture { model in
+      let page = try XCTUnwrap(model.activePage)
+      let address = NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+      let text = try XCTUnwrap(model.beginToolText(at:.init(x:100,y:100),address:address,screenScale:1))
+      await assertSaved(model); await model.reloadExternalChanges()?.value
+      let refs = model.lassoElements(polygon,at:address,graph:.init([]))
+      XCTAssertTrue(refs.contains(address.reference(text)))
+      model.selectDrawingTool(.lasso)
+      XCTAssertTrue(model.drawingTools.begin(at:polygon[0],address:address,screenScale:1))
+      for point in polygon.dropFirst() { model.drawingTools.move(to:point) }
+      model.drawingTools.finish()
+      XCTAssertTrue(model.selectionSession.contains(address.reference(text)),"Visible elements select synchronously, before awaiting any ink mesh")
+    }
+  }
+
+  func testLaserExpiresFromOldestToNewestAndRetainsWorldWidth() {
+    let address = NotebookToolAddress(surface:.board(UUID()),boardID:nil,worldOrigin:.zero,bounds:nil)
+    let trace = NotebookLaserTrace(id:UUID(),address:address,color:.red,width:40,lifetime:0.6,
+      samples:[.init(point:.init(x:0,y:0),time:0),.init(point:.init(x:100,y:0),time:0.2),.init(point:.init(x:200,y:0),time:0.4)])
+    let visible = trace.points(at:0.7)
+    XCTAssertEqual(visible.first!.x,50,accuracy:0.00001)
+    XCTAssertEqual(visible.last!.x,200)
+    XCTAssertTrue(trace.points(at:1.01).isEmpty)
+    XCTAssertEqual(trace.width*0.1,4); XCTAssertEqual(trace.width*0.05,2)
+  }
+
+  func testPencilEraserDiameterDoesNotPumpWithPressure() {
+    let paper = PaperInputView(frame:.init(x:0,y:0,width:500,height:500))
+    paper.configure(penStyle:.standard,eraserStyle:.init(maximumWidth:80),drawingTool:.eraser)
+    let touch = DrawingToolPencilTouch()
+    var accepted: PageInkAction?
+    paper.onDrawingMutation = { accepted = $0 }
+    touch.pressure = 0.01; paper.touchesBegan([touch],with:nil)
+    for force in [0.9,0.03,1,0.05,0.5] {
+      touch.pressure = force; touch.sampleTime += 0.02; touch.point.x += 10
+      paper.touchesMoved([touch],with:nil)
+    }
+    paper.touchesEnded([touch],with:nil)
+    XCTAssertNotNil(accepted)
+    XCTAssertTrue(accepted?.samples.allSatisfy { abs($0.width-80) < 0.001 } == true)
+  }
+
+  func testShapeSubtractionPersistsOneEditableContourAndUndoRestoresRectangle() async throws {
+    try await fixture { model in
+      let page = try XCTUnwrap(model.activePage)
+      let address = NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+      let original = NotebookWorkingGraphic(id:UUID(),surface:address.surface,frame:.init(x:80,y:80,width:240,height:220),worldOrigin:nil,
+        graphic:.init(shape:.rectangle,style:.init(strokeWidth:2,fill:.black)))
+      XCTAssertTrue(model.acceptAuthoredGraphic(original,at:address)); await assertSaved(model); await model.reloadExternalChanges()?.value
+      let cutter = NotebookWorkingGraphic(id:UUID(),surface:address.surface,frame:.init(x:140,y:140,width:80,height:70),worldOrigin:nil,
+        graphic:.init(shape:.ellipse,style:.init(stroke:.init(red:1,green:0,blue:0),strokeWidth:2,fill:.init(red:1,green:1,blue:0))))
+      model.combineAuthoredShape(cutter,at:address,graph:model.graphicGraph(page:try XCTUnwrap(model.activePage),preview:false),operation:.subtract)
+      await assertSaved(model); await model.reloadExternalChanges()?.value
+      let edited = try XCTUnwrap(model.store.loadPage(page.id).elements.first { $0.id == original.id })
+      XCTAssertEqual(edited.graphic?.shape,.path)
+      XCTAssertNotEqual(edited.graphic?.style.stroke,edited.graphic?.style.fill)
+      let paint = NotebookGraphicGeometry.paintPath(try XCTUnwrap(edited.graphic),layout:nil,size:.init(width:edited.frame.width,height:edited.frame.height))
+      XCTAssertFalse(paint.contains(.init(x:180-edited.frame.x,y:170-edited.frame.y)))
+      model.undoLastSurfaceAction(); await assertSaved(model); await model.reloadExternalChanges()?.value
+      XCTAssertEqual(try model.store.loadPage(page.id).elements.first { $0.id == original.id }?.graphic?.shape,.rectangle)
     }
   }
 
