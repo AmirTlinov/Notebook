@@ -1,5 +1,23 @@
 # Проверка Notebook
 
+## 19 сентября, 17:44 МСК — GUI-250: Simulator UI opening не принят
+
+Test-only Simulator bundle собран, installed V16 и контейнер сохранены.
+Sound search/tap довёл реальный public `nb.observe` до точной обложки
+`98001c01-bd25-4112-90fc-591c72667a5c`, mode=cover/openProgress=0; сам документ
+ещё не открыт. Последние XCTest events17:39:17 — AX cover query с automation
+type mismatch. Дальнейшего прогресса не было; app наблюдался с0–1%CPU.
+После bounded stop xcode не завершил finalize-test-log, собственные диагностические
+PID остановлены адресно. xcresult не финализирован (нетInfo.plist); подвисший
+sample не даёт performance evidence. Ни XCTest PASS, ни показ не заявляются.
+`receivedByIPad=confirmed`, `shownOnIPad=awaiting_display`. Offline large UI не
+запускался. Следующая проверка должна сначала локализовать cover accessibility/
+UI-driver зависание, не повторять слепо полный прогон.
+
+Evidence: `.build/gui250-received-program-ui-v18/{ui-build.json,xctest-events.log,interruption.json,sound-live-receipt.json,observe-after-interruption.json}`.
+Физический iPad, production и сеть не менялись. Этот отказ UI gate не отменяет
+принятый отдельно Mac scroll fix790847b или byte-for-byte receipt большого пакета.
+
 ## 19 сентября, 17:37 МСК — GUI-248: содержимое больше не прилипает к titlebar при scroll
 
 Mac V18 source `5b52a090262d84c42eee301c42c5a390a28911894791c27efbfe7138f5e265e4`,
