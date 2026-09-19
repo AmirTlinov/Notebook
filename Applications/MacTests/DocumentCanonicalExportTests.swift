@@ -51,7 +51,7 @@ import XCTest
     let persistence = NotebookPersistenceQueue(store: store)
     let document = DocumentDocument(actor: UUID(), blocks: [
       .markdown(id: "text", source: "# Vector heading\n\n[An external link](https://example.com)"),
-      .interactive(id: "program", html: "<div style='width:100%;height:100px;background:rgb(255,0,0)'></div>", height: 100)])
+      .interactive(id: "program", html: "<div style='width:100%;height:100px;background:rgb(255,0,0)'></div>", javaScript: "notebook.ready(Promise.resolve());notebook.exportFrame(()=>null)", height: 100)])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     let geometry = WorkspaceItemGeometry.document(document.paperSize)
     // Deliberately install a later blue frame under the same saved journal
@@ -79,6 +79,49 @@ import XCTest
     let attachment = XCTAttachment(data: pdfBytes, uniformTypeIdentifier: "com.adobe.pdf")
     attachment.name = "saved-red-cut-with-vector-text-not-live-blue"; attachment.lifetime = .keepAlways; add(attachment)
   }
+  func testRasterExportWaitsForTheExactAuthoredStateAndRefusesUnknownFrames() async throws {
+    let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    defer { try? FileManager.default.removeItem(at: store.root) }
+    let persistence = NotebookPersistenceQueue(store: store)
+    let script = """
+      const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
+      canvas.width=10;canvas.height=10;ctx.fillStyle='blue';ctx.fillRect(0,0,10,10);
+      notebook.ready(Promise.resolve());
+      notebook.lifecycle({pause(){},checkpoint(){throw Error('No late checkpoint');}});
+      notebook.exportFrame(async ({format,state,pixelRatio})=>{
+        if(format!=='raster'||!(pixelRatio>0))throw Error('Wrong export extent');
+        await new Promise(resolve=>setTimeout(resolve,30));
+        const {width,height}=canvas.getBoundingClientRect();canvas.width=Math.round(width*pixelRatio);canvas.height=Math.round(height*pixelRatio);
+        if(state.phase!==.625)throw Error('Wrong saved phase '+JSON.stringify(state));
+        ctx.fillStyle='red';ctx.fillRect(0,0,canvas.width,canvas.height);
+        if(notebook.commit({phase:99}))throw Error('Export must not commit');return null;
+      });
+      """
+    var document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "text", source: "# Exact saved phase"),
+      .interactive(id: "frame", html: "<canvas style='width:100%;height:100px'></canvas>", javaScript: script, height: 100)])
+    var state = DocumentStateJournal(id: document.id, actor: UUID())
+    XCTAssertTrue(state.commit(blockID: "frame", value: .object(["phase": .number(0.625)]), actor: UUID()))
+    let cut = try NotebookExportCut(document: document, state: state)
+    let first = try await DocumentCanonicalExport.publication(cut: cut, options: .init(format: .png, pixelWidth: 1600), jobID: UUID(), store: store, persistence: persistence)
+    let bytes = try readExportBytes(first.artifact, store: store), bitmap = try XCTUnwrap(NSBitmapImageRep(data: bytes))
+    let attachment = XCTAttachment(data: bytes, uniformTypeIdentifier: "public.png"); attachment.name = "authored-canvas-frame"; attachment.lifetime = .keepAlways; add(attachment)
+    // AppKit converts calibrated PNG red to display RGB (green can be ~0.15);
+    // require red dominance, not an untagged byte-space identity.
+    var red = 0
+    for y in stride(from: 0, to: bitmap.pixelsHigh, by: 5) { for x in stride(from: 0, to: bitmap.pixelsWide, by: 5) {
+      if let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), c.redComponent > 0.8 && c.blueComponent < 0.3 && c.greenComponent < 0.3 { red += 1 }
+    } }
+    XCTAssertGreaterThan(red, 500, "Await author completion, not its blue startup frame")
+    let repeated = try await DocumentCanonicalExport.publication(cut: cut, options: .init(format: .png, pixelWidth: 1600), jobID: UUID(), store: store, persistence: persistence)
+    XCTAssertEqual(repeated.artifact.sha256, first.artifact.sha256, "Same saved frame renders reproducibly")
+    document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "unknown", html: "<p>Not an export-ready program</p>", javaScript: "notebook.ready(Promise.resolve())", height: 100)])
+    do {
+      _ = try await DocumentCanonicalExport.publication(cut: .init(document: document, state: .init(id: document.id, actor: UUID())), options: .init(format: .png), jobID: UUID(), store: store, persistence: persistence)
+      XCTFail("A running frame with no author export contract cannot be called the saved state")
+    } catch { XCTAssertTrue(String(describing: error).contains("program_export_unavailable"), "\(error)") }
+  }
+
   func testLargeQuartzPDFStreamsThroughPartsAndPublishesWithoutBinaryIPC() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let store = NotebookStore(root: root), actor = UUID()

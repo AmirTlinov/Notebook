@@ -146,6 +146,14 @@ PDF текст, формулы и SVG. Это тот же `DocumentPrintedPage`,
 замкнутый SVG с literal presentation attributes/local definitions; script,
 foreignObject, CSS styles, анимация и внешние ресурсы отклоняются, а не вырезаются.
 Signal экспортирует выбранное окно Plot и marker настоящими path/text, без PNG.
+PNG/PDF интерактивных областей тоже требуют `exportFrame`: format=raster,
+pixelRatio в CSS-пикселях, exact saved state. Автор останавливает свои часы,
+awaits model/media и рисует целевой backing Canvas/WebGL; возвращает null после
+готовности. Нет callback — program_export_unavailable, а не случайный startup
+кадр. Ресурсный raster admission происходит до увеличения backing, после callback
+используется прежний WebKit capture/compositor; live executor не меняется.
+Signal/Three/six inline recipes используют ту же модель; wave ждёт accepted
+Worker result (не draft), recording ждёт decoded seeked frame и остаётся muted.
 Presented, portable и video пока относятся к незавершённой части GUI-249.
 
 Растр для агента подтверждает точные token, поколение и эпоху установки.

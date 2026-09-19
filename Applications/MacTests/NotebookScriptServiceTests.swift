@@ -955,7 +955,7 @@ final class NotebookScriptServiceTests: XCTestCase {
     XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
     let document = DocumentDocument(id: item.id, actor: actor, blocks: [
       .markdown(id: "heading", source: "# Canonical image\n\nAn offline mixed page with $x^2$ and vector SVG.\n\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"240\" height=\"60\"><path d=\"M10 40 Q120 -20 230 40\" fill=\"none\" stroke=\"#2466af\" stroke-width=\"3\"/></svg>"),
-      .interactive(id: "program", html: "<div style='width:100%;height:100px;background:rgb(255,0,0)'></div>", height: 100)])
+      .interactive(id: "program", html: "<div style='width:100%;height:100px;background:rgb(255,0,0)'></div>", javaScript: "notebook.ready(Promise.resolve());notebook.exportFrame(()=>null)", height: 100)])
     try owner.store.saveDocumentWorkspaceBundle(index: index, document: document, state: .init(id: item.id, actor: actor), board: board)
     _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2,
       code: "return await nb.export('png',{documentID:args.documentID,format:'png',pageIndex:0,pixelWidth:1600});",

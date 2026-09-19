@@ -15,6 +15,7 @@ const canvas=get<HTMLCanvasElement>('gear-canvas'),status=get('model-status'),er
 const phase=get<HTMLInputElement>('phase'),reveal=get<HTMLInputElement>('reveal'),field=get<HTMLInputElement>('field'),play=get<HTMLButtonElement>('play');
 const events=new AbortController(),theme=matchMedia('(prefers-color-scheme:dark)');
 let state=selection(notebook.state),suspended=false,disposed=false,lost=false,playing=false,frame=0,previous=0;
+let exportRatio:number|undefined;
 let renderer:THREE.WebGLRenderer|undefined,controls:OrbitControls|undefined,model:THREE.Group|undefined;
 let environment:THREE.WebGLRenderTarget|undefined,environmentDirty=true;
 let loading:Promise<void>|undefined,request:AbortController|undefined,manager:THREE.LoadingManager|undefined;
@@ -49,7 +50,9 @@ function draw() {
   fieldGroup.visible=state.field;
   for(const mesh of meshes){const material=mesh.material as THREE.MeshStandardMaterial;material.emissive.setHex(mesh.userData.partID===state.selected?0x292315:0);}
   const {width,height}=canvas.getBoundingClientRect(),w=Math.max(1,Math.round(width)),h=Math.max(1,Math.round(height));
-  const dpr=Math.min(devicePixelRatio||1,2,1600/Math.max(w,h));
+  const dpr=exportRatio??Math.min(devicePixelRatio||1,2,1600/Math.max(w,h));
+  const max=renderer.getContext().getParameter(renderer.getContext().MAX_RENDERBUFFER_SIZE);
+  if(w*dpr>max||h*dpr>max)throw Error('program_export_extent');
   if(renderer.getPixelRatio()!==dpr||canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){renderer.setPixelRatio(dpr);renderer.setSize(w,h,false);camera.aspect=w/h;camera.fov=2*Math.atan(Math.max(190,345/camera.aspect)/800)*180/Math.PI;camera.updateProjectionMatrix();}
   if(environmentDirty){environment?.dispose();const studio=new RoomEnvironment(),pmrem=new THREE.PMREMGenerator(renderer);environment=pmrem.fromScene(studio,.04);scene.environment=environment.texture;scene.environmentIntensity=.7;// RoomEnvironment.dispose releases materials/geometries, not its InstancedMesh attributes.
     studio.traverse(o=>{if(o instanceof THREE.InstancedMesh)o.dispose();});studio.dispose();pmrem.dispose();environmentDirty=false;}
@@ -146,6 +149,12 @@ notebook.semantic(()=>{
     {label:'Делительный радиус',value:design.module*gear.teeth/2,unit:'mm'},
     {label:'Угол',value:angles(state.phase)[i]!,unit:'rad'}],
     model:{time:state.phase*16,timeUnit:'s',ratio:ratios[i]!,reveal:state.reveal,camera:[...state.camera]}};
+});
+notebook.exportFrame(({format,state:saved,pixelRatio,signal})=>{
+  if(format!=='raster')throw Error('program_export_unavailable');
+  if(signal.aborted||!renderer||!model||lost)throw Error('program_export_3d_not_ready');
+  stop();state=selection(saved);exportRatio=pixelRatio;suspended=false;
+  try{applyCamera();sync();renderNow();return null;}finally{suspended=true;stop();}
 });
 notebook.lifecycle({pause(){stop();renderNow();suspended=true;request?.abort();manager?.abort();if(controls)controls.enabled=false;sync();},checkpoint(){return {...state,camera:[...state.camera]};},resume(){if(disposed)return;suspended=false;if(controls)controls.enabled=!lost;sync();if(!model)startLoad();else renderNow();},dispose(){disposed=true;stop();events.abort();observer.disconnect();request?.abort();manager?.abort();controls?.dispose();controls=undefined;releaseModel();environment?.dispose();environment=undefined;scene.environment=null;renderer?.dispose();renderer?.forceContextLoss();renderer=undefined;}});
 get('model-size').textContent=`Локальный glTF: ${metadata.triangles.toLocaleString('ru-RU')} треугольников, две текстуры 2048 × 2048. Геометрия не пересобирается при движении; неподвижная сцена не запрашивает кадры.`;

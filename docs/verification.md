@@ -1,5 +1,35 @@
 # Проверка Notebook
 
+## 19 сентября, 08:39 МСК — GUI-249: точный authored raster вместо startup кадра
+
+PNG/PDF ждут exportFrame(format=raster,state,pixelRatio) после author pause,
+в отдельном executor. Rasters admitted до callback; общий native capture остаётся
+владельцем пикселей. Без callback — явный отказ, не случайная фаза. Callback error
+возвращается одному export caller, не одновременно в display invalidation.
+Signal рисует целевой Canvas/Plot, Three — выбранную фазу/камеру в целевом GL
+backing, wave ждёт accepted Worker result и decoded/seeked muted recording.
+Шесть inline scientific scenes используют тот же render, без второго движка.
+
+**Mac6 PASS**, `.build/gui249-raster-mac-v4/verification.json`, source
+**7a3c3b5a544c9ea45dbf11ac72b130fa1ffcd46ca75168a1d1eb017e882639ce**:
+exact phase0.625 после delayed Canvas draw, два PNG с одинаковым SHA, отказ без
+provider, real SDK PNG и PDF/compiled assets/SVG, реальные signal/gears/wave
+backings при ratio3; accepted wave0.25 вместо draft4, recording0.75 decoded/paused/
+muted, commits не выросли. **JS37 PASS**, `/tmp/gui249-raster-js-v1.log`; после
+правки error owner **bridge17 PASS + SDK check**, `/tmp/gui249-raster-js-v2.log`.
+**Simulator2 PASS**, `.build/gui249-raster-sim-v1.xcresult` (tall lifecycle + Worker/
+media); final bridge **Simulator1 PASS**, `.build/gui249-raster-sim-v2.xcresult`.
+Физическая пара не затронута.
+
+Промежуточный тест ошибочно требовал ratio>=2 при физическом viewport1091 и
+PNG1600; теперь проверяет положительный target ratio, real backing ratio3
+проверяется отдельно. Второй тест неверно считал red только при green<0.1 после
+AppKit calibrated-to-display RGB (фактический green≈0.149). Реальный PNG открыт и
+осмотрен: красный authored Canvas и печатный заголовок. Проверка использует red
+dominance с учётом профиля; renderer ради этого не менялся. Артефакт осмотра:
+`.build/gui249-raster-preview-v3/E95B57FF-7EAE-41D9-9CF1-B09B2BDFDACB.png`.
+Это не presented/portable/video и не полная GUI-250 performance acceptance.
+
 ## 19 сентября, 08:25 МСК — GUI-249: настоящий SVG выбранного saved result
 
 format=svg + blockID проходят прежний export owner, immutable cut и V2 publication.

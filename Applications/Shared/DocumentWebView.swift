@@ -1758,8 +1758,7 @@ final class DocumentWebCoordinator: NSObject,
     onRenderReady(ready && (snapshotPixelWidth == nil || snapshotOnlyComplete))
   }
 
-  /// A thumbnail borrows pixels from the already mounted page. It neither
-  /// starts that page's programs again nor revokes the page's input lease.
+  /// Only an isolated export executor may request an authored representation.
   func exportSVG(block: DocumentBlock, state: JSONValue) async throws -> String {
     guard exportSnapshotID != nil, let before = payload, !isInvalidated else { throw CancellationError() }
     try await awaitPresentation(token: before.renderToken)
@@ -1814,6 +1813,18 @@ final class DocumentWebCoordinator: NSObject,
         }
         guard !Task.isCancelled, !isInvalidated, generation == expectedGeneration, let web = webView else {
           reservation.release(); throw CancellationError()
+        }
+        if exportSnapshotID != nil {
+          do {
+            let ids = payload.source.programIDs(on: payload.pageIndex) ?? payload.source.programIDs
+            for block in payload.blocks where ids.contains(block.id) {
+              _ = try await NotebookProgramBridge.lifecycle("exportProgram", controller: "notebookRenderer",
+                argument: .object(["format": .string("raster"), "blockID": .string(block.id),
+                  "state": payload.states[block.id] ?? block.initialState,
+                  "pixelRatio": .number(Double(pixelWidth) / size.width)]), in: web)
+            }
+            guard !Task.isCancelled, !isInvalidated, generation == expectedGeneration else { throw CancellationError() }
+          } catch { reservation.release(); throw error }
         }
         #if os(iOS)
           let scale = web.window?.screen.scale ?? 2

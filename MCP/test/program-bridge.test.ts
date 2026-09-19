@@ -204,3 +204,16 @@ test('missing, throwing, unbounded or cancelled author SVG is an error, never a 
   const pending=program.exportFrame({format:'svg',state:null});await new Promise(resolve=>setTimeout(resolve,0));
   await program.dispose();done('<svg/>');await assert.rejects(pending,/superseded|disposed/);
 });
+
+
+test('raster export waits for the authored saved frame at exact scale and never checkpoints or commits',async()=>{
+  const {program,api,commits}=fixture();let ready=false,ratio=0;
+  api.lifecycle({pause:()=>{},checkpoint:()=>{throw Error('No later phase');}});
+  api.exportFrame(async({format,state,pixelRatio}:any)=>{assert.equal(format,'raster');assert.equal(state.phase,.625);
+    ratio=pixelRatio;await new Promise(resolve=>setTimeout(resolve,1));ready=true;assert.equal(api.commit(state),false);return null;});
+  assert.equal(await program.exportFrame({format:'raster',state:{phase:.625},pixelRatio:3}),null);
+  assert.equal(ready,true);assert.equal(ratio,3);assert.equal(commits.length,0);assert.equal(program.suspended,true);
+  for(const pixelRatio of [0,-1,NaN,Infinity,9])await assert.rejects(program.exportFrame({format:'raster',state:null,pixelRatio}),/extent/);
+  await assert.rejects(fixture().program.exportFrame({format:'raster',state:null,pixelRatio:2}),/unavailable/);
+  const invalid=fixture();invalid.api.exportFrame(()=>'<svg/>');await assert.rejects(invalid.program.exportFrame({format:'raster',state:null,pixelRatio:2}),/raster_invalid/);
+});

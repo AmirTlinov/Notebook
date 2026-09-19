@@ -271,3 +271,30 @@ state старым checkpoint и не позволяет поздней отме
 `gears` использует прежний selected part, buttons/raycast и положение камеры.
 Это development-контракт GUI-247; установленная пользовательская release 116
 его пока не содержит. Simulator-проверка не означает hardware acceptance.
+
+
+## Точный экспорт
+
+`nb.export(key,{documentID})` создаёт PDF; format=png + pageIndex/pixelWidth —
+страницу, format=svg + blockID — авторский векторный результат. Status/cancel
+используют тот же jobID. Ошибка не публикует неполный файл.
+
+Каждый экспортируемый interactive block явно регистрирует:
+
+```js
+notebook.exportFrame(async ({format,state,pixelRatio,signal}) => {
+  if (format !== 'raster') throw Error('program_export_unavailable');
+  // Уже вызван pause. Восстанови переданный state, а не поздний local playhead.
+  // Дождись своего worker/seek, отрисуй Canvas/WebGL при pixelRatio.
+  await renderSavedFrame(state, pixelRatio, signal);
+  return null; // pixels заберёт прежний native capture
+});
+```
+
+Для SVG callback возвращает passive SVG string до 1 МиБ с presentation attributes
+и локальными definitions; без CSS/scripts/external resources. Этот контракт
+выполняется только в отдельном export executor. Commit там запрещён, авторская
+ошибка/timeout отказывают в экспорте. Не перематывай пользовательский executor,
+не возвращай null до готовности и не увеличивай только CSS-размер старого bitmap.
+Рецепты signal/gears/wave и шесть inline science examples уже поддерживают raster;
+Plot signal также поддерживает SVG.

@@ -19,6 +19,9 @@ function stateFrom(value:unknown):State {
 }
 let state=stateFrom(notebook.state),worker:Worker|undefined,generation=0,debounce=0,disposed=false,suspended=false;
 let lastGood:Float32Array|undefined,lastReport:Frame['report']|undefined,reference:Float32Array|undefined,referenceRequest:AbortController|undefined;
+let exportRatio:number|undefined;
+type Completion={resolve:()=>void;reject:(error:Error)=>void};
+let completion:Completion|undefined;
 let mediaMounted=false,restoringMedia=false,mediaEpoch=0;
 const image=ctx.createImageData(size,size),palette=Array.from({length:2049},(_,i)=>color(i/1024-1));
 const active=()=>!disposed&&!suspended;
@@ -43,7 +46,7 @@ function draw(field:Float32Array,p:Parameters,report?:Frame['report'],partial=fa
  ctx.putImageData(image,0,0);
  const marker=get('probe-marker');marker.hidden=!state.probe;
  if(state.probe){marker.style.left=(state.probe.x+.5)/size*100+'%';marker.style.top=(size-state.probe.y-.5)/size*100+'%';}
- const width=Math.max(280,cut.getBoundingClientRect().width),height=120,dpr=Math.min(devicePixelRatio||1,2);
+ const width=Math.max(280,cut.getBoundingClientRect().width),height=120,dpr=exportRatio??Math.min(devicePixelRatio||1,2);
  if(cut.width!==Math.round(width*dpr)||cut.height!==height*dpr){cut.width=Math.round(width*dpr);cut.height=height*dpr;}
  const c=cutContext;c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,width,height);c.strokeStyle='#aab0bf';c.lineWidth=1;c.beginPath();c.moveTo(28,60);c.lineTo(width-14,60);c.stroke();
  c.strokeStyle='#5274c5';c.lineWidth=2;c.beginPath();for(let x=0;x<size;x++){const y=60-(field[(size/2-1)*size+x]!+field[size/2*size+x]!)*22;const X=28+x/(size-1)*(width-42);x?c.lineTo(X,y):c.moveTo(X,y);}c.stroke();
@@ -58,11 +61,11 @@ function draw(field:Float32Array,p:Parameters,report?:Frame['report'],partial=fa
  }
 }
 function showLast() {if(lastGood&&state.accepted)draw(lastGood,state.accepted,lastReport);else draw(initial(state.accepted??state.draft),state.accepted??state.draft);}
-function stop() {generation++;clearTimeout(debounce);debounce=0;if(worker){worker.onmessage=null;worker.onerror=null;worker.terminate();worker=undefined;}}
+function stop() {const cancelled=completion;completion=undefined;cancelled?.reject(Error('program_export_compute_cancelled'));generation++;clearTimeout(debounce);debounce=0;if(worker){worker.onmessage=null;worker.onerror=null;worker.terminate();worker=undefined;}}
 function fail(error:unknown){stop();failure.hidden=false;failure.textContent='Расчёт не завершён: '+String(error);status.textContent='Последний правильный результат сохранён. Можно повторить расчёт.';showLast();sync();}
-function run(p=state.draft,restore=false) {
- if(!active()||state.tab!=='model')return;
- stop();const id=generation;failure.hidden=true;progress.value=0;status.textContent='Расчёт 256 × 256…';
+function run(p=state.draft,restore=false,awaited?:Completion) {
+ if(!active()||state.tab!=='model'){awaited?.reject(Error('program_export_compute_unavailable'));return;}
+ stop();completion=awaited;const id=generation;failure.hidden=true;progress.value=0;status.textContent='Расчёт 256 × 256…';
  try{
   const job=new Worker(new URL('./worker-wave.js',import.meta.url),{type:'module'});worker=job;
   job.onmessage=(event:MessageEvent<Frame&{error?:string}>)=>{
@@ -70,7 +73,7 @@ function run(p=state.draft,restore=false) {
    const result=event.data;if(result.error){fail(result.error);return;}
    if(!(result.buffer instanceof ArrayBuffer)||result.buffer.byteLength!==size*size*4){fail('Неверный размер поля');return;}
    const field=new Float32Array(result.buffer);draw(field,p,result.report,!result.done);progress.value=result.total?result.step/result.total:1;
-   if(result.done){lastGood=field;lastReport=result.report;state={...state,accepted:{...p}};stop();status.textContent='Расчёт завершён.';sync();if(!restore)commit();}
+   if(result.done){lastGood=field;lastReport=result.report;state={...state,accepted:{...p}};const done=completion;completion=undefined;stop();status.textContent='Расчёт завершён.';sync();if(!restore)commit();done?.resolve();}
    else {status.textContent=`Шаг ${result.step} / ${result.total}. Ввод доступен.`;job.postMessage({kind:'recycle',id,buffer:result.buffer},[result.buffer]);}
   };
   job.onerror=e=>{if(worker===job){e.preventDefault();fail(e.message||'Worker недоступен');}};
@@ -122,6 +125,32 @@ notebook.semantic(()=>{
   values:[{label:'x',value:p.x/(size-1),unit:'m'},{label:'y',value:p.y/(size-1),unit:'m'},
     {label:'Смещение',value:lastGood[p.y*size+p.x]!,unit:'mm'},{label:'Время',value:lastReport.time,unit:'s'}],
   model:{parameters:{...state.accepted},grid:size,index:p.y*size+p.x,energyRatio:lastReport.energy}};
+});
+notebook.exportFrame(async ({format,state:saved,pixelRatio,signal})=>{
+ if(format!=='raster')throw Error('program_export_unavailable');
+ if(signal.aborted||disposed)throw Error('program_export_cancelled');
+ state=stateFrom(saved);exportRatio=pixelRatio;lastGood=undefined;lastReport=undefined;suspended=false;
+ const cancel=()=>{stop();unmountMedia();};signal.addEventListener('abort',cancel,{once:true});
+ try {
+  sync();
+  if(state.tab==='model') {
+   // A saved accepted result is not the unfinished draft. No second solver or queue.
+   if(state.accepted)await new Promise<void>((resolve,reject)=>run(state.accepted!,true,{resolve,reject}));
+   else showLast();
+  } else {
+   video.muted=true;
+   await new Promise<void>((resolve,reject)=>{
+    const check=()=>{if(video.readyState>=2&&!video.seeking&&Math.abs(video.currentTime-state.playhead)<.03){cleanup();resolve();}};
+    const failed=()=>{cleanup();reject(Error('program_export_media_unavailable'));};
+    const cleanup=()=>{for(const event of ['loadeddata','seeked'])video.removeEventListener(event,check);video.removeEventListener('error',failed);signal.removeEventListener('abort',failed);};
+    for(const event of ['loadeddata','seeked'])video.addEventListener(event,check);
+    video.addEventListener('error',failed);signal.addEventListener('abort',failed,{once:true});
+    mountMedia();video.muted=true;video.pause();check();
+   });
+  }
+  if(signal.aborted)throw Error('program_export_cancelled');
+  return null;
+ } finally {signal.removeEventListener('abort',cancel);suspended=true;stop();video.pause();}
 });
 notebook.lifecycle({pause(){suspended=true;stop();unmountMedia();referenceRequest?.abort();showLast();status.textContent='Расчёт приостановлен.';sync();},checkpoint(){return {...state,draft:{...state.draft},accepted:state.accepted?{...state.accepted}:null};},resume(){if(disposed)return;suspended=false;sync();if(!reference)void loadReference();if(state.tab==='recording')mountMedia();else if(!lastGood)run(state.accepted??state.draft,true);else{showLast();status.textContent='Последний результат восстановлен. Новый расчёт — по команде.';}},dispose(){disposed=true;stop();unmountMedia();referenceRequest?.abort();resize.disconnect();events.abort();lastGood=undefined;reference=undefined;canvas.width=canvas.height=cut.width=cut.height=0;}});
 get('provenance').textContent=`Внешний расчёт: NumPy ${provenance.numpy}, ${provenance.steps} шагов; input SHA-256 ${provenance.inputSHA256}; script ${provenance.scriptSHA256}; video ${provenance.outputs['experiment.mp4'].sha256}. Полные параметры и hashes — provenance.json в пакете.`;

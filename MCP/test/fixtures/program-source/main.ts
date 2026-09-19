@@ -26,3 +26,5 @@ addEventListener('notebookstate',()=>{x=(notebook.state as {x:number}).x;void dr
 notebook.lifecycle({pause:async()=>{paused=true;button.disabled=true;await pending},checkpoint:()=>({x}),
   resume:()=>{paused=false;button.disabled=false},dispose:()=>worker.terminate()});
 notebook.ready(draw());
+
+notebook.exportFrame(async ({format,state})=>{if(format!=='raster')throw Error('program_export_unavailable');x=(state as {x:number})?.x??2;await draw();return null;});

@@ -14,6 +14,7 @@ const theme = matchMedia('(prefers-color-scheme:dark)'), events = new AbortContr
 let state = selection(notebook.state), suspended = false, disposed = false;
 let bins: Float32Array, data: {start: number; values: Float32Array} | undefined;
 let request: AbortController | undefined, loading: Promise<void> | undefined, wanted = false;
+let exportRatio: number | undefined;
 let formulaWanted = false, formulaWork: Promise<void> | undefined, frame = 0;
 const active = () => !suspended && !disposed;
 const colors = () => {const style = getComputedStyle(canvas); return {ink: style.getPropertyValue('--ink'), muted: style.getPropertyValue('--muted'),
@@ -32,7 +33,7 @@ function syncControls() {
 }
 function drawOverview() {
   if (!bins || !active()) return;
-  const {width,height} = canvas.getBoundingClientRect(), scale = Math.min(3, devicePixelRatio || 1);
+  const {width,height} = canvas.getBoundingClientRect(), scale = exportRatio ?? Math.min(3, devicePixelRatio || 1);
   canvas.width = Math.round(width * scale); canvas.height = Math.round(height * scale);
   const ctx = canvas.getContext('2d')!; ctx.scale(scale,scale);
   const c = colors(), left = 44, right = width - 12, top = 12, bottom = height - 30;
@@ -186,12 +187,13 @@ addEventListener('notebookstate',() => {state = selection(notebook.state);if (ac
 function pause() {suspended = true;wanted = false;formulaWanted = false;request?.abort();cancelAnimationFrame(frame);frame = 0;syncControls();}
 // Export the chosen raw-sample Plot as vectors. Its computed presentation is
 // copied into the SVG, so no parent CSS, network font or browser heap is needed.
-notebook.exportFrame(async ({state: saved,signal}) => {
+notebook.exportFrame(async ({format,state: saved,signal,pixelRatio}) => {
   const cancel=()=>pause();signal.addEventListener('abort',cancel,{once:true});
   try {
     if(signal.aborted||disposed)throw Error('Экспорт отменён');
-    suspended=false;state=selection(saved);await loadWindow();
-    if(signal.aborted)throw Error('Экспорт отменён');
+    suspended=false;state=selection(saved);exportRatio=pixelRatio;syncControls();drawOverview();await loadWindow();
+    if(signal.aborted)throw new DOMException('Aborted','AbortError');
+    if(format==='raster')return null;
     const source=detail.querySelector('svg');if(!source)throw Error('График не готов');
     const svg=source.cloneNode(true) as SVGSVGElement;
     const original=[source,...source.querySelectorAll('*')],copy=[svg,...svg.querySelectorAll('*')];

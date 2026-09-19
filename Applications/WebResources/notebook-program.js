@@ -100,21 +100,28 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
     },
     async exportFrame(request) {
       alive();
-      if (!exportFrame || request?.format !== 'svg') throw error('program_export_unavailable');
+      if (!exportFrame || !['svg','raster'].includes(request?.format)) throw error('program_export_unavailable');
+      if(request.format==='raster'&&(!Number.isFinite(request.pixelRatio)||request.pixelRatio<=0||request.pixelRatio>8))throw error('program_export_extent');
       const input = copy(request.state);
       suspended = true; frozen = false; abort();
       const expected = generation, operationRequest = new AbortController(); operation = operationRequest;
       try {
-        const svg = await bounded(async () => {
+        const result = await bounded(async () => {
           await hooks.pause?.({signal:operationRequest.signal});
           if (operationRequest.signal.aborted) throw error('program_superseded');
-          return await exportFrame({format:'svg',state:copy(input),signal:operationRequest.signal});
+          return await exportFrame({format:request.format,state:copy(input),pixelRatio:request.pixelRatio,signal:operationRequest.signal});
         }, operationRequest.signal, 'program_export');
         alive();
         if (expected !== generation) throw error('program_superseded');
-        if (typeof svg !== 'string' || svg.length > 524288) throw error('program_export_limit');
-        return svg;
-      } catch(reason) { operationRequest.abort(); announce(reason); throw reason; }
+        if(request.format==='svg') {
+          if(typeof result!=='string'||result.length>524288)throw error('program_export_limit');
+          return result;
+        }
+        if(result!==null)throw error('program_export_raster_invalid');
+        // Null acknowledges that the author has rendered and stopped at this cut.
+        // Pixels stay in the existing WebKit snapshot path, never in postMessage.
+        return null;
+      } catch(reason) { operationRequest.abort(); throw reason; }
       finally { if(operation === operationRequest) operation = null; }
     },
     async checkpoint() {

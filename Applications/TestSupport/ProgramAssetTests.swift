@@ -154,6 +154,40 @@ final class ProgramAssetTests: XCTestCase {
     attachment.name = "saved-signal-37125-vector"; attachment.lifetime = .keepAlways; add(attachment)
   }
 
+  func testScientificRasterExportsRenderSavedModelsAtRequestedScaleWithoutLiveCommits() async throws {
+    for name in ["signal", "gears", "wave"] {
+      let f = try compiledFixture(name + "-program"); defer { f.close() }
+      let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
+      var ready = false, commits = 0
+      let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in commits += 1; return true })
+      owner.programStore = f.store
+      let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
+      defer { owner.invalidate(); lease.release(); close() }
+      owner.load(.init(id: name, kind: .web, frame: .init(x: 0, y: 0, width: 760, height: 1050), source: "", html: "", programPackage: f.hash), policy: .exact(scale: 1), in: web)
+      try await wait { ready || owner.snapshotFailure != nil }; XCTAssertTrue(ready, name); XCTAssertNil(owner.snapshotFailure)
+      let saved: JSONValue
+      if name == "signal" { saved = .object(["center": .number(37.125), "span": .number(0.05), "sample": .number(37125)]) }
+      else if name == "gears" { saved = .object(["phase": .number(0.625), "selected": .string("output"), "reveal": .number(0.8)]) }
+      else { saved = .object(["accepted": .object(["time": .number(0.25), "shape": .string("mode"), "speed": .number(1)]), "draft": .object(["time": .number(4)]), "probe": .object(["x": .number(128), "y": .number(128)])]) }
+      let before = commits
+      let result = try await NotebookProgramBridge.lifecycle("exportFrame", controller: "notebookProgram",
+        argument: .object(["format": .string("raster"), "state": saved, "pixelRatio": .number(3)]), in: web)
+      XCTAssertEqual(result, .null); XCTAssertEqual(commits, before)
+      let canvas = name == "signal" ? "overview" : name == "gears" ? "gear-canvas" : "wave-cut"
+      let exact = try await web.evaluateJavaScript("{const c=document.getElementById('\(canvas)'); c.width===Math.round(c.getBoundingClientRect().width*3)}") as? Bool
+      XCTAssertEqual(exact, true, name + " draws real target pixels, not an upscaled low-resolution buffer")
+      let caption = try await web.evaluateJavaScript(name == "signal" ? "document.getElementById('detail-caption').textContent" : name == "gears" ? "document.getElementById('phase').value" : "document.getElementById('result-caption').textContent") as? String
+      XCTAssertTrue(caption?.contains(name == "signal" ? "37125" : name == "gears" ? "0.625" : "0,250") == true, name + " " + (caption ?? "missing"))
+      if name == "wave" {
+        let recording: JSONValue = .object(["tab": .string("recording"), "playhead": .number(0.75)])
+        _ = try await NotebookProgramBridge.lifecycle("exportFrame", controller: "notebookProgram", argument: .object(["format": .string("raster"), "state": recording, "pixelRatio": .number(3)]), in: web)
+        let media = try await web.evaluateJavaScript("{const v=document.getElementById('recording');v.readyState>=2&&!v.seeking&&v.paused&&v.muted&&Math.abs(v.currentTime-.75)<.03}") as? Bool
+        XCTAssertEqual(media, true, "The saved media frame is decoded, sought, muted and stopped, not its poster")
+        XCTAssertEqual(commits, before)
+      }
+    }
+  }
+
   func testSavedPDFExportsACompiledAssetPackageWithoutAProgramStoreFallback() async throws {
     let f = try compiledFixture(); defer { f.close() }
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "title", source: "# Offline asset export"),

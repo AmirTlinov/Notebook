@@ -52,6 +52,10 @@ var Science = (() => {
     addEventListener('notebookstate',restore);
     const visibility=()=>{if(document.hidden&&!disposed){stop();render();}};
     document.addEventListener('visibilitychange',visibility);
+    notebook.exportFrame(({format,state:saved})=>{
+      if(format!=='raster')throw new Error('program_export_unavailable');
+      stop();state=sanitize(saved??{});render(true);return null;
+    });
     notebook.lifecycle({
       pause(){suspended=true;stop();render();},
       checkpoint(){return structuredClone(state);},
