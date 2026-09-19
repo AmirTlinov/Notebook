@@ -7,7 +7,7 @@ final class DocumentProgramIdentityTests: XCTestCase {
   private func update(_ coordinator: DocumentWebCoordinator, document: DocumentDocument, state: DocumentStateJournal,
     pageIndex: Int = 0) {
     coordinator.update(document: document, state: state, selectedPageIndex: pageIndex, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onRenderReady: .init { _ in }, onPageLayout: { _ in },  onStateChange: { _, _ in nil })
   }
 
   func testStateAndPageChangesKeepEveryProgramAtTheMaximumDocumentSize() throws {
@@ -16,7 +16,7 @@ final class DocumentProgramIdentityTests: XCTestCase {
     })
     var state = DocumentStateJournal(id: document.id, actor: UUID())
     let coordinator = DocumentWebCoordinator(onRenderReady: .init { _ in }, onPageLayout: { _ in },
-      onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+       onStateChange: { _, _ in nil })
     defer { coordinator.invalidate() }
     update(coordinator, document: document, state: state)
     let first = try XCTUnwrap(coordinator.payload)
@@ -38,7 +38,7 @@ final class DocumentProgramIdentityTests: XCTestCase {
     var document = DocumentDocument(actor: actor, blocks: (0..<12).map { .markdown(id: "block-\($0)", source: "Source \($0)") })
     let state = DocumentStateJournal(id: document.id, actor: actor)
     let coordinator = DocumentWebCoordinator(onRenderReady: .init { _ in }, onPageLayout: { _ in },
-      onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+       onStateChange: { _, _ in nil })
     defer { coordinator.invalidate() }
     update(coordinator, document: document, state: state)
     let first = try XCTUnwrap(coordinator.payload?.blockTokens)

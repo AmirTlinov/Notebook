@@ -150,3 +150,42 @@ func printSourceMapDoesNotRebaseAStalePageOrAdoptAnABA() throws {
   #expect(try f.store.commitDocumentSource(edit: edit, actor: f.actor).status == .conflict)
   #expect(try NotebookStore(root: f.root).documentEditingSessions().first?.edit == edit)
 }
+
+@Test("Преамбула использует общий CAS, черновик, публикацию и отмену")
+func documentPreambleEditUsesCommonOwner() throws {
+  let fixture = try EditingFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.root) }
+  let edit = DocumentSourceEdit(sessionID: UUID(), documentID: fixture.document.id, blockID: "preamble",
+    baseSource: fixture.document.preamble, baseVersion: fixture.document.preambleVersion,
+    source: "\\newcommand{\\energy}{E}", sequence: 1, field: .preamble)
+  try fixture.store.saveDocumentDraft(.init(edit: edit))
+  let result = try fixture.store.commitDocumentSource(edit: edit, actor: fixture.actor)
+  #expect(result.status == .committed)
+  let publication = try #require(result.preamblePublication)
+  var local = fixture.document
+  let merged = local.mergeSource(publication)
+  #expect(merged)
+  let saved = try fixture.store.loadDocument(fixture.document.id)
+  #expect(local == saved)
+  #expect(saved.preamble == edit.source && saved.blocks == fixture.document.blocks)
+  #expect(try fixture.store.documentEditingSessions().isEmpty)
+  #expect(try fixture.store.commitDocumentSource(edit: edit, actor: fixture.actor).preamblePublication == publication)
+  let stale = DocumentSourceEdit(sessionID: UUID(), documentID: edit.documentID, blockID: "preamble",
+    baseSource: "", baseVersion: fixture.document.preambleVersion, source: "other", sequence: 1, field: .preamble)
+  #expect(try fixture.store.commitDocumentSource(edit: stale, actor: fixture.actor).status == .conflict)
+}
+
+@Test("Повтор сохранения после чужой правки возвращает исходную квитанцию, не чужую версию")
+func documentEditRetryDoesNotClaimLaterSourceVersion() throws {
+  let fixture = try EditingFixture()
+  defer { try? FileManager.default.removeItem(at: fixture.root) }
+  let edit = fixture.edit("Первое сохранение")
+  let accepted = try fixture.store.commitDocumentSource(edit: edit, actor: fixture.actor)
+  var other = try fixture.store.loadDocument(fixture.document.id)
+  let changed = other.replaceBlockSource(id: "body", source: "Чужое продолжение", actor: UUID())
+  #expect(changed)
+  try fixture.store.saveDocument(other)
+  let reopened = NotebookStore(root: fixture.root)
+  #expect(try reopened.commitDocumentSource(edit: edit, actor: fixture.actor) == accepted)
+  #expect(try reopened.loadDocument(fixture.document.id).blocks.first?.source == "Чужое продолжение")
+}

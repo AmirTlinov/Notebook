@@ -8,6 +8,8 @@ import NotebookScriptProtocol
 public final class NotebookScriptCoordinator {
   public typealias Command = @Sendable (NotebookCommand) async throws -> JSONValue
   public typealias Persistence = @Sendable (@escaping @Sendable (NotebookStore) throws -> JSONValue) async throws -> JSONValue
+  public typealias CanonicalExport = @MainActor (DocumentDocument, UUID) async throws -> NotebookExportPublication
+  let canonicalExport: CanonicalExport
   let command: Command
   let persistence: Persistence
   let markup: NotebookMarkupQueue
@@ -52,8 +54,10 @@ public final class NotebookScriptCoordinator {
   var completionWaiters: [UUID: [UUID: RunCompletionWaiter]] = [:]
 
   public init(command: @escaping Command, persistence: @escaping Persistence, workingDirectory: URL,
+    canonicalExport: @escaping CanonicalExport = { _, _ in throw CollaborationError("print_owner_unavailable", "Владелец печатного макета недоступен.") },
     userServiceName: String = NotebookScriptServiceNames.user,
     markupServiceName: String = NotebookScriptServiceNames.markup) {
+    self.canonicalExport = canonicalExport
     self.command = command; self.persistence = persistence; self.workingDirectory = workingDirectory
     self.userServiceName = userServiceName; self.markupServiceName = markupServiceName
     markup = NotebookMarkupQueue(serviceName: markupServiceName)

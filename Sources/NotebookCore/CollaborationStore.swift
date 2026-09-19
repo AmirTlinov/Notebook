@@ -1294,7 +1294,7 @@ private func advancing(_ value: JSONValue, key: String, actor: UUID) throws -> J
 }
 private func completeBlock(_ fields: [String: JSONValue]) throws -> JSONValue {
   guard let id = fields["id"]?.string, !id.isEmpty, id.count <= 120,
-    let kind = fields["kind"]?.string, ["markdown", "latex", "interactive"].contains(kind) else { throw invalid("Блок имеет устойчивый ID и вид содержания.") }
+    let kind = fields["kind"]?.string, ["markdown", "latex", "tex", "interactive"].contains(kind) else { throw invalid("Блок имеет устойчивый ID и вид содержания.") }
   let source = fields["source"] ?? fields["html"] ?? .string("")
   return .object(["id": .string(id), "kind": .string(kind), "source": source,
     "html": kind == "interactive" ? (fields["html"] ?? source) : .string(""),

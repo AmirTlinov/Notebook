@@ -17,11 +17,7 @@ struct DocumentPagePresentation {
   let pageTurnActive: Bool
   let onRenderReady: PageTurnReadiness
   let onPageLayout: (DocumentPageLayout) -> Void
-  let onSourceChange: (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status
   let onStateChange: (String, JSONValue) -> ContentFieldVersion?
-  let drafts: [DocumentEditingSession]
-  let onDraftChange: (DocumentEditingSession) -> Void
-  let onDraftDiscard: (UUID) -> Void
   let onLinkActivation: (DocumentLinkActivation) -> Void
   let snapshotPixelWidth: Int?
   let onPreparationFailure: (Error) -> Void
@@ -310,7 +306,7 @@ final class DocumentPagePresentationOwner {
 
   private func makePaper() -> DocumentWebCoordinator {
     let renderer = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .targetMissing }, onStateChange: { _, _ in nil })
+      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
     bindPaper(renderer)
     return renderer
   }
@@ -517,10 +513,10 @@ final class DocumentPagePresentationOwner {
     // Program state and its paint receipt belong to each retained runtime;
     // independent state changes never send another frame through the paper.
     let matches = current?.id == id && paper.payload?.pageIndex == input.pageIndex
-      && (paper.payload?.source.matches(input.document) == true || paper.isPresentingEditor)
+      && paper.payload?.source.matches(input.document) == true
     if matches, contacts.isEmpty {
-      paper.updateInteractionCallbacks(onSourceChange: input.onSourceChange, onDraftChange: input.onDraftChange,
-        onDraftDiscard: input.onDraftDiscard, onLinkActivation: input.onLinkActivation)
+      paper.updateInteractionCallbacks(
+         onLinkActivation: input.onLinkActivation)
     }
     paper.updateInputAdmission(in: host,
       isInteractive: matches && input.isVisible && input.isInteractive)
@@ -640,10 +636,8 @@ final class DocumentPagePresentationOwner {
     if paper.payload?.pageIndex != input.pageIndex, !gestureLocked {
       await programOwner.blurFocused()
     }
-    if current != nil, (mountedID != entry.id || paper.payload?.renderToken != input.paperToken || !paper.hasCanonicalPixels),
-      !(paper.isPresentingEditor && mountedID == entry.id && paper.payload?.source.matches(input.document) == true) {
+    if current != nil, (mountedID != entry.id || paper.payload?.renderToken != input.paperToken || !paper.hasCanonicalPixels) {
       guard !inputLocked else { return }
-      if paper.isPresentingEditor, paper.payload?.pageIndex != input.pageIndex { await paper.flushEditingDraft() }
       // Only a deliberate physical navigation changes this paper viewport.
       // Programs live above it, and a state echo never disables their input.
       if mountedID != entry.id, let old = mountedID.flatMap({ entries[$0] }) {
@@ -701,7 +695,7 @@ final class DocumentPagePresentationOwner {
         // same runtime. A replaced/failed renderer cannot keep a departed one.
         paperTransfer = nil
       }
-      try await paper.awaitPresentation(token: input.paperToken, allowsEditor: true)
+      try await paper.awaitPresentation(token: input.paperToken)
     } else if current == nil, source == nil {
       let renderer = passiveRenderer(in: host, input: input)
       configure(renderer, input: input, page: input.pageIndex)
@@ -845,8 +839,7 @@ final class DocumentPagePresentationOwner {
     renderer.update(document: input.document, state: input.state, selectedPageIndex: page, capturesSnapshot: false,
       onRenderReady: .init { _ in }, onPageLayout: { [weak self] layout in
         self?.entries.values.forEach { $0.input.onPageLayout(layout) }
-      }, onSourceChange: input.onSourceChange, onStateChange: { _, _ in nil }, drafts: input.drafts,
-      onDraftChange: input.onDraftChange, onDraftDiscard: input.onDraftDiscard,
+      },  onStateChange: { _, _ in nil },
       onLinkActivation: input.onLinkActivation,
       preparationRequestID: input.measurements?.preparationRequestID(documentID: documentID, pageIndex: page, token: input.token))
     if source !== renderer.payload?.source {

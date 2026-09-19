@@ -9252,7 +9252,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
   }
 
   // src/document-tex.ts
-  function documentExport(document) {
+  function documentExport(document, programPointScale = 0.75) {
+    if (!Number.isFinite(programPointScale) || programPointScale <= 0 || programPointScale > 10) throw new Error("invalid_program_scale");
     const assets = [];
     const images = /* @__PURE__ */ new Map();
     const anchors = /* @__PURE__ */ new Set();
@@ -9260,11 +9261,26 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     let imageBytes = 0;
     let currentMath = [];
     const restoreMath = (value) => currentMath.reduce((text, [placeholder, formula]) => text.split(placeholder).join(formula), value);
+    let imageToken = "NOTEBOOKEMBEDDEDIMAGE";
+    while (document.blocks.some((block) => block.source.includes(imageToken))) imageToken += "X";
+    const encodedImages = [];
+    const tokenPattern = new RegExp(`${imageToken}(\\d+)END`, "g");
+    const restoreImages = (value) => value.replace(tokenPattern, (token, index) => encodedImages[Number(index)] ?? token);
     const rendered = document.blocks.map((block) => {
       if (block.kind !== "markdown") return { block, fragment: null, nodes: [], math: [] };
-      const protectedMath = protectMath(block.source);
+      const compact = block.source.replace(/data:image\/(?:svg\+xml|png|jpeg)(?:;charset=[^;,\s]+)?;base64,[A-Za-z0-9+/=]+/gi, (value) => {
+        const token = `${imageToken}${encodedImages.length}END`;
+        encodedImages.push(value);
+        return token;
+      });
+      const protectedMath = protectMath(compact);
       const fragment = parseFragment(f.parse(protectedMath.source, { async: false, gfm: true }));
-      return { block, fragment, nodes: descendants(fragment.childNodes), math: protectedMath.segments };
+      const nodes = descendants(fragment.childNodes);
+      for (const node of nodes) {
+        if ("value" in node) node.value = restoreImages(node.value);
+        if ("attrs" in node) for (const attr of node.attrs) attr.value = restoreImages(attr.value);
+      }
+      return { block, fragment, nodes, math: protectedMath.segments.map(([token, value]) => [token, restoreImages(value)]) };
     });
     for (const { nodes } of rendered) for (const node of nodes) {
       if (!("tagName" in node)) continue;
@@ -9428,26 +9444,27 @@ ${prefix}${body2}\\par
       }
     }
     const body = rendered.map(({ block, fragment, math }) => {
-      if (block.kind === "latex") return block.source;
-      if (block.kind === "interactive") return [
-        "\\begin{center}",
-        "\\fcolorbox{black!18}{black!2}{%",
-        "\\begin{minipage}{0.88\\linewidth}",
-        `\\textbf{\u0418\u043D\u0442\u0435\u0440\u0430\u043A\u0442\u0438\u0432\u043D\u044B\u0439 \u044D\u043B\u0435\u043C\u0435\u043D\u0442:} \\texttt{${Array.from(block.id, escapeTeX).join("\\allowbreak{}")}}\\par`,
-        "\u041E\u0442\u043A\u0440\u043E\u0439\u0442\u0435 \u0434\u043E\u043A\u0443\u043C\u0435\u043D\u0442 \u0432 Notebook, \u0447\u0442\u043E\u0431\u044B \u0438\u0441\u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u044C \u044D\u0442\u043E\u0442 \u044D\u043B\u0435\u043C\u0435\u043D\u0442.",
-        "\\end{minipage}}",
-        "\\end{center}"
-      ].join("\n");
+      if (block.kind === "tex") return block.source;
+      if (block.kind === "latex") {
+        return /^\s*(\$\$|\\\[|\\begin\s*\{(?:equation|align|alignat|gather|multline|flalign)\*?\})/.test(block.source) ? block.source : `\\[${block.source}\\]`;
+      }
+      if (block.kind === "interactive") {
+        const height = (block.height || 320) * programPointScale;
+        const rows = ["\\par"];
+        for (let y2 = 0; y2 < height; y2 += 12) rows.push(`\\nointerlineskip\\hbox to\\linewidth{\\vrule width0pt height${Math.min(12, height - y2).toFixed(6)}pt depth0pt\\hfil}\\penalty0`);
+        rows.push("\\par");
+        return rows.join("\n");
+      }
       currentMath = math;
       let text = renderNodes(fragment.childNodes);
       for (const [placeholder, formula] of math) text = text.split(placeholder).join(formula);
-      return text;
+      return text.trim() ? text : "\\noindent\\mbox{}\\par";
     });
     const supplied = document.preamble.trim();
     let preamble = /\\documentclass(?:\[[^\]]*\])?\{/.test(supplied) ? supplied : [
       "\\documentclass[12pt]{article}",
       "\\usepackage{fontspec}",
-      "\\setmainfont{Georgia}",
+      "\\setmainfont{Libertinus Serif}",
       supplied
     ].filter(Boolean).join("\n");
     if (/\\(?:begin|end)\s*\{document\}/.test(preamble)) throw new Error("preamble \u0437\u0430\u0434\u0430\u0451\u0442 \u043A\u043B\u0430\u0441\u0441 \u0438 \u043F\u0430\u043A\u0435\u0442\u044B; begin/end document \u043F\u0440\u0438\u043D\u0430\u0434\u043B\u0435\u0436\u0430\u0442 \u044D\u043A\u0441\u043F\u043E\u0440\u0442\u0451\u0440\u0443.");
@@ -9542,7 +9559,7 @@ ${prefix}${body2}\\par
 
   // src/markup.ts
   function notebookMarkup(request) {
-    if (request.kind === "documentTeX") return documentExport(request.document);
+    if (request.kind === "documentTeX") return documentExport(request.document, request.programPointScale);
     if (request.kind !== "action") throw new Error("invalid_markup_request");
     const { action, markdownOperations } = request.preparation;
     for (const index of markdownOperations) {

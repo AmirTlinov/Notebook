@@ -22,8 +22,7 @@ settings:
     NOTEBOOK_ACCEPTANCE_ENABLED: NO
     NOTEBOOK_IPAD_ENTITLEMENTS: ""
     NOTEBOOK_CLOUD_CONTAINER: ""
-    NOTEBOOK_TEX_RUNTIME: $(SRCROOT)/../.build/notebook-tex-runtime
-    NOTEBOOK_IMAGE_RUNTIME: ""
+    NOTEBOOK_TYPESETTER_RUNTIME: $(SRCROOT)/../.build/notebook-typesetter-runtime
 
 targets:
   Notebook:
@@ -36,7 +35,19 @@ targets:
       - path: WebResources
         type: folder
         buildPhase: resources
+    postBuildScripts:
+      - name: Install canonical typesetter resources
+        script: /usr/bin/env python3 -B "$SRCROOT/bundle_notebook_typesetter.py"
+        inputFiles:
+          - $(SRCROOT)/bundle_notebook_typesetter.py
+          - $(NOTEBOOK_TYPESETTER_RUNTIME)/manifest.json
+          - $(NOTEBOOK_TYPESETTER_RUNTIME)/Resources
+        outputFileLists:
+          - $(SRCROOT)/NotebookTypesetterResources.xcfilelist
+
     dependencies:
+      - package: NotebookCore
+        product: NotebookTypesetter
       - package: NotebookCore
         product: NotebookCore
     info:
@@ -65,6 +76,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook$(NOTEBOOK_BUNDLE_SUFFIX)
         PRODUCT_NAME: Notebook
+        OTHER_LDFLAGS: "$(inherited) $(NOTEBOOK_TYPESETTER_RUNTIME)/$(PLATFORM_NAME)/libnotebook_typesetter_runtime.a -liconv -lresolv -framework Security"
         NOTEBOOK_DISPLAY_NAME: Notebook
         MARKETING_VERSION: 0.3.110
         CURRENT_PROJECT_VERSION: 113
@@ -127,6 +139,16 @@ targets:
       - path: WebResources
         type: folder
         buildPhase: resources
+    postBuildScripts:
+      - name: Install canonical typesetter resources
+        script: /usr/bin/env python3 -B "$SRCROOT/bundle_notebook_typesetter.py"
+        inputFiles:
+          - $(SRCROOT)/bundle_notebook_typesetter.py
+          - $(NOTEBOOK_TYPESETTER_RUNTIME)/manifest.json
+          - $(NOTEBOOK_TYPESETTER_RUNTIME)/Resources
+        outputFileLists:
+          - $(SRCROOT)/NotebookTypesetterResources.xcfilelist
+
     preBuildScripts:
       - name: Bundle Notebook tools
         script: |
@@ -139,6 +161,8 @@ targets:
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NotebookTools/dist/index.mjs
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NotebookTools/package.json
     dependencies:
+      - package: NotebookCore
+        product: NotebookTypesetter
       - package: NotebookCore
         product: NotebookCore
       - package: NotebookCore
@@ -168,6 +192,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.amirtlinov.notebook.mac$(NOTEBOOK_BUNDLE_SUFFIX)
         CODE_SIGN_ENTITLEMENTS: $(NOTEBOOK_MAC_ENTITLEMENTS)
         PRODUCT_NAME: Notebook
+        OTHER_LDFLAGS: "$(inherited) $(NOTEBOOK_TYPESETTER_RUNTIME)/$(PLATFORM_NAME)/libnotebook_typesetter_runtime.a -liconv -lresolv -framework Security"
         MARKETING_VERSION: 0.3.110
         CURRENT_PROJECT_VERSION: 113
         CODE_SIGN_STYLE: Automatic
@@ -228,57 +253,16 @@ targets:
       - package: NotebookCore
         product: NotebookScriptWorker
     postBuildScripts:
-      - name: Bundle pinned TeX compiler and distribution
-        script: /bin/sh "$SRCROOT/bundle_notebook_tex.sh"
-        inputFiles:
-          - $(SRCROOT)/bundle_notebook_tex.sh
-          - $(SRCROOT)/prepare_notebook_tex.py
-          - $(SRCROOT)/../Sources/NotebookMarkupService/TeXResources.lock.json
-          - $(SRCROOT)/../Sources/NotebookMarkupService/tex-child.entitlements.plist
-          - $(NOTEBOOK_TEX_RUNTIME)
-        outputFiles:
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/tectonic
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/texlive.zip
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/manifest.json
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/Tectonic-LICENSE.txt
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/TeXLive-LICENSE.TL
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/LPPL-1.3c.txt
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/FreeType-2.13.3-FTL.txt
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/HarfBuzz-11.3.3-COPYING.txt
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/Graphite-1.3.14-COPYING.txt
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/ICU-74.2-LICENSE.txt
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/zlib-1.3.1-LICENSE.txt
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/libpng-1.6.50-LICENSE.txt
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/Expat-2.7.3-COPYING.txt
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/Brotli-1.1.0-LICENSE.txt
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/fontconfig-2.15.0-COPYING.txt
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTeX/licenses/bzip2-1.0.8-LICENSE.txt
-      - name: Bundle pinned SVG to PDF compiler
-        script: /bin/sh "$SRCROOT/bundle_notebook_images.sh"
-        inputFiles:
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers
-          - $(SRCROOT)/bundle_notebook_images.sh
-          - $(SRCROOT)/prepare_notebook_images.py
-          - $(SRCROOT)/NotebookImageResources.xcfilelist
-          - $(SRCROOT)/../Sources/NotebookImageCompiler
-          - $(SRCROOT)/../Sources/NotebookMarkupService/tex-child.entitlements.plist
-          - $(NOTEBOOK_IMAGE_RUNTIME)
-        outputFileLists:
-          - $(SRCROOT)/NotebookImageResources.xcfilelist
       - name: Bundle pinned TypeScript compiler and SDK
         script: /bin/sh "$SRCROOT/bundle_notebook_typescript.sh"
         inputFiles:
-          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers
           - $(SRCROOT)/bundle_notebook_typescript.sh
           - $(SRCROOT)/prepare_notebook_typescript.py
-          - $(SRCROOT)/prepare_notebook_images.py
+          - $(SRCROOT)/notebook_macho.py
           - $(SRCROOT)/NotebookTypeScriptResources.xcfilelist
           - $(SRCROOT)/../Sources/NotebookMarkupService/TypeScriptResources.lock.json
           - $(SRCROOT)/../Sources/NotebookScriptHost/Resources/notebook-sdk.d.ts
-          - $(SRCROOT)/../Sources/NotebookMarkupService/tex-child.entitlements.plist
+          - $(SRCROOT)/../Sources/NotebookMarkupService/typescript-child.entitlements.plist
           - $(NOTEBOOK_TYPESCRIPT_RUNTIME)
         outputFileLists:
           - $(SRCROOT)/NotebookTypeScriptResources.xcfilelist

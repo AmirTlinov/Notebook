@@ -220,6 +220,7 @@ final class NotebookAppModel {
     }
   }
   private(set) var documentEditingSessions: [DocumentEditingSession] = []
+  @ObservationIgnored weak var documentSourceEditor: DocumentSourceEditorSession?
   private(set) var documentReadingPositions: [UUID: DocumentReadingPosition] = [:]
   @ObservationIgnored private var documentReadingLayout: (id: UUID, stamp: VersionStamp, record: DocumentLayoutRecord)?
   @ObservationIgnored private var readingRestoreDocument: UUID?
@@ -2285,7 +2286,7 @@ final class NotebookAppModel {
       guard let owner = presence?.focusedItemID else { return }
       let restored = collaborationActions.first {
         $0.author == .human && $0.undo == nil && $0.action.operations.contains {
-          $0.target == CollaborationTarget(kind: .document, id: owner) && $0.kind == .updateBlock
+          $0.target == CollaborationTarget(kind: .document, id: owner) && [.updateBlock, .setPreamble].contains($0.kind)
         }
       }?.id
       if let command = pencilUndoHistory.lastCommand(for: owner) ?? restored { undoCollaboration(command) }
@@ -3310,6 +3311,40 @@ final class NotebookAppModel {
     return true
   }
 
+  func insertDocumentSource(documentID: UUID, kind: DocumentBlockKind) async throws -> DocumentSourceRequest {
+    guard shutdownPhase == .running, !isItemBeingDeleted(documentID) else { throw CancellationError() }
+    let actor = actorID
+    await withCheckedContinuation { continuation in inputGate.performAfterIdle { continuation.resume() } }
+    let inserted = try await persistence.submit(publishesChanges: true) {
+      try $0.insertDocumentSource(documentID: documentID, kind: kind, actor: actor)
+    }
+    pencilUndoHistory.recordCommand(ownerID: documentID, actionID: inserted.receipt.id)
+    if var current = documents[documentID] { _ = current.merge(inserted.document); documents[documentID] = current }
+    else { documents[documentID] = inserted.document }
+    reloadExternalChanges()
+    return .init(documentID: documentID, block: inserted.document.blocks.first { $0.id == inserted.blockID }!,
+      version: inserted.document.sourceVersion(blockID: inserted.blockID), offset: 0)
+  }
+
+  func selectSourceForAgent(documentID: UUID, blockID: String, version: ContentFieldVersion, range: NSRange) {
+    guard let workspace, let hierarchy = boardHierarchy, let ink = spatialInk,
+      let document = documents[documentID], let block = document.blocks.first(where: { $0.id == blockID }),
+      document.sourceVersion(blockID: blockID) == version,
+      range.location >= 0, range.length > 0, NSMaxRange(range) <= block.source.utf16.count else { return }
+    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let selection = NotebookAttentionSelection(fragments: [.init(target: .init(kind: .document, id: documentID),
+      elementID: blockID, region: .init(x: 0, y: 0, width: geometry.width, height: geometry.height),
+      worldOrigin: nil, pageIndex: nil, label: "Исходник · " + blockID)], workspace: workspace, hierarchy: hierarchy,
+      ink: ink, pages: pages, documents: [documentID: document], states: documentStates)
+    let selected = (block.source as NSString).substring(with: range)
+    publishHumanContext(selection, text: "Выделенный исходник (UTF-16: \(range.location)..<\(NSMaxRange(range))):\n" + selected)
+    #if os(iOS)
+    chat?.expanded = true; chat?.browsesChats = false
+    #else
+    showCue("Выделенный исходник добавлен в контекст Codex")
+    #endif
+  }
+
   func saveDocumentDraft(_ draft: DocumentEditingSession) {
     guard !isItemBeingDeleted(draft.edit.documentID) else { return }
     if let previous = documentEditingSessions.first(where: { $0.id == draft.id }),
@@ -3326,7 +3361,7 @@ final class NotebookAppModel {
     enqueueStoreWrite { try $0.discardDocumentDraft(sessionID) }
   }
 
-  func commitDocumentSource(edit: DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status {
+  func commitDocumentSource(edit: DocumentSourceEdit, onCommit: ((DocumentSourceCommitResult) -> Void)? = nil) async throws -> DocumentSourceCommitResult.Status {
     guard shutdownPhase == .running else {
       throw NotebookPersistenceQueue.Failure(message: "Notebook завершает работу; новый исходник не принят.")
     }
@@ -3336,7 +3371,7 @@ final class NotebookAppModel {
     let actor = actorID
     if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
     documentSavePresentation = .init(sessionID: edit.sessionID, documentID: edit.documentID,
-      blockID: edit.blockID, phase: .saving, source: edit.source)
+      blockID: edit.blockID, isPreamble: edit.isPreamble, phase: .saving, source: edit.source)
     documentSaveObserver = DocumentRenderRegistry.shared.observeLive(documentID: edit.documentID) { [weak self] in
       // The native publication can occur during representable update. Its
       // actual attachment is checked again after that update, never polled.
@@ -3364,6 +3399,10 @@ final class NotebookAppModel {
         _ = document.mergeSource(publication)
         documents[document.id] = document
       }
+      if !isStopped, !isItemBeingDeleted(edit.documentID),
+        let publication = result.preamblePublication, var document = documents[edit.documentID] {
+        _ = document.mergeSource(publication); documents[document.id] = document
+      }
       if documentSavePresentation?.sessionID == edit.sessionID {
         documentSavePresentation?.phase = .saved
         completeDocumentSavePresentation()
@@ -3377,6 +3416,7 @@ final class NotebookAppModel {
         selectionStart: current?.selectionStart ?? 0, selectionEnd: current?.selectionEnd ?? 0,
         isComposing: current?.isComposing ?? false, scrollTop: current?.scrollTop, phase: phase))
     }
+    onCommit?(result)
     return result.status
   }
 
@@ -3388,12 +3428,19 @@ final class NotebookAppModel {
   }
 
   private func completeDocumentSavePresentation() {
-    guard let saved = documentSavePresentation, saved.phase == .saved,
+    guard let saved = documentSavePresentation, saved.phase == .saved else { return }
+    if let document = documents[saved.documentID],
+      (saved.isPreamble ? document.preamble : document.blocks.first(where: { $0.id == saved.blockID })?.source) != saved.source {
+      // Undo or a newer author's source superseded this pending presentation.
+      // It can no longer install, so it must not leave an endless save cue.
+      clearDocumentSavePresentation(sessionID: saved.sessionID); return
+    }
+    guard
       let presence, presence.mode == .document, presence.focusedItemID == saved.documentID,
       presence.openProgress >= 0.999, presencePhase == .settled,
       readingRestoreTarget?.id != saved.documentID, readingRestoreDocument != saved.documentID,
       let document = documents[saved.documentID], let state = documentStates[saved.documentID],
-      document.blocks.first(where: { $0.id == saved.blockID })?.source == saved.source,
+      (saved.isPreamble ? document.preamble : document.blocks.first(where: { $0.id == saved.blockID })?.source) == saved.source,
       DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: presence.documentPageIndex, scope: .paper) else { return }
     documentSavePresentation?.phase = .installed
     documentSavePresentation?.source = nil
@@ -3616,7 +3663,11 @@ final class NotebookAppModel {
       }, persistence: { operation in
         try await persistence.submit(publishesChanges: false, operation)
       }, workingDirectory: store.root.appendingPathComponent("derived/script-runtime", isDirectory: true),
-        userServiceName: userService, markupServiceName: markupService)
+        canonicalExport: { [weak self] document, id in
+          guard self != nil else { throw CancellationError() }
+          let state = try await persistence.submit(publishesChanges: false) { try $0.loadDocumentState(document.id) }
+          return try await DocumentCanonicalExport.publication(document: document, state: state, jobID: id)
+        }, userServiceName: userService, markupServiceName: markupService)
       scriptCoordinator = coordinator
       return coordinator
     }
@@ -3692,7 +3743,7 @@ final class NotebookAppModel {
     }
   }
 
-  func publishHumanContext(_ selection: NotebookAttentionSelection, target: NotebookSelectionSession.Target = .context) {
+  func publishHumanContext(_ selection: NotebookAttentionSelection, target: NotebookSelectionSession.Target = .context, text: String? = nil) {
     let actor = actorID
     let generation = replaceSelection(target, persistsDeselection: false)
     selectionSession.isResolvingContext = true
@@ -3700,7 +3751,7 @@ final class NotebookAppModel {
       do {
         let sealed = try selection.seal(in: store)
         let context = try store.appendContext(references: sealed.references, author: .human, actor: actor,
-          select: true, sourceWorkspaceID: sealed.workspaceID)
+          text: text, select: true, sourceWorkspaceID: sealed.workspaceID)
         return (context, sealed)
       } catch {
         // A rejected new source must not reopen the previous choice on restart.
@@ -4601,8 +4652,7 @@ final class NotebookAppModel {
       observeNavigation("page_input_finish_end", fields: trace)
       guard !Task.isCancelled, continuing() else { return false }
       if presencePhase == .active, let presence { updatePresence(presence, settled: true) }
-      if let documentID = presence?.focusedItemID, documents[documentID] != nil,
-        !(await DocumentRenderRegistry.shared.finishEditing(documentID: documentID)) { return false }
+      await documentSourceEditor?.checkpoint()
       guard await finishPendingPersistence(boundary: boundary, continuing: continuing) else { return false }
       // The await itself is not a contact boundary: a later Pencil may have
       // started or even lifted while the preceding publication was draining.

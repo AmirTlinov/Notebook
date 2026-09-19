@@ -322,13 +322,13 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
       let state = DocumentStateJournal(id: document.id, actor: UUID())
       let ready = PageTurnReadiness { _ in }
       coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: ready, onPageLayout: { _ in },
-        onSourceChange: { _ in .targetMissing }, onStateChange: { _, _ in nil })
+         onStateChange: { _, _ in nil })
       let geometry = WorkspaceItemGeometry.document(document.paperSize)
       window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: geometry.width, height: geometry.height),
         styleMask: .borderless, backing: .buffered, defer: false)
       window.isReleasedWhenClosed = false; window.contentView = host; window.orderBack(nil)
       coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-        onRenderReady: ready, onPageLayout: { _ in }, onSourceChange: { _ in .targetMissing }, onStateChange: { _, _ in nil })
+        onRenderReady: ready, onPageLayout: { _ in },  onStateChange: { _, _ in nil })
       coordinator.mount(in: host, physicalSize: .init(width: geometry.width, height: geometry.height),
         isInteractive: false, priority: .background)
     }

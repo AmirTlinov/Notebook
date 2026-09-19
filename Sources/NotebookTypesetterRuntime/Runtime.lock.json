@@ -1,0 +1,57 @@
+{
+  "format": 1,
+  "engineSource": {
+    "url": "https://github.com/mgilbir/tectonic",
+    "revision": "d1a46a5d127ea40c6a1afcb45e91bb3d7c1f5e47",
+    "patch": "build/tectonic.patch"
+  },
+  "wabt": {
+    "url": "https://github.com/WebAssembly/wabt",
+    "revision": "ad75c5edcdff96d73c245b57fbc07607aaca9f95"
+  },
+  "kernels": {
+    "tectonic.wasm": {
+      "bytes": 5185263,
+      "sha256": "4cbc37ca98527c8b451f28956c9f6e7dc7553bb662ea5142c2316d8d1173d628",
+      "packedSHA256": "ed07a07e355e17cab6fbd7581e4317aca3bcdf5d4b21943a4c9a5a1279c58c05"
+    },
+    "image.wasm": {
+      "bytes": 5125796,
+      "sha256": "80414f9577be6853cdbc71c5484d73458e78bb13980d1791f32aff669b0950b9",
+      "packedSHA256": "585402894b24de4b7ad0316fa67eaca8eaa7d41ac35dbfbbfa0b75064c9cd514"
+    },
+    "latex.fmt": {
+      "bytes": 24451432,
+      "sha256": "744c7d59f930a926d26f0f6de066b2f8305adb02a05349eca4fa6e907c49fe9e",
+      "packedSHA256": "9d2102982032c880ae7cc3bfa6143466d3394641a12a722bd92518b502d6fac3"
+    },
+    "fonts.tsv": {
+      "bytes": 247729,
+      "sha256": "c6d907e4c124a54090fe5030a59278d9687a1da3593ac1e8de370386019398f5",
+      "packedSHA256": "c743b164ae93a93ed17694cd2dfcb35ecd2eea1539e05bb29d98bb69bb3beaf5"
+    }
+  },
+  "distribution": {
+    "bytes": 1481187938,
+    "sha256": "c508958589f4c18218f98a7785ff21af901fb2460106e9a11d7b7bf065204487"
+  },
+  "distributionSource": {
+    "name": "tlextras-2022.0r0.tar",
+    "url": "https://data1b.fullyjustified.net/tlextras-2022.0r0.tar",
+    "bytes": 2881562112,
+    "sha256": "425685e124746c15ba9bb8e0596bdaad98fce886afa347fbcf9ec0e9acd7fe79",
+    "bundleDigest": "6ffe055852f8faf66c0acbe1a7fb27f87b869a90bad1204f3bf4d9683f597c7c",
+    "fileCount": 134980
+  },
+  "rustToolchain": "1.94.1",
+  "imageSource": {
+    "directory": "Sources/NotebookImageCompiler",
+    "target": "wasm32-wasip1",
+    "rustflags": "-C link-args=--import-memory -C link-args=--export-memory -C link-args=--max-memory=335544320 -C link-args=--export=notebook_image_compile",
+    "files": {
+      "Cargo.toml": "8d6d65f6e3c4548b245fd9edb48960920e3bc60c338733fcaeaad41341dbfbc5",
+      "Cargo.lock": "ef2565e5f7546a0650b58764b4a9dd6c3f85f855b5831f4060e2067ccc72bf28",
+      "src/main.rs": "ae3e093cc470cc183a7ffe3b33e3a60ae097d5d48e11bcaa19a93cd50acd2961"
+    }
+  }
+}

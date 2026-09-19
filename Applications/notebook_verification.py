@@ -17,8 +17,6 @@ import notebook_release as release
 ROOT = Path(__file__).resolve().parents[1]
 UI = "NotebookUITests/DrawingResponsivenessTests/"
 DOCUMENT_BROWSER_CONTRACTS = (
-    "Tests/NotebookDocumentAcceptance/test_common_shell_startup.mjs",
-    "Tests/NotebookDocumentAcceptance/test_document_images.mjs",
     "Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
 )
 PROFILES = {
@@ -103,7 +101,7 @@ PROFILES = {
     "document-web": {
         "commands": ["document-browser"],
         "mac": ["NotebookMacTests/DocumentRuntimeTests"],
-        "ipad": ["NotebookTests/DocumentShellPreparationTests", "NotebookTests/DocumentImageReadinessTests",
+        "ipad": ["NotebookTests/DocumentShellPreparationTests", "NotebookTests/DocumentPrintImageTests",
                  "NotebookTests/DocumentLinkActivationTests"],
     },
     "documents": {
@@ -113,10 +111,10 @@ PROFILES = {
         "mac": ["NotebookMacTests/DocumentLargeSourceTests", "NotebookMacTests/DocumentRenderSessionTests",
                 "NotebookMacTests/DocumentLinkNavigationTests",
                 "NotebookMacTests/DocumentSnapshotTests", "NotebookMacTests/AddressedTargetRenderTests",
-                "NotebookMacTests/DocumentEditorPresentationTests", "NotebookMacTests/DocumentProgramIdentityTests",
+                "NotebookMacTests/DocumentNativeSourceSessionTests", "NotebookMacTests/DocumentProgramIdentityTests",
                 "NotebookMacTests/DocumentRuntimeTests"],
         "ipad": ["NotebookTests/DocumentLargeSourceTests", "NotebookTests/DocumentResourceLeaseTests",
-                 "NotebookTests/DocumentShellPreparationTests", "NotebookTests/DocumentImageReadinessTests",
+                 "NotebookTests/DocumentShellPreparationTests", "NotebookTests/DocumentPrintImageTests",
                  "NotebookTests/PhysicalWebViewportTests", "NotebookTests/NotebookDocumentOpeningTests",
                  "NotebookTests/DocumentLinkActivationTests",
                  "NotebookTests/DocumentProgramOwnerTests", "NotebookTests/DocumentProgramOverlayHostTests",
@@ -155,11 +153,11 @@ PROFILES = {
             "testStopDrainsSupersededPreparationAndRejectsNewWork")],
     },
     "paper-resources": {
-        "mac": ["NotebookMacTests/DocumentLargeSourceTests/testLargeIllustratedMathBookColdMountsAndTurnsToDistantPhysicalPagesWithinTheExistingDeadline",
+        "mac": ["NotebookMacTests/DocumentLargeSourceTests/testLargeIllustratedBookKeepsOnePrintArtifactAndRastersOnlyRequestedPages",
                 "NotebookMacTests/DocumentRenderSessionTests",
-                "NotebookMacTests/DocumentRuntimeTests/testNativeReaderRejectsChangedLayoutAndPagePacketLengthsWithoutPublishingOrLeaking"],
-        "ipad": ["NotebookTests/DocumentLargeSourceTests/testLargeBookOpensBesideDrawnPaperInTheSameSceneBudget",
-                 "NotebookTests/DocumentLargeSourceTests/testLargeIllustratedMathBookColdMountsAndTurnsToDistantPhysicalPagesWithinTheExistingDeadline",
+                "NotebookMacTests/DocumentTypesetterBoundaryTests"],
+        "ipad": ["NotebookTests/DocumentCanonicalPrintTests",
+                 "NotebookTests/DocumentLargeSourceTests/testLargeIllustratedBookKeepsOnePrintArtifactAndRastersOnlyRequestedPages",
                  "NotebookTests/SceneCompositionTests/testMixedPaperCoversPublishInLandscapeWithoutDroppingTheirInputOwners",
                  "NotebookTests/SceneRenderResourcesTests/testInputCanBorrowUnusedPassiveSpaceButPassiveCannotBorrowTheProtectedHalf",
                  "NotebookTests/SceneRenderResourcesTests/testPhysicalHandoffChangesRolesAtomicallyAndSubmittedBytesOutliveTheOwnerLease",
@@ -527,11 +525,9 @@ def run_selected(root, plan, evidence):
                 "test"] + ["-only-testing:" + selector for selector in checks[platform]]
         if platform == "ipad":
             args.extend(native_ipad_signing_settings())
+        runtime = release.prepare_typesetter_runtime(root, command, "macosx" if platform == "mac" else "iphoneos")
+        args.append("NOTEBOOK_TYPESETTER_RUNTIME=" + str(runtime))
         if platform == "mac":
-            tex_runtime = release.prepare_tex_runtime(root, command)
-            args.append("NOTEBOOK_TEX_RUNTIME=" + str(tex_runtime))
-            image_runtime = release.prepare_image_runtime(root, command)
-            args.append("NOTEBOOK_IMAGE_RUNTIME=" + str(image_runtime))
             typescript_runtime = release.prepare_typescript_runtime(root, command)
             args.append("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript_runtime))
             args.extend(native_mac_signing_settings())

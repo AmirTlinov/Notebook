@@ -20,7 +20,7 @@ function fixture() {
   const receipt = {documentID:'document', runtimeID:'runtime', generation:'3', sourceKey:'source',
     stateKey:'state', renderToken:'pixels', pageIndex:0, presentationEpoch:'7', presentation:'canonical'};
   const context = vm.createContext({root:{contains: value => value === anchor,
-    addEventListener:(name, listener) => { assert.equal(name,'click'); click=listener; }},
+    addEventListener:(name, listener) => { if(name==='click')click=listener; }},
     payload:{}, layoutCanonical:true, editingBlockID:null, presentationIsRendering:false,
     lastTouchTap:{}, presentationReceipt:()=>receipt, bridge:value=>records.push(value)});
   vm.runInContext(listenerSource, context);
@@ -49,7 +49,7 @@ test('a runtime assigns distinct ordered identities to terminal activations',()=
 });
 
 test('editor, rendering and absent canonical source cannot emit navigation',()=>{
-  for(const [key,value] of [['payload',null],['layoutCanonical',false],['editingBlockID','editing'],['presentationIsRendering',true]]){
+  for(const [key,value] of [['payload',null],['layoutCanonical',false],['presentationIsRendering',true]]){
     const f=fixture(); f.context[key]=value;
     assert.equal(f.click().defaultPrevented,true);
     assert.equal(f.records.length,0,key);
@@ -69,7 +69,7 @@ function editingFixture() {
     editorLayer:{addEventListener:()=>{}}, addEventListener:listen,
     lastTouchTap:null, performance:{now:()=>now}, beginEditing:id=>edits.push(id),
   });
-  const end = shell.indexOf("addEventListener('pagehide'", start);
+  const end = shell.indexOf("addEventListener('message'", start);
   vm.runInContext(shell.slice(start, end), context);
   function send(type, id=1, x=100, y=100, pointerType='touch') {
     now += 20;
@@ -106,4 +106,17 @@ test('single-finger double tap has one owner; a later mouse double-click still e
   assert.deepEqual(f.edits,['body']);
   f.send('pointerdown',3,100,100,'mouse');f.send('dblclick',3,100,100,'mouse');
   assert.deepEqual(f.edits,['body','body']);
+});
+
+// Exercise the actual message builder too: a gesture-only test cannot detect
+// a native receiver rejecting a message with no document identity.
+test('source request carries the installed document, runtime, generation and page',()=>{
+  const messages = [], receipt = {documentID:'doc',runtimeID:'runtime',sourceKey:'source',generation:'7',pageIndex:2};
+  const context = vm.createContext({payload:{editable:true,blocks:[{id:'body',kind:'tex'}]},
+    root:{getBoundingClientRect:()=>({left:10,top:20,width:100,height:200}),clientWidth:200,clientHeight:400},
+    presentationReceipt:()=>receipt,bridge:message=>messages.push(message)});
+  vm.runInContext(shell.slice(shell.indexOf('const beginEditing ='), shell.indexOf('const setEditingEnabled ='))+
+    "beginEditing('body',{clientX:35,clientY:50});",context);
+  for(const [key,value] of Object.entries(receipt))assert.equal(messages[0][key],value);
+  assert.equal(messages[0].kind,'requestSource');assert.equal(messages[0].x,50);assert.equal(messages[0].y,60);
 });

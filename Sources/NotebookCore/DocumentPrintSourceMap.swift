@@ -17,6 +17,8 @@ public struct DocumentPrintSourceRange: Codable, Equatable, Sendable {
 /// Its digest binds the complete causal snapshot: a maximum VersionStamp alone
 /// cannot distinguish every concurrent merge that changes the visible source.
 public struct DocumentPrintSourceMap: Codable, Equatable, Sendable {
+  public static let renderingRecipe = "NotebookCanonicalPrint/1"
+
   public let format: Int
   public let documentID: UUID
   public let documentRevision: String

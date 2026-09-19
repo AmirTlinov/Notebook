@@ -14,7 +14,7 @@ from notebook_release import (BUNDLE, CANONICAL, DISPLAY_NAME, CONFIGURATION,
     SWIFT_OPTIMIZATION, TEAM, DEVICE, UDID, CANONICAL_MAC, APP_ID, ReleaseError,
     require, write_json, below, source_inputs, app_manifest,
     successful_json, validate_device, app_rows, canonical_identity,
-    release_commands, copy_source, build_ipad, inspect_ipad)
+    release_commands, copy_source, prepare_typesetter_runtime, build_ipad, inspect_ipad)
 
 
 def main(argv, default_source, runner=None):
@@ -81,7 +81,8 @@ def main(argv, default_source, runner=None):
         command("xcode-version", ["/usr/bin/xcrun", "xcodebuild", "-version"])
         command("xcodegen-version", [xcodegen, "--version"])
         command("generate-project", [xcodegen, "generate", "--spec", "project.yml"], cwd=snapshot / "Applications")
-        app = build_ipad(snapshot, evidence, command)
+        runtime = prepare_typesetter_runtime(snapshot, command, "iphoneos", stage=source / ".build/notebook-typesetter-runtime")
+        app = build_ipad(snapshot, evidence, command, runtime)
         after = source_inputs(source)
         write_json(evidence / "source-after.json", after)
         snapshot_after = source_inputs(snapshot)

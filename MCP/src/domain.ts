@@ -94,7 +94,7 @@ export interface WorkspaceProjection {
   stamp: VersionStamp;
 }
 
-export type DocumentBlockKind = "markdown" | "latex" | "interactive";
+export type DocumentBlockKind = "markdown" | "latex" | "tex" | "interactive";
 export type DocumentPaperSize = "a4" | "letter";
 
 export interface DocumentBlock {

@@ -2061,64 +2061,23 @@ final class DrawingResponsivenessTests: XCTestCase {
   func testDocumentTextOpensMarkdownEditorOnDoubleTap() async throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
-    try await Task.sleep(for: .milliseconds(350))
     let app = XCUIApplication()
-    app.launchArguments = [
-      "--notebook-drawing-responsiveness-fixture",
-      "--notebook-document-runtime-fixture",
-    ]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-document-runtime-fixture"]
     launchPortraitFixture(app)
-
-    // HTML page regions are siblings of the continuous text flow in WebKit's
-    // accessibility tree. The UIKit shell owns the actual current document.
-    let firstPage = app.otherElements["page-turn-page-0"].firstMatch
-    XCTAssertTrue(firstPage.waitForExistence(timeout: 8))
-    let heading = firstPage.staticTexts["Живая математика"].firstMatch
-    XCTAssertTrue(
-      heading.waitForExistence(timeout: 8),
-      "Markdown должен стать читаемым текстом текущей страницы WebKit"
-    )
-    XCTAssertTrue(heading.isHittable, "Читаемый Markdown должен принимать касание")
-    heading.doubleTap()
-
-    let editor = app.textViews["Исходный Markdown или LaTeX"].firstMatch
-    XCTAssertTrue(
-      editor.waitForExistence(timeout: 5),
-      "Двойное касание должно заменить блок одним редактором исходника"
-    )
-    // WKWebView honours the person's double tap, while XCUITest does not pass
-    // that activation token to a textarea created during the same event. A
-    // direct automation tap gives the synthesized keyboard the same focus a
-    // real touch already has.
-    editor.tap()
-    XCTAssertTrue(
-      app.keyboards.firstMatch.waitForExistence(timeout: 5),
-      "Редактор должен получить клавиатуру до синтезированного ввода"
-    )
-    editor.typeText("\n\nНовая строка\n\n")
-
-    if (editor.value as? String)?.contains("Новая строка") != true {
-      let hierarchy = XCTAttachment(string: app.debugDescription)
-      hierarchy.name = "Document editor after keyboard input"
-      hierarchy.lifetime = .keepAlways
-      add(hierarchy)
-    }
-    XCTAssertTrue(
-      (editor.value as? String)?.contains("Новая строка") == true,
-      "Редактор должен принимать Markdown с экранной клавиатуры"
-    )
-    let save = app.buttons["Сохранить"].firstMatch
-    XCTAssertTrue(save.isHittable, "Клавиатура не должна закрывать сохранение")
-    save.tap()
-    XCTAssertTrue(firstPage.staticTexts["Новая строка"].firstMatch.waitForExistence(timeout: 12),
-      "Сохранённый текст должен появиться на этой бумаге без закрытия документа")
-    XCTAssertFalse(editor.exists, "Редактор завершается установкой сохранённого источника")
-    let finished = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-      !app.otherElements["document-save-status"].exists
-    }, object: nil)
-    XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 5), .completed)
-    let savedImage = XCTAttachment(screenshot: app.screenshot())
-    savedImage.name = "document-after-physical-save"; savedImage.lifetime = .keepAlways; add(savedImage)
+    let sourceRegion = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Исходник: # Живая математика")).firstMatch
+    XCTAssertTrue(sourceRegion.waitForExistence(timeout: 20), app.debugDescription)
+    sourceRegion.doubleTap()
+    let editor = app.textViews["document-source-editor"].firstMatch
+    XCTAssertTrue(editor.waitForExistence(timeout: 8), app.debugDescription)
+    XCTAssertTrue((editor.value as? String)?.contains("Живая математика") == true)
+    editor.tap(); editor.typeText("\n\nНовая строка\n\n")
+    XCTAssertTrue(app.staticTexts["Сохранено"].waitForExistence(timeout: 15))
+    app.buttons["Лист"].tap()
+    XCTAssertFalse(editor.exists)
+    app.buttons["Код"].tap()
+    XCTAssertTrue((editor.value as? String)?.contains("Новая строка") == true)
+    let image = XCTAttachment(screenshot: app.screenshot()); image.name = "Native source after paper double tap"
+    image.lifetime = .keepAlways; add(image)
   }
 
   func testDocumentRuntimeRendersMarkdownLatexAndInteractiveContent() async throws {

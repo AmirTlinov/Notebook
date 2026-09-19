@@ -30,9 +30,8 @@ final class DocumentShellPreparationTests: XCTestCase {
     XCTAssertEqual(Set(observations.map(\.shellID)).count, 1)
     XCTAssertEqual(Set(observations.map(\.leaseID)).count, 1)
     let runtime = try await web.callAsyncJavaScript("""
-      await window.MathJax.startup.promise;
-      return typeof window.MathJax.typesetPromise === 'function' &&
-        typeof window.notebookRenderer.beginSourcePreparation === 'function';
+      return typeof window.notebookRenderer.installPageSource === 'function' &&
+        typeof window.notebookRenderer.presentPage === 'function' && typeof window.MathJax === 'undefined';
       """, arguments: [:], in: nil, contentWorld: .page)
     XCTAssertEqual(runtime as? Bool, true)
   }
@@ -199,8 +198,8 @@ private final class PreparedShellPageFixture {
     coordinator.update(.init(document: document, state: .init(id: document.id, actor: UUID()), pageIndex: 0,
       isCurrent: true, isVisible: true, isInteractive: true, pageTurnActive: false,
       onRenderReady: .init { [weak self] in self?.ready = $0 }, onPageLayout: { _ in },
-      onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil }, drafts: [],
-      onDraftChange: { _ in }, onDraftDiscard: { _ in }, onLinkActivation: { _ in },
+       onStateChange: { _, _ in nil },
+        onLinkActivation: { _ in },
       snapshotPixelWidth: nil, onPreparationFailure: { [weak self] in self?.errors.append(String(describing: $0)) }),
       in: host, resources: resources)
   }

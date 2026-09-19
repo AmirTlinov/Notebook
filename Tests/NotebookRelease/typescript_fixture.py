@@ -1,14 +1,14 @@
 """Synthetic compiler bytes for packaging guards, never executable evidence."""
 import json, shutil, struct, tempfile
 from pathlib import Path
-import image_fixture
+import macho_fixture
 import prepare_notebook_typescript as ts
 
 
 def inputs(root):
     root=Path(root);package=root/'MCP/node_modules/@typescript/typescript-darwin-arm64'
     (package/'lib').mkdir(parents=True)
-    data=bytearray(image_fixture.executable());struct.pack_into('<I',data,32+72+12,12<<16)
+    data=bytearray(macho_fixture.executable());struct.pack_into('<I',data,32+72+12,12<<16)
     (package/'lib/tsc').write_bytes(data)
     (package/'package.json').write_text('{"version":"7.0.2"}')
     resources={'lib.d.ts':b'// CLI discovery library', 'lib.es5.d.ts':b'// synthetic declarations', 'LICENSE':b'synthetic license'}

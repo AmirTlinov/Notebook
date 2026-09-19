@@ -51,9 +51,8 @@ final class DocumentSaveTransitionTests: XCTestCase {
       physical.update(.init(document: document, state: state, pageIndex: 0, isCurrent: true, isVisible: true,
         isInteractive: true, pageTurnActive: false, onRenderReady: .init { _ in },
         onPageLayout: { model.acceptDocumentReadingLayout($0, documentID: id) },
-        onSourceChange: { try await model.commitDocumentSource(edit: $0) }, onStateChange: { _, _ in nil },
-        drafts: model.documentEditingSessions, onDraftChange: model.saveDocumentDraft,
-        onDraftDiscard: model.discardDocumentDraft, onLinkActivation: { _ in }, snapshotPixelWidth: nil,
+         onStateChange: { _, _ in nil },
+         onLinkActivation: { _ in }, snapshotPixelWidth: nil,
         onPreparationFailure: { _ in }), in: host, resources: resources)
     }
     func paper() -> WKWebView? {
@@ -66,11 +65,12 @@ final class DocumentSaveTransitionTests: XCTestCase {
     try update()
     await wait { (paper()?.navigationDelegate as? DocumentWebCoordinator)?.hasCanonicalPixels == true && host.isUserInteractionEnabled }
     let web = try XCTUnwrap(paper())
-    _ = try await web.evaluateJavaScript("""
-      document.querySelector('#document .editable').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
-      window.originalEditor=document.querySelector('textarea');originalEditor.value='# Saved by the sole writer';
-      originalEditor.dispatchEvent(new Event('input'));document.querySelector('[data-editor-action=save]').click();true
-      """)
+    let current = try XCTUnwrap(model.documents[id])
+    let block = try XCTUnwrap(current.blocks.first { $0.kind != .interactive })
+    let editor = DocumentSourceEditorSession(request: .init(documentID: id, block: block,
+      version: current.sourceVersion(blockID: block.id), offset: 0), model: model)
+    editor.input("# Saved by the sole writer", selection: .init(location: 5, length: 0), composing: false, scroll: 0)
+    await editor.save()
     await wait { model.documentSavePresentation?.phase == .saved }
     XCTAssertEqual(model.documentSavePresentation?.source, "# Saved by the sole writer")
     let savedDocument = try await model.performStoreCommand { try $0.loadDocument(id) }

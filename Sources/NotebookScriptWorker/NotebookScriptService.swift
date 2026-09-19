@@ -86,28 +86,6 @@ private final class Session: NSObject, NotebookScriptServiceProtocol, @unchecked
     }
   }
 
-  func compile(_ request: Data, withReply reply: @escaping (Data) -> Void) {
-    let reply = DataReply(reply)
-    guard mode == .markup else { respond(.init(code: "compiler_unavailable"), reply); return }
-    guard request.count <= 32*1024*1024,
-      let value = try? JSONDecoder().decode(NotebookCompilerRequest.self, from: request),
-      value.source.utf8.count <= 4*1024*1024 else {
-      respond(.init(code: "resource_limit", message: "Печатный исходник превышает 4 МиБ."), reply); return
-    }
-    lock.withLock {
-      guard activeID == nil else { respond(.init(code: "worker_busy"), reply); return }
-      activeID = value.id
-      // A separate XPC connection owns each compiler. It never joins the
-      // serial parser queue or a user-run admission queue.
-      compilation = Task { [weak self] in
-        let result = await NotebookSandboxedTeXCompiler.compile(value)
-        guard let self else { return }
-        self.lock.withLock { self.compilation = nil; self.activeID = nil }
-        self.respond(result, reply)
-      }
-    }
-  }
-
   func compileTypeScript(_ request: Data, withReply reply: @escaping (Data) -> Void) {
     let reply = DataReply(reply)
     guard mode == .markup else { respond(.init(code: "compiler_unavailable"), reply); return }

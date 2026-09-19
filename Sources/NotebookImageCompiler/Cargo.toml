@@ -9,6 +9,7 @@ krilla = "=0.8.2"
 krilla-svg = "=0.8.1"
 usvg = "=0.47.0"
 log = "=0.4.34"
+ttf-parser = "=0.25.1"
 
 [profile.release]
 lto = true

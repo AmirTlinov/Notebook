@@ -753,6 +753,7 @@
                                   "enum": [
                                     "markdown",
                                     "latex",
+                                    "tex",
                                     "interactive"
                                   ]
                                 },
@@ -4746,6 +4747,7 @@
                 "enum": [
                   "markdown",
                   "latex",
+                  "tex",
                   "interactive"
                 ]
               },
@@ -9109,6 +9111,7 @@
                 "enum": [
                   "markdown",
                   "latex",
+                  "tex",
                   "interactive"
                 ]
               },
@@ -13393,6 +13396,7 @@
                 "enum": [
                   "markdown",
                   "latex",
+                  "tex",
                   "interactive"
                 ]
               },
@@ -21619,6 +21623,7 @@
                               "enum": [
                                 "markdown",
                                 "latex",
+                                "tex",
                                 "interactive"
                               ]
                             },
@@ -23059,7 +23064,8 @@
                     "type": "string",
                     "enum": [
                       "markdown",
-                      "latex"
+                      "latex",
+                      "tex"
                     ]
                   },
                   "source": {
@@ -24001,6 +24007,7 @@
                         "enum": [
                           "markdown",
                           "latex",
+                          "tex",
                           "interactive"
                         ]
                       },
@@ -25113,7 +25120,8 @@
                     "type": "string",
                     "enum": [
                       "markdown",
-                      "latex"
+                      "latex",
+                      "tex"
                     ]
                   },
                   "source": {
@@ -28971,6 +28979,7 @@
                             "enum": [
                               "markdown",
                               "latex",
+                              "tex",
                               "interactive"
                             ]
                           },
@@ -30788,6 +30797,7 @@
                       "enum": [
                         "markdown",
                         "latex",
+                        "tex",
                         "interactive"
                       ]
                     },
@@ -34964,6 +34974,7 @@
                 "enum": [
                   "markdown",
                   "latex",
+                  "tex",
                   "interactive"
                 ]
               },
@@ -35204,6 +35215,7 @@
                   "enum": [
                     "markdown",
                     "latex",
+                    "tex",
                     "interactive"
                   ]
                 },
@@ -45773,6 +45785,7 @@
                 "enum": [
                   "markdown",
                   "latex",
+                  "tex",
                   "interactive"
                 ]
               },
@@ -46918,7 +46931,8 @@
                     "type": "string",
                     "enum": [
                       "markdown",
-                      "latex"
+                      "latex",
+                      "tex"
                     ]
                   },
                   "source": {
@@ -47445,7 +47459,8 @@
                     "type": "string",
                     "enum": [
                       "markdown",
-                      "latex"
+                      "latex",
+                      "tex"
                     ]
                   },
                   "source": {

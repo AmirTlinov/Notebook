@@ -6,14 +6,14 @@ import XCTest
 final class DocumentRenderSessionTests: XCTestCase {
   private func coordinator(resources: SceneRenderResources, document: DocumentDocument, state: DocumentStateJournal, page: Int = 0) -> DocumentWebCoordinator {
     let value = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
     update(value, document: document, state: state, page: page)
     return value
   }
 
   private func update(_ value: DocumentWebCoordinator, document: DocumentDocument, state: DocumentStateJournal, page: Int = 0) {
     value.update(document: document, state: state, selectedPageIndex: page, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onRenderReady: .init { _ in }, onPageLayout: { _ in },  onStateChange: { _, _ in nil })
   }
 
   func testFourPagesShareExactlyOneImmutableSourceAndStateEncodingWithoutAllocatingWebKit() async throws {

@@ -5,7 +5,9 @@ struct NotebookRootView: View {
   @Environment(NotebookAppModel.self) private var model
   @State private var showsDevices = false
   @State private var showsHistory = false
-  @State private var penControlsFrame = CGRect.zero
+  @State private var topBarFrame = CGRect.zero
+  @State private var documentMode = DocumentViewMode.paper
+  @State private var backRequest: UInt64 = 0
 
   var body: some View {
     ZStack {
@@ -24,7 +26,8 @@ struct NotebookRootView: View {
             }.padding(24)
           } else { Color.clear }
         case .ready:
-          SpatialWorkspaceView()
+          DocumentSourceWorkspace(mode: $documentMode, topInset: max(74, topBarFrame.maxY - geometry.frame(in: .global).minY + 8),
+            allowsBeside: geometry.size.width > geometry.size.height) { SpatialWorkspaceView(backRequest: backRequest) }
         case .failed(let message):
           Text(message)
             .font(.footnote)
@@ -59,16 +62,14 @@ struct NotebookRootView: View {
           .accessibilityIdentifier("persistence-failure")
         }
 
-          PenControlsView()
+        if let presence = model.presence {
+          NotebookTopBar(presence: presence, documentMode: $documentMode, allowsBeside: geometry.size.width > geometry.size.height) { backRequest &+= 1 }
             .background(NotebookControlRegion(gate: model.inputGate))
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { penControlsFrame = $0 }
-            .frame(
-              maxWidth: .infinity,
-              maxHeight: .infinity,
-              alignment: .topTrailing
-            )
-            .padding(.top, 18)
-            .padding(.trailing, 18)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { topBarFrame = $0 }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, 18).padding(.top, 18)
+        }
+
       }
       .task {
           await model.start(
@@ -85,7 +86,7 @@ struct NotebookRootView: View {
       .padding(18)
     if let chat = model.chat, chat.files.window.isOpen, chat.files.document != nil {
       GeometryReader { geometry in
-        let top = max(18, penControlsFrame.maxY - geometry.frame(in: .global).minY + 12)
+        let top = max(18, topBarFrame.maxY - geometry.frame(in: .global).minY + 12)
         NotebookCodeDocumentView(files: chat.files)
           .padding(.top, top).padding(.horizontal, 18).padding(.bottom, 18)
       }
@@ -93,7 +94,7 @@ struct NotebookRootView: View {
     if let chat = model.chat {
       GeometryReader { geometry in
         let origin = geometry.frame(in: .global).origin
-        let top = max(18, penControlsFrame.maxY - origin.y + 12)
+        let top = max(18, topBarFrame.maxY - origin.y + 12)
         // Leave the paper navigation reachable. This is window space only;
         // keyboard avoidance never publishes a SessionPresence or remounts paper.
         let available = CGRect(x: 18, y: top, width: max(44, geometry.size.width - 36),

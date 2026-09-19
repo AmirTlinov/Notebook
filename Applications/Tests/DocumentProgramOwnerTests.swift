@@ -280,8 +280,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
     fixture.window.rootViewController!.view.addSubview(thumbnail)
     thumbnailCoordinator.update(.init(document: document, state: .init(id: document.id, actor: UUID()),
       pageIndex: target, isCurrent: false, isVisible: true, isInteractive: false, pageTurnActive: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onSourceChange: { _ in .committed },
-      onStateChange: { _, _ in nil }, drafts: [], onDraftChange: { _ in }, onDraftDiscard: { _ in },
+      onRenderReady: .init { _ in }, onPageLayout: { _ in },
+      onStateChange: { _, _ in nil },
       onLinkActivation: { _ in }, snapshotPixelWidth: 256,
       onPreparationFailure: { error in XCTFail("Thumbnail preparation: \(error)") }), in: thumbnail, resources: fixture.resources)
     try await wait(message: { fixture.diagnostics }) { thumbnail.hasSnapshot }
@@ -525,14 +525,14 @@ final class DocumentProgramOwnerTests: XCTestCase {
     // Hold a real second admitted WebKit. The passive owner must queue through
     // SceneRenderResources, rather than a manufactured renderer-ready callback.
     let blocker = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
     let blockerHost = DocumentWebHost()
     fixture.window.rootViewController?.view.addSubview(blockerHost)
     blockerHost.frame = .init(x: 720, y: 0, width: 240, height: 340)
     let blockerDocument = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "blocker", source: "# Another active paper")])
     blocker.update(document: blockerDocument, state: .init(id: blockerDocument.id, actor: UUID()),
       selectedPageIndex: 0, capturesSnapshot: false, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onSourceChange: { _ in .committed }, onStateChange: { _, _ in nil })
+      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
     let geometry = WorkspaceItemGeometry.document(blockerDocument.paperSize)
     blocker.mount(in: blockerHost, physicalSize: .init(width: geometry.width, height: geometry.height),
       isInteractive: true, priority: .currentPage)
@@ -1224,54 +1224,6 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertLessThanOrEqual(fixture.resources.activeWebSurfaceCount, 4)
   }
 
-  func testViewRecreationAndNewSourceKeepTheComposingEditorAndItsSelection() async throws {
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# Original text"),
-      .markdown(id: "other", source: "A separate block")])
-    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
-    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
-    let lifetime = owner.retainOpenDocument()
-    defer { fixture.close(); lifetime.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled }
-    let web = try XCTUnwrap(fixture.paper(in: 0))
-    _ = try await web.evaluateJavaScript("""
-      document.querySelector('#document .editable').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
-      window.originalEditor=document.querySelector('textarea');originalEditor.value='A composing draft stays here';
-      originalEditor.setSelectionRange(2,11);originalEditor.dispatchEvent(new Event('compositionstart'));
-      originalEditor.dispatchEvent(new Event('input'));true
-      """)
-    fixture.replaceSource(blockID: "other", source: "A changed independent block")
-    await owner.observePendingPresentationWork()
-    fixture.retirePresentation(0)
-    await owner.observePendingPresentationWork()
-    fixture.restorePresentation(0)
-    try await wait(message: { fixture.diagnostics }) { fixture.paper(in: 0) === web && fixture.hosts[0].isUserInteractionEnabled }
-    let unchanged = try await web.evaluateJavaScript("originalEditor===document.querySelector('textarea')&&document.activeElement===originalEditor&&notebookRenderer.editingDraft().isComposing&&originalEditor.value==='A composing draft stays here'&&originalEditor.selectionStart===2&&originalEditor.selectionEnd===11")
-    XCTAssertEqual(unchanged as? Bool, true)
-    _ = try await web.evaluateJavaScript("originalEditor.dispatchEvent(new Event('compositionend'));true")
-  }
-
-  func testAnOpenSourceEditorKeepsItsDOMWhilePassiveWorkAndCameraSizeChange() async throws {
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
-      (0..<60).map { "Paragraph \($0). " + String(repeating: "The editor owns this accepted draft. ", count: 10) }.joined(separator: "\n\n"))])
-    let fixture = try ProgramFixture(document: document)
-    defer { fixture.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.ready[1] == true && fixture.hosts[0].isUserInteractionEnabled }
-    let web = try XCTUnwrap(fixture.paper(in: 0))
-    _ = try await web.evaluateJavaScript("""
-      document.querySelector('#document .editable').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
-      window.originalEditor=document.querySelector('textarea');originalEditor.value='An accepted unfinished draft';
-      originalEditor.dispatchEvent(new Event('input',{bubbles:true}));true
-      """)
-    fixture.hosts[0].frame.size.width += 0.15
-    fixture.hosts[0].setNeedsLayout(); fixture.hosts[0].layoutIfNeeded()
-    try await Task.sleep(for: .milliseconds(250))
-    let survived = try await web.evaluateJavaScript("originalEditor===document.querySelector('textarea')&&originalEditor.value==='An accepted unfinished draft'")
-    XCTAssertEqual(survived as? Bool, true)
-    XCTAssertTrue(fixture.paper(in: 0) === web)
-    XCTAssertTrue(fixture.hosts[0].isUserInteractionEnabled)
-    XCTAssertLessThanOrEqual(fixture.resources.activeWebSurfaceCount, 4)
-  }
-
   func testAttentionCapturesLivePixelsEvenWhenProgramChangesWithoutAStateCommit() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
       html: "<div id='swatch' style='height:200px;background:#ff0000'></div>", css: "",
@@ -1579,13 +1531,13 @@ private final class ProgramFixture {
       coordinator.update(.init(document: document, state: state, pageIndex: pageIndices[index], isCurrent: selected == index && !thumbnailPresentations.contains(index),
         isVisible: true, isInteractive: selected == index && interactive && !thumbnailPresentations.contains(index), pageTurnActive: false,
         onRenderReady: .init(activity: activity) { [weak self] in self?.ready[index] = $0 },
-        onPageLayout: { _ in }, onSourceChange: { _ in .committed },
+        onPageLayout: { _ in },
         onStateChange: { [weak self] block, value in
           guard let self else { return nil }
           _ = state.commit(blockID: block, value: value, actor: actor)
           let accepted = state.records.first { $0.id == block }?.valueVersion
           refresh(); return accepted
-        }, drafts: [], onDraftChange: { _ in }, onDraftDiscard: { _ in }, onLinkActivation: { [weak self] in self?.linkNavigation($0.destination) },
+        },    onLinkActivation: { [weak self] in self?.linkNavigation($0.destination) },
         snapshotPixelWidth: thumbnailPresentations.contains(index) ? 256 : nil, onPreparationFailure: { [weak self] error in
           self?.preparationErrors.append("page \(index): \(error)")
         },

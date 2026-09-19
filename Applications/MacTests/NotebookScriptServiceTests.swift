@@ -2,6 +2,8 @@ import Foundation
 import AppKit
 import NotebookCore
 import NotebookScriptProtocol
+import NotebookTypesetter
+@testable import Notebook
 import PDFKit
 import Security
 import XCTest
@@ -67,6 +69,8 @@ final class NotebookScriptServiceTests: XCTestCase {
     return NotebookScriptCoordinator(command: { try await owner.command($0) },
       persistence: { operation in try await owner.persist(operation) },
       workingDirectory: owner.store.root.appendingPathComponent("derived/script-runtime"),
+      canonicalExport: { document, id in try await DocumentCanonicalExport.publication(document: document,
+        state: owner.store.loadDocumentState(document.id), jobID: id) },
       userServiceName: try service("NotebookScriptService"), markupServiceName: try service("NotebookMarkupService"))
   }
 
@@ -84,10 +88,6 @@ final class NotebookScriptServiceTests: XCTestCase {
     let entries: [(URL, [String: Bool])] = [
       (root.appendingPathComponent("NotebookScriptService.xpc"), ["com.apple.security.app-sandbox": true]),
       (root.appendingPathComponent("NotebookMarkupService.xpc"), ["com.apple.security.app-sandbox": true]),
-      (root.appendingPathComponent("NotebookMarkupService.xpc/Contents/Helpers/tectonic"),
-        ["com.apple.security.app-sandbox": true, "com.apple.security.inherit": true]),
-      (root.appendingPathComponent("NotebookMarkupService.xpc/Contents/Helpers/notebook-image-compiler"),
-        ["com.apple.security.app-sandbox": true, "com.apple.security.inherit": true]),
       (root.appendingPathComponent("NotebookMarkupService.xpc/Contents/Helpers/notebook-typescript"),
         ["com.apple.security.app-sandbox": true, "com.apple.security.inherit": true]),
     ]
@@ -975,8 +975,8 @@ final class NotebookScriptServiceTests: XCTestCase {
     XCTAssertTrue(syncTeX.starts(with: [0x1f, 0x8b]), "The source map must accompany actual engine-generated page coordinates")
     let printed = try XCTUnwrap(PDFDocument(data: pdf))
     let pages = (0..<printed.pageCount).compactMap { printed.page(at: $0) }
-    XCTAssertTrue((printed.string ?? "").filter { !$0.isWhitespace }.contains(interactiveID),
-      "The complete interactive address must survive wrapping in the actual PDF")
+    XCTAssertFalse((printed.string ?? "").contains(interactiveID),
+      "A live program is frozen in its own print region, not replaced by its internal ID")
     for page in pages {
       let paper = page.bounds(for: .mediaBox)
       for index in 0..<page.numberOfCharacters {
@@ -1004,42 +1004,6 @@ final class NotebookScriptServiceTests: XCTestCase {
     }, "A substantial red SVG rectangle must be visible in the final compiled PDF.")
     XCTAssertFalse(receipt.log.contains("Missing character"))
     await host.shutdown()
-  }
-
-  func testActualCompilerCannotReadOutsideItsSandboxAndUserServiceRejectsCompilation() async throws {
-    try await requireRestrictedServiceSignatures()
-    let owner = try Owner(root: FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".notebook-xpc-sandbox-canary-\(UUID())", isDirectory: true))
-    defer { try? FileManager.default.removeItem(at: owner.store.root) }
-    let canary = owner.store.root.appendingPathComponent("compiler-outside-canary.tex")
-    let marker = "NB_OUTSIDE_CANARY_READ_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-    try Data("\\typeout{\(marker)}".utf8).write(to: canary)
-    let source = "\\documentclass{article}\n\\begin{document}\nProbe.\\input{\(canary.path)}\n\\end{document}"
-    let compiler = NotebookXPCWorker(serviceName: try service("NotebookMarkupService")) { _ in .init(code: "unexpected_host") }
-    let result = await compiler.compile(.init(id: UUID(), source: source))
-    XCTAssertEqual(result.code, "export_failed", "Actual signed child must be denied by App Sandbox: \(String(describing: result.message))")
-    XCTAssertNil(result.value)
-    XCTAssertTrue(result.message?.contains(canary.lastPathComponent) == true,
-      "The native compiler must report its attempted access to this exact outside file.")
-    XCTAssertFalse(result.message?.contains(marker) == true, "TeX must never read the host's harmless canary.")
-    XCTAssertEqual(try String(contentsOf: canary, encoding: .utf8), "\\typeout{\(marker)}")
-    compiler.invalidate()
-    for body in ["<foreignObject width='20' height='20'><div xmlns='http://www.w3.org/1999/xhtml'>Must not vanish</div></foreignObject>",
-      "<style>@import url(https://example.org/print.css);</style>", "<image href='\(canary.absoluteString)'/>"] {
-      let svg = "<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'>\(body)</svg>"
-      // Production owns one XPC connection per compiler job. Each negative
-      // sample must cross that real boundary, not reuse a completed lease.
-      let imageCompiler = NotebookXPCWorker(serviceName: try service("NotebookMarkupService")) { _ in .init(code: "unexpected_host") }
-      let rejectedImage = await imageCompiler.compile(.init(id: UUID(), source: "\\documentclass{article}\\begin{document}Image\\end{document}",
-        assets: [.init(name: "notebook-image-0.pdf", mediaType: .svg, data: Data(svg.utf8))]))
-      imageCompiler.invalidate()
-      XCTAssertEqual(rejectedImage.code, "export_image_invalid", "Unsupported or external SVG content must fail explicitly: \(String(describing: rejectedImage.message))")
-      XCTAssertNil(rejectedImage.value, "A missing image must never be published as a successful PDF.")
-    }
-    let user = NotebookXPCWorker(serviceName: try service("NotebookScriptService")) { _ in .init(code: "unexpected_host") }
-    let rejected = await user.compile(.init(id: UUID(), source: "ignored"))
-    user.invalidate()
-    XCTAssertEqual(rejected.code, "compiler_unavailable")
   }
 
   func testPinnedTypeScriptCLICompilesInsideTheSignedSandboxBeforePublicAdmission() async throws {
@@ -1231,22 +1195,20 @@ final class NotebookScriptServiceTests: XCTestCase {
     let identity = try XCTUnwrap(NotebookTypeScriptPreparation.bundledIdentity)
     let name = try service("NotebookMarkupService")
     let typed = NotebookXPCWorker(serviceName: name) { _ in .init(code: "unexpected_host") }
-    let printer = NotebookXPCWorker(serviceName: name) { _ in .init(code: "unexpected_host") }
+    let printer = NotebookTypesetter(resources: Bundle.main.resourceURL!.appendingPathComponent("NotebookTypesetter"))
     let parser = NotebookMarkupQueue(serviceName: name)
-    defer { typed.invalidate(); printer.invalidate() }
+    defer { typed.invalidate() }
     let source = "const values: number[] = [" + String(repeating: "1234,", count: 30_000) + "]; return values.length;"
     async let compilation = typed.compileTypeScript(.init(id: UUID(), source: source,
       compilerVersion: identity.compilerVersion, sdkVersion: identity.sdkVersion))
-    async let pdf = printer.compile(.init(id: UUID(), source: "\\documentclass{article}\\begin{document}Independent PDF\\end{document}"))
+    async let pdf = printer.compile(DocumentDocument(actor: UUID(), blocks: [.init(id: "body", kind: .tex, source: "Independent PDF")]))
     async let markup = parser.normalize(.object(["kind": .string("action"), "preparation": .object([
       "action": .object(["operations": .array([.object(["values": .object(["source": .string("**Independent markup**")])])])]),
       "markdownOperations": .array([.number(0)])])]))
     let (prepared,printed,normalized) = try await (compilation,pdf,markup)
     XCTAssertNil(prepared.code, prepared.message ?? "TypeScript failure")
     XCTAssertNotNil(prepared.value)
-    XCTAssertNil(printed.code, printed.message ?? "PDF failure")
-    let document = try JSONDecoder().decode(NotebookCompilerResult.self, from: XCTUnwrap(printed.value))
-    XCTAssertEqual(PDFDocument(data: document.pdf)?.pageCount, 1)
+    XCTAssertEqual(PDFDocument(data: printed.pdf)?.pageCount, 1)
     XCTAssertTrue(normalized.array("operations").first?["values"]?.string("html")?.contains("<strong>Independent markup</strong>") == true)
   }
 }

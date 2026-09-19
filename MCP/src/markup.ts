@@ -3,10 +3,10 @@ import { documentExport } from "./document-tex.js";
 import type { DocumentDocument } from "./domain.js";
 
 type Preparation = { action: {operations:Array<{values:Record<string, unknown>}>}; markdownOperations:number[] };
-type Request = { kind:"action"; preparation:Preparation } | { kind:"documentTeX"; document:DocumentDocument };
+type Request = { kind:"action"; preparation:Preparation } | { kind:"documentTeX"; document:DocumentDocument; programPointScale?:number };
 
 function notebookMarkup(request: Request): unknown {
-  if (request.kind === "documentTeX") return documentExport(request.document);
+  if (request.kind === "documentTeX") return documentExport(request.document, request.programPointScale);
   if (request.kind !== "action") throw new Error("invalid_markup_request");
   const {action,markdownOperations} = request.preparation;
   for (const index of markdownOperations) {

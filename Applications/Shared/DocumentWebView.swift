@@ -36,8 +36,12 @@ final class DocumentSnapshotCache {
         token: Self.token(document: document, state: state, pageIndex: pageIndex))
       let requiredScale = Double(NSScreen.main?.backingScaleFactor ?? 2)
       if let lease = resources.retainRaster(for: source, minimumScale: requiredScale) { return lease }
+      if let producer = DocumentRenderRegistry.shared.rasterProducer(documentID: document.id,
+        token: Self.token(document: document, state: state, pageIndex: pageIndex), resources: resources, excluding: UUID()) {
+        return try await producer.retainPreparedSnapshot(pixelWidth: Int(ceil(WorkspaceItemGeometry.document(document.paperSize).width * requiredScale)), force: true)
+      }
       let ready = PageTurnReadiness { _ in }
-      let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: ready, onPageLayout: { _ in }, onSourceChange: { _ in .targetMissing }, onStateChange: { _, _ in nil })
+      let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: ready, onPageLayout: { _ in },  onStateChange: { _, _ in nil })
       let host = DocumentWebHost()
       let geometry = WorkspaceItemGeometry.document(document.paperSize)
       let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: geometry.width, height: geometry.height),
@@ -45,7 +49,7 @@ final class DocumentSnapshotCache {
       window.isReleasedWhenClosed = false; window.contentView = host; window.orderBack(nil)
       defer { coordinator.invalidate(); window.orderOut(nil); window.close() }
       coordinator.update(document: document, state: state, selectedPageIndex: pageIndex, capturesSnapshot: false,
-        onRenderReady: ready, onPageLayout: { _ in }, onSourceChange: { _ in .targetMissing }, onStateChange: { _, _ in nil })
+        onRenderReady: ready, onPageLayout: { _ in },  onStateChange: { _, _ in nil })
       coordinator.mount(in: host, physicalSize: .init(width: geometry.width, height: geometry.height),
         isInteractive: false, priority: .background)
       return try await withTaskCancellationHandler {
@@ -113,6 +117,7 @@ struct DocumentPageLayout: Equatable, Sendable {
 
 struct DocumentWebView: View {
   @Environment(\.openURL) private var openURL
+  @Environment(\.documentPaperVisible) private var paperVisible
   @State private var linkFailure: String?
   let document: DocumentDocument
   let state: DocumentStateJournal
@@ -122,11 +127,7 @@ struct DocumentWebView: View {
   let onRenderReady: PageTurnReadiness
   let onPageLayout: (DocumentPageLayout) -> Void
   let onLinkActivation: (DocumentLinkActivation) -> DocumentLinkDestination?
-  let onSourceChange: (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status
   let onStateChange: (String, JSONValue) -> ContentFieldVersion?
-  var drafts: [DocumentEditingSession] = []
-  var onDraftChange: (DocumentEditingSession) -> Void = { _ in }
-  var onDraftDiscard: (UUID) -> Void = { _ in }
   var resources: SceneRenderResources = .shared
   var isCurrent = true
   var isVisible = true
@@ -138,14 +139,13 @@ struct DocumentWebView: View {
     PlatformDocumentWebView(
       document: document,
       state: state,
-      isInteractive: isInteractive,
+      isInteractive: isInteractive && paperVisible,
       selectedPageIndex: selectedPageIndex,
       capturesSnapshot: capturesSnapshot,
       onRenderReady: onRenderReady,
       onPageLayout: onPageLayout,
-      onSourceChange: onSourceChange,
       onStateChange: onStateChange,
-      resources: resources, drafts: drafts, onDraftChange: onDraftChange, onDraftDiscard: onDraftDiscard,
+      resources: resources,
       onLinkActivation: { activation in
         guard let destination = onLinkActivation(activation) else { return }
         switch destination {
@@ -155,7 +155,7 @@ struct DocumentWebView: View {
         }
         case .unavailable(let message): linkFailure = message
         }
-      }, isCurrent: isCurrent, isVisible: isVisible, isPageTurnActive: isPageTurnActive,
+      }, isCurrent: isCurrent, isVisible: isVisible && paperVisible, isPageTurnActive: isPageTurnActive,
       onStateCheckpoint: onStateCheckpoint, measurements: measurements
     )
     .accessibilityIdentifier("document-runtime")
@@ -178,7 +178,7 @@ struct DocumentThumbnailView: View {
   var body: some View {
     PlatformDocumentWebView(document: document, state: state, isInteractive: false,
       selectedPageIndex: pageIndex, capturesSnapshot: true, onRenderReady: onRenderReady,
-      onPageLayout: { _ in }, onSourceChange: { _ in .targetMissing }, onStateChange: { _, _ in nil },
+      onPageLayout: { _ in },  onStateChange: { _, _ in nil },
       resources: resources, snapshotPixelWidth: 256, onPreparationFailure: onFailure, isCurrent: false)
       .accessibilityHidden(true)
   }
@@ -199,7 +199,6 @@ struct DocumentRuntimePayload {
   var runtimeID: UUID
   let blockTokens: [String: String]
   let programMode: String
-  var drafts: [DocumentEditingSession]
 
   var rasterToken: String {
     let omitsPrograms = programMode == "external" && source.programIDs(on: pageIndex).map { !$0.isEmpty } != false
@@ -215,7 +214,7 @@ struct DocumentRuntimePayload {
   func frame(generation: UInt64) -> DocumentRuntimeFrame {
     .init(documentID: documentID, generation: String(generation), sourceKey: source.message.key, stateKey: state.message.key,
       editable: editable, renderToken: renderToken, pageIndex: pageIndex, runtimeID: runtimeID,
-      blockTokens: blockTokens, programMode: programMode, drafts: drafts)
+      blockTokens: blockTokens, programMode: programMode)
   }
 }
 
@@ -230,11 +229,10 @@ struct DocumentRuntimeFrame: Encodable {
   let runtimeID: UUID
   let blockTokens: [String: String]
   let programMode: String
-  let drafts: [DocumentEditingSession]
 }
 
-private struct DocumentPixelPresentation: Equatable {
-  enum Kind: String { case canonical, editor, preparing }
+private struct DocumentPixelPresentation: Equatable, Sendable {
+  enum Kind: String, Sendable { case canonical, preparing }
   let epoch: UInt64
   let kind: Kind
   init?(_ receipt: NSDictionary) {
@@ -245,7 +243,6 @@ private struct DocumentPixelPresentation: Equatable {
 }
 
 enum DocumentSnapshotWait: Error, Equatable {
-  case editorActive
   case presentationChanged
 }
 
@@ -313,7 +310,6 @@ final class DocumentWebCoordinator: NSObject,
   private(set) var acceptsInput = false
   private var requestedInput = false
   private(set) var ownsEditing = false
-  var isPresentingEditor: Bool { pixelPresentation?.kind == .editor }
   private var physicalSize = CGSize(width: 1, height: 1)
   private var generation: UInt64 = 0
   private var preparationRequestID: UUID?
@@ -323,6 +319,11 @@ final class DocumentWebCoordinator: NSObject,
   private var frameTaskID: UUID?
   private var frameEvaluationID: UUID?
   private var frameContinuation: CheckedContinuation<Void, Error>?
+  private let printedView = DocumentPaperView()
+  private var printedSourceMatches: Bool {
+    guard let raster = printedView.raster, let payload else { return false }
+    return raster.sourceKey == payload.source.message.key && raster.page.pageIndex == min(payload.pageIndex, max(0, pageCount-1))
+  }
   private var sentSourcePage: Int?
   private var sentSourceKey: String?
   private var sentStateKey: String?
@@ -331,7 +332,7 @@ final class DocumentWebCoordinator: NSObject,
   private var pixelPresentation: DocumentPixelPresentation?
   private var canonicalPixelEpoch: UInt64?
   var hasCanonicalPixels: Bool {
-    renderIsReady && layoutAccepted && pixelPresentation?.kind == .canonical
+    renderIsReady && printedSourceMatches && layoutAccepted && pixelPresentation?.kind == .canonical
       && canonicalPixelEpoch != nil && canonicalPixelEpoch == pixelPresentation?.epoch
   }
   private struct CanonicalSnapshotWaiter {
@@ -345,9 +346,6 @@ final class DocumentWebCoordinator: NSObject,
   private let hostID = UUID()
   private var runtimeID = UUID()
   private var blockTokens: [String: String] = [:]
-  private var draftsByID: [UUID: DocumentEditingSession] = [:]
-  private var onDraftChange: (DocumentEditingSession) -> Void = { _ in }
-  private var onDraftDiscard: (UUID) -> Void = { _ in }
   private var preparationDeadlineTask: Task<Void, Never>?
   private var preparationDeadlineGeneration: UInt64?
   private var preparationAdmissionGeneration: UInt64?
@@ -389,7 +387,6 @@ final class DocumentWebCoordinator: NSObject,
   private struct PresentationWaiter {
     let generation: UInt64
     let token: String
-    let allowsEditor: Bool
     let continuation: CheckedContinuation<Void, Error>
   }
   private var presentationWaiters: [UUID: PresentationWaiter] = [:]
@@ -398,13 +395,13 @@ final class DocumentWebCoordinator: NSObject,
   /// Wait for this exact request, not a later page that happens to be ready.
   /// Admission and execution keep their existing owners and deadlines; this
   /// subscription adds no polling loop or competing overall timeout.
-  func awaitPresentation(token: String, allowsEditor: Bool = false) async throws {
+  func awaitPresentation(token: String) async throws {
     try Task.checkCancellation()
     let id = UUID(), expected = generation
     try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in
         presentationWaiters[id] = .init(generation: expected, token: token,
-          allowsEditor: allowsEditor, continuation: continuation)
+          continuation: continuation)
         resolvePresentationWaiters()
         // An admitted surface can lose its canonical receipt without starting
         // a new source frame (for example when leaving an editor). The same
@@ -426,10 +423,9 @@ final class DocumentWebCoordinator: NSObject,
         result = .failure(CancellationError())
       } else if let acquisitionError {
         result = .failure(acquisitionError)
-      } else if hasCanonicalPixels || (waiter.allowsEditor && renderIsReady && isPresentingEditor) {
+      } else if hasCanonicalPixels {
         result = .success(())
-      } else if !waiter.allowsEditor && isPresentingEditor {
-        result = .failure(DocumentSnapshotWait.editorActive)
+
       } else { continue }
       presentationWaiters.removeValue(forKey: id)?.continuation.resume(with: result)
     }
@@ -452,7 +448,7 @@ final class DocumentWebCoordinator: NSObject,
     preparesCommonRuntime = true
     host.configure(size: physicalSize, interactive: false)
     let web = DocumentWebViewFactory.make(coordinator: self, lease: lease)
-    host.install(web, size: physicalSize)
+    host.install(web, size: physicalSize); host.installPaper(printedView)
     emptyShellDeadline = Task { @MainActor [weak self, weak web] in
       do { try await Task.sleep(for: .seconds(8)) } catch { return }
       guard !Task.isCancelled, let self, let web, self.webView === web,
@@ -475,12 +471,10 @@ final class DocumentWebCoordinator: NSObject,
   /// Event routing can change while the canonical pixels and their generation
   /// stay identical (for example after the measured page count reaches SwiftUI).
   func updateInteractionCallbacks(
-    onSourceChange: @escaping (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status,
-    onDraftChange: @escaping (DocumentEditingSession) -> Void,
-    onDraftDiscard: @escaping (UUID) -> Void,
+
+
+
     onLinkActivation: @escaping (DocumentLinkActivation) -> Void) {
-    self.onSourceChange = onSourceChange
-    self.onDraftChange = onDraftChange; self.onDraftDiscard = onDraftDiscard
     self.onLinkActivation = onLinkActivation
   }
 
@@ -524,20 +518,15 @@ final class DocumentWebCoordinator: NSObject,
   private func refreshInputAdmission() {
     let isInteractive = requestedInput
     let installed = webView.map { host?.hasCanonicalSurface($0) == true } ?? false
-    // Editor pixels are a valid installed input surface too. A snapshot or a
-    // loading overlay never grants access to the DOM underneath it.
-    acceptsInput = isInteractive && installed && (hasCanonicalPixels || (ownsEditing && isPresentingEditor))
+    // Only the installed canonical source admits input. A loading overlay
+    // never grants access to the transparent interaction layer underneath it.
+    acceptsInput = isInteractive && installed && hasCanonicalPixels
     host?.configure(size: physicalSize, interactive: acceptsInput)
     if isInteractive, hasCanonicalPixels, let payload, let presentation = pixelPresentation, let host, let web = webView,
       host.hasCanonicalSurface(web) {
       admittedLinkOrigin = .init(source: payload.source, state: payload.state,
         runtimeID: payload.runtimeID, generation: generation, renderToken: payload.renderToken,
         pageIndex: payload.pageIndex, presentationEpoch: presentation.epoch)
-    }
-    // The current reader warms a bounded continuation, not the rest of the
-    // book. A neighbour or one-page export cannot expand that window.
-    if hasCanonicalPixels, requestedPriority == .currentPage, let payload {
-      payload.source.didPresentPage(payload.pageIndex)
     }
     refreshLiveReceipt()
   }
@@ -653,7 +642,7 @@ final class DocumentWebCoordinator: NSObject,
     let previousHost = self.host
     self.host = host
     if let webView, previousHost !== host || !host.ownsSurface(webView) {
-      host.install(webView, size: physicalSize)
+      host.install(webView, size: physicalSize); host.installPaper(printedView)
       if previousHost !== host { previousHost?.removeSurface(ownedBy: webView) }
     }
     DocumentRenderRegistry.shared.mountRenderer(self, hostID: hostID)
@@ -677,7 +666,7 @@ final class DocumentWebCoordinator: NSObject,
     if webView != nil {
       surfaceLease?.updatePriority(priority); requestedPriority = priority
       refreshInputAdmission()
-      if !hasCanonicalPixels && !isPresentingEditor { beginPreparationDeadline() }
+      if !hasCanonicalPixels { beginPreparationDeadline() }
       return
     }
     if let snapshotPixelWidth, acquisitionTask == nil, let payload,
@@ -723,7 +712,7 @@ final class DocumentWebCoordinator: NSObject,
         recordPreparation(.admittedAt)
         beginPreparationDeadline()
         let web = DocumentWebViewFactory.make(coordinator: self, lease: lease)
-        host.install(web, size: self.physicalSize)
+        host.install(web, size: self.physicalSize); host.installPaper(self.printedView)
         host.configure(size: self.physicalSize, interactive: acceptsInput)
       } catch {
         guard let self, !isInvalidated, acquisitionID == id else { return }
@@ -781,7 +770,6 @@ final class DocumentWebCoordinator: NSObject,
   /// The resource and all callbacks belong to this one mounted lifetime.
   func invalidate() {
     guard !isInvalidated else { return }
-    retainFinalEditingDraft()
     isInvalidated = true
     pagePreparationTrace = nil; preparationRequestID = nil
     generation &+= 1
@@ -799,9 +787,8 @@ final class DocumentWebCoordinator: NSObject,
     preparedSnapshotLease?.release(); preparedSnapshotLease = nil
     onRenderReady(false)
     onRenderReady = .init { _ in }
-    onPageLayout = { _ in }; onSourceChange = { _ in .targetMissing }; onStateChange = { _, _ in nil }
+    onPageLayout = { _ in }; onStateChange = { _, _ in nil }
     onPreparationFailure = { _ in }; onLinkActivation = { _ in }
-    onDraftChange = { _ in }; onDraftDiscard = { _ in }
     releaseWebSurface()
     payload = nil; renderSession = nil
     if !preservesFallback { host?.removeFallback() }
@@ -826,7 +813,7 @@ final class DocumentWebCoordinator: NSObject,
     onBeforeRuntimeRestart()
     if let payload { payload.source.retryPagePreparation(payload.pageIndex) }
     host.removeFailure()
-    runtimeID = UUID(); payload?.runtimeID = runtimeID; payload?.drafts = Array(draftsByID.values)
+    runtimeID = UUID(); payload?.runtimeID = runtimeID
     mount(in: host, physicalSize: physicalSize, isInteractive: requestedInput, priority: priority)
   }
 
@@ -867,81 +854,13 @@ final class DocumentWebCoordinator: NSObject,
 
   func revokeEditingOwnership() {
     ownsEditing = false; payload?.editable = false
+    webView?.evaluateJavaScript("window.notebookRenderer?.setEditingEnabled(false)", completionHandler: nil)
   }
 
-  func activateEditing(drafts: [DocumentEditingSession]) {
+  func activateEditing() {
     guard !isInvalidated, requestedInput || holdsEditingOwnership else { return }
-    for draft in drafts where draft.edit.documentID == payload?.documentID
-      && !DocumentRenderRegistry.shared.isDraftFinished(documentID: draft.edit.documentID, sessionID: draft.id) {
-      if draftsByID[draft.id].map({ $0.edit.sequence < draft.edit.sequence }) ?? true { draftsByID[draft.id] = draft }
-    }
-    ownsEditing = true; payload?.editable = true; payload?.drafts = Array(draftsByID.values)
-    guard isReady, let webView, let data = try? JSONEncoder().encode(Array(draftsByID.values)),
-      let drafts = try? JSONSerialization.jsonObject(with: data) else { return }
-    webView.callAsyncJavaScript("window.notebookRenderer.setEditingEnabled(true, drafts); return true;",
-      arguments: ["drafts": drafts], in: nil, in: .page, completionHandler: nil)
-  }
-
-  func flushEditingDraft() async { _ = await readEditingDraft(suspends: true) }
-  func checkpointEditingDraft() async -> Bool { await readEditingDraft(suspends: false) }
-
-  private func readEditingDraft(suspends: Bool) async -> Bool {
-    guard let webView, isReady else { return !isPresentingEditor }
-    let expectedRuntime = runtimeID
-    let result: (Bool, DocumentEditingSession?) = await withCheckedContinuation { continuation in
-      var completed = false
-      let deadline = Task { @MainActor in
-        do { try await Task.sleep(for: .seconds(1)) } catch { return }
-        guard !completed else { return }; completed = true
-        continuation.resume(returning: (false, nil))
-      }
-      let script = suspends ? "window.notebookRenderer.setEditingEnabled(false)" : "window.notebookRenderer.editingDraft()"
-      webView.evaluateJavaScript(script) { value, error in
-        guard !completed else { return }; completed = true; deadline.cancel()
-        let draft: DocumentEditingSession? = Self.decode(value)
-        continuation.resume(returning: (error == nil && (value == nil || value is NSNull || draft != nil), draft))
-      }
-    }
-    guard result.0, !isInvalidated, runtimeID == expectedRuntime else { return false }
-    if let draft = result.1, draft.edit.documentID == payload?.documentID { acceptDraft(draft) }
-    return true
-  }
-
-  /// The final asynchronous DOM read borrows its real executor and captures
-  /// the accepted writer callback before the representable disappears.
-  private func retainFinalEditingDraft() {
-    guard ownsEditing || isPresentingEditor, let webView, isReady, let documentID = payload?.documentID,
-      let borrow = try? surfaceLease?.borrow() else { return }
-    let save = onDraftChange, registry = DocumentRenderRegistry.shared
-    let task = Task { @MainActor in
-      let draft: DocumentEditingSession? = await withCheckedContinuation { continuation in
-        webView.evaluateJavaScript("window.notebookRenderer.setEditingEnabled(false)") { value, _ in
-          continuation.resume(returning: Self.decode(value))
-        }
-      }
-      defer { borrow.release() }
-      if let draft, draft.edit.documentID == documentID, registry.recordDraft(draft) { save(draft) }
-    }
-    registry.retainRetiringEditor(documentID: documentID, drain: task)
-  }
-
-  private func acceptDraft(_ draft: DocumentEditingSession) {
-    if draftsByID[draft.id].map({ $0.edit.sequence >= draft.edit.sequence }) == true { return }
-    guard DocumentRenderRegistry.shared.recordDraft(draft) else { return }
-    draftsByID[draft.id] = draft
-    onDraftChange(draft)
-  }
-
-  func removeEditingDraft(_ sessionID: UUID) {
-    draftsByID[sessionID] = nil
-    payload?.drafts.removeAll { $0.id == sessionID }
-  }
-
-  func completeSourceEdit(_ edit: DocumentSourceEdit, status: String) {
-    guard !isInvalidated, payload?.documentID == edit.documentID, let webView else { return }
-    webView.callAsyncJavaScript("window.notebookRenderer.completeSourceEdit(result); return true;",
-      arguments: ["result": ["sessionID": edit.sessionID.uuidString, "sequence": edit.sequence, "status": status]],
-      in: nil, in: .page, completionHandler: nil)
+    ownsEditing = true; payload?.editable = true
+    webView?.evaluateJavaScript("window.notebookRenderer?.setEditingEnabled(true)", completionHandler: nil)
   }
 
   private func revokeLiveReceipt() {
@@ -980,7 +899,7 @@ final class DocumentWebCoordinator: NSObject,
       failPreparation(SceneRenderError.snapshotPending("web_process_terminated")); return
     }
     recoveryAttempts += 1; generation &+= 1
-    runtimeID = UUID(); payload?.runtimeID = runtimeID; payload?.drafts = Array(draftsByID.values)
+    runtimeID = UUID(); payload?.runtimeID = runtimeID
     onBeforeRuntimeRestart()
     mount(in: host, physicalSize: physicalSize, isInteractive: requestedInput, priority: priority)
   }
@@ -1096,7 +1015,6 @@ final class DocumentWebCoordinator: NSObject,
   var onRenderReady: PageTurnReadiness
   var onPageLayout: (DocumentPageLayout) -> Void
   var onLinkActivation: (DocumentLinkActivation) -> Void = { _ in }
-  var onSourceChange: (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status
   var onStateChange: (String, JSONValue) -> ContentFieldVersion?
   var pendingSnapshotPayload: DocumentRuntimePayload?
   private var preparedSnapshotLease: RasterLease?
@@ -1105,13 +1023,11 @@ final class DocumentWebCoordinator: NSObject,
     resources: SceneRenderResources = .shared,
     onRenderReady: PageTurnReadiness,
     onPageLayout: @escaping (DocumentPageLayout) -> Void,
-    onSourceChange: @escaping (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status,
     onStateChange: @escaping (String, JSONValue) -> ContentFieldVersion?
   ) {
     self.resources = resources
     self.onRenderReady = onRenderReady
     self.onPageLayout = onPageLayout
-    self.onSourceChange = onSourceChange
     self.onStateChange = onStateChange
   }
 
@@ -1122,12 +1038,8 @@ final class DocumentWebCoordinator: NSObject,
     capturesSnapshot: Bool,
     onRenderReady: PageTurnReadiness,
     onPageLayout: @escaping (DocumentPageLayout) -> Void,
-    onSourceChange: @escaping (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status,
     onStateChange: @escaping (String, JSONValue) -> ContentFieldVersion?,
     snapshotPixelWidth: Int? = nil,
-    drafts: [DocumentEditingSession] = [],
-    onDraftChange: @escaping (DocumentEditingSession) -> Void = { _ in },
-    onDraftDiscard: @escaping (UUID) -> Void = { _ in },
     onPreparationFailure: @escaping (Error) -> Void = { _ in },
     onLinkActivation: @escaping (DocumentLinkActivation) -> Void = { _ in },
     preparationRequestID: UUID? = nil
@@ -1139,13 +1051,7 @@ final class DocumentWebCoordinator: NSObject,
     self.onRenderReady = onRenderReady
     self.onPageLayout = onPageLayout
     self.onLinkActivation = onLinkActivation
-    self.onSourceChange = onSourceChange
     self.onStateChange = onStateChange
-    self.onDraftChange = onDraftChange; self.onDraftDiscard = onDraftDiscard
-    for draft in drafts where draft.edit.documentID == document.id {
-      guard DocumentRenderRegistry.shared.recordDraft(draft) else { continue }
-      if draftsByID[draft.id].map({ $0.edit.sequence < draft.edit.sequence }) ?? true { draftsByID[draft.id] = draft }
-    }
     self.snapshotPixelWidth = snapshotPixelWidth.map { min(256, max(1, $0)) }
     self.onPreparationFailure = onPreparationFailure
     let nextPageIndex = max(0, selectedPageIndex)
@@ -1197,7 +1103,6 @@ final class DocumentWebCoordinator: NSObject,
       canonicalPixelEpoch = nil
       if payload?.documentID != document.id {
         pageCount = 1; blockTokens = [:]
-        draftsByID = Dictionary(uniqueKeysWithValues: drafts.filter { $0.edit.documentID == document.id }.map { ($0.id, $0) })
       }
       // A state echo visits each program once. Searching both arrays for each
       // block made four live pages repeat quadratic work on the input actor.
@@ -1217,8 +1122,7 @@ final class DocumentWebCoordinator: NSObject,
       }
       payload = DocumentRuntimePayload(source: nextSource, state: nextState,
         editable: ownsEditing, renderToken: DocumentSnapshotCache.paperToken(sourceRevision: document.contentStamp.revision, pageIndex: selectedPageIndex),
-        pageIndex: selectedPageIndex, runtimeID: runtimeID, blockTokens: blockTokens,
-        programMode: programMode, drafts: Array(draftsByID.values))
+        pageIndex: selectedPageIndex, runtimeID: runtimeID, blockTokens: blockTokens, programMode: programMode)
       beginPreparationObservation(configuredAt: configuredAt)
       sendFrameIfReady()
     } else if pageChanged {
@@ -1370,27 +1274,22 @@ final class DocumentWebCoordinator: NSObject,
     guard body["runtimeID"] as? String == runtimeID.uuidString,
       let blockID = body["blockID"] as? String else { return }
     switch kind {
+    case "requestSource":
+      guard ownsEditing, renderIsReady, printedSourceMatches,
+        body["sourceKey"] as? String == payload.source.message.key,
+        body["pageIndex"] as? Int == payload.pageIndex,
+        let x = body["x"] as? Double, let y = body["y"] as? Double,
+        let block = payload.blocks.first(where: { $0.id == blockID && $0.kind != .interactive }),
+        let version = payload.source.message.sourceVersions[blockID] else { return }
+      let offset = payload.source.sourceOffset(blockID: blockID, pageIndex: payload.pageIndex, x: x, y: y) ?? 0
+      NotificationCenter.default.post(name: DocumentSourceRequest.notification,
+        object: DocumentSourceRequest(documentID: payload.documentID, block: block, version: version, offset: offset))
     case "programReady":
       guard body["blockToken"] as? String == blockTokens[blockID] else { return }
       onProgramReady()
     case "programFocus":
       guard body["blockToken"] as? String == blockTokens[blockID], let focused = body["focused"] as? Bool else { return }
       onProgramFocus(focused)
-    case "draft":
-      guard let draft: DocumentEditingSession = Self.decode(body["session"]),
-        draft.edit.documentID == payload.documentID, draft.edit.blockID == blockID,
-        ownsEditing else { return }
-      acceptDraft(draft)
-    case "discardDraft":
-      guard let raw = body["sessionID"] as? String, let id = UUID(uuidString: raw), draftsByID[id] != nil else { return }
-      draftsByID[id] = nil
-      DocumentRenderRegistry.shared.removeDraft(documentID: payload.documentID, sessionID: id)
-      onDraftDiscard(id)
-    case "source":
-      guard let edit: DocumentSourceEdit = Self.decode(body["edit"]),
-        edit.documentID == payload.documentID, edit.blockID == blockID,
-        ownsEditing || draftsByID[edit.sessionID] != nil else { return }
-      DocumentRenderRegistry.shared.commitSource(edit, using: onSourceChange)
     case "state":
       // Runtime state ownership exists before its first frame. Native hit
       // admission is a separate decision and cannot discard an initial commit.
@@ -1431,7 +1330,7 @@ final class DocumentWebCoordinator: NSObject,
     onPresentationChange()
     refreshLiveReceipt()
     if readerID != nil {
-      finishReader(throwing: value.kind == .editor ? DocumentSnapshotWait.editorActive : .presentationChanged)
+      finishReader(throwing: DocumentSnapshotWait.presentationChanged)
     }
   }
 
@@ -1467,6 +1366,7 @@ final class DocumentWebCoordinator: NSObject,
           let admissionChanged: (Bool) -> Void = { [weak self] waiting in
             self?.preparationAdmissionChanged(waiting, generation: expected)
           }
+          admissionChanged(true)
           let prepared = try await next.source.preparedPage(next.pageIndex, hostID: hostID, in: web, lease: lease,
             resources: resources, onAdmissionWait: admissionChanged, onLayoutChanged: { [weak self, weak source = next.source] layout in
               guard let self, let source, payload?.source === source, hasCanonicalPixels else { return }
@@ -1476,6 +1376,12 @@ final class DocumentWebCoordinator: NSObject,
               onPageLayout(.init(pageCount: layout.pageCount,
                 sourceRevision: "\(source.stamp.actor):\(source.stamp.counter)", record: layout))
             })
+          admissionChanged(false)
+          let paper: DocumentPaperRaster
+          if let installed = printedView.raster, installed.sourceKey == next.source.message.key,
+            installed.page.pageIndex == prepared.fragment.pageIndex { paper = installed }
+          else { paper = try await DocumentPaperRaster.prepare(page: prepared.printed, sourceKey: next.source.message.key,
+            pixelWidth: snapshotPixelWidth ?? 1024, resources: resources, waits: admissionChanged) }
           recordPreparation(.preparedPageReadyAt, trace: trace)
           let source = sentSourceKey == next.source.message.key && sentSourcePage == prepared.fragment.pageIndex
             ? nil : try await prepared.encodedMessage(resources: resources, onAdmissionWait: admissionChanged)
@@ -1499,6 +1405,10 @@ final class DocumentWebCoordinator: NSObject,
           try await evaluateFrame(script, message: source, lease: lease, in: web)
           recordPreparation(.frameEvaluationReturnedAt, trace: trace)
           guard !Task.isCancelled, !isInvalidated, frameTaskID == taskID, webView === web else { return }
+          guard generation == expected else { continue }
+          printedView.install(paper, resources: resources)
+          host?.installPaper(printedView)
+          if layoutAccepted, canonicalPixelEpoch != nil, canonicalPixelEpoch == pixelPresentation?.epoch { setRenderReady(true); capturePendingSnapshotIfReady() }
           sentSourceKey = next.source.message.key; sentSourcePage = prepared.fragment.pageIndex; sentStateKey = next.state.message.key; sentGeneration = expected
         } catch {
           guard !Task.isCancelled, !isInvalidated, frameTaskID == taskID, generation == expected else { continue }
@@ -1612,30 +1522,17 @@ final class DocumentWebCoordinator: NSObject,
     )
   }
 
-  /// Missing from a prefix is not a missing section. Keep the terminal
-  /// activation while its sole source owner finishes the navigation index.
   func resolveLink(_ href: String, origin: DocumentLinkOrigin,
     deliver: @escaping (DocumentLinkActivation) -> Void) {
     guard let layout = origin.source.layout else { return }
-    let destination = layout.destination(for: href)
-    if layout.isComplete || !href.hasPrefix("#") {
-      deliver(.init(origin: origin, destination: destination)); return
-    }
-    if case .page = destination { deliver(.init(origin: origin, destination: destination)); return }
-    guard let web = webView, let lease = surfaceLease else { return }
-    Task { @MainActor [weak self] in
-      let result: DocumentLinkDestination
-      do { result = try await origin.source.completeLayout(in: web, lease: lease).destination(for: href) }
-      catch { result = .unavailable("Не удалось подготовить раздел документа: \(error.localizedDescription)") }
-      guard let current = self?.currentLinkOrigin, current.hasSamePresentation(as: origin) else { return }
-      deliver(.init(origin: origin, destination: result))
-    }
+    deliver(.init(origin: origin, destination: layout.destination(for: href)))
   }
 
-  private func setRenderReady(_ ready: Bool) {
+  private func setRenderReady(_ requested: Bool) {
     guard !isInvalidated else { return }
+    let ready = requested && printedSourceMatches
     defer {
-      if (hasCanonicalPixels && !capturesSnapshot) || (renderIsReady && isPresentingEditor) {
+      if hasCanonicalPixels && !capturesSnapshot {
         preparationDeadlineTask?.cancel(); preparationDeadlineTask = nil
       }
       resolvePresentationWaiters()
@@ -1793,8 +1690,7 @@ final class DocumentWebCoordinator: NSObject,
   }
 
   /// The image remains reserved and private until both actual WebKit receipts
-  /// name the same canonical presentation. An open/close cycle changes epoch
-  /// even if it returns to the same source and no textarea remains afterward.
+  /// name the same canonical presentation, including its installation epoch.
   private func beginCanonicalSnapshot(id: UUID, capture: DocumentSnapshotCapture,
     payload: DocumentRuntimePayload, generation expected: UInt64,
     pixelWidth: Int, size: CGSize, scale: Double, nativeScale: Double?) {
@@ -1825,23 +1721,47 @@ final class DocumentWebCoordinator: NSObject,
             do {
               if let error { throw error }
               let after = try canonicalSnapshotPresentation(raw, payload: payload, generation: expected)
-              guard before == after, let image = capture.image, let reservation = capture.reservation else {
+              guard before == after, let image = capture.image, capture.reservation != nil else {
                 throw DocumentSnapshotWait.presentationChanged
               }
               #if os(iOS)
-                guard let cg = image.cgImage else { throw SceneRenderError.resourceLimit }
-                let normalized = UIImage(cgImage: cg, scale: nativeScale ?? Double(cg.width) / size.width, orientation: .up)
+                guard let overlay = image.cgImage else { throw SceneRenderError.resourceLimit }
               #else
-                guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw SceneRenderError.resourceLimit }
-                let outputSize = nativeScale.map { CGSize(width: Double(cg.width) / $0, height: Double(cg.height) / $0) } ?? size
-                let normalized = NSImage(cgImage: cg, size: outputSize)
+                guard let overlay = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw SceneRenderError.resourceLimit }
               #endif
-              guard let layout = payload.source.layout,
-                let retained = DocumentSnapshotCache.shared.storeAndRetain(image: normalized, documentID: payload.documentID,
-                  token: payload.rasterToken, layout: layout, reservation: reservation, resources: resources)
-              else { throw SceneRenderError.resourceLimit }
-              readerPreparedLease?.release(); readerPreparedLease = retained
-              finishReader()
+              guard let paper = printedView.raster?.page, printedSourceMatches else { throw DocumentSnapshotWait.presentationChanged }
+              capture.submit() // Retain both accounted backings through the native draw tail.
+              Task { @MainActor [weak self, capture] in
+                var received = false
+                do {
+                  let cg = try await paper.image(width: overlay.width, overlay: overlay)
+                  #if os(iOS)
+                    let normalized = UIImage(cgImage: cg, scale: nativeScale ?? Double(cg.width) / size.width, orientation: .up)
+                  #else
+                    let outputSize = nativeScale.map { CGSize(width: Double(cg.width) / $0, height: Double(cg.height) / $0) } ?? size
+                    let normalized = NSImage(cgImage: cg, size: outputSize)
+                  #endif
+                  received = true
+                  guard capture.receive(normalized) else { return }
+                  guard let self, readerID == id else { capture.cancel(); return }
+                  let final: DocumentPixelPresentation = try await withCheckedThrowingContinuation { continuation in
+                    web.callAsyncJavaScript("return window.notebookRenderer.presentationReceipt();", arguments: [:], in: nil, in: .page) { result in
+                      do { continuation.resume(returning: try self.canonicalSnapshotPresentation(result.get(), payload: payload, generation: expected)) }
+                      catch { continuation.resume(throwing: error) }
+                    }
+                  }
+                  guard before == final,
+                    let reservation = capture.reservation, let layout = payload.source.layout,
+                    let retained = DocumentSnapshotCache.shared.storeAndRetain(image: normalized, documentID: payload.documentID,
+                      token: payload.rasterToken, layout: layout, reservation: reservation, resources: resources)
+                  else { throw DocumentSnapshotWait.presentationChanged }
+                  readerPreparedLease?.release(); readerPreparedLease = retained; finishReader()
+                } catch {
+                  if !received { _ = capture.receive(nil) }
+                  capture.cancel()
+                  if self?.readerID == id { self?.finishReader(throwing: error) }
+                }
+              }
             } catch { finishReader(throwing: error) }
           }
         }
@@ -1856,7 +1776,6 @@ final class DocumentWebCoordinator: NSObject,
     generation expected: UInt64) throws -> DocumentPixelPresentation {
     guard !isInvalidated, generation == expected else { throw CancellationError() }
     let value = try presentation(in: raw, for: payload, generation: expected)
-    guard value.kind != .editor else { throw DocumentSnapshotWait.editorActive }
     guard hasCanonicalPixels, value.kind == .canonical, value == pixelPresentation,
       value.epoch == canonicalPixelEpoch else { throw DocumentSnapshotWait.presentationChanged }
     return value
@@ -1946,6 +1865,7 @@ private enum DocumentWebViewFactory {
     let webView = WKWebView(frame: .zero, configuration: configuration)
     coordinator.webView = webView
     webView.navigationDelegate = coordinator
+    webView.underPageBackgroundColor = .clear
     #if os(iOS)
       webView.isOpaque = false
       webView.backgroundColor = .clear
@@ -2027,6 +1947,7 @@ private enum DocumentWebViewFactory {
 
   @MainActor
   final class DocumentWebHost: UIView {
+    func installPaper(_ paper: DocumentPaperView) { viewport?.installBackground(paper) }
     let programOverlay = DocumentProgramOverlayHost()
     private var paperSize = CGSize.zero
     func installProgramOverlay() {
@@ -2240,12 +2161,8 @@ private enum DocumentWebViewFactory {
     let capturesSnapshot: Bool
     let onRenderReady: PageTurnReadiness
     let onPageLayout: (DocumentPageLayout) -> Void
-    let onSourceChange: (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status
     let onStateChange: (String, JSONValue) -> ContentFieldVersion?
     let resources: SceneRenderResources
-    var drafts: [DocumentEditingSession] = []
-    var onDraftChange: (DocumentEditingSession) -> Void = { _ in }
-    var onDraftDiscard: (UUID) -> Void = { _ in }
     var snapshotPixelWidth: Int? = nil
     var onPreparationFailure: (Error) -> Void = { _ in }
     var onLinkActivation: (DocumentLinkActivation) -> Void = { _ in }
@@ -2260,8 +2177,8 @@ private enum DocumentWebViewFactory {
       context.coordinator.update(.init(document: document, state: state, pageIndex: selectedPageIndex,
         isCurrent: snapshotPixelWidth == nil && isCurrent, isVisible: isVisible, isInteractive: isInteractive,
         pageTurnActive: isPageTurnActive, onRenderReady: onRenderReady, onPageLayout: onPageLayout,
-        onSourceChange: onSourceChange, onStateChange: onStateChange, drafts: drafts,
-        onDraftChange: onDraftChange, onDraftDiscard: onDraftDiscard, onLinkActivation: onLinkActivation,
+         onStateChange: onStateChange,
+          onLinkActivation: onLinkActivation,
         snapshotPixelWidth: snapshotPixelWidth, onPreparationFailure: onPreparationFailure,
         onStateCheckpoint: onStateCheckpoint, measurements: measurements), in: view, resources: resources)
     }
@@ -2270,6 +2187,12 @@ private enum DocumentWebViewFactory {
 #elseif os(macOS)
   @MainActor
   final class DocumentWebHost: NSView {
+    private weak var paper: DocumentPaperView?
+    func installPaper(_ paper: DocumentPaperView) {
+      self.paper = paper
+      if paper.superview !== self { addSubview(paper, positioned: .below, relativeTo: web) }
+      paper.frame = web?.frame ?? bounds; paper.refine()
+    }
     private var web: WKWebView?
     private var inputEnabled = false
     private var fallback: NSImageView?
@@ -2317,7 +2240,7 @@ private enum DocumentWebViewFactory {
     }
     func configure(size: CGSize, interactive: Bool) {
       inputEnabled = interactive
-      if web?.frame.size != size { web?.setFrameSize(size) }
+      if web?.frame.size != size { web?.setFrameSize(size); paper?.setFrameSize(size); paper?.refine() }
       web?.setAccessibilityHidden(!interactive)
     }
     func ownsSurface(_ web: WKWebView) -> Bool { self.web === web && web.superview === self }
@@ -2346,12 +2269,8 @@ private enum DocumentWebViewFactory {
     let capturesSnapshot: Bool
     let onRenderReady: PageTurnReadiness
     let onPageLayout: (DocumentPageLayout) -> Void
-    let onSourceChange: (DocumentSourceEdit) async throws -> DocumentSourceCommitResult.Status
     let onStateChange: (String, JSONValue) -> ContentFieldVersion?
     let resources: SceneRenderResources
-    var drafts: [DocumentEditingSession] = []
-    var onDraftChange: (DocumentEditingSession) -> Void = { _ in }
-    var onDraftDiscard: (UUID) -> Void = { _ in }
     var snapshotPixelWidth: Int? = nil
     var onPreparationFailure: (Error) -> Void = { _ in }
     var onLinkActivation: (DocumentLinkActivation) -> Void = { _ in }
@@ -2362,14 +2281,13 @@ private enum DocumentWebViewFactory {
     var measurements: DocumentPresentationRecorder? = nil
     func makeCoordinator() -> DocumentWebCoordinator {
       DocumentWebCoordinator(resources: resources, onRenderReady: onRenderReady, onPageLayout: onPageLayout,
-        onSourceChange: onSourceChange, onStateChange: onStateChange)
+         onStateChange: onStateChange)
     }
     func makeNSView(context: Context) -> DocumentWebHost { DocumentWebHost() }
     func updateNSView(_ view: DocumentWebHost, context: Context) {
       context.coordinator.update(document: document, state: state, selectedPageIndex: selectedPageIndex,
         capturesSnapshot: capturesSnapshot, onRenderReady: onRenderReady, onPageLayout: onPageLayout,
-        onSourceChange: onSourceChange, onStateChange: onStateChange, snapshotPixelWidth: snapshotPixelWidth,
-        drafts: drafts, onDraftChange: onDraftChange, onDraftDiscard: onDraftDiscard,
+         onStateChange: onStateChange, snapshotPixelWidth: snapshotPixelWidth,
         onPreparationFailure: onPreparationFailure, onLinkActivation: onLinkActivation)
       let geometry = WorkspaceItemGeometry.document(document.paperSize)
       context.coordinator.mount(in: view, physicalSize: .init(width: geometry.width, height: geometry.height),
