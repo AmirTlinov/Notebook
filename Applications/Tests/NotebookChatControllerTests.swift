@@ -67,7 +67,7 @@ final class NotebookChatControllerTests: XCTestCase {
       case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
       case .history: reply = .history(.init(messages: [], nextCursor: nil))
       case .activity(let ids): reply = .activity(ids.map { .init(id: $0, status: .idle) })
-      case .conversation(let id): reply = .conversation(.init(threadID: id, revision: 1,
+      case .conversation(let id): reply = .conversation(.init(threadID: id, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1,
         title: id == created.id ? created.title : previous.title, ready: true, busy: false,
         activeTurnID: nil, messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:]))
       default: return XCTFail("Unexpected creation query: \(query)")
@@ -117,7 +117,7 @@ final class NotebookChatControllerTests: XCTestCase {
       .init(id: "tool", turnID: "turn", clientID: nil, role: .assistant, text: "Читаю файл", activity: .init(kind: .files, status: "inProgress")),
       .init(id: "progress", turnID: "turn", clientID: nil, role: .assistant, text: "Проверяю\nизменение", phase: "commentary")]
     func value(active: Bool = true, requests: [CodexUserRequest] = []) -> CodexConversation {
-      .init(threadID: "task", revision: 1, title: "Task", ready: true, busy: active, activeTurnID: active ? "turn" : nil,
+      .init(threadID: "task", generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Task", ready: true, busy: active, activeTurnID: active ? "turn" : nil,
         messages: messages, requests: requests, acceptedMessages: [:], turnStatuses: [:])
     }
     let status = NotebookChatWorkStatus(conversation: value(), connected: true)
@@ -139,7 +139,7 @@ final class NotebookChatControllerTests: XCTestCase {
     func snapshot(_ revision: Int, working: Bool = true) -> CodexConversation {
       let replies = (1...revision).map { CodexMessage(id: "reply-\($0)", turnID: "turn-\($0)", clientID: nil, role: .assistant, text: "Useful answer \($0)", phase: "final_answer") }
       let progress = CodexMessage(id: "progress", turnID: "working", clientID: nil, role: .assistant, text: "Internal progress", phase: "commentary")
-      return .init(threadID: thread, revision: revision, title: "One task", ready: true, busy: working, activeTurnID: working ? "working" : nil,
+      return .init(threadID: thread, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: revision, title: "One task", ready: true, busy: working, activeTurnID: working ? "working" : nil,
         messages: replies + [progress], requests: [], acceptedMessages: [:], turnStatuses: [:])
     }
     chat = .init(persistence: queue, author: author) { envelope, _ in
@@ -223,10 +223,10 @@ final class NotebookChatControllerTests: XCTestCase {
         reply = .history(.init(messages: [message(4), message(5)], nextCursor: "older"))
       case .conversation:
         if generation == 2 {
-          reply = .conversation(.init(threadID: thread, revision: 2, title: "Task", ready: true, busy: false, activeTurnID: nil,
+          reply = .conversation(.init(threadID: thread, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 2, title: "Task", ready: true, busy: false, activeTurnID: nil,
             messages: (20...22).map { message($0) }, requests: [], acceptedMessages: [:], turnStatuses: [:])); break
         }
-        reply = .conversation(.init(threadID: thread, revision: 1, title: "Task", ready: true, busy: true, activeTurnID: "turn",
+        reply = .conversation(.init(threadID: thread, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Task", ready: true, busy: true, activeTurnID: "turn",
           messages: [message(3), message(4), message(5, text: "Live text"), message(6)], requests: [], acceptedMessages: [:], turnStatuses: [:]))
       default: return XCTFail("Silent synchronization cannot submit work: \(query)")
       }
@@ -314,7 +314,7 @@ final class NotebookChatControllerTests: XCTestCase {
       case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
       case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
       case .history: reply = .history(.init(messages: [], nextCursor: nil))
-      case .conversation: reply = .conversation(.init(threadID: thread, revision: 1, title: "Existing", ready: true, busy: false,
+      case .conversation: reply = .conversation(.init(threadID: thread, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Existing", ready: true, busy: false,
         activeTurnID: nil, messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:]))
       default: reply = .failure("No new creation is allowed")
       }
@@ -340,7 +340,7 @@ final class NotebookChatControllerTests: XCTestCase {
     var subscription: UUID?
     let subscribed = expectation(description: "Native conversation subscription")
     func snapshot(_ revision: Int) -> CodexConversation {
-      .init(threadID: thread, revision: revision, title: "Task", ready: true, busy: false, activeTurnID: nil,
+      .init(threadID: thread, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: revision, title: "Task", ready: true, busy: false, activeTurnID: nil,
         messages: [.init(id: "native", turnID: "turn", clientID: nil, role: .assistant, text: "revision \(revision)")],
         requests: [], acceptedMessages: [:], turnStatuses: [:])
     }
@@ -406,7 +406,7 @@ final class NotebookChatControllerTests: XCTestCase {
       case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
       case .activity(let ids): reply = .activity(ids.map { .init(id: $0, status: .idle) })
       case .history: reply = .history(.init(messages: [], nextCursor: nil))
-      case .conversation(let thread): reply = .conversation(.init(threadID: thread, revision: 1, title: "Task", ready: true, busy: false,
+      case .conversation(let thread): reply = .conversation(.init(threadID: thread, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Task", ready: true, busy: false,
         activeTurnID: nil, messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:]))
       default: return XCTFail("Only the same conversation and saved outbox may be queried")
       }
@@ -492,7 +492,7 @@ final class NotebookChatControllerTests: XCTestCase {
         XCTAssertEqual(id, task.id); reply = .history(.init(messages: [], nextCursor: nil))
       case .conversation(let id):
         XCTAssertEqual(id, task.id)
-        reply = .conversation(.init(threadID: id, revision: 1, title: task.title, ready: true, busy: false, activeTurnID: nil,
+        reply = .conversation(.init(threadID: id, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: task.title, ready: true, busy: false, activeTurnID: nil,
           messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:]))
       case .job(let input):
         submitted.append(input)
@@ -556,7 +556,7 @@ final class NotebookChatControllerTests: XCTestCase {
       case .history: reply = .history(.init(messages: [], nextCursor: nil))
       case .activity(let ids):
         XCTAssertLessThanOrEqual(ids.count, 8); reply = .activity(ids.map { .init(id: $0, status: .idle) })
-      case .conversation(let id): reply = .conversation(.init(threadID: id, revision: 1, title: "Native", ready: true, busy: false, activeTurnID: nil,
+      case .conversation(let id): reply = .conversation(.init(threadID: id, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Native", ready: true, busy: false, activeTurnID: nil,
         messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:]))
       default: return XCTFail("Browsing is read-only, not a task or process launch: \(query)")
       }

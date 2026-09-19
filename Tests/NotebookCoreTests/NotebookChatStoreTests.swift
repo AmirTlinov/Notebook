@@ -93,7 +93,7 @@ struct NotebookChatStoreTests {
     }
   }
   @Test func conversationEventsCannotCoalesceAwayADeliveryReply() throws {
-    let state = CodexConversation(threadID: UUID().uuidString, revision: 1, title: "Task", ready: true, busy: false, activeTurnID: nil,
+    let state = CodexConversation(threadID: UUID().uuidString, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Task", ready: true, busy: false, activeTurnID: nil,
       messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:])
     let event = NotebookTransportTransient.codex(.init(body: .event(subscriptionID: UUID(), conversation: state)))
     let response = NotebookTransportTransient.codex(.init(body: .reply(.conversation(state))))

@@ -80,7 +80,15 @@ final class NotebookCodexSidecar {
   }
 
   func receiveEvent(_ event: CodexBridgeEvent) {
-    guard !stopped, case .conversation(let state) = event,
+    guard !stopped else { return }
+    if case .unavailable(let error) = event {
+      publishEvents?.cancel(); publishEvents = nil; pendingEvents.removeAll()
+      for (peer, subscription) in subscriptions {
+        publish?(.init(body: .unavailable(subscriptionID: subscription.id, threadID: subscription.thread, reason: Self.message(error))), peer)
+      }
+      return
+    }
+    guard case .conversation(let state) = event,
       subscriptions.values.contains(where: { $0.thread == state.threadID }) else { return }
     pendingEvents[state.threadID] = state
     if publishEvents == nil {
@@ -473,7 +481,7 @@ final class NotebookCodexSidecar {
   private static func transport(_ state: CodexConversation) -> CodexConversation {
     let messages = CodexMessage.transportPage(Array(state.messages.suffix(32)))
     let ids = Set(messages.compactMap(\.clientID)), turns = Set(messages.map(\.turnID))
-    return .init(threadID: state.threadID, revision: state.revision, title: state.title,
+    return .init(threadID: state.threadID, generation: state.generation, revision: state.revision, title: state.title,
       ready: state.ready, busy: state.busy, activeTurnID: state.activeTurnID, messages: messages,
       requests: state.requests, acceptedMessages: state.acceptedMessages.filter { ids.contains($0.key) },
       turnStatuses: state.turnStatuses.filter { turns.contains($0.key) || $0.key == state.activeTurnID }, access: state.access, model: state.model, contextUsage: state.contextUsage)

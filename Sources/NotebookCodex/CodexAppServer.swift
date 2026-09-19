@@ -23,7 +23,8 @@ public actor CodexAppServer {
   private var connection: Task<Connection, Error>?
   private var generation = UUID()
   private var states: [String: CodexAppServerState] = [:]
-  private var attaching: [String: Task<Void, Error>] = [:]
+  private struct Attachment { let id: UUID; let task: Task<Void, Error> }
+  private var attaching: [String: Attachment] = [:]
   private var starting: Set<String> = []
   private struct RunningProcess {
     let publish: @Sendable (NotebookProcessEvent) async throws -> Void
@@ -88,31 +89,44 @@ public actor CodexAppServer {
     guard !accountSession.changing else { throw CodexBridgeError.busy }
     guard UUID(uuidString: threadID) != nil else { throw CodexBridgeError.invalidInput }
     if states[threadID]?.ready == true { selections.insert(threadID); return }
-    if let task = attaching[threadID] { try await task.value; selections.insert(threadID); return }
     let epoch = generation
+    if let entry = attaching[threadID] {
+      try await entry.task.value
+      guard epoch == generation, states[threadID]?.ready == true else { throw CodexBridgeError.disconnected }
+      selections.insert(threadID); return
+    }
+    let id = UUID()
     let task = Task { try await self.load(threadID: threadID, epoch: epoch) }
-    attaching[threadID] = task
+    attaching[threadID] = Attachment(id: id, task: task)
     do {
       try await task.value
       guard epoch == generation else { throw CodexBridgeError.disconnected }
-      attaching.removeValue(forKey: threadID); selections.insert(threadID)
+      if attaching[threadID]?.id == id { attaching.removeValue(forKey: threadID) }
+      selections.insert(threadID)
     } catch {
-      if epoch == generation { attaching.removeValue(forKey: threadID); states.removeValue(forKey: threadID) }
+      if attaching[threadID]?.id == id { attaching.removeValue(forKey: threadID); states.removeValue(forKey: threadID) }
       throw error
     }
   }
 
   private func load(threadID: String, epoch: UUID) async throws {
     let rpc = try await connect()
+    try Task.checkCancellation()
+    guard epoch == generation else { throw CodexBridgeError.disconnected }
     try await validateThreadScope(threadID, rpc: rpc)
+    try Task.checkCancellation()
+    guard epoch == generation else { throw CodexBridgeError.disconnected }
     if states.count >= 9 {
       guard let idle = states.keys.sorted().first(where: { !selections.contains($0) && !(voice?.threadID == $0 && voice?.phase != .ended) && states[$0]?.view.busy == false && states[$0]?.requests.isEmpty == true }) else { throw CodexBridgeError.busy }
       _ = try await rpc.request("thread/unsubscribe", params: .object(["threadId": .string(idle)]))
+      guard epoch == generation else { throw CodexBridgeError.disconnected }
       states.removeValue(forKey: idle); threadWorkspaces.removeValue(forKey: idle)
     }
     // No settings overrides, stale-turn inference or force takeover. A foreign active writer is a refusal.
     states[threadID] = CodexAppServerState(threadID: threadID)
     let parameters = try await scopedThreadParameters(["threadId": .string(threadID), "excludeTurns": .bool(true)], rpc: rpc)
+    try Task.checkCancellation()
+    guard epoch == generation else { throw CodexBridgeError.disconnected }
     let result = try await rpc.request("thread/resume", params: .object(parameters))
     guard epoch == generation, let thread = result["thread"], thread["id"] == .string(threadID),
       thread["canAcceptDirectInput"] == .bool(true) else { throw CodexBridgeError.externalOwnerUnavailable }
@@ -291,7 +305,7 @@ public actor CodexAppServer {
   }
 
   func invalidateAccountPresentation() {
-    for task in attaching.values { task.cancel() }; attaching.removeAll()
+    for entry in attaching.values { entry.task.cancel() }; attaching.removeAll()
     states.removeAll(); selections.removeAll(); answeringRequests.removeAll(); threadWorkspaces.removeAll()
   }
 
@@ -305,7 +319,8 @@ public actor CodexAppServer {
     if voice?.isActive == true { voice?.phase = .failed; voice?.sdp = nil; voice?.error = "Mac отключён. Голос не возобновляется автоматически." }
     let rpc = self.rpc; self.rpc = nil; scopedConfiguration = nil
     connection?.cancel(); connection = nil
-    for task in attaching.values { task.cancel() }; attaching.removeAll()
+    accountRead?.task.cancel(); accountRead = nil; accountSession.revision = UUID()
+    for entry in attaching.values { entry.task.cancel() }; attaching.removeAll()
     states.removeAll(); selections.removeAll(); answeringRequests.removeAll(); threadWorkspaces.removeAll()
     await rpc?.stop()
     await interruptProcesses()
@@ -478,7 +493,7 @@ public actor CodexAppServer {
       let result = try await task.value
       guard generation == epoch else { await result.rpc.stop(); throw CodexBridgeError.disconnected }
       rpc = result.rpc; scopedConfiguration = result.configuration; connection = nil; return result.rpc
-    } catch { connection = nil; throw error }
+    } catch { if epoch == generation { connection = nil }; throw error }
   }
 
   func scopedThreadParameters(_ original: [String: JSONValue], rpc: CodexRPC, workspaceID: UUID? = nil) async throws -> [String: JSONValue] {
@@ -536,7 +551,11 @@ public actor CodexAppServer {
   private func disconnected(_ error: CodexBridgeError, epoch: UUID) async {
     guard generation == epoch else { return }
     if voice?.isActive == true { voice?.phase = .failed; voice?.sdp = nil; voice?.error = "Соединение с Codex прервано. Голос не возобновляется автоматически." }
-    generation = UUID(); rpc = nil; scopedConfiguration = nil; states.removeAll(); selections.removeAll(); answeringRequests.removeAll(); threadWorkspaces.removeAll()
+    generation = UUID(); rpc = nil; scopedConfiguration = nil
+    connection?.cancel(); connection = nil
+    accountRead?.task.cancel(); accountRead = nil; accountSession.revision = UUID()
+    for entry in attaching.values { entry.task.cancel() }; attaching.removeAll()
+    states.removeAll(); selections.removeAll(); answeringRequests.removeAll(); threadWorkspaces.removeAll()
     output.yield(.unavailable(error))
     await interruptProcesses()
   }

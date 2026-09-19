@@ -13332,3 +13332,22 @@ presentation больше не даёт collision. Тестовый creation cal
 до ошибки setup. Установка и физический жест пока НЕ подтверждены: общий
 Xcode/device слот занят GUI-266; последующая проверка только отдельной Remote Test пары.
 Ни login, ни полный suite, ни production-пара этим изменением не запускались.
+
+## GUI-269 — поколение подключения и общий порядок чтения, 19 сентября 2026
+
+Удалены зависшие attaching entries: отключение отменяет и освобождает попытки,
+а cleanup старой попытки не удаляет новую. Нативная проекция имеет явный generation;
+revision сравнивается внутри него. Sidecar доставляет unavailable текущей подписке.
+Mac теперь проверяет subscription ID, использует тот же merge native windows
+и read-window/cursor rules, что iPad; refresh сохраняет глубину раскрытого каталога.
+Оба клиента дочитывают пропуск после возврата, не меняя native thread и черновик.
+Протокол пары 32; старый клиент явно несовместим, ключи/хранилища не заменяются.
+
+Проверено: 3 общих projection tests PASS, 18 focused state/connection tests PASS.
+Source-level probe настоящего AppServer с изолированным JSONL peer:
+disconnect во время resume → следующий attach ready=true, retainedTasks=0.
+Настоящий Mac presentation source: revision 100 → новый generation/1, busy=false;
+порядок [m1,m2,m3]; две страницы каталога остаются после refresh; Stop collision нет.
+Mac owner module компилируется. Изменения тестовых fixtures передают явный generation,
+не создают произвольное новое поколение при каждом snapshot.
+Физический возврат/жест и installed pair ещё не заявляются: ожидание общего Xcode/device слота.

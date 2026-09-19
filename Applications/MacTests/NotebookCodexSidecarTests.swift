@@ -38,7 +38,7 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   func detach(threadID: String) { }
   func close() { }
   func snapshot(threadID: String) -> CodexConversation? {
-    .init(threadID: threadID, revision: 1, title: "Математика", ready: true, busy: busy, activeTurnID: busy ? turn : nil,
+    .init(threadID: threadID, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Математика", ready: true, busy: busy, activeTurnID: busy ? turn : nil,
       messages: accepted, requests: [], acceptedMessages: [:], turnStatuses: [:],
       access: .init(profileID: accessMode.rawValue, approvalPolicy: .string(accessMode.approvalPolicy), available: CodexAccessMode.allCases), model: model)
   }

@@ -8,7 +8,7 @@ final class NotebookMacCodexPresentation {
   let model: NotebookAppModel
   var tasks: [CodexTask] = []
   var projects: [CodexProject] = []
-  var projectID: String?
+  var projectID: String? { didSet { if projectID != oldValue { catalogueGeneration = UUID(); taskPages = 1; taskCursor = nil; tasks = [] } } }
   var taskCursor: String?
   var projectCursor: String?
   var threadID: String?
@@ -22,6 +22,12 @@ final class NotebookMacCodexPresentation {
   private var restored = false
   private var generation = UUID()
   private var historyLoaded = false
+  private var historyBoundary: String?
+  private var catchUpBoundary: String?
+  private var subscription: UUID?
+  private var catalogueGeneration = UUID()
+  private var taskPages = 1
+  private var projectPages = 1
   private var createdInput: UUID?
   private var projectInput: UUID?
   private var submission: NotebookChatInput?
@@ -49,7 +55,11 @@ final class NotebookMacCodexPresentation {
         }
         if refresh % 10 == 0 {
           try await loadProjects(); try await catalogue()
-          if threadID != nil { try await refreshConversation(); if !historyLoaded { try await history(more: false) } }
+          if threadID != nil {
+            try await refreshConversation()
+            if !historyLoaded { try await history(more: false) }
+            try await catchUpHistory()
+          }
         }
       } catch is CancellationError { break } catch { failure = error.localizedDescription }
       refresh += 1
@@ -59,31 +69,39 @@ final class NotebookMacCodexPresentation {
   }
 
   func catalogue(more: Bool = false) async throws {
-    let selected = projects.first { $0.id == projectID }
-    if case .catalogue(let page) = try await model.localCodexQuery(.catalogue(cursor: more ? taskCursor : nil, project: selected)) {
-      tasks = more ? tasks + page.tasks.filter { item in !tasks.contains { $0.id == item.id } } : page.tasks
-      taskCursor = page.nextCursor
-    }
+    let selected = projects.first { $0.id == projectID }, epoch = catalogueGeneration
+    var read = CodexReadWindow<CodexTask>(cursor: more ? taskCursor : nil)
+    repeat {
+      guard case .catalogue(let page) = try await model.localCodexQuery(.catalogue(cursor: read.cursor, project: selected)) else { throw NotebookTransportError.invalidAcknowledgement }
+      guard epoch == catalogueGeneration, !Task.isCancelled else { return }
+      try read.append(page.tasks, next: page.nextCursor)
+    } while read.needsPage(refreshing: !more, loadedPages: taskPages)
+    tasks = more ? CodexReadWindow.appending(tasks, read.items) : read.items
+    taskCursor = read.cursor; taskPages = more ? taskPages + read.pages : read.pages
   }
   func loadProjects(more: Bool = false) async throws {
-    if case .projects(let page) = try await model.localCodexQuery(.projects(cursor: more ? projectCursor : nil)) {
-      projects = more ? projects + page.projects.filter { item in !projects.contains { $0.id == item.id } } : page.projects
-      projectCursor = page.nextCursor
-    }
+    var read = CodexReadWindow<CodexProject>(cursor: more ? projectCursor : nil)
+    repeat {
+      guard case .projects(let page) = try await model.localCodexQuery(.projects(cursor: read.cursor)) else { throw NotebookTransportError.invalidAcknowledgement }
+      try Task.checkCancellation(); try read.append(page.projects, next: page.nextCursor)
+    } while read.needsPage(refreshing: !more, loadedPages: projectPages)
+    projects = more ? CodexReadWindow.appending(projects, read.items) : read.items
+    projectCursor = read.cursor; projectPages = more ? projectPages + read.pages : read.pages
   }
   func select(_ id: String) async {
-    generation = UUID(); threadID = id; conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; savePanel()
+    generation = UUID(); threadID = id; conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; catchUpBoundary = nil; subscription = nil; savePanel()
     do { try await refreshConversation(); try await history(more: false) }
     catch { failure = error.localizedDescription }
   }
   private func refreshConversation() async throws {
     guard let threadID else { return }
-    let epoch = generation
-    let reply = try await model.localCodexQuery(.conversation(threadID: threadID))
-    guard generation == epoch else { return }
+    let epoch = generation, requestID = UUID()
+    subscription = requestID
+    let reply = try await model.localCodexQuery(.conversation(threadID: threadID), requestID: requestID)
+    guard generation == epoch, subscription == requestID else { return }
     switch reply {
     case .conversation(let value): accept(value); failure = nil
-    case .conversationUnavailable(_, let reason): conversation = nil; failure = reason
+    case .conversationUnavailable(_, let reason): unavailable(reason)
     default: break
     }
   }
@@ -91,21 +109,40 @@ final class NotebookMacCodexPresentation {
     guard let threadID else { return }
     let epoch = generation
     if case .history(let page) = try await model.localCodexQuery(.history(threadID: threadID, cursor: more ? historyCursor : nil)), epoch == generation {
-      let existing = Set(messages.map(\.id))
-      messages = page.messages.filter { !existing.contains($0.id) } + messages
+      messages = CodexTranscript.merging(messages, page.messages, preferIncoming: false, before: more ? historyBoundary ?? messages.first?.id : nil)
+      historyBoundary = page.messages.first?.id ?? historyBoundary
       historyCursor = page.nextCursor; historyLoaded = true
     }
   }
+  private func catchUpHistory() async throws {
+    guard let threadID, let boundary = catchUpBoundary else { return }
+    let epoch = generation
+    var cursor: String?, before: String?, seen = Set<String>()
+    repeat {
+      guard case .history(let page) = try await model.localCodexQuery(.history(threadID: threadID, cursor: cursor)) else { throw NotebookTransportError.invalidAcknowledgement }
+      guard epoch == generation, !Task.isCancelled else { return }
+      messages = CodexTranscript.merging(messages, page.messages, preferIncoming: false, before: before)
+      if page.messages.contains(where: { $0.id == boundary }) || page.nextCursor == nil { catchUpBoundary = nil; return }
+      before = page.messages.first?.id ?? before; cursor = page.nextCursor
+      if let cursor, !seen.insert(cursor).inserted { throw NotebookTransportError.invalidAcknowledgement }
+    } while cursor != nil
+  }
   func receive(_ envelope: NotebookChatEnvelope?) {
-    if case .event(_, let value) = envelope?.body, value.threadID == threadID { accept(value) }
+    switch envelope?.body {
+    case .event(let id, let value) where id == subscription && value.threadID == threadID: accept(value)
+    case .unavailable(let id, let thread, let reason) where id == subscription && thread == threadID: unavailable(reason)
+    default: break
+    }
+  }
+  private func unavailable(_ reason: String) {
+    if catchUpBoundary == nil { catchUpBoundary = messages.last?.id }
+    conversation = nil; failure = reason
   }
   private func accept(_ value: CodexConversation) {
-    guard value.threadID == threadID, conversation == nil || value.revision >= conversation!.revision else { return }
+    guard value.threadID == threadID, value.succeeds(conversation) else { return }
+    if let conversation, conversation.generation != value.generation, catchUpBoundary == nil { catchUpBoundary = messages.last?.id }
     conversation = value
-    for item in value.messages {
-      if let index = messages.firstIndex(where: { $0.id == item.id }) { messages[index] = item }
-      else { messages.append(item) }
-    }
+    messages = CodexTranscript.merging(messages, value.messages, preferIncoming: true)
   }
   func savePanel() {
     guard restored else { return }

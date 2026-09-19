@@ -122,6 +122,7 @@ public struct CodexUserRequest: Codable, Equatable, Sendable, Identifiable {
 
 public struct CodexConversation: Codable, Equatable, Sendable {
   public let threadID: String
+  public let generation: UUID
   public let revision: Int
   public let title: String
   public let ready: Bool
@@ -135,7 +136,7 @@ public struct CodexConversation: Codable, Equatable, Sendable {
   public let access: CodexAccess?
   public let model: CodexModelSelection?
   public let contextUsage: CodexContextUsage?
-  public init(threadID: String, revision: Int, title: String, ready: Bool, busy: Bool, activeTurnID: String?, messages: [CodexMessage], requests: [CodexUserRequest], acceptedMessages: [String: String], turnStatuses: [String: String], access: CodexAccess? = nil, model: CodexModelSelection? = nil, contextUsage: CodexContextUsage? = nil) { self.threadID = threadID; self.revision = revision; self.title = title; self.ready = ready; self.busy = busy; self.activeTurnID = activeTurnID; self.messages = messages; self.requests = requests; self.acceptedMessages = acceptedMessages; self.turnStatuses = turnStatuses; self.access = access; self.model = model; self.contextUsage = contextUsage }
+  public init(threadID: String, generation: UUID, revision: Int, title: String, ready: Bool, busy: Bool, activeTurnID: String?, messages: [CodexMessage], requests: [CodexUserRequest], acceptedMessages: [String: String], turnStatuses: [String: String], access: CodexAccess? = nil, model: CodexModelSelection? = nil, contextUsage: CodexContextUsage? = nil) { self.threadID = threadID; self.generation = generation; self.revision = revision; self.title = title; self.ready = ready; self.busy = busy; self.activeTurnID = activeTurnID; self.messages = messages; self.requests = requests; self.acceptedMessages = acceptedMessages; self.turnStatuses = turnStatuses; self.access = access; self.model = model; self.contextUsage = contextUsage }
 
 }
 
@@ -340,7 +341,7 @@ public enum NotebookChatReply: Codable, Equatable, Sendable {
 /// One normal request and one urgent control use separate coalesced lanes per iPad.
 /// Retransmission reuses the request ID and the durable mutation's original ID.
 public struct NotebookChatEnvelope: Codable, Equatable, Sendable {
-  public enum Body: Codable, Equatable, Sendable { case request(NotebookChatQuery), reply(NotebookChatReply), event(subscriptionID: UUID, conversation: CodexConversation) }
+  public enum Body: Codable, Equatable, Sendable { case request(NotebookChatQuery), reply(NotebookChatReply), event(subscriptionID: UUID, conversation: CodexConversation), unavailable(subscriptionID: UUID, threadID: String, reason: String) }
   public let id: UUID
   public let body: Body
 

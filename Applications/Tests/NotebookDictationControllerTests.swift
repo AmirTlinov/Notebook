@@ -325,7 +325,7 @@ import NotebookCore
         case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
         case .history: reply = .history(.init(messages: [], nextCursor: nil))
         case .activity(let ids): reply = .activity(ids.map { .init(id: $0, status: .idle) })
-        case .conversation: reply = .conversation(.init(threadID: thread, revision: 1, title: "Fixture", ready: true, busy: false,
+        case .conversation: reply = .conversation(.init(threadID: thread, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Fixture", ready: true, busy: false,
           activeTurnID: nil, messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:]))
         default: reply = .failure("Unused fixture surface")
         }

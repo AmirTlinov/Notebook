@@ -6,7 +6,7 @@ import Foundation
 public enum NotebookTransportLimits {
   // Explicitly finished unknown command receipts require both applications to update.
   // Both applications update together; identities and queued history stay intact.
-  public static let protocolVersion = 31
+  public static let protocolVersion = 32
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 32 * 1_024
   public static let maximumQueuedBytes = 1_024 * 1_024
@@ -65,7 +65,7 @@ public enum NotebookTransportTransient: Codable, Equatable, Sendable {
       switch envelope.body {
       case .request(let query) where query.isInteractiveControl: -1
       case .reply(.job(let job)) where job.input.action.isInteractiveControl: -1
-      case .event: 4
+      case .event, .unavailable: 4
       default: 3
       }
     case .presentation: 5

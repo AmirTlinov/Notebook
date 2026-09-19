@@ -4,6 +4,7 @@ import NotebookCore
 /// A bounded view of native items, not a second stored transcript. Hidden reasoning is never retained.
 struct CodexAppServerState: Sendable {
   let threadID: String
+  let generation = UUID()
   var title = "Codex"
   var ready = false
   var activeTurnID: String?
@@ -21,7 +22,7 @@ struct CodexAppServerState: Sendable {
   private var acceptedOrder: [String] = []
 
   var view: CodexConversation {
-    CodexConversation(threadID: threadID, revision: revision, title: title, ready: ready,
+    CodexConversation(threadID: threadID, generation: generation, revision: revision, title: title, ready: ready,
       busy: runtimeActive || activeTurnID != nil, activeTurnID: activeTurnID, messages: messages, requests: requests,
       acceptedMessages: accepted,
       turnStatuses: turnStatuses, access: access, model: model, contextUsage: contextUsage)

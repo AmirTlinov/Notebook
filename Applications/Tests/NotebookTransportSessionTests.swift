@@ -159,7 +159,7 @@ final class NotebookTransportSessionTests: XCTestCase {
       case .reply(.job(let job)):
         XCTAssertEqual(value.id, envelope.id)
         XCTAssertEqual(job.input, input); XCTAssertNotEqual(peer.deviceID, input.author); received.fulfill()
-        let state = CodexConversation(threadID: input.action.threadID!, revision: 4, title: "Task", ready: true,
+        let state = CodexConversation(threadID: input.action.threadID!, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 4, title: "Task", ready: true,
           busy: false, activeTurnID: nil, messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:])
         pair.server?.sendTransient(.codex(.init(body: .event(subscriptionID: envelope.id, conversation: state))))
       case .event(let subscription, let state):

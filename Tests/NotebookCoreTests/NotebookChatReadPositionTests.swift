@@ -12,7 +12,7 @@ struct NotebookChatReadPositionTests {
       .init(id: "first", turnID: "1", clientID: nil, role: .assistant, text: "Answer", phase: "final_answer"),
       .init(id: "second", turnID: "2", clientID: nil, role: .assistant, text: "Another answer", phase: "final_answer"),
       .init(id: "partial", turnID: "3", clientID: nil, role: .assistant, text: "Unfinished", phase: "final_answer")]
-    let conversation = CodexConversation(threadID: UUID().uuidString, revision: 1, title: "Task", ready: true, busy: true, activeTurnID: "3",
+    let conversation = CodexConversation(threadID: UUID().uuidString, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Task", ready: true, busy: true, activeTurnID: "3",
       messages: messages, requests: [], acceptedMessages: [:], turnStatuses: ["1":"completed", "2":"completed", "3":"inProgress"])
     let replies = NotebookChatReadPosition.replies(in: messages, conversation: conversation)
     #expect(replies.map(\.id) == ["first", "second"])

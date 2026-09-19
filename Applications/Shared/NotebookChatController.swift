@@ -95,7 +95,6 @@ final class NotebookChatController {
   @ObservationIgnored private var nextCatchUp = ContinuousClock.now
   @ObservationIgnored private var nextProjects = ContinuousClock.now
   @ObservationIgnored private var conversationSubscription: UUID?
-  @ObservationIgnored private var subscriptionRevision: Int?
   @ObservationIgnored private var nextConversation = ContinuousClock.now
   @ObservationIgnored private var offeredJobs = Set<UUID>()
   @ObservationIgnored private var savingInput: NotebookChatInput?
@@ -246,7 +245,7 @@ final class NotebookChatController {
       transcriptGeneration = UUID(); catchUpBoundary = nil
       conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; projects = []; catalogues = [:]; activities = [:]
       projectCursor = nil; projectPages = 1; nextProjectPage = false; offeredJobs.removeAll(); selectedTask = nil; expandedProjects = []; browserMode = .chats
-      conversationSubscription = nil; subscriptionRevision = nil; nextConversation = .now; continuationUnavailable = false
+      conversationSubscription = nil; nextConversation = .now; continuationUnavailable = false
       browsesChats = threadID == nil
       jobs = restored.jobs
       await files.installWindow(restored.window, document: restored.document)
@@ -259,6 +258,11 @@ final class NotebookChatController {
     if case .event(let subscription, let value) = envelope.body {
       guard subscription == conversationSubscription, value.threadID == threadID else { return }
       acceptConversation(value); return
+    }
+    if case .unavailable(let subscription, let thread, let reason) = envelope.body {
+      guard subscription == conversationSubscription, thread == threadID else { return }
+      suspendTranscript(); conversation = nil; continuationUnavailable = true; error = reason
+      nextConversation = .now; return
     }
     guard case .reply(let reply) = envelope.body, let (_, completion) = pending.removeValue(forKey: envelope.id) else { return }
     retries.removeValue(forKey: envelope.id)?.cancel()
@@ -284,20 +288,16 @@ final class NotebookChatController {
         }
       }
       do {
-        var cursor = cursor, result: [CodexTask] = [], pages = 0, needsSignIn = false, seen = Set<String>()
+        var read = CodexReadWindow<CodexTask>(cursor: cursor), needsSignIn = false
         repeat {
-          guard case .catalogue(let page) = try await directQuery(.catalogue(cursor: cursor, project: project)), page.nextCursor == nil || page.nextCursor != cursor else { throw NotebookTransportError.invalidAcknowledgement }
+          guard case .catalogue(let page) = try await directQuery(.catalogue(cursor: read.cursor, project: project)) else { throw NotebookTransportError.invalidAcknowledgement }
           guard !Task.isCancelled, catalogueGeneration == generation, catalogues[scope] != nil,
             project == nil || projects.first(where: { $0.id == project?.id })?.roots == project?.roots else { return }
-          result += page.tasks.filter { task in !result.contains { $0.id == task.id } }
-          cursor = page.nextCursor; pages += 1; needsSignIn = page.defaultProviderNeedsSignIn
-          if let cursor, !seen.insert(cursor).inserted { throw NotebookTransportError.invalidAcknowledgement }
-        } while cursor != nil && (result.isEmpty || (!next && pages < window.pages))
-        if next {
-          let known = Set(window.tasks.map(\.id))
-          catalogues[scope]?.tasks = window.tasks + result.filter { !known.contains($0.id) }; catalogues[scope]?.pages = window.pages + pages
-        } else { catalogues[scope]?.tasks = result; catalogues[scope]?.pages = pages }
-        catalogues[scope]?.cursor = cursor; catalogues[scope]?.loaded = true; catalogues[scope]?.error = nil
+          try read.append(page.tasks, next: page.nextCursor); needsSignIn = page.defaultProviderNeedsSignIn
+        } while read.needsPage(refreshing: !next, loadedPages: window.pages)
+        catalogues[scope]?.tasks = next ? CodexReadWindow.appending(window.tasks, read.items) : read.items
+        catalogues[scope]?.pages = next ? window.pages + read.pages : read.pages
+        catalogues[scope]?.cursor = read.cursor; catalogues[scope]?.loaded = true; catalogues[scope]?.error = nil
         defaultProviderNeedsSignIn = needsSignIn; error = nil
         let known = Set(catalogues.values.flatMap { $0.tasks.map(\.id) })
         activities = activities.filter { known.contains($0.key) }
@@ -320,19 +320,19 @@ final class NotebookChatController {
         }
       }
       do {
-        var cursor = cursor, result: [CodexProject] = [], pages = 0
+        var read = CodexReadWindow<CodexProject>(cursor: cursor)
         repeat {
-          guard case .projects(let page) = try await directQuery(.projects(cursor: cursor)), page.nextCursor == nil || page.nextCursor != cursor else { throw NotebookTransportError.invalidAcknowledgement }
+          guard case .projects(let page) = try await directQuery(.projects(cursor: read.cursor)) else { throw NotebookTransportError.invalidAcknowledgement }
           guard !Task.isCancelled, catalogueGeneration == generation else { return }
-          result += page.projects.filter { project in !result.contains { $0.id == project.id } }
-          cursor = page.nextCursor; pages += 1
-        } while !next && pages < projectPages && cursor != nil
+          try read.append(page.projects, next: page.nextCursor)
+        } while read.needsPage(refreshing: !next, loadedPages: projectPages)
+        let result = read.items, pages = read.pages, cursor = read.cursor
         for project in result {
           if let previous = projects.first(where: { $0.id == project.id }), previous.roots != project.roots {
             catalogues.removeValue(forKey: .project(project.id))
           }
         }
-        if next { projects += result.filter { project in !projects.contains { $0.id == project.id } }; projectPages += pages }
+        if next { projects = CodexReadWindow.appending(projects, result); projectPages += pages }
         else { projects = result; projectPages = pages }
         projectCursor = cursor; error = nil
         let retained = Set(projects.map(\.id))
@@ -649,7 +649,7 @@ final class NotebookChatController {
     }
     guard connected, !stopped, let peer else { throw NotebookTransportError.disconnected }
     let envelope = NotebookChatEnvelope(body: .request(query))
-    if case .conversation = query { conversationSubscription = envelope.id; subscriptionRevision = nil }
+    if case .conversation = query { conversationSubscription = envelope.id }
     let reply: NotebookChatReply = try await withCheckedThrowingContinuation { continuation in
       pending[envelope.id] = (envelope, continuation)
       retries[envelope.id] = Task { [weak self] in
@@ -667,8 +667,9 @@ final class NotebookChatController {
     return reply
   }
   private func acceptConversation(_ value: CodexConversation) {
-    guard subscriptionRevision == nil || value.revision >= subscriptionRevision! else { return }
-    subscriptionRevision = value.revision; conversation = value; continuationUnavailable = false; error = nil
+    guard value.succeeds(conversation) else { return }
+    if let conversation, conversation.generation != value.generation { suspendTranscript() }
+    conversation = value; continuationUnavailable = false; error = nil
     mergeMessages(value.messages, preferIncoming: true)
     if readPosition == nil || expanded || voice.activeID != nil { markRepliesRead() }
     refreshCompanionReplies()
@@ -725,23 +726,8 @@ final class NotebookChatController {
     }
   }
 
-  /// Both sources are chronological native windows. Insert missing runs beside
-  /// their shared IDs; an older prefix in a live window must not become a tail.
   private func mergeMessages(_ incoming: [CodexMessage], preferIncoming: Bool, before boundary: String? = nil) {
-    let known = Set(messages.map(\.id)), updates = Dictionary(incoming.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-    var before: [String: [CodexMessage]] = [:], pending: [CodexMessage] = [], lastShared: String?, seen = Set<String>()
-    for item in incoming where seen.insert(item.id).inserted {
-      if known.contains(item.id) { before[item.id] = pending; pending = []; lastShared = item.id }
-      else { pending.append(item) }
-    }
-    var result: [CodexMessage] = []
-    for item in messages {
-      if lastShared == nil, item.id == boundary { result += pending; pending = [] }
-      result += before[item.id] ?? []
-      result.append(preferIncoming ? updates[item.id] ?? item : item)
-      if item.id == lastShared { result += pending; pending = [] }
-    }
-    messages = result + pending
+    messages = CodexTranscript.merging(messages, incoming, preferIncoming: preferIncoming, before: boundary)
   }
 
   private func accept(_ reply: NotebookChatReply, for query: NotebookChatQuery, computer: UUID?) async throws {

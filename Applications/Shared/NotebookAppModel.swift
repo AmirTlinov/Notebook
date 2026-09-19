@@ -3588,10 +3588,10 @@ final class NotebookAppModel {
     }
 
     /// Local presentation uses the same journal/owner directly, never a loopback transport.
-    func localCodexQuery(_ query: NotebookChatQuery) async throws -> NotebookChatReply {
+    func localCodexQuery(_ query: NotebookChatQuery, requestID: UUID = UUID()) async throws -> NotebookChatReply {
       if codexSidecar == nil { await startCodexSidecar() }
       guard let codexSidecar else { throw NotebookPersistenceQueue.Failure(message: agentStartupError ?? "Codex недоступен") }
-      guard let envelope = await codexSidecar.receive(.init(body: .request(query)), peerID: actorID),
+      guard let envelope = await codexSidecar.receive(.init(id: requestID, body: .request(query)), peerID: actorID),
         case .reply(let reply) = envelope.body else { throw NotebookTransportError.disconnected }
       if case .failure(let message) = reply { throw NotebookPersistenceQueue.Failure(message: message) }
       return reply
