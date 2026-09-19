@@ -19,6 +19,7 @@ export async function buildScienceProgram(id) {
   if(!example||example.format!=='program')throw new Error('Choose an asset-backed science program: '+scienceExamples.filter(e=>e.format==='program').map(e=>e.id).join(', '));
   const directory=fileURLToPath(new URL('../../../',import.meta.url));
   const {buildProgram}=await import('./program-build.mjs');
+  if(id==='wave')return buildProgram({directory,entry:'skills/notebook/assets/science/wave/main.ts',html:'skills/notebook/assets/science/wave/view.html',workers:{wave:'skills/notebook/assets/science/wave/solver.ts'},assets:['skills/notebook/assets/science/wave/provenance.json','skills/notebook/assets/science/wave/recording-input.json','skills/notebook/assets/science/wave/generate.py','skills/notebook/assets/science/wave/sonification.wav']});
   if(id==='gears')return buildProgram({directory,entry:'skills/notebook/assets/science/gears/main.ts',html:'skills/notebook/assets/science/gears/view.html',assets:['node_modules/three/LICENSE']});
   const font='node_modules/@mathjax/mathjax-newcm-font';
   const dynamic=(await readdir(new URL('../../../'+font+'/svg/dynamic/',import.meta.url))).filter(name=>name.endsWith('.js')).sort();

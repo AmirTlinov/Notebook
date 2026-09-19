@@ -1,0 +1,41 @@
+{
+  "format": 1,
+  "parameters": {
+    "speed": 1,
+    "time": 4,
+    "seed": 246,
+    "shape": "pulse"
+  },
+  "grid": 256,
+  "steps": 2267,
+  "dt": 0.00176444640494045,
+  "duration": 8,
+  "fps": 30,
+  "probe": [
+    0.3,
+    0.4
+  ],
+  "sonification": "220 Hz carrier; amplitude from |u(probe)|; same 2x slowed timeline, not physical sound",
+  "inputSHA256": "2e0877c78101c2f1e7347ff84d7b6e7a79f0a6622f583a26af7e09a11fe2769e",
+  "scriptSHA256": "0c3c37326feb95e2e77ca4c32f1f1b03cc9449dae8a09d7794adcf91cc0465b9",
+  "numpy": "2.3.5",
+  "ffmpeg": "ffmpeg version 8.1.1 Copyright (c) 2000-2026 the FFmpeg developers",
+  "outputs": {
+    "experiment.mp4": {
+      "sha256": "de08698f6a733d7e0585be8cae044cd2b047755e0ef2ace00c82832a7fd77110",
+      "bytes": 1039507
+    },
+    "sonification.wav": {
+      "sha256": "bae5dcd2294168324c3f3acf9662ad73568f89ad77d95f2fe8c456ecb27bf65e",
+      "bytes": 768044
+    },
+    "final.bin": {
+      "sha256": "5ae55dc1f4d5bf2dca155e3afa56abe42f44e05058eda10f95abe609d4afed2a",
+      "bytes": 262144
+    },
+    "recording-poster.png": {
+      "sha256": "f736663fcd4c57563e72e169fd32c36362472fa7b1162749f1c45daab3343261",
+      "bytes": 18980
+    }
+  }
+}

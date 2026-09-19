@@ -394,6 +394,86 @@ final class ProgramAssetTests: XCTestCase {
     }
   }
 
+  func testWaveWorkerBackpressureCancellationAndMediaCheckpointOffline() async throws {
+    let f = try compiledFixture("wave-program"); defer { f.close() }
+    let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
+    var ready = false
+    let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in true })
+    owner.programStore = f.store
+    let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
+    defer { owner.invalidate(); lease.release(); close() }
+    web.configuration.userContentController.addUserScript(WKUserScript(source: """
+      (()=>{const Native=Worker;window.waveProbe={alive:0,maxAlive:0,frames:0,recycled:0,detached:0,maxPending:0,fetches:[]};
+      window.Worker=class extends Native {
+        constructor(...args){super(...args);this.fixtureActive=true;this.pending=0;waveProbe.last=this;
+          waveProbe.alive++;waveProbe.maxAlive=Math.max(waveProbe.maxAlive,waveProbe.alive);
+          this.addEventListener('message',e=>{if(e.data.buffer){this.pending++;waveProbe.frames++;waveProbe.maxPending=Math.max(waveProbe.maxPending,this.pending);}});}
+        postMessage(message,...args){if(message.kind==='start')this.fixtureID=message.id;
+          super.postMessage(message,...args);if(message.kind==='recycle'){this.pending--;waveProbe.recycled++;if(message.buffer.byteLength===0)waveProbe.detached++;}}
+        terminate(){if(this.fixtureActive){waveProbe.alive--;this.fixtureActive=false;}super.terminate();}
+      };const fetch=window.fetch;window.fetch=(url,options)=>{waveProbe.fetches.push(String(url));return fetch(url,options)};
+      })();
+      """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+    owner.load(.init(id: "wave", kind: .web, frame: .init(x: 0, y: 0, width: 760, height: 1050), source: "", html: "", programPackage: f.hash),
+      policy: .exact(scale: 1), in: web)
+    try await wait { ready || owner.snapshotFailure != nil }; XCTAssertTrue(ready); XCTAssertNil(owner.snapshotFailure)
+    func js(_ source: String) async throws -> Any? { try await web.evaluateJavaScript(source) }
+    func until(_ source: String) async throws {
+      let deadline = ContinuousClock.now + .seconds(12)
+      while .now < deadline {
+        if try await js(source) as? Bool == true { return }
+        try await Task.sleep(for: .milliseconds(20))
+      }
+      let details = try await js("JSON.stringify({status:document.getElementById('status').textContent,error:document.getElementById('failure').textContent,media:document.getElementById('media-error').textContent,ready:document.getElementById('recording').readyState,probe:{alive:waveProbe.alive,frames:waveProbe.frames,recycled:waveProbe.recycled}})")
+      XCTFail("Wave condition: " + source + " · " + String(describing: details))
+    }
+    try await until("document.getElementById('status').textContent==='Расчёт завершён.' && waveProbe.alive===0")
+    let frames = try await js("waveProbe.frames") as? Int; XCTAssertGreaterThan(frames ?? 0, 0)
+    _ = try await js("for(const t of ['.5','1.1','1.7']){const s=document.getElementById('time');s.value=t;s.dispatchEvent(new Event('input'));}null")
+    try await until("document.getElementById('status').textContent==='Расчёт завершён.' && document.getElementById('result-caption').textContent.includes('1,700')")
+    let maxAlive = try await js("waveProbe.maxAlive") as? Int; XCTAssertEqual(maxAlive, 1, "No job queue or simultaneous old/new worker")
+    let recycled = try await js("waveProbe.recycled") as? Int, detached = try await js("waveProbe.detached") as? Int
+    XCTAssertGreaterThan(recycled ?? 0, 0); XCTAssertEqual(recycled, detached, "ArrayBuffers really transfer, rather than clone")
+    let pending = try await js("waveProbe.maxPending") as? Int; XCTAssertEqual(pending, 1, "One outstanding frame applies backpressure")
+    _ = try await js("window.goodPixels=document.getElementById('wave-field').toDataURL();document.getElementById('time').value='4';document.getElementById('time').dispatchEvent(new Event('input'));document.getElementById('calculate').click();window.late=waveProbe.last.onmessage;window.lateID=waveProbe.last.fixtureID;document.getElementById('cancel').click();late({data:{id:lateID,step:1,total:1,done:true,buffer:new ArrayBuffer(256*256*4),report:{time:4,energy:1,error:null,amplitude:0}}});null")
+    let cancel = try await js("waveProbe.alive===0 && document.getElementById('status').textContent.startsWith('Отменено') && document.getElementById('wave-field').toDataURL()===goodPixels") as? Bool
+    XCTAssertEqual(cancel, true, "Cancellation and a queued old callback cannot replace the last correct field")
+    _ = try await js("document.getElementById('calculate').click();waveProbe.last.dispatchEvent(new ErrorEvent('error',{message:'fixture worker failure',cancelable:true}));null")
+    let localError = try await js("waveProbe.alive===0 && !document.getElementById('failure').hidden && document.getElementById('wave-field').toDataURL()===goodPixels") as? Bool
+    XCTAssertEqual(localError, true)
+    _ = try await js("document.getElementById('time').value='1.7';document.getElementById('time').dispatchEvent(new Event('input'));document.getElementById('calculate').click();null")
+    try await until("document.getElementById('status').textContent==='Расчёт завершён.' && document.getElementById('failure').hidden")
+    _ = try await js("document.getElementById('calculate').click();null")
+    let checkpoint = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram", in: web)
+    XCTAssertEqual(checkpoint["accepted"]?["time"], .number(1.7))
+    let hiddenWorkers = try await js("waveProbe.alive") as? Int; XCTAssertEqual(hiddenWorkers, 0)
+    _ = try await NotebookProgramBridge.lifecycle("resume", controller: "notebookProgram", in: web)
+    let resumedWorkers = try await js("waveProbe.alive") as? Int; XCTAssertEqual(resumedWorkers, 0, "A completed field resumes without recomputing")
+    _ = try await js("document.getElementById('recording-tab').click();null")
+    try await until("document.getElementById('recording').readyState>=1 && document.getElementById('recording').duration===8")
+    _ = try await js("document.getElementById('media-seek').value='2.5';document.getElementById('media-seek').dispatchEvent(new Event('input'));document.getElementById('rate').value='1.5';document.getElementById('rate').dispatchEvent(new Event('change'));null")
+    try await until("Math.abs(document.getElementById('recording').currentTime-2.5)<.05 && document.getElementById('recording').readyState>=2")
+    let media = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram", in: web)
+    XCTAssertEqual(media["tab"], .string("recording")); XCTAssertEqual(media["rate"], .number(1.5))
+    guard case let .number(playhead)? = media["playhead"] else { return XCTFail("Missing media playhead") }
+    XCTAssertEqual(playhead, 2.5, accuracy: 0.05)
+    let stopped = try await js("document.getElementById('recording').paused && !document.getElementById('recording').hasAttribute('src')") as? Bool
+    XCTAssertEqual(stopped, true, "Hidden media stops decoding/buffering, not just sound")
+    _ = try await NotebookProgramBridge.lifecycle("resume", controller: "notebookProgram", in: web)
+    try await until("document.getElementById('recording').readyState>=2 && Math.abs(document.getElementById('recording').currentTime-2.5)<.05")
+    let paused = try await js("document.getElementById('recording').paused") as? Bool; XCTAssertEqual(paused, true, "Resume never autoplays sound")
+    _ = try await js("document.getElementById('recording').src=new URL('./missing.mp4',location.href).href;document.getElementById('recording').load();null")
+    try await until("document.getElementById('recording').error!==null && !document.getElementById('media-play').disabled")
+    _ = try await js("document.getElementById('media-play').click();null")
+    try await until("document.getElementById('recording').readyState>=2 && document.getElementById('media-error').hidden && Math.abs(document.getElementById('recording').currentTime-2.5)<.05")
+    let directMedia = try await js("!waveProbe.fetches.some(url=>url.endsWith('.mp4')) && document.getElementById('recording').currentSrc.startsWith(location.origin)") as? Bool
+    XCTAssertEqual(directMedia, true, "Video uses the scoped URL/Range path, not a JS full-buffer Blob")
+    _ = try await js("document.getElementById('model-tab').click();document.getElementById('calculate').click();null")
+    _ = try await NotebookProgramBridge.lifecycle("dispose", controller: "notebookProgram", in: web)
+    let disposed = try await js("waveProbe.alive===0 && document.getElementById('wave-field').width===0 && !document.getElementById('recording').hasAttribute('src')") as? Bool
+    XCTAssertEqual(disposed, true)
+  }
+
   private func wav() -> Data {
     var result = Data()
     func string(_ s: String) { result.append(Data(s.utf8)) }

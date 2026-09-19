@@ -1,5 +1,56 @@
 # Проверка Notebook
 
+## 19 сентября, 05:53 МСК — GUI-246: Worker, внешний расчёт и локальное медиа
+
+Добавлен один asset-backed recipe `wave` на прежнем TS/package пути: мембрана
+256×256, фиксированный край, воспроизводимый seed, проверочная стоячая мода,
+сечение и относительная дискретная энергия. Один Worker, один передаваемый
+256 KiB буфер с возвратом; отмена/замена завершают старого исполнителя, поздний
+ответ не меняет последний завершённый результат. Скрытие прекращает расчёт,
+чтение эталона и media decoding; cold reopen восстанавливает параметры и seek.
+
+Собственный внешний NumPy-расчёт действительно выполнен. Пакет содержит input,
+Python-скрипт, provenance/hashes, float32 поле, MP4/H.264/AAC, PNG и WAV. Видео
+показывает 4 секунды модели за 8 секунд; озвучивание амплитуды явно не названо
+физическим звуком. HTMLMediaElement читает scoped URL напрямую, без fetch/Blob
+полного видео. Python/WASM runtime в приложение не добавлен.
+
+Окончательный package **de90ce96d5080cfe7fc5079c82f9b8db1ecd1a3c77530228b9ebbcdbe0b0e349**.
+**Mac 1 + Simulator 2 PASS** (`.build/gui-246-mac-final/verification.json`,
+`.build/gui-246-sim-final.xcresult`), source до/после:
+**e6376d82728ae60a944a1ab2af78403b41f12cd779f3770f8b96e537c3ba9a34**.
+Реальный WK проверяет transfer detachment, максимум одного worker и одного
+неподтверждённого кадра, latest-wins, cancel/error с сохранением хорошего поля,
+checkpoint/resume/dispose, локальное видео, seek/rate, missing MP4 и retry без
+потери playhead. UI проверяет первый control, play/pause/seek, Home и холодное
+SQLite-открытие на обеих поверхностях. Mac здесь offscreen WK, не видимый жест.
+
+Последнее уточнение только UI-теста выбирает WebView по постоянному заголовку,
+а не первый WebView документа, и требует достижимости конца материала.
+**Ещё 1 Simulator UI PASS**, `.build/gui-246-sim-scroll2.xcresult`, неизменный source
+**3ae3ee146c324863ef96f582190c4d0ced5d33f7c86b057c91d44a9ce3c8940d**.
+Итоговые board/document screenshots действительно просмотрены: полный график,
+единицы и формула читаемы внутри локальной прокрутки, камера доски не движется.
+Окончательный browser package осмотрен в420×900 dark: исправлено сжатие шрифта
+Canvas-сечения за счёт его фактической CSS-ширины/DPR, не уменьшением текста.
+Временные viewport/media overrides, tabs и preview servers убраны.
+
+**25 MCP PASS + SDK check**, `/tmp/gui-246-js-final.log`, `/tmp/gui-246-sdk-final.log`:
+первый шаг из покоя, CFL, неподвижный край, дискретная энергия, сходимость к
+аналитическому решению, seed и точное совпадение реального NumPy float32 с JS.
+Для принятого mode t=0.650s max error=4.04e−6 mm; NumPy comparison=0.00e+0 mm.
+Reference Sound/pressure-waves осмотрен: связаны поле, сечение, цвет и параметр;
+собственные данные/код, постоянная шкала −1…1 mm, без скрытого auto-gain.
+
+Промежуточные UI отказы v1/v2/scroll были ошибками адресации harness (скрытая
+кнопка в query, HTML slider без AX bounds, summary как staticText). Заменены
+стабильным query и настоящим касанием seek. Отдельный ранний JS-запуск попал в
+`npm ci` Mac harness и не нашёл tsx; после подготовки зависимостей повтор прошёл.
+Не скрыта граница сигнала: эти проверки не доказывают Pencil, system frame/CPU/
+GPU/memory budget, 30 минут, 300 MiB media streaming или installed/shared chat.
+Пользовательская физическая пара116 не изменена. GUI-246 остаётся In Progress;
+GUI-247–250 и итоговая приёмка ещё впереди.
+
 ## 19 сентября, 05:20 МСК — GUI-245: offline 3D-механизм и его ресурсный цикл
 
 Прежний inline `gears` заменён одним Three.js 0.186.0/WebGL 2 recipe на общем

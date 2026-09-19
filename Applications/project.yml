@@ -129,6 +129,8 @@ targets:
         buildPhase: resources
       - path: TestSupport/ProgramAssets/gears-program.json
         buildPhase: resources
+      - path: TestSupport/ProgramAssets/wave-program.json
+        buildPhase: resources
       - path: ../MCP/skills/notebook/assets/science
         type: folder
         buildPhase: resources

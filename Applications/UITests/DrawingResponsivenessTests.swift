@@ -476,6 +476,53 @@ final class DrawingResponsivenessTests: XCTestCase {
   }
 
   #if targetEnvironment(simulator)
+  func testWaveFirstControlMediaSeekAndColdReopenOnBothSurfaces() throws {
+    continueAfterFailure = false
+    let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "wave-program", withExtension: "json"))
+    for document in [false, true] {
+      let app = XCUIApplication()
+      app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-compiled-program-fixture", "--notebook-simulator-finger-gestures"]
+        + (document ? ["--notebook-document-runtime-fixture"] : [])
+      app.launchEnvironment["NOTEBOOK_COMPILED_PROGRAM_PATH"] = url.path
+      launchPortraitFixture(app)
+      let mode = app.switches["Проверочная мода"]
+      XCTAssertTrue(mode.waitForExistence(timeout: 20)); mode.tap()
+      let result = app.staticTexts["Показанный результат: t = 0,650 с · c = 1,00 м/с · проверочная мода."]
+      XCTAssertTrue(result.waitForExistence(timeout: 15))
+      let picture = XCTAttachment(screenshot: app.screenshot()); picture.name = document ? "wave-document-mode" : "wave-board-mode"
+      picture.lifetime = .keepAlways; add(picture)
+      let material = app.webViews.containing(.staticText, identifier: "Волна помнит границу.").firstMatch
+      let original = material.frame
+      material.swipeUp()
+      let modelNote = app.buttons["Модель, точность и происхождение"]
+      if !modelNote.isHittable { material.swipeUp() }
+      XCTAssertTrue(modelNote.isHittable, "Local scrolling exposes the complete plot and its explanation")
+      XCTAssertEqual(material.frame.midX, original.midX, accuracy: 4)
+      XCTAssertEqual(material.frame.midY, original.midY, accuracy: 4, "Local scrolling must not pan the board")
+      let plot = XCTAttachment(screenshot: app.screenshot()); plot.name = document ? "wave-document-plot" : "wave-board-plot"
+      plot.lifetime = .keepAlways; add(plot)
+      material.swipeDown()
+      let recording = app.switches["Запись эксперимента"]
+      if !recording.isHittable { material.swipeDown() }
+      recording.tap()
+      let play = app.buttons["Воспроизвести запись"]
+      if !play.isHittable { material.swipeUp() }
+      XCTAssertTrue(play.waitForExistence(timeout: 12)); play.tap()
+      let pause = app.buttons["Пауза записи"]; XCTAssertTrue(pause.waitForExistence(timeout: 5)); pause.tap()
+      let seek = app.sliders["Момент записи"]
+      if !seek.isHittable { material.swipeUp() }
+      XCTAssertTrue(seek.waitForExistence(timeout: 5)); seek.coordinate(withNormalizedOffset: .init(dx: 0.4, dy: 0.5)).tap()
+      let playhead = try XCTUnwrap(seek.value as? String)
+      XCUIDevice.shared.press(.home); app.activate()
+      XCTAssertTrue(play.waitForExistence(timeout: 8), "Background return must not autoplay")
+      app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); launchPortraitFixture(app)
+      if !seek.isHittable { app.webViews.containing(.staticText, identifier: "Волна помнит границу.").firstMatch.swipeUp() }
+      XCTAssertTrue(seek.waitForExistence(timeout: 15)); XCTAssertEqual(seek.value as? String, playhead, "Cold SQLite restores the video playhead")
+      XCTAssertTrue(play.exists)
+      app.terminate()
+    }
+  }
+
   func testThreeDimensionalFirstOrbitSelectionPinchAndColdReopenOnBoardAndDocument() throws {
     continueAfterFailure = false
     let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "gears-program", withExtension: "json"))
