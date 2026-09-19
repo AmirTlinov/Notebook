@@ -81,6 +81,7 @@ struct DocumentStateMessage: Encodable, Sendable {
   let key: String
   let documentID: UUID
   let states: [String: JSONValue]
+  let versions: [String: ContentFieldVersion]
 }
 
 /// Pages share one immutable source. Its body crosses the browser boundary
@@ -218,7 +219,8 @@ final class DocumentStateSnapshot {
   init(documentID: UUID, records: [DocumentStateRecord]) {
     self.records = records
     message = .init(key: UUID().uuidString, documentID: documentID,
-      states: Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0.value) }))
+      states: Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0.value) }),
+      versions: Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0.valueVersion) }))
   }
 
   func encodedJSON() async throws -> String {

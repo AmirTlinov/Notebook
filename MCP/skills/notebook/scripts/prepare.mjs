@@ -4,6 +4,7 @@ import {execFileSync} from 'node:child_process';
 import {resolve,dirname,extname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {makeRecipe,chartSVG} from './recipes.mjs';
+import {loadScienceExample} from './science-examples.mjs';
 
 const maxImageBytes=700_000;
 function size(bytes,mimeType,path) {
@@ -40,6 +41,10 @@ export async function loadImage(path,{fit=false,outputPath}={}) {
 
 export async function prepare(name,input,{baseDirectory='.',outputPath,runID}={}) {
   input=structuredClone(input);
+  if(name==='animation'&&input.example) {
+    for(const field of ['html','css','javaScript'])if(input[field]!==undefined||input[`${field}Path`]!==undefined)throw new Error('Choose a named example or source files, not both');
+    input={...await loadScienceExample(input.example),...input};
+  }
   if(name==='plot') {
     const svg=chartSVG(input),width=input.width??720,height=input.height??420;
     input.image={dataURL:`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`,width,height};

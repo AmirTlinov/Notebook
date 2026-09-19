@@ -39,7 +39,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
           notebook.commit({count:notebook.state.count+1});
           document.querySelector('output').textContent=String(notebook.state.count);
         };
-        """, initialState: .object(["count": .number(3)]), height: 100)])
+      notebook.ready(Promise.resolve());
+      """, initialState: .object(["count": .number(3)]), height: 100)])
     let fixture = try ProgramFixture(document: document, showsNeighbour: false)
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "counter") != nil }
@@ -68,7 +69,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
         const render=()=>document.querySelector('output').textContent=String(notebook.state.count);
         document.querySelector('button').onclick=()=>{notebook.commit({count:notebook.state.count+1});render()};
         addEventListener('notebookstate',render);
-        """, initialState: .object(["count": .number(0)]), height: 100),
+      notebook.ready(Promise.resolve());
+      """, initialState: .object(["count": .number(0)]), height: 100),
       .markdown(id: "text", source: String(repeating: "Independent physical paper stays measured and installed.\n\n", count: 160)),
       .interactive(id: "far", html: "<button>Far control</button>", height: 100)])
     let fixture = try ProgramFixture(document: document)
@@ -140,12 +142,22 @@ final class DocumentProgramOwnerTests: XCTestCase {
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) }
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
+    // Canonical layout is demand-driven. A far link asks its existing source
+    // owner for the remaining index; waiting alone does not schedule that work.
+    let paper = try XCTUnwrap(fixture.paper(in: 0))
+    let renderer = try XCTUnwrap(paper.navigationDelegate as? DocumentWebCoordinator)
+    // The native paper may be mounted before its source receipt authorizes links.
+    try await wait(message: { fixture.diagnostics }) { renderer.currentLinkOrigin != nil }
+    renderer.resolveLink("#bad", origin: try XCTUnwrap(renderer.currentLinkOrigin)) { _ in }
     try await wait(message: { fixture.diagnostics }) { source.layout?.isComplete == true }
     let layout = try XCTUnwrap(source.layout)
     let target = try XCTUnwrap(layout.regions.first { $0.id == "bad" }?.pageIndex)
     XCTAssertGreaterThan(target, 1)
     fixture.showPages(current: 0, neighbour: target); fixture.restorePresentation(1)
-    try await wait(message: { fixture.diagnostics }) { !fixture.preparationErrors.isEmpty }
+    try await wait(message: {
+      "target=\(target) \(fixture.diagnostics)\n" +
+        DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: fixture.resources)
+    }) { !fixture.preparationErrors.isEmpty }
     XCTAssertNotEqual(fixture.ready[1], true, "A failed program cannot yield a complete curl picture")
     fixture.activity.prepare(target, presentation: .live)
     let demand = try XCTUnwrap(fixture.activity.preparationDemand)
@@ -164,7 +176,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
   func testIndependentLandingDoesNotJoinAnInvisibleProgramsCheckpoint() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [
       .interactive(id: "program", html: "<button>Count</button>", css: "",
-        javaScript: "notebook.commit({count:7})", initialState: .null, height: 200),
+        javaScript: "notebook.commit({count:7});notebook.ready(Promise.resolve());", initialState: .null, height: 200),
       .markdown(id: "body", source: String(repeating: "An independent paper does not wait for an invisible program's disk acknowledgement.\n\n", count: 200) + "\n\n# Far")
     ])
     let fixture = try ProgramFixture(document: document, showsNeighbour: false)
@@ -695,7 +707,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
           notebook.commit({count:(notebook.state.count||0)+1});
           document.querySelector('output').textContent=String(notebook.state.count);
         };
-        """, initialState: .object(["count": .number(0)]), height: 90)])
+      notebook.ready(Promise.resolve());
+      """, initialState: .object(["count": .number(0)]), height: 90)])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.web(block: "counter") != nil }
@@ -900,9 +913,100 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertEqual(editing, document.blocks[0].source, "Return must expose the working source, not just a cached picture")
   }
 
+  func testBackgroundCheckpointFreezesTheModelAndForegroundResumesTheSameHeap() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "clock",
+      html: "<output></output>", javaScript: """
+        let phase=0,timer;
+        const tick=()=>{phase++;document.querySelector('output').textContent=phase};
+        const start=()=>{timer=setInterval(tick,10)};
+        notebook.lifecycle({pause(){clearInterval(timer)},checkpoint(){return {phase}},resume:start,dispose(){clearInterval(timer)}});
+        notebook.ready(Promise.resolve().then(start));
+        """, initialState: .object(["phase": .number(0)]), height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "clock") != nil }
+    let web = try XCTUnwrap(fixture.web(block: "clock"))
+    try await Task.sleep(for: .milliseconds(100))
+    let saved = await DocumentPagePresentationOwner.checkpointPrograms(documentID: document.id, resources: fixture.resources, resume: false)
+    XCTAssertTrue(saved)
+    let phase = fixture.number("clock", field: "phase")
+    XCTAssertGreaterThan(phase, 0)
+    try await Task.sleep(for: .milliseconds(100))
+    let frozen = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertEqual(frozen, phase)
+    await DocumentPagePresentationOwner.resumePrograms(resources: fixture.resources)
+    try await Task.sleep(for: .milliseconds(100))
+    let resumed = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertGreaterThan(resumed ?? 0, phase)
+    XCTAssertTrue(fixture.web(block: "clock") === web)
+  }
+
+  func testClosingAnObsoleteProgramDoesNotPinItsSupersededHeap() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "clock", html: "<output>old</output>",
+      javaScript: "notebook.lifecycle({checkpoint:()=>({phase:0.25})});notebook.ready(Promise.resolve());",
+      initialState: .object(["phase": .number(0)]), height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "clock") != nil }
+    fixture.onCheckpoint = { [weak fixture] _ in fixture?.replaceState(blockID: "clock", value: .object(["phase": .number(0.75)])) }
+    fixture.close()
+    try await wait(message: { fixture.diagnostics }) { fixture.resources.activeWebSurfaceCount == 0 }
+    XCTAssertEqual(fixture.number("clock", field: "phase"), 0.75)
+    XCTAssertNil(fixture.checkpointValues["clock"], "The superseded heap must not overwrite its successor")
+  }
+
+  func testClosingDocumentRetainsAnUnacceptedModelUntilExplicitRetry() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "clock",
+      html: "<output>0.625</output>", javaScript: """
+        notebook.lifecycle({checkpoint:()=>({phase:0.625})});notebook.ready(Promise.resolve());
+        """, initialState: .object(["phase": .number(0)]), height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "clock") != nil }
+    var attempts = 0
+    fixture.onCheckpoint = { _ in attempts += 1 }
+    fixture.acceptsCheckpoints = false
+    fixture.close()
+    try await wait(message: { fixture.diagnostics }) { attempts == 1 }
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertGreaterThan(fixture.resources.activeWebSurfaceCount, 0, "Dismantling is not permission to discard unsaved author state")
+    XCTAssertNil(fixture.checkpointValues["clock"])
+    fixture.acceptsCheckpoints = true
+    DocumentPagePresentationOwner.retryRetiringPrograms(resources: fixture.resources)
+    try await wait(message: { fixture.diagnostics }) { fixture.resources.activeWebSurfaceCount == 0 }
+    XCTAssertEqual(fixture.checkpointValues["clock"], .object(["phase": .number(0.625)]))
+    XCTAssertEqual(fixture.resources.rasterAdmission.pinnedBytes, 0)
+  }
+
+  func testReturnProgramFreezesItsModelWithoutWaitingForPoolPressure() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
+      html: "<output>0</output>", javaScript: """
+        let phase=0,timer=setInterval(()=>{phase++;document.querySelector('output').textContent=phase},10);
+        notebook.lifecycle({pause(){clearInterval(timer)},checkpoint(){return {phase}},resume(){},dispose(){clearInterval(timer)}});
+        notebook.ready(Promise.resolve());
+        """, initialState: .object(["phase": .number(0)]), height: 100)])
+    let resources = SceneRenderResources(maximumWebSurfaces: 6)
+    let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: resources)
+    let lifetime = owner.retainOpenDocument()
+    defer { fixture.close(); lifetime.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "program") != nil }
+    let original = try XCTUnwrap(fixture.web(block: "program"))
+    try await Task.sleep(for: .milliseconds(100))
+    lifetime.parkForReturn(); fixture.retirePresentation(0)
+    try await wait(message: { fixture.diagnostics }) { fixture.checkpoints.contains("program") }
+    let frozen = try await original.evaluateJavaScript("document.querySelector('output').textContent") as? String
+    try await Task.sleep(for: .milliseconds(200))
+    let later = try await original.evaluateJavaScript("document.querySelector('output').textContent") as? String
+    XCTAssertEqual(later, frozen)
+    XCTAssertEqual(fixture.number("program", field: "phase"), Double(frozen ?? ""))
+    lifetime.resume(); fixture.restorePresentation(0)
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "program") === original }
+  }
+
   func testReturnProgramsYieldTheirExistingPoolSlotsAfterCheckpointWhenForegroundNeedsThem() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
-      html: "<button>Retained return program</button>", javaScript: "notebook.commit({count:1})",
+      html: "<button>Retained return program</button>", javaScript: "notebook.commit({count:1});notebook.ready(Promise.resolve());",
       initialState: .object(["count": .number(0)]), height: 100)])
     let resources = SceneRenderResources(maximumWebSurfaces: 3)
     let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
@@ -929,7 +1033,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
 
   func testRefusedReturnCheckpointDoesNotBlockReclaimingAnotherIdleSurface() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
-      html: "<button>Unsaved return program</button>", javaScript: "notebook.commit({count:1})",
+      html: "<button>Unsaved return program</button>", javaScript: "notebook.commit({count:1});notebook.ready(Promise.resolve());",
       initialState: .object(["count": .number(0)]), height: 100)])
     let resources = SceneRenderResources(maximumWebSurfaces: 3)
     let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
@@ -1127,6 +1231,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
       addEventListener('message',event=>{if(event.data==='increment'){count++;report();}if(event.data==='probe')report();});
       setInterval(()=>{ticks++;},40);
       notebook.commit({...notebook.state,nonce,count,mounts:(notebook.state.mounts||0)+1});
+      notebook.ready(Promise.resolve());
       """, initialState: .object(["count": .number(0)]), height: 2048)])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
@@ -1174,7 +1279,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
 
   func testNeverReadyNeighborDoesNotSwitchOrDisableTheCurrentProgram() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [
-      .interactive(id: "current", html: "<button>Ready control</button>", css: "", javaScript: "notebook.commit({started:true})", initialState: .null, height: 1400),
+      .interactive(id: "current", html: "<button>Ready control</button>", css: "", javaScript: "notebook.commit({started:true});notebook.ready(Promise.resolve());", initialState: .null, height: 1400),
       .interactive(id: "delayed", html: "<button>Waiting control</button>", css: "", javaScript: "notebook.ready(new Promise(()=>{}))", initialState: .null, height: 200)
     ])
     let fixture = try ProgramFixture(document: document)
@@ -1197,6 +1302,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
       let count=notebook.state.count||0;const nonce=crypto.randomUUID();
       notebook.commit({...notebook.state,count,nonce,mounts:(notebook.state.mounts||0)+1});
       addEventListener('message',event=>{if(event.data==='increment')notebook.commit({...notebook.state,count:++count});});
+      notebook.ready(Promise.resolve());
       """, initialState: .object(["count": .number(0)]), height: 2000)
     }
     let document = DocumentDocument(actor: UUID(), blocks: [program("program"), program("middle"), program("last")])
@@ -1227,7 +1333,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
   func testAttentionCapturesLivePixelsEvenWhenProgramChangesWithoutAStateCommit() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
       html: "<div id='swatch' style='height:200px;background:#ff0000'></div>", css: "",
-      javaScript: "addEventListener('message',event=>{if(event.data==='blue'){document.querySelector('#swatch').style.background='#0000ff';requestAnimationFrame(()=>window.postMessage('blue-ready','*'));}});",
+      javaScript: "addEventListener('message',event=>{if(event.data==='blue'){document.querySelector('#swatch').style.background='#0000ff';requestAnimationFrame(()=>window.postMessage('blue-ready','*'));}});;notebook.ready(Promise.resolve());",
       initialState: .null, height: 200)])
     let fixture = try ProgramFixture(document: document)
     fixture.showPages(current: 0, neighbour: 0)
@@ -1285,6 +1391,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
         if(event.data==='focus'){document.querySelector('input').focus();notebook.commit({...notebook.state,focused:true});}
         if(event.data==='increment')notebook.commit({...notebook.state,count:(notebook.state.count||0)+1});
       });
+      notebook.ready(Promise.resolve());
       """, initialState: .object(["count": .number(0)]), height: 2000)])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
@@ -1325,7 +1432,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
   func testAnOffscreenProgramReleasesItsExecutorAfterWritingEvenWhenNoRasterCanBeAdmitted() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: (0..<4).map { index in
       .interactive(id: "program-\(index)", html: "<button>Control \(index)</button>",
-        javaScript: "notebook.commit({accepted:1})", height: 100)
+        javaScript: "notebook.commit({accepted:1});notebook.ready(Promise.resolve());", height: 100)
     })
     let resources = SceneRenderResources(maximumRasterCount: 0)
     let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
@@ -1351,7 +1458,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
         const render=()=>document.querySelector('#value').textContent=String(notebook.state.count||0);
         document.querySelector('button').onclick=()=>{notebook.commit({...notebook.state,count:(notebook.state.count||0)+1});render()};
         notebook.commit({...notebook.state,mounts:(notebook.state.mounts||0)+1});render();
-        """, initialState: .object(["count": .number(0)]), height: 90)
+      notebook.ready(Promise.resolve());
+      """, initialState: .object(["count": .number(0)]), height: 90)
     })
     let fixture = try ProgramFixture(document: document, showsNeighbour: false)
     defer { fixture.close() }
@@ -1541,11 +1649,16 @@ private final class ProgramFixture {
         snapshotPixelWidth: thumbnailPresentations.contains(index) ? 256 : nil, onPreparationFailure: { [weak self] error in
           self?.preparationErrors.append("page \(index): \(error)")
         },
-        onStateCheckpoint: { [weak self] block, value, version in
-          guard let self, document.sourceVersion(blockID: block) == version, self.value(block) == value else { return false }
+        onStateCheckpoint: { [weak self] block, value, version, stateVersion in
+          guard let self else { return nil }
           await onCheckpoint(block)
-          guard acceptsCheckpoints else { return false }
-          checkpoints.insert(block); checkpointValues[block] = value; return true
+          guard acceptsCheckpoints else { throw SceneRenderError.snapshotPending("test_writer_unavailable") }
+          guard document.sourceVersion(blockID: block) == version,
+            state.records.first(where: { $0.id == block })?.valueVersion == stateVersion else { return nil }
+          _ = state.commit(blockID: block, value: value, actor: actor)
+          checkpoints.insert(block); checkpointValues[block] = value
+          let accepted = state.records.first { $0.id == block }?.valueVersion
+          refresh(); return accepted
         }, measurements: measurements), in: hosts[index], resources: resources)
     }
   }
@@ -1637,6 +1750,7 @@ private final class ProgramFixture {
     throw SceneRenderError.snapshotPending("test_current_document_capture")
   }
   func close() {
+    retiredPresentations = Set(coordinators.indices)
     coordinators.forEach { $0.invalidate() }; window.isHidden = true; window.rootViewController = nil
   }
 }

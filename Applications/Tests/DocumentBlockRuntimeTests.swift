@@ -6,6 +6,115 @@ import XCTest
 
 @MainActor
 final class DocumentBlockRuntimeTests: XCTestCase {
+  func testLCCircuitQuarterPeriodsAndCheckpointUseTheShippedAuthorSources() async throws {
+    func source(_ suffix: String) throws -> String {
+      let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "lc", withExtension: suffix, subdirectory: "animation"))
+      return try String(contentsOf: url, encoding: .utf8)
+    }
+    let fixture = try RuntimeFixture(block: .interactive(id: "lc", html: source("html"),
+      css: source("css"), javaScript: source("js"), height: 720), width: 760)
+    defer { fixture.close() }
+    try await fixture.waitUntilReady()
+    let web = try XCTUnwrap(fixture.runtime.webView)
+    let overflows = try await web.evaluateJavaScript("document.documentElement.scrollHeight > innerHeight + 1") as? Bool
+    XCTAssertEqual(overflows, false, "The explanatory footer must stay inside the physical frame")
+    for quarter in 0..<4 {
+      let snapshot = try await fixture.runtime.capture(sourceOffset: 0, height: 720, pixelWidth: 760)
+      let attachment = XCTAttachment(image: snapshot.image); snapshot.release()
+      attachment.name = "LC-phase-\(quarter)-of-4"; attachment.lifetime = .keepAlways; add(attachment)
+      let m = try await web.evaluateJavaScript("sampleLC({phase:\(Double(quarter)/4),inductance:100,capacitance:25,voltage:5})") as? [String:Double]
+      XCTAssertEqual((m?["electric"] ?? -1) + (m?["magnetic"] ?? -1), 0.0003125, accuracy: 1e-10)
+      _ = try await web.evaluateJavaScript("document.querySelector('#forward').click();true")
+      try await Task.sleep(for: .milliseconds(40))
+      XCTAssertEqual(fixture.runtime.value["phase"], .number(Double((quarter+1)%4)/4))
+    }
+    _ = try await web.evaluateJavaScript("document.querySelector('#play').click();true")
+    try await Task.sleep(for: .milliseconds(180))
+    let value = try await fixture.runtime.checkpoint()
+    XCTAssertNotEqual(value["phase"], .number(0))
+    let shown = try await web.evaluateJavaScript("Number(document.querySelector('#phase').value)") as? Double
+    if case .number(let phase) = value["phase"] { XCTAssertEqual(shown ?? -1, phase, accuracy: 0.001) }
+    else { XCTFail("Checkpoint must contain the shown phase") }
+  }
+
+  func testCheckpointFreezesTheActualAnimatedMomentBeforeAcceptingStateAndPixels() async throws {
+    let block = DocumentBlock.interactive(id: "animation", html: "<output></output>", javaScript: """
+      let phase=0,frame=0;
+      const draw=()=>document.querySelector('output').textContent=String(phase);
+      const tick=()=>{phase++;draw();frame=requestAnimationFrame(tick)};
+      notebook.lifecycle({pause:()=>cancelAnimationFrame(frame),checkpoint:()=>({phase}),
+        resume:()=>{frame=requestAnimationFrame(tick)},dispose:()=>cancelAnimationFrame(frame)});
+      notebook.ready(Promise.resolve().then(()=>{draw();frame=requestAnimationFrame(tick)}));
+      """, initialState: .object(["phase": .number(0)]), height: 100)
+    let fixture = try RuntimeFixture(block: block)
+    defer { fixture.close() }
+    try await fixture.waitUntilReady()
+    let web = try XCTUnwrap(fixture.runtime.webView)
+    try await Task.sleep(for: .milliseconds(100))
+    let saved = try await fixture.runtime.checkpoint()
+    XCTAssertNotEqual(saved, block.initialState, "Checkpoint must read the model, not the last button commit")
+    XCTAssertEqual(fixture.runtime.value, saved)
+    let first = try await fixture.runtime.capture(sourceOffset: 0, height: 100, pixelWidth: 360)
+    defer { first.release() }
+    try await Task.sleep(for: .milliseconds(100))
+    let last = try await fixture.runtime.capture(sourceOffset: 0, height: 100, pixelWidth: 360)
+    defer { last.release() }
+    XCTAssertEqual(first.image.pngData(), last.image.pngData(), "The frozen picture must not drift after the state checkpoint")
+    let shown = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertEqual(shown.map(JSONValue.number), saved["phase"])
+    await fixture.runtime.resume()
+    try await Task.sleep(for: .milliseconds(100))
+    let resumed = try await web.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
+    XCTAssertGreaterThan(resumed ?? 0, shown ?? 0)
+  }
+
+  func testRejectedCheckpointRetainsTheLiveRuntimeForRecovery() async throws {
+    let fixture = try RuntimeFixture(block: .interactive(id: "rejected", html: "<output>0.5</output>", javaScript: """
+      notebook.lifecycle({checkpoint:()=>({phase:0.5})});notebook.ready(Promise.resolve());
+      """, initialState: .object(["phase": .number(0)]), height: 100))
+    defer { fixture.close() }
+    try await fixture.waitUntilReady()
+    let web = fixture.runtime.webView
+    fixture.runtime.onStateCheckpoint = { _, _ in throw SceneRenderError.snapshotPending("checkpoint_not_accepted") }
+    do { _ = try await fixture.runtime.checkpoint(); XCTFail("Unaccepted state cannot retire the program") }
+    catch { XCTAssertTrue(String(describing:error).contains("checkpoint_not_accepted")) }
+    XCTAssertTrue(fixture.runtime.webView === web)
+    XCTAssertTrue(fixture.runtime.ready)
+    XCTAssertNil(fixture.runtime.failure)
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 1)
+    await fixture.runtime.resume()
+    let suspended = try await web?.evaluateJavaScript("documentProgram.suspended") as? Bool
+    XCTAssertEqual(suspended, false)
+  }
+
+  func testCheckpointCannotOverwriteAnUnobservedExternalState() async throws {
+    let fixture = try RuntimeFixture(block: .interactive(id: "stale", html: "<output>0.5</output>", javaScript: """
+      notebook.lifecycle({checkpoint:()=>({phase:0.5})});notebook.ready(Promise.resolve());
+      """, initialState: .object(["phase": .number(0)]), height: 100))
+    defer { fixture.close() }
+    try await fixture.waitUntilReady()
+    fixture.runtime.onStateCheckpoint = { _, _ in nil }
+    var writes = 0
+    fixture.runtime.onStateChange = { _ in writes += 1; return nil }
+    do { _ = try await fixture.runtime.checkpoint(); XCTFail("A newer state owns this program") }
+    catch { XCTAssertTrue(error is NotebookProgramCheckpointError) }
+    XCTAssertEqual(writes, 0)
+    XCTAssertTrue(fixture.runtime.ready)
+    await fixture.runtime.resume()
+  }
+
+  func testMissingRejectedAndHungReadinessAreLocalFailuresNotReadySurfaces() async throws {
+    for source in ["window.unfinished=true", "notebook.ready(Promise.reject(new Error('setup failed')))",
+      "notebook.ready(new Promise(()=>{}))"] {
+      let fixture = try RuntimeFixture(block: .interactive(id: "unready", html: "<output>Not ready</output>",
+        javaScript: source, height: 100))
+      defer { fixture.close() }
+      try await wait(seconds: 9) { fixture.runtime.failure != nil }
+      XCTAssertFalse(fixture.runtime.ready)
+      XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 0)
+    }
+  }
+
   func testHTMLScriptReceivesTheAPIAndAnOlderStateEchoCannotUndoItsInput() async throws {
     let block = DocumentBlock.interactive(id: "counter", html: """
       <script>notebook.commit({count:0,inline:true});notebook.ready(Promise.resolve());</script>
@@ -105,8 +214,8 @@ final class DocumentBlockRuntimeTests: XCTestCase {
     return stride(from: 0, to: bytes.count, by: 4).filter { bytes[$0] < 90 && bytes[$0 + 2] > 180 }.count
   }
 
-  private func wait(_ predicate: () -> Bool) async throws {
-    let deadline = ContinuousClock.now + .seconds(5)
+  private func wait(seconds: Double = 5, _ predicate: () -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(seconds)
     while !predicate(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     XCTAssertTrue(predicate())
   }
@@ -120,18 +229,23 @@ private final class RuntimeFixture {
   private var journal: DocumentStateJournal
   let overlay = DocumentProgramOverlayHost()
   let window: UIWindow
-  init(block: DocumentBlock, resources: SceneRenderResources = SceneRenderResources(), priority: WebPriority = .input) throws {
+  init(block: DocumentBlock, resources: SceneRenderResources = SceneRenderResources(), priority: WebPriority = .input, width: Double = 360) throws {
     self.resources = resources
     document = .init(actor: UUID(), blocks: [block])
     journal = .init(id: document.id, actor: UUID())
     runtime = .init(documentID: document.id, block: block, sourceVersion: document.sourceVersion(blockID: block.id),
-      value: block.initialState, stateVersion: nil, width: 360, resources: resources)
+      value: block.initialState, stateVersion: nil, width: width, resources: resources)
     window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let root = UIViewController(); window.rootViewController = root
-    overlay.frame = .init(x: 0, y: 0, width: 360, height: 700); root.view.addSubview(overlay)
+    overlay.frame = .init(x: 0, y: 0, width: width, height: 700); root.view.addSubview(overlay)
     window.makeKeyAndVisible()
     runtime.onStateChange = { [weak self] value in
       guard let self else { return nil }
+      _ = journal.commit(blockID: block.id, value: value, actor: journal.stamp.actor)
+      return journal.records.first { $0.id == block.id }?.valueVersion
+    }
+    runtime.onStateCheckpoint = { [weak self] value, version in
+      guard let self, journal.records.first(where: { $0.id == block.id })?.valueVersion == version else { return nil }
       _ = journal.commit(blockID: block.id, value: value, actor: journal.stamp.actor)
       return journal.records.first { $0.id == block.id }?.valueVersion
     }
@@ -145,8 +259,8 @@ private final class RuntimeFixture {
     XCTAssertTrue(runtime.ready)
     let web = try XCTUnwrap(runtime.webView)
     XCTAssertTrue(overlay.present([.init(blockID: runtime.block.id, webView: web,
-      rect: .init(x: 0, y: 0, width: 360, height: min(700, runtime.block.height)), sourceOffset: 0, fullSize: web.bounds.size)],
-      paperSize: .init(width: 360, height: 700), interactive: true))
+      rect: .init(x: 0, y: 0, width: runtime.blockWidth, height: min(700, runtime.block.height)), sourceOffset: 0, fullSize: web.bounds.size)],
+      paperSize: .init(width: runtime.blockWidth, height: 700), interactive: true))
   }
   func close() { runtime.stop(); overlay.removePrograms(); window.isHidden = true; window.rootViewController = nil }
 }

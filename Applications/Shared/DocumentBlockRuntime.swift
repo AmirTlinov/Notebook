@@ -37,8 +37,10 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   private var presentedRevision: UInt64?
   private var appliedValue: JSONValue
   private var observedStateVersion: ContentFieldVersion?
+  private var checkpointTask: Task<JSONValue, Error>?
   var onChange: () -> Void = { }
   var onStateChange: (JSONValue) -> ContentFieldVersion? = { _ in nil }
+  var onStateCheckpoint: (JSONValue, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _ in nil }
   var requiresStateAcceptance = true
   var onFocus: (Bool) -> Void = { _ in }
   var onLink: (String) -> Void = { _ in }
@@ -143,15 +145,31 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   /// Suspends new commits before reading the exact explicit state. The caller
   /// must confirm persistence and window identity before allowing retirement.
   func checkpoint() async throws -> JSONValue {
+    if let checkpointTask { return try await checkpointTask.value }
+    let task = Task { @MainActor [self] in try await persistCheckpoint() }
+    checkpointTask = task
+    defer { checkpointTask = nil }
+    return try await task.value
+  }
+
+  private func persistCheckpoint() async throws -> JSONValue {
     guard ready, !focused, let webView, let lease else { throw CancellationError() }
     let borrow = try lease.borrow(); defer { borrow.release() }
-    let raw = try await webView.evaluateJavaScript("documentProgram.suspend()")
-    let data = try JSONSerialization.data(withJSONObject: raw ?? NSNull(), options: [.fragmentsAllowed])
-    return try JSONDecoder().decode(JSONValue.self, from: data)
+    let basis = observedStateVersion, expectedRevision = revision
+    let next = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "documentProgram", in: webView)
+    guard !stopped, self.webView === webView, !Task.isCancelled,
+      observedStateVersion == basis, revision == expectedRevision else { throw CancellationError() }
+    guard let accepted = try await onStateCheckpoint(next, basis) else {
+      throw NotebookProgramCheckpointError.superseded
+    }
+    guard !stopped, self.webView === webView, !Task.isCancelled, revision == expectedRevision,
+      observedStateVersion == basis || observedStateVersion == accepted else { throw CancellationError() }
+    value = next; appliedValue = next; observedStateVersion = accepted
+    return next
   }
 
   func resume() async {
-    _ = try? await webView?.evaluateJavaScript("documentProgram.resume()")
+    if let webView { _ = try? await NotebookProgramBridge.lifecycle("resume", controller: "documentProgram", in: webView) }
   }
 
   func blur() async { _ = try? await webView?.evaluateJavaScript("document.activeElement?.blur();true") }
@@ -243,7 +261,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     ready = false; failure = nil; revision = 0; presentedRevision = nil; releaseSurface(); start(priority: .input)
   }
 
-  func stop() { stopped = true; startTask?.cancel(); startTask = nil; startID = nil; releaseSurface() }
+  func stop() { stopped = true; checkpointTask?.cancel(); checkpointTask = nil; startTask?.cancel(); startTask = nil; startID = nil; releaseSurface() }
   private func fail(_ error: Error) {
     failure = error; ready = false; focused = false; presentedRevision = nil
     // A failed program keeps its accepted explicit state, not a broken slot
@@ -253,6 +271,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   private func releaseSurface() {
     readinessDeadline?.cancel(); readinessDeadline = nil
     initialNavigationPending = false
+    webView?.evaluateJavaScript("void documentProgram.dispose().catch(()=>{})", completionHandler: nil)
     webView?.stopLoading(); webView?.navigationDelegate = nil
     webView?.configuration.userContentController.removeScriptMessageHandler(forName: "documentProgram")
     if let webView {
@@ -276,19 +295,26 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none';img-src data: blob:;style-src 'unsafe-inline';script-src 'unsafe-inline';font-src data:;media-src data: blob:;connect-src 'none';form-action 'none';base-uri 'none';object-src 'none'">
     <style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}\(css)</style><script>(()=>{
-      const runtimeID=\(try encoded(id.uuidString));let value=\(try encoded(value)),suspended=false,declaredReady=null,revision=0n;
+      \(NotebookProgramBridge.script)
+      const runtimeID=\(try encoded(id.uuidString));
       const post=(kind,extra={})=>webkit.messageHandlers.documentProgram.postMessage({runtimeID,kind,...extra});
-      const stable=value=>JSON.stringify(value,(_,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);
       const painted=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      const present=async expected=>{await painted();if(revision===expected)post('presented',{revision:String(expected)})};
+      const present=async expected=>{await painted();if(documentProgram.revision===expected)post('presented',{revision:expected})};
       const focus=()=>post('focus',{value:!!document.activeElement?.matches('input,textarea,[contenteditable=true]')});
       addEventListener('focusin',focus);addEventListener('focusout',()=>queueMicrotask(focus));
       addEventListener('click',event=>{const link=event.target.closest('a[href]');if(!link)return;event.preventDefault();post('link',{href:link.getAttribute('href'),userActivated:event.isTrusted})});
       addEventListener('error',event=>post('failure',{message:String(event.error || event.message)}));
       addEventListener('unhandledrejection',event=>post('failure',{message:String(event.reason)}));
-      window.notebook=Object.freeze({get state(){return value},commit(next){if(suspended||stable(next)===stable(value))return false;value=next;revision++;post('state',{value});present(revision);return true},ready(promise){declaredReady=Promise.resolve(promise);return declaredReady}});
-      window.documentProgram=Object.freeze({async apply(next,expected){if(String(revision)!==expected)return false;if(stable(value)!==stable(next)){value=next;dispatchEvent(new CustomEvent('notebookstate',{detail:value}))}await painted();return String(revision)===expected},suspend(){suspended=true;return value},resume(){suspended=false;return true}});
-      addEventListener('load',async()=>{try{await document.fonts.ready;await Promise.all([...document.images].map(image=>image.decode().catch(()=>{})));await declaredReady;await painted();post('ready',{revision:String(revision)})}catch(error){post('failure',{message:String(error)})}});
+      window.documentProgram=createNotebookProgram({state:\(try encoded(value)),paint:painted,
+        onCommit:(value,revision)=>{post('state',{value,revision});present(revision)},
+        report:(kind,message)=>{if(kind!=='program_lifecycle_error')post('failure',{message:kind+': '+message})}});
+      window.notebook=documentProgram.api;
+      addEventListener('load',async()=>{try{
+        await document.fonts.ready;
+        await Promise.all([...document.images].map(image=>image.decode()));
+        const receipt=await documentProgram.start({requiresReady:\(!block.javaScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || block.html.localizedCaseInsensitiveContains("<script"))});
+        post('ready',receipt);
+      }catch(error){post('failure',{message:String(error)})}});
       addEventListener('DOMContentLoaded',()=>{try{const script=document.createElement('script');script.textContent=\(try encoded(block.javaScript));document.body.append(script)}catch(error){post('failure',{message:String(error)})}});
     })()</script></head><body>\(block.html)</body></html>
     """

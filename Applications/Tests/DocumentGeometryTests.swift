@@ -93,6 +93,7 @@ final class DocumentGeometryTests: XCTestCase {
   private func descendant<T: UIView>(_ type: T.Type, in view: UIView) -> T? {
     if let value = view as? T { return value }
     return view.subviews.lazy.compactMap { self.descendant(type, in: $0) }.first
+
   }
 
   @MainActor

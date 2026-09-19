@@ -577,7 +577,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
     let resources = SceneRenderResources(maximumWebSurfaces: 2)
     let document = DocumentDocument(actor: UUID(), blocks: [
       .interactive(id: "initial", html: "<p>Initial state</p>", css: "",
-        javaScript: "notebook.commit({ready:true})", initialState: .null, height: 100)
+        javaScript: "notebook.commit({ready:true});notebook.ready(Promise.resolve())", initialState: .null, height: 100)
     ])
     var activeStates: [JSONValue] = [], passiveStates: [JSONValue] = [], readyAtCommit: [Bool] = []
     var activeCoordinator: DocumentWebCoordinator?

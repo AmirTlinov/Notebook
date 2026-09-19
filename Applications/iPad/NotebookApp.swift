@@ -71,6 +71,7 @@ struct NotebookApp: App {
         guard phase == .background else { return }
         let task = UIApplication.shared.beginBackgroundTask(withName: "Сохранение принятого ввода")
         Task {
+          _ = await model.finishProgramBoundary()
           await model.finishPendingInteraction()
           if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
         }

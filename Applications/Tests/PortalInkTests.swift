@@ -120,7 +120,7 @@ final class PortalInkTests: XCTestCase {
     var element = SpatialElement(id: UUID().uuidString, surface: .board, kind: .web,
       frame: .init(x: 0, y: 0, width: 300, height: 180), worldOrigin: .zero,
       source: "Portal state", html: "<div id='value'></div>",
-      javaScript: "document.body.style.background=notebook.state.value===1?'#e02020':'#2040e0'",
+      javaScript: "document.body.style.background=notebook.state.value===1?'#e02020':'#2040e0';notebook.ready(Promise.resolve())",
       state: .object(["value": .number(1)]), stamp: .init(counter: 0, actor: UUID()))
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene)

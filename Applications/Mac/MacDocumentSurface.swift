@@ -44,7 +44,8 @@ struct MacDocumentSurface: View {
         if layout.isComplete, page >= layout.pageCount { _ = model.selectDocumentPage(layout.pageCount - 1, documentID: document.id) }
       }, onLinkActivation: model.activateDocumentLink,
       onStateChange: { block, value in model.commitDocumentState(documentID: document.id, blockID: block, value: value, sourceVersion: document.sourceVersion(blockID: block)) },
-      onStateCheckpoint: { try await model.checkpointDocumentState(documentID: document.id, blockID: $0, value: $1, sourceVersion: $2) },
+      onStateCheckpoint: { try await model.checkpointDocumentState(documentID: document.id, blockID: $0, value: $1, sourceVersion: $2, stateVersion: $3) },
+
       measurements: model.documentMeasurements)
       .overlay(alignment: .bottom) { if let failure = model.documentPageNavigationStatus?.failure {
         VStack { Text(failure.message); Button("Повторить") { model.retryDocumentPageNavigation() } }.padding().background(.regularMaterial)

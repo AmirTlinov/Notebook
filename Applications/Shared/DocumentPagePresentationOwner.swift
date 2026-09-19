@@ -21,7 +21,7 @@ struct DocumentPagePresentation {
   let onLinkActivation: (DocumentLinkActivation) -> Void
   let snapshotPixelWidth: Int?
   let onPreparationFailure: (Error) -> Void
-  var onStateCheckpoint: (String, JSONValue, ContentFieldVersion) async throws -> Bool = { _, _, _ in false }
+  var onStateCheckpoint: (String, JSONValue, ContentFieldVersion, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
   var measurements: DocumentPresentationRecorder? = nil
   var paperToken: String { DocumentSnapshotCache.paperToken(sourceRevision: document.contentStamp.revision, pageIndex: pageIndex) }
   var token: String { DocumentSnapshotCache.token(document: document, state: state, pageIndex: pageIndex) }
@@ -52,6 +52,7 @@ final class DocumentPagePresentationOwner {
   private struct Key: Hashable { let documentID: UUID; let resources: ObjectIdentifier }
   private final class WeakOwner {
     weak var value: DocumentPagePresentationOwner?
+    var closingValue: DocumentPagePresentationOwner?
     init(_ value: DocumentPagePresentationOwner) { self.value = value }
   }
   @MainActor private final class Entry {
@@ -128,6 +129,7 @@ final class DocumentPagePresentationOwner {
     func cameraDidChange() { owner?.refreshVisiblePrograms() }
     isolated deinit { close() }
   }
+  private var closingPrograms: Task<Void, Never>?
   private var openDocuments = 0
   private var returnDocuments = 0
   func retainOpenDocument() -> OpenDocument { OpenDocument(self) }
@@ -138,6 +140,28 @@ final class DocumentPagePresentationOwner {
     let owner = DocumentPagePresentationOwner(documentID: documentID, resources: resources)
     owners[key] = WeakOwner(owner)
     return owner
+  }
+
+  static func retryRetiringPrograms(resources: SceneRenderResources = .shared) {
+    for entry in Array(owners.values) {
+      if let owner = entry.closingValue, owner.resources === resources { owner.stop() }
+    }
+  }
+
+  static func checkpointPrograms(documentID: UUID? = nil, resources: SceneRenderResources = .shared, resume: Bool) async -> Bool {
+    let current = owners.values.compactMap(\.value).filter {
+      !$0.stopped && $0.resources === resources && (documentID == nil || $0.documentID == documentID)
+    }
+    let tasks = current.map { owner in Task { @MainActor in await owner.programOwner.checkpointAll(resume: resume) } }
+    var accepted = true
+    for task in tasks { if !(await task.value) { accepted = false } }
+    return accepted
+  }
+
+  static func resumePrograms(resources: SceneRenderResources = .shared) async {
+    for owner in owners.values.compactMap(\.value) where !owner.stopped && owner.resources === resources {
+      await owner.programOwner.resumeAll()
+    }
   }
 
   static func presentationDiagnostic(documentID: UUID, resources: SceneRenderResources) -> String {
@@ -1219,6 +1243,25 @@ final class DocumentPagePresentationOwner {
     }) { schedule() }
   }
   private func stop() {
+    guard !stopped, closingPrograms == nil else { return }
+    guard !programOwner.runtimes.isEmpty else { finishStop(); return }
+    let key = Key(documentID: documentID, resources: ObjectIdentifier(resources))
+    Self.owners[key]?.closingValue = self
+    closingPrograms = Task { @MainActor [self] in
+      let saved = await programOwner.checkpointAll(resume: false)
+      closingPrograms = nil
+      if entries.isEmpty && openDocuments == 0 {
+        if saved { finishStop() }
+        // Failed persistence retains the same owner and admits explicit retry.
+      } else {
+        await programOwner.resumeAll()
+        Self.owners[key]?.closingValue = nil
+        schedule()
+      }
+    }
+  }
+
+  private func finishStop() {
     observe("document_owner_stop", reason: "document_and_presentations_closed")
     stopped = true; work?.cancel(); work = nil; captureTail?.cancel(); captureTail = nil
     paper?.invalidate(); passive?.invalidate(); programOwner.stop()

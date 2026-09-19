@@ -7,16 +7,24 @@ public struct NotebookDocumentStateCommand: Sendable {
   public let record: DocumentStateRecord
   public let journalStamp: VersionStamp
   public let expectedSourceVersion: ContentFieldVersion
+  public let stateCondition: NotebookDocumentStateCondition
 
   public init(documentID: UUID, record: DocumentStateRecord, journalStamp: VersionStamp,
-    expectedSourceVersion: ContentFieldVersion) {
+    expectedSourceVersion: ContentFieldVersion, stateCondition: NotebookDocumentStateCondition = .any) {
     self.documentID = documentID; self.record = record; self.journalStamp = journalStamp
-    self.expectedSourceVersion = expectedSourceVersion
+    self.expectedSourceVersion = expectedSourceVersion; self.stateCondition = stateCondition
   }
 
   public var expectedResult: NotebookDocumentStateResult {
     .committed(.init(documentID: documentID, record: record, journalStamp: journalStamp))
   }
+}
+
+/// Ordinary contacts merge causally. A lifecycle checkpoint may only advance
+/// the exact state observed by that executor, including an absent first value.
+public enum NotebookDocumentStateCondition: Sendable {
+  case any
+  case matching(ContentFieldVersion?)
 }
 
 /// Only the addressed value and aggregate clock return to the native queue.
@@ -26,6 +34,7 @@ public enum NotebookDocumentStateResult: Equatable, Sendable {
   /// Admission in memory cannot authorize a different durable program. A nil
   /// version identifies a missing target; neither case advances the journal.
   case targetChanged(documentID: UUID, currentSourceVersion: ContentFieldVersion?)
+  case stateChanged(documentID: UUID, currentStateVersion: ContentFieldVersion?)
 }
 
 public struct NotebookDocumentStatePublication: Equatable, Sendable {
@@ -58,6 +67,10 @@ extension NotebookStore {
       let address = rootAddress + "/records/@" + fieldKey([collaborationIdentity(command.record.id)])
       let rows = try storedFragments(address: address)
       let previous = try rows.isEmpty ? nil : NotebookRecordCodec.decode(rows, root: address).decode(DocumentStateRecord.self)
+      if case .matching(let expected) = command.stateCondition,
+        previous?.valueVersion != expected, previous != command.record {
+        return .stateChanged(documentID: command.documentID, currentStateVersion: previous?.valueVersion)
+      }
       var resolved = command.record
       if let previous {
         guard previous.id == resolved.id, previous.isValid(in: header.stamp) else {
@@ -83,6 +96,32 @@ extension NotebookStore {
         .setting("records", .array([try .encode(resolved)]))
       try publishProjectionEdits(file: file, before: before, after: after)
       return .committed(.init(documentID: command.documentID, record: resolved, journalStamp: stamp))
+    }
+  }
+
+  /// A detached document is outside the model's working set, not deleted.
+  /// Its final heap still addresses one durable block through the same writer.
+  public func checkpointDocumentState(documentID: UUID, blockID: String, value: JSONValue,
+    sourceVersion: ContentFieldVersion, stateVersion: ContentFieldVersion?, actor: UUID) throws -> ContentFieldVersion? {
+    guard value.isValid else { throw NotebookStorageError.invalidTransaction("document checkpoint value") }
+    return try commandTransaction {
+      guard try readItemHeader(documentID)?.kind == .document,
+        let target = try readDocumentBlock(documentID: documentID, blockID: blockID),
+        target.block.kind == .interactive, target.sourceVersion == sourceVersion,
+        target.stateVersion == stateVersion else { return nil }
+      if target.state == value, let stateVersion { return stateVersion }
+      let address = stateFile(documentID) + "#"
+      guard let root = try storedFragments(address: address, descendants: false).first else {
+        throw NotebookStorageError.corruptRecord(address)
+      }
+      let header = try documentStateHeader(root, id: documentID)
+      guard let stamp = header.stamp.advanced(by: actor) else { throw NotebookStorageError.limitExceeded("document state clock") }
+      let version = ContentFieldVersion(stamp: stamp, human: true, previous: stateVersion)
+      let command = NotebookDocumentStateCommand(documentID: documentID,
+        record: .init(id: blockID, value: value, stamp: stamp, fieldVersion: version),
+        journalStamp: stamp, expectedSourceVersion: sourceVersion, stateCondition: .matching(stateVersion))
+      guard case .committed(let accepted) = try commitDocumentState(command) else { return nil }
+      return accepted.record.valueVersion
     }
   }
 

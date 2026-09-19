@@ -902,6 +902,7 @@ final class NotebookAppModel {
   @ObservationIgnored private var scenePresentationOwners: [ObjectIdentifier: WeakScenePresentationOwner] = [:]
   @ObservationIgnored private var documentShellPreparation: DocumentShellPreparation?
   private var preparationIsForeground = true
+  @ObservationIgnored private var programBoundaryTask: Task<Bool, Never>?
   @ObservationIgnored private var shutdownTask: Task<Bool, Never>?
   @ObservationIgnored private var inputSequence: UInt64 = 0
   private(set) var inputIsActive = false
@@ -3255,6 +3256,41 @@ final class NotebookAppModel {
     }
   }
 
+  func programStateBasis(focus: InteractiveElementReference, rendered: AgentElement) -> NotebookProgramStateBasis? {
+    switch focus {
+    case .page(let pageID, let elementID):
+      guard elementID == rendered.id, let page = pages[pageID],
+        page.elements.first(where: { $0.id == elementID }) == rendered else { return nil }
+      return page.programStateBasis(elementID)
+    case .board(let boardID, let elementID):
+      guard elementID == rendered.id, let board = boardHierarchy?.board(boardID),
+        let source = board.elements.first(where: { $0.id == elementID }),
+        AgentProgramSource(agentElementSnapshotSource(source)) == AgentProgramSource(rendered),
+        source.state == rendered.state else { return nil }
+      return board.programStateBasis(elementID)
+    }
+  }
+
+  func checkpointProgramState(focus: InteractiveElementReference, rendered: AgentElement, value: JSONValue, basis: NotebookProgramStateBasis) async throws -> NotebookProgramStateBasis? {
+    guard !isStopped else { return nil }
+    let target: CollaborationTarget
+    switch focus {
+    case .page(let pageID, let elementID):
+      guard elementID == rendered.id, !isPageBeingDeleted(pageID) else { return nil }
+      target = .init(kind: .page, id: pageID)
+    case .board(let boardID, let elementID):
+      guard elementID == rendered.id else { return nil }
+      target = .init(kind: .board, id: boardID)
+    }
+    let actor = actorID
+    collaborationReadEpoch &+= 1; collaborationContentEpoch &+= 1
+    let accepted = try await persistence.submit(publishesChanges: true) { store in
+      try store.checkpointProgramState(target: target, rendered: rendered, state: value, basis: basis, actor: actor)
+    }
+    if accepted != nil { reloadExternalChanges() }
+    return accepted
+  }
+
   @discardableResult
   func commitElementState(pageID: UUID, elementID: String, state: JSONValue) -> Bool {
     guard !isPageBeingDeleted(pageID), var page = pages[pageID] else { return false }
@@ -3473,26 +3509,45 @@ final class NotebookAppModel {
     return record.valueVersion
   }
 
-  /// A runtime may retire only after its last accepted state crossed the sole
-  /// writer. The optimistic SwiftUI echo is not a persistence acknowledgement.
+  /// Checkpoint admission compares the executor's causal basis before changing
+  /// the model, and again inside the sole writer. A delayed animation cannot
+  /// adopt a newer human state just because SwiftUI has not echoed it yet.
   func checkpointDocumentState(documentID: UUID, blockID: String, value: JSONValue,
-    sourceVersion: ContentFieldVersion) async throws -> Bool {
+    sourceVersion: ContentFieldVersion, stateVersion: ContentFieldVersion?) async throws -> ContentFieldVersion? {
+    guard value.isValid else { throw NotebookStorageError.invalidTransaction("document checkpoint value") }
+    guard !isStopped, !isItemBeingDeleted(documentID) else { return nil }
+    if documents[documentID] == nil || documentStates[documentID] == nil {
+      let actor = actorID
+      let accepted = try await persistence.submit(publishesChanges: true) { store in
+        try store.checkpointDocumentState(documentID: documentID, blockID: blockID, value: value,
+          sourceVersion: sourceVersion, stateVersion: stateVersion, actor: actor)
+      }
+      if accepted != nil { reloadExternalChanges() }
+      return accepted
+    }
     guard !isStopped, !isItemBeingDeleted(documentID),
       let document = documents[documentID], document.sourceVersion(blockID: blockID) == sourceVersion,
-      let block = document.blocks.first(where: { $0.id == blockID }),
-      let journal = documentStates[documentID] else { return false }
-    let record = journal.records.first { $0.id == blockID }
-    let stateVersion = record?.valueVersion
-    guard (record?.value ?? block.initialState) == value else { return false }
+      let block = document.blocks.first(where: { $0.id == blockID && $0.kind == .interactive }),
+      var journal = documentStates[documentID],
+      journal.records.first(where: { $0.id == blockID })?.valueVersion == stateVersion else { return nil }
+    if journal.commit(blockID: blockID, value: value, actor: actorID) {
+      let record = journal.records.first { $0.id == blockID }!
+      let command = NotebookDocumentStateCommand(documentID: documentID, record: record,
+        journalStamp: journal.stamp, expectedSourceVersion: sourceVersion, stateCondition: .matching(stateVersion))
+      documentStates[documentID] = journal
+      persistence.enqueue(owner: .documentState(documentID)) { try $0.commitDocumentState(command) != command.expectedResult }
+    }
+    guard let record = journal.records.first(where: { $0.id == blockID }), record.value == value else {
+      throw NotebookStorageError.invalidTransaction("document checkpoint admission")
+    }
     let stored = try await persistence.submit { try $0.readDocumentBlock(documentID: documentID, blockID: blockID) }
     try Task.checkCancellation()
     guard !isStopped, !isItemBeingDeleted(documentID), let stored,
       stored.block == block, stored.sourceVersion == sourceVersion,
-      stored.stateVersion == stateVersion, (stored.state ?? stored.block.initialState) == value,
+      stored.stateVersion == record.valueVersion, stored.state == value,
       documents[documentID]?.sourceVersion(blockID: blockID) == sourceVersion,
-      documents[documentID]?.blocks.first(where: { $0.id == blockID }) == block,
-      documentStates[documentID]?.records.first(where: { $0.id == blockID }) == record else { return false }
-    return true
+      documentStates[documentID]?.records.first(where: { $0.id == blockID }) == record else { return nil }
+    return record.valueVersion
   }
 
   @discardableResult
@@ -4136,7 +4191,13 @@ final class NotebookAppModel {
       }
       guard await finishPendingInteraction(boundary: .acceptedInput, continuing: isCurrent) else { return false }
       guard !Task.isCancelled, !isStopped, isCurrent() else { return false }
-      if !inputGate.isActive { return true }
+      if !inputGate.isActive {
+        guard await checkpointPrograms(resume: true) else {
+          showCue("Не удалось сохранить состояние программы"); return false
+        }
+        if inputGate.isActive { continue }
+        return !Task.isCancelled && !isStopped && isCurrent()
+      }
     }
     return false
   }
@@ -4408,9 +4469,30 @@ final class NotebookAppModel {
     #endif
   }
 
+  private func checkpointPrograms(resume: Bool) async -> Bool {
+    let spatial = Task { @MainActor in await AgentWebCoordinator.checkpointPrograms(ownedBy: self, resume: resume) }
+    let document = Task { @MainActor in await DocumentRenderRegistry.shared.checkpointPrograms(resume: resume) }
+    let spatialSaved = await spatial.value, documentSaved = await document.value
+    return spatialSaved && documentSaved
+  }
+
+  func finishProgramBoundary() async -> Bool { await programBoundaryTask?.value ?? true }
+
   func setPreparationForeground(_ foreground: Bool) {
     guard preparationIsForeground != foreground else { return }
     preparationIsForeground = foreground
+    let prior = programBoundaryTask
+    programBoundaryTask = Task { @MainActor [weak self] in
+      _ = await prior?.value
+      guard let self, !isStopped else { return true }
+      if foreground {
+        await AgentWebCoordinator.resumePrograms(ownedBy: self)
+        await DocumentRenderRegistry.shared.resumePrograms(); return true
+      }
+      let saved = await checkpointPrograms(resume: false)
+      if !saved { showCue("Не удалось сохранить состояние программы") }
+      return saved
+    }
     if !foreground { agentFeedback.stop() }
     if foreground { documentShellPreparation?.allowPreparationAfterForeground() }
     else {
@@ -4630,6 +4712,8 @@ final class NotebookAppModel {
   }
 
   func retryPendingPersistence() {
+    AgentWebCoordinator.retryRetirements(ownedBy: self)
+    DocumentRenderRegistry.shared.retryRetiringPrograms()
     acceptedPageInkFailure = nil
     startAcceptedPageInkPreparation()
     persistence.retry()
@@ -4742,11 +4826,12 @@ final class NotebookAppModel {
         await chat?.stop()
         let agentStopped = true
       #endif
+      let programsSaved = await checkpointPrograms(resume: false)
       let inputSaved = await finishPendingInteraction()
       // A failed quit keeps admission closed but leaves the same writer and
       // refresh owner available to the explicit repair/retry action. Terminal
       // teardown would otherwise make publicationFailure impossible to clear.
-      guard agentStopped && inputSaved else { return false }
+      guard agentStopped && inputSaved && programsSaved else { return false }
       if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
       documentSaveObserver = nil
       #if os(iOS)

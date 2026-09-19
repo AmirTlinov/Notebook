@@ -132,7 +132,7 @@ struct DocumentWebView: View {
   var isCurrent = true
   var isVisible = true
   var isPageTurnActive = false
-  var onStateCheckpoint: (String, JSONValue, ContentFieldVersion) async throws -> Bool = { _, _, _ in false }
+  var onStateCheckpoint: (String, JSONValue, ContentFieldVersion, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
   var measurements: DocumentPresentationRecorder? = nil
 
   var body: some View {
@@ -863,6 +863,91 @@ final class DocumentWebCoordinator: NSObject,
     webView?.evaluateJavaScript("window.notebookRenderer?.setEditingEnabled(true)", completionHandler: nil)
   }
 
+  private struct ProgramCheckpointWrite {
+    let id: UUID
+    let source: ContentFieldVersion
+    let state: ContentFieldVersion?
+    let value: JSONValue
+    let task: Task<ContentFieldVersion?, Error>
+  }
+  private var programCheckpointWrites: [String: ProgramCheckpointWrite] = [:]
+  private var programCheckpointTask: Task<Bool, Never>?
+  private var programRetirementTask: Task<Void, Never>?
+
+  private func persistProgramCheckpoint(_ id: String, value: JSONValue,
+    source: ContentFieldVersion, state: ContentFieldVersion?) async throws -> ContentFieldVersion? {
+    if let pending = programCheckpointWrites[id], pending.source == source,
+      pending.state == state, pending.value == value { return try await pending.task.value }
+    let request = UUID(), token = blockTokens[id]
+    let task = Task { @MainActor [self] in
+      let accepted = try await onStateCheckpoint(id, value, source, state)
+      // The writer's receipt, not a later SwiftUI projection, advances this
+      // iframe's causal basis. Resume must not apply the pre-checkpoint value.
+      if let accepted, let token, !isInvalidated, blockTokens[id] == token,
+        payload?.sourceVersions[id] == source, let webView {
+        let valueJSON = try canonicalDocumentJSON(value), basisJSON = try canonicalDocumentJSON(state)
+        let versionJSON = try canonicalDocumentJSON(accepted)
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+          webView.callAsyncJavaScript("notebookRenderer.acknowledgeProgramCheckpoint(block,token,JSON.parse(value),JSON.parse(basis),JSON.parse(version));return true;",
+            arguments: ["block": id, "token": token, "value": valueJSON, "basis": basisJSON, "version": versionJSON],
+            in: nil, in: .page, completionHandler: { _ in done.resume() })
+        }
+      }
+      return accepted
+    }
+    programCheckpointWrites[id] = .init(id: request, source: source, state: state, value: value, task: task)
+    defer { if programCheckpointWrites[id]?.id == request { programCheckpointWrites[id] = nil } }
+    return try await task.value
+  }
+
+  func checkpointPrograms(resume: Bool) async -> Bool {
+    let task: Task<Bool, Never>
+    if let pending = programCheckpointTask { task = pending }
+    else {
+      task = Task { @MainActor [self] in await checkpointProgramsOnce() }
+      programCheckpointTask = task
+    }
+    let accepted = await task.value; programCheckpointTask = nil
+    if resume { await resumePrograms() }
+    return accepted
+  }
+
+  private func checkpointProgramsOnce() async -> Bool {
+    guard !isInvalidated, isReady, requestedInput || ownsProgramState, let webView, let before = payload,
+      before.programMode != "external", !before.source.programIDs.isEmpty else { return true }
+    do {
+      let result = try await NotebookProgramBridge.lifecycle("checkpointPrograms", controller: "notebookRenderer", in: webView)
+      guard case .array(let checkpoints) = result, !isInvalidated, payload?.runtimeID == before.runtimeID else { return false }
+      var accepted = true
+      for checkpoint in checkpoints {
+        guard case .string(let id) = checkpoint["blockID"], case .string(let token) = checkpoint["token"],
+          let value = checkpoint["state"], let basis = checkpoint["stateVersion"], token == blockTokens[id],
+          let version = before.sourceVersions[id], payload?.sourceVersions[id] == version else { accepted = false; continue }
+        let stateVersion = basis == .null ? nil : try basis.decode(ContentFieldVersion.self)
+        _ = try await persistProgramCheckpoint(id, value: value, source: version, state: stateVersion)
+      }
+      return accepted
+    } catch { return false }
+  }
+
+  func retireAfterProgramCheckpoint() {
+    guard !isInvalidated, programRetirementTask == nil else { return }
+    guard isReady, requestedInput || ownsProgramState, payload?.programMode != "external",
+      payload?.source.programIDs.isEmpty == false, let web = webView else { invalidate(); return }
+    DocumentRenderRegistry.shared.retainRetiringProgram(self, web: web, hostID: hostID)
+    programRetirementTask = Task { @MainActor [self] in
+      defer { programRetirementTask = nil }
+      if await checkpointPrograms(resume: false) { invalidate() }
+      else { onPreparationFailure(SceneRenderError.snapshotPending("document_state_checkpoint_not_accepted")) }
+    }
+  }
+
+  func resumePrograms() async {
+    guard !isInvalidated, isReady, let webView else { return }
+    _ = try? await NotebookProgramBridge.lifecycle("resumePrograms", controller: "notebookRenderer", in: webView)
+
+  }
+
   private func revokeLiveReceipt() {
     DocumentRenderRegistry.shared.revokeLive(hostID: hostID, through: generation)
   }
@@ -1016,6 +1101,7 @@ final class DocumentWebCoordinator: NSObject,
   var onPageLayout: (DocumentPageLayout) -> Void
   var onLinkActivation: (DocumentLinkActivation) -> Void = { _ in }
   var onStateChange: (String, JSONValue) -> ContentFieldVersion?
+  var onStateCheckpoint: (String, JSONValue, ContentFieldVersion, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
   var pendingSnapshotPayload: DocumentRuntimePayload?
   private var preparedSnapshotLease: RasterLease?
 
@@ -1290,13 +1376,28 @@ final class DocumentWebCoordinator: NSObject,
     case "programFocus":
       guard body["blockToken"] as? String == blockTokens[blockID], let focused = body["focused"] as? Bool else { return }
       onProgramFocus(focused)
+    case "programCheckpoint":
+      guard requestedInput || ownsProgramState, body["blockToken"] as? String == blockTokens[blockID],
+        let source = payload.sourceVersions[blockID], let value: JSONValue = Self.decode(body["value"]),
+        let basis: JSONValue = Self.decode(body["stateVersion"]) else { return }
+      let stateVersion = basis == .null ? nil : try? basis.decode(ContentFieldVersion.self)
+      guard basis == .null || stateVersion != nil else { return }
+      Task { @MainActor [weak self] in
+        _ = try? await self?.persistProgramCheckpoint(blockID, value: value, source: source, state: stateVersion)
+      }
+
     case "state":
       // Runtime state ownership exists before its first frame. Native hit
       // admission is a separate decision and cannot discard an initial commit.
       guard requestedInput || ownsProgramState, body["blockToken"] as? String == blockTokens[blockID],
         payload.blocks.contains(where: { $0.id == blockID && $0.kind == .interactive }),
         let value: JSONValue = Self.decode(body["value"]) else { return }
-      _ = onStateChange(blockID, value)
+      if let version = onStateChange(blockID, value), let revision = body["revision"] as? String,
+        let token = blockTokens[blockID], let encoded = try? canonicalDocumentJSON(version) {
+        webView?.callAsyncJavaScript("notebookRenderer.acknowledgeProgramState(block,token,revision,JSON.parse(version));return true;",
+          arguments: ["block": blockID, "token": token, "revision": revision, "version": encoded],
+          in: nil, in: .page, completionHandler: nil)
+      }
     default: return
     }
   }
@@ -2169,7 +2270,7 @@ private enum DocumentWebViewFactory {
     var isCurrent = true
     var isVisible = true
     var isPageTurnActive = false
-    var onStateCheckpoint: (String, JSONValue, ContentFieldVersion) async throws -> Bool = { _, _, _ in false }
+    var onStateCheckpoint: (String, JSONValue, ContentFieldVersion, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
     var measurements: DocumentPresentationRecorder? = nil
     func makeCoordinator() -> DocumentPhysicalPageCoordinator { DocumentPhysicalPageCoordinator() }
     func makeUIView(context: Context) -> DocumentWebHost { DocumentWebHost() }
@@ -2277,7 +2378,7 @@ private enum DocumentWebViewFactory {
     var isCurrent = true
     var isVisible = true
     var isPageTurnActive = false
-    var onStateCheckpoint: (String, JSONValue, ContentFieldVersion) async throws -> Bool = { _, _, _ in false }
+    var onStateCheckpoint: (String, JSONValue, ContentFieldVersion, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
     var measurements: DocumentPresentationRecorder? = nil
     func makeCoordinator() -> DocumentWebCoordinator {
       DocumentWebCoordinator(resources: resources, onRenderReady: onRenderReady, onPageLayout: onPageLayout,
@@ -2285,6 +2386,7 @@ private enum DocumentWebViewFactory {
     }
     func makeNSView(context: Context) -> DocumentWebHost { DocumentWebHost() }
     func updateNSView(_ view: DocumentWebHost, context: Context) {
+      context.coordinator.onStateCheckpoint = onStateCheckpoint
       context.coordinator.update(document: document, state: state, selectedPageIndex: selectedPageIndex,
         capturesSnapshot: capturesSnapshot, onRenderReady: onRenderReady, onPageLayout: onPageLayout,
          onStateChange: onStateChange, snapshotPixelWidth: snapshotPixelWidth,
@@ -2293,6 +2395,6 @@ private enum DocumentWebViewFactory {
       context.coordinator.mount(in: view, physicalSize: .init(width: geometry.width, height: geometry.height),
         isInteractive: isInteractive, priority: snapshotPixelWidth != nil ? .visible : (isInteractive ? .currentPage : .neighbor))
     }
-    static func dismantleNSView(_ view: DocumentWebHost, coordinator: DocumentWebCoordinator) { coordinator.invalidate() }
+    static func dismantleNSView(_ view: DocumentWebHost, coordinator: DocumentWebCoordinator) { coordinator.retireAfterProgramCheckpoint() }
   }
 #endif
