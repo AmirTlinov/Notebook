@@ -111,8 +111,9 @@ extension CodexAppServer: NotebookCodexProcessOwner { }
       }
       return try await persistence.submit { try $0.advanceChatJob(input.id, from: .attempting, to: .accepted, result: result) }
     } catch {
-      let state: NotebookChatJob.State = dispatched ? .uncertain : .rejected
-      let message = dispatched ? "Принятие команды неизвестно; она не повторена." : error.localizedDescription
+      let unknown = dispatched && !(error is CodexRequestRejection)
+      let state: NotebookChatJob.State = unknown ? .uncertain : .rejected
+      let message = unknown ? "Принятие команды неизвестно; она не повторена." : error.localizedDescription
       return try await persistence.submit { try $0.advanceChatJob(input.id, from: .attempting, to: state, error: message) }
     }
   }

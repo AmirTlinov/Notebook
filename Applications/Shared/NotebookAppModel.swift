@@ -3604,9 +3604,14 @@ final class NotebookAppModel {
       let author = actorID
       persistence.enqueue(publishesChanges: false) { try $0.saveChatPanel(state, author: author); return false }
     }
+    func localCodexControl(_ action: NotebookChatAction) async throws -> NotebookChatJob? {
+        let author = actorID
+        return try await persistence.submit { try $0.savedChatControl(action, author: author, computer: author) }
+    }
+
     func localCodexJobs() async throws -> [NotebookChatJob] {
       let author = actorID
-      return try await persistence.submit { try $0.recentChatJobs(author: author) }
+      return try await persistence.submit { try $0.routedChatJobs(author: author, computer: author) }
     }
 
     private func startCodexSidecar() async {

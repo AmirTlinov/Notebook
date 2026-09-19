@@ -83,7 +83,7 @@ import NotebookCodex
     print("Reading native catalogue")
     let catalogue = try await metadata.tasks()
     print("Creating native metadata task")
-    let task = try await metadata.create(directory: directory, title: "Notebook — проверка нативного моста", workspaceID: UUID())
+    let task = try await metadata.create(directory: directory, title: "Notebook — проверка нативного моста", workspaceID: UUID()) { _ in }
     print("Created disposable task \(task.id)")
     let bridge = metadata
     do {

@@ -267,21 +267,25 @@ public enum NotebookChatResult: Codable, Equatable, Sendable {
 }
 
 public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
-  public enum State: String, Codable, Sendable { case saved, attempting, uncertain, accepted, rejected }
+  public enum State: String, Codable, Sendable { case saved, attempting, uncertain, unconfirmed, accepted, rejected }
   public let input: NotebookChatInput
   public let state: State
   public let result: NotebookChatResult?
+  public let createdTask: CodexTask?
   public let error: String?
   public let revision: Int
   public var id: UUID { input.id }
 
-  public init(input: NotebookChatInput, state: State = .saved, result: NotebookChatResult? = nil, error: String? = nil, revision: Int = 0) {
-    self.input = input; self.state = state; self.result = result; self.error = error; self.revision = revision
+  public init(input: NotebookChatInput, state: State = .saved, result: NotebookChatResult? = nil, error: String? = nil, revision: Int = 0, createdTask: CodexTask? = nil) {
+    self.createdTask = createdTask; self.input = input; self.state = state; self.result = result; self.error = error; self.revision = revision
   }
-  public var isTerminal: Bool { state == .accepted || state == .rejected }
+  public var isTerminal: Bool { state == .accepted || state == .rejected || state == .unconfirmed }
   public var isValid: Bool {
     guard input.isValid, revision >= 0, (error?.utf8.count ?? 0) <= 4096,
       (state == .accepted) == (result != nil) else { return false }
+    if let createdTask {
+      guard case .create = input.action, UUID(uuidString: createdTask.id) != nil else { return false }
+    }
     guard let result else { return true }
     switch (input.action, result) {
     case (.renameFile(let request), .renamed(let result)): return request == result && result.isValid
@@ -301,8 +305,9 @@ public struct NotebookChatJob: Codable, Equatable, Sendable, Identifiable {
 }
 
 public enum NotebookChatQuery: Codable, Equatable, Sendable {
-  public var isInteractiveControl: Bool { if case .job(let input) = self { input.action.isInteractiveControl } else { false } }
+  public var isInteractiveControl: Bool { switch self { case .job(let input): input.action.isInteractiveControl; case .stopWaiting: true; default: false } }
   case account(CodexAccountQuery)
+  case stopWaiting(UUID)
   case dictation(NotebookDictationQuery)
   case job(NotebookChatInput)
   case file(NotebookFileQuery)

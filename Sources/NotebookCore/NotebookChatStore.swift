@@ -80,17 +80,50 @@ extension NotebookStore {
       let allowed: Bool
       switch (expected, state) {
       case (.saved, .attempting), (.saved, .rejected), (.attempting, .accepted), (.attempting, .rejected), (.attempting, .uncertain),
-        (.attempting, .saved), (.uncertain, .accepted): allowed = true
+        (.attempting, .saved), (.uncertain, .accepted), (.uncertain, .unconfirmed): allowed = true
       default: allowed = false
       }
       guard allowed, (state == .accepted) == (result != nil), (error?.utf8.count ?? 0) <= 4096 else {
         throw NotebookStorageError.invalidTransaction("invalid chat transition")
       }
-      let job = NotebookChatJob(input: old.input, state: state, result: result, error: error, revision: old.revision + 1)
+      let job = NotebookChatJob(input: old.input, state: state, result: result, error: error, revision: old.revision + 1, createdTask: old.createdTask)
       guard job.isValid else { throw NotebookStorageError.invalidTransaction("invalid chat result") }
       try writeChatJob(job)
       return job
     }
+  }
+
+  /// The native task already exists even if a later setup RPC loses its reply.
+  public func recordCreatedChatTask(_ id: UUID, task: CodexTask) throws {
+    try commandTransaction(advancesReadRevision: false) {
+      guard let old = try chatJob(id), case .create = old.input.action,
+        old.state == .attempting, old.createdTask == nil || old.createdTask?.id == task.id else {
+        throw NotebookStorageError.invalidTransaction("invalid created task checkpoint")
+      }
+      let job = NotebookChatJob(input: old.input, state: old.state, result: old.result, error: old.error,
+        revision: old.revision + 1, createdTask: task)
+      guard job.isValid else { throw NotebookStorageError.invalidTransaction("invalid native task") }
+      try writeChatJob(job)
+    }
+  }
+
+  public func stopWaitingForChatJob(_ id: UUID, author: UUID) throws -> NotebookChatJob {
+    try commandTransaction(advancesReadRevision: false) {
+      guard let old = try chatJob(id), old.input.author == author else { throw NotebookStorageError.invalidTransaction("unknown chat input") }
+      if old.isTerminal { return old }
+      guard old.state == .uncertain else { throw NotebookStorageError.invalidTransaction("command is still active") }
+      return try advanceChatJob(id, from: .uncertain, to: .unconfirmed,
+        error: "Ожидание завершено. Исход действия остался неизвестным; повторного исполнения нет.")
+    }
+  }
+
+  /// Both presentations reuse the immutable payload, not just a deterministic ID.
+  public func savedChatControl(_ action: NotebookChatAction, author: UUID, computer: UUID?) throws -> NotebookChatJob? {
+    guard let id = action.controlID(author: author), let job = try chatJob(id) else { return nil }
+    guard job.input.action == action, try chatDestination(id) == computer else {
+      throw NotebookStorageError.invalidTransaction("a different control decision is already saved")
+    }
+    return job
   }
 
   /// A verified reply only advances the iPad's display receipt, never execution.

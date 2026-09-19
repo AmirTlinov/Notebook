@@ -3,8 +3,22 @@ import NotebookCore
 
 public enum CodexBridgeError: String, Error, Sendable {
   case notInstalled, incompatibleVersion, unsafeEndpoint, unavailable, disconnected, timeout
-  case invalidFrame, invalidResponse, requestRejected, historyLimit, busy, staleTurn
+  case invalidFrame, invalidResponse, historyLimit, busy, staleTurn
   case staleRequest, unsupportedRequest, invalidInput, acceptanceUnknown, signInRequired, externalOwnerUnavailable
+}
+
+/// A received JSON-RPC refusal is not a lost acknowledgement. Only the code
+/// crosses devices: native free-form errors can contain prompts or credentials.
+public struct CodexRequestRejection: Error, Sendable, LocalizedError {
+  public let code: Int?
+  public init(code: Int?) { self.code = code }
+  public var errorDescription: String? {
+    switch code {
+    case -32601: "Эта операция не поддерживается установленным Codex."
+    case -32602: "Codex отклонил параметры запроса (-32602). Действие не принято."
+    default: "Codex отклонил запрос" + (code.map { " (\($0))" } ?? "") + ". Действие не принято."
+    }
+  }
 }
 
 /// A safe process-start diagnostic. No stderr, account data or command arguments

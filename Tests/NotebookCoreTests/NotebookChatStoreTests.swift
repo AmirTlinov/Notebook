@@ -16,6 +16,38 @@ struct NotebookChatStoreTests {
     .init(id: id, author: author, action: .send(threadID: "00000000-0000-0000-0000-000000000001", text: text, context: ""), createdAt: Date(timeIntervalSince1970: 100))
   }
 
+  @Test func endingUnknownObservationPreservesOutcomeAndFreesAdmissionWithoutReplay() throws {
+    try fixture { store, author in
+      let message = input(author)
+      _ = try store.saveChatInput(message)
+      _ = try store.advanceChatJob(message.id, from: .saved, to: .attempting)
+      _ = try store.advanceChatJob(message.id, from: .attempting, to: .uncertain)
+      #expect(throws: (any Error).self) { try store.stopWaitingForChatJob(message.id, author: UUID()) }
+      let finished = try store.stopWaitingForChatJob(message.id, author: author)
+      #expect(finished.state == .unconfirmed && finished.isTerminal && finished.result == nil)
+      #expect(try store.pendingChatJobs().isEmpty)
+      #expect(try store.saveChatInput(message) == finished)
+      #expect(try store.stopWaitingForChatJob(message.id, author: author) == finished)
+      #expect(throws: (any Error).self) { try store.advanceChatJob(message.id, from: .unconfirmed, to: .saved) }
+    }
+  }
+  @Test func nativeCreationCheckpointAndControlPayloadSurviveReopening() throws {
+    try fixture { store, author in
+      let creation = NotebookChatInput(author: author, action: .create(title: "Task"))
+      _ = try store.saveChatInput(creation)
+      _ = try store.advanceChatJob(creation.id, from: .saved, to: .attempting)
+      let task = CodexTask(id: UUID().uuidString, title: "Codex", cwd: "/tmp")
+      try store.recordCreatedChatTask(creation.id, task: task)
+      _ = try store.advanceChatJob(creation.id, from: .attempting, to: .uncertain)
+      let reopened = NotebookStore(root: store.root)
+      #expect(try reopened.chatJob(creation.id)?.createdTask == task)
+      let action = NotebookChatAction.stop(threadID: UUID().uuidString, turnID: UUID().uuidString)
+      let control = NotebookChatInput(id: action.controlID(author: author)!, author: author, action: action)
+      _ = try store.saveChatInput(control, to: author)
+      #expect(try reopened.savedChatControl(action, author: author, computer: author)?.input == control)
+    }
+  }
+
   @Test func attachmentsCommitWithTheirMessageAndCannotClearANewerSelection() throws {
     try fixture { store, author in
       let thread = UUID().uuidString, computer = UUID()

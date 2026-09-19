@@ -27,6 +27,8 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   var stopIsStale = false
   var needsSignIn = false
   var slowCreation = false
+  var failsCreationSetup = false
+  func failCreationSetup() { failsCreationSetup = true }
   func delayCreation() { slowCreation = true }
   func requireSignIn(_ required: Bool) { needsSignIn = required }
   func finishBeforeStop() { stopIsStale = true }
@@ -80,10 +82,13 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   func projects(cursor: String?) -> CodexProjectPage { .init(projects: [], nextCursor: nil) }
   func tasks(cursor: String?, project: CodexProject?) -> CodexTaskPage { .init(tasks: [.init(id: thread, title: "Математика", cwd: "/tmp")], nextCursor: nil, defaultProviderNeedsSignIn: needsSignIn) }
   func history(threadID: String, cursor: String?) -> CodexHistoryPage { .init(messages: accepted, nextCursor: nil) }
-  func create(directory: URL, title: String, workspaceID: UUID, project: CodexProject?) async throws -> CodexTask {
+  func create(directory: URL, title: String, workspaceID: UUID, project: CodexProject?, onCreated: @escaping @Sendable (CodexTask) async throws -> Void) async throws -> CodexTask {
     if slowCreation { try await Task.sleep(for: .seconds(5)) }
     if needsSignIn { throw CodexBridgeError.signInRequired }
-    return .init(id: thread, title: title, cwd: directory.path)
+    let task = CodexTask(id: thread, title: title, cwd: directory.path)
+    try await onCreated(task)
+    if failsCreationSetup { throw CodexBridgeError.disconnected }
+    return task
   }
 }
 
@@ -106,6 +111,39 @@ final class NotebookCodexSidecarTests: XCTestCase {
     let deadline = ContinuousClock.now + .seconds(8)
     while !(try await predicate()), .now < deadline { try await Task.sleep(for: .milliseconds(50)) }
     let ready = try await predicate(); XCTAssertTrue(ready)
+  }
+
+  func testUncertainSettingsCannotStarveNarrowerAccessOrStop() async throws {
+    try await fixture { store, queue, native, peer in
+      let service = try sidecar(store, queue, native)
+      let old = NotebookChatInput(author: peer, action: .setAccess(threadID: native.thread, mode: .full))
+      _ = try store.saveChatInput(old)
+      _ = try store.advanceChatJob(old.id, from: .saved, to: .attempting)
+      _ = try store.advanceChatJob(old.id, from: .attempting, to: .uncertain)
+      let narrow = NotebookChatInput(author: peer, action: .setAccess(threadID: native.thread, mode: .readOnly))
+      let stop = NotebookChatInput(author: peer, action: .stop(threadID: native.thread, turnID: native.turn))
+      _ = await service.receive(.init(body: .request(.job(narrow))), peerID: peer)
+      _ = await service.receive(.init(body: .request(.job(stop))), peerID: peer)
+      service.start()
+      try await wait { try await queue.submit { try $0.chatJob(stop.id)?.state == .accepted && $0.chatJob(narrow.id)?.state == .accepted } }
+      XCTAssertEqual(try store.chatJob(old.id)?.state, .uncertain)
+      let mode = await native.accessMode, stops = await native.counts().1
+      XCTAssertEqual(mode, .readOnly); XCTAssertEqual(stops, 1)
+      await service.stop()
+    }
+  }
+  func testCreatedNativeIDSurvivesFailureOfAdditionalSetup() async throws {
+    try await fixture { store, queue, native, peer in
+      await native.failCreationSetup()
+      let service = try sidecar(store, queue, native)
+      let input = NotebookChatInput(author: peer, action: .create(title: "Task"))
+      _ = await service.receive(.init(body: .request(.job(input))), peerID: peer); service.start()
+      try await wait { try await queue.submit { try $0.chatJob(input.id)?.state == .accepted } }
+      let job = try XCTUnwrap(store.chatJob(input.id))
+      XCTAssertEqual(job.createdTask?.id, native.thread); XCTAssertNotNil(job.error)
+      if case .created(let task) = job.result { XCTAssertEqual(task.id, native.thread) } else { XCTFail("Lost native identity") }
+      await service.stop()
+    }
   }
 
   func testRevocationBeforeAdmissionRejectsRunAndVoiceButDoesNotUndoAcceptedWork() async throws {

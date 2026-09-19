@@ -198,7 +198,10 @@ public actor CodexAppServer {
       guard let turn = expectedTurnID == nil ? result["turn"]?["id"]?.string : result["turnId"]?.string,
         UUID(uuidString: turn) != nil else { throw CodexBridgeError.invalidResponse }
       return turn
-    } catch { throw CodexBridgeError.acceptanceUnknown }
+    } catch let rejection as CodexRequestRejection { throw rejection }
+    catch CodexBridgeError.busy { throw CodexBridgeError.busy }
+    catch CodexBridgeError.externalOwnerUnavailable { throw CodexBridgeError.externalOwnerUnavailable }
+    catch { throw CodexBridgeError.acceptanceUnknown }
   }
 
   public func interrupt(threadID: String, turnID: String) async throws {
@@ -328,7 +331,7 @@ public actor CodexAppServer {
         "clientManagedHandoffs": .bool(false), "flushTranscriptTailOnSessionEnd": .bool(false)]))
     } catch {
       if voice?.id == id { voice?.phase = dispatched ? .failed : .ended; voice?.error = "Начало разговора не подтверждено. Повторного вызова нет." }
-      throw dispatched ? CodexBridgeError.acceptanceUnknown : error
+      throw dispatched && !(error is CodexRequestRejection) ? CodexBridgeError.acceptanceUnknown : error
     }
   }
   public func stopVoice(id: UUID) async throws {
@@ -336,6 +339,7 @@ public actor CodexAppServer {
     guard let rpc else { throw CodexBridgeError.disconnected }
     voice?.phase = .ending
     do { _ = try await rpc.request("thread/realtime/stop", params: .object(["threadId": .string(current.threadID)])) }
+    catch let rejection as CodexRequestRejection { voice = current; throw rejection }
     catch { throw CodexBridgeError.acceptanceUnknown }
     let deadline = ContinuousClock.now + .seconds(5)
     while voice?.id == id, voice?.phase == .ending, .now < deadline { try await Task.sleep(for: .milliseconds(25)) }

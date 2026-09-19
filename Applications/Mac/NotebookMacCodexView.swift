@@ -117,6 +117,11 @@ final class NotebookMacCodexPresentation {
     guard !submitting else { return }
     submitting = true; defer { submitting = false }
     if let submission, submission.action != action { failure = "Сначала повторите сохранение предыдущего действия — его исход ещё не подтверждён."; return }
+    do {
+      if let job = try await model.localCodexControl(action) {
+        jobs.removeAll { $0.id == job.id }; jobs.insert(job, at: 0); failure = job.error; return
+      }
+    } catch { failure = error.localizedDescription; return }
     let input = submission ?? NotebookChatInput(id: action.controlID(author: model.actorID) ?? UUID(), author: model.actorID, action: action)
     guard input.isValid else { failure = "Сообщение слишком большое или параметры неполны"; return }
     submission = input
@@ -128,6 +133,13 @@ final class NotebookMacCodexPresentation {
         if case .createProject = action { projectInput = input.id }
         if let message = action.message, draft == message.text { draft = "" }
         failure = job.error
+      }
+    } catch { failure = error.localizedDescription }
+  }
+  func stopWaiting(_ id: UUID) async {
+    do {
+      if case .job(let job) = try await model.localCodexQuery(.stopWaiting(id)) {
+        jobs.removeAll { $0.id == id }; jobs.insert(job, at: 0); failure = job.error
       }
     } catch { failure = error.localizedDescription }
   }
@@ -207,6 +219,7 @@ struct NotebookMacCodexView: View {
           Text(job.error ?? (job.state == .uncertain ? "Исход команды неизвестен. Автоматического повтора не будет." : "Команда сохранена на Mac · ожидается Codex"))
             .font(.caption).foregroundStyle(.secondary)
         }
+        NotebookCodexUncertainJobsView(jobs: chat.jobs, finish: chat.stopWaiting)
         TextEditor(text: $chat.draft).frame(minHeight: 70, maxHeight: 130)
           .accessibilityIdentifier("codex-mac-composer")
         HStack {

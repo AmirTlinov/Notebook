@@ -42,7 +42,7 @@ actor CodexRPC {
       try await withCheckedThrowingContinuation { continuation in
         let timer = timeout.map { duration in Task { [weak self] in
           try? await Task.sleep(for: duration)
-          if !Task.isCancelled { await self?.fail(id, .timeout) }
+          if !Task.isCancelled { await self?.fail(id, CodexBridgeError.timeout) }
         } }
         pending[id] = Pending(continuation: continuation, timer: timer)
         Task { [weak self, channel] in
@@ -50,7 +50,7 @@ actor CodexRPC {
           catch { await self?.fail(id, error as? CodexBridgeError ?? .disconnected) }
         }
       }
-    } onCancel: { Task { await self.fail(id, .disconnected) } }
+    } onCancel: { Task { await self.fail(id, CodexBridgeError.disconnected) } }
   }
 
   func respond(id: JSONValue, result: JSONValue) async throws {
@@ -68,14 +68,20 @@ actor CodexRPC {
     guard let id = frame["id"]?.string, pending[id] != nil else { return }
     if let error = frame["error"] {
       let message = error["message"]?.string ?? ""
-      fail(id, message.contains("already has an active writer") ? .externalOwnerUnavailable : .requestRejected)
+      if message.contains("already has an active writer") { fail(id, CodexBridgeError.externalOwnerUnavailable) }
+      else {
+        let code: Int?
+        if case .number(let value) = error["code"], value.isFinite, abs(value) <= 9_007_199_254_740_991, value.rounded() == value { code = Int(value) }
+        else { code = nil }
+        fail(id, CodexRequestRejection(code: code))
+      }
       return
     }
     guard let result = frame["result"] else { throw CodexBridgeError.invalidResponse }
     guard let waiting = pending.removeValue(forKey: id) else { return }
     waiting.timer?.cancel(); waiting.continuation.resume(returning: result)
   }
-  private func fail(_ id: String, _ error: CodexBridgeError) {
+  private func fail(_ id: String, _ error: Error) {
     guard let request = pending.removeValue(forKey: id) else { return }
     request.timer?.cancel(); request.continuation.resume(throwing: error)
   }

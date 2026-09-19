@@ -68,7 +68,7 @@ extension Proof {
     let bridge = CodexAppServer(installation: installation, scope: scope)
     let account = try await bridge.account(.read)
     guard account.account != nil, !account.requiresSignIn else { throw CodexBridgeError.signInRequired }
-    let task = try await bridge.create(directory: root, title: "GUI-183 isolated standalone proof", workspaceID: UUID())
+    let task = try await bridge.create(directory: root, title: "GUI-183 isolated standalone proof", workspaceID: UUID()) { _ in }
     do {
       try await bridge.attach(threadID: task.id)
       _ = try await wait(bridge, threadID: task.id) { $0.ready }

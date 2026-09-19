@@ -26,7 +26,7 @@ private actor RunOwner: NotebookCodexProcessOwner, NotebookCodexCatalogueOwner {
   func projects(cursor: String?) -> CodexProjectPage { .init(projects: [], nextCursor: nil) }
   func tasks(cursor: String?, project: CodexProject?) -> CodexTaskPage { .init(tasks: [], nextCursor: nil) }
   func history(threadID: String, cursor: String?) -> CodexHistoryPage { .init(messages: [], nextCursor: nil) }
-  func create(directory: URL, title: String, workspaceID: UUID, project: CodexProject?) throws -> CodexTask { throw CodexBridgeError.invalidInput }
+  func create(directory: URL, title: String, workspaceID: UUID, project: CodexProject?, onCreated: @escaping @Sendable (CodexTask) async throws -> Void) async throws -> CodexTask { throw CodexBridgeError.invalidInput }
 }
 
 @MainActor final class NotebookProjectRunsTests: XCTestCase {

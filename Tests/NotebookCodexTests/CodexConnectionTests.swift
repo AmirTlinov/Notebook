@@ -25,6 +25,15 @@ private struct RPCFixture {
 
 @Suite("Persistent App Server transport")
 struct CodexConnectionTests {
+  @Test func receivedRefusalKeepsItsCodeAndIsNotAnUnknownAcceptance() async throws {
+    let fixture = try RPCFixture("q=read()\nwrite({'id':q['id'],'error':{'code':-32602,'message':'private request content'}})\nsys.stdin.read()\n")
+    defer { fixture.remove() }
+    let rpc = CodexRPC(channel: fixture.channel); try await rpc.start()
+    do { _ = try await rpc.request("turn/start", params: .object([:])); Issue.record("Expected refusal") }
+    catch let rejection as CodexRequestRejection { #expect(rejection.code == -32602); #expect(!rejection.localizedDescription.contains("private request content")) }
+    await rpc.stop()
+  }
+
   @Test func failedInitializationReportsOnlyItsStageAndActualExitCode() async throws {
     let fixture = try RPCFixture("read()\nprint('opaque child stderr', file=sys.stderr)\nsys.exit(17)\n", respondsToInitialize: false)
     defer { fixture.remove() }

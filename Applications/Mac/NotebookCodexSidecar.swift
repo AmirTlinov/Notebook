@@ -25,7 +25,7 @@ protocol NotebookCodexCatalogueOwner: Sendable {
   func updateProject(_ edit: CodexProjectEdit) async throws -> CodexProject
   func projects(cursor: String?) async throws -> CodexProjectPage
   func history(threadID: String, cursor: String?) async throws -> CodexHistoryPage
-  func create(directory: URL, title: String, workspaceID: UUID, project: CodexProject?) async throws -> CodexTask
+  func create(directory: URL, title: String, workspaceID: UUID, project: CodexProject?, onCreated: @escaping @Sendable (CodexTask) async throws -> Void) async throws -> CodexTask
 }
 extension CodexAppServer: NotebookCodexConversationOwner { }
 extension CodexAppServer: NotebookCodexCatalogueOwner { }
@@ -58,6 +58,7 @@ final class NotebookCodexSidecar {
   private struct Admission { let peer: UUID; let generation: UInt64; let account: UUID? }
   var accountRequest: ((CodexAccountQuery) async throws -> CodexAccountState)?
   private var executing: [String: Task<Void, Never>] = [:]
+  private var reconciling: [UUID: Task<Void, Never>] = [:]
   private var revokedPeers: Set<UUID> = []
   private var requests: Set<UUID> = []
   private var historyCursors: [UUID: String] = [:]
@@ -121,6 +122,9 @@ final class NotebookCodexSidecar {
         while !Task.isCancelled {
           do {
             let jobs = try await persistence.submit { try $0.pendingChatJobs() }
+            let pending = Set(jobs.map(\.id))
+            reconciliationAfter = reconciliationAfter.filter { pending.contains($0.key) }
+            historyCursors = historyCursors.filter { pending.contains($0.key) }
             // Explicit control of the current turn bypasses queued next-turn text.
             // Preserve journal order within each class and independent thread.
             let ordered = jobs.enumerated().sorted { left, right in
@@ -130,8 +134,20 @@ final class NotebookCodexSidecar {
             }.map(\.element)
             for job in ordered where !Task.isCancelled {
               if job.input.action.isRunCommand || job.input.action.isVoiceCommand { continue }
-              let key = job.input.action.threadID ?? job.id.uuidString
-              guard executing[key] == nil, executing.count < 8 else { continue }
+              if job.state == .uncertain || job.state == .attempting {
+                guard reconciling[job.id] == nil, reconciling.count < 2,
+                  reconciliationAfter[job.id, default: .distantPast] <= Date() else { continue }
+                reconciliationAfter[job.id] = Date().addingTimeInterval(15)
+                reconciling[job.id] = Task { [weak self] in
+                  guard let self else { return }
+                  try? await reconcile(job)
+                  reconciling.removeValue(forKey: job.id)
+                }
+                continue
+              }
+              let control = job.input.action.isInteractiveControl
+              let key = (job.input.action.threadID ?? job.id.uuidString) + (control ? "/control" : "")
+              guard executing[key] == nil, executing.count < (control ? 10 : 8) else { continue }
               executing[key] = Task { [weak self] in
                 guard let self else { return }
                 do { try await execute(job) } catch { /* The durable receipt remains authoritative. */ }
@@ -154,10 +170,10 @@ final class NotebookCodexSidecar {
     subscriptions.removeAll(); pendingEvents.removeAll()
     // Do not cancel a native turn. An in-flight mutation retains its durable attempt.
     await worker?.value; worker = nil
-    let tasks = Array(executing.values)
+    let tasks = Array(executing.values) + Array(reconciling.values)
     for task in tasks { task.cancel() }
     for task in tasks { await task.value }
-    executing.removeAll()
+    executing.removeAll(); reconciling.removeAll()
   }
 
   func revokeDevice(_ peer: UUID) {
@@ -211,6 +227,8 @@ final class NotebookCodexSidecar {
       case .account(let query):
         guard let accountRequest else { throw CodexBridgeError.unavailable }
         reply = .account(try await accountRequest(query))
+      case .stopWaiting(let id):
+        reply = .job(try await persistence.submit { try $0.stopWaitingForChatJob(id, author: peerID) })
       case .dictation(let query):
         guard let dictation else { throw CodexBridgeError.unavailable }
         reply = .dictation(try dictation.receive(query, peer: peerID))
@@ -291,9 +309,6 @@ final class NotebookCodexSidecar {
 
   private func execute(_ job: NotebookChatJob) async throws {
     guard !stopped else { return }
-    if job.state == .uncertain || job.state == .attempting {
-      try await reconcile(job); return
-    }
     guard job.state == .saved else { return }
     guard !revokedPeers.contains(job.input.author), authorizePeer(job.input.author) else {
       try await persistence.submit { try $0.rejectSavedChatInputs(from: job.input.author) }; return
@@ -343,7 +358,9 @@ final class NotebookCodexSidecar {
         if let selectedProject { project = try await metadata.readProject(id: selectedProject.id) } else { project = nil }
         let target = project?.roots.first.map { URL(fileURLWithPath: $0) } ?? directory
         if project == nil { try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true) }
-        result = .created(try await metadata.create(directory: target, title: title, workspaceID: workspaceID, project: project))
+        result = .created(try await metadata.create(directory: target, title: title, workspaceID: workspaceID, project: project) { [persistence] task in
+          try await persistence.submit { try $0.recordCreatedChatTask(job.id, task: task) }
+        })
       case .send(let thread, let text, let context):
         result = .turn(try await bridge.send(threadID: thread, clientMessageID: job.id, text: text, context: context, attachments: job.input.attachments ?? []))
       case .steer(let thread, let turn, let text, let context):
@@ -356,6 +373,12 @@ final class NotebookCodexSidecar {
     } catch {
       // These local checks fail before native dispatch. A turn that finished on
       // the Mac is a definite stale Stop, not an indefinitely unknown acceptance.
+      if case .create = job.input.action,
+        let task = try await persistence.submit({ try $0.chatJob(job.id)?.createdTask }) {
+        _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: .attempting, to: .accepted,
+          result: .created(task), error: "Задача создана. Дополнительная настройка не завершена: " + Self.message(error)) }
+        return
+      }
       let code = error as? CodexBridgeError
       let fileRejected: Bool
       if case .saveFile = job.input.action { fileRejected = try await persistence.submit { try $0.fileCommit(job.id) == nil } }
@@ -363,12 +386,7 @@ final class NotebookCodexSidecar {
         let unprepared = try await persistence.submit { try $0.fileRename(job.id) == nil }
         fileRejected = error is MacNotebookProjectFiles.RenameRejected || unprepared
       } else { fileRejected = false }
-      let accessRejected: Bool
-      switch job.input.action {
-      case .setAccess, .setModel, .compact: accessRejected = code == .requestRejected
-      default: accessRejected = false
-      }
-      let rejected = accessRejected || fileRejected || code == .staleTurn || code == .staleRequest || code == .unsupportedRequest || code == .invalidInput || code == .signInRequired
+      let rejected = error is CodexRequestRejection || fileRejected || code == .externalOwnerUnavailable || code == .staleTurn || code == .staleRequest || code == .unsupportedRequest || code == .invalidInput || code == .signInRequired
       // busy/unavailable are guaranteed pre-dispatch by send(). Other failures
       // remain uncertain, including success whose native reply was lost.
       let retryable: Bool
@@ -387,17 +405,19 @@ final class NotebookCodexSidecar {
   }
 
   private func reconcile(_ job: NotebookChatJob) async throws {
+    guard try await persistence.submit({ try $0.chatJob(job.id)?.state }) == job.state else { return }
+    if let task = job.createdTask {
+      _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted,
+        result: .created(task), error: "Задача создана до обрыва. Дополнительная настройка не подтверждена; состояние проверяется при открытии.") }
+      return
+    }
     if case .createProject(let name, let path) = job.input.action {
-      guard reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
-      reconciliationAfter[job.id] = Date().addingTimeInterval(15)
       // Only this public API explicitly guarantees idempotent creation by key.
       let project = try await metadata.createProject(name: name, path: path, idempotencyKey: job.id)
       _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .project(project)) }
       return
     }
     if case .setModel(let thread, let selection) = job.input.action {
-      guard reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
-      reconciliationAfter[job.id] = Date().addingTimeInterval(15)
       try await observe(thread)
       if await bridge.snapshot(threadID: thread)?.model == selection {
         _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .acknowledged) }
@@ -405,8 +425,6 @@ final class NotebookCodexSidecar {
       return // Never repeat a settings write after an unknown response.
     }
     if case .setAccess(let thread, let mode) = job.input.action {
-      guard reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
-      reconciliationAfter[job.id] = Date().addingTimeInterval(15)
       try await observe(thread)
       if await bridge.snapshot(threadID: thread)?.access?.mode == mode {
         _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .acknowledged) }
@@ -414,7 +432,7 @@ final class NotebookCodexSidecar {
       return
     }
     if case .renameFile(let request) = job.input.action {
-      guard request.address.computer == computerID, reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
+      guard request.address.computer == computerID else { return }
       reconciliationAfter[job.id] = Date().addingTimeInterval(5)
       let project = try await metadata.readProject(id: request.address.project)
       if let result = try await files.reconcileRename(job.id, project: project) {
@@ -423,7 +441,7 @@ final class NotebookCodexSidecar {
       return
     }
     if case .saveFile(let address) = job.input.action {
-      guard address.computer == computerID, reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
+      guard address.computer == computerID else { return }
       reconciliationAfter[job.id] = Date().addingTimeInterval(5)
       let project = try await metadata.readProject(id: address.project)
       if let result = try await files.reconcile(job.id, project: project) {
@@ -432,8 +450,6 @@ final class NotebookCodexSidecar {
       return
     }
     if case .updateProject(let edit) = job.input.action {
-      guard reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
-      reconciliationAfter[job.id] = Date().addingTimeInterval(15)
       let project = try await metadata.readProject(id: edit.id)
       if edit.matches(project) {
         _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .project(project)) }
@@ -441,9 +457,7 @@ final class NotebookCodexSidecar {
       }
       return // Observation can confirm the requested state; it never repeats an edit over newer work.
     }
-    guard let (thread, _, _) = job.input.action.message,
-      reconciliationAfter[job.id, default: .distantPast] <= Date() else { return }
-    reconciliationAfter[job.id] = Date().addingTimeInterval(15)
+    guard let (thread, _, _) = job.input.action.message else { return }
     do {
       let page = try await metadata.history(threadID: thread, cursor: historyCursors[job.id])
       if let message = page.messages.first(where: { $0.clientID == job.id.uuidString.lowercased() }) {
@@ -472,7 +486,6 @@ final class NotebookCodexSidecar {
     }
     guard let bridge = error as? CodexBridgeError else { return String(error.localizedDescription.prefix(2048)) }
     switch bridge {
-    case .requestRejected: return "Codex отклонил запрос. Проверьте доступные настройки этой задачи на Mac."
     case .signInRequired: return "Войдите в Codex через настройки аккаунта Notebook."
     case .notInstalled: return "Официальный runtime Codex отсутствует. Переустановите актуальный Notebook на Mac."
     case .incompatibleVersion: return "Версия Codex несовместима с проверенным протоколом Notebook."

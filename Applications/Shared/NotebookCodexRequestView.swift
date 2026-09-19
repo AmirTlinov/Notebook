@@ -124,3 +124,40 @@ struct NotebookCodexRequestView: View {
     Task { await respond(decision); submitted = false }
   }
 }
+
+/// Ending observation is not cancellation or proof that the native action failed.
+struct NotebookCodexUncertainJobsView: View {
+  let jobs: [NotebookChatJob]
+  let finish: (UUID) async -> Void
+  @State private var selected: NotebookChatJob?
+  var body: some View {
+    let uncertain = jobs.filter { $0.state == .uncertain }
+    if !uncertain.isEmpty {
+      Menu("Неизвестный исход · \(uncertain.count)") {
+        ForEach(uncertain) { job in
+          Button(label(job)) { selected = job }
+        }
+      }
+      .font(.caption).accessibilityIdentifier("notebook-codex-uncertain")
+      .confirmationDialog("Завершить ожидание?", isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } })) {
+        if let selected { Button("Завершить ожидание") { Task { await finish(selected.id) }; self.selected = nil } }
+        Button("Продолжить ждать", role: .cancel) { selected = nil }
+      } message: {
+        Text("Это не остановит действие и не означает, что оно не выполнилось. Исход останется неизвестным; автоматического повтора не будет.")
+      }
+    }
+  }
+  private func label(_ job: NotebookChatJob) -> String {
+    let name: String
+    switch job.input.action {
+    case .send(_, let text, _), .steer(_, _, let text, _): name = String(text.prefix(60))
+    case .create: name = "Создание задачи"
+    case .setAccess: name = "Изменение доступа"
+    case .setModel: name = "Изменение модели"
+    case .stop, .stopRun, .stopVoice: name = "Остановка"
+    case .respond: name = "Ответ на разрешение"
+    default: name = "Действие Codex"
+    }
+    return job.input.createdAt.formatted(date: .omitted, time: .shortened) + " · " + name
+  }
+}

@@ -283,6 +283,7 @@ struct NotebookChatPanel: View {
 
   private var composer: some View {
     VStack(alignment: .leading, spacing: 8) {
+      NotebookCodexUncertainJobsView(jobs: chat.jobs, finish: chat.stopWaiting)
       NotebookVoiceControls(voice: chat.voice)
       if let notice {
         Text(notice).font(.caption).foregroundStyle(chat.error != nil || model.agentRequestError != nil ? .red : .secondary)

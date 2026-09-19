@@ -526,12 +526,16 @@ final class NotebookChatController {
     saving = true; defer { saving = false }
     let computer = peer
     let controlID = messageID ?? action.controlID(author: author)
+    let author = author
     if savingInput == nil, let controlID {
       do {
-        if let previous = try await persistence.submit({ try $0.chatJob(controlID) }) {
-          let destination = try await persistence.submit { try $0.chatDestination(controlID) }
-          guard destination == computer, previous.input.action == action else {
-            error = "Для этого запроса уже сохранено другое решение. Повторно оно не отправляется."; return false
+        if let previous = try await persistence.submit({ store in
+          if action.controlID(author: author) != nil { return try store.savedChatControl(action, author: author, computer: computer) }
+          return try store.chatJob(controlID)
+        }) {
+          guard previous.input.action == action,
+            try await persistence.submit({ try $0.chatDestination(controlID) }) == computer else {
+            error = "Для этого запроса уже сохранено другое решение."; return false
           }
           try await refreshJobs(); return true
         }
@@ -584,6 +588,15 @@ final class NotebookChatController {
       return true
     }
   }
+  func stopWaiting(_ id: UUID) async {
+    let computer = peer
+    do {
+      guard case .job(let job) = try await directQuery(.stopWaiting(id)), peer == computer else { return }
+      _ = try await persistence.submit { try $0.receiveChatReceipt(job) }
+      try await refreshJobs(); error = job.error
+    } catch { self.error = error.localizedDescription }
+  }
+
   func refreshFileJobs() async { try? await refreshJobs(); wake.continuation.yield(()) }
   func fileQuery(_ query: NotebookFileQuery) async throws -> NotebookFileReply {
     guard query.isValid, case .file(let reply) = try await directQuery(.file(query)) else { throw NotebookTransportError.invalidAcknowledgement }
