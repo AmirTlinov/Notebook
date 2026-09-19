@@ -28,6 +28,9 @@ final class NotebookScriptServiceTests: XCTestCase {
     var loseWriteReplies = false
     var nativeWrites = 0
     var reads = 0
+    var holdExportRender = false
+    var exportCuts: [NotebookExportCut] = []
+    var releaseExportRender: CheckedContinuation<Void, Never>?
     init(root: URL? = nil) throws {
       store = NotebookStore(root: root ?? FileManager.default.temporaryDirectory.appendingPathComponent("notebook-xpc-contract-\(UUID())"))
       _ = try store.loadOrCreate(actor: UUID(), pageSize: .init(width: 834, height: 1194))
@@ -69,8 +72,11 @@ final class NotebookScriptServiceTests: XCTestCase {
     return NotebookScriptCoordinator(command: { try await owner.command($0) },
       persistence: { operation in try await owner.persist(operation) },
       workingDirectory: owner.store.root.appendingPathComponent("derived/script-runtime"),
-      canonicalExport: { document, id in try await DocumentCanonicalExport.publication(document: document,
-        state: owner.store.loadDocumentState(document.id), jobID: id) },
+      canonicalExport: { cut, id in
+        owner.exportCuts.append(cut)
+        if owner.holdExportRender { await withCheckedContinuation { owner.releaseExportRender = $0 } }
+        return try await DocumentCanonicalExport.publication(cut: cut, jobID: id, programStore: owner.store)
+      },
       userServiceName: try service("NotebookScriptService"), markupServiceName: try service("NotebookMarkupService"))
   }
 
@@ -892,6 +898,48 @@ final class NotebookScriptServiceTests: XCTestCase {
     XCTAssertEqual(page.string("status"), "interrupted")
     XCTAssertEqual(page["error"]?.string("code"), "owner_restarted")
     XCTAssertTrue(page.array("effects").isEmpty)
+    await host.shutdown()
+  }
+
+  func testExportFreezesStateAtAdmissionAndRejectsALaterEditWithoutReplay() async throws {
+    let owner = try Owner(), host = try await coordinator(owner), run = UUID(), actor = UUID()
+    defer { owner.releaseExportRender?.resume(); try? FileManager.default.removeItem(at: owner.store.root) }
+    let document = DocumentDocument(actor: actor, blocks: [.markdown(id: "text", source: "Immutable source")])
+    var index = try owner.store.loadIndex(), board = try owner.store.loadBoard(items: index.items)
+    XCTAssertNotNil(index.createDocument(title: "State cut", actor: actor, documentID: document.id))
+    XCTAssertTrue(board.addItem(document.id, to: index.rootBoardID, near: .zero, actor: actor))
+    var state = DocumentStateJournal(id: document.id, actor: actor)
+    XCTAssertTrue(state.commit(blockID: "text", value: .number(1), actor: actor))
+    try owner.store.saveDocumentWorkspaceBundle(index: index, document: document, state: state, board: board)
+    owner.holdExportRender = true
+    _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2,
+      code: "return await nb.export('cut',{documentID:args.documentID});",
+      arguments: .object(["documentID": .string(document.id.uuidString)])))
+    let result = try await finish(host, run), job = try XCTUnwrap(result["result"]?.string("jobID"))
+    let deadline = ContinuousClock.now + .seconds(12)
+    while owner.releaseExportRender == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    XCTAssertNotNil(owner.releaseExportRender)
+    let accepted = try XCTUnwrap(owner.exportCuts.first)
+    XCTAssertEqual(accepted.state, state)
+    XCTAssertEqual(result["result"]?.string("cutSHA256"), try accepted.sha256)
+    XCTAssertTrue(state.commit(blockID: "text", value: .number(2), actor: actor))
+    try owner.store.saveDocumentState(state)
+    owner.releaseExportRender?.resume(); owner.releaseExportRender = nil
+    var status: JSONValue = .null
+    let finished = ContinuousClock.now + .seconds(20)
+    repeat {
+      status = try await host.context(.init(method: "exportStatus", arguments: .object(["jobID": .string(job)])))
+      if status["data"]?.string("status") == "failed" { break }
+      try await Task.sleep(for: .milliseconds(20))
+    } while ContinuousClock.now < finished
+    XCTAssertEqual(status["data"]?.string("status"), "failed", "\(status)")
+    XCTAssertEqual(status["data"]?["error"]?.string("code"), "revision_conflict")
+    XCTAssertEqual(status["data"]?.string("cutSHA256"), try accepted.sha256)
+    XCTAssertEqual(status["data"]?.string("stateRevision"), accepted.state.stamp.revision)
+    let repeated = try await host.context(.init(method: "exportStatus", arguments: .object(["jobID": .string(job)])))
+    XCTAssertEqual(repeated["data"], status["data"]); XCTAssertEqual(owner.exportCuts.count, 1)
+    XCTAssertEqual(try owner.store.loadDocumentState(document.id), state)
+    XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: owner.store.root.appendingPathComponent("exports").path).isEmpty)
     await host.shutdown()
   }
 

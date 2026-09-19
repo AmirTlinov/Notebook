@@ -123,10 +123,16 @@ struct NotebookScriptAdmissionTests {
   @Test func publicationReceiptAndExportJobCommitTogetherAcrossRestart() throws {
     let (store, _) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "text", source: "Printed")])
-    try store.saveDocument(document); try store.saveDocumentState(.init(id: document.id, actor: UUID()))
+    let actor = UUID()
+    var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
+    let created = index.createDocument(title: "Export receipt", actor: actor, documentID: document.id)
+    #expect(created != nil)
+    let added = board.addItem(document.id, to: index.rootBoardID, near: .zero, actor: actor); #expect(added)
+    try store.saveDocumentWorkspaceBundle(index: index, document: document,
+      state: .init(id: document.id, actor: actor), board: board)
     let id = UUID()
     try store.saveScriptExportJob(id, value: .object(["status": .string("queued"), "jobID": .string(id.uuidString)]))
-    let publication = NotebookExportPublication(documentID: document.id, expectedRevision: document.contentStamp.revision,
+    let publication = NotebookExportPublication(cut: try .init(document: store.loadDocument(document.id), state: store.loadDocumentState(document.id)),
       source: "trusted source", pdf: Data("%PDF-proof".utf8), log: "", jobID: id)
     let receipt = try store.publishDocumentExport(publication)
     let lost = UUID()

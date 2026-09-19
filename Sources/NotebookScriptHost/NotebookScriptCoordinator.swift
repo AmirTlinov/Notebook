@@ -8,7 +8,7 @@ import NotebookScriptProtocol
 public final class NotebookScriptCoordinator {
   public typealias Command = @Sendable (NotebookCommand) async throws -> JSONValue
   public typealias Persistence = @Sendable (@escaping @Sendable (NotebookStore) throws -> JSONValue) async throws -> JSONValue
-  public typealias CanonicalExport = @MainActor (DocumentDocument, UUID) async throws -> NotebookExportPublication
+  public typealias CanonicalExport = @MainActor (NotebookExportCut, UUID) async throws -> NotebookExportPublication
   let canonicalExport: CanonicalExport
   let command: Command
   let persistence: Persistence
@@ -28,6 +28,7 @@ public final class NotebookScriptCoordinator {
   var inFlightEffects = 0
   var effectDrainWaiters: [CheckedContinuation<Void, Never>] = []
   var exportTasks: [UUID: Task<Void, Never>] = [:]
+  var exportAdmissions = 0
   var closing = false
   private var admissions = 0
   private var admissionWaiters: [CheckedContinuation<Void, Never>] = []

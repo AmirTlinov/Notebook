@@ -9,7 +9,10 @@ import PDFKit
 /// rectangles are frozen as images; all typeset text, paths and links remain
 /// vector PDF, at their already installed physical coordinates.
 @MainActor enum DocumentCanonicalExport {
-  static func publication(document: DocumentDocument, state: DocumentStateJournal, jobID: UUID) async throws -> NotebookExportPublication {
+  static func publication(cut: NotebookExportCut, jobID: UUID, programStore: NotebookStore? = nil) async throws -> NotebookExportPublication {
+    let document = cut.document, state = cut.state
+    // A saved export never borrows an uncommitted live frame with an equal
+    // journal token, and never checkpoints or rewinds the user's executor.
     let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
     let programs = Set(document.blocks.filter { $0.kind == .interactive }.map(\.id))
     var pdf = artifact.pdf
@@ -21,7 +24,8 @@ import PDFKit
         try Task.checkCancellation()
         let locations = byPage[pageIndex] ?? []
         if locations.isEmpty { try await composer.append(pageIndex: pageIndex, image: nil, regions: []); continue }
-        let raster = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: pageIndex)
+        let raster = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: pageIndex,
+          programStore: programStore, isolationID: jobID)
         defer { raster.release() }
         var rect = CGRect(origin: .zero, size: raster.image.size)
         guard let image = raster.image.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { throw SceneRenderError.resourceLimit }
@@ -34,7 +38,7 @@ import PDFKit
       pdf = try await composer.finish()
     }
     let map = try DocumentPrintSourceMap(document: document, source: artifact.source, pdf: pdf, ranges: artifact.sourceMap.ranges)
-    return .init(documentID: document.id, expectedRevision: document.contentStamp.revision,
+    return .init(cut: cut,
       source: artifact.source, pdf: pdf, log: artifact.log, jobID: jobID,
       assets: artifact.assets.map { .init(name: $0.name, data: $0.data) }, sourceMap: map, syncTeX: artifact.syncTeX)
   }

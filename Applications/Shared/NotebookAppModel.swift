@@ -3735,10 +3735,9 @@ final class NotebookAppModel {
       }, persistence: { operation in
         try await persistence.submit(publishesChanges: false, operation)
       }, workingDirectory: store.root.appendingPathComponent("derived/script-runtime", isDirectory: true),
-        canonicalExport: { [weak self] document, id in
-          guard self != nil else { throw CancellationError() }
-          let state = try await persistence.submit(publishesChanges: false) { try $0.loadDocumentState(document.id) }
-          return try await DocumentCanonicalExport.publication(document: document, state: state, jobID: id)
+        canonicalExport: { [weak self] cut, id in
+          guard let self else { throw CancellationError() }
+          return try await DocumentCanonicalExport.publication(cut: cut, jobID: id, programStore: self.store)
         }, userServiceName: userService, markupServiceName: markupService)
       scriptCoordinator = coordinator
       return coordinator

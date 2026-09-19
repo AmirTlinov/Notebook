@@ -21,7 +21,7 @@ struct NotebookExportPublicationTests {
     let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
     let pdf = Data("%PDF-controlled-final".utf8), image = Data("%PDF-controlled-image".utf8)
     func publish(_ source: String, _ asset: Data = image) throws -> NotebookExportReceipt {
-      try store.publishDocumentExport(.init(documentID: document.id, expectedRevision: document.contentStamp.revision,
+      try store.publishDocumentExport(.init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
         source: source, pdf: pdf, log: "", assets: [.init(name: "notebook-image-0.pdf", data: asset)]))
     }
     let first = try publish("first"), repeatFirst = try publish("first"), second = try publish("second")
@@ -35,8 +35,12 @@ struct NotebookExportPublicationTests {
   }
   @Test func stalePublicationNeverInstallsAPartialPackage() throws {
     let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
+    let cut = try NotebookExportCut(document: document, state: store.loadDocumentState(document.id))
+    var edited = document
+    let changed = edited.replaceBlockSource(id: "body", source: "Edited after request", actor: UUID()); #expect(changed)
+    try store.saveDocument(edited)
     do {
-      _ = try store.publishDocumentExport(.init(documentID: document.id, expectedRevision: "wrong-revision",
+      _ = try store.publishDocumentExport(.init(cut: cut,
         source: "source", pdf: Data("%PDF-result".utf8), log: ""))
       Issue.record("An export of stale content cannot publish")
     } catch let error as CollaborationError { #expect(error.code == "revision_conflict") }
@@ -45,7 +49,7 @@ struct NotebookExportPublicationTests {
   @Test func assetNamesCannotEscapeThePreparedPackage() throws {
     let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
     #expect(throws: CollaborationError.self) {
-      try store.publishDocumentExport(.init(documentID: document.id, expectedRevision: document.contentStamp.revision,
+      try store.publishDocumentExport(.init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
         source: "source", pdf: Data("%PDF-result".utf8), log: "", assets: [.init(name: "../outside.pdf", data: Data("%PDF-asset".utf8))]))
     }
     #expect(!FileManager.default.fileExists(atPath: store.root.appendingPathComponent("outside.pdf").path))
@@ -53,7 +57,7 @@ struct NotebookExportPublicationTests {
   @Test func nativeCommandLetsExportOwnItsPreparationAndCommitBoundary() throws {
     let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
     var command = NotebookCommand(command: .publishExport)
-    command.export = .init(documentID: document.id, expectedRevision: document.contentStamp.revision,
+    command.export = .init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
       source: "native command", pdf: Data("%PDF-native-export".utf8), log: "")
     let reply = try NotebookCommandDispatcher(store: store).handle(command)
     let receipt = try reply.decode(NotebookExportReceipt.self)
@@ -63,10 +67,28 @@ struct NotebookExportPublicationTests {
       try store.commandTransaction { try store.publishDocumentExport(command.export!) }
     }
   }
-  @Test func historicalReceiptDoesNotNeedNewPackageMetadata() throws {
-    let bytes = Data(#"{"documentID":"7E7A0000-0000-4000-8000-000000000040","texPath":"old.tex","pdfPath":"old.pdf","pdfSHA256":"old-hash","byteCount":8,"log":"old"}"#.utf8)
-    let receipt = try JSONDecoder().decode(NotebookExportReceipt.self, from: bytes)
-    #expect(receipt.texPath == "old.tex" && receipt.assets == nil && receipt.packageSHA256 == nil)
+  @Test func stateAndCausalABAInvalidateAQueuedCutWithoutChangingPriorArtifacts() throws {
+    let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
+    let cut = try NotebookExportCut(document: document, state: store.loadDocumentState(document.id))
+    let publication = NotebookExportPublication(cut: cut, source: "same source", pdf: Data("%PDF-same".utf8), log: "")
+    let saved = try store.publishDocumentExport(publication)
+    #expect(saved.cutSHA256 == (try cut.sha256))
+    #expect(try Data(contentsOf: URL(fileURLWithPath: saved.cut.path)) == cut.canonicalData())
+    var state = cut.state
+    let changed = state.commit(blockID: "body", value: .number(1), actor: UUID()); #expect(changed)
+    try store.saveDocumentState(state)
+    do { _ = try store.publishDocumentExport(publication); Issue.record("State changed, source did not") }
+    catch let error as CollaborationError { #expect(error.code == "revision_conflict") }
+    let reset = state.commit(blockID: "body", value: .null, actor: UUID()); #expect(reset)
+    try store.saveDocumentState(state)
+    #expect(throws: CollaborationError.self) { try store.publishDocumentExport(publication) }
+    let next = try NotebookExportCut(document: document, state: state)
+    let newReceipt = try store.publishDocumentExport(.init(cut: next, source: publication.source, pdf: publication.pdf, log: ""))
+    #expect(newReceipt.pdfSHA256 == saved.pdfSHA256)
+    #expect(newReceipt.packageSHA256 != saved.packageSHA256)
+    #expect(newReceipt.cutSHA256 != saved.cutSHA256)
+    #expect(try Data(contentsOf: URL(fileURLWithPath: saved.pdfPath)) == publication.pdf)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: store.root.appendingPathComponent("exports").path).allSatisfy { !$0.hasPrefix(".pending-") })
   }
   @Test func sourceMapAndSyncTeXAreBoundToTheExactAtomicPrintPackage() throws {
     let (store, document) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
@@ -74,18 +96,18 @@ struct NotebookExportPublicationTests {
     let syncTeX = Data([0x1f, 0x8b, 0x08, 0x00])
     let map = try DocumentPrintSourceMap(document: document, source: source, pdf: pdf,
       ranges: [.init(blockID: "body", firstLine: 2, lastLine: 2)])
-    let receipt = try store.publishDocumentExport(.init(documentID: document.id,
-      expectedRevision: document.contentStamp.revision, source: source, pdf: pdf, log: "",
+    let receipt = try store.publishDocumentExport(.init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
+      source: source, pdf: pdf, log: "",
       sourceMap: map, syncTeX: syncTeX))
     let bytes = try Data(contentsOf: URL(fileURLWithPath: #require(receipt.sourceMap?.path)))
     #expect(try JSONDecoder().decode(DocumentPrintSourceMap.self, from: bytes) == map)
     #expect(try Data(contentsOf: URL(fileURLWithPath: #require(receipt.syncTeX?.path))) == syncTeX)
     #expect(throws: CollaborationError.self) {
-      try store.publishDocumentExport(.init(documentID: document.id, expectedRevision: document.contentStamp.revision,
+      try store.publishDocumentExport(.init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
         source: source, pdf: Data("%PDF-other".utf8), log: "", sourceMap: map, syncTeX: syncTeX))
     }
     #expect(throws: CollaborationError.self) {
-      try store.publishDocumentExport(.init(documentID: document.id, expectedRevision: document.contentStamp.revision,
+      try store.publishDocumentExport(.init(cut: try .init(document: document, state: store.loadDocumentState(document.id)),
         source: source, pdf: pdf, log: "", sourceMap: map))
     }
   }

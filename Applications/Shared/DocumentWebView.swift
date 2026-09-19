@@ -31,18 +31,18 @@ final class DocumentSnapshotCache {
 
     #if os(macOS)
     func prepare(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int,
-      resources: SceneRenderResources = .shared, programStore: NotebookStore? = nil) async throws -> RasterLease {
+      resources: SceneRenderResources = .shared, programStore: NotebookStore? = nil, isolationID: UUID? = nil) async throws -> RasterLease {
       let source = SceneRasterSource.document(id: document.id,
         token: Self.token(document: document, state: state, pageIndex: pageIndex))
       let requiredScale = Double(NSScreen.main?.backingScaleFactor ?? 2)
-      if let lease = resources.retainRaster(for: source, minimumScale: requiredScale) { return lease }
-      if let producer = DocumentRenderRegistry.shared.rasterProducer(documentID: document.id,
+      if isolationID == nil, let lease = resources.retainRaster(for: source, minimumScale: requiredScale) { return lease }
+      if isolationID == nil, let producer = DocumentRenderRegistry.shared.rasterProducer(documentID: document.id,
         token: Self.token(document: document, state: state, pageIndex: pageIndex), resources: resources, excluding: UUID()) {
         return try await producer.retainPreparedSnapshot(pixelWidth: Int(ceil(WorkspaceItemGeometry.document(document.paperSize).width * requiredScale)), force: true)
       }
       let ready = PageTurnReadiness { _ in }
       let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: ready, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
-      coordinator.programStore = programStore
+      coordinator.programStore = programStore; coordinator.exportSnapshotID = isolationID
       let host = DocumentWebHost()
       let geometry = WorkspaceItemGeometry.document(document.paperSize)
       let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: geometry.width, height: geometry.height),
@@ -353,6 +353,12 @@ final class DocumentWebCoordinator: NSObject,
   private var blockTokens: [String: String] = [:]
   let programAssets = NotebookProgramAssets()
   var programStore: NotebookStore?
+  // Export uses the same admission budget, but neither reads nor overwrites a
+  // live raster with an equal journal token and later uncommitted pixels.
+  var exportSnapshotID: UUID?
+  private func snapshotToken(_ payload: DocumentRuntimePayload) -> String {
+    payload.rasterToken + (exportSnapshotID.map { "|export:" + $0.uuidString.lowercased() } ?? "")
+  }
   private var programURLs: [String: (token: String, url: URL)] = [:]
   private var preparationDeadlineTask: Task<Void, Never>?
   private var preparationDeadlineGeneration: UInt64?
@@ -1748,7 +1754,7 @@ final class DocumentWebCoordinator: NSObject,
       try await awaitPresentation(token: payload.renderToken)
       guard generation == requestGeneration else { throw CancellationError() }
     }
-    let source = SceneRasterSource.document(id: payload.documentID, token: payload.rasterToken)
+    let source = SceneRasterSource.document(id: payload.documentID, token: snapshotToken(payload))
     let minimumScale = nativeScale ?? Self.snapshotMinimumScale(pixelWidth: pixelWidth, size: physicalSize)
     if !force, let cached = resources.retainRaster(for: source, minimumScale: minimumScale) { return cached }
     if force, let preceding = readerTask {
@@ -1848,7 +1854,7 @@ final class DocumentWebCoordinator: NSObject,
   private func retryRasterSnapshotAdmission() {
     guard let demand = pendingRasterSnapshot else { return }
     guard !isInvalidated, generation == rasterSnapshotAdmissionGeneration,
-      payload.map({ SceneRasterSource.document(id: $0.documentID, token: $0.rasterToken) }) == demand.source else {
+      payload.map({ SceneRasterSource.document(id: $0.documentID, token: snapshotToken($0)) }) == demand.source else {
       finishRasterSnapshotAdmission(throwing: CancellationError()); return
     }
     let current = resources.rasterAdmission, previous = demand.admission
@@ -1940,7 +1946,7 @@ final class DocumentWebCoordinator: NSObject,
                   guard before == final,
                     let reservation = capture.reservation, let layout = payload.source.layout,
                     let retained = DocumentSnapshotCache.shared.storeAndRetain(image: normalized, documentID: payload.documentID,
-                      token: payload.rasterToken, layout: layout, reservation: reservation, resources: resources)
+                      token: snapshotToken(payload), layout: layout, reservation: reservation, resources: resources)
                   else { throw DocumentSnapshotWait.presentationChanged }
                   readerPreparedLease?.release(); readerPreparedLease = retained; finishReader()
                 } catch {

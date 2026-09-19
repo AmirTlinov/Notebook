@@ -1,5 +1,52 @@
 # Проверка Notebook
 
+## 19 сентября, 07:34 МСК — GUI-249: immutable saved export cut
+
+Queue admission фиксирует source/state/packages в одной WAL snapshot, до
+асинхронного render. `cutSHA256`, stateRevision и moment=saved остаются в queued,
+saved и failed job. Publication проверяет полный исходник и state, не только
+максимальный contentStamp; output того же PDF с другим cut имеет другой package
+hash. `document.cut.json` сохраняет точный вход. Рендерер обязан вернуть тот же
+cut/jobID; повтор status не исполняет job заново. Slot admission учитывает также
+запросы между чтением и постановкой в очередь.
+
+Asset-backed PDF получает store. Saved render использует прежний coordinator
+и **общий** бюджет, отдельную namespace для растров, не берёт поздний live image
+по равному journal token и не затирает его. Вёрстка, векторный PDF и ссылки
+остаются GUI-238; user runtime не перематывается и не checkpoint-ится экспортом.
+Удалён старый publication contract без state cut; совместимость таких DTO не
+добавлялась. Исторический JSON job читается как данные, не воспроизводится.
+
+**Mac5 PASS**, `.build/gui249-mac-cut-v2/verification.json`, source
+**08b7759c2a270005665ee0d94383a43e9e1ac8731485174c7299a41fdc02a062**:
+real compiled asset module/Worker/resource -> PDF; negative blue live cache
+не попал в saved red PDF и не был заменён; vector text/links; actual XPC export
+с независимой записью; state меняется после admission -> revision_conflict,
+нет публикации/повторного render. **Ещё Mac1 PASS**, `.build/gui249-mac-cut-final/verification.json`,
+source **f4be21dcdce80172b5327743ab02914ed6665b310948b61885d9518196be617c**:
+failed сохраняет исходный cut/state identity. Последующий production change
+между прогонами только этот error receipt.
+
+**Core14 PASS**, `/tmp/gui249-core-cut-v5.log`: stale source/state/causal change,
+атомарная квитанция, неизменные предыдущие файлы и очистка staging.
+**Simulator1 PASS**, `.build/gui249-sim-cut.xcresult`, source
+**74f51a1f4e5ffd49154cdc34b6aaa37b64925d16986401163bc4f7bd65ab54e3**:
+default native tall-program/curl/capture маршрут после общей правки token.
+**MCP20 PASS + generated SDK check**, `/tmp/gui249-js-cut-v3.log`.
+
+Готовые PDFs действительно открыты как Quick Look white-paper renders:
+compiled parabola x=2/y=4, asset/SVG и подписи; красный program rectangle рядом
+с selectable vector heading и внешней ссылкой. Первые sips PNG были прозрачными,
+а не чёрной бумагой PDF; проверен настоящий белый PDF-view. Промежуточные ошибки
+были compile/fixture контрактами: новый обязательный cut, мутирующий вызов внутри
+Swift Testing macro, несохранённый canonical document в старой fixture, неверный
+cwd TS test и старый union без GUI-238 `tex`. Они исправлены, проверки повторены.
+
+**Это foundation, не полный GUI-249**: PDF пока сохраняет старые inline caps.
+Presented cut, PNG/SVG, portable offline package/import, deterministic video,
+streaming large artifacts и cancellation ещё реализуются. Полная приёмка GUI-250
+не проведена; физическая пара не изменена. GUI-249 остаётся In Progress.
+
 ## 19 сентября, 07:20 МСК — GUI-248: 2/4/8 материалов и переход программы через страницу
 
 На прежнем pool/owners проверены настоящие signal/Three gears/wave packages.

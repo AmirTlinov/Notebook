@@ -34,9 +34,9 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
       const appearance:'intact'|'partial'|'erased'=s.data.appearance.state;
       const sourceIsPixels:boolean=s.data.appearance.sourceIsCompleteAppearance;
       const d=await nb.document({id:input.documentID,blockID:'one'});
-      if(d.data) { const kind:'markdown'|'latex'|'interactive'=d.data.block.kind; await emit(kind); }
+      if(d.data) { const kind:'markdown'|'latex'|'tex'|'interactive'=d.data.block.kind; await emit(kind); }
       const printed=await nb.exportStatus({jobID:input.documentID});
-      for(const map of [printed.data.receipt?.sourceMap,printed.data.receipt?.syncTeX]) {
+      for(const map of [printed.data.receipt?.cut,printed.data.receipt?.sourceMap,printed.data.receipt?.syncTeX]) {
         if(map) {
           const path:string=map.path, hash:string=map.sha256, bytes:number=map.byteCount, mime:string=map.mimeType;
           await emit({path,hash,bytes,mime});

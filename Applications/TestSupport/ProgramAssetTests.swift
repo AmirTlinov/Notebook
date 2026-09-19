@@ -136,6 +136,22 @@ final class ProgramAssetTests: XCTestCase {
     return Fixture(root: root, store: store, package: value.package, hash: hash)
   }
 
+  #if os(macOS)
+  func testSavedPDFExportsACompiledAssetPackageWithoutAProgramStoreFallback() async throws {
+    let f = try compiledFixture(); defer { f.close() }
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "title", source: "# Offline asset export"),
+      .interactive(id: "compiled", html: "", programPackage: f.hash, height: 600)])
+    var state = DocumentStateJournal(id: document.id, actor: UUID())
+    XCTAssertTrue(state.commit(blockID: "compiled", value: .object(["x": .number(2)]), actor: UUID()))
+    let cut = try NotebookExportCut(document: document, state: state)
+    let publication = try await DocumentCanonicalExport.publication(cut: cut, jobID: UUID(), programStore: f.store)
+    XCTAssertEqual(publication.cut, cut)
+    XCTAssertTrue(publication.pdf.starts(with: Data("%PDF-".utf8))); XCTAssertGreaterThan(publication.pdf.count, 4000)
+    let attachment = XCTAttachment(data: publication.pdf, uniformTypeIdentifier: "com.adobe.pdf")
+    attachment.name = "compiled-offline-program-saved-pdf"; attachment.lifetime = .keepAlways; add(attachment)
+  }
+  #endif
+
   func testCompiledTypeScriptPackageRunsOfflineAndCheckpointsInBothExistingOwners() async throws {
     let f = try compiledFixture(); defer { f.close() }
     let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)

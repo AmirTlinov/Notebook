@@ -39,26 +39,51 @@ public struct NotebookExportAsset: Codable, Sendable {
   public init(name: String, data: Data) { self.name = name; self.data = data }
 }
 
+/// One accepted source/state/assets identity. Program package hashes belong to
+/// the document; their immutable namespaces cannot drift during rendering.
+public struct NotebookExportCut: Codable, Equatable, Sendable {
+  public let document: DocumentDocument
+  public let state: DocumentStateJournal
+  public init(document: DocumentDocument, state: DocumentStateJournal) throws {
+    guard document.isValid, state.isValid, document.id == state.id else {
+      throw CollaborationError("invalid_export_cut", "Исходник и состояние принадлежат одному документу.")
+    }
+    self.document = document; self.state = state
+  }
+  public func canonicalData() throws -> Data {
+    _ = try Self(document: document, state: state)
+    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    return try encoder.encode(self)
+  }
+  public var sha256: String { get throws {
+    SHA256.hash(data: try canonicalData()).map { String(format: "%02x", $0) }.joined()
+  } }
+}
+
 public struct NotebookExportPublication: Codable, Sendable {
   public let jobID: UUID?
-  public let documentID: UUID
-  public let expectedRevision: String
+  public let cut: NotebookExportCut
+  public var documentID: UUID { cut.document.id }
+  public var expectedRevision: String { cut.document.contentStamp.revision }
   public let source: String
   public let pdf: Data
   public let log: String
   public let assets: [NotebookExportAsset]?
   public let sourceMap: DocumentPrintSourceMap?
   public let syncTeX: Data?
-  public init(documentID: UUID, expectedRevision: String, source: String, pdf: Data, log: String, jobID: UUID? = nil,
+  public init(cut: NotebookExportCut, source: String, pdf: Data, log: String, jobID: UUID? = nil,
     assets: [NotebookExportAsset] = [], sourceMap: DocumentPrintSourceMap? = nil, syncTeX: Data? = nil) {
     self.assets = assets
     self.sourceMap = sourceMap; self.syncTeX = syncTeX
     self.jobID = jobID
-    self.documentID = documentID; self.expectedRevision = expectedRevision; self.source = source; self.pdf = pdf; self.log = log
+    self.cut = cut; self.source = source; self.pdf = pdf; self.log = log
   }
 }
 
 public struct NotebookExportReceipt: Codable, Sendable {
+  public let cutSHA256: String
+  public let stateRevision: String
+  public let cut: NotebookArtifact
   public let documentID: UUID
   public let texPath: String
   public let pdfPath: String
@@ -184,9 +209,9 @@ extension NotebookStore {
       if let id = publication.jobID, let saved = try scriptExportJob(id), saved["status"] == .string("saved"),
         let receipt = saved["receipt"] { return try receipt.decode(NotebookExportReceipt.self) }
       let document = try loadDocument(publication.documentID)
-      guard document.contentStamp.revision == publication.expectedRevision,
-        prepared.document.map({ $0 == document }) ?? true else {
-        throw CollaborationError("revision_conflict", "Документ изменился во время печати.")
+      guard document == publication.cut.document,
+        try loadDocumentState(publication.documentID) == publication.cut.state else {
+        throw CollaborationError("revision_conflict", "Исходник или состояние изменились во время экспорта.")
       }
       if !prepared.alreadyInstalled {
         try FileManager.default.moveItem(at: prepared.staging, to: prepared.destination)
@@ -194,15 +219,17 @@ extension NotebookStore {
       let receipt = prepared.receipt
       if let id = publication.jobID {
         try saveScriptExportJob(id, value: .object(["status": .string("saved"), "jobID": .string(id.uuidString.lowercased()),
-          "contentRevision": .string(publication.expectedRevision), "receipt": try .encode(receipt)]))
+          "contentRevision": .string(publication.expectedRevision), "stateRevision": .string(publication.cut.state.stamp.revision),
+          "cutSHA256": .string(receipt.cutSHA256), "moment": .string("saved"), "receipt": try .encode(receipt)]))
       }
       return receipt
     }
   }
 
   private func prepareDocumentExport(_ publication: NotebookExportPublication) throws ->
-    (staging: URL, destination: URL, alreadyInstalled: Bool, receipt: NotebookExportReceipt, document: DocumentDocument?) {
+    (staging: URL, destination: URL, alreadyInstalled: Bool, receipt: NotebookExportReceipt) {
     guard currentSQL == nil else { throw NotebookStorageError.invalidTransaction("Export preparation must precede SQL admission") }
+    let cutData = try publication.cut.canonicalData()
     let assets = publication.assets ?? []
     let assetBytes = assets.reduce(0) { $0 + $1.data.count }
     guard publication.source.utf8.count <= 4*1024*1024,
@@ -213,25 +240,21 @@ extension NotebookStore {
       assets.enumerated().allSatisfy({ index, asset in
         asset.name == "notebook-image-\(index).pdf" && asset.data.starts(with: Data("%PDF-".utf8))
       }) else { throw CollaborationError("invalid_artifact", "Недопустимый или слишком большой печатный пакет.") }
-    var files = [("document.tex", Data(publication.source.utf8)), ("document.pdf", publication.pdf)]
+    var files = [("document.cut.json", cutData), ("document.tex", Data(publication.source.utf8)), ("document.pdf", publication.pdf)]
       + assets.map { ($0.name, $0.data) }
-    let snapshot: DocumentDocument?
     if let map = publication.sourceMap, let syncTeX = publication.syncTeX {
       guard syncTeX.count <= 4*1024*1024, syncTeX.starts(with: [0x1f, 0x8b]) else {
         throw CollaborationError("invalid_artifact", "Недопустимая или слишком большая карта печатных страниц.")
       }
-      let document = try loadDocument(publication.documentID)
-      try map.validate(document: document, source: publication.source, pdf: publication.pdf)
+      try map.validate(document: publication.cut.document, source: publication.source, pdf: publication.pdf)
       let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
       let encoded = try encoder.encode(map)
       guard encoded.count <= 1024*1024 else { throw CollaborationError("invalid_artifact", "Карта блоков превышает 1 МиБ.") }
       files += [("document.source-map.json", encoded), ("document.synctex.gz", syncTeX)]
-      snapshot = document
     } else {
       guard publication.sourceMap == nil, publication.syncTeX == nil else {
         throw CollaborationError("invalid_artifact", "Карта блоков и карта страниц публикуются вместе.")
       }
-      snapshot = nil
     }
     // Length-framed names and content hashes bind the entire package, including
     // TeX sources that happen to compile to identical PDF pixels.
@@ -268,7 +291,10 @@ extension NotebookStore {
       files.first { $0.0 == name }.map { .init(path: destination.appendingPathComponent(name).path,
         sha256: artifactHash($0.1), byteCount: $0.1.count, mimeType: type) }
     }
-    let receipt = NotebookExportReceipt(documentID: publication.documentID,
+    let cutHash = artifactHash(cutData)
+    let receipt = NotebookExportReceipt(cutSHA256: cutHash, stateRevision: publication.cut.state.stamp.revision,
+      cut: .init(path: destination.appendingPathComponent("document.cut.json").path, sha256: cutHash,
+        byteCount: cutData.count, mimeType: "application/json"), documentID: publication.documentID,
       texPath: destination.appendingPathComponent("document.tex").path,
       pdfPath: destination.appendingPathComponent("document.pdf").path,
       pdfSHA256: artifactHash(publication.pdf), byteCount: publication.pdf.count, log: publication.log,
@@ -276,7 +302,7 @@ extension NotebookStore {
         sha256: artifactHash($0.data), byteCount: $0.data.count, mimeType: "application/pdf") },
       sourceMap: artifact("document.source-map.json", type: "application/json"),
       syncTeX: artifact("document.synctex.gz", type: "application/gzip"))
-    return (staging, destination, alreadyInstalled, receipt, snapshot)
+    return (staging, destination, alreadyInstalled, receipt)
   }
 
   private func artifactID(_ id: UUID?) throws -> UUID {
