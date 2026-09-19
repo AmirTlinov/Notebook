@@ -24,7 +24,8 @@ struct NotebookMacCanvas: View {
     GeometryReader { geometry in
       if let stored = model.presence {
         let viewport = SpatialPoint(x: max(1, geometry.size.width), y: max(1, geometry.size.height))
-        let presence = stored.adapted(to: viewport, geometry: model.itemGeometry(stored.focusedItemID))
+        let adapted = stored.adapted(to: viewport, geometry: model.itemGeometry(stored.focusedItemID))
+        let presence = adapted.replacingCamera(model.macConstrainReading(adapted.camera, presence: adapted))
         let pins = pinned(presence)
         let frame = model.sceneIndex.map { WorkspaceSceneFrame(index: $0, presence: presence, portalCamera: model.scenePortalCamera, pinned: pins) }
         let cohort = model.compositionTiles.published.flatMap { $0.plan.rootBoardID == presence.boardID ? $0 : nil }
@@ -66,7 +67,8 @@ struct NotebookMacCanvas: View {
         }
         .onChange(of: viewport, initial: true) { _, value in
           guard let p = model.presence, p.viewport != value else { return }
-          model.updatePresence(p.adapted(to: value, geometry: model.itemGeometry(p.focusedItemID)), settled: true)
+          let adapted = p.adapted(to: value, geometry: model.itemGeometry(p.focusedItemID))
+          model.updatePresence(adapted.replacingCamera(model.macConstrainReading(adapted.camera, presence: adapted)), settled: true)
         }
         .onDisappear { pageResolution.cancel() }
         .task(id: model.navigationGeneration) {

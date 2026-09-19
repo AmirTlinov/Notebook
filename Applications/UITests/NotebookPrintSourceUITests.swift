@@ -32,7 +32,7 @@ import XCTest
         }
       }
       (landscape ? app.buttons["Рядом"] : code).tap()
-      let editor = app.textViews["document-source-editor"].firstMatch
+      let editor = app.textViews["document-latex-source-viewer"].firstMatch
       XCTAssertTrue(editor.waitForExistence(timeout: 10))
       XCTAssertGreaterThan(editor.frame.minY, controls.map { $0.frame.maxY }.max() ?? 0)
       let image = XCTAttachment(screenshot: app.screenshot()); image.name = "Unified toolbar \(orientation.rawValue)"; image.lifetime = .keepAlways; add(image)
@@ -51,6 +51,7 @@ import XCTest
     let beside = app.buttons["Рядом"]
     XCTAssertTrue(beside.waitForExistence(timeout: 30))
     beside.tap()
+    app.buttons["document-source-menu"].tap(); app.buttons["markdown · introduction"].tap()
     let editor = app.textViews["document-source-editor"].firstMatch
     XCTAssertTrue(editor.waitForExistence(timeout: 10))
     editor.tap()
@@ -79,6 +80,7 @@ import XCTest
     let code = app.buttons["Код"]
     XCTAssertTrue(code.waitForExistence(timeout: 30), app.debugDescription)
     code.tap()
+    app.buttons["document-source-menu"].tap(); app.buttons["markdown · introduction"].tap()
     let editor = app.textViews["document-source-editor"].firstMatch
     XCTAssertTrue(editor.waitForExistence(timeout: 10), app.debugDescription)
     let original = editor.value as? String

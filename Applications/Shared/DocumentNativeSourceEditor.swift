@@ -37,6 +37,28 @@ private typealias SourceColor = NSColor
 }
 
 #if os(iOS)
+/// Inspect the actual generated/file source without opening an editable draft.
+struct DocumentNativeSourceViewer: UIViewRepresentable {
+  let text: String
+  let findRequest: Int
+  func makeCoordinator() -> Coordinator { Coordinator() }
+  func makeUIView(context: Context) -> UITextView {
+    let view = UITextView(usingTextLayoutManager: false)
+    view.isEditable = false; view.isSelectable = true; view.isFindInteractionEnabled = true
+    view.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
+    view.textColor = .label; view.backgroundColor = .systemBackground
+    view.textContainerInset = .init(top: 16, left: 16, bottom: 16, right: 16)
+    return view
+  }
+  func updateUIView(_ view: UITextView, context: Context) {
+    if view.text != text { view.text = text; view.setContentOffset(.zero, animated: false) }
+    if context.coordinator.find != findRequest {
+      context.coordinator.find = findRequest; view.findInteraction?.presentFindNavigator(showingReplace: false)
+    }
+  }
+  final class Coordinator { var find = 0 }
+}
+
 struct DocumentNativeSourceEditor: UIViewRepresentable {
   let session: DocumentSourceEditorSession
   let findRequest: Int
@@ -148,6 +170,35 @@ final class SourceTextView: UITextView {
   }
 }
 #else
+struct DocumentNativeSourceViewer: NSViewRepresentable {
+  let text: String
+  let findRequest: Int
+  func makeCoordinator() -> Coordinator { Coordinator() }
+  func makeNSView(context: Context) -> NSScrollView {
+    let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
+    let view = NSTextView(frame: .zero)
+    view.isEditable = false; view.isSelectable = true; view.isRichText = false
+    view.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
+    view.usesFindPanel = true; view.isIncrementalSearchingEnabled = true
+    view.textContainerInset = .init(width: 16, height: 16)
+    view.minSize = .zero; view.maxSize = .init(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+    view.isVerticallyResizable = true; view.isHorizontallyResizable = false; view.autoresizingMask = [.width]
+    view.textContainer?.widthTracksTextView = true
+    view.textContainer?.containerSize = .init(width: scroll.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+    scroll.documentView = view
+    return scroll
+  }
+  func updateNSView(_ scroll: NSScrollView, context: Context) {
+    guard let view = scroll.documentView as? NSTextView else { return }
+    if view.string != text { view.string = text; view.scrollRangeToVisible(.init(location: 0, length: 0)) }
+    if context.coordinator.find != findRequest {
+      context.coordinator.find = findRequest; view.window?.makeFirstResponder(view)
+      let sender = NSMenuItem(); sender.tag = NSTextFinder.Action.showFindInterface.rawValue; view.performTextFinderAction(sender)
+    }
+  }
+  final class Coordinator { var find = 0 }
+}
+
 struct DocumentNativeSourceEditor: NSViewRepresentable {
   let session: DocumentSourceEditorSession
   let findRequest: Int

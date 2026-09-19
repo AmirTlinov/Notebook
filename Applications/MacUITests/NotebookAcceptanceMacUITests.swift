@@ -57,7 +57,7 @@ import XCTest
     proof.name = "automatic-devices-status"; proof.lifetime = .keepAlways; add(proof)
   }
 
-  func testSourceUnavailableUsesTheWholePaneInBesideAndCodeModes() throws {
+  func testInteractiveSourceIsVisibleInLaTeXAndProgramsWithoutChangingPaper() throws {
     continueAfterFailure = false
     let id = try XCTUnwrap(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_DOCUMENT_ID"].flatMap(UUID.init(uuidString:)))
     let title = try XCTUnwrap(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_DOCUMENT_TITLE"])
@@ -80,22 +80,33 @@ import XCTest
     XCTAssertGreaterThan(originalPaperWidth, window.frame.width * 0.8)
     let original = XCTAttachment(screenshot: originalPixels)
     original.name = "paper-before-source-mode-round-trip"; original.lifetime = .keepAlways; add(original)
-    let unavailable = window.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@ OR value BEGINSWITH %@",
-      "Нет текстового исходника", "Нет текстового исходника")).firstMatch
     for mode in ["Рядом", "Код"] {
       window.radioButtons[mode].click()
-      let source = window.menuButtons["Исходник"]
+      let source = window.menuButtons["Документ LaTeX"]
       XCTAssertTrue(source.waitForExistence(timeout: 5))
       XCTAssertLessThan(source.frame.minY, window.frame.minY + 130,
         "The source toolbar belongs at the top, not in a short vertically centered strip")
-      XCTAssertTrue(unavailable.exists)
-      XCTAssertTrue(window.buttons["Показать лист"].isHittable)
-      XCTAssertFalse(window.buttons["Найти в исходнике"].exists)
+      let text = window.textViews.firstMatch
+      let generated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        (text.value as? String)?.contains("Notebook interactive block: \"sound\"") == true
+          && (text.value as? String)?.contains("notebook.ready") == true
+      }, object: nil)
+      XCTAssertEqual(XCTWaiter.wait(for: [generated], timeout: 15), .completed,
+        "The actual compiled LaTeX must expose the interactive source, not hide it behind an empty state")
+      XCTAssertTrue(window.buttons["Найти в исходнике"].exists)
       let screenshot = XCTAttachment(screenshot: window.screenshot())
-      screenshot.name = "interactive-source-unavailable-" + mode; screenshot.lifetime = .keepAlways; add(screenshot)
+      screenshot.name = "interactive-latex-source-" + mode; screenshot.lifetime = .keepAlways; add(screenshot)
     }
-    window.buttons["Показать лист"].click()
-    XCTAssertFalse(unavailable.exists)
+    window.menuButtons["Документ LaTeX"].click(); application.menuItems["Программа · sound"].click()
+    let actualProgram = window.textViews.firstMatch
+    let executable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      (actualProgram.value as? String)?.contains("notebook.ready") == true
+        && (actualProgram.value as? String)?.contains("% Notebook interactive block:") == false
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [executable], timeout: 5), .completed)
+    let program = XCTAttachment(screenshot: window.screenshot())
+    program.name = "actual-program-javascript"; program.lifetime = .keepAlways; add(program)
+    window.radioButtons["Лист"].click()
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
     XCTAssertEqual(paper.frame.width, originalPaper.width, accuracy: 1,
       "Returning to paper must restore its width without a hidden horizontal scale")
@@ -143,6 +154,32 @@ import XCTest
     XCTAssertEqual(XCTWaiter.wait(for: [returned], timeout: 5), .completed)
     XCTAssertEqual(heading.frame.width, top.width, accuracy: 1)
     capture("sound-scroll-returned")
+  }
+
+  func testReadingFitsAndScrollsToTheBottomWithoutAnOutsideFooter() throws {
+    continueAfterFailure = false
+    let id = try XCTUnwrap(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_DOCUMENT_ID"].flatMap(UUID.init(uuidString:)))
+    let title = try XCTUnwrap(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_DOCUMENT_TITLE"])
+    try activatePrivateApplication()
+    let back = application.buttons["mac-workspace-back"]
+    if back.exists && back.isEnabled { back.click() }
+    let cover = application.buttons["workspace-item-" + id.uuidString.lowercased()]
+    XCTAssertTrue(cover.waitForExistence(timeout: 15)); cover.doubleClick()
+    let window = application.windows[title], paper = window.webViews.firstMatch
+    XCTAssertTrue(window.waitForExistence(timeout: 15)); XCTAssertTrue(paper.waitForExistence(timeout: 30))
+    for fit in ["Вся страница", "По ширине"] {
+      window.menuButtons["mac-reading-zoom"].click(); application.menuItems[fit].click()
+      if fit == "По ширине" {
+        window.coordinate(withNormalizedOffset: .init(dx: 0.99, dy: 0.65)).scroll(byDeltaX: 0, deltaY: -10_000)
+      }
+      let aligned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        abs(paper.frame.maxY-window.frame.maxY) <= 1
+      }, object: nil)
+      XCTAssertEqual(XCTWaiter.wait(for: [aligned], timeout: 5), .completed,
+        "The physical bottom of the paper must meet the reader edge, not reserve a gray footer")
+      let attachment = XCTAttachment(screenshot: window.screenshot())
+      attachment.name = "paper-bottom-" + fit; attachment.lifetime = .keepAlways; add(attachment)
+    }
   }
 
   /// The public Sound document has white paper on the gray reader canvas.

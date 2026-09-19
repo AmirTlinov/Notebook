@@ -113,9 +113,30 @@ test("reserves the exact physical program height without typesetting its interna
   const before = JSON.stringify(value), result = documentExport(value, 0.75);
   assert.equal(JSON.stringify(value), before);
   assert.deepEqual(result.sourceRanges.map(range => range.blockID), [id]);
-  assert.doesNotMatch(result.source, /collaboration-counter/);
+  assert.match(result.source, /% Notebook interactive block: "collaboration-counter/);
+  assert.doesNotMatch(result.source.split("\n").filter(line => !line.startsWith("%")).join("\n"), /collaboration-counter/);
   const heights = [...result.source.matchAll(/vrule width0pt height([\d.]+)bp/g)].map(match => Number(match[1]));
   assert.equal(heights.reduce((a, b) => a+b, 0), 240);
+});
+
+test("shows real inline program code in compiled LaTeX comments without making it TeX input", () => {
+  const block = { ...markdown('sound\n\\input{hidden}', ""), kind: "interactive" as const, height: 320,
+    html: '<button>Start</button>\r\n^^M\\input{hidden}', css: 'button { color: red; }\0',
+    javaScript: 'const phase = 0;\nnotebook.ready(Promise.resolve());', initialState: { phase: 0 } };
+  const result = documentExport(document([block]));
+  assert.match(result.source, /% HTML\n% <button>Start<\/button>\n% \\u005e\\u005eM\\input\{hidden\}/);
+  assert.match(result.source, /% JavaScript\n% const phase = 0;\n% notebook.ready/);
+  assert.ok(!result.source.includes('\0'));
+  const executable = result.source.split("\n").filter(line => !line.startsWith("%")).join("\n");
+  assert.doesNotMatch(executable, /Start|notebook.ready|input\{hidden\}/);
+  assert.equal(result.sourceRanges[0]!.blockID, block.id);
+});
+
+test("names the immutable package in LaTeX instead of inventing inline source", () => {
+  const hash = "a".repeat(64);
+  const result = documentExport(document([{ ...markdown("gears", ""), kind: "interactive", programPackage: hash }]));
+  assert.ok(result.source.includes(`% Package SHA-256: ${hash}`));
+  assert.doesNotMatch(result.source, /% HTML\n/);
 });
 
 

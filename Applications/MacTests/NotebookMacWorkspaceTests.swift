@@ -30,16 +30,37 @@ import SwiftUI
     let frame = geometry.screenFrame(center: center, camera: fit, viewport: viewport)
     XCTAssertEqual(frame.width, viewport.x - 48, accuracy: 0.001)
     XCTAssertEqual(frame.x, 24, accuracy: 0.001)
-    XCTAssertEqual(frame.y, 24, accuracy: 0.001)
+    XCTAssertEqual(frame.y, 0, accuracy: 0.001)
     let far = SpatialCamera(center: center.offsetBy(x: 100_000, y: 100_000), scale: fit.scale)
     let constrained = MacReadingCamera.constrained(far, center: center, geometry: geometry, viewport: viewport)
     let bottom = geometry.screenFrame(center: center, camera: constrained, viewport: viewport)
     XCTAssertEqual(bottom.x, 24, accuracy: 0.001)
-    XCTAssertEqual(bottom.y + bottom.height, viewport.y - 24, accuracy: 0.001)
+    XCTAssertEqual(bottom.y + bottom.height, viewport.y, accuracy: 0.001)
     let whole = MacReadingCamera.fitted(center: center, geometry: geometry, viewport: viewport, fit: .page)
     let paper = geometry.screenFrame(center: center, camera: whole, viewport: viewport)
-    XCTAssertEqual(paper.height, viewport.y - 48, accuracy: 0.001)
+    XCTAssertEqual(paper.height, viewport.y, accuracy: 0.001)
     XCTAssertEqual(whole.center, center)
+  }
+
+  func testReaderResizeConstrainsTheOldScrollWithoutReservingAFooter() {
+    let center = WorldPoint(x: 1800, y: -2400), geometry = WorkspaceItemGeometry.document(.a4)
+    let original = SpatialPoint(x: 1100, y: 780)
+    let camera = MacReadingCamera.fitted(center: center, geometry: geometry, viewport: original, fit: .width)
+    let scrolled = MacReadingCamera.constrained(.init(center: center.offsetBy(x: 0, y: 100_000), scale: camera.scale),
+      center: center, geometry: geometry, viewport: original)
+    let presence = SessionPresence(boardID: UUID(), mode: .document, camera: scrolled,
+      viewport: original, focusedItemID: UUID(), openProgress: 1)
+    for viewport in [SpatialPoint(x: 920, y: 1300), SpatialPoint(x: 1400, y: 600)] {
+      let adapted = presence.adapted(to: viewport, geometry: geometry)
+      let constrained = MacReadingCamera.constrained(adapted.camera, center: center, geometry: geometry, viewport: viewport)
+      let frame = geometry.screenFrame(center: center, camera: constrained, viewport: viewport)
+      if frame.height >= viewport.y {
+        XCTAssertLessThanOrEqual(frame.y, 0.001)
+        XCTAssertGreaterThanOrEqual(frame.y + frame.height, viewport.y - 0.001)
+      } else {
+        XCTAssertEqual(frame.y, (viewport.y-frame.height)/2, accuracy: 0.001)
+      }
+    }
   }
 
   func testPeerCameraDoesNotMoveLocalWindowAndIPCStillObservesIPad() async throws {

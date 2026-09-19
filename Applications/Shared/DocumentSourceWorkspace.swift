@@ -197,6 +197,7 @@ struct DocumentSourceWorkspace<Paper: View>: View {
   var topInset: CGFloat = 0
   let allowsBeside: Bool
   @State private var session: DocumentSourceEditorSession?
+  @State private var programID: String?
   @State private var find = 0
   @State private var comparison = false
   @State private var printStatus = ""
@@ -239,14 +240,13 @@ struct DocumentSourceWorkspace<Paper: View>: View {
 
       }
       .onChange(of: mode) { _, value in
-        if value != .paper, session == nil, let document { openFirst(document) }
         if value == .paper { session?.finish() }
       }
       .onChange(of: allowsBeside, initial: true) { _, allowed in
         if !allowed, mode == .beside { mode = .code }
       }
       .onChange(of: document) { _, value in if let value { session?.reconcile(value) } }
-      .onChange(of: document?.id) { _, _ in session?.finish(); session = nil; mode = .paper }
+      .onChange(of: document?.id) { _, _ in session?.finish(); session = nil; programID = nil; mode = .paper }
       .onReceive(NotificationCenter.default.publisher(for: DocumentSourceRequest.notification)) { note in
         guard let request = note.object as? DocumentSourceRequest, request.documentID == model.activeDocument?.id else { return }
         open(request); if mode == .paper { mode = allowsBeside ? .beside : .code }
@@ -289,21 +289,30 @@ struct DocumentSourceWorkspace<Paper: View>: View {
     }
   }
   @ViewBuilder private func editor(_ document: DocumentDocument) -> some View {
+    let program = document.blocks.first { $0.id == programID && $0.kind == .interactive }
     VStack(spacing: 0) {
       HStack {
         Menu {
+          Button("Документ LaTeX") { showSource() }
+          Divider()
           Button("Добавить LaTeX") { insert(.tex, document: document) }
           Button("Добавить текст") { insert(.markdown, document: document) }
           Divider()
           Button("Преамбула LaTeX") { open(.init(preamble: document)) }
           Divider()
-          ForEach(document.blocks.filter { $0.kind != .interactive }) { block in
-            Button("\(block.kind.rawValue) · \(block.id)") { open(.init(documentID: document.id, block: block, version: document.sourceVersion(blockID: block.id), offset: 0)) }
+          ForEach(document.blocks) { block in
+            if block.kind == .interactive {
+              Button("Программа · \(block.id)") { showSource(program: block.id) }
+            } else {
+              Button("\(block.kind.rawValue) · \(block.id)") { open(.init(documentID: document.id, block: block, version: document.sourceVersion(blockID: block.id), offset: 0)) }
+            }
           }
-        } label: { Label(session.map { $0.field == .preamble ? "Преамбула LaTeX" : "\($0.blockID) · \($0.kind.rawValue)" } ?? "Исходник", systemImage: "doc.text").lineLimit(1) }
+        } label: { Label(session.map { $0.field == .preamble ? "Преамбула LaTeX" : "\($0.blockID) · \($0.kind.rawValue)" }
+          ?? program.map { "Программа · \($0.id)" } ?? "Документ LaTeX", systemImage: "doc.text").lineLimit(1) }
+        .accessibilityIdentifier("document-source-menu")
         Spacer()
+        Button { find += 1 } label: { Image(systemName: "magnifyingglass") }.accessibilityLabel("Найти в исходнике")
         if let session {
-          Button { find += 1 } label: { Image(systemName: "magnifyingglass") }.accessibilityLabel("Найти в исходнике")
           Button { revealSelection(document) } label: { Image(systemName: "doc.viewfinder") }.accessibilityLabel("Показать на листе")
           Button { session.askAgent() } label: { Image(systemName: "bubble.left.and.text.bubble.right") }
             .accessibilityLabel("Обсудить выделенный исходник").disabled(!session.canAskAgent)
@@ -318,17 +327,17 @@ struct DocumentSourceWorkspace<Paper: View>: View {
           Spacer()
           if session.conflicted { Button("Сравнить") { comparison = true } }
         }.font(.caption).padding(12)
+      } else if let program {
+        DocumentProgramSourceView(block: program, store: model.store, findRequest: find).id(program.id)
+      } else if let printedSource, printedSource.artifact.document == document {
+        DocumentNativeSourceViewer(text: printedSource.artifact.source, findRequest: find)
+          .accessibilityIdentifier("document-latex-source-viewer")
+        Text("Собранный LaTeX · только чтение. Для правки выберите блок в меню исходника.")
+          .font(.caption).foregroundStyle(.secondary).padding(12)
       } else {
-        ContentUnavailableView {
-          Label("Нет текстового исходника", systemImage: "doc.text")
-        } description: {
-          Text("Интерактивные блоки не редактируются как текст. Можно добавить текстовый блок или вернуться к листу.")
-        } actions: {
-          Button("Добавить текст") { insert(.markdown, document: document) }
-          Button("Показать лист") { mode = .paper }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityIdentifier("document-source-unavailable")
+        ContentUnavailableView("LaTeX ещё не собран", systemImage: "doc.text", description:
+          Text("Исходники отдельных блоков и программ доступны в меню выше."))
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
       ForEach(diagnostics) { diagnostic in
         Button("Строка \(diagnostic.line): \(diagnostic.message)") {
@@ -351,13 +360,13 @@ struct DocumentSourceWorkspace<Paper: View>: View {
       catch { printStatus = error.localizedDescription }
     }
   }
-  private func openFirst(_ document: DocumentDocument) {
-    guard let block = document.blocks.first(where: { $0.kind != .interactive }) else { return }
-    open(.init(documentID: document.id, block: block, version: document.sourceVersion(blockID: block.id), offset: 0))
+  private func showSource(program: String? = nil) {
+    session?.finish(); session = nil; programID = program
   }
   private func open(_ request: DocumentSourceRequest) {
+    if case .block(let block) = request.contents, block.kind == .interactive { showSource(program: block.id); return }
     if session?.blockID == request.blockID, session?.field == request.field, session?.documentID == request.documentID { session?.navigate(request.offset); return }
-    session?.finish(); session = .init(request: request, model: model)
+    session?.finish(); programID = nil; session = .init(request: request, model: model)
   }
   private func revealSelection(_ document: DocumentDocument) {
     guard let session, let printedSource, printedSource.artifact.document == document,

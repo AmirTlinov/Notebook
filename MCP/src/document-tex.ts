@@ -10,7 +10,7 @@ export interface DocumentExportAsset {
   data: string;
 }
 /** One-based, inclusive lines in the exact generated document.tex, not lines
- * in Markdown. SyncTeX addresses these lines; block IDs never enter TeX. */
+ * in Markdown. SyncTeX addresses these lines; block IDs are never TeX tokens. */
 export interface DocumentPrintSourceRange { blockID: string; firstLine: number; lastLine: number; sourceOffsets: number[] }
 export interface DocumentExport {
   source: string;
@@ -189,7 +189,16 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
       // Breakable, exact-height print slots. The existing native program keeps
       // its viewport; sourceOffset addresses each consecutive page fragment.
       const height = (block.height || 320) * programPointScale;
-      const rows: string[] = ["\\par"];
+      // This is the actual compiled source, not a second editable program.
+      // Comments expose the owner and its code without executing it in TeX.
+      // Neutralize ^^ translation even in comments, and prefix every line.
+      const comment = (text: string) => text.replace(/\r\n?/g, "\n")
+        .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f^]/g, character => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
+        .split("\n").map(line => "% " + line).join("\n");
+      const code = block.programPackage
+        ? [`Package SHA-256: ${block.programPackage}`, "Open this program in the source menu to inspect its files."]
+        : ["HTML", block.html, "CSS", block.css, "JavaScript", block.javaScript];
+      const rows: string[] = [comment(`Notebook interactive block: ${JSON.stringify(block.id)}\nHTML/CSS/JavaScript executes in Notebook; TeX reserves the physical slot.\n${code.join("\n")}\nInitial state: ${JSON.stringify(block.initialState)}\nEnd Notebook program source`), "\\par"];
       for (let y = 0; y < height; y += 12) rows.push(`\\nointerlineskip\\hbox to\\linewidth{\\vrule width0pt height${Math.min(12, height-y).toFixed(6)}bp depth0pt\\hfil}\\penalty0`);
       rows.push("\\par"); return rows.join("\n");
     }

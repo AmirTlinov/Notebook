@@ -9464,7 +9464,13 @@ ${prefix}${body2}\\par
       }
       if (block.kind === "interactive") {
         const height = (block.height || 320) * programPointScale;
-        const rows = ["\\par"];
+        const comment = (text2) => text2.replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f^]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`).split("\n").map((line2) => "% " + line2).join("\n");
+        const code = block.programPackage ? [`Package SHA-256: ${block.programPackage}`, "Open this program in the source menu to inspect its files."] : ["HTML", block.html, "CSS", block.css, "JavaScript", block.javaScript];
+        const rows = [comment(`Notebook interactive block: ${JSON.stringify(block.id)}
+HTML/CSS/JavaScript executes in Notebook; TeX reserves the physical slot.
+${code.join("\n")}
+Initial state: ${JSON.stringify(block.initialState)}
+End Notebook program source`), "\\par"];
         for (let y2 = 0; y2 < height; y2 += 12) rows.push(`\\nointerlineskip\\hbox to\\linewidth{\\vrule width0pt height${Math.min(12, height - y2).toFixed(6)}bp depth0pt\\hfil}\\penalty0`);
         rows.push("\\par");
         return rows.join("\n");

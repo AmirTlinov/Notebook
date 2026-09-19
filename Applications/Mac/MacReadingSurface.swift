@@ -76,11 +76,17 @@ struct MacReadingSurface: View {
 
 enum MacReadingCamera {
   enum Fit { case width, page, actual }
-  static let margin = 24.0
+  static let horizontalMargin = 24.0
+
+  private static func available(_ viewport: SpatialPoint) -> SpatialPoint {
+    // A reader has side gutters, not a footer outside the physical paper.
+    .init(x: max(1, viewport.x - horizontalMargin * 2), y: viewport.y)
+  }
 
   static func fitted(center: WorldPoint, geometry: WorkspaceItemGeometry, viewport: SpatialPoint, fit: Fit) -> SpatialCamera {
-    let width = max(1, viewport.x - margin * 2) / geometry.width
-    let height = max(1, viewport.y - margin * 2) / geometry.height
+    let space = available(viewport)
+    let width = space.x / geometry.width
+    let height = space.y / geometry.height
     let scale: Double = switch fit {
     case .width: width
     case .page: min(width, height)
@@ -90,12 +96,12 @@ enum MacReadingCamera {
   }
 
   static func top(_ camera: SpatialCamera, center: WorldPoint, geometry: WorkspaceItemGeometry, viewport: SpatialPoint) -> SpatialCamera {
-    let y = max(0, geometry.height / 2 - (viewport.y / 2 - margin) / camera.scale)
+    let y = max(0, geometry.height / 2 - viewport.y / (2 * camera.scale))
     return .init(center: center.offsetBy(x: center.delta(to: camera.center).x, y: -y), scale: camera.scale)
   }
 
   static func constrained(_ camera: SpatialCamera, center: WorldPoint, geometry: WorkspaceItemGeometry, viewport: SpatialPoint) -> SpatialCamera {
-    geometry.readingCamera(camera, centeredOn: center, viewport: viewport, margin: margin, maximumScale: 8)
+    geometry.readingCamera(camera, centeredOn: center, viewport: available(viewport), maximumScale: 8)
   }
 }
 
