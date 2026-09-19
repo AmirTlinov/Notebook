@@ -62,7 +62,7 @@ final class InkRasterRenderer: @unchecked Sendable {
         SpatialInkGeometry.appendStrokeVertices(points:points,color:.init(Float(color.red),Float(color.green),Float(color.blue),1),to:&vertices)
       case .erase(let points):
         erase = true
-        SpatialInkGeometry.appendStrokeVertices(points:points,color:.init(1,1,1,1),to:&vertices)
+        SpatialInkGeometry.appendStrokeVertices(points:points,color:.init(1,1,1,1),eraser:true,to:&vertices)
       }
       return (vertices,erase)
     }

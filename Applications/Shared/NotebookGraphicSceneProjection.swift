@@ -1,3 +1,4 @@
+import Foundation
 import NotebookCore
 
 extension NotebookAppModel {
@@ -37,6 +38,19 @@ extension NotebookAppModel {
     let ids = Set(working.map(\.id))
     let combined = NotebookGraphicGraph(Array(graph.nodes.values).filter { !ids.contains($0.id) } + working.map(\.node))
     return projectingGraphicCommands(combined) { .page(pageID: page.id, elementID: $0) }
+  }
+
+  /// New commands see the accepted model and its queued drafts, not the older
+  /// raster cohort. Persistence still chains the exact predecessor sources.
+  func authoredGraphicGraph(boardID: UUID) -> NotebookGraphicGraph {
+    let graph = boardHierarchy?.board(boardID)?.graphicGraph() ?? .init([])
+    let working = pendingModelGraphics.filter {
+      $0.surface == .board(boardID) || ($0.surface.kind == .cover &&
+        $0.surface.ownerID.flatMap { boardHierarchy?.ownerBoardID(of:$0) } == boardID)
+    }
+    let ids = Set(working.map(\.id))
+    let combined = NotebookGraphicGraph(Array(graph.nodes.values).filter { !ids.contains($0.id) } + working.map(\.node))
+    return projectingGraphicCommands(combined) { .spatial(boardID:boardID,elementID:$0) }
   }
 
   func graphicLayout(_ reference: EditableElementReference, preview: Bool = true) -> NotebookGraphicLayout? {

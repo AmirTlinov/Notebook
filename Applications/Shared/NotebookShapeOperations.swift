@@ -15,13 +15,13 @@ extension NotebookAppModel {
     }
     let cutter = outline(object.graphic,object.frame)
     let operands = graph.nodes.values.filter { node in
-      guard node.surface == address.surface, node.shown,
+      guard node.surface == address.surface, node.shown, node.graphic.showsGeometry,
         ![NotebookGraphic.Shape.connector,.freehand,.plus].contains(node.graphic.shape) else { return false }
       return outline(node.graphic,node.frame,origin.delta(to:node.origin)).intersects(cutter)
     }.sorted { $0.id < $1.id }
     guard let first = operands.first else {
-      if operation == .union || operation == .exclude { acceptAuthoredGraphic(object,at:address) }
-      else { showCue("Нарисуйте фигуру поверх другой фигуры.") }
+      // With no operand under the contact, establish a new base shape.
+      acceptAuthoredGraphic(object,at:address)
       return
     }
     guard operands.count <= 32 else { showCue("Выберите не более 32 фигур."); return }

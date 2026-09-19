@@ -18,7 +18,7 @@ import XCTest
     let raw = PageDocument(size:size,actor:actor,drawingData:drawing)
     let frame = PageRect(x:0,y:0,width:300,height:200)
     let graphic = NotebookGraphic(shape:.freehand,sourceInkIDs:[stroke.id,later.id],freehand:.init(layers:actions.map {
-      .init(tool:$0.tool,color:$0.color,vertices:NotebookFreehand.mesh(samples:$0.samples,frame:frame,origin:nil)) }))
+      .init(tool:$0.tool,color:$0.color,vertices:NotebookFreehand.mesh(samples:$0.samples,frame:frame,origin:nil,tool:$0.tool)) }))
     let converted = PageDocument(size:size,actor:actor,drawingData:drawing,elements:[
       .init(id:"retained",kind:.graphic,frame:frame,source:"",html:"",graphic:graphic)])
     func render(_ page:PageDocument,_ name:String) async throws -> NSBitmapImageRep {
@@ -49,6 +49,56 @@ import XCTest
       if let c = textImage.colorAt(x:x,y:y)?.usingColorSpace(.deviceRGB),max(c.redComponent,c.greenComponent,c.blueComponent) < 0.4 { dark += 1 }
     } }
     XCTAssertGreaterThan(dark,1000)
+  }
+
+  func testDenseRoundEraserExportPreparesItsMaskWithoutBlockingTheMainActor() async throws {
+    let frame = PageRect(x:20,y:20,width:160,height:160)
+    let graphic = NotebookGraphic(shape:.rectangle,style:.init(strokeWidth:2,fill:.black))
+    let element = AgentElement(id:"dense-cut",kind:.graphic,frame:frame,source:"",html:"",graphic:graphic)
+    let samples = (0..<2048).map { index in
+      let angle = Double(index)*0.31
+      return SpatialInkSample(point:.init(x:80+cos(angle)*3,y:80+sin(angle)*3),timeOffset:Double(index)/240,
+        width:36,opacity:1,force:1,azimuth:0,altitude:1)
+    }
+    let erase = PageInkAction(tool:.eraser,samples:samples).erasingElements([.init(elementID:element.id,frame:frame)])
+    let page = PageDocument(size:.init(width:200,height:200),actor:UUID(),drawingData:try PageInkDrawing(actions:[erase]).dataRepresentation(),elements:[element])
+    var ticks = 0
+    let heartbeat = Task { @MainActor in
+      while !Task.isCancelled { try? await Task.sleep(for:.milliseconds(10)); ticks += 1 }
+    }
+    defer { heartbeat.cancel() }
+    let started = ContinuousClock.now
+    let result = try await PageCompositionRenderer.render(page,scale:1) { _ in
+      XCTFail("Native erasure never starts WebKit"); throw CocoaError(.featureUnsupported)
+    }
+    XCTAssertLessThan(started.duration(to:.now),.seconds(8),"Dense cutouts cannot monopolize CPU mask rasterization")
+    XCTAssertGreaterThan(ticks,2,"The main actor remains available during canonical mask preparation")
+    let image = try XCTUnwrap(NSBitmapImageRep(data:result.png))
+    XCTAssertGreaterThan(try XCTUnwrap(image.colorAt(x:80,y:80)?.usingColorSpace(.deviceRGB)).redComponent,0.8)
+    XCTAssertLessThan(try XCTUnwrap(image.colorAt(x:140,y:140)?.usingColorSpace(.deviceRGB)).redComponent,0.2)
+  }
+
+  func testRoundEraserTurnLeavesNoPenMiterInSavedPixels() async throws {
+    func sample(_ x: Double, _ y: Double, _ width: Double) -> SpatialInkSample {
+      .init(point:.init(x:x,y:y),timeOffset:0,width:width,opacity:1,force:1,azimuth:0,altitude:1)
+    }
+    let drawing = try PageInkDrawing(actions:[
+      .init(tool:.pen,samples:[sample(110,110,200)]),
+      .init(tool:.eraser,samples:[sample(40,80,40),sample(120,80,40),sample(120,160,40)])
+    ]).dataRepresentation()
+    let page = PageDocument(size:.init(width:230,height:230),actor:UUID(),drawingData:drawing)
+    let result = try await PageCompositionRenderer.render(page,scale:2) { _ in
+      XCTFail("Measured erasure stays native"); throw CocoaError(.featureUnsupported)
+    }
+    let image = try XCTUnwrap(NSBitmapImageRep(data:result.png))
+    func red(_ x: Int, _ y: Int) throws -> CGFloat {
+      try XCTUnwrap(image.colorAt(x:x*2,y:y*2)?.usingColorSpace(.deviceRGB)).redComponent
+    }
+    XCTAssertLessThan(try red(138,62),0.2,"Outside the round turn remains ink, not the pen's square/miter cut")
+    XCTAssertGreaterThan(try red(132,68),0.8,"The interior of the round turn is erased")
+    XCTAssertGreaterThan(try red(120,80),0.8)
+    let proof = XCTAttachment(data:result.png,uniformTypeIdentifier:"public.png")
+    proof.name = "round-eraser-saved-turn"; proof.lifetime = .keepAlways; add(proof)
   }
 
   func testRoundedPolygonPaintUsesTheSharedContour() async throws {

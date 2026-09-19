@@ -279,6 +279,8 @@ final class NotebookAppModel {
   let compositionTiles: SceneCompositionTiles
   private(set) var sceneIndex: WorkspaceSceneIndex?
   private(set) var workspaceHeader: NotebookWorkspaceHeader?
+  // Logical content admission, not the durable header-only refresh or GPU cohort.
+  private(set) var sceneContentCursor: UInt64 = 0
   private(set) var documentPaperSizes: [UUID: DocumentPaperSize] = [:]
   private(set) var sceneCoverage: [UUID: WorkspaceSpatialBounds] = [:]
   private(set) var truncatedSceneBoards: Set<UUID> = []
@@ -2604,6 +2606,32 @@ final class NotebookAppModel {
     return acceptInkIntent(.undoLast, pageID: page.id, stamp: stamp)
   }
 
+  // The toolbar projects the active tool’s stored color, never a second copy.
+  var drawingColor: PenColor {
+    switch drawingTool {
+    case .marker: drawingToolSettings.markerColor
+    case .shape: drawingToolSettings.shapeColor
+    case .text: drawingToolSettings.textColor
+    case .connector: drawingToolSettings.connectionColor
+    case .laser: drawingToolSettings.laserColor
+    case .pen, .ruler, .eraser, .lasso: penStyle.color
+    }
+  }
+  func selectDrawingColor(_ color: PenColor) {
+    switch drawingTool {
+    case .marker: drawingToolSettings.markerColor = color
+    case .shape: drawingToolSettings.shapeColor = color
+    case .text: drawingToolSettings.textColor = color
+    case .connector: drawingToolSettings.connectionColor = color
+    case .laser: drawingToolSettings.laserColor = color
+    case .pen, .ruler:
+      guard color != penStyle.color else { return }
+      penStyle = PenStyle(color:color,width:penStyle.width,minimumOpacity:penStyle.minimumOpacity)
+      savePenStyle()
+    case .eraser, .lasso: break
+    }
+  }
+
   func selectPenColor(_ color: PenColor) {
     clearSelection()
     drawingTool = .pen
@@ -3090,6 +3118,16 @@ final class NotebookAppModel {
   }
 
   private func elementGeometry(_ reference: EditableElementReference) -> (frame: CGRect, bounds: CGRect?, identity: VersionStamp?, worldOrigin: WorldPoint?)? {
+    if let working = acceptedWorkingGraphic(reference) {
+      let bounds: CGRect?
+      if working.surface.kind == .page, let page = working.surface.ownerID.flatMap({ pages[$0] }) {
+        bounds = .init(x:0,y:0,width:page.size.width,height:page.size.height)
+      } else if working.surface.kind == .cover {
+        let size = itemGeometry(working.surface.ownerID); bounds = .init(x:0,y:0,width:size.width,height:size.height)
+      } else { bounds = nil }
+      let f = working.frame
+      return (graphicCommandDrafts[reference]?.rect ?? .init(x:f.x,y:f.y,width:f.width,height:f.height),bounds,nil,working.worldOrigin)
+    }
     switch reference {
     case .page(let pageID, let id):
       guard !isPageBeingDeleted(pageID), let page = pages[pageID],
@@ -3114,6 +3152,7 @@ final class NotebookAppModel {
 
   func graphicElement(_ reference: EditableElementReference) -> NotebookGraphic? {
     if let draft = graphicCommandDrafts[reference] { return draft.graphic }
+    if let working = acceptedWorkingGraphic(reference) { return working.graphic }
     switch reference {
     case .page(let pageID, let id): return pages[pageID]?.elements.first { $0.id == id }?.graphic
     case .spatial(let boardID, let id): return boardHierarchy?.board(boardID)?.elements.first { $0.id == id }?.graphic
@@ -3243,7 +3282,9 @@ final class NotebookAppModel {
     var drafts: [EditableElementReference: NotebookGraphicCommandDraft] = [:]
     do {
       for edit in edits {
-        guard var graphic = graphicElement(edit.reference), let geometry = elementGeometry(edit.reference) else { continue }
+        // Creation already has a working object; its full payload is not an update patch.
+        guard ![CollaborationOperation.Kind.insertElement,.convertInkToElement].contains(edit.kind),
+          var graphic = graphicElement(edit.reference), let geometry = elementGeometry(edit.reference) else { continue }
         if let patch = edit.values["graphic"] { graphic = try graphic.applying(patch) }
         if edit.kind == .removeElement { graphic.visible = false }
         let frame = try edit.values["frame"]?.decode(PageRect.self)
@@ -3311,8 +3352,9 @@ final class NotebookAppModel {
     case .spatial(let owner,let id):
       let element = boardHierarchy?.board(owner)?.elements.first { $0.id == id }
       guard boardHierarchy?.board(owner) != nil else { return nil }
-      let target = element?.surface.kind == .cover
-        ? CollaborationTarget(kind:.cover,id:element!.surface.ownerID!,boardID:owner) : .init(kind:.board,id:owner)
+      let surface = element?.surface ?? acceptedWorkingGraphic(reference)?.surface
+      let target = surface?.kind == .cover
+        ? CollaborationTarget(kind:.cover,id:surface!.ownerID!,boardID:owner) : .init(kind:.board,id:owner)
       return .init(target:target,id:id,spatial:element)
     }
   }
@@ -4550,6 +4592,7 @@ final class NotebookAppModel {
 
   private func acceptSceneState(_ state: NotebookSceneState, preservingPresence: SessionPresence? = nil) {
     workspaceHeader = state.header
+    sceneContentCursor = state.header.cursor
     for (id, cursor) in completedDeletions where state.header.cursor >= cursor {
       pendingDeletions[id] = nil
       completedDeletions[id] = nil

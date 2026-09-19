@@ -9,9 +9,11 @@ struct NotebookTransientToolsOverlay: View {
   var body: some View {
     ZStack(alignment:.topLeading) {
     if !model.drawingTools.laserTraces.isEmpty {
-      TimelineView(.animation) { _ in
+      TimelineView(.animation) { timeline in
+        // Capture the timeline tick in the Canvas value, not a clock read hidden
+        // inside its cached drawing closure. Lift need not mutate the model.
+        let now = timeline.date.timeIntervalSinceReferenceDate
         Canvas { context,_ in
-          let now = ProcessInfo.processInfo.systemUptime
           for trace in model.drawingTools.laserTraces {
             guard let origin = origin(trace.address) else { continue }
             let points = trace.points(at:now), scale = presence.camera.scale

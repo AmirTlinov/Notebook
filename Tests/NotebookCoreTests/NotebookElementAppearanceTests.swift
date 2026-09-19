@@ -71,7 +71,7 @@ import Testing
         radius:Float(sample.width/2),premultipliedColor:.init(repeating:1))
     }
     var vertices: [InkStrokeGeometry.Vertex] = []
-    InkStrokeGeometry.appendStrokeVertices(renderPoints:points,to:&vertices)
+    InkStrokeGeometry.appendEraserVertices(renderPoints:points,to:&vertices)
     for size in [CGSize(width:160,height:100),CGSize(width:240,height:75)] {
       let mask = NotebookElementAppearance.erasurePath([erasure,erasure],size:size)
       let measured = NotebookElementAppearance.measuredErasurePath([erasure,erasure],size:size)

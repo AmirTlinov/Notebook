@@ -10,7 +10,6 @@ struct NotebookDrawingToolSettingsView: View {
   var body: some View {
     switch tool {
     case .marker:
-      colors(\.markerColor)
       slider("Толщина маркера", path: \.markerWidth, range: 0.5...128, id:"marker-width",logarithmic:true)
       slider("Непрозрачность маркера", path: \.markerOpacity, range: 0.1...0.65, id:"marker-opacity")
     case .lasso:
@@ -20,23 +19,19 @@ struct NotebookDrawingToolSettingsView: View {
       Picker("Фигура",selection:binding(\.shape)) {
         ForEach(DrawingShape.allCases,id:\.self) { shape in Label(shape.title,systemImage:shape.symbol).tag(shape) }
       }.accessibilityIdentifier("drawing-shape-kind")
-      Text("Обводка").font(.caption)
-      colors(\.shapeColor)
       slider("Толщина контура",path:\.shapeWidth,range:0.25...128,id:"shape-width",logarithmic:true)
       Toggle("Заливка",isOn:binding(\.shapeFilled)).accessibilityIdentifier("shape-fill")
       if model.drawingToolSettings.shapeFilled {
         Text("Цвет заливки").font(.caption)
-        colors(Binding(get:{ model.drawingToolSettings.shapeFillColor ?? .yellow },set:{ model.drawingToolSettings.shapeFillColor = $0 }),suffix:"fill")
+        NotebookToolColorPalette(selection:Binding(get:{ model.drawingToolSettings.shapeFillColor ?? .yellow },set:{ model.drawingToolSettings.shapeFillColor = $0 }),prefix:"shape-fill")
       }
       Picker("Наложение",selection:Binding(get:{ model.drawingToolSettings.shapeOperation ?? .normal },set:{ model.drawingToolSettings.shapeOperation = $0 })) {
         ForEach(NotebookShapeOperation.allCases,id:\.self) { Text($0.title).tag($0) }
       }.accessibilityIdentifier("shape-operation")
-      Toggle("Круг / квадрат",isOn:binding(\.preservesAspect)).accessibilityIdentifier("shape-aspect")
+      Toggle("Фиксированные пропорции",isOn:binding(\.preservesAspect)).accessibilityIdentifier("shape-aspect")
     case .text:
-      colors(\.textColor)
       slider("Размер текста",path:\.textSize,range:12...72,id:"text-size")
     case .connector:
-      colors(\.connectionColor)
       slider("Толщина стрелки",path:\.connectionWidth,range:0.25...128,id:"connector-width",logarithmic:true)
       Picker("Линия",selection:binding(\.connectionRouting)) {
         Text("Прямая").tag(NotebookGraphicConnection.Routing.straight)
@@ -57,7 +52,6 @@ struct NotebookDrawingToolSettingsView: View {
         .font(.caption).foregroundStyle(.secondary)
         .onChange(of:model.drawingToolSettings.rulerAngle) { _,angle in model.drawingTools.ruler?.angle = angle }
     case .laser:
-      colors(\.laserColor)
       slider("След: \(String(format:"%.1f",model.drawingToolSettings.laserDuration)) с",path:\.laserDuration,range:0.2...2,id:"laser-duration",step:0.1)
     case .pen, .eraser: EmptyView()
     }
@@ -65,21 +59,6 @@ struct NotebookDrawingToolSettingsView: View {
 
   private func binding<T>(_ path: WritableKeyPath<NotebookDrawingToolSettings,T>) -> Binding<T> {
     .init(get:{ model.drawingToolSettings[keyPath:path] },set:{ model.drawingToolSettings[keyPath:path] = $0 })
-  }
-  private func colors(_ path: WritableKeyPath<NotebookDrawingToolSettings,PenColor>) -> some View { colors(binding(path)) }
-  private func colors(_ selection: Binding<PenColor>, suffix: String = "") -> some View {
-    HStack {
-      ForEach(PenColor.allCases) { color in
-        Button { selection.wrappedValue = color } label: {
-          Circle().fill(color.displayColor).frame(width:22,height:22).padding(4)
-            .overlay { Circle().stroke(color == selection.wrappedValue ? Color.primary : .clear,lineWidth:2) }
-            .frame(width:44,height:44).contentShape(Rectangle())
-        }
-        .accessibilityLabel(color.name)
-        .accessibilityIdentifier(tool.rawValue + "-" + (suffix.isEmpty ? "" : suffix + "-") + "color-" + color.rawValue)
-        .accessibilityAddTraits(color == selection.wrappedValue ? .isSelected : [])
-      }
-    }
   }
   private func arrowhead(_ title: String, path: WritableKeyPath<NotebookDrawingToolSettings,NotebookGraphicConnection.Arrowhead?>,
     defaultValue: NotebookGraphicConnection.Arrowhead) -> some View {
@@ -97,6 +76,24 @@ struct NotebookDrawingToolSettingsView: View {
       Slider(value:Binding(get:{ logarithmic ? log2(model.drawingToolSettings[keyPath:path]) : model.drawingToolSettings[keyPath:path] },
         set:{ model.drawingToolSettings[keyPath:path] = logarithmic ? pow(2,$0) : $0 }),
         in:logarithmic ? log2(range.lowerBound)...log2(range.upperBound) : range,step:step).accessibilityLabel(title).accessibilityIdentifier(id)
+    }
+  }
+}
+
+struct NotebookToolColorPalette: View {
+  @Binding var selection: PenColor
+  let prefix: String
+  var body: some View {
+    HStack(spacing:0) {
+      ForEach(PenColor.allCases) { color in
+        Button { selection = color } label: {
+          Circle().fill(color.displayColor).frame(width:22,height:22).padding(4)
+            .overlay { Circle().stroke(color == selection ? Color.primary : .clear,lineWidth:1) }
+            .frame(maxWidth:.infinity,minHeight:40).contentShape(Rectangle())
+        }
+        .accessibilityLabel(color.name).accessibilityIdentifier(prefix+"-color-"+color.rawValue)
+        .accessibilityAddTraits(color == selection ? .isSelected : [])
+      }
     }
   }
 }

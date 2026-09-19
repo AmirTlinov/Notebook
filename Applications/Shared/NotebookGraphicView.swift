@@ -7,8 +7,9 @@ struct NotebookGraphicView: View {
   let graphic: NotebookGraphic
   var layout: NotebookGraphicLayout? = nil
   var erasures: [InkElementErasure] = []
+  var appearance: NotebookElementAppearance? = nil
   var body: some View {
-    Canvas { context, size in Self.paint(graphic, layout: layout, in: context, size: size, erasures: erasures) }
+    Canvas { context, size in Self.paint(graphic, layout: layout, in: context, size: size, erasures: erasures, appearance: appearance) }
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(graphic.label.isEmpty ? graphic.shape.displayName : graphic.label)
     .accessibilityAddTraits(.isImage)

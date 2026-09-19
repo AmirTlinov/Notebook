@@ -120,7 +120,7 @@ public struct NotebookElementAppearance: @unchecked Sendable {
         else { points.append(next) }
       }
       var vertices: [InkStrokeGeometry.Vertex] = []
-      InkStrokeGeometry.appendStrokeVertices(renderPoints:points,to:&vertices)
+      InkStrokeGeometry.appendEraserVertices(renderPoints:points,to:&vertices)
       func point(_ p: SIMD2<Float>) -> CGPoint {
         let normalized = SpatialPoint(x:Double(p.x)/erasure.target.frame.width,y:Double(p.y)/erasure.target.frame.height)
         let content = (erasure.target.graphicTransform ?? .identity).unapplying(normalized)

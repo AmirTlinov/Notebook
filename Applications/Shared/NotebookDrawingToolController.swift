@@ -65,12 +65,12 @@ final class NotebookDrawingToolController {
     guard !model.drawingTool.usesInkJournal, address.surface.ownerID != nil,
       screenScale.isFinite, screenScale > 0 else { return false }
     cancel()
-    laserTraces.removeAll { $0.expiresAt <= ProcessInfo.processInfo.systemUptime }
+    laserTraces.removeAll { $0.expiresAt <= Date.timeIntervalSinceReferenceDate }
     let graph: NotebookGraphicGraph
     if [.laser,.ruler,.text].contains(model.drawingTool) { graph = .init([]) }
-    else if address.surface.kind == .page, let page = model.pages[address.surface.ownerID!] { graph = model.graphicGraph(page:page,preview:false) }
-    else if let board = address.boardID ?? address.surface.ownerID, let cohort = model.compositionTiles.published {
-      graph = model.presentedGraphicGraph(boardID:board,cohort:cohort,preview:false)
+    else if address.surface.kind == .page, let page = model.pages[address.surface.ownerID!] { graph = model.graphicGraph(page:page) }
+    else if let board = address.boardID ?? address.surface.ownerID {
+      graph = model.authoredGraphicGraph(boardID:board)
     } else { graph = .init([]) }
     let ink: Task<NotebookLassoInkSource?,Never>?
     if model.drawingTool == .lasso {
@@ -88,7 +88,7 @@ final class NotebookDrawingToolController {
     if let contact, contact.tool == .laser {
       laserTraces.append(.init(id:contact.id,address:address,color:contact.settings.laserColor,
         width:4/screenScale,lifetime:contact.settings.laserDuration,
-        samples:[.init(point:point,time:ProcessInfo.processInfo.systemUptime)]))
+        samples:[.init(point:point,time:Date.timeIntervalSinceReferenceDate)]))
     }
     return true
   }
@@ -106,7 +106,7 @@ final class NotebookDrawingToolController {
     } else { current.points = [current.points[0],point] }
     contact = current
     if current.tool == .laser, let index = laserTraces.firstIndex(where:{ $0.id == current.id }) {
-      let now = ProcessInfo.processInfo.systemUptime
+      let now = Date.timeIntervalSinceReferenceDate
       laserTraces[index].append(point,time:now)
     }
     if let object = figure(current) { model.updateWorkingGraphic(object,strokeID:current.id) }
@@ -126,22 +126,29 @@ final class NotebookDrawingToolController {
     case .lasso: finishLasso(current)
     case .text:
       model.beginToolText(at:current.points[0],address:current.address,screenScale:current.screenScale)
-    case .laser:
-      let lifetime = current.settings.laserDuration
-      Task { [weak self] in
-        try? await Task.sleep(for:.seconds(lifetime))
-        self?.laserTraces.removeAll { $0.id == current.id }
-      }
+    case .laser: expireLaser(current.id)
     case .pen,.marker,.eraser: assertionFailure("Ink belongs to the measured journal adapter")
     }
   }
 
   func cancel() {
     lassoTask?.cancel(); lassoTask = nil
-    if let contact { model.updateWorkingGraphic(nil,strokeID:contact.id); laserTraces.removeAll { $0.id == contact.id } }
+    if let contact {
+      model.updateWorkingGraphic(nil,strokeID:contact.id)
+      if contact.tool == .laser { expireLaser(contact.id) }
+    }
     contact = nil
     let cancellation = onContactCancellation; onContactCancellation = nil
     cancellation?()
+  }
+
+  private func expireLaser(_ id: UUID) {
+    guard let trace = laserTraces.first(where:{ $0.id == id }) else { return }
+    let remaining = max(0,trace.expiresAt-Date.timeIntervalSinceReferenceDate)
+    Task { [weak self] in
+      try? await Task.sleep(for:.seconds(remaining))
+      self?.laserTraces.removeAll { $0.id == id }
+    }
   }
 
   private func finishLasso(_ current: Contact) {

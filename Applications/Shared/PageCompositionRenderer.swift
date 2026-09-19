@@ -51,13 +51,23 @@ enum PageCompositionRenderer {
       let local = layout?.frame ?? element.frame
       let frame = CGRect(x: local.x - region.x, y: local.y - region.y,
         width: local.width, height: local.height)
+      let cuts = erasures[element.id] ?? []
+      // Export must not send a dense live triangle mask to ImageRenderer on
+      // the main actor. Prepare the same canonical appearance as scene picking.
+      let appearance: NotebookElementAppearance?
+      if !cuts.isEmpty && (element.graphic != nil || element.kind == .nativeText) {
+        let input = NotebookElementErasureCache.Input(graphic:element.graphic,layout:layout,size:frame.size,erasures:cuts)
+        let worker = Task.detached(priority:.utility) { input.prepare() }
+        appearance = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+        try Task.checkCancellation()
+      } else { appearance = nil }
       if let graphic = element.graphic {
-        try await canvas.drawView(NotebookGraphicView(graphic: graphic, layout:layout, erasures: erasures[element.id] ?? []), size: frame.size, in: frame)
+        try await canvas.drawView(NotebookGraphicView(graphic: graphic, layout:layout, erasures:cuts,appearance:appearance), size: frame.size, in: frame)
         continue
       }
       if element.kind == .nativeText {
         try await canvas.drawView(NotebookNativeTextSnapshot(source:element.source,style:element.textStyle ?? .standard)
-          .erased(by:erasures[element.id] ?? []),size:frame.size,in:frame)
+          .erased(by:cuts,appearance:appearance),size:frame.size,in:frame)
         continue
       }
       let image = try await raster(element)
@@ -93,7 +103,11 @@ enum PageCompositionRenderer {
     defer { pixels.release() }
     var geometryBytes = 0
     for action in drawing.actions where action.isActive {
-      let samples = action.samples.count.multipliedReportingOverflow(by: 512)
+      // Round sweeps retain a disk per sample in both CPU vertices and GPU
+      // buffers; the old pen-only estimate would undercharge these allocations.
+      let bytesPerSample = action.tool == .eraser
+        ? 512 + 2 * InkStrokeGeometry.roundSweepSegmentVertexCount * MemoryLayout<SpatialInkGeometry.Vertex>.stride : 512
+      let samples = action.samples.count.multipliedReportingOverflow(by: bytesPerSample)
       let total = geometryBytes.addingReportingOverflow(samples.partialValue)
       guard !samples.overflow, !total.overflow, total.partialValue <= resources.byteLimit - 2304 else {
         throw SceneRenderError.resourceLimit

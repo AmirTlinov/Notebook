@@ -87,6 +87,29 @@ public enum InkStrokeGeometry {
     }
   }
 
+  public static var roundDiskVertexCount: Int { capSegments * 6 }
+  public static var roundSweepSegmentVertexCount: Int { 6 + roundDiskVertexCount }
+
+  /// A round eraser sweeps disks, never the pen's mitered cross sections.
+  /// The fixed segment layout also lets the live mesh replace only its tail.
+  public static func appendEraserVertices(renderPoints: [RenderPoint], includesStart: Bool = true,
+    to vertices: inout [Vertex]) {
+    guard let first = renderPoints.first else { return }
+    if includesStart { appendDisk(at:first,to:&vertices) }
+    for index in 1..<renderPoints.count {
+      if index.isMultiple(of:256), Task.isCancelled { return }
+      let a = renderPoints[index-1], b = renderPoints[index]
+      let direction = unitDirection(from:a.position,to:b.position)
+      let normal = SIMD2<Float>(-direction.y,direction.x)
+      let al = vertex(at:a.position+normal*a.radius,color:a.premultipliedColor)
+      let ar = vertex(at:a.position-normal*a.radius,color:a.premultipliedColor)
+      let bl = vertex(at:b.position+normal*b.radius,color:b.premultipliedColor)
+      let br = vertex(at:b.position-normal*b.radius,color:b.premultipliedColor)
+      vertices.append(contentsOf:[al,ar,bl,ar,br,bl])
+      appendDisk(at:b,to:&vertices)
+    }
+  }
+
   public static func areCoincident(_ first: RenderPoint, _ second: RenderPoint) -> Bool {
     distanceSquared(first.position, second.position) < minimumDistanceSquared
   }

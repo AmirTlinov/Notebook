@@ -42,6 +42,22 @@ struct NotebookWorkingGraphic: Equatable, Identifiable {
 }
 
 extension NotebookAppModel {
+  /// Rendering may retain an insertion until its raster is installed. Authoring
+  /// stops overlaying that original as soon as the logical model admits it.
+  var pendingModelGraphics: [NotebookWorkingGraphic] {
+    workingGraphics.filter { $0.accepted && ($0.publicationCursor.map { sceneContentCursor < $0 } ?? true) }
+  }
+
+  func acceptedWorkingGraphic(_ reference: EditableElementReference) -> NotebookWorkingGraphic? {
+    pendingModelGraphics.first { graphic in
+      switch reference {
+      case .page(let owner,let id): return graphic.surface == .page(owner) && graphic.id == id
+      case .spatial(let board,let id): return graphic.id == id && (graphic.surface == .board(board) ||
+        (graphic.surface.kind == .cover && graphic.surface.ownerID.flatMap { boardHierarchy?.ownerBoardID(of:$0) } == board))
+      }
+    }
+  }
+
   func updateWorkingGraphic(_ graphic: NotebookWorkingGraphic?, strokeID: UUID) {
     // Late cancellation belongs to the old contact, never to accepted input.
     guard workingGraphics.first(where: { $0.strokeID == strokeID })?.accepted != true else { return }

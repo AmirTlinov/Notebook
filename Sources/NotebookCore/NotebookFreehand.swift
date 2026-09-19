@@ -29,7 +29,7 @@ public struct NotebookFreehand: Codable, Equatable, Sendable {
       && layers.allSatisfy { $0.color.isValid && !$0.vertices.isEmpty && $0.vertices.count % 3 == 0
         && $0.vertices.allSatisfy(\.isValid) }
   }
-  public static func mesh(samples: [SpatialInkSample], frame: PageRect, origin: WorldPoint?) -> [Vertex] {
+  public static func mesh(samples: [SpatialInkSample], frame: PageRect, origin: WorldPoint?, tool: SpatialInkTool = .pen) -> [Vertex] {
     var points: [InkStrokeGeometry.RenderPoint] = []
     for sample in samples {
       let p = origin.flatMap { o in sample.worldPoint.map { o.delta(to:$0) } } ?? sample.point
@@ -40,7 +40,8 @@ public struct NotebookFreehand: Codable, Equatable, Sendable {
       else { points.append(next) }
     }
     var vertices: [InkStrokeGeometry.Vertex] = []
-    InkStrokeGeometry.appendStrokeVertices(renderPoints:points,to:&vertices)
+    if tool == .eraser { InkStrokeGeometry.appendEraserVertices(renderPoints:points,to:&vertices) }
+    else { InkStrokeGeometry.appendStrokeVertices(renderPoints:points,to:&vertices) }
     return vertices.map { .init(x:Double($0.position.x)/frame.width,y:Double($0.position.y)/frame.height,opacity:Double($0.premultipliedColor.w)) }
   }
   public static func path(_ vertices: [Vertex], size: CGSize, transform: NotebookGraphicTransform? = nil) -> CGPath {

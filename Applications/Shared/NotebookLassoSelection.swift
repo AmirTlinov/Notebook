@@ -70,7 +70,7 @@ enum NotebookLassoInkSource: Sendable {
     var layers: [NotebookFreehand.Layer] = [], count = 0, eraserCursor = 0
     func append(_ samples: [SpatialInkSample], tool: SpatialInkTool, color: SpatialInkColor) throws {
       guard samples.count <= 10_000 else { throw CollaborationError("selection_limit","Слишком сложное выделение; выделите меньшую часть рукописи.") }
-      let vertices = NotebookFreehand.mesh(samples:samples,frame:frame,origin:origin)
+      let vertices = NotebookFreehand.mesh(samples:samples,frame:frame,origin:origin,tool:tool)
       count += vertices.count
       guard count <= NotebookFreehand.maximumVertices, layers.count < 2048 else {
         throw CollaborationError("selection_limit","Слишком сложное выделение; выделите меньшую часть рукописи.")

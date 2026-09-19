@@ -111,7 +111,7 @@ struct SpatialInkMesh: Sendable {
           color: .init(Float(color.red), Float(color.green), Float(color.blue), 1), to: &vertices)
       case .erase(let points):
         tool = .eraser
-        SpatialInkGeometry.appendStrokeVertices(points: points, color: .init(1, 1, 1, 1), to: &vertices)
+        SpatialInkGeometry.appendStrokeVertices(points: points, color: .init(1, 1, 1, 1), eraser:true, to: &vertices)
       }
       return .init(tool: tool, vertices: vertices, projection: .local)
     })
@@ -141,7 +141,7 @@ struct SpatialInkMesh: Sendable {
         let color = action.color
         SpatialInkGeometry.appendStrokeVertices(points: points,
           color: action.tool == .pen ? .init(Float(color.red), Float(color.green), Float(color.blue), 1) : .init(1, 1, 1, 1),
-          to: &vertices)
+          eraser:action.tool == .eraser, to: &vertices)
         try Task.checkCancellation()
         let projection = origin.map(Projection.world) ?? .local
         if pending?.tool == action.tool, pending?.projection == projection {

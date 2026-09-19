@@ -305,6 +305,57 @@ import UIKit
     }
   }
 
+  func testImmediateBooleanContactsUseAcceptedGeometryBeforePublication() async throws {
+    try await fixture { model in
+      let page = try XCTUnwrap(model.activePage), board = try XCTUnwrap(model.presence?.boardID)
+      let item = try XCTUnwrap(model.workspace?.selectedItemID)
+      for address in [NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil),
+        .init(surface:.board(board),boardID:board,worldOrigin:.zero,bounds:nil),
+        .init(surface:.cover(item),boardID:board,worldOrigin:nil,bounds:nil)] {
+        model.selectDrawingTool(.shape)
+        model.drawingToolSettings.shapeFilled = true
+        @MainActor func draw(_ operation: NotebookShapeOperation, _ start: SpatialPoint, _ end: SpatialPoint) {
+          model.drawingToolSettings.shapeOperation = operation
+          XCTAssertTrue(model.drawingTools.begin(at:start,address:address,screenScale:1))
+          model.drawingTools.move(to:end); model.drawingTools.finish()
+        }
+        @MainActor func graph() -> NotebookGraphicGraph {
+          address.surface.kind == .page ? model.graphicGraph(page:model.pages[page.id]!) : model.authoredGraphicGraph(boardID:board)
+        }
+        draw(.normal,.init(x:80,y:80),.init(x:300,y:300))
+        let original = try XCTUnwrap(graph().nodes.values.first { $0.surface == address.surface && $0.shown && $0.graphic.showsGeometry })
+        for (operation,start,end) in [(NotebookShapeOperation.union,SpatialPoint(x:260,y:100),SpatialPoint(x:420,y:260)),
+          (.subtract,.init(x:130,y:130),.init(x:170,y:170)),
+          (.intersect,.init(x:180,y:100),.init(x:380,y:280)),
+          (.exclude,.init(x:300,y:140),.init(x:440,y:240))] {
+          draw(operation,start,end)
+          XCTAssertEqual(graph().nodes.values.filter { $0.surface == address.surface && $0.shown && $0.graphic.showsGeometry }.count,1)
+          XCTAssertEqual(graph().nodes[original.id]?.graphic.shape,.path)
+        }
+        let expected = try XCTUnwrap(graph().nodes[original.id])
+        await assertSaved(model); await model.reloadExternalChanges()?.value
+        let saved = address.surface.kind == .page ? try model.store.loadPage(page.id).elements.first { $0.id == original.id }?.graphic
+          : try model.store.readSpatialElement(boardID:board,elementID:original.id)?.graphic
+        XCTAssertEqual(saved,expected.graphic,"Quick contacts chain accepted predecessors, not whichever raster happened to publish")
+        XCTAssertEqual(graph().nodes[original.id]?.graphic,expected.graphic,"An old working insertion retained for raster handoff cannot replace a newer admitted boolean result")
+        XCTAssertEqual(model.graphicElement(address.reference(original.id)),expected.graphic)
+        draw(.subtract,.init(x:600,y:600),.init(x:700,y:700))
+        XCTAssertEqual(graph().nodes.values.filter { $0.surface == address.surface && $0.shown && $0.graphic.showsGeometry }.count,2,"No intersection establishes a new base instead of dropping the drawn shape")
+        await assertSaved(model); await model.reloadExternalChanges()?.value
+      }
+    }
+  }
+
+  func testPrimaryColorHasOnePreferenceOwnerAndDoesNotSwitchTools() async throws {
+    try await fixture { model in
+      for tool in [DrawingTool.pen,.marker,.shape,.text,.connector,.ruler,.laser] {
+        model.selectDrawingTool(tool); model.selectDrawingColor(.green)
+        XCTAssertEqual(model.drawingTool,tool); XCTAssertEqual(model.drawingColor,.green)
+      }
+      XCTAssertNotEqual(model.drawingToolSettings.shapeFillColor ?? .yellow,.green)
+    }
+  }
+
   private func assertSaved(_ model: NotebookAppModel, file: StaticString = #filePath, line: UInt = #line) async {
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved,model.persistenceFailure ?? "",file:file,line:line)
   }
