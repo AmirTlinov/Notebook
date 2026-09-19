@@ -136,7 +136,9 @@ public struct NotebookTransportPacket: Codable, Equatable, Sendable {
 
 public enum NotebookTransportFraming {
   public static func encode(_ packet: NotebookTransportPacket) throws -> Data {
-    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+    // Base64 already bounds binary expansion to 4/3. Optional slash escaping
+    // would double an allowed all-0xff chunk beyond the fixed frame budget.
+    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     let payload = try encoder.encode(packet)
     guard !payload.isEmpty, payload.count <= NotebookTransportLimits.maximumFrameBytes - 4 else {
       throw NotebookTransportError.frameTooLarge
