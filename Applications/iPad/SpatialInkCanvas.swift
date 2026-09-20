@@ -447,8 +447,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
           guard let self, let geometry = actionGeometry else { return fit }
           let scale = geometry.camera.scale, screenOrigin = SpatialPoint(x:fit.frame.x,y:fit.frame.y)
           let origin = geometry.camera.screenToWorld(screenOrigin,viewport:geometry.viewport)
-          let physical = fit.scaled(by:1/scale,frameOrigin:.zero).binding(in:geometry.graphics,surface:boardSurface,origin:origin,tolerance:18/scale,erasures:geometry.graphicErasures,appearance: { id,graphic,size,cuts in
-              appearances?.appearance(surface:boardSurface,id:id,graphic:graphic,layout:nil,size:size,erasures:cuts)
+          let physical = fit.scaled(by:1/scale,frameOrigin:.zero).binding(in:geometry.graphics,surface:boardSurface,origin:origin,tolerance:18/scale,erasures:geometry.graphicErasures,appearance: { id,graphic,layout,size,cuts in
+              appearances?.appearance(surface:boardSurface,id:id,graphic:graphic,layout:layout,size:size,erasures:cuts)
             })
           return physical.scaled(by:scale,frameOrigin:screenOrigin)
         }) { [weak self] in

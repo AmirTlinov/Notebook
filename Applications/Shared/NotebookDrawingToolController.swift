@@ -336,23 +336,26 @@ extension NotebookAppModel {
       guard (node.graphic.freehand != nil ? includesInk : includesObjects), node.surface == address.surface, node.shown, let layout = graph.resolve(node.id).layout else { return false }
       let delta = origin.delta(to:node.origin), frame = layout.frame
       guard NotebookToolGeometry.intersects(.init(x:delta.x+frame.x,y:delta.y+frame.y,width:frame.width,height:frame.height),polygon:polygon) else { return false }
-      let local = polygon.map { CGPoint(x:$0.x-delta.x-frame.x,y:$0.y-delta.y-frame.y) }
+      let local = polygon.compactMap { layout.framePoint($0,from:origin) }
+      guard local.count == polygon.count else { return false }
       if let ink = node.graphic.freehand {
-        let basis = node.graphic.transform ?? .identity
-        let source = local.map { p -> CGPoint in
-          let q = basis.unapplying(.init(x:p.x/frame.width,y:p.y/frame.height))
+        let basis = node.graphic.transform ?? .identity,size=node.placement.localSize
+        let source = local.compactMap { p -> CGPoint? in
+          guard let body=layout.localPoint(p) else { return nil }
+          let q = basis.unapplying(.init(x:body.x/size.x,y:body.y/size.y))
           return .init(x:q.x,y:q.y)
         }
-        guard ink.geometry.intersects(source) else { return false }
+        guard source.count == polygon.count,ink.geometry.intersects(source) else { return false }
       }
       let cuts = erasures[node.id] ?? []
-      guard !cuts.isEmpty else { return true }
-      return elementErasureCache.appearance(surface:address.surface,id:node.id,graphic:node.graphic,layout:layout,
-        size:.init(width:frame.width,height:frame.height),erasures:cuts).map {
-          guard $0.state != .erased else { return false }
-          let path = CGMutablePath(); path.addLines(between:local); path.closeSubpath()
-          return !$0.remaining.intersection(path,using:.evenOdd).isEmpty
-        } ?? false
+      if cuts.isEmpty,node.graphic.freehand != nil { return true }
+      let appearance = cuts.isEmpty
+        ? NotebookElementAppearance(graphic:node.graphic,layout:layout,size:.init(width:frame.width,height:frame.height),erasures:[])
+        : elementErasureCache.appearance(surface:address.surface,id:node.id,graphic:node.graphic,layout:layout,
+            size:.init(width:frame.width,height:frame.height),erasures:cuts)
+      guard let appearance,appearance.state != .erased else { return false }
+      let path = CGMutablePath(); path.addLines(between:local.map { .init(x:$0.x,y:$0.y) }); path.closeSubpath()
+      return !appearance.remaining.intersection(path,using:.evenOdd).isEmpty
     }.map { address.reference($0.id) }
     guard includesObjects else { return references }
     func visible(_ id: String, _ frame: CGRect) -> Bool {
@@ -363,7 +366,7 @@ extension NotebookAppModel {
     var all = references
     if address.surface.kind == .page, let page = pages[address.surface.ownerID!] {
       all += page.elements.filter { element in
-        guard element.graphic == nil else { return false }
+        guard element.kind != .group, element.graphic == nil else { return false }
         let f = elementPresentationFrame(address.reference(element.id),fallback:element.frame)
         let rect = CGRect(x:f.x,y:f.y,width:f.width,height:f.height)
         return visible(element.id,rect) && NotebookToolGeometry.intersects(rect,polygon:polygon)
@@ -373,7 +376,7 @@ extension NotebookAppModel {
         ? cohort.frame.index.coverElements(itemID:address.surface.ownerID!,boardID:board)
         : cohort.frame.workset(boardID:board).elements
       all += elements.filter { element in
-        guard element.surface == address.surface, element.graphic == nil else { return false }
+        guard element.surface == address.surface, element.kind != .group, element.graphic == nil else { return false }
         let delta = origin.delta(to:element.worldOrigin ?? .zero)
         let f = elementPresentationFrame(address.reference(element.id),fallback:NotebookTextTypography.frame(element))
         return visible(element.id,.init(x:f.x,y:f.y,width:f.width,height:f.height)) && NotebookToolGeometry.intersects(.init(x:delta.x+f.x,y:delta.y+f.y,width:f.width,height:f.height),polygon:polygon)

@@ -94,6 +94,17 @@ import XCTest
     XCTAssertFalse(pendingMask.contains(.init(x:60,y:110)))
     XCTAssertFalse(appearance.contains(.init(x:60,y:90),tolerance:0))
     XCTAssertTrue(appearance.contains(.init(x:60,y:110),tolerance:0))
+    let graph=model.graphicGraph(page:page),surface=SurfaceID.page(pageID)
+    func binding(_ point: SpatialPoint) -> NotebookGraphicConnection.Binding? {
+      graph.binding(at:point,surface:surface,tolerance:0,erasures:drawing.elementErasures) { id,graphic,layout,size,cuts in
+        model.elementErasureCache.appearance(surface:surface,id:id,graphic:graphic,layout:layout,size:size,erasures:cuts)
+      }
+    }
+    XCTAssertNil(binding(.init(x:180,y:250)),"An unprepared cut cannot create an old-coordinate attraction")
+    let deadline=ContinuousClock.now + .seconds(5)
+    while binding(.init(x:180,y:250)) == nil,ContinuousClock.now<deadline { try await Task.sleep(for:.milliseconds(5)) }
+    XCTAssertEqual(binding(.init(x:180,y:250))?.elementID,"shape")
+    XCTAssertNil(binding(.init(x:180,y:150)),"Binding shares the displayed cut, not the old local mask")
     let result = try await PageCompositionRenderer.render(PageDocument(id:pageID,size:size,actor:actor,
       drawingData:drawing.dataRepresentation(),elements:page.elements),scale:1) { _ in
       XCTFail("A group is not a WebKit document"); throw CocoaError(.featureUnsupported)
@@ -129,6 +140,39 @@ import XCTest
     XCTAssertFalse(dark(cut,180,150)); XCTAssertTrue(dark(uncut,180,150))
     XCTAssertTrue(dark(cut,180,285)); XCTAssertTrue(dark(uncut,180,285))
     XCTAssertFalse(dark(cut,60,70),"The local source frame is not an extra painted copy")
+  }
+
+  func testLassoUsesDisplayedContoursAndDoesNotSelectTheGroupDescriptor() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("group-lasso-\(UUID())")
+    let store=NotebookStore(root:root),actor=UUID(),size=PageSize(width:600,height:400)
+    let (workspace,_)=try store.loadOrCreate(actor:actor,pageSize:size)
+    let pageID=try XCTUnwrap(workspace.selectedPageID)
+    let turn=NotebookGraphicTransform(a:0,b:1,c:-1,d:0,tx:1,ty:0)
+    let ink=NotebookFreehand(layers:[.init(color:.black,vertices:[
+      .init(x:0.1,y:0.1,opacity:1),.init(x:0.6,y:0.1,opacity:1),.init(x:0.1,y:0.6,opacity:1)])])
+    var page=try store.loadPage(pageID)
+    page.replaceElements([
+      .init(id:"whole",kind:.group,frame:.init(x:100,y:50,width:400,height:200),source:"",html:"",basis:.init(size:.init(x:100,y:100),transform:turn)),
+      .init(id:"ellipse",kind:.graphic,frame:.init(x:0,y:0,width:100,height:100),source:"",html:"",graphic:.init(shape:.ellipse,style:.init(fill:.black)),parentID:"whole"),
+      .init(id:"ink",kind:.graphic,frame:.init(x:0,y:0,width:100,height:100),source:"",html:"",graphic:.init(shape:.freehand,freehand:ink),parentID:"whole")],actor:actor)
+    try store.savePage(page)
+    let model=NotebookAppModel(store:store,startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root);await model.start(pageSize:size)
+    let address=NotebookToolAddress(surface:.page(pageID),boardID:nil,worldOrigin:nil,bounds:nil)
+    model.selectDrawingTool(.lasso)
+    func lasso(_ min: Double,_ max: Double,ink: Bool,passes: Int = 1) {
+      model.drawingToolSettings.lassoSelectsInk=ink;model.drawingToolSettings.lassoSelectsObjects = !ink
+      let local:[SpatialPoint]=[.init(x:min,y:min),.init(x:max,y:min),.init(x:max,y:max),.init(x:min,y:max)]
+      let points=Array(repeating:local,count:passes).flatMap { $0 }.map { SpatialPoint(x:500-4*$0.y,y:50+2*$0.x) }
+      XCTAssertTrue(model.drawingTools.begin(at:points[0],address:address,screenScale:1))
+      for point in points.dropFirst() { model.drawingTools.move(to:point) };model.drawingTools.finish()
+    }
+    lasso(2,5,ink:false)
+    XCTAssertTrue(model.selectionSession.elements.isEmpty,"Neither the empty ellipse corner nor its nonpainting group is selected")
+    lasso(40,60,ink:false);XCTAssertEqual(model.selectionSession.elements,[address.reference("ellipse")])
+    lasso(40,60,ink:false,passes:2);XCTAssertTrue(model.selectionSession.elements.isEmpty,"Repeated lasso loops keep the existing even-odd rule")
+    lasso(18,22,ink:true);XCTAssertEqual(model.selectionSession.elements,[address.reference("ink")])
+    lasso(78,82,ink:true);XCTAssertTrue(model.selectionSession.elements.isEmpty,"The freehand's empty bounding-box corner stays empty")
   }
 
   private func pixels(_ png: Data) throws -> [UInt8] {

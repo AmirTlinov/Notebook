@@ -222,8 +222,8 @@ import WebKit
     let fit = NotebookQuickShapeFit(frame:.init(x:260,y:250,width:50,height:1),sampleCount:2,
       connection:.init(start:.init(point:.zero),end:.init(point:.init(x:50,y:0))))
     func bind(_ cuts: [InkElementErasure]) -> NotebookQuickShapeFit {
-      fit.binding(in:graph,surface:surface,tolerance:6,erasures:["shape":cuts],appearance: { id,graphic,size,cuts in
-        cache.appearance(surface:surface,id:id,graphic:graphic,layout:nil,size:size,erasures:cuts)
+      fit.binding(in:graph,surface:surface,tolerance:6,erasures:["shape":cuts],appearance: { id,graphic,layout,size,cuts in
+        cache.appearance(surface:surface,id:id,graphic:graphic,layout:layout,size:size,erasures:cuts)
       })
     }
     XCTAssertNil(bind(partial).connection?.start.binding,"Pending is not permission to bind to erased geometry")

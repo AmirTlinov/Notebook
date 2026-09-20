@@ -72,8 +72,8 @@ struct PageSurface: View {
               publishReadiness(ink: ready, overlay: overlayIsReady)
             }, resolveQuickShape: { fit, scale in
               fit.binding(in:page.graphicGraph(),surface:.page(page.id),tolerance:18/scale,
-                erasures:model.elementErasures(on:.page(page.id)),appearance: { id,graphic,size,cuts in
-                  model.elementErasureCache.appearance(surface:.page(page.id),id:id,graphic:graphic,layout:nil,size:size,erasures:cuts)
+                erasures:model.elementErasures(on:.page(page.id)),appearance: { id,graphic,layout,size,cuts in
+                  model.elementErasureCache.appearance(surface:.page(page.id),id:id,graphic:graphic,layout:layout,size:size,erasures:cuts)
                 })
             }, onWorkingGraphic: model.updateWorkingGraphic,
             eraserTargets: { model.eraserTargets(pageID: page.id) },

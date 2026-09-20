@@ -26,8 +26,8 @@ public struct NotebookQuickShapeFit: Equatable, Sendable {
   }
   public func binding(in graph: NotebookGraphicGraph, surface: SurfaceID, origin: WorldPoint = .zero,
     tolerance: Double, erasures: [String: [InkElementErasure]] = [:],
-    appearance: (String, NotebookGraphic, CGSize, [InkElementErasure]) -> NotebookElementAppearance? = { _, graphic, size, cuts in
-      .init(graphic:graphic,layout:nil,size:size,erasures:cuts)
+    appearance: (String, NotebookGraphic, NotebookGraphicLayout, CGSize, [InkElementErasure]) -> NotebookElementAppearance? = { _, graphic, layout, size, cuts in
+      .init(graphic:graphic,layout:layout,size:size,erasures:cuts)
     }) -> Self {
     guard var connection else { return self }
     for terminal in NotebookGraphicConnection.Terminal.allCases {
@@ -35,10 +35,10 @@ public struct NotebookQuickShapeFit: Equatable, Sendable {
       let point = SpatialPoint(x:frame.x+endpoint.point.x,y:frame.y+endpoint.point.y)
       endpoint.binding = nil
       if var binding = graph.binding(at:point,origin:origin,surface:surface,tolerance:tolerance,erasures:erasures,appearance:appearance),
-        let node = graph.nodes[collaborationIdentity(binding.elementID)] {
-        let offset = origin.delta(to:node.origin)
-        let anchor = SpatialPoint(x:(point.x-offset.x-node.frame.x)/node.frame.width,
-          y:(point.y-offset.y-node.frame.y)/node.frame.height)
+        let layout=graph.resolve(binding.elementID).layout,
+        let p=layout.framePoint(point,from:origin),let local=layout.localPoint(p) {
+        let size=layout.projection?.size ?? CGSize(width:layout.frame.width,height:layout.frame.height)
+        let anchor=SpatialPoint(x:local.x/size.width,y:local.y/size.height)
         // Pencil authors the endpoint, not the magnet. Attach at that exact
         // position only; proximity outside a node must not pull ink off the nib.
         if (-0.000001...1.000001).contains(anchor.x), (-0.000001...1.000001).contains(anchor.y) {
