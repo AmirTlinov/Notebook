@@ -592,7 +592,7 @@ final class NotebookAppModel {
       return .init(reference:reference,address:.init(surface:.page(value.target.id),boardID:nil,
         worldOrigin:nil,bounds:pages[value.target.id].map { .init(x:0,y:0,width:$0.size.width,height:$0.size.height) }),
         frame:elementCommandDrafts[reference]?.frame ?? page.frame,source:elementCommandDrafts[reference]?.textSource ?? page.source,
-        style:elementCommandDrafts[reference]?.textStyle ?? page.textStyle ?? .standard,page:page)
+        style:elementCommandDrafts[reference]?.textStyle ?? page.textStyle ?? .standard,page:page,basis:elementCommandDrafts[reference]?.basis ?? page.basis)
     }
     if let stored = value.spatial, stored.kind == .nativeText {
       let spatial:SpatialElement
@@ -601,7 +601,7 @@ final class NotebookAppModel {
       } else { spatial=stored }
       return .init(reference:reference,address:.init(surface:spatial.surface,boardID:value.target.boardID ?? value.target.id,
         worldOrigin:spatial.worldOrigin,bounds:spatial.surface.kind == .cover ? .init(x:0,y:0,width:itemGeometry(spatial.surface.ownerID).width,height:itemGeometry(spatial.surface.ownerID).height) : nil),frame:.init(x:spatial.frame.x,y:spatial.frame.y,width:spatial.frame.width,height:spatial.frame.height),
-        source:spatial.source,style:spatial.textStyle,spatial:spatial)
+        source:spatial.source,style:spatial.textStyle,spatial:spatial,basis:spatial.basis)
     }
     return nil
   }
@@ -611,12 +611,12 @@ final class NotebookAppModel {
       var target = nativeTextTarget(reference) else { return }
     var format = target.style.format ?? .init(); change(&format); target.style.format = format
     target.style.runs = target.style.runs?.map { run in var run = run; change(&run.format); return run }
-    let width = min(target.address.bounds.map { $0.maxX-target.frame.x } ?? .greatestFiniteMagnitude,
-      max(target.frame.width,320 / max(0.001,presence?.camera.scale ?? 1)))
-    target.frame = NotebookTextTypography.fittingFrame(target.source,style:target.style,
-      in:.init(x:target.frame.x,y:target.frame.y,width:max(1,width),height:target.frame.height))
-    guard let value = try? JSONValue.encode(target.style), let frame = try? JSONValue.encode(target.frame),
-      performElementOperations([.init(reference:reference,kind:.updateElement,values:["textStyle":value,"frame":frame])],summary:"Оформить текст") else { return }
+    let fitted=NotebookTextTypography.fittingFrame(target.source,style:target.style,in:target.localFrame)
+    guard (try? target.resizeBody(width:target.localFrame.width,height:max(1,min(fitted.height,target.maximumBodyHeight)))) != nil,
+      let value=try? JSONValue.encode(target.style),let frame=try? JSONValue.encode(target.frame) else { return }
+    var values:[String:JSONValue] = ["textStyle":value,"frame":frame]
+    if let basis=target.basis { values["basis"] = try? .encode(basis) }
+    guard performElementOperations([.init(reference:reference,kind:.updateElement,values:values)],summary:"Оформить текст") else { return }
     selectionSession.nativeText = target
   }
 
@@ -639,19 +639,21 @@ final class NotebookAppModel {
   func prepareNativeTextEditing(_ target: NotebookNativeTextTarget) {
     guard selectionSession.element == target.reference else { return }
     var target = target
-    // Editing has room for the next character; the saved object is fitted to
-    // its content. Reopening a short word must not wrap every new character.
-    let width = min(target.address.bounds.map { $0.maxX-target.frame.x } ?? .greatestFiniteMagnitude,
-      max(target.frame.width,320 / max(0.001,presence?.camera.scale ?? 1)))
-    target.frame = .init(x:target.frame.x,y:target.frame.y,width:max(1,width),height:target.frame.height)
+    // Existing transformed text keeps its local layout width. Plain short
+    // text can still open room for another character in the current camera.
+    if target.basis == nil,!target.hasParent {
+      let width=min(target.address.bounds.map { $0.maxX-target.frame.x } ?? 1_000_000,
+        max(target.frame.width,320/max(0.001,presence?.camera.scale ?? 1)))
+      guard (try? target.resizeBody(width:max(1,width),height:target.localFrame.height)) != nil else { return }
+    }
     selectionSession.nativeText = target
   }
   func measureNativeText(_ reference: EditableElementReference, height: Double) {
     guard selectionSession.nativeText?.reference == reference, var target = selectionSession.nativeText,
       height.isFinite, height > 0 else { return }
-    let height = min(height,target.address.bounds.map { $0.maxY-target.frame.y } ?? .greatestFiniteMagnitude)
-    guard abs(target.frame.height-height) > 0.5 else { return }
-    target.frame = .init(x:target.frame.x,y:target.frame.y,width:target.frame.width,height:max(1,height))
+    let height=min(height,target.maximumBodyHeight)
+    guard height>0,abs(target.localFrame.height-height)>0.5,
+      (try? target.resizeBody(width:target.localFrame.width,height:height)) != nil else { return }
     selectionSession.nativeText = target
   }
   /// A disappearing editor can release only the selection that admitted it.
@@ -2490,7 +2492,7 @@ final class NotebookAppModel {
   /// Late editor teardown can finish its original object, never the new page.
   func commitNativeText(reference: EditableElementReference, text: String, finish: Bool,
     retainedPage: AgentElement? = nil, retainedSpatial: SpatialElement? = nil, height: Double? = nil,
-    style: NativeTextStyle? = nil, editingFrame: PageRect? = nil, draftTarget: NotebookNativeTextTarget? = nil) {
+    style: NativeTextStyle? = nil, draftTarget: NotebookNativeTextTarget? = nil) {
     defer { if finish { endNativeTextEditing(reference) } }
     let retained: NotebookNativeElementSource?
     switch reference {
@@ -2505,12 +2507,20 @@ final class NotebookAppModel {
     let live = nativeElementSource(reference)
     let source = live?.page != nil || live?.spatial != nil ? live : retained ?? live
     let draftTarget = draftTarget ?? (selectionSession.nativeText?.reference == reference ? selectionSession.nativeText : nil)
-    let currentFrame = editingFrame ?? draftTarget?.frame ?? source?.page?.frame ?? source?.spatial.map { PageRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height) }
-    if let frame = currentFrame {
-      var fitted = NotebookTextTypography.fittingFrame(text,style:style ?? draftTarget?.style ?? source?.page?.textStyle ?? source?.spatial?.textStyle ?? .standard,in:frame)
-      let maximumHeight = draftTarget?.address.bounds.map { $0.maxY-frame.y } ?? .greatestFiniteMagnitude
-      fitted = .init(x:fitted.x,y:fitted.y,width:fitted.width,height:max(1,min(maximumHeight,height.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? fitted.height)))
-      values["frame"] = try? .encode(fitted)
+    var geometry=draftTarget ?? nativeTextTarget(reference)
+    if geometry == nil,let source,let placement=source.placementSource {
+      let surface:SurfaceID = source.page.map { _ in .page(source.target.id) } ?? source.spatial!.surface
+      geometry = .init(reference:reference,address:.init(surface:surface,boardID:source.target.boardID ?? (source.spatial == nil ? nil : source.target.id),
+        worldOrigin:source.spatial?.worldOrigin,bounds:nil),frame:placement.frame,source:text,
+        style:style ?? source.page?.textStyle ?? source.spatial?.textStyle ?? .standard,page:source.page,spatial:source.spatial,basis:placement.basis)
+    }
+    if var target=geometry {
+      let requested=height.flatMap { $0.isFinite && $0>0 ? $0 : nil }
+        ?? NotebookTextTypography.fittingFrame(text,style:style ?? target.style,in:target.localFrame).height
+      guard (try? target.resizeBody(width:target.localFrame.width,height:max(1,min(target.maximumBodyHeight,requested)))) != nil else { return }
+      values["frame"] = try? .encode(target.frame)
+      if let basis=target.basis { values["basis"] = try? .encode(basis) }
+      geometry=target
     }
     let removes = finish && text.isEmpty
     let inserting = source?.page == nil && source?.spatial == nil && elementCommandSources[reference] == nil
@@ -2528,9 +2538,7 @@ final class NotebookAppModel {
     if var target = selectionSession.nativeText, target.reference == reference {
       target.source = text
       if let style { target.style = style }
-      if let frame = try? values["frame"]?.decode(PageRect.self) {
-        target.frame = .init(x:frame.x,y:frame.y,width:finish ? frame.width : target.frame.width,height:frame.height)
-      }
+      if let geometry { target.frame=geometry.frame;target.basis=geometry.basis }
       selectionSession.nativeText = target
     }
     if !finish { editingNativeTextReferences.insert(reference) }

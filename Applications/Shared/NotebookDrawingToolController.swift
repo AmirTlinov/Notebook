@@ -296,21 +296,16 @@ extension NotebookAppModel {
         .filter { $0.surface == address.surface && $0.kind == .nativeText }.map { address.reference($0.id) } ?? []
     }
     for reference in candidates {
-      guard var target = nativeTextTarget(reference) else { continue }
-      target.frame = elementPresentationFrame(reference,fallback:target.frame)
-      let delta = (address.worldOrigin ?? .zero).delta(to:target.address.worldOrigin ?? .zero)
-      if CGRect(x:target.frame.x+delta.x,y:target.frame.y+delta.y,width:target.frame.width,height:target.frame.height)
-        .contains(CGPoint(x:point.x,y:point.y)) {
-        let id: String
-        switch reference { case .page(_,let value), .spatial(_,let value): id = value }
-        let cuts = elementErasures(on:address.surface)[id] ?? []
-        if !cuts.isEmpty {
-          guard elementErasureCache.appearance(surface:address.surface,id:id,graphic:nil,layout:nil,
-            size:.init(width:target.frame.width,height:target.frame.height),erasures:cuts)?.contains(
-              .init(x:point.x-target.frame.x-delta.x,y:point.y-target.frame.y-delta.y),tolerance:0) == true else { continue }
-        }
-        selectElement(reference); return nil
+      guard let shown=elementPresentation(reference) else { continue }
+      let delta=(address.worldOrigin ?? .zero).delta(to:shown.placement.origin)
+      let local=CGPoint(x:point.x-delta.x,y:point.y-delta.y).applying(shown.placement.transform.inverted())
+      guard shown.localBounds.contains(local) else { continue }
+      let cuts=elementErasures(on:address.surface)[reference.elementID] ?? []
+      if !cuts.isEmpty {
+        guard elementErasureCache.appearance(surface:address.surface,id:reference.elementID,graphic:nil,layout:nil,
+          size:shown.bodySize,erasures:cuts)?.contains(.init(x:local.x,y:local.y),tolerance:0) == true else { continue }
       }
+      selectElement(reference);return nil
     }
     let fontSize = drawingToolSettings.textSize/screenScale
     guard (3...5760).contains(fontSize) else { return nil }

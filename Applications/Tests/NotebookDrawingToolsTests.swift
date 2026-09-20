@@ -20,7 +20,7 @@ import UIKit
         "The editable target exists synchronously before the addressed insert publishes")
       var style = target.style
       style.runs = [.init(location:0,length:5,format:.init(fontName:"Georgia",bold:true,italic:true,link:"https://example.com"))]
-      model.commitNativeText(reference:target.reference,text:"Hello",finish:true,style:style,editingFrame:target.frame)
+      model.commitNativeText(reference:target.reference,text:"Hello",finish:true,style:style,draftTarget:target)
       model.clearSelection()
       await assertSaved(model)
       let saved = try XCTUnwrap(model.store.loadPage(page.id).elements.first { $0.id == id })

@@ -13,6 +13,21 @@ public struct NotebookElementPlacement: Equatable, Sendable {
     public init(frame: PageRect,origin: WorldPoint = .zero,parentID: String? = nil,basis: NotebookElementBasis? = nil,isGroup: Bool = false) {
       self.frame=frame;self.origin=origin;self.parentID=parentID;self.basis=basis;self.isGroup=isGroup
     }
+    /// Change a specialized body's layout extent without stretching its axes.
+    /// This edits only this descriptor; shared ancestor frames stay untouched.
+    public func resizingBody(to size:SpatialPoint) throws -> Self {
+      guard size.x.isFinite,size.y.isFinite,size.x>0,size.y>0,size.x<=1_000_000,size.y<=1_000_000 else { throw NotebookStorageError.limitExceeded("element_body_size") }
+      var result=self
+      let local=try NotebookElementPlacement.local(self)
+      if basis == nil {
+        result.frame = .init(x:local.tx,y:local.ty,width:size.x,height:size.y)
+        guard NotebookElementBasis.validLocalFrame(result.frame) else { throw NotebookStorageError.limitExceeded("element_body_size") }
+      } else {
+        let value=try NotebookElementPlacement.represented(local:local,size:size)
+        result.frame=value.frame;result.basis=value.basis
+      }
+      return result
+    }
   }
   /// Only groups allocate a shared frame. Leaves retain one local map in their
   /// existing descriptor, not a copied array of all ancestor matrices.
@@ -111,12 +126,16 @@ public struct NotebookElementPlacement: Equatable, Sendable {
     let parent=parentTransform,det=parent.a*parent.d-parent.b*parent.c
     guard det.isFinite,det != 0 else { throw NotebookStorageError.limitExceeded("element_group_projection") }
     let local=transform.concatenating(change).concatenating(parent.inverted())
-    let bounds=CGRect(x:0,y:0,width:localSize.x,height:localSize.y).applying(local)
+    return try Self.represented(local:local,size:localSize)
+  }
+
+  private static func represented(local:CGAffineTransform,size:SpatialPoint) throws -> (frame:PageRect,basis:NotebookElementBasis) {
+    let bounds=CGRect(x:0,y:0,width:size.x,height:size.y).applying(local)
     let frame=PageRect(x:bounds.minX,y:bounds.minY,width:bounds.width,height:bounds.height)
     guard NotebookElementBasis.validLocalFrame(frame) else { throw NotebookStorageError.limitExceeded("element_group_projection") }
-    let basis=NotebookElementBasis(size:localSize,transform:.init(
-      a:local.a*localSize.x/bounds.width,b:local.b*localSize.x/bounds.height,
-      c:local.c*localSize.y/bounds.width,d:local.d*localSize.y/bounds.height,
+    let basis=NotebookElementBasis(size:size,transform:.init(
+      a:local.a*size.x/bounds.width,b:local.b*size.x/bounds.height,
+      c:local.c*size.y/bounds.width,d:local.d*size.y/bounds.height,
       tx:(local.tx-bounds.minX)/bounds.width,ty:(local.ty-bounds.minY)/bounds.height))
     guard basis.isValid else { throw NotebookStorageError.limitExceeded("element_group_projection") }
     return (frame,basis)

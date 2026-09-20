@@ -70,8 +70,8 @@ struct AgentOverlayView: View {
           } else if element.kind == .nativeText {
             let target=model.nativeTextTarget(reference)
             NotebookNativeTextView(source:target?.source ?? element.source,style:target?.style ?? element.textStyle ?? .standard,reference:reference,
-              frame:model.elementCommandDrafts[reference]?.frame ?? element.frame,maximumHeight:pageSize.height-frame.y,isEditing:allowsInteraction && model.interactiveElementFocus == interactiveReference,
-              onEditingEnded:{ if model.interactiveElementFocus == interactiveReference { model.interactiveElementFocus = nil } },retainedPage:element)
+              isEditing:allowsInteraction && model.interactiveElementFocus == interactiveReference,
+              onEditingEnded:{ if model.interactiveElementFocus == interactiveReference { model.interactiveElementFocus = nil } },retainedPage:element,draftTarget:target)
           } else if let presentation {
           PreparedAgentElementView(
             element: agentElementSnapshotSource(element),

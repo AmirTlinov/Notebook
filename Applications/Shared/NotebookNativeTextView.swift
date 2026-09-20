@@ -13,8 +13,6 @@ struct NotebookNativeTextView: View {
   let source: String
   let style: NativeTextStyle
   let reference: EditableElementReference
-  let frame: PageRect
-  var maximumHeight: Double = .greatestFiniteMagnitude
   let isEditing: Bool
   let onEditingEnded: () -> Void
   var retainedPage: AgentElement? = nil
@@ -65,7 +63,7 @@ struct NotebookNativeTextView: View {
       onHeight:{ measuredHeight = $0; model.measureNativeText(reference,height:$0) })
     #else
     NotebookMacInlineTextInput(text:$draft,style:$draftStyle,
-      onFinish:{ commit(finishing:true); onEditingEnded() })
+      onHeight:{ measuredHeight = $0; model.measureNativeText(reference,height:$0) },onFinish:{ commit(finishing:true); onEditingEnded() })
     #endif
   }
   private func scheduleCommit() {
@@ -80,9 +78,8 @@ struct NotebookNativeTextView: View {
     guard hasDraft else { return }
     if finishing { pending?.cancel(); hasDraft = false }
     guard draft != submitted || draftStyle != submittedStyle || (finishing && draft.isEmpty) else { return }
-    let height = min(maximumHeight,measuredHeight ?? frame.height)
     model.commitNativeText(reference:reference,text:draft,finish:finishing,
-      retainedPage:retainedPage,retainedSpatial:retainedSpatial,height:max(1,height),style:draftStyle,editingFrame:frame,draftTarget:draftTarget)
+      retainedPage:retainedPage,retainedSpatial:retainedSpatial,height:measuredHeight,style:draftStyle,draftTarget:draftTarget)
     submitted = draft; submittedStyle = draftStyle
   }
 }
@@ -118,6 +115,10 @@ private struct NotebookInlineTextInput: UIViewRepresentable {
     context.coordinator.input = view
     view.onLayout = { [weak coordinator = context.coordinator] in coordinator?.updateContextMenu() }
     return view
+  }
+  func sizeThatFits(_ proposal:ProposedViewSize,uiView:Input,context:Context) -> CGSize? {
+    guard let width=proposal.width,let height=proposal.height else { return nil }
+    return .init(width:width,height:height)
   }
   func updateUIView(_ view: Input, context: Context) {
     let coordinator = context.coordinator
@@ -249,6 +250,7 @@ private struct NotebookInlineTextInput: UIViewRepresentable {
 private struct NotebookMacInlineTextInput: NSViewRepresentable {
   @Binding var text: String
   @Binding var style: NativeTextStyle
+  let onHeight: (Double) -> Void
   let onFinish: () -> Void
   func makeCoordinator() -> Coordinator { Coordinator(self) }
   func makeNSView(context: Context) -> Input {
@@ -260,6 +262,10 @@ private struct NotebookMacInlineTextInput: NSViewRepresentable {
     view.delegate = context.coordinator
     view.setAccessibilityIdentifier("native-text-editor")
     return view
+  }
+  func sizeThatFits(_ proposal:ProposedViewSize,nsView:Input,context:Context) -> CGSize? {
+    guard let width=proposal.width,let height=proposal.height else { return nil }
+    return .init(width:width,height:height)
   }
   func updateNSView(_ view: Input, context: Context) {
     let coordinator = context.coordinator; coordinator.owner = self
@@ -289,6 +295,10 @@ private struct NotebookMacInlineTextInput: NSViewRepresentable {
       let style = NotebookTextTypography.style(from:view.attributedString(),base:owner.style)
       presentedText = view.string; presentedStyle = style
       owner.text = view.string; owner.style = style
+      if let container=view.textContainer,let layout=view.layoutManager {
+        layout.ensureLayout(for:container)
+        owner.onHeight(ceil(layout.usedRect(for:container).height))
+      }
     }
     func textDidEndEditing(_ notification: Notification) { owner.onFinish() }
   }

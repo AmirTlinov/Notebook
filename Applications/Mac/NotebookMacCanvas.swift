@@ -116,7 +116,7 @@ struct NotebookMacCanvas: View {
       content: model.collaborationReadEpoch, editing: model.interactiveElementFocus, selection: model.selectionSession.target),
       reanchorsOnRevision: false, isCameraActive: model.presencePhase == .active, installation: cohort.installation(for: .elements), hitRegions: { anchor in
         values.compactMap { element in
-          let presentation=element.graphic == nil ? graph.placement(element.id).map { NotebookElementPresentation(element,placement:$0) } : nil
+          let presentation=model.elementPresentation(.spatial(boardID:presence.boardID,elementID:element.id),graph:graph)
           guard let origin=presentation?.placement.origin ?? element.worldOrigin else { return nil }
           let point = anchor.camera.worldToScreen(origin, viewport: anchor.viewport)
           let f = presentation?.frame ?? model.elementPresentationFrame(.spatial(boardID: presence.boardID, elementID: element.id),
@@ -137,7 +137,7 @@ struct NotebookMacCanvas: View {
             .zIndex(cohort.plan.rank(id: run.id.id, in: run.plane) ?? 0)
         }
         ForEach(values) { element in
-          let presentation=element.graphic == nil ? graph.placement(element.id).map { NotebookElementPresentation(element,placement:$0) } : nil
+          let presentation=model.elementPresentation(.spatial(boardID:presence.boardID,elementID:element.id),graph:graph)
           if let origin=presentation?.placement.origin ?? element.worldOrigin {
             let reference = EditableElementReference.spatial(boardID: presence.boardID, elementID: element.id)
             let frame = presentation?.frame ?? model.elementPresentationFrame(reference, fallback: .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height))

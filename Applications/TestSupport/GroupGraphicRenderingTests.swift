@@ -12,6 +12,157 @@ import AppKit
 @testable import Notebook
 
 @MainActor final class GroupGraphicRenderingTests: XCTestCase {
+  func testPlacedTextTypingAndFormattingKeepItsLocalAxes() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("placed-text-\(UUID())")
+    let model=NotebookAppModel(store:NotebookStore(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:.init(width:834,height:1194))
+    var page=try XCTUnwrap(model.activePage)
+    let whole=AgentElement(id:"whole",kind:.group,frame:.init(x:100,y:100,width:400,height:600),source:"",html:"",
+      basis:.init(size:.init(x:200,y:200),transform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0)))
+    let text=AgentElement(id:"text",kind:.nativeText,frame:.init(x:30,y:40,width:100,height:160),source:"Исходный текст",html:"",
+      parentID:"whole",basis:.init(size:.init(x:240,y:60),transform:.init(a:-1,b:0,c:0,d:1,tx:1,ty:0)))
+    XCTAssertTrue(page.replaceElements([whole,text],actor:model.actorID));try model.store.savePage(page)
+    await model.reloadExternalChanges()?.value
+    let ref=EditableElementReference.page(pageID:page.id,elementID:text.id)
+    let original=try XCTUnwrap(page.graphicGraph().placement(text.id))
+    model.selectElement(ref);model.interactiveElementFocus = .page(pageID:page.id,elementID:text.id)
+    var target=try XCTUnwrap(model.selectionSession.nativeText)
+    XCTAssertEqual(target.localFrame.width,240,"The displayed outer width is not the editor's layout width")
+    XCTAssertEqual(target.basis,text.basis)
+    model.measureNativeText(ref,height:108)
+    target=try XCTUnwrap(model.selectionSession.nativeText)
+    XCTAssertEqual(target.localFrame.height,108)
+    let editor=try XCTUnwrap(model.nativeTextEditingPresentation(target))
+    func sameAxes(_ actual:CGAffineTransform,_ expected:CGAffineTransform,file:StaticString = #filePath,line:UInt = #line) {
+      for (a,b) in zip([actual.a,actual.b,actual.c,actual.d,actual.tx,actual.ty],
+        [expected.a,expected.b,expected.c,expected.d,expected.tx,expected.ty]) { XCTAssertEqual(a,b,accuracy:1e-10,file:file,line:line) }
+    }
+    sameAxes(editor.placement.transform,original.transform)
+    model.commitNativeText(reference:ref,text:"Правка внутри преобразованного текста",finish:true,height:108,draftTarget:target)
+    let savedTyping=await model.finishPendingPersistence();XCTAssertTrue(savedTyping)
+    var saved=try model.store.loadPage(page.id)
+    var written=try XCTUnwrap(saved.element(id:text.id))
+    XCTAssertEqual(written.basis?.size,.init(x:240,y:108));XCTAssertEqual(written.parentID,"whole")
+    XCTAssertEqual(saved.element(id:whole.id),whole)
+    sameAxes(try XCTUnwrap(saved.graphicGraph().placement(text.id)).transform,original.transform)
+    model.clearSelection();await model.reloadExternalChanges()?.value
+    model.selectElement(ref);model.formatNativeText(ref) { $0.bold=true }
+    let savedFormatting=await model.finishPendingPersistence();XCTAssertTrue(savedFormatting)
+    saved=try model.store.loadPage(page.id);written=try XCTUnwrap(saved.element(id:text.id))
+    XCTAssertEqual(written.textStyle?.format?.bold,true);XCTAssertEqual(written.basis?.size.x,240)
+    XCTAssertEqual(saved.element(id:whole.id),whole)
+    sameAxes(try XCTUnwrap(saved.graphicGraph().placement(text.id)).transform,original.transform)
+    model.clearSelection();await model.reloadExternalChanges()?.value
+    let shown=try XCTUnwrap(model.elementPresentation(ref))
+    let point=CGPoint(x:12,y:12).applying(shown.placement.transform)
+    let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+    XCTAssertNil(model.beginToolText(at:.init(x:point.x,y:point.y),address:address,screenScale:1))
+    XCTAssertEqual(model.selectionSession.element,ref,"The text tool uses the same inverse placement as ordinary picking")
+    model.interactiveElementFocus = .page(pageID:page.id,elementID:text.id)
+    let inputTarget=try XCTUnwrap(model.selectionSession.nativeText)
+    let inputPlacement=try XCTUnwrap(model.nativeTextEditingPresentation(inputTarget))
+    func content(_ placement:NotebookElementPresentation) -> AnyView { AnyView(NotebookPlacedElement(presentation:placement) {
+      NotebookNativeTextView(source:inputTarget.source,style:inputTarget.style,reference:ref,isEditing:true,
+        onEditingEnded:{},retainedPage:written,ownsEditor:true,draftTarget:inputTarget)
+    }.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(.white).environment(model)) }
+    #if os(iOS)
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous=scene.windows.first { $0.isKeyWindow },window=UIWindow(windowScene:scene)
+    let host=UIHostingController(rootView:content(inputPlacement))
+    window.rootViewController=host;window.makeKeyAndVisible()
+    defer { window.isHidden=true;window.rootViewController=nil;previous?.makeKey() }
+    func find(_ view:UIView) -> UITextView? {
+      if let input=view as? UITextView { return input }
+      return view.subviews.lazy.compactMap(find).first
+    }
+    var found:UITextView?
+    for _ in 0..<50 { host.view.layoutIfNeeded();found=find(host.view);if found != nil { break };try await Task.sleep(for:.milliseconds(20)) }
+    let input=try XCTUnwrap(found)
+    XCTAssertEqual(input.bounds.width,inputTarget.localFrame.width,accuracy:0.01)
+    let first=try XCTUnwrap(input.position(from:input.beginningOfDocument,offset:0))
+    let second=try XCTUnwrap(input.position(from:input.beginningOfDocument,offset:2))
+    let a=input.caretRect(for:first),b=input.caretRect(for:second)
+    let pa=CGPoint(x:a.midX,y:a.midY),pb=CGPoint(x:b.midX,y:b.midY)
+    let screenA=input.convert(pa,to:window),screenB=input.convert(pb,to:window)
+    input.selectedRange = .init(location:2,length:0);input.insertText("!")
+    #else
+    let previous=NSApp.keyWindow
+    let window=NSWindow(contentRect:.init(x:0,y:0,width:800,height:1000),styleMask:[.titled],backing:.buffered,defer:false)
+    let host=NSHostingView(rootView:content(inputPlacement))
+    window.contentView=host;window.makeKeyAndOrderFront(nil)
+    defer { window.orderOut(nil);window.contentView=nil;previous?.makeKey() }
+    func find(_ view:NSView) -> NSTextView? {
+      if let input=view as? NSTextView { return input }
+      return view.subviews.lazy.compactMap(find).first
+    }
+    var found:NSTextView?
+    for _ in 0..<50 { host.layoutSubtreeIfNeeded();found=find(host);if found != nil { break };try await Task.sleep(for:.milliseconds(20)) }
+    let input=try XCTUnwrap(found)
+    XCTAssertEqual(input.bounds.width,inputTarget.localFrame.width,accuracy:0.01)
+    let layout=try XCTUnwrap(input.layoutManager),container=try XCTUnwrap(input.textContainer)
+    layout.ensureLayout(for:container)
+    let pa=layout.location(forGlyphAt:0),pb=layout.location(forGlyphAt:2)
+    let screenA=input.convert(pa,to:nil),screenB=input.convert(pb,to:nil)
+    input.setSelectedRange(.init(location:2,length:0));input.insertText("!",replacementRange:input.selectedRange())
+    #endif
+    XCTAssertGreaterThan(hypot(pb.x-pa.x,pb.y-pa.y),1,"Two distinct caret positions make the coordinate proof nonempty")
+    let expectedA=pa.applying(inputPlacement.placement.transform),expectedB=pb.applying(inputPlacement.placement.transform)
+    XCTAssertEqual(abs(screenB.x-screenA.x),abs(expectedB.x-expectedA.x),accuracy:0.5)
+    XCTAssertEqual(abs(screenB.y-screenA.y),abs(expectedB.y-expectedA.y),accuracy:0.5)
+    let expected=String(inputTarget.source.prefix(2))+"!"+String(inputTarget.source.dropFirst(2))
+    for _ in 0..<100 {
+      if model.nativeTextTarget(ref)?.source == expected { break }
+      try await Task.sleep(for:.milliseconds(20))
+    }
+    XCTAssertEqual(model.nativeTextTarget(ref)?.source,expected,"The installed native editor publishes its insertion through the same owner")
+    let savedInput=await model.finishPendingPersistence();XCTAssertTrue(savedInput)
+    let afterInput=try model.store.loadPage(page.id)
+    XCTAssertEqual(afterInput.element(id:text.id)?.source,expected)
+    XCTAssertEqual(afterInput.element(id:whole.id),whole)
+    XCTAssertEqual(afterInput.element(id:text.id)?.basis?.size.x,240)
+    sameAxes(try XCTUnwrap(afterInput.graphicGraph().placement(text.id)).transform,original.transform)
+    // Capture after the native input/keyboard and accepted edit have settled,
+    // in the actual host bounds rather than an oversized offscreen fixture.
+    try await Task.sleep(for:.milliseconds(150))
+    #if os(iOS)
+    host.view.layoutIfNeeded()
+    let snapshot=UIGraphicsImageRenderer(size:host.view.bounds.size).pngData { _ in
+      host.view.drawHierarchy(in:host.view.bounds,afterScreenUpdates:true)
+    }
+    #else
+    host.layoutSubtreeIfNeeded()
+    let image=try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in:host.bounds))
+    host.cacheDisplay(in:host.bounds,to:image)
+    let snapshot=try XCTUnwrap(image.representation(using:.png,properties:[:]))
+    #endif
+    let proof=XCTAttachment(data:snapshot,uniformTypeIdentifier:"public.png")
+    proof.name="placed-native-text-editor";proof.lifetime = .keepAlways;add(proof)
+    // A parent-only change keeps the physical editor and its local selection.
+    let groupRef=EditableElementReference.page(pageID:page.id,elementID:whole.id)
+    XCTAssertTrue(model.performElementOperation(.updateElement,reference:groupRef,
+      values:["frame":try .encode(PageRect(x:120,y:130,width:400,height:600))],summary:"Передвинуть целое"))
+    let savedWhole=await model.finishPendingPersistence();XCTAssertTrue(savedWhole)
+    let movedInput=try XCTUnwrap(model.nativeTextEditingPresentation(try XCTUnwrap(model.selectionSession.nativeText)))
+    host.rootView=content(movedInput)
+    try await Task.sleep(for:.milliseconds(60))
+    #if os(iOS)
+    host.view.layoutIfNeeded()
+    XCTAssertTrue(find(host.view) === input);XCTAssertEqual(input.selectedRange,.init(location:3,length:0))
+    #else
+    host.layoutSubtreeIfNeeded()
+    XCTAssertTrue(find(host) === input);XCTAssertEqual(input.selectedRange(),.init(location:3,length:0))
+    #endif
+    XCTAssertEqual(input.bounds.width,240,accuracy:0.01)
+    XCTAssertEqual(try model.store.loadPage(page.id).element(id:text.id),afterInput.element(id:text.id))
+    var rootTarget=NotebookNativeTextTarget(reference:ref,address:.init(surface:.page(page.id),boardID:nil,worldOrigin:nil,
+      bounds:.init(x:0,y:0,width:500,height:500)),frame:.init(x:100,y:100,width:120,height:300),source:"root",style:.standard,
+      basis:.init(size:.init(x:100,y:60),transform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0)))
+    XCTAssertEqual(rootTarget.maximumBodyHeight,110)
+    try rootTarget.resizeBody(width:100,height:110)
+    XCTAssertEqual(rootTarget.frame,.init(x:0,y:100,width:220,height:300))
+  }
+
   func testMixedBodiesSharePlacementButRetainLocalLayoutAndPixels() async throws {
     let actor=UUID(),pageID=UUID()
     let whole=AgentElement(id:"whole",kind:.group,frame:.init(x:40,y:30,width:240,height:600),source:"",html:"",

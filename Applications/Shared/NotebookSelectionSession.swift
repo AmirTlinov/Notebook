@@ -70,4 +70,27 @@ struct NotebookNativeTextTarget: Equatable, Sendable {
   var style: NativeTextStyle
   var page: AgentElement?
   var spatial: SpatialElement?
+  var basis: NotebookElementBasis? = nil
+  var localFrame: PageRect { .init(x:0,y:0,width:basis?.size.x ?? frame.width,height:basis?.size.y ?? frame.height) }
+  var hasParent: Bool { page?.parentID != nil || spatial?.parentID != nil }
+  /// Only a root's authored frame is constrained by the paper. Descendants
+  /// may leave their group; the existing surface renderer clips the result.
+  var maximumBodyHeight: Double {
+    guard !hasParent,let bounds=address.bounds else { return 1_000_000 }
+    guard let t=try? basis?.placement(in:frame) ?? CGAffineTransform(translationX:frame.x,y:frame.y) else { return 0 }
+    var result=1_000_000.0
+    for x in [0.0,localFrame.width] {
+      let p=CGPoint(x:x,y:0).applying(t)
+      for (start,step,lower,upper) in [(p.x,t.c,bounds.minX,bounds.maxX),(p.y,t.d,bounds.minY,bounds.maxY)] {
+        if step>0 { result=min(result,(upper-start)/step) }
+        else if step<0 { result=min(result,(lower-start)/step) }
+        else if start<lower || start>upper { return 0 }
+      }
+    }
+    return max(0,result)
+  }
+  mutating func resizeBody(width:Double,height:Double) throws {
+    let result=try NotebookElementPlacement.Source(frame:frame,basis:basis).resizingBody(to:.init(x:width,y:height))
+    frame=result.frame;basis=result.basis
+  }
 }

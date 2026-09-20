@@ -58,7 +58,7 @@ extension NotebookAppModel {
     let original=editingGraphicGraph(target.reference)?.placement(target.reference.elementID)
     let placement:NotebookElementPlacement
     if let original {
-      guard let updated=try? original.updating(frame:target.frame,basis:original.basis) else { return nil }
+      guard let updated=try? original.updating(frame:target.frame,basis:target.basis) else { return nil }
       placement=updated
     } else {
       guard target.page == nil,target.spatial == nil else { return nil }
@@ -73,6 +73,10 @@ extension NotebookAppModel {
       source.placementSource?.isGroup == false,
       let placement=(graph ?? editingGraphicGraph(reference))?.placement(reference.elementID) else { return nil }
     if let text=nativeTextTarget(reference) {
+      #if os(macOS)
+      if selectionSession.isInteractive,selectionSession.element == reference,
+        let editing=try? placement.updating(frame:text.frame,basis:text.basis) { return .init(placement:editing) }
+      #endif
       return .init(placement:placement,text:text.source,style:text.style)
     }
     return .init(placement:placement)

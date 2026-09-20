@@ -236,7 +236,7 @@ struct WorkspaceItemCoverView: View {
       }) { element in
         let reference = EditableElementReference.spatial(boardID: boardID, elementID: element.id)
         if let placement=graph?.placement(element.id) {
-        let presentation=NotebookElementPresentation(element,placement:placement),local=presentation.frame
+        let presentation=(!isPortalProjection ? model.elementPresentation(reference,graph:graph) : nil) ?? NotebookElementPresentation(element,placement:placement),local=presentation.frame
         let retainsTextInput = !isPortalProjection
           && element.kind == .nativeText && editingTextID == element.id
         EditableElementContainer(reference: reference, coordinateScale: 1) {
@@ -422,9 +422,8 @@ struct SpatialElementContent: View {
     case .nativeText:
       NotebookNativeTextView(source:element.source,style:element.textStyle,
         reference:.spatial(boardID:sourceBoardID ?? WorkspaceRoot.boardID,elementID:element.id),
-        frame:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height),
-        maximumHeight:element.surface.kind == .cover ? model.itemGeometry(element.surface.ownerID).height-element.frame.y : .greatestFiniteMagnitude,
-        isEditing:isTextEditing && commitsState && sourceBoardID != nil,onEditingEnded:onTextEditingEnded,retainedSpatial:element)
+        isEditing:isTextEditing && commitsState && sourceBoardID != nil,onEditingEnded:onTextEditingEnded,retainedSpatial:element,
+        draftTarget:model.nativeTextTarget(.spatial(boardID:sourceBoardID ?? WorkspaceRoot.boardID,elementID:element.id)))
     case .markdown, .web:
       let sourceBoardID = self.sourceBoardID
       PreparedAgentElementView(element: agentElement,
