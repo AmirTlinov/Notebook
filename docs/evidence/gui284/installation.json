@@ -1,0 +1,39 @@
+{
+  "sourceSHA256": "1fbaeb0ac163ed2f5bb7b7280e3c411aeaa61bc55f8a5a0366111075a8609307",
+  "baseCommit": "c3516cc4530f72bd11196ed3c0878b796a8feb67",
+  "uncommittedRuntimeFix": false,
+  "sourceScope": "GUI-284 indexed vector source and editing, vector lasso, direct pose fields, visible source range GPU upload; includes build135 fixes; wire37/manifest18",
+  "status": "installed-and-live-readback-verified",
+  "macOldBundleSHA256": "877f99adedcdf8ab7fcebd2980914a4c37a875eea1a227db86703a981e6f2fe6",
+  "macNewBundleSHA256": "0c10f20704799355ce5d911a1111ec6a07583b37d24522023e13af287bb159eb",
+  "macDataBytesUnchangedBeforeLaunch": true,
+  "iPadWorkspaceRegistryDigestUnchanged": true,
+  "profileExpiresUTC": "2027-09-17T09:41:04",
+  "fullPhysicalAcceptance": false,
+  "noUninstallOrContainerReset": true,
+  "version": "0.3.133",
+  "build": "136",
+  "iPadBundleSHA256": "17694eccd65880e8bd401ec5b6dec7378e600e4b87e9f62ce5b01ab7da07fb39",
+  "installedVersionReadback": {
+    "mac": "0.3.133 (136)",
+    "iPad": "0.3.133 (136)"
+  },
+  "liveReadback": {
+    "status": "ready",
+    "basisUnchanged": true,
+    "workspaceHeaderUnchanged": true,
+    "pageHeaderUnchanged": true,
+    "boardContentRevisionUnchanged": true,
+    "cursorBefore": "26059",
+    "cursorAfter": "26069",
+    "deviceLocalPresenceNotCompared": true
+  },
+  "visualInspection": {
+    "mac": "Installed production path: workspace with document/notebook covers, no launch error",
+    "iPad": "Installed production bundle: current notebook page and existing handwriting visible",
+    "screenshotSHA256": "8fb6cc786371497f5cd7b50e585d9baba64c40e4b632e308c71b10c8af7b5063"
+  },
+  "userAuthorizedActiveWorkInterruption": true,
+  "forcedTermination": false,
+  "verifiedUTC": "2026-09-20T00:28:04.339843+00:00"
+}
