@@ -38,9 +38,10 @@ struct NotebookElementControls: UIViewRepresentable {
       if contact.vertices != contact.originalVertices { graphic?.vertices = contact.vertices }
       if contact.cornerRadius != contact.originalCornerRadius { graphic?.cornerRadius = contact.cornerRadius }
     }
+    let isGroup=model.isElementGroup(reference)
     view.graphic = graphic
     view.configure(selectionID: selectionID, frame: frame, layout: model.graphicElement(reference)?.connection == nil ? nil : model.graphicLayout(reference), scale:scale,
-      hasLabel: !(graphic?.label.isEmpty ?? true), mode:model.selectionSession.geometryMode, manipulating: model.selectionSession.manipulation != nil)
+      hasLabel: !(graphic?.label.isEmpty ?? true), mode:model.selectionSession.geometryMode, manipulating: model.selectionSession.manipulation != nil,subject:isGroup ? .group : .element)
     view.beginManipulation = { kind in
       guard model.selectionSession.id == selectionID,
         let contact = model.beginElementManipulation(reference, kind: kind) else { return nil }
@@ -79,7 +80,17 @@ struct NotebookElementControls: UIViewRepresentable {
         }
       ]))
     }
-    if graphic != nil { menus.append(selectionTransformMenu(model:model,selectionID:selectionID)) }
+    if graphic != nil || isGroup { menus.append(selectionTransformMenu(model:model,selectionID:selectionID)) }
+    if let parent=model.parentGroup(reference) {
+      menus.append(UIAction(title:"Выбрать группу",image:UIImage(systemName:"square.on.square")) { _ in
+        guard model.selectionSession.id == selectionID else { return };model.selectElement(parent)
+      })
+    }
+    if isGroup {
+      menus.append(UIAction(title:"Выбрать участника",image:UIImage(systemName:"cursorarrow")) { _ in
+        guard model.selectionSession.id == selectionID else { return };model.clearSelection()
+      })
+    }
     view.setLayerActions(available:model.availableLayerMoves) { move in
       guard model.selectionSession.id == selectionID else { return }
       model.arrangeSelection(move)
@@ -114,6 +125,7 @@ struct NotebookElementControls: UIViewRepresentable {
         Task { _ = await NotebookTextObjectClipboard.paste(nextTo:text,model:model) }
       })
     } else { view.setTextActions(nil) }
+    if isGroup { view.setLayerActions();view.setGroupActions() }
     view.setActionsMenu(menus)
   }
 
@@ -150,6 +162,9 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
     let alignments: [(NotebookGraphicSelection.Alignment,String)] = [(.left,"По левому краю"),(.center,"По центру горизонтально"),
       (.right,"По правому краю"),(.top,"По верхнему краю"),(.middle,"По центру вертикально"),(.bottom,"По нижнему краю")]
     view.setActionsMenu([
+      UIAction(title:"Сгруппировать",image:UIImage(systemName:"square.on.square"),attributes:model.canGroupSelectedElements ? [] : .disabled) { _ in
+        guard model.selectionSession.id == selectionID else { return };model.groupSelectedElements()
+      },
       selectionTransformMenu(model:model,selectionID:selectionID),
       UIAction(title:model.selectionSession.addingElements ? "Завершить выбор" : "Добавить к выбору",image:UIImage(systemName:"checkmark.circle")) { _ in
         guard model.selectionSession.id == selectionID else { return }; model.setMultipleSelectionAdding(!model.selectionSession.addingElements)
@@ -202,12 +217,13 @@ struct NotebookItemControls: UIViewRepresentable {
 }
 
 private enum ElementHandle: Hashable {
-  case corner(NotebookElementResizeHandle), start, end, bend, vertex(Int), rounding
+  case corner(NotebookElementResizeHandle), move, start, end, bend, vertex(Int), rounding
   var kind: NotebookElementManipulation.Kind {
-    switch self { case .corner(let value): .resize(value); case .start: .endpoint(.start); case .end: .endpoint(.end); case .bend: .bend; case .vertex(let index): .vertex(index); case .rounding: .roundCorners }
+    switch self { case .move: .move; case .corner(let value): .resize(value); case .start: .endpoint(.start); case .end: .endpoint(.end); case .bend: .bend; case .vertex(let index): .vertex(index); case .rounding: .roundCorners }
   }
   var label: String {
     switch self {
+    case .move: "Переместить группу"
     case .corner(let value): "Изменить размер за " + value.label
     case .start: "Начало стрелки"
     case .end: "Конец стрелки"
@@ -217,7 +233,7 @@ private enum ElementHandle: Hashable {
     }
   }
   var identifier: String {
-    switch self { case .corner(let value): "resize-agent-element-" + value.rawValue
+    switch self { case .move: "move-element-group"; case .corner(let value): "resize-agent-element-" + value.rawValue
     case .start: "graphic-start-handle"; case .end: "graphic-end-handle"; case .bend: "graphic-bend-handle"
     case .vertex(let index): "graphic-vertex-\(index)"; case .rounding: "graphic-corner-radius-handle" }
   }
@@ -225,7 +241,7 @@ private enum ElementHandle: Hashable {
 
 /// Element geometry and actions only. Context presentation belongs to the workspace.
 final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegate {
-  enum Subject { case element, elements(Int), item(WorkspaceItemKind) }
+  enum Subject { case element, group, elements(Int), item(WorkspaceItemKind) }
   private var subject: Subject = .element
   var memberFrames: [CGRect] = []
   override var isEnabled: Bool {
@@ -289,6 +305,10 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     layerButton.contents = NotebookElementLayerMove.allCases.map { direction in
       UIAction(title:direction.title,attributes:available.contains(direction) ? [] : .disabled) { _ in move?(direction) }
     }
+    setNeedsLayout()
+  }
+  func setGroupActions() {
+    editButton.isHidden=true;deleteButton.isHidden=true
     setNeedsLayout()
   }
   func setActionsMenu(_ children: [UIMenuElement]) {
@@ -366,10 +386,10 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   func configure(selectionID: UUID, frame: CGRect, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false, mode: NotebookSelectionSession.GeometryMode = .transform, manipulating: Bool = false, subject: Subject = .element) {
     if self.selectionID != selectionID { cancel(); contextMenus.hide(source:source); self.selectionID = selectionID }
     self.subject = subject
-    editButton.isHidden = false; setTextActions(nil); setLayerActions()
+    editButton.isHidden = false; deleteButton.isHidden = false; setTextActions(nil); setLayerActions()
     var primary = editButton.configuration!
     switch subject {
-    case .element:
+    case .element, .group:
       primary.image = UIImage(systemName:"character.cursor.ibeam")
       editButton.accessibilityLabel = graphic == nil ? "Редактировать элемент" : "Подпись фигуры"
       editButton.accessibilityIdentifier = "edit-agent-element"
@@ -409,6 +429,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     let next: [ElementHandle]
     if case .item = subject { next = [] }
     else if case .elements = subject { next = [] }
+    else if case .group = subject { next = NotebookElementResizeHandle.visible(in:frame.size).map(ElementHandle.corner)+[.move] }
     else if layout != nil { next = [.start,.end,.bend] }
     else if geometryMode == .vertices, let vertices { next = vertices.indices.map(ElementHandle.vertex) }
     else if geometryMode == .rounding { next = [.rounding] }
@@ -451,6 +472,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     return handle(at:point) != nil
   }
   private func point(_ handle: ElementHandle) -> CGPoint {
+    if handle == .move { return .init(x:frameRect.midX,y:frameRect.midY) }
     if case .corner(let corner) = handle { return corner.point(in:frameRect) }
     if case .vertex(let index) = handle, let vertices = graphic.flatMap({ $0.transform == nil ? NotebookGraphicGeometry.polygon($0) : nil }), vertices.indices.contains(index) {
       return .init(x:frameRect.minX+vertices[index].x*frameRect.width,y:frameRect.minY+vertices[index].y*frameRect.height)

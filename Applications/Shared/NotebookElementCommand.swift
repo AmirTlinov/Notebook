@@ -16,9 +16,10 @@ struct NotebookElementCommand {
 }
 
 struct NotebookElementCommandDraft: Equatable {
-  let frame: PageRect
+  let source: NotebookElementPlacement.Source
   let graphic: NotebookGraphic?
-  var basis: NotebookElementBasis? = nil
+  var frame: PageRect { source.frame }
+  var basis: NotebookElementBasis? { source.basis }
   var rect: CGRect { .init(x: frame.x, y: frame.y, width: frame.width, height: frame.height) }
 }
 
@@ -31,12 +32,32 @@ extension NotebookAppModel {
     }
   }
 
+  /// Whole and leaf drafts enter the one placement resolver before children
+  /// are resolved. Never rewrite each child's local frame to preview its parent.
+  func elementPlacementDrafts(reference: (String) -> EditableElementReference) -> [String:NotebookElementPlacement.Source] {
+    var result:[String:NotebookElementPlacement.Source]=[:]
+    for (ref,draft) in elementCommandDrafts {
+      let id:String
+      switch ref { case .page(_,let value),.spatial(_,let value): id=value }
+      if reference(id) == ref { result[id]=draft.source }
+    }
+    if let contact=selectionSession.manipulation {
+      let ref=contact.reference,id:String
+      switch ref { case .page(_,let value),.spatial(_,let value): id=value }
+      if reference(id) == ref,var source=result[id] ?? nativeElementSource(ref)?.placementSource {
+        source.frame = .init(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height)
+        source.basis=contact.basis;result[id]=source
+      }
+    }
+    return result
+  }
+
   /// Contact and accepted edits share the existing graph, renderer and camera.
   /// Only nodes already admitted by that graph can change here.
   func projectingGraphicCommands(_ graph: NotebookGraphicGraph,
     reference: (String) -> EditableElementReference) -> NotebookGraphicGraph {
     let selectedEdits = Dictionary(uniqueKeysWithValues:(selectionSession.manipulation?.selectedEdits ?? []).map { ($0.id,$0) })
-    return .init(graph.nodes.values.compactMap { node in
+    return graph.replacingNodes(graph.nodes.values.compactMap { node in
       let ref = reference(node.id), draft = elementCommandDrafts[ref]
       let contact = selectionSession.manipulation.flatMap { $0.reference == ref ? $0 : nil }
       var graphic = draft?.graphic ?? node.graphic

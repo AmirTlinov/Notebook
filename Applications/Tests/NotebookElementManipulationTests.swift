@@ -279,6 +279,24 @@ import XCTest
     }
   }
 
+  func testGroupMoveHandleUsesTheSameContactGateAndDoesNotBlockPencil() throws {
+    let gate=NotebookInputGate()
+    let window=UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let controller=UIViewController();window.rootViewController=controller;window.makeKeyAndVisible()
+    defer { window.isHidden=true;window.rootViewController=nil }
+    let controls=NotebookSelectionControlsView(gate:gate,contextMenus:mountContextMenus(in:controller.view,gate:gate))
+    controls.frame=controller.view.bounds
+    controls.configure(selectionID:UUID(),frame:.init(x:100,y:150,width:240,height:180),subject:.group)
+    controls.setGroupActions();controller.view.addSubview(controls);controls.layoutIfNeeded()
+    let center=controls.convert(.init(x:220,y:240),to:window)
+    XCTAssertTrue(window.hitTest(center,with:nil) === controls)
+    XCTAssertFalse(gate.permitsSceneContact(at:center,kind:.finger));XCTAssertTrue(gate.permitsSceneContact(at:center,kind:.pencil))
+    let handles=(controls.accessibilityElements ?? []).compactMap { $0 as? UIAccessibilityElement }
+    XCTAssertEqual(handles.count,9)
+    XCTAssertEqual(handles.filter { $0.accessibilityIdentifier == "move-element-group" }.count,1)
+    controls.removeFromSuperview();XCTAssertTrue(gate.permitsSceneContact(at:center,kind:.finger))
+  }
+
   func testCornerAdmissionLeavesPencilAndUnrelatedPaperAvailable() throws {
     let gate = NotebookInputGate()
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))

@@ -18,6 +18,52 @@ struct NotebookGroupGeometryTests {
       .init(id:"link",kind:.graphic,frame:.init(x:25,y:20,width:300,height:180),source:"",html:"",graphic:connector,parentID:"outer")])
   }
 
+  @Test func sourceDraftMovesTheWholeAndBoundsIncludeAnEscapedChild() throws {
+    let source=page(bFrame:.init(x:700,y:120,width:70,height:60)),before=source.graphicGraph()
+    let oldBounds=try #require(before.groupBounds("outer"))
+    #expect(oldBounds.maxX>600)
+    let draft=NotebookElementPlacement.Source(frame:.init(x:150,y:170,width:500,height:300),basis:source.elements[0].basis,isGroup:true)
+    let next=source.graphicGraph(placements:["outer":draft]),newBounds=try #require(next.groupBounds("outer"))
+    #expect(next.node("outer") == nil)
+    #expect(next.groups.count == 2)
+    #expect(newBounds == oldBounds.offsetBy(dx:50,dy:70))
+    #expect(try #require(next.resolve("link").layout).localLayout == #require(before.resolve("link").layout).localLayout)
+    for id in ["a","b","link"] {
+      #expect(next.node(id)?.frame == before.node(id)?.frame)
+      #expect(next.node(id)?.graphic == before.node(id)?.graphic)
+    }
+    let boardID=UUID(),origin=WorldPoint(tileX:1_000_000_000,tileY:-1_000_000_000,localX:5,localY:7)
+    let stamp=VersionStamp(counter:1,actor:UUID())
+    let board=BoardDocument(freeItems:[],elements:source.elements.map { element in
+      SpatialElement(id:element.id,surface:.board(boardID),kind:element.kind == .group ? .group : .graphic,
+        frame:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height),worldOrigin:element.parentID == nil ? origin : .zero,source:element.source,
+        graphic:element.graphic,parentID:element.parentID,basis:element.basis,stamp:stamp)
+    },stamp:stamp)
+    var boardDraft=draft;boardDraft.origin=origin
+    let boardGraph=board.graphicGraph(placements:["outer":boardDraft])
+    #expect(boardGraph.groupBounds("outer") == newBounds)
+    #expect(boardGraph.placement("a")?.origin == origin)
+  }
+
+  @Test func aHundredThousandMembersKeepOneWholeDraftButExposeProjectionCost() throws {
+    let graphic=NotebookGraphic(shape:.rectangle,style:.init(strokeWidth:1))
+    let boardID=UUID(),stamp=VersionStamp(counter:1,actor:UUID())
+    let children=(0..<100_000).map { i in SpatialElement(id:"part-\(i)",surface:.board(boardID),kind:.graphic,
+      frame:.init(x:Double(i%1000),y:Double(i/1000),width:0.8,height:0.8),worldOrigin:.zero,source:"",graphic:graphic,parentID:"whole",stamp:stamp) }
+    let whole=SpatialElement(id:"whole",surface:.board(boardID),kind:.group,frame:.init(x:50,y:60,width:1000,height:100),worldOrigin:.zero,source:"",
+      basis:.init(size:.init(x:1000,y:100)),stamp:stamp)
+    let page=BoardDocument(freeItems:[],elements:[whole]+children,stamp:stamp)
+    let clock=ContinuousClock(),start=clock.now,graph=page.graphicGraph(),prepared=clock.now
+    let bounds=try #require(graph.groupBounds("whole")),bounded=clock.now
+    let draft=NotebookElementPlacement.Source(frame:.init(x:80,y:100,width:1000,height:100),basis:whole.basis,isGroup:true)
+    let next=page.graphicGraph(placements:["whole":draft]),projected=clock.now
+    #expect(graph.nodes.count == 100_000 && next.nodes.count == 100_000 && next.groups.count == 1)
+    #expect(try #require(next.groupBounds("whole")) == bounds.offsetBy(dx:30,dy:40))
+    #expect(next.node("part-99999")?.frame == graph.node("part-99999")?.frame)
+    #expect(page.elements[100_000] == children.last)
+    print("GUI291 whole 100000: coldGraph=\(start.duration(to:prepared)), bounds=\(prepared.duration(to:bounded)), draftGraph=\(bounded.duration(to:projected)); one draft, 100000 admitted leaves still projected")
+  }
+
   @Test func internalBindingsCancelTheSharedOuterFrameNotFloatingPointMatrices() throws {
     let original = page(), graph = original.graphicGraph()
     let body = try #require(graph.resolve("link").layout).localLayout
@@ -36,7 +82,7 @@ struct NotebookGroupGeometryTests {
     }
     let edited = page(bFrame:.init(x:300,y:150,width:90,height:70)).graphicGraph()
     #expect(edited.resolve("link").layout?.localLayout != body)
-    #expect(original.graphicGraph(frames:["outer":.init(x:170,y:150,width:500,height:300)]).resolve("link").layout?.localLayout == body)
+    #expect(original.graphicGraph(placements:["outer":.init(frame:.init(x:170,y:150,width:500,height:300),basis:original.elements[0].basis,isGroup:true)]).resolve("link").layout?.localLayout == body)
   }
 
   @Test func strokesAndExistingCutsTransformTogetherAndRemainPickable() throws {

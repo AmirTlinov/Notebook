@@ -26,10 +26,16 @@ struct EditableElementContainer<Content: View>: View {
       .accessibilityAction(named: "Переместить вверх") { model.moveElementAccessibly(reference, by: .init(x: 0, y: -20)) }
       #if os(macOS)
       .onTapGesture(count: 2) { model.selectElement(reference); model.editSelectedElement(reference) }
-      .onTapGesture { model.selectElement(reference) }
+      .onTapGesture {
+        if model.selectionSession.addingElements { model.toggleGraphicSelection(reference) } else { model.selectElement(reference) }
+      }
       .contextMenu {
         Button("Редактировать") { model.selectElement(reference); model.editSelectedElement(reference) }
         Button("Удалить", role: .destructive) { model.selectElement(reference); model.deleteElement(reference) }
+        if let parent=model.parentGroup(reference) { Button("Выбрать группу") { model.selectElement(parent) } }
+        if model.graphicElement(reference) != nil {
+          Button("Выбрать несколько") { model.selectElement(reference);model.beginMultipleSelection() }
+        }
       }
       .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .named(NotebookManipulationSpace.material))
         .onChanged { value in

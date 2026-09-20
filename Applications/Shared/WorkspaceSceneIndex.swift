@@ -143,6 +143,8 @@ struct WorkspaceSceneIndex: Sendable {
   func pageOwner(pageID: UUID) -> UUID? { pageOwners[pageID] }
   func ownerBoard(itemID: UUID) -> UUID? { itemOwners[itemID] }
   func element(id: String, boardID: UUID) -> SpatialElement? { boards[boardID]?.elements[id] }
+  func graphicGraph(boardID: UUID) -> NotebookGraphicGraph? { boards[boardID]?.graphics }
+
   func graphicLayout(id: String, boardID: UUID) -> NotebookGraphicLayout? { boards[boardID]?.graphics.resolve(id).layout }
   func paintEntry(id: WorkspaceSpatialID, boardID: UUID, coverID: UUID? = nil) -> WorkspaceSpatialEntry? {
     guard let board = boards[boardID] else { return nil }

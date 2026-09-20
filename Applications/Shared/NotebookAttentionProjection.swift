@@ -159,7 +159,10 @@ enum NotebookAttentionProjection {
           element.surface == .board(target.id) else { return nil }
         local = model.elementPresentationFrame(.spatial(boardID:presence.boardID,elementID:id),
           fallback:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height))
-        if element.graphic != nil {
+        if element.kind == .group {
+          guard let group=model.groupManipulationGeometry(.spatial(boardID:presence.boardID,elementID:id)) else { return nil }
+          local = .init(x:group.bounds.minX,y:group.bounds.minY,width:group.bounds.width,height:group.bounds.height);origin=group.placement.origin
+        } else if element.graphic != nil {
           guard let layout = graphicLayout ?? model.graphicLayout(.spatial(boardID:presence.boardID,elementID:id)) else { return nil }
           local = layout.frame;origin = layout.origin
         } else { origin = element.worldOrigin ?? .zero }
@@ -175,7 +178,10 @@ enum NotebookAttentionProjection {
       if let id = elementID {
         guard let element = model.pages[target.id]?.elements.first(where: { $0.id == id }) else { return nil }
         local = model.elementPresentationFrame(.page(pageID:target.id,elementID:id),fallback:element.frame)
-        if element.graphic != nil {
+        if element.kind == .group {
+          guard let group=model.groupManipulationGeometry(.page(pageID:target.id,elementID:id)) else { return nil }
+          local = .init(x:group.bounds.minX,y:group.bounds.minY,width:group.bounds.width,height:group.bounds.height)
+        } else if element.graphic != nil {
           guard let layout = graphicLayout ?? model.graphicLayout(.page(pageID:target.id,elementID:id)) else { return nil }
           local = layout.frame
         }
@@ -195,7 +201,10 @@ enum NotebookAttentionProjection {
             element.surface == .cover(itemID) else { return nil }
           local = model.elementPresentationFrame(.spatial(boardID:presence.boardID,elementID:id),
             fallback:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height))
-          if element.graphic != nil {
+          if element.kind == .group {
+            guard let group=model.groupManipulationGeometry(.spatial(boardID:presence.boardID,elementID:id)) else { return nil }
+            local = .init(x:group.bounds.minX,y:group.bounds.minY,width:group.bounds.width,height:group.bounds.height)
+          } else if element.graphic != nil {
             guard let layout = graphicLayout ?? model.graphicLayout(.spatial(boardID:presence.boardID,elementID:id)) else { return nil }
             local = layout.frame
           }

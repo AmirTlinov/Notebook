@@ -224,8 +224,26 @@ public struct NotebookGraphicGraph: Sendable {
     }
   }
   public let nodes: [String: Node]
-  public init(_ nodes: [Node]) {
+  public let groups: [String:NotebookElementPlacement]
+  public init(_ nodes: [Node], groups: [String:NotebookElementPlacement] = [:]) {
+    self.groups=groups
     self.nodes = Dictionary(nodes.map { (collaborationIdentity($0.id), $0) }, uniquingKeysWith: { first, _ in first })
+  }
+  public func placement(_ id: String) -> NotebookElementPlacement? {
+    node(id)?.placement ?? groups[collaborationIdentity(id)]
+  }
+  public func replacingNodes(_ nodes: [Node]) -> Self { .init(nodes,groups:groups) }
+  /// Selection bounds include escaped members, not the original basis rectangle.
+  /// This resolves only the admitted graph, not a new stored descendant list.
+  public func groupBounds(_ id: String) -> CGRect? {
+    let key=collaborationIdentity(id)
+    guard groups[key] != nil else { return nil }
+    var bounds=CGRect.null
+    for node in nodes.values where node.shown && node.placement.descends(from:key) {
+      guard let layout=resolve(node.id).layout else { continue }
+      bounds=bounds.union(.init(x:layout.frame.x,y:layout.frame.y,width:layout.frame.width,height:layout.frame.height))
+    }
+    return bounds.isNull ? nil : bounds
   }
   /// The whole closed node is a binding target; empty bounding-box corners are
   /// not. Prefer the innermost target and retain it at its edge during a drag.
@@ -403,44 +421,47 @@ public struct NotebookGraphicGraph: Sendable {
 }
 
 extension PageDocument {
-  public func graphicGraph(frames: [String: PageRect] = [:], connections: [String: NotebookGraphicConnection] = [:]) -> NotebookGraphicGraph {
-    let shown = graphicPresentation.geometryIDs
-    let sources = Dictionary(elements.filter { $0.kind == .group }.map { (collaborationIdentity($0.id),$0) },uniquingKeysWith:{ first,_ in first })
-    let resolver = NotebookElementPlacement.Resolver { id in
-      sources[collaborationIdentity(id)].map {
-        .init(frame:frames[$0.id] ?? $0.frame,origin:.zero,parentID:$0.parentID,basis:$0.basis,isGroup:$0.kind == .group)
-      }
+  public func graphicGraph(placements: [String:NotebookElementPlacement.Source] = [:]) -> NotebookGraphicGraph {
+    let shown=graphicPresentation.geometryIDs
+    var groups=Dictionary(elements.filter { $0.kind == .group }.map {
+      (collaborationIdentity($0.id),NotebookElementPlacement.Source(frame:$0.frame,parentID:$0.parentID,basis:$0.basis,isGroup:true))
+    },uniquingKeysWith:{ first,_ in first })
+    for (id,source) in placements where source.isGroup { groups[collaborationIdentity(id)]=source }
+    let resolver=NotebookElementPlacement.Resolver { groups[collaborationIdentity($0)] }
+    let nodes:[NotebookGraphicGraph.Node]=elements.compactMap { element in
+      guard let graphic=element.graphic else { return nil }
+      let source=placements[element.id] ?? .init(frame:element.frame,parentID:element.parentID,basis:element.basis)
+      guard let placement=try? resolver.resolve(element.id,source:source) else { return nil }
+      return .init(id:element.id,graphic:graphic,frame:source.frame,surface:.page(id),shown:shown.contains(element.id),placement:placement)
     }
-    return .init(elements.compactMap { element in
-      guard var graphic = element.graphic,let placement = try? resolver.resolve(element.id,
-        source:.init(frame:frames[element.id] ?? element.frame,origin:.zero,parentID:element.parentID,basis:element.basis,isGroup:false)) else { return nil }
-      if let connection = connections[element.id] { graphic.connection = connection }
-      return .init(id:element.id,graphic:graphic,frame:frames[element.id] ?? element.frame,
-        surface:.page(id),shown:shown.contains(element.id),placement:placement)
-    })
+    return .init(nodes,groups:Dictionary(uniqueKeysWithValues:groups.keys.compactMap { id in
+      (try? resolver.resolve(id)).map { (id,$0) }
+    }))
   }
 }
 extension BoardDocument {
-  public func graphicGraph(frames: [String: PageRect] = [:], connections: [String: NotebookGraphicConnection] = [:]) -> NotebookGraphicGraph {
-    let shown = graphicPresentation.geometryIDs
-    let sources = Dictionary(elements.filter { $0.kind == .group }.map { (collaborationIdentity($0.id),$0) },uniquingKeysWith:{ first,_ in first })
-    // Separate surfaces cannot share a parent, even in a partially delivered cut.
-    var resolvers: [SurfaceID:NotebookElementPlacement.Resolver] = [:]
-    return .init(elements.compactMap { element in
-      guard var graphic = element.graphic else { return nil }
-      let surface = element.surface
-      let resolver = resolvers[surface] ?? NotebookElementPlacement.Resolver { id in
-        guard let value = sources[collaborationIdentity(id)],value.surface == surface else { return nil }
-        return .init(frame:frames[value.id] ?? .init(x:value.frame.x,y:value.frame.y,width:value.frame.width,height:value.frame.height),
-          origin:value.worldOrigin ?? .zero,parentID:value.parentID,basis:value.basis,isGroup:value.kind == .group)
+  public func graphicGraph(placements: [String:NotebookElementPlacement.Source] = [:]) -> NotebookGraphicGraph {
+    let shown=graphicPresentation.geometryIDs
+    let groups=Dictionary(elements.filter { $0.kind == .group }.map { (collaborationIdentity($0.id),$0) },uniquingKeysWith:{ first,_ in first })
+    var resolvers:[SurfaceID:NotebookElementPlacement.Resolver]=[:]
+    func resolver(_ surface: SurfaceID) -> NotebookElementPlacement.Resolver {
+      if let value=resolvers[surface] { return value }
+      let value=NotebookElementPlacement.Resolver { id in
+        guard let group=groups[collaborationIdentity(id)],group.surface == surface else { return nil }
+        return placements[group.id] ?? .init(frame:.init(x:group.frame.x,y:group.frame.y,width:group.frame.width,height:group.frame.height),
+          origin:group.worldOrigin ?? .zero,parentID:group.parentID,basis:group.basis,isGroup:true)
       }
-      resolvers[element.surface] = resolver
-      let frame = frames[element.id] ?? PageRect(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
-      guard let placement = try? resolver.resolve(element.id,
-        source:.init(frame:frame,origin:element.worldOrigin ?? .zero,parentID:element.parentID,basis:element.basis,isGroup:false)) else { return nil }
-      if let connection = connections[element.id] { graphic.connection = connection }
-      return .init(id:element.id,graphic:graphic,
-        frame:frame,surface:element.surface,shown:shown.contains(element.id),placement:placement)
-    })
+      resolvers[surface]=value;return value
+    }
+    let nodes:[NotebookGraphicGraph.Node]=elements.compactMap { element in
+      guard let graphic=element.graphic else { return nil }
+      let source=placements[element.id] ?? .init(frame:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height),
+        origin:element.worldOrigin ?? .zero,parentID:element.parentID,basis:element.basis)
+      guard let placement=try? resolver(element.surface).resolve(element.id,source:source) else { return nil }
+      return .init(id:element.id,graphic:graphic,frame:source.frame,surface:element.surface,shown:shown.contains(element.id),placement:placement)
+    }
+    return .init(nodes,groups:Dictionary(uniqueKeysWithValues:groups.values.compactMap { group in
+      (try? resolver(group.surface).resolve(group.id)).map { (collaborationIdentity(group.id),$0) }
+    }))
   }
 }

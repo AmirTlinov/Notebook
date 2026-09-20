@@ -4,12 +4,15 @@ import Foundation
 /// Addressed placement, not a materialized copy of the descendants. Geometry
 /// and input consume the same local-to-surface map; world origin stays tiled.
 public struct NotebookElementPlacement: Equatable, Sendable {
-  struct Source {
-    let frame: PageRect
-    let origin: WorldPoint
-    let parentID: String?
-    let basis: NotebookElementBasis?
-    let isGroup: Bool
+  public struct Source: Equatable, Sendable {
+    public var frame: PageRect
+    public var origin: WorldPoint
+    public var parentID: String?
+    public var basis: NotebookElementBasis?
+    public let isGroup: Bool
+    public init(frame: PageRect,origin: WorldPoint = .zero,parentID: String? = nil,basis: NotebookElementBasis? = nil,isGroup: Bool = false) {
+      self.frame=frame;self.origin=origin;self.parentID=parentID;self.basis=basis;self.isGroup=isGroup
+    }
   }
   /// Only groups allocate a shared frame. Leaves retain one local map in their
   /// existing descriptor, not a copied array of all ancestor matrices.
@@ -72,6 +75,14 @@ public struct NotebookElementPlacement: Equatable, Sendable {
     var values: [String]=[],frame=parent
     while let current=frame { values.append(current.id);frame=current.parent }
     return values
+  }
+  public func descends(from id: String) -> Bool {
+    let key=collaborationIdentity(id)
+    var frame=parent
+    while let current=frame {
+      if collaborationIdentity(current.id) == key { return true };frame=current.parent
+    }
+    return false
   }
   public var localTransform: CGAffineTransform { local }
   public var parentTransform: CGAffineTransform { parent?.transform ?? .identity }
@@ -234,20 +245,30 @@ extension NotebookStore {
   public func groupNativeElements(_ sources: [NotebookNativeElementSource], id: String, actor: UUID
   ) throws -> CollaborationReceipt {
     try commandTransaction(readAllowance:.agentCommand) {
+      let operations=try Self.elementGroupingEdits(sources,id:id)
+      // Insertion adds a nonpainted address. The original flat painter order is
+      // untouched, including unselected objects between selected members.
+      return try applyNativeElementEdits(operations,summary:"Сгруппировать объекты",
+        sources:sources+[.init(target:operations[0].target,id:id)],actor:actor).receipt
+    }
+  }
+
+  /// The app and store prepare the same finite membership action; persistence
+  /// still validates the exact sources atomically through the existing writer.
+  public static func elementGroupingEdits(_ sources: [NotebookNativeElementSource],id: String) throws -> [CollaborationOperation] {
       guard let target = sources.first?.target, (2...31).contains(sources.count),
-        sources.allSatisfy({ $0.target == target }), Set(sources.map(\.id)).count == sources.count,
-        !id.isEmpty, id.utf16.count <= 120, !sources.contains(where:{ $0.id == id }),
-        try elementGroupingSource(target:target,id:id) == nil else {
+        sources.allSatisfy({ $0.target == target }), Set(sources.map { collaborationIdentity($0.id) }).count == sources.count,
+        !id.isEmpty, id.utf16.count <= 120, !sources.contains(where:{ collaborationIdentity($0.id) == collaborationIdentity(id) }) else {
         throw CollaborationError("invalid_operation","Группа получает свободный ID и от 2 до 31 выбранного объекта одной поверхности.")
       }
       let members = try sources.map { source -> NotebookElementPlacement.Source in
-        guard let element = try elementGroupingSource(target:target,id:source.id) else {
+        guard let element = source.placementSource else {
           throw CollaborationError("revision_conflict","Выбранный объект исчез до группировки.")
         }
         return element
       }
       let parent = members[0].parentID, origin = members[0].origin
-      guard members.allSatisfy({ $0.parentID == parent }) else {
+      guard members.allSatisfy({ $0.parentID.map(collaborationIdentity) == parent.map(collaborationIdentity) }) else {
         throw CollaborationError("invalid_operation","Группировка выбирает соседей одного локального основания.")
       }
       let frames = members.map { member -> CGRect in
@@ -269,11 +290,7 @@ extension NotebookStore {
         if target.kind == .board { patch["worldOrigin"] = try .encode(WorldPoint.zero) }
         operations.append(.init(kind:.updateElement,target:target,id:source.id,values:patch))
       }
-      // Insertion adds a nonpainted address. The original flat painter order is
-      // untouched, including unselected objects between selected members.
-      return try applyNativeElementEdits(operations,summary:"Сгруппировать объекты",
-        sources:sources+[.init(target:target,id:id)],actor:actor).receipt
-    }
+      return operations
   }
 
   func elementGroupingSource(target: CollaborationTarget,id: String) throws -> NotebookElementPlacement.Source? {
@@ -289,5 +306,14 @@ extension NotebookStore {
     guard let element = try readSpatialElement(boardID:target.boardID ?? target.id,elementID:id),element.surface == surface else { return nil }
     return .init(frame:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height),
       origin:element.worldOrigin ?? .zero,parentID:element.parentID,basis:element.basis,isGroup:element.kind == .group)
+  }
+}
+
+extension NotebookNativeElementSource {
+  public var placementSource: NotebookElementPlacement.Source? {
+    if let page { return .init(frame:page.frame,parentID:page.parentID,basis:page.basis,isGroup:page.kind == .group) }
+    if let spatial { return .init(frame:.init(x:spatial.frame.x,y:spatial.frame.y,width:spatial.frame.width,height:spatial.frame.height),
+      origin:spatial.worldOrigin ?? .zero,parentID:spatial.parentID,basis:spatial.basis,isGroup:spatial.kind == .group) }
+    return nil
   }
 }

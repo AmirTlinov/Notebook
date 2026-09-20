@@ -280,6 +280,119 @@ import XCTest
     XCTAssertEqual(try shown(),moved)
   }
 
+  func testSelectionCreatesAndManipulatesOneWholeWithoutRewritingItsMembers() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("group-controls-\(UUID())")
+    let model=NotebookAppModel(store:.init(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root);await model.start(pageSize:.init(width:800,height:1000))
+    let initialized=await model.finishPendingPersistence();XCTAssertTrue(initialized)
+    var page=try XCTUnwrap(model.activePage)
+    page.replaceElements([
+      .init(id:"a",kind:.graphic,frame:.init(x:150,y:150,width:100,height:80),source:"",html:"",graphic:.init(shape:.rectangle,style:.init(strokeWidth:6,fill:.black))),
+      .init(id:"between",kind:.graphic,frame:.init(x:200,y:170,width:30,height:30),source:"",html:"",graphic:.init(shape:.ellipse)),
+      .init(id:"b",kind:.graphic,frame:.init(x:300,y:200,width:80,height:100),source:"",html:"",graphic:.init(shape:.ellipse,style:.init(strokeWidth:4,fill:.black)))],actor:model.actorID)
+    try model.store.savePage(page);await model.reloadExternalChanges()?.value
+    func ref(_ id:String) -> EditableElementReference { .page(pageID:page.id,elementID:id) }
+    func graph() throws -> NotebookGraphicGraph { model.graphicGraph(page:try XCTUnwrap(model.pages[page.id])) }
+    let before=try graph(),original=try ["a","b"].map { try XCTUnwrap(before.resolve($0).layout) }
+    model.selectElements([ref("a"),ref("b")]);XCTAssertTrue(model.canGroupSelectedElements)
+    model.groupSelectedElements()
+    let deadline=ContinuousClock.now + .seconds(10)
+    while model.selectionSession.element.map({ model.isElementGroup($0) }) != true,ContinuousClock.now<deadline { try await Task.sleep(for:.milliseconds(10)) }
+    let whole=try XCTUnwrap(model.selectionSession.element),grouped=try model.store.loadPage(page.id)
+    XCTAssertTrue(model.isElementGroup(whole));XCTAssertEqual(model.parentGroup(ref("a")),whole)
+    XCTAssertEqual(grouped.elements.filter { $0.kind != .group }.map(\.id),page.elements.map(\.id))
+    XCTAssertEqual(try ["a","b"].map { try XCTUnwrap(graph().resolve($0).layout) },original)
+    let children=grouped.elements.filter { $0.kind != .group }
+    let held=try XCTUnwrap(model.beginElementManipulation(whole,kind:.move))
+    model.updateElementManipulation(held,translation:.init(x:30,y:40))
+    for (id,old) in zip(["a","b"],original) {
+      let next=try XCTUnwrap(graph().resolve(id).layout)
+      XCTAssertEqual(next.frame.x,old.frame.x+30,accuracy:1e-9);XCTAssertEqual(next.frame.y,old.frame.y+40,accuracy:1e-9)
+    }
+    XCTAssertEqual(try model.store.loadPage(page.id),grouped,"A held whole does not write any child")
+    model.cancelElementManipulation(held)
+    XCTAssertEqual(try ["a","b"].map { try XCTUnwrap(graph().resolve($0).layout) },original)
+    let move=try XCTUnwrap(model.beginElementManipulation(whole,kind:.move))
+    XCTAssertTrue(model.finishElementManipulation(move,translation:.init(x:30,y:40)))
+    let accepted=try graph()
+    let moved=await model.finishPendingPersistence();XCTAssertTrue(moved);await model.reloadExternalChanges()?.value
+    XCTAssertEqual(try model.store.loadPage(page.id).elements.filter { $0.kind != .group },children)
+    for id in ["a","b"] { XCTAssertEqual(try graph().resolve(id).layout,accepted.resolve(id).layout) }
+    let resize=try XCTUnwrap(model.beginElementManipulation(whole,kind:.resize(.bottomTrailing)))
+    model.updateElementManipulation(resize,translation:.init(x:40,y:30));let resized=try graph()
+    XCTAssertTrue(model.finishElementManipulation(resize,translation:.init(x:40,y:30)))
+    let saved=await model.finishPendingPersistence();XCTAssertTrue(saved);await model.reloadExternalChanges()?.value
+    XCTAssertEqual(try model.store.loadPage(page.id).elements.filter { $0.kind != .group },children)
+    for id in ["a","b"] { XCTAssertEqual(try graph().resolve(id).layout,resized.resolve(id).layout) }
+    model.transformGraphicSelection(radians:.pi/2)
+    let rotated=try graph()
+    let rotationSaved=await model.finishPendingPersistence();XCTAssertTrue(rotationSaved);await model.reloadExternalChanges()?.value
+    let reopened=try NotebookStore(root:root).loadPage(page.id)
+    XCTAssertEqual(reopened.elements.filter { $0.kind != .group },children)
+    for id in ["a","b"] { XCTAssertEqual(reopened.graphicGraph().resolve(id).layout,rotated.resolve(id).layout) }
+    let actions=try model.store.collaborationActions(afterID:nil)
+    let rotation=try XCTUnwrap(actions.first { $0.action.summary == "Повернуть группу" })
+    XCTAssertEqual(rotation.action.operations.count,1)
+    model.undoCollaboration(rotation.id)
+    let undone=await model.finishPendingPersistence();XCTAssertTrue(undone);await model.reloadExternalChanges()?.value
+    for id in ["a","b"] { XCTAssertEqual(try graph().resolve(id).layout,resized.resolve(id).layout) }
+    let export=try await PageCompositionRenderer.render(reopened,scale:1) { _ in
+      XCTFail("The group has no document surface");throw CocoaError(.featureUnsupported)
+    }
+    let proof=XCTAttachment(data:export.png,uniformTypeIdentifier:"public.png");proof.name="group-controls-saved-export";proof.lifetime = .keepAlways;add(proof)
+  }
+
+  func testBoardBasisWaitsForPassiveMembersAndDoesNotMixMembershipCuts() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("group-cohort-\(UUID())")
+    let model=NotebookAppModel(store:.init(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root);await model.start(pageSize:.init(width:800,height:1000))
+    let initialized=await model.finishPendingPersistence();XCTAssertTrue(initialized)
+    let boardID=try XCTUnwrap(model.workspace?.rootBoardID),target=CollaborationTarget(kind:.board,id:boardID),group=UUID().uuidString
+    let operations:[CollaborationOperation]=[
+      .init(kind:.insertElement,target:target,id:group,values:["kind":.string("group"),"source":.string(""),"worldOrigin":try .encode(WorldPoint.zero),
+        "frame":try .encode(PageRect(x:40,y:50,width:200,height:100)),"basis":try .encode(NotebookElementBasis(size:.init(x:200,y:100)))]),
+      .init(kind:.insertElement,target:target,id:"a",values:["kind":.string("graphic"),"source":.string(""),"worldOrigin":try .encode(WorldPoint.zero),
+        "frame":try .encode(PageRect(x:10,y:10,width:60,height:50)),"parentID":.string(group.lowercased()),"graphic":try .encode(NotebookGraphic(shape:.rectangle))]),
+      .init(kind:.insertElement,target:target,id:"b",values:["kind":.string("graphic"),"source":.string(""),"worldOrigin":try .encode(WorldPoint.zero),
+        "frame":try .encode(PageRect(x:100,y:20,width:70,height:50)),"parentID":.string(group),"graphic":try .encode(NotebookGraphic(shape:.ellipse))])]
+    _ = try model.store.applyNativeElementEdits(operations,summary:"Группа на доске",sources:operations.map { .init(target:target,id:$0.id!) },actor:model.actorID)
+    await model.reloadExternalChanges()?.value
+    let workspace=try XCTUnwrap(model.workspace),hierarchy=try XCTUnwrap(model.boardHierarchy),captured=try XCTUnwrap(hierarchy.board(boardID))
+    let index=WorkspaceSceneIndex(workspace:workspace,hierarchy:hierarchy,paperSizes:[:])
+    let presence=SessionPresence(boardID:boardID,mode:.board,camera:.init(),viewport:.init(x:800,y:600))
+    let frame=WorkspaceSceneFrame(index:index,presence:presence,portalCamera:{ _ in nil })
+    func cohort(_ live:[String]) -> SceneCompositionCohort {
+      let owners=live.enumerated().map { i,id in SceneCompositionLiveOwner(plane:.board(boardID),id:.element(id),position:.init(layer:.elements,zIndex:Double(i),key:id)) }
+      let plan=SceneCompositionPlan(revision:1,workspaceID:index.generationID,rootBoardID:boardID,inkBoardIDs:[],liveOwners:owners,protectedOwners:[],
+        bands:[],coverage:[:],presentations:[.board(boardID):presence],tiles:[])
+      let data=SceneCompositionLiveData(documents:[:],states:[:],pages:[:],ink:.init(stamp:workspace.stamp))
+      #if os(iOS)
+      return .init(plan:plan,frame:frame,requestedSources:frame.sourceIdentity,liveData:data,rasters:[:],liveRasters:[:],
+        nativeInk:.init(registry:.init(),rootBoardID:boardID,focusedCoverID:nil,owners:[:],updates:[]))
+      #else
+      return .init(plan:plan,frame:frame,liveData:data,rasters:[:],liveRasters:[:])
+      #endif
+    }
+    let source=try model.store.readSpatialElement(boardID:boardID,elementID:group)
+    _ = try model.store.applyNativeElementEdits([.init(kind:.updateElement,target:target,id:group,values:["frame":try .encode(PageRect(x:130,y:70,width:200,height:100))])],
+      summary:"Переместить общее основание",sources:[.init(target:target,id:group,spatial:source)],actor:model.actorID)
+    await model.reloadExternalChanges()?.value
+    let old=captured.graphicGraph(),all=cohort(["a","b"]),partial=cohort(["a"])
+    for id in ["a","b"] {
+      let before=try XCTUnwrap(old.resolve(id).layout)
+      let moved=try XCTUnwrap(model.presentedGraphicGraph(boardID:boardID,cohort:all).resolve(id).layout)
+      XCTAssertEqual(moved.frame.x,before.frame.x+90,accuracy:1e-9);XCTAssertEqual(moved.frame.y,before.frame.y+20,accuracy:1e-9)
+      XCTAssertEqual(model.presentedGraphicGraph(boardID:boardID,cohort:partial).resolve(id).layout,before,
+        "One live member must not move ahead of the same whole's retained passive pixels")
+    }
+    let beforeRegroup=model.presentedGraphicGraph(boardID:boardID,cohort:all)
+    _ = try model.store.groupNativeElements(["a","b"].map { try .init(target:target,id:$0,spatial:model.store.readSpatialElement(boardID:boardID,elementID:$0)) },id:"nested",actor:model.actorID)
+    await model.reloadExternalChanges()?.value
+    let retained=model.presentedBoard(captured,boardID:boardID,cohort:all)
+    XCTAssertEqual(retained.elements.first { $0.id == "a" }?.parentID,group.lowercased())
+    for id in ["a","b"] { XCTAssertEqual(model.presentedGraphicGraph(boardID:boardID,cohort:all).resolve(id).layout,beforeRegroup.resolve(id).layout) }
+  }
+
   private func pixels(_ png: Data) throws -> [UInt8] {
     let source=try XCTUnwrap(CGImageSourceCreateWithData(png as CFData,nil))
     let image=try XCTUnwrap(CGImageSourceCreateImageAtIndex(source,0,nil))

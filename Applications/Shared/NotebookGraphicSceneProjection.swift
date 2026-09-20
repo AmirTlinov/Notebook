@@ -33,24 +33,24 @@ extension NotebookAppModel {
       })
   }
   func graphicGraph(page: PageDocument, preview: Bool = true) -> NotebookGraphicGraph {
-    let graph = page.graphicGraph()
+    let graph = page.graphicGraph(placements:preview ? elementPlacementDrafts { .page(pageID:page.id,elementID:$0) } : [:])
     guard preview else { return graph }
     let working = workingGraphics.filter { $0.surface == .page(page.id) }
     let ids = Set(working.map(\.id))
-    let combined = NotebookGraphicGraph(Array(graph.nodes.values).filter { !ids.contains($0.id) } + working.map(\.node))
+    let combined = graph.replacingNodes(Array(graph.nodes.values).filter { !ids.contains($0.id) } + working.map(\.node))
     return projectingGraphicCommands(combined) { .page(pageID: page.id, elementID: $0) }
   }
 
   /// New commands see the accepted model and its queued drafts, not the older
   /// raster cohort. Persistence still chains the exact predecessor sources.
   func authoredGraphicGraph(boardID: UUID) -> NotebookGraphicGraph {
-    let graph = boardHierarchy?.board(boardID)?.graphicGraph() ?? .init([])
+    let graph = boardHierarchy?.board(boardID)?.graphicGraph(placements:elementPlacementDrafts { .spatial(boardID:boardID,elementID:$0) }) ?? .init([])
     let working = pendingModelGraphics.filter {
       $0.surface == .board(boardID) || ($0.surface.kind == .cover &&
         $0.surface.ownerID.flatMap { boardHierarchy?.ownerBoardID(of:$0) } == boardID)
     }
     let ids = Set(working.map(\.id))
-    let combined = NotebookGraphicGraph(Array(graph.nodes.values).filter { !ids.contains($0.id) } + working.map(\.node))
+    let combined = graph.replacingNodes(Array(graph.nodes.values).filter { !ids.contains($0.id) } + working.map(\.node))
     return projectingGraphicCommands(combined) { .spatial(boardID:boardID,elementID:$0) }
   }
 

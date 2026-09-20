@@ -878,7 +878,7 @@ final class NotebookAppModel {
   private var peerActivities: [UUID: NotebookInputActivity] = [:]
   private var cueTask: Task<Void, Never>?
   private var pencilUndoHistory = PencilUndoHistory()
-  private var graphicCommandTask: Task<NotebookElementCommandResult?, Never>?
+  private(set) var graphicCommandTask: Task<NotebookElementCommandResult?, Never>?
   @ObservationIgnored private var graphicCommandGeneration = UUID()
   var workingGraphics: [NotebookWorkingGraphic] = []
   var workingElementErasures: [UUID: [NotebookElementErasing]] = [:]
@@ -2927,6 +2927,7 @@ final class NotebookAppModel {
   }
 
   func transformGraphicSelection(radians: Double = 0, scale: Double = 1) {
+    if transformSelectedGroup(radians:radians,scale:scale) { return }
     guard let members = selectedGraphicMembers(), let first = selectionSession.elements.first else { return }
     let edits = NotebookGraphicSelection.transformed(members,radians:radians,scale:scale)
     if let bounds = elementGeometry(first)?.bounds,
@@ -3109,10 +3110,12 @@ final class NotebookAppModel {
     let connection = graphicElement(reference)?.connection
     cancelElementManipulation()
     let graphicGeometry=graphicManipulationGeometry(reference)
+    let groupGeometry=groupManipulationGeometry(reference)
+    if isElementGroup(reference), groupGeometry == nil || !groupAllowsLiveManipulation(reference) { return nil }
     var contact = NotebookElementManipulation(reference: reference, kind: kind,
       frame: geometry.frame, bounds: geometry.bounds, identity: geometry.identity, worldOrigin: geometry.worldOrigin,
-      connection:connection,layout:graphicGeometry?.body,graphic:graphicElement(reference),placement:graphicGeometry?.placement,
-      displayFrame:graphicGeometry.map { .init(x:$0.display.frame.x,y:$0.display.frame.y,width:$0.display.frame.width,height:$0.display.frame.height) })
+      connection:connection,layout:graphicGeometry?.body,graphic:graphicElement(reference),placement:graphicGeometry?.placement ?? groupGeometry?.placement,
+      displayFrame:graphicGeometry.map { .init(x:$0.display.frame.x,y:$0.display.frame.y,width:$0.display.frame.width,height:$0.display.frame.height) } ?? groupGeometry?.bounds)
     if selectionSession.elements.count > 1 {
       guard kind == .move, let members = selectedGraphicMembers() else { return nil }
       contact.selectedMembers = members
@@ -3153,7 +3156,7 @@ final class NotebookAppModel {
       current.identity == contact.identity,
       graphicElement(contact.reference)?.connection == contact.originalConnection else { return false }
     if let placement=contact.placement {
-      guard graphicManipulationGeometry(contact.reference)?.placement == placement else { return false }
+      guard (graphicManipulationGeometry(contact.reference)?.placement ?? groupManipulationGeometry(contact.reference)?.placement) == placement else { return false }
     } else if current.worldOrigin != contact.worldOrigin { return false }
     if contact.vertices != contact.originalVertices || contact.cornerRadius != contact.originalCornerRadius {
       guard graphicElement(contact.reference).flatMap(NotebookGraphicGeometry.polygon) == contact.originalVertices,
@@ -3190,7 +3193,7 @@ final class NotebookAppModel {
   private func commitElementFrame(_ contact: NotebookElementManipulation) -> Bool {
     guard let identity = contact.identity else { return false }
     let frame = contact.frame, original = contact.original, actor = actorID
-    if graphicElement(contact.reference) != nil || nativeTextTarget(contact.reference) != nil {
+    if graphicElement(contact.reference) != nil || nativeTextTarget(contact.reference) != nil || isElementGroup(contact.reference) {
       return performElementOperation(.updateElement, reference: contact.reference,
         values: ["frame":(try? .encode(PageRect(x:frame.minX,y:frame.minY,width:frame.width,height:frame.height))) ?? .null]
           .merging(contact.basis == contact.originalBasis ? [:] : ["basis":(try? .encode(contact.basis)) ?? .null]) { _,new in new },
@@ -3250,7 +3253,7 @@ final class NotebookAppModel {
     return NotebookTextTypography.fittingFrame(text.source,style:text.style,in:frame)
   }
 
-  private func elementGeometry(_ reference: EditableElementReference) -> (frame: CGRect, bounds: CGRect?, identity: VersionStamp?, worldOrigin: WorldPoint?)? {
+  func elementGeometry(_ reference: EditableElementReference) -> (frame: CGRect, bounds: CGRect?, identity: VersionStamp?, worldOrigin: WorldPoint?)? {
     func fitted(_ frame: PageRect) -> CGRect {
       let text = nativeTextTarget(reference)
       let value = text.map { NotebookTextTypography.fittingFrame($0.source,style:$0.style,in:frame) } ?? frame
@@ -3397,7 +3400,7 @@ final class NotebookAppModel {
   @discardableResult
   func performElementOperations(_ edits: [NotebookElementEdit], summary: String,
     layerMove: NotebookElementLayerMove? = nil, readSources: [EditableElementReference] = [], copiedFrom: [String:String] = [:],
-    insertionTarget explicitTarget: CollaborationTarget? = nil, expectedInkRevision: String? = nil, retainedSources: [EditableElementReference:NotebookNativeElementSource] = [:]) -> Bool {
+    insertionTarget explicitTarget: CollaborationTarget? = nil, expectedInkRevision: String? = nil, retainedSources: [EditableElementReference:NotebookNativeElementSource] = [:], previews: Bool = true) -> Bool {
     guard !edits.isEmpty, edits.count <= 32 else { return false }
     let references = Array(Set(edits.map(\.reference) + readSources))
     let insertionTarget = explicitTarget ?? readSources.first.flatMap { nativeElementSource($0)?.target }
@@ -3420,19 +3423,22 @@ final class NotebookAppModel {
     }
     var drafts: [EditableElementReference: NotebookElementCommandDraft] = [:]
     do {
-      for edit in edits {
+      for edit in edits where previews {
         // Creation already has a working object; its full payload is not an update patch.
         guard ![CollaborationOperation.Kind.insertElement,.convertInkToElement].contains(edit.kind),
           let geometry = elementGeometry(edit.reference) else { continue }
         var graphic = graphicElement(edit.reference)
-        guard graphic != nil || nativeTextTarget(edit.reference) != nil else { continue }
+        guard graphic != nil || nativeTextTarget(edit.reference) != nil || isElementGroup(edit.reference) else { continue }
         if let patch = edit.values["graphic"] { graphic = try graphic?.applying(patch) }
         if edit.kind == .removeElement { graphic?.visible = false }
         let frame = try edit.values["frame"]?.decode(PageRect.self)
           ?? PageRect(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height)
         let basis=try edit.values["basis"]?.decode(NotebookElementBasis.self)
           ?? elementCommandDrafts[edit.reference]?.basis ?? originals[edit.reference]?.page?.basis ?? originals[edit.reference]?.spatial?.basis
-        drafts[edit.reference] = .init(frame:frame,graphic:graphic,basis:basis)
+        var source=elementCommandDrafts[edit.reference]?.source ?? originals[edit.reference]?.placementSource
+          ?? .init(frame:frame,origin:geometry.worldOrigin ?? .zero)
+        source.frame=frame;source.basis=basis
+        drafts[edit.reference] = .init(source:source,graphic:graphic)
       }
     } catch { showCue(error.localizedDescription); return false }
     for (reference,draft) in drafts { elementCommandDrafts[reference] = draft }
@@ -3487,7 +3493,7 @@ final class NotebookAppModel {
     return true
   }
 
-  private func nativeElementSource(_ reference: EditableElementReference) -> NotebookNativeElementSource? {
+  func nativeElementSource(_ reference: EditableElementReference) -> NotebookNativeElementSource? {
     switch reference {
     case .page(let owner,let id):
       guard pages[owner] != nil else { return nil }

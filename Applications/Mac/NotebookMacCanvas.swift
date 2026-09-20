@@ -51,6 +51,12 @@ struct NotebookMacCanvas: View {
             let rect = NotebookAttentionProjection.editingFrame(reference, model: model, presence: presence) {
             MacElementControls(reference: reference, frame: rect, scale: presence.camera.scale)
           }
+          if model.selectionSession.elements.count > 1 {
+            VStack { HStack {
+              Button("Сгруппировать") { model.groupSelectedElements() }.disabled(!model.canGroupSelectedElements)
+              Button("Снять выделение") { model.clearSelection() }
+            }.padding(8).background(.regularMaterial,in:RoundedRectangle(cornerRadius:8));Spacer() }.padding()
+          }
           if let cue = model.actionCue {
             Text(cue).padding(12).background(.regularMaterial, in: Capsule()).allowsHitTesting(false)
           }
