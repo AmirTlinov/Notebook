@@ -955,15 +955,19 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   /// The same spatial checkpoint additionally captures pixels for a passive
   /// replacement; a close/background fence does not allocate an unused raster.
   static func checkpointCurrent(focus: InteractiveElementReference, element: AgentElement,
-    persist: @escaping @MainActor (JSONValue) async throws -> NotebookProgramStateBasis?,
+    persist: @escaping @MainActor (JSONValue, NotebookProgramStateBasis) async throws -> NotebookProgramStateBasis?,
     resources: SceneRenderResources = .shared) async throws -> (AgentElement, RasterLease) {
     presentations = presentations.filter { $0.value.owner != nil }
     let owners = presentations.values.compactMap(\.owner).filter {
       $0.resources === resources && $0.presentationFocus == focus && $0.hasLiveSource(element)
     }
-    guard owners.count == 1, let owner = owners.first else { throw SceneRenderError.snapshotPending("program_checkpoint_owner") }
+    guard owners.count == 1, let owner = owners.first, let basis = owner.programBasis else {
+      throw SceneRenderError.snapshotPending("program_checkpoint_owner")
+    }
     do {
-      let accepted = try await owner.checkpointModel(element: element, persist: persist)
+      // The executing context owns the source/state it actually observed. A
+      // scene read window may already have evicted this body during retirement.
+      let accepted = try await owner.checkpointModel(element: element) { value in try await persist(value, basis) }
       try Task.checkCancellation()
       guard let pixels = try await owner.captureCurrent(element: accepted) else {
         throw SceneRenderError.snapshotPending("program_checkpoint_picture")
@@ -979,10 +983,10 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     let owners = presentations.values.compactMap(\.owner).filter {
       $0.programOwner === model && $0.presentationFocus == focus && $0.hasLiveSource(element)
     }
-    guard owners.count == 1, let owner = owners.first, let basis = owner.programBasis,
+    guard owners.count == 1, let owner = owners.first,
       let token = owner.loadToken else { throw SceneRenderError.snapshotPending("program_attention_owner") }
     let attentionID = UUID(); owner.attentionPauseID = attentionID
-    let (accepted, pixels) = try await checkpointCurrent(focus: focus, element: element, persist: { value in
+    let (accepted, pixels) = try await checkpointCurrent(focus: focus, element: element, persist: { value, basis in
       try await model.checkpointProgramState(focus: focus, rendered: element, value: value, basis: basis)
     })
     pixels.release()

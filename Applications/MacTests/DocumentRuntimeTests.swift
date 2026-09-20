@@ -733,14 +733,17 @@ final class DocumentRuntimeTests: XCTestCase {
     coordinator.bindPresentation(to: focus); coordinator.load(source, basis: originalBasis, in: web)
     await waitUntil { ready }
     do {
-      _ = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: source, persist: { _ in nil }, resources: resources)
+      _ = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: source, persist: { _, basis in
+        XCTAssertEqual(basis, originalBasis); return nil
+      }, resources: resources)
       XCTFail("Writer refusal is not saved")
     } catch { XCTAssertTrue(String(describing:error).contains("checkpoint_not_accepted")) }
     XCTAssertTrue(coordinator.hasLiveSource(source))
     let suspended = try await js("String(notebookProgram.suspended)", web)
     XCTAssertEqual(suspended, "false")
     var persisted: JSONValue?
-    let (accepted, picture) = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: source, persist: { value in
+    let (accepted, picture) = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: source, persist: { value, basis in
+      XCTAssertEqual(basis, originalBasis)
       persisted = value
       page.replaceElements([source.updating(state: value)], actor: actor)
       return page.programStateBasis(source.id)

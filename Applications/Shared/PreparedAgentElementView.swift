@@ -358,8 +358,7 @@ struct PreparedAgentElementView: View {
       // current program frame is retained. No source job boots a second copy;
       // its keyed admission waits for this owner's final submitted borrow.
       do {
-        let (accepted, captured) = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: demand.source) { value in
-          guard let basis = demand.basis else { return nil }
+        let (accepted, captured) = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: demand.source) { value, basis in
           return try await model.checkpointProgramState(focus: focus, rendered: demand.source, value: value, basis: basis)
         }
         guard !Task.isCancelled, self.web?.id == retiring.id, !isActive else {

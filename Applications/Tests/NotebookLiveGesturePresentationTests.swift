@@ -131,6 +131,123 @@ final class NotebookLiveGesturePresentationTests: XCTestCase {
       .init(x: expected.minX, y: expected.minY, width: expected.width, height: expected.height))
   }
 
+  func testBoardWholePublicationKeepsItsProgramAndVisibilityReturnRestoresCheckpoint() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("whole-runtime-" + UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    let previous = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let host = UIHostingController(rootView: AnyView(EmptyView()))
+    addTeardownBlock { @MainActor in
+      host.rootView = AnyView(EmptyView()); window.isHidden = true; window.rootViewController = nil; previous?.makeKey()
+      let saved = await model.shutdown(); XCTAssertTrue(saved)
+      if saved { try FileManager.default.removeItem(at: root) }
+    }
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    model.moveItem(try XCTUnwrap(model.workspace?.selectedItemID), to: .init(x: 100_000, y: 100_000))
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let boardID = try XCTUnwrap(model.workspace?.rootBoardID)
+    let before = try model.store.loadBoard(items: try XCTUnwrap(model.workspace).items)
+    var after = before
+    let stamp = VersionStamp(counter: 0, actor: model.actorID)
+    let whole = SpatialElement(id: "whole", surface: .board(boardID), kind: .group,
+      frame: .init(x: 100, y: 200, width: 400, height: 300), worldOrigin: .zero, source: "",
+      basis: .init(size: .init(x: 400, y: 300)), stamp: stamp)
+    let program = SpatialElement(id: "program", surface: .board(boardID), kind: .web,
+      frame: .init(x: 20, y: 20, width: 180, height: 100), worldOrigin: .zero, source: "Whole runtime",
+      html: "<button id='counter'>7</button><input id='value' value='initial'>", javaScript: """
+        const counter=document.getElementById('counter'),input=document.getElementById('value');
+        counter.textContent=notebook.state.count ?? 7;input.value=notebook.state.value ?? 'initial';
+        counter.onclick=()=>counter.textContent=Number(counter.textContent)+1;
+        window.runtimeNonce="boot";
+        notebook.lifecycle({checkpoint:()=>({count:Number(counter.textContent),value:input.value})});
+        notebook.ready(Promise.resolve());
+        """, parentID: whole.id, stamp: stamp)
+    let text = SpatialElement(id: "text", surface: .board(boardID), kind: .nativeText,
+      frame: .init(x: 20, y: 150, width: 180, height: 10), worldOrigin: .zero,
+      source: "Текст и программа внутри общего основания", parentID: whole.id, stamp: stamp)
+    for element in [whole, program, text] {
+      XCTAssertTrue(after.upsertElement(element, in: boardID, expected: nil, actor: model.actorID))
+    }
+    _ = try model.store.saveBoardEdits(before: before, after: after)
+    await model.reloadExternalChanges()?.value
+    let storedProgram = try XCTUnwrap(model.store.readSpatialElement(boardID: boardID, elementID: program.id))
+    let storedText = try model.store.readSpatialElement(boardID: boardID, elementID: text.id)
+    window.frame = .init(x: 0, y: 0, width: 834, height: 1194)
+    let presence = SessionPresence(boardID: boardID, mode: .board,
+      camera: .init(center: .init(x: 417, y: 597), scale: 1), viewport: .init(x: 834, y: 1194))
+    model.updatePresence(presence, settled: true)
+    host.rootView = AnyView(SpatialWorkspaceView().environment(model).environment(\.displayScale, 2).ignoresSafeArea())
+    window.rootViewController = host; window.makeKeyAndVisible()
+    let source = agentElementSnapshotSource(storedProgram), ref = EditableElementReference.spatial(boardID: boardID, elementID: whole.id)
+    try await waitUntil(diagnostic: {
+      let webs = self.descendants(host.view, as: WKWebView.self)
+      return "Initial whole: pending=\(model.scenePreparationPending), failure=\(model.compositionTiles.failure ?? "none"), owners=\(String(describing:model.compositionTiles.published?.runtimeOwners)), webs=\(webs.count), diagnostics=\(SceneRenderResources.shared.diagnostics(for:[source]))"
+    }) {
+      self.liveWeb(in: host.view, source: source) != nil && !model.scenePreparationPending
+    }
+    let web = try XCTUnwrap(liveWeb(in: host.view, source: source))
+    let original = try XCTUnwrap(model.compositionTiles.published)
+    _ = try await web.evaluateJavaScript("window.runtimeNonce='kept';document.getElementById('counter').click();document.getElementById('value').value='kept';null")
+    model.selectElement(ref)
+    try await waitUntil { model.groupAllowsLiveManipulation(ref) }
+    let contact = try XCTUnwrap(model.beginElementManipulation(ref, kind: .move))
+    XCTAssertTrue(model.finishElementManipulation(contact, translation: .init(x: 60, y: 40)))
+    let moved = await model.finishPendingPersistence(); XCTAssertTrue(moved)
+    await model.reloadExternalChanges()?.value
+    try await waitUntil {
+      model.compositionTiles.published !== original && model.groupAllowsLiveManipulation(ref) && !model.scenePreparationPending
+    }
+    XCTAssertTrue(model.transformSelectedGroup(radians: .pi / 6, scale: 1.2))
+    let rotated = await model.finishPendingPersistence(); XCTAssertTrue(rotated)
+    await model.reloadExternalChanges()?.value
+    let persistedWhole = try XCTUnwrap(model.store.readSpatialElement(boardID: boardID, elementID: whole.id))
+    XCTAssertNotEqual(persistedWhole.basis, whole.basis)
+    try await waitUntil {
+      host.view.layoutIfNeeded()
+      guard let cohort = model.compositionTiles.published,
+        let placement = model.presentedGraphicGraph(boardID: boardID, cohort: cohort).placement(program.id) else { return false }
+      let expected = NotebookElementPresentation(storedProgram, placement: placement).bounds
+      return model.groupAllowsLiveManipulation(ref) && !model.scenePreparationPending
+        && self.framesEqual(web.convert(web.bounds, to: host.view), expected)
+    }
+    XCTAssertTrue(liveWeb(in: host.view, source: source) === web, "Publication keeps the physical program, not merely its cached picture")
+    XCTAssertEqual(web.bounds.size, CGSize(width: 180, height: 100))
+    let retainedNonce = try await web.evaluateJavaScript("window.runtimeNonce") as? String
+    XCTAssertEqual(retainedNonce, "kept")
+    XCTAssertEqual(try model.store.readSpatialElement(boardID: boardID, elementID: program.id), storedProgram)
+    XCTAssertEqual(try model.store.readSpatialElement(boardID: boardID, elementID: text.id), storedText)
+
+    let basis = try XCTUnwrap(model.programStateBasis(focus: .board(boardID: boardID, elementID: program.id), rendered: source))
+    XCTAssertNotNil(try model.store.checkpointProgramState(target: .init(kind: .board, id: boardID), rendered: source,
+      state: source.state, basis: basis, actor: model.actorID), "Current addressed source accepts its unchanged state")
+    let pendingValues = try await web.evaluateJavaScript("document.getElementById('counter').textContent+':'+document.getElementById('value').value") as? String
+    XCTAssertEqual(pendingValues, "8:kept")
+
+    // Leaving the scene may retire the heap, but only after the existing owner
+    // has durably captured its explicit state. No second persistence path.
+    model.clearSelection()
+    model.updatePresence(SessionPresence(boardID: boardID, mode: .board,
+      camera: .init(center: .init(x: 20_000, y: 20_000), scale: 1), viewport: presence.viewport), settled: true)
+    let checkpoint: JSONValue = .object(["count": .number(8), "value": .string("kept")])
+    try await waitUntil(diagnostic: {
+      "Retirement: live=\(self.liveWeb(in:host.view,source:source) != nil), state=\(String(describing:try? model.store.readSpatialElement(boardID:boardID,elementID:program.id)?.state)), cue=\(model.actionCue ?? "none"), presence=\(String(describing:model.presence)), owners=\(String(describing:model.compositionTiles.published?.runtimeOwners)), pending=\(model.scenePreparationPending), focus=\(String(describing:model.interactiveElementFocus)), drafts=\(model.elementCommandDrafts.keys)"
+    }) {
+      self.liveWeb(in: host.view, source: source) == nil
+        && (try? model.store.readSpatialElement(boardID: boardID, elementID: program.id)?.state) == checkpoint
+    }
+    model.updatePresence(presence, settled: true)
+    let restoredSource = agentElementSnapshotSource(try XCTUnwrap(model.store.readSpatialElement(boardID: boardID, elementID: program.id)))
+    try await waitUntil { self.liveWeb(in: host.view, source: restoredSource) != nil && !model.scenePreparationPending }
+    let restored = try XCTUnwrap(liveWeb(in: host.view, source: restoredSource))
+    XCTAssertFalse(restored === web, "Offscreen retirement releases the old browser context")
+    let values = try await restored.evaluateJavaScript("document.getElementById('counter').textContent+':'+document.getElementById('value').value") as? String
+    XCTAssertEqual(values, "8:kept")
+    let reopened = try NotebookStore(root: root).readSpatialElement(boardID: boardID, elementID: program.id)
+    XCTAssertEqual(reopened?.state, checkpoint)
+    XCTAssertEqual(reopened?.frame, storedProgram.frame); XCTAssertEqual(reopened?.parentID, whole.id)
+    XCTAssertEqual(try model.store.readSpatialElement(boardID: boardID, elementID: whole.id), persistedWhole)
+  }
+
   private func assertCornerFrame(in view: UIView, expected: CGRect) throws {
     let controls = try XCTUnwrap(descendants(view, as: NotebookSelectionControlsView.self).first)
     let corners = (controls.accessibilityElements ?? []).compactMap { $0 as? UIAccessibilityElement }
