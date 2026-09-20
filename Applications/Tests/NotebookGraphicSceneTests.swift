@@ -100,7 +100,7 @@ import XCTest
     let controls = try XCTUnwrap(descendants(try XCTUnwrap(window.rootViewController?.view)).compactMap { $0 as? NotebookSelectionControlsView }.first)
     func leadingGrip() throws -> CGPoint {
       controls.layoutIfNeeded()
-      let grip = try XCTUnwrap((controls.accessibilityElements as? [UIAccessibilityElement])?.first { $0.accessibilityIdentifier == "resize-agent-element-topLeading" })
+      let grip = try XCTUnwrap((controls.accessibilityElements as? [UIAccessibilityElement])?.first { $0.accessibilityIdentifier == "resize-agent-element-leadingCenter" })
       let rect = grip.accessibilityFrameInContainerSpace
       return .init(x:rect.midX,y:rect.midY)
     }
@@ -112,14 +112,14 @@ import XCTest
     XCTAssertEqual(during.minX-before.minX,45*presence.camera.scale,accuracy:0.01)
     XCTAssertEqual(during.minY-before.minY,70*presence.camera.scale,accuracy:0.01)
     XCTAssertEqual(try leadingGrip().x,during.minX,accuracy:1,"Installed controls must not apply the preview translation twice")
-    XCTAssertEqual(try leadingGrip().y,during.minY,accuracy:1)
+    XCTAssertEqual(try leadingGrip().y,during.minY+text.frame.height/2*presence.camera.scale,accuracy:1)
     let shot = XCTAttachment(image:UIGraphicsImageRenderer(bounds:window.bounds).image { _ in window.drawHierarchy(in:window.bounds,afterScreenUpdates:true) })
     shot.name = "text-selection-during-drag"; shot.lifetime = .keepAlways; add(shot)
     XCTAssertTrue(model.finishElementManipulation(drag,translation:.init(x:45,y:70)))
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     let moved = try XCTUnwrap(model.store.loadPage(page.id).elements.first)
     XCTAssertEqual(moved.frame.x,245); XCTAssertEqual(moved.frame.y,390)
-    XCTAssertLessThan(moved.frame.width,110)
+    XCTAssertEqual(moved.frame.width,text.frame.width,"Moving keeps the authored line width, not the fitted glyph box")
   }
 
   func testLaserPixelsRecedeAfterLiftWithoutAnotherInputEvent() async throws {

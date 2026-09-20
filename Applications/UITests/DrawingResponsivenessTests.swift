@@ -42,6 +42,43 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(node.frame.midX-before.midX,160,accuracy:8,"The moved element returns on its original page")
   }
 
+  func testTextWidthGripReflowsAndPersistsOnPage() {
+    continueAfterFailure=false
+    let app=XCUIApplication()
+    app.launchArguments=["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture","--notebook-native-graphic-page"]
+    launchPortraitFixture(app)
+    let paper=app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout:5));let originalPaper=paper.frame,ink=paper.value as? String
+    app.buttons["drawing-tools-more"].tap();app.buttons["drawing-tool-text"].tap()
+    app.coordinate(withNormalizedOffset:.init(dx:0.55,dy:0.15)).tap()
+    let editor=app.textViews["native-text-editor"]
+    XCTAssertTrue(editor.waitForExistence(timeout:3))
+    let source="Ширина строки меняется, но форма букв и отношения сохраняются."
+    editor.typeText(source)
+    app.coordinate(withNormalizedOffset:.init(dx:0.25,dy:0.65)).tap()
+    XCTAssertTrue(editor.waitForNonExistence(timeout:3))
+    let text=app.staticTexts[source]
+    XCTAssertTrue(text.waitForExistence(timeout:5));text.tap()
+    let leading=app.descendants(matching:.any)["resize-agent-element-leadingCenter"]
+    let trailing=app.descendants(matching:.any)["resize-agent-element-trailingCenter"]
+    XCTAssertTrue(trailing.waitForExistence(timeout:3));XCTAssertTrue(leading.exists)
+    XCTAssertFalse(app.descendants(matching:.any)["resize-agent-element-topLeading"].exists)
+    let width=trailing.frame.midX-leading.frame.midX,height=text.frame.height
+    let from=trailing.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+    from.press(forDuration:0.01,thenDragTo:from.withOffset(.init(dx:-100,dy:0)),withVelocity:.slow,thenHoldForDuration:0.1)
+    let reflow=XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in
+      abs(trailing.frame.midX-leading.frame.midX-(width-100))<3 && text.frame.height>height+10
+    },object:nil)
+    XCTAssertEqual(XCTWaiter.wait(for:[reflow],timeout:5),.completed)
+    XCTAssertEqual(paper.frame,originalPaper);XCTAssertEqual(paper.value as? String,ink)
+    XCTAssertFalse(editor.exists)
+    let after=text.frame
+    let proof=XCTAttachment(screenshot:app.screenshot());proof.name="text-width-physical-drag";proof.lifetime = .keepAlways;add(proof)
+    app.terminate();app.launchArguments.append("--notebook-reopen-fixture");app.launch()
+    XCTAssertTrue(text.waitForExistence(timeout:15))
+    XCTAssertEqual(text.frame.width,after.width,accuracy:3);XCTAssertEqual(text.frame.height,after.height,accuracy:3)
+  }
+
   func testInlineFormattingAndTextDragStayOnTheirPaper() {
     continueAfterFailure = false
     let app = XCUIApplication()
@@ -96,12 +133,13 @@ final class DrawingResponsivenessTests: XCTestCase {
     for id in ["native-text-cut","native-text-copy","native-text-paste"] { XCTAssertFalse(app.buttons[id].exists) }
     format.tap(); app.buttons["Жирный"].tap()
     format.tap(); app.buttons["Жирный"].tap()
-    let leading = app.descendants(matching:.any)["resize-agent-element-topLeading"]
-    let trailing = app.descendants(matching:.any)["resize-agent-element-bottomTrailing"]
+    let leading = app.descendants(matching:.any)["resize-agent-element-leadingCenter"]
+    let trailing = app.descendants(matching:.any)["resize-agent-element-trailingCenter"]
     XCTAssertTrue(leading.waitForExistence(timeout:2))
     XCTAssertEqual(leading.frame.midX,text.frame.minX,accuracy:2)
-    XCTAssertEqual(trailing.frame.midX,text.frame.maxX,accuracy:2)
-    XCTAssertLessThan(text.frame.width,150,"Short text does not retain the 320pt editor box")
+    let lineWidth=trailing.frame.midX-leading.frame.midX
+    XCTAssertGreaterThan(lineWidth,text.frame.width,"Width grips expose the line constraint rather than the last glyph")
+    XCTAssertLessThan(text.frame.width,150,"Short text's painted extent remains fitted")
     let layers = app.buttons["element-layer-menu"]
     XCTAssertTrue(layers.exists)
     XCTAssertFalse(app.buttons["element-send-to-back"].exists)
@@ -125,8 +163,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     text.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.05,thenDragTo:text.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).withOffset(.init(dx:-60,dy:80)))
     XCTAssertGreaterThan(text.frame.midY,before.midY+40)
     XCTAssertEqual(leading.frame.midX,text.frame.minX,accuracy:2)
-    XCTAssertEqual(leading.frame.midY,text.frame.minY,accuracy:2)
-    XCTAssertEqual(trailing.frame.midX,text.frame.maxX,accuracy:2)
+    XCTAssertEqual(leading.frame.midY,text.frame.midY,accuracy:2)
+    XCTAssertEqual(trailing.frame.midX-leading.frame.midX,lineWidth,accuracy:2)
     XCTAssertEqual(paper.frame,originalPaper); XCTAssertEqual(paper.value as? String,ink)
     XCTAssertFalse(editor.exists,"Dragging text moves it instead of creating another editor or curling paper")
     XCTAssertFalse(app.buttons["edit-agent-element"].exists)

@@ -8,6 +8,7 @@ enum NotebookElementResizeHandle: String, CaseIterable, Sendable {
   var changesWidth: Bool { self != .topCenter && self != .bottomCenter }
   var changesHeight: Bool { self != .leadingCenter && self != .trailingCenter }
   var isCorner: Bool { changesWidth && changesHeight }
+  static let textWidth: [Self] = [.leadingCenter,.trailingCenter]
   /// Side grips need room between the corners. Touch target size never changes
   /// the authored geometry or makes a small object's centre into a resize grip.
   static func visible(in size: CGSize) -> [Self] {
@@ -26,6 +27,27 @@ enum NotebookElementResizeHandle: String, CaseIterable, Sendable {
   func point(in frame: CGRect) -> CGPoint {
     .init(x: changesWidth ? (leading ? frame.minX : frame.maxX) : frame.midX,
       y: changesHeight ? (top ? frame.minY : frame.maxY) : frame.midY)
+  }
+}
+
+/// Text grips name the two local line edges, not the sides of its screen AABB.
+/// Drawing, hit regions and accessibility all consume this same projection.
+struct NotebookTextWidthControls {
+  let size: CGSize
+  let transform: CGAffineTransform
+  init(presentation:NotebookElementPresentation,screenFrame:CGRect,scale:Double) {
+    size=presentation.bodySize
+    transform=presentation.transform.concatenating(.init(scaleX:scale,y:scale))
+      .concatenating(.init(translationX:screenFrame.minX,y:screenFrame.minY))
+  }
+  func point(_ handle:NotebookElementResizeHandle) -> CGPoint {
+    handle.point(in:.init(origin:.zero,size:size)).applying(transform)
+  }
+  var corners:[CGPoint] { [.topLeading,.topTrailing,.bottomTrailing,.bottomLeading].map(point) }
+  var angle:Double { atan2(transform.b,transform.a) }
+  func translation(leading:Bool,amount:Double) -> CGPoint {
+    let length=hypot(transform.a,transform.b),amount=leading ? -amount : amount
+    return .init(x:transform.a/length*amount,y:transform.b/length*amount)
   }
 }
 
@@ -56,6 +78,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
   let originalCornerRadius: Double
   private(set) var cornerRadius: Double
   private let graphic: NotebookGraphic?
+  private let text: NotebookNativeTextTarget?
   var ancestorReferences: [EditableElementReference] {
     (placement?.ancestors ?? []).map { ancestor in
       switch reference { case .page(let owner,_): .page(pageID:owner,elementID:ancestor)
@@ -69,13 +92,15 @@ struct NotebookElementManipulation: Equatable, Sendable {
 
   init(reference: EditableElementReference, kind: Kind, frame: CGRect, bounds: CGRect?, identity: VersionStamp? = nil,
     worldOrigin: WorldPoint? = nil, connection: NotebookGraphicConnection? = nil, layout: NotebookGraphicLayout? = nil,
-    graphic: NotebookGraphic? = nil, placement: NotebookElementPlacement? = nil, displayFrame: CGRect? = nil) {
+    graphic: NotebookGraphic? = nil, placement: NotebookElementPlacement? = nil, displayFrame: CGRect? = nil,
+    text:NotebookNativeTextTarget? = nil) {
     self.reference = reference; self.kind = kind; original = frame
     self.frame = frame; self.bounds = bounds
     self.identity = identity; self.worldOrigin = placement?.origin ?? worldOrigin
     self.placement=placement;basis=placement?.basis;self.displayFrame=displayFrame ?? frame;presentedFrame=displayFrame ?? frame
     originalConnection = connection; self.connection = connection; originalLayout = layout
     self.graphic = graphic; originalVertices = graphic.flatMap(NotebookGraphicGeometry.polygon); vertices = originalVertices
+    self.text=text
     originalCornerRadius = graphic?.cornerRadius ?? 0; cornerRadius = originalCornerRadius
   }
 
@@ -108,6 +133,34 @@ struct NotebookElementManipulation: Equatable, Sendable {
         connection = value
       }
     case .resize(let corner):
+      if let text,let placement {
+        guard corner.changesWidth,let delta=placement.bodyVector(.init(x:translation.x,y:translation.y)) else { return }
+        let width=placement.localSize.x
+        var maximum=1_000_000.0
+        if let bounds {
+          // Keep the opposite line origin fixed. The moving edge follows its
+          // real local axis even through a reflected/sheared ancestor.
+          let t=placement.transform,p=CGPoint(x:corner.leading ? width : 0,y:0).applying(t)
+          let direction=corner.leading ? -1.0 : 1.0
+          for (start,step,lower,upper) in [(p.x,t.a*direction,bounds.minX,bounds.maxX),(p.y,t.b*direction,bounds.minY,bounds.maxY)] {
+            if step>0 { maximum=min(maximum,(upper-start)/step) }
+            else if step<0 { maximum=min(maximum,(lower-start)/step) }
+          }
+        }
+        guard maximum>=min(1,width) else { return }
+        let nextWidth=min(maximum,max(min(1,width),width+(corner.leading ? -delta.x : delta.x)))
+        guard nextWidth != width else {
+          frame=original;basis=originalBasis;presentedFrame=displayFrame;return
+        }
+        let fitted=NotebookTextTypography.fittingFrame(text.source,style:text.style,
+          in:.init(x:0,y:0,width:nextWidth,height:placement.localSize.y))
+        guard let pose=try? NotebookElementPlacement.Source(frame:.init(x:original.minX,y:original.minY,width:original.width,height:original.height),basis:originalBasis)
+          .resizingBody(to:.init(x:nextWidth,y:min(1_000_000,fitted.height)),offset:.init(x:corner.leading ? width-nextWidth : 0,y:0)),
+          let updated=try? placement.updating(frame:pose.frame,basis:pose.basis) else { return }
+        frame = .init(x:pose.frame.x,y:pose.frame.y,width:pose.frame.width,height:pose.frame.height);basis=pose.basis
+        presentedFrame=CGRect(x:fitted.x,y:fitted.y,width:fitted.width,height:fitted.height).applying(updated.transform)
+        return
+      }
       let original=displayFrame
       let minimumWidth = min(1, original.width), minimumHeight = min(1, original.height)
       let x: CGFloat, y: CGFloat, right: CGFloat, bottom: CGFloat
@@ -134,14 +187,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
           .concatenating(.init(translationX:shown.minX,y:shown.minY))
         guard let pose=try? placement.applyingSurfaceTransform(change) else { return }
         frame = .init(x:pose.frame.x,y:pose.frame.y,width:pose.frame.width,height:pose.frame.height);basis=pose.basis
-      } else {
-        // The fitted glyph box is not the authored text layout constraint.
-        // Apply the handle delta without replacing that constraint by its ink.
-        frame = .init(x:self.original.minX+shown.minX-displayFrame.minX,
-          y:self.original.minY+shown.minY-displayFrame.minY,
-          width:max(min(1,self.original.width),self.original.width+shown.width-displayFrame.width),
-          height:max(min(1,self.original.height),self.original.height+shown.height-displayFrame.height))
-      }
+      } else { frame=shown }
       presentedFrame=shown
     case .endpoint(let terminal):
       guard var value = originalConnection, let layout = originalLayout else { return }

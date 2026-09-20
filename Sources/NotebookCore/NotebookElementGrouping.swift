@@ -15,10 +15,11 @@ public struct NotebookElementPlacement: Equatable, Sendable {
     }
     /// Change a specialized body's layout extent without stretching its axes.
     /// This edits only this descriptor; shared ancestor frames stay untouched.
-    public func resizingBody(to size:SpatialPoint) throws -> Self {
-      guard size.x.isFinite,size.y.isFinite,size.x>0,size.y>0,size.x<=1_000_000,size.y<=1_000_000 else { throw NotebookStorageError.limitExceeded("element_body_size") }
+    public func resizingBody(to size:SpatialPoint,offset:SpatialPoint = .zero) throws -> Self {
+      guard size.x.isFinite,size.y.isFinite,size.x>0,size.y>0,size.x<=1_000_000,size.y<=1_000_000,
+        offset.x.isFinite,offset.y.isFinite else { throw NotebookStorageError.limitExceeded("element_body_size") }
       var result=self
-      let local=try NotebookElementPlacement.local(self)
+      let local=try CGAffineTransform(translationX:offset.x,y:offset.y).concatenating(NotebookElementPlacement.local(self))
       if basis == nil {
         result.frame = .init(x:local.tx,y:local.ty,width:size.x,height:size.y)
         guard NotebookElementBasis.validLocalFrame(result.frame) else { throw NotebookStorageError.limitExceeded("element_body_size") }

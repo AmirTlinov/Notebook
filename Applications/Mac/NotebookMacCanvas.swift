@@ -47,8 +47,7 @@ struct NotebookMacCanvas: View {
               camera: presence.camera, viewport: viewport).allowsHitTesting(false)
             items(workset.items, presence: presence, cohort: cohort)
           } else { ProgressView("Подготовка пространства…") }
-          if presence.mode != .page && presence.mode != .document,
-            let reference = model.selectionSession.editingElement,
+          if let reference = model.selectionSession.editingElement,
             let rect = NotebookAttentionProjection.editingFrame(reference, model: model, presence: presence) {
             MacElementControls(reference: reference, frame: rect, scale: presence.camera.scale)
           }

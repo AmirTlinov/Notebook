@@ -10,14 +10,18 @@ struct MacElementControls: View {
 
   var body: some View {
     let rect=frame,isGroup=model.isElementGroup(reference)
+    let text=model.textWidthControls(reference,screenFrame:rect,scale:scale)
     let availableLayers=isGroup ? [] : model.availableLayerMoves
     ZStack(alignment: .topLeading) {
-      Rectangle().stroke(.tint, lineWidth: 1).frame(width: rect.width, height: rect.height)
-        .position(x: rect.midX, y: rect.midY).allowsHitTesting(false)
-      ForEach(NotebookElementResizeHandle.visible(in: rect.size), id: \.self) { handle in
-        let point = handle.point(in: rect)
+      Path { path in
+        if let points=text?.corners { path.addLines(points);path.closeSubpath() }
+        else { path.addRect(rect) }
+      }.stroke(.tint,lineWidth:1).allowsHitTesting(false)
+      ForEach(text == nil ? NotebookElementResizeHandle.visible(in:rect.size) : NotebookElementResizeHandle.textWidth,id: \.self) { handle in
+        let point = text?.point(handle) ?? handle.point(in: rect)
         Rectangle().fill(.background).overlay { Rectangle().stroke(.tint, lineWidth: 1) }
-          .frame(width: 8, height: 8).padding(5).contentShape(Rectangle())
+          .frame(width: text == nil ? 8 : 6,height:text == nil ? 8 : 18)
+          .rotationEffect(.radians(text?.angle ?? 0)).padding(5).contentShape(Rectangle())
           .position(point)
           .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named(NotebookManipulationSpace.selection)).onChanged { value in
             if contact == nil { contact = model.beginElementManipulation(reference, kind: .resize(handle)) }
@@ -26,7 +30,8 @@ struct MacElementControls: View {
             if let contact { model.finishElementManipulation(contact, translation: .init(x: value.translation.width / scale, y: value.translation.height / scale)) }
             contact = nil
           })
-          .accessibilityLabel("Изменить размер за \(handle.label)")
+          .accessibilityLabel(text == nil ? "Изменить размер за \(handle.label)" : "Ширина текста: \(handle.leading ? "начало" : "конец") строки")
+          .accessibilityIdentifier("resize-agent-element-"+handle.rawValue)
       }
       if isGroup {
         Image(systemName:"arrow.up.and.down.and.arrow.left.and.right").padding(8).background(.regularMaterial,in:Circle())

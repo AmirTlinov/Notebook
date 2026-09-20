@@ -119,11 +119,14 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     let beforeResize=try XCTUnwrap(model.presentedElement(reference,cohort:cohort))
     XCTAssertEqual(beforeResize.frame.width,old.frame.width,"Moving text does not change its layout width")
     XCTAssertEqual(beforeResize.frame.height,old.frame.height)
-    let resize = try XCTUnwrap(model.beginElementManipulation(reference, kind: .resize(.bottomTrailing)))
+    let resize = try XCTUnwrap(model.beginElementManipulation(reference, kind: .resize(.trailingCenter)))
     XCTAssertTrue(model.finishElementManipulation(resize, translation: .init(x: 50, y: 35)))
     let accepted = try XCTUnwrap(model.presentedElement(reference, cohort: cohort))
+    let fitted=NotebookTextTypography.fittingFrame(old.source,style:old.textStyle,
+      in:.init(x:0,y:0,width:old.frame.width+50,height:old.frame.height))
     XCTAssertEqual(accepted.frame, .init(x: old.frame.x + 70, y: old.frame.y + 10,
-      width: old.frame.width + 50, height: old.frame.height + 35))
+      width: old.frame.width + 50, height:fitted.height))
+    XCTAssertEqual(accepted.textStyle,old.textStyle,"A text width grip reflows instead of scaling the font")
     try assertPresentedElement(reference, model: model, cohort: cohort, presence: presence)
     let saved = await model.finishPendingPersistence()
     XCTAssertTrue(saved, model.persistenceFailure ?? "")

@@ -54,6 +54,11 @@ struct NotebookPlacedElement<Content:View>: View {
 }
 
 extension NotebookAppModel {
+  func textWidthControls(_ reference:EditableElementReference,screenFrame:CGRect,scale:Double) -> NotebookTextWidthControls? {
+    guard nativeTextTarget(reference) != nil,let presentation=elementPresentation(reference) else { return nil }
+    return .init(presentation:presentation,screenFrame:screenFrame,scale:scale)
+  }
+
   func nativeTextEditingPresentation(_ target:NotebookNativeTextTarget) -> NotebookElementPresentation? {
     let original=editingGraphicGraph(target.reference)?.placement(target.reference.elementID)
     let placement:NotebookElementPlacement

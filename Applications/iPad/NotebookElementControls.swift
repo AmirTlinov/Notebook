@@ -40,7 +40,7 @@ struct NotebookElementControls: UIViewRepresentable {
     }
     let isGroup=model.isElementGroup(reference)
     view.graphic = graphic
-    view.configure(selectionID: selectionID, frame: frame, layout: graphic?.connection == nil ? nil : model.graphicLayout(reference), scale:scale,
+    view.configure(selectionID: selectionID, frame: frame, textWidth:model.textWidthControls(reference,screenFrame:frame,scale:scale), layout: graphic?.connection == nil ? nil : model.graphicLayout(reference), scale:scale,
       hasLabel: !(graphic?.label.isEmpty ?? true), mode:model.selectionSession.geometryMode, manipulating: model.selectionSession.manipulation != nil,subject:isGroup ? .group : .element)
     view.beginManipulation = { kind in
       guard model.selectionSession.id == selectionID,
@@ -257,6 +257,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   private weak var installedWindow: UIWindow?
   private var selectionID: UUID?
   private var frameRect = CGRect.zero
+  private var textWidth:NotebookTextWidthControls?
   private var contact: SceneSelectionLift?
   private var pointingHandle: ElementHandle?
   private var pencilRevision: UInt64?
@@ -366,14 +367,18 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   private func rebuildAccessibility() {
     handleAccessibility = handles.map { handle in
       let item = ElementHandleAccessibility(accessibilityContainer: self)
-      item.accessibilityLabel = handle.label
+      if case .corner(let corner)=handle,textWidth != nil {
+        item.accessibilityLabel="Ширина текста: \(corner.leading ? "начало" : "конец") строки"
+      } else { item.accessibilityLabel = handle.label }
       item.accessibilityIdentifier = handle.identifier
       item.accessibilityTraits = .adjustable
       item.adjust = { [weak self] increase in
         guard let self, let contact = beginManipulation?(handle.kind) else { return }
         let amount: CGFloat = increase ? 20 : -20
         if case .corner(let corner) = handle {
-          contact.end(.init(x: corner.changesWidth ? (corner.leading ? -amount : amount) : 0, y: corner.changesHeight ? (corner.top ? -amount : amount) : 0))
+          let delta=textWidth?.translation(leading:corner.leading,amount:amount)
+            ?? .init(x: corner.changesWidth ? (corner.leading ? -amount : amount) : 0, y: corner.changesHeight ? (corner.top ? -amount : amount) : 0)
+          contact.end(.init(x:delta.x,y:delta.y))
         } else { contact.end(.init(x:handle == .bend ? 0 : amount,y:amount)) }
       }
       return item
@@ -385,9 +390,10 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-  func configure(selectionID: UUID, frame: CGRect, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false, mode: NotebookSelectionSession.GeometryMode = .transform, manipulating: Bool = false, subject: Subject = .element) {
+  func configure(selectionID: UUID, frame: CGRect, textWidth:NotebookTextWidthControls? = nil, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false, mode: NotebookSelectionSession.GeometryMode = .transform, manipulating: Bool = false, subject: Subject = .element) {
     if self.selectionID != selectionID { cancel(); contextMenus.hide(source:source); self.selectionID = selectionID }
     self.subject = subject
+    self.textWidth=textWidth
     editButton.isHidden = false; deleteButton.isHidden = false; setTextActions(nil); setLayerActions()
     var primary = editButton.configuration!
     switch subject {
@@ -432,6 +438,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     if case .item = subject { next = [] }
     else if case .elements = subject { next = [] }
     else if case .group = subject { next = NotebookElementResizeHandle.visible(in:frame.size).map(ElementHandle.corner)+[.move] }
+    else if textWidth != nil { next = NotebookElementResizeHandle.textWidth.map(ElementHandle.corner) }
     else if layout != nil { next = [.start,.end,.bend] }
     else if geometryMode == .vertices, let vertices { next = vertices.indices.map(ElementHandle.vertex) }
     else if geometryMode == .rounding { next = [.rounding] }
@@ -475,7 +482,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   }
   private func point(_ handle: ElementHandle) -> CGPoint {
     if handle == .move { return .init(x:frameRect.midX,y:frameRect.midY) }
-    if case .corner(let corner) = handle { return corner.point(in:frameRect) }
+    if case .corner(let corner) = handle { return textWidth?.point(corner) ?? corner.point(in:frameRect) }
     if case .vertex(let index) = handle, let vertices = graphic.flatMap({ $0.transform == nil ? NotebookGraphicGeometry.polygon($0) : nil }), vertices.indices.contains(index) {
       return .init(x:frameRect.minX+vertices[index].x*frameRect.width,y:frameRect.minY+vertices[index].y*frameRect.height)
     }
@@ -532,7 +539,10 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     tintColor.withAlphaComponent(0.7).setStroke()
     if connectionLayout == nil {
       let outline: UIBezierPath
-      if geometryMode != .transform, let vertices = graphic.flatMap({ $0.transform == nil ? NotebookGraphicGeometry.polygon($0) : nil }) {
+      if let textWidth {
+        outline=UIBezierPath();outline.move(to:textWidth.corners[0])
+        for point in textWidth.corners.dropFirst() { outline.addLine(to:point) };outline.close()
+      } else if geometryMode != .transform, let vertices = graphic.flatMap({ $0.transform == nil ? NotebookGraphicGeometry.polygon($0) : nil }) {
         outline = UIBezierPath()
         for (index,p) in vertices.enumerated() {
           let point = CGPoint(x:frameRect.minX+p.x*frameRect.width,y:frameRect.minY+p.y*frameRect.height)
@@ -549,12 +559,16 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
         let circle = UIBezierPath(ovalIn:.init(x:point.x-6,y:point.y-6,width:12,height:12))
         circle.lineWidth = 2; circle.fill(); circle.stroke(); continue
       }
-      let point = corner.point(in: frameRect)
+      let point = point(handle)
       let rect: CGRect
       if corner.isCorner { rect = .init(x:point.x-5,y:point.y-5,width:10,height:10) }
       else if corner.changesWidth { rect = .init(x:point.x-3,y:point.y-9,width:6,height:18) }
       else { rect = .init(x:point.x-9,y:point.y-3,width:18,height:6) }
       let path = UIBezierPath(roundedRect:rect,cornerRadius:corner.isCorner ? 5 : 3)
+      if let textWidth {
+        path.apply(CGAffineTransform(translationX:-point.x,y:-point.y)
+          .concatenating(.init(rotationAngle:textWidth.angle)).concatenating(.init(translationX:point.x,y:point.y)))
+      }
       tintColor.setFill(); UIColor.systemBackground.setStroke()
       path.lineWidth = 1.5; path.fill(); path.stroke()
 

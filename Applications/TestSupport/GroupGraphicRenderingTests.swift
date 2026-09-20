@@ -12,6 +12,136 @@ import AppKit
 @testable import Notebook
 
 @MainActor final class GroupGraphicRenderingTests: XCTestCase {
+  func testTextMeasurementFitsTheCompleteSnapshotAtDifferentWidths() throws {
+    let source="Ширина строки меняется, но форма букв и отношения внутри целого сохраняются."
+    for width in [160.0,240] {
+      for (font,size):(String?,Double) in [(nil,12),(nil,20),(nil,34),("Georgia",20),("Menlo-Regular",20)] {
+        let style=NativeTextStyle(fontSize:size,format:.init(fontName:font))
+        let fitted=NotebookTextTypography.fittingFrame(source,style:style,in:.init(x:0,y:0,width:width,height:1))
+        let renderer=ImageRenderer(content:Text(AttributedString(NotebookTextTypography.attributed(source,style:style)))
+          .frame(width:width).fixedSize(horizontal:false,vertical:true))
+        renderer.scale=1
+        let complete=try XCTUnwrap(renderer.cgImage)
+        XCTAssertGreaterThanOrEqual(fitted.height,Double(complete.height),"A measured body must fit every rendered line: \(font ?? "system") \(size) / \(width)")
+        XCTAssertLessThanOrEqual(fitted.height,Double(complete.height)+1)
+      }
+    }
+  }
+
+  func testTextWidthGripsFollowLocalAxesAndReflowWithoutStretching() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("text-width-\(UUID())")
+    let model=NotebookAppModel(store:NotebookStore(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:.init(width:834,height:1194))
+    var page=try XCTUnwrap(model.activePage)
+    let whole=AgentElement(id:"whole",kind:.group,frame:.init(x:50,y:80,width:600,height:750),source:"",html:"",
+      basis:.init(size:.init(x:500,y:600),transform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0)))
+    let text=AgentElement(id:"text",kind:.nativeText,frame:.init(x:60,y:60,width:280,height:160),
+      source:"Ширина строки меняется, но форма букв и отношения внутри целого сохраняются.",html:"",textStyle:.init(fontSize:20),
+      parentID:"whole",basis:.init(size:.init(x:240,y:100),transform:.init(a:-0.8,b:0,c:0.2,d:1,tx:0.8,ty:0)))
+    XCTAssertTrue(page.replaceElements([whole,text],actor:model.actorID));try model.store.savePage(page)
+    await model.reloadExternalChanges()?.value
+    let ref=EditableElementReference.page(pageID:page.id,elementID:text.id)
+    let original=try XCTUnwrap(page.graphicGraph().placement(text.id)),t=original.transform
+    model.selectElement(ref)
+    for handle in NotebookElementResizeHandle.textWidth {
+      let contact=try XCTUnwrap(model.beginElementManipulation(ref,kind:.resize(handle)))
+      let dx=handle.leading ? 80.0 : -80.0
+      // Deliberate motion along local y must not change the line width.
+      let delta=SpatialPoint(x:t.a*dx+t.c*30,y:t.b*dx+t.d*30)
+      model.updateElementManipulation(contact,translation:delta)
+      let shown=try XCTUnwrap(model.elementPresentation(ref))
+      XCTAssertEqual(shown.placement.localSize.x,160,accuracy:1e-9)
+      XCTAssertGreaterThan(shown.localBounds.height,NotebookElementPresentation(text,placement:original).localBounds.height)
+      for (a,b) in zip([shown.placement.transform.a,shown.placement.transform.b,shown.placement.transform.c,shown.placement.transform.d],[t.a,t.b,t.c,t.d]) {
+        XCTAssertEqual(a,b,accuracy:1e-10,"Width changes layout, never the font's placed axes")
+      }
+      let before=CGPoint(x:handle.leading ? 240 : 0,y:0).applying(t)
+      let after=CGPoint(x:handle.leading ? 160 : 0,y:0).applying(shown.placement.transform)
+      XCTAssertEqual(after.x,before.x,accuracy:1e-9);XCTAssertEqual(after.y,before.y,accuracy:1e-9)
+      let screen=CGRect(x:90,y:120,width:shown.bounds.width*0.75,height:shown.bounds.height*0.75)
+      let grips=try XCTUnwrap(model.textWidthControls(ref,screenFrame:screen,scale:0.75))
+      for side in NotebookElementResizeHandle.textWidth {
+        let physical=side.point(in:.init(origin:.zero,size:shown.bodySize)).applying(shown.placement.transform)
+        let point=grips.point(side)
+        XCTAssertEqual(point.x,screen.minX+(physical.x-shown.bounds.minX)*0.75,accuracy:1e-9)
+        XCTAssertEqual(point.y,screen.minY+(physical.y-shown.bounds.minY)*0.75,accuracy:1e-9)
+        let voiceOver=grips.translation(leading:side.leading,amount:20)
+        let local=try XCTUnwrap(shown.placement.bodyVector(.init(x:voiceOver.x/0.75,y:voiceOver.y/0.75)))
+        XCTAssertEqual(local.y,0,accuracy:1e-9);XCTAssertEqual(local.x<0,side.leading)
+      }
+      #if os(iOS)
+      let controls=NotebookSelectionControlsView(gate:model.inputGate,contextMenus:NotebookContextMenus())
+      controls.frame = .init(x:0,y:0,width:834,height:1194)
+      controls.configure(selectionID:model.selectionSession.id,frame:screen,textWidth:grips)
+      controls.layoutIfNeeded()
+      let access=try XCTUnwrap(controls.accessibilityElements as? [UIAccessibilityElement])
+      XCTAssertEqual(access.count,2)
+      for (item,side) in zip(access,NotebookElementResizeHandle.textWidth) {
+        let point=grips.point(side)
+        XCTAssertEqual(item.accessibilityFrameInContainerSpace.midX,point.x,accuracy:1e-9)
+        XCTAssertEqual(item.accessibilityFrameInContainerSpace.midY,point.y,accuracy:1e-9)
+        XCTAssertTrue(controls.point(inside:point,with:nil))
+      }
+      controls.uninstall()
+      #endif
+      if handle == .trailingCenter {
+        let projected=CGRect(x:shown.bounds.minX*0.75,y:shown.bounds.minY*0.75,width:shown.bounds.width*0.75,height:shown.bounds.height*0.75)
+        let material=AgentOverlayView(page:page,renderingScale:0.75,allowsInteraction:false,inputEnabled:false,
+          onRenderReady:{ _ in },onState:{ _,_ in false }).frame(width:834,height:1194)
+          .scaleEffect(0.75,anchor:.topLeading).frame(width:760,height:760,alignment:.topLeading)
+        #if os(iOS)
+        let menus=NotebookContextMenus()
+        let content=ZStack(alignment:.topLeading) {
+          Color.white;material
+          NotebookElementControls(contextMenus:menus,reference:ref,selectionID:model.selectionSession.id,frame:projected,scale:0.75)
+        }.frame(width:760,height:760).environment(model)
+        let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous=scene.windows.first(where: \.isKeyWindow),window=UIWindow(windowScene:scene)
+        let host=UIHostingController(rootView:content)
+        window.rootViewController=host;window.makeKeyAndVisible()
+        try await Task.sleep(for:.milliseconds(150));host.view.layoutIfNeeded()
+        let data=try XCTUnwrap(UIGraphicsImageRenderer(bounds:host.view.bounds).image { _ in
+          host.view.drawHierarchy(in:host.view.bounds,afterScreenUpdates:true)
+        }.pngData())
+        window.isHidden=true;window.rootViewController=nil;previous?.makeKey()
+        #else
+        let content=ZStack(alignment:.topLeading) {
+          Color.white;material
+          MacElementControls(reference:ref,frame:projected,scale:0.75)
+        }.frame(width:760,height:760).environment(model)
+        let window=NSWindow(contentRect:.init(x:0,y:0,width:760,height:760),styleMask:[.titled],backing:.buffered,defer:false)
+        window.isReleasedWhenClosed=false
+        let host=NSHostingView(rootView:content);window.contentView=host;window.orderFront(nil)
+        try await Task.sleep(for:.milliseconds(150));host.layoutSubtreeIfNeeded();host.displayIfNeeded()
+        let bitmap=try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in:host.bounds))
+        host.cacheDisplay(in:host.bounds,to:bitmap)
+        let data=try XCTUnwrap(bitmap.representation(using:.png,properties:[:]))
+        window.orderOut(nil);window.contentView=nil;window.close()
+        #endif
+        let proof=XCTAttachment(data:data,uniformTypeIdentifier:"public.png")
+        proof.name="placed-text-width-controls";proof.lifetime = .keepAlways;add(proof)
+      }
+      XCTAssertEqual(try model.store.loadPage(page.id).element(id:text.id),text,"Pointer samples never persist")
+      model.updateElementManipulation(contact,translation:.zero)
+      XCTAssertEqual(model.elementPresentation(ref)?.placement,original,"Returning to the grip restores the exact descriptor")
+      XCTAssertTrue(model.finishElementManipulation(contact,translation:delta))
+      let flushed=await model.finishPendingPersistence();XCTAssertTrue(flushed)
+      await model.reloadExternalChanges()?.value
+      let saved=try NotebookStore(root:root).loadPage(page.id)
+      XCTAssertEqual(saved.element(id:whole.id),whole)
+      let written=try XCTUnwrap(saved.element(id:text.id))
+      XCTAssertEqual(written.source,text.source);XCTAssertEqual(written.textStyle,text.textStyle)
+      XCTAssertEqual(try XCTUnwrap(written.basis).size.x,160,accuracy:1e-9)
+      XCTAssertEqual(saved.graphicGraph().placement(text.id),shown.placement)
+      model.undoLastSurfaceAction();let undone=await model.finishPendingPersistence();XCTAssertTrue(undone)
+      await model.reloadExternalChanges()?.value
+      XCTAssertEqual(try model.store.loadPage(page.id).element(id:text.id)?.frame,text.frame)
+      XCTAssertEqual(try model.store.loadPage(page.id).element(id:text.id)?.basis,text.basis)
+      model.selectElement(ref)
+    }
+  }
+
   func testPlacedTextTypingAndFormattingKeepItsLocalAxes() async throws {
     let root=FileManager.default.temporaryDirectory.appendingPathComponent("placed-text-\(UUID())")
     let model=NotebookAppModel(store:NotebookStore(root:root),startsNearbySync:false)

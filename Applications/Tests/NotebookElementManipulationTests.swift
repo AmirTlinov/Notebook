@@ -133,11 +133,14 @@ import XCTest
       let replacement = try XCTUnwrap(model.beginElementManipulation(reference, kind: .move))
       XCTAssertTrue(model.finishElementManipulation(replacement, translation: .init(x: 10, y: 0)))
       XCTAssertFalse(model.finishElementManipulation(next, translation: .init(x: 100, y: 100)), "A replacement contact cannot be overwritten by the old lift")
-      XCTAssertEqual(model.activePage?.elements.first?.frame, .init(x: 80, y: 60, width: 230, height: 180))
+      XCTAssertEqual(model.elementPresentationFrame(reference,fallback:page.elements[0].frame),.init(x:80,y:60,width:230,height:180),
+        "The accepted draft is visible before the serial writer publishes its page")
+      let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
+      XCTAssertEqual(try model.store.loadPage(before.id).elements.first?.frame,.init(x:80,y:60,width:230,height:180))
     }
   }
 
-  func testCornerCommitKeepsConcurrentAgentContentAndInk() async throws {
+  func testStaleCornerRejectsConcurrentSourceThenFreshContactKeepsContentAndInk() async throws {
     try await fixture { model, reference in
       let before = try XCTUnwrap(model.activePage)
       model.selectElement(reference)
@@ -152,7 +155,16 @@ import XCTest
       ])
       _ = try model.store.applyCollaborationAction(action, actor: agent)
       XCTAssertTrue(model.finishElementManipulation(contact, translation: .init(x: -30, y: -20)))
+      let rejected=await model.graphicCommandTask?.value
+      XCTAssertNil(rejected,"An old contact cannot silently adopt a peer's replaced source")
       let flushed = await model.finishPendingPersistence(); XCTAssertTrue(flushed)
+      XCTAssertEqual(try model.store.loadPage(before.id).elements.first?.frame,before.elements.first?.frame)
+      XCTAssertNotNil(model.actionCue)
+      await model.reloadExternalChanges()?.value
+      model.selectElement(reference)
+      let fresh=try XCTUnwrap(model.beginElementManipulation(reference,kind:.resize(.topLeading)))
+      XCTAssertTrue(model.finishElementManipulation(fresh,translation:.init(x:-30,y:-20)))
+      let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
       let merged = try model.store.loadPage(before.id)
       XCTAssertEqual(merged.elements.first?.frame, .init(x: 70, y: 60, width: 230, height: 180))
       XCTAssertEqual(merged.elements.first?.html, "<p>Agent's new explanation</p>")

@@ -3123,15 +3123,15 @@ final class NotebookAppModel {
     let groupGeometry=groupManipulationGeometry(reference,in:captured)
     if isElementGroup(reference), groupGeometry == nil || !groupAllowsLiveManipulation(reference,in:captured) { return nil }
     let native=elementPresentation(reference,graph:captured)
-    // Moving a body follows its parent axes. A plain text width handle still
-    // edits layout width; an explicit basis edits the placed whole instead.
+    let text=nativeTextTarget(reference)
+    // Text width edits its body, while a whole/group resize changes placement.
     let nativePlacement=native.flatMap { value -> NotebookElementPlacement? in
-      kind == .move || value.placement.parentID != nil || value.placement.basis != nil ? value.placement : nil
+      text != nil || kind == .move || value.placement.parentID != nil || value.placement.basis != nil ? value.placement : nil
     }
     var contact = NotebookElementManipulation(reference: reference, kind: kind,
       frame: geometry.frame, bounds: geometry.bounds, identity: geometry.identity, worldOrigin: geometry.worldOrigin,
       connection:connection,layout:graphicGeometry?.body,graphic:graphicElement(reference),placement:graphicGeometry?.placement ?? groupGeometry?.placement ?? nativePlacement,
-      displayFrame:graphicGeometry.map { .init(x:$0.display.frame.x,y:$0.display.frame.y,width:$0.display.frame.width,height:$0.display.frame.height) } ?? groupGeometry?.bounds ?? native?.bounds)
+      displayFrame:graphicGeometry.map { .init(x:$0.display.frame.x,y:$0.display.frame.y,width:$0.display.frame.width,height:$0.display.frame.height) } ?? groupGeometry?.bounds ?? native?.bounds,text:text)
     if let captured,let source=captured.source(reference.elementID) {
       let closed:Bool?
       if case .spatial(let owner,let id)=reference { closed=spatialGroupReads[owner]?[id]?.isSelfContained } else { closed=nil }
@@ -3420,7 +3420,7 @@ final class NotebookAppModel {
         guard ![CollaborationOperation.Kind.insertElement,.convertInkToElement].contains(edit.kind),
           let geometry = elementGeometry(edit.reference) else { continue }
         var graphic = graphicElement(edit.reference)
-        guard graphic != nil || nativeTextTarget(edit.reference) != nil || isElementGroup(edit.reference) else { continue }
+        guard graphic != nil || originals[edit.reference]?.placementSource != nil else { continue }
         if let patch = edit.values["graphic"] { graphic = try graphic?.applying(patch) }
         if edit.kind == .removeElement { graphic?.visible = false }
         let frame = try edit.values["frame"]?.decode(PageRect.self)

@@ -18,11 +18,14 @@ enum NotebookTextTypography {
   private static let formatKey = NSAttributedString.Key("notebook.nativeTextFormat")
 
   /// The authored frame is a text layout constraint, not a minimum selection
-  /// size. Rendering, grips and contact admission use the same fitted extent.
+  /// size. Rendering and contact admission use this fitted extent; width grips
+  /// expose the actual line constraint rather than the last glyph's position.
   static func fittingFrame(_ text: String, style: NativeTextStyle, in frame: PageRect) -> PageRect {
     guard !text.isEmpty else { return frame }
+    // Match Text's line metrics. Opting into legacy font leading on macOS
+    // can measure six 24-point lines as 138 rather than 144 and truncate them.
     let rect = attributed(text,style:style).boundingRect(with:.init(width:frame.width,height:CGFloat.greatestFiniteMagnitude),
-      options:[.usesLineFragmentOrigin,.usesFontLeading],context:nil)
+      options:[.usesLineFragmentOrigin],context:nil)
     return .init(x:frame.x,y:frame.y,width:min(frame.width,max(1,ceil(rect.width))),height:max(1,ceil(rect.height)))
   }
   static func frame(_ element: AgentElement) -> PageRect {

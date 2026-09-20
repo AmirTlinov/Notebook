@@ -83,9 +83,7 @@ final class NotebookLiveGesturePresentationTests: XCTestCase {
         "The installed point route must resolve the shown artifact, drop \(index + 1), point \(nativePoint), body \(body.convert(body.bounds, to: host.view)), selection \(String(describing: model.selectionSession.target)), error \(model.agentRequestError ?? "none")")
       observer.touchesBegan([touch], with: UIEvent())
       recognizer.touchesBegan([touch], with: UIEvent())
-      if index == 0 {
-        try await waitUntil { model.selectionSession.manipulation?.reference == reference }
-      }
+      XCTAssertNil(model.selectionSession.manipulation,"A stationary touch must not begin a drag")
       touch.point.x += delta.width; touch.point.y += delta.height
       recognizer.touchesMoved([touch], with: UIEvent())
       XCTAssertEqual(model.selectionSession.manipulation?.reference,reference,"The selected material starts directly on movement, without another long hold")
@@ -96,7 +94,7 @@ final class NotebookLiveGesturePresentationTests: XCTestCase {
       XCTAssertTrue(model.inputGate.beginPencilAction(source: pencil))
       expected = expected.offsetBy(dx: delta.width, dy: delta.height)
       XCTAssertNil(model.selectionSession.manipulation)
-      XCTAssertEqual(model.boardHierarchy?.board(boardID)?.elements.first { $0.id == element.id }?.frame,
+      XCTAssertEqual(model.presentedElement(reference,cohort:original)?.frame,
         .init(x: expected.minX, y: expected.minY, width: expected.width, height: expected.height))
       try await waitUntil {
         host.view.layoutIfNeeded()
