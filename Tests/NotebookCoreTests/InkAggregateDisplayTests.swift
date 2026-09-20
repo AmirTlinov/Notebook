@@ -108,4 +108,47 @@ import Testing
       }
     }
   }
+  @Test(arguments:[false,true],[false,true])
+  func worldStripsKeepTiledCoordinatesAndExactEdits(vertical: Bool,reverse: Bool) throws {
+    let origin=WorldPoint(tileX:WorldPoint.maximumTileIndex-1000,tileY:-WorldPoint.maximumTileIndex+1000,localX:20,localY:40)
+    let samples=(0..<4097).map { i in
+      let d=Double(i)*(reverse ? -2 : 2)
+      return SpatialInkSample(point:.init(x:Double(i)/4,y:sin(Double(i))),
+        worldPoint:origin.offsetBy(x:vertical ? 0 : d,y:vertical ? d : 0),timeOffset:Double(i)/128,
+        width:4,opacity:0.5,force:Double(i%5)/4,azimuth:Double(i%9)/4,altitude:1)
+    }
+    let original=source(samples)
+    for value in [original,try InkSampleRelations(encodedRelations:original.encodedRelations())] {
+      #expect(value.geometry.isUniformAxisStrip)
+      let display=SpatialInkGeometry.Source(source:value,projection:.init(origin:origin))
+      #expect(display.chunkCount == 1)
+      let prepared=display.prepare(0)
+      #expect(prepared.decodedPoints == 4)
+      let retained=[0,1,4095,4096]
+      for (node,index) in zip(prepared.chunk.nodes,retained) {
+        let p=origin.delta(to:samples[index].worldPoint!)
+        #expect(node.position == .init(Float(p.x),Float(p.y)))
+        #expect(InkSampleRelations.sameBits(value.sample(at:index),samples[index]))
+      }
+      // Without a world projection the existing API displays sample.point;
+      // that unrelated, curved coordinate must not inherit the world proof.
+      var unprojected=0
+      value.forEachDisplayPoint { _,_,_ in unprojected += 1 }
+      #expect(unprojected == samples.count)
+      let remote=origin.offsetBy(x:-1_000_000_000,y:-1_000_000_000)
+      var far=0
+      value.forEachDisplayPoint(origin:remote) { _,_,_ in far += 1 }
+      #expect(far == samples.count,"Float coalescing must use the requested projection, not the first event's origin")
+      #expect(SpatialInkGeometry.RelativeSource(value,projection:.init(origin:remote)) == nil)
+    }
+    let i=2048,p=samples[i]
+    let bend=SpatialInkSample(point:p.point,worldPoint:p.worldPoint!.offsetBy(x:vertical ? 8 : 0,y:vertical ? 0 : 8),
+      timeOffset:p.timeOffset,width:p.width,opacity:p.opacity,force:p.force,azimuth:p.azimuth,altitude:p.altitude)
+    let edited=try original.editing(original.address(at:i),to:bend,revision:UUID())
+    #expect(!edited.geometry.isUniformAxisStrip)
+    let restored=try edited.editing(edited.address(at:i),to:p,revision:UUID())
+    #expect(restored.geometry.isUniformAxisStrip)
+    #expect(InkSampleRelations.sameBits(restored.sample(at:i),p))
+  }
+
 }

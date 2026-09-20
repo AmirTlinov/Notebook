@@ -239,7 +239,11 @@ public struct InkSampleRelations: Sendable {
     // Reduction must not skip samples that the shared Float normalizer would
     // coalesce. Its threshold lives with that normalizer. Bound Float rounding
     // over the whole projected source, including repeated/shifted ranges.
-    let box=storage.root.bounds
+    var box=storage.root.bounds
+    if let sourceOrigin=storage.root.geometry.origin,let origin {
+      let delta=origin.delta(to:sourceOrigin)
+      box=Geometry.offset(box,x:delta.x,y:delta.y)
+    }
     let magnitude=[box.minX*scale+offset.x,box.maxX*scale+offset.x,
       box.minY*scale+offset.y,box.maxY*scale+offset.y].map { abs(Float($0)) }.max() ?? .infinity
     let spacing=(Double(InkStrokeGeometry.minimumDistanceSquared.squareRoot())+2*Double(magnitude.ulp))/abs(scale)

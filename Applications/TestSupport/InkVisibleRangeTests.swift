@@ -200,6 +200,58 @@ final class InkVisibleRangeTests: XCTestCase {
     let a=XCTAttachment(data:try JSONSerialization.data(withJSONObject:records,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
     a.name="whole-straight-repeat-costs";a.lifetime = .keepAlways;add(a)
   }
+  func testWholeWorldStripUsesFourNodesAndKeepsAffinePixels() throws {
+    let origin=WorldPoint(tileX:WorldPoint.maximumTileIndex-1000,tileY:-WorldPoint.maximumTileIndex+1000,localX:20,localY:40)
+    let count=100_000
+    let samples=(0..<count).map { i in SpatialInkSample(point:.zero,worldPoint:origin.offsetBy(x:Double(i),y:0),
+      timeOffset:Double(i)/128,width:4,opacity:0.5,force:Double(i%5)/4,azimuth:0,altitude:1) }
+    func milliseconds(_ start: ContinuousClock.Instant) -> Double {
+      let c=start.duration(to:.now).components;return Double(c.seconds)*1000+Double(c.attoseconds)/1e15
+    }
+    let cold=ContinuousClock.now,measured=source(samples),sourceMS=milliseconds(cold)
+    let start=ContinuousClock.now
+    let batch=SpatialInkMesh.Batch(source:measured,projection:.world(origin),sampleProjection:.init(origin:origin))
+    let affine=InkAffine(.init(500/Float(count),4,6,64))
+    let image=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:.init(batches:[batch]),
+      size:.init(width:512,height:128),scale:2,affine:affine))
+    let rasterMS=milliseconds(start)
+    let query=batch.query(viewport:.init(x:0,y:0,width:512,height:128),affine:affine)
+    XCTAssertEqual(query.chunks,[0]);XCTAssertEqual(query.cost.decodedSamples,0)
+    XCTAssertEqual(batch.prepareChunk(0).decodedPoints,4)
+    XCTAssertEqual(batch.prepareChunk(0).chunk.nodes.count,4)
+    let transforms=[affine,InkAffine(.init(1,1,-Float(count)/2,64)),
+      InkAffine(x:.init(-0.004,0.2,450,0),y:.init(0.0001,4,50,0))]
+    for edited in [false,true] {
+      var events=samples
+      let value:InkSampleRelations
+      if edited {
+        let i=count/2,p=events[i]
+        events[i]=SpatialInkSample(point:p.point,worldPoint:p.worldPoint!.offsetBy(x:0,y:12),
+          timeOffset:p.timeOffset,width:12,opacity:0.9,force:p.force,azimuth:p.azimuth,altitude:p.altitude)
+        value=try measured.editing(measured.address(at:i),to:events[i],revision:UUID())
+      } else { value=measured }
+      let actual=SpatialInkMesh(batches:[.init(source:value,projection:.world(origin),sampleProjection:.init(origin:origin))])
+      let paper=events.map { p in SpatialInkSample(point:origin.delta(to:p.worldPoint!),timeOffset:p.timeOffset,
+        width:p.width,opacity:p.opacity,force:p.force,azimuth:p.azimuth,altitude:p.altitude) }
+      let reference=SpatialInkMesh.referencePage(.init(actions:[.init(tool:.pen,color:value.header.color,samples:paper)]))
+      for transform in transforms {
+        let a=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:actual,size:.init(width:512,height:128),scale:2,affine:transform))
+        let b=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:reference,size:.init(width:512,height:128),scale:2,affine:transform))
+        let left=Array(try XCTUnwrap(a.dataProvider?.data) as Data),right=Array(try XCTUnwrap(b.dataProvider?.data) as Data)
+        XCTAssertLessThanOrEqual(zip(left,right).map { abs(Int($0)-Int($1)) }.max()!,2,"edited \(edited)")
+        XCTAssertTrue(left.contains { $0 > 0 })
+      }
+    }
+    let record:[String:Any]=["events":count,"coldSourceMilliseconds":sourceMS,"sourceToRasterMilliseconds":sourceMS+rasterMS,
+      "preparedSourceToRasterMilliseconds":rasterMS,"chunks":query.chunks.count,"indexVisits":query.cost.visitedNodes,
+      "boundsEvents":query.cost.decodedSamples,"displayEvents":4,"sourceBytes":measured.payloadBytes]
+    let attachment=XCTAttachment(data:try JSONSerialization.data(withJSONObject:record,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
+    attachment.name="world-whole-strip-costs";attachment.lifetime = .keepAlways;add(attachment)
+    let png=NSMutableData(),destination=try XCTUnwrap(CGImageDestinationCreateWithData(png,"public.png" as CFString,1,nil))
+    CGImageDestinationAddImage(destination,image,nil);XCTAssertTrue(CGImageDestinationFinalize(destination))
+    let proof=XCTAttachment(data:png as Data,uniformTypeIdentifier:"public.png")
+    proof.name="world-whole-strip";proof.lifetime = .keepAlways;add(proof)
+  }
   func testAggregateStripAndItsEditedMiddleKeepAffinePaintAndEraserOrder() throws {
     let samples=(0..<8193).map { i in SpatialInkSample(point:.init(x:20+Double(i)/16,y:70),
       timeOffset:Double(i)/128,width:6,opacity:0.4,force:0.75,azimuth:0,altitude:1) }

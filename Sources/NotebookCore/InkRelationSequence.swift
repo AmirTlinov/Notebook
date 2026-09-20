@@ -127,9 +127,19 @@ extension InkSampleRelations {
         self.directions=directions;self.width=width;self.opacity=opacity
       }
       static func directions(from a: Coordinate?,to b: Coordinate?) -> UInt8 {
-        guard case .paper(let a)=a,case .paper(let b)=b else { return 0 }
-        if a.y == b.y { return a.x < b.x ? 1 : a.x > b.x ? 2 : 0 }
-        if a.x == b.x { return a.y < b.y ? 4 : a.y > b.y ? 8 : 0 }
+        switch (a,b) {
+        case (.paper(let a),.paper(let b)):
+          if a.y == b.y { return a.x < b.x ? 1 : a.x > b.x ? 2 : 0 }
+          if a.x == b.x { return a.y < b.y ? 4 : a.y > b.y ? 8 : 0 }
+        case (.world(let a),.world(let b)):
+          // Compare normalized tile addresses, never a flattened world Double.
+          // Nearby local detail remains exact even at the admitted world edge.
+          let x=(a.tileX,a.localX),y=(a.tileY,a.localY)
+          let nextX=(b.tileX,b.localX),nextY=(b.tileY,b.localY)
+          if y == nextY { return x < nextX ? 1 : x > nextX ? 2 : 0 }
+          if x == nextX { return y < nextY ? 4 : y > nextY ? 8 : 0 }
+        default: break
+        }
         return 0
       }
       init?(_ block: Block) {
@@ -156,7 +166,6 @@ extension InkSampleRelations {
           self.init(directions:direction,width:Double(bitPattern:w),opacity:Double(bitPattern:a))
         case .literal(let samples):
           let first=samples[0]
-          guard first.worldPoint == nil else { return nil }
           var directions: UInt8=15,previous=Coordinate(first)
           for i in 1..<samples.count {
             let next=samples[i],point=Coordinate(next)
@@ -718,13 +727,15 @@ extension InkSampleRelations {
     }
     func forEachDisplayPoint(in range: Range<Int>,reduce: Bool,origin: WorldPoint? = nil,minimumSpacing: Double,maximumSpan: Double,base: Int = 0,_ emit: (Int,Double,Double,Double,Double)->Void) {
       if range.isEmpty { return }
-      if reduce,range.count > 4,geometry.canReduceAxisStrip(minimumSpacing:minimumSpacing,maximumSpan:maximumSpan) {
+      if reduce,range.count > 4,geometry.origin == nil || origin != nil,geometry.canReduceAxisStrip(minimumSpacing:minimumSpacing,maximumSpan:maximumSpan) {
         // Stop at this proved aggregate before visiting any of its children.
         // Keep cap neighbours; their original tangent is also used after an
         // outer reflection, shear or anisotropic transform.
         var cost=AccessCost()
         for i in [range.lowerBound,range.lowerBound+1,range.upperBound-2,range.upperBound-1] {
-          let p=sample(at:i,cost:&cost);emit(base+i,p.point.x,p.point.y,p.width,p.opacity)
+          let p=sample(at:i,cost:&cost)
+          let local=origin.flatMap { start in p.worldPoint.map { start.delta(to:$0) } } ?? p.point
+          emit(base+i,local.x,local.y,p.width,p.opacity)
         }
         return
       }
