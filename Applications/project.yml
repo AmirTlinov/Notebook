@@ -245,6 +245,8 @@ targets:
       - path: ../MCP/skills/notebook/assets/science
         type: folder
         buildPhase: resources
+      - path: ../Tests/NotebookCoreTests/Resources/QuickShapeMeasured.json
+        buildPhase: resources
     dependencies:
       - target: NotebookMac
     settings:

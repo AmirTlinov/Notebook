@@ -71,6 +71,23 @@ enum SpatialInkGeometry {
     return normalized.indices.map { InkRenderGeometry.node(at: $0, in: normalized) }
   }
 
+  /// Same compact geometry owner; the source chooses only proved display ranges.
+  /// No PencilKit objects or full decoded measurement array are created here.
+  static func compact(source: InkSampleRelations) -> [Node] {
+    let c = source.header.color
+    let color: SIMD4<Float> = source.header.tool == .eraser ? .init(repeating:1)
+      : .init(Float(c.red),Float(c.green),Float(c.blue),1)
+    var points: [RenderPoint] = []
+    source.forEachDisplayPoint { position,radius,opacity in
+      let alpha = min(max(opacity*color.w,0),1)
+      let p = RenderPoint(position:position,radius:max(radius,0.25),
+        premultipliedColor:.init(color.x*alpha,color.y*alpha,color.z*alpha,alpha))
+      if let last = points.last, areCoincident(last,p) { points[points.count-1] = p }
+      else { points.append(p) }
+    }
+    return points.indices.map { InkRenderGeometry.node(at:$0,in:points) }
+  }
+
   static var roundCapVertexCount: Int { InkStrokeGeometry.roundCapVertexCount }
   static func areCoincident(_ a: RenderPoint, _ b: RenderPoint) -> Bool { InkStrokeGeometry.areCoincident(a,b) }
   static func appendStrokeVertices(renderPoints: [RenderPoint], roundsStart: Bool = true,

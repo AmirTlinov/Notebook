@@ -56,10 +56,13 @@ final class InkRasterRenderer: @unchecked Sendable {
     layers: [SpatialInkRenderLayer], size: CGSize, baselinePNG: Data? = nil, scale: Double = 2
   ) -> CGImage? {
     let mesh = SpatialInkMesh.local(layers)
-    return raster(
-      size: size, baselinePNG: baselinePNG, scale: scale,
-      batches: mesh.batches.map { .init(mesh:$0,affine:InkAffine()) }
-    )
+    return render(mesh:mesh,size:size,baselinePNG:baselinePNG,scale:scale)
+  }
+
+  func render(mesh: SpatialInkMesh, size: CGSize, baselinePNG: Data? = nil,
+    scale: Double = 2, affine: InkAffine = .init()) -> CGImage? {
+    raster(size:size,baselinePNG:baselinePNG,scale:scale,
+      batches:mesh.batches.map { .init(mesh:$0,affine:affine) })
   }
 
   private struct DrawBatch {
