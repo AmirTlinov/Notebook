@@ -77,7 +77,7 @@ public struct InkSampleRelations: Sendable {
   final class SampleBuffer: Sendable {
     let samples: [SpatialInkSample]
     init(_ samples: [SpatialInkSample]) { self.samples=samples }
-    var byteCount: Int { 32+samples.capacity*MemoryLayout<SpatialInkSample>.stride }
+    var byteCount: Int { 64+samples.capacity*MemoryLayout<SpatialInkSample>.stride }
   }
   struct Samples: Sendable {
     let buffer: SampleBuffer
@@ -171,6 +171,7 @@ public struct InkSampleRelations: Sendable {
     /// measurement. Empty event bodies may still carry a nonzero exit.
     let exit: InkRepeatStep
     init(_ root: Sequence, exit: InkRepeatStep = .zero) { self.root=root;self.exit=exit }
+    var byteCount: Int { MemoryLayout<InkRepeatStep>.stride+32 }
   }
   public let sourceID: UUID
   public let span: Int
@@ -385,7 +386,8 @@ public struct InkSampleRelations: Sendable {
   }
   public var allocationSummary: (nodes: Int, bytes: Int) {
     var seen=Set<ObjectIdentifier>()
-    return storage.root.allocationSummary(seen:&seen)
+    let tree=storage.root.allocationSummary(seen:&seen)
+    return (tree.nodes,storage.byteCount+tree.bytes)
   }
   public var payloadBytes: Int {
     MemoryLayout<Self>.stride + frames.count * MemoryLayout<InkExactFrame>.stride + allocationSummary.bytes

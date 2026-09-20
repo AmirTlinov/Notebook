@@ -221,28 +221,52 @@ extension InkSampleRelations {
     let content: Content
     let count: Int
     let height: Int
-    let geometry: Geometry
-    let worldEvents: Int
-    let hasVisibleInk: Bool
-    var bounds: CGRect { geometry.bounds }
     let pending: Bool
-    let domain: [Lattice?] // x, y, time; nil means no admitted nonzero translation
+    // A <=3-event primitive has no internal range to index. Keep just that
+    // primitive; derive its bounded facts only when a consumer needs them.
+    private final class Summary: Sendable {
+      let geometry: Geometry
+      let worldEvents: Int
+      let hasVisibleInk: Bool
+      let domain: [Lattice?]
+      init(geometry: Geometry,worldEvents: Int,hasVisibleInk: Bool,domain: [Lattice?]) {
+        self.geometry=geometry;self.worldEvents=worldEvents;self.hasVisibleInk=hasVisibleInk;self.domain=domain
+      }
+    }
+    private let summary: Summary?
+    private var primitive: Block {
+      guard case .block(let block)=content else { preconditionFailure("An aggregate must retain its summary") }
+      return block
+    }
+    var geometry: Geometry { summary?.geometry ?? Geometry(block:primitive) }
+    var worldEvents: Int { summary?.worldEvents ?? Self.worldEvents(in:primitive) }
+    var hasVisibleInk: Bool { summary?.hasVisibleInk ?? Self.hasVisibleInk(in:primitive) }
+    var bounds: CGRect { geometry.bounds }
+    var domain: [Lattice?] { summary?.domain ?? Self.domain(of:primitive) }
+    var hasStoredSummary: Bool { summary != nil }
     static let empty=Sequence(block:.literal(.init([])))
 
     init(block: Block,pending: Bool = false) {
       self.pending=pending
-      content = .block(block);count=block.count;height=1;geometry=Geometry(block:block)
+      content = .block(block);count=block.count;height=1
+      summary=block.count < 4 ? nil : .init(geometry:Geometry(block:block),
+        worldEvents:Self.worldEvents(in:block),hasVisibleInk:Self.hasVisibleInk(in:block),domain:Self.domain(of:block))
+    }
+    private static func worldEvents(in block: Block) -> Int {
+      if case .literal(let samples)=block { return samples.values.reduce(0) { $0+($1.worldPoint == nil ? 0 : 1) } }
+      return 0
+    }
+    private static func hasVisibleInk(in block: Block) -> Bool {
       switch block {
-      case .literal(let samples):
-        worldEvents=samples.values.reduce(0) { $0+($1.worldPoint == nil ? 0 : 1) }
-        hasVisibleInk=samples.values.contains { $0.opacity > 0 }
+      case .literal(let samples): return samples.values.contains { $0.opacity > 0 }
       case .fields(let fields,let count):
-        worldEvents=0
         switch fields[4] {
-        case .literal(let bits): hasVisibleInk=bits.contains { Double(bitPattern:$0) > 0 }
-        default: hasVisibleInk=count > 0 && (fields[4].value(at:0) > 0 || fields[4].value(at:count-1) > 0)
+        case .literal(let bits): return bits.contains { Double(bitPattern:$0) > 0 }
+        default: return count > 0 && (fields[4].value(at:0) > 0 || fields[4].value(at:count-1) > 0)
         }
       }
+    }
+    private static func domain(of block: Block) -> [Lattice?] {
       func fieldDomain(_ field: Field) -> Lattice? {
         switch field {
         case .constant(let bits): return Lattice(Double(bitPattern:bits))
@@ -262,7 +286,7 @@ extension InkSampleRelations {
       }
       switch block {
       case .fields(let fields,_):
-        domain=(0..<3).map { fieldDomain(fields[$0]) }
+        return (0..<3).map { fieldDomain(fields[$0]) }
       case .literal(let samples):
         var ranges=[Lattice?](repeating:nil,count:3),valid=[true,true,true]
         for (i,p) in samples.values.enumerated() {
@@ -274,7 +298,7 @@ extension InkSampleRelations {
             } else { valid[j]=false }
           }
         }
-        domain=(0..<3).map { valid[$0] ? ranges[$0] : nil }
+        return (0..<3).map { valid[$0] ? ranges[$0] : nil }
       }
     }
     static func pointBounds(_ x: Double,_ y: Double,_ width: Double) -> CGRect {
@@ -282,6 +306,7 @@ extension InkSampleRelations {
       return CGRect(x:left,y:top,width:((x+r).nextUp-left).nextUp,height:((y+r).nextUp-top).nextUp)
     }
     private init(_ content: Content,count: Int,height: Int,domain: [Lattice?],pending: Bool = false) {
+      let geometry: Geometry,worldEvents: Int,hasVisibleInk: Bool
       switch content {
       case .block(let b): self.pending=pending;geometry=Geometry(block:b)
       case .pair(let a,let b): self.pending=pending || a.pending || b.pending;geometry=a.geometry.joined(b.geometry)
@@ -290,15 +315,14 @@ extension InkSampleRelations {
       }
       switch content {
       case .block(let b):
-        if case .literal(let samples)=b {
-          worldEvents=samples.values.reduce(0) { $0+($1.worldPoint == nil ? 0 : 1) }
-        } else { worldEvents=0 }
-        hasVisibleInk=(0..<b.count).contains { b.sample(at:$0).opacity > 0 }
+        worldEvents=Self.worldEvents(in:b);hasVisibleInk=Self.hasVisibleInk(in:b)
       case .pair(let a,let b): worldEvents=a.worldEvents+b.worldEvents;hasVisibleInk=a.hasVisibleInk || b.hasVisibleInk
       case .repeated(let body,let n,_): worldEvents=body.worldEvents*n;hasVisibleInk=n > 0 && body.hasVisibleInk
       case .shifted(let body,_): worldEvents=body.worldEvents;hasVisibleInk=body.hasVisibleInk
       }
-      self.content=content;self.count=count;self.height=height;self.domain=domain
+      self.content=content;self.count=count;self.height=height
+      if case .block(let block)=content,block.count < 4 { summary=nil }
+      else { summary = .init(geometry:geometry,worldEvents:worldEvents,hasVisibleInk:hasVisibleInk,domain:domain) }
     }
     static func from(_ blocks: [Block]) -> Sequence {
       func build(_ range: Range<Int>) -> Sequence {
@@ -311,9 +335,10 @@ extension InkSampleRelations {
     }
     static func pair(_ a: Sequence,_ b: Sequence) -> Sequence {
       if a.count == 0 { return b };if b.count == 0 { return a }
+      let left=a.domain,right=b.domain
       return .init(.pair(a,b),count:a.count+b.count,height:max(a.height,b.height)+1,
         domain:(0..<3).map { i in
-          guard let x=a.domain[i],let y=b.domain[i] else { return nil };return x.union(y)
+          guard let x=left[i],let y=right[i] else { return nil };return x.union(y)
         })
     }
     /// AVL join copies only the path. Repeated bodies are atomic in this outer
@@ -350,9 +375,10 @@ extension InkSampleRelations {
     private func shiftedDomain(first: InkRepeatStep,last: InkRepeatStep,quantum: InkRepeatStep? = nil) -> [Lattice?]? {
       let a=[first.x,first.y,first.time],b=[last.x,last.y,last.time]
       let quantum=quantum.map { [$0.x.exponent,$0.y.exponent,$0.time.exponent] }
-      var result=domain
+      let original=domain
+      var result=original
       for i in 0..<3 where a[i] != .zero || b[i] != .zero {
-        guard let d=domain[i]?.shifted(from:a[i],to:b[i],quantum:quantum?[i]) else { return nil };result[i]=d
+        guard let d=original[i]?.shifted(from:a[i],to:b[i],quantum:quantum?[i]) else { return nil };result[i]=d
       }
       if let time=result[2], time.low < 0 { return nil }
       return result
@@ -657,7 +683,8 @@ extension InkSampleRelations {
     }
     func allocationSummary(seen: inout Set<ObjectIdentifier>) -> (nodes: Int,bytes: Int) {
       guard seen.insert(ObjectIdentifier(self)).inserted else { return (0,0) }
-      var total=(nodes:1,bytes:MemoryLayout<Content>.stride+MemoryLayout<Geometry>.stride+MemoryLayout<Lattice?>.stride*3+64)
+      var total=(nodes:1,bytes:MemoryLayout<Content>.stride+64)
+      if summary != nil { total.bytes += MemoryLayout<Geometry>.stride+MemoryLayout<Lattice?>.stride*3+80 }
       switch content {
       case .block(let b):
         if case .literal(let samples)=b {

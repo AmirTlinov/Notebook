@@ -52,9 +52,13 @@ final class InkVisibleRangeTests: XCTestCase {
   }
   func testHundredThousandSmallStrokesPackIntoTheExistingChunkIndex() throws {
     let actor=UUID(),surface=SurfaceID.cover(UUID())
+    let sourceStart=ContinuousClock.now
     let actions=(0..<100_000).map { i in SpatialInkAction(tool:.pen,
       spans:[.init(surface:surface,samples:[sample(Double(i)*20,10,0),sample(Double(i)*20+8,12,1)])],
       stamp:.init(counter:UInt64(i+1),actor:actor)) }
+    let sourceElapsed=sourceStart.duration(to:.now).components
+    XCTAssertTrue(actions.allSatisfy { !$0.spans[0].samples.storage.root.hasStoredSummary })
+    let sourceBytes=actions.reduce(0) { $0+$1.spans[0].samples.payloadBytes }
     let journal=SpatialInkJournal(actions:actions,stamp:actions.last!.stamp)
     let start=ContinuousClock.now,mesh=try SpatialInkMesh.prepare(surface:surface,journal:journal)
     let elapsed=start.duration(to:.now).components
@@ -68,6 +72,8 @@ final class InkVisibleRangeTests: XCTestCase {
     XCTAssertLessThan(chunk.byteCount,256,"A visible view shares prepared nodes/LOD, not another copy")
     let record:[String:Any]=["strokes":actions.count,"parts":batch.parts.count,"chunks":batch.chunkCount,
       "meshBytes":batch.byteCount,"queryVisits":q.cost.visitedNodes,
+      "sourceLayoutBytes":sourceBytes,
+      "sourcePrepareMilliseconds":Double(sourceElapsed.seconds)*1000+Double(sourceElapsed.attoseconds)/1e15,
       "prepareMilliseconds":Double(elapsed.seconds)*1000+Double(elapsed.attoseconds)/1e15]
     let a=XCTAttachment(data:try JSONSerialization.data(withJSONObject:record,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
     a.name="relation-small-strokes-costs";a.lifetime = .keepAlways;add(a)

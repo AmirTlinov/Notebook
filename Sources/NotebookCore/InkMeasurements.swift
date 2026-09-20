@@ -20,10 +20,34 @@ public struct InkMeasurements: RandomAccessCollection, ExpressibleByArrayLiteral
   public init(arrayLiteral elements: SpatialInkSample...) { self.init(elements) }
   public init(_ samples: [SpatialInkSample], revision: UUID = UUID(uuid:(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))) {
     precondition(samples.allSatisfy(\.isValid))
-    let buffer=InkSampleRelations.SampleBuffer(samples)
-    storage = .init(.from(stride(from:0,to:samples.count,by:InkSampleRelations.blockSize).map {
-      .init(.init(buffer:buffer,range:$0..<Swift.min(samples.count,$0+InkSampleRelations.blockSize)))
-    }))
+    if samples.isEmpty { storage = .init(.empty) }
+    else {
+      let buffer=InkSampleRelations.SampleBuffer(samples)
+      if samples.count <= InkSampleRelations.blockSize {
+        storage = .init(.init(block:.init(.init(buffer:buffer,range:samples.indices))))
+      } else {
+        var blocks: [InkSampleRelations.Block] = stride(from:0,to:samples.count,by:InkSampleRelations.blockSize).map {
+          .init(.init(buffer:buffer,range:$0..<Swift.min(samples.count,$0+InkSampleRelations.blockSize)))
+        }
+        let literalCount=blocks.reduce(0) { count,block in
+          if case .literal(let view)=block { return count+view.count };return count
+        }
+        if literalCount > 0,literalCount < samples.count {
+          // A short residual must not pin the entire pre-compression array.
+          // All residual leaves still share ONE immutable literal buffer.
+          var residuals: [SpatialInkSample]=[];residuals.reserveCapacity(literalCount)
+          for case .literal(let view) in blocks { residuals.append(contentsOf:view.values) }
+          let retained=InkSampleRelations.SampleBuffer(residuals)
+          var offset=0
+          for i in blocks.indices {
+            if case .literal(let view)=blocks[i] {
+              blocks[i] = .literal(.init(buffer:retained,range:offset..<(offset+view.count)));offset += view.count
+            }
+          }
+        }
+        storage = .init(.from(blocks))
+      }
+    }
     self.revision=revision
   }
   init(storage: InkSampleRelations.Storage, revision: UUID) {
@@ -34,7 +58,7 @@ public struct InkMeasurements: RandomAccessCollection, ExpressibleByArrayLiteral
   public var hasVisibleInk: Bool { storage.root.hasVisibleInk }
   public var payloadBytes: Int {
     var seen=Set<ObjectIdentifier>()
-    return MemoryLayout<Self>.stride+storage.root.allocationSummary(seen:&seen).bytes
+    return MemoryLayout<Self>.stride+storage.byteCount+storage.root.allocationSummary(seen:&seen).bytes
   }
   public func materialized(in range: Range<Int>? = nil) -> [SpatialInkSample] {
     let range=range ?? 0..<count
