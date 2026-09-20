@@ -1,0 +1,24 @@
+{
+  "status": "verified-build",
+  "sourceSHA256": "e59c415116d853f703da9fa5810c70fb0a72f7c658305392861d0d3c70f0d6e1",
+  "version": "0.3.134",
+  "verificationRoute": "./verify.sh:selected",
+  "verificationSHA256": "09b5f3650616ec43147bacaa2418c335083d0036cae830d6405ea0d0461b9df7",
+  "build": "137",
+  "sourceCommit": "7d9e0402ff8dc123ee1c7fc2572bc5bd93669c01",
+  "apps": {
+    "iPad": {
+      "manifestSHA256": "115962d0334ae0917df9dfe84240748c2260617eacee6ae66c54696c8116936f",
+      "identifier": "com.amirtlinov.notebook.preview",
+      "team": "M94V58FCVP",
+      "profileExpiration": "2027-09-17T09:41:04"
+    },
+    "mac": {
+      "manifestSHA256": "c8c3d71fed015c34dff3f56f5eec2f146c611eb0f4e11f8b2f42eb27a779f264",
+      "identifier": "com.amirtlinov.notebook.mac",
+      "team": "M94V58FCVP",
+      "profileExpiration": null
+    }
+  },
+  "installationStatus": "not attempted: Mac active work warning; fresh user confirmation requested; dialog cancelled without interrupting work"
+}
