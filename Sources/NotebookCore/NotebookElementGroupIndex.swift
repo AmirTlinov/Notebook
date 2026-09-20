@@ -9,7 +9,7 @@ extension NotebookStore {
   static func createElementGroupSpatialIndex(_ database: NotebookSQLConnection) throws {
     let columns = Set(try database.rows("PRAGMA table_info(spatial_entries)").compactMap { $0[1].text })
     for (name,type) in [("parent_id","TEXT"),("is_group","INTEGER NOT NULL DEFAULT 0"),
-      ("has_paint","INTEGER NOT NULL DEFAULT 1"),("non_graphic","INTEGER NOT NULL DEFAULT 0"),("space_key","INTEGER NOT NULL DEFAULT 0"),("max_z","REAL NOT NULL DEFAULT 0"),("lower_key","TEXT NOT NULL DEFAULT ''")] where !columns.contains(name) {
+      ("has_paint","INTEGER NOT NULL DEFAULT 1"),("space_key","INTEGER NOT NULL DEFAULT 0"),("max_z","REAL NOT NULL DEFAULT 0"),("lower_key","TEXT NOT NULL DEFAULT ''")] where !columns.contains(name) {
       try database.run("ALTER TABLE spatial_entries ADD COLUMN \(name) \(type)")
     }
     if !columns.contains("lower_key") {
@@ -33,7 +33,7 @@ extension NotebookStore {
     // Only grouped entries pay for extrema/ordering. A whole pose reads six
     // index endpoints rather than scanning or rewriting the member records.
     for (name,parts) in [("min_x","min_tx,min_x"),("min_y","min_ty,min_y"),
-      ("max_x","max_tx,max_x"),("max_y","max_ty,max_y"),("order","layer,z_index,lower_key"),("last","max_z"),("non_graphic","non_graphic")] {
+      ("max_x","max_tx,max_x"),("max_y","max_ty,max_y"),("order","layer,z_index,lower_key"),("last","max_z")] {
       try database.run("CREATE INDEX IF NOT EXISTS spatial_group_\(name) ON spatial_entries(board_id,parent_id,\(parts)) WHERE parent_id IS NOT NULL AND has_paint=1")
     }
   }
@@ -134,7 +134,6 @@ extension NotebookStore {
         try database.rows("SELECT "+columns+predicate+" ORDER BY "+order+" LIMIT 1",arguments).first
       }
       let first = cyclic ? nil : try extreme("z_index,lower_key","layer,z_index,lower_key")
-      let nonGraphic = try first != nil && extreme("non_graphic","non_graphic DESC")?[0].integer == 1
       var origin = (element.worldOrigin ?? .zero).offsetBy(x:element.frame.x,y:element.frame.y)
       var width=0.0,height=0.0,z=Double(fragment.position),last=z,lower=element.id
       if let first {
@@ -146,16 +145,16 @@ extension NotebookStore {
         z=first[0].spatialNumber;lower=first[1].text!;last=try extreme("max_z","max_z DESC")![0].spatialNumber
       }
       guard let maximum=origin.projectionOffset(x:width,y:height) else { throw NotebookStorageError.limitExceeded("element_group_bounds") }
-      let old = try database.rows("SELECT parent_id,has_paint,z_index,max_z,lower_key,min_tx,min_ty,min_x,min_y,max_tx,max_ty,max_x,max_y,non_graphic FROM spatial_entries WHERE address=?",[.text(address)]).first
+      let old = try database.rows("SELECT parent_id,has_paint,z_index,max_z,lower_key,min_tx,min_ty,min_x,min_y,max_tx,max_ty,max_x,max_y FROM spatial_entries WHERE address=?",[.text(address)]).first
       let parentKey = element.parentID.map(collaborationIdentity)
       if let old,old[0].text == parentKey,old[1].integer == (first == nil ? 0 : 1),old[2].spatialNumber == z,
         old[3].spatialNumber == last,old[4].text == lower,old[5].integer == origin.tileX,old[6].integer == origin.tileY,
         old[7].spatialNumber == origin.localX,old[8].spatialNumber == origin.localY,old[9].integer == maximum.tileX,
-        old[10].integer == maximum.tileY,old[11].spatialNumber == maximum.localX,old[12].spatialNumber == maximum.localY,old[13].integer == (nonGraphic ? 1 : 0) { continue }
+        old[10].integer == maximum.tileY,old[11].spatialNumber == maximum.localX,old[12].spatialNumber == maximum.localY { continue }
       try database.run("DELETE FROM spatial_entries WHERE address=?",[.text(address)])
       try insertSpatialEntry(address:address,boardID:boardID,id:element.surface.kind == .cover ? element.surface.ownerID!.uuidString.lowercased() : element.id,
         kind:element.surface.kind == .cover ? "coverElement" : "element",key:element.id,origin:origin,width:width,height:height,z:z,
-        parentID:element.parentID,isGroup:true,hasPaint:first != nil,nonGraphic:nonGraphic,maxZ:last,lowerKey:lower,database:database)
+        parentID:element.parentID,isGroup:true,hasPaint:first != nil,maxZ:last,lowerKey:lower,database:database)
       if let parent = element.parentID,let owner = fragment.parent {
         try database.noteOwner(.elementGroup,owner+"/board/elements/@"+fieldKey([collaborationIdentity(parent)]))
       }

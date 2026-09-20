@@ -1,5 +1,5 @@
-import NotebookCore
-import SwiftUI
+import Foundation
+import CoreGraphics
 #if os(iOS)
 import UIKit
 private typealias NativeFont = UIFont
@@ -12,15 +12,15 @@ private typealias NativeColor = NSColor
 
 /// TextKit and the static scene consume the same attributed content. There is
 /// no Markdown heuristic, HTML renderer, or second rich-text document.
-enum NotebookTextTypography {
-  static let fonts: [(name: String?, title: String)] = [(nil,"Системный"),("Georgia","С засечками"),
+public enum NotebookTextTypography {
+  public static let fonts: [(name: String?, title: String)] = [(nil,"Системный"),("Georgia","С засечками"),
     ("Menlo-Regular","Моноширинный"),("ChalkboardSE-Regular","Рукописный"),("Noteworthy-Light","Заметки")]
   private static let formatKey = NSAttributedString.Key("notebook.nativeTextFormat")
 
   /// The authored frame is a text layout constraint, not a minimum selection
   /// size. Rendering and contact admission use this fitted extent; width grips
   /// expose the actual line constraint rather than the last glyph's position.
-  static func fittingFrame(_ text: String, style: NativeTextStyle, in frame: PageRect) -> PageRect {
+  public static func fittingFrame(_ text: String, style: NativeTextStyle, in frame: PageRect) -> PageRect {
     guard !text.isEmpty else { return frame }
     // Match Text's line metrics. Opting into legacy font leading on macOS
     // can measure six 24-point lines as 138 rather than 144 and truncate them.
@@ -28,22 +28,22 @@ enum NotebookTextTypography {
       options:[.usesLineFragmentOrigin],context:nil)
     return .init(x:frame.x,y:frame.y,width:min(frame.width,max(1,ceil(rect.width))),height:max(1,ceil(rect.height)))
   }
-  static func frame(_ element: AgentElement) -> PageRect {
+  public static func frame(_ element: AgentElement) -> PageRect {
     element.kind == .nativeText ? fittingFrame(element.source,style:element.textStyle ?? .standard,in:element.frame) : element.frame
   }
-  static func frame(_ element: SpatialElement) -> PageRect {
+  public static func frame(_ element: SpatialElement) -> PageRect {
     let frame = PageRect(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
     return element.kind == .nativeText ? fittingFrame(element.source,style:element.textStyle,in:frame) : frame
   }
 
-  static func attributed(_ text: String, style: NativeTextStyle, editing: Bool = false) -> NSAttributedString {
+  public static func attributed(_ text: String, style: NativeTextStyle, editing: Bool = false) -> NSAttributedString {
     let result = NSMutableAttributedString(string:text,attributes:attributes(style:style,format:style.format ?? .init(),editing:editing))
     for run in style.runs ?? [] where run.location >= 0 && run.length > 0 && run.location <= result.length-run.length {
       result.setAttributes(attributes(style:style,format:run.format,editing:editing),range:.init(location:run.location,length:run.length))
     }
     return result
   }
-  static func attributes(style: NativeTextStyle, format: NativeTextFormat, editing: Bool = false) -> [NSAttributedString.Key:Any] {
+  public static func attributes(style: NativeTextStyle, format: NativeTextFormat, editing: Bool = false) -> [NSAttributedString.Key:Any] {
     let weight = format.bold.map { $0 ? 0.9 : 0.3 } ?? style.weight
     let nativeWeight: NativeFont.Weight = switch weight {
     case ..<0.2: .light; case ..<0.4: .regular; case ..<0.6: .medium; case ..<0.8: .semibold; default: .bold
@@ -70,7 +70,7 @@ enum NotebookTextTypography {
     }
     return result
   }
-  static func format(from attributes: [NSAttributedString.Key:Any], base: NativeTextStyle, editing: Bool = false) -> NativeTextFormat {
+  public static func format(from attributes: [NSAttributedString.Key:Any], base: NativeTextStyle, editing: Bool = false) -> NativeTextFormat {
     var format = attributes[formatKey] as? NativeTextFormat ?? base.format ?? .init()
     let expected = self.attributes(style:base,format:format)
     if let font = attributes[.font] as? NativeFont, let previous = expected[.font] as? NativeFont {
@@ -92,7 +92,7 @@ enum NotebookTextTypography {
     if attributes[.backgroundColor] == nil { format.highlight = nil }
     return format
   }
-  static func style(from text: NSAttributedString, base: NativeTextStyle, editing: Bool = false) -> NativeTextStyle {
+  public static func style(from text: NSAttributedString, base: NativeTextStyle, editing: Bool = false) -> NativeTextStyle {
     var result = base, runs: [NativeTextRun] = []
     text.enumerateAttributes(in:.init(location:0,length:text.length)) { attributes,range,_ in
       let format = format(from:attributes,base:base,editing:editing)

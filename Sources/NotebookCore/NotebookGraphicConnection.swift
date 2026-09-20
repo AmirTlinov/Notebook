@@ -223,7 +223,12 @@ public struct NotebookGraphicGraph: Sendable {
       self.surface = surface; self.shown = shown
     }
   }
-  struct ElementSource: Sendable { let source:NotebookElementPlacement.Source;let surface:SurfaceID }
+  struct ElementSource: Sendable {
+    let source:NotebookElementPlacement.Source
+    let surface:SurfaceID
+    var text:String? = nil
+    var textStyle:NativeTextStyle = .standard
+  }
   private final class Source: @unchecked Sendable {
     private let lock=NSLock()
     private var visibility:[UUID:NotebookGraphicVisibility]=[:]
@@ -385,6 +390,10 @@ public struct NotebookGraphicGraph: Sendable {
     for node in nodes.values where node.shown && node.placement.descends(from:key) {
       guard let layout=resolve(node.id).layout else { continue }
       bounds=bounds.union(.init(x:layout.frame.x,y:layout.frame.y,width:layout.frame.width,height:layout.frame.height))
+    }
+    for (id,element) in base.elements {
+      guard let placement=placement(id),placement.descends(from:key) else { continue }
+      bounds=bounds.union(NotebookElementPresentation(placement:placement,text:element.text,style:element.textStyle).bounds)
     }
     return bounds.isNull ? nil : bounds
   }
@@ -582,7 +591,7 @@ extension PageDocument {
       return .init(id:element.id,graphic:graphic,frame:source.frame,surface:.page(id),shown:shown.contains(element.id),placement:placement)
     }
     return .init(nodes,groupSources:groups.mapValues { .init(source:$0,surface:.page(id)) },elementSources:Dictionary(elements.filter { $0.kind != .group && $0.graphic == nil }.map {
-      (collaborationIdentity($0.id),.init(source:.init(frame:$0.frame,parentID:$0.parentID,basis:$0.basis),surface:.page(id)))
+      (collaborationIdentity($0.id),.init(source:.init(frame:$0.frame,parentID:$0.parentID,basis:$0.basis),surface:.page(id),text:$0.kind == .nativeText ? $0.source : nil,textStyle:$0.textStyle ?? .standard))
     },uniquingKeysWith:{ first,_ in first }),resolvers:[.page(id):resolver])
   }
 }
@@ -612,7 +621,7 @@ extension BoardDocument {
         origin:group.worldOrigin ?? .zero,parentID:group.parentID,basis:group.basis,isGroup:true),surface:group.surface)
     },elementSources:Dictionary(elements.filter { $0.kind != .group && $0.graphic == nil }.map {
       (collaborationIdentity($0.id),.init(source:.init(frame:.init(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height),
-        origin:$0.worldOrigin ?? .zero,parentID:$0.parentID,basis:$0.basis),surface:$0.surface))
+        origin:$0.worldOrigin ?? .zero,parentID:$0.parentID,basis:$0.basis),surface:$0.surface,text:$0.kind == .nativeText ? $0.source : nil,textStyle:$0.textStyle))
     },uniquingKeysWith:{ first,_ in first }),resolvers:resolvers)
   }
 }

@@ -261,27 +261,31 @@ extension NotebookStore {
           : CollaborationTarget(kind: .board, id: boardID)
         guard let layout = try storedGraphicResolution(target:target,elementID:element.id,relativeToParent:true).layout else { return }
         frame = layout.frame
+      } else if element.graphic == nil {
+        let local=PageRect(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+        let placement=try NotebookElementPlacement(id:element.id,frame:local).updating(frame:local,basis:element.basis)
+        frame=NotebookElementPresentation(element,placement:placement).frame
       } else { frame = .init(x: element.frame.x,y: element.frame.y,width: element.frame.width,height: element.frame.height) }
       let bounds=try NotebookElementBasis.spatialBounds(CGRect(x:frame.x,y:frame.y,width:frame.width,height:frame.height),origin:element.worldOrigin ?? .zero)
       let id = element.surface.kind == .cover ? (element.surface.ownerID?.uuidString.lowercased() ?? "") : element.id
       try insertSpatialEntry(address: fragment.address, boardID: boardID, id: id,
         kind: element.surface.kind == .cover ? "coverElement" : "element", key: element.id,
-        origin:bounds.origin,width:frame.width,height:frame.height,z:Double(fragment.position),parentID:element.parentID,nonGraphic:element.graphic == nil,database:database)
+        origin:bounds.origin,width:frame.width,height:frame.height,z:Double(fragment.position),parentID:element.parentID,database:database)
       if element.surface.kind == .cover { try database.noteOwner(.cover, fragment.address) }
   }
 
   func insertSpatialEntry(address: String, boardID: UUID, id: String, kind: String,
     key: String, origin: WorldPoint, width: Double, height: Double, z: Double,
-    parentID: String? = nil, isGroup: Bool = false, hasPaint: Bool = true, nonGraphic: Bool = false, maxZ: Double? = nil, lowerKey: String? = nil,
+    parentID: String? = nil, isGroup: Bool = false, hasPaint: Bool = true, maxZ: Double? = nil, lowerKey: String? = nil,
     database: NotebookSQLConnection) throws {
     guard let maximum=origin.projectionOffset(x:width,y:height) else { throw NotebookStorageError.limitExceeded("spatial_bounds") }
-    try database.run("INSERT INTO spatial_entries(entry_id,address,board_id,owner_id,kind,layer,z_index,paint_key,min_tx,min_ty,min_x,min_y,max_tx,max_ty,max_x,max_y,parent_id,is_group,has_paint,max_z,lower_key,space_key,non_graphic) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [
+    try database.run("INSERT INTO spatial_entries(entry_id,address,board_id,owner_id,kind,layer,z_index,paint_key,min_tx,min_ty,min_x,min_y,max_tx,max_ty,max_x,max_y,parent_id,is_group,has_paint,max_z,lower_key,space_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [
       .text(address + ":" + id), .text(address), .text(boardID.uuidString.lowercased()), .text(id),
       .text(kind), .integer(kind == "item" ? 1 : 0), .real(z), .text(key),
       .integer(origin.tileX), .integer(origin.tileY), .real(origin.localX), .real(origin.localY),
       .integer(maximum.tileX), .integer(maximum.tileY), .real(maximum.localX), .real(maximum.localY),
       parentID.map { .text(collaborationIdentity($0)) } ?? .null,.integer(isGroup ? 1 : 0),.integer(hasPaint ? 1 : 0),
-      .real(maxZ ?? z),.text(lowerKey ?? key),.integer(Self.spatialSpaceKey(board:boardID.uuidString.lowercased(),parent:parentID.map(collaborationIdentity))),.integer(nonGraphic ? 1 : 0)])
+      .real(maxZ ?? z),.text(lowerKey ?? key),.integer(Self.spatialSpaceKey(board:boardID.uuidString.lowercased(),parent:parentID.map(collaborationIdentity)))])
   }
 
   private func placementGroupIDs(boardID: String, stackID: String, database: NotebookSQLConnection) throws -> [String] {

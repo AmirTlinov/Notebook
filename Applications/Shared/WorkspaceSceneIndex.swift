@@ -95,7 +95,7 @@ struct WorkspaceSceneIndex: Sendable {
         let layout = element.graphic == nil ? nil : graphicGraph.resolve(element.id).layout
         guard element.graphic == nil || layout != nil else { continue }
         let placement=element.graphic == nil ? graphicGraph.placement(element.id) : nil
-        guard let bounds=layout.map({ CGRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height) }) ?? placement?.bounds else { continue }
+        guard let bounds=layout.map({ CGRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height) }) ?? placement.map({ NotebookElementPresentation(element,placement:$0).bounds }) else { continue }
         let frame=PageRect(x:bounds.minX,y:bounds.minY,width:bounds.width,height:bounds.height)
         elements[element.id] = element
         if element.surface == .board(node.id), let origin = layout?.origin ?? placement?.origin {
@@ -110,7 +110,7 @@ struct WorkspaceSceneIndex: Sendable {
         covers: covers, coverIndices: covers.mapValues { elements in
           WorkspaceSpatialIndex(entries: elements.enumerated().compactMap { offset, element in
             guard let bounds=graphicGraph.resolve(element.id).layout.map({ CGRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height) })
-              ?? graphicGraph.placement(element.id)?.bounds else { return nil }
+              ?? graphicGraph.placement(element.id).map({ NotebookElementPresentation(element,placement:$0).bounds }) else { return nil }
             let frame=PageRect(x:bounds.minX,y:bounds.minY,width:bounds.width,height:bounds.height)
             return .init(id: .element(element.id), bounds: .init(origin: .init(x: frame.x, y: frame.y),
               width: frame.width, height: frame.height), zIndex: Double(offset))

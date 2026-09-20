@@ -4,6 +4,7 @@ import ImageIO
 import NotebookCore
 import SwiftUI
 import XCTest
+import WebKit
 #if os(iOS)
 import UIKit
 #else
@@ -291,6 +292,108 @@ import AppKit
     XCTAssertEqual(rootTarget.maximumBodyHeight,110)
     try rootTarget.resizeBody(width:100,height:110)
     XCTAssertEqual(rootTarget.frame,.init(x:0,y:100,width:220,height:300))
+  }
+
+  func testMixedWholeMovesAndScalesWithoutRelayoutOrRestartingItsProgram() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("mixed-whole-runtime-\(UUID())")
+    let model=NotebookAppModel(store:NotebookStore(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:.init(width:834,height:1194))
+    var page=try XCTUnwrap(model.activePage)
+    let whole=AgentElement(id:"whole",kind:.group,frame:.init(x:100,y:100,width:400,height:400),source:"",html:"",
+      basis:.init(size:.init(x:400,y:400)))
+    let program=AgentElement(id:"program",kind:.web,frame:.init(x:20,y:20,width:180,height:100),source:"Counter",html:
+      "<button id='counter' onclick='this.textContent=Number(this.textContent)+1'>7</button><input id='value' value='retained'>",parentID:whole.id)
+    let text=AgentElement(id:"text",kind:.nativeText,frame:.init(x:20,y:150,width:180,height:10),source:"Несколько строк текста внутри общего основания",html:"",
+      textStyle:.init(fontSize:20),parentID:whole.id)
+    XCTAssertTrue(page.replaceElements([whole,program,text],actor:model.actorID));try model.store.savePage(page)
+    await model.reloadExternalChanges()?.value
+    let content=MixedWholeProgramPage(pageID:page.id).environment(model)
+    #if os(iOS)
+    let previous=UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.windows.first(where: \.isKeyWindow)
+    let window=UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let host=UIHostingController(rootView:content);window.rootViewController=host;window.makeKeyAndVisible()
+    defer { window.isHidden=true;window.rootViewController=nil;previous?.makeKey() }
+    func webViews(_ view:UIView) -> [WKWebView] { (view as? WKWebView).map { [$0] } ?? view.subviews.flatMap(webViews) }
+    func allWebs() -> [WKWebView] { webViews(host.view) }
+    func layout() { host.view.layoutIfNeeded() }
+    func rectangle(_ web:WKWebView) -> CGRect { web.convert(web.bounds,to:host.view) }
+    #else
+    let previous=NSApp.keyWindow,window=NSWindow(contentRect:.init(x:0,y:0,width:834,height:1194),styleMask:[.titled],backing:.buffered,defer:false)
+    window.isReleasedWhenClosed=false
+    let host=NSHostingView(rootView:content);window.contentView=host;window.makeKeyAndOrderFront(nil)
+    defer { window.orderOut(nil);window.contentView=nil;previous?.makeKey() }
+    func webViews(_ view:NSView) -> [WKWebView] { (view as? WKWebView).map { [$0] } ?? view.subviews.flatMap(webViews) }
+    func allWebs() -> [WKWebView] { webViews(host) }
+    func layout() { host.layoutSubtreeIfNeeded() }
+    func rectangle(_ web:WKWebView) -> CGRect { web.convert(web.bounds,to:host) }
+    #endif
+    let source=agentElementSnapshotSource(program)
+    func live() -> [WKWebView] { allWebs().filter { ($0.navigationDelegate as? AgentWebCoordinator)?.hasLiveSource(source) == true } }
+    var found:WKWebView?
+    let deadline=ContinuousClock.now + .seconds(8)
+    repeat {
+      layout()
+      if let web=live().first,(try? await web.evaluateJavaScript("Boolean(document.getElementById('counter'))")) as? Bool == true { found=web;break }
+      try await Task.sleep(for:.milliseconds(20))
+    } while ContinuousClock.now<deadline
+    let web=try XCTUnwrap(found)
+    _ = try await web.evaluateJavaScript("window.runtimeToken='kept';document.getElementById('value').value='typed value';null")
+    let ref=EditableElementReference.page(pageID:page.id,elementID:whole.id),textRef=EditableElementReference.page(pageID:page.id,elementID:text.id)
+    let textSize=try XCTUnwrap(model.elementPresentation(textRef)).bodySize
+    model.selectElement(ref)
+    XCTAssertTrue(model.groupAllowsLiveManipulation(ref))
+    let bounds=try XCTUnwrap(model.groupManipulationGeometry(ref)).bounds
+    XCTAssertGreaterThan(bounds.maxY,260,"Selection includes fitted text beyond its ten-point authored height")
+    let move=try XCTUnwrap(model.beginElementManipulation(ref,kind:.move))
+    XCTAssertTrue(model.finishElementManipulation(move,translation:.init(x:60,y:80)))
+    let movedSaved=await model.finishPendingPersistence();XCTAssertTrue(movedSaved);await model.reloadExternalChanges()?.value
+    let moved=try model.store.loadPage(page.id)
+    XCTAssertEqual(moved.element(id:text.id),text);XCTAssertEqual(moved.element(id:program.id),program)
+    for rotated in [false,true] {
+      if rotated {
+        XCTAssertTrue(model.transformSelectedGroup(radians:.pi/6,scale:1.2))
+        let saved=await model.finishPendingPersistence();XCTAssertTrue(saved);await model.reloadExternalChanges()?.value
+        XCTAssertNotEqual(try model.store.loadPage(page.id).element(id:whole.id)?.basis,moved.element(id:whole.id)?.basis,
+          model.actionCue ?? "The rotation must actually commit, not merely handle a denied command")
+      }
+      let expected=try XCTUnwrap(model.elementPresentation(.page(pageID:page.id,elementID:program.id))).bounds
+      let ready=ContinuousClock.now + .seconds(3)
+      repeat {
+        layout()
+        if abs(rectangle(web).width-expected.width)<0.5 && abs(rectangle(web).height-expected.height)<0.5 { break }
+        try await Task.sleep(for:.milliseconds(20))
+      } while ContinuousClock.now<ready
+      XCTAssertEqual(live().count,1);XCTAssertTrue(live().first === web,"A whole pose must not mount a second program")
+      XCTAssertEqual(web.bounds.width,180,accuracy:0.01);XCTAssertEqual(web.bounds.height,100,accuracy:0.01)
+      XCTAssertEqual(rectangle(web).width,expected.width,accuracy:0.5);XCTAssertEqual(rectangle(web).height,expected.height,accuracy:0.5)
+      XCTAssertEqual(try XCTUnwrap(model.elementPresentation(textRef)).bodySize,textSize,"Moving/scaling the whole does not reflow its text")
+      let retained=try await web.evaluateJavaScript("window.runtimeToken==='kept'&&document.getElementById('value').value==='typed value'") as? Bool
+      XCTAssertEqual(retained,true)
+      let count=try await web.evaluateJavaScript("document.getElementById('counter').click();Number(document.getElementById('counter').textContent)") as? Int
+      XCTAssertEqual(count,rotated ? 9 : 8)
+      if rotated {
+        #if os(iOS)
+        let png=try XCTUnwrap(UIGraphicsImageRenderer(bounds:host.view.bounds).image { _ in
+          host.view.drawHierarchy(in:host.view.bounds,afterScreenUpdates:true)
+        }.pngData())
+        #else
+        window.displayIfNeeded();host.layoutSubtreeIfNeeded()
+        let bitmap=try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in:host.bounds));host.cacheDisplay(in:host.bounds,to:bitmap)
+        let png=try XCTUnwrap(bitmap.representation(using:.png,properties:[:]))
+        #endif
+        let proof=XCTAttachment(data:png,uniformTypeIdentifier:"public.png");proof.name="mixed-whole-live-program-rotated";proof.lifetime = .keepAlways;add(proof)
+      }
+    }
+    let changed=try model.store.loadPage(page.id)
+    XCTAssertEqual(changed.element(id:text.id),text);XCTAssertEqual(changed.element(id:program.id),program)
+    let rotation=try XCTUnwrap(model.store.collaborationActions(afterID:nil).first { $0.action.summary == "Повернуть группу" })
+    XCTAssertEqual(rotation.action.operations.map(\.id),[whole.id])
+    model.undoCollaboration(rotation.id)
+    let undone=await model.finishPendingPersistence();XCTAssertTrue(undone);await model.reloadExternalChanges()?.value
+    XCTAssertEqual(try model.store.loadPage(page.id).elements,moved.elements)
+    XCTAssertEqual(try NotebookStore(root:root).loadPage(page.id).elements,moved.elements)
+    XCTAssertEqual(live().count,1);XCTAssertTrue(live().first === web)
   }
 
   func testMixedBodiesSharePlacementButRetainLocalLayoutAndPixels() async throws {
@@ -936,9 +1039,10 @@ import AppKit
     _ = try store.applyNativeElementEdits([whole],summary:"Целое",sources:[.init(target:target,id:"whole")],actor:actor)
     for start in stride(from:0,to:160,by:32) {
       let operations=try (start..<start+32).map { i in
-        CollaborationOperation(kind:.insertElement,target:target,id:"shape-\(i)",values:["kind":.string("graphic"),"source":.string(""),"worldOrigin":try .encode(WorldPoint.zero),
-          "parentID":.string("whole"),"frame":try .encode(PageRect(x:i == 159 ? 2000 : Double(i%16)*50,y:i == 159 ? 1500 : Double(i/16)*50,width:30,height:30)),
-          "graphic":try .encode(NotebookGraphic(shape:.rectangle,style:.init(fill:.black)))])
+        var values:[String:JSONValue] = ["kind":.string(i<2 ? "nativeText" : "graphic"),"source":.string(i<2 ? "Текст" : ""),"worldOrigin":try .encode(WorldPoint.zero),
+          "parentID":.string("whole"),"frame":try .encode(PageRect(x:i == 159 ? 2000 : Double(i%16)*50,y:i == 159 ? 1500 : Double(i/16)*50,width:30,height:30))]
+        if i>=2 { values["graphic"] = try .encode(NotebookGraphic(shape:.rectangle,style:.init(fill:.black))) }
+        return CollaborationOperation(kind:.insertElement,target:target,id:"shape-\(i)",values:values)
       }
       _ = try store.applyNativeElementEdits(operations,summary:"Участники",sources:operations.map { .init(target:target,id:$0.id!) },actor:actor)
     }
@@ -967,12 +1071,16 @@ import AppKit
     }
     let original=try await publish("initial")
     let read=try XCTUnwrap(model.spatialGroupReads[target.id]?["whole"])
-    XCTAssertFalse(read.hasNonGraphics);XCTAssertEqual(read.localBounds.width,2030);XCTAssertEqual(read.localBounds.height,1530)
+    XCTAssertEqual(read.localBounds.width,2030);XCTAssertEqual(read.localBounds.height,1530)
     let start=model.presentedGraphicGraph(boardID:target.id,cohort:original)
     XCTAssertLessThan(start.nodes.count,160,"The contact does not admit all member bodies")
     XCTAssertGreaterThan(original.plan.presentedOwners.count,0);XCTAssertLessThan(original.plan.presentedOwners.count,160)
     XCTAssertFalse(original.rasters.isEmpty,"Some visible members remain in passive tiles")
-    let live=try XCTUnwrap(original.plan.presentedOwners.compactMap { owner -> String? in if case .element(let id)=owner.id { return id };return nil }.first)
+    let native=try XCTUnwrap(start.placement("shape-0")),nativeSource=try XCTUnwrap(store.readSpatialElement(boardID:target.id,elementID:"shape-0"))
+    let nativeBefore=NotebookElementPresentation(nativeSource,placement:native)
+    let live=try XCTUnwrap(original.plan.presentedOwners.compactMap { owner -> String? in
+      if case .element(let id)=owner.id,start.nodes[id] != nil { return id };return nil
+    }.first)
     let before=try XCTUnwrap(start.resolve(live).layout)
     let contact=try XCTUnwrap(model.beginElementManipulation(ref,kind:.move))
     defer { model.cancelElementManipulation() }
@@ -982,6 +1090,9 @@ import AppKit
       "The live member must wait for the same publication as passive peers")
     let moved=try await publish("held"),movedGraph=model.presentedGraphicGraph(boardID:target.id,cohort:moved)
     let after=try XCTUnwrap(movedGraph.resolve(live).layout)
+    let nativeAfter=NotebookElementPresentation(nativeSource,placement:try XCTUnwrap(movedGraph.placement("shape-0")))
+    XCTAssertEqual(nativeAfter.bodySize,nativeBefore.bodySize)
+    XCTAssertEqual(nativeAfter.bounds,nativeBefore.bounds.offsetBy(dx:40,dy:25),"Native members share the published whole pose with passive figures")
     XCTAssertEqual(after.frame.x,before.frame.x+40,accuracy:1e-9);XCTAssertEqual(after.frame.y,before.frame.y+25,accuracy:1e-9)
     XCTAssertEqual(model.groupManipulationGeometry(ref)?.bounds,read.localBounds.applying(try XCTUnwrap(movedGraph.placement("whole")).transform))
     XCTAssertNotEqual(moved.geometryID,original.geometryID)
@@ -1166,5 +1277,17 @@ import AppKit
   private func dark(_ pixels: [UInt8],_ x: Int,_ y: Int) -> Bool {
     let p=(y*400+x)*4
     return max(pixels[p],pixels[p+1],pixels[p+2])<80
+  }
+}
+
+private struct MixedWholeProgramPage: View {
+  @Environment(NotebookAppModel.self) private var model
+  let pageID:UUID
+  var body: some View {
+    if let page=model.pages[pageID] {
+      AgentOverlayView(page:page,renderingScale:1,allowsInteraction:true,inputEnabled:true,
+        onRenderReady:{ _ in },onState:{ _,_ in false })
+        .frame(width:page.size.width,height:page.size.height,alignment:.topLeading).background(.white)
+    }
   }
 }

@@ -7,7 +7,6 @@ public struct NotebookElementGroupRead: Equatable, Sendable {
   public let source: NotebookElementPlacement.Source
   public let placement: NotebookElementPlacement
   public let localBounds: CGRect
-  public let hasNonGraphics: Bool
   public let isSelfContained: Bool
 }
 
@@ -38,11 +37,11 @@ extension NotebookStore {
       let boardID=target.boardID ?? target.id
       guard let source=try elementGroupingSource(target:target,id:elementID),source.isGroup,
         let placement=try readElementPlacement(target:target,elementID:elementID) else { return nil }
-      let row=try currentSQL!.rows("SELECT non_graphic FROM spatial_entries WHERE address=? AND is_group=1",
+      let row=try currentSQL!.rows("SELECT 1 FROM spatial_entries WHERE address=? AND is_group=1",
         [.text("board.json#/boards/@"+boardID.uuidString.lowercased()+"/board/elements/@"+fieldKey([collaborationIdentity(elementID)]))]).first
-      guard let row else { return nil }
+      guard row != nil else { return nil }
       let owner=target.kind.rawValue+":"+target.id.uuidString.lowercased()
-      return try .init(source:source,placement:placement,localBounds:storedGroupLocalBounds(boardID:boardID,id:elementID) ?? .null,hasNonGraphics:row[0].integer == 1,
+      return try .init(source:source,placement:placement,localBounds:storedGroupLocalBounds(boardID:boardID,id:elementID) ?? .null,
         isSelfContained:try dependentGraphicAddresses(owner:owner,id:elementID).isEmpty)
     }
   }

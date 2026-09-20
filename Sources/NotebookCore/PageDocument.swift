@@ -253,7 +253,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     return Set(ids).count == ids.count
       && elements.allSatisfy {
         !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-          && ($0.parentID == nil ? $0.frame.isContained(in: size) : NotebookElementBasis.validLocalFrame($0.frame))
+          && ($0.parentID == nil && $0.kind != .group ? $0.frame.isContained(in: size) : NotebookElementBasis.validLocalFrame($0.frame))
           && NotebookElementBasis.validParent($0.parentID,childID:$0.id)
           && $0.state.isValid
           && NotebookProgramPackage.validSourceReference($0.programPackage, isProgram: $0.kind == .web, source: $0.source, html: $0.html, css: $0.css, javaScript: $0.javaScript)

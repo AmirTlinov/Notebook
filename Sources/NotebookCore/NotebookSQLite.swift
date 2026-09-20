@@ -340,7 +340,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 15
+  static let currentDatabaseVersion: Int64 = 16
 
   func prepareDatabase(initialWorkspaceID: UUID? = nil) throws {
     if currentSQL != nil { guard initialWorkspaceID == nil else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }; return }
@@ -465,15 +465,19 @@ extension NotebookStore {
       }
       if admittedVersion < 8 { try rebuildItemLifecycleIndex(database: database) }
       if admittedVersion < 10 { try rebuildRetiredNotebookPageIndex(database: database) }
-      if admittedVersion < 15 {
-        // Read each old body once during local index admission, never during
-        // a group contact. Shared records, hashes and delivery stay unchanged.
-        var after = ""
-        while let row = try database.rows("SELECT address FROM spatial_entries WHERE is_group=0 AND kind<>'item' AND address>? ORDER BY address LIMIT 1",[.text(after)]).first {
+      if admittedVersion < 16 {
+        // Rebuild only native-body bounds. Text uses the same local typography
+        // as painting, including fitted overflow; shared source stays untouched.
+        try database.run("DROP INDEX IF EXISTS spatial_group_non_graphic")
+        if try database.rows("PRAGMA table_info(spatial_entries)").contains(where:{ $0[1].text == "non_graphic" }) {
+          try database.run("ALTER TABLE spatial_entries DROP COLUMN non_graphic")
+        }
+        var after=""
+        while let row=try database.rows("SELECT address FROM spatial_entries WHERE is_group=0 AND kind<>'item' AND address>? ORDER BY address LIMIT 1",[.text(after)]).first {
           after=row[0].text!
           guard let fragment=try storedFragments(address:after,descendants:false).first else { throw NotebookStorageError.corruptRecord(after) }
           if fragment.value["graphic"] == nil {
-            try database.run("UPDATE spatial_entries SET non_graphic=1 WHERE address=?",[.text(after)])
+            try indexSpatialElement(fragment,database:database)
             try noteElementGroupAncestors(fragment,database:database)
           }
         }

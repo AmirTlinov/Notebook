@@ -52,15 +52,12 @@ extension NotebookAppModel {
     guard let graph=prepared ?? groupGraph(reference)?.0 else { return false }
     let id=reference.elementID
     if case .spatial(let owner,_)=reference {
-      guard let read=spatialGroupReads[owner]?[id],!read.hasNonGraphics,!read.localBounds.isNull,
+      guard let read=spatialGroupReads[owner]?[id],!read.localBounds.isNull,
         read.source == nativeElementSource(reference)?.placementSource else { return false }
       let desired=projectingGraphicCommands(boardHierarchy?.board(owner)?.graphicGraph() ?? NotebookGraphicGraph([])) { .spatial(boardID:owner,elementID:$0) }
       return graph.placement(id) == desired.placement(id)
     }
-    guard case .page(let owner,_)=reference else { return false }
-    let key=UUID(uuidString:id)?.uuidString ?? id
-    return !(pages[owner]?.elements ?? []).filter { $0.kind != .group && $0.graphic == nil }.compactMap(\.parentID)
-      .contains { (UUID(uuidString:$0)?.uuidString ?? $0) == key || graph.placement($0)?.descends(from:id) == true }
+    return graph.groups[id] != nil
   }
 
   var hasSpatialGroupContact: Bool {
