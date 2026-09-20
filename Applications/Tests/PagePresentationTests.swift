@@ -121,25 +121,32 @@ final class PagePresentationTests: XCTestCase {
     controller.view.addSubview(clip)
     let view = PagePresentationNativeView(), page = PageDocument(size: .init(width: 100, height: 100), actor: UUID())
     view.frame = .init(x: -50, y: 0, width: 100, height: 100); clip.addSubview(view)
+    let fringe=2/window.screen.scale
+    let first=CGRect(x:50-fringe,y:0,width:50+fringe,height:100)
+    let next=CGRect(x:0,y:0,width:50+fringe,height:100)
     var region: CGRect?
     let initialRegion = expectation(description: "First installed physical clip")
     view.onVisibleRegion = {
       region = $0
-      if $0 == CGRect(x: 50, y: 0, width: 50, height: 100) { initialRegion.fulfill() }
+      if $0 == first { initialRegion.fulfill() }
     }
-    view.update(model: model, page: page, isCurrent: true, isVisible: true, isReady: false, activity: nil)
+    view.update(model: model, page: page, isCurrent: false, isVisible: true, isReady: false, activity: nil)
     model.pagePresentations.cameraDidChange()
     await fulfillment(of: [initialRegion], timeout: 3)
-    XCTAssertEqual(region, CGRect(x: 50, y: 0, width: 50, height: 100), "Program demand is visible geometry, not whole-page readiness")
+    XCTAssertEqual(region, first, "A visible neighbouring page keeps its graphics, including the antialias fringe")
     let movedRegion = expectation(description: "Moved physical clip")
     view.onVisibleRegion = {
       region = $0
-      if $0 == CGRect(x: 0, y: 0, width: 50, height: 100) { movedRegion.fulfill() }
+      if $0 == next { movedRegion.fulfill() }
     }
+    let projection=ScenePlaneProjection(try XCTUnwrap(model.presence))
+    view.viewport.observe(projection)
+    model.updatePresence(projection.current,settled:false)
+    XCTAssertFalse(model.permitsBackgroundPreparation)
     view.frame.origin.x = 0
-    model.pagePresentations.cameraDidChange()
+    projection.didProject()
     await fulfillment(of: [movedRegion], timeout: 3)
-    XCTAssertEqual(region, CGRect(x: 0, y: 0, width: 50, height: 100))
+    XCTAssertEqual(region, next)
     view.uninstall()
   }
 

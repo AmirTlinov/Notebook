@@ -332,7 +332,13 @@ extension NotebookAppModel {
     includesInk: Bool = true, includesObjects: Bool = true) -> [EditableElementReference] {
     let origin = address.worldOrigin ?? .zero
     let erasures = elementErasures(on:address.surface)
-    let references = graph.nodes.values.filter { node in
+    let candidates:AnySequence<NotebookGraphicGraph.Node>
+    if address.surface.kind == .page,let pageID=address.surface.ownerID,origin == .zero,
+      let x=polygon.map(\.x).min(),let y=polygon.map(\.y).min(),let right=polygon.map(\.x).max(),let bottom=polygon.map(\.y).max() {
+      let visible=graph.visiblePageGraphics(pageID,in:.init(x:x,y:y,width:right-x,height:bottom-y))
+      candidates=AnySequence(visible.layouts.keys.lazy.compactMap { graph.node($0) })
+    } else { candidates=graph.nodes.values }
+    let references = candidates.filter { node in
       guard (node.graphic.freehand != nil ? includesInk : includesObjects), node.surface == address.surface, node.shown, let layout = graph.resolve(node.id).layout else { return false }
       let delta = origin.delta(to:node.origin), frame = layout.frame
       guard NotebookToolGeometry.intersects(.init(x:delta.x+frame.x,y:delta.y+frame.y,width:frame.width,height:frame.height),polygon:polygon) else { return false }
@@ -365,7 +371,7 @@ extension NotebookAppModel {
     }
     var all = references
     if address.surface.kind == .page, let page = pages[address.surface.ownerID!] {
-      all += page.elements.filter { element in
+      all += page.displayElements(graphicIDs:[]).filter { element in
         guard element.kind != .group, element.graphic == nil else { return false }
         let f = elementPresentationFrame(address.reference(element.id),fallback:element.frame)
         let rect = CGRect(x:f.x,y:f.y,width:f.width,height:f.height)

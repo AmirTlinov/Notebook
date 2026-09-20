@@ -5,38 +5,19 @@ struct AgentOverlayView: View {
   @Environment(NotebookAppModel.self) private var model
   @Environment(\.displayScale) private var displayScale
 
-  let pageID: UUID
-  let pageSize: PageSize
+  let page:PageDocument
   let renderingScale: Double
-  let elements: [AgentElement]
+  private var pageID:UUID { page.id }
+  private var pageSize:PageSize { page.size }
   let allowsInteraction: Bool
   let inputEnabled: Bool
   let onRenderReady: (Bool) -> Void
   let onState: (String, JSONValue) -> Bool
-  var graphicPresentation = NotebookGraphicPresentation([])
   var visibleRegion: CGRect? = nil
 
   @State private var readiness = AgentOverlayReadiness()
 
-  private var graph: NotebookGraphicGraph {
-    if let page = model.pages[pageID] { return model.graphicGraph(page:page) }
-    return .init(elements.compactMap { element in
-      guard let graphic = element.graphic else { return nil }
-      return .init(id:element.id,graphic:graphic,frame:element.frame,surface:.page(pageID),shown:graphicPresentation.geometryIDs.contains(element.id))
-    })
-  }
-
-  private var visibleElements: [AgentElement] {
-    let graph = graph
-    return elements.filter {
-      guard $0.kind != .group else { return false }
-      if $0.graphic != nil {
-        guard let frame = graph.resolve($0.id).layout?.frame else { return false }
-        return frame.x < pageSize.width && frame.y < pageSize.height && frame.x+frame.width > 0 && frame.y+frame.height > 0
-      }
-      return captureRegion(for: $0) != nil
-    }
-  }
+  private var display:NotebookPageGraphicDisplay { model.pageGraphicDisplay(page,in:visibleRegion) }
 
   private func captureRegion(for element: AgentElement) -> PageRect? {
     let frame = element.frame
@@ -59,21 +40,20 @@ struct AgentOverlayView: View {
 
   private func runtimeIDs(in elements: [AgentElement]) -> Set<String> {
     Set(elements.filter { element in
-      element.kind == .web && (visibleRegion.map {
+      allowsInteraction && element.kind == .web && (visibleRegion.map {
         $0.intersects(CGRect(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height))
       } ?? true)
     }.map(\.id))
   }
 
   var body: some View {
-    let visible = visibleElements
-    let graph = graph
+    let display=display,visible=display.elements,graph=display.graph
     let erasures = model.elementErasures(on: .page(pageID))
     let runningPrograms = runtimeIDs(in: visible)
     // Observe completion in this body, not only in the deferred ForEach builder.
     let appearances = Dictionary(uniqueKeysWithValues: visible.compactMap { element -> (String, NotebookElementAppearance)? in
       let reference = EditableElementReference.page(pageID:pageID,elementID:element.id)
-      let layout = element.graphic == nil ? nil : graph.resolve(element.id).layout
+      let layout = display.layouts[element.id]
       let frame = layout?.frame ?? model.elementPresentationFrame(reference,fallback:element.frame)
       guard let value = model.elementErasureCache.appearance(surface:.page(pageID),id:element.id,
         graphic:graph.nodes[element.id]?.graphic,layout:layout,size:.init(width:frame.width,height:frame.height),
@@ -87,7 +67,7 @@ struct AgentOverlayView: View {
           elementID: element.id
         )
         let interactiveReference = InteractiveElementReference.page(pageID: pageID, elementID: element.id)
-        let layout = element.graphic == nil ? nil : graph.resolve(element.id).layout
+        let layout = display.layouts[element.id]
         let frame = layout?.frame ?? model.elementPresentationFrame(reference, fallback: element.frame)
         let cuts = erasures[element.id] ?? []
         let appearance = appearances[element.id]
@@ -132,7 +112,7 @@ struct AgentOverlayView: View {
     .coordinateSpace(name: NotebookManipulationSpace.material)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .onAppear { publishReadiness() }
-    .onChange(of: elements) { _, updatedElements in
+    .onChange(of: page.elements) { _, updatedElements in
       readiness.retain(updatedElements)
       publishReadiness()
     }
@@ -146,7 +126,7 @@ struct AgentOverlayView: View {
   }
 
   private func publishReadiness() {
-    onRenderReady(readiness.isReady(for: visibleElements))
+    onRenderReady(readiness.isReady(for: display.elements))
   }
 }
 

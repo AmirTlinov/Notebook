@@ -9,7 +9,8 @@ struct MacElementControls: View {
   @State private var contact: UUID?
 
   var body: some View {
-    let rect = frame, availableLayers = model.availableLayerMoves, isGroup=model.isElementGroup(reference)
+    let rect=frame,isGroup=model.isElementGroup(reference)
+    let availableLayers=isGroup ? [] : model.availableLayerMoves
     ZStack(alignment: .topLeading) {
       Rectangle().stroke(.tint, lineWidth: 1).frame(width: rect.width, height: rect.height)
         .position(x: rect.midX, y: rect.midY).allowsHitTesting(false)

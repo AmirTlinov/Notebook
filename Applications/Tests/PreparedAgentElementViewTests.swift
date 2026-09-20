@@ -890,8 +890,8 @@ final class PreparedAgentElementViewTests: XCTestCase {
     }
     let viewport = PageProgramViewport()
     var commits: [String: JSONValue] = [:]
-    let host = try SurfaceHost(content: AnyView(PageProgramViewportFixture(viewport: viewport, pageID: pageID,
-      elements: elements, onState: { commits[$0] = $1; return true }).environment(model)))
+    let host = try SurfaceHost(content: AnyView(PageProgramViewportFixture(viewport: viewport,
+      page:.init(id:pageID,size:.init(width:400,height:320),actor:UUID(),elements:elements),onState: { commits[$0] = $1; return true }).environment(model)))
     defer { host.close() }
     try await waitUntil("All four visible programs are ready without an activation tap", timeout: .seconds(12)) {
       let views = self.webViews(in: host.controller.view)
@@ -1493,12 +1493,11 @@ private final class PageProgramViewport { var region: CGRect? }
 
 private struct PageProgramViewportFixture: View {
   let viewport: PageProgramViewport
-  let pageID: UUID
-  let elements: [AgentElement]
+  let page:PageDocument
   let onState: (String, JSONValue) -> Bool
   var body: some View {
-    AgentOverlayView(pageID: pageID, pageSize: .init(width: 400, height: 320), renderingScale: 1,
-      elements: elements, allowsInteraction: true, inputEnabled: true, onRenderReady: { _ in },
+    AgentOverlayView(page:page,renderingScale:1,
+      allowsInteraction: true, inputEnabled: true, onRenderReady: { _ in },
       onState: onState, visibleRegion: viewport.region)
       .frame(width: 400, height: 320)
   }

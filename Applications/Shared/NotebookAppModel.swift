@@ -3276,7 +3276,7 @@ final class NotebookAppModel {
     switch reference {
     case .page(let pageID, let id):
       guard !isPageBeingDeleted(pageID), let page = pages[pageID],
-        let element = page.elements.first(where: { $0.id == id }) else { return nil }
+        let element = page.element(id:id) else { return nil }
       return (fitted(elementCommandDrafts[reference]?.frame ?? element.frame),
         .init(x: 0, y: 0, width: page.size.width, height: page.size.height), page.elementIdentityStamp(id), nil)
     case .spatial(let boardID, let id):
@@ -3299,7 +3299,7 @@ final class NotebookAppModel {
     if let draft = elementCommandDrafts[reference] { return draft.graphic }
     if let working = acceptedWorkingGraphic(reference) { return working.graphic }
     switch reference {
-    case .page(let pageID, let id): return pages[pageID]?.elements.first { $0.id == id }?.graphic
+    case .page(let pageID, let id): return pages[pageID]?.element(id:id)?.graphic
     case .spatial(let boardID, let id): return boardHierarchy?.board(boardID)?.elements.first { $0.id == id }?.graphic
     }
   }
@@ -3501,7 +3501,7 @@ final class NotebookAppModel {
     switch reference {
     case .page(let owner,let id):
       guard pages[owner] != nil else { return nil }
-      return .init(target:.init(kind:.page,id:owner),id:id,page:pages[owner]?.elements.first { $0.id == id })
+      return .init(target:.init(kind:.page,id:owner),id:id,page:pages[owner]?.element(id:id))
     case .spatial(let owner,let id):
       let element = boardHierarchy?.board(owner)?.elements.first { $0.id == id }
       guard boardHierarchy?.board(owner) != nil else { return nil }

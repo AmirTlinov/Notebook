@@ -1,7 +1,38 @@
 import Foundation
 import NotebookCore
 
+struct NotebookPageGraphicDisplay {
+  let graph:NotebookGraphicGraph
+  let elements:[AgentElement]
+  let layouts:[String:NotebookGraphicLayout]
+  let visitedIndexNodes:Int
+  let resolvedGraphics:Int
+}
+
 extension NotebookAppModel {
+  func pageGraphicDisplay(_ page:PageDocument,in visibleRegion:CGRect?) -> NotebookPageGraphicDisplay {
+    let graph=graphicGraph(page:page)
+    let paper=CGRect(x:0,y:0,width:page.size.width,height:page.size.height)
+    let query=graph.visiblePageGraphics(page.id,in:visibleRegion.map { $0.intersection(paper) } ?? paper)
+    var layouts=query.layouts,pinned=Set<String>()
+    if case .page(let owner,let id)=interactiveElementFocus,owner == page.id { pinned.insert(id) }
+    if case .page(let owner,let id)=selectionSession.manipulation?.reference,owner == page.id { pinned.insert(id) }
+    var resolved=query.resolvedGraphics
+    for id in pinned where layouts[id] == nil {
+      resolved += 1;layouts[id]=graph.resolve(id).layout
+    }
+    let working=workingGraphics.filter { $0.surface == .page(page.id) }
+    let workingIDs=Set(working.map(\.id))
+    let admitted=page.displayElements(graphicIDs:Set(layouts.keys)).filter { element in
+      guard !workingIDs.contains(element.id) else { return false }
+      if element.graphic != nil { return true }
+      let f=element.frame
+      return f.x<page.size.width && f.y<page.size.height && f.x+f.width>0 && f.y+f.height>0
+    }
+    return .init(graph:graph,elements:admitted+working.filter { layouts[$0.id] != nil }.map(\.pageElement),
+      layouts:layouts,visitedIndexNodes:query.visitedIndexNodes,resolvedGraphics:resolved)
+  }
+
   var manipulatedBindingTarget: (reference: EditableElementReference, elementID: String)? {
     guard let contact = selectionSession.manipulation, case .endpoint(let terminal) = contact.kind,
       let connection = contact.connection,

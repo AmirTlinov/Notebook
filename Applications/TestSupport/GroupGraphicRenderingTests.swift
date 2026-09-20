@@ -2,7 +2,13 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import NotebookCore
+import SwiftUI
 import XCTest
+#if os(iOS)
+import UIKit
+#else
+import AppKit
+#endif
 @testable import Notebook
 
 @MainActor final class GroupGraphicRenderingTests: XCTestCase {
@@ -163,7 +169,8 @@ import XCTest
     func lasso(_ min: Double,_ max: Double,ink: Bool,passes: Int = 1) {
       model.drawingToolSettings.lassoSelectsInk=ink;model.drawingToolSettings.lassoSelectsObjects = !ink
       let local:[SpatialPoint]=[.init(x:min,y:min),.init(x:max,y:min),.init(x:max,y:max),.init(x:min,y:max)]
-      let points=Array(repeating:local,count:passes).flatMap { $0 }.map { SpatialPoint(x:500-4*$0.y,y:50+2*$0.x) }
+      let repeated:[SpatialPoint]=Array(repeating:local,count:passes).flatMap { $0 }
+      let points:[SpatialPoint]=repeated.map { point in SpatialPoint(x:500.0-4.0*point.y,y:50.0+2.0*point.x) }
       XCTAssertTrue(model.drawingTools.begin(at:points[0],address:address,screenScale:1))
       for point in points.dropFirst() { model.drawingTools.move(to:point) };model.drawingTools.finish()
     }
@@ -423,6 +430,105 @@ import XCTest
     let retained=model.presentedBoard(captured,boardID:boardID,cohort:all)
     XCTAssertEqual(retained.elements.first { $0.id == "a" }?.parentID,group.lowercased())
     for id in ["a","b"] { XCTAssertEqual(model.presentedGraphicGraph(boardID:boardID,cohort:all).resolve(id).layout,beforeRegroup.resolve(id).layout) }
+  }
+
+  func testPageViewportSkipsHiddenMembersAndKeepsTheSameVisiblePixelsDuringAWholeDrag() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("group-visible-\(UUID())")
+    let model=NotebookAppModel(store:.init(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root);await model.start(pageSize:.init(width:1000,height:1000))
+    let initialized=await model.finishPendingPersistence();XCTAssertTrue(initialized)
+    var page=try XCTUnwrap(model.activePage)
+    let whole=AgentElement(id:"whole",kind:.group,frame:.init(x:20,y:20,width:900,height:900),source:"",html:"",basis:.init(size:.init(x:900,y:900)))
+    var children=(0..<1000).map { i in AgentElement(id:"part-\(i)",kind:.graphic,
+      frame:.init(x:Double(i%32)*28,y:Double(i/32)*28,width:16,height:16),source:"",html:"",
+      graphic:.init(shape:i.isMultiple(of:2) ? .rectangle : .ellipse,style:.init(strokeWidth:1,fill:.black)),parentID:"whole") }
+    children.insert(.init(id:"between",kind:.graphic,frame:.init(x:350,y:390,width:30,height:30),source:"",html:"",
+      graphic:.init(shape:.ellipse,style:.init(strokeWidth:3,fill:.init(red:1,green:1,blue:1)))),at:501)
+    XCTAssertTrue(page.replaceElements([whole]+children,actor:model.actorID))
+    try model.store.savePage(page);await model.reloadExternalChanges()?.value
+    page=try XCTUnwrap(model.pages[page.id])
+    let reference=EditableElementReference.page(pageID:page.id,elementID:"whole")
+    model.selectElement(reference)
+    let held=try XCTUnwrap(model.beginElementManipulation(reference,kind:.move))
+    model.updateElementManipulation(held,translation:.init(x:40,y:50))
+    let area=CGRect(x:340,y:370,width:48,height:48)
+    let visible=model.pageGraphicDisplay(page,in:area)
+    XCTAssertEqual(visible.elements.count,5)
+    XCTAssertLessThan(visible.resolvedGraphics,8);XCTAssertLessThan(visible.visitedIndexNodes,150)
+    XCTAssertEqual(visible.elements.map(\.id),page.elements.filter { visible.layouts[$0.id] != nil }.map(\.id))
+    func render(_ region:CGRect?) throws -> CGImage {
+      let painter=ImageRenderer(content:AgentOverlayView(page:page,renderingScale:1,allowsInteraction:false,inputEnabled:false,
+        onRenderReady:{ _ in },onState:{ _,_ in false },visibleRegion:region).environment(model)
+        .frame(width:1000,height:1000).background(Color.white))
+      painter.scale=1
+      return try XCTUnwrap(painter.cgImage)
+    }
+    func rgba(_ image:CGImage) throws -> Data {
+      let clipped=try XCTUnwrap(image.cropping(to:area))
+      let context=try XCTUnwrap(CGContext(data:nil,width:clipped.width,height:clipped.height,bitsPerComponent:8,bytesPerRow:clipped.width*4,
+        space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.draw(clipped,in:.init(x:0,y:0,width:clipped.width,height:clipped.height))
+      return Data(bytes:try XCTUnwrap(context.data),count:clipped.width*clipped.height*4)
+    }
+    let all=try render(nil),small=try render(area),pixels=try rgba(small)
+    XCTAssertEqual(pixels,try rgba(all),"Culling must retain the interleaved painter order and exactly the same crop")
+    XCTAssertTrue(stride(from:0,to:pixels.count,by:4).contains { pixels[$0]<80 && pixels[$0+1]<80 && pixels[$0+2]<80 },"An empty image is not a valid comparison")
+    let clock=ContinuousClock()
+    func ms(_ d:Duration) -> Double { let c=d.components;return Double(c.seconds)*1000+Double(c.attoseconds)/1e15 }
+    var full:[Double]=[],bounded:[Double]=[]
+    for i in 0..<10 {
+      for limited in (i.isMultiple(of:2) ? [false,true] : [true,false]) {
+        let start=clock.now,image=try render(limited ? area : nil),elapsed=ms(start.duration(to:clock.now))
+        XCTAssertEqual(image.width,1000)
+        if limited { bounded.append(elapsed) } else { full.append(elapsed) }
+      }
+    }
+    let record:[String:Any]=["scope":"Debug ImageRenderer, same live AgentOverlayView, warm source/index, 1001 graphics, 48x48 crop; not on-screen FPS or input-to-present",
+      "fullPageMs":full,"visibleOnlyMs":bounded,"displayedGraphics":visible.elements.count,
+      "resolvedGraphics":visible.resolvedGraphics,"visitedIndexNodes":visible.visitedIndexNodes]
+    let timing=XCTAttachment(data:try JSONSerialization.data(withJSONObject:record,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
+    timing.name="gui291-page-visible-render-cost";timing.lifetime = .keepAlways;add(timing)
+    let data=NSMutableData(),destination=try XCTUnwrap(CGImageDestinationCreateWithData(data,"public.png" as CFString,1,nil))
+    CGImageDestinationAddImage(destination,small,nil);XCTAssertTrue(CGImageDestinationFinalize(destination))
+    let proof=XCTAttachment(data:data as Data,uniformTypeIdentifier:"public.png");proof.name="group-visible-page-crop";proof.lifetime = .keepAlways;add(proof)
+    model.cancelElementManipulation(held)
+    XCTAssertEqual(try model.store.loadPage(page.id).elements,page.elements)
+  }
+
+  func testNativeCameraChangesTheGraphicCandidatesWithoutRepublishingTheirSource() async throws {
+    #if os(iOS)
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous=scene.windows.first { $0.isKeyWindow },window=UIWindow(windowScene:scene),controller=UIViewController()
+    window.rootViewController=controller;window.makeKeyAndVisible()
+    defer { window.isHidden=true;window.rootViewController=nil;previous?.makeKey() }
+    let clip=UIView(frame:.init(x:30,y:30,width:96,height:96));clip.clipsToBounds=true
+    controller.view.addSubview(clip)
+    let host=PagePresentationNativeView()
+    #else
+    let window=NSWindow(contentRect:.init(x:0,y:0,width:96,height:96),styleMask:[.titled],backing:.buffered,defer:false)
+    let clip=PagePresentationNativeView(frame:.init(x:0,y:0,width:96,height:96))
+    window.contentView=clip;window.makeKeyAndOrderFront(nil)
+    defer { window.orderOut(nil);window.contentView=nil }
+    let host=PagePresentationNativeView(frame:.zero)
+    #endif
+    host.frame = .init(x:-160,y:0,width:400,height:400);clip.addSubview(host)
+    let viewport=host.viewport;defer { viewport.stop() }
+    let page=PageDocument(size:.init(width:400,height:400),actor:UUID(),elements:[
+      .init(id:"a",kind:.graphic,frame:.init(x:180,y:20,width:20,height:20),source:"",html:"",graphic:.init(shape:.rectangle)),
+      .init(id:"b",kind:.graphic,frame:.init(x:20,y:20,width:20,height:20),source:"",html:"",graphic:.init(shape:.ellipse))])
+    let graph=page.graphicGraph(),projection=ScenePlaneProjection(.init(mode:.page,camera:.init(),viewport:.init(x:96,y:96)))
+    viewport.isVisible=true
+    func move(_ x:CGFloat,expecting id:String) async {
+      let ready=expectation(description:"Native viewport shows \(id)")
+      viewport.onRegion={ area in
+        XCTAssertTrue(page.graphicGraph().sharesSource(with:graph))
+        let candidates=graph.visiblePageGraphics(page.id,in:area)
+        if Set(candidates.layouts.keys) == [id] { ready.fulfill() }
+      }
+      host.frame.origin.x=x;viewport.observe(projection);projection.didProject()
+      await fulfillment(of:[ready],timeout:3)
+    }
+    await move(-160,expecting:"a");await move(0,expecting:"b");await move(-160,expecting:"a")
   }
 
   private func pixels(_ png: Data) throws -> [UInt8] {

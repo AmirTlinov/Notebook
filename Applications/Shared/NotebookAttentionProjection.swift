@@ -176,7 +176,7 @@ enum NotebookAttentionProjection {
         workspace.selectedPageID == target.id, presence.mode == .page else { return nil }
       itemID = ownerID
       if let id = elementID {
-        guard let element = model.pages[target.id]?.elements.first(where: { $0.id == id }) else { return nil }
+        guard let element = model.pages[target.id]?.element(id:id) else { return nil }
         local = model.elementPresentationFrame(.page(pageID:target.id,elementID:id),fallback:element.frame)
         if element.kind == .group {
           guard let group=model.groupManipulationGeometry(.page(pageID:target.id,elementID:id)) else { return nil }

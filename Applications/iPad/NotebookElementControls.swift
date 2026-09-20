@@ -40,7 +40,7 @@ struct NotebookElementControls: UIViewRepresentable {
     }
     let isGroup=model.isElementGroup(reference)
     view.graphic = graphic
-    view.configure(selectionID: selectionID, frame: frame, layout: model.graphicElement(reference)?.connection == nil ? nil : model.graphicLayout(reference), scale:scale,
+    view.configure(selectionID: selectionID, frame: frame, layout: graphic?.connection == nil ? nil : model.graphicLayout(reference), scale:scale,
       hasLabel: !(graphic?.label.isEmpty ?? true), mode:model.selectionSession.geometryMode, manipulating: model.selectionSession.manipulation != nil,subject:isGroup ? .group : .element)
     view.beginManipulation = { kind in
       guard model.selectionSession.id == selectionID,
@@ -91,9 +91,11 @@ struct NotebookElementControls: UIViewRepresentable {
         guard model.selectionSession.id == selectionID else { return };model.clearSelection()
       })
     }
-    view.setLayerActions(available:model.availableLayerMoves) { move in
-      guard model.selectionSession.id == selectionID else { return }
-      model.arrangeSelection(move)
+    if !isGroup {
+      view.setLayerActions(available:model.availableLayerMoves) { move in
+        guard model.selectionSession.id == selectionID else { return }
+        model.arrangeSelection(move)
+      }
     }
     view.changeRouting = { routing in
       guard model.selectionSession.id == selectionID else { return }

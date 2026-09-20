@@ -163,9 +163,25 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   public let size: PageSize
   public private(set) var drawingData: Data
   public private(set) var drawingStamp: VersionStamp
-  public private(set) var elements: [AgentElement]
-  public private(set) var agentStamp: VersionStamp
-  public private(set) var collaboration: CollaborativeContent?
+  public private(set) var elements: [AgentElement] { didSet { elementProjectionCache = .init() } }
+  public private(set) var agentStamp: VersionStamp { didSet { elementProjectionCache = .init() } }
+  public private(set) var collaboration: CollaborativeContent? { didSet { elementProjectionCache = .init() } }
+  private var elementProjectionCache = PageElementProjectionCache()
+  var elementProjection: PageElementProjection { elementProjectionCache.value(for:self) }
+  private enum CodingKeys: String,CodingKey {
+    case format,id,size,drawingData,drawingStamp,elements,agentStamp,collaboration,computations
+  }
+  public static func == (a:Self,b:Self) -> Bool {
+    a.format == b.format && a.id == b.id && a.size == b.size && a.drawingData == b.drawingData
+      && a.drawingStamp == b.drawingStamp && a.elements == b.elements && a.agentStamp == b.agentStamp
+      && a.collaboration == b.collaboration && a.computations == b.computations
+  }
+  public func element(id:String) -> AgentElement? { elementProjection.element(id) }
+  /// Original painter order, with no scan of unrequested graphic sources.
+  /// Other content keeps its specialized preparation/readiness owner.
+  public func displayElements(graphicIDs:Set<String>) -> [AgentElement] {
+    elementProjection.elements(graphicIDs:graphicIDs)
+  }
   /// Absent until a user activates ink; not a second page or editor.
   public internal(set) var computations: [NotebookComputation]?
 

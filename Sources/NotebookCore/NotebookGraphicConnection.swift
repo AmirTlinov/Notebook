@@ -224,7 +224,15 @@ public struct NotebookGraphicGraph: Sendable {
     }
   }
   struct Group: Sendable { let source:NotebookElementPlacement.Source;let surface:SurfaceID }
-  private final class Source: Sendable {
+  private final class Source: @unchecked Sendable {
+    private let lock=NSLock()
+    private var visibility:[UUID:NotebookGraphicVisibility]=[:]
+    func pageVisibility(_ id:UUID,graph:NotebookGraphicGraph) -> NotebookGraphicVisibility {
+      lock.lock();defer { lock.unlock() }
+      if let value=visibility[id] { return value }
+      let value=NotebookGraphicVisibility(pageID:id,graph:graph,nodes:Array(nodes.values),groups:groups)
+      visibility[id]=value;return value
+    }
     let nodes:[String:Node]
     let groups:[String:Group]
     init(_ nodes:[Node],groups:[String:Group]) {
@@ -301,7 +309,7 @@ public struct NotebookGraphicGraph: Sendable {
     base=Source(nodes,groups:groupSources);projection=nil
     baseResolver=Projection(sources:[:],graphics:[:],additions:[:],resolvers:resolvers)
   }
-  private init(base:Source,projection:Projection,baseResolver:Projection) { self.base=base;self.projection=projection;self.baseResolver=baseResolver }
+  private init(base:Source,projection:Projection?,baseResolver:Projection) { self.base=base;self.projection=projection;self.baseResolver=baseResolver }
   public func source(_ id:String) -> NotebookElementPlacement.Source? {
     let key=collaborationIdentity(id)
     if let override=projection?.sources[key] { return override }
@@ -342,6 +350,17 @@ public struct NotebookGraphicGraph: Sendable {
   /// original node dictionary. No address or implementation type is exposed.
   public func sharesSource(with other:Self) -> Bool { base === other.base }
   public var projectedPlacementReadCount:Int { projection?.placementReadCount ?? 0 }
+  /// Exact broad-phase candidates in the existing page coordinate system.
+  /// Original nodes remain addressable even when no pixel query visits them.
+  public func visiblePageGraphics(_ pageID:UUID,in area:CGRect) -> NotebookGraphicVisibilityResult {
+    let original=Self(base:base,projection:nil,baseResolver:baseResolver)
+    let index=base.pageVisibility(pageID,graph:original)
+    var changed=Set(projection?.sources.keys.map { $0 } ?? [])
+    changed.formUnion(projection?.graphics.keys.map { $0 } ?? [])
+    changed.formUnion(projection?.additions.keys.map { $0 } ?? [])
+    return index.query(area,graph:self,changed:changed)
+  }
+
   public func groupIsSelfContained(_ id:String) -> Bool {
     guard base.groups[collaborationIdentity(id)] != nil else { return false }
     for member in nodes.values where member.shown && member.placement.descends(from:id) {
@@ -371,7 +390,13 @@ public struct NotebookGraphicGraph: Sendable {
       .init(graphic:graphic,layout:layout,size:size,erasures:cuts)
     }) -> NotebookGraphicConnection.Binding? {
     var candidates: [(id:String,distance:Double,inside:Bool,area:Double,anchor:SpatialPoint)] = []
-    for node in nodes.values where node.shown && ![.connector,.freehand].contains(node.graphic.shape)
+    let near:AnySequence<Node>
+    if surface.kind == .page,let pageID=surface.ownerID,origin == .zero,tolerance.isFinite,tolerance>=0 {
+      let radius=tolerance*1.5
+      let hits=visiblePageGraphics(pageID,in:.init(x:point.x-radius,y:point.y-radius,width:radius*2,height:radius*2))
+      near=AnySequence(hits.layouts.keys.lazy.compactMap { node($0) })
+    } else { near=nodes.values }
+    for node in near where node.shown && ![.connector,.freehand].contains(node.graphic.shape)
       && node.surface == surface && collaborationIdentity(node.id) != id.map(collaborationIdentity) {
       guard let layout=resolve(node.id).layout,let p=layout.framePoint(point,from:origin) else { continue }
       let retained=collaborationIdentity(node.id) == retainedID.map(collaborationIdentity)
@@ -538,8 +563,8 @@ public struct NotebookGraphicGraph: Sendable {
 }
 
 extension PageDocument {
-  public func graphicGraph() -> NotebookGraphicGraph {
-    let shown=graphicPresentation.geometryIDs
+  public func graphicGraph() -> NotebookGraphicGraph { elementProjection.graph }
+  func makeGraphicGraph(shown:Set<String>) -> NotebookGraphicGraph {
     let groups=Dictionary(elements.filter { $0.kind == .group }.map {
       (collaborationIdentity($0.id),NotebookElementPlacement.Source(frame:$0.frame,parentID:$0.parentID,basis:$0.basis,isGroup:true))
     },uniquingKeysWith:{ first,_ in first })

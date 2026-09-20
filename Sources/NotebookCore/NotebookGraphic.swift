@@ -243,14 +243,7 @@ extension SpatialInkJournal {
 }
 
 extension PageDocument {
-  public var graphicPresentation: NotebookGraphicPresentation {
-    .init(elements.compactMap { element in
-      guard let graphic = element.graphic else { return nil }
-      return .init(id: element.id, graphic: graphic,
-        version: collaboration?.fields[fieldKey(["elements", collaborationIdentity(element.id), "graphic", "sourceInkIDs"])]
-          ?? .init(stamp: agentStamp, human: true))
-    })
-  }
+  public var graphicPresentation: NotebookGraphicPresentation { elementProjection.presentation }
 }
 
 extension BoardDocument {

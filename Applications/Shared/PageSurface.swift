@@ -33,10 +33,8 @@ struct PageSurface: View {
         GridPaperView()
         if scale > 0 {
           AgentOverlayView(
-            pageID: page.id,
-            pageSize: page.size,
+            page:page,
             renderingScale: scale * displayProjection,
-            elements: model.pageElementsForDisplay(page),
             allowsInteraction: isVisible && isCurrent,
             inputEnabled: isVisible && isInteractive,
             onRenderReady: { ready in
@@ -47,7 +45,7 @@ struct PageSurface: View {
             onState: { elementID, state in
               guard isVisible, isCurrent, model.activePage?.id == page.id else { return false }
               return model.commitElementState(pageID: page.id, elementID: elementID, state: state)
-            }, graphicPresentation: page.graphicPresentation, visibleRegion: visibleRegion
+            }, visibleRegion: visibleRegion
           )
           .opacity(isVisible ? 1 : 0)
           .allowsHitTesting(isVisible && isInteractive)

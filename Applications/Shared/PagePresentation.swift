@@ -30,6 +30,7 @@ final class NotebookPagePresentationRegistry {
 
 struct PagePresentationView: UIViewRepresentable {
   @Environment(NotebookAppModel.self) private var model
+  @Environment(\.scenePlaneProjection) private var projection
   let page: PageDocument
   let isCurrent: Bool
   let isVisible: Bool
@@ -42,6 +43,7 @@ struct PagePresentationView: UIViewRepresentable {
     view.update(model: model, page: page, isCurrent: isCurrent, isVisible: isVisible,
       isReady: isReady, activity: activity)
     view.onVisibleRegion = onVisibleRegion
+    view.viewport.observe(projection)
     view.scheduleVisibleRegion()
   }
   static func dismantleUIView(_ view: PagePresentationNativeView, coordinator: ()) { view.uninstall() }
@@ -65,9 +67,11 @@ final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
   private var isReady = false
   private var activity: PageTurnActivity?
   private var retired = false
-  var onVisibleRegion: (CGRect) -> Void = { _ in }
-  private var regionTask: Task<Void, Never>?
-  private var publishedRegion: CGRect?
+  lazy var viewport = PageViewportProjection(host:self)
+  var onVisibleRegion: (CGRect) -> Void {
+    get { viewport.onRegion }
+    set { viewport.onRegion = newValue }
+  }
 
   init() {
     super.init(frame: .zero)
@@ -93,22 +97,13 @@ final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
     }
     source = Source(page); self.isCurrent = isCurrent; self.isVisible = isVisible
     self.isReady = isReady; self.activity = activity
+    viewport.isVisible = isVisible
   }
 
   override func layoutSubviews() { super.layoutSubviews(); scheduleVisibleRegion() }
   override func didMoveToWindow() { super.didMoveToWindow(); scheduleVisibleRegion() }
 
-  func scheduleVisibleRegion() {
-    guard !retired, regionTask == nil else { return }
-    regionTask = Task { @MainActor [weak self] in
-      guard let self else { return }
-      regionTask = nil
-      guard !retired, model?.permitsBackgroundPreparation == true else { return }
-      let visible = isCurrent && isVisible ? SceneSourceVisibility.visibleRect(self) : .null
-      guard visible != publishedRegion else { return }
-      publishedRegion = visible; onVisibleRegion(visible)
-    }
-  }
+  func scheduleVisibleRegion() { viewport.refresh() }
 
   func isPresenting(_ page: PageDocument) -> Bool {
     guard !retired, isCurrent, isVisible, isReady, activity?.isTransitioning != true,
@@ -125,20 +120,88 @@ final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
   func uninstall() {
     guard !retired else { return }
     retired = true; source = nil; activity = nil
-    regionTask?.cancel(); regionTask = nil; onVisibleRegion = { _ in }
+    viewport.stop()
     model?.pagePresentations.remove(self)
     model?.unregisterScenePresentation(self)
     model = nil
   }
 }
 #else
-struct PagePresentationView: View {
+struct PagePresentationView: NSViewRepresentable {
+  @Environment(\.scenePlaneProjection) private var projection
   let page: PageDocument
   let isCurrent: Bool
   let isVisible: Bool
   let isReady: Bool
   let activity: PageTurnActivity?
   var onVisibleRegion: (CGRect) -> Void = { _ in }
-  var body: some View { Color.clear.accessibilityHidden(true) }
+  func makeNSView(context:Context) -> PagePresentationNativeView { .init(frame:.zero) }
+  func updateNSView(_ view:PagePresentationNativeView,context:Context) {
+    view.viewport.onRegion=onVisibleRegion;view.viewport.isVisible=isVisible
+    view.viewport.observe(projection)
+  }
+  static func dismantleNSView(_ view:PagePresentationNativeView,coordinator:()) { view.viewport.stop() }
+}
+
+final class PagePresentationNativeView: NSView {
+  lazy var viewport=PageViewportProjection(host:self)
+  override var isFlipped:Bool { true }
+  override func hitTest(_ point:NSPoint) -> NSView? { nil }
+  override func layout() { super.layout();viewport.refresh() }
+  override func viewDidMoveToWindow() { super.viewDidMoveToWindow();viewport.refresh() }
 }
 #endif
+
+#if os(iOS)
+private typealias PageViewportHost=UIView
+#else
+private typealias PageViewportHost=NSView
+#endif
+
+/// Reads the existing native camera, including held gestures. This is display
+/// demand, not background preparation, current-page focus or a second camera.
+@MainActor
+final class PageViewportProjection: ScenePlaneProjectionObserver {
+  private weak var host:PageViewportHost?
+  private weak var projection:ScenePlaneProjection?
+  private var task:Task<Void,Never>?
+  private var published:CGRect?
+  private var stopped=false
+  var isVisible=false
+  var onRegion:(CGRect)->Void = { _ in }
+  fileprivate init(host:PageViewportHost) { self.host=host }
+  func observe(_ value:ScenePlaneProjection?) {
+    if projection !== value { projection?.remove(self);projection=value;value?.register(self) }
+    refresh()
+  }
+  func scenePlaneDidProject() { refresh() }
+  func refresh() {
+    guard !stopped,task == nil else { return }
+    task=Task { @MainActor [weak self] in
+      guard let self else { return };task=nil
+      guard !stopped else { return }
+      let region=region()
+      guard region != published else { return };published=region;onRegion(region)
+    }
+  }
+  private func region() -> CGRect {
+    guard isVisible,let host,let window=host.window,SceneSourceVisibility.isMounted(host) else { return .null }
+    #if os(iOS)
+    let visible=SceneSourceVisibility.visibleRect(host)
+    let origin=host.convert(CGPoint.zero,to:window),x=host.convert(CGPoint(x:1,y:0),to:window),y=host.convert(CGPoint(x:0,y:1),to:window)
+    let backing=window.windowScene?.screen.scale ?? host.traitCollection.displayScale
+    #else
+    let visible=host.visibleRect.intersection(host.convert(window.contentView?.bounds ?? .zero,from:window.contentView))
+    let origin=host.convert(CGPoint.zero,to:nil),x=host.convert(CGPoint(x:1,y:0),to:nil),y=host.convert(CGPoint(x:0,y:1),to:nil)
+    let backing=window.backingScaleFactor
+    #endif
+    guard !visible.isNull,!visible.isEmpty else { return .null }
+    let density=max(hypot(x.x-origin.x,x.y-origin.y),hypot(y.x-origin.x,y.y-origin.y))*backing
+    guard density.isFinite,density>0 else { return host.bounds }
+    // Geometry outside the clip can still contribute antialiased edge pixels.
+    return visible.insetBy(dx:-2/density,dy:-2/density).intersection(host.bounds)
+  }
+  func stop() {
+    stopped=true;task?.cancel();task=nil;projection?.remove(self);projection=nil;host=nil;onRegion={ _ in }
+  }
+}
