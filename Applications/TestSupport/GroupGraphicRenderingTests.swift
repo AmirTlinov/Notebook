@@ -554,6 +554,63 @@ import AppKit
       "The containing board must not reuse old cover pixels merely because the board itself has no posed groups")
   }
 
+  func testNativeTextEraserCapturesFullLocalBodyAndFollowsTheWholeInExport() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("native-body-eraser-\(UUID())")
+    let model=NotebookAppModel(store:NotebookStore(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:.init(width:400,height:800))
+    var page=try XCTUnwrap(model.activePage)
+    let whole=AgentElement(id:"whole",kind:.group,frame:.init(x:40,y:30,width:300,height:700),source:"",html:"",
+      basis:.init(size:.init(x:200,y:200),transform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0)))
+    let text=AgentElement(id:"text",kind:.nativeText,frame:.init(x:10,y:20,width:100,height:10),
+      source:"Текст внутри целого сохраняет строки и измеренный след ластика",html:"",textStyle:.init(fontSize:20),parentID:"whole")
+    XCTAssertTrue(page.replaceElements([whole,text],actor:model.actorID));try model.store.savePage(page)
+    await model.reloadExternalChanges()?.value
+    let ref=EditableElementReference.page(pageID:page.id,elementID:text.id)
+    let shown=try XCTUnwrap(model.elementPresentation(ref)),size=shown.bodySize
+    let targets=model.eraserTargets(pageID:page.id),target=try XCTUnwrap(targets.first)
+    XCTAssertEqual(targets.count,1);XCTAssertFalse(target.wholeElement)
+    let bounds=CGRect(origin:.zero,size:size).applying(shown.placement.transform)
+    XCTAssertEqual(target.frame,.init(x:bounds.minX,y:bounds.minY,width:bounds.width,height:bounds.height))
+    XCTAssertGreaterThan(size.height,text.frame.height)
+    // A strip crosses glyphs near the end of the local first line. Its points
+    // and circular width are captured in the displayed, nonuniformly scaled basis.
+    let samples=[5.0,95].map { x -> SpatialInkSample in
+      let p=CGPoint(x:x,y:12).applying(shown.placement.transform)
+      return .init(point:.init(x:p.x,y:p.y),timeOffset:0,width:12,opacity:1,force:1,azimuth:0,altitude:1)
+    }
+    let action=PageInkAction(tool:.eraser,samples:samples).erasingElements(targets)
+    let drawing=try PageInkDrawing.decode(PageInkDrawing(actions:[action]).dataRepresentation())
+    let cuts=try XCTUnwrap(drawing.elementErasures[text.id])
+    let input=NotebookElementErasureCache.Input(graphic:nil,layout:nil,size:size,erasures:cuts)
+    let appearance=input.prepare(),live=NotebookElementAppearance.measuredErasurePath(cuts,size:size)
+    XCTAssertFalse(appearance.contains(.init(x:50,y:12),tolerance:0));XCTAssertTrue(live.contains(.init(x:50,y:12)))
+    XCTAssertTrue(appearance.contains(.init(x:50,y:30),tolerance:0));XCTAssertFalse(live.contains(.init(x:50,y:30)))
+    let bottom=CGPoint(x:50,y:size.height-2).applying(shown.placement.transform)
+    XCTAssertTrue(target.intersects([.init(point:.init(x:bottom.x,y:bottom.y),timeOffset:0,width:2,opacity:1,force:1,azimuth:0,altitude:1)]),
+      "Fitted lines below the authored minimum height are eraser targets too")
+    func render(_ ink:PageInkDrawing,_ elements:[AgentElement]) async throws -> Data {
+      let source=PageDocument(id:page.id,size:page.size,actor:model.actorID,drawingData:try ink.dataRepresentation(),elements:elements)
+      return try await PageCompositionRenderer.render(source,elementID:text.id,scale:1) { _ in
+        XCTFail("Native text has no WebKit raster owner");throw CocoaError(.featureUnsupported)
+      }.png
+    }
+    let uncut=try await render(.init(),page.elements),cut=try await render(drawing,page.elements)
+    XCTAssertNotEqual(try pixels(uncut),try pixels(cut),"The saved measured cut changes the actual exported glyph pixels")
+    let undone=try await render(drawing.removing([action.id]),page.elements)
+    XCTAssertEqual(try pixels(uncut),try pixels(undone))
+    let moved=AgentElement(id:whole.id,kind:.group,frame:.init(x:50,y:50,width:300,height:700),source:"",html:"",basis:whole.basis)
+    let movedPage=PageDocument(size:page.size,actor:model.actorID,elements:[moved,text])
+    let movedPresentation=NotebookElementPresentation(text,placement:try XCTUnwrap(movedPage.graphicGraph().placement(text.id)))
+    XCTAssertEqual(NotebookElementErasureCache.Input(graphic:nil,layout:nil,size:movedPresentation.bodySize,erasures:cuts),input,
+      "Moving an ancestor keeps the same prepared body mask")
+    let movedCut=try await render(drawing,[moved,text])
+    for (name,data) in [("before",uncut),("cut",cut),("whole-moved",movedCut)] {
+      let proof=XCTAttachment(data:data,uniformTypeIdentifier:"public.png");proof.name="native-text-eraser-\(name)";proof.lifetime = .keepAlways;add(proof)
+    }
+    XCTAssertEqual(page.elements[1],text);XCTAssertEqual(drawing.actions.first?.samples,samples)
+  }
+
   func testMeasuredEraserCapturesTheModelsWholeBasisNotTheLocalFrame() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("group-eraser-\(UUID())")
     let store = NotebookStore(root:root),actor = UUID(),size = PageSize(width:400,height:800)

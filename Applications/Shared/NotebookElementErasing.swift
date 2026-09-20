@@ -165,10 +165,13 @@ extension NotebookAppModel {
     let graph = graphicGraph(page: page)
     return pageElementsForDisplay(page).compactMap { element in
       guard element.kind != .group else { return nil }
-      let layout = element.graphic == nil ? nil : graph.resolve(element.id).layout
-      guard element.graphic == nil || layout != nil else { return nil }
-      return .init(elementID:element.id,frame:layout?.frame ?? element.frame,wholeElement:element.kind == .web,
-        graphicTransform:element.graphic?.transform,elementTransform:layout?.elementTransform)
+      if element.graphic == nil {
+        return elementPresentation(.page(pageID:pageID,elementID:element.id),graph:graph)?
+          .eraserTarget(id:element.id,wholeElement:element.kind == .web)
+      }
+      guard let layout=graph.resolve(element.id).layout else { return nil }
+      return .init(elementID:element.id,frame:layout.frame,
+        graphicTransform:element.graphic?.transform,elementTransform:layout.elementTransform)
     }
   }
 
@@ -177,9 +180,10 @@ extension NotebookAppModel {
     let board = cohort.frame.index.capturedHierarchy.board(boardID).map { presentedBoard($0, boardID: boardID, cohort: cohort) }
     var result: [SurfaceID: [InkElementTarget]] = [:]
     for element in board?.elements ?? [] where element.graphic == nil && element.kind != .group {
-      result[element.surface, default: []].append(.init(elementID: element.id,
-        frame: .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height),
-        worldOrigin: element.worldOrigin, wholeElement: element.kind == .web,graphicTransform:element.graphic?.transform))
+      guard let placement=graph.placement(element.id) else { continue }
+      result[element.surface,default:[]].append(NotebookElementPresentation(element,placement:placement)
+        .eraserTarget(id:element.id,wholeElement:element.kind == .web,
+          worldOrigin:element.surface.kind == .board ? placement.origin : nil))
     }
     for node in graph.nodes.values {
       guard let layout = graph.resolve(node.id).layout else { continue }
@@ -214,5 +218,18 @@ extension NotebookAppModel {
       }
     }
     return result
+  }
+}
+
+private extension NotebookElementPresentation {
+  /// Freeze the same full local body that receives the mask. Text's fitted
+  /// envelope can be narrower than its layout width and taller than its source.
+  func eraserTarget(id:String,wholeElement:Bool,worldOrigin:WorldPoint? = nil) -> InkElementTarget {
+    let t=placement.transform,size=bodySize,bounds=CGRect(origin:.zero,size:size).applying(t)
+    let basis=NotebookGraphicTransform(a:t.a*size.width/bounds.width,b:t.b*size.width/bounds.height,
+      c:t.c*size.height/bounds.width,d:t.d*size.height/bounds.height,
+      tx:(t.tx-bounds.minX)/bounds.width,ty:(t.ty-bounds.minY)/bounds.height)
+    return .init(elementID:id,frame:.init(x:bounds.minX,y:bounds.minY,width:bounds.width,height:bounds.height),
+      worldOrigin:worldOrigin,wholeElement:wholeElement,elementTransform:basis == .identity ? nil : basis)
   }
 }

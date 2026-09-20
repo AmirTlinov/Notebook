@@ -39,6 +39,24 @@ struct InkElementErasureTests {
     #expect(object.intersects([sample(100, 94), sample(300, 94)]))
   }
 
+  @Test(arguments:[false,true]) func transformedWholeObjectsUseTheirBodyAndPhysicalEraserRadius(reflected:Bool) throws {
+    let basis=NotebookGraphicTransform(a:reflected ? -0.5 : 0.5,b:reflected ? -0.5 : 0.5,
+      c:-0.5,d:0.5,tx:reflected ? 1 : 0.5,ty:reflected ? 0.5 : 0)
+    let object=InkElementTarget(elementID:"program",frame:target.frame,wholeElement:true,elementTransform:basis)
+    #expect(!object.intersects([sample(105,105),sample(145,105)]),"An empty corner of the outer frame is not the program")
+    #expect(object.intersects([sample(50,160),sample(350,160)]))
+    #expect(object.intersects([sample(200,160)]))
+    // Middle of the slanted upper-right edge, offset along its physical normal.
+    let length=hypot(0.6,1)
+    #expect(object.intersects([sample(250+5*0.6/length,130-5/length)]))
+    #expect(!object.intersects([sample(250+7*0.6/length,130-7/length)]))
+    #expect(!object.intersects([sample(200,93)]))
+    #expect(object.intersects([sample(200,95)]))
+    let restored=try JSONDecoder().decode(InkElementTarget.self,from:JSONEncoder().encode(object))
+    #expect(restored == object)
+    #expect(!restored.intersects([sample(105,105)]))
+  }
+
   @Test func sweptEraserRecordsOnlySeenTargetsAndUndoRestoresBothKindsOfPaint() throws {
     let eraser = PageInkAction(tool: .eraser, samples: [sample(50, 160), sample(350, 160)])
       .erasingElements([target, .init(elementID: "far", frame: .init(x: 900, y: 900, width: 20, height: 20))])

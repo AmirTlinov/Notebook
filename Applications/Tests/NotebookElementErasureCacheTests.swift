@@ -99,9 +99,14 @@ import WebKit
       "<svg viewBox='0 0 160 100'><circle cx='80' cy='50' r='20'><animate attributeName='r' values='10;30;10' dur='1s' repeatCount='indefinite'/></circle></svg>",
       "<button onclick='this.textContent=Number(this.textContent)+1'>1</button>"
     ].enumerated() {
+      let group=SpatialElement(id:"whole-\(index)",surface:.board(board),kind:.group,
+        frame:.init(x:0,y:0,width:160,height:100),worldOrigin:.init(x:-180+Double(index)*200,y:-50),source:"",
+        basis:.init(size:.init(x:160,y:100),transform:.init(a:0.5,b:0.5,c:-0.5,d:0.5,tx:0.5,ty:0)),
+        stamp:.init(counter:0,actor:model.actorID))
+      XCTAssertTrue(after.upsertElement(group,in:board,expected:nil,actor:model.actorID))
       let element = SpatialElement(id: "program-\(index)", surface: .board(board), kind: .web,
-        frame: .init(x: 0, y: 0, width: 160, height: 100), worldOrigin: .init(x: -180 + Double(index)*200, y: -50),
-        source: "Program \(index)", html: html, stamp: .init(counter: 0, actor: model.actorID))
+        frame: .init(x: 0, y: 0, width: 160, height: 100), worldOrigin: .zero,
+        source: "Program \(index)", html: html,parentID:group.id,stamp: .init(counter: 0, actor: model.actorID))
       XCTAssertTrue(after.upsertElement(element, in: board, expected: nil, actor: model.actorID))
     }
     _ = try model.store.saveBoardEdits(before: before, after: after)
@@ -109,6 +114,7 @@ import WebKit
     let viewport = SpatialPoint(x: 834, y: 1194)
     model.updatePresence(.init(boardID: board, mode: .board, camera: .init(scale: 1), viewport: viewport), settled: true)
     model.selectDrawingTool(.eraser)
+    model.selectEraserWidth(12)
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let host = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
     window.frame = .init(x: 0, y: 0, width: viewport.x, height: viewport.y)
@@ -126,12 +132,26 @@ import WebKit
       try await Task.sleep(for: .milliseconds(10))
     }
     XCTAssertEqual(programs(host.view), 2)
+    // A real recognizer contact through the empty AABB corner must not retire
+    // either transformed program or save a whole-object erasure for it.
+    do {
+      let pencil=try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
+      let touch=ProgramEraseTouch(),event=UIEvent();touch.hostWindow=window
+      touch.point = .init(x:viewport.x/2-175,y:viewport.y/2-45)
+      pencil.reset();pencil.touchesBegan([touch],with:event)
+      touch.point.x += 4;touch.time += 0.1;pencil.touchesMoved([touch],with:event)
+      touch.time += 0.1;pencil.touchesEnded([touch],with:event)
+      let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
+      XCTAssertEqual(programs(host.view),2)
+      XCTAssertTrue(try model.store.readSpatialInk(surfaces:[.board(board)]).elementErasures(on:.board(board)).isEmpty)
+    }
     for index in 0..<2 {
       let pencil = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
       let touch = ProgramEraseTouch(), event = UIEvent()
       touch.hostWindow = window
       // Four points of measured edge movement, not a covering geometric mask.
-      touch.point = .init(x: viewport.x/2 - 25 + Double(index)*200, y: viewport.y/2 + 44)
+      // Local (140,50) in the diamond-shaped whole maps to (110,68.75).
+      touch.point = .init(x: viewport.x/2 - 70 + Double(index)*200, y: viewport.y/2 + 18.75)
       pencil.reset(); pencil.touchesBegan([touch], with: event)
       XCTAssertTrue(model.inputGate.hasActivePencil)
       touch.point.x -= 4; touch.time += 0.1; pencil.touchesMoved([touch], with: event)
@@ -142,7 +162,10 @@ import WebKit
       touch.time += 0.1; pencil.touchesEnded([touch], with: event)
       let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
       let journal = try model.store.readSpatialInk(surfaces: [.board(board)])
-      XCTAssertTrue(journal.elementErasures(on: .board(board))["program-\(index)"]?.contains { $0.target.wholeElement } == true)
+      let target=try XCTUnwrap(journal.elementErasures(on:.board(board))["program-\(index)"]?.first?.target)
+      XCTAssertTrue(target.wholeElement)
+      XCTAssertEqual(target.worldOrigin,.init(x:-180+Double(index)*200,y:-50),"The contact uses the root's tiled origin, not the child's zero")
+      XCTAssertEqual(target.elementTransform,.init(a:0.5,b:0.5,c:-0.5,d:0.5,tx:0.5,ty:0))
       XCTAssertEqual(model.elementErasureCache.preparationCount, 0)
     }
     model.undoLastSurfaceAction()

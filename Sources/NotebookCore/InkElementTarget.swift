@@ -62,37 +62,42 @@ public struct InkElementTarget: Codable, Equatable, Sendable {
       let a = previous?.0 ?? point, padding = max(radius, previous?.1 ?? radius)
       if min(a.x, point.x) - padding <= frame.width && max(a.x, point.x) + padding >= 0
         && min(a.y, point.y) - padding <= frame.height && max(a.y, point.y) + padding >= 0 {
-        if !wholeElement || touchesRectangle(from: a, to: point, radius: padding) { return true }
+        if !wholeElement || touchesBody(from: a, to: point, radius: padding) { return true }
       }
       previous = (point, radius)
     }
     return false
   }
 
-  private func touchesRectangle(from a: SpatialPoint, to b: SpatialPoint, radius: Double) -> Bool {
-    func distanceToRectangle(_ p: SpatialPoint) -> Double {
-      let x = max(0, max(-p.x, p.x - frame.width)), y = max(0, max(-p.y, p.y - frame.height))
-      return x*x + y*y
+  private func touchesBody(from a: SpatialPoint, to b: SpatialPoint, radius: Double) -> Bool {
+    let transform=elementTransform ?? .identity
+    func body(_ p:SpatialPoint) -> SpatialPoint {
+      transform.unapplying(.init(x:p.x/frame.width,y:p.y/frame.height))
     }
-    if min(distanceToRectangle(a), distanceToRectangle(b)) <= radius*radius { return true }
-    let dx = b.x-a.x, dy = b.y-a.y
-    var enter = 0.0, leave = 1.0
-    func clip(_ start: Double, _ delta: Double, _ extent: Double) -> Bool {
-      if abs(delta) < 1e-12 { return start >= 0 && start <= extent }
-      let first = -start/delta, last = (extent-start)/delta
-      enter = max(enter, min(first, last)); leave = min(leave, max(first, last))
+    let first=body(a),last=body(b)
+    // Clip in body coordinates, but measure the circular eraser in physical
+    // coordinates below. An inverse circle would be wrong under shear/scale.
+    var enter=0.0,leave=1.0
+    func clip(_ start:Double,_ delta:Double) -> Bool {
+      if delta == 0 { return start >= 0 && start <= 1 }
+      let first = -start/delta,last=(1-start)/delta
+      enter=max(enter,min(first,last));leave=min(leave,max(first,last))
       return enter <= leave
     }
-    if clip(a.x, dx, frame.width) && clip(a.y, dy, frame.height) { return true }
-    let lengthSquared = dx*dx + dy*dy
-    guard lengthSquared > 0 else { return false }
-    // If the segment misses the rectangle, its nearest interior point is
-    // paired with a corner; endpoint-to-edge distances were handled above.
-    for corner in [SpatialPoint.zero, .init(x: frame.width, y: 0),
-      .init(x: 0, y: frame.height), .init(x: frame.width, y: frame.height)] {
-      let t = max(0, min(1, ((corner.x-a.x)*dx + (corner.y-a.y)*dy)/lengthSquared))
-      let x = a.x+t*dx-corner.x, y = a.y+t*dy-corner.y
-      if x*x + y*y <= radius*radius { return true }
+    if clip(first.x,last.x-first.x) && clip(first.y,last.y-first.y) { return true }
+    func distanceSquared(_ p:SpatialPoint,_ a:SpatialPoint,_ b:SpatialPoint) -> Double {
+      let dx=b.x-a.x,dy=b.y-a.y,length=dx*dx+dy*dy
+      let t=length == 0 ? 0 : max(0,min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/length))
+      let x=a.x+t*dx-p.x,y=a.y+t*dy-p.y
+      return x*x+y*y
+    }
+    let corners=[SpatialPoint.zero,.init(x:1,y:0),.init(x:1,y:1),.init(x:0,y:1)].map {
+      let p=transform.applying($0)
+      return SpatialPoint(x:p.x*frame.width,y:p.y*frame.height)
+    }
+    for i in corners.indices {
+      let c=corners[i],d=corners[(i+1)%corners.count]
+      if min(distanceSquared(a,c,d),distanceSquared(b,c,d),distanceSquared(c,a,b)) <= radius*radius { return true }
     }
     return false
   }
