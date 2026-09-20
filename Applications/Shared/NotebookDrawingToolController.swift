@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import NotebookCore
 import Observation
@@ -29,13 +30,14 @@ final class NotebookDrawingToolController {
     let address: NotebookToolAddress
     let graph: NotebookGraphicGraph
     let screenScale: Double
-    let ink: Task<NotebookLassoInkSource?,Never>?
+    let ink: Task<NotebookLassoInkSource.Prepared?,Never>?
     var points: [SpatialPoint]
   }
   private unowned let model: NotebookAppModel
   private(set) var contact: Contact?
   var ruler: NotebookRuler?
   private(set) var laserTraces: [NotebookLaserTrace] = []
+  @ObservationIgnored private var inkSnapshotCache: (key: String, task: Task<NotebookLassoInkSource.Prepared?,Never>)?
   @ObservationIgnored private var lassoTask: Task<Void,Never>?
   @ObservationIgnored var onContactCancellation: (() -> Void)?
   init(model: NotebookAppModel) { self.model = model }
@@ -87,11 +89,27 @@ final class NotebookDrawingToolController {
     return true
   }
 
-  private func inkSnapshot(at address: NotebookToolAddress, graph: NotebookGraphicGraph) -> Task<NotebookLassoInkSource?,Never>? {
-    if let page = model.pages[address.surface.ownerID!], address.surface.kind == .page { return model.lassoInkSnapshot(page) }
-    guard let journal = model.renderingInk(on:address.surface,fallback:model.compositionTiles.published?.liveData.ink) else { return nil }
-    let suppressed = Set(graph.nodes.values.filter { !$0.graphic.visible || $0.graphic.representation == .geometry }.flatMap { $0.graphic.sourceInkIDs })
-    return Task { .spatial(journal,suppressed) }
+  private func inkSnapshot(at address: NotebookToolAddress, graph: NotebookGraphicGraph) -> Task<NotebookLassoInkSource.Prepared?,Never>? {
+    let raw: Task<NotebookLassoInkSource?,Never>
+    if let page = model.pages[address.surface.ownerID!], address.surface.kind == .page { raw = model.lassoInkSnapshot(page) }
+    else {
+      guard let journal = model.renderingInk(on:address.surface,fallback:model.compositionTiles.published?.liveData.ink) else { return nil }
+      let suppressed = Set(graph.nodes.values.filter { !$0.graphic.visible || $0.graphic.representation == .geometry }.flatMap { $0.graphic.sourceInkIDs })
+      raw = Task { .spatial(journal,suppressed) }
+    }
+    return Task { [weak self] in
+      guard let source = await raw.value, let self else { return nil }
+      let key = source.cacheKey(surface:address.surface)
+      if let cached = inkSnapshotCache, cached.key == key {
+        return await cached.task.value?.excluding(source.suppressed)
+      }
+      let task = Task.detached(priority:.userInitiated) {
+        try? source.prepare(surface:address.surface,origin:address.worldOrigin)
+      }
+      inkSnapshotCache?.task.cancel()
+      inkSnapshotCache = (key,task)
+      return await task.value
+    }
   }
 
   func selectInk(at point: SpatialPoint, address: NotebookToolAddress, screenScale: Double) {
@@ -184,7 +202,7 @@ final class NotebookDrawingToolController {
       guard !Task.isCancelled else { return }
       let preparation = Task.detached(priority:.userInitiated) {
         try source?.selection(polygon:current.points,surface:current.address.surface,
-          origin:current.address.worldOrigin,bounds:current.address.bounds,screenScale:current.screenScale)
+          origin:current.address.worldOrigin,bounds:current.address.bounds)
       }
       do {
         let result = try await withTaskCancellationHandler { try await preparation.value } onCancel: { preparation.cancel() }
@@ -318,10 +336,23 @@ extension NotebookAppModel {
       guard (node.graphic.freehand != nil ? includesInk : includesObjects), node.surface == address.surface, node.shown, let layout = graph.resolve(node.id).layout else { return false }
       let delta = origin.delta(to:node.origin), frame = layout.frame
       guard NotebookToolGeometry.intersects(.init(x:delta.x+frame.x,y:delta.y+frame.y,width:frame.width,height:frame.height),polygon:polygon) else { return false }
+      let local = polygon.map { CGPoint(x:$0.x-delta.x-frame.x,y:$0.y-delta.y-frame.y) }
+      if let ink = node.graphic.freehand {
+        let basis = node.graphic.transform ?? .identity
+        let source = local.map { p -> CGPoint in
+          let q = basis.unapplying(.init(x:p.x/frame.width,y:p.y/frame.height))
+          return .init(x:q.x,y:q.y)
+        }
+        guard ink.geometry.intersects(source) else { return false }
+      }
       let cuts = erasures[node.id] ?? []
       guard !cuts.isEmpty else { return true }
       return elementErasureCache.appearance(surface:address.surface,id:node.id,graphic:node.graphic,layout:layout,
-        size:.init(width:frame.width,height:frame.height),erasures:cuts).map { $0.state != .erased } ?? false
+        size:.init(width:frame.width,height:frame.height),erasures:cuts).map {
+          guard $0.state != .erased else { return false }
+          let path = CGMutablePath(); path.addLines(between:local); path.closeSubpath()
+          return !$0.remaining.intersection(path,using:.evenOdd).isEmpty
+        } ?? false
     }.map { address.reference($0.id) }
     guard includesObjects else { return references }
     func visible(_ id: String, _ frame: CGRect) -> Bool {

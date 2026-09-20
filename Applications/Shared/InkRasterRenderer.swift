@@ -57,49 +57,43 @@ final class InkRasterRenderer: @unchecked Sendable {
   ) -> CGImage? {
     let mesh = SpatialInkMesh.local(layers)
     return raster(
-      size: size, baselinePNG: baselinePNG, scale: scale, affine: InkAffine(), batches: mesh.batches
+      size: size, baselinePNG: baselinePNG, scale: scale,
+      batches: mesh.batches.map { .init(mesh:$0,affine:InkAffine()) }
     )
   }
 
-  /// Canonical freehand already stores triangles. Keep their topology, but move
-  /// the entire object with one affine uniform instead of rewriting every point.
+  private struct DrawBatch {
+    let mesh: SpatialInkMesh.Batch
+    let affine: InkAffine
+  }
+
+  /// Pixels are replaceable output. Query the immutable vector hierarchy BEFORE
+  /// reading source vertices; whole transforms never rebuild that hierarchy.
   func freehand(_ ink: NotebookFreehand, transform: NotebookGraphicTransform?, size: CGSize,
     region: CGRect, scale: Double, mask: Bool) -> CGImage? {
-    let basis = transform ?? .identity
-    let o = basis.applying(.init(x: 0, y: 0)), u = basis.applying(.init(x: 1, y: 0)),
-      v = basis.applying(.init(x: 0, y: 1))
-    let affine = InkAffine(
-      x: .init(
-        Float((u.x - o.x) * size.width), Float((v.x - o.x) * size.width),
-        Float(o.x * size.width - region.minX), 0),
-      y: .init(
-        Float((u.y - o.y) * size.height), Float((v.y - o.y) * size.height),
-        Float(o.y * size.height - region.minY), 0))
-    let batches = ink.layers.map { layer -> SpatialInkMesh.Batch in
-      let color =
-        mask || layer.tool == .eraser ? SpatialInkColor(red: 1, green: 1, blue: 1) : layer.color
-      let nodes = layer.renderVertices.map {
-        SpatialInkGeometry.Node(
-          position: .init(Float($0.x), Float($0.y)), edge: .zero, radius: 0,
-          alpha: Float($0.opacity))
-      }
-      var chunks: [SpatialInkGeometry.Chunk] = []
-      for start in stride(from: 0, to: nodes.count, by: 4092) {
-        let range = start..<min(nodes.count, start + 4092)
-        chunks.append(
-          .init(
-            nodes: range, bounds: InkRenderGeometry.bounds(nodes[range]),
-            color: .init(Float(color.red), Float(color.green), Float(color.blue), 1), flags: 8))
-      }
-      return .init(tool: layer.tool, nodes: nodes, chunks: chunks, projection: .local)
+    guard size.width > 0, size.height > 0, scale > 0 else { return nil }
+    let source = ink.geometry, basis = transform ?? .identity
+    let area = NotebookFreehandGeometry.sourceBounds(region.insetBy(dx:-1/scale,dy:-1/scale),
+      size:size,transform:transform)
+    let batches = source.index.query(area).indices.map { id -> DrawBatch in
+      let chunk = source.chunks[id], unit = chunk.sourceSize
+      let affine = InkAffine(
+        x:.init(Float(basis.a*size.width/unit.width),Float(basis.c*size.width/unit.height),
+          Float(basis.tx*size.width-region.minX),0),
+        y:.init(Float(basis.b*size.height/unit.width),Float(basis.d*size.height/unit.height),
+          Float(basis.ty*size.height-region.minY),0))
+      let color = mask || source.tool(at:id) == .eraser ? SpatialInkColor(red:1,green:1,blue:1) : source.color(at:id)
+      let nodes = source.nodes(at:id)
+      let c = SpatialInkGeometry.Chunk(nodes:0..<nodes.count,bounds:InkRenderGeometry.bounds(nodes[...]),
+        color:.init(Float(color.red),Float(color.green),Float(color.blue),1),flags:chunk.flags)
+      return .init(mesh:.init(tool:source.tool(at:id),nodes:nodes,chunks:[c],projection:.local),affine:affine)
     }
-    return raster(
-      size: region.size, baselinePNG: nil, scale: scale, affine: affine, batches: batches)
+    return raster(size:region.size,baselinePNG:nil,scale:scale,batches:batches)
   }
 
   private func raster(
-    size: CGSize, baselinePNG: Data?, scale: Double, affine: InkAffine,
-    batches: [SpatialInkMesh.Batch]
+    size: CGSize, baselinePNG: Data?, scale: Double,
+    batches: [DrawBatch]
   ) -> CGImage? {
     guard !Task.isCancelled, size.width.isFinite, size.height.isFinite,
       size.width > 0, size.height > 0, scale.isFinite, scale > 0,
@@ -148,12 +142,13 @@ final class InkRasterRenderer: @unchecked Sendable {
     }
     var viewport = SIMD2<Float>(Float(size.width), Float(size.height))
     encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
-    var affine = affine
-    encoder.setVertexBytes(&affine, length: MemoryLayout<InkAffine>.stride, index: 2)
     let area = CGRect(origin: .zero, size: size).insetBy(dx: -1 / scale, dy: -1 / scale)
-    let stretch = affine.maximumStretch
-    for batch in batches {
+    for draw in batches {
       guard !Task.isCancelled else { encoder.endEncoding(); return nil }
+      let batch = draw.mesh
+      var affine = draw.affine
+      let stretch = affine.maximumStretch
+      encoder.setVertexBytes(&affine,length:MemoryLayout<InkAffine>.stride,index:2)
       encoder.setRenderPipelineState(batch.tool == .eraser ? eraser : ink)
       for chunk in batch.chunks where affine.bounds(chunk.bounds).intersects(area) {
         let level = InkRenderGeometry.level(chunk.levels, pixelsPerUnit: stretch * Float(scale))

@@ -60,8 +60,10 @@ in order; an originally circular footprint follows `Q' = A Q Aᵀ`. Joins are th
 transformed local contour, not joins recomputed after transformation. This keeps
 the existing graphic-transform semantics. No new arbitrary per-node tensor brush
 or bit-quantized durable format is introduced. Radius stays Float32 so zoom cannot
-magnify logarithmic quantization error. Freehand export still prepares its source
-triangles on each raster job; its affine is no longer materialized into each point.
+magnify logarithmic quantization error. Retained freehand rendering queries its
+source hierarchy before preparing the visible vector ranges. Its affine is not
+materialized into each point; retained eraser sweeps go directly to compact GPU
+nodes rather than expanding all their triangles for every raster job.
 
 Display-only LOD keeps the original samples. It bounds both contour rails by
 0.20 physical pixels and linear alpha error by 1/4096, preserves cap neighbours
@@ -82,6 +84,40 @@ are not the spatial retained-tile cache.
 An isolated state-update ratio is not a frame-rate claim. Benchmarks must report
 GPU and submit/wait separately, preparation and resident payload separately, and
 whether LOD or dirty tiles actually removed work.
+
+## Vector source and editing
+
+Native ink remains measured vectors in the immutable journal; selected/copied
+freehand retains canonical vector triangles and compact measured cuts. Neither
+selection, movement nor undo uses pixels as content. Imported PNGs remain image
+assets: this change cannot recover measurements that an imported image never had.
+No durable format, transport contract, source sample or existing asset is rewritten.
+
+`InkBoundsIndex` is the one bounds-tree implementation for display chunks and
+editing. `NotebookFreehandGeometry` belongs to one immutable source, is prepared
+once and shared across affine/style edits. Point picking transforms the query
+back into source coordinates; rendering rejects invisible branches before
+reading/uploading vertices. Color and painter order survive spatial traversal.
+`NotebookGraphic.applying` decodes only the addressed fields; a transform no
+longer serializes and decodes all retained source vertices. Validation of the
+immutable source is also reused, not repeated at every pose update.
+
+The tool controller retains one prepared accepted lasso snapshot. Its identity
+covers the owner, revision and actual spatial-window action membership. Suppressed
+stroke IDs belong to the pinned query and do not rebuild unchanged measurements.
+Moving the world origin reprojects the query, not the samples. Local
+selection examines indexed measurement ranges and intersecting later eraser
+ranges, then keeps original whole-stroke ownership and the existing admission
+revision check. Visibility uses vector set differences, not a screen-pixel mask.
+Degenerate numerical fragments are rejected at coordinate-ulp precision, not at
+a display-pixel threshold; transparent paint does not become selectable content.
+
+Cold decoding/index construction still reads the source once. Converting a newly
+selected whole stroke still visits that stroke's samples; complete export visits
+all visible vectors. Persistence/reload, a dense overlapping scene, and arbitrary
+full-source edits do not become constant-time. The existing selection/content
+budgets remain unchanged. Runtime indexes are disposable and never serialized;
+images can be replaced without changing selection or saved content.
 
 ## Navigation and working sets
 

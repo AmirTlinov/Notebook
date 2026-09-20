@@ -56,11 +56,14 @@ not retarget the lasso to its cover. Mixed selection has one
 `NotebookSelectionSession` and a 32-target limit; graphics transforms do not pretend
 to transform notebook cards.
 
-Ink conversion fixes the accepted tail and prepares shared `InkStrokeGeometry`
-off-main as freehand with source IDs, pressure and ordered pen/eraser layers.
-The existing InkRasterRenderer/Metal path preserves triangle coverage and overlap,
-using bounded batches rather than pathological CoreGraphics union paths.
-Temporary raster is clipped to visibility and at most four megapixels.
+Ink conversion fixes the accepted tail and prepares a reusable vector bounds
+hierarchy off-main. Lasso examines only intersecting sample ranges; visibility is
+vector paint minus later cuts, not a bitmap mask. Selected whole strokes use shared
+`InkStrokeGeometry` as freehand with source IDs, pressure and ordered pen/eraser
+layers. Its immutable source hierarchy serves point picking, subsequent lasso and
+visible-range GPU uploads; pose edits share it instead of rewriting vertices.
+The existing InkRasterRenderer/Metal path preserves triangle coverage and overlap.
+Its replaceable raster is clipped to visibility and at most four megapixels.
 Admission rechecks revision; stale selection cannot replace new ink.
 Original journal entries remain immutable; a copy gains no authority over their IDs.
 Move/scale/rotate use ordinary selection, geometry, erasure and undo.

@@ -58,16 +58,32 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
       Set(patch.object.keys).isSubset(of: Set(Self.causalFields + ["connection"]).subtracting(["sourceInkIDs"])) else {
       throw CollaborationError("invalid_operation", "Правка геометрии не меняет её исходные измерения.")
     }
-    var value = try JSONValue.encode(self)
+    var result = self
     for (part, supplied) in patch.object {
-      if part == "connection", let previous = value[part] {
-        guard !supplied.object.isEmpty, Set(supplied.object.keys).isSubset(of: Set(NotebookGraphicConnection.causalFields)) else {
-          throw CollaborationError("invalid_operation", "Правка связи называет её концы, изгиб, наконечники или положение подписи.")
-        }
-        value = value.setting(part, .object(previous.object.merging(supplied.object) { _, latest in latest }))
-      } else { value = value.setting(part, ["vertices", "cornerRadius", "freehand", "transform", "path"].contains(part) && supplied == .null ? nil : supplied) }
+      // A pose/style edit touches only that field. Serializing the complete
+      // graphic here used to revisit every retained vector vertex per edit.
+      switch part {
+      case "shape": result.shape = try supplied.decode(Shape.self)
+      case "style": result.style = try supplied.decode(Style.self)
+      case "label": result.label = try supplied.decode(String.self)
+      case "representation": result.representation = try supplied.decode(Representation.self)
+      case "visible": result.visible = try supplied.decode(Bool.self)
+      case "vertices": result.vertices = supplied == .null ? nil : try supplied.decode([SpatialPoint].self)
+      case "cornerRadius": result.cornerRadius = supplied == .null ? nil : try supplied.decode(Double.self)
+      case "freehand": result.freehand = supplied == .null ? nil : try supplied.decode(NotebookFreehand.self)
+      case "transform": result.transform = supplied == .null ? nil : try supplied.decode(NotebookGraphicTransform.self)
+      case "path": result.path = supplied == .null ? nil : try supplied.decode(NotebookVectorPath.self)
+      case "connection":
+        if let previous = connection {
+          guard !supplied.object.isEmpty, Set(supplied.object.keys).isSubset(of: Set(NotebookGraphicConnection.causalFields)) else {
+            throw CollaborationError("invalid_operation", "Правка связи называет её концы, изгиб, наконечники или положение подписи.")
+          }
+          let old = try JSONValue.encode(previous)
+          result.connection = try JSONValue.object(old.object.merging(supplied.object) { _, latest in latest }).decode(NotebookGraphicConnection.self)
+        } else { result.connection = supplied == .null ? nil : try supplied.decode(NotebookGraphicConnection.self) }
+      default: preconditionFailure("Validated graphic field")
+      }
     }
-    let result = try value.decode(Self.self)
     guard result.isValid else { throw CollaborationError("invalid_operation", "Недопустимая геометрия.") }
     return result
   }

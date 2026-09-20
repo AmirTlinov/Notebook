@@ -29,9 +29,11 @@ struct NotebookFreehandEraserTests {
     let pen = NotebookFreehand.Layer(color:.black,vertices:[.init(x:0,y:0,opacity:0.2),.init(x:1,y:0,opacity:1),.init(x:1,y:1,opacity:1)])
     let ink = NotebookFreehand(layers:[pen,layer])
     #expect(ink.isValid)
-    #expect(layer.renderVertices.count > NotebookFreehand.maximumVertices)
+    let geometry = ink.geometry
+    let rendered = geometry.chunks.indices.filter { geometry.tool(at:$0) == .eraser }.flatMap { geometry.vertices(at:$0) }
+    #expect(rendered.count > NotebookFreehand.maximumVertices)
     let measured = samples.map { SpatialInkSample(point:$0.point,timeOffset:0,width:$0.width,opacity:1,force:1,azimuth:0,altitude:.pi/2) }
-    #expect(layer.renderVertices == NotebookFreehand.mesh(samples:measured,frame:.init(x:0,y:0,width:500,height:200),origin:nil,tool:.eraser))
+    #expect(rendered == NotebookFreehand.mesh(samples:measured,frame:.init(x:0,y:0,width:500,height:200),origin:nil,tool:.eraser))
     let compact = try JSONEncoder().encode(ink)
     #expect(compact.count < 150_000)
     #expect(try JSONDecoder().decode(NotebookFreehand.self,from:compact) == ink)

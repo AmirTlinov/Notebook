@@ -33,56 +33,18 @@ enum SpatialInkGeometry {
   /// Immutable bounds tree of upload chunks, built with the mesh off the frame
   /// path. Queries visit intersecting branches before touching chunk geometry.
   struct ChunkIndex: Sendable {
-    private struct Node: Sendable {
-      let bounds: CGRect
-      let left: Int
-      let right: Int
-      let chunk: Int
-    }
-    private let nodes: [Node]
-    var byteCount: Int { nodes.count * MemoryLayout<Node>.stride }
-
-    init(_ chunks: [Chunk]) {
-      var nodes: [Node] = []
-      nodes.reserveCapacity(max(0, chunks.count * 2 - 1))
-      func build(_ ids: [Int]) -> Int {
-        let id = nodes.count
-        let bounds = ids.reduce(CGRect.null) { $0.union(chunks[$1].bounds) }
-        nodes.append(.init(bounds: bounds, left: -1, right: -1, chunk: -1))
-        if ids.count == 1 {
-          nodes[id] = .init(bounds: bounds, left: -1, right: -1, chunk: ids[0])
-        } else {
-          let horizontal = bounds.width >= bounds.height
-          let ordered = ids.sorted {
-            let a = horizontal ? chunks[$0].bounds.midX : chunks[$0].bounds.midY
-            let b = horizontal ? chunks[$1].bounds.midX : chunks[$1].bounds.midY
-            return a == b ? $0 < $1 : a < b
-          }
-          let middle = ordered.count / 2
-          let left = build(Array(ordered[..<middle])), right = build(Array(ordered[middle...]))
-          nodes[id] = .init(bounds: bounds, left: left, right: right, chunk: -1)
-        }
-        return id
-      }
-      if !chunks.isEmpty { _ = build(Array(chunks.indices)) }
-      self.nodes = nodes
-    }
+    private let index: InkBoundsIndex
+    var byteCount: Int { index.byteCount }
+    init(_ chunks: [Chunk]) { index = .init(chunks.map(\.bounds)) }
 
     func query(viewport: CGRect, transform: SIMD4<Float>) -> (chunks: [Int], visitedNodes: Int) {
-      guard !nodes.isEmpty, transform.x > 0, transform.y > 0 else { return ([], 0) }
+      guard transform.x > 0, transform.y > 0 else { return ([], 0) }
       let padded = viewport.insetBy(dx: -1, dy: -1)
       let local = CGRect(x: (padded.minX - Double(transform.z)) / Double(transform.x),
         y: (padded.minY - Double(transform.w)) / Double(transform.y),
         width: padded.width / Double(transform.x), height: padded.height / Double(transform.y))
-      var pending = [0], found: [Int] = [], visited = 0
-      while let id = pending.popLast() {
-        let node = nodes[id]; visited += 1
-        guard node.bounds.intersects(local) else { continue }
-        if node.chunk >= 0 { found.append(node.chunk) }
-        else { pending.append(node.right); pending.append(node.left) }
-      }
-      // Spatial traversal must never reorder translucent ink or an eraser.
-      return (found.sorted(), visited)
+      let result = index.query(local)
+      return (result.indices, result.visitedNodes)
     }
   }
 
