@@ -101,12 +101,12 @@ struct InkSampleRelations: Sendable {
       guard case .fields(let fields,_)=self else { return false }
       return fields.contains { if case .literal=$0 { return false };return true }
     }
-    var isUniformAxisStrip: Bool {
+    func isUniformAxisStrip(minimumSpacing: Double) -> Bool {
       guard case .fields(let f,let n) = self, n > 4,
         case .constant = f[3], case .constant = f[4] else { return false }
       switch (f[0],f[1]) {
       case (.progression(_,let step),.constant),(.constant,.progression(_,let step)):
-        return step.coefficient != 0
+        return abs(step.value) > minimumSpacing
       default: return false
       }
     }
@@ -190,11 +190,19 @@ struct InkSampleRelations: Sendable {
   /// Only a uniform monotone axis-aligned pen strip is reduced here. Its
   /// interior emits no cap/disk, so opacity does not accumulate per sample.
   /// Eraser disks and every unproved shape retain all events for display.
-  func forEachDisplayPoint(in range: Range<Int>? = nil, _ body: (SIMD2<Float>,Float,Float) -> Void) {
+  func forEachDisplayPoint(in range: Range<Int>? = nil, origin: WorldPoint? = nil,
+    offset: SpatialPoint = .zero, scale: Double = 1, _ body: (SIMD2<Float>,Float,Float) -> Void) {
     let range=range ?? 0..<count
     precondition(range.lowerBound >= 0 && range.upperBound <= count)
-    storage.root.forEachDisplayPoint(in:range,reduce:header.tool == .pen) { x,y,width,opacity in
-      body(.init(Float(x),Float(y)),Float(width/2),Float(opacity))
+    // Reduction must not skip samples that the shared Float normalizer would
+    // coalesce. Its threshold lives with that normalizer. Bound Float rounding
+    // over the whole projected source, including repeated/shifted ranges.
+    let box=storage.root.bounds
+    let magnitude=[box.minX*scale+offset.x,box.maxX*scale+offset.x,
+      box.minY*scale+offset.y,box.maxY*scale+offset.y].map { abs(Float($0)) }.max() ?? .infinity
+    let spacing=(Double(InkStrokeGeometry.minimumDistanceSquared.squareRoot())+2*Double(magnitude.ulp))/abs(scale)
+    storage.root.forEachDisplayPoint(in:range,reduce:header.tool == .pen,origin:origin,minimumSpacing:spacing) { x,y,width,opacity in
+      body(.init(Float(x*scale+offset.x),Float(y*scale+offset.y)),Float(width*scale/2),Float(opacity))
     }
   }
   func decoded(in range: Range<Int>? = nil) -> [SpatialInkSample] {

@@ -78,8 +78,8 @@ final class InkRepeatTests: XCTestCase {
   }
   private func compareRangeGPU(_ source: InkSampleRelations,range: Range<Int>,name: String) throws {
     let samples=source.decoded(in:range),color=source.header.color
-    let old=SpatialInkMesh.local(SpatialInkComposer.pageLayers(.init(actions:[
-      .init(tool:.pen,color:color,samples:samples)])))
+    let old=SpatialInkMesh.referencePage(.init(actions:[
+      .init(tool:.pen,color:color,samples:samples)]))
     let nodes=SpatialInkGeometry.compact(source:source,range:range)
     let new=SpatialInkMesh(batches:[.init(tool:.pen,nodes:nodes,
       color:.init(Float(color.red),Float(color.green),Float(color.blue),1),projection:.local)])

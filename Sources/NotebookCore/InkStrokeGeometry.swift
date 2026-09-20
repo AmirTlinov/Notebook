@@ -22,7 +22,7 @@ public enum InkStrokeGeometry {
   public static let maximumCrossSectionScale: Float = 1.8
   private static let capSegments = 12
   public static var roundCapVertexCount: Int { capSegments * 3 }
-  private static let minimumDistanceSquared: Float = 0.0001
+  public static let minimumDistanceSquared: Float = 0.0001
   /// Consumes the single normalization shared with the incremental tail.
   /// A second normalization could collapse a distinct pair after near samples
   /// moved the last point back towards its preceding neighbour.

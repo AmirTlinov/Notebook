@@ -8,7 +8,7 @@ final class SpatialInkProjectionTests: XCTestCase {
   func testUploadChunksPreserveEveryOriginalTriangleAndTheirPainterOrder() {
     let points = (0..<20_000).map { index in
       PKStrokePoint(location: .init(x: Double(index) * 10, y: 50), timeOffset: Double(index) / 120,
-        size: .init(width: 5, height: 5), opacity: 0.4, force: 1, azimuth: 0, altitude: 1)
+        size: .init(width: 5 + Double(index % 7) / 10, height: 5), opacity: 0.4, force: 1, azimuth: 0, altitude: 1)
     }
     let mesh = SpatialInkMesh.local([.ink(points: points, color: .black), .erase(points: points),
       .ink(points: points, color: .black)])

@@ -66,19 +66,15 @@ enum SpatialInkGeometry {
           levels: buildLOD ? InkRenderGeometry.levels(nodes[range], flags: flags) : [])
     }
   }
-  static func compact(points: [PKStrokePoint], color: SIMD4<Float>) -> [Node] {
-    let normalized = renderPoints(from: points, color: color)
-    return normalized.indices.map { InkRenderGeometry.node(at: $0, in: normalized) }
-  }
-
   /// Same compact geometry owner; the source chooses only proved display ranges.
   /// No PencilKit objects or full decoded measurement array are created here.
-  static func compact(source: InkSampleRelations, range: Range<Int>? = nil) -> [Node] {
+  static func compact(source: InkSampleRelations, range: Range<Int>? = nil,
+    origin: WorldPoint? = nil, offset: SpatialPoint = .zero, scale: Double = 1) -> [Node] {
     let c = source.header.color
     let color: SIMD4<Float> = source.header.tool == .eraser ? .init(repeating:1)
       : .init(Float(c.red),Float(c.green),Float(c.blue),1)
     var points: [RenderPoint] = []
-    source.forEachDisplayPoint(in:range) { position,radius,opacity in
+    source.forEachDisplayPoint(in:range,origin:origin,offset:offset,scale:scale) { position,radius,opacity in
       let alpha = min(max(opacity*color.w,0),1)
       let p = RenderPoint(position:position,radius:max(radius,0.25),
         premultipliedColor:.init(color.x*alpha,color.y*alpha,color.z*alpha,alpha))
@@ -88,47 +84,7 @@ enum SpatialInkGeometry {
     return points.indices.map { InkRenderGeometry.node(at:$0,in:points) }
   }
 
-  static var roundCapVertexCount: Int { InkStrokeGeometry.roundCapVertexCount }
   static func areCoincident(_ a: RenderPoint, _ b: RenderPoint) -> Bool { InkStrokeGeometry.areCoincident(a,b) }
-  static func appendStrokeVertices(renderPoints: [RenderPoint], roundsStart: Bool = true,
-    roundsEnd: Bool = true, eraser: Bool = false, to vertices: inout [Vertex]) {
-    if eraser { InkStrokeGeometry.appendEraserVertices(renderPoints:renderPoints,includesStart:roundsStart,to:&vertices) }
-    else { InkStrokeGeometry.appendStrokeVertices(renderPoints:renderPoints,roundsStart:roundsStart,roundsEnd:roundsEnd,to:&vertices) }
-  }
-  static func appendStrokeVertices(
-    points: [PKStrokePoint],
-    color: SIMD4<Float>,
-    roundsStart: Bool = true,
-    roundsEnd: Bool = true,
-    eraser: Bool = false,
-    to vertices: inout [Vertex]
-  ) {
-    let renderPoints = renderPoints(from: points, color: color)
-    appendStrokeVertices(renderPoints: renderPoints, roundsStart: roundsStart,
-      roundsEnd: roundsEnd, eraser: eraser, to: &vertices)
-  }
-
-  private static func renderPoints(
-    from points: [PKStrokePoint],
-    color: SIMD4<Float>
-  ) -> [RenderPoint] {
-    var result: [RenderPoint] = []
-    result.reserveCapacity(points.count)
-
-    for (index, point) in points.enumerated() {
-      if index.isMultiple(of: 256), Task.isCancelled { return [] }
-      let renderPoint = renderPoint(from: point, color: color)
-
-      if let last = result.last,
-        areCoincident(last, renderPoint)
-      {
-        result[result.count - 1] = renderPoint
-      } else {
-        result.append(renderPoint)
-      }
-    }
-    return result
-  }
 
   static func renderPoint(from point: PKStrokePoint, color: SIMD4<Float>) -> RenderPoint {
     let alpha = min(max(Float(point.opacity) * color.w, 0), 1)

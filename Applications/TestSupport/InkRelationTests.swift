@@ -83,7 +83,7 @@ final class InkRelationTests: XCTestCase {
     }
     let action = PageInkAction(id:sourceID,tool:eraser ? .eraser : .pen,
       color:.init(red:0.1,green:0.3,blue:0.7),samples:samples)
-    return SpatialInkMesh.local(SpatialInkComposer.pageLayers(.init(actions:[action])))
+    return SpatialInkMesh.referencePage(.init(actions:[action]))
   }
   private func mesh(_ source: InkSampleRelations) -> SpatialInkMesh {
     let c = source.header.color
@@ -98,7 +98,7 @@ final class InkRelationTests: XCTestCase {
   private func verifyRender(_ samples: [SpatialInkSample], name: String, encoded: InkSampleRelations? = nil) throws {
     let input = encoded ?? source(samples)
     let action = PageInkAction(id:input.sourceID,tool:input.header.tool,color:input.header.color,samples:samples)
-    let original = SpatialInkMesh.local(SpatialInkComposer.pageLayers(.init(actions:[action])))
+    let original = SpatialInkMesh.referencePage(.init(actions:[action]))
     let derived = mesh(input)
     let a = try image(original), b = try image(derived)
     let left = Array(try XCTUnwrap(a.dataProvider?.data) as Data),right = Array(try XCTUnwrap(b.dataProvider?.data) as Data)

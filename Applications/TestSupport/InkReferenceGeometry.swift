@@ -1,0 +1,77 @@
+import NotebookCore
+import PencilKit
+@testable import Notebook
+
+/// Unreduced pre-integration oracle, test-only. Production never constructs a
+/// PencilKit array from accepted source measurements to prepare settled ink.
+extension SpatialInkGeometry {
+  static func compact(points: [PKStrokePoint], color: SIMD4<Float>) -> [Node] {
+    let normalized = renderPoints(from: points, color: color)
+    return normalized.indices.map { InkRenderGeometry.node(at: $0, in: normalized) }
+  }
+
+  static var roundCapVertexCount: Int { InkStrokeGeometry.roundCapVertexCount }
+  static func appendStrokeVertices(renderPoints: [RenderPoint], roundsStart: Bool = true,
+    roundsEnd: Bool = true, eraser: Bool = false, to vertices: inout [Vertex]) {
+    if eraser { InkStrokeGeometry.appendEraserVertices(renderPoints:renderPoints,includesStart:roundsStart,to:&vertices) }
+    else { InkStrokeGeometry.appendStrokeVertices(renderPoints:renderPoints,roundsStart:roundsStart,roundsEnd:roundsEnd,to:&vertices) }
+  }
+  static func appendStrokeVertices(
+    points: [PKStrokePoint],
+    color: SIMD4<Float>,
+    roundsStart: Bool = true,
+    roundsEnd: Bool = true,
+    eraser: Bool = false,
+    to vertices: inout [Vertex]
+  ) {
+    let renderPoints = renderPoints(from: points, color: color)
+    appendStrokeVertices(renderPoints: renderPoints, roundsStart: roundsStart,
+      roundsEnd: roundsEnd, eraser: eraser, to: &vertices)
+  }
+
+  private static func renderPoints(
+    from points: [PKStrokePoint],
+    color: SIMD4<Float>
+  ) -> [RenderPoint] {
+    var result: [RenderPoint] = []
+    result.reserveCapacity(points.count)
+
+    for (index, point) in points.enumerated() {
+      if index.isMultiple(of: 256), Task.isCancelled { return [] }
+      let renderPoint = renderPoint(from: point, color: color)
+
+      if let last = result.last,
+        areCoincident(last, renderPoint)
+      {
+        result[result.count - 1] = renderPoint
+      } else {
+        result.append(renderPoint)
+      }
+    }
+    return result
+  }
+
+}
+
+extension SpatialInkMesh {
+  static func referencePage(_ drawing: PageInkDrawing) -> Self {
+    .init(batches:drawing.activeActions.map { action in
+      let points=action.samples.map { PKStrokePoint(location:.init(x:$0.point.x,y:$0.point.y),
+        timeOffset:$0.timeOffset,size:.init(width:$0.width,height:$0.width),opacity:$0.opacity,
+        force:$0.force,azimuth:$0.azimuth,altitude:$0.altitude) }
+      let c=action.color, color: SIMD4<Float> = action.tool == .eraser ? .init(repeating:1)
+        : .init(Float(c.red),Float(c.green),Float(c.blue),1)
+      return .init(tool:action.tool,nodes:SpatialInkGeometry.compact(points:points,color:color),color:color,projection:.local)
+    })
+  }
+}
+
+extension SpatialInkRenderLayer {
+  static func ink(points: [PKStrokePoint], color: SpatialInkColor) -> Self { fixture(points,tool:.pen,color:color) }
+  static func erase(points: [PKStrokePoint]) -> Self { fixture(points,tool:.eraser,color:.black) }
+  private static func fixture(_ points: [PKStrokePoint], tool: SpatialInkTool, color: SpatialInkColor) -> Self {
+    let samples=points.map { SpatialInkSample(point:.init(x:$0.location.x,y:$0.location.y),timeOffset:$0.timeOffset,
+      width:$0.size.width,opacity:$0.opacity,force:$0.force,azimuth:$0.azimuth,altitude:$0.altitude) }
+    return .init(source:.init(sourceID:UUID(),revision:UUID(),samples:samples,header:.init(tool:tool,color:color)))
+  }
+}

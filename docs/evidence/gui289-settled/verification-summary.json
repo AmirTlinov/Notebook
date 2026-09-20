@@ -1,0 +1,19 @@
+{
+  "sourceSHA256": "5b38d55e3adcea687cd27b3007c4766f0bd458a3cd31bc29333c2b944c4b9924",
+  "status": "passed",
+  "scope": "S4 settled replay/export only; native Debug Mac and physical iPad; working pair remains 136",
+  "ipad": {
+    "result": "Passed",
+    "passedTests": 46,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": []
+  },
+  "mac": {
+    "result": "Passed",
+    "passedTests": 13,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": []
+  }
+}

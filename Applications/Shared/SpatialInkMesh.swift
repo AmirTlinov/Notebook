@@ -53,7 +53,6 @@ struct SpatialInkInstalledSource: Sendable {
     return result
   }
 }
-import PencilKit
 
 /// Nodes stay near their physical origin. Camera motion changes one uniform
 /// per span, never the measured samples or compact node buffers.
@@ -108,15 +107,12 @@ struct SpatialInkMesh: Sendable {
   let batches: [Batch]
   static func local(_ layers: [SpatialInkRenderLayer]) -> Self {
     .init(batches: layers.map { layer in
-        let points: [PKStrokePoint], color: SIMD4<Float>, tool: SpatialInkTool
-      switch layer {
-        case .ink(let p, let c):
-          points = p; color = .init(Float(c.red), Float(c.green), Float(c.blue), 1); tool = .pen
-        case .erase(let p): points = p; color = .init(repeating: 1); tool = .eraser
-      }
-        return .init(
-          tool: tool, nodes: SpatialInkGeometry.compact(points: points, color: color), color: color,
-          projection: .local)
+      let source=layer.source, c=source.header.color
+      let color: SIMD4<Float> = source.header.tool == .eraser ? .init(repeating:1)
+        : .init(Float(c.red),Float(c.green),Float(c.blue),1)
+      return .init(tool:source.header.tool,
+        nodes:SpatialInkGeometry.compact(source:source,origin:layer.origin,offset:layer.offset,scale:layer.scale),
+        color:color,projection:.local)
     })
   }
   static func prepare(surface: SurfaceID, journal: SpatialInkJournal?, suppressedInkIDs: Set<UUID> = []) throws -> Self {
@@ -138,20 +134,13 @@ struct SpatialInkMesh: Sendable {
         let origin = span.samples.first?.worldPoint.map {
           WorldPoint(tileX: $0.tileX, tileY: $0.tileY, localX: 0, localY: 0)
         }
-        let points = span.samples.map { sample in
-          let local =
-            origin.flatMap { start in sample.worldPoint.map { start.delta(to: $0) } }
-            ?? sample.point
-          return PKStrokePoint(
-            location: .init(x: local.x, y: local.y), timeOffset: sample.timeOffset,
-            size: .init(width: sample.width, height: sample.width), opacity: sample.opacity,
-            force: sample.force, azimuth: sample.azimuth, altitude: sample.altitude)
-        }
+        let source=InkSampleRelations(sourceID:action.id,revision:action.id,samples:span.samples,
+          header:.init(tool:action.tool,color:action.color))
         let c = action.color,
           color: SIMD4<Float> =
             action.tool == .pen
             ? .init(Float(c.red), Float(c.green), Float(c.blue), 1) : .init(repeating: 1)
-        let nodes = SpatialInkGeometry.compact(points: points, color: color)
+        let nodes = SpatialInkGeometry.compact(source:source,origin:origin)
         let chunks = SpatialInkGeometry.chunks(
           for: nodes, color: color, eraser: action.tool == .eraser)
         let projection = origin.map(Projection.world) ?? .local
@@ -198,16 +187,12 @@ struct PageInkMesh: Sendable {
           continue
         }
       }
-      let points = action.samples.map { sample in
-        PKStrokePoint(location: .init(x: sample.point.x, y: sample.point.y), timeOffset: sample.timeOffset,
-          size: .init(width: sample.width, height: sample.width), opacity: sample.opacity,
-          force: sample.force, azimuth: sample.azimuth, altitude: sample.altitude)
-      }
+      let source=InkSampleRelations(action,revision:action.id)
       let color = action.color,
         c: SIMD4<Float> =
           action.tool == .pen
           ? .init(Float(color.red), Float(color.green), Float(color.blue), 1) : .init(repeating: 1)
-      let nodes = SpatialInkGeometry.compact(points: points, color: c)
+      let nodes = SpatialInkGeometry.compact(source:source)
       try Task.checkCancellation()
       entries.append(
         .init(

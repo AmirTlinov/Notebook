@@ -71,8 +71,9 @@ final class DrawingOwnershipTests: XCTestCase {
 
     let layers = SpatialInkComposer.localLayers(for: .cover(coverID), journal: journal)
     XCTAssertEqual(layers.count, 1)
-    guard case .ink(let points, _) = layers[0] else { return XCTFail("Ожидалась ручка") }
-    XCTAssertGreaterThan(points.last!.location.x - points.first!.location.x, 100)
+    XCTAssertEqual(layers[0].source.header.tool,.pen)
+    let source=layers[0].source
+    XCTAssertGreaterThan(source.sample(at:source.count-1).point.x-source.sample(at:0).point.x,100)
 
   }
 
@@ -134,13 +135,9 @@ final class DrawingOwnershipTests: XCTestCase {
     )
 
     XCTAssertEqual(layers.count, 2)
-    guard case .ink(let inkPoints, _) = layers[0],
-      case .erase(let eraserPoints) = layers[1]
-    else {
-      return XCTFail("Обложка должна послать ручку и ластик в один Metal-порядок")
-    }
-    XCTAssertEqual(inkPoints.map(\.location.x), [80, 240])
-    XCTAssertEqual(eraserPoints.map(\.location.x), [60, 260])
+    XCTAssertEqual(layers.map { $0.source.header.tool },[.pen,.eraser])
+    XCTAssertEqual(layers[0].source.decoded().map(\.point.x),[80,240])
+    XCTAssertEqual(layers[1].source.decoded().map(\.point.x),[60,260])
 
     let boardLayers = SpatialInkComposer.boardLayers(
       board: .board,

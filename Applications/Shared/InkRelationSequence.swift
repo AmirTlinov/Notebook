@@ -495,29 +495,31 @@ extension InkSampleRelations {
         }
       }
     }
-    func forEachDisplayPoint(in range: Range<Int>,reduce: Bool,_ emit: (Double,Double,Double,Double)->Void) {
+    func forEachDisplayPoint(in range: Range<Int>,reduce: Bool,origin: WorldPoint? = nil,minimumSpacing: Double,_ emit: (Double,Double,Double,Double)->Void) {
       if range.isEmpty { return }
       switch content {
       case .block(let block):
         func point(_ i: Int) {
           switch block {
-          case .literal(let a): let p=a[i];emit(p.point.x,p.point.y,p.width,p.opacity)
+          case .literal(let a):
+            let p=a[i], local=origin.flatMap { start in p.worldPoint.map { start.delta(to:$0) } } ?? p.point
+            emit(local.x,local.y,p.width,p.opacity)
           case .fields(let f,_): emit(f[0].value(at:i),f[1].value(at:i),f[3].value(at:i),f[4].value(at:i))
           }
         }
-        if reduce && block.isUniformAxisStrip && range.count > 4 {
+        if reduce && block.isUniformAxisStrip(minimumSpacing:minimumSpacing) && range.count > 4 {
           for i in [range.lowerBound,range.lowerBound+1,range.upperBound-2,range.upperBound-1] { point(i) }
         } else { for i in range { point(i) } }
       case .pair(let a,let b):
-        if range.lowerBound < a.count { a.forEachDisplayPoint(in:range.lowerBound..<min(a.count,range.upperBound),reduce:reduce,emit) }
-        if range.upperBound > a.count { b.forEachDisplayPoint(in:max(0,range.lowerBound-a.count)..<(range.upperBound-a.count),reduce:reduce,emit) }
+        if range.lowerBound < a.count { a.forEachDisplayPoint(in:range.lowerBound..<min(a.count,range.upperBound),reduce:reduce,origin:origin,minimumSpacing:minimumSpacing,emit) }
+        if range.upperBound > a.count { b.forEachDisplayPoint(in:max(0,range.lowerBound-a.count)..<(range.upperBound-a.count),reduce:reduce,origin:origin,minimumSpacing:minimumSpacing,emit) }
       case .shifted(let body,let basis):
         let step=basis.step
-        body.forEachDisplayPoint(in:range,reduce:reduce) { x,y,w,o in emit(step.apply(x,step.x),step.apply(y,step.y),w,o) }
+        body.forEachDisplayPoint(in:range,reduce:reduce,origin:origin,minimumSpacing:minimumSpacing) { x,y,w,o in emit(step.apply(x,step.x),step.apply(y,step.y),w,o) }
       case .repeated(let body,_,let step):
         for q in range.lowerBound/body.count...(range.upperBound-1)/body.count {
           let shift=step.multiplied(by:q)!
-          body.forEachDisplayPoint(in:max(0,range.lowerBound-q*body.count)..<min(body.count,range.upperBound-q*body.count),reduce:reduce) {
+          body.forEachDisplayPoint(in:max(0,range.lowerBound-q*body.count)..<min(body.count,range.upperBound-q*body.count),reduce:reduce,origin:origin,minimumSpacing:minimumSpacing) {
             x,y,w,o in emit(shift.apply(x,shift.x),shift.apply(y,shift.y),w,o)
           }
         }

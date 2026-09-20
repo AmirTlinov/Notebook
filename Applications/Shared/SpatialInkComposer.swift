@@ -1,88 +1,41 @@
 import NotebookCore
-import PencilKit
+import Foundation
 
-enum SpatialInkRenderLayer {
-  case ink(points: [PKStrokePoint], color: SpatialInkColor)
-  case erase(points: [PKStrokePoint])
+/// A view of accepted measurements, not another decoded point array. Projection
+/// changes only display coordinates; tiled world positions and event bits stay
+/// in the source. The live canvas, page export and passive scene share this path.
+struct SpatialInkRenderLayer: Sendable {
+  let source: InkSampleRelations
+  var origin: WorldPoint? = nil
+  var offset: SpatialPoint = .zero
+  var scale: Double = 1
 }
 
 enum SpatialInkComposer {
   static func pageLayers(_ drawing: PageInkDrawing) -> [SpatialInkRenderLayer] {
-    drawing.activeActions.map { action in
-      let points = action.samples.map { point($0,location:CGPoint(x:$0.point.x,y:$0.point.y),widthScale:1) }
-      return action.tool == .pen ? .ink(points:points,color:action.color) : .erase(points:points)
-    }
+    drawing.activeActions.map { .init(source:.init($0,revision:$0.id)) }
   }
 
   static func boardLayers(
-    board: SurfaceID,
-    journal: SpatialInkJournal?,
-    camera: SpatialCamera,
-    viewport: SpatialPoint
+    board: SurfaceID, journal: SpatialInkJournal?, camera: SpatialCamera, viewport: SpatialPoint
   ) -> [SpatialInkRenderLayer] {
-    guard let journal else { return [] }
-    return layers(for: board, in: journal) { sample in
-      guard let worldPoint = sample.worldPoint else { return nil }
-      let screen = camera.worldToScreen(worldPoint, viewport: viewport)
-      return point(
-        sample,
-        location: CGPoint(x: screen.x, y: screen.y),
-        widthScale: camera.scale
-      )
+    layers(for:board,in:journal).map {
+      .init(source:$0,origin:camera.center,offset:.init(x:viewport.x/2,y:viewport.y/2),scale:camera.scale)
     }
   }
 
   static func localLayers(
-    for surface: SurfaceID,
-    journal: SpatialInkJournal?,
-    origin: SpatialPoint = .zero
+    for surface: SurfaceID, journal: SpatialInkJournal?, origin: SpatialPoint = .zero
   ) -> [SpatialInkRenderLayer] {
-    guard let journal else { return [] }
-    return layers(for: surface, in: journal) { sample in
-      point(
-        sample,
-        location: CGPoint(x: sample.point.x - origin.x, y: sample.point.y - origin.y),
-        widthScale: 1
-      )
-    }
+    layers(for:surface,in:journal).map { .init(source:$0,offset:.init(x:-origin.x,y:-origin.y)) }
   }
 
-  private static func layers(
-    for surface: SurfaceID,
-    in journal: SpatialInkJournal,
-    point transform: (SpatialInkSample) -> PKStrokePoint?
-  ) -> [SpatialInkRenderLayer] {
-    var result: [SpatialInkRenderLayer] = []
-    for action in journal.actions where action.isActive {
-      for span in action.spans where span.surface == surface {
-        let points = span.samples.compactMap(transform)
-        guard !points.isEmpty else { continue }
-        if action.tool == .pen {
-          result.append(.ink(points: points, color: action.color))
-        } else {
-          result.append(.erase(points: points))
-        }
+  private static func layers(for surface: SurfaceID, in journal: SpatialInkJournal?) -> [InkSampleRelations] {
+    (journal?.actions ?? []).filter(\.isActive).flatMap { action in
+      action.spans.filter { $0.surface == surface }.map { span in
+        .init(sourceID:action.id,revision:action.id,samples:span.samples,
+          header:.init(tool:action.tool,color:action.color))
       }
     }
-    return result
-  }
-
-  private static func point(
-    _ sample: SpatialInkSample,
-    location: CGPoint,
-    widthScale: Double
-  ) -> PKStrokePoint {
-    PKStrokePoint(
-      location: location,
-      timeOffset: sample.timeOffset,
-      size: CGSize(
-        width: sample.width * widthScale,
-        height: sample.width * widthScale
-      ),
-      opacity: sample.opacity,
-      force: sample.force,
-      azimuth: sample.azimuth,
-      altitude: sample.altitude
-    )
   }
 }
