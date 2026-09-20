@@ -5,10 +5,30 @@ import Foundation
 /// and children. A group has no second scene or members array: parentID owns
 /// membership, while frame/basis owns placement for every content kind.
 public struct NotebookElementBasis: Codable, Equatable, Sendable {
-  public let size: SpatialPoint
-  public let transform: NotebookGraphicTransform?
+  // One immutable payload follows source copies into placements and drafts.
+  // An absent basis costs one pointer, not eight reserved Doubles per leaf.
+  private final class Value: Sendable {
+    let size: SpatialPoint
+    let transform: NotebookGraphicTransform?
+    init(size: SpatialPoint,transform: NotebookGraphicTransform?) { self.size=size;self.transform=transform }
+  }
+  private let value: Value
+  public var size: SpatialPoint { value.size }
+  public var transform: NotebookGraphicTransform? { value.transform }
   public init(size: SpatialPoint, transform: NotebookGraphicTransform? = nil) {
-    self.size = size; self.transform = transform
+    value=Value(size:size,transform:transform)
+  }
+  public static func == (a: Self,b: Self) -> Bool {
+    a.value === b.value || (a.size == b.size && a.transform == b.transform)
+  }
+  private enum CodingKeys: String,CodingKey { case size,transform }
+  public init(from decoder: Decoder) throws {
+    let c=try decoder.container(keyedBy:CodingKeys.self)
+    self.init(size:try c.decode(SpatialPoint.self,forKey:.size),transform:try c.decodeIfPresent(NotebookGraphicTransform.self,forKey:.transform))
+  }
+  public func encode(to encoder: Encoder) throws {
+    var c=encoder.container(keyedBy:CodingKeys.self)
+    try c.encode(size,forKey:.size);try c.encodeIfPresent(transform,forKey:.transform)
   }
   var isValid: Bool {
     size.x.isFinite && size.y.isFinite && size.x > 0 && size.y > 0

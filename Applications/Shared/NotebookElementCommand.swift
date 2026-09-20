@@ -18,6 +18,7 @@ struct NotebookElementCommand {
 struct NotebookElementCommandDraft: Equatable {
   let frame: PageRect
   let graphic: NotebookGraphic?
+  var basis: NotebookElementBasis? = nil
   var rect: CGRect { .init(x: frame.x, y: frame.y, width: frame.width, height: frame.height) }
 }
 
@@ -48,7 +49,13 @@ extension NotebookAppModel {
       if let selected { graphic = selected.graphic }
       let frame = selected?.frame ?? contact.map { PageRect(x: $0.frame.minX, y: $0.frame.minY, width: $0.frame.width, height: $0.frame.height) }
         ?? draft?.frame ?? node.frame
-      guard let placement = try? node.placement.updating(frame:frame,from:node.frame) else { return nil }
+      let basis = contact?.basis ?? draft?.basis ?? node.placement.basis
+      let placement:NotebookElementPlacement
+      if frame == node.frame,basis == node.placement.basis { placement=node.placement }
+      else {
+        guard let changed=try? node.placement.updating(frame:frame,basis:basis) else { return nil }
+        placement=changed
+      }
       return .init(id:node.id,graphic:graphic,frame:frame,surface:node.surface,
         shown:node.shown && graphic.showsGeometry,placement:placement)
     })

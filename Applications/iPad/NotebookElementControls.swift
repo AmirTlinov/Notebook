@@ -465,8 +465,9 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
       }
     }
     guard let layout = connectionLayout else { return .zero }
-    let point = handle == .start ? layout.start : handle == .end ? layout.end : layout.bend
-    let dx = layout.end.x-layout.start.x, dy = layout.end.y-layout.start.y, length = max(0.001,hypot(dx,dy))
+    let point = layout.displayedPoint(handle == .start ? layout.start : handle == .end ? layout.end : layout.bend)
+    let start=layout.displayedPoint(layout.start),end=layout.displayedPoint(layout.end)
+    let dx = end.x-start.x, dy = end.y-start.y, length = max(0.001,hypot(dx,dy))
     let offset = handle == .bend && hasLabel ? 30.0 : 0
     return .init(x:frameRect.minX+point.x*projectionScale+dy/length*offset,
       y:frameRect.minY+point.y*projectionScale-dx/length*offset)

@@ -94,4 +94,38 @@ struct NotebookGroupContactTests {
     #expect(abs(hole.x-30)<1e-10 && hole.y == 50)
   }
 
+
+  @Test func physicalAffineEditKeepsTheBodyAndOrderUnderANestedBasis() throws {
+    let page=PageDocument(size:.init(width:2000,height:2000),actor:UUID(),elements:[
+      .init(id:"outer",kind:.group,frame:.init(x:100,y:75,width:1000,height:900),source:"",html:"",
+        basis:.init(size:.init(x:400,y:400),transform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0))),
+      .init(id:"inner",kind:.group,frame:.init(x:30,y:40,width:200,height:120),source:"",html:"",
+        parentID:"outer",basis:.init(size:.init(x:200,y:120),transform:.init(a:-1,b:0,c:0,d:1,tx:1,ty:0))),
+      .init(id:"shape",kind:.graphic,frame:.init(x:10,y:20,width:100,height:60),source:"",html:"",
+        graphic:.init(shape:.ellipse),parentID:"inner")])
+    let placement=try #require(page.graphicGraph().node("shape")?.placement)
+    let change=CGAffineTransform(translationX:-700,y:-300).concatenating(.init(scaleX:1.5,y:0.8))
+      .concatenating(.init(rotationAngle:0.3)).concatenating(.init(translationX:700,y:300))
+    let edit=try placement.applyingSurfaceTransform(change),after=try placement.updating(frame:edit.frame,basis:edit.basis)
+    #expect(after.localSize == placement.localSize && after.ancestors == placement.ancestors && after.origin == placement.origin)
+    for p in [CGPoint.zero,.init(x:100,y:0),.init(x:0,y:60),.init(x:100,y:60),.init(x:25,y:35)] {
+      let expected=p.applying(placement.transform).applying(change),actual=p.applying(after.transform)
+      #expect(abs(actual.x-expected.x)<1e-9 && abs(actual.y-expected.y)<1e-9)
+    }
+    let different=CGAffineTransform(rotationAngle:0.3).concatenating(.init(scaleX:1.5,y:0.8))
+    #expect(different.a != change.a || different.b != change.b || different.c != change.c || different.d != change.d)
+  }
+
+
+  @Test func aBasisSharesItsImmutablePayloadWithoutReservingItInEveryPlainLeaf() throws {
+    #expect(MemoryLayout<NotebookElementBasis>.stride == MemoryLayout<UnsafeRawPointer>.stride)
+    #expect(MemoryLayout<NotebookElementBasis?>.stride == MemoryLayout<UnsafeRawPointer>.stride)
+    let original=NotebookElementBasis(size:.init(x:100,y:60)),copy=original
+    let encoded=try JSONValue.encode(original)
+    #expect(encoded == .object(["size":.object(["x":.number(100),"y":.number(60)])]))
+    #expect(try encoded.decode(NotebookElementBasis.self) == copy)
+    let transformed=NotebookElementBasis(size:original.size,transform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0))
+    #expect(original == copy && original.transform == nil && transformed != original)
+  }
+
 }

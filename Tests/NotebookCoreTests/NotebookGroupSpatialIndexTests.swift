@@ -120,7 +120,7 @@ struct NotebookGroupSpatialIndexTests {
     let region=WorkspaceSpatialBounds(origin:origin.offsetBy(x:-50,y:-100),width:800,height:1000)
     #expect(try query(region).map(\.id) == ["a","middle","b","internal","c"].map(WorkspaceSpatialID.element))
     let before=try source("a").spatial
-    let body=try #require(try graph().resolve("internal",relativeToParent:true).layout)
+    let body=try #require(try graph().resolve("internal",space:.parent).layout)
     final class Counter { var rows=0 }
     let counter=Counter()
     try store.commandTransaction {
@@ -138,7 +138,7 @@ struct NotebookGroupSpatialIndexTests {
     }
     #expect(counter.rows == 2,"Only the outer row is replaced; child bounds and internal link remain local")
     #expect(try source("a").spatial == before)
-    #expect(try graph().resolve("internal",relativeToParent:true).layout == body)
+    #expect(try graph().resolve("internal",space:.parent).layout == body)
     let moved=try graph(),actual=try query(region)
     #expect(actual.map(\.id) == ["a","middle","b","internal","c"].map(WorkspaceSpatialID.element))
     for entry in actual {

@@ -3108,9 +3108,11 @@ final class NotebookAppModel {
       let geometry = elementGeometry(reference) else { return nil }
     let connection = graphicElement(reference)?.connection
     cancelElementManipulation()
+    let graphicGeometry=graphicManipulationGeometry(reference)
     var contact = NotebookElementManipulation(reference: reference, kind: kind,
       frame: geometry.frame, bounds: geometry.bounds, identity: geometry.identity, worldOrigin: geometry.worldOrigin,
-      connection: connection, layout: graphicLayout(reference), graphic: graphicElement(reference))
+      connection:connection,layout:graphicGeometry?.body,graphic:graphicElement(reference),placement:graphicGeometry?.placement,
+      displayFrame:graphicGeometry.map { .init(x:$0.display.frame.x,y:$0.display.frame.y,width:$0.display.frame.width,height:$0.display.frame.height) })
     if selectionSession.elements.count > 1 {
       guard kind == .move, let members = selectedGraphicMembers() else { return nil }
       contact.selectedMembers = members
@@ -3145,11 +3147,14 @@ final class NotebookAppModel {
       guard selectedGraphicMembers() == contact.selectedMembers else { return false }
       return applySelectionEdits(contact.selectedEdits,summary:"Переместить выбранные фигуры")
     }
-    guard contact.frame != contact.original || contact.connection != contact.originalConnection
+    guard contact.frame != contact.original || contact.basis != contact.originalBasis || contact.connection != contact.originalConnection
       || contact.vertices != contact.originalVertices || contact.cornerRadius != contact.originalCornerRadius,
       let current = elementGeometry(contact.reference), current.frame == contact.original,
-      current.identity == contact.identity, current.worldOrigin == contact.worldOrigin,
+      current.identity == contact.identity,
       graphicElement(contact.reference)?.connection == contact.originalConnection else { return false }
+    if let placement=contact.placement {
+      guard graphicManipulationGeometry(contact.reference)?.placement == placement else { return false }
+    } else if current.worldOrigin != contact.worldOrigin { return false }
     if contact.vertices != contact.originalVertices || contact.cornerRadius != contact.originalCornerRadius {
       guard graphicElement(contact.reference).flatMap(NotebookGraphicGeometry.polygon) == contact.originalVertices,
         (graphicElement(contact.reference)?.cornerRadius ?? 0) == contact.originalCornerRadius else { return false }
@@ -3160,7 +3165,7 @@ final class NotebookAppModel {
       if contact.frame != contact.original {
         values["frame"] = try? .encode(PageRect(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height))
       }
-      return performElementOperation(.updateElement,reference:contact.reference,values:values,summary:"Изменить геометрию фигуры")
+      return performElementOperation(.updateElement,reference:contact.reference,values:values,summary:"Изменить геометрию фигуры",readSources:contact.ancestorReferences)
     }
     if let connection = contact.connection, connection != contact.originalConnection {
       guard let original = contact.originalConnection else { return false }
@@ -3175,7 +3180,7 @@ final class NotebookAppModel {
         values["frame"] = try? .encode(PageRect(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height))
       }
       return performElementOperation(.updateElement, reference: contact.reference,
-        values: values, summary: "Изменить связь")
+        values:values,summary:"Изменить связь",readSources:contact.ancestorReferences)
     }
     return commitElementFrame(contact)
   }
@@ -3187,8 +3192,9 @@ final class NotebookAppModel {
     let frame = contact.frame, original = contact.original, actor = actorID
     if graphicElement(contact.reference) != nil || nativeTextTarget(contact.reference) != nil {
       return performElementOperation(.updateElement, reference: contact.reference,
-        values: ["frame": (try? .encode(PageRect(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height))) ?? .null],
-        summary: "Переместить фигуру")
+        values: ["frame":(try? .encode(PageRect(x:frame.minX,y:frame.minY,width:frame.width,height:frame.height))) ?? .null]
+          .merging(contact.basis == contact.originalBasis ? [:] : ["basis":(try? .encode(contact.basis)) ?? .null]) { _,new in new },
+        summary:"Переместить фигуру",readSources:contact.ancestorReferences)
     }
     switch contact.reference {
     case .page(let pageID, let elementID):
@@ -3383,8 +3389,9 @@ final class NotebookAppModel {
 
   @discardableResult
   func performElementOperation(_ kind: CollaborationOperation.Kind, reference: EditableElementReference,
-    values: [String: JSONValue], summary: String, layerMove: NotebookElementLayerMove? = nil) -> Bool {
-    performElementOperations([.init(reference:reference,kind:kind,values:values)],summary:summary,layerMove:layerMove)
+    values: [String: JSONValue], summary: String, layerMove: NotebookElementLayerMove? = nil,
+    readSources: [EditableElementReference] = []) -> Bool {
+    performElementOperations([.init(reference:reference,kind:kind,values:values)],summary:summary,layerMove:layerMove,readSources:readSources)
   }
 
   @discardableResult
@@ -3423,7 +3430,9 @@ final class NotebookAppModel {
         if edit.kind == .removeElement { graphic?.visible = false }
         let frame = try edit.values["frame"]?.decode(PageRect.self)
           ?? PageRect(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height)
-        drafts[edit.reference] = .init(frame:frame,graphic:graphic)
+        let basis=try edit.values["basis"]?.decode(NotebookElementBasis.self)
+          ?? elementCommandDrafts[edit.reference]?.basis ?? originals[edit.reference]?.page?.basis ?? originals[edit.reference]?.spatial?.basis
+        drafts[edit.reference] = .init(frame:frame,graphic:graphic,basis:basis)
       }
     } catch { showCue(error.localizedDescription); return false }
     for (reference,draft) in drafts { elementCommandDrafts[reference] = draft }

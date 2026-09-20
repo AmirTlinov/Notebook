@@ -265,14 +265,17 @@ public struct NotebookGraphicGraph: Sendable {
     guard let chosen=candidates.first else { return nil }
     return .init(elementID:chosen.id,normalizedAnchor:chosen.anchor,isExact:!chosen.inside,isPrecise:true)
   }
-  public func resolve(_ id: String,relativeToParent: Bool = false) -> NotebookGraphicResolution {
+  public func node(_ id: String) -> Node? { nodes[collaborationIdentity(id)] }
+  public enum Space { case surface, parent, body }
+  public func resolve(_ id: String,space: Space = .surface) -> NotebookGraphicResolution {
     guard let node = nodes[collaborationIdentity(id)] else { return .pending([id]) }
     guard node.shown else { return .hidden }
     let size = node.placement.localSize, graphic = node.graphic
     guard let connection = graphic.connection else {
       let local = NotebookGraphicLayout(frame:.init(x:0,y:0,width:size.x,height:size.y),curves:[],heads:[],
         label:.init(x:size.x/2,y:size.y/2),start:.zero,end:.zero,bend:.zero,axisStart:.zero,axisEnd:.zero)
-      guard let placed = local.placed(in:node.placement,relativeToParent:relativeToParent) else { return .pending([id]) }
+      if space == .body { return .geometry(local) }
+      guard let placed = local.placed(in:node.placement,relativeToParent:space == .parent) else { return .pending([id]) }
       return .geometry(placed)
     }
     let missing = Set(connection.bindings.filter { nodes[collaborationIdentity($0.elementID)] == nil }.map(\.elementID))
@@ -314,7 +317,8 @@ public struct NotebookGraphicGraph: Sendable {
     // Resolve in the node's local basis. Translating a connector must not round
     // its local curves differently and invalidate an otherwise identical mask.
     let local = Self.connectionLayout(graphic: graphic, start: start, end: end, middle: middle, axisStart: a, axisEnd: b)
-    guard let placed = local.placed(in:node.placement,relativeToParent:relativeToParent) else { return .pending([id]) }
+    if space == .body { return .geometry(local) }
+    guard let placed = local.placed(in:node.placement,relativeToParent:space == .parent) else { return .pending([id]) }
     return .geometry(placed)
   }
 

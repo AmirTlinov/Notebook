@@ -59,7 +59,7 @@ import XCTest
     }
     let before = try layout(graphic)
     var contact = NotebookElementManipulation(reference:.page(pageID:UUID(),elementID:"line"),kind:.bend,
-      frame:.init(x:100,y:100,width:200,height:100),bounds:nil,connection:graphic.connection,layout:before,graphic:graphic)
+      frame:.init(x:100,y:100,width:200,height:100),bounds:nil,connection:graphic.connection,layout:try XCTUnwrap(NotebookGraphicGraph([.init(id:"line",graphic:graphic,frame:frame,surface:surface,shown:true)]).resolve("line",space:.body).layout),graphic:graphic)
     contact.update(translation:.zero); XCTAssertEqual(contact.connection,graphic.connection)
     contact.update(translation:.init(x:30,y:40))
     var changed = graphic; changed.connection = contact.connection

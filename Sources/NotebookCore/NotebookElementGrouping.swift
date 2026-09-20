@@ -3,7 +3,7 @@ import Foundation
 
 /// Addressed placement, not a materialized copy of the descendants. Geometry
 /// and input consume the same local-to-surface map; world origin stays tiled.
-public struct NotebookElementPlacement: Sendable {
+public struct NotebookElementPlacement: Equatable, Sendable {
   struct Source {
     let frame: PageRect
     let origin: WorldPoint
@@ -66,42 +66,61 @@ public struct NotebookElementPlacement: Sendable {
   public private(set) var localSize: SpatialPoint
   public private(set) var transform: CGAffineTransform
   private var local: CGAffineTransform
-  private let hasBasis: Bool
+  public let basis: NotebookElementBasis?
   private let parent: Frame?
   public var ancestors: [String] {
     var values: [String]=[],frame=parent
     while let current=frame { values.append(current.id);frame=current.parent }
     return values
   }
-  var localTransform: CGAffineTransform { local }
+  public var localTransform: CGAffineTransform { local }
+  public var parentTransform: CGAffineTransform { parent?.transform ?? .identity }
   var parentOrigin: WorldPoint { parent == nil ? origin : .zero }
   public var bounds: CGRect { CGRect(x:0,y:0,width:localSize.x,height:localSize.y).applying(transform) }
-  init(id: String,frame: PageRect,origin: WorldPoint) {
+  public init(id: String,frame: PageRect,origin: WorldPoint = .zero) {
     rootID=id;self.origin=origin;localSize = .init(x:frame.width,y:frame.height)
-    local = .init(translationX:frame.x,y:frame.y);transform=local;parent=nil;hasBasis=false
+    local = .init(translationX:frame.x,y:frame.y);transform=local;parent=nil;basis=nil
   }
   private init(id: String,source: Source,parent: Frame?) throws {
-    self.parent=parent;rootID=parent?.rootID ?? id;origin=parent?.origin ?? source.origin;hasBasis=source.basis != nil
+    self.parent=parent;rootID=parent?.rootID ?? id;origin=parent?.origin ?? source.origin;basis=source.basis
     localSize=source.basis?.size ?? .init(x:source.frame.width,y:source.frame.height)
     local=try Self.local(source);transform=local.concatenating(parent?.transform ?? .identity)
     try Self.validate(transform)
   }
   /// A frame draft changes placement, not its shared ancestry. The plain
   /// element's body resizes; an explicit basis retains its original local size.
-  public func updating(frame: PageRect,from old: PageRect) throws -> Self {
-    guard frame != old else { return self }
-    var result=self
-    if hasBasis {
-      let x=frame.width/old.width,y=frame.height/old.height
-      result.local = .init(a:local.a*x,b:local.b*y,c:local.c*x,d:local.d*y,
-        tx:frame.x+(local.tx-old.x)*x,ty:frame.y+(local.ty-old.y)*y)
-    } else {
-      result.local = .init(translationX:frame.x,y:frame.y)
-      result.localSize = .init(x:frame.width,y:frame.height)
-    }
-    result.transform=result.local.concatenating(parent?.transform ?? .identity)
-    try Self.validate(result.transform)
-    return result
+  public func updating(frame: PageRect,basis: NotebookElementBasis?) throws -> Self {
+    try .init(id:rootID,source:.init(frame:frame,origin:origin,parentID:nil,basis:basis,isGroup:false),parent:parent)
+  }
+
+  /// A physical edit changes this one local descriptor. Descendant bodies,
+  /// internal relationships and the tiled world origin are never rewritten.
+  public func applyingSurfaceTransform(_ change: CGAffineTransform) throws -> (frame:PageRect,basis:NotebookElementBasis) {
+    let parent=parentTransform,det=parent.a*parent.d-parent.b*parent.c
+    guard det.isFinite,det != 0 else { throw NotebookStorageError.limitExceeded("element_group_projection") }
+    let local=transform.concatenating(change).concatenating(parent.inverted())
+    let bounds=CGRect(x:0,y:0,width:localSize.x,height:localSize.y).applying(local)
+    let frame=PageRect(x:bounds.minX,y:bounds.minY,width:bounds.width,height:bounds.height)
+    guard NotebookElementBasis.validLocalFrame(frame) else { throw NotebookStorageError.limitExceeded("element_group_projection") }
+    let basis=NotebookElementBasis(size:localSize,transform:.init(
+      a:local.a*localSize.x/bounds.width,b:local.b*localSize.x/bounds.height,
+      c:local.c*localSize.y/bounds.width,d:local.d*localSize.y/bounds.height,
+      tx:(local.tx-bounds.minX)/bounds.width,ty:(local.ty-bounds.minY)/bounds.height))
+    guard basis.isValid else { throw NotebookStorageError.limitExceeded("element_group_projection") }
+    return (frame,basis)
+  }
+
+  public func parentVector(_ vector: SpatialPoint) -> SpatialPoint? { Self.vector(vector,through:parentTransform) }
+  public func bodyVector(_ vector: SpatialPoint) -> SpatialPoint? { Self.vector(vector,through:transform) }
+  private static func vector(_ v: SpatialPoint,through t: CGAffineTransform) -> SpatialPoint? {
+    let det=t.a*t.d-t.b*t.c
+    guard det.isFinite,det != 0 else { return nil }
+    let p=SpatialPoint(x:(t.d*v.x-t.c*v.y)/det,y:(t.a*v.y-t.b*v.x)/det)
+    return p.x.isFinite && p.y.isFinite ? p : nil
+  }
+  public static func == (a: Self,b: Self) -> Bool {
+    a.origin == b.origin && a.rootID == b.rootID && a.localSize == b.localSize && a.local == b.local
+      && a.transform == b.transform && a.basis == b.basis && a.ancestors == b.ancestors
   }
   private static func local(_ source: Source) throws -> CGAffineTransform {
     try source.basis?.placement(in:source.frame) ?? .init(translationX:source.frame.x,y:source.frame.y)

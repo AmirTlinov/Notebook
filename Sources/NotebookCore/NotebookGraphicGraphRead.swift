@@ -71,7 +71,7 @@ extension NotebookStore {
       for id in Set(element.graphic.connection?.bindings.map(\.elementID) ?? []) {
         if let node = try read(id) { nodes.append(node) }
       }
-      return NotebookGraphicGraph(nodes).resolve(elementID,relativeToParent:relativeToParent)
+      return NotebookGraphicGraph(nodes).resolve(elementID,space:relativeToParent ? .parent : .surface)
     }
   }
 

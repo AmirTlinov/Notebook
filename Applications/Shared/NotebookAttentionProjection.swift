@@ -161,9 +161,8 @@ enum NotebookAttentionProjection {
           fallback:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height))
         if element.graphic != nil {
           guard let layout = graphicLayout ?? model.graphicLayout(.spatial(boardID:presence.boardID,elementID:id)) else { return nil }
-          local = layout.frame
-        }
-        origin = element.worldOrigin ?? .zero
+          local = layout.frame;origin = layout.origin
+        } else { origin = element.worldOrigin ?? .zero }
       }
       let top = presence.camera.worldToScreen(origin.offsetBy(x:local.x,y:local.y),viewport:presence.viewport)
       return .init(x:top.x,y:top.y,width:max(minimumSide,local.width * presence.camera.scale),height:max(minimumSide,local.height * presence.camera.scale))

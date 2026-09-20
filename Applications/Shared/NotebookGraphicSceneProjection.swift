@@ -26,7 +26,8 @@ extension NotebookAppModel {
       surface = node.surface; id = elementID
     }
     let p = terminal == .start ? connection.start.point : connection.end.point
-    return graph.binding(at:.init(x:contact.original.minX+p.x,y:contact.original.minY+p.y),
+    let shown=CGPoint(x:p.x,y:p.y).applying(contact.placement?.transform ?? .init(translationX:contact.original.minX,y:contact.original.minY))
+    return graph.binding(at:.init(x:shown.x,y:shown.y),
       origin:contact.worldOrigin ?? .zero,surface:surface,excluding:id,tolerance:14/max(0.001,presence?.camera.scale ?? 1),retaining:retainedID,erasures:elementErasures(on:surface,fallback:compositionTiles.published?.liveData.ink), appearance: { elementID, graphic, layout, size, cuts in
         elementErasureCache.appearance(surface:surface,id:elementID,graphic:graphic,layout:layout,size:size,erasures:cuts)
       })
@@ -51,6 +52,19 @@ extension NotebookAppModel {
     let ids = Set(working.map(\.id))
     let combined = NotebookGraphicGraph(Array(graph.nodes.values).filter { !ids.contains($0.id) } + working.map(\.node))
     return projectingGraphicCommands(combined) { .spatial(boardID:boardID,elementID:$0) }
+  }
+
+  func graphicManipulationGeometry(_ reference: EditableElementReference) -> (placement:NotebookElementPlacement,body:NotebookGraphicLayout,display:NotebookGraphicLayout)? {
+    let graph:NotebookGraphicGraph,id:String
+    switch reference {
+    case .page(let owner,let elementID):
+      guard let page=pages[owner] else { return nil };graph=graphicGraph(page:page);id=elementID
+    case .spatial(let owner,let elementID):
+      guard let value=compositionTiles.published.map({ presentedGraphicGraph(boardID:owner,cohort:$0) })
+        ?? boardHierarchy?.board(owner)?.graphicGraph() else { return nil };graph=value;id=elementID
+    }
+    guard let node=graph.node(id),let body=graph.resolve(id,space:.body).layout,let display=graph.resolve(id).layout else { return nil }
+    return (node.placement,body,display)
   }
 
   func graphicLayout(_ reference: EditableElementReference, preview: Bool = true) -> NotebookGraphicLayout? {

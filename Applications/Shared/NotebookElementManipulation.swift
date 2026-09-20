@@ -42,23 +42,36 @@ struct NotebookElementManipulation: Equatable, Sendable {
   let worldOrigin: WorldPoint?
   private(set) var frame: CGRect
   let originalConnection: NotebookGraphicConnection?
+  /// Resolved in the authored body, never the displayed outer frame.
   let originalLayout: NotebookGraphicLayout?
+  let placement: NotebookElementPlacement?
+  let displayFrame: CGRect
+  var originalBasis: NotebookElementBasis? { placement?.basis }
+  private(set) var basis: NotebookElementBasis?
   private(set) var connection: NotebookGraphicConnection?
   let originalVertices: [SpatialPoint]?
   private(set) var vertices: [SpatialPoint]?
   let originalCornerRadius: Double
   private(set) var cornerRadius: Double
   private let graphic: NotebookGraphic?
+  var ancestorReferences: [EditableElementReference] {
+    (placement?.ancestors ?? []).map { ancestor in
+      switch reference { case .page(let owner,_): .page(pageID:owner,elementID:ancestor)
+        case .spatial(let owner,_): .spatial(boardID:owner,elementID:ancestor) }
+    }
+  }
   var selectedMembers: [NotebookGraphicSelection.Member] = []
   var selectedEdits: [NotebookGraphicSelection.Edit] {
     NotebookGraphicSelection.translated(selectedMembers, by: .init(x: movement.x,y: movement.y))
   }
 
   init(reference: EditableElementReference, kind: Kind, frame: CGRect, bounds: CGRect?, identity: VersionStamp? = nil,
-    worldOrigin: WorldPoint? = nil, connection: NotebookGraphicConnection? = nil, layout: NotebookGraphicLayout? = nil, graphic: NotebookGraphic? = nil) {
+    worldOrigin: WorldPoint? = nil, connection: NotebookGraphicConnection? = nil, layout: NotebookGraphicLayout? = nil,
+    graphic: NotebookGraphic? = nil, placement: NotebookElementPlacement? = nil, displayFrame: CGRect? = nil) {
     self.reference = reference; self.kind = kind; original = frame
     self.frame = frame; self.bounds = bounds
-    self.identity = identity; self.worldOrigin = worldOrigin
+    self.identity = identity; self.worldOrigin = placement?.origin ?? worldOrigin
+    self.placement=placement;basis=placement?.basis;self.displayFrame=displayFrame ?? frame
     originalConnection = connection; self.connection = connection; originalLayout = layout
     self.graphic = graphic; originalVertices = graphic.flatMap(NotebookGraphicGeometry.polygon); vertices = originalVertices
     originalCornerRadius = graphic?.cornerRadius ?? 0; cornerRadius = originalCornerRadius
@@ -67,20 +80,22 @@ struct NotebookElementManipulation: Equatable, Sendable {
   mutating func update(translation: CGPoint) {
     guard translation.x.isFinite, translation.y.isFinite else { return }
     if translation == .zero {
-      frame = original; connection = originalConnection; vertices = originalVertices; cornerRadius = originalCornerRadius
+      frame = original; basis=originalBasis; connection = originalConnection; vertices = originalVertices; cornerRadius = originalCornerRadius
       return
     }
     switch kind {
     case .move:
-      let x = bounds.map { min(max(original.minX + translation.x, $0.minX), $0.maxX - original.width) } ?? (original.minX + translation.x)
-      let y = bounds.map { min(max(original.minY + translation.y, $0.minY), $0.maxY - original.height) } ?? (original.minY + translation.y)
-      frame = .init(x: x, y: y, width: original.width, height: original.height)
+      let x = bounds.map { min(max(displayFrame.minX + translation.x, $0.minX), $0.maxX - displayFrame.width) } ?? (displayFrame.minX + translation.x)
+      let y = bounds.map { min(max(displayFrame.minY + translation.y, $0.minY), $0.maxY - displayFrame.height) } ?? (displayFrame.minY + translation.y)
+      let physical=SpatialPoint(x:x-displayFrame.minX,y:y-displayFrame.minY)
+      guard let delta=placement.map({ $0.parentVector(physical) }) ?? physical else { return }
+      frame = .init(x:original.minX+delta.x,y:original.minY+delta.y,width:original.width,height:original.height)
       if var value = originalConnection, !value.bindings.isEmpty, let layout = originalLayout {
         // Dragging the body translates it, never secretly bends it. Detach
         // from the visible terminals, not stale fallback points in the record.
         if frame == original { connection = originalConnection; return }
         func point(_ p: SpatialPoint) -> SpatialPoint {
-          .init(x:layout.frame.x+p.x-original.minX,y:layout.frame.y+p.y-original.minY)
+          .init(x:layout.frame.x+p.x,y:layout.frame.y+p.y)
         }
         value.start = .init(point:point(layout.start)); value.end = .init(point:point(layout.end))
         let midpoint = layout.bend
@@ -90,6 +105,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
         connection = value
       }
     case .resize(let corner):
+      let original=displayFrame
       let minimumWidth = min(1, original.width), minimumHeight = min(1, original.height)
       let x: CGFloat, y: CGFloat, right: CGFloat, bottom: CGFloat
       if !corner.changesWidth { x = original.minX; right = original.maxX }
@@ -108,16 +124,27 @@ struct NotebookElementManipulation: Equatable, Sendable {
         y = original.minY
         bottom = max(y + minimumHeight, min(bounds?.maxY ?? .greatestFiniteMagnitude, original.maxY + translation.y))
       }
-      frame = .init(x: x, y: y, width: right - x, height: bottom - y)
+      let shown=CGRect(x:x,y:y,width:right-x,height:bottom-y)
+      if let placement {
+        let change=CGAffineTransform(translationX:-original.minX,y:-original.minY)
+          .concatenating(.init(scaleX:shown.width/original.width,y:shown.height/original.height))
+          .concatenating(.init(translationX:shown.minX,y:shown.minY))
+        guard let pose=try? placement.applyingSurfaceTransform(change) else { return }
+        frame = .init(x:pose.frame.x,y:pose.frame.y,width:pose.frame.width,height:pose.frame.height);basis=pose.basis
+      } else { frame=shown }
     case .endpoint(let terminal):
       guard var value = originalConnection, let layout = originalLayout else { return }
       let p = terminal == .start ? layout.start : layout.end
-      let endpoint = NotebookGraphicConnection.Endpoint(point: .init(x:layout.frame.x+p.x-original.minX+translation.x,
-        y:layout.frame.y+p.y-original.minY+translation.y))
+      let physical=SpatialPoint(x:translation.x,y:translation.y)
+      guard let delta=placement.map({ $0.bodyVector(physical) }) ?? physical else { return }
+      let endpoint = NotebookGraphicConnection.Endpoint(point:.init(x:layout.frame.x+p.x+delta.x,y:layout.frame.y+p.y+delta.y))
       if terminal == .start { value.start = endpoint } else { value.end = endpoint }
       connection = value
     case .bend:
       guard var value = originalConnection, let layout = originalLayout else { return }
+      let physical=SpatialPoint(x:translation.x,y:translation.y)
+      guard let delta=placement.map({ $0.bodyVector(physical) }) ?? physical else { return }
+      let translation=CGPoint(x:delta.x,y:delta.y)
       let dx = layout.axisEnd.x-layout.axisStart.x, dy = layout.axisEnd.y-layout.axisStart.y, length = max(0.001,hypot(dx,dy))
       value.bendPosition = min(1,max(0,(value.bendPosition ?? 0.5)+(dx*translation.x+dy*translation.y)/(length*length)))
       value.bend += (-dy*translation.x+dx*translation.y)/length
