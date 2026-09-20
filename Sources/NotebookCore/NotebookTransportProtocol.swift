@@ -4,9 +4,9 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Unified Codex generations/control receipts and the current content renderer.
+  // Shared element bases, parent-local geometry and measured whole-basis cuts.
   // Both applications update together; identities and queued history stay intact.
-  public static let protocolVersion = 37
+  public static let protocolVersion = 38
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 32 * 1_024
   public static let maximumQueuedBytes = 1_024 * 1_024

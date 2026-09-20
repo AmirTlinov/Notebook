@@ -340,7 +340,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 12
+  static let currentDatabaseVersion: Int64 = 14
 
   func prepareDatabase(initialWorkspaceID: UUID? = nil) throws {
     if currentSQL != nil { guard initialWorkspaceID == nil else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }; return }
@@ -395,14 +395,14 @@ extension NotebookStore {
         try database.run("CREATE INDEX metadata_pending ON metadata_index(kind,status,created_at,address)")
         try database.run("CREATE TABLE reference_owners(owner_key TEXT PRIMARY KEY,digest BLOB NOT NULL CHECK(length(digest)=32),hash TEXT,parent TEXT)")
         try database.run("CREATE TABLE reference_contributions(address TEXT NOT NULL,owner_key TEXT NOT NULL,hash TEXT NOT NULL,PRIMARY KEY(address,owner_key))")
-        try database.run("CREATE TABLE reference_element_order(address TEXT PRIMARY KEY,owner_key TEXT NOT NULL,position INTEGER NOT NULL,member TEXT NOT NULL)")
+        try database.run("CREATE TABLE reference_element_order(address TEXT PRIMARY KEY,owner_key TEXT NOT NULL,position INTEGER NOT NULL,member TEXT NOT NULL,parent_id TEXT)")
         try database.run("CREATE INDEX reference_element_neighbors ON reference_element_order(owner_key,position,member)")
+        try database.run("CREATE INDEX reference_element_children ON reference_element_order(owner_key,parent_id,position,member)")
         try database.run("CREATE INDEX reference_owner_contributions ON reference_contributions(owner_key,address)")
         try database.run("CREATE TABLE board_nodes(node_id TEXT PRIMARY KEY, digest BLOB NOT NULL CHECK(length(digest)=32))")
         try database.run("CREATE TABLE board_frontier(prefix TEXT PRIMARY KEY,parent TEXT,hash TEXT NOT NULL)")
         try database.run("CREATE INDEX board_frontier_parent ON board_frontier(parent,prefix)")
-        try database.run("CREATE TABLE spatial_entries(entry_id TEXT PRIMARY KEY, address TEXT NOT NULL REFERENCES records(address) ON DELETE CASCADE, board_id TEXT NOT NULL, owner_id TEXT NOT NULL, kind TEXT NOT NULL, layer INTEGER NOT NULL, z_index REAL NOT NULL, paint_key TEXT NOT NULL, min_tx INTEGER NOT NULL, min_ty INTEGER NOT NULL, min_x REAL NOT NULL, min_y REAL NOT NULL, max_tx INTEGER NOT NULL, max_ty INTEGER NOT NULL, max_x REAL NOT NULL, max_y REAL NOT NULL)")
-        try database.run("CREATE INDEX spatial_board_tiles ON spatial_entries(board_id,min_tx,min_ty,layer,z_index,paint_key)")
+        try database.run("CREATE TABLE spatial_entries(entry_id TEXT PRIMARY KEY, address TEXT NOT NULL REFERENCES records(address) ON DELETE CASCADE, board_id TEXT NOT NULL, owner_id TEXT NOT NULL, kind TEXT NOT NULL, layer INTEGER NOT NULL, z_index REAL NOT NULL, paint_key TEXT NOT NULL, parent_id TEXT, is_group INTEGER NOT NULL DEFAULT 0, has_paint INTEGER NOT NULL DEFAULT 1, max_z REAL NOT NULL DEFAULT 0, lower_key TEXT NOT NULL DEFAULT '', min_tx INTEGER NOT NULL, min_ty INTEGER NOT NULL, min_x REAL NOT NULL, min_y REAL NOT NULL, max_tx INTEGER NOT NULL, max_ty INTEGER NOT NULL, max_x REAL NOT NULL, max_y REAL NOT NULL)")
         try database.run("CREATE INDEX spatial_address ON spatial_entries(address)")
         try database.run("CREATE INDEX spatial_owner ON spatial_entries(owner_id,board_id)")
         try database.run("CREATE TABLE item_owners(item_id TEXT PRIMARY KEY, board_id TEXT NOT NULL, address TEXT NOT NULL REFERENCES records(address) ON DELETE CASCADE)")
@@ -424,6 +424,15 @@ extension NotebookStore {
       if admittedVersion == Self.currentDatabaseVersion { return }
       guard (2..<Self.currentDatabaseVersion).contains(admittedVersion) else { throw NotebookStorageError.unsupportedFormat }
       try prepareCurrentDatabaseSchema(database)
+      if admittedVersion < 13 {
+        // Permanent parents are introduced with v13. Earlier admitted content
+        // has no membership field; adding its disposable index rewrites no
+        // shared records, versions, hashes or replication cursors.
+        if try !database.rows("PRAGMA table_info(reference_element_order)").contains(where:{ $0[1].text == "parent_id" }) {
+          try database.run("ALTER TABLE reference_element_order ADD COLUMN parent_id TEXT")
+        }
+        try database.run("CREATE INDEX IF NOT EXISTS reference_element_children ON reference_element_order(owner_key,parent_id,position,member)")
+      }
       if admittedVersion == 2 { try migrateStoredBoardPlacements(database: database) }
       // One historical receipt at a time; no whole-history buffer and no
       // rewritten shared content, hashes, identities or replication cursors.
@@ -462,6 +471,7 @@ extension NotebookStore {
 
   /// Called only inside the bootstrap or admission writer transaction.
   private func prepareCurrentDatabaseSchema(_ database: NotebookSQLConnection) throws {
+    try Self.createElementGroupSpatialIndex(database)
     try Self.createItemLifecycleIndex(database)
     try Self.createPageBirthReservationIndex(database)
     try Self.createRetiredNotebookPageIndex(database)
@@ -548,6 +558,7 @@ extension NotebookStore {
     do {
       let result = try operation()
       try refreshGraphicIndex(database: database)
+      try refreshElementGroupIndex(database: database)
       try validateChangedPageOrders(database: database)
       try validateChangedOwnership(database: database)
       try refreshBoardFrontier(database: database)

@@ -333,7 +333,7 @@ extension NotebookStore {
     while true {
       let remaining = NotebookPlacementBudget.maximumObstacles - budget.inspectedObstacles - result.count
       let rows = try currentSQL!.rows("""
-        SELECT owner_id FROM spatial_entries INDEXED BY spatial_board_tiles
+        SELECT owner_id FROM spatial_entries INDEXED BY spatial_item_tiles
         WHERE board_id=? AND min_tx=? AND min_ty>=? AND min_ty<=? AND kind='item'
         ORDER BY min_ty,layer,z_index,paint_key LIMIT ?
         """, [.text(boardID.uuidString.lowercased()), .integer(tile), .integer(lower.tileY), .integer(upper.tileY), .integer(Int64(max(remaining + 1, 1)))])

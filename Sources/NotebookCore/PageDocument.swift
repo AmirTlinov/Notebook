@@ -62,11 +62,16 @@ public enum AgentElementKind: String, Codable, Sendable {
   case markdown
   case web
   case graphic
+  case group
 }
 
 public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
-  static func causalFieldKeys(id: String, graphic: NotebookGraphic? = nil, textStyle: NativeTextStyle? = nil, allGraphicFields: Bool = false) -> [String] {
-    let base = ["exists", "id", "frame", "content", "css", "javaScript", "state"].map {
+  static func causalFieldKeys(id: String, graphic: NotebookGraphic? = nil, textStyle: NativeTextStyle? = nil,
+    parentID: String? = nil, basis: NotebookElementBasis? = nil, allGraphicFields: Bool = false) -> [String] {
+    let fields = ["exists", "id", "frame", "content", "css", "javaScript", "state"]
+      + (parentID != nil || allGraphicFields ? ["parentID"] : [])
+      + (basis != nil || allGraphicFields ? ["basis"] : [])
+    let base = fields.map {
       fieldKey(["elements", collaborationIdentity(id), $0])
     }
     let paths = allGraphicFields ? NotebookGraphic.allCausalPaths : (graphic?.causalPaths ?? [])
@@ -86,6 +91,8 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
   public let state: JSONValue
   public let graphic: NotebookGraphic?
   public let textStyle: NativeTextStyle?
+  public let parentID: String?
+  public let basis: NotebookElementBasis?
 
   public init(
     id: String,
@@ -98,7 +105,9 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
     programPackage: String? = nil,
     state: JSONValue = .object([:]),
     graphic: NotebookGraphic? = nil,
-    textStyle: NativeTextStyle? = nil
+    textStyle: NativeTextStyle? = nil,
+    parentID: String? = nil,
+    basis: NotebookElementBasis? = nil
   ) {
     precondition(!id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     self.id = id
@@ -112,6 +121,7 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
     self.state = state
     self.graphic = graphic
     self.textStyle = textStyle
+    self.parentID = parentID; self.basis = basis
   }
 
   public func updating(state: JSONValue) -> Self {
@@ -125,7 +135,7 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
       javaScript: javaScript,
       programPackage: programPackage,
       state: state,
-      graphic: graphic, textStyle: textStyle
+      graphic: graphic, textStyle: textStyle, parentID: parentID, basis: basis
     )
   }
 
@@ -140,7 +150,7 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
       javaScript: javaScript,
       programPackage: programPackage,
       state: state,
-      graphic: graphic, textStyle: textStyle
+      graphic: graphic, textStyle: textStyle, parentID: parentID, basis: basis
     )
   }
 }
@@ -203,7 +213,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     drawingStamp = VersionStamp(counter: 0, actor: actor)
     self.elements = elements
     agentStamp = VersionStamp(counter: 0, actor: actor)
-    let keys = ["elements/order"] + elements.flatMap { AgentElement.causalFieldKeys(id: $0.id, graphic: $0.graphic, textStyle: $0.textStyle) }
+    let keys = ["elements/order"] + elements.flatMap { AgentElement.causalFieldKeys(id: $0.id, graphic: $0.graphic, textStyle: $0.textStyle, parentID: $0.parentID, basis: $0.basis) }
     collaboration = .init(fields: Dictionary(keys.map { ($0, ContentFieldVersion(stamp: agentStamp, human: true)) },
       uniquingKeysWith: { first, _ in first }))
     precondition(isValid)
@@ -227,12 +237,15 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     return Set(ids).count == ids.count
       && elements.allSatisfy {
         !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-          && $0.frame.isContained(in: size)
+          && ($0.parentID == nil ? $0.frame.isContained(in: size) : NotebookElementBasis.validLocalFrame($0.frame))
+          && NotebookElementBasis.validParent($0.parentID,childID:$0.id)
           && $0.state.isValid
           && NotebookProgramPackage.validSourceReference($0.programPackage, isProgram: $0.kind == .web, source: $0.source, html: $0.html, css: $0.css, javaScript: $0.javaScript)
           && ($0.textStyle?.isValid(for:$0.source) ?? true)
           && ($0.kind == .nativeText || $0.textStyle == nil)
           && ($0.kind == .graphic ? $0.graphic?.isValid == true : $0.graphic == nil)
+          && ($0.kind == .group ? $0.basis?.isValid == true && $0.source.isEmpty && $0.html.isEmpty
+            && $0.css.isEmpty && $0.javaScript.isEmpty && $0.state == .object([:]) : ($0.basis?.isValid ?? true))
       }
   }
 

@@ -99,7 +99,7 @@ struct BoardPortalPreview: View {
               projectOrigin: { camera.worldToScreen($0, viewport: viewport).cgPoint }, commitsState: false)
               .zIndex(cohort.plan.rank(id: run.id.id, in: plane) ?? 0)
           }
-          ForEach(workset.elements.filter { $0.graphic == nil && cohort.plan.allowsLive(.element($0.id), in: plane) }) { element in
+          ForEach(workset.elements.filter { $0.kind != .group && $0.graphic == nil && cohort.plan.allowsLive(.element($0.id), in: plane) }) { element in
             if let origin = element.worldOrigin {
               let local = element.frame
               let screen = camera.worldToScreen(origin, viewport: viewport)
@@ -414,7 +414,7 @@ struct SpatialElementContent: View {
 
   @ViewBuilder private var content: some View {
     switch element.kind {
-    case .graphic: EmptyView()
+    case .graphic, .group: EmptyView()
     case .nativeText:
       NotebookNativeTextView(source:element.source,style:element.textStyle,
         reference:.spatial(boardID:sourceBoardID ?? WorkspaceRoot.boardID,elementID:element.id),

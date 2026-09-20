@@ -5,8 +5,10 @@ extension NotebookStore {
   /// authors a repair or scans the board; causal intent stays in its records.
   func noteGraphicIndexChange(_ fragment: NotebookStoredFragment, database: NotebookSQLConnection) throws {
     guard fragment.file == "board.json", let parent = fragment.parent else { return }
-    if fragment.collection == "board/elements", fragment.value["graphic"] != nil {
-      try database.noteOwner(.graphic, fragment.address)
+    if fragment.collection == "board/elements" {
+      try noteElementGroupAncestors(fragment,database:database)
+      if fragment.value["graphic"] != nil { try database.noteOwner(.graphic, fragment.address) }
+      if fragment.value["kind"]?.string == "group" { try database.noteOwner(.elementGroup,fragment.address) }
       if let surface = try fragment.value["surface"]?.decode(SurfaceID.self), let owner = surface.ownerID,
         let id = fragment.value["id"]?.string {
         for address in try dependentGraphicAddresses(owner: surface.kind.rawValue + ":" + owner.uuidString.lowercased(), id: id) {
@@ -43,8 +45,12 @@ extension NotebookStore {
         guard projected.insert(affected.address).inserted else { continue }
         let id = affected.value["id"]!.string!
         let shown = claimants.isEmpty ? graphic.showsGeometry : presentation.geometryIDs.contains(id)
+        if graphic.connection != nil { try indexGraphicBasisDependencies(affected,database:database) }
         if shown { try indexSpatialElement(affected, database: database, resolvingGraphics: true) }
-        else { try database.run("DELETE FROM spatial_entries WHERE address=?", [.text(affected.address)]) }
+        else {
+          try noteElementGroupAncestors(affected,database:database)
+          try database.run("DELETE FROM spatial_entries WHERE address=?", [.text(affected.address)])
+        }
         // A winner/loser change affects its incoming links even if no node
         // record changed (only the immutable source-claim author's priority).
         if affected.value["graphic"]?["connection"] == nil, let owner = surface.ownerID {

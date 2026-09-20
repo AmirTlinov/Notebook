@@ -40,7 +40,7 @@ extension NotebookStore {
     return try storedGraphicResolution(target: target, elementID: elementID)
   }
 
-  func storedGraphicResolution(target: CollaborationTarget, elementID: String) throws -> NotebookGraphicResolution {
+  func storedGraphicResolution(target: CollaborationTarget, elementID: String, relativeToParent: Bool = false) throws -> NotebookGraphicResolution {
     try readTransaction { _ in
       let surface: SurfaceID
       switch target.kind {
@@ -49,27 +49,29 @@ extension NotebookStore {
       case .cover: surface = .cover(target.id)
       default: throw NotebookStorageError.invalidTransaction("graphic owner")
       }
+      let resolver = NotebookElementPlacement.Resolver { try self.elementGroupingSource(target:target,id:$0) }
       func read(_ id: String) throws -> NotebookGraphicGraph.Node? {
-        let graphic: NotebookGraphic, frame: PageRect, origin: WorldPoint
+        let graphic: NotebookGraphic, frame: PageRect, origin: WorldPoint, parentID: String?, basis: NotebookElementBasis?
         if target.kind == .page {
           guard let value = try readPageElement(pageID: target.id, elementID: id), let payload = value.graphic else { return nil }
-          graphic = payload; frame = value.frame; origin = .zero
+          graphic = payload; frame = value.frame; origin = .zero; parentID=value.parentID; basis=value.basis
         } else {
           guard let value = try storedSpatialElement(boardID: target.boardID ?? target.id, elementID: id),
             value.surface == surface, let payload = value.graphic else { return nil }
           graphic = payload; frame = .init(x: value.frame.x,y: value.frame.y,width: value.frame.width,height: value.frame.height)
-          origin = value.worldOrigin ?? .zero
+          origin = value.worldOrigin ?? .zero; parentID=value.parentID; basis=value.basis
         }
         let shown = try graphic.showsGeometry && (graphic.sourceInkIDs.isEmpty
           || graphicPresentation(on: surface, sourceInkIDs: Set(graphic.sourceInkIDs)).geometryIDs.contains(id))
-        return .init(id: id, graphic: graphic, frame: frame, origin: origin, surface: surface, shown: shown)
+        guard let placement = try resolver.resolve(id,source:.init(frame:frame,origin:origin,parentID:parentID,basis:basis,isGroup:false)) else { return nil }
+        return .init(id:id,graphic:graphic,frame:frame,surface:surface,shown:shown,placement:placement)
       }
       guard let element = try read(elementID) else { return .pending([elementID]) }
       var nodes = [element]
       for id in Set(element.graphic.connection?.bindings.map(\.elementID) ?? []) {
         if let node = try read(id) { nodes.append(node) }
       }
-      return NotebookGraphicGraph(nodes).resolve(elementID)
+      return NotebookGraphicGraph(nodes).resolve(elementID,relativeToParent:relativeToParent)
     }
   }
 
@@ -100,6 +102,18 @@ extension NotebookStore {
           guard seen.count <= 4096 else { throw NotebookStorageError.limitExceeded("graphic_dependencies") }
           rows.append(claimant.fragment)
         }
+      }
+    }
+    // Bring only the addressed ancestor descriptors, never all their members.
+    // This also follows parents of off-window endpoints and claimants.
+    var next = 0
+    while next < rows.count {
+      let row = rows[next]; next += 1
+      guard row.collection == "board/elements",let parent = row.value["parentID"]?.string else { continue }
+      let address = boardAddress + "/board/elements/@" + fieldKey([collaborationIdentity(parent)])
+      if seen.insert(address).inserted {
+        guard seen.count <= 4096 else { throw NotebookStorageError.limitExceeded("graphic_dependencies") }
+        if let dependency = try storedFragments(address:address,descendants:false).first { rows.append(dependency) }
       }
     }
     guard rows.count <= 4096 else { throw NotebookStorageError.limitExceeded("graphic_dependencies") }

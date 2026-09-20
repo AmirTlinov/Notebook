@@ -27,7 +27,7 @@ struct NotebookElementErasing {
     let erasures: [InkElementErasure]
     init(graphic: NotebookGraphic?, layout: NotebookGraphicLayout?, size: CGSize, erasures: [InkElementErasure]) {
       self.graphic = graphic
-      self.layout = graphic?.shape == .connector ? layout : nil
+      self.layout = graphic?.shape == .connector || layout?.projection != nil ? layout : nil
       self.size = size; self.erasures = erasures
     }
     static func == (a: Self, b: Self) -> Bool {
@@ -35,7 +35,7 @@ struct NotebookElementErasing {
       // does not invalidate pixels; resizing or moving a bound endpoint does.
       a.graphic == b.graphic && a.size == b.size && a.erasures == b.erasures
         && a.layout?.curves == b.layout?.curves && a.layout?.heads == b.layout?.heads
-        && a.layout?.label == b.layout?.label
+        && a.layout?.label == b.layout?.label && a.layout?.projection == b.layout?.projection
     }
     func prepare() -> NotebookElementAppearance {
       .init(graphic:graphic,layout:layout,size:size,erasures:erasures)
@@ -164,11 +164,11 @@ extension NotebookAppModel {
     guard let page = pages[pageID] else { return [] }
     let graph = graphicGraph(page: page)
     return pageElementsForDisplay(page).compactMap { element in
-      let frame: PageRect
-      if element.graphic != nil {
-        guard let layout = graph.resolve(element.id).layout else { return nil }; frame = layout.frame
-      } else { frame = element.frame }
-      return .init(elementID: element.id, frame: frame, wholeElement: element.kind == .web,graphicTransform:element.graphic?.transform)
+      guard element.kind != .group else { return nil }
+      let layout = element.graphic == nil ? nil : graph.resolve(element.id).layout
+      guard element.graphic == nil || layout != nil else { return nil }
+      return .init(elementID:element.id,frame:layout?.frame ?? element.frame,wholeElement:element.kind == .web,
+        graphicTransform:element.graphic?.transform,elementTransform:layout?.elementTransform)
     }
   }
 
@@ -176,7 +176,7 @@ extension NotebookAppModel {
     let graph = presentedGraphicGraph(boardID: boardID, cohort: cohort)
     let board = cohort.frame.index.capturedHierarchy.board(boardID).map { presentedBoard($0, boardID: boardID, cohort: cohort) }
     var result: [SurfaceID: [InkElementTarget]] = [:]
-    for element in board?.elements ?? [] where element.graphic == nil {
+    for element in board?.elements ?? [] where element.graphic == nil && element.kind != .group {
       result[element.surface, default: []].append(.init(elementID: element.id,
         frame: .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height),
         worldOrigin: element.worldOrigin, wholeElement: element.kind == .web,graphicTransform:element.graphic?.transform))
@@ -184,7 +184,7 @@ extension NotebookAppModel {
     for node in graph.nodes.values {
       guard let layout = graph.resolve(node.id).layout else { continue }
       result[node.surface, default: []].append(.init(elementID: node.id, frame: layout.frame,
-        worldOrigin: node.surface.kind == .board ? node.origin : nil,graphicTransform:node.graphic.transform))
+        worldOrigin: node.surface.kind == .board ? node.origin : nil,graphicTransform:node.graphic.transform,elementTransform:layout.elementTransform))
     }
     return result
   }

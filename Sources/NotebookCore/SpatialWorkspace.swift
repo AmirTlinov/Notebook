@@ -56,18 +56,23 @@ public struct WorldPoint: Codable, Equatable, Hashable, Sendable {
   /// Admission for a new physical address. Projection geometry may extend
   /// beyond the stored world; a camera center or measured sample may not.
   public func addressOffset(x: Double, y: Double) -> Self? {
-    guard isValid, x.isFinite, y.isFinite else { return nil }
-    func axis(_ tile: Int64, _ local: Double, _ delta: Double) -> (Int64, Double)? {
-      let value = local + delta
-      guard value.isFinite, let offset = Int64(exactly: floor(value / Self.tileSize)) else { return nil }
-      let (next, overflow) = tile.addingReportingOverflow(offset)
-      let remainder = value - Double(offset) * Self.tileSize
-      guard !overflow, (-Self.maximumTileIndex...Self.maximumTileIndex).contains(next),
-        remainder.isFinite, remainder >= 0, remainder < Self.tileSize else { return nil }
-      return (next, remainder)
+    guard isValid, let result=projectionOffset(x:x,y:y),result.isValid else { return nil }
+    return result
+  }
+
+  /// Derived bounds may exceed the JSON address domain, but never Int64.
+  /// An unrepresentable projection is refused before a normalizing conversion.
+  func projectionOffset(x: Double,y: Double) -> Self? {
+    func axis(_ tile: Int64,_ local: Double,_ delta: Double) -> (Int64,Double)? {
+      let value=local+delta
+      guard value.isFinite,let carry=Int64(exactly:floor(value/Self.tileSize)) else { return nil }
+      let (next,overflow)=tile.addingReportingOverflow(carry)
+      let remainder=value-Double(carry)*Self.tileSize
+      guard !overflow,remainder.isFinite,remainder>=0,remainder<Self.tileSize else { return nil }
+      return (next,remainder)
     }
-    guard let x = axis(tileX, localX, x), let y = axis(tileY, localY, y) else { return nil }
-    return .init(tileX: x.0, tileY: y.0, localX: x.1, localY: y.1)
+    guard let x=axis(tileX,localX,x),let y=axis(tileY,localY,y) else { return nil }
+    return .init(tileX:x.0,tileY:y.0,localX:x.1,localY:y.1)
   }
 
   /// Interpolates an admitted address without flattening its tiles into a
@@ -102,12 +107,14 @@ public struct WorldPoint: Codable, Equatable, Hashable, Sendable {
   /// Returns `other - self` without first flattening both coordinates into
   /// huge floating-point numbers.
   public func delta(to other: Self) -> SpatialPoint {
-    SpatialPoint(
-      x: Double(other.tileX - tileX) * Self.tileSize
-        + other.localX - localX,
-      y: Double(other.tileY - tileY) * Self.tileSize
-        + other.localY - localY
-    )
+    func distance(_ a: Int64,_ b: Int64) -> Double {
+      let (difference,overflow)=b.subtractingReportingOverflow(a)
+      guard overflow else { return Double(difference) }
+      return b>a ? Double(UInt64(bitPattern:b) &- UInt64(bitPattern:a))
+        : -Double(UInt64(bitPattern:a) &- UInt64(bitPattern:b))
+    }
+    return SpatialPoint(x:distance(tileX,other.tileX)*Self.tileSize+other.localX-localX,
+      y:distance(tileY,other.tileY)*Self.tileSize+other.localY-localY)
   }
 
   public var isValid: Bool {
@@ -509,6 +516,7 @@ public enum SpatialElementKind: String, Codable, Sendable {
   case graphic
   case markdown
   case web
+  case group
 }
 
 public struct NativeTextStyle: Codable, Equatable, Sendable {
@@ -584,6 +592,8 @@ public struct SpatialElement: Codable, Equatable, Identifiable, Sendable {
   public private(set) var state: JSONValue
   public private(set) var textStyle: NativeTextStyle
   public private(set) var graphic: NotebookGraphic?
+  public let parentID: String?
+  public let basis: NotebookElementBasis?
   public private(set) var stamp: VersionStamp
 
   public init(
@@ -600,6 +610,8 @@ public struct SpatialElement: Codable, Equatable, Identifiable, Sendable {
     state: JSONValue = .object([:]),
     textStyle: NativeTextStyle = .standard,
     graphic: NotebookGraphic? = nil,
+    parentID: String? = nil,
+    basis: NotebookElementBasis? = nil,
     stamp: VersionStamp
   ) {
     precondition(!id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -616,6 +628,7 @@ public struct SpatialElement: Codable, Equatable, Identifiable, Sendable {
     self.state = state
     self.textStyle = textStyle
     self.graphic = graphic
+    self.parentID = parentID; self.basis = basis
     self.stamp = stamp
     precondition(isValid)
   }
@@ -650,6 +663,10 @@ public struct SpatialElement: Codable, Equatable, Identifiable, Sendable {
       && frame.isValid && state.isValid && textStyle.isValid(for:source)
       && NotebookProgramPackage.validSourceReference(programPackage, isProgram: kind == .web, source: source, html: html, css: css, javaScript: javaScript)
       && (kind == .graphic ? graphic?.isValid == true : graphic == nil)
+      && NotebookElementBasis.validParent(parentID,childID:id)
+      && (parentID == nil || worldOrigin == nil || worldOrigin == .zero)
+      && (kind == .group ? basis?.isValid == true && source.isEmpty && html.isEmpty
+        && css.isEmpty && javaScript.isEmpty && state == .object([:]) : (basis?.isValid ?? true))
       && (surface.kind == .board
         ? worldOrigin?.isValid == true
         : worldOrigin == nil)

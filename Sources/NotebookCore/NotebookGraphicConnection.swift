@@ -58,7 +58,8 @@ public struct NotebookGraphicConnection: Codable, Equatable, Sendable {
 }
 
 /// A derived render / hit-test value, never encoded into content or its journal.
-/// Every point is local to `frame`; frame remains in the physical owner's units.
+/// Points stay in the local body. An optional outer projection places the entire
+/// body, including stroke and labels, into its physical frame.
 public struct NotebookGraphicLayout: Equatable, Sendable {
   public struct Curve: Equatable, Sendable {
     public let start: SpatialPoint
@@ -80,6 +81,12 @@ public struct NotebookGraphicLayout: Equatable, Sendable {
     public let filled: Bool
     public let closed: Bool
   }
+  public struct Projection: Equatable, Sendable {
+    public let size: CGSize
+    public let transform: CGAffineTransform
+  }
+  public var origin: WorldPoint = .zero
+  public var projection: Projection? = nil
   public let frame: PageRect
   public let curves: [Curve]
   public let heads: [Head]
@@ -90,7 +97,49 @@ public struct NotebookGraphicLayout: Equatable, Sendable {
   public let axisStart: SpatialPoint
   public let axisEnd: SpatialPoint
 
+  /// Strip only a disposable outer placement. Local arrays remain shared.
+  public var localLayout: Self {
+    let size = projection?.size ?? CGSize(width:frame.width,height:frame.height)
+    return .init(frame:.init(x:0,y:0,width:size.width,height:size.height),curves:curves,heads:heads,
+      label:label,start:start,end:end,bend:bend,axisStart:axisStart,axisEnd:axisEnd)
+  }
+  /// Capture only the normalized outer map for measured erasures. It maps
+  /// local body units into this frame; its world translation stays in frame.
+  public var elementTransform: NotebookGraphicTransform? {
+    guard let projection else { return nil }
+    let t = projection.transform, size = projection.size
+    return .init(a:t.a*size.width/frame.width,b:t.b*size.width/frame.height,
+      c:t.c*size.height/frame.width,d:t.d*size.height/frame.height,
+      tx:t.tx/frame.width,ty:t.ty/frame.height)
+  }
+  public func displayedPoint(_ point: SpatialPoint) -> SpatialPoint {
+    let p = CGPoint(x:point.x,y:point.y).applying(projection?.transform ?? .identity)
+    return .init(x:p.x,y:p.y)
+  }
+  func placed(in placement: NotebookElementPlacement,relativeToParent: Bool = false) -> Self? {
+    let t = relativeToParent ? placement.localTransform : placement.transform
+    let origin = relativeToParent ? placement.parentOrigin : placement.origin
+    if t.a == 1 && t.b == 0 && t.c == 0 && t.d == 1 {
+      guard (frame.x+t.tx).isFinite,(frame.y+t.ty).isFinite else { return nil }
+      return .init(origin:origin,frame:.init(x:frame.x+t.tx,y:frame.y+t.ty,width:frame.width,height:frame.height),
+        curves:curves,heads:heads,label:label,start:start,end:end,bend:bend,axisStart:axisStart,axisEnd:axisEnd)
+    }
+    let linear = CGAffineTransform(a:t.a,b:t.b,c:t.c,d:t.d,tx:0,ty:0)
+    let bounds = CGRect(x:frame.x,y:frame.y,width:frame.width,height:frame.height).applying(linear)
+    guard [bounds.minX+t.tx,bounds.minY+t.ty,bounds.width,bounds.height].allSatisfy(\.isFinite),
+      bounds.width>0,bounds.height>0 else { return nil }
+    let content = CGAffineTransform(translationX:frame.x,y:frame.y).concatenating(linear)
+      .concatenating(.init(translationX:-bounds.minX,y:-bounds.minY))
+    return .init(origin:origin,projection:.init(size:.init(width:frame.width,height:frame.height),transform:content),
+      frame:.init(x:bounds.minX+t.tx,y:bounds.minY+t.ty,width:bounds.width,height:bounds.height),
+      curves:curves,heads:heads,label:label,start:start,end:end,bend:bend,axisStart:axisStart,axisEnd:axisEnd)
+  }
+
   public func hitTest(_ point: SpatialPoint, graphic: NotebookGraphic, tolerance: Double) -> Bool {
+    if projection != nil {
+      return NotebookElementAppearance(graphic:graphic,layout:self,
+        size:.init(width:frame.width,height:frame.height),erasures:[]).contains(point,tolerance:tolerance)
+    }
     if graphic.shape != .connector {
       return NotebookGraphicGeometry.hitTest(graphic, width: frame.width, height: frame.height,
         x: point.x, y: point.y, tolerance: tolerance)
@@ -150,11 +199,13 @@ public struct NotebookGraphicGraph: Sendable {
     public let graphic: NotebookGraphic
     public let frame: PageRect
     public let origin: WorldPoint
+    public let placement: NotebookElementPlacement
     public let surface: SurfaceID
     public let shown: Bool
     public init(id: String, graphic: NotebookGraphic, frame: PageRect, origin: WorldPoint = .zero,
-      surface: SurfaceID, shown: Bool) {
-      self.id = id; self.graphic = graphic; self.frame = frame; self.origin = origin
+      surface: SurfaceID, shown: Bool, placement: NotebookElementPlacement? = nil) {
+      let placement = placement ?? .init(id:id,frame:frame,origin:origin)
+      self.id = id; self.graphic = graphic; self.frame = frame; self.origin = placement.origin; self.placement = placement
       self.surface = surface; self.shown = shown
     }
   }
@@ -213,13 +264,15 @@ public struct NotebookGraphicGraph: Sendable {
     return .init(elementID:node.id,normalizedAnchor:.init(x:min(1,max(0,anchor.x/frame.width)),y:min(1,max(0,anchor.y/frame.height))),
       isExact:!chosen.inside,isPrecise:true)
   }
-  public func resolve(_ id: String) -> NotebookGraphicResolution {
+  public func resolve(_ id: String,relativeToParent: Bool = false) -> NotebookGraphicResolution {
     guard let node = nodes[collaborationIdentity(id)] else { return .pending([id]) }
     guard node.shown else { return .hidden }
-    let frame = node.frame, graphic = node.graphic
+    let size = node.placement.localSize, graphic = node.graphic
     guard let connection = graphic.connection else {
-      return .geometry(.init(frame: frame, curves: [], heads: [], label: .init(x: frame.width/2, y: frame.height/2),
-        start: .zero, end: .zero, bend: .zero, axisStart: .zero, axisEnd: .zero))
+      let local = NotebookGraphicLayout(frame:.init(x:0,y:0,width:size.x,height:size.y),curves:[],heads:[],
+        label:.init(x:size.x/2,y:size.y/2),start:.zero,end:.zero,bend:.zero,axisStart:.zero,axisEnd:.zero)
+      guard let placed = local.placed(in:node.placement,relativeToParent:relativeToParent) else { return .pending([id]) }
+      return .geometry(placed)
     }
     let missing = Set(connection.bindings.filter { nodes[collaborationIdentity($0.elementID)] == nil }.map(\.elementID))
     guard missing.isEmpty else { return .pending(missing) }
@@ -227,16 +280,15 @@ public struct NotebookGraphicGraph: Sendable {
       guard let target = nodes[collaborationIdentity(binding.elementID)], target.shown,
         target.surface == node.surface, target.graphic.shape != .connector else { return .hidden }
     }
-    func anchor(_ endpoint: NotebookGraphicConnection.Endpoint) -> SpatialPoint {
+    func anchor(_ endpoint: NotebookGraphicConnection.Endpoint) -> SpatialPoint? {
       guard let binding = endpoint.binding, let target = nodes[collaborationIdentity(binding.elementID)] else {
         return endpoint.point
       }
-      let offset = node.origin.delta(to: target.origin)
       let a = binding.isPrecise ? binding.normalizedAnchor : .init(x: 0.5, y: 0.5)
-      return .init(x: offset.x + (target.frame.x-frame.x) + target.frame.width*a.x,
-        y: offset.y + (target.frame.y-frame.y) + target.frame.height*a.y)
+      let size = target.placement.localSize
+      return node.placement.point(.init(x:size.x*a.x,y:size.y*a.y),from:target.placement)
     }
-    let a = anchor(connection.start), b = anchor(connection.end)
+    guard let a = anchor(connection.start), let b = anchor(connection.end) else { return .hidden }
     let distance = hypot(b.x-a.x, b.y-a.y)
     guard distance > 0.001 else { return .hidden }
     let normal = SpatialPoint(x: -(b.y-a.y)/distance, y: (b.x-a.x)/distance)
@@ -246,14 +298,13 @@ public struct NotebookGraphicGraph: Sendable {
     func clipped(_ endpoint: NotebookGraphicConnection.Endpoint, anchor: SpatialPoint, toward: SpatialPoint) -> SpatialPoint {
       guard let binding = endpoint.binding, !binding.isExact,
         let target = nodes[collaborationIdentity(binding.elementID)] else { return anchor }
-      let delta = node.origin.delta(to: target.origin)
-      let center = SpatialPoint(x: delta.x+(target.frame.x-frame.x)+target.frame.width/2,
-        y: delta.y+(target.frame.y-frame.y)+target.frame.height/2)
-      let rx = target.frame.width/2, ry = target.frame.height/2
-      let px = (anchor.x-center.x)/rx, py = (anchor.y-center.y)/ry
-      let dx = (toward.x-anchor.x)/rx, dy = (toward.y-anchor.y)/ry
+      guard let localAnchor = target.placement.point(anchor,from:node.placement),
+        let localToward = target.placement.point(toward,from:node.placement) else { return anchor }
+      let size = target.placement.localSize, rx = size.x/2, ry = size.y/2
+      let px = (localAnchor.x-rx)/rx, py = (localAnchor.y-ry)/ry
+      let dx = (localToward.x-localAnchor.x)/rx, dy = (localToward.y-localAnchor.y)/ry
       if target.graphic.shape == .plus { return anchor }
-      if let vertices = NotebookGraphicGeometry.outlinePolygon(target.graphic, width: target.frame.width, height: target.frame.height) {
+      if let vertices = NotebookGraphicGeometry.outlinePolygon(target.graphic, width:size.x,height:size.y) {
         let intersections = zip(vertices,vertices.dropFirst()+vertices.prefix(1)).compactMap { a,b -> Double? in
           let ax = a.x*2-1, ay = a.y*2-1, ex = (b.x-a.x)*2, ey = (b.y-a.y)*2
           let cross = dx*ey-dy*ex
@@ -279,9 +330,8 @@ public struct NotebookGraphicGraph: Sendable {
     // Resolve in the node's local basis. Translating a connector must not round
     // its local curves differently and invalidate an otherwise identical mask.
     let local = Self.connectionLayout(graphic: graphic, start: start, end: end, middle: middle, axisStart: a, axisEnd: b)
-    return .geometry(.init(frame:.init(x:frame.x+local.frame.x,y:frame.y+local.frame.y,
-      width:local.frame.width,height:local.frame.height),curves:local.curves,heads:local.heads,label:local.label,
-      start:local.start,end:local.end,bend:local.bend,axisStart:local.axisStart,axisEnd:local.axisEnd))
+    guard let placed = local.placed(in:node.placement,relativeToParent:relativeToParent) else { return .pending([id]) }
+    return .geometry(placed)
   }
 
   private static func connectionLayout(graphic: NotebookGraphic, start: SpatialPoint, end: SpatialPoint,
@@ -367,23 +417,42 @@ public struct NotebookGraphicGraph: Sendable {
 extension PageDocument {
   public func graphicGraph(frames: [String: PageRect] = [:], connections: [String: NotebookGraphicConnection] = [:]) -> NotebookGraphicGraph {
     let shown = graphicPresentation.geometryIDs
+    let sources = Dictionary(elements.filter { $0.kind == .group }.map { (collaborationIdentity($0.id),$0) },uniquingKeysWith:{ first,_ in first })
+    let resolver = NotebookElementPlacement.Resolver { id in
+      sources[collaborationIdentity(id)].map {
+        .init(frame:frames[$0.id] ?? $0.frame,origin:.zero,parentID:$0.parentID,basis:$0.basis,isGroup:$0.kind == .group)
+      }
+    }
     return .init(elements.compactMap { element in
-      guard var graphic = element.graphic else { return nil }
+      guard var graphic = element.graphic,let placement = try? resolver.resolve(element.id,
+        source:.init(frame:frames[element.id] ?? element.frame,origin:.zero,parentID:element.parentID,basis:element.basis,isGroup:false)) else { return nil }
       if let connection = connections[element.id] { graphic.connection = connection }
-      return .init(id: element.id, graphic: graphic, frame: frames[element.id] ?? element.frame,
-        surface: .page(id), shown: shown.contains(element.id))
+      return .init(id:element.id,graphic:graphic,frame:frames[element.id] ?? element.frame,
+        surface:.page(id),shown:shown.contains(element.id),placement:placement)
     })
   }
 }
 extension BoardDocument {
   public func graphicGraph(frames: [String: PageRect] = [:], connections: [String: NotebookGraphicConnection] = [:]) -> NotebookGraphicGraph {
     let shown = graphicPresentation.geometryIDs
+    let sources = Dictionary(elements.filter { $0.kind == .group }.map { (collaborationIdentity($0.id),$0) },uniquingKeysWith:{ first,_ in first })
+    // Separate surfaces cannot share a parent, even in a partially delivered cut.
+    var resolvers: [SurfaceID:NotebookElementPlacement.Resolver] = [:]
     return .init(elements.compactMap { element in
       guard var graphic = element.graphic else { return nil }
+      let surface = element.surface
+      let resolver = resolvers[surface] ?? NotebookElementPlacement.Resolver { id in
+        guard let value = sources[collaborationIdentity(id)],value.surface == surface else { return nil }
+        return .init(frame:frames[value.id] ?? .init(x:value.frame.x,y:value.frame.y,width:value.frame.width,height:value.frame.height),
+          origin:value.worldOrigin ?? .zero,parentID:value.parentID,basis:value.basis,isGroup:value.kind == .group)
+      }
+      resolvers[element.surface] = resolver
+      let frame = frames[element.id] ?? PageRect(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+      guard let placement = try? resolver.resolve(element.id,
+        source:.init(frame:frame,origin:element.worldOrigin ?? .zero,parentID:element.parentID,basis:element.basis,isGroup:false)) else { return nil }
       if let connection = connections[element.id] { graphic.connection = connection }
-      return .init(id: element.id, graphic: graphic,
-        frame: frames[element.id] ?? .init(x: element.frame.x,y: element.frame.y,width: element.frame.width,height: element.frame.height),
-        origin: element.worldOrigin ?? .zero, surface: element.surface, shown: shown.contains(element.id))
+      return .init(id:element.id,graphic:graphic,
+        frame:frame,surface:element.surface,shown:shown.contains(element.id),placement:placement)
     })
   }
 }

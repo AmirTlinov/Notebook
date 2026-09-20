@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 extension NotebookStore {
@@ -246,33 +247,41 @@ extension NotebookStore {
   func indexSpatialElement(_ fragment: NotebookStoredFragment, database: NotebookSQLConnection, resolvingGraphics: Bool = false) throws {
       guard let boardString = fragment.parent?.components(separatedBy: "@").last,
         let boardID = UUID(uuidString: boardString) else { throw NotebookStorageError.corruptRecord(fragment.address) }
-      try database.run("DELETE FROM spatial_entries WHERE address=?", [.text(fragment.address)])
       let element = try fragment.value.decode(SpatialElement.self)
+      if element.kind == .group {
+        try database.noteOwner(.elementGroup,fragment.address)
+        return
+      }
+      if resolvingGraphics { try noteElementGroupAncestors(fragment,database:database) }
+      try database.run("DELETE FROM spatial_entries WHERE address=?", [.text(fragment.address)])
       let frame: PageRect
       if resolvingGraphics, element.graphic != nil {
         let target = element.surface.kind == .cover
           ? CollaborationTarget(kind: .cover, id: element.surface.ownerID!, boardID: boardID)
           : CollaborationTarget(kind: .board, id: boardID)
-        guard let layout = try storedGraphicResolution(target: target, elementID: element.id).layout else { return }
+        guard let layout = try storedGraphicResolution(target:target,elementID:element.id,relativeToParent:true).layout else { return }
         frame = layout.frame
       } else { frame = .init(x: element.frame.x,y: element.frame.y,width: element.frame.width,height: element.frame.height) }
+      let bounds=try NotebookElementBasis.spatialBounds(CGRect(x:frame.x,y:frame.y,width:frame.width,height:frame.height),origin:element.worldOrigin ?? .zero)
       let id = element.surface.kind == .cover ? (element.surface.ownerID?.uuidString.lowercased() ?? "") : element.id
       try insertSpatialEntry(address: fragment.address, boardID: boardID, id: id,
         kind: element.surface.kind == .cover ? "coverElement" : "element", key: element.id,
-        origin: (element.worldOrigin ?? .zero).offsetBy(x: frame.x, y: frame.y),
-        width: frame.width, height: frame.height, z: Double(fragment.position), database: database)
+        origin:bounds.origin,width:frame.width,height:frame.height,z:Double(fragment.position),parentID:element.parentID,database:database)
       if element.surface.kind == .cover { try database.noteOwner(.cover, fragment.address) }
   }
 
-  private func insertSpatialEntry(address: String, boardID: UUID, id: String, kind: String,
+  func insertSpatialEntry(address: String, boardID: UUID, id: String, kind: String,
     key: String, origin: WorldPoint, width: Double, height: Double, z: Double,
+    parentID: String? = nil, isGroup: Bool = false, hasPaint: Bool = true, maxZ: Double? = nil, lowerKey: String? = nil,
     database: NotebookSQLConnection) throws {
-    let maximum = origin.offsetBy(x: width, y: height)
-    try database.run("INSERT INTO spatial_entries(entry_id,address,board_id,owner_id,kind,layer,z_index,paint_key,min_tx,min_ty,min_x,min_y,max_tx,max_ty,max_x,max_y) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [
+    guard let maximum=origin.projectionOffset(x:width,y:height) else { throw NotebookStorageError.limitExceeded("spatial_bounds") }
+    try database.run("INSERT INTO spatial_entries(entry_id,address,board_id,owner_id,kind,layer,z_index,paint_key,min_tx,min_ty,min_x,min_y,max_tx,max_ty,max_x,max_y,parent_id,is_group,has_paint,max_z,lower_key,space_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [
       .text(address + ":" + id), .text(address), .text(boardID.uuidString.lowercased()), .text(id),
       .text(kind), .integer(kind == "item" ? 1 : 0), .real(z), .text(key),
       .integer(origin.tileX), .integer(origin.tileY), .real(origin.localX), .real(origin.localY),
-      .integer(maximum.tileX), .integer(maximum.tileY), .real(maximum.localX), .real(maximum.localY)])
+      .integer(maximum.tileX), .integer(maximum.tileY), .real(maximum.localX), .real(maximum.localY),
+      parentID.map { .text(collaborationIdentity($0)) } ?? .null,.integer(isGroup ? 1 : 0),.integer(hasPaint ? 1 : 0),
+      .real(maxZ ?? z),.text(lowerKey ?? key),.integer(Self.spatialSpaceKey(board:boardID.uuidString.lowercased(),parent:parentID.map(collaborationIdentity)))])
   }
 
   private func placementGroupIDs(boardID: String, stackID: String, database: NotebookSQLConnection) throws -> [String] {
@@ -369,22 +378,6 @@ extension NotebookStore {
     try database.run("DELETE FROM spatial_entries WHERE address=?", [.text(address)])
     try insertSpatialEntry(address: address, boardID: boardID, id: itemID.uuidString.lowercased(), kind: "item",
       key: itemID.uuidString, origin: origin, width: width, height: height, z: z, database: database)
-  }
-
-  func spatialRows(boardID: UUID, coverID: UUID? = nil, bounds: WorkspaceSpatialBounds, limit: Int, after: NotebookScenePaintCursor? = nil, elementsOnly: Bool = false) throws -> [[NotebookSQLValue]] {
-    guard (1...257).contains(limit) else { throw NotebookStorageError.limitExceeded("scene_window") }
-    let origin = bounds.origin, maximum = bounds.maximum
-    return try currentSQL!.rows("""
-      SELECT paint_key,address,owner_id,kind,layer,z_index,min_tx,min_ty,min_x,min_y,max_tx,max_ty,max_x,max_y
-      FROM spatial_entries WHERE board_id=? AND (?=0 OR kind<>'item') AND ((? IS NULL AND kind<>'coverElement') OR (? IS NOT NULL AND kind='coverElement' AND owner_id=?))
-      AND (min_tx<? OR (min_tx=? AND min_x<=?)) AND (max_tx>? OR (max_tx=? AND max_x>=?))
-      AND (min_ty<? OR (min_ty=? AND min_y<=?)) AND (max_ty>? OR (max_ty=? AND max_y>=?))
-      AND (layer>? OR (layer=? AND (z_index>? OR (z_index=? AND paint_key>?))))
-      ORDER BY layer,z_index,paint_key LIMIT ?
-      """, [.text(boardID.uuidString.lowercased()), .integer(elementsOnly ? 1 : 0), coverID.map { .text($0.uuidString.lowercased()) } ?? .null, coverID.map { .text($0.uuidString.lowercased()) } ?? .null, coverID.map { .text($0.uuidString.lowercased()) } ?? .null,
-      .integer(maximum.tileX), .integer(maximum.tileX), .real(maximum.localX), .integer(origin.tileX), .integer(origin.tileX), .real(origin.localX),
-      .integer(maximum.tileY), .integer(maximum.tileY), .real(maximum.localY), .integer(origin.tileY), .integer(origin.tileY), .real(origin.localY),
-      .integer(Int64(after?.layer ?? -1)), .integer(Int64(after?.layer ?? -1)), .real(after?.zIndex ?? 0), .real(after?.zIndex ?? 0), .text(after?.address ?? ""), .integer(Int64(limit))])
   }
 
   public func readSceneWindow(boardID: UUID, bounds: WorkspaceSpatialBounds, limit: Int = 256,

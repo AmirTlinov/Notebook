@@ -10,20 +10,24 @@ public struct InkElementTarget: Codable, Equatable, Sendable {
   public let worldOrigin: WorldPoint?
   public let wholeElement: Bool
   public let graphicTransform: NotebookGraphicTransform?
+  /// Whole-body basis at contact, normalized into the captured physical frame.
+  /// Source contour transform stays separate: their order is not interchangeable.
+  public let elementTransform: NotebookGraphicTransform?
 
-  public init(elementID: String, frame: PageRect, worldOrigin: WorldPoint? = nil, wholeElement: Bool = false, graphicTransform: NotebookGraphicTransform? = nil) {
+  public init(elementID: String, frame: PageRect, worldOrigin: WorldPoint? = nil, wholeElement: Bool = false, graphicTransform: NotebookGraphicTransform? = nil, elementTransform: NotebookGraphicTransform? = nil) {
     self.elementID = elementID; self.frame = frame; self.worldOrigin = worldOrigin
-    self.wholeElement = wholeElement; self.graphicTransform = graphicTransform
+    self.wholeElement = wholeElement; self.graphicTransform = graphicTransform; self.elementTransform = elementTransform
     precondition(isValid)
   }
 
-  private enum CodingKeys: String, CodingKey { case elementID, frame, worldOrigin, wholeElement, graphicTransform }
+  private enum CodingKeys: String, CodingKey { case elementID, frame, worldOrigin, wholeElement, graphicTransform, elementTransform }
   public init(from decoder: any Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     elementID = try values.decode(String.self, forKey: .elementID)
     frame = try values.decode(PageRect.self, forKey: .frame)
     worldOrigin = try values.decodeIfPresent(WorldPoint.self, forKey: .worldOrigin)
     graphicTransform = try values.decodeIfPresent(NotebookGraphicTransform.self,forKey:.graphicTransform)
+    elementTransform = try values.decodeIfPresent(NotebookGraphicTransform.self,forKey:.elementTransform)
     wholeElement = try values.decodeIfPresent(Bool.self, forKey: .wholeElement) ?? false
     guard isValid else { throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
       debugDescription: "Invalid eraser target")) }
@@ -34,13 +38,14 @@ public struct InkElementTarget: Codable, Equatable, Sendable {
     try values.encode(frame, forKey: .frame)
     try values.encodeIfPresent(worldOrigin, forKey: .worldOrigin)
     try values.encodeIfPresent(graphicTransform,forKey:.graphicTransform)
+    try values.encodeIfPresent(elementTransform,forKey:.elementTransform)
     if wholeElement { try values.encode(true, forKey: .wholeElement) }
   }
 
   var isValid: Bool {
     !elementID.isEmpty && elementID.count <= 120
       && [frame.x, frame.y, frame.width, frame.height].allSatisfy(\.isFinite)
-      && frame.width > 0 && frame.height > 0 && (worldOrigin?.isValid ?? true) && (graphicTransform?.isValid ?? true)
+      && frame.width > 0 && frame.height > 0 && (worldOrigin?.isValid ?? true) && (graphicTransform?.isValid ?? true) && (elementTransform?.isValid ?? true)
   }
 
   public func localPoint(_ sample: SpatialInkSample) -> SpatialPoint {

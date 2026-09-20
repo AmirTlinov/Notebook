@@ -261,11 +261,13 @@ final class SceneCompositionRenderer {
         guard range?.contains(entry) ?? true else { continue }
         switch entry.id {
         case .element(let id):
-          guard let element = try await source.element(id, boardID: presence.boardID), let origin = element.worldOrigin else {
+          guard let element = try await source.element(id, boardID: presence.boardID) else {
             throw SceneRenderError.snapshotPending("element_source")
           }
+          if element.kind == .group { continue }
           let layout = try await source.graphicLayout(element,boardID:presence.boardID)
           if element.graphic != nil && layout == nil { continue }
+          guard let origin = layout?.origin ?? element.worldOrigin else { throw SceneRenderError.snapshotPending("element_origin") }
           let local = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
           let screen = presence.camera.worldToScreen(origin.offsetBy(x: local.x, y: local.y), viewport: presence.viewport)
           let rect = CGRect(x: frame.minX + screen.x * projection, y: frame.minY + screen.y * projection,
@@ -373,6 +375,7 @@ final class SceneCompositionRenderer {
   private func paintElement(_ element: SpatialElement, boardID: UUID, frame: CGRect, canvas: SceneRasterCompositor,
     graphicLayout: NotebookGraphicLayout? = nil) async throws {
     try checkPreparation()
+    guard element.kind != .group else { return }
     let erasures = try await source.elementErasures(element)
     guard !erasures.contains(where: { $0.target.wholeElement }) else { return }
     let appearance = element.graphic != nil || element.kind == .nativeText

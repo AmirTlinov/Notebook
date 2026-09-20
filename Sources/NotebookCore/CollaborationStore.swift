@@ -238,12 +238,14 @@ extension NotebookStore {
           // An intermediate connector can precede its endpoint. Validate only
           // the completed action, never each lifecycle publication barrier.
           try after.validateGraphicBindings(action: action, scope: self)
+          try after.validateElementParents(action: action, scope: self)
           try after.validate(scope: self)
         }
       } else {
         try applyOperations()
         try after.recordFieldChanges(from: before, human: human)
         try after.validateGraphicBindings(action: action, scope: self)
+        try after.validateElementParents(action: action, scope: self)
         try after.validate(scope: self)
       }
       if hasLifecycle { try coalesceCreatedNotebookSources(action, before: before, after: after, evidence: &evidenceAfter) }
@@ -819,12 +821,17 @@ struct CollaborationWorkspace {
     switch op.kind {
     case .insertElement, .convertInkToElement:
       guard index == nil, let id = op.id, !id.isEmpty, id.count <= 120,
-        let kind = op.values["kind"]?.string, ["markdown", "web", "nativeText", "graphic"].contains(kind),
+        let kind = op.values["kind"]?.string, ["markdown", "web", "nativeText", "graphic", "group"].contains(kind),
         let frame = op.values["frame"], let source = op.values["source"] else { throw invalid("Новый элемент получает ID, вид, рамку и исходник.") }
       var value: [String: JSONValue] = ["id": .string(id), "kind": .string(kind), "frame": frame,
         "source": source, "html": op.values["html"] ?? source, "css": op.values["css"] ?? .string(""),
         "javaScript": op.values["javaScript"] ?? .string(""), "state": op.values["state"] ?? .object([:])]
       if let package = op.values["programPackage"], package != .null { value["programPackage"] = package }
+      if let parent = op.values["parentID"], parent != .null { value["parentID"] = parent }
+      if let raw = op.values["basis"], raw != .null {
+        guard try raw.decode(NotebookElementBasis.self).isValid else { throw invalid("Недопустимое основание элемента.") }
+        value["basis"] = raw
+      } else if kind == "group" { throw invalid("Группа получает локальное основание.") }
       if kind == "graphic" {
         guard let raw = op.values["graphic"] else { throw invalid("Нужна нативная геометрия.") }
         let graphic = try raw.decode(NotebookGraphic.self)
@@ -849,14 +856,14 @@ struct CollaborationWorkspace {
           try surface.decode(SurfaceID.self) == (op.target.kind == .cover ? .cover(op.target.id) : .board(op.target.id)) else { throw missing(op.target) }
       }
       let allowed = op.kind == .setElementState ? Set(["state"])
-        : Set(["frame", "source", "html", "css", "javaScript", "programPackage", "graphic", "textStyle"]
+        : Set(["frame", "parentID", "basis", "source", "html", "css", "javaScript", "programPackage", "graphic", "textStyle"]
           + (op.target.kind == .page ? [] : ["worldOrigin"]))
       guard !op.values.isEmpty, Set(op.values.keys).isSubset(of: allowed) else { throw invalid("Поля изменения принадлежат выбранной операции.") }
       for (key, value) in op.values {
         if key == "graphic" {
           guard let raw = elements[index]["graphic"] else { throw invalid("Элемент не содержит геометрии.") }
           elements[index] = try elements[index].setting(key, .encode(raw.decode(NotebookGraphic.self).applying(value)))
-        } else { elements[index] = elements[index].setting(key, key == "programPackage" && value == .null ? nil : value) }
+        } else { elements[index] = elements[index].setting(key, ["programPackage","parentID","basis"].contains(key) && value == .null ? nil : value) }
       }
     case .removeElement:
       guard let index else { throw missing(op.target) }

@@ -29,6 +29,7 @@ struct AgentOverlayView: View {
   private var visibleElements: [AgentElement] {
     let graph = graph
     return elements.filter {
+      guard $0.kind != .group else { return false }
       if $0.graphic != nil {
         guard let frame = graph.resolve($0.id).layout?.frame else { return false }
         return frame.x < pageSize.width && frame.y < pageSize.height && frame.x+frame.width > 0 && frame.y+frame.height > 0
@@ -120,7 +121,7 @@ struct AgentOverlayView: View {
           width: frame.width,
           height: frame.height
         )
-        .erased(by: cuts, appearance: appearance,transform:graph.nodes[element.id]?.graphic.transform)
+        .erased(by: cuts, appearance:appearance,transform:graph.nodes[element.id]?.graphic.transform,layout:layout)
         .offset(x: frame.x, y: frame.y)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent-element-\(element.id)")

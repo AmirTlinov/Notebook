@@ -35,7 +35,7 @@ extension NotebookAppModel {
   func projectingGraphicCommands(_ graph: NotebookGraphicGraph,
     reference: (String) -> EditableElementReference) -> NotebookGraphicGraph {
     let selectedEdits = Dictionary(uniqueKeysWithValues:(selectionSession.manipulation?.selectedEdits ?? []).map { ($0.id,$0) })
-    return .init(graph.nodes.values.map { node in
+    return .init(graph.nodes.values.compactMap { node in
       let ref = reference(node.id), draft = elementCommandDrafts[ref]
       let contact = selectionSession.manipulation.flatMap { $0.reference == ref ? $0 : nil }
       var graphic = draft?.graphic ?? node.graphic
@@ -48,8 +48,9 @@ extension NotebookAppModel {
       if let selected { graphic = selected.graphic }
       let frame = selected?.frame ?? contact.map { PageRect(x: $0.frame.minX, y: $0.frame.minY, width: $0.frame.width, height: $0.frame.height) }
         ?? draft?.frame ?? node.frame
-      return .init(id: node.id, graphic: graphic, frame: frame, origin: node.origin, surface: node.surface,
-        shown: node.shown && graphic.showsGeometry)
+      guard let placement = try? node.placement.updating(frame:frame,from:node.frame) else { return nil }
+      return .init(id:node.id,graphic:graphic,frame:frame,surface:node.surface,
+        shown:node.shown && graphic.showsGeometry,placement:placement)
     })
   }
 }

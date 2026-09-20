@@ -87,7 +87,8 @@ struct InkElementErasureTests {
   }
 
   @Test(arguments: [false, true]) func cutoutsSurviveAddressedStorageReplicationReplayAndUndo(whole: Bool) throws {
-    let target = InkElementTarget(elementID: self.target.elementID, frame: self.target.frame, wholeElement: whole)
+    let target = InkElementTarget(elementID:self.target.elementID,frame:self.target.frame,wholeElement:whole,
+      elementTransform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0))
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let a = NotebookStore(root: root.appendingPathComponent("a")), b = NotebookStore(root: root.appendingPathComponent("b"))
@@ -102,7 +103,7 @@ struct InkElementErasureTests {
     try a.savePage(page)
     let origin = WorldPoint(x: 9000, y: -12000)
     let span = SpatialInkSpan(surface: surface, samples: [sample(0, 0, world: origin.offsetBy(x: 100, y: 160))])
-      .erasingElements([.init(elementID: "circle", frame: target.frame, worldOrigin: origin)])
+      .erasingElements([.init(elementID: "circle", frame:target.frame,worldOrigin:origin,elementTransform:target.elementTransform)])
     let action = SpatialInkAction(tool: .eraser, spans: [span], stamp: .init(counter: 21, actor: actor))
     try a.commitSpatialInk(.append(action, journalStamp: action.stamp))
     for record in try a.changeJournal(after: 0) {
@@ -130,7 +131,7 @@ struct InkElementErasureTests {
     #expect(try reopened.readElementErasures(on:surface,elementID:"circle").isEmpty)
   }
 
-  @Test(arguments:[4,5,6,7,8,9,12,13,14,15,16,17]) func newManifestFencesOldReadersWithoutDroppingQueuedHistory(legacyFormat: Int) throws {
+  @Test(arguments:[4,5,6,7,8,9,12,13,14,15,16,17,18]) func newManifestFencesOldReadersWithoutDroppingQueuedHistory(legacyFormat: Int) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let a = NotebookStore(root: root.appendingPathComponent("a")), b = NotebookStore(root: root.appendingPathComponent("b"))

@@ -13,6 +13,12 @@ public struct NotebookElementAppearance: @unchecked Sendable {
 
   public init(graphic: NotebookGraphic?, layout: NotebookGraphicLayout?, size: CGSize,
     erasures: [InkElementErasure]) {
+    if let layout, let projection = layout.projection {
+      let body = Self(graphic:graphic,layout:layout.localLayout,size:projection.size,erasures:erasures)
+      var transform = projection.transform
+      remaining = body.remaining.copy(using:&transform)!; mask = body.mask.copy(using:&transform)!; state = body.state
+      return
+    }
     if erasures.contains(where: { $0.target.wholeElement }) {
       mask = CGPath(rect: CGRect(origin: .zero, size: size), transform: nil)
       remaining = CGMutablePath(); state = .erased
@@ -94,7 +100,12 @@ public struct NotebookElementAppearance: @unchecked Sendable {
   /// Nonzero fill of the same positive triangles is already their union.
   /// Painting does not need CoreGraphics boolean normalization. This linear
   /// path is also the exact live eraser while semantic preparation is pending.
-  public static func measuredErasurePath(_ erasures: [InkElementErasure], size: CGSize, transform: NotebookGraphicTransform? = nil) -> CGPath {
+  public static func measuredErasurePath(_ erasures: [InkElementErasure], size: CGSize, transform: NotebookGraphicTransform? = nil,
+    layout: NotebookGraphicLayout? = nil) -> CGPath {
+    if let projection = layout?.projection {
+      var outer = projection.transform
+      return measuredErasurePath(erasures,size:projection.size,transform:transform).copy(using:&outer)!
+    }
     if erasures.contains(where: { $0.target.wholeElement }) {
       return CGPath(rect: CGRect(origin: .zero, size: size), transform: nil)
     }
@@ -123,7 +134,8 @@ public struct NotebookElementAppearance: @unchecked Sendable {
       InkStrokeGeometry.appendEraserVertices(renderPoints:points,to:&vertices)
       func point(_ p: SIMD2<Float>) -> CGPoint {
         let normalized = SpatialPoint(x:Double(p.x)/erasure.target.frame.width,y:Double(p.y)/erasure.target.frame.height)
-        let content = (erasure.target.graphicTransform ?? .identity).unapplying(normalized)
+        let body = erasure.target.elementTransform?.unapplying(normalized) ?? normalized
+        let content = (erasure.target.graphicTransform ?? .identity).unapplying(body)
         let current = (transform ?? .identity).applying(content)
         return .init(x:current.x*size.width,y:current.y*size.height)
       }
@@ -172,6 +184,10 @@ extension NotebookGraphicGeometry {
   /// their content envelope conservatively; partial source is explicitly marked.
   public static func paintPath(_ graphic: NotebookGraphic, layout: NotebookGraphicLayout?, size: CGSize) -> CGPath {
     guard graphic.showsGeometry else { return CGMutablePath() }
+    if let layout, let projection = layout.projection {
+      var transform = projection.transform
+      return paintPath(graphic,layout:layout.localLayout,size:projection.size).copy(using:&transform)!
+    }
     var result: CGPath = graphic.freehand?.paintPath(size:size,transform:graphic.transform) ?? CGMutablePath()
     let width = graphic.style.strokeWidth
     func add(_ path: CGPath) { result = result.union(path) }

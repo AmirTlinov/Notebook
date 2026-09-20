@@ -22,6 +22,13 @@ struct NotebookGraphicView: View {
     appearance: NotebookElementAppearance? = nil, layer: PaintLayer = .content) {
       guard graphic.showsGeometry, appearance?.state != .erased else { return }
       var context = context
+      if let layout, let projection = layout.projection {
+        if let appearance { context.clip(to:Path(appearance.mask),options:.inverse) }
+        context.concatenate(projection.transform)
+        paint(graphic,layout:layout.localLayout,in:context,size:projection.size,
+          erasures:appearance == nil ? erasures : [],layer:layer)
+        return
+      }
       if let appearance { context.clip(to:Path(appearance.mask),options:.inverse) }
       else { NotebookElementErasurePaint.clip(erasures, context: &context, size: size,transform:graphic.transform) }
       if let ink = graphic.freehand {

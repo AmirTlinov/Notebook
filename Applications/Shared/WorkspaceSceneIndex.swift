@@ -89,12 +89,13 @@ struct WorkspaceSceneIndex: Sendable {
       let graphicPresentation = node.board.graphicPresentation
       let graphicGraph = node.board.graphicGraph()
       for (position, element) in node.board.elements.enumerated() {
+        guard element.kind != .group else { continue }
         guard element.graphic == nil || graphicPresentation.geometryIDs.contains(element.id) else { continue }
         let layout = element.graphic == nil ? nil : graphicGraph.resolve(element.id).layout
         guard element.graphic == nil || layout != nil else { continue }
         let frame = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
         elements[element.id] = element
-        if element.surface == .board(node.id), let origin = element.worldOrigin {
+        if element.surface == .board(node.id), let origin = layout?.origin ?? element.worldOrigin {
           entries.append(.init(id: .element(element.id), bounds: .init(
             origin: origin.offsetBy(x: frame.x, y: frame.y),
             width: frame.width, height: frame.height), zIndex: Double(position)))

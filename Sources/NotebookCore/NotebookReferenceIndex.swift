@@ -823,11 +823,17 @@ extension NotebookStore {
   /// Relative adjacency, rather than absolute SQL slots, identifies painting
   /// order. Moving one element changes at most four neighboring edges.
   private func updateReferenceOrder(address: String, database: NotebookSQLConnection) throws {
-    let old = try database.rows("SELECT owner_key,position,member FROM reference_element_order WHERE address=?", [.text(address)]).first
+    let old = try database.rows("SELECT owner_key,position,member,parent_id FROM reference_element_order WHERE address=?", [.text(address)]).first
     let fragment = try storedFragments(address: address, descendants: false).first
     let scope = try fragment.flatMap(Self.referenceOrderScope)
     let orderKey = scope.map { $0.owner + ($0.group.map { "|" + $0 } ?? "") }
-    if old?[0].text == orderKey, old?[1].integer == fragment.map({ Int64($0.position) }), old?[2].text == scope?.member { return }
+    let parent = fragment?.value["parentID"]?.string.map(collaborationIdentity)
+    if old?[0].text == orderKey, old?[1].integer == fragment.map({ Int64($0.position) }), old?[2].text == scope?.member {
+      if old?[3].text != parent {
+        try database.run("UPDATE reference_element_order SET parent_id=? WHERE address=?", [parent.map(NotebookSQLValue.text) ?? .null,.text(address)])
+      }
+      return
+    }
     if let old, let oldOwner = old[0].text, let position = old[1].integer, let oldMember = old[2].text {
       let (previous, next) = try referenceNeighbors(owner: oldOwner, position: position, member: oldMember, database: database)
       let parts = oldOwner.split(separator: "|", maxSplits: 1).map(String.init)
@@ -840,7 +846,7 @@ extension NotebookStore {
       let (previous, next) = try referenceNeighbors(owner: orderKey, position: Int64(fragment.position), member: scope.member, database: database)
       try setReferenceEdge(owner: scope.owner, group: scope.group, from: previous, to: scope.member, database: database)
       try setReferenceEdge(owner: scope.owner, group: scope.group, from: scope.member, to: next, database: database)
-      try database.run("INSERT INTO reference_element_order(address,owner_key,position,member) VALUES(?,?,?,?)", [.text(address), .text(orderKey), .integer(Int64(fragment.position)), .text(scope.member)])
+      try database.run("INSERT INTO reference_element_order(address,owner_key,position,member,parent_id) VALUES(?,?,?,?,?)", [.text(address), .text(orderKey), .integer(Int64(fragment.position)), .text(scope.member),parent.map(NotebookSQLValue.text) ?? .null])
     }
   }
 }

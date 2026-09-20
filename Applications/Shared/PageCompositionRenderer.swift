@@ -14,7 +14,7 @@ enum PageCompositionRenderer {
     let graph = page.graphicGraph()
     return page.elements.filter {
       let frame = graph.resolve($0.id).layout?.frame ?? $0.frame
-      return (elementID == nil || elementID == $0.id)
+      return $0.kind != .group && (elementID == nil || elementID == $0.id)
         && ($0.graphic == nil || graphics.contains($0.id))
         && ($0.graphic == nil || graph.resolve($0.id).layout != nil)
         && bounds.intersects(CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height))

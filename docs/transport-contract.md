@@ -5,21 +5,21 @@ private directory of one Apple Account and stored in Keychain. Bonjour discovers
 endpoints; access comes from verified keys, identities and account admission.
 See [automatic connection](installation-pairing.md).
 
-## Current compatibility: wire 37, manifest 18
+## Current compatibility: wire 38, manifest 19
 
-Both applications must use the same wire contract. Version 37 integrates the
-shared Mac runtime, account/relay routing, conversation generations, addressed
-approvals and resolved-unknown receipts with manifest 18 content: full TeX,
-program packages, formatted native text, drawing tools, canonical board placements
-and whole-element SVG/HTML erasure. Existing manifests 4–17 remain readable;
-history is not rewritten. Package sources require manifest 10 or later and full
-TeX requires 11 or later.
+Both applications must use the same wire contract. Version 38 and manifest 19
+add shared element bases, ordered parent-local group geometry and the measured
+outer transform of an eraser target. A reader that ignores these fields would
+paint a different object; the prior pair cannot join this wire or admit its new
+manifests. Existing manifests 4–18 remain readable without rewriting history.
+The existing Codex, TeX, package and native-content boundaries remain unchanged.
+Package sources require manifest 10 or later and full TeX requires 11 or later.
 
 Content, local containers, workspace/device identities and keys survive an
 ordinary update. Installed build status belongs in [verification](verification.md);
 a source version alone does not prove installation.
 
-Bonjour advertises `notebook-v37-<UUID>-<generation>`; TXT `workspace` distinguishes
+Bonjour advertises `notebook-v38-<UUID>-<generation>`; TXT `workspace` distinguishes
 background workspace listeners sharing a Mac device ID. One transport owner
 changes the advertisement generation on restart. Metadata grants no trust.
 

@@ -27,7 +27,7 @@ struct NotebookGraphicBatchView: View {
     return run.owners.compactMap { owner in
       guard case .element(let id) = owner.id, let element = sources[id], element.graphic != nil,
         let layout = graph.resolve(id).layout else { return nil }
-      let origin = projectOrigin(element.worldOrigin ?? .zero), local = layout.frame
+      let origin = projectOrigin(layout.origin), local = layout.frame
       return .init(element: element, layout: layout, frame: .init(
         x: origin.x + local.x * scale, y: origin.y + local.y * scale,
         width: local.width * scale, height: local.height * scale))
@@ -74,7 +74,7 @@ struct NotebookGraphicBatchView: View {
       if let object = objects.first(where: { $0.id == editingID }) {
         NotebookGraphicElementView(graphic: graph.nodes[object.id]!.graphic, reference: reference(object.id), layout: object.layout)
           .frame(width: object.layout.frame.width, height: object.layout.frame.height)
-          .erased(by: erasures[object.id] ?? [], appearance: appearances[object.id],transform:graph.nodes[object.id]?.graphic.transform)
+          .erased(by: erasures[object.id] ?? [], appearance:appearances[object.id],transform:graph.nodes[object.id]?.graphic.transform,layout:object.layout)
           .scaleEffect(scale)
           .frame(width: object.frame.width, height: object.frame.height)
           .position(x: object.frame.midX, y: object.frame.midY)
