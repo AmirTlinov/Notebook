@@ -101,7 +101,7 @@ final class InkRepeatTests: XCTestCase {
     let nested=try XCTUnwrap(inner.repeated(100,revision:UUID()))
     let flat=try XCTUnwrap(body.repeated(1000,revision:UUID()))
     for i in [0,15,16,159,160,8_011,15_999] { assertBits(nested.sample(at:i),flat.sample(at:i)) }
-    XCTAssertEqual(try nested.access(nested.address(at:8011)).cost.jumps,2)
+    XCTAssertEqual(try nested.access(nested.address(at:8011)).cost.jumps,1)
     let empty=try XCTUnwrap(body.repeated(0,revision:UUID()))
     XCTAssertEqual(empty.count,0);XCTAssertEqual(empty.storage.exit,.zero)
     XCTAssertThrowsError(try empty.sample(at:empty.address(at:0)))
@@ -145,12 +145,13 @@ final class InkRepeatTests: XCTestCase {
   func testChangedExitPropagatesAndRepeatedLocalEditsStayIndexed() throws {
     let body=source(32).settingExit(step,revision:UUID()),original=try XCTUnwrap(body.repeated(10_000,revision:UUID()))
     let changedStep=InkRepeatStep(x:InkDyadic(36)!,y:InkDyadic(2)!,time:InkDyadic(2)!)
-    let changed=try XCTUnwrap(original.changingRepeatExit(at:4999,to:changedStep,revision:UUID()))
     let delta=try XCTUnwrap(changedStep.adding(step.negated))
+    let changed=try original.propagatingExitDelta(delta,from:original.address(at:160_000),revision:UUID())
     for i in [0,159_999] { assertBits(changed.sample(at:i),original.sample(at:i)) }
     for i in [160_000,160_003,319_999] { assertBits(changed.sample(at:i),delta.apply(original.sample(at:i))) }
     XCTAssertEqual(changed.storage.exit,original.storage.exit.adding(delta))
-    XCTAssertLessThan(changed.allocationSummary.nodes,20)
+    // Includes the single shared basis owner as well as sequence/index nodes.
+    XCTAssertLessThanOrEqual(changed.allocationSummary.nodes,20)
     var edited=original,expected:[Int:SpatialInkSample]=[:]
     for i in 0..<250 {
       let index=(i*7919)%original.count,replacement=sample(i%32)

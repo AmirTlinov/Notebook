@@ -5,6 +5,25 @@ import NotebookCore
 /// causal action or independently editable raster lives here. Block identity is
 /// physical; event identity remains (action, revision, logical index).
 struct InkSampleRelations: Sendable {
+  struct RewriteWork: Sendable {
+    var remaining: Int
+    var spent=0, reductions=0, scannedEvents=0, comparedEvents=0, propagatedEvents=0, visitedNodes=0
+    var rules: UInt8=0
+    var deferred=false
+    init(_ limit: Int = 8192) { remaining=max(0,limit) }
+    mutating func spend(_ units: Int) -> Bool {
+      guard units <= remaining else { deferred=true;return false }
+      remaining -= units;spent += units;return true
+    }
+    mutating func applied(_ rule: Int) { reductions += 1;rules |= 1 << (rule-1) }
+  }
+  struct EditSummary: Sendable {
+    let affectedEvents: Range<Int>
+    let oldBounds: CGRect, newBounds: CGRect
+    let geometryChanged: Bool, exitChanged: Bool
+    let work: RewriteWork
+  }
+  let lastEdit: EditSummary?
   static let blockSize = 256
   final class Header: Sendable {
     let tool: SpatialInkTool
@@ -27,7 +46,7 @@ struct InkSampleRelations: Sendable {
     }
   }
   struct Address: Equatable, Sendable { let source: UUID; let revision: UUID; let index: Int }
-  enum AccessError: Error { case staleAddress, outsideSource }
+  enum AccessError: Error { case staleAddress, outsideSource, unsupportedExactTranslation }
   enum Field: Equatable, Sendable {
     case constant(UInt64)
     case progression(InkDyadic, InkDyadic)
@@ -78,6 +97,10 @@ struct InkSampleRelations: Sendable {
           azimuth:f[6].value(at:i),altitude:f[7].value(at:i))
       }
     }
+    var hasGenerator: Bool {
+      guard case .fields(let fields,_)=self else { return false }
+      return fields.contains { if case .literal=$0 { return false };return true }
+    }
     var isUniformAxisStrip: Bool {
       guard case .fields(let f,let n) = self, n > 4,
         case .constant = f[3], case .constant = f[4] else { return false }
@@ -108,7 +131,7 @@ struct InkSampleRelations: Sendable {
   let storage: Storage
   let frames: [InkExactFrame]
   init(sourceID: UUID, revision: UUID, samples: [SpatialInkSample], header: Header) {
-    self.sourceID = sourceID; self.header = header; self.revision = revision; count = samples.count; frames = []
+    self.sourceID = sourceID; self.header = header; self.revision = revision; count = samples.count; frames = [];lastEdit=nil
     storage = .init(Sequence.from(stride(from:0,to:samples.count,by:Self.blockSize).map {
       Block(samples[$0..<min(samples.count,$0+Self.blockSize)])
     }))
@@ -124,7 +147,8 @@ struct InkSampleRelations: Sendable {
     .init(id:sourceID,tool:header.tool,color:header.color,samples:decoded(),sequence:header.sequence,
       isActive:header.isActive,elementTargets:header.elementTargets)
   }
-  private init(sourceID: UUID, revision: UUID, count: Int, storage: Storage, frames: [InkExactFrame], header: Header) {
+  private init(sourceID: UUID, revision: UUID, count: Int, storage: Storage, frames: [InkExactFrame], header: Header, lastEdit: EditSummary? = nil) {
+    self.lastEdit=lastEdit
     self.sourceID = sourceID; self.revision = revision; self.count = count; self.storage = storage; self.frames = frames; self.header = header
   }
   /// Frames surround the WHOLE source. No measured event may sit between two
@@ -214,25 +238,45 @@ struct InkSampleRelations: Sendable {
       let root=Sequence.repeated(storage.root,count:repetitions,step:step) else { return nil }
     return .init(sourceID:sourceID,revision:revision,count:root.count,storage:.init(root,exit:exit),frames:frames,header:header)
   }
-  func editing(_ address: Address, to value: SpatialInkSample, revision: UUID) throws -> Self {
+  func editing(_ address: Address, to value: SpatialInkSample, revision: UUID, normalizationBudget: Int = 8192) throws -> Self {
     _ = try sample(at:address)
     precondition(revision != self.revision)
-    let prefix=storage.root.slice(0..<address.index), suffix=storage.root.slice((address.index+1)..<count)
-    let root=Sequence.join(Sequence.join(prefix,Sequence(block:.literal([value]))),suffix)
-    return .init(sourceID:sourceID,revision:revision,count:count,storage:.init(root,exit:storage.exit),frames:frames,header:header)
+    var work=RewriteWork(normalizationBudget)
+    let root=storage.root.edited(at:address.index,to:value,work:&work)
+    let range=max(0,address.index-1)..<min(count,address.index+2)
+    return editedSource(root,exit:storage.exit,revision:revision,range:range,geometryChanged:true,work:work)
   }
-  /// Explicitly change one occurrence's EXIT, not its last measurement. In this
-  /// translation-only domain the entire suffix accepts one exact basis change.
-  /// Unsupported precision rejects the operation without altering the source.
-  func changingRepeatExit(at occurrence: Int, to step: InkRepeatStep, revision: UUID) -> Self? {
+  /// The selected body's changed output is an explicit delta at its logical
+  /// boundary. This remains addressable after earlier edits/normalization; it
+  /// does not depend on the root still being encoded as one Repeat node.
+  func propagatingExitDelta(_ delta: InkRepeatStep, from address: Address, revision: UUID,
+    normalizationBudget: Int = 8192) throws -> Self {
+    guard address.source == sourceID,address.revision == self.revision else { throw AccessError.staleAddress }
+    guard (0...count).contains(address.index) else { throw AccessError.outsideSource }
     precondition(revision != self.revision)
-    guard case .repeated(let body,let n,let oldStep)=storage.root.content,
-      (0..<n).contains(occurrence),let delta=step.adding(oldStep.negated),
-      let exit=storage.exit.adding(delta) else { return nil }
-    let boundary=(occurrence+1)*body.count
-    guard let suffix=storage.root.slice(boundary..<count).shifted(delta) else { return nil }
-    let root=Sequence.join(storage.root.slice(0..<boundary),suffix)
-    return .init(sourceID:sourceID,revision:revision,count:count,storage:.init(root,exit:exit),frames:frames,header:header)
+    var work=RewriteWork(normalizationBudget)
+    guard let exit=storage.exit.adding(delta),
+      let suffix=storage.root.slice(address.index..<count).translated(delta,work:&work) else {
+      throw AccessError.unsupportedExactTranslation
+    }
+    let root=Sequence.join(storage.root.slice(0..<address.index),suffix,work:&work)
+    let geometryChanged=delta.x != .zero || delta.y != .zero
+    let range=geometryChanged ? max(0,address.index-1)..<count : address.index..<address.index
+    return editedSource(root,exit:exit,revision:revision,range:range,geometryChanged:geometryChanged,work:work)
+  }
+  private func editedSource(_ root: Sequence,exit: InkRepeatStep,revision: UUID,range: Range<Int>,
+    geometryChanged: Bool,work: RewriteWork) -> Self {
+    let result=Self(sourceID:sourceID,revision:revision,count:count,storage:.init(root,exit:exit),frames:frames,header:header)
+    let old=try! bounds(in:range).bounds,new=try! result.bounds(in:range).bounds
+    let summary=EditSummary(affectedEvents:range,oldBounds:old,newBounds:new,geometryChanged:geometryChanged,
+      exitChanged:exit != storage.exit,work:work)
+    return .init(sourceID:sourceID,revision:revision,count:count,storage:result.storage,frames:frames,header:header,lastEdit:summary)
+  }
+  func normalizingPending(budget: Int) -> Self {
+    var work=RewriteWork(budget)
+    let root=storage.root.normalized(work:&work)
+    let summary=EditSummary(affectedEvents:0..<0,oldBounds:.null,newBounds:.null,geometryChanged:false,exitChanged:false,work:work)
+    return .init(sourceID:sourceID,revision:revision,count:count,storage:.init(root,exit:storage.exit),frames:frames,header:header,lastEdit:summary)
   }
   /// Returns notProven when the caller's explicit comparison budget is exhausted.
   /// No structural hash can turn different encodings into unequal content.
@@ -242,7 +286,7 @@ struct InkSampleRelations: Sendable {
     guard context == .equal else { return context }
     guard storage.exit == other.storage.exit else { return .different }
     guard frames == other.frames else { return .notProven }
-    if storage === other.storage { return .equal }
+    if storage.root === other.storage.root { return .equal }
     let n = min(count,max(0,eventBudget))
     for i in 0..<n where !Self.sameBits(sample(at:i),other.sample(at:i)) { return .different }
     return n == count ? .equal : .notProven

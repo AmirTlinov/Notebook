@@ -1,0 +1,10 @@
+{
+  "case" : "mixed binary scales, no shared range proof",
+  "events" : 100000,
+  "milliseconds" : 123.987458,
+  "normalizationDeferred" : true,
+  "normalizationWork" : 7814,
+  "propagatedEvents" : 100000,
+  "scannedEvents" : 928,
+  "visitedNodes" : 1544
+}

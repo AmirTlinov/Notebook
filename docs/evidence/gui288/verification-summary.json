@@ -1,0 +1,17 @@
+{
+  "sourceSHA256": "eef74de0210e1044e7dded347ec1e27c49749b669b3e029ec48d182e865be78f",
+  "status": "passed",
+  "scope": "native Debug; test-host Mac and physical iPad; working pair remains 136",
+  "ipad": {
+    "result": "Passed",
+    "passedTests": 17,
+    "failedTests": 0,
+    "skippedTests": 0
+  },
+  "mac": {
+    "result": "Passed",
+    "passedTests": 17,
+    "failedTests": 0,
+    "skippedTests": 0
+  }
+}
