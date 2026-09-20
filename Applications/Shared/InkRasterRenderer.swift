@@ -150,12 +150,12 @@ final class InkRasterRenderer: @unchecked Sendable {
       guard !Task.isCancelled else { encoder.endEncoding(); return nil }
       let batch = draw.mesh
       var affine = draw.affine
-      let stretch = affine.maximumStretch
+      let stretch = affine.maximumStretch, minimumStretch = affine.minimumStretch
       encoder.setVertexBytes(&affine,length:MemoryLayout<InkAffine>.stride,index:2)
       encoder.setRenderPipelineState(batch.tool == .eraser ? eraser : ink)
       for id in batch.query(viewport:area,affine:affine).chunks {
         let prepared=batch.prepareChunk(id).chunk,chunk=prepared.descriptor
-        let level=InkRenderGeometry.level(chunk.levels,pixelsPerUnit:stretch*Float(scale))
+        let level=InkRenderGeometry.level(chunk.levels,pixelsPerUnit:stretch*Float(scale),minimumPixelsPerUnit:minimumStretch*Float(scale))
         let nodes=prepared.selected(level:level)
         guard !nodes.isEmpty else { continue }
         guard

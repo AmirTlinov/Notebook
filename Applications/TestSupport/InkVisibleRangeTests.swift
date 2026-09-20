@@ -200,6 +200,49 @@ final class InkVisibleRangeTests: XCTestCase {
     let a=XCTAttachment(data:try JSONSerialization.data(withJSONObject:records,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
     a.name="whole-straight-repeat-costs";a.lifetime = .keepAlways;add(a)
   }
+  func testDistantCurveKeepsCoverageAcrossSubpixelRasterPhase() throws {
+    let body=source((0..<100).map { i in SpatialInkSample(point:.init(x:Double(i),y:sin(Double(i)*0.07)*4),
+      timeOffset:Double(i)/128,width:4,opacity:1,force:1,azimuth:0,altitude:1) })
+      .settingExit(.init(x:InkDyadic(100)!,y:.zero,time:.one),revision:UUID())
+    let value=try XCTUnwrap(body.repeated(10_000,revision:UUID()))
+    let actual=SpatialInkMesh(batches:[.init(source:value,projection:.local)])
+    let full=SpatialInkMesh.referencePage(.init(actions:[value.restoredAction()]))
+    // The oracle must not run the same LOD selection as the path under test.
+    let reference=SpatialInkMesh(batches:full.batches.map { batch in
+      .init(tool:batch.tool,projection:batch.projection,parts:batch.parts.map { part in
+        guard case .prepared(let nodes,let chunks,_)=part.storage else { fatalError("Expected explicit oracle") }
+        return .init(nodes:nodes,chunks:chunks.map { .init(nodes:$0.nodes,bounds:$0.bounds,color:$0.color,flags:$0.flags) })
+      })
+    })
+    var records:[[String:Any]]=[]
+    for (scale,offset):(Float,Float) in [(0.0005,64),(0.0005,64.0625),(0.1,64.0625)] {
+      let affine=InkAffine(.init(scale,scale,6,offset))
+      let a=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:actual,size:.init(width:512,height:128),scale:2,affine:affine))
+      let b=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:reference,size:.init(width:512,height:128),scale:2,affine:affine))
+      let left=Array(try XCTUnwrap(a.dataProvider?.data) as Data),right=Array(try XCTUnwrap(b.dataProvider?.data) as Data)
+      var sum=0,difference=0,shown=0,changed=0
+      for i in stride(from:3,to:left.count,by:4) {
+        sum += Int(right[i]);shown += Int(left[i]);difference += abs(Int(left[i])-Int(right[i]))
+        if abs(Int(left[i])-Int(right[i])) > 2 { changed += 1 }
+      }
+      records.append(["scale":scale,"offset":offset,"referenceAlpha":sum,"actualAlpha":shown,"alphaL1":difference,"changedPixels":changed])
+      if offset == 64.0625 {
+        for (label,img) in [("actual",a),("reference",b)] {
+          let png=NSMutableData(),destination=try XCTUnwrap(CGImageDestinationCreateWithData(png,"public.png" as CFString,1,nil))
+          CGImageDestinationAddImage(destination,img,nil);XCTAssertTrue(CGImageDestinationFinalize(destination))
+          let proof=XCTAttachment(data:png as Data,uniformTypeIdentifier:"public.png")
+          proof.name="subpixel-curve-\(label)-\(scale)";proof.lifetime = .keepAlways;add(proof)
+        }
+      }
+    }
+    let a=XCTAttachment(data:try JSONSerialization.data(withJSONObject:records,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
+    a.name="subpixel-curve-coverage";a.lifetime = .keepAlways;add(a)
+    XCTAssertTrue(records.contains { ($0["referenceAlpha"] as! Int) > 0 },"Also test actual visible paint, not only blank phases")
+    for record in records {
+      let expected=record["referenceAlpha"] as! Int,error=record["alphaL1"] as! Int
+      XCTAssertLessThanOrEqual(Double(error),max(2,Double(expected)*0.02),"Geometry tolerance is not a coverage guarantee: \(record)")
+    }
+  }
   func testWholeWorldStripUsesFourNodesAndKeepsAffinePixels() throws {
     let origin=WorldPoint(tileX:WorldPoint.maximumTileIndex-1000,tileY:-WorldPoint.maximumTileIndex+1000,localX:20,localY:40)
     let count=100_000

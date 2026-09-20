@@ -99,7 +99,7 @@ final class CompactInkTestRenderer {
         var nodes = Array(allNodes[start...end])
         if let lodScale {
           let levels = InkRenderGeometry.levels(nodes[...], flags: flags)
-          let level = InkRenderGeometry.level(levels, pixelsPerUnit: lodScale)
+          let level = InkRenderGeometry.level(levels, pixelsPerUnit: lodScale, minimumPixelsPerUnit: abs(lodScale))
           if level >= 0 { nodes = levels[level].indices.map { nodes[Int($0)] } }
         }
         result.append(

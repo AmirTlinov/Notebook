@@ -27,9 +27,25 @@ struct InkRenderGeometryTests {
     let before = source
     let levels = InkRenderGeometry.levels(source[...], flags: 3)
     #expect(levels.first?.indices == [0, 1, 255, 256])
-    #expect(InkRenderGeometry.level(levels, pixelsPerUnit: 1) == 0)
-    #expect(InkRenderGeometry.level(levels, pixelsPerUnit: 100) == -1)
+    #expect(InkRenderGeometry.level(levels, pixelsPerUnit: 1, minimumPixelsPerUnit: 1) == 0)
+    #expect(InkRenderGeometry.level(levels, pixelsPerUnit: 100, minimumPixelsPerUnit: 100) == -1)
     #expect(source == before)
+  }
+  @Test func subpixelCoverageUsesTheLeastProjectedWidth() {
+    let source=nodes(257) { i,n in n.position.y=sin(Float(i)/40)*0.2 }
+    let levels=InkRenderGeometry.levels(source[...],flags:3)
+    #expect(!levels.isEmpty)
+    #expect(levels.allSatisfy { $0.minimumRadius == 2 })
+    #expect(InkRenderGeometry.level(levels,pixelsPerUnit:0.001,minimumPixelsPerUnit:0.001) == -1)
+    #expect(InkRenderGeometry.level(levels,pixelsPerUnit:0.4,minimumPixelsPerUnit:0.001) == -1)
+    #expect(InkRenderGeometry.level(levels,pixelsPerUnit:0.4,minimumPixelsPerUnit:0.4) >= 0)
+    #expect(InkRenderGeometry.level(levels,pixelsPerUnit:0.4,minimumPixelsPerUnit:0) == -1)
+    let stretch=InkAffine(.init(-4,0.125,0,0))
+    #expect(abs(stretch.maximumStretch-4)<1e-6)
+    #expect(abs(stretch.minimumStretch-0.125)<1e-6)
+    let shear=InkAffine(x:.init(1,100,0,0),y:.init(0,1,0,0))
+    #expect(abs(shear.minimumStretch*shear.maximumStretch-1)<1e-5)
+    #expect(InkAffine(.init(0,1,0,0)).minimumStretch == 0)
   }
   @Test func curvatureThicknessOrientationAlphaAndFoldCannotDisappear() {
     for feature in 0..<5 {

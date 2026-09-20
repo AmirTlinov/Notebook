@@ -21,6 +21,14 @@ public struct InkAffine: Sendable {
     let d = x.y * x.y + y.y * y.y
     return sqrt(max(0, (a + d + sqrt((a - d) * (a - d) + 4 * b * b)) / 2))
   }
+  /// Least singular value, rounded down. Double products preserve the exact
+  /// Float matrix's determinant without Float overflow or cancellation.
+  public var minimumStretch: Float {
+    let a=Double(x.x),b=Double(y.x),c=Double(x.y),d=Double(y.y)
+    guard a.isFinite,b.isFinite,c.isFinite,d.isFinite else { return 0 }
+    let maximum=(hypot(a+d,b-c)+hypot(a-d,b+c))/2
+    return maximum > 0 ? max(0,Float(abs(a*d-b*c)/maximum).nextDown) : 0
+  }
   public func bounds(_ rect: CGRect) -> CGRect {
     var lo = SIMD2<Float>(repeating: .infinity)
     var hi = SIMD2<Float>(repeating: -.infinity)

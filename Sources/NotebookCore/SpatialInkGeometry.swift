@@ -17,7 +17,7 @@ public enum SpatialInkGeometry {
     public let flags: UInt32
     public let levels: [InkRenderGeometry.Level]
     public var vertexCount: Int { InkRenderGeometry.vertexCount(nodes: nodes.count, flags: flags) }
-    public var metadataBytes: Int { levels.reduce(0) { $0 + $1.indices.count * 2 } }
+    public var metadataBytes: Int { levels.reduce(0) { $0 + MemoryLayout<InkRenderGeometry.Level>.stride + $1.indices.count * 2 } }
     public init(
       nodes: Range<Int>, bounds: CGRect, color: SIMD4<Float> = .init(repeating: 1),
       flags: UInt32 = 3,

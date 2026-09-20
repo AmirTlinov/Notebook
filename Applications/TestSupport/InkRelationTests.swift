@@ -183,7 +183,7 @@ final class InkRelationTests: XCTestCase {
               visibleCPUBytes[mode]=output.batches.reduce(0) { total,batch in
                 total+batch.query(viewport:.init(x:0,y:0,width:640,height:640),affine:.init()).chunks.reduce(0) { bytes,id in
                   let chunk=batch.prepareChunk(id).chunk
-                  let level=InkRenderGeometry.level(chunk.descriptor.levels,pixelsPerUnit:1)
+                  let level=InkRenderGeometry.level(chunk.descriptor.levels,pixelsPerUnit:1,minimumPixelsPerUnit:1)
                   selectedGPUBytes[mode] += chunk.selected(level:level).count*MemoryLayout<SpatialInkGeometry.Node>.stride
                   return bytes+chunk.byteCount
                 }

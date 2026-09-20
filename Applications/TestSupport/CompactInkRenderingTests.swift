@@ -66,7 +66,7 @@ final class CompactInkRenderingTests: XCTestCase {
           radius: 0.4, premultipliedColor: color)
       }
     }
-    let names = ["cpu-triangles", "compact-exact", "compact-lod"]
+    let names = ["cpu-triangles", "compact-exact", "compact-lod-request"]
     let modes = names.enumerated().map { index, _ in
       strokes.flatMap {
         gpu.prepare($0, color: color, compact: index > 0, lodScale: index == 2 ? 1 : nil)
@@ -101,7 +101,12 @@ final class CompactInkRenderingTests: XCTestCase {
     add(attachment)
     print("COMPACT_INK_DEVICE_MEASUREMENT " + String(decoding: bytes, as: UTF8.self))
     XCTAssertEqual(modes[1].reduce(0) { $0 + $1.buffer.length }, 2_400_000)
-    XCTAssertLessThan(modes[2].reduce(0) { $0 + $1.buffer.length }, 100_000)
+    // These authored 0.8-pixel strokes cannot take a geometric-only LOD:
+    // retain coverage rather than accepting a smaller but different image.
+    XCTAssertEqual(modes[2].reduce(0) { $0 + $1.buffer.length }, 2_400_000)
+    _ = try gpu.run(modes[1]);let exact=gpu.pixels()
+    _ = try gpu.run(modes[2]);XCTAssertEqual(gpu.pixels(),exact)
+    XCTAssertTrue(exact.contains { $0 > 0 })
   }
 
   func testDistantLODIsBoundedAndZoomRestoresOriginalGPUData() throws {

@@ -19,6 +19,7 @@ public enum InkRenderGeometry {
   }
   public struct Level: Sendable {
     public let error: Float
+    public let minimumRadius: Float
     public let indices: [UInt16]
   }
   public static let maximumSegments = 256
@@ -56,6 +57,7 @@ public enum InkRenderGeometry {
     guard source.count > 6, flags & 12 == 0 else { return [] }
     let a = Array(source)
     let last = a.count - 1
+    let minimumRadius = a.reduce(Float.infinity) { min($0,$1.radius) }
     var result: [Level] = []
     var previous = a.count
     for tolerance: Float in [0.125, 0.5, 2, 8, 32] {
@@ -96,13 +98,20 @@ public enum InkRenderGeometry {
       }
       let ids = keep.sorted().map(UInt16.init)
       if ids.count < previous {
-        result.append(.init(error: tolerance, indices: ids))
+        result.append(.init(error: tolerance, minimumRadius: minimumRadius, indices: ids))
         previous = ids.count
       }
     }
     return result
   }
-  public static func level(_ levels: [Level], pixelsPerUnit: Float) -> Int {
-    levels.lastIndex { $0.error * abs(pixelsPerUnit) <= pixelError } ?? -1
+  public static func level(_ levels: [Level], pixelsPerUnit: Float, minimumPixelsPerUnit: Float) -> Int {
+    // A subpixel contour displacement can change coverage of an entire thin
+    // stroke at MSAA sample positions. Geometric proximity alone is not an
+    // alpha proof: retain the original rails below one physical pixel.
+    // Use the least stretch, not the largest, under shear/anisotropic scale.
+    guard minimumPixelsPerUnit.isFinite, minimumPixelsPerUnit > 0 else { return -1 }
+    return levels.lastIndex {
+      $0.error * abs(pixelsPerUnit) <= pixelError && 2 * $0.minimumRadius * minimumPixelsPerUnit >= 1
+    } ?? -1
   }
 }

@@ -1470,7 +1470,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       }
       let transform=mesh.projection.transform(camera:camera,viewport:viewport)
       let level=InkRenderGeometry.level(geometry.chunk.descriptor.levels,
-        pixelsPerUnit:max(abs(transform.x),abs(transform.y))*pixelsPerPoint)
+        pixelsPerUnit:max(abs(transform.x),abs(transform.y))*pixelsPerPoint,
+        minimumPixelsPerUnit:min(abs(transform.x),abs(transform.y))*pixelsPerPoint)
       if batches[batchIndex].buffers[chunkIndex]?.level == level { continue }
       let selected=geometry.chunk.selected(level:level)
       guard let device,
