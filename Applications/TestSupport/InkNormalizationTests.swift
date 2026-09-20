@@ -1,5 +1,5 @@
 import Foundation
-import NotebookCore
+@testable import NotebookCore
 import XCTest
 @testable import Notebook
 

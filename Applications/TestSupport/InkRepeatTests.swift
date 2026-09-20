@@ -1,7 +1,7 @@
 import Foundation
 import CoreGraphics
 import ImageIO
-import NotebookCore
+@testable import NotebookCore
 import XCTest
 @testable import Notebook
 
@@ -64,7 +64,8 @@ final class InkRepeatTests: XCTestCase {
       XCTAssertLessThan(bounds.cost.visitedNodes,10)
       XCTAssertTrue(bounds.bounds.contains(CGPoint(x:repeated.sample(at:middle).point.x,y:repeated.sample(at:middle).point.y)))
       let selected=(middle-15)..<(middle+26)
-      try compareRangeGPU(edited,range:selected,name:"repeat-\(repeated.count)-selected")
+      let reopened=try InkSampleRelations(encodedRelations:edited.encodedRelations())
+      try compareRangeGPU(reopened,range:selected,name:"repeat-\(repeated.count)-restored-selected")
       reports.append(["events":repeated.count,"bodyEvents":body.count,"bodyGenerationAndEncodingMilliseconds":bodyMS,"setupMilliseconds":setup,
         "accessMilliseconds":accessTimes,"editMilliseconds":editMS,
         "sequentialControlTransitions":n-1,"sequentialControlMilliseconds":sequentialMS,

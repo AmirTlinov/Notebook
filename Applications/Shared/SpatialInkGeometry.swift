@@ -129,11 +129,11 @@ extension SpatialInkGeometry {
   struct RelativeSource: Sendable {
     let source: InkSampleRelations
     let projection: InkSampleProjection
-    var bounds: CGRect { projected(source.storage.root.geometry.bounds) }
-    var chunkCount: Int { source.count == 0 ? 0 : source.storage.root.geometry.stationary ? 1 : max(1,(source.count-2)/InkRenderGeometry.maximumSegments+1) }
+    var bounds: CGRect { projected(source.geometry.bounds) }
+    var chunkCount: Int { source.count == 0 ? 0 : source.geometry.stationary ? 1 : max(1,(source.count-2)/InkRenderGeometry.maximumSegments+1) }
     init?(_ source: InkSampleRelations,projection: InkSampleProjection) {
       self.source=source;self.projection=projection
-      let geometry=source.storage.root.geometry
+      let geometry=source.geometry
       guard geometry.origin == nil || projection.origin != nil else { return nil }
       let box=projected(geometry.bounds)
       let magnitude=[box.minX,box.minY,box.maxX,box.maxY].map { abs(Float($0)) }.max() ?? .infinity
@@ -143,13 +143,13 @@ extension SpatialInkGeometry {
     }
     func range(at id: Int) -> Range<Int> {
       precondition((0..<chunkCount).contains(id))
-      if source.storage.root.geometry.stationary { return (source.count-1)..<source.count }
+      if source.geometry.stationary { return (source.count-1)..<source.count }
       let start=id*InkRenderGeometry.maximumSegments
       return start..<(start+min(source.count-start,InkRenderGeometry.maximumSegments+1))
     }
     private func projected(_ box: CGRect) -> CGRect {
       var box=box
-      if let origin=source.storage.root.geometry.origin,let target=projection.origin {
+      if let origin=source.geometry.origin,let target=projection.origin {
         let d=target.delta(to:origin);box=InkSampleRelations.Geometry.offset(box,x:d.x,y:d.y)
       }
       let x=box.minX*projection.scale+projection.offset.x,y=box.minY*projection.scale+projection.offset.y
@@ -180,7 +180,7 @@ extension SpatialInkGeometry {
     }
     func prepare(_ id: Int) -> (chunk: PreparedChunk,decodedPoints: Int) {
       let range=range(at:id)
-      let halo=source.storage.root.geometry.stationary ? range : max(0,range.lowerBound-1)..<(range.upperBound+(range.upperBound < source.count ? 1 : 0))
+      let halo=source.geometry.stationary ? range : max(0,range.lowerBound-1)..<(range.upperBound+(range.upperBound < source.count ? 1 : 0))
       let c=source.header.color,erase=source.header.tool == .eraser
       let color: SIMD4<Float> = erase ? .init(repeating:1) : .init(Float(c.red),Float(c.green),Float(c.blue),1)
       var points:[RenderPoint]=[],owned:[Int]=[]

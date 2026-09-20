@@ -3,13 +3,13 @@ import Foundation
 /// The exact numeric domain for ink relations, not an alternate Float evaluator.
 /// A normalized signed coefficient has at most 53 bits; exponent is -1074...1023.
 /// Unsupported composition leaves its operands intact. It never rounds content.
-struct InkDyadic: Equatable, Sendable {
-  let coefficient: Int64
-  let exponent: Int
-  static let zero = InkDyadic(coefficient: 0, exponent: 0)!
-  static let one = InkDyadic(coefficient: 1, exponent: 0)!
+public struct InkDyadic: Hashable, Sendable {
+  public let coefficient: Int64
+  public let exponent: Int
+  public static let zero = InkDyadic(coefficient: 0, exponent: 0)!
+  public static let one = InkDyadic(coefficient: 1, exponent: 0)!
 
-  init?(coefficient: Int64, exponent: Int) {
+  public init?(coefficient: Int64, exponent: Int) {
     guard coefficient != .min else { return nil }
     if coefficient == 0 { self.coefficient = 0; self.exponent = 0; return }
     let shift = coefficient.magnitude.trailingZeroBitCount
@@ -21,19 +21,19 @@ struct InkDyadic: Equatable, Sendable {
     self.coefficient = c; self.exponent = e
   }
 
-  init?(_ value: Double) {
+  public init?(_ value: Double) {
     guard value.isFinite, value.bitPattern != 0x8000_0000_0000_0000 else { return nil }
     let bits = value.bitPattern, e = Int((bits >> 52) & 0x7ff)
     let mantissa = (bits & 0x000f_ffff_ffff_ffff) | (e == 0 ? 0 : 1 << 52)
     self.init(coefficient: value.sign == .minus ? -Int64(mantissa) : Int64(mantissa),
       exponent: e == 0 ? -1074 : e - 1023 - 52)
   }
-  var value: Double {
+  public var value: Double {
     Double(sign: coefficient < 0 ? .minus : .plus, exponent: exponent, significand: Double(coefficient.magnitude))
   }
-  var negated: Self { Self(coefficient: -coefficient, exponent: exponent)! }
+  public var negated: Self { Self(coefficient: -coefficient, exponent: exponent)! }
 
-  func adding(_ other: Self) -> Self? {
+  public func adding(_ other: Self) -> Self? {
     if coefficient == 0 { return other }; if other.coefficient == 0 { return self }
     let e = min(exponent, other.exponent)
     func shifted(_ x: Self) -> Int64? {
@@ -46,26 +46,29 @@ struct InkDyadic: Equatable, Sendable {
     let (c, overflow) = a.addingReportingOverflow(b)
     return overflow ? nil : Self(coefficient: c, exponent: e)
   }
-  func multiplied(by other: Self) -> Self? {
+  public func multiplied(by other: Self) -> Self? {
     let (c, overflow) = coefficient.multipliedReportingOverflow(by: other.coefficient)
     return overflow ? nil : Self(coefficient: c, exponent: exponent + other.exponent)
   }
-  func multiplied(by count: Int) -> Self? {
+  public func multiplied(by count: Int) -> Self? {
     guard let n = Int64(exactly: count) else { return nil }
     let (c, overflow) = coefficient.multipliedReportingOverflow(by: n)
     return overflow ? nil : Self(coefficient: c, exponent: exponent)
   }
 }
 
-enum InkRelationEquality: Equatable { case equal, different, notProven }
+public enum InkRelationEquality: Equatable { case equal, different, notProven }
 
 /// Typed affine relation in paper points. Composition is inner, then outer.
 /// Observable samples remain outside this value; inverse transitions may only
 /// cancel when adjacent, with no emitted sample/contact/paint barrier in between.
-struct InkExactFrame: Equatable, Sendable {
-  let a: InkDyadic, b: InkDyadic, c: InkDyadic, d: InkDyadic, x: InkDyadic, y: InkDyadic
-  static let identity = InkExactFrame(a: .one, b: .zero, c: .zero, d: .one, x: .zero, y: .zero)
-  func composed(after inner: Self) -> Self? {
+public struct InkExactFrame: Equatable, Sendable {
+  public let a: InkDyadic, b: InkDyadic, c: InkDyadic, d: InkDyadic, x: InkDyadic, y: InkDyadic
+  public init(a: InkDyadic, b: InkDyadic, c: InkDyadic, d: InkDyadic, x: InkDyadic, y: InkDyadic) {
+    self.a=a;self.b=b;self.c=c;self.d=d;self.x=x;self.y=y
+  }
+  public static let identity = InkExactFrame(a: .one, b: .zero, c: .zero, d: .one, x: .zero, y: .zero)
+  public func composed(after inner: Self) -> Self? {
     func sum(_ a: InkDyadic, _ b: InkDyadic, _ c: InkDyadic, _ d: InkDyadic,
       offset: InkDyadic = .zero) -> InkDyadic? {
       guard let p = a.multiplied(by: b), let q = c.multiplied(by: d), let s = p.adding(q) else { return nil }

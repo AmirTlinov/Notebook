@@ -41,6 +41,12 @@ public struct WorldPoint: Codable, Equatable, Hashable, Sendable {
     self.localY = normalized.localY
   }
 
+  /// Already normalized binary source: validate without recomputing local bits.
+  init?(exactTileX: Int64, tileY: Int64, localX: Double, localY: Double) {
+    self.tileX=exactTileX;self.tileY=tileY;self.localX=localX;self.localY=localY
+    guard isValid else { return nil }
+  }
+
   public static let zero = WorldPoint(x: 0, y: 0)
 
   public func offsetBy(x: Double, y: Double) -> Self {

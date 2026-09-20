@@ -100,7 +100,7 @@ enum NotebookLassoInkSource: Sendable {
             if origin == nil {
               bounds=try source.bounds(in:range).bounds
             } else {
-              source.storage.root.forEachSample(in:range) { sample in
+              source.forEachSample(in:range) { sample in
                 let p=Self.point(sample,origin:origin),r=max(0.25,sample.width/2)*1.8
                 bounds=bounds.union(.init(x:p.x-r,y:p.y-r,width:r*2,height:r*2))
               }

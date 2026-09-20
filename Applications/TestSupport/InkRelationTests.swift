@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 import CoreGraphics
 import ImageIO
-import NotebookCore
+@testable import NotebookCore
 import PencilKit
 import XCTest
 @testable import Notebook
@@ -140,7 +140,8 @@ final class InkRelationTests: XCTestCase {
     assertBits(samples,placed.decoded())
     let back=placed.transformed(by:undo)
     XCTAssertEqual(back.equality(to:original,eventBudget:0),.equal)
-    let actual=try image(mesh(placed),affine:placed.displayAffine)
+    let reopened=try InkSampleRelations(encodedRelations:placed.encodedRelations())
+    let actual=try image(mesh(reopened),affine:reopened.displayAffine)
     let expected=try image(mesh(samples,relations:false),affine:.init(x:.init(0,-1,580,0),y:.init(1,0,20,0)))
     let a=Array(try XCTUnwrap(actual.dataProvider?.data) as Data),b=Array(try XCTUnwrap(expected.dataProvider?.data) as Data)
     XCTAssertLessThanOrEqual(zip(a,b).map { abs(Int($0)-Int($1)) }.max()!,2)

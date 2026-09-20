@@ -1,26 +1,26 @@
 import Foundation
-import NotebookCore
 
 /// The only fast repeat admitted here advances paper x/y and seconds by an
 /// exact translation. It is not an evaluator for arbitrary dependent programs.
-struct InkRepeatStep: Equatable, Sendable {
-  let x: InkDyadic, y: InkDyadic, time: InkDyadic
-  static let zero = Self(x:.zero,y:.zero,time:.zero)
-  func multiplied(by count: Int) -> Self? {
+public struct InkRepeatStep: Hashable, Sendable {
+  public let x: InkDyadic, y: InkDyadic, time: InkDyadic
+  public init(x: InkDyadic, y: InkDyadic, time: InkDyadic) { self.x=x;self.y=y;self.time=time }
+  public static let zero = Self(x:.zero,y:.zero,time:.zero)
+  public func multiplied(by count: Int) -> Self? {
     guard let x=x.multiplied(by:count), let y=y.multiplied(by:count),
       let time=time.multiplied(by:count) else { return nil }
     return .init(x:x,y:y,time:time)
   }
-  func adding(_ other: Self) -> Self? {
+  public func adding(_ other: Self) -> Self? {
     guard let x=x.adding(other.x), let y=y.adding(other.y), let time=time.adding(other.time) else { return nil }
     return .init(x:x,y:y,time:time)
   }
-  var negated: Self { .init(x:x.negated,y:y.negated,time:time.negated) }
-  func apply(_ value: Double, _ offset: InkDyadic) -> Double {
+  public var negated: Self { .init(x:x.negated,y:y.negated,time:time.negated) }
+  public func apply(_ value: Double, _ offset: InkDyadic) -> Double {
     // In particular preserve a literal negative zero for the identity relation.
     offset == .zero ? value : InkDyadic(value)!.adding(offset)!.value
   }
-  func applyingIfExact(_ sample: SpatialInkSample) -> SpatialInkSample? {
+  public func applyingIfExact(_ sample: SpatialInkSample) -> SpatialInkSample? {
     if self == .zero { return sample }
     guard sample.worldPoint == nil || (x == .zero && y == .zero) else { return nil }
     func shifted(_ value: Double,_ offset: InkDyadic) -> Double? {
@@ -32,7 +32,7 @@ struct InkRepeatStep: Equatable, Sendable {
     return .init(point:.init(x:x,y:y),worldPoint:sample.worldPoint,timeOffset:time,width:sample.width,opacity:sample.opacity,
       force:sample.force,azimuth:sample.azimuth,altitude:sample.altitude)
   }
-  func apply(_ sample: SpatialInkSample) -> SpatialInkSample {
+  public func apply(_ sample: SpatialInkSample) -> SpatialInkSample {
     .init(point:.init(x:apply(sample.point.x,x),y:apply(sample.point.y,y)),
       worldPoint:sample.worldPoint,timeOffset:apply(sample.timeOffset,time),width:sample.width,opacity:sample.opacity,
       force:sample.force,azimuth:sample.azimuth,altitude:sample.altitude)
@@ -86,7 +86,7 @@ extension InkSampleRelations {
   /// Display rejection and neighbour independence belong to the same source
   /// tree. A world box stays relative to an exact tiled origin, never a large
   /// absolute Double. Mixed coordinate kinds deliberately have unknown bounds.
-  struct Geometry: Sendable {
+  public struct Geometry: Sendable {
     enum Coordinate: Equatable, Sendable {
       case paper(SpatialPoint), world(WorldPoint)
       init(_ sample: SpatialInkSample) {
@@ -117,10 +117,10 @@ extension InkSampleRelations {
       }
     }
     let first: Coordinate?,last: Coordinate?
-    let bounds: CGRect
-    let minimumSpacing: Double
-    let stationary: Bool
-    var origin: WorldPoint? { first?.origin }
+    public let bounds: CGRect
+    public let minimumSpacing: Double
+    public let stationary: Bool
+    public var origin: WorldPoint? { first?.origin }
     init(block: Block) {
       guard block.count > 0 else { first=nil;last=nil;bounds = .null;minimumSpacing = .infinity;stationary=true;return }
       first=Coordinate(block.sample(at:0));last=Coordinate(block.sample(at:block.count-1))
@@ -170,7 +170,7 @@ extension InkSampleRelations {
       default: return .infinite
       }
     }
-    static func offset(_ rect: CGRect,x: Double,y: Double) -> CGRect {
+    public static func offset(_ rect: CGRect,x: Double,y: Double) -> CGRect {
       guard !rect.isNull,x != 0 || y != 0 else { return rect }
       let left=(rect.minX+x).nextDown,top=(rect.minY+y).nextDown
       return .init(x:left,y:top,width:((rect.maxX+x).nextUp-left).nextUp,height:((rect.maxY+y).nextUp-top).nextUp)
@@ -191,7 +191,12 @@ extension InkSampleRelations {
     }
   }
 
-  struct AccessCost { var visitedNodes=0;var jumps=0;var decodedSamples=0 }
+  public struct AccessCost: Sendable {
+    public var visitedNodes: Int, jumps: Int, decodedSamples: Int
+    public init(visitedNodes: Int = 0, jumps: Int = 0, decodedSamples: Int = 0) {
+      self.visitedNodes=visitedNodes;self.jumps=jumps;self.decodedSamples=decodedSamples
+    }
+  }
 
   /// A persistent sequence index, not a second scene/spatial index. At most one
   /// literal leaf per 256 measurements; repeats share the same immutable body.
@@ -281,7 +286,7 @@ extension InkSampleRelations {
       }
       return build(blocks.indices)
     }
-    private static func pair(_ a: Sequence,_ b: Sequence) -> Sequence {
+    static func pair(_ a: Sequence,_ b: Sequence) -> Sequence {
       if a.count == 0 { return b };if b.count == 0 { return a }
       return .init(.pair(a,b),count:a.count+b.count,height:max(a.height,b.height)+1,
         domain:(0..<3).map { i in
@@ -349,7 +354,7 @@ extension InkSampleRelations {
       if step == .zero || count == 0 { return self }
       return placing(Basis(step),compose:true)
     }
-    private func placing(_ basis: Basis,compose: Bool = true) -> Sequence? {
+    func placing(_ basis: Basis,compose: Bool = true) -> Sequence? {
       let step=basis.step
       if step == .zero || count == 0 { return self }
       if compose,case .shifted(let body,let previous)=content,let combined=previous.step.adding(step),
@@ -438,7 +443,7 @@ extension InkSampleRelations {
       return .equal
     }
     private static let nodeBytes=MemoryLayout<Content>.stride+MemoryLayout<Geometry>.stride+MemoryLayout<Lattice?>.stride*3+48
-    private func markPending() -> Sequence {
+    func markPending() -> Sequence {
       if pending { return self }
       return .init(content,count:count,height:height,domain:domain,pending:true)
     }

@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 import ImageIO
-import NotebookCore
+@testable import NotebookCore
 import XCTest
 @testable import Notebook
 
