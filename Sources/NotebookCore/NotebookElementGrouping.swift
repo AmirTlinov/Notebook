@@ -84,6 +84,7 @@ public struct NotebookElementPlacement: Equatable, Sendable {
     }
     return false
   }
+  public var parentID: String? { parent?.id }
   public var localTransform: CGAffineTransform { local }
   public var parentTransform: CGAffineTransform { parent?.transform ?? .identity }
   var parentOrigin: WorldPoint { parent == nil ? origin : .zero }

@@ -22,14 +22,13 @@ extension WorkspaceSceneProjection {
 extension NotebookAppModel {
   func presentedGraphicGraph(boardID: UUID, cohort: SceneCompositionCohort, preview: Bool = true) -> NotebookGraphicGraph {
     guard let captured = cohort.frame.index.capturedHierarchy.board(boardID) else { return .init([]) }
-    let board = presentedBoard(captured, boardID:boardID,cohort:cohort)
-    let graph = board.graphicGraph(placements:preview ? elementPlacementDrafts { .spatial(boardID:boardID,elementID:$0) } : [:])
+    let retained=preview ? retainedGraphicGraph { .spatial(boardID:boardID,elementID:$0) } : nil
+    let graph = retained ?? presentedBoard(captured,boardID:boardID,cohort:cohort).graphicGraph()
     guard preview else { return graph }
     let working = workingGraphics.filter {
       ($0.surface == .board(boardID) || ($0.surface.kind == .cover && $0.surface.ownerID.flatMap { cohort.frame.index.ownerBoard(itemID:$0) } == boardID))
         && ($0.publicationCursor.map { cohort.plan.revision < $0 } ?? true)
     }
-    let ids = Set(working.map(\.id))
     // A retained insertion is a live host, not a frozen copy of its geometry.
     // SQL may already contain subsequent edits while the original cohort waits.
     let admitted = working.isEmpty ? nil : boardHierarchy?.board(boardID)?.graphicGraph()
@@ -38,7 +37,7 @@ extension NotebookAppModel {
         let current = admitted?.nodes[object.id], current.surface == object.surface { return current }
       return object.node
     }
-    let combined = graph.replacingNodes(Array(graph.nodes.values).filter { !ids.contains($0.id) } + nodes)
+    let combined = graph.projecting(adding:nodes)
     return projectingGraphicCommands(combined) { .spatial(boardID: boardID, elementID: $0) }
   }
   /// The cohort admits physical hosts and excludes their pixels from its tiles.

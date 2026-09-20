@@ -223,16 +223,134 @@ public struct NotebookGraphicGraph: Sendable {
       self.surface = surface; self.shown = shown
     }
   }
-  public let nodes: [String: Node]
-  public let groups: [String:NotebookElementPlacement]
-  public init(_ nodes: [Node], groups: [String:NotebookElementPlacement] = [:]) {
-    self.groups=groups
-    self.nodes = Dictionary(nodes.map { (collaborationIdentity($0.id), $0) }, uniquingKeysWith: { first, _ in first })
+  struct Group: Sendable { let source:NotebookElementPlacement.Source;let surface:SurfaceID }
+  private final class Source: Sendable {
+    let nodes:[String:Node]
+    let groups:[String:Group]
+    init(_ nodes:[Node],groups:[String:Group]) {
+      self.nodes=Dictionary(nodes.map { (collaborationIdentity($0.id),$0) },uniquingKeysWith:{ first,_ in first })
+      self.groups=groups
+    }
   }
-  public func placement(_ id: String) -> NotebookElementPlacement? {
-    node(id)?.placement ?? groups[collaborationIdentity(id)]
+  /// Only the small edit dictionaries belong to a new projection. The retained
+  /// node/body dictionaries remain shared; no descendant is visited until read.
+  private final class Projection: @unchecked Sendable {
+    let sources:[String:NotebookElementPlacement.Source]
+    let graphics:[String:NotebookGraphic]
+    let additions:[String:Node]
+    let rebuildParents:Bool
+    private var placementsRead=0
+    private let lock=NSLock()
+    private var resolvers:[SurfaceID:NotebookElementPlacement.Resolver]=[:]
+    init(sources:[String:NotebookElementPlacement.Source],graphics:[String:NotebookGraphic],additions:[String:Node],rebuildParents:Bool = false,resolvers:[SurfaceID:NotebookElementPlacement.Resolver] = [:]) {
+      self.sources=sources;self.graphics=graphics;self.additions=additions;self.rebuildParents=rebuildParents;self.resolvers=resolvers
+    }
+    var placementReadCount:Int { lock.lock();defer { lock.unlock() };return placementsRead }
+    func placement(_ id:String,source:NotebookElementPlacement.Source,surface:SurfaceID,base:Source) -> NotebookElementPlacement? {
+      lock.lock();defer { lock.unlock() }
+      placementsRead += 1
+      let resolver:NotebookElementPlacement.Resolver
+      if let found=resolvers[surface] { resolver=found }
+      else {
+        let overrides=sources
+        resolver = .init { id in
+          let key=collaborationIdentity(id)
+          guard let group=base.groups[key],group.surface == surface else { return nil }
+          return overrides[key] ?? group.source
+        }
+        resolvers[surface]=resolver
+      }
+      return try? resolver.resolve(id,source:source)
+    }
   }
-  public func replacingNodes(_ nodes: [Node]) -> Self { .init(nodes,groups:groups) }
+  private let base:Source
+  private let projection:Projection?
+  public struct Nodes: Sendable {
+    fileprivate let graph:NotebookGraphicGraph
+    public subscript(_ id:String) -> Node? { graph.node(id) }
+    public var count:Int { graph.base.nodes.count+(graph.projection?.additions.keys.filter { graph.base.nodes[$0] == nil }.count ?? 0) }
+    public var values:AnySequence<Node> {
+      AnySequence {
+        var original=graph.base.nodes.makeIterator(),added=(graph.projection?.additions ?? [:]).makeIterator()
+        return AnyIterator<Node> {
+          while let (id,_)=original.next() { if let node=graph.node(id) { return node } }
+          while let (id,_)=added.next() { if graph.base.nodes[id] == nil,let node=graph.node(id) { return node } }
+          return nil
+        }
+      }
+    }
+  }
+  public struct Groups: Sendable {
+    fileprivate let graph:NotebookGraphicGraph
+    public var count:Int { graph.base.groups.count }
+    public var isEmpty:Bool { graph.base.groups.isEmpty }
+    public subscript(_ id:String) -> NotebookElementPlacement? {
+      let key=collaborationIdentity(id)
+      guard let group=graph.base.groups[key] else { return nil }
+      return graph.placementResolver.placement(key,source:graph.source(id)!,surface:group.surface,base:graph.base)
+    }
+  }
+  // The base graph also needs one shared group resolver for addressed group
+  // reads. Its empty projection is retained, not rebuilt by a property getter.
+  private let baseResolver:Projection
+  private var placementResolver:Projection { projection.flatMap { $0.rebuildParents ? $0 : nil } ?? baseResolver }
+  public var nodes:Nodes { .init(graph:self) }
+  public var groups:Groups { .init(graph:self) }
+  public init(_ nodes:[Node]) { self.init(nodes,groupSources:[:]) }
+  init(_ nodes:[Node],groupSources:[String:Group],resolvers:[SurfaceID:NotebookElementPlacement.Resolver] = [:]) {
+    base=Source(nodes,groups:groupSources);projection=nil
+    baseResolver=Projection(sources:[:],graphics:[:],additions:[:],resolvers:resolvers)
+  }
+  private init(base:Source,projection:Projection,baseResolver:Projection) { self.base=base;self.projection=projection;self.baseResolver=baseResolver }
+  public func source(_ id:String) -> NotebookElementPlacement.Source? {
+    let key=collaborationIdentity(id)
+    if let override=projection?.sources[key] { return override }
+    if let group=base.groups[key] { return group.source }
+    guard let node=projection?.additions[key] ?? base.nodes[key] else { return nil }
+    return .init(frame:node.frame,origin:node.placement.parentID == nil ? node.origin : .zero,
+      parentID:node.placement.parentID,basis:node.placement.basis)
+  }
+  public func node(_ id:String) -> Node? {
+    let key=collaborationIdentity(id)
+    guard let raw=projection?.additions[key] ?? base.nodes[key] else { return nil }
+    guard let projection else { return raw }
+    let graphic=projection.graphics[key] ?? raw.graphic
+    if !projection.rebuildParents {
+      let source=projection.sources[key]
+      guard let placement=source.map({ try? raw.placement.updating(frame:$0.frame,basis:$0.basis) }) ?? raw.placement else { return nil }
+      return .init(id:raw.id,graphic:graphic,frame:source?.frame ?? raw.frame,surface:raw.surface,shown:raw.shown && graphic.showsGeometry,placement:placement)
+    }
+    guard let source=source(key),let placement=projection.placement(key,source:source,surface:raw.surface,base:base) else { return nil }
+    return .init(id:raw.id,graphic:graphic,frame:source.frame,surface:raw.surface,shown:raw.shown && graphic.showsGeometry,placement:placement)
+  }
+  public func placement(_ id:String) -> NotebookElementPlacement? { node(id)?.placement ?? groups[id] }
+  public func projecting(placements:[String:NotebookElementPlacement.Source] = [:],graphics:[String:NotebookGraphic] = [:],adding:[Node] = []) -> Self {
+    guard !placements.isEmpty || !graphics.isEmpty || !adding.isEmpty else { return self }
+    var sources=projection?.sources ?? [:],bodies=projection?.graphics ?? [:],additions=projection?.additions ?? [:]
+    for (id,source) in placements { sources[collaborationIdentity(id)]=source }
+    for (id,graphic) in graphics { bodies[collaborationIdentity(id)]=graphic }
+    for node in adding { additions[collaborationIdentity(node.id)]=node }
+    let rebuild=sources.contains { key,value in
+      guard !value.isGroup,let raw=additions[key] ?? base.nodes[key] else { return true }
+      let parent=raw.placement.parentID
+      return parent.map(collaborationIdentity) != value.parentID.map(collaborationIdentity)
+        || (parent == nil && value.origin != raw.origin)
+    }
+    return .init(base:base,projection:Projection(sources:sources,graphics:bodies,additions:additions,rebuildParents:rebuild),baseResolver:baseResolver)
+  }
+  /// A retained contact can prove that copying this value did not copy the
+  /// original node dictionary. No address or implementation type is exposed.
+  public func sharesSource(with other:Self) -> Bool { base === other.base }
+  public var projectedPlacementReadCount:Int { projection?.placementReadCount ?? 0 }
+  public func groupIsSelfContained(_ id:String) -> Bool {
+    guard base.groups[collaborationIdentity(id)] != nil else { return false }
+    for member in nodes.values where member.shown && member.placement.descends(from:id) {
+      for binding in member.graphic.connection?.bindings ?? [] {
+        guard let target=node(binding.elementID),target.placement.descends(from:id) else { return false }
+      }
+    }
+    return true
+  }
   /// Selection bounds include escaped members, not the original basis rectangle.
   /// This resolves only the admitted graph, not a new stored descendant list.
   public func groupBounds(_ id: String) -> CGRect? {
@@ -283,7 +401,6 @@ public struct NotebookGraphicGraph: Sendable {
     guard let chosen=candidates.first else { return nil }
     return .init(elementID:chosen.id,normalizedAnchor:chosen.anchor,isExact:!chosen.inside,isPrecise:true)
   }
-  public func node(_ id: String) -> Node? { nodes[collaborationIdentity(id)] }
   public enum Space { case surface, parent, body }
   public func resolve(_ id: String,space: Space = .surface) -> NotebookGraphicResolution {
     guard let node = nodes[collaborationIdentity(id)] else { return .pending([id]) }
@@ -421,26 +538,23 @@ public struct NotebookGraphicGraph: Sendable {
 }
 
 extension PageDocument {
-  public func graphicGraph(placements: [String:NotebookElementPlacement.Source] = [:]) -> NotebookGraphicGraph {
+  public func graphicGraph() -> NotebookGraphicGraph {
     let shown=graphicPresentation.geometryIDs
-    var groups=Dictionary(elements.filter { $0.kind == .group }.map {
+    let groups=Dictionary(elements.filter { $0.kind == .group }.map {
       (collaborationIdentity($0.id),NotebookElementPlacement.Source(frame:$0.frame,parentID:$0.parentID,basis:$0.basis,isGroup:true))
     },uniquingKeysWith:{ first,_ in first })
-    for (id,source) in placements where source.isGroup { groups[collaborationIdentity(id)]=source }
     let resolver=NotebookElementPlacement.Resolver { groups[collaborationIdentity($0)] }
     let nodes:[NotebookGraphicGraph.Node]=elements.compactMap { element in
       guard let graphic=element.graphic else { return nil }
-      let source=placements[element.id] ?? .init(frame:element.frame,parentID:element.parentID,basis:element.basis)
+      let source=NotebookElementPlacement.Source(frame:element.frame,parentID:element.parentID,basis:element.basis)
       guard let placement=try? resolver.resolve(element.id,source:source) else { return nil }
       return .init(id:element.id,graphic:graphic,frame:source.frame,surface:.page(id),shown:shown.contains(element.id),placement:placement)
     }
-    return .init(nodes,groups:Dictionary(uniqueKeysWithValues:groups.keys.compactMap { id in
-      (try? resolver.resolve(id)).map { (id,$0) }
-    }))
+    return .init(nodes,groupSources:groups.mapValues { .init(source:$0,surface:.page(id)) },resolvers:[.page(id):resolver])
   }
 }
 extension BoardDocument {
-  public func graphicGraph(placements: [String:NotebookElementPlacement.Source] = [:]) -> NotebookGraphicGraph {
+  public func graphicGraph() -> NotebookGraphicGraph {
     let shown=graphicPresentation.geometryIDs
     let groups=Dictionary(elements.filter { $0.kind == .group }.map { (collaborationIdentity($0.id),$0) },uniquingKeysWith:{ first,_ in first })
     var resolvers:[SurfaceID:NotebookElementPlacement.Resolver]=[:]
@@ -448,20 +562,21 @@ extension BoardDocument {
       if let value=resolvers[surface] { return value }
       let value=NotebookElementPlacement.Resolver { id in
         guard let group=groups[collaborationIdentity(id)],group.surface == surface else { return nil }
-        return placements[group.id] ?? .init(frame:.init(x:group.frame.x,y:group.frame.y,width:group.frame.width,height:group.frame.height),
+        return .init(frame:.init(x:group.frame.x,y:group.frame.y,width:group.frame.width,height:group.frame.height),
           origin:group.worldOrigin ?? .zero,parentID:group.parentID,basis:group.basis,isGroup:true)
       }
       resolvers[surface]=value;return value
     }
     let nodes:[NotebookGraphicGraph.Node]=elements.compactMap { element in
       guard let graphic=element.graphic else { return nil }
-      let source=placements[element.id] ?? .init(frame:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height),
+      let source=NotebookElementPlacement.Source(frame:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height),
         origin:element.worldOrigin ?? .zero,parentID:element.parentID,basis:element.basis)
       guard let placement=try? resolver(element.surface).resolve(element.id,source:source) else { return nil }
       return .init(id:element.id,graphic:graphic,frame:source.frame,surface:element.surface,shown:shown.contains(element.id),placement:placement)
     }
-    return .init(nodes,groups:Dictionary(uniqueKeysWithValues:groups.values.compactMap { group in
-      (try? resolver(group.surface).resolve(group.id)).map { (collaborationIdentity(group.id),$0) }
-    }))
+    return .init(nodes,groupSources:groups.mapValues { group in
+      .init(source:.init(frame:.init(x:group.frame.x,y:group.frame.y,width:group.frame.width,height:group.frame.height),
+        origin:group.worldOrigin ?? .zero,parentID:group.parentID,basis:group.basis,isGroup:true),surface:group.surface)
+    },resolvers:resolvers)
   }
 }

@@ -3109,13 +3109,17 @@ final class NotebookAppModel {
       let geometry = elementGeometry(reference) else { return nil }
     let connection = graphicElement(reference)?.connection
     cancelElementManipulation()
-    let graphicGeometry=graphicManipulationGeometry(reference)
-    let groupGeometry=groupManipulationGeometry(reference)
-    if isElementGroup(reference), groupGeometry == nil || !groupAllowsLiveManipulation(reference) { return nil }
+    let captured=editingGraphicGraph(reference)
+    let graphicGeometry=graphicManipulationGeometry(reference,in:captured)
+    let groupGeometry=groupManipulationGeometry(reference,in:captured)
+    if isElementGroup(reference), groupGeometry == nil || !groupAllowsLiveManipulation(reference,in:captured) { return nil }
     var contact = NotebookElementManipulation(reference: reference, kind: kind,
       frame: geometry.frame, bounds: geometry.bounds, identity: geometry.identity, worldOrigin: geometry.worldOrigin,
       connection:connection,layout:graphicGeometry?.body,graphic:graphicElement(reference),placement:graphicGeometry?.placement ?? groupGeometry?.placement,
       displayFrame:graphicGeometry.map { .init(x:$0.display.frame.x,y:$0.display.frame.y,width:$0.display.frame.width,height:$0.display.frame.height) } ?? groupGeometry?.bounds)
+    if let captured,let source=captured.source(reference.elementID) {
+      contact.graphicCapture = .init(graph:captured,source:source,id:reference.elementID)
+    }
     if selectionSession.elements.count > 1 {
       guard kind == .move, let members = selectedGraphicMembers() else { return nil }
       contact.selectedMembers = members
@@ -3168,7 +3172,7 @@ final class NotebookAppModel {
       if contact.frame != contact.original {
         values["frame"] = try? .encode(PageRect(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height))
       }
-      return performElementOperation(.updateElement,reference:contact.reference,values:values,summary:"Изменить геометрию фигуры",readSources:contact.ancestorReferences)
+      return performElementOperation(.updateElement,reference:contact.reference,values:values,summary:"Изменить геометрию фигуры",readSources:contact.ancestorReferences,capture:contact.graphicCapture?.retaining(bounds:contact.presentedFrame))
     }
     if let connection = contact.connection, connection != contact.originalConnection {
       guard let original = contact.originalConnection else { return false }
@@ -3183,7 +3187,7 @@ final class NotebookAppModel {
         values["frame"] = try? .encode(PageRect(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height))
       }
       return performElementOperation(.updateElement, reference: contact.reference,
-        values:values,summary:"Изменить связь",readSources:contact.ancestorReferences)
+        values:values,summary:"Изменить связь",readSources:contact.ancestorReferences,capture:contact.graphicCapture?.retaining(bounds:contact.presentedFrame))
     }
     return commitElementFrame(contact)
   }
@@ -3197,7 +3201,7 @@ final class NotebookAppModel {
       return performElementOperation(.updateElement, reference: contact.reference,
         values: ["frame":(try? .encode(PageRect(x:frame.minX,y:frame.minY,width:frame.width,height:frame.height))) ?? .null]
           .merging(contact.basis == contact.originalBasis ? [:] : ["basis":(try? .encode(contact.basis)) ?? .null]) { _,new in new },
-        summary:"Переместить фигуру",readSources:contact.ancestorReferences)
+        summary:"Переместить фигуру",readSources:contact.ancestorReferences,capture:contact.graphicCapture?.retaining(bounds:contact.presentedFrame))
     }
     switch contact.reference {
     case .page(let pageID, let elementID):
@@ -3393,14 +3397,14 @@ final class NotebookAppModel {
   @discardableResult
   func performElementOperation(_ kind: CollaborationOperation.Kind, reference: EditableElementReference,
     values: [String: JSONValue], summary: String, layerMove: NotebookElementLayerMove? = nil,
-    readSources: [EditableElementReference] = []) -> Bool {
-    performElementOperations([.init(reference:reference,kind:kind,values:values)],summary:summary,layerMove:layerMove,readSources:readSources)
+    readSources: [EditableElementReference] = [],capture:NotebookGraphicContactSource? = nil) -> Bool {
+    performElementOperations([.init(reference:reference,kind:kind,values:values)],summary:summary,layerMove:layerMove,readSources:readSources,capture:capture)
   }
 
   @discardableResult
   func performElementOperations(_ edits: [NotebookElementEdit], summary: String,
     layerMove: NotebookElementLayerMove? = nil, readSources: [EditableElementReference] = [], copiedFrom: [String:String] = [:],
-    insertionTarget explicitTarget: CollaborationTarget? = nil, expectedInkRevision: String? = nil, retainedSources: [EditableElementReference:NotebookNativeElementSource] = [:], previews: Bool = true) -> Bool {
+    insertionTarget explicitTarget: CollaborationTarget? = nil, expectedInkRevision: String? = nil, retainedSources: [EditableElementReference:NotebookNativeElementSource] = [:], previews: Bool = true,capture:NotebookGraphicContactSource? = nil) -> Bool {
     guard !edits.isEmpty, edits.count <= 32 else { return false }
     let references = Array(Set(edits.map(\.reference) + readSources))
     let insertionTarget = explicitTarget ?? readSources.first.flatMap { nativeElementSource($0)?.target }
@@ -3438,7 +3442,7 @@ final class NotebookAppModel {
         var source=elementCommandDrafts[edit.reference]?.source ?? originals[edit.reference]?.placementSource
           ?? .init(frame:frame,origin:geometry.worldOrigin ?? .zero)
         source.frame=frame;source.basis=basis
-        drafts[edit.reference] = .init(source:source,graphic:graphic)
+        drafts[edit.reference] = .init(source:source,graphic:graphic,capture:capture)
       }
     } catch { showCue(error.localizedDescription); return false }
     for (reference,draft) in drafts { elementCommandDrafts[reference] = draft }

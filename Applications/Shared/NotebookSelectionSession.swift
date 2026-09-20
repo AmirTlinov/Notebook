@@ -4,6 +4,7 @@ import NotebookCore
 /// Every editable element carries its physical owner; changing the camera
 /// cannot redirect a delayed drag to another board with the same element ID.
 enum EditableElementReference: Hashable, Sendable {
+  var elementID:String { switch self { case .page(_,let id),.spatial(_,let id): id } }
   case page(pageID: UUID, elementID: String)
   case spatial(boardID: UUID, elementID: String)
 }

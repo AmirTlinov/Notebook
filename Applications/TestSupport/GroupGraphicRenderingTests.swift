@@ -232,6 +232,7 @@ import XCTest
     let queued=model.finishElementManipulation(stale,translation:.init(x:20,y:40))
     let staleFinished=await model.finishPendingPersistence();XCTAssertTrue(staleFinished);await model.reloadExternalChanges()?.value
     if queued { XCTAssertNotNil(model.actionCue,"Queued admission is not a durable receipt; the changed parent must reject it") }
+    XCTAssertNil(model.retainedGraphicGraph { .page(pageID:pageID,elementID:$0) })
     XCTAssertEqual(try store.loadPage(pageID).elements[1],moved.elements[1],"A late lift cannot adopt another whole's placement")
   }
 
@@ -304,6 +305,22 @@ import XCTest
     XCTAssertEqual(try ["a","b"].map { try XCTUnwrap(graph().resolve($0).layout) },original)
     let children=grouped.elements.filter { $0.kind != .group }
     let held=try XCTUnwrap(model.beginElementManipulation(whole,kind:.move))
+    let capture=try XCTUnwrap(model.selectionSession.manipulation?.graphicCapture)
+    XCTAssertTrue(capture.closedGroup)
+    let initialBounds=try XCTUnwrap(capture.graph.groupBounds(whole.elementID))
+    // Real model update and both display queries, after contact admission.
+    // No leaf is resolved merely to update the whole's controls.
+    let clock=ContinuousClock(),start=clock.now
+    for step in 0..<100 {
+      let delta=SpatialPoint(x:Double(step%31),y:Double(step%41))
+      model.updateElementManipulation(held,translation:delta)
+      let projection=try graph(),geometry=try XCTUnwrap(model.groupManipulationGeometry(whole))
+      XCTAssertTrue(projection.sharesSource(with:capture.graph))
+      XCTAssertEqual(projection.projectedPlacementReadCount,0)
+      XCTAssertEqual(geometry.bounds,initialBounds.offsetBy(dx:delta.x,dy:delta.y))
+    }
+    let timing=XCTAttachment(string:"GUI291 model 100 held whole updates + graph + controls: \(start.duration(to:clock.now)); 2 grouped members and 1 unchanged outsider; excludes cold admission and painting")
+    timing.name="gui291-held-whole-model-cost";timing.lifetime = .keepAlways;add(timing)
     model.updateElementManipulation(held,translation:.init(x:30,y:40))
     for (id,old) in zip(["a","b"],original) {
       let next=try XCTUnwrap(graph().resolve(id).layout)
@@ -311,11 +328,26 @@ import XCTest
     }
     XCTAssertEqual(try model.store.loadPage(page.id),grouped,"A held whole does not write any child")
     model.cancelElementManipulation(held)
+    XCTAssertNil(model.retainedGraphicGraph(reference:ref))
     XCTAssertEqual(try ["a","b"].map { try XCTUnwrap(graph().resolve($0).layout) },original)
     let move=try XCTUnwrap(model.beginElementManipulation(whole,kind:.move))
+    let moveCapture=try XCTUnwrap(model.selectionSession.manipulation?.graphicCapture)
     XCTAssertTrue(model.finishElementManipulation(move,translation:.init(x:30,y:40)))
     let accepted=try graph()
+    XCTAssertTrue(accepted.sharesSource(with:moveCapture.graph))
+    XCTAssertEqual(accepted.projectedPlacementReadCount,0)
+    XCTAssertEqual(model.groupManipulationGeometry(whole)?.bounds,initialBounds.offsetBy(dx:30,dy:40))
+    // A following member draft invalidates the closed whole's retained bounds.
+    // This is projection-only; removing it before yielding cannot write a child.
+    var member=try XCTUnwrap(accepted.source("a"))
+    member.frame = .init(x:member.frame.x+300,y:member.frame.y,width:member.frame.width,height:member.frame.height)
+    model.elementCommandDrafts[ref("a")] = .init(source:member,graphic:accepted.node("a")?.graphic)
+    let expanded=try XCTUnwrap(graph().groupBounds(whole.elementID))
+    XCTAssertGreaterThan(expanded.maxX,initialBounds.maxX+30)
+    XCTAssertEqual(model.groupManipulationGeometry(whole)?.bounds,expanded)
+    model.elementCommandDrafts[ref("a")] = nil
     let moved=await model.finishPendingPersistence();XCTAssertTrue(moved);await model.reloadExternalChanges()?.value
+    XCTAssertNil(model.retainedGraphicGraph(reference:ref))
     XCTAssertEqual(try model.store.loadPage(page.id).elements.filter { $0.kind != .group },children)
     for id in ["a","b"] { XCTAssertEqual(try graph().resolve(id).layout,accepted.resolve(id).layout) }
     let resize=try XCTUnwrap(model.beginElementManipulation(whole,kind:.resize(.bottomTrailing)))

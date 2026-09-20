@@ -23,7 +23,7 @@ struct NotebookGroupGeometryTests {
     let oldBounds=try #require(before.groupBounds("outer"))
     #expect(oldBounds.maxX>600)
     let draft=NotebookElementPlacement.Source(frame:.init(x:150,y:170,width:500,height:300),basis:source.elements[0].basis,isGroup:true)
-    let next=source.graphicGraph(placements:["outer":draft]),newBounds=try #require(next.groupBounds("outer"))
+    let next=before.projecting(placements:["outer":draft]),newBounds=try #require(next.groupBounds("outer"))
     #expect(next.node("outer") == nil)
     #expect(next.groups.count == 2)
     #expect(newBounds == oldBounds.offsetBy(dx:50,dy:70))
@@ -40,9 +40,50 @@ struct NotebookGroupGeometryTests {
         graphic:element.graphic,parentID:element.parentID,basis:element.basis,stamp:stamp)
     },stamp:stamp)
     var boardDraft=draft;boardDraft.origin=origin
-    let boardGraph=board.graphicGraph(placements:["outer":boardDraft])
+    let boardGraph=board.graphicGraph().projecting(placements:["outer":boardDraft])
     #expect(boardGraph.groupBounds("outer") == newBounds)
     #expect(boardGraph.placement("a")?.origin == origin)
+  }
+
+  @Test func sparseEditsShareOnlyAnUnchangedSourceAndNeverMixAncestorFrames() throws {
+    let source=page(),base=source.graphicGraph()
+    #expect(base.groupIsSelfContained("outer"))
+    var outer=try #require(base.source("outer"))
+    outer.frame = .init(x:193,y:147,width:371,height:617)
+    outer.basis = .init(size:.init(x:500,y:300),transform:.init(a:0.6,b:0.23,c:0.31,d:0.7,tx:0.04,ty:0.03))
+    let whole=base.projecting(placements:["outer":outer])
+    let body=try #require(base.resolve("link").layout).localLayout
+    #expect(whole.resolve("link").layout?.localLayout == body)
+    var leaf=try #require(base.source("b"));leaf.frame = .init(x:leaf.frame.x+30,y:leaf.frame.y,width:leaf.frame.width,height:leaf.frame.height)
+    let both=whole.projecting(placements:["b":leaf])
+    let rebuilt=page(frame:outer.frame,pose:outer.basis?.transform,bFrame:leaf.frame).graphicGraph()
+    #expect(both.sharesSource(with:base))
+    for id in ["a","b","link"] { #expect(both.resolve(id) == rebuilt.resolve(id)) }
+    #expect(base.resolve("link").layout?.localLayout == body)
+    let leafOnly=base.projecting(placements:["b":leaf])
+    #expect(leafOnly.resolve("link") == page(bFrame:leaf.frame).graphicGraph().resolve("link"))
+    #expect(leafOnly.projectedPlacementReadCount == 0,"Leaf edits retain the existing shared ancestry")
+    // Reparenting must rebuild the common frame cut, not reuse the old chain.
+    leaf.parentID="inner"
+    let reparented=whole.projecting(placements:["b":leaf])
+    #expect(reparented.placement("b")?.ancestors == ["inner","outer"])
+    #expect(whole.placement("b")?.ancestors == ["outer"])
+    leaf.parentID="missing"
+    #expect(whole.projecting(placements:["b":leaf]).node("b") == nil)
+    // A connection crossing the whole boundary cannot reuse its old bounds.
+    var graphic=try #require(base.node("link")).graphic
+    graphic.connection?.end.binding = .init(elementID:"outside")
+    let outside=NotebookGraphicGraph.Node(id:"outside",graphic:.init(shape:.ellipse),frame:.init(x:800,y:800,width:40,height:40),surface:.page(source.id),shown:true)
+    let open=base.projecting(graphics:["link":graphic],adding:[outside])
+    #expect(!open.groupIsSelfContained("outer"))
+    #expect(open.nodes.count == base.nodes.count+1)
+    #expect(open.nodes.values.map(\.id).sorted() == ["a","b","link","outside"])
+    #expect(base.node("outside") == nil)
+    let replacement=NotebookGraphicGraph.Node(id:"outside",graphic:outside.graphic,frame:.init(x:700,y:700,width:40,height:40),surface:outside.surface,shown:true)
+    let replaced=open.projecting(adding:[replacement])
+    #expect(replaced.nodes.count == open.nodes.count)
+    #expect(replaced.node("outside")?.frame == replacement.frame)
+    #expect(open.node("outside")?.frame == outside.frame)
   }
 
   @Test func aHundredThousandMembersKeepOneWholeDraftButExposeProjectionCost() throws {
@@ -56,12 +97,16 @@ struct NotebookGroupGeometryTests {
     let clock=ContinuousClock(),start=clock.now,graph=page.graphicGraph(),prepared=clock.now
     let bounds=try #require(graph.groupBounds("whole")),bounded=clock.now
     let draft=NotebookElementPlacement.Source(frame:.init(x:80,y:100,width:1000,height:100),basis:whole.basis,isGroup:true)
-    let next=page.graphicGraph(placements:["whole":draft]),projected=clock.now
+    let next=graph.projecting(placements:["whole":draft]),projected=clock.now
+    #expect(next.sharesSource(with:graph));#expect(next.projectedPlacementReadCount == 0)
+    for id in ["part-0","part-1","part-2","part-3"] { #expect(next.resolve(id).layout != nil) }
+    #expect(next.projectedPlacementReadCount == 4)
     #expect(graph.nodes.count == 100_000 && next.nodes.count == 100_000 && next.groups.count == 1)
-    #expect(try #require(next.groupBounds("whole")) == bounds.offsetBy(dx:30,dy:40))
+    let fullStart=clock.now,fullBounds=next.groupBounds("whole"),fullEnd=clock.now
+    #expect(try #require(fullBounds) == bounds.offsetBy(dx:30,dy:40))
     #expect(next.node("part-99999")?.frame == graph.node("part-99999")?.frame)
     #expect(page.elements[100_000] == children.last)
-    print("GUI291 whole 100000: coldGraph=\(start.duration(to:prepared)), bounds=\(prepared.duration(to:bounded)), draftGraph=\(bounded.duration(to:projected)); one draft, 100000 admitted leaves still projected")
+    print("GUI291 whole 100000: coldGraph=\(start.duration(to:prepared)), bounds=\(prepared.duration(to:bounded)), sparseDraft=\(bounded.duration(to:projected)), explicitFullProjectedBounds=\(fullStart.duration(to:fullEnd)); four addressed placements read before that full query")
   }
 
   @Test func internalBindingsCancelTheSharedOuterFrameNotFloatingPointMatrices() throws {
@@ -82,7 +127,7 @@ struct NotebookGroupGeometryTests {
     }
     let edited = page(bFrame:.init(x:300,y:150,width:90,height:70)).graphicGraph()
     #expect(edited.resolve("link").layout?.localLayout != body)
-    #expect(original.graphicGraph(placements:["outer":.init(frame:.init(x:170,y:150,width:500,height:300),basis:original.elements[0].basis,isGroup:true)]).resolve("link").layout?.localLayout == body)
+    #expect(original.graphicGraph().projecting(placements:["outer":.init(frame:.init(x:170,y:150,width:500,height:300),basis:original.elements[0].basis,isGroup:true)]).resolve("link").layout?.localLayout == body)
   }
 
   @Test func strokesAndExistingCutsTransformTogetherAndRemainPickable() throws {

@@ -33,36 +33,36 @@ extension NotebookAppModel {
       })
   }
   func graphicGraph(page: PageDocument, preview: Bool = true) -> NotebookGraphicGraph {
-    let graph = page.graphicGraph(placements:preview ? elementPlacementDrafts { .page(pageID:page.id,elementID:$0) } : [:])
+    let graph = (preview ? retainedGraphicGraph { .page(pageID:page.id,elementID:$0) } : nil) ?? page.graphicGraph()
     guard preview else { return graph }
     let working = workingGraphics.filter { $0.surface == .page(page.id) }
-    let ids = Set(working.map(\.id))
-    let combined = graph.replacingNodes(Array(graph.nodes.values).filter { !ids.contains($0.id) } + working.map(\.node))
+    let combined = graph.projecting(adding:working.map(\.node))
     return projectingGraphicCommands(combined) { .page(pageID: page.id, elementID: $0) }
   }
 
   /// New commands see the accepted model and its queued drafts, not the older
   /// raster cohort. Persistence still chains the exact predecessor sources.
   func authoredGraphicGraph(boardID: UUID) -> NotebookGraphicGraph {
-    let graph = boardHierarchy?.board(boardID)?.graphicGraph(placements:elementPlacementDrafts { .spatial(boardID:boardID,elementID:$0) }) ?? .init([])
+    let graph = retainedGraphicGraph { .spatial(boardID:boardID,elementID:$0) } ?? boardHierarchy?.board(boardID)?.graphicGraph() ?? .init([])
     let working = pendingModelGraphics.filter {
       $0.surface == .board(boardID) || ($0.surface.kind == .cover &&
         $0.surface.ownerID.flatMap { boardHierarchy?.ownerBoardID(of:$0) } == boardID)
     }
-    let ids = Set(working.map(\.id))
-    let combined = graph.replacingNodes(Array(graph.nodes.values).filter { !ids.contains($0.id) } + working.map(\.node))
+    let combined = graph.projecting(adding:working.map(\.node))
     return projectingGraphicCommands(combined) { .spatial(boardID:boardID,elementID:$0) }
   }
 
-  func graphicManipulationGeometry(_ reference: EditableElementReference) -> (placement:NotebookElementPlacement,body:NotebookGraphicLayout,display:NotebookGraphicLayout)? {
-    let graph:NotebookGraphicGraph,id:String
+  func editingGraphicGraph(_ reference:EditableElementReference) -> NotebookGraphicGraph? {
     switch reference {
-    case .page(let owner,let elementID):
-      guard let page=pages[owner] else { return nil };graph=graphicGraph(page:page);id=elementID
-    case .spatial(let owner,let elementID):
-      guard let value=compositionTiles.published.map({ presentedGraphicGraph(boardID:owner,cohort:$0) })
-        ?? boardHierarchy?.board(owner)?.graphicGraph() else { return nil };graph=value;id=elementID
+    case .page(let owner,_): return pages[owner].map { graphicGraph(page:$0) }
+    case .spatial(let owner,_): return compositionTiles.published.map { presentedGraphicGraph(boardID:owner,cohort:$0) }
+      ?? boardHierarchy?.board(owner)?.graphicGraph()
     }
+  }
+
+  func graphicManipulationGeometry(_ reference: EditableElementReference,in prepared:NotebookGraphicGraph? = nil) -> (placement:NotebookElementPlacement,body:NotebookGraphicLayout,display:NotebookGraphicLayout)? {
+    guard let graph=prepared ?? editingGraphicGraph(reference) else { return nil }
+    let id=reference.elementID
     guard let node=graph.node(id),let body=graph.resolve(id,space:.body).layout,let display=graph.resolve(id).layout else { return nil }
     return (node.placement,body,display)
   }

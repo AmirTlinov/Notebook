@@ -18,6 +18,7 @@ struct NotebookElementCommand {
 struct NotebookElementCommandDraft: Equatable {
   let source: NotebookElementPlacement.Source
   let graphic: NotebookGraphic?
+  var capture: NotebookGraphicContactSource? = nil
   var frame: PageRect { source.frame }
   var basis: NotebookElementBasis? { source.basis }
   var rect: CGRect { .init(x: frame.x, y: frame.y, width: frame.width, height: frame.height) }
@@ -32,6 +33,14 @@ extension NotebookAppModel {
     }
   }
 
+  func retainedGraphicGraph(reference:(String) -> EditableElementReference) -> NotebookGraphicGraph? {
+    if let contact=selectionSession.manipulation,reference(contact.reference.elementID) == contact.reference,
+      let captured=contact.graphicCapture { return captured.graph }
+    return elementCommandDrafts.first { ref,draft in
+      reference(ref.elementID) == ref && draft.capture != nil
+    }?.value.capture?.graph
+  }
+
   /// Whole and leaf drafts enter the one placement resolver before children
   /// are resolved. Never rewrite each child's local frame to preview its parent.
   func elementPlacementDrafts(reference: (String) -> EditableElementReference) -> [String:NotebookElementPlacement.Source] {
@@ -44,7 +53,7 @@ extension NotebookAppModel {
     if let contact=selectionSession.manipulation {
       let ref=contact.reference,id:String
       switch ref { case .page(_,let value),.spatial(_,let value): id=value }
-      if reference(id) == ref,var source=result[id] ?? nativeElementSource(ref)?.placementSource {
+      if reference(id) == ref,var source=result[id] ?? contact.graphicCapture?.source ?? nativeElementSource(ref)?.placementSource {
         source.frame = .init(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height)
         source.basis=contact.basis;result[id]=source
       }
@@ -56,30 +65,26 @@ extension NotebookAppModel {
   /// Only nodes already admitted by that graph can change here.
   func projectingGraphicCommands(_ graph: NotebookGraphicGraph,
     reference: (String) -> EditableElementReference) -> NotebookGraphicGraph {
-    let selectedEdits = Dictionary(uniqueKeysWithValues:(selectionSession.manipulation?.selectedEdits ?? []).map { ($0.id,$0) })
-    return graph.replacingNodes(graph.nodes.values.compactMap { node in
-      let ref = reference(node.id), draft = elementCommandDrafts[ref]
-      let contact = selectionSession.manipulation.flatMap { $0.reference == ref ? $0 : nil }
-      var graphic = draft?.graphic ?? node.graphic
-      if let connection = contact?.connection { graphic.connection = connection }
-      if let contact {
-        if contact.vertices != contact.originalVertices { graphic.vertices = contact.vertices }
-        if contact.cornerRadius != contact.originalCornerRadius { graphic.cornerRadius = contact.cornerRadius }
-      }
-      let selected = selectedEdits[node.id]
-      if let selected { graphic = selected.graphic }
-      let frame = selected?.frame ?? contact.map { PageRect(x: $0.frame.minX, y: $0.frame.minY, width: $0.frame.width, height: $0.frame.height) }
-        ?? draft?.frame ?? node.frame
-      let basis = contact?.basis ?? draft?.basis ?? node.placement.basis
-      let placement:NotebookElementPlacement
-      if frame == node.frame,basis == node.placement.basis { placement=node.placement }
-      else {
-        guard let changed=try? node.placement.updating(frame:frame,basis:basis) else { return nil }
-        placement=changed
-      }
-      return .init(id:node.id,graphic:graphic,frame:frame,surface:node.surface,
-        shown:node.shown && graphic.showsGeometry,placement:placement)
-    })
+    let selectedEdits=selectionSession.manipulation?.selectedEdits ?? []
+    let placements=elementPlacementDrafts(reference:reference)
+    var graphics:[String:NotebookGraphic]=[:]
+    for (ref,draft) in elementCommandDrafts {
+      let id=ref.elementID
+      if reference(id) == ref,let graphic=draft.graphic { graphics[id]=graphic }
+    }
+    if let contact=selectionSession.manipulation,reference(contact.reference.elementID) == contact.reference,
+      var graphic=graphics[contact.reference.elementID] ?? graph.node(contact.reference.elementID)?.graphic {
+      if let connection=contact.connection { graphic.connection=connection }
+      if contact.vertices != contact.originalVertices { graphic.vertices=contact.vertices }
+      if contact.cornerRadius != contact.originalCornerRadius { graphic.cornerRadius=contact.cornerRadius }
+      graphics[contact.reference.elementID]=graphic
+    }
+    var sources=placements
+    for selected in selectedEdits where graph.node(selected.id) != nil {
+      graphics[selected.id]=selected.graphic
+      if var source=graph.source(selected.id) { source.frame=selected.frame;sources[selected.id]=source }
+    }
+    return graph.projecting(placements:sources,graphics:graphics)
   }
 }
 
@@ -87,4 +92,22 @@ struct NotebookElementEdit {
   let reference: EditableElementReference
   let kind: CollaborationOperation.Kind
   let values: [String: JSONValue]
+}
+
+/// A contact retains the exact admitted graph, just as it retains its input
+/// settings. Lift transfers this source to the existing command draft; disposal
+/// of that draft also disposes of the captured graph, without a global cache.
+final class NotebookGraphicContactSource: Equatable, Sendable {
+  let graph:NotebookGraphicGraph
+  let source:NotebookElementPlacement.Source
+  let closedGroup:Bool
+  let bounds:CGRect?
+  init(graph:NotebookGraphicGraph,source:NotebookElementPlacement.Source,id:String) {
+    self.graph=graph;self.source=source;closedGroup=source.isGroup && graph.groupIsSelfContained(id);bounds=nil
+  }
+  private init(_ original:NotebookGraphicContactSource,bounds:CGRect) {
+    graph=original.graph;source=original.source;closedGroup=original.closedGroup;self.bounds=bounds
+  }
+  func retaining(bounds:CGRect) -> NotebookGraphicContactSource { .init(self,bounds:bounds) }
+  static func == (a:NotebookGraphicContactSource,b:NotebookGraphicContactSource) -> Bool { a === b }
 }

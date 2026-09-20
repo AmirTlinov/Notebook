@@ -22,16 +22,30 @@ extension NotebookAppModel {
     }
   }
 
-  func groupManipulationGeometry(_ reference: EditableElementReference) -> (placement:NotebookElementPlacement,bounds:CGRect)? {
-    guard isElementGroup(reference),let (graph,id)=groupGraph(reference),
+  func groupManipulationGeometry(_ reference: EditableElementReference,in prepared:NotebookGraphicGraph? = nil) -> (placement:NotebookElementPlacement,bounds:CGRect)? {
+    if let contact=selectionSession.manipulation,contact.reference == reference,contact.graphicCapture?.closedGroup == true,
+      let placement=try? contact.placement?.updating(frame:.init(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height),basis:contact.basis) {
+      return (placement,contact.presentedFrame)
+    }
+    // A second contact/draft can change a member independently. Its bounds
+    // must then be derived from that complete projected cut, not this snapshot.
+    if selectionSession.manipulation == nil,elementCommandDrafts.count == 1,
+      let draft=elementCommandDrafts[reference],let capture=draft.capture,capture.closedGroup,
+      let bounds=capture.bounds,let placement=try? capture.graph.placement(reference.elementID)?.updating(frame:draft.frame,basis:draft.basis) {
+      return (placement,bounds)
+    }
+    guard isElementGroup(reference),let graph=prepared ?? groupGraph(reference)?.0 else { return nil }
+    let id=reference.elementID
+    guard
       let placement=graph.placement(id),let bounds=graph.groupBounds(id) else { return nil }
     return (placement,bounds)
   }
 
   /// Baked descendants cannot silently remain at the old pose. Until the scene
   /// has admitted all shown participants, selection is allowed but not a drag.
-  func groupAllowsLiveManipulation(_ reference: EditableElementReference) -> Bool {
-    guard let (graph,id)=groupGraph(reference) else { return false }
+  func groupAllowsLiveManipulation(_ reference: EditableElementReference,in prepared:NotebookGraphicGraph? = nil) -> Bool {
+    guard let graph=prepared ?? groupGraph(reference)?.0 else { return false }
+    let id=reference.elementID
     let unpaintedParents:[String]
     switch reference {
     case .page(let owner,_): unpaintedParents=(pages[owner]?.elements ?? []).filter { $0.kind != .group && $0.graphic == nil }.compactMap(\.parentID)

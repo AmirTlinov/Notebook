@@ -46,6 +46,8 @@ struct NotebookElementManipulation: Equatable, Sendable {
   let originalLayout: NotebookGraphicLayout?
   let placement: NotebookElementPlacement?
   let displayFrame: CGRect
+  private(set) var presentedFrame: CGRect
+  var graphicCapture: NotebookGraphicContactSource?
   var originalBasis: NotebookElementBasis? { placement?.basis }
   private(set) var basis: NotebookElementBasis?
   private(set) var connection: NotebookGraphicConnection?
@@ -71,7 +73,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
     self.reference = reference; self.kind = kind; original = frame
     self.frame = frame; self.bounds = bounds
     self.identity = identity; self.worldOrigin = placement?.origin ?? worldOrigin
-    self.placement=placement;basis=placement?.basis;self.displayFrame=displayFrame ?? frame
+    self.placement=placement;basis=placement?.basis;self.displayFrame=displayFrame ?? frame;presentedFrame=displayFrame ?? frame
     originalConnection = connection; self.connection = connection; originalLayout = layout
     self.graphic = graphic; originalVertices = graphic.flatMap(NotebookGraphicGeometry.polygon); vertices = originalVertices
     originalCornerRadius = graphic?.cornerRadius ?? 0; cornerRadius = originalCornerRadius
@@ -80,7 +82,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
   mutating func update(translation: CGPoint) {
     guard translation.x.isFinite, translation.y.isFinite else { return }
     if translation == .zero {
-      frame = original; basis=originalBasis; connection = originalConnection; vertices = originalVertices; cornerRadius = originalCornerRadius
+      presentedFrame=displayFrame;frame = original; basis=originalBasis; connection = originalConnection; vertices = originalVertices; cornerRadius = originalCornerRadius
       return
     }
     switch kind {
@@ -90,6 +92,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
       let physical=SpatialPoint(x:x-displayFrame.minX,y:y-displayFrame.minY)
       guard let delta=placement.map({ $0.parentVector(physical) }) ?? physical else { return }
       frame = .init(x:original.minX+delta.x,y:original.minY+delta.y,width:original.width,height:original.height)
+      presentedFrame=displayFrame.offsetBy(dx:physical.x,dy:physical.y)
       if var value = originalConnection, !value.bindings.isEmpty, let layout = originalLayout {
         // Dragging the body translates it, never secretly bends it. Detach
         // from the visible terminals, not stale fallback points in the record.
@@ -132,6 +135,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
         guard let pose=try? placement.applyingSurfaceTransform(change) else { return }
         frame = .init(x:pose.frame.x,y:pose.frame.y,width:pose.frame.width,height:pose.frame.height);basis=pose.basis
       } else { frame=shown }
+      presentedFrame=shown
     case .endpoint(let terminal):
       guard var value = originalConnection, let layout = originalLayout else { return }
       let p = terminal == .start ? layout.start : layout.end
