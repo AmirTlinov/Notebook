@@ -1,0 +1,27 @@
+{
+  "sourceSHA256": "810bf9a83e1cc6fddde6ca214f57881bb488f4556c71e96f7e3aeccab7c5ab37",
+  "status": "passed",
+  "scope": "native Debug; test-host apps on Mac and physical iPad; production pair remains 136",
+  "ipad": {
+    "result": "Passed",
+    "passedTests": 10,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "device": {
+      "modelName": "iPad Pro (11-inch) (3rd generation)",
+      "osVersion": "27.0",
+      "architecture": "arm64"
+    }
+  },
+  "mac": {
+    "result": "Passed",
+    "passedTests": 10,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "device": {
+      "modelName": "MacBook Pro",
+      "osVersion": "27.0",
+      "architecture": "arm64"
+    }
+  }
+}

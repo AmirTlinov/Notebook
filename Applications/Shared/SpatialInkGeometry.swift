@@ -73,12 +73,12 @@ enum SpatialInkGeometry {
 
   /// Same compact geometry owner; the source chooses only proved display ranges.
   /// No PencilKit objects or full decoded measurement array are created here.
-  static func compact(source: InkSampleRelations) -> [Node] {
+  static func compact(source: InkSampleRelations, range: Range<Int>? = nil) -> [Node] {
     let c = source.header.color
     let color: SIMD4<Float> = source.header.tool == .eraser ? .init(repeating:1)
       : .init(Float(c.red),Float(c.green),Float(c.blue),1)
     var points: [RenderPoint] = []
-    source.forEachDisplayPoint { position,radius,opacity in
+    source.forEachDisplayPoint(in:range) { position,radius,opacity in
       let alpha = min(max(opacity*color.w,0),1)
       let p = RenderPoint(position:position,radius:max(radius,0.25),
         premultipliedColor:.init(color.x*alpha,color.y*alpha,color.z*alpha,alpha))

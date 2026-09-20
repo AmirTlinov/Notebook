@@ -1,0 +1,9 @@
+{
+  "case" : "fully overlapping repeat, explicit full export",
+  "decodeMilliseconds" : 54.250959000000002,
+  "emittedEvents" : 100000,
+  "events" : 100000,
+  "expandedPayloadBytes" : 10400000,
+  "scope" : "negative control; full output is not sublinear",
+  "sourcePayloadBytes" : 1648
+}

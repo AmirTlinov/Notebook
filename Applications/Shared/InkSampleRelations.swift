@@ -95,8 +95,11 @@ struct InkSampleRelations: Sendable {
     }
   }
   final class Storage: Sendable {
-    let blocks: [Block]
-    init(_ blocks: [Block]) { self.blocks = blocks }
+    let root: Sequence
+    /// Exit of the typed translation state, independent of the last emitted
+    /// measurement. Empty event bodies may still carry a nonzero exit.
+    let exit: InkRepeatStep
+    init(_ root: Sequence, exit: InkRepeatStep = .zero) { self.root=root;self.exit=exit }
   }
   let sourceID: UUID
   let header: Header
@@ -106,9 +109,9 @@ struct InkSampleRelations: Sendable {
   let frames: [InkExactFrame]
   init(sourceID: UUID, revision: UUID, samples: [SpatialInkSample], header: Header) {
     self.sourceID = sourceID; self.header = header; self.revision = revision; count = samples.count; frames = []
-    storage = .init(stride(from:0,to:samples.count,by:Self.blockSize).map {
+    storage = .init(Sequence.from(stride(from:0,to:samples.count,by:Self.blockSize).map {
       Block(samples[$0..<min(samples.count,$0+Self.blockSize)])
-    })
+    }))
   }
   init(_ action: PageInkAction, revision: UUID) {
     self.init(sourceID:action.id,revision:revision,samples:action.samples,
@@ -157,39 +160,79 @@ struct InkSampleRelations: Sendable {
   }
   func sample(at i: Int) -> SpatialInkSample {
     precondition((0..<count).contains(i))
-    return storage.blocks[i/Self.blockSize].sample(at:i%Self.blockSize)
+    var cost=AccessCost()
+    return storage.root.sample(at:i,cost:&cost)
   }
   /// Only a uniform monotone axis-aligned pen strip is reduced here. Its
   /// interior emits no cap/disk, so opacity does not accumulate per sample.
   /// Eraser disks and every unproved shape retain all events for display.
-  func forEachDisplayPoint(_ body: (SIMD2<Float>,Float,Float) -> Void) {
-    for block in storage.blocks {
-      func emit(_ i: Int) {
-        switch block {
-        case .literal(let values):
-          let p = values[i]
-          body(.init(Float(p.point.x),Float(p.point.y)),Float(p.width/2),Float(p.opacity))
-        case .fields(let f,_):
-          body(.init(Float(f[0].value(at:i)),Float(f[1].value(at:i))),Float(f[3].value(at:i)/2),Float(f[4].value(at:i)))
-        }
-      }
-      if header.tool == .pen && block.isUniformAxisStrip {
-        for i in [0,1,block.count-2,block.count-1] { emit(i) }
-      } else {
-        for i in 0..<block.count { emit(i) }
-      }
+  func forEachDisplayPoint(in range: Range<Int>? = nil, _ body: (SIMD2<Float>,Float,Float) -> Void) {
+    let range=range ?? 0..<count
+    precondition(range.lowerBound >= 0 && range.upperBound <= count)
+    storage.root.forEachDisplayPoint(in:range,reduce:header.tool == .pen) { x,y,width,opacity in
+      body(.init(Float(x),Float(y)),Float(width/2),Float(opacity))
     }
   }
-  func decoded() -> [SpatialInkSample] { (0..<count).map { sample(at:$0) } }
+  func decoded(in range: Range<Int>? = nil) -> [SpatialInkSample] {
+    let range=range ?? 0..<count
+    precondition(range.lowerBound >= 0 && range.upperBound <= count)
+    var output:[SpatialInkSample]=[];output.reserveCapacity(range.count)
+    storage.root.appendDecoded(in:range,to:&output)
+    return output
+  }
+  func access(_ address: Address) throws -> (sample: SpatialInkSample,cost: AccessCost) {
+    guard address.source == sourceID, address.revision == revision else { throw AccessError.staleAddress }
+    guard (0..<count).contains(address.index) else { throw AccessError.outsideSource }
+    var cost=AccessCost()
+    let value=storage.root.sample(at:address.index,cost:&cost)
+    return (value,cost)
+  }
+  func bounds(in range: Range<Int>) throws -> (bounds: CGRect,cost: AccessCost) {
+    guard range.lowerBound >= 0,range.upperBound <= count else { throw AccessError.outsideSource }
+    var cost=AccessCost()
+    let bounds=storage.root.bounds(in:range,cost:&cost)
+    guard !bounds.isNull else { return (bounds,cost) }
+    // Projection to Float is display-only, but range rejection must still
+    // enclose its rounding after a distant repeated translation. Screen AA and
+    // the whole-object transform remain the caller's projection responsibility.
+    let quantum=[bounds.minX,bounds.minY,bounds.maxX,bounds.maxY].map { Double(Float($0).ulp) }.max()!
+    return (quantum.isFinite ? bounds.insetBy(dx:-8*quantum,dy:-8*quantum) : .infinite,cost)
+  }
+  /// An explicit body-state edit. Changing its exit is distinct from replacing
+  /// an emitted measurement; nested repeats inherit this exit, never override it.
+  func settingExit(_ exit: InkRepeatStep, revision: UUID) -> Self {
+    precondition(revision != self.revision)
+    return .init(sourceID:sourceID,revision:revision,count:count,
+      storage:.init(storage.root,exit:exit),frames:frames,header:header)
+  }
+  /// Constructor for a typed, declared repeat. Recognition in measured data is
+  /// separate and fully verified (R8). B's exact exit defines jump(B,q,s).
+  func repeated(_ repetitions: Int, revision: UUID) -> Self? {
+    precondition(revision != self.revision)
+    let step=storage.exit
+    guard let exit=step.multiplied(by:repetitions),
+      let root=Sequence.repeated(storage.root,count:repetitions,step:step) else { return nil }
+    return .init(sourceID:sourceID,revision:revision,count:root.count,storage:.init(root,exit:exit),frames:frames,header:header)
+  }
   func editing(_ address: Address, to value: SpatialInkSample, revision: UUID) throws -> Self {
     _ = try sample(at:address)
     precondition(revision != self.revision)
-    var blocks = storage.blocks
-    let index = address.index/Self.blockSize, block = blocks[index]
-    var samples = (0..<block.count).map { block.sample(at:$0) }
-    samples[address.index%Self.blockSize] = value
-    blocks[index] = .init(samples[...])
-    return .init(sourceID:sourceID,revision:revision,count:count,storage:.init(blocks),frames:frames,header:header)
+    let prefix=storage.root.slice(0..<address.index), suffix=storage.root.slice((address.index+1)..<count)
+    let root=Sequence.join(Sequence.join(prefix,Sequence(block:.literal([value]))),suffix)
+    return .init(sourceID:sourceID,revision:revision,count:count,storage:.init(root,exit:storage.exit),frames:frames,header:header)
+  }
+  /// Explicitly change one occurrence's EXIT, not its last measurement. In this
+  /// translation-only domain the entire suffix accepts one exact basis change.
+  /// Unsupported precision rejects the operation without altering the source.
+  func changingRepeatExit(at occurrence: Int, to step: InkRepeatStep, revision: UUID) -> Self? {
+    precondition(revision != self.revision)
+    guard case .repeated(let body,let n,let oldStep)=storage.root.content,
+      (0..<n).contains(occurrence),let delta=step.adding(oldStep.negated),
+      let exit=storage.exit.adding(delta) else { return nil }
+    let boundary=(occurrence+1)*body.count
+    guard let suffix=storage.root.slice(boundary..<count).shifted(delta) else { return nil }
+    let root=Sequence.join(storage.root.slice(0..<boundary),suffix)
+    return .init(sourceID:sourceID,revision:revision,count:count,storage:.init(root,exit:exit),frames:frames,header:header)
   }
   /// Returns notProven when the caller's explicit comparison budget is exhausted.
   /// No structural hash can turn different encodings into unequal content.
@@ -197,6 +240,7 @@ struct InkSampleRelations: Sendable {
     guard sourceID == other.sourceID, revision == other.revision, count == other.count else { return .different }
     let context = header.equality(to:other.header)
     guard context == .equal else { return context }
+    guard storage.exit == other.storage.exit else { return .different }
     guard frames == other.frames else { return .notProven }
     if storage === other.storage { return .equal }
     let n = min(count,max(0,eventBudget))
@@ -213,8 +257,11 @@ struct InkSampleRelations: Sendable {
     default: return false
     }
   }
+  var allocationSummary: (nodes: Int, bytes: Int) {
+    var seen=Set<ObjectIdentifier>()
+    return storage.root.allocationSummary(seen:&seen)
+  }
   var payloadBytes: Int {
-    MemoryLayout<Self>.stride + frames.count * MemoryLayout<InkExactFrame>.stride + storage.blocks.count * MemoryLayout<Block>.stride
-      + storage.blocks.reduce(0) { $0 + $1.payloadBytes }
+    MemoryLayout<Self>.stride + frames.count * MemoryLayout<InkExactFrame>.stride + allocationSummary.bytes
   }
 }

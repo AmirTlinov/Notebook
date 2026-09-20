@@ -18,6 +18,8 @@ public enum InkStrokeGeometry {
       self.position = position; self.radius = radius; self.premultipliedColor = premultipliedColor
     }
   }
+  /// Shared upper bound for pen joins, including source range summaries.
+  public static let maximumCrossSectionScale: Float = 1.8
   private static let capSegments = 12
   public static var roundCapVertexCount: Int { capSegments * 3 }
   private static let minimumDistanceSquared: Float = 0.0001
@@ -138,7 +140,7 @@ public enum InkStrokeGeometry {
     let sum = SIMD2<Float>(-incoming.y, incoming.x) + outgoingNormal
     let normal = lengthSquared(sum) > 0.0001 ? normalize(sum) : outgoingNormal
     let denominator = max(abs(dot(normal, outgoingNormal)), 0.55)
-    return normal * min(points[index].radius / denominator, points[index].radius * 1.8)
+    return normal * min(points[index].radius / denominator, points[index].radius * maximumCrossSectionScale)
   }
 
   private static func appendDisk(
