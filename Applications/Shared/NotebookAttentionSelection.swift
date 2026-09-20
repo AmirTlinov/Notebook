@@ -17,7 +17,8 @@ struct NotebookAttentionSelection: Sendable {
 
   let fragments: [Fragment]
   private let workspace: WorkspaceIndex
-  private let hierarchy: BoardHierarchy
+  private var hierarchy: BoardHierarchy
+  private var acceptedElements: [EditableElementReference:Task<NotebookElementCommandResult?,Never>]
   private var ink: SpatialInkJournal
   private let pages: [PageDocument]
   private let documents: [DocumentDocument]
@@ -37,7 +38,9 @@ struct NotebookAttentionSelection: Sendable {
     states: [UUID: DocumentStateJournal], visuals: NotebookFrozenVisualSources? = nil,
     referenceIdentities: [NotebookReferenceIdentity] = [],
     installedInk: [SurfaceID: SpatialInkInstalledSource] = [:], requiredInk: Set<SurfaceID> = [],
-    referenceBasis: NotebookReferenceBasis? = nil) {
+    referenceBasis: NotebookReferenceBasis? = nil,
+    acceptedElements: [EditableElementReference:Task<NotebookElementCommandResult?,Never>] = [:]) {
+    self.acceptedElements=acceptedElements
     self.fragments = fragments
     self.workspace = workspace; self.hierarchy = hierarchy; self.ink = ink
     let pageIDs = Set(fragments.filter { $0.target.kind == .page }.map { $0.target.id })
@@ -51,6 +54,41 @@ struct NotebookAttentionSelection: Sendable {
     self.referenceIdentities = referenceIdentities.filter { targets.contains($0.target) }
     self.installedInk = installedInk; self.requiredInk = requiredInk; self.referenceBasis = referenceBasis
     workspaceID = referenceBasis?.workspaceID
+  }
+
+  var hasAcceptedElements: Bool { !acceptedElements.isEmpty }
+
+  /// Join the exact commands visible at touch-down before entering the writer.
+  /// Their own results supply causal stamps, never a later read of current SQL.
+  func resolvingAcceptedElements() async throws -> Self {
+    guard !acceptedElements.isEmpty else { return self }
+    var value=self,boards=Dictionary(uniqueKeysWithValues:hierarchy.boards.map { ($0.id,$0) })
+    var headers:[UUID:BoardDocument]=[:]
+    for (reference,task) in acceptedElements {
+      guard case .spatial(let boardID,let id)=reference,let result=await task.value,
+        let node=boards[boardID],let header=result.boardHeader else {
+        throw CollaborationError("capture_source_changed","Принятое изменение указания не было сохранено.")
+      }
+      let expected=node.board.elements.first { $0.id == id }
+      func content(_ element:SpatialElement?) throws -> JSONValue? {
+        guard let element else { return nil }
+        guard case .object(var fields)=try JSONValue.encode(element) else { throw NotebookStorageError.corruptRecord(id) }
+        fields["stamp"]=nil;return .object(fields)
+      }
+      let before=try content(expected),after=try content(result.spatial)
+      guard before == after else { throw CollaborationError("capture_source_changed","Результат изменения отличается от показанного указания.") }
+      if headers[boardID].map({ $0.stamp < header.stamp }) ?? true { headers[boardID]=header }
+      let elements=node.board.elements.compactMap { $0.id == id ? result.spatial : $0 }
+      boards[boardID] = .init(id:node.id,board:node.board.projecting(placements:node.board.placements,elements:elements),
+        portalCamera:node.portalCamera,portalStamp:node.portalStamp)
+    }
+    value.hierarchy = .init(rootBoardID:hierarchy.rootBoardID,boards:hierarchy.boards.map { old in
+      let node=boards[old.id]!
+      return .init(id:node.id,board:(headers[node.id] ?? node.board).projecting(placements:node.board.placements,elements:node.board.elements),
+        portalCamera:node.portalCamera,portalStamp:node.portalStamp)
+    },stamp:hierarchy.stamp)
+    value.acceptedElements=[:]
+    return value
   }
 
   func sourceFiles() throws -> [String: JSONValue] {
@@ -132,6 +170,7 @@ struct NotebookAttentionSelection: Sendable {
   }
 
   private func resolvingPresentedSources() throws -> Self {
+    guard acceptedElements.isEmpty else { throw CollaborationError("capture_source_pending","Принятые изменения указания ещё не сохранены.") }
     let wholeScene = fragments.contains { $0.elementID == nil && [.board, .cover].contains($0.target.kind) }
     guard !requiredInk.isEmpty || (wholeScene && referenceBasis != nil) else { return self }
     guard requiredInk.count <= 8, requiredInk.allSatisfy({ installedInk[$0]?.surface == $0 }), let referenceBasis else {

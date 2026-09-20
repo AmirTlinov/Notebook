@@ -7,6 +7,7 @@ import NotebookCore
 struct NotebookElementCommandResult: Sendable {
   let page: AgentElement?
   let spatial: SpatialElement?
+  var boardHeader: BoardDocument? = nil
 }
 
 struct NotebookElementCommand {
@@ -19,9 +20,25 @@ struct NotebookElementCommandDraft: Equatable {
   let source: NotebookElementPlacement.Source
   let graphic: NotebookGraphic?
   var capture: NotebookGraphicContactSource? = nil
+  var removed = false
+  var textSource: String? = nil
+  var textHTML: String? = nil
+  var textStyle: NativeTextStyle? = nil
   var frame: PageRect { source.frame }
   var basis: NotebookElementBasis? { source.basis }
   var rect: CGRect { .init(x: frame.x, y: frame.y, width: frame.width, height: frame.height) }
+
+  /// Same accepted draft as the native body and controls; its causal stamp
+  /// remains unresolved until this command's own writer result is available.
+  func projecting(_ element:SpatialElement) -> SpatialElement? {
+    guard !removed else { return nil }
+    return .init(id:element.id,surface:element.surface,kind:element.kind,
+      frame:.init(x:frame.x,y:frame.y,width:frame.width,height:frame.height),worldOrigin:element.worldOrigin,
+      source:textSource ?? element.source,html:textHTML ?? element.html,css:element.css,javaScript:element.javaScript,
+      programPackage:element.programPackage,state:element.state,textStyle:textStyle ?? element.textStyle,
+      graphic:graphic,parentID:source.parentID,basis:basis,stamp:element.stamp)
+  }
+
 }
 
 extension NotebookAppModel {

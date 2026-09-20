@@ -164,7 +164,10 @@ extension NotebookAppModel {
       if current.parentID != admitted.parentID { return admitted }
       if current.graphic != nil, !board.graphicPresentation.geometryIDs.contains(current.id) { return nil }
       // The same local ID on a different physical surface is not this host.
-      return current.surface == admitted.surface && current.kind == admitted.kind ? current : nil
+      guard current.surface == admitted.surface,current.kind == admitted.kind else { return nil }
+      let ref=EditableElementReference.spatial(boardID:boardID,elementID:current.id)
+      if let draft=elementCommandDrafts[ref] { return draft.projecting(current) }
+      return current
     }
     if board.hasRemovedElement(id: admitted.id) || missingSceneElements[boardID]?.contains(admitted.id) == true { return nil }
     if admitted.surface.kind == .cover {

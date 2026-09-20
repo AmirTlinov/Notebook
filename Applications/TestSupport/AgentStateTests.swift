@@ -126,9 +126,9 @@ final class AgentStateTests: XCTestCase {
 
     model.commitNativeText(reference:.spatial(boardID:boardID,elementID:elementID),text:"",finish:true)
 
-    XCTAssertFalse(model.board?.elements.contains(where: {
-      $0.id == elementID
-    }) ?? true)
+    let removed = EditableElementReference.spatial(boardID:boardID,elementID:elementID)
+    XCTAssertNil(model.nativeTextTarget(removed))
+    XCTAssertNil(model.elementGeometry(removed))
     await model.finishPendingPersistence()
     XCTAssertFalse(
       try store.loadBoard(items: workspace.items)

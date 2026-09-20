@@ -585,14 +585,20 @@ final class NotebookAppModel {
     }
   }
   func nativeTextTarget(_ reference: EditableElementReference) -> NotebookNativeTextTarget? {
+    guard elementCommandDrafts[reference]?.removed != true else { return nil }
     if let target = selectionSession.nativeText, target.reference == reference { return target }
     guard let value = nativeElementSource(reference) else { return nil }
     if let page = value.page, page.kind == .nativeText {
       return .init(reference:reference,address:.init(surface:.page(value.target.id),boardID:nil,
         worldOrigin:nil,bounds:pages[value.target.id].map { .init(x:0,y:0,width:$0.size.width,height:$0.size.height) }),
-        frame:page.frame,source:page.source,style:page.textStyle ?? .standard,page:page)
+        frame:elementCommandDrafts[reference]?.frame ?? page.frame,source:elementCommandDrafts[reference]?.textSource ?? page.source,
+        style:elementCommandDrafts[reference]?.textStyle ?? page.textStyle ?? .standard,page:page)
     }
-    if let spatial = value.spatial, spatial.kind == .nativeText {
+    if let stored = value.spatial, stored.kind == .nativeText {
+      let spatial:SpatialElement
+      if let draft=elementCommandDrafts[reference] {
+        guard let projected=draft.projecting(stored) else { return nil };spatial=projected
+      } else { spatial=stored }
       return .init(reference:reference,address:.init(surface:spatial.surface,boardID:value.target.boardID ?? value.target.id,
         worldOrigin:spatial.worldOrigin,bounds:spatial.surface.kind == .cover ? .init(x:0,y:0,width:itemGeometry(spatial.surface.ownerID).width,height:itemGeometry(spatial.surface.ownerID).height) : nil),frame:.init(x:spatial.frame.x,y:spatial.frame.y,width:spatial.frame.width,height:spatial.frame.height),
         source:spatial.source,style:spatial.textStyle,spatial:spatial)
@@ -676,6 +682,8 @@ final class NotebookAppModel {
   let agentFeedback = NotebookAgentFeedback()
   private var referenceHighlightTask: Task<Void, Never>?
   private var collaborationUndoTask: Task<Void, Never>?
+  private var contextPublicationTask: Task<Void, Never>?
+  private var contextPublicationID: UUID?
   private var collaborationReadSnapshot: CollaborationReadSnapshot?
   /// Publication/admission order rejects stale asynchronous scene reads, even
   /// when the accepted cut happens to contain the same source values.
@@ -2526,17 +2534,7 @@ final class NotebookAppModel {
       selectionSession.nativeText = target
     }
     if !finish { editingNativeTextReferences.insert(reference) }
-    // Keep an admitted spatial editor responsive while its command is queued.
-    if case .spatial(let boardID,let id) = reference, var hierarchy = boardHierarchy,
-      var element = hierarchy.board(boardID)?.elements.first(where:{ $0.id == id }), element.kind == .nativeText {
-      if removes { _ = hierarchy.removeElements(ids:[id],from:boardID,actor:actorID) }
-      else {
-        let stamp = element.stamp
-        let frame = try? values["frame"]?.decode(SpatialRect.self)
-        if element.update(source:text,frame:frame,textStyle:style,actor:actorID) { _ = hierarchy.upsertElement(element,in:boardID,expected:stamp,actor:actorID) }
-      }
-      boardHierarchy = hierarchy
-    }
+    // The command draft owns accepted content until its SQL scene is admitted.
   }
 
   func endNativeTextEditing(_ reference: EditableElementReference) {
@@ -3106,7 +3104,7 @@ final class NotebookAppModel {
     // A passive raster is selectable, but it is not a live manipulation owner.
     // Selection requests its ordinary scene admission; do not commit an
     // invisible drag while the installed cohort still owns baked pixels.
-    if case .spatial = reference, graphicElement(reference) != nil,
+    if case .spatial = reference, graphicElement(reference) != nil || nativeTextTarget(reference) != nil,
       let cohort = compositionTiles.published, presentedElement(reference, cohort: cohort) == nil { return nil }
     guard selectionSession.contains(reference), inputGate.beginFingerSequence() != nil,
       let geometry = elementGeometry(reference) else { return nil }
@@ -3116,10 +3114,15 @@ final class NotebookAppModel {
     let graphicGeometry=graphicManipulationGeometry(reference,in:captured)
     let groupGeometry=groupManipulationGeometry(reference,in:captured)
     if isElementGroup(reference), groupGeometry == nil || !groupAllowsLiveManipulation(reference,in:captured) { return nil }
+    let textFrame=nativeTextTarget(reference).map { target in
+      let value=NotebookTextTypography.fittingFrame(target.source,style:target.style,
+        in:.init(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height))
+      return CGRect(x:value.x,y:value.y,width:value.width,height:value.height)
+    }
     var contact = NotebookElementManipulation(reference: reference, kind: kind,
       frame: geometry.frame, bounds: geometry.bounds, identity: geometry.identity, worldOrigin: geometry.worldOrigin,
       connection:connection,layout:graphicGeometry?.body,graphic:graphicElement(reference),placement:graphicGeometry?.placement ?? groupGeometry?.placement,
-      displayFrame:graphicGeometry.map { .init(x:$0.display.frame.x,y:$0.display.frame.y,width:$0.display.frame.width,height:$0.display.frame.height) } ?? groupGeometry?.bounds)
+      displayFrame:graphicGeometry.map { .init(x:$0.display.frame.x,y:$0.display.frame.y,width:$0.display.frame.width,height:$0.display.frame.height) } ?? groupGeometry?.bounds ?? textFrame)
     if let captured,let source=captured.source(reference.elementID) {
       let closed:Bool?
       if case .spatial(let owner,let id)=reference { closed=spatialGroupReads[owner]?[id]?.isSelfContained } else { closed=nil }
@@ -3269,10 +3272,9 @@ final class NotebookAppModel {
   }
 
   func elementGeometry(_ reference: EditableElementReference) -> (frame: CGRect, bounds: CGRect?, identity: VersionStamp?, worldOrigin: WorldPoint?)? {
-    func fitted(_ frame: PageRect) -> CGRect {
-      let text = nativeTextTarget(reference)
-      let value = text.map { NotebookTextTypography.fittingFrame($0.source,style:$0.style,in:frame) } ?? frame
-      return .init(x:value.x,y:value.y,width:value.width,height:value.height)
+    guard elementCommandDrafts[reference]?.removed != true else { return nil }
+    func rectangle(_ frame: PageRect) -> CGRect {
+      .init(x:frame.x,y:frame.y,width:frame.width,height:frame.height)
     }
     if let working = acceptedWorkingGraphic(reference) {
       let bounds: CGRect?
@@ -3288,14 +3290,14 @@ final class NotebookAppModel {
     case .page(let pageID, let id):
       guard !isPageBeingDeleted(pageID), let page = pages[pageID],
         let element = page.element(id:id) else { return nil }
-      return (fitted(elementCommandDrafts[reference]?.frame ?? element.frame),
+      return (rectangle(elementCommandDrafts[reference]?.frame ?? element.frame),
         .init(x: 0, y: 0, width: page.size.width, height: page.size.height), page.elementIdentityStamp(id), nil)
     case .spatial(let boardID, let id):
       guard let element = boardHierarchy?.board(boardID)?.elements.first(where: { $0.id == id }),
         surfaceAcceptsChanges(element.surface) else { return nil }
       let size = itemGeometry(element.surface.ownerID)
       let bounds: CGRect? = element.surface.kind == .cover ? .init(x: 0, y: 0, width: size.width, height: size.height) : nil
-      return (fitted(elementCommandDrafts[reference]?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)), bounds,
+      return (rectangle(elementCommandDrafts[reference]?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)), bounds,
         boardHierarchy?.board(boardID)?.elementIdentityStamp(id), element.worldOrigin)
     }
   }
@@ -3453,10 +3455,14 @@ final class NotebookAppModel {
         var source=elementCommandDrafts[edit.reference]?.source ?? originals[edit.reference]?.placementSource
           ?? .init(frame:frame,origin:geometry.worldOrigin ?? .zero)
         source.frame=frame;source.basis=basis
-        drafts[edit.reference] = .init(source:source,graphic:graphic,capture:capture)
+        drafts[edit.reference] = .init(source:source,graphic:graphic,capture:capture,
+          removed:edit.kind == .removeElement && graphic == nil,textSource:try edit.values["source"]?.decode(String.self) ?? elementCommandDrafts[edit.reference]?.textSource,
+          textHTML:try edit.values["html"]?.decode(String.self) ?? elementCommandDrafts[edit.reference]?.textHTML,
+          textStyle:try edit.values["textStyle"]?.decode(NativeTextStyle.self) ?? elementCommandDrafts[edit.reference]?.textStyle)
       }
     } catch { showCue(error.localizedDescription); return false }
     for (reference,draft) in drafts { elementCommandDrafts[reference] = draft }
+    if !drafts.isEmpty { collaborationReadEpoch &+= 1;collaborationContentEpoch &+= 1 }
     let task = Task<[EditableElementReference: NotebookElementCommandResult]?, Never> { [weak self] in
       guard let self else { return nil }
       defer { if graphicCommandGeneration == generation { graphicCommandTask = nil } }
@@ -3474,16 +3480,17 @@ final class NotebookAppModel {
         }
         await withCheckedContinuation { continuation in inputGate.performAfterIdle { continuation.resume() } }
         let admittedSources = expected
-        let (receipt,cursor,saved) = try await persistence.submit(publishesChanges:true) { store in
+        let (receipt,cursor,saved,header) = try await persistence.submit(publishesChanges:true) { store in
           let result = try store.applyNativeElementEdits(operations,summary:summary,sources:admittedSources,layerMove:layerMove,copiedFrom:copiedFrom,expectedInkRevision:expectedInkRevision,actor:actor)
-          return (result.receipt,try store.currentChangeCursor(),result.sources)
+          return (result.receipt,try store.currentChangeCursor(),result.sources,
+            target.kind == .page ? nil : try store.readBoardNodeHeader(target.boardID ?? target.id)?.board)
         }
         var results: [EditableElementReference:NotebookElementCommandResult] = [:]
         for reference in references {
           if elementCommandSources[reference]?.id == generation { elementCommandSources[reference]?.cursor = cursor }
           let id = sources[reference]!.id
           let source = saved.first { $0.id == id }
-          results[reference] = .init(page:source?.page,spatial:source?.spatial)
+          results[reference] = .init(page:source?.page,spatial:source?.spatial,boardHeader:header)
           if operations.contains(where: { $0.id == id && [.convertInkToElement,.insertElement].contains($0.kind) }),
             let index = workingGraphics.firstIndex(where: { $0.id == id }) { workingGraphics[index].publicationCursor = cursor }
         }
@@ -4188,35 +4195,59 @@ final class NotebookAppModel {
     let actor = actorID
     let generation = replaceSelection(target, persistsDeselection: false)
     selectionSession.isResolvingContext = true
-    persistence.enqueueCommand(publishesChanges: true, { store in
-      do {
-        let sealed = try selection.seal(in: store)
-        let context = try store.appendContext(references: sealed.references, author: .human, actor: actor,
-          text: text, select: true, sourceWorkspaceID: sealed.workspaceID)
-        return (context, sealed)
-      } catch {
-        // A rejected new source must not reopen the previous choice on restart.
-        try store.selectSharedContext(nil, actor: actor)
-        throw error
-      }
-    }) { [weak self] result in
-      Task { @MainActor [weak self] in
-        guard let self else { return }
-        let context: SharedContextAppend, sealed: NotebookAttentionSelection.Sealed
-        do { (context, sealed) = try result.get() }
-        catch {
-          if self.selectionSession.id == generation { self.selectionSession.isResolvingContext = false; self.agentRequestError = error.localizedDescription }
-          return
+    let predecessor=contextPublicationTask,id=UUID()
+    contextPublicationID=id
+    func enqueue(_ prepared:Result<NotebookAttentionSelection,Error>) -> Task<Void,Never> {
+      let selects=selectionSession.id == generation
+      let (results,continuation)=AsyncStream<Result<(SharedContextAppend,NotebookAttentionSelection.Sealed),Error>>
+        .makeStream(bufferingPolicy:.bufferingNewest(1))
+      // Already-resolved captures register their writer fence before returning
+      // to the next contact. Only a captured native command needs preparation.
+      persistence.enqueueCommand(publishesChanges:true, { store in
+        do {
+          let sealed=try prepared.get().seal(in:store)
+          let context=try store.appendContext(references:sealed.references,author:.human,actor:actor,
+            text:text,select:selects,sourceWorkspaceID:sealed.workspaceID)
+          return (context,sealed)
+        } catch {
+          if selects { try store.selectSharedContext(nil,actor:actor) }
+          throw error
         }
-        let entry = context.entry
-        self.pinnedAttentionSelections.append((context.id, sealed.selection))
-        if self.pinnedAttentionSelections.count > 2 { self.pinnedAttentionSelections.removeFirst() }
-        self.reloadExternalChanges()
-        guard self.selectionSession.id == generation else { return }
-        self.selectionSession.isResolvingContext = false
-        self.selectionSession.context = .init(contextID: context.id, entryID: entry.id, references: sealed.references)
-        self.agentRequestError = nil
+      }) { result in continuation.yield(result);continuation.finish() }
+      return Task { [weak self] in
+        // Completion order must not let older pending captures evict the
+        // current selection's retained source from the bounded history.
+        await predecessor?.value
+        guard let self else { return }
+        for await result in results {
+          do {
+            let (context,sealed)=try result.get()
+            pinnedAttentionSelections.append((context.id,sealed.selection))
+            if pinnedAttentionSelections.count>2 { pinnedAttentionSelections.removeFirst() }
+            reloadExternalChanges()
+            guard selectionSession.id == generation else { return }
+            selectionSession.isResolvingContext=false
+            selectionSession.context = .init(contextID:context.id,entryID:context.entry.id,references:sealed.references)
+            agentRequestError=nil
+          } catch {
+            if selectionSession.id == generation { selectionSession.isResolvingContext=false;agentRequestError=error.localizedDescription }
+          }
+        }
       }
+    }
+    let publication:Task<Void,Never>
+    if selection.hasAcceptedElements {
+      publication=Task {
+        let prepared:Result<NotebookAttentionSelection,Error>
+        do { prepared = .success(try await selection.resolvingAcceptedElements()) }
+        catch { prepared = .failure(error) }
+        await enqueue(prepared).value
+      }
+    } else { publication=enqueue(.success(selection)) }
+    contextPublicationTask=Task { [weak self] in
+      await publication.value
+      guard let self,contextPublicationID == id else { return }
+      contextPublicationTask=nil;contextPublicationID=nil
     }
   }
 
@@ -5190,6 +5221,7 @@ final class NotebookAppModel {
       guard await finishAcceptedPageInk() else { return false }
       observeNavigation("wait_accepted_ink_end", fields: trace)
       if let task = graphicCommandTask { _ = await task.value }
+      if let task = contextPublicationTask { await task.value }
       if let task = collaborationUndoTask { await task.value }
       guard !Task.isCancelled, continuing() else { return false }
       if boundary == .quiescent {
@@ -5207,7 +5239,7 @@ final class NotebookAppModel {
       observeNavigation("writer_flush_end", fields: trace)
       guard !Task.isCancelled, continuing() else { return false }
     } while boundary == .quiescent && (diskRefreshTask != nil || headerRefreshTask != nil || documentOpeningTask != nil || persistence.pendingCount > 0
-      || pageInkPreparationTask != nil || acceptedPageInkHead != nil || graphicCommandTask != nil)
+      || pageInkPreparationTask != nil || acceptedPageInkHead != nil || graphicCommandTask != nil || contextPublicationTask != nil)
     return publicationFailure == nil
   }
 

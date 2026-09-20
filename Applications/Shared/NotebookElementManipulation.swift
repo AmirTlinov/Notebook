@@ -134,7 +134,14 @@ struct NotebookElementManipulation: Equatable, Sendable {
           .concatenating(.init(translationX:shown.minX,y:shown.minY))
         guard let pose=try? placement.applyingSurfaceTransform(change) else { return }
         frame = .init(x:pose.frame.x,y:pose.frame.y,width:pose.frame.width,height:pose.frame.height);basis=pose.basis
-      } else { frame=shown }
+      } else {
+        // The fitted glyph box is not the authored text layout constraint.
+        // Apply the handle delta without replacing that constraint by its ink.
+        frame = .init(x:self.original.minX+shown.minX-displayFrame.minX,
+          y:self.original.minY+shown.minY-displayFrame.minY,
+          width:max(min(1,self.original.width),self.original.width+shown.width-displayFrame.width),
+          height:max(min(1,self.original.height),self.original.height+shown.height-displayFrame.height))
+      }
       presentedFrame=shown
     case .endpoint(let terminal):
       guard var value = originalConnection, let layout = originalLayout else { return }

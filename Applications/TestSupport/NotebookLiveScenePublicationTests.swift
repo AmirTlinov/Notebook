@@ -1,6 +1,10 @@
 import NotebookCore
 import SwiftUI
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 import XCTest
 @testable import Notebook
 
@@ -112,6 +116,9 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
       XCTAssertTrue(model.compositionTiles.published === cohort)
       try assertPresentedElement(reference, model: model, cohort: cohort, presence: presence)
     }
+    let beforeResize=try XCTUnwrap(model.presentedElement(reference,cohort:cohort))
+    XCTAssertEqual(beforeResize.frame.width,old.frame.width,"Moving text does not change its layout width")
+    XCTAssertEqual(beforeResize.frame.height,old.frame.height)
     let resize = try XCTUnwrap(model.beginElementManipulation(reference, kind: .resize(.bottomTrailing)))
     XCTAssertTrue(model.finishElementManipulation(resize, translation: .init(x: 50, y: 35)))
     let accepted = try XCTUnwrap(model.presentedElement(reference, cohort: cohort))
@@ -189,9 +196,7 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     XCTAssertEqual(frozen.placements.first { $0.id == item }?.pose?.stackID, stack.id,
       "A single retained member preserves latent membership; capture cannot invent a free intent")
     XCTAssertNotEqual(frozen.placement(of: item)?.center, body.center)
-    let installed = Dictionary(uniqueKeysWithValues: cohort.nativeInk.owners.compactMap { surface, owner in
-      owner.canvas.installedSpatialSource.map { (surface, $0) }
-    })
+    let installed=fixture.installed
     XCTAssertNil(NotebookAttentionProjection.capture(start: .init(x: 350, y: 560), end: .init(x: 620, y: 750),
       model: model, presence: presence, cohort: cohort, installedInk: installed),
       "Only the whole-area proof waits when the source layout cannot describe the actual mixed pixels")
@@ -200,7 +205,7 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
       end: .init(x: box.x + 60, y: box.y + 60), model: model, presence: presence, cohort: cohort,
       installedInk: installed, itemID: item))
     XCTAssertEqual(cover.fragments.first?.target, .init(kind: .cover, id: item, boardID: presence.boardID))
-    let sealed = try await model.performStoreCommand { try cover.seal(in: $0) }
+    let sealed = try await seal(cover,model:model)
     XCTAssertFalse(sealed.references.isEmpty, "Cover-local material does not wait for a neighboring fan")
     XCTAssertTrue(model.compositionTiles.published === cohort)
     XCTAssertEqual(model.presence?.camera, presence.camera)
@@ -238,9 +243,7 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
   func testWholeBoardAndCoverCapturesSealImmediatelyAfterAcceptedGeometryWhileCohortStaysOld() async throws {
     let fixture = try await fixture(), model = fixture.model, cohort = fixture.cohort
     let presence = fixture.presence, item = try XCTUnwrap(model.workspace?.selectedItemID)
-    let installed = Dictionary(uniqueKeysWithValues: cohort.nativeInk.owners.compactMap { surface, owner in
-      owner.canvas.installedSpatialSource.map { (surface, $0) }
-    })
+    let installed=fixture.installed
     XCTAssertNotNil(installed[.board(presence.boardID)])
     XCTAssertNotNil(installed[.cover(item)])
     for (offset, delta) in [SpatialPoint(x: 40, y: 30), .init(x: 50, y: -10)].enumerated() {
@@ -262,7 +265,7 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
         model: model, presence: presence, cohort: cohort, installedInk: installed, itemID: item))
       XCTAssertEqual(coverSelection.fragments.first?.target, .init(kind: .cover, id: item, boardID: presence.boardID))
       for selection in [boardSelection, coverSelection] {
-        let sealed = try await model.performStoreCommand { try selection.seal(in: $0) }
+        let sealed = try await seal(selection,model:model)
         XCTAssertFalse(sealed.references.isEmpty)
         for reference in sealed.references {
           XCTAssertEqual(reference.revision, try model.store.referenceRevision(target: reference.target, elementID: reference.elementID))
@@ -274,10 +277,96 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     model.deleteElement(fixture.boardReference)
     let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start: .init(x: 350, y: 560),
       end: .init(x: 620, y: 750), model: model, presence: presence, cohort: cohort, installedInk: installed))
-    let sealed = try await model.performStoreCommand { try selection.seal(in: $0) }
+    let sealed = try await seal(selection,model:model)
     XCTAssertEqual(sealed.references.first?.revision,
       try model.store.referenceRevision(target: .init(kind: .board, id: presence.boardID)))
     XCTAssertTrue(model.compositionTiles.published === cohort)
+  }
+
+  func testAcceptedTextContentAndQueuedMovesPublishTheExactHumanContext() async throws {
+    let fixture=try await fixture(),model=fixture.model,ref=fixture.boardReference
+    let lock=try NotebookSQLWriteBlocker(store:model.store)
+    defer { try? lock.release() }
+    model.commitNativeText(reference:ref,text:"Принятое содержание",finish:true)
+    XCTAssertEqual(model.presentedElement(ref,cohort:fixture.cohort)?.source,"Принятое содержание")
+    XCTAssertEqual(model.presentedElement(ref,cohort:fixture.cohort)?.html,"Принятое содержание")
+    model.selectElement(ref)
+    for delta in [SpatialPoint(x:25,y:10),.init(x:30,y:20)] {
+      let contact=try XCTUnwrap(model.beginElementManipulation(ref,kind:.move))
+      XCTAssertTrue(model.finishElementManipulation(contact,translation:delta))
+    }
+    let selection=try captureBoard(fixture)
+    XCTAssertTrue(selection.hasAcceptedElements)
+    model.publishHumanContext(selection)
+    XCTAssertTrue(model.selectionSession.isResolvingContext)
+    try lock.release()
+    let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
+    XCTAssertNil(model.agentRequestError)
+    let question=try XCTUnwrap(model.agentQuestion)
+    let reference=try XCTUnwrap(question.references.first)
+    XCTAssertEqual(reference.revision,try model.store.referenceRevision(target:reference.target,elementID:reference.elementID))
+    XCTAssertEqual(try model.store.readSpatialElement(boardID:fixture.presence.boardID,elementID:ref.elementID)?.source,"Принятое содержание")
+    XCTAssertTrue(model.compositionTiles.published === fixture.cohort)
+    try await Task.sleep(for:.milliseconds(50))
+    let image=try XCTUnwrap(fixture.snapshot())
+    let proof=XCTAttachment(data:image,uniformTypeIdentifier:"public.png")
+    proof.name="accepted-native-text-on-retained-scene";proof.lifetime = .keepAlways;add(proof)
+  }
+
+  func testFrozenAcceptedCaptureCannotSilentlyAdvanceToALaterTextEdit() async throws {
+    let fixture=try await fixture(),model=fixture.model,ref=fixture.boardReference
+    model.selectElement(ref)
+    let first=try XCTUnwrap(model.beginElementManipulation(ref,kind:.move))
+    XCTAssertTrue(model.finishElementManipulation(first,translation:.init(x:30,y:20)))
+    let selection=try captureBoard(fixture)
+    let second=try XCTUnwrap(model.beginElementManipulation(ref,kind:.move))
+    XCTAssertTrue(model.finishElementManipulation(second,translation:.init(x:50,y:40)))
+    let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
+    do {
+      _ = try await seal(selection,model:model)
+      XCTFail("A frozen capture must not borrow a later command's stamp or geometry")
+    } catch let error as CollaborationError { XCTAssertEqual(error.code,"capture_source_changed") }
+    XCTAssertNil(model.persistenceFailure)
+  }
+
+  func testReadyCaptureRegistersItsFenceBeforeTheNextAcceptedContact() async throws {
+    let fixture=try await fixture(),model=fixture.model
+    let selection=try captureBoard(fixture)
+    XCTAssertFalse(selection.hasAcceptedElements)
+    let expected=try model.store.referenceRevision(target:.init(kind:.board,id:fixture.presence.boardID))
+    model.publishHumanContext(selection)
+    let item=try XCTUnwrap(model.workspace?.selectedItemID)
+    model.moveItem(item,to:.init(x:-1_200,y:100))
+    let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
+    XCTAssertNil(model.agentRequestError)
+    let reference=try XCTUnwrap(model.agentQuestion?.references.first)
+    XCTAssertEqual(reference.revision,expected)
+    XCTAssertNotEqual(reference.revision,try model.store.referenceRevision(target:reference.target))
+  }
+
+  func testDismissedPendingTextCaptureSavesHistoryWithoutReopeningSelection() async throws {
+    let fixture=try await fixture(),model=fixture.model,ref=fixture.boardReference
+    let lock=try NotebookSQLWriteBlocker(store:model.store)
+    defer { try? lock.release() }
+    model.selectElement(ref)
+    let contact=try XCTUnwrap(model.beginElementManipulation(ref,kind:.move))
+    XCTAssertTrue(model.finishElementManipulation(contact,translation:.init(x:20,y:10)))
+    let selection=try captureBoard(fixture)
+    model.publishHumanContext(selection)
+    model.dismissAgentQuestion()
+    try lock.release()
+    let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
+    await model.reloadExternalChanges()?.value
+    XCTAssertNil(model.agentQuestion)
+    XCTAssertNil(model.agentRequestError)
+    let contexts=try model.store.sharedContexts()
+    XCTAssertEqual(contexts.contexts.filter { $0.entries.first?.references.first?.id == selection.fragments.first?.id }.count,1)
+    XCTAssertNil(contexts.selection?.contextID)
+  }
+
+  private func captureBoard(_ fixture:Fixture) throws -> NotebookAttentionSelection {
+    try XCTUnwrap(NotebookAttentionProjection.capture(start:.init(x:350,y:560),end:.init(x:620,y:750),
+      model:fixture.model,presence:fixture.presence,cohort:fixture.cohort,installedInk:fixture.installed))
   }
 
   private func assertPresentedElement(_ reference: EditableElementReference, model: NotebookAppModel,
@@ -293,8 +382,12 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     let captured = try XCTUnwrap(NotebookAttentionProjection.capture(start: point, end: point, model: model,
       presence: presence, cohort: cohort, installedInk: [:]))
     XCTAssertEqual(captured.fragments.first?.elementID, element.id)
-    XCTAssertEqual(captured.fragments.first?.region,
-      .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height))
+    XCTAssertEqual(captured.fragments.first?.region,NotebookTextTypography.frame(element))
+  }
+
+  private func seal(_ selection:NotebookAttentionSelection,model:NotebookAppModel) async throws -> NotebookAttentionSelection.Sealed {
+    let ready=try await selection.resolvingAcceptedElements()
+    return try await model.performStoreCommand { try ready.seal(in:$0) }
   }
 
   private struct Fixture {
@@ -303,6 +396,8 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     let presence: SessionPresence
     let boardReference: EditableElementReference
     let coverReference: EditableElementReference
+    let installed: [SurfaceID:SpatialInkInstalledSource]
+    let snapshot: @MainActor () -> Data?
   }
 
   private func fixture() async throws -> Fixture {
@@ -349,6 +444,7 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     XCTAssertTrue(cohort.plan.allowsLive(.element(coverElement.id), in: .cover(boardID: workspace.rootBoardID, itemID: workspace.selectedItemID)))
     // Retain this actual native publication while exercising newer accepted
     // geometry. A prepared cohort alone is deliberately not a paint receipt.
+    #if os(iOS)
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
     window.frame = .init(x: 0, y: 0, width: presence.viewport.x, height: presence.viewport.y)
@@ -358,14 +454,53 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     addTeardownBlock { @MainActor in
       window.isHidden = true; window.rootViewController = nil; previous?.makeKey()
     }
+    func snapshot() -> Data? {
+      window.layoutIfNeeded()
+      return UIGraphicsImageRenderer(bounds:window.bounds).image { _ in
+        window.drawHierarchy(in:window.bounds,afterScreenUpdates:true)
+      }.pngData()
+    }
+    func installedSources() -> [SurfaceID:SpatialInkInstalledSource] {
+      Dictionary(uniqueKeysWithValues:cohort.nativeInk.owners.compactMap { surface,owner in
+        owner.canvas.installedSpatialSource.map { (surface,$0) }
+      })
+    }
+    #else
+    let window=NSWindow(contentRect:.init(x:0,y:0,width:presence.viewport.x,height:presence.viewport.y),
+      styleMask:[.titled],backing:.buffered,defer:false)
+    window.isReleasedWhenClosed=false
+    window.contentView=NSHostingView(rootView:RetainedLiveScene(cohort:cohort,presence:presence).environment(model))
+    window.orderFront(nil)
+    addTeardownBlock { @MainActor in window.orderOut(nil);window.contentView=nil;window.close() }
+    func snapshot() -> Data? {
+      guard let view=window.contentView else { return nil }
+      view.layoutSubtreeIfNeeded();view.displayIfNeeded()
+      guard let bitmap=view.bitmapImageRepForCachingDisplay(in:view.bounds) else { return nil }
+      view.cacheDisplay(in:view.bounds,to:bitmap)
+      return bitmap.representation(using:.png,properties:[:])
+    }
+    func installedSources() -> [SurfaceID:SpatialInkInstalledSource] {
+      var result:[SurfaceID:SpatialInkInstalledSource]=[:]
+      func visit(_ view:NSView) {
+        if let source=(view as? InkCanvasView)?.installedSpatialSource { result[source.surface]=source }
+        for child in view.subviews { visit(child) }
+      }
+      if let view=window.contentView { visit(view) };return result
+    }
+    #endif
     let paintDeadline = ContinuousClock.now + .seconds(5)
-    while !cohort.isPaintInstalled, .now < paintDeadline {
-      window.layoutIfNeeded(); try await Task.sleep(for: .milliseconds(10))
+    while (!cohort.isPaintInstalled || installedSources().count<2), .now < paintDeadline {
+      #if os(iOS)
+      window.layoutIfNeeded()
+      #else
+      window.contentView?.layoutSubtreeIfNeeded()
+      #endif
+      try await Task.sleep(for:.milliseconds(10))
     }
     XCTAssertTrue(cohort.isPaintInstalled)
     return .init(model: model, cohort: cohort, presence: presence,
       boardReference: .spatial(boardID: workspace.rootBoardID, elementID: boardElement.id),
-      coverReference: .spatial(boardID: workspace.rootBoardID, elementID: coverElement.id))
+      coverReference: .spatial(boardID: workspace.rootBoardID, elementID: coverElement.id),installed:installedSources(),snapshot:snapshot)
   }
 }
 
@@ -378,7 +513,17 @@ private struct RetainedLiveScene: View {
   private let ink = SpatialInkSurfaceRegistry()
 
   var body: some View {
-    ZStack { plane(.elements); plane(.covers) }
+    ZStack {
+      plane(.elements)
+      #if os(iOS)
+      SpatialInkSurfaceView(surface:.board(presence.boardID),cohort:cohort,boardID:presence.boardID,isActive:false)
+        .allowsHitTesting(false)
+      #else
+      SpatialInkSurfaceView(surface:.board(presence.boardID),journal:cohort.liveData.ink,camera:presence.camera,viewport:presence.viewport)
+        .allowsHitTesting(false)
+      #endif
+      plane(.covers)
+    }
       .environment(\.sceneComposition, .init(cohort))
       .environment(\.workspaceSceneFrame, cohort.frame)
   }

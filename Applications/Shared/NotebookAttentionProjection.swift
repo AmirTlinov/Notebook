@@ -139,7 +139,7 @@ enum NotebookAttentionProjection {
     case .spatial(let boardID, let elementID):
       guard boardID == presence.boardID,
         let cohort = model.compositionTiles.published,
-        let element = model.presentedElement(reference, cohort: cohort) ?? cohort.frame.index.element(id:elementID,boardID:boardID), let owner = element.surface.ownerID else { return nil }
+        let element = model.presentedElement(reference, cohort: cohort) ?? cohort.frame.index.element(id:elementID,boardID:boardID).flatMap { $0.kind == .group ? $0 : nil }, let owner = element.surface.ownerID else { return nil }
       target = .init(kind: element.surface.kind == .cover ? .cover : .board, id: owner, boardID: boardID); id = elementID
     }
     return frame(target: target, elementID: id, region: nil, worldOrigin: nil, pageIndex: nil, model: model, presence: presence, minimumSide: 0, graphicLayout:layout)
@@ -155,7 +155,7 @@ enum NotebookAttentionProjection {
       guard target.id == presence.boardID else { return nil }
       var origin = worldOrigin ?? .zero
       if let id = elementID {
-        guard let element = model.presentedElement(.spatial(boardID: presence.boardID, elementID: id), cohort: cohort) ?? index.element(id:id,boardID:presence.boardID),
+        guard let element = model.presentedElement(.spatial(boardID: presence.boardID, elementID: id), cohort: cohort) ?? index.element(id:id,boardID:presence.boardID).flatMap { $0.kind == .group ? $0 : nil },
           element.surface == .board(target.id) else { return nil }
         local = model.elementPresentationFrame(.spatial(boardID:presence.boardID,elementID:id),
           fallback:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height))
@@ -454,11 +454,27 @@ enum NotebookAttentionProjection {
         requiredInk.insert(.cover(fragment.target.id))
       }
     }
+    // Only already admitted native text can contribute its accepted draft to
+    // this frozen scene. Retain that command, not the model's future tail.
+    var accepted:[EditableElementReference:Task<NotebookElementCommandResult?,Never>]=[:]
+    for (ref,draft) in model.elementCommandDrafts where draft.graphic == nil && !draft.source.isGroup {
+      guard case .spatial(let boardID,let id)=ref,
+        let element=cohort.frame.index.element(id:id,boardID:boardID),element.kind == .nativeText,
+        let command=model.elementCommandSources[ref] else { continue }
+      let plane:SceneCompositionPlane=element.surface.kind == .cover
+        ? .cover(boardID:boardID,itemID:element.surface.ownerID!) : .board(boardID)
+      let relevant=fragments.contains { fragment in
+        guard fragment.elementID == nil || fragment.elementID == id else { return false }
+        if fragment.target.kind == .cover { return element.surface == .cover(fragment.target.id) }
+        return fragment.target.kind == .board && sources.hierarchy.descendantBoardIDs(including:fragment.target.id).contains(boardID)
+      }
+      if relevant && cohort.plan.allowsLive(.element(id),in:plane) { accepted[ref]=command.task }
+    }
     return .init(fragments: fragments, workspace: sources.workspace, hierarchy: sources.hierarchy, ink: sources.ink,
       pages: sources.pages, documents: sources.documents, states: sources.states, visuals: visuals,
       referenceIdentities: cohort.liveData.referenceIdentities,
       installedInk: installedInk.filter { requiredInk.contains($0.key) }, requiredInk: requiredInk,
-      referenceBasis: cohort.liveData.referenceBasis)
+      referenceBasis: cohort.liveData.referenceBasis,acceptedElements:accepted)
   }
 
   private static func intersects(_ fragment: NotebookAttentionSelection.Fragment,
