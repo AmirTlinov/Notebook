@@ -229,6 +229,11 @@ public enum InkStrokeGeometry {
     guard lengthSquared(delta) > Self.minimumDistanceSquared else {
       return SIMD2(1, 0)
     }
+    // An axis direction is exact, regardless of segment length. A reciprocal
+    // square root otherwise makes a straight rail wobble by an ulp, which a
+    // large outer stretch can expose (and a reduced chord can change).
+    if delta.y == 0 { return SIMD2(delta.x > 0 ? 1 : -1,0) }
+    if delta.x == 0 { return SIMD2(0,delta.y > 0 ? 1 : -1) }
     return normalize(delta)
   }
 

@@ -6,7 +6,11 @@ struct InkAffine { float4 x; float4 y; };
 struct CompactInkOut { float4 position [[position]]; float4 premultipliedColor; };
 float2 inkDirection(float2 a,float2 b) {
   float2 d=b-a;
-  return dot(d,d)>0.0001f ? normalize(d):float2(1,0);
+  if (!(dot(d,d)>0.0001f)) return float2(1,0);
+  // Match the exact axis directions of InkStrokeGeometry.
+  if (d.y==0) return float2(d.x>0 ? 1:-1,0);
+  if (d.x==0) return float2(0,d.y>0 ? 1:-1);
+  return normalize(d);
 }
 float2 inkArc(InkNode n,uint slot,uint segments,float start,float sweep) {
   if (slot == 0) return n.position;

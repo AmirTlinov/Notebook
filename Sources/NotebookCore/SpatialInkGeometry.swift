@@ -133,8 +133,9 @@ extension SpatialInkGeometry {
   public struct RelativeSource: Sendable {
     public let source: InkSampleRelations
     public let projection: InkSampleProjection
+    private var uniformStrip=false
     public var bounds: CGRect { projected(source.geometry.bounds) }
-    public var chunkCount: Int { source.count == 0 ? 0 : source.geometry.stationary ? 1 : max(1,(source.count-2)/InkRenderGeometry.maximumSegments+1) }
+    public var chunkCount: Int { source.count == 0 ? 0 : source.geometry.stationary || uniformStrip ? 1 : max(1,(source.count-2)/InkRenderGeometry.maximumSegments+1) }
     public init?(_ source: InkSampleRelations,projection: InkSampleProjection) {
       self.source=source;self.projection=projection
       let geometry=source.geometry
@@ -144,10 +145,14 @@ extension SpatialInkGeometry {
       let error=4*Double(magnitude.ulp)
       guard source.count <= 1 || geometry.stationary || (error.isFinite && geometry.minimumSpacing*abs(projection.scale)
         > Double(InkStrokeGeometry.minimumDistanceSquared.squareRoot())+error) else { return nil }
+      uniformStrip=source.header.tool == .pen && geometry.canReduceAxisStrip(
+        minimumSpacing:(Double(InkStrokeGeometry.minimumDistanceSquared.squareRoot())+error)/abs(projection.scale),
+        maximumSpan:Double(Float.greatestFiniteMagnitude.squareRoot())/4/abs(projection.scale))
     }
     public func range(at id: Int) -> Range<Int> {
       precondition((0..<chunkCount).contains(id))
       if source.geometry.stationary { return (source.count-1)..<source.count }
+      if uniformStrip { return 0..<source.count }
       let start=id*InkRenderGeometry.maximumSegments
       return start..<(start+min(source.count-start,InkRenderGeometry.maximumSegments+1))
     }
@@ -172,7 +177,7 @@ extension SpatialInkGeometry {
         let padding=8*Double(magnitude.ulp)
         return !padding.isFinite || SpatialInkGeometry.overlaps(bounds.insetBy(dx:-padding,dy:-padding),viewport)
       }
-      if source.geometry.stationary {
+      if source.geometry.stationary || uniformStrip {
         let result=try! source.bounds(in:0..<source.count)
         return (overlaps(result.bounds) ? [0] : [],result.cost)
       }

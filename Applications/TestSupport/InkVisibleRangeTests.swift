@@ -161,4 +161,86 @@ final class InkVisibleRangeTests: XCTestCase {
     XCTAssertNotNil(SpatialInkGeometry.RelativeSource(literal,projection:.init()))
     XCTAssertNotEqual(literal.storage.root.geometry.minimumSpacing,0,"A closed endpoint does not erase the painted middle")
   }
+  func testWholeStraightRepeatRasterCostIncludesQueryAndPreparation() throws {
+    let body=source((0..<100).map { i in SpatialInkSample(point:.init(x:Double(i),y:10),
+      timeOffset:Double(i)/128,width:4,opacity:0.5,force:0.75,azimuth:0,altitude:1) })
+      .settingExit(.init(x:InkDyadic(100)!,y:.zero,time:.one),revision:UUID())
+    func milliseconds(_ start: ContinuousClock.Instant) -> Double {
+      let c=start.duration(to:.now).components;return Double(c.seconds)*1000+Double(c.attoseconds)/1e15
+    }
+    var records:[[String:Any]]=[]
+    for count in [10_000,100_000,1_000_000] {
+      let start=ContinuousClock.now
+      let repeated=try XCTUnwrap(body.repeated(count/100,revision:UUID()))
+      let batch=SpatialInkMesh.Batch(source:repeated,projection:.local)
+      let affine=InkAffine(.init(500/Float(count),4,6,10))
+      let image=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:.init(batches:[batch]),
+        size:.init(width:512,height:128),scale:2,affine:affine))
+      let elapsed=milliseconds(start)
+      let query=batch.query(viewport:.init(x:0,y:0,width:512,height:128),affine:affine)
+      var decoded=0,nodes=0
+      for id in query.chunks { let p=batch.prepareChunk(id);decoded += p.decodedPoints;nodes += p.chunk.nodes.count }
+      XCTAssertEqual(query.chunks.count,1);XCTAssertEqual(decoded,4);XCTAssertEqual(nodes,4)
+      let reference=SpatialInkMesh.referencePage(.init(actions:[repeated.restoredAction()]))
+      let control=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:reference,
+        size:.init(width:512,height:128),scale:2,affine:affine))
+      let a=Array(try XCTUnwrap(image.dataProvider?.data) as Data),b=Array(try XCTUnwrap(control.dataProvider?.data) as Data)
+      XCTAssertLessThanOrEqual(zip(a,b).map { abs(Int($0)-Int($1)) }.max()!,2)
+      XCTAssertTrue(a.contains { $0 > 0 })
+      records.append(["events":count,"sourceToRasterMilliseconds":elapsed,"chunks":query.chunks.count,
+        "indexVisits":query.cost.visitedNodes,"boundsEvents":query.cost.decodedSamples,
+        "displayEvents":decoded,"nodes":nodes,"sourceBytes":repeated.payloadBytes])
+      if count == 1_000_000 {
+        let png=NSMutableData(),destination=try XCTUnwrap(CGImageDestinationCreateWithData(png,"public.png" as CFString,1,nil))
+        CGImageDestinationAddImage(destination,image,nil);XCTAssertTrue(CGImageDestinationFinalize(destination))
+        let a=XCTAttachment(data:png as Data,uniformTypeIdentifier:"public.png")
+        a.name="whole-million-straight-repeat";a.lifetime = .keepAlways;add(a)
+      }
+    }
+    let a=XCTAttachment(data:try JSONSerialization.data(withJSONObject:records,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
+    a.name="whole-straight-repeat-costs";a.lifetime = .keepAlways;add(a)
+  }
+  func testAggregateStripAndItsEditedMiddleKeepAffinePaintAndEraserOrder() throws {
+    let samples=(0..<8193).map { i in SpatialInkSample(point:.init(x:20+Double(i)/16,y:70),
+      timeOffset:Double(i)/128,width:6,opacity:0.4,force:0.75,azimuth:0,altitude:1) }
+    let original=source(samples)
+    let eraser=source((0..<128).map { i in SpatialInkSample(point:.init(x:200,y:40+Double(i)/2),
+      timeOffset:Double(i)/128,width:8,opacity:0.3,force:1,azimuth:0,altitude:1) },tool:.eraser)
+    let transforms=[InkAffine(),InkAffine(x:.init(-0.8,0.3,480,0),y:.init(0.05,0.6,20,0)),
+      InkAffine(x:.init(0.2,0.1,20,0),y:.init(0.1,2,20,0)),InkAffine(.init(0,1,128,0))]
+    for feature in 0..<5 {
+      let value: InkSampleRelations
+      if feature == 0 { value=original }
+      else {
+        let p=samples[4096]
+        let changed=SpatialInkSample(point:.init(x:feature == 4 ? p.point.x-4 : p.point.x,y:feature == 1 ? p.point.y+12 : p.point.y),
+          timeOffset:p.timeOffset,width:feature == 2 ? 18 : p.width,opacity:feature == 3 ? 0.9 : p.opacity,
+          force:p.force,azimuth:p.azimuth,altitude:p.altitude)
+        value=try original.editing(original.address(at:4096),to:changed,revision:UUID())
+      }
+      let sources=[value,eraser,source(Array(samples[3000..<4000]))]
+      let actual=SpatialInkMesh(batches:sources.map { .init(source:$0,projection:.local) })
+      let reference=SpatialInkMesh.referencePage(.init(actions:sources.map { $0.restoredAction() }))
+      for transform in transforms {
+        let a=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:actual,size:.init(width:560,height:256),scale:2,affine:transform))
+        let b=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:reference,size:.init(width:560,height:256),scale:2,affine:transform))
+        let left=Array(try XCTUnwrap(a.dataProvider?.data) as Data),right=Array(try XCTUnwrap(b.dataProvider?.data) as Data)
+        XCTAssertLessThanOrEqual(zip(left,right).map { abs(Int($0)-Int($1)) }.max()!,2,"feature \(feature)")
+      }
+    }
+  }
+  func testAggregateRailKeepsSubpixelBoundaryUnderExtremeAnisotropy() throws {
+    let body=source((0..<100).map { i in SpatialInkSample(point:.init(x:Double(i),y:0),
+      timeOffset:Double(i)/128,width:4,opacity:0.5,force:1,azimuth:0,altitude:1) })
+      .settingExit(.init(x:InkDyadic(100)!,y:.zero,time:.one),revision:UUID())
+    let repeated=try XCTUnwrap(body.repeated(1000,revision:UUID()))
+    let actual=SpatialInkMesh(batches:[.init(source:repeated,projection:.local)])
+    let reference=SpatialInkMesh.referencePage(.init(actions:[repeated.restoredAction()]))
+    let affine=InkAffine(.init(0.005,1_000_000,6,-2_000_000+64))
+    let a=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:actual,size:.init(width:512,height:128),scale:2,affine:affine))
+    let b=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:reference,size:.init(width:512,height:128),scale:2,affine:affine))
+    let left=Array(try XCTUnwrap(a.dataProvider?.data) as Data),right=Array(try XCTUnwrap(b.dataProvider?.data) as Data)
+    XCTAssertLessThanOrEqual(zip(left,right).map { abs(Int($0)-Int($1)) }.max()!,2)
+    XCTAssertTrue(left.contains { $0 > 0 })
+  }
 }

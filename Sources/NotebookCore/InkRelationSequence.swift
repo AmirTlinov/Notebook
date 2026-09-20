@@ -116,12 +116,75 @@ extension InkSampleRelations {
         }
       }
     }
+    /// A proof about the painted strip, not equality of measured events.
+    /// The direction mask admits a singleton in either axis; a join must prove
+    /// a strictly monotone connection and identical width/opacity. Folds and
+    /// coincident seams cannot silently lose their accumulated paint.
+    private struct AxisStrip: Sendable {
+      let directions: UInt8
+      let width: Double,opacity: Double
+      init(directions: UInt8,width: Double,opacity: Double) {
+        self.directions=directions;self.width=width;self.opacity=opacity
+      }
+      static func directions(from a: Coordinate?,to b: Coordinate?) -> UInt8 {
+        guard case .paper(let a)=a,case .paper(let b)=b else { return 0 }
+        if a.y == b.y { return a.x < b.x ? 1 : a.x > b.x ? 2 : 0 }
+        if a.x == b.x { return a.y < b.y ? 4 : a.y > b.y ? 8 : 0 }
+        return 0
+      }
+      init?(_ block: Block) {
+        guard block.count > 0 else { return nil }
+        switch block {
+        case .fields(let f,_):
+          guard case .constant(let w)=f[3],case .constant(let a)=f[4] else { return nil }
+          var direction: UInt8
+          switch (f[0],f[1]) {
+          case (.progression(_,let step),.constant): direction=step.value > 0 ? 1 : step.value < 0 ? 2 : 0
+          case (.constant,.progression(_,let step)): direction=step.value > 0 ? 4 : step.value < 0 ? 8 : 0
+          default:
+            // A literal coordinate (including a preserved negative zero) can
+            // still prove this display property. Scan only this bounded leaf.
+            direction=15
+            var previous=Coordinate.paper(.init(x:f[0].value(at:0),y:f[1].value(at:0)))
+            for i in 1..<block.count {
+              let point=Coordinate.paper(.init(x:f[0].value(at:i),y:f[1].value(at:i)))
+              direction &= Self.directions(from:previous,to:point)
+              guard direction != 0 else { return nil };previous=point
+            }
+          }
+          guard direction != 0 else { return nil }
+          self.init(directions:direction,width:Double(bitPattern:w),opacity:Double(bitPattern:a))
+        case .literal(let samples):
+          let first=samples[0]
+          guard first.worldPoint == nil else { return nil }
+          var directions: UInt8=15,previous=Coordinate(first)
+          for i in 1..<samples.count {
+            let next=samples[i],point=Coordinate(next)
+            guard next.width.bitPattern == first.width.bitPattern,next.opacity.bitPattern == first.opacity.bitPattern else { return nil }
+            directions &= Self.directions(from:previous,to:point)
+            guard directions != 0 else { return nil };previous=point
+          }
+          self.init(directions:directions,width:first.width,opacity:first.opacity)
+        }
+      }
+      func joined(_ other: Self,from a: Coordinate?,to b: Coordinate?) -> Self? {
+        guard width.bitPattern == other.width.bitPattern,opacity.bitPattern == other.opacity.bitPattern else { return nil }
+        let direction=directions & other.directions & Self.directions(from:a,to:b)
+        return direction == 0 ? nil : .init(directions:direction,width:width,opacity:opacity)
+      }
+    }
     let first: Coordinate?,last: Coordinate?
+    private let axisStrip: AxisStrip?
+    var isUniformAxisStrip: Bool { axisStrip != nil }
+    func canReduceAxisStrip(minimumSpacing: Double,maximumSpan: Double) -> Bool {
+      isUniformAxisStrip && self.minimumSpacing > minimumSpacing && max(bounds.width,bounds.height) < maximumSpan
+    }
     public let bounds: CGRect
     public let minimumSpacing: Double
     public let stationary: Bool
     public var origin: WorldPoint? { first?.origin }
     init(block: Block) {
+      axisStrip=AxisStrip(block)
       guard block.count > 0 else { first=nil;last=nil;bounds = .null;minimumSpacing = .infinity;stationary=true;return }
       first=Coordinate(block.sample(at:0));last=Coordinate(block.sample(at:block.count-1))
       var cost=AccessCost()
@@ -143,8 +206,8 @@ extension InkSampleRelations {
       }
       minimumSpacing=spacing;stationary=same
     }
-    private init(first: Coordinate?,last: Coordinate?,bounds: CGRect,minimumSpacing: Double,stationary: Bool) {
-      self.first=first;self.last=last;self.bounds=bounds;self.minimumSpacing=minimumSpacing;self.stationary=stationary
+    private init(first: Coordinate?,last: Coordinate?,bounds: CGRect,minimumSpacing: Double,stationary: Bool,axisStrip: AxisStrip?) {
+      self.first=first;self.last=last;self.bounds=bounds;self.minimumSpacing=minimumSpacing;self.stationary=stationary;self.axisStrip=axisStrip
     }
     static func bounds(_ block: Block,in range: Range<Int>,origin: WorldPoint?,cost: inout AccessCost) -> CGRect {
       guard let origin else {
@@ -178,16 +241,18 @@ extension InkSampleRelations {
     func joined(_ other: Self) -> Self {
       guard let end=last else { return other };guard let begin=other.first else { return self }
       return .init(first:first,last:other.last,bounds:bounds.union(placing(other.bounds,from:other.origin)),
-        minimumSpacing:min(minimumSpacing,other.minimumSpacing,end.distance(to:begin)),stationary:stationary && other.stationary && end == begin)
+        minimumSpacing:min(minimumSpacing,other.minimumSpacing,end.distance(to:begin)),stationary:stationary && other.stationary && end == begin,
+        axisStrip:axisStrip.flatMap { a in other.axisStrip.flatMap { a.joined($0,from:end,to:begin) } })
     }
     func shifted(_ step: InkRepeatStep) -> Self {
-      .init(first:first?.shifted(step),last:last?.shifted(step),bounds:Self.offset(bounds,x:step.x.value,y:step.y.value),minimumSpacing:minimumSpacing,stationary:stationary)
+      .init(first:first?.shifted(step),last:last?.shifted(step),bounds:Self.offset(bounds,x:step.x.value,y:step.y.value),minimumSpacing:minimumSpacing,stationary:stationary,axisStrip:axisStrip)
     }
     func repeated(count: Int,step: InkRepeatStep) -> Self {
       guard count > 1,let first,let last else { return self }
       let end=shifted(step.multiplied(by:count-1)!)
       return .init(first:first,last:end.last,bounds:bounds.union(end.bounds),
-        minimumSpacing:min(minimumSpacing,last.distance(to:first.shifted(step))),stationary:stationary && step.x == .zero && step.y == .zero)
+        minimumSpacing:min(minimumSpacing,last.distance(to:first.shifted(step))),stationary:stationary && step.x == .zero && step.y == .zero,
+        axisStrip:axisStrip.flatMap { $0.joined($0,from:last,to:first.shifted(step)) })
     }
   }
 
@@ -651,8 +716,18 @@ extension InkSampleRelations {
         }
       }
     }
-    func forEachDisplayPoint(in range: Range<Int>,reduce: Bool,origin: WorldPoint? = nil,minimumSpacing: Double,base: Int = 0,_ emit: (Int,Double,Double,Double,Double)->Void) {
+    func forEachDisplayPoint(in range: Range<Int>,reduce: Bool,origin: WorldPoint? = nil,minimumSpacing: Double,maximumSpan: Double,base: Int = 0,_ emit: (Int,Double,Double,Double,Double)->Void) {
       if range.isEmpty { return }
+      if reduce,range.count > 4,geometry.canReduceAxisStrip(minimumSpacing:minimumSpacing,maximumSpan:maximumSpan) {
+        // Stop at this proved aggregate before visiting any of its children.
+        // Keep cap neighbours; their original tangent is also used after an
+        // outer reflection, shear or anisotropic transform.
+        var cost=AccessCost()
+        for i in [range.lowerBound,range.lowerBound+1,range.upperBound-2,range.upperBound-1] {
+          let p=sample(at:i,cost:&cost);emit(base+i,p.point.x,p.point.y,p.width,p.opacity)
+        }
+        return
+      }
       switch content {
       case .block(let block):
         func point(_ i: Int) {
@@ -663,19 +738,17 @@ extension InkSampleRelations {
           case .fields(let f,_): emit(base+i,f[0].value(at:i),f[1].value(at:i),f[3].value(at:i),f[4].value(at:i))
           }
         }
-        if reduce && block.isUniformAxisStrip(minimumSpacing:minimumSpacing) && range.count > 4 {
-          for i in [range.lowerBound,range.lowerBound+1,range.upperBound-2,range.upperBound-1] { point(i) }
-        } else { for i in range { point(i) } }
+        for i in range { point(i) }
       case .pair(let a,let b):
-        if range.lowerBound < a.count { a.forEachDisplayPoint(in:range.lowerBound..<min(a.count,range.upperBound),reduce:reduce,origin:origin,minimumSpacing:minimumSpacing,base:base,emit) }
-        if range.upperBound > a.count { b.forEachDisplayPoint(in:max(0,range.lowerBound-a.count)..<(range.upperBound-a.count),reduce:reduce,origin:origin,minimumSpacing:minimumSpacing,base:base+a.count,emit) }
+        if range.lowerBound < a.count { a.forEachDisplayPoint(in:range.lowerBound..<min(a.count,range.upperBound),reduce:reduce,origin:origin,minimumSpacing:minimumSpacing,maximumSpan:maximumSpan,base:base,emit) }
+        if range.upperBound > a.count { b.forEachDisplayPoint(in:max(0,range.lowerBound-a.count)..<(range.upperBound-a.count),reduce:reduce,origin:origin,minimumSpacing:minimumSpacing,maximumSpan:maximumSpan,base:base+a.count,emit) }
       case .shifted(let body,let basis):
         let step=basis.step
-        body.forEachDisplayPoint(in:range,reduce:reduce,origin:origin,minimumSpacing:minimumSpacing,base:base) { i,x,y,w,o in emit(i,step.apply(x,step.x),step.apply(y,step.y),w,o) }
+        body.forEachDisplayPoint(in:range,reduce:reduce,origin:origin,minimumSpacing:minimumSpacing,maximumSpan:maximumSpan,base:base) { i,x,y,w,o in emit(i,step.apply(x,step.x),step.apply(y,step.y),w,o) }
       case .repeated(let body,_,let step):
         for q in range.lowerBound/body.count...(range.upperBound-1)/body.count {
           let shift=step.multiplied(by:q)!
-          body.forEachDisplayPoint(in:max(0,range.lowerBound-q*body.count)..<min(body.count,range.upperBound-q*body.count),reduce:reduce,origin:origin,minimumSpacing:minimumSpacing,base:base+q*body.count) {
+          body.forEachDisplayPoint(in:max(0,range.lowerBound-q*body.count)..<min(body.count,range.upperBound-q*body.count),reduce:reduce,origin:origin,minimumSpacing:minimumSpacing,maximumSpan:maximumSpan,base:base+q*body.count) {
             i,x,y,w,o in emit(i,shift.apply(x,shift.x),shift.apply(y,shift.y),w,o)
           }
         }
