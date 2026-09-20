@@ -262,3 +262,49 @@ func graphicCornerGeometryPersists(onBoard: Bool) throws {
   #expect(try read(peer)?.cornerRadius == nil)
   #expect(try read(peer)?.sourceInkIDs == [source])
 }
+
+@Test("Отмена необязательной геометрии возвращает отсутствие, ручное обнуление — нет", arguments:[false,true], [false,true])
+func graphicAbsentTransformOwnershipSurvivesDelivery(onBoard: Bool, inverse: Bool) throws {
+  let f=try GraphicFixture(onBoard:onBoard);defer { f.clean() }
+  let source=try f.stroke(),conversion=try f.convert("ink",sources:[source])
+  let pose=try JSONValue.encode(NotebookGraphicTransform(a:0,b:1,c:-1,d:0,tx:1,ty:0))
+  // Follow two successive inverse edges to the original absent register.
+  let first=try f.write(.updateElement,id:"ink",values:["graphic":.object(["transform":pose])])
+  let firstUndo=try f.store.undoCollaborationAction(first.id,actor:f.actor)
+  #expect(firstUndo.undo?.restorations?.contains { $0.restoredVersion == nil } == true)
+  let second=try f.write(.updateElement,id:"ink",values:["graphic":.object(["transform":pose])])
+  if inverse { _=try f.store.undoCollaborationAction(second.id,actor:f.actor) }
+  else { _=try f.write(.updateElement,id:"ink",values:["graphic":.object(["transform":.null])]) }
+  let peer=try GraphicFixture(onBoard:onBoard,seed:f.store,target:f.target);defer { peer.clean() }
+  // Duplicate authenticated delivery must not add another authority edge.
+  try receiveFixtureChanges(from:f.store,to:peer.store,peerID:f.actor)
+  for store in [f.store,NotebookStore(root:peer.root)] {
+    let graphic=try onBoard ? store.readSpatialElement(boardID:f.target.id,elementID:"ink")?.graphic
+      : store.readPageElement(pageID:f.target.id,elementID:"ink")?.graphic
+    #expect(graphic?.transform == nil,"A delivered absence cannot display the superseded transform")
+  }
+  let undone=try NotebookStore(root:peer.root).undoCollaborationAction(conversion.id,actor:peer.actor)
+  #expect(undone.undo?.preserved.isEmpty == inverse)
+  #expect(try peer.presentation().geometryIDs == (inverse ? [] : ["ink"]))
+  #expect(try peer.presentation().suppressedInkIDs == (inverse ? [] : [source]))
+}
+
+@Test("Свидетельство отсутствия не может подменить непустое прежнее значение")
+func graphicAbsentRestorationRejectsForgedBeforeImage() throws {
+  let f=try GraphicFixture(onBoard:false);defer { f.clean() }
+  let source=try f.stroke(),conversion=try f.convert("ink",sources:[source])
+  let edit=try f.write(.updateElement,id:"ink",values:["graphic":.object([
+    "transform":try .encode(NotebookGraphicTransform(a:0,b:1,c:-1,d:0,tx:1,ty:0))])])
+  var receipt=try f.store.undoCollaborationAction(edit.id,actor:f.actor)
+  let index=try #require(receipt.changes.firstIndex { $0.path.last == .field("transform") })
+  let old=receipt.changes[index]
+  receipt.changes[index] = .init(file:old.file,path:old.path,before:.string("not absent"),after:old.after,
+    beforeVersion:old.beforeVersion,afterVersion:old.afterVersion)
+  #expect(throws:NotebookStorageError.self) {
+    try f.store.commandTransaction {
+      try f.store.indexFieldRestorations(receipt,address:"collaboration/actions/\(edit.id.uuidString.lowercased()).json#",database:f.store.currentSQL!)
+    }
+  }
+  let undone=try f.store.undoCollaborationAction(conversion.id,actor:f.actor)
+  #expect(undone.undo?.preserved.isEmpty == true,"Rejected evidence cannot damage the valid restoration index")
+}

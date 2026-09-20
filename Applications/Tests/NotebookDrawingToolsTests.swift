@@ -323,8 +323,9 @@ import UIKit
       let selection = try XCTUnwrap(NotebookLassoInkSource.page(page).selection(polygon:polygon,surface:.page(page.id),origin:nil,bounds:nil))
       let ink = try XCTUnwrap(selection.graphic.freehand)
       XCTAssertFalse(ink.layers.filter { $0.tool == .eraser }.isEmpty)
-      XCTAssertLessThan(ink.layers[0].vertices.map(\.opacity).min()!,0.3)
-      XCTAssertGreaterThan(ink.layers[0].vertices.map(\.opacity).max()!,0.8)
+      let measurements=try XCTUnwrap(ink.layers[0].measured?.measurements)
+      XCTAssertLessThan(try XCTUnwrap(measurements.map(\.opacity).min()),0.3)
+      XCTAssertGreaterThan(try XCTUnwrap(measurements.map(\.opacity).max()),0.8)
       let size = CGSize(width:selection.frame.width,height:selection.frame.height)
       let paint = ink.paintPath(size:size,transform:nil)
       XCTAssertTrue(paint.contains(.init(x:110-selection.frame.x,y:100-selection.frame.y)))
@@ -348,6 +349,15 @@ import UIKit
       let actualFrame = saved.elements[0].frame
       let actual = NotebookGraphicGeometry.paintPath(saved.elements[0].graphic!,layout:nil,size:.init(width:actualFrame.width,height:actualFrame.height))
       XCTAssertFalse(actual.contains(.init(x:actualFrame.width/2,y:actualFrame.height/2)),"The cut rotates with ink")
+      // Ordinary undo owns all three accepted actions: copy, first rotation,
+      // then conversion. Returning an optional basis to nil is not adoption.
+      for _ in 0..<3 {
+        model.undoLastSurfaceAction();await assertSaved(model);await model.reloadExternalChanges()?.value
+      }
+      let restored=try NotebookStore(root:model.store.root).loadPage(page.id)
+      XCTAssertTrue(restored.graphicPresentation.suppressedInkIDs.isEmpty)
+      XCTAssertEqual(restored.drawingData,data)
+      XCTAssertEqual(restored.elements.first?.graphic?.freehand,ink)
     }
   }
 

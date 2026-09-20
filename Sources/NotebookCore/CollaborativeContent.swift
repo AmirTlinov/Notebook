@@ -211,16 +211,9 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
       let bv = incomingState?.fields[key] ?? .init(stamp: incomingStamp, human: true)
       let resolved = try av.resolving(value: a[key], with: bv, incomingValue: b[key])
       metadata.fields[key] = resolved.version
-      // Absence of a field on a removed member is owned by its existence clock.
-      // Surviving members retain their complete payload during a concurrent edit.
-      if key.hasSuffix("/exists") {
-        result[key] = resolved.value
-      } else {
-        result[key] = resolved.value ?? a[key] ?? b[key]
-        if result[key] != resolved.value {
-          metadata.fields[key] = resolved.version.retainingValue(resolved.value)
-        }
-      }
+      // A cleared optional field is an authored absence. Removed members keep
+      // their payload in the original field versions, not in a display fallback.
+      result[key] = resolved.value
     }
     for key in keys {
       if let exists = memberExistenceField(key), result[exists] != .bool(true) {
@@ -242,7 +235,7 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
 
 private func memberExistenceField(_ key: String) -> String? {
   let parts = key.split(separator: "/", omittingEmptySubsequences: false)
-  guard parts.count == 3, (parts[0] == "elements" || parts[0] == "blocks"), parts[2] != "exists" else { return nil }
+  guard parts.count >= 3, (parts[0] == "elements" || parts[0] == "blocks"), parts[2] != "exists" else { return nil }
   return parts[0] + "/" + parts[1] + "/exists"
 }
 
@@ -304,15 +297,12 @@ private func rebuildContent(base: JSONValue, fields: [String: JSONValue]) -> JSO
       let ids = existing.map { String($0.dropFirst(prefix.count).dropLast("/exists".count)) }
       let preferred = fields[fieldKey([name, "order"])]?.array.compactMap(\.string) ?? []
       let order = contentMemberOrder(preferred: preferred, escapedMembers: ids)
-      let old = base[name]?.array ?? []
       let items: [JSONValue] = order.map { id in
         let memberPrefix = fieldKey([name, id]) + "/"
-        var object = old.first { $0.memberIdentity == id }?.object ?? [:]
+        var object: [String: JSONValue] = [:]
         for (key, val) in fields where key.hasPrefix(memberPrefix) {
           let field = String(key.dropFirst(memberPrefix.count))
           if field == "content" {
-            // Optional package removal belongs to the same atomic source field.
-            object.removeValue(forKey: "programPackage")
             for (part, value) in val.object { object[part] = value }
           }
           else if field.hasPrefix("graphic/") {

@@ -74,6 +74,9 @@ struct MeasuredFreehandTests {
     #expect(reloaded.drawingData == original)
     _=try store.undoCollaborationAction(moved.receipt.id,actor:actor)
     #expect(try store.loadPage(page.id).elements.first?.graphic == graphic)
-
+    let undone=try NotebookStore(root:root).undoCollaborationAction(converted.receipt.id,actor:actor)
+    #expect(undone.undo?.preserved.isEmpty == true)
+    #expect(try store.loadPage(page.id).graphicPresentation.suppressedInkIDs.isEmpty)
+    #expect(try store.loadPage(page.id).drawingData == original)
   }
 }

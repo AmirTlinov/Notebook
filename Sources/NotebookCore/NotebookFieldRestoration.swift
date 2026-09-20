@@ -9,11 +9,12 @@ extension NotebookStore {
     try database.run("DELETE FROM action_field_restorations WHERE address=?", [.text(address)])
     var fields: [String: CollaborationFieldRestoration] = [:]
     for restoration in receipt.undo?.restorations ?? [] {
-      guard restoration.writtenVersion.isValid, restoration.restoredVersion.isValid,
+      guard restoration.writtenVersion.isValid, restoration.restoredVersion?.isValid ?? true,
         restoration.writtenVersion.human,
         receipt.changes.contains(where: {
           $0.file == restoration.file && $0.path == restoration.path
             && $0.beforeVersion == restoration.restoredVersion
+            && (restoration.restoredVersion != nil || $0.before == nil)
         }), receipt.undo?.preserved.contains(where: {
           $0.file == restoration.file && $0.path == restoration.path
         }) == false else { throw NotebookStorageError.invalidTransaction("invalid field restoration") }
@@ -271,11 +272,11 @@ extension NotebookStore {
       requiringExactVersion: requiringExactVersion, ancestors: [])
   }
 
-  private func fieldVersionIsOwned(_ current: ContentFieldVersion, expected: ContentFieldVersion,
+  private func fieldVersionIsOwned(_ current: ContentFieldVersion, expected: ContentFieldVersion?,
     field: String, requiringExactVersion: Bool, ancestors: Set<String>) throws -> Bool {
     var version = current, visited = ancestors
     while visited.insert(version.restorationIdentity).inserted {
-      if requiringExactVersion ? version == expected : (version.stamp == expected.stamp && version.human == expected.human) { return true }
+      if let expected,requiringExactVersion ? version == expected : (version.stamp == expected.stamp && version.human == expected.human) { return true }
       let rows = try currentSQL!.rows("SELECT value FROM action_field_restorations WHERE field=? AND version=? LIMIT 2",
         [.text(field), .text(version.restorationIdentity)])
       // Two claims about one inverse dot are not evidence of restored ownership.
@@ -283,12 +284,18 @@ extension NotebookStore {
       let value = try JSONDecoder().decode(JSONValue.self, from: data)
       let restoration = try value.decode(CollaborationFieldRestoration.self)
       let condition = try value["condition"]?.decode(CapturedFieldRestorationCondition.self)
-      guard !(requiringExactVersion || condition != nil) || version == restoration.writtenVersion else { return false }
+      // Delivery may bind an implicit single head to its nil payload. This is
+      // the same absence, not an extra observation or concurrent authored head.
+      let exact = expected == nil
+        ? version.retainingValue(nil) == restoration.writtenVersion.retainingValue(nil)
+        : version == restoration.writtenVersion
+      guard !(requiringExactVersion || condition != nil) || exact else { return false }
       if let condition {
         guard try fieldVersionIsOwned(condition.current, expected: condition.expected, field: field,
           requiringExactVersion: true, ancestors: visited) else { return false }
       }
-      version = restoration.restoredVersion
+      guard let prior=restoration.restoredVersion else { return expected == nil }
+      version = prior
     }
     return false
   }
@@ -367,11 +374,19 @@ extension NotebookStore {
       let paths = [["frame"]] + (graphic == nil ? [] : NotebookGraphic.allCausalPaths).filter { !["representation", "visible", "sourceInkIDs"].contains($0[0]) }.map { ["graphic"] + $0 }
       for suffix in paths {
         let path = prefix + suffix.map(CollaborationPathComponent.field)
-        // Optional geometry can be absent initially, or deliberately cleared
-        // later. Only the latter has an authored register and can adopt a shape.
-        if files[change.file]?.value(at:path[...]) == nil && collaborationFieldVersion(file:files[change.file],path:path) == nil { continue }
+        // An initial absence is not adoption; a later independent clearing is.
+        // An inverse keeps its own authored dot and proves what it restored.
+        let current=collaborationFieldVersion(file:files[change.file],path:path)
+        if files[change.file]?.value(at:path[...]) == nil {
+          if current == nil { continue }
+          // Equality with nil is not ownership: only the exact inverse chain
+          // may prove return to the absence present at this conversion.
+          let original=JSONValue.object(operation.values).value(at:suffix.map(CollaborationPathComponent.field)[...])
+          if original == nil,let current,try fieldVersionIsOwned(current,expected:nil,
+            field:restorationKey(file:change.file,path:path),requiringExactVersion:true,ancestors:[]) { continue }
+        }
         let field = CollaborationFieldChange(file: change.file, path: path, before: nil, after: nil, afterVersion: version)
-        if try !fieldIsOwned(collaborationFieldVersion(file: files[change.file], path: path), by: field) { adopted = true; break }
+        if try !fieldIsOwned(current, by: field) { adopted = true; break }
       }
     }
     let owner = operation.target.kind.rawValue + ":" + operation.target.id.uuidString.lowercased()

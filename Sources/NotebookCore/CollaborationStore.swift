@@ -371,10 +371,11 @@ extension NotebookStore {
         receipt.undo = CollaborationUndoResult(restored: restored, preserved: preserved, completedAt: Date())
         receipt.undo?.dependencies = preservedDependencies.isEmpty ? nil : preservedDependencies
         receipt.undo?.restorations = restoredFields.compactMap { change in
-          guard let prior = change.beforeVersion,
+          let prior = change.beforeVersion
+          guard prior != nil || change.before == nil,
             let written = collaborationFieldVersion(file: after.files[change.file], path: change.path),
             written.stamp != collaborationFieldVersion(file: before.files[change.file], path: change.path)?.stamp,
-            written.stamp != prior.stamp else { return nil }
+            written.stamp != prior?.stamp else { return nil }
           return .init(file: change.file, path: change.path, writtenVersion: written, restoredVersion: prior)
         }
         let changed = collaborationDiff(before.files, after.files)

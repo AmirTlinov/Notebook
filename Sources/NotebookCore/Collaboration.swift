@@ -167,7 +167,8 @@ public struct CollaborationFieldRestoration: Codable, Equatable, Sendable {
   public let file: String
   public let path: [CollaborationPathComponent]
   public let writtenVersion: ContentFieldVersion
-  public let restoredVersion: ContentFieldVersion
+  /// Nil is a proved return to an absent, never-authored register.
+  public let restoredVersion: ContentFieldVersion?
 }
 
 public struct CollaborationUndoResult: Codable, Equatable, Sendable {

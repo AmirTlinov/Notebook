@@ -160,11 +160,13 @@ import Testing
   }
 
   @Test func aConcurrentRemovalDoesNotReauthorTheSurvivingPayloadOnReplay() throws {
+    let graphic: JSONValue = .object(["vertices":.array([.number(1),.number(2)]),
+      "connection":.object(["start":.object(["point":.number(3)]),"end":.object(["point":.number(4)])])])
     let original = JSONValue.object(["elements": .array([.object([
-      "id": .string("material"), "source": .string("Keep this source"), "css": .string("black")])])])
+      "id": .string("material"), "source": .string("Keep this source"), "css": .string("black"),"graphic":graphic])])])
     let removed = JSONValue.object(["elements": .array([])])
     let adopted = JSONValue.object(["elements": .array([.object([
-      "id": .string("material"), "source": .string("Keep this source"), "css": .string("red")])])])
+      "id": .string("material"), "source": .string("Keep this source"), "css": .string("red"),"graphic":graphic])])])
     var base = CollaborativeContent(); base.materializeVersions(in: original, fallback: versions[0].stamp)
     var deletion = base, edit = base
     deletion.record(before: original, after: removed, beforeStamp: versions[0].stamp, stamp: versions[1].stamp, human: false)
@@ -179,6 +181,30 @@ import Testing
         joined = try merge(joined, replay)
         #expect(joined.value == adopted)
       }
+    }
+  }
+
+  @Test func clearedOptionalGeometrySurvivesReorderingReplayAndSnapshotJoins() throws {
+    let original: JSONValue = .object(["elements":.array([.object([
+      "id":.string("ink"),"source":.string("exact"),"css":.string("black"),
+      "graphic":.object(["label":.string("keep"),"transform":.object(["tx":.number(5)]),
+        "connection":.object(["bend":.number(3),"routing":.string("curved")])])])])])
+    let cleared: JSONValue = .object(["elements":.array([.object([
+      "id":.string("ink"),"source":.string("exact"),
+      "graphic":.object(["label":.string("keep"),"connection":.object(["routing":.string("curved")])])])])])
+    var metadata=CollaborativeContent();metadata.materializeVersions(in:original,fallback:versions[0].stamp)
+    let before=State(value:original,metadata:metadata,stamp:versions[0].stamp)
+    let stamp=VersionStamp(counter:12,actor:x)
+    metadata.record(before:original,after:cleared,beforeStamp:before.stamp,stamp:stamp,human:true)
+    let after=State(value:cleared,metadata:metadata,stamp:stamp)
+    let snapshot=try merge(before,after)
+    let states=[before,after,snapshot]
+    for order in orders {
+      let a=states[order[0]],b=states[order[1]],c=states[order[2]]
+      let left=try merge(merge(a,b),c),right=try merge(a,merge(b,c))
+      #expect(left.value == cleared);#expect(right.value == cleared)
+      #expect(left.metadata == right.metadata)
+      for replay in states { #expect(try merge(left,replay).value == cleared) }
     }
   }
 
