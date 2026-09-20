@@ -1,0 +1,230 @@
+{
+  "scope": "Immutable contour admission and warm in-memory pose application; not a frame/FPS or installed-app measurement",
+  "configuration": "Debug",
+  "warmupTrials": 5,
+  "measuredTrials": 100,
+  "editsPerWarmTrial": 20,
+  "versions": {
+    "before": {
+      "sourceSHA256": "68658e1393d04cc58bf186722ed738a17ed391571d22b39cc6f44fc3d9a17369",
+      "verificationSHA256": "56e56598686513b51729728c1cd2d7d5c71df112da443fe46a182f4af92e4114",
+      "platforms": {
+        "ipad": {
+          "passedTests": 3,
+          "failedTests": 0,
+          "rawSHA256": "59117ed24902308868f9c7600f71cd1e2cc4243f8cf7550ca9436e9489848021",
+          "metrics": [
+            {
+              "commands": 6,
+              "encodedSourceBytes": 605,
+              "coldValidationMilliseconds": {
+                "p50": 0.0021455,
+                "p95": 0.002208,
+                "p99": 0.002292
+              },
+              "warmPoseAndEqualityMilliseconds": {
+                "p50": 0.01531875,
+                "p95": 0.015885450000000002,
+                "p99": 0.0161146
+              }
+            },
+            {
+              "commands": 514,
+              "encodedSourceBytes": 88632,
+              "coldValidationMilliseconds": {
+                "p50": 0.20456249999999998,
+                "p95": 0.214084,
+                "p99": 0.223083
+              },
+              "warmPoseAndEqualityMilliseconds": {
+                "p50": 0.217521875,
+                "p95": 0.22087705,
+                "p99": 0.22400000000000003
+              }
+            },
+            {
+              "commands": 8192,
+              "encodedSourceBytes": 1420024,
+              "coldValidationMilliseconds": {
+                "p50": 3.268854,
+                "p95": 3.315458,
+                "p99": 3.384875
+              },
+              "warmPoseAndEqualityMilliseconds": {
+                "p50": 3.28627605,
+                "p95": 3.30642085,
+                "p99": 3.3658791999999997
+              }
+            }
+          ]
+        },
+        "mac": {
+          "passedTests": 3,
+          "failedTests": 0,
+          "rawSHA256": "fa5ba90b974eb46641873fc6dabbde4a1780fedcd9c32981d1fe4ce5b2a5bc20",
+          "metrics": [
+            {
+              "commands": 6,
+              "encodedSourceBytes": 605,
+              "coldValidationMilliseconds": {
+                "p50": 0.00125,
+                "p95": 0.001333,
+                "p99": 0.001375
+              },
+              "warmPoseAndEqualityMilliseconds": {
+                "p50": 0.00987915,
+                "p95": 0.0103646,
+                "p99": 0.01226875
+              }
+            },
+            {
+              "commands": 514,
+              "encodedSourceBytes": 88632,
+              "coldValidationMilliseconds": {
+                "p50": 0.1149165,
+                "p95": 0.123833,
+                "p99": 0.13425
+              },
+              "warmPoseAndEqualityMilliseconds": {
+                "p50": 0.12420727499999999,
+                "p95": 0.12795415000000002,
+                "p99": 0.12890835
+              }
+            },
+            {
+              "commands": 8192,
+              "encodedSourceBytes": 1420024,
+              "coldValidationMilliseconds": {
+                "p50": 1.844854,
+                "p95": 1.936667,
+                "p99": 1.965625
+              },
+              "warmPoseAndEqualityMilliseconds": {
+                "p50": 1.859316675,
+                "p95": 1.91208125,
+                "p99": 1.94319165
+              }
+            }
+          ]
+        }
+      }
+    },
+    "after": {
+      "sourceSHA256": "8cb4f0275bcc80ff498ab715dc3a730eadb007976ec6588c4745013c57f76b61",
+      "verificationSHA256": "3a7a0f22f3bf689738d01effe2592503eada4a4b6364b2a390962e5c8206c1a4",
+      "platforms": {
+        "ipad": {
+          "passedTests": 10,
+          "failedTests": 0,
+          "rawSHA256": "80b5f7b51a9248020f52ea4258c368b275e0cbe894167d80c294e881c3fb8f38",
+          "metrics": [
+            {
+              "commands": 6,
+              "encodedSourceBytes": 605,
+              "coldValidationMilliseconds": {
+                "p50": 0.00225,
+                "p95": 0.002292,
+                "p99": 0.002333
+              },
+              "warmPoseAndEqualityMilliseconds": {
+                "p50": 0.01313125,
+                "p95": 0.013927100000000001,
+                "p99": 0.0141271
+              }
+            },
+            {
+              "commands": 514,
+              "encodedSourceBytes": 88632,
+              "coldValidationMilliseconds": {
+                "p50": 0.206042,
+                "p95": 0.20875,
+                "p99": 0.210875
+              },
+              "warmPoseAndEqualityMilliseconds": {
+                "p50": 0.013128125000000001,
+                "p95": 0.0132729,
+                "p99": 0.01355625
+              }
+            },
+            {
+              "commands": 8192,
+              "encodedSourceBytes": 1420024,
+              "coldValidationMilliseconds": {
+                "p50": 3.289583,
+                "p95": 3.308042,
+                "p99": 3.321875
+              },
+              "warmPoseAndEqualityMilliseconds": {
+                "p50": 0.013143750000000001,
+                "p95": 0.01335625,
+                "p99": 0.01390415
+              }
+            }
+          ]
+        },
+        "mac": {
+          "passedTests": 5,
+          "failedTests": 0,
+          "rawSHA256": "d3abe81d20ef6e6268fc352f8764eba3312019d2b148683147b94bc44406ae09",
+          "metrics": [
+            {
+              "commands": 6,
+              "encodedSourceBytes": 605,
+              "coldValidationMilliseconds": {
+                "p50": 0.001292,
+                "p95": 0.001375,
+                "p99": 0.001417
+              },
+              "warmPoseAndEqualityMilliseconds": {
+                "p50": 0.008333324999999999,
+                "p95": 0.008654199999999999,
+                "p99": 0.00899375
+              }
+            },
+            {
+              "commands": 514,
+              "encodedSourceBytes": 88632,
+              "coldValidationMilliseconds": {
+                "p50": 0.116542,
+                "p95": 0.121708,
+                "p99": 0.12575
+              },
+              "warmPoseAndEqualityMilliseconds": {
+                "p50": 0.008592724999999999,
+                "p95": 0.0089896,
+                "p99": 0.01072085
+              }
+            },
+            {
+              "commands": 8192,
+              "encodedSourceBytes": 1420024,
+              "coldValidationMilliseconds": {
+                "p50": 1.8336665,
+                "p95": 1.88925,
+                "p99": 1.898792
+              },
+              "warmPoseAndEqualityMilliseconds": {
+                "p50": 0.0085948,
+                "p95": 0.009066649999999999,
+                "p99": 0.009743749999999999
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "core": {
+    "command": "swift test --filter 'NotebookVectorPathTests|NotebookGraphicSelectionTests'",
+    "tests": 7,
+    "suites": 2,
+    "status": "passed",
+    "logSHA256": "80a86f38b0ce2f56265e28bc1fa38681c8a6d568bdc52ba66b310d201d23f29b"
+  },
+  "limits": [
+    "No additional derived CGPath, geometry cache or lock; one derived Bool in the existing value. Full process memory has not been measured.",
+    "Cold source construction/decoding still validates every command once. Painting still visits visible commands.",
+    "No permanent or nested groups implemented by this change. GUI-291 is not complete.",
+    "Production applications have not been updated by this change; paired physical gesture acceptance remains open."
+  ]
+}

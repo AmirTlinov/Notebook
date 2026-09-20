@@ -11,7 +11,18 @@ public struct NotebookVectorPath: Codable, Equatable, Sendable {
     public init(kind: Kind, points: [SpatialPoint]) { self.kind = kind; self.points = points }
   }
   public let commands: [Command]
-  public init(commands: [Command]) { self.commands = commands }
+  /// Validity belongs to the immutable commands, not each pose/style carrying
+  /// them. It is derived once at admission and never serialized or cached as a
+  /// second geometry body.
+  public let isValid: Bool
+  private enum CodingKeys: String, CodingKey { case commands }
+  public init(commands: [Command]) {
+    self.commands = commands
+    isValid = Self.validate(commands)
+  }
+  public init(from decoder: Decoder) throws {
+    self.init(commands:try decoder.container(keyedBy:CodingKeys.self).decode([Command].self,forKey:.commands))
+  }
   public init(path: CGPath, frame: CGRect) {
     var commands: [Command] = []
     path.applyWithBlock { pointer in
@@ -29,9 +40,9 @@ public struct NotebookVectorPath: Codable, Equatable, Sendable {
         .init(x:(element.points[$0].x-frame.minX)/frame.width,y:(element.points[$0].y-frame.minY)/frame.height)
       }))
     }
-    self.commands = commands
+    self.init(commands:commands)
   }
-  public var isValid: Bool {
+  private static func validate(_ commands: [Command]) -> Bool {
     guard !commands.isEmpty, commands.count <= 8192 else { return false }
     var open = false
     for command in commands {
