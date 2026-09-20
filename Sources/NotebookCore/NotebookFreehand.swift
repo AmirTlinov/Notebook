@@ -87,7 +87,7 @@ public struct NotebookFreehand: Codable, Equatable, Sendable {
   }
   public static let maximumVertices = 65_536
   public var isValid: Bool { preparation.isValid(layers) }
-  public static func mesh(samples: [SpatialInkSample], frame: PageRect, origin: WorldPoint?, tool: SpatialInkTool = .pen) -> [Vertex] {
+  public static func mesh(samples: some Sequence<SpatialInkSample>, frame: PageRect, origin: WorldPoint?, tool: SpatialInkTool = .pen) -> [Vertex] {
     var points: [InkStrokeGeometry.RenderPoint] = []
     for sample in samples {
       let p = origin.flatMap { o in sample.worldPoint.map { o.delta(to:$0) } } ?? sample.point

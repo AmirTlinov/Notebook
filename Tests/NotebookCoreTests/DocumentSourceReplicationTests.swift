@@ -88,9 +88,11 @@ struct DocumentSourceReplicationTests {
       let hash = NotebookProgramPackage.hash(oldBytes)
       try a.stageBlob(data: oldBytes, expectedHash: hash)
       let old = NotebookDurableChange(sequence: change.sequence, transactionID: change.transactionID, manifestHash: hash, byteCount: oldBytes.count)
-      try stage(old, a, b)
       let cursor = try b.peerCursor(peerID: actor, direction: .incoming)
-      #expect(throws: NotebookStorageError.self) { try b.applyRemoteChange(old, peerID: actor) }
+      // A retired format is rejected as soon as its manifest is staged, before
+      // requesting any owner body, not only at the final transaction boundary.
+      do { try deliver(old,a,b,actor);Issue.record("Retired TeX manifest was admitted") }
+      catch let error as CollaborationError { #expect(error.code == "placement_peer_upgrade_required") }
       #expect(try b.peerCursor(peerID: actor, direction: .incoming) == cursor)
       try deliver(change, a, b, actor)
       let cold = NotebookStore(root: b.root)
@@ -98,8 +100,8 @@ struct DocumentSourceReplicationTests {
     }
   }
 
-  @Test(arguments: [15, 16])
-  func queuedPreIntegrationManifestsStillDeliverSource(format: Int) throws {
+  @Test(arguments: [15, 16, 19])
+  func queuedPriorFormatsRequireTheirExplicitTransitionBeforeDelivery(format: Int) throws {
     try fixture { a, b, actor, id in
       let change = try changedSource(a, id, actor: actor, source: "<button>Queued</button>")
       let bytes = try a.readBlobChunk(hash: change.manifestHash, offset: 0, maxBytes: change.byteCount)
@@ -109,8 +111,12 @@ struct DocumentSourceReplicationTests {
       try a.stageBlob(data: queuedBytes, expectedHash: hash)
       let queued = NotebookDurableChange(sequence: change.sequence, transactionID: change.transactionID,
         manifestHash: hash, byteCount: queuedBytes.count)
-      try deliver(queued, a, b, actor)
-      #expect(try NotebookStore(root: b.root).loadDocument(id).blocks.first { $0.id == selected }?.html == "<button>Queued</button>")
+      let before=try b.loadDocument(id),cursor=try b.currentChangeCursor()
+      let incoming=try b.peerCursor(peerID:actor,direction:.incoming)
+      do { try deliver(queued,a,b,actor);Issue.record("Prior format crossed the relation transition") }
+      catch let error as CollaborationError { #expect(error.code == "placement_peer_upgrade_required") }
+      #expect(try NotebookStore(root:b.root).loadDocument(id) == before)
+      #expect(try b.currentChangeCursor() == cursor && b.peerCursor(peerID:actor,direction:.incoming) == incoming)
     }
   }
 

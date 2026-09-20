@@ -76,10 +76,7 @@ public struct InkSampleRelations: Sendable {
   /// buffer instead of making another copy of incompressible measurements.
   final class SampleBuffer: Sendable {
     let samples: [SpatialInkSample]
-    let external: Bool
-    init(_ samples: [SpatialInkSample],external: Bool = false) {
-      self.samples=samples;self.external=external
-    }
+    init(_ samples: [SpatialInkSample]) { self.samples=samples }
     var byteCount: Int { 32+samples.capacity*MemoryLayout<SpatialInkSample>.stride }
   }
   struct Samples: Sendable {
@@ -106,21 +103,13 @@ public struct InkSampleRelations: Sendable {
       // Direct field access avoids dynamic key-path traversal for every event
       // in this cold path. The exact recognition/proof remains field-local.
       let x=Field(samples.map { $0.point.x.bitPattern }),y=Field(samples.map { $0.point.y.bitPattern })
-      // For canonical irregular coordinates, another field encoding cannot
-      // remove geometry work. Keep the existing buffer without scanning/copying
-      // six more attributes merely to discard them under the display budget.
-      if view.buffer.external,case .literal=x,case .literal=y { self = .literal(view);return }
       let fields: [Field] = [x,y,
         .init(samples.map { $0.timeOffset.bitPattern }), .init(samples.map { $0.width.bitPattern }),
         .init(samples.map { $0.opacity.bitPattern }), .init(samples.map { $0.force.bitPattern }),
         .init(samples.map { $0.azimuth.bitPattern }), .init(samples.map { $0.altitude.bitPattern })]
 
       let bytes = fields.count * MemoryLayout<Field>.stride + fields.reduce(0) { $0 + $1.payloadBytes }
-      // A canonical literal costs no additional sample storage. Only retain
-      // a derived encoding below the 24-byte display-node budget. Contacts own
-      // their measurements, so encoding there competes with the full sample.
-      let budget=view.buffer.external ? 24 : MemoryLayout<SpatialInkSample>.stride
-      self = bytes < samples.count * budget ? .fields(fields,samples.count) : .literal(view)
+      self = bytes < samples.count * MemoryLayout<SpatialInkSample>.stride ? .fields(fields,samples.count) : .literal(view)
     }
     func sample(at i: Int) -> SpatialInkSample {
       switch self {
@@ -186,9 +175,10 @@ public struct InkSampleRelations: Sendable {
   public let sourceID: UUID
   public let span: Int
   public let header: Header
-  public let revision: UUID
-  public let count: Int
-  let storage: Storage
+  public let measurements: InkMeasurements
+  public var revision: UUID { measurements.revision }
+  public var count: Int { measurements.count }
+  var storage: Storage { measurements.storage }
   public var geometry: Geometry { storage.root.geometry }
   public func forEachSample(in range: Range<Int>, _ emit: (SpatialInkSample) -> Void) {
     precondition(range.lowerBound >= 0 && range.upperBound <= count)
@@ -196,26 +186,28 @@ public struct InkSampleRelations: Sendable {
   }
   public let frames: [InkExactFrame]
   public init(sourceID: UUID, span: Int = 0, revision: UUID, samples: [SpatialInkSample], header: Header) {
-    self.sourceID = sourceID; self.span=span; self.header = header; self.revision = revision; count = samples.count; frames = [];lastEdit=nil
-    let buffer=SampleBuffer(samples,external:true)
-    storage = .init(Sequence.from(stride(from:0,to:samples.count,by:Self.blockSize).map {
-      Block(Samples(buffer:buffer,range:$0..<min(samples.count,$0+Self.blockSize)))
-    }))
+    self.init(sourceID:sourceID,span:span,measurements:.init(samples,revision:revision),header:header)
   }
-  public init(_ action: PageInkAction, revision: UUID) {
-    self.init(sourceID:action.id,revision:revision,samples:action.samples,
+  public init(sourceID: UUID, span: Int = 0, measurements: InkMeasurements, frames: [InkExactFrame] = [], header: Header) {
+    self.sourceID=sourceID;self.span=span;self.measurements=measurements;self.header=header;self.frames=frames;lastEdit=nil
+  }
+  public init(_ action: PageInkAction) {
+    self.init(sourceID:action.id,measurements:action.samples,
       header:.init(tool:action.tool,color:action.color,sequence:action.sequence,
         isActive:action.isActive,elementTargets:action.elementTargets))
   }
-  /// Full materialization is explicit and paid at the existing persistence/export
-  /// boundary. A pose does not rewrite the provenance of accepted measurements.
   public func restoredAction() -> PageInkAction {
-    .init(id:sourceID,tool:header.tool,color:header.color,samples:decoded(),sequence:header.sequence,
+    // Journal actions own local measurements. Whole placement belongs to the
+    // existing graphic/group owner, not a second pose hidden inside ink data.
+    precondition(frames.isEmpty, "Persist the enclosing whole, not a flattened placed action")
+    return .init(id:sourceID,tool:header.tool,color:header.color,measurements:measurements,sequence:header.sequence,
       isActive:header.isActive,elementTargets:header.elementTargets)
   }
   init(sourceID: UUID, span: Int, revision: UUID, count: Int, storage: Storage, frames: [InkExactFrame], header: Header, lastEdit: EditSummary? = nil) {
+    precondition(count == storage.root.count)
     self.lastEdit=lastEdit
-    self.sourceID = sourceID; self.span=span; self.revision = revision; self.count = count; self.storage = storage; self.frames = frames; self.header = header
+    self.sourceID=sourceID;self.span=span;self.header=header;self.frames=frames
+    measurements = .init(storage:storage,revision:revision)
   }
   /// Frames surround the WHOLE source. No measured event may sit between two
   /// entries in this list; separate painted sources keep separate frame scopes.
@@ -374,13 +366,10 @@ public struct InkSampleRelations: Sendable {
   public var payloadBytes: Int {
     MemoryLayout<Self>.stride + frames.count * MemoryLayout<InkExactFrame>.stride + allocationSummary.bytes
   }
-  /// Additional retention when the same canonical arrays are already counted
-  /// by the mesh owner. Owned contact/edit buffers are still counted in full.
-  public var auxiliaryBytes: Int {
-    var seen=Set<ObjectIdentifier>()
-    return MemoryLayout<Self>.stride + frames.count * MemoryLayout<InkExactFrame>.stride
-      + storage.root.allocationSummary(seen:&seen,includeExternal:false).bytes
-  }
+  /// Extra binding retained beside the canonical body; that body is counted
+  /// once by its journal, not again by every display view that borrows it.
+  public var auxiliaryBytes: Int { MemoryLayout<Self>.stride+frames.count*MemoryLayout<InkExactFrame>.stride }
+
 }
 
 
@@ -438,9 +427,12 @@ extension InkSampleRelations {
       var result:[SpatialInkSample]=[];result.reserveCapacity(range.count)
       forEach(in:range) { result.append($0) };return result
     }
-    public func frozen() -> InkSampleRelations {
-      let root=tail.isEmpty ? prefix : Sequence.balance(prefix,Sequence(block:Block(tail[...])))
-      return .init(sourceID:sourceID,span:span,revision:revision,count:count,
+    public func frozen(through end: Int? = nil) -> InkSampleRelations {
+      let end=end ?? count
+      precondition((0...count).contains(end))
+      let whole=tail.isEmpty ? prefix : Sequence.balance(prefix,Sequence(block:Block(tail[...])))
+      let root=end == count ? whole : whole.slice(0..<end)
+      return .init(sourceID:sourceID,span:span,revision:revision,count:end,
         storage:.init(root),frames:[],header:header)
     }
   }

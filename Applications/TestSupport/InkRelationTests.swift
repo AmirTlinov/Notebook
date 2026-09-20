@@ -74,7 +74,7 @@ final class InkRelationTests: XCTestCase {
     let action = PageInkAction(id:sourceID,tool:.pen,samples:original.decoded(),sequence:9)
     let reopened = try JSONDecoder().decode(PageInkAction.self,from:JSONEncoder().encode(action))
     XCTAssertEqual(reopened.id,sourceID); XCTAssertEqual(reopened.sequence,9)
-    assertBits(samples,reopened.samples)
+    assertBits(samples,reopened.samples.materialized())
     XCTAssertLessThan(original.payloadBytes,samples.capacity*MemoryLayout<SpatialInkSample>.stride*11/10)
   }
   private func mesh(_ samples: [SpatialInkSample], relations: Bool, eraser: Bool = false) -> SpatialInkMesh {
@@ -238,13 +238,13 @@ final class InkRelationTests: XCTestCase {
     }
     let data = try Data(contentsOf:url)
     let action = try JSONDecoder().decode(PageInkAction.self,from:data)
-    let original = InkSampleRelations(action,revision:revision)
+    let original = InkSampleRelations(action)
     let restored = original.restoredAction()
-    XCTAssertEqual(restored,action);assertBits(action.samples,restored.samples)
+    XCTAssertEqual(restored,action);assertBits(action.samples.materialized(),restored.samples.materialized())
     XCTAssertEqual(original.header.tool,action.tool);XCTAssertEqual(original.header.sequence,action.sequence)
     let changedHeader=InkSampleRelations.Header(tool:.eraser,color:action.color,sequence:action.sequence)
-    let other=InkSampleRelations(sourceID:action.id,revision:revision,samples:action.samples,header:changedHeader)
+    let other=InkSampleRelations(sourceID:action.id,measurements:action.samples,header:changedHeader)
     XCTAssertEqual(original.equality(to:other,eventBudget:0),.different)
-    try verifyRender(action.samples,name:"relative-private-measured",encoded:original)
+    try verifyRender(action.samples.materialized(),name:"relative-private-measured",encoded:original)
   }
 }

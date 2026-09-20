@@ -8,7 +8,7 @@ import SwiftUI
     guard let region = reference.region else { return nil }
     var vertices: [InkStrokeGeometry.Vertex] = []
     var erasures: [Path] = []
-    func geometry(_ samples: [SpatialInkSample], origin: WorldPoint? = nil) -> Path {
+    func geometry(_ samples: InkMeasurements, origin: WorldPoint? = nil) -> Path {
       let points = samples.compactMap { sample -> InkStrokeGeometry.RenderPoint? in
         let point: SpatialPoint
         if let world = sample.worldPoint, let origin {

@@ -33,14 +33,14 @@ extension NotebookStore {
         if surface.kind == .page {
           let action = try NotebookRecordCodec.decode(storedFragments(address:address),root:address).decode(PageInkAction.self)
           for target in action.elementTargets ?? [] where collaborationIdentity(target.elementID) == collaborationIdentity(elementID) {
-            result.append(.init(target:target,samples:action.samples))
+            result.append(.init(target:target,measurements:action.samples))
           }
           continue
         }
         let action = try readSpatialInkAction(address)
         for span in action.spans where span.surface == surface {
           for target in span.elementTargets ?? [] where collaborationIdentity(target.elementID) == collaborationIdentity(elementID) {
-            result.append(.init(target:target,samples:span.samples))
+            result.append(.init(target:target,measurements:span.samples))
           }
         }
       }

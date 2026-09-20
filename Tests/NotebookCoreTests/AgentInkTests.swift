@@ -52,7 +52,7 @@ func agentInkUsesExistingOwners() throws {
   let page = try #require(content.pages.first)
   let drawing = try PageInkDrawing.decode(page.drawingData)
   #expect(drawing.activeActions.count == 1)
-  #expect(try drawing.activeActions[0].samples == CollaborationInkStroke(operations[0]).samples)
+  #expect(try drawing.activeActions[0].samples.elementsEqual(CollaborationInkStroke(operations[0]).samples,by:InkSampleRelations.sameBits))
   #expect(try drawing.activeActions[0].color == CollaborationInkStroke(operations[0]).color)
   #expect(drawing.activeActions[0].tool == .pen)
   #expect(page.elements.isEmpty && content.hierarchy == before.hierarchy)
@@ -235,7 +235,7 @@ func agentInkRejectsOldArchivesAndImplicitClocks() throws {
   let old = try JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy))
   let data = try Data("NotebookInk/1\n".utf8) + PropertyListSerialization.data(fromPropertyList: old, format: .binary, options: 0)
   #expect(throws: PageInkDrawing.InkError.self) { try PageInkDrawing.decode(data) }
-  let incompleteNew = Data("NotebookInk/2\n".utf8) + (try JSONEncoder().encode(legacy))
+  let incompleteNew = Data("NotebookInk/3\n".utf8) + (try JSONEncoder().encode(legacy))
   #expect(throws: (any Error).self) { try PageInkDrawing.decode(incompleteNew) }
 }
 

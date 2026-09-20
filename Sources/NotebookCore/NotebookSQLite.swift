@@ -340,7 +340,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 16
+  static let currentDatabaseVersion: Int64 = 17
 
   func prepareDatabase(initialWorkspaceID: UUID? = nil) throws {
     if currentSQL != nil { guard initialWorkspaceID == nil else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }; return }
@@ -419,7 +419,7 @@ extension NotebookStore {
     }
     // Schema, content conversion and the durable admission version share the
     // sole writer. Another opener may have completed admission while we waited.
-    try commandTransaction(advancesReadRevision: version == 2, preparedDatabase: database) {
+    try commandTransaction(advancesReadRevision: true, preparedDatabase: database) {
       let admittedVersion = try database.rows("PRAGMA user_version").first?.first?.integer ?? 0
       if admittedVersion == Self.currentDatabaseVersion { return }
       guard (2..<Self.currentDatabaseVersion).contains(admittedVersion) else { throw NotebookStorageError.unsupportedFormat }
@@ -434,6 +434,7 @@ extension NotebookStore {
         try database.run("CREATE INDEX IF NOT EXISTS reference_element_children ON reference_element_order(owner_key,parent_id,position,member)")
       }
       if admittedVersion == 2 { try migrateStoredBoardPlacements(database: database) }
+      if admittedVersion < 17 { try migrateStoredInkRelations(database: database) }
       // One historical receipt at a time; no whole-history buffer and no
       // rewritten shared content, hashes, identities or replication cursors.
       // Version 12 indexes the current phase's time separately from creation
@@ -706,9 +707,9 @@ extension NotebookStore {
   public func changeJournal(after cursor: UInt64, limit: Int = 16) throws -> [NotebookDurableChange] {
     guard cursor <= UInt64(Int64.max), (1...16).contains(limit) else { throw NotebookStorageError.limitExceeded("journal_page") }
     return try sqlRead { database in
-      let floor = UInt64(try database.rows("SELECT value FROM metadata WHERE key='placement_outgoing_floor'").first?[0].text ?? "0") ?? 0
+      let floor = try deliveryFormatFloor(database: database)
       guard cursor >= floor else {
-        throw CollaborationError("placement_checkpoint_required", "Это устройство ещё не получило изменения до обновления формата. Новому устройству нужен снимок текущего пространства; существующее содержание не будет сброшено.")
+        throw CollaborationError("format_checkpoint_required", "Это устройство ещё не получило изменения до обновления формата. Новому устройству нужен снимок текущего пространства; существующее содержание не будет сброшено.")
       }
       return try storedJournalPage(after: cursor, limit: limit, database: database)
     }
@@ -798,7 +799,7 @@ extension NotebookStore {
 
 extension NotebookStore {
   func requireChangeHistory(after: UInt64) throws {
-    let floor = UInt64(try currentSQL!.rows("SELECT value FROM metadata WHERE key='placement_outgoing_floor'").first?[0].text ?? "0") ?? 0
+    let floor = try deliveryFormatFloor(database: currentSQL!)
     guard after >= floor else {
       throw CollaborationError("observation_cursor_expired", "История этого курсора больше недоступна; запросите новый ограниченный снимок без since/next.")
     }

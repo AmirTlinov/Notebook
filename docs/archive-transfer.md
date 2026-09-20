@@ -30,7 +30,7 @@ missing owners and unsupported journals fail. Admission limits are 100,000 items
 
 Core constructors preserve physical UUIDs, membership and order while introducing
 the current causal/order fields. Selection moves to `SessionPresence/5`.
-Binary ink becomes `NotebookInk/2` without redrawing: PNG bases, original action
+Binary ink becomes `NotebookInk/3` without redrawing: PNG bases, original action
 counts, UUIDs, points, pen properties and undone actions survive. Missing legacy
 sequence/activity fields receive their historical meaning. Raw live PencilKit is
 not accepted as current app storage.

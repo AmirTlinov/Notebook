@@ -1121,10 +1121,8 @@ final class PaperInputView: UIView {
     guard let source=activePenStroke?.measured ?? activeEraserStroke?.measured else { return nil }
     let count=min(source.count,quickShape.fit?.sampleCount ?? source.count)
     guard count > 0 else { return nil }
-    // Full materialization occurs only at the existing accepted-write/cut
-    // boundary. Predictions have never entered this source.
-    return PageInkAction(id:source.sourceID,tool:source.header.tool,color:source.header.color,
-      samples:source.decoded(in:0..<count)).erasingElements(actionElementTargets)
+    // Freeze the accepted tree; predictions never enter the durable source.
+    return source.frozen(through:count).restoredAction().erasingElements(actionElementTargets)
   }
 
   private func scheduleFinalization() {

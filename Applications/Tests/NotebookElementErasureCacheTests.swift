@@ -75,7 +75,7 @@ import WebKit
   func testWholeObjectEraseDoesNotBuildOrQueueBooleanGeometry() async throws {
     let cache = NotebookElementErasureCache()
     let cuts = [InkElementErasure(target: .init(elementID: "program", frame: frame, wholeElement: true),
-      samples: cuts(full: false, count: 8192)[0].samples)]
+      measurements: cuts(full: false, count: 8192)[0].samples)]
     for _ in 0..<100 {
       let appearance = cache.appearance(surface: surface, id: "program", graphic: nil,
         layout: nil, size: .init(width: 160, height: 100), erasures: cuts)

@@ -6,7 +6,7 @@ import Foundation
 public enum NotebookTransportLimits {
   // Shared element bases, parent-local geometry and measured whole-basis cuts.
   // Both applications update together; identities and queued history stay intact.
-  public static let protocolVersion = 38
+  public static let protocolVersion = 39
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 32 * 1_024
   public static let maximumQueuedBytes = 1_024 * 1_024
@@ -102,7 +102,7 @@ public enum NotebookTransportContentRequirement: String, Codable, Equatable, Sen
     guard let error = error as? CollaborationError else { return nil }
     switch error.code {
     case "placement_peer_upgrade_required": self = .peerUpgrade
-    case "placement_checkpoint_required": self = .checkpoint
+    case "format_checkpoint_required": self = .checkpoint
     default: return nil
     }
   }
@@ -111,7 +111,7 @@ public enum NotebookTransportContentRequirement: String, Codable, Equatable, Sen
     case .peerUpgrade:
       CollaborationError("placement_peer_upgrade_required", "Обновите Notebook на обоих устройствах. Прежние изменения не подтверждены и не будут пропущены.")
     case .checkpoint:
-      CollaborationError("placement_checkpoint_required", "Для продолжения обмена отстающему устройству нужна текущая исходная копия пространства. Существующее содержание и сопряжение сохранены.")
+      CollaborationError("format_checkpoint_required", "Для продолжения обмена отстающему устройству нужна текущая исходная копия пространства. Существующее содержание и сопряжение сохранены.")
     }
   }
 }

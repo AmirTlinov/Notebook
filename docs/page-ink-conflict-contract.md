@@ -15,6 +15,23 @@ Different points under the same UUID or exhausted order fail.
 `writeFragment` validates immutable headers and prevents false→true activity revival.
 Row position is an order index, not mutable author content.
 
+`InkMeasurements` is the immutable accepted body: a shared relation tree, not a
+second representation beside a retained flat array. `NotebookInk/3` and spatial
+journal 2 persist its bounded NIM1 graph with exact IEEE fields, repeat exits and
+address revisions. Contact freezing, journal metadata changes and mesh bindings
+borrow that body. An equivalent replay in another encoding retains the accepted
+body/revision; different bits still conflict. Whole placement remains with the
+existing graphic/group owner, outside local measurements. Full NIR1 relation
+snapshots retain their enclosing exact frames; a placed snapshot cannot silently
+be restored as an unplaced journal action.
+
+Explicit command reads export at most 32,768 original samples per ink query,
+plus `relations` (the exact NIM1 body). This is a disposable, bounded observation,
+not the storage, delivery or rendering path. A compact million-event body can be
+saved/read natively without expanding it; requesting every point through this
+observational endpoint is refused before materialization. Source directories
+remain metadata-only.
+
 Failure publishes no content, receipt or delivery cursor. Imported raster-base
 revision is separate and cannot resolve conflicting action UUIDs through last-write-wins.
 

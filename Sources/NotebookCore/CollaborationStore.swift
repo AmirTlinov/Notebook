@@ -792,7 +792,7 @@ struct CollaborationWorkspace {
       var page = try raw.decode(PageDocument.self)
       let drawing = try PageInkDrawing.decode(page.drawingData)
       guard let existing = drawing.actions.first(where: { $0.id == stroke.id }), existing.isActive,
-        existing.tool == .pen, existing.color == stroke.color, existing.samples == stroke.samples else { return false }
+        existing.tool == .pen, existing.color == stroke.color, existing.samples.elementsEqual(stroke.samples,by:InkSampleRelations.sameBits) else { return false }
       guard page.replaceDrawing(try drawing.removing([stroke.id]).dataRepresentation(), actor: actor) else { return false }
       files[pageFile(page.id)] = try .encode(page)
     } else {

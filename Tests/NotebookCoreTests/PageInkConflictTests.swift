@@ -54,7 +54,7 @@ struct PageInkConflictTests {
     let (page, _) = try pages(collision: .samples)
     let drawing = try PageInkDrawing.decode(page.drawingData)
     let accepted = try #require(drawing.actions.first)
-    let measured = PageInkAction(id: accepted.id, tool: accepted.tool, color: accepted.color, samples: accepted.samples)
+    let measured = PageInkAction(id: accepted.id, tool: accepted.tool, color: accepted.color, measurements: accepted.samples)
     let liveReplay = try page.prepareInkChange(.append(measured), stamp: .init(counter: 20, actor: UUID()))
     #expect(liveReplay.data == page.drawingData)
     #expect(liveReplay.stamp == page.drawingStamp)
@@ -72,9 +72,9 @@ struct PageInkConflictTests {
     let (page, _) = try pages(collision: .samples)
     let action = try #require(PageInkDrawing.decode(page.drawingData).actions.first)
     let final = PageInkAction(id: action.id, tool: action.tool, color: action.color,
-      samples: action.samples, sequence: VersionStamp.maximumCounter)
+      measurements: action.samples, sequence: VersionStamp.maximumCounter)
     let drawing = PageInkDrawing(actions: [final])
-    let next = PageInkAction(tool: action.tool, color: action.color, samples: action.samples)
+    let next = PageInkAction(tool: action.tool, color: action.color, measurements: action.samples)
     #expect(throws: PageInkDrawing.InkError.self) { try drawing.appending(next) }
     #expect(try drawing.appending(action) == drawing)
   }
@@ -104,7 +104,7 @@ struct PageInkConflictTests {
     let (original, _) = try pages(id: id, collision: .samples)
     _ = try store.savePage(original)
     let first = try PageInkDrawing.decode(original.drawingData)
-    let next = PageInkAction(tool: .pen, samples: try #require(first.actions.first).samples)
+    let next = PageInkAction(tool: .pen, measurements: try #require(first.actions.first).samples)
     let later = PageDocument(id: id, size: original.size, actor: UUID(),
       drawingData: try first.appending(next).dataRepresentation())
     _ = try store.savePage(later)

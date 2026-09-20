@@ -36,13 +36,13 @@ enum NotebookLassoInkSource: Sendable {
     switch self {
     case .page(let page):
       entries = try PageInkDrawing.decode(page.drawingData).actions.filter { $0.isActive }.map {
-        .init(id:$0.id,tool:$0.tool,color:$0.color,sources:[.init($0,revision:$0.id)])
+        .init(id:$0.id,tool:$0.tool,color:$0.color,sources:[.init($0)])
       }
     case .spatial(let journal,_):
       entries = journal.actions.filter { $0.isActive
         && ($0.tool == .eraser || $0.spans.allSatisfy { $0.surface == surface }) }.compactMap { action in
           let spans=action.spans.enumerated().filter { $0.element.surface == surface }.map { index,span in
-            InkSampleRelations(sourceID:action.id,span:index,revision:action.id,samples:span.samples,
+            InkSampleRelations(sourceID:action.id,span:index,measurements:span.samples,
               header:.init(tool:action.tool,color:action.color))
           }
           return spans.isEmpty ? nil : .init(id:action.id,tool:action.tool,color:action.color,sources:spans)

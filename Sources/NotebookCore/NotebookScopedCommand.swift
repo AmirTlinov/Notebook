@@ -6,6 +6,18 @@ extension NotebookStoredFragment {
     .init(address: address, file: file, parent: parent, collection: collection, member: member,
       position: position ?? self.position, value: value, collections: collections ?? self.collections)
   }
+  var isInkMeasurementBody: Bool {
+    (file.hasPrefix("pages/") && address.contains("#/drawingData/actions/@") && collection == "samples")
+      || (file == "spatial-ink.json" && collection == "spans")
+  }
+
+  func hasSameInkMeasurements(as other: Self) throws -> Bool {
+    guard isInkMeasurementBody, replacing(value: .null) == other.replacing(value: .null) else { return false }
+    if value == other.value { return true }
+    if collection == "samples" { return try value.decode(InkMeasurements.self) == other.value.decode(InkMeasurements.self) }
+    return try value.decode([SpatialInkSpan].self) == other.value.decode([SpatialInkSpan].self)
+  }
+
 }
 
 extension NotebookStore {
@@ -13,7 +25,7 @@ extension NotebookStore {
   /// edits both reach it inside the same SQL command/receipt transaction.
   @discardableResult
   func writeFragment(_ fragment: NotebookStoredFragment, data suppliedData: Data? = nil, hash suppliedHash: String? = nil,
-    database: NotebookSQLConnection) throws -> Bool {
+    database: NotebookSQLConnection, migratingInk: Bool = false) throws -> Bool {
     for hash in try programPackageHashes(in: fragment) { try validateProgramPackageClosure(hash) }
     let data = try suppliedData ?? Self.storageEncoder.encode(fragment)
     let hash = try suppliedHash ?? database.putBlob(data)
@@ -95,10 +107,20 @@ extension NotebookStore {
       for head in order.heads { try database.noteOwner(.orderRoot, head.valueRoot) }
       try database.noteOwner(.pageOrder, fragment.member)
     }
-    if previousHash != nil,
-      (fragment.file.hasPrefix("pages/") && fragment.address.contains("#/drawingData/actions/@") && fragment.collection == "samples")
-        || (fragment.file == "spatial-ink.json" && fragment.collection == "spans") {
-      throw NotebookStorageError.invalidTransaction("stroke samples are immutable")
+    if let previousHash, fragment.isInkMeasurementBody {
+      let accepted = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(previousHash))
+      if migratingInk {
+        guard try accepted.migratingStoredInkMeasurements() == fragment else {
+          throw NotebookStorageError.invalidTransaction("ink migration changed measurements")
+        }
+      } else {
+        guard try accepted.hasSameInkMeasurements(as: fragment) else {
+          throw NotebookStorageError.invalidTransaction("stroke samples are immutable")
+        }
+        // Representation and revision remain those of the accepted action. An
+        // exact retry cannot rewrite them, nor revive a tombstoned action.
+        return false
+      }
     }
     if fragment.file == "workspace.json", fragment.collection == "items", let id = UUID(uuidString: fragment.member) { try database.noteOwner(.item, id.uuidString.lowercased()) }
     if fragment.file == "workspace.json", fragment.collection == "pageIDs", let parent = fragment.parent,

@@ -223,7 +223,7 @@ struct SpatialInkMesh: Sendable {
         let origin=span.samples.first?.worldPoint.map { WorldPoint(tileX:$0.tileX,tileY:$0.tileY,localX:0,localY:0) }
         let next=origin.map(Projection.world) ?? .local
         if tool != action.tool || projection != next { seal();tool=action.tool;projection=next }
-        let source=InkSampleRelations(sourceID:action.id,span:spanIndex,revision:action.id,samples:span.samples,
+        let source=InkSampleRelations(sourceID:action.id,span:spanIndex,measurements:span.samples,
           header:.init(tool:action.tool,color:action.color))
         append(.init(source:source,projection:.init(origin:origin)))
       }
@@ -257,7 +257,7 @@ struct PageInkMesh: Sendable {
           continue
         }
       }
-      let source=InkSampleRelations(action,revision:action.id)
+      let source=InkSampleRelations(action)
       entries.append(.init(action:action,mesh:.init(source:source,projection:.local),reusedIndex:nil))
     }
     return .init(entries: entries)
@@ -302,13 +302,13 @@ final class SpatialInkMeshCache {
   fileprivate func store(_ mesh: SpatialInkMesh, versions: [ActionVersion],
     surface: SurfaceID, journal: SpatialInkJournal?) {
     if let old = entries.removeValue(forKey: surface) { retainedBytes -= old.cost }
-    let samples = journal?.actions.reduce(0) { total, action in
-      total + action.spans.reduce(0) { $0 + $1.samples.count }
+    let sourceBytes = journal?.actions.reduce(0) { total, action in
+      total + action.spans.reduce(0) { $0 + $1.samples.payloadBytes }
     } ?? 0
     // Include canonical source retained for reconciliation, relative metadata,
     // and any explicitly required full normalization; visible caches own theirs.
     let cost = mesh.batches.reduce(0) { $0+$1.auxiliaryBytes }
-      + samples * MemoryLayout<SpatialInkSample>.stride
+      + sourceBytes
       + (journal?.actions.count ?? 0) * MemoryLayout<SpatialInkAction>.stride
     guard capacity > 0, cost <= byteLimit else { return }
     while entries.count >= capacity || retainedBytes + cost > byteLimit {

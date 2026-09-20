@@ -13,7 +13,7 @@ struct SpatialInkRenderLayer: Sendable {
 
 enum SpatialInkComposer {
   static func pageLayers(_ drawing: PageInkDrawing) -> [SpatialInkRenderLayer] {
-    drawing.activeActions.map { .init(source:.init($0,revision:$0.id)) }
+    drawing.activeActions.map { .init(source:.init($0)) }
   }
 
   static func boardLayers(
@@ -33,7 +33,7 @@ enum SpatialInkComposer {
   private static func layers(for surface: SurfaceID, in journal: SpatialInkJournal?) -> [InkSampleRelations] {
     (journal?.actions ?? []).filter(\.isActive).flatMap { action in
       action.spans.enumerated().filter { $0.element.surface == surface }.map { index,span in
-        .init(sourceID:action.id,span:index,revision:action.id,samples:span.samples,
+        .init(sourceID:action.id,span:index,measurements:span.samples,
           header:.init(tool:action.tool,color:action.color))
       }
     }

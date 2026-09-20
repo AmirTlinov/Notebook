@@ -57,7 +57,7 @@ extension NotebookStore {
       }
       try database.run("DELETE FROM sqlite_sequence WHERE name='change_log'")
       let sourceGeneration = try database.rows("SELECT value FROM metadata WHERE key='journal_generation'").first?[0].text.flatMap(UUID.init(uuidString:)) ?? sourcePeer
-      try database.run("DELETE FROM metadata WHERE key='placement_outgoing_floor' OR key LIKE 'peer_generation:%' OR key LIKE 'replication_snapshot:%'")
+      try database.run("DELETE FROM metadata WHERE key IN ('placement_outgoing_floor','ink_outgoing_floor') OR key LIKE 'peer_generation:%' OR key LIKE 'replication_snapshot:%'")
       try database.run("INSERT INTO metadata(key,value) VALUES('journal_generation',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [.text(UUID().uuidString.lowercased())])
       if let sourcePeer {
         try database.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',?)",

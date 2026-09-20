@@ -13,7 +13,7 @@ import Testing
   #expect(try PageInkDrawing.decode(drawing.dataRepresentation()) == drawing)
   #expect(drawing.actions.map(\.tool) == [.pen, .eraser])
   #expect(try drawing.appending(pen) == drawing)
-  #expect(try drawing.dataRepresentation().starts(with: Data("NotebookInk/2\n".utf8)))
+  #expect(try drawing.dataRepresentation().starts(with: Data("NotebookInk/3\n".utf8)))
 }
 
 @Test func pageInkAcceptsOnlyTheCurrentFormat() throws {

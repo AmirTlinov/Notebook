@@ -55,7 +55,7 @@ public struct InkElementTarget: Codable, Equatable, Sendable {
 
   /// Native masks need only a broad phase. Whole objects require an actual
   /// swept contact: a diagonal bounding box must not delete untouched programs.
-  public func intersects(_ samples: [SpatialInkSample]) -> Bool {
+  public func intersects(_ samples: some Sequence<SpatialInkSample>) -> Bool {
     var previous: (SpatialPoint, Double)?
     for sample in samples {
       let point = localPoint(sample), radius = sample.width / 2
@@ -108,9 +108,12 @@ public struct InkElementTarget: Codable, Equatable, Sendable {
 /// raw-ink erasure and element erasure; merge/replay cannot apply it twice.
 public struct InkElementErasure: Equatable, Sendable {
   public let target: InkElementTarget
-  public let samples: [SpatialInkSample]
+  public let samples: InkMeasurements
   public init(target: InkElementTarget, samples: [SpatialInkSample]) {
-    self.target = target; self.samples = samples
+    self.init(target:target,measurements:.init(samples))
+  }
+  public init(target: InkElementTarget, measurements: InkMeasurements) {
+    self.target=target;self.samples=measurements
   }
 }
 
@@ -119,7 +122,7 @@ extension PageInkDrawing {
     var result: [String: [InkElementErasure]] = [:]
     for action in actions where action.isActive && action.tool == .eraser {
       for target in action.elementTargets ?? [] {
-        result[target.elementID, default: []].append(.init(target: target, samples: action.samples))
+        result[target.elementID, default: []].append(.init(target: target, measurements: action.samples))
       }
     }
     return result
@@ -132,7 +135,7 @@ extension SpatialInkJournal {
     for action in actions where action.isActive && action.tool == .eraser {
       for span in action.spans where span.surface == surface {
         for target in span.elementTargets ?? [] {
-          result[target.elementID, default: []].append(.init(target: target, samples: span.samples))
+          result[target.elementID, default: []].append(.init(target: target, measurements: span.samples))
         }
       }
     }

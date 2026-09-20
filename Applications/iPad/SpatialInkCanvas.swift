@@ -722,15 +722,15 @@ struct SpatialInkCanvas: UIViewRepresentable {
       }
     }
 
-    private func measuredSpan(surface: SurfaceID, samples: [SpatialInkSample]) -> SpatialInkSpan {
-      let span = SpatialInkSpan(surface: surface, samples: samples)
+    private func measuredSpan(surface: SurfaceID, measurements: InkMeasurements) -> SpatialInkSpan {
+      let span = SpatialInkSpan(surface: surface, measurements: measurements)
       return actionTool == .eraser ? span.erasingElements(actionGeometry?.eraserTargets[surface] ?? []) : span
     }
 
     private func publishElementErasing() {
       var spans = actionSpans
       if let surface=currentSurface,let source=segmentSource,source.count > 0 {
-        spans.append(measuredSpan(surface:surface,samples:source.decoded()))
+        spans.append(measuredSpan(surface:surface,measurements:source.frozen().measurements))
       }
       onElementErasing(spans.map { .init(id: actionStrokeID, surface: $0.surface,
         samples: $0.samples, targets: $0.elementTargets ?? []) }, actionStrokeID)
@@ -739,7 +739,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private func finishCurrentSegment() {
       guard let currentSurface else { return }
       if let source=segmentSource,source.count > 0 {
-        actionSpans.append(measuredSpan(surface:currentSurface,samples:source.decoded()))
+        actionSpans.append(measuredSpan(surface:currentSurface,measurements:source.frozen().measurements))
       }
       activePen?.replacePredictions(with: [])
       surfaceRegistry.canvas(for: currentSurface)?

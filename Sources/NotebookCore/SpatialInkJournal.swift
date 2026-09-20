@@ -75,30 +75,29 @@ public struct SpatialInkSample: Codable, Equatable, Sendable {
 
 public struct SpatialInkSpan: Codable, Equatable, Sendable {
   public let surface: SurfaceID
-  public let samples: [SpatialInkSample]
+  public let samples: InkMeasurements
   public let elementTargets: [InkElementTarget]?
 
   public init(surface: SurfaceID, samples: [SpatialInkSample], elementTargets: [InkElementTarget]? = nil) {
-    precondition(surface.kind != .page && !samples.isEmpty)
+    self.init(surface:surface,measurements:.init(samples),elementTargets:elementTargets)
+  }
+  public init(surface: SurfaceID, measurements: InkMeasurements, elementTargets: [InkElementTarget]? = nil) {
+    precondition(surface.kind != .page && !measurements.isEmpty)
     self.surface = surface
-    self.samples = samples
+    self.samples = measurements
     self.elementTargets = elementTargets?.isEmpty == false ? elementTargets : nil
   }
 
   public func erasingElements(_ targets: [InkElementTarget]) -> Self {
-    .init(surface: surface, samples: samples, elementTargets: targets.filter { $0.intersects(samples) })
+    .init(surface: surface, measurements: samples, elementTargets: targets.filter { $0.intersects(samples) })
   }
 
   var isValid: Bool {
     (elementTargets == nil || (elementTargets!.allSatisfy { $0.isValid && ($0.worldOrigin != nil) == (surface.kind == .board) }
       && Set(elementTargets!.map(\.elementID)).count == elementTargets!.count))
       && surface.isValid && surface.kind != .page
-      && !samples.isEmpty && samples.allSatisfy(\.isValid)
-      && samples.allSatisfy {
-        surface.kind == .board
-          ? $0.worldPoint != nil
-          : $0.worldPoint == nil
-      }
+      && !samples.isEmpty && samples.count <= 1_000_000
+      && (surface.kind == .board ? samples.isWorld : samples.isPaper)
   }
 }
 
@@ -164,7 +163,7 @@ public struct SpatialInkAction: Codable, Equatable, Identifiable, Sendable {
 }
 
 public struct SpatialInkJournal: Codable, Equatable, Sendable {
-  public static let formatVersion = 1
+  public static let formatVersion = 2
 
   public let format: Int
   public private(set) var actions: [SpatialInkAction]
@@ -183,7 +182,7 @@ public struct SpatialInkJournal: Codable, Equatable, Sendable {
     actions.contains { action in
       action.isActive && action.tool == .pen
         && action.spans.contains { span in
-          span.surface == surface && span.samples.contains { $0.opacity > 0 }
+          span.surface == surface && span.samples.hasVisibleInk
         }
     }
   }

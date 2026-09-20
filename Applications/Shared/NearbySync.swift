@@ -103,7 +103,7 @@ struct NotebookPeerDiscovery: Equatable {
   }
   static func upgradeMessage(for error: Error) -> String? {
     if let error = error as? CollaborationError,
-      ["placement_migration_pending_peer", "placement_peer_upgrade_required", "placement_checkpoint_required"].contains(error.code) {
+      ["placement_migration_pending_peer", "placement_peer_upgrade_required", "format_checkpoint_required", "ink_migration_pending_peer"].contains(error.code) {
       return error.localizedDescription
     }
     if error as? NotebookTransportError == .unsupportedVersion {

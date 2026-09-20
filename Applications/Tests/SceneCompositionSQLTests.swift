@@ -1,4 +1,4 @@
-import NotebookCore
+@testable import NotebookCore
 import UIKit
 import XCTest
 @testable import Notebook
@@ -580,12 +580,8 @@ final class SceneCompositionSQLTests: XCTestCase {
     XCTAssertEqual(openedData.states[documentID]?.value(for: "body"), .number(7))
     XCTAssertEqual(newData.ink.actions.count, 1)
     XCTAssertEqual(openedData.ink, newData.ink)
-    newData.ink.actions[0].spans[0].samples.withUnsafeBufferPointer { before in
-      openedData.ink.actions[0].spans[0].samples.withUnsafeBufferPointer { after in
-        XCTAssertEqual(before.baseAddress, after.baseAddress,
-          "The same checked SQL cut keeps its actual measured samples, not a freshly decoded equal copy")
-      }
-    }
+    XCTAssertTrue(newData.ink.actions[0].spans[0].samples.storage === openedData.ink.actions[0].spans[0].samples.storage,
+      "The same checked SQL cut keeps its actual relation body, not a freshly decoded equal copy")
     let expanded = SceneCompositionPlan(revision: newPlan.revision, workspaceID: newPlan.workspaceID,
       rootBoardID: newPlan.rootBoardID, inkBoardIDs: newPlan.inkBoardIDs,
       liveOwners: newPlan.liveOwners + [.init(plane: .board(header.rootBoardID), id: .item(notebookID),

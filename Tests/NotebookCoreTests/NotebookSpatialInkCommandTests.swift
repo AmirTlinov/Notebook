@@ -30,14 +30,14 @@ struct NotebookSpatialInkCommandTests {
       let read = try store.readSpatialInk(surfaces: [surface])
       let duration = start.duration(to: .now)
       #expect(read == canonical)
-      #expect(read.actions[0].spans[0].samples == samples)
+      #expect(read.actions[0].spans[0].samples.elementsEqual(samples,by:InkSampleRelations.sameBits))
       #expect(!read.actions[0].isActive)
       #expect(read.actions[0].stateStamp.counter == 2)
       print("INK_READ samples=4096 generic=\(oldTime) typed=\(duration)")
     }
   }
 
-  @Test func typedReadRejectsInvalidMeasurementsBeforeConstructingAnAction() throws {
+  @Test func typedReadRejectsInvalidRelationsBeforeConstructingAnAction() throws {
     try fixture { store, actor, header in
       let surface = SurfaceID.board(header.rootBoardID)
       let action = SpatialInkAction(tool: .pen, spans: [span(surface)], stamp: .init(counter: 1, actor: actor))
@@ -46,10 +46,10 @@ struct NotebookSpatialInkCommandTests {
       try store.commandTransaction {
         let record = try #require(try store.storedFragments(address: address).first)
         guard case .array(var spans) = record.value,
-          case .object(var first) = spans[0], case .array(var samples) = first["samples"],
-          case .object(var sample) = samples[0] else { throw NotebookStorageError.corruptRecord(address) }
-        sample["width"] = .number(-1); samples[0] = .object(sample)
-        first["samples"] = .array(samples); spans[0] = .object(first)
+          case .object(var first) = spans[0], let encoded = first["samples"]?.string,
+          var bytes = Data(base64Encoded: encoded) else { throw NotebookStorageError.corruptRecord(address) }
+        bytes.removeLast()
+        first["samples"] = .string(bytes.base64EncodedString()); spans[0] = .object(first)
         let data = try JSONEncoder().encode(record.replacing(value: .array(spans)))
         let hash = try store.currentSQL!.putBlob(data)
         try store.currentSQL!.run("UPDATE records SET hash=? WHERE address=?", [.text(hash), .text(address)])

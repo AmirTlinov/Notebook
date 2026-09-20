@@ -307,7 +307,7 @@ public struct NotebookCommandDispatcher: Sendable {
         boardIDs: query.boardIDs ?? [], surfaces: query.surfaces ?? [])
       return .object(["header": try .encode(set.header), "items": try .encode(set.items), "boards": .array(try set.boards.map(boardReadProjection)),
         "pages": .object(try Dictionary(uniqueKeysWithValues:set.pages.map { ($0.key.uuidString.lowercased(),try $0.value.graphicReadProjection()) })),
-        "documents": try keyed(set.documents), "states": try keyed(set.states), "ink": try .encode(set.ink)])
+        "documents": try keyed(set.documents), "states": try keyed(set.states), "ink": try set.ink.measuredReadProjection()])
     case .sceneWindow:
       guard let bounds = query.bounds else { throw invalid("invalid_region", "Нужна физическая область сцены.") }
       let window = try store.readSceneWindow(boardID: required(query.id), bounds: bounds.validated(),
@@ -334,7 +334,9 @@ public struct NotebookCommandDispatcher: Sendable {
       // The opaque cursor preserves UInt64 exactly; JavaScript never rounds it.
       return .object(["revision": .string(String(page.revision)), "entries": try .encode(page.entries),
         "nextCursor": try page.next.map { .string(try JSONEncoder().encode($0).base64EncodedString()) } ?? .null])
-    case .codeFragment: return try .encode(store.codeAnnotation(required(query.id)))
+    case .codeFragment:
+      guard let annotation = try store.codeAnnotation(required(query.id)) else { return .null }
+      return try JSONValue.encode(annotation).setting("ink", annotation.ink.measuredReadProjection())
     case .codeFragments:
       guard let file = query.file else { throw invalid("invalid_reference", "Нужен адрес файла на компьютере.") }
       return try .encode(store.codeFragments(file: file, after: query.after, limit: query.limit ?? 64))
@@ -353,7 +355,7 @@ public struct NotebookCommandDispatcher: Sendable {
       guard let rawID = query.elementID, let actionID = UUID(uuidString: rawID) else {
         throw invalid("invalid_reference", "Нужен UUID исходного штриха листа.")
       }
-      return try .encode(store.readPageInkAction(pageID: required(query.id), actionID: actionID))
+      return try store.readPageInkAction(pageID: required(query.id), actionID: actionID)?.measuredReadProjection() ?? .null
     case .document: return try .encode(store.loadDocument(required(query.id)))
     case .documentState: return try .encode(store.loadDocumentState(required(query.id)))
     case .documentBlock:
@@ -379,7 +381,7 @@ public struct NotebookCommandDispatcher: Sendable {
       let pageID = try required(query.id)
       guard let itemID = try query.itemID ?? store.ownerItemID(ofPage: pageID) else { return .null }
       return try .encode(store.resolveNotebookPage(pageID, in: itemID, expectedVisibleRoot: query.visibleRoot))
-    case .spatialInk: return try .encode(store.readSpatialInk(surfaces: query.surfaces ?? []))
+    case .spatialInk: return try store.readSpatialInk(surfaces: query.surfaces ?? []).measuredReadProjection()
     case .presence: return try .encode(store.readObservedPresenceIfAvailable())
     case .selection: return try .encode(store.readSelectionPublication())
     case .attentionEvidence: return try .encode(store.attentionEvidence(contextID: required(query.id), referenceID: required(query.referenceID)))

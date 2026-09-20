@@ -222,6 +222,8 @@ extension InkSampleRelations {
     let count: Int
     let height: Int
     let geometry: Geometry
+    let worldEvents: Int
+    let hasVisibleInk: Bool
     var bounds: CGRect { geometry.bounds }
     let pending: Bool
     let domain: [Lattice?] // x, y, time; nil means no admitted nonzero translation
@@ -230,6 +232,17 @@ extension InkSampleRelations {
     init(block: Block,pending: Bool = false) {
       self.pending=pending
       content = .block(block);count=block.count;height=1;geometry=Geometry(block:block)
+      switch block {
+      case .literal(let samples):
+        worldEvents=samples.values.reduce(0) { $0+($1.worldPoint == nil ? 0 : 1) }
+        hasVisibleInk=samples.values.contains { $0.opacity > 0 }
+      case .fields(let fields,let count):
+        worldEvents=0
+        switch fields[4] {
+        case .literal(let bits): hasVisibleInk=bits.contains { Double(bitPattern:$0) > 0 }
+        default: hasVisibleInk=count > 0 && (fields[4].value(at:0) > 0 || fields[4].value(at:count-1) > 0)
+        }
+      }
       func fieldDomain(_ field: Field) -> Lattice? {
         switch field {
         case .constant(let bits): return Lattice(Double(bitPattern:bits))
@@ -274,6 +287,16 @@ extension InkSampleRelations {
       case .pair(let a,let b): self.pending=pending || a.pending || b.pending;geometry=a.geometry.joined(b.geometry)
       case .shifted(let body,let basis): self.pending=pending || body.pending;geometry=body.geometry.shifted(basis.step)
       case .repeated(let body,let n,let step): self.pending=pending || body.pending;geometry=body.geometry.repeated(count:n,step:step)
+      }
+      switch content {
+      case .block(let b):
+        if case .literal(let samples)=b {
+          worldEvents=samples.values.reduce(0) { $0+($1.worldPoint == nil ? 0 : 1) }
+        } else { worldEvents=0 }
+        hasVisibleInk=(0..<b.count).contains { b.sample(at:$0).opacity > 0 }
+      case .pair(let a,let b): worldEvents=a.worldEvents+b.worldEvents;hasVisibleInk=a.hasVisibleInk || b.hasVisibleInk
+      case .repeated(let body,let n,_): worldEvents=body.worldEvents*n;hasVisibleInk=n > 0 && body.hasVisibleInk
+      case .shifted(let body,_): worldEvents=body.worldEvents;hasVisibleInk=body.hasVisibleInk
       }
       self.content=content;self.count=count;self.height=height;self.domain=domain
     }
@@ -442,7 +465,7 @@ extension InkSampleRelations {
       }
       return .equal
     }
-    private static let nodeBytes=MemoryLayout<Content>.stride+MemoryLayout<Geometry>.stride+MemoryLayout<Lattice?>.stride*3+48
+    private static let nodeBytes=MemoryLayout<Content>.stride+MemoryLayout<Geometry>.stride+MemoryLayout<Lattice?>.stride*3+64
     func markPending() -> Sequence {
       if pending { return self }
       return .init(content,count:count,height:height,domain:domain,pending:true)
@@ -632,22 +655,22 @@ extension InkSampleRelations {
         }
       }
     }
-    func allocationSummary(seen: inout Set<ObjectIdentifier>,includeExternal: Bool = true) -> (nodes: Int,bytes: Int) {
+    func allocationSummary(seen: inout Set<ObjectIdentifier>) -> (nodes: Int,bytes: Int) {
       guard seen.insert(ObjectIdentifier(self)).inserted else { return (0,0) }
-      var total=(nodes:1,bytes:MemoryLayout<Content>.stride+MemoryLayout<Geometry>.stride+MemoryLayout<Lattice?>.stride*3+48)
+      var total=(nodes:1,bytes:MemoryLayout<Content>.stride+MemoryLayout<Geometry>.stride+MemoryLayout<Lattice?>.stride*3+64)
       switch content {
       case .block(let b):
         if case .literal(let samples)=b {
           if seen.insert(ObjectIdentifier(samples.buffer)).inserted {
-            total.bytes += includeExternal || !samples.buffer.external ? samples.buffer.byteCount : 32
+            total.bytes += samples.buffer.byteCount
           }
         } else { total.bytes += b.payloadBytes }
       case .pair(let a,let b):
-        for child in [a,b] { let c=child.allocationSummary(seen:&seen,includeExternal:includeExternal);total.nodes += c.nodes;total.bytes += c.bytes }
+        for child in [a,b] { let c=child.allocationSummary(seen:&seen);total.nodes += c.nodes;total.bytes += c.bytes }
       case .repeated(let body,_,_):
-        let c=body.allocationSummary(seen:&seen,includeExternal:includeExternal);total.nodes += c.nodes;total.bytes += c.bytes
+        let c=body.allocationSummary(seen:&seen);total.nodes += c.nodes;total.bytes += c.bytes
       case .shifted(let body,let basis):
-        let c=body.allocationSummary(seen:&seen,includeExternal:includeExternal);total.nodes += c.nodes;total.bytes += c.bytes
+        let c=body.allocationSummary(seen:&seen);total.nodes += c.nodes;total.bytes += c.bytes
         if seen.insert(ObjectIdentifier(basis)).inserted { total.nodes += 1;total.bytes += MemoryLayout<InkRepeatStep>.stride+MemoryLayout<UUID>.stride+16 }
       }
       return total

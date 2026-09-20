@@ -3262,6 +3262,9 @@
                               "$ref": "#/$defs/__schema55"
                             }
                           },
+                          "relations": {
+                            "$ref": "#/$defs/__schema0"
+                          },
                           "elementTargets": {
                             "type": "array",
                             "items": {
@@ -3275,7 +3278,8 @@
                           "color",
                           "sequence",
                           "isActive",
-                          "samples"
+                          "samples",
+                          "relations"
                         ],
                         "additionalProperties": {}
                       }
@@ -6320,6 +6324,9 @@
                               "$ref": "#/$defs/__schema55"
                             }
                           },
+                          "relations": {
+                            "$ref": "#/$defs/__schema0"
+                          },
                           "elementTargets": {
                             "type": "array",
                             "items": {
@@ -6329,7 +6336,8 @@
                         },
                         "required": [
                           "surface",
-                          "samples"
+                          "samples",
+                          "relations"
                         ],
                         "additionalProperties": {}
                       }
@@ -7902,6 +7910,9 @@
                                 "$ref": "#/$defs/__schema55"
                               }
                             },
+                            "relations": {
+                              "$ref": "#/$defs/__schema0"
+                            },
                             "elementTargets": {
                               "type": "array",
                               "items": {
@@ -7915,7 +7926,8 @@
                             "color",
                             "sequence",
                             "isActive",
-                            "samples"
+                            "samples",
+                            "relations"
                           ],
                           "additionalProperties": {}
                         }
@@ -10956,6 +10968,9 @@
                               "$ref": "#/$defs/__schema55"
                             }
                           },
+                          "relations": {
+                            "$ref": "#/$defs/__schema0"
+                          },
                           "elementTargets": {
                             "type": "array",
                             "items": {
@@ -10965,7 +10980,8 @@
                         },
                         "required": [
                           "surface",
-                          "samples"
+                          "samples",
+                          "relations"
                         ],
                         "additionalProperties": {}
                       }
@@ -16134,6 +16150,9 @@
                                           "additionalProperties": {}
                                         }
                                       },
+                                      "relations": {
+                                        "$ref": "#/$defs/__schema2"
+                                      },
                                       "elementTargets": {
                                         "type": "array",
                                         "items": {
@@ -16183,7 +16202,8 @@
                                     },
                                     "required": [
                                       "surface",
-                                      "samples"
+                                      "samples",
+                                      "relations"
                                     ],
                                     "additionalProperties": {}
                                   }
@@ -34055,6 +34075,9 @@
                             "additionalProperties": {}
                           }
                         },
+                        "relations": {
+                          "$ref": "#/$defs/__schema3"
+                        },
                         "elementTargets": {
                           "type": "array",
                           "items": {
@@ -34083,7 +34106,8 @@
                       },
                       "required": [
                         "surface",
-                        "samples"
+                        "samples",
+                        "relations"
                       ],
                       "additionalProperties": {}
                     }
@@ -38741,13 +38765,16 @@
                     "additionalProperties": {}
                   }
                 },
+                "relations": {
+                  "$ref": "#/$defs/__schema4"
+                },
                 "elementTargets": {
                   "type": "array",
                   "items": {
                     "type": "object",
                     "properties": {
                       "elementID": {
-                        "type": "string"
+                        "$ref": "#/$defs/__schema4"
                       },
                       "frame": {
                         "type": "object",
@@ -38794,7 +38821,8 @@
                 "color",
                 "sequence",
                 "isActive",
-                "samples"
+                "samples",
+                "relations"
               ],
               "additionalProperties": {}
             }
@@ -38865,6 +38893,9 @@
             "localY"
           ],
           "additionalProperties": false
+        },
+        "__schema4": {
+          "type": "string"
         }
       }
     },
@@ -42642,13 +42673,16 @@
                         "additionalProperties": {}
                       }
                     },
+                    "relations": {
+                      "$ref": "#/$defs/__schema3"
+                    },
                     "elementTargets": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
                           "elementID": {
-                            "type": "string"
+                            "$ref": "#/$defs/__schema3"
                           },
                           "frame": {
                             "type": "object",
@@ -42691,19 +42725,20 @@
                   },
                   "required": [
                     "surface",
-                    "samples"
+                    "samples",
+                    "relations"
                   ],
                   "additionalProperties": {}
                 }
               },
               "stamp": {
-                "$ref": "#/$defs/__schema3"
+                "$ref": "#/$defs/__schema4"
               },
               "isActive": {
                 "type": "boolean"
               },
               "stateStamp": {
-                "$ref": "#/$defs/__schema3"
+                "$ref": "#/$defs/__schema4"
               }
             },
             "required": [
@@ -42719,7 +42754,7 @@
           }
         },
         "stamp": {
-          "$ref": "#/$defs/__schema3"
+          "$ref": "#/$defs/__schema4"
         }
       },
       "required": [
@@ -42770,6 +42805,9 @@
           "additionalProperties": false
         },
         "__schema3": {
+          "type": "string"
+        },
+        "__schema4": {
           "type": "object",
           "properties": {
             "counter": {
@@ -46769,6 +46807,9 @@
                                 "additionalProperties": {}
                               }
                             },
+                            "relations": {
+                              "$ref": "#/$defs/__schema1"
+                            },
                             "elementTargets": {
                               "type": "array",
                               "items": {
@@ -46818,7 +46859,8 @@
                           },
                           "required": [
                             "surface",
-                            "samples"
+                            "samples",
+                            "relations"
                           ],
                           "additionalProperties": {}
                         }

@@ -133,8 +133,9 @@ extension NotebookStore {
       let spansData = rows.first(where: { $0[0].text == spansAddress })?[1].blob
     else { throw NotebookStorageError.corruptRecord(address) }
     let decoder = JSONDecoder()
-    let header = try decoder.decode(NotebookStoredPayload<SpatialInkActionHeader>.self, from: headerData)
-    let spans = try decoder.decode(NotebookStoredPayload<[SpatialInkSpan]>.self, from: spansData)
+    guard let header = try? decoder.decode(NotebookStoredPayload<SpatialInkActionHeader>.self, from: headerData),
+      let spans = try? decoder.decode(NotebookStoredPayload<[SpatialInkSpan]>.self, from: spansData)
+    else { throw NotebookStorageError.corruptRecord(address) }
     guard header.address == address, header.file == "spatial-ink.json",
       header.parent == "spatial-ink.json#", header.collection == "actions",
       header.member == header.value.id.uuidString.lowercased(),

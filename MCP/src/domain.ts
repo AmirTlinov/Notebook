@@ -254,6 +254,8 @@ export interface SpatialInkSample {
 export interface SpatialInkSpan {
   surface: SurfaceID;
   samples: SpatialInkSample[];
+  /** Exact NIM1 relation graph, base64; points above are a bounded read projection. */
+  relations: string;
 }
 
 export interface SpatialInkAction {
@@ -267,7 +269,7 @@ export interface SpatialInkAction {
 }
 
 export interface SpatialInkJournal {
-  format: 1;
+  format: 2;
   actions: SpatialInkAction[];
   stamp: VersionStamp;
 }

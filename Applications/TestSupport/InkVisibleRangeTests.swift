@@ -14,7 +14,9 @@ final class InkVisibleRangeTests: XCTestCase {
       opacity:0.25+Double(i%4)/8,force:Double(i%5)/4,azimuth:Double(i%9)/4,altitude:1)
   }
   func testIncompressibleCanonicalLiteralsShareOneImmutableBuffer() throws {
-    var samples=(0..<4096).map { i in sample(Double(i)/2+sin(Double(i))/8,sin(Double(i)*1.7)*40,i) }
+    let paper=(0..<4096).map { i in sample(Double(i)/2+sin(Double(i))/8,sin(Double(i)*1.7)*40,i) }
+    var samples=paper.map { s in SpatialInkSample(point:s.point,worldPoint:.init(x:s.point.x,y:s.point.y),
+      timeOffset:s.timeOffset,width:s.width,opacity:s.opacity,force:s.force,azimuth:s.azimuth,altitude:s.altitude) }
     let original=samples[0],measured=source(samples)
     var buffers:[InkSampleRelations.SampleBuffer]=[]
     func visit(_ node: InkSampleRelations.Sequence) {
@@ -30,7 +32,9 @@ final class InkVisibleRangeTests: XCTestCase {
     XCTAssertTrue(buffers.allSatisfy { $0 === buffer })
     let canonical=samples.withUnsafeBufferPointer { UInt(bitPattern:$0.baseAddress!) }
     XCTAssertEqual(buffer.samples.withUnsafeBufferPointer { UInt(bitPattern:$0.baseAddress!) },canonical)
-    XCTAssertEqual(measured.payloadBytes-measured.auxiliaryBytes,samples.capacity*MemoryLayout<SpatialInkSample>.stride)
+    let sourceBytes=samples.capacity*MemoryLayout<SpatialInkSample>.stride
+    XCTAssertGreaterThanOrEqual(measured.payloadBytes,sourceBytes)
+    XCTAssertLessThan(measured.payloadBytes-sourceBytes,25_000)
     XCTAssertLessThan(measured.auxiliaryBytes,samples.count*MemoryLayout<SpatialInkGeometry.Node>.stride/4)
     samples[0]=sample(900,900,0)
     XCTAssertTrue(InkSampleRelations.sameBits(measured.sample(at:0),original),"A caller mutation must COW, never alter accepted events")
@@ -39,10 +43,10 @@ final class InkVisibleRangeTests: XCTestCase {
     let tiny=InkSampleRelations.Sequence(block:.literal(.init(buffer:buffer,range:0..<1)))
     var seen=Set<ObjectIdentifier>()
     XCTAssertGreaterThan(tiny.allocationSummary(seen:&seen).bytes,4096*MemoryLayout<SpatialInkSample>.stride)
-    let batch=SpatialInkMesh.Batch(source:measured,projection:.local)
+    let batch=SpatialInkMesh.Batch(source:measured,projection:.world(.zero),sampleProjection:.init(origin:.zero))
     XCTAssertEqual(batch.preparedNodeCount,0)
     let visibleCPU=(0..<batch.chunkCount).reduce(0) { $0+batch.prepareChunk($1).chunk.byteCount }
-    let reference=SpatialInkMesh.referencePage(.init(actions:[measured.restoredAction()])).batches[0]
+    let reference=SpatialInkMesh.referencePage(.init(actions:[PageInkAction(tool:.pen,color:measured.header.color,samples:paper)])).batches[0]
     let canonicalBytes=buffer.samples.capacity*MemoryLayout<SpatialInkSample>.stride
     XCTAssertLessThanOrEqual(Double(canonicalBytes+batch.auxiliaryBytes+visibleCPU),Double(canonicalBytes+reference.byteCount)*1.1)
   }

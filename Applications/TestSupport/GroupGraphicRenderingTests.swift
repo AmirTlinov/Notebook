@@ -711,7 +711,7 @@ import AppKit
     for (name,data) in [("before",uncut),("cut",cut),("whole-moved",movedCut)] {
       let proof=XCTAttachment(data:data,uniformTypeIdentifier:"public.png");proof.name="native-text-eraser-\(name)";proof.lifetime = .keepAlways;add(proof)
     }
-    XCTAssertEqual(page.elements[1],text);XCTAssertEqual(drawing.actions.first?.samples,samples)
+    XCTAssertEqual(page.elements[1],text);XCTAssertEqual(drawing.actions.first?.samples,InkMeasurements(samples))
   }
 
   func testMeasuredEraserCapturesTheModelsWholeBasisNotTheLocalFrame() async throws {

@@ -62,11 +62,12 @@ extension NotebookStore {
           guard previous.isValid, previous.id == id, previous.stamp == header.stamp,
             previous.tool == header.tool, previous.color == header.color else { throw NotebookStorageError.transactionConflict }
           if let spans {
-            // Compare exact addressed immutable bytes, without decoding samples.
+            // Keep the accepted encoding when a peer proves the same exact body.
             let canonical = NotebookStoredFragment(address: spansAddress, file: file, parent: actionAddress,
               collection: "spans", member: "", position: 0, value: spans.value, collections: [])
             guard spans == canonical,
-              try storedFragments(address: spansAddress, descendants: false) == [spans] else { throw NotebookStorageError.transactionConflict }
+              let accepted = try storedFragments(address: spansAddress, descendants: false).first,
+              try accepted.hasSameInkMeasurements(as: spans) else { throw NotebookStorageError.transactionConflict }
           }
           _ = try publishSpatialInk(.state(actionID: id, creationStamp: header.stamp,
             isActive: header.isActive, stateStamp: header.stateStamp, journalStamp: clock), origin: .replication)

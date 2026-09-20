@@ -97,7 +97,7 @@ final class NotebookTransportSessionTests: XCTestCase {
     var stopped: Set<UUID> = []
     pair.onStopped = { identity, error in
       XCTAssertTrue(stopped.insert(identity.deviceID).inserted)
-      XCTAssertEqual((error as? CollaborationError)?.code, "placement_checkpoint_required")
+      XCTAssertEqual((error as? CollaborationError)?.code, "format_checkpoint_required")
       rejected.fulfill()
     }
     try pair.start()
@@ -117,7 +117,7 @@ final class NotebookTransportSessionTests: XCTestCase {
     let server = try XCTUnwrap(pair.server), client = try XCTUnwrap(pair.client)
     client.onStop = { peer, error in
       XCTAssertEqual(peer?.deviceID, pair.serverIdentity.deviceID)
-      XCTAssertEqual((error as? CollaborationError)?.code, "placement_checkpoint_required")
+      XCTAssertEqual((error as? CollaborationError)?.code, "format_checkpoint_required")
       rejected.fulfill()
     }
     server.stop(NotebookTransportContentRequirement.checkpoint.error)

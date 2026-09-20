@@ -97,7 +97,9 @@ struct NotebookPageInkReadTests {
   @Test func exactHumanStrokePreservesMeasurementsAndMissingIDIsNull() throws {
     let f = try Fixture(), action = f.actions[2]
     let value = try f.read(f.query("pageInkAction", elementID: action.id.uuidString))
-    let exact = try #require(try value["data"]?["action"]?.decode(PageInkAction.self))
+    let raw = try #require(value["data"]?["action"])
+    let exact = try raw.setting("samples",raw["relations"]).decode(PageInkAction.self)
+    #expect(try raw["samples"]?.decode([SpatialInkSample].self).elementsEqual(action.samples,by:InkSampleRelations.sameBits) == true)
     #expect(exact == action)
     #expect(exact.tool == .eraser)
     let header = try #require(try value["data"]?["header"]?.decode(NotebookContentHeader.self))
@@ -118,7 +120,8 @@ struct NotebookPageInkReadTests {
     #expect(directory["data"]?["actions"]?.array.count == 5)
     #expect(directory["data"]?["baseline"]?["present"] == .bool(true))
     let exact = try f.read(f.query("pageInkAction", elementID: f.actions[0].id.uuidString))
-    #expect(try exact["data"]?["action"]?.decode(PageInkAction.self) == f.actions[0])
+    let raw=try #require(exact["data"]?["action"])
+    #expect(try raw.setting("samples",raw["relations"]).decode(PageInkAction.self) == f.actions[0])
   }
 
   @Test func retiredSourceCannotBeReadThroughEitherQuery() throws {
@@ -157,7 +160,7 @@ extension NotebookPageInkReadTests {
       UUID(uuidString: String(format: "10000000-0000-0000-0000-%012d", offset))!
     }
     let selected = PageInkAction(id: UUID(uuidString: "ffffffff-ffff-ffff-ffff-ffffffffffff")!,
-      tool: .pen, samples: f.actions[0].samples, sequence: 100_006)
+      tool: .pen, measurements: f.actions[0].samples, sequence: 100_006)
     let seedStarted = ContinuousClock.now
     try f.store.commandTransaction {
       let db = f.store.currentSQL!
@@ -169,7 +172,7 @@ extension NotebookPageInkReadTests {
         }
       }
       for offset in 0..<100_000 {
-        try write(.init(id: id(offset), tool: .pen, samples: f.actions[0].samples,
+        try write(.init(id: id(offset), tool: .pen, measurements: f.actions[0].samples,
           sequence: UInt64(offset + 6)), position: offset + 5)
       }
       try write(selected, position: 100_005)
@@ -197,7 +200,8 @@ extension NotebookPageInkReadTests {
     }
     #expect(values.0["data"]?["actions"]?.array.count == 3)
     #expect(values.0["coverage"]?["complete"] == .bool(true))
-    #expect(try values.1["data"]?["action"]?.decode(PageInkAction.self) == selected)
+    let raw=try #require(values.1["data"]?["action"])
+    #expect(try raw.setting("samples",raw["relations"]).decode(PageInkAction.self) == selected)
     #expect(counter.pointee > 0 && counter.pointee < 20_000)
     #expect(try f.store.currentReadCursor() == cursor)
     print("PAGE_INK_ADDRESSED_READ foreign_actions=100000 SQL_instructions=\(counter.pointee) elapsed=\(started.duration(to: .now))")

@@ -128,8 +128,7 @@ final class MacPageInkCanvas: NSView {
       model.releaseDrawingReservation(pageID: pageID, stamp: stamp)
       model.inputGate.endPencilAction(source: source); return
     }
-    let action=PageInkAction(id:measured.sourceID,tool:measured.header.tool,color:measured.header.color,
-      samples:measured.decoded()).erasingElements(actionTargets)
+    let action=measured.frozen().restoredAction().erasingElements(actionTargets)
     if actionTool == .pen { ink.commitActiveStroke(action) } else { ink.commitActiveEraser(action) }
     unpublished.insert(action.id)
     let accepted = model.acceptDrawingAction(action, pageID: pageID, stamp: stamp)

@@ -3,7 +3,7 @@ import Foundation
 /// A page owns the ordered pen and eraser operations that produced its pixels.
 /// A converted page starts with the final visible PNG of its previous drawing.
 public struct PageInkDrawing: Codable, Equatable, Sendable {
-  private static let signature = Data("NotebookInk/2\n".utf8)
+  private static let signature = Data("NotebookInk/3\n".utf8)
   public let baselinePNG: Data?
   public let baselineActionCount: Int
   public private(set) var actions: [PageInkAction]
@@ -99,7 +99,7 @@ public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
   public let id: UUID
   public let tool: SpatialInkTool
   public let color: SpatialInkColor
-  public let samples: [SpatialInkSample]
+  public let samples: InkMeasurements
   public let sequence: UInt64
   public let elementTargets: [InkElementTarget]?
   public let isActive: Bool
@@ -109,10 +109,16 @@ public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
     samples: [SpatialInkSample], sequence: UInt64 = 0, isActive: Bool = true,
     elementTargets: [InkElementTarget]? = nil
   ) {
+    self.init(id:id,tool:tool,color:color,measurements:.init(samples),sequence:sequence,isActive:isActive,elementTargets:elementTargets)
+  }
+
+  public init(id: UUID = UUID(), tool: SpatialInkTool, color: SpatialInkColor = .black,
+    measurements: InkMeasurements, sequence: UInt64 = 0, isActive: Bool = true,
+    elementTargets: [InkElementTarget]? = nil) {
     self.id = id
     self.tool = tool
     self.color = color
-    self.samples = samples
+    self.samples = measurements
     self.sequence = sequence
     self.elementTargets = elementTargets?.isEmpty == false ? elementTargets : nil
     self.isActive = isActive
@@ -121,7 +127,7 @@ public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
 
   public var isValid: Bool {
     sequence <= VersionStamp.maximumCounter && color.isValid && !samples.isEmpty && samples.count <= 1_000_000
-      && samples.allSatisfy { $0.isValid && $0.worldPoint == nil }
+      && samples.isPaper
       && (elementTargets == nil || (tool == .eraser
         && elementTargets!.allSatisfy { $0.isValid && $0.worldOrigin == nil }
         && Set(elementTargets!.map(\.elementID)).count == elementTargets!.count))
@@ -134,7 +140,7 @@ public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
     id = try values.decode(UUID.self, forKey: .id)
     tool = try values.decode(SpatialInkTool.self, forKey: .tool)
     color = try values.decode(SpatialInkColor.self, forKey: .color)
-    samples = try values.decode([SpatialInkSample].self, forKey: .samples)
+    samples = try values.decode(InkMeasurements.self, forKey: .samples)
     sequence = try values.decode(UInt64.self, forKey: .sequence)
     isActive = try values.decode(Bool.self, forKey: .isActive)
     elementTargets = try values.decodeIfPresent([InkElementTarget].self, forKey: .elementTargets)
@@ -143,12 +149,12 @@ public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
 
   public func erasingElements(_ targets: [InkElementTarget]) -> Self {
     guard tool == .eraser else { return self }
-    return Self(id: id, tool: tool, color: color, samples: samples, sequence: sequence, isActive: isActive,
+    return Self(id: id, tool: tool, color: color, measurements: samples, sequence: sequence, isActive: isActive,
       elementTargets: targets.filter { $0.intersects(samples) })
   }
 
   fileprivate func ordered(_ sequence: UInt64) -> Self {
-    Self(id: id, tool: tool, color: color, samples: samples, sequence: sequence, isActive: isActive, elementTargets: elementTargets)
+    Self(id: id, tool: tool, color: color, measurements: samples, sequence: sequence, isActive: isActive, elementTargets: elementTargets)
   }
 
   fileprivate func hasSameMeasurement(as other: Self) -> Bool {
@@ -156,6 +162,6 @@ public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
   }
 
   fileprivate func deactivated() -> Self {
-    isActive ? Self(id: id, tool: tool, color: color, samples: samples, sequence: sequence, isActive: false, elementTargets: elementTargets) : self
+    isActive ? Self(id: id, tool: tool, color: color, measurements: samples, sequence: sequence, isActive: false, elementTargets: elementTargets) : self
   }
 }

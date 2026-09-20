@@ -6,13 +6,13 @@ import NotebookCore
 struct NotebookElementErasing {
   let id: UUID
   let surface: SurfaceID
-  let samples: [SpatialInkSample]
+  let samples: InkMeasurements
   let targets: [InkElementTarget]
   var accepted = false
 
   var masks: [String: [InkElementErasure]] {
     Dictionary(uniqueKeysWithValues: targets.map {
-      ($0.elementID, [InkElementErasure(target: $0, samples: samples)])
+      ($0.elementID, [InkElementErasure(target: $0, measurements: samples)])
     })
   }
 }

@@ -70,7 +70,7 @@ struct InkElementErasureTests {
     #expect(undone.elementErasures.isEmpty)
     #expect(try undone.merging(decoded) == undone, "An old peer cannot restore the erase after undo")
     #expect(decoded.elementErasures["created-later"] == nil)
-    let altered = PageInkAction(id: eraser.id, tool: .eraser, samples: eraser.samples)
+    let altered = PageInkAction(id: eraser.id, tool: .eraser, measurements: eraser.samples)
     #expect(throws: PageInkDrawing.InkError.self) { try decoded.appending(altered) }
   }
 

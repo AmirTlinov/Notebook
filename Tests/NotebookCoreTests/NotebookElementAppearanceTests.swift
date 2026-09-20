@@ -102,7 +102,7 @@ import Testing
     let pageID = try #require(store.loadIndex().selectedPageID), surface = SurfaceID.board(header.rootBoardID)
     let erase = cut([.init(x:80,y:50)],width:400)
     var page = try store.loadPage(pageID)
-    let action = PageInkAction(tool:.eraser,samples:erase.samples).erasingElements([erase.target])
+    let action = PageInkAction(tool:.eraser,measurements:erase.samples).erasingElements([erase.target])
     let change = try page.prepareInkChange(.append(action),stamp:.init(counter:10,actor:actor))
     let changed = page.publishInkChange(change); #expect(changed); try store.savePage(page)
     let spatial = SpatialInkAction(tool:.eraser,spans:[SpatialInkSpan(surface:surface,samples:erase.samples.map { .init(point:$0.point,worldPoint:WorldPoint(x:$0.point.x,y:$0.point.y),timeOffset:$0.timeOffset,width:$0.width,opacity:1,force:1,azimuth:0,altitude:1) }).erasingElements([.init(elementID:erase.target.elementID,frame:erase.target.frame,worldOrigin:.zero)])],stamp:.init(counter:11,actor:actor))

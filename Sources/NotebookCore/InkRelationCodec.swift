@@ -6,7 +6,7 @@ import Foundation
 extension InkSampleRelations: Codable {
   public enum CodingError: Error { case invalidSource, limitExceeded }
   private static let signature = Data("NIR1".utf8)
-  private static let maximumBytes = 128 * 1024 * 1024
+  fileprivate static let maximumBytes = 128 * 1024 * 1024
   private static let maximumNodes = 65_536
   private static let maximumEvents = 1_000_000
   private static let maximumDepth = 128
@@ -26,6 +26,26 @@ extension InkSampleRelations: Codable {
       frames.count <= Self.maximumNodes, header.sequence <= VersionStamp.maximumCounter,
       header.color.isValid, header.elementTargets?.allSatisfy(\.isValid) ?? true,
       header.elementTargets == nil || header.tool == .eraser else { throw CodingError.invalidSource }
+    var out = InkRelationWriter(data: Self.signature)
+    out.uuid(sourceID); out.integer(UInt32(span))
+    out.byte(header.tool == .pen ? 0 : 1)
+    for value in [header.color.red, header.color.green, header.color.blue] { out.double(value) }
+    out.integer(header.sequence); out.byte(header.isActive ? 1 : 0)
+    let targets = header.elementTargets ?? []
+    guard targets.count <= Self.maximumNodes, Set(targets.map(\.elementID)).count == targets.count else { throw CodingError.invalidSource }
+    out.byte(header.elementTargets == nil ? 0 : 1); out.integer(UInt32(targets.count))
+    for target in targets {
+      try out.target(target)
+      guard out.data.count <= Self.maximumBytes else { throw CodingError.limitExceeded }
+    }
+    out.integer(UInt32(frames.count))
+    for f in frames { for d in [f.a,f.b,f.c,f.d,f.x,f.y] { out.dyadic(d) } }
+    try Self.encodeMeasurements(measurements,into:&out)
+    return out.data
+  }
+
+  fileprivate static func encodeMeasurements(_ value: InkMeasurements, into out: inout InkRelationWriter) throws {
+    guard value.count <= maximumEvents else { throw CodingError.limitExceeded }
     var nodes: [Sequence] = [], indexes: [ObjectIdentifier: Int] = [:], depth: [ObjectIdentifier: Int] = [:]
     func visit(_ node: Sequence, at nesting: Int = 1) throws {
       guard nesting <= Self.maximumDepth else { throw CodingError.limitExceeded }
@@ -42,21 +62,9 @@ extension InkSampleRelations: Codable {
       guard level <= Self.maximumDepth, nodes.count < Self.maximumNodes else { throw CodingError.limitExceeded }
       depth[key] = level; indexes[key] = nodes.count; nodes.append(node)
     }
-    try visit(storage.root)
-    var out = InkRelationWriter(data: Self.signature)
-    out.uuid(sourceID); out.integer(UInt32(span)); out.uuid(revision)
-    out.byte(header.tool == .pen ? 0 : 1)
-    for value in [header.color.red, header.color.green, header.color.blue] { out.double(value) }
-    out.integer(header.sequence); out.byte(header.isActive ? 1 : 0)
-    let targets = header.elementTargets ?? []
-    guard targets.count <= Self.maximumNodes, Set(targets.map(\.elementID)).count == targets.count else { throw CodingError.invalidSource }
-    out.byte(header.elementTargets == nil ? 0 : 1); out.integer(UInt32(targets.count))
-    for target in targets {
-      try out.target(target)
-      guard out.data.count <= Self.maximumBytes else { throw CodingError.limitExceeded }
-    }
-    out.step(storage.exit); out.integer(UInt32(frames.count))
-    for f in frames { for d in [f.a,f.b,f.c,f.d,f.x,f.y] { out.dyadic(d) } }
+    try visit(value.storage.root)
+    out.uuid(value.revision)
+    out.step(value.storage.exit)
     out.integer(UInt32(nodes.count))
     for node in nodes {
       out.byte(node.pending ? 1 : 0)
@@ -90,7 +98,6 @@ extension InkSampleRelations: Codable {
       }
       guard out.data.count <= Self.maximumBytes else { throw CodingError.limitExceeded }
     }
-    return out.data
   }
 
   /// Prove affine leaves on their common binary lattice, without walking the
@@ -135,7 +142,7 @@ extension InkSampleRelations: Codable {
     guard data.count <= Self.maximumBytes else { throw CodingError.limitExceeded }
     var input = InkRelationReader(data: data)
     guard try input.bytes(4) == Self.signature else { throw CodingError.invalidSource }
-    let sourceID = try input.uuid(), span = Int(try input.integer(UInt32.self)), revision = try input.uuid()
+    let sourceID = try input.uuid(), span = Int(try input.integer(UInt32.self))
     guard span <= Self.maximumEvents else { throw CodingError.invalidSource }
     let tool = try input.flag() ? SpatialInkTool.eraser : .pen
     let colors = try (0..<3).map { _ in try input.double() }
@@ -146,11 +153,21 @@ extension InkSampleRelations: Codable {
     guard targetCount <= Self.maximumNodes, hasTargets || targetCount == 0, !hasTargets || tool == .eraser else { throw CodingError.invalidSource }
     let targets = try (0..<targetCount).map { _ in try input.target() }
     guard Set(targets.map(\.elementID)).count == targetCount else { throw CodingError.invalidSource }
-    let exit = try input.step(), frameCount = Int(try input.integer(UInt32.self))
+    let frameCount = Int(try input.integer(UInt32.self))
     guard frameCount <= Self.maximumNodes else { throw CodingError.limitExceeded }
     let frames = try (0..<frameCount).map { _ in
       try InkExactFrame(a: input.dyadic(), b: input.dyadic(), c: input.dyadic(), d: input.dyadic(), x: input.dyadic(), y: input.dyadic())
     }
+    let measurements=try Self.decodeMeasurements(from:&input)
+    guard input.offset == data.count else { throw CodingError.invalidSource }
+    self.init(sourceID:sourceID,span:span,measurements:measurements,frames:frames,
+      header:.init(tool:tool,color:.init(red:colors[0],green:colors[1],blue:colors[2]),sequence:sequence,isActive:active,
+        elementTargets:hasTargets ? targets : nil))
+  }
+
+  fileprivate static func decodeMeasurements(from input: inout InkRelationReader) throws -> InkMeasurements {
+    let revision=try input.uuid()
+    let exit = try input.step()
     let nodeCount = Int(try input.integer(UInt32.self))
     guard nodeCount > 0, nodeCount <= Self.maximumNodes else { throw CodingError.limitExceeded }
     var nodes: [Sequence] = [], depths: [Int] = [], used = Set<Int>()
@@ -209,11 +226,32 @@ extension InkSampleRelations: Codable {
       if pending { node = node.markPending() }
       depths.append(depth); nodes.append(node)
     }
-    guard input.offset == data.count, used.count == nodeCount - 1 else { throw CodingError.invalidSource }
-    let root = nodes.last!
-    self.init(sourceID:sourceID,span:span,revision:revision,count:root.count,storage:.init(root,exit:exit),frames:frames,
-      header:.init(tool:tool,color:.init(red:colors[0],green:colors[1],blue:colors[2]),sequence:sequence,isActive:active,
-        elementTargets:hasTargets ? targets : nil))
+    guard used.count == nodeCount-1 else { throw CodingError.invalidSource }
+    return .init(storage:.init(nodes.last!,exit:exit),revision:revision)
+  }
+
+}
+
+/// No action metadata is copied into the body. The one graph codec above is
+/// shared by journal bodies and full addressed relation snapshots.
+extension InkMeasurements: Codable {
+  public func encodedRelations() throws -> Data {
+    var output=InkRelationWriter(data:Data("NIM1".utf8))
+    try InkSampleRelations.encodeMeasurements(self,into:&output)
+    return output.data
+  }
+  public init(encodedRelations: Data) throws {
+    guard encodedRelations.count <= InkSampleRelations.maximumBytes else { throw InkSampleRelations.CodingError.limitExceeded }
+    var input=InkRelationReader(data:encodedRelations)
+    guard try input.bytes(4) == Data("NIM1".utf8) else { throw InkSampleRelations.CodingError.invalidSource }
+    self=try InkSampleRelations.decodeMeasurements(from:&input)
+    guard input.offset == encodedRelations.count else { throw InkSampleRelations.CodingError.invalidSource }
+  }
+  public func encode(to encoder: any Encoder) throws {
+    var container=encoder.singleValueContainer();try container.encode(encodedRelations())
+  }
+  public init(from decoder: any Decoder) throws {
+    let container=try decoder.singleValueContainer();try self.init(encodedRelations:container.decode(Data.self))
   }
 }
 

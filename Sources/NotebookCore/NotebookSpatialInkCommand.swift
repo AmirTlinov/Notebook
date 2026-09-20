@@ -96,8 +96,9 @@ extension NotebookStore {
           guard header.tool == action.tool, header.color == action.color else { throw NotebookStorageError.transactionConflict }
           let spans = try Self.spatialInkSpans(action.spans, actionAddress: address)
           let hash = SHA256.hash(data: try Self.storageEncoder.encode(spans)).map { String(format: "%02x", $0) }.joined()
-          guard try database.rows("SELECT hash FROM records WHERE address=?", [.text(spans.address)]).first?[0].text == hash else {
-            throw NotebookStorageError.transactionConflict
+          if try database.rows("SELECT hash FROM records WHERE address=?", [.text(spans.address)]).first?[0].text != hash {
+            guard let accepted = try storedFragments(address: spans.address, descendants: false).first,
+              try accepted.hasSameInkMeasurements(as: spans) else { throw NotebookStorageError.transactionConflict }
           }
         }
         if expected.stateStamp == header.stateStamp, expected.isActive != header.isActive {
@@ -153,7 +154,7 @@ extension NotebookStore {
 
   /// Bulk native journals can contain unchanged history on retired boards.
   /// Only a changed contact needs live admission; immutable spans still pass
-  /// through the shared writer's existing byte-identity check.
+  /// through the shared writer's exact measurement check.
   func requireLiveBoardInkChanges(_ journal: SpatialInkJournal, removingOmittedActions: Bool = true) throws {
     guard let database = currentSQL, database.writable else { throw NotebookStorageError.readOnlyTransaction }
     guard try hasStoredValue("workspace.json") else { return }
@@ -171,6 +172,8 @@ extension NotebookStore {
         let spans = try Self.spatialInkSpans(action.spans, actionAddress: address)
         let hash = SHA256.hash(data: try Self.storageEncoder.encode(spans)).map { String(format: "%02x", $0) }.joined()
         if try database.rows("SELECT hash FROM records WHERE address=?", [.text(spans.address)]).first?[0].text == hash { continue }
+        if let accepted = try storedFragments(address: spans.address, descendants: false).first,
+          try accepted.hasSameInkMeasurements(as: spans) { continue }
       }
       try requirePreviousOwners(address)
       for surface in Set(action.spans.map(\.surface)) where surface.kind == .board {

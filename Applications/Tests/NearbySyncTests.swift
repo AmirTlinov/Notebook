@@ -247,7 +247,7 @@ final class NearbySyncTests: XCTestCase {
   }
 
   func testUpgradeAndCheckpointFailuresAreNotReportedAsNetworkErrors() {
-    for code in ["placement_migration_pending_peer", "placement_peer_upgrade_required", "placement_checkpoint_required"] {
+    for code in ["placement_migration_pending_peer", "ink_migration_pending_peer", "placement_peer_upgrade_required", "format_checkpoint_required"] {
       let error = CollaborationError(code, "Изменения сохранены; требуется обновление пары.")
       XCTAssertEqual(NotebookPeerDiscovery.upgradeMessage(for: error), error.localizedDescription)
     }

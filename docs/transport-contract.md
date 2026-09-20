@@ -5,13 +5,14 @@ private directory of one Apple Account and stored in Keychain. Bonjour discovers
 endpoints; access comes from verified keys, identities and account admission.
 See [automatic connection](installation-pairing.md).
 
-## Current compatibility: wire 38, manifest 19
+## Current compatibility: wire 39, manifest 20
 
-Both applications must use the same wire contract. Version 38 and manifest 19
-add shared element bases, ordered parent-local group geometry and the measured
-outer transform of an eraser target. A reader that ignores these fields would
-paint a different object; the prior pair cannot join this wire or admit its new
-manifests. Existing manifests 4–18 remain readable without rewriting history.
+Both applications must use the same wire contract. Version 39 and manifest 20
+carry exact compact measurement bodies, including shared repetitions, rather
+than flat arrays. Prior wire versions cannot join. Current admission rejects
+prior manifest formats; immutable manifests 3–19 remain inspectable as history,
+not relabelled as current input. Already accepted transaction echoes retain
+normal idempotent acknowledgement without applying their bodies again.
 The existing Codex, TeX, package and native-content boundaries remain unchanged.
 Package sources require manifest 10 or later and full TeX requires 11 or later.
 
@@ -19,7 +20,7 @@ Content, local containers, workspace/device identities and keys survive an
 ordinary update. Installed build status belongs in [verification](verification.md);
 a source version alone does not prove installation.
 
-Bonjour advertises `notebook-v38-<UUID>-<generation>`; TXT `workspace` distinguishes
+Bonjour advertises `notebook-v39-<UUID>-<generation>`; TXT `workspace` distinguishes
 background workspace listeners sharing a Mac device ID. One transport owner
 changes the advertisement generation on restart. Metadata grants no trust.
 
@@ -29,6 +30,14 @@ current checkpoint; its cursor is never advanced artificially. Authenticated
 `contentUnavailable` reports a specific upgrade/checkpoint reason without
 acknowledging content. The final control frame has a bounded close deadline.
 An unchanged incompatible advertisement does not restart exchange every two seconds.
+
+Database admission 17 converts current page/spatial measurement rows and the
+reachable pre/postimages named by current undo receipts in one writer transaction.
+It retains all original blobs, IDs, clocks, keys and peer cursors. Local pinned
+moments are not retargeted. Conversion refuses an unacknowledged peer; rollback
+leaves the old admission version and content intact. The transition publishes
+current-format rows and records its outgoing floor, never imports old archives.
+A repeated open does not repeat conversion or publish another change.
 
 ## Authentication and encryption
 

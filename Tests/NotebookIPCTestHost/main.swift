@@ -118,7 +118,23 @@ actor TestOwner {
       concurrentBoardMove = nil
       return try .encode(merged.board(workspace.rootBoardID)?.stamp)
     case "presence": try store.savePresence(value.decode(SessionPresence.self))
-    case "ink": try store.saveSpatialInk(value.decode(SpatialInkJournal.self))
+    case "ink":
+      // Fixture input describes measurements; the real owner accepts them once
+      // into relations, just like a contact. This is not a runtime old reader.
+      var journal = try value.decode([String:JSONValue].self)
+      let actions = try journal["actions"]!.decode([[String:JSONValue]].self).map { original in
+        var action = original
+        let spans = try action["spans"]!.decode([[String:JSONValue]].self).map { original in
+          var span = original
+          span["samples"] = try .encode(InkMeasurements(span["samples"]!.decode([SpatialInkSample].self)))
+          return JSONValue.object(span)
+        }
+        action["spans"] = .array(spans)
+        return JSONValue.object(action)
+      }
+      journal["format"] = .number(Double(SpatialInkJournal.formatVersion))
+      journal["actions"] = .array(actions)
+      try store.saveSpatialInk(JSONValue.object(journal).decode(SpatialInkJournal.self))
     case "input": try store.saveInputActivity(value.decode(NotebookInputActivity.self))
     case "targetReceipt": try store.saveTargetRender(value.decode(TargetRenderReceipt.self))
     case "renderRequests": return try .encode(store.targetRenderRequests())

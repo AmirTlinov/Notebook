@@ -31,9 +31,9 @@ const inkElementTarget=object({elementID:text,frame,worldOrigin:worldPointSchema
 const pageInkMetadata={id,tool:z.enum(["pen","eraser"]),color:object({red:number,green:number,blue:number}),sequence:number,isActive:z.boolean()};
 const pageInkActions=object({header:contentHeader,baseline:object({present:z.boolean(),actionCount:number}),
   actions:z.array(object(pageInkMetadata)),nextActionID:id.optional()});
-const pageInkAction=object({header:contentHeader,action:object({...pageInkMetadata,samples:z.array(inkSample),
+const pageInkAction=object({header:contentHeader,action:object({...pageInkMetadata,samples:z.array(inkSample),relations:text,
   elementTargets:z.array(inkElementTarget).optional()})}).nullable();
-const inkAction=object({id,tool:z.enum(["pen","eraser"]),color:object({red:number,green:number,blue:number}),spans:z.array(object({surface,samples:z.array(inkSample),elementTargets:z.array(inkElementTarget).optional()})),stamp,isActive:z.boolean(),stateStamp:stamp});
+const inkAction=object({id,tool:z.enum(["pen","eraser"]),color:object({red:number,green:number,blue:number}),spans:z.array(object({surface,samples:z.array(inkSample),relations:text,elementTargets:z.array(inkElementTarget).optional()})),stamp,isActive:z.boolean(),stateStamp:stamp});
 const ink=object({format:number,actions:z.array(inkAction),stamp});
 const board=object({id,board:object({format:number,elements:z.array(spatialElement),stamp,freeItems:z.array(object({itemID:id,center:worldPointSchema,zIndex:number,stamp})),stacks:z.array(object({id,center:worldPointSchema,zIndex:number,itemIDs:z.array(id),stamp}))})});
 const scene=object({header,boardID:id,items:z.array(item),boards:z.array(board),boardContentRevisions:z.record(text,text),totalMatches:number,truncated:z.boolean()});
