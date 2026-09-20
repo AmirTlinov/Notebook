@@ -114,12 +114,12 @@ enum NotebookLassoInkSource: Sendable {
     }
     private func ranges(_ span: Span, intersecting box: CGRect,examined: inout Int) throws -> [Range<Int>] {
       let source=entries[span.entry].sources[span.span]
-      let query=try source.querySegments(maximumSegments:64) {
+      let query=try source.querySegments(maximumSegments:64,intersecting: {
         let b=Self.projected($0,source:source,origin:origin)
         return !b.isNull && b.maxX >= box.minX && b.minX <= box.maxX && b.maxY >= box.minY && b.minY <= box.maxY
-      }
+      })
       examined += query.cost.decodedSamples
-      return query.segments.map { ($0*64)..<min(source.count,$0*64+65) }
+      return query.segments.map { ($0.lowerBound*64)..<min(source.count,$0.upperBound*64+1) }
     }
     private static func point(_ sample: SpatialInkSample, origin: WorldPoint?) -> SpatialPoint {
       origin.flatMap { o in sample.worldPoint.map { o.delta(to:$0) } } ?? sample.point

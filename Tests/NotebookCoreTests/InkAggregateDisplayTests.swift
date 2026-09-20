@@ -20,8 +20,8 @@ import Testing
       #expect(display.preparedNodeCount == 0)
       #expect(display.chunkCount == 1)
       let query=display.query(viewport:.init(x:-10,y:0,width:Double(count)+20,height:20),affine:.init())
-      #expect(query.chunks == [0]);#expect(query.cost.visitedNodes == 1);#expect(query.cost.decodedSamples == 0)
-      let prepared=display.prepare(0)
+      #expect(query.chunks == [0..<1]);#expect(query.cost.visitedNodes == 1);#expect(query.cost.decodedSamples == 0)
+      let prepared=display.prepare(0..<1)
       #expect(prepared.decodedPoints == 4);#expect(prepared.chunk.nodes.count == 4)
       #expect(prepared.chunk.nodes.map(\.position.x) == [0,1,Float(count-2),Float(count-1)])
       #expect(prepared.chunk.nodes.allSatisfy { $0.edge == .init(0,2) && $0.alpha == 0.5 })
@@ -57,6 +57,35 @@ import Testing
     #expect(restored.geometry.isUniformAxisStrip)
     #expect(SpatialInkGeometry.compact(source:restored).count == 4)
   }
+  @Test(arguments:[10_000,100_000,1_000_000])
+  func oneLocalEditDoesNotExpandTheRemainingStraightRanges(count: Int) throws {
+    let body=source((0..<100).map { sample($0) })
+      .settingExit(.init(x:InkDyadic(100)!,y:.zero,time:.one),revision:UUID())
+    let original=try #require(body.repeated(count/100,revision:UUID()))
+    let index=count/2,changed=sample(index,y:22,width:9,opacity:0.75)
+    let value=try original.editing(original.address(at:index),to:changed,revision:UUID())
+    let display=SpatialInkGeometry.Source(source:value,projection:.init())
+    #expect(!value.geometry.isUniformAxisStrip)
+    let query=display.query(viewport:.init(x:-10,y:-10,width:Double(count)+20,height:50),affine:.init())
+    #expect(query.chunks.contains { $0.count > 1 })
+    #expect(query.chunks.first?.lowerBound == 0)
+    #expect(query.chunks.last?.upperBound == display.chunkCount)
+    for (a,b) in zip(query.chunks,query.chunks.dropFirst()) { #expect(a.upperBound == b.lowerBound) }
+    let prepared=query.chunks.map { display.prepare($0) }
+    let reads=prepared.reduce(query.cost.decodedSamples) { $0+$1.decodedPoints }
+    #expect(reads < 2000)
+    let nodes=prepared.flatMap { Array($0.chunk.nodes) }
+    let position=SIMD2<Float>(Float(index),22)
+    #expect(nodes.contains { $0.position == position && $0.radius == 4.5 && $0.alpha == 0.75 })
+    if case .relative(let r)=display.storage {
+      for (selection,p) in zip(query.chunks,prepared) { #expect(p.decodedPoints <= r.preparationPointLimit(selection)) }
+    }
+    #expect(InkSampleRelations.sameBits(value.sample(at:index),changed))
+    #expect(original.sample(at:index).point.y == 10)
+    let mixed=display.query(viewport:.init(x:-10,y:-10,width:Double(count)+20,height:Double(count)+50),
+      affine:.init(x:.init(1,0.2,0,0),y:.init(0.1,1,0,0)))
+    #expect(mixed.chunks.allSatisfy { $0.count == 1 })
+  }
   @Test(arguments:[false,true],[false,true])
   func bothAxisDirectionsComposeAcrossUnevenLeaves(vertical: Bool,reverse: Bool) {
     let samples=(0..<1025).map { i in
@@ -65,7 +94,7 @@ import Testing
     }
     let value=source(samples),display=SpatialInkGeometry.Source(source:value,projection:.init())
     #expect(value.geometry.isUniformAxisStrip);#expect(display.chunkCount == 1)
-    #expect(display.prepare(0).decodedPoints == 4)
+    #expect(display.prepare(0..<1).decodedPoints == 4)
     #expect(SpatialInkGeometry.compact(source:source(samples,tool:.eraser)).count == samples.count)
   }
   @Test func repeatSeamsAndNumericalCoalescingRemainUnreduced() throws {
@@ -89,7 +118,7 @@ import Testing
     let edited=try repeated.editing(repeated.address(at:50_000),to:sample(50_000,y:0,opacity:0.75),revision:UUID())
     for value in [repeated,edited] {
       let display=SpatialInkGeometry.Source(source:value,projection:.init())
-      for nodes in [Array(display.prepare(0).chunk.nodes),SpatialInkGeometry.compact(source:value)] {
+      for nodes in [Array(display.prepare(0..<1).chunk.nodes),SpatialInkGeometry.compact(source:value)] {
         #expect(nodes.count >= 2)
         for node in nodes { #expect((node.position.y+node.edge.y)*1_000_000-2_000_000+64 == 64) }
       }
@@ -122,7 +151,7 @@ import Testing
       #expect(value.geometry.isUniformAxisStrip)
       let display=SpatialInkGeometry.Source(source:value,projection:.init(origin:origin))
       #expect(display.chunkCount == 1)
-      let prepared=display.prepare(0)
+      let prepared=display.prepare(0..<1)
       #expect(prepared.decodedPoints == 4)
       let retained=[0,1,4095,4096]
       for (node,index) in zip(prepared.chunk.nodes,retained) {

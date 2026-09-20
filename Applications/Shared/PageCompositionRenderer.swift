@@ -158,10 +158,10 @@ enum PageCompositionRenderer {
       if source.count > InkRenderGeometry.maximumSegments,
         let relative=SpatialInkGeometry.RelativeSource(source,projection:.init()) {
         // Account for the bounded query's result capacity before asking for it.
-        try add(relative.chunkCount,2*MemoryLayout<Int>.stride)
+        try add(relative.chunkCount,2*MemoryLayout<Range<Int>>.stride)
         for id in relative.query(viewport:viewport).chunks {
           // CPU halo, prepared nodes/LOD, selected copy and Metal buffer.
-          try add(relative.range(at:id).count+2,512)
+          try add(relative.preparationPointLimit(id),512)
         }
       } else { try add(source.count,512) }
     }

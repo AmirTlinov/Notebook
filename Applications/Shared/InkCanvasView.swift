@@ -149,7 +149,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   fileprivate struct CommittedBatch {
     let renderID = UUID()
     let mesh: SpatialInkMesh.Batch
-    var buffers: [Int: GeometryBuffer] = [:]
+    var buffers: [Range<Int>: GeometryBuffer] = [:]
     var pageAction: PageInkAction?
     var pageCommit: UInt64 = 0
     var operation: RenderOperation { mesh.tool == .pen ? .ink : .erase }
@@ -160,7 +160,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   private struct TileToken: Equatable {
     let source: UUID
-    let chunk: Int
+    let chunk: Range<Int>
     let revision: UInt64
     let level: Int
     let transform: SIMD4<Float>
@@ -741,7 +741,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     }
     guard let commandQueue, let commandBuffer = commandQueue.makeCommandBuffer() else { return }
     var passes:
-      [(MTLRenderPassDescriptor, any CAMetalDrawable, MTLViewport?, CGRect?, [(Int, Int)])] = []
+      [(MTLRenderPassDescriptor, any CAMetalDrawable, MTLViewport?, CGRect?, [(Int, Range<Int>)])] = []
     var signatures: [TileSignature] = []
     if let target = spatialTarget {
       let previous = drawnTiles?.target == ObjectIdentifier(target) ? drawnTiles?.signatures : nil
@@ -875,18 +875,18 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     if activeInkStroke == nil, activeEraserStroke == nil { isPaused = true }
   }
 
-  private func visibleChunks(in clip: CGRect) -> [(Int, Int)] {
+  private func visibleChunks(in clip: CGRect) -> [(Int, Range<Int>)] {
     // The viewport query already selected and prepared resident chunks. Tiles
     // filter those descriptors; they must not repeat source-range disclosure.
     committedBatches.enumerated().flatMap { b, batch in
       let transform=batch.mesh.projection.transform(camera:spatialCamera,viewport:spatialViewport)
-      return batch.buffers.keys.sorted().filter {
+      return batch.buffers.keys.sorted { $0.lowerBound < $1.lowerBound }.filter {
         batch.buffers[$0]!.geometry.chunk.descriptor.intersects(viewport:clip,transform:transform)
       }.map { (b,$0) }
     }
   }
 
-  private func tileSignature(visible: [(Int, Int)], clip: CGRect) -> TileSignature {
+  private func tileSignature(visible: [(Int, Range<Int>)], clip: CGRect) -> TileSignature {
     var tokens: [TileToken] = []
     for (b, c) in visible {
       let batch = committedBatches[b],
@@ -903,13 +903,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     where chunk.intersects(viewport: clip, transform: .init(1, 1, 0, 0)) {
       tokens.append(
         .init(
-          source: activeRenderID, chunk: c, revision: activeMesh.chunkRevisions[c], level: -1,
+          source: activeRenderID, chunk: c..<(c+1), revision: activeMesh.chunkRevisions[c], level: -1,
           transform: .init(1, 1, 0, 0)))
     }
     return .init(tokens: tokens, baseline: baselineTexture.map { ObjectIdentifier($0) })
   }
 
-  private func encodeSpatial(batches: [CommittedBatch], visible: [(Int, Int)],
+  private func encodeSpatial(batches: [CommittedBatch], visible: [(Int, Range<Int>)],
     active: (buffer: any MTLBuffer, operation: RenderOperation)?, camera: SpatialCamera?,
     viewport: SpatialPoint, size: CGSize, clip: CGRect? = nil, encoder: any MTLRenderCommandEncoder) {
     guard inkPipelineState != nil, eraserPipelineState != nil else { return }
@@ -1420,7 +1420,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     committedBatches.append(batch)
   }
 
-  private func prepareCommittedBuffers() -> [(Int, Int)]? {
+  private func prepareCommittedBuffers() -> [(Int, Range<Int>)]? {
     guard let visible = try? prepareBuffers(in: &committedBatches,
       camera: spatialCamera, viewport: spatialViewport, size: bounds.size) else { return nil }
     visibleCommittedVertexCount = visible.reduce(0) {
@@ -1438,8 +1438,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   private func prepareBuffers(in batches: inout [CommittedBatch], camera: SpatialCamera?,
     viewport: SpatialPoint, size: CGSize, pixelScale: Float? = nil
-  ) throws -> [(Int, Int)] {
-    var visible: [(Int, Int)] = []
+  ) throws -> [(Int, Range<Int>)] {
+    var visible: [(Int, Range<Int>)] = []
     let viewportRect = camera == nil ? (pageRenderRegion ?? CGRect(origin: .zero, size: size)) : CGRect(origin: .zero, size: size)
     for batchIndex in batches.indices {
       let mesh = batches[batchIndex].mesh

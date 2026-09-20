@@ -89,30 +89,31 @@ public final class NotebookFreehandGeometry: Sendable {
     sourceNodeCount=count;chunkCount=chunksCount;preparedNodeCount=prepared
     layerIndex = .init(bodies.map(\.bounds))
   }
-  private func location(_ id: Int) -> (layer: Int,chunk: Int) {
-    precondition((0..<chunkCount).contains(id))
+  private func location(_ selection: Range<Int>) -> (layer: Int,chunk: Range<Int>) {
+    precondition(!selection.isEmpty && selection.lowerBound >= 0 && selection.upperBound <= chunkCount)
+    let id=selection.lowerBound
     var low=0,high=starts.count
     while low+1 < high { let mid=(low+high)/2;if starts[mid] <= id { low=mid } else { high=mid } }
-    return (low,id-starts[low])
+    return (low,(id-starts[low])..<(selection.upperBound-starts[low]))
   }
-  public func layer(at id: Int) -> Int { location(id).layer }
-  public func tool(at id: Int) -> SpatialInkTool { layers[layer(at:id)].tool }
-  public func color(at id: Int) -> SpatialInkColor { layers[layer(at:id)].color }
-  public func query(_ area: CGRect) -> (indices: [Int],visitedNodes: Int) {
+  public func layer(at id: Range<Int>) -> Int { location(id).layer }
+  public func tool(at id: Range<Int>) -> SpatialInkTool { layers[layer(at:id)].tool }
+  public func color(at id: Range<Int>) -> SpatialInkColor { layers[layer(at:id)].color }
+  public func query(_ area: CGRect,allowRangeCoalescing: Bool = true) -> (indices: [Range<Int>],visitedNodes: Int) {
     let candidates=layerIndex.query(area)
-    var result:[Int]=[],visits=candidates.visitedNodes
+    var result:[Range<Int>]=[],visits=candidates.visitedNodes
     for layer in candidates.indices {
       switch bodies[layer] {
       case .primitives(_,let index):
-        let q=index.query(area);result.append(contentsOf:q.indices.map { starts[layer]+$0 });visits += q.visitedNodes
+        let q=index.query(area);result.append(contentsOf:q.indices.map { (starts[layer]+$0)..<(starts[layer]+$0+1) });visits += q.visitedNodes
       case .measured(let source,let size):
-        let q=source.query(viewport:.init(x:area.minX*size.width,y:area.minY*size.height,width:area.width*size.width,height:area.height*size.height),affine:.init())
-        result.append(contentsOf:q.chunks.map { starts[layer]+$0 });visits += q.cost.visitedNodes
+        let q=source.query(viewport:.init(x:area.minX*size.width,y:area.minY*size.height,width:area.width*size.width,height:area.height*size.height),affine:.init(),allowRangeCoalescing:allowRangeCoalescing)
+        result.append(contentsOf:q.chunks.map { (starts[layer]+$0.lowerBound)..<(starts[layer]+$0.upperBound) });visits += q.cost.visitedNodes
       }
     }
     return (result,visits)
   }
-  public func prepared(at id: Int) -> Prepared {
+  public func prepared(at id: Range<Int>) -> Prepared {
     let at=location(id)
     switch bodies[at.layer] {
     case .measured(let source,let size):
@@ -121,7 +122,8 @@ public final class NotebookFreehandGeometry: Sendable {
       if case .relative(let r)=source.storage { range=r.range(at:at.chunk) } else { range=c.nodes }
       return .init(descriptor:.init(layer:at.layer,range:range,bounds:Body.normalized(c.bounds,size:size),sourceSize:size,flags:c.flags),geometry:prepared)
     case .primitives(let chunks,_):
-      let c=chunks[at.chunk],nodes:[InkRenderGeometry.Node]
+      precondition(at.chunk.count == 1)
+      let c=chunks[at.chunk.lowerBound],nodes:[InkRenderGeometry.Node]
       if c.flags & 4 != 0 {
         nodes=c.range.map { let p=erasers[c.layer][$0];return .init(position:p.position,edge:.zero,radius:p.radius,alpha:1) }
       } else {
@@ -132,10 +134,10 @@ public final class NotebookFreehandGeometry: Sendable {
   }
   /// Original triangle primitives keep their Double coordinates. Measured
   /// ranges use the same halo-resolved nodes as GPU, never a full-source mesh.
-  public func vertices(at id: Int) -> [NotebookFreehand.Vertex] {
+  public func vertices(at id: Range<Int>) -> [NotebookFreehand.Vertex] {
     let at=location(id)
     if case .primitives(let chunks,_)=bodies[at.layer],layers[at.layer].eraser == nil {
-      return Array(layers[at.layer].vertices[chunks[at.chunk].range])
+      return Array(layers[at.layer].vertices[chunks[at.chunk.lowerBound].range])
     }
     let p=prepared(at:id),c=p.descriptor,nodes=p.geometry.nodes
     var vertices:[InkStrokeGeometry.Vertex]=[]
@@ -197,7 +199,7 @@ public final class NotebookFreehandGeometry: Sendable {
   public func intersects(_ polygon: [CGPoint]) -> Bool {
     guard polygon.count >= 3 else { return false }
     let area = polygonBounds(polygon)
-    var cuts: [Int:[NotebookFreehand.Vertex]] = [:]
+    var cuts: [Range<Int>:[NotebookFreehand.Vertex]] = [:]
     for id in query(area).indices.reversed() where tool(at:id) == .pen {
       if Task.isCancelled { return false }
       let v = vertices(at:id)

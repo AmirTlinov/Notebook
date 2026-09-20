@@ -30,7 +30,7 @@ struct NotebookFreehandEraserTests {
     let ink = NotebookFreehand(layers:[pen,layer])
     #expect(ink.isValid)
     let geometry = ink.geometry
-    let rendered = (0..<geometry.chunkCount).filter { geometry.tool(at:$0) == .eraser }.flatMap { geometry.vertices(at:$0) }
+    let rendered = (0..<geometry.chunkCount).map { $0..<($0+1) }.filter { geometry.tool(at:$0) == .eraser }.flatMap { geometry.vertices(at:$0) }
     #expect(rendered.count > NotebookFreehand.maximumVertices)
     let measured = samples.map { SpatialInkSample(point:$0.point,timeOffset:0,width:$0.width,opacity:1,force:1,azimuth:0,altitude:.pi/2) }
     #expect(rendered == NotebookFreehand.meshControl(samples:measured,frame:.init(x:0,y:0,width:500,height:200),origin:nil,tool:.eraser))

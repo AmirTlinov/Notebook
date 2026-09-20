@@ -689,6 +689,26 @@ extension InkSampleRelations {
         return result
       }
     }
+    /// Only a cached proof covering this interval admits early display reduction.
+    /// A range crossing an unproved join stays detailed; no samples are inspected
+    /// just to guess a cheaper representation during camera work.
+    func canReduceAxisStrip(in range: Range<Int>,minimumSpacing: Double,maximumSpan: Double,cost: inout AccessCost) -> Bool {
+      cost.visitedNodes += 1
+      if geometry.canReduceAxisStrip(minimumSpacing:minimumSpacing,maximumSpan:maximumSpan) { return true }
+      switch content {
+      case .block: return false
+      case .pair(let a,let b):
+        if range.upperBound <= a.count { return a.canReduceAxisStrip(in:range,minimumSpacing:minimumSpacing,maximumSpan:maximumSpan,cost:&cost) }
+        if range.lowerBound >= a.count { return b.canReduceAxisStrip(in:(range.lowerBound-a.count)..<(range.upperBound-a.count),minimumSpacing:minimumSpacing,maximumSpan:maximumSpan,cost:&cost) }
+        return false
+      case .shifted(let body,_): return body.canReduceAxisStrip(in:range,minimumSpacing:minimumSpacing,maximumSpan:maximumSpan,cost:&cost)
+      case .repeated(let body,_,_):
+        let first=range.lowerBound/body.count,last=(range.upperBound-1)/body.count
+        guard first == last else { return false }
+        cost.jumps += 1
+        return body.canReduceAxisStrip(in:(range.lowerBound%body.count)..<((range.upperBound-1)%body.count+1),minimumSpacing:minimumSpacing,maximumSpan:maximumSpan,cost:&cost)
+      }
+    }
     func slice(_ range: Range<Int>) -> Sequence {
       if range.isEmpty { return Self.empty };if range == 0..<count { return self }
       switch content {

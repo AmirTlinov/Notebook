@@ -29,6 +29,11 @@ public struct InkAffine: Sendable {
     let maximum=(hypot(a+d,b-c)+hypot(a-d,b+c))/2
     return maximum > 0 ? max(0,Float(abs(a*d-b*c)/maximum).nextDown) : 0
   }
+  /// Collinear source rails remain screen-axis rails. With mixed axes, Float
+  /// projection and MSAA edge setup can distinguish different subdivisions.
+  public var preservesAxisAlignment: Bool {
+    (x.y == 0 && y.x == 0) || (x.x == 0 && y.y == 0)
+  }
   public func bounds(_ rect: CGRect) -> CGRect {
     var lo = SIMD2<Float>(repeating: .infinity)
     var hi = SIMD2<Float>(repeating: -.infinity)

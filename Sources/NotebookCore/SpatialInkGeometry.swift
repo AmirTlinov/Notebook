@@ -134,6 +134,7 @@ extension SpatialInkGeometry {
     public let source: InkSampleRelations
     public let projection: InkSampleProjection
     private var uniformStrip=false
+    private var minimumSpacing=Double.infinity, maximumSpan=Double.zero
     public var bounds: CGRect { projected(source.geometry.bounds) }
     public var chunkCount: Int { source.count == 0 ? 0 : source.geometry.stationary || uniformStrip ? 1 : max(1,(source.count-2)/InkRenderGeometry.maximumSegments+1) }
     public init?(_ source: InkSampleRelations,projection: InkSampleProjection) {
@@ -145,16 +146,16 @@ extension SpatialInkGeometry {
       let error=4*Double(magnitude.ulp)
       guard source.count <= 1 || geometry.stationary || (error.isFinite && geometry.minimumSpacing*abs(projection.scale)
         > Double(InkStrokeGeometry.minimumDistanceSquared.squareRoot())+error) else { return nil }
-      uniformStrip=source.header.tool == .pen && geometry.canReduceAxisStrip(
-        minimumSpacing:(Double(InkStrokeGeometry.minimumDistanceSquared.squareRoot())+error)/abs(projection.scale),
-        maximumSpan:Double(Float.greatestFiniteMagnitude.squareRoot())/4/abs(projection.scale))
+      minimumSpacing=(Double(InkStrokeGeometry.minimumDistanceSquared.squareRoot())+error)/abs(projection.scale)
+      maximumSpan=Double(Float.greatestFiniteMagnitude.squareRoot())/4/abs(projection.scale)
+      uniformStrip=source.header.tool == .pen && geometry.canReduceAxisStrip(minimumSpacing:minimumSpacing,maximumSpan:maximumSpan)
     }
-    public func range(at id: Int) -> Range<Int> {
-      precondition((0..<chunkCount).contains(id))
+    public func range(at selection: Range<Int>) -> Range<Int> {
+      precondition(!selection.isEmpty && selection.lowerBound >= 0 && selection.upperBound <= chunkCount)
       if source.geometry.stationary { return (source.count-1)..<source.count }
       if uniformStrip { return 0..<source.count }
-      let start=id*InkRenderGeometry.maximumSegments
-      return start..<(start+min(source.count-start,InkRenderGeometry.maximumSegments+1))
+      let start=selection.lowerBound*InkRenderGeometry.maximumSegments
+      return start..<min(source.count,selection.upperBound*InkRenderGeometry.maximumSegments+1)
     }
     private func projected(_ box: CGRect) -> CGRect {
       var box=box
@@ -169,7 +170,7 @@ extension SpatialInkGeometry {
       let radiusFloor=max(0,1-abs(projection.scale))*0.25*Double(InkStrokeGeometry.maximumCrossSectionScale)
       return padding.isFinite ? projected.insetBy(dx:-padding-radiusFloor,dy:-padding-radiusFloor) : .infinite
     }
-    public func query(viewport: CGRect,affine: InkAffine = .init()) -> (chunks: [Int],cost: InkSampleRelations.AccessCost) {
+    public func query(viewport: CGRect,affine: InkAffine = .init(),allowRangeCoalescing: Bool = true) -> (chunks: [Range<Int>],cost: InkSampleRelations.AccessCost) {
       guard chunkCount > 0 else { return ([],.init()) }
       func overlaps(_ rect: CGRect) -> Bool {
         let bounds=affine.bounds(projected(rect))
@@ -179,27 +180,49 @@ extension SpatialInkGeometry {
       }
       if source.geometry.stationary || uniformStrip {
         let result=try! source.bounds(in:0..<source.count)
-        return (overlaps(result.bounds) ? [0] : [],result.cost)
+        return (overlaps(result.bounds) ? [0..<1] : [],result.cost)
       }
       // Cancellation stops an obsolete frame, not an alternative renderer.
-      guard let query=try? source.querySegments(maximumSegments:InkRenderGeometry.maximumSegments,intersecting:overlaps) else {
+      guard let query=try? source.querySegments(maximumSegments:InkRenderGeometry.maximumSegments,intersecting:overlaps,
+        coalescing:allowRangeCoalescing && affine.preservesAxisAlignment && source.header.tool == .pen ? { range,cost in
+          source.storage.root.canReduceAxisStrip(in:range,minimumSpacing:minimumSpacing,maximumSpan:maximumSpan,cost:&cost)
+        } : nil) else {
         return ([],.init())
       }
       return (query.segments,query.cost)
     }
-    public func prepare(_ id: Int) -> (chunk: PreparedChunk,decodedPoints: Int) {
-      let range=range(at:id)
+    /// Bounds temporary geometry, not the number of exact source measurements.
+    public func preparationPointLimit(_ selection: Range<Int>) -> Int {
+      if source.geometry.stationary { return 1 }
+      if uniformStrip { return 4 }
+      return selection.count > 1 ? 6 : range(at:selection).count+2
+    }
+    public func prepare(_ selection: Range<Int>) -> (chunk: PreparedChunk,decodedPoints: Int) {
+      let range=range(at:selection)
       let halo=source.geometry.stationary ? range : max(0,range.lowerBound-1)..<(range.upperBound+(range.upperBound < source.count ? 1 : 0))
       let c=source.header.color,erase=source.header.tool == .eraser
       let color: SIMD4<Float> = erase ? .init(repeating:1) : .init(Float(c.red),Float(c.green),Float(c.blue),1)
       var points:[RenderPoint]=[],owned:[Int]=[]
-      source.forEachIndexedDisplayPoint(in:halo,origin:projection.origin,offset:projection.offset,scale:projection.scale) { index,p,r,a in
-        let alpha=min(max(a,0),1)
+      func append(_ index: Int,_ p: RenderPoint) {
         if range.contains(index) { owned.append(points.count) }
-        points.append(.init(position:p,radius:max(r,0.25),premultipliedColor:.init(color.x*alpha,color.y*alpha,color.z*alpha,alpha)))
+        points.append(p)
+      }
+      if selection.count > 1 {
+        // The query admitted this interval through its existing exact strip
+        // proof. Preserve both cap neighbours and the original external halo.
+        let indices=[halo.lowerBound,range.lowerBound,range.lowerBound+1,range.upperBound-2,range.upperBound-1,halo.upperBound-1]
+        var previous: Int?
+        for index in indices where index != previous {
+          append(index,SpatialInkGeometry.renderPoint(from:source.sample(at:index),color:color,projection:projection));previous=index
+        }
+      } else {
+        source.forEachIndexedDisplayPoint(in:halo,origin:projection.origin,offset:projection.offset,scale:projection.scale) { index,p,r,a in
+          let alpha=min(max(a,0),1)
+          append(index,.init(position:p,radius:max(r,0.25),premultipliedColor:.init(color.x*alpha,color.y*alpha,color.z*alpha,alpha)))
+        }
       }
       let nodes=owned.map { InkRenderGeometry.node(at:$0,in:points) }
-      let flags:UInt32=(id == 0 ? 1 : 0) | (id == chunkCount-1 ? 2 : 0) | (erase ? 4 : 0)
+      let flags:UInt32=(selection.lowerBound == 0 ? 1 : 0) | (selection.upperBound == chunkCount ? 2 : 0) | (erase ? 4 : 0)
       let descriptor=Chunk(nodes:0..<nodes.count,bounds:InkRenderGeometry.bounds(nodes[...]),color:color,flags:flags,
         levels:InkRenderGeometry.levels(nodes[...],flags:flags))
       return (.init(nodes:nodes,descriptor:descriptor),points.count)
@@ -237,31 +260,32 @@ extension SpatialInkGeometry {
       switch storage {
       case .prepared(let n,let c,let index): return n.count*MemoryLayout<SpatialInkGeometry.Node>.stride+(index?.byteCount ?? 0)
         + c.reduce(0) { $0+MemoryLayout<Chunk>.stride+$1.metadataBytes }
-      case .relative(let r): return r.source.payloadBytes+MemoryLayout<InkSampleProjection>.stride
+      case .relative(let r): return r.source.payloadBytes+MemoryLayout<RelativeSource>.stride-MemoryLayout<InkSampleRelations>.stride
       }
     }
     public var auxiliaryBytes: Int {
-      if case .relative(let r)=storage { return r.source.auxiliaryBytes+MemoryLayout<InkSampleProjection>.stride }
+      if case .relative(let r)=storage { return r.source.auxiliaryBytes+MemoryLayout<RelativeSource>.stride-MemoryLayout<InkSampleRelations>.stride }
       return byteCount
     }
-    public func query(viewport: CGRect,affine: InkAffine) -> (chunks: [Int],cost: InkSampleRelations.AccessCost) {
+    public func query(viewport: CGRect,affine: InkAffine,allowRangeCoalescing: Bool = true) -> (chunks: [Range<Int>],cost: InkSampleRelations.AccessCost) {
       switch storage {
-      case .relative(let r): return r.query(viewport:viewport,affine:affine)
+      case .relative(let r): return r.query(viewport:viewport,affine:affine,allowRangeCoalescing:allowRangeCoalescing)
       case .prepared(_,let chunks,let index):
         // Native canvas uses positive diagonal camera transforms. General
         // raster transforms keep the same conservative per-chunk rejection.
         if let index,affine.x.y == 0,affine.y.x == 0,affine.x.x > 0,affine.y.y > 0 {
           let q=index.query(viewport:viewport,transform:.init(affine.x.x,affine.y.y,affine.x.z,affine.y.z))
-          return (q.chunks,.init(visitedNodes:q.visitedNodes))
+          return (q.chunks.map { $0..<($0+1) },.init(visitedNodes:q.visitedNodes))
         }
-        return (chunks.indices.filter { SpatialInkGeometry.overlaps(affine.bounds(chunks[$0].bounds),viewport) },.init(visitedNodes:chunks.count))
+        return (chunks.indices.filter { SpatialInkGeometry.overlaps(affine.bounds(chunks[$0].bounds),viewport) }.map { $0..<($0+1) },.init(visitedNodes:chunks.count))
       }
     }
-    public func prepare(_ id: Int) -> (chunk: SpatialInkGeometry.PreparedChunk,decodedPoints: Int) {
+    public func prepare(_ selection: Range<Int>) -> (chunk: SpatialInkGeometry.PreparedChunk,decodedPoints: Int) {
       switch storage {
-      case .relative(let r): return r.prepare(id)
+      case .relative(let r): return r.prepare(selection)
       case .prepared(let nodes,let chunks,_):
-        let c=chunks[id],local=nodes[c.nodes]
+        precondition(selection.count == 1)
+        let c=chunks[selection.lowerBound],local=nodes[c.nodes]
         return (.init(sharedNodes:local,descriptor:.init(nodes:0..<local.count,bounds:c.bounds,color:c.color,flags:c.flags,levels:c.levels)),0)
       }
     }

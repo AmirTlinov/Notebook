@@ -78,7 +78,8 @@ final class InkRasterRenderer: @unchecked Sendable {
     let source = ink.geometry, basis = transform ?? .identity
     let area = NotebookFreehandGeometry.sourceBounds(region.insetBy(dx:-1/scale,dy:-1/scale),
       size:size,transform:transform)
-    let batches = source.query(area).indices.map { id -> DrawBatch in
+    let displayBasis=InkAffine(x:.init(Float(basis.a),Float(basis.c),0,0),y:.init(Float(basis.b),Float(basis.d),0,0))
+    let batches = source.query(area,allowRangeCoalescing:displayBasis.preservesAxisAlignment).indices.map { id -> DrawBatch in
       let prepared=source.prepared(at:id),chunk=prepared.descriptor,unit=chunk.sourceSize
       let affine = InkAffine(
         x:.init(Float(basis.a*size.width/unit.width),Float(basis.c*size.width/unit.height),

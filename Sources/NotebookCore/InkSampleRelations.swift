@@ -281,12 +281,13 @@ public struct InkSampleRelations: Sendable {
   /// their endpoint so a crossing between two measurements cannot disappear.
   /// No per-segment index or expanded repeated body is constructed.
   public func querySegments(maximumSegments: Int,
-    intersecting overlaps: (CGRect) -> Bool
-  ) throws -> (segments: [Int],cost: AccessCost) {
+    intersecting overlaps: (CGRect) -> Bool,
+    coalescing accepts: ((Range<Int>,inout AccessCost) -> Bool)? = nil
+  ) throws -> (segments: [Range<Int>],cost: AccessCost) {
     precondition(maximumSegments > 0)
     guard count > 0 else { return ([],.init()) }
     let segments=max(1,(count-2)/maximumSegments+1)
-    var selected:[Int]=[],cost=AccessCost()
+    var selected:[Range<Int>]=[],cost=AccessCost()
     func visit(_ range: Range<Int>) throws {
       try Task.checkCancellation()
       let lower=range.lowerBound*maximumSegments
@@ -294,7 +295,7 @@ public struct InkSampleRelations: Sendable {
       let result=try bounds(in:lower..<upper)
       cost.visitedNodes += result.cost.visitedNodes;cost.jumps += result.cost.jumps;cost.decodedSamples += result.cost.decodedSamples
       guard overlaps(result.bounds) else { return }
-      if range.count == 1 { selected.append(range.lowerBound);return }
+      if range.count == 1 || accepts?(lower..<upper,&cost) == true { selected.append(range);return }
       let mid=range.lowerBound+range.count/2
       try visit(range.lowerBound..<mid);try visit(mid..<range.upperBound)
     }

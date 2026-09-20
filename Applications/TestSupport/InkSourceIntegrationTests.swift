@@ -161,6 +161,19 @@ final class InkSourceIntegrationTests: XCTestCase {
     XCTAssertLessThan(resources.peakAccountedBytes,resources.byteLimit)
     let proof=XCTAttachment(data:actual.png,uniformTypeIdentifier:"public.png")
     proof.name="bounded-million-event-page-export";proof.lifetime = .keepAlways;add(proof)
+    // A whole straight repeat is four display nodes even though its logical
+    // range spans one million measurements. Admission must charge that work.
+    let straight=InkSampleRelations(sourceID:UUID(),revision:UUID(),samples:(0..<100).map { i in
+      SpatialInkSample(point:.init(x:Double(i),y:64),timeOffset:Double(i)/128,width:4,opacity:0.5,force:1,azimuth:0,altitude:1)
+    },header:body.header).settingExit(.init(x:InkDyadic(100)!,y:.zero,time:.one),revision:UUID())
+    let long=try XCTUnwrap(straight.repeated(10_000,revision:UUID()))
+    let simple=try await PageCompositionRenderer.render(page(long.restoredAction()),scale:2,resources:resources) { _ in
+      throw CocoaError(.featureUnsupported)
+    }
+    let simpleControl=try await PageCompositionRenderer.render(page(.init(tool:.pen,color:body.header.color,
+      samples:long.decoded(in:0..<600))),scale:2,resources:resources) { _ in throw CocoaError(.featureUnsupported) }
+    XCTAssertEqual(try pixels(simple.png),try pixels(simpleControl.png))
+    XCTAssertLessThan(resources.peakAccountedBytes,resources.byteLimit)
     let overlap=try XCTUnwrap(body.repeated(10_000,revision:UUID()))
     do {
       _=try await PageCompositionRenderer.render(page(overlap.restoredAction()),scale:2,resources:resources) { _ in

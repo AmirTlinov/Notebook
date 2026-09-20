@@ -107,7 +107,7 @@ extension SpatialInkMesh.Batch {
   func expandedForTesting() -> (nodes: [SpatialInkGeometry.Node],chunks: [SpatialInkGeometry.Chunk]) {
     var nodes:[SpatialInkGeometry.Node]=[],chunks:[SpatialInkGeometry.Chunk]=[]
     for id in 0..<chunkCount {
-      let prepared=prepareChunk(id).chunk,c=prepared.descriptor
+      let prepared=prepareChunk(id..<(id+1)).chunk,c=prepared.descriptor
       let shared=c.flags & 1 == 0 && chunks.last.map { $0.flags & 2 == 0 } == true && nodes.last == prepared.nodes.first
       let start=nodes.count-(shared ? 1 : 0)
       nodes.append(contentsOf:shared ? prepared.nodes.dropFirst() : prepared.nodes)

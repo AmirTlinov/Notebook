@@ -109,7 +109,7 @@ struct SpatialInkMesh: Sendable {
     init(tool: SpatialInkTool,nodes: [SpatialInkGeometry.Node],chunks: [Chunk],projection: Projection) {
       self.init(tool:tool,projection:projection,parts:[.init(nodes:nodes,chunks:chunks)])
     }
-    func query(viewport: CGRect,affine: InkAffine) -> (chunks: [Int],cost: InkSampleRelations.AccessCost) {
+    func query(viewport: CGRect,affine: InkAffine) -> (chunks: [Range<Int>],cost: InkSampleRelations.AccessCost) {
       let viewport=viewport.insetBy(dx:-1,dy:-1)
       let candidates: [Int]
       var cost=InkSampleRelations.AccessCost()
@@ -118,19 +118,20 @@ struct SpatialInkMesh: Sendable {
           width:viewport.width/Double(affine.x.x),height:viewport.height/Double(affine.y.y))
         let q=partIndex.query(area);candidates=q.indices;cost.visitedNodes=q.visitedNodes
       } else { candidates=parts.indices.filter { affine.bounds(parts[$0].bounds).intersects(viewport) };cost.visitedNodes=parts.count }
-      var result:[Int]=[]
+      var result:[Range<Int>]=[]
       for id in candidates {
         let q=parts[id].query(viewport:viewport,affine:affine)
-        result.append(contentsOf:q.chunks.map { starts[id]+$0 })
+        result.append(contentsOf:q.chunks.map { (starts[id]+$0.lowerBound)..<(starts[id]+$0.upperBound) })
         cost.visitedNodes += q.cost.visitedNodes;cost.jumps += q.cost.jumps;cost.decodedSamples += q.cost.decodedSamples
       }
       return (result,cost)
     }
-    func prepareChunk(_ id: Int) -> (chunk: SpatialInkGeometry.PreparedChunk,decodedPoints: Int) {
-      precondition((0..<chunkCount).contains(id))
+    func prepareChunk(_ selection: Range<Int>) -> (chunk: SpatialInkGeometry.PreparedChunk,decodedPoints: Int) {
+      precondition(!selection.isEmpty && selection.lowerBound >= 0 && selection.upperBound <= chunkCount)
+      let id=selection.lowerBound
       var low=0,high=parts.count
       while low+1 < high { let mid=(low+high)/2;if starts[mid] <= id { low=mid } else { high=mid } }
-      return parts[low].prepare(id-starts[low])
+      return parts[low].prepare((id-starts[low])..<(selection.upperBound-starts[low]))
     }
   }
   let batches: [Batch]

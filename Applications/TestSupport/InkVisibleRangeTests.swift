@@ -45,7 +45,7 @@ final class InkVisibleRangeTests: XCTestCase {
     XCTAssertGreaterThan(tiny.allocationSummary(seen:&seen).bytes,4096*MemoryLayout<SpatialInkSample>.stride)
     let batch=SpatialInkMesh.Batch(source:measured,projection:.world(.zero),sampleProjection:.init(origin:.zero))
     XCTAssertEqual(batch.preparedNodeCount,0)
-    let visibleCPU=(0..<batch.chunkCount).reduce(0) { $0+batch.prepareChunk($1).chunk.byteCount }
+    let visibleCPU=(0..<batch.chunkCount).reduce(0) { $0+batch.prepareChunk($1..<($1+1)).chunk.byteCount }
     let reference=SpatialInkMesh.referencePage(.init(actions:[PageInkAction(tool:.pen,color:measured.header.color,samples:paper)])).batches[0]
     let canonicalBytes=buffer.samples.capacity*MemoryLayout<SpatialInkSample>.stride
     XCTAssertLessThanOrEqual(Double(canonicalBytes+batch.auxiliaryBytes+visibleCPU),Double(canonicalBytes+reference.byteCount)*1.1)
@@ -66,8 +66,8 @@ final class InkVisibleRangeTests: XCTestCase {
     XCTAssertEqual(mesh.batches.count,1);XCTAssertEqual(batch.parts.count,1)
     XCTAssertEqual(batch.chunkCount,100_000);XCTAssertEqual(batch.preparedNodeCount,200_000)
     let q=batch.query(viewport:.init(x:1_000_000,y:0,width:10,height:20),affine:.init())
-    XCTAssertEqual(q.chunks,[50_000]);XCTAssertLessThan(q.cost.visitedNodes,100)
-    let chunk=batch.prepareChunk(50_000).chunk
+    XCTAssertEqual(q.chunks,[50_000..<50_001]);XCTAssertLessThan(q.cost.visitedNodes,100)
+    let chunk=batch.prepareChunk(50_000..<50_001).chunk
     XCTAssertEqual(chunk.nodes.first?.position.x,1_000_000)
     XCTAssertLessThan(chunk.byteCount,256,"A visible view shares prepared nodes/LOD, not another copy")
     let record:[String:Any]=["strokes":actions.count,"parts":batch.parts.count,"chunks":batch.chunkCount,
@@ -147,10 +147,10 @@ final class InkVisibleRangeTests: XCTestCase {
     let repeated=try XCTUnwrap(body.repeated(500_000,revision:UUID()))
     let mesh=SpatialInkMesh.Batch(source:repeated,projection:.local)
     XCTAssertEqual(mesh.preparedNodeCount,0);XCTAssertEqual(mesh.chunkCount,1)
-    let p=mesh.prepareChunk(0)
+    let p=mesh.prepareChunk(0..<1)
     XCTAssertEqual(p.decodedPoints,1)
     XCTAssertEqual(Array(p.chunk.nodes),SpatialInkGeometry.compact(source:source([sample(30,40,1)])))
-    XCTAssertEqual(mesh.query(viewport:.init(x:25,y:35,width:10,height:10),affine:.init()).chunks,[0])
+    XCTAssertEqual(mesh.query(viewport:.init(x:25,y:35,width:10,height:10),affine:.init()).chunks,[0..<1])
   }
   func testCoalescingAmbiguityPaysForTheExistingNormalizerInsteadOfChangingItsState() {
     let samples=(0..<4096).map { sample(Double($0)/8192,20,$0) }
@@ -199,6 +199,49 @@ final class InkVisibleRangeTests: XCTestCase {
     }
     let a=XCTAttachment(data:try JSONSerialization.data(withJSONObject:records,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
     a.name="whole-straight-repeat-costs";a.lifetime = .keepAlways;add(a)
+  }
+  func testLocalBendKeepsExactRasterWithoutExpandingStraightNeighbours() throws {
+    let samples=(0..<10_000).map { i in SpatialInkSample(point:.init(x:Double(i),y:10),
+      timeOffset:Double(i)/128,width:4,opacity:0.5,force:0.75,azimuth:0,altitude:1) }
+    let body=source(samples)
+    let changed=SpatialInkSample(point:.init(x:5000,y:22),timeOffset:5000.0/128,width:9,opacity:0.75,force:0.75,azimuth:0,altitude:1)
+    let value=try body.editing(body.address(at:5000),to:changed,revision:UUID())
+    let actual=SpatialInkMesh(batches:[.init(source:value,projection:.local)])
+    var original=samples;original[5000]=changed
+    let color=SIMD4<Float>(0.2,0.4,0.8,1)
+    let points=original.map { SpatialInkGeometry.renderPoint(from:$0,color:color) }
+    let nodes=points.indices.map { InkRenderGeometry.node(at:$0,in:points) }
+    let reference=SpatialInkMesh(batches:[.init(tool:.pen,nodes:nodes,
+      chunks:SpatialInkGeometry.chunks(for:nodes,color:color,eraser:false,buildLOD:false),projection:.local)])
+    let transforms=[InkAffine(.init(0.05,4,6,10)),InkAffine(.init(0.05,0.05,6,64.0625)),
+      InkAffine(.init(1,1,-4900,30)),InkAffine(x:.init(-0.04,0.7,440,0),y:.init(0.004,2,10,0)),
+      InkAffine(.init(0.05,1_000_000,6,-10_000_000+64))]
+    var records:[[String:Any]]=[]
+    for (i,affine) in transforms.enumerated() {
+      let start=ContinuousClock.now
+      let a=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:actual,size:.init(width:512,height:128),scale:2,affine:affine))
+      let elapsed=start.duration(to:.now).components
+      let b=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:reference,size:.init(width:512,height:128),scale:2,affine:affine))
+      let left=Array(try XCTUnwrap(a.dataProvider?.data) as Data),right=Array(try XCTUnwrap(b.dataProvider?.data) as Data)
+      let maxError=zip(left,right).map { abs(Int($0)-Int($1)) }.max()!
+      let q=actual.batches[0].query(viewport:.init(x:0,y:0,width:512,height:128),affine:affine)
+      let prepared=q.chunks.map { actual.batches[0].prepareChunk($0) }
+      let reads=prepared.reduce(q.cost.decodedSamples) { $0+$1.decodedPoints }
+      if affine.preservesAxisAlignment { XCTAssertLessThan(reads,2000) }
+      else { XCTAssertTrue(q.chunks.allSatisfy { $0.count == 1 }) }
+      XCTAssertLessThanOrEqual(maxError,2)
+      if i != 4 { XCTAssertTrue(right.contains { $0 > 0 }) }
+      records.append(["case":i,"chunks":q.chunks.count,"reads":reads,"nodes":prepared.reduce(0) { $0+$1.chunk.nodes.count },
+        "maxChannelError":maxError,"rasterMilliseconds":Double(elapsed.seconds)*1000+Double(elapsed.attoseconds)/1e15])
+      if i == 0 {
+        let png=NSMutableData(),destination=try XCTUnwrap(CGImageDestinationCreateWithData(png,"public.png" as CFString,1,nil))
+        CGImageDestinationAddImage(destination,a,nil);XCTAssertTrue(CGImageDestinationFinalize(destination))
+        let proof=XCTAttachment(data:png as Data,uniformTypeIdentifier:"public.png")
+        proof.name="local-bend-coarse-neighbours";proof.lifetime = .keepAlways;add(proof)
+      }
+    }
+    let proof=XCTAttachment(data:try JSONSerialization.data(withJSONObject:records,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
+    proof.name="local-bend-range-costs";proof.lifetime = .keepAlways;add(proof)
   }
   func testDistantCurveKeepsCoverageAcrossSubpixelRasterPhase() throws {
     let body=source((0..<100).map { i in SpatialInkSample(point:.init(x:Double(i),y:sin(Double(i)*0.07)*4),
@@ -259,9 +302,9 @@ final class InkVisibleRangeTests: XCTestCase {
       size:.init(width:512,height:128),scale:2,affine:affine))
     let rasterMS=milliseconds(start)
     let query=batch.query(viewport:.init(x:0,y:0,width:512,height:128),affine:affine)
-    XCTAssertEqual(query.chunks,[0]);XCTAssertEqual(query.cost.decodedSamples,0)
-    XCTAssertEqual(batch.prepareChunk(0).decodedPoints,4)
-    XCTAssertEqual(batch.prepareChunk(0).chunk.nodes.count,4)
+    XCTAssertEqual(query.chunks,[0..<1]);XCTAssertEqual(query.cost.decodedSamples,0)
+    XCTAssertEqual(batch.prepareChunk(0..<1).decodedPoints,4)
+    XCTAssertEqual(batch.prepareChunk(0..<1).chunk.nodes.count,4)
     let transforms=[affine,InkAffine(.init(1,1,-Float(count)/2,64)),
       InkAffine(x:.init(-0.004,0.2,450,0),y:.init(0.0001,4,50,0))]
     for edited in [false,true] {
@@ -316,9 +359,15 @@ final class InkVisibleRangeTests: XCTestCase {
       let sources=[value,eraser,source(Array(samples[3000..<4000]))]
       let actual=SpatialInkMesh(batches:sources.map { .init(source:$0,projection:.local) })
       let reference=SpatialInkMesh.referencePage(.init(actions:sources.map { $0.restoredAction() }))
+      let full=SpatialInkMesh(batches:reference.batches.map { batch in
+        .init(tool:batch.tool,projection:batch.projection,parts:batch.parts.map { part in
+          guard case .prepared(let nodes,let chunks,_)=part.storage else { fatalError("Expected explicit oracle") }
+          return .init(nodes:nodes,chunks:chunks.map { .init(nodes:$0.nodes,bounds:$0.bounds,color:$0.color,flags:$0.flags) })
+        })
+      })
       for transform in transforms {
         let a=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:actual,size:.init(width:560,height:256),scale:2,affine:transform))
-        let b=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:reference,size:.init(width:560,height:256),scale:2,affine:transform))
+        let b=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:full,size:.init(width:560,height:256),scale:2,affine:transform))
         let left=Array(try XCTUnwrap(a.dataProvider?.data) as Data),right=Array(try XCTUnwrap(b.dataProvider?.data) as Data)
         XCTAssertLessThanOrEqual(zip(left,right).map { abs(Int($0)-Int($1)) }.max()!,2,"feature \(feature)")
       }
