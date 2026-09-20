@@ -867,7 +867,15 @@ final class SceneCompositionTiles {
     pinned: Set<WorkspaceSpatialID>, displayScale: Double = 2, refinesDetails: Bool = true,
     permitsPreparation: @escaping @MainActor () -> Bool = { true },
     onSourceInvalidated: @escaping @MainActor () -> Void = {}) {
-    prepare(.init(source: source, presence: presence, frame: frame, pinned: pinned,
+    // A whole is an addressed source pin, never another painted host. A cover
+    // keeps its one physical carrier; its members remain eligible for tiles.
+    var painters=Set<WorkspaceSpatialID>()
+    for pin in pinned {
+      if case .element(let id)=pin,let element=frame.index.element(id:id,boardID:presence.boardID),element.kind == .group {
+        if element.surface.kind == .cover,let owner=element.surface.ownerID { painters.insert(.item(owner)) }
+      } else { painters.insert(pin) }
+    }
+    prepare(.init(source: source, presence: presence, frame: frame, pinned: painters,
       displayScale: displayScale, refinesDetails: refinesDetails,
       permitsPreparation: permitsPreparation, onSourceInvalidated: onSourceInvalidated))
   }

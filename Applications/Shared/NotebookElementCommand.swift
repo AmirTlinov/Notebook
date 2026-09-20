@@ -33,11 +33,11 @@ extension NotebookAppModel {
     }
   }
 
-  func retainedGraphicGraph(reference:(String) -> EditableElementReference) -> NotebookGraphicGraph? {
+  func retainedGraphicGraph(includingGroups:Bool = true,reference:(String) -> EditableElementReference) -> NotebookGraphicGraph? {
     if let contact=selectionSession.manipulation,reference(contact.reference.elementID) == contact.reference,
-      let captured=contact.graphicCapture { return captured.graph }
+      let captured=contact.graphicCapture,includingGroups || !captured.source.isGroup { return captured.graph }
     return elementCommandDrafts.first { ref,draft in
-      reference(ref.elementID) == ref && draft.capture != nil
+      reference(ref.elementID) == ref && draft.capture != nil && (includingGroups || !draft.source.isGroup)
     }?.value.capture?.graph
   }
 
@@ -64,6 +64,7 @@ extension NotebookAppModel {
   /// Contact and accepted edits share the existing graph, renderer and camera.
   /// Only nodes already admitted by that graph can change here.
   func projectingGraphicCommands(_ graph: NotebookGraphicGraph,
+    publishedGroups: [String:NotebookElementPlacement.Source]? = nil,
     reference: (String) -> EditableElementReference) -> NotebookGraphicGraph {
     let selectedEdits=selectionSession.manipulation?.selectedEdits ?? []
     let placements=elementPlacementDrafts(reference:reference)
@@ -80,6 +81,10 @@ extension NotebookAppModel {
       graphics[contact.reference.elementID]=graphic
     }
     var sources=placements
+    if let publishedGroups {
+      sources=sources.filter { !$0.value.isGroup }
+      sources.merge(publishedGroups) { _,published in published }
+    }
     for selected in selectedEdits where graph.node(selected.id) != nil {
       graphics[selected.id]=selected.graphic
       if var source=graph.source(selected.id) { source.frame=selected.frame;sources[selected.id]=source }
@@ -102,8 +107,8 @@ final class NotebookGraphicContactSource: Equatable, Sendable {
   let source:NotebookElementPlacement.Source
   let closedGroup:Bool
   let bounds:CGRect?
-  init(graph:NotebookGraphicGraph,source:NotebookElementPlacement.Source,id:String) {
-    self.graph=graph;self.source=source;closedGroup=source.isGroup && graph.groupIsSelfContained(id);bounds=nil
+  init(graph:NotebookGraphicGraph,source:NotebookElementPlacement.Source,id:String,closedGroup:Bool? = nil) {
+    self.graph=graph;self.source=source;self.closedGroup=closedGroup ?? (source.isGroup && graph.groupIsSelfContained(id));bounds=nil
   }
   private init(_ original:NotebookGraphicContactSource,bounds:CGRect) {
     graph=original.graph;source=original.source;closedGroup=original.closedGroup;self.bounds=bounds

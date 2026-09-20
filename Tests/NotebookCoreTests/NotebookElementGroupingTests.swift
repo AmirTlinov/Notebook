@@ -17,13 +17,13 @@ struct NotebookElementGroupingTests {
     let header = try store.workspaceHeader()
     try database.run("DROP INDEX reference_element_children")
     try database.run("ALTER TABLE reference_element_order DROP COLUMN parent_id")
-    for name in ["min_x","min_y","max_x","max_y","order","last"] {
+    for name in ["min_x","min_y","max_x","max_y","order","last","non_graphic"] {
       try database.run("DROP INDEX spatial_group_\(name)")
     }
     for name in ["insert","remove","update"] { try database.run("DROP TRIGGER spatial_range_\(name)") }
     try database.run("DROP TABLE spatial_ranges")
     try database.run("DROP INDEX spatial_item_tiles")
-    for name in ["parent_id","is_group","has_paint","max_z","lower_key","space_key"] {
+    for name in ["parent_id","is_group","has_paint","max_z","lower_key","space_key","non_graphic"] {
       try database.run("ALTER TABLE spatial_entries DROP COLUMN \(name)")
     }
     try database.run("CREATE INDEX spatial_board_tiles ON spatial_entries(board_id,min_tx,min_ty,layer,z_index,paint_key)")
@@ -31,11 +31,55 @@ struct NotebookElementGroupingTests {
     let reopened = NotebookStore(root:root)
     let after = try reopened.workspaceHeader()
     #expect(after.workspaceID == header.workspaceID && after.cursor == header.cursor)
-    #expect(try database.rows("PRAGMA user_version").first?[0].integer == 14)
+    #expect(try database.rows("PRAGMA user_version").first?[0].integer == NotebookStore.currentDatabaseVersion)
     #expect(try database.rows("SELECT count(*) FROM spatial_ranges").first?[0].integer == database.rows("SELECT count(*) FROM spatial_entries").first?[0].integer)
     #expect(try database.rows("SELECT 1 FROM sqlite_master WHERE name='spatial_board_tiles'").isEmpty)
     #expect(try reopened.readScenePaintOrder(boardID:header.rootBoardID,bounds:.init(origin:.init(x:-1000,y:-1000),width:2000,height:2000)).entries.count == 1)
     #expect(try database.rows("SELECT address,hash FROM records ORDER BY address").map { [$0[0].text!,$0[1].text!] } == before)
+  }
+
+  @Test func completeGroupReadSurvivesLocalIndexAdmissionAndMemberDeletion() throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("group-summary-\(UUID())")
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store=NotebookStore(root:root),actor=UUID(),header=try store.initializeWorkspace(actor:actor,pageSize:.init(width:834,height:1194))
+    let target=CollaborationTarget(kind:.board,id:header.rootBoardID)
+    func source(_ id:String) throws -> NotebookNativeElementSource {
+      try .init(target:target,id:id,spatial:store.readSpatialElement(boardID:target.id,elementID:id))
+    }
+    let operations=try ["a","b","text"].enumerated().map { i,id in
+      var values:[String:JSONValue]=["kind":.string(id == "text" ? "nativeText" : "graphic"),"source":.string(""),
+        "worldOrigin":try .encode(WorldPoint.zero),"frame":try .encode(PageRect(x:Double(i)*50,y:0,width:20,height:30))]
+      if id != "text" { values["graphic"] = try .encode(NotebookGraphic(shape:.rectangle)) }
+      return CollaborationOperation(kind:.insertElement,target:target,id:id,values:values)
+    }
+    _ = try store.applyNativeElementEdits(operations,summary:"Смешанные участники",sources:operations.map { .init(target:target,id:$0.id!) },actor:actor)
+    _ = try store.groupNativeElements([source("a"),source("b")],id:"inner",actor:actor)
+    _ = try store.groupNativeElements([source("inner"),source("text")],id:"outer",actor:actor)
+    let inner=try #require(try store.readElementGroup(target:target,elementID:"inner"))
+    let outer=try #require(try store.readElementGroup(target:target,elementID:"outer"))
+    #expect(!inner.hasNonGraphics && outer.hasNonGraphics && outer.isSelfContained)
+    #expect(inner.localBounds == CGRect(x:0,y:0,width:70,height:30))
+    #expect(outer.localBounds == CGRect(x:0,y:0,width:120,height:30))
+    #expect(try store.readElementGroup(target:target,elementID:"a") == nil)
+    let db=try NotebookSQLConnection(url:store.databaseURL,writable:true,create:false)
+    let hashes=try db.rows("SELECT address,hash FROM records ORDER BY address").map { [$0[0].text!,$0[1].text!] }
+    let cursor=try store.currentChangeCursor()
+    try db.run("DROP INDEX spatial_group_non_graphic")
+    try db.run("ALTER TABLE spatial_entries DROP COLUMN non_graphic")
+    try db.run("PRAGMA user_version=14")
+    let reopened=NotebookStore(root:root)
+    #expect(try reopened.readElementGroup(target:target,elementID:"inner") == inner)
+    #expect(try reopened.readElementGroup(target:target,elementID:"outer") == outer)
+    #expect(try reopened.currentChangeCursor() == cursor)
+    #expect(try db.rows("SELECT address,hash FROM records ORDER BY address").map { [$0[0].text!,$0[1].text!] } == hashes)
+    _ = try reopened.applyNativeElementEdits([.init(kind:.removeElement,target:target,id:"text")],summary:"Убрать текст",sources:[source("text")],actor:actor)
+    #expect(try reopened.readElementGroup(target:target,elementID:"outer")?.hasNonGraphics == false)
+    #expect(try reopened.readElementGroup(target:target,elementID:"outer")?.localBounds == inner.localBounds)
+    for id in ["a","b"] {
+      _ = try reopened.applyNativeElementEdits([.init(kind:.removeElement,target:target,id:id)],summary:"Убрать фигуру",sources:[source(id)],actor:actor)
+    }
+    let empty=try #require(try reopened.readElementGroup(target:target,elementID:"outer"))
+    #expect(empty.localBounds.isNull && !empty.hasNonGraphics)
   }
 
   @Test(arguments:[false,true]) func nestedPoseIsOneAddressAndKeepsChildEditsAfterUndo(onBoard: Bool) throws {

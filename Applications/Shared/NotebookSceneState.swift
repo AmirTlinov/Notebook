@@ -47,6 +47,7 @@ struct NotebookSceneState: Sendable {
   let missingPinnedElements: [UUID: Set<String>]
   let missingPinnedItems: Set<UUID>
   let transferredPinnedItems: [UUID: UUID]
+  var groupReads: [UUID:[String:NotebookElementGroupRead]] = [:]
 
   static func start(store: NotebookStore, actor: UUID, pageSize: PageSize,
     notebookID: UUID, pageID: UUID, viewport: SpatialPoint? = nil) throws -> Self {
@@ -169,6 +170,7 @@ struct NotebookSceneState: Sendable {
       var pending: [SessionPresence] = [presence]
       var remainingEntries = 96
       var missingPinnedElements: [UUID: Set<String>] = [:]
+      var groupReads: [UUID:[String:NotebookElementGroupRead]] = [:]
       while !pending.isEmpty, coverage.count < 4, remainingEntries > 0 {
         let view = pending.removeFirst()
         guard coverage[view.boardID] == nil else { continue }
@@ -184,6 +186,11 @@ struct NotebookSceneState: Sendable {
         }
         let window = try store.readSceneWindow(boardID: view.boardID, bounds: bounds,
           limit: remainingEntries, pinnedIDs: pins, pinnedElementIDs: elementPins)
+        for id in elementPins {
+          guard let element=window.boards.first(where:{ $0.id == view.boardID })?.board.elements.first(where:{ $0.id == id }),element.kind == .group else { continue }
+          let target=element.surface.kind == .cover ? CollaborationTarget(kind:.cover,id:element.surface.ownerID!,boardID:view.boardID) : .init(kind:.board,id:view.boardID)
+          groupReads[view.boardID,default:[:]][id]=try store.readElementGroup(target:target,elementID:id)
+        }
         for item in window.items where item.id != selected.id { items[item.id] = item }
         for node in window.boards { nodes[node.id] = node }
         boardContentRevisions.merge(window.boardContentRevisions) { _, current in current }
@@ -244,7 +251,7 @@ struct NotebookSceneState: Sendable {
         reading: selected.kind == .document ? store.readDocumentReadingPosition(selected.id) : nil,
         hierarchy: hierarchy, boardContentRevisions: boardContentRevisions, ink: live.ink, inkSurfaces: Set(surfaces), presence: presence, paperSizes: paper,
         coverage: coverage, truncatedBoards: truncated, completeCoverElementOwners: completeCoverElementOwners, missingPinnedElements: missingPinnedElements,
-        missingPinnedItems: missingPinnedItems, transferredPinnedItems: transferredPinnedItems)
+        missingPinnedItems: missingPinnedItems, transferredPinnedItems: transferredPinnedItems,groupReads:groupReads)
     }
   }
 }

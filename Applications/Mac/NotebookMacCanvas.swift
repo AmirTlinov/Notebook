@@ -18,6 +18,7 @@ struct NotebookMacCanvas: View {
     let permits: Bool
     let refinesDetails: Bool
     let selection: NotebookSelectionSession.Target?
+    let groupPoses: [SceneCompositionPlane:[String:NotebookElementPlacement.Source]]
   }
 
   var body: some View {
@@ -32,7 +33,7 @@ struct NotebookMacCanvas: View {
         let workset = cohort.map { model.presentedWorkset(cohort: $0, boardID: presence.boardID, presence: presence) } ?? .empty
         let request = Preparation(presence: presence, generation: model.sceneIndexGeneration,
           publication: model.scenePublicationGeneration, cursor: model.workspaceHeader?.cursor,
-          permits: model.permitsScenePreparation, refinesDetails: model.presencePhase == .settled, selection: model.selectionSession.target)
+          permits: model.permitsScenePreparation, refinesDetails: model.presencePhase == .settled, selection: model.selectionSession.target,groupPoses:model.compositionGroupPoses)
         ZStack {
           if presence.mode == .page || presence.mode == .document {
             Color(red: 0.90, green: 0.91, blue: 0.90)

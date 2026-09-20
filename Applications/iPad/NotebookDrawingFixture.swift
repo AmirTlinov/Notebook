@@ -89,6 +89,7 @@
         fixtureName = (nativeGraphicPage ? "NativeGraphicPage" : "NativeGraphicBoard")
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-connector") ? "Connector" : "")
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-dense") ? "Dense" : "")
+          + (ProcessInfo.processInfo.arguments.contains("--notebook-native-whole") ? "Whole" : "")
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-erased") ? "Erased" : "")
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-polygons") ? "Polygons" : "")
           + (ProcessInfo.processInfo.arguments.contains("--notebook-native-geometry-edit") ? "GeometryEdit" : "")
@@ -746,6 +747,23 @@
             end: .init(point: .zero, binding: .init(elementID: id)))))
           operations += [.init(kind: .insertElement, target: target, id: id, values: extra),
             .init(kind: .insertElement, target: target, id: "batch-link-\(index)", values: link)]
+        }
+      }
+      if !onPage && ProcessInfo.processInfo.arguments.contains("--notebook-native-whole") {
+        // More members than the scene admission budget: the real move must
+        // carry both live vectors and the remaining passive tiles.
+        node["worldOrigin"] = try .encode(WorldPoint.zero)
+        node["parentID"] = .string("native-whole")
+        operations[0] = .init(kind:.insertElement,target:target,id:"native-circle",values:node)
+        operations.insert(.init(kind:.insertElement,target:target,id:"native-whole",values:[
+          "kind":.string("group"),"source":.string(""),"worldOrigin":try .encode(WorldPoint(x:-340,y:-260)),
+          "frame":try .encode(PageRect(x:0,y:0,width:200,height:500)),
+          "basis":try .encode(NotebookElementBasis(size:.init(x:200,y:500)))]),at:0)
+        for i in 0..<159 {
+          var cell=node
+          cell["frame"] = try .encode(PageRect(x:Double(i%10)*20,y:180+Double(i/10)*20,width:14,height:14))
+          cell["graphic"] = try .encode(NotebookGraphic(shape:.rectangle,style:.init(fill:.black)))
+          operations.append(.init(kind:.insertElement,target:target,id:"whole-cell-\(i)",values:cell))
         }
       }
       let erasedFixture = onPage && ProcessInfo.processInfo.arguments.contains("--notebook-native-erased")

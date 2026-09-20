@@ -89,7 +89,8 @@ struct WorkspaceSceneIndex: Sendable {
       let graphicPresentation = node.board.graphicPresentation
       let graphicGraph = node.board.graphicGraph()
       for (position, element) in node.board.elements.enumerated() {
-        guard element.kind != .group else { continue }
+        // The descriptor is addressable for selection, but is not a painter.
+        if element.kind == .group { elements[element.id]=element;continue }
         guard element.graphic == nil || graphicPresentation.geometryIDs.contains(element.id) else { continue }
         let layout = element.graphic == nil ? nil : graphicGraph.resolve(element.id).layout
         guard element.graphic == nil || layout != nil else { continue }

@@ -23,6 +23,11 @@ extension NotebookAppModel {
   }
 
   func groupManipulationGeometry(_ reference: EditableElementReference,in prepared:NotebookGraphicGraph? = nil) -> (placement:NotebookElementPlacement,bounds:CGRect)? {
+    if case .spatial(let boardID,let id)=reference {
+      guard let read=spatialGroupReads[boardID]?[id],!read.localBounds.isNull,
+        let graph=prepared ?? groupGraph(reference)?.0,let placement=graph.placement(id) else { return nil }
+      return (placement,read.localBounds.applying(placement.transform))
+    }
     if let contact=selectionSession.manipulation,contact.reference == reference,contact.graphicCapture?.closedGroup == true,
       let placement=try? contact.placement?.updating(frame:.init(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height),basis:contact.basis) {
       return (placement,contact.presentedFrame)
@@ -41,24 +46,45 @@ extension NotebookAppModel {
     return (placement,bounds)
   }
 
-  /// Baked descendants cannot silently remain at the old pose. Until the scene
-  /// has admitted all shown participants, selection is allowed but not a drag.
+  /// A spatial whole is admitted by the complete indexed source, not by the
+  /// accidental subset of children that happens to fit the live workset.
   func groupAllowsLiveManipulation(_ reference: EditableElementReference,in prepared:NotebookGraphicGraph? = nil) -> Bool {
     guard let graph=prepared ?? groupGraph(reference)?.0 else { return false }
     let id=reference.elementID
-    let unpaintedParents:[String]
-    switch reference {
-    case .page(let owner,_): unpaintedParents=(pages[owner]?.elements ?? []).filter { $0.kind != .group && $0.graphic == nil }.compactMap(\.parentID)
-    case .spatial(let owner,_): unpaintedParents=(boardHierarchy?.board(owner)?.elements ?? []).filter { $0.kind != .group && $0.graphic == nil }.compactMap(\.parentID)
+    if case .spatial(let owner,_)=reference {
+      guard let read=spatialGroupReads[owner]?[id],!read.hasNonGraphics,!read.localBounds.isNull,
+        read.source == nativeElementSource(reference)?.placementSource else { return false }
+      let desired=projectingGraphicCommands(boardHierarchy?.board(owner)?.graphicGraph() ?? NotebookGraphicGraph([])) { .spatial(boardID:owner,elementID:$0) }
+      return graph.placement(id) == desired.placement(id)
     }
+    guard case .page(let owner,_)=reference else { return false }
     let key=UUID(uuidString:id)?.uuidString ?? id
-    guard !unpaintedParents.contains(where: { (UUID(uuidString:$0)?.uuidString ?? $0) == key || graph.placement($0)?.descends(from:id) == true }) else { return false }
-    if case .page = reference { return true }
-    guard case .spatial(let owner,_) = reference,let cohort=compositionTiles.published else { return false }
-    let authored=authoredGraphicGraph(boardID:owner)
-    guard graph.placement(id) == authored.placement(id) else { return false }
-    let members=authored.nodes.values.filter { $0.shown && $0.placement.descends(from:id) }
-    return !members.isEmpty && members.allSatisfy { presentedElement(.spatial(boardID:owner,elementID:$0.id),cohort:cohort) != nil }
+    return !(pages[owner]?.elements ?? []).filter { $0.kind != .group && $0.graphic == nil }.compactMap(\.parentID)
+      .contains { (UUID(uuidString:$0)?.uuidString ?? $0) == key || graph.placement($0)?.descends(from:id) == true }
+  }
+
+  var hasSpatialGroupContact: Bool {
+    guard let contact=selectionSession.manipulation,case .spatial=contact.reference else { return false }
+    return contact.graphicCapture?.source.isGroup == true
+  }
+
+  /// The view's ordinary composition request carries the desired whole poses.
+  /// Painting reads only the published request; pointer samples never author
+  /// a second live geometry ahead of the same whole's passive pixels.
+  var compositionGroupPoses: [SceneCompositionPlane:[String:NotebookElementPlacement.Source]] {
+    var drafts=elementCommandDrafts.filter { $0.value.source.isGroup }.mapValues(\.source)
+    if let contact=selectionSession.manipulation,let captured=contact.graphicCapture,captured.source.isGroup {
+      var source=captured.source
+      source.frame = .init(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height)
+      source.basis=contact.basis;drafts[contact.reference]=source
+    }
+    var result:[SceneCompositionPlane:[String:NotebookElementPlacement.Source]]=[:]
+    for (ref,source) in drafts {
+      guard case .spatial(let boardID,let id)=ref,let element=nativeElementSource(ref)?.spatial else { continue }
+      let plane=element.surface.kind == .cover ? SceneCompositionPlane.cover(boardID:boardID,itemID:element.surface.ownerID!) : .board(boardID)
+      result[plane,default:[:]][id]=source
+    }
+    return result
   }
 
   var canGroupSelectedElements: Bool {

@@ -30,6 +30,7 @@ import AppKit
     let workspace=try store.loadIndex(),hierarchy=try store.loadBoard(items:workspace.items)
     let index=WorkspaceSceneIndex(workspace:workspace,hierarchy:hierarchy,paperSizes:[:])
     XCTAssertNil(index.paintEntry(id:.element("whole"),boardID:target.id))
+    XCTAssertEqual(index.element(id:"whole",boardID:target.id)?.kind,.group,"A descriptor is addressable without becoming painted")
     let entry=try XCTUnwrap(index.paintEntry(id:.element("shape"),boardID:target.id))
     XCTAssertEqual(entry.bounds.origin,origin.offsetBy(x:120,y:60))
     XCTAssertEqual(entry.bounds.width,120);XCTAssertEqual(entry.bounds.height,300)
@@ -485,7 +486,85 @@ import AppKit
     let proof=XCTAttachment(data:export.png,uniformTypeIdentifier:"public.png");proof.name="group-controls-saved-export";proof.lifetime = .keepAlways;add(proof)
   }
 
-  func testBoardBasisWaitsForPassiveMembersAndDoesNotMixMembershipCuts() async throws {
+  func testHeldBoardWholePublishesLiveAndPassiveMembersAtOnePose() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("held-board-whole-\(UUID())")
+    let store=NotebookStore(root:root),actor=UUID(),header=try store.initializeWorkspace(actor:actor,pageSize:.init(width:834,height:1194))
+    let target=CollaborationTarget(kind:.board,id:header.rootBoardID),origin=WorldPoint(x:5000,y:5000)
+    let whole=CollaborationOperation(kind:.insertElement,target:target,id:"whole",values:["kind":.string("group"),"source":.string(""),"worldOrigin":try .encode(origin),
+      "frame":try .encode(PageRect(x:0,y:0,width:1000,height:700)),"basis":try .encode(NotebookElementBasis(size:.init(x:1000,y:700)))])
+    _ = try store.applyNativeElementEdits([whole],summary:"Целое",sources:[.init(target:target,id:"whole")],actor:actor)
+    for start in stride(from:0,to:160,by:32) {
+      let operations=try (start..<start+32).map { i in
+        CollaborationOperation(kind:.insertElement,target:target,id:"shape-\(i)",values:["kind":.string("graphic"),"source":.string(""),"worldOrigin":try .encode(WorldPoint.zero),
+          "parentID":.string("whole"),"frame":try .encode(PageRect(x:i == 159 ? 2000 : Double(i%16)*50,y:i == 159 ? 1500 : Double(i/16)*50,width:30,height:30)),
+          "graphic":try .encode(NotebookGraphic(shape:.rectangle,style:.init(fill:.black)))])
+      }
+      _ = try store.applyNativeElementEdits(operations,summary:"Участники",sources:operations.map { .init(target:target,id:$0.id!) },actor:actor)
+    }
+    let child=try store.readSpatialElement(boardID:target.id,elementID:"shape-159")
+    let model=NotebookAppModel(store:store,startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root);await model.start(pageSize:.init(width:834,height:1194))
+    let presence=SessionPresence(boardID:target.id,mode:.board,camera:.init(center:origin.offsetBy(x:400,y:300),scale:1),viewport:.init(x:1000,y:800))
+      .selecting(itemID:try XCTUnwrap(model.presence?.selectedItemID),pageID:model.presence?.notebookPageID)
+    model.updatePresence(presence,settled:true)
+    let initialized=await model.finishPendingPersistence();XCTAssertTrue(initialized)
+    await model.reloadExternalChanges()?.value
+    let ref=EditableElementReference.spatial(boardID:target.id,elementID:"whole"),pins:Set<WorkspaceSpatialID>=[.element("whole")]
+    model.selectElement(ref)
+    func publish(_ phase:String) async throws -> SceneCompositionCohort {
+      let deadline=ContinuousClock.now + .seconds(10)
+      repeat {
+        let frame=model.sceneIndex.map { WorkspaceSceneFrame(index:$0,presence:presence,portalCamera:model.scenePortalCamera,pinned:pins) }
+        model.prepareComposition(presence:presence,frame:frame,pinned:pins,displayScale:1)
+        if let cohort=model.compositionTiles.published,cohort.plan.groupPoses == model.compositionGroupPoses,
+          cohort.plan.revision == model.workspaceHeader?.cursor,!model.compositionTiles.isPreparing,
+          model.spatialGroupReads[target.id]?["whole"] != nil { return cohort }
+        try await Task.sleep(for:.milliseconds(10))
+      } while ContinuousClock.now<deadline
+      XCTFail("\(phase): \(model.compositionTiles.failure ?? model.persistenceFailure ?? "Whole publication timed out"); group=\(model.spatialGroupReads[target.id]?["whole"] != nil), preparing=\(model.compositionTiles.isPreparing), permits=\(model.permitsScenePreparation), revision=\(String(describing:model.compositionTiles.published?.plan.revision))/\(String(describing:model.workspaceHeader?.cursor))")
+      return try XCTUnwrap(model.compositionTiles.published)
+    }
+    let original=try await publish("initial")
+    let read=try XCTUnwrap(model.spatialGroupReads[target.id]?["whole"])
+    XCTAssertFalse(read.hasNonGraphics);XCTAssertEqual(read.localBounds.width,2030);XCTAssertEqual(read.localBounds.height,1530)
+    let start=model.presentedGraphicGraph(boardID:target.id,cohort:original)
+    XCTAssertLessThan(start.nodes.count,160,"The contact does not admit all member bodies")
+    XCTAssertGreaterThan(original.plan.presentedOwners.count,0);XCTAssertLessThan(original.plan.presentedOwners.count,160)
+    XCTAssertFalse(original.rasters.isEmpty,"Some visible members remain in passive tiles")
+    let live=try XCTUnwrap(original.plan.presentedOwners.compactMap { owner -> String? in if case .element(let id)=owner.id { return id };return nil }.first)
+    let before=try XCTUnwrap(start.resolve(live).layout)
+    let contact=try XCTUnwrap(model.beginElementManipulation(ref,kind:.move))
+    defer { model.cancelElementManipulation() }
+    model.updateElementManipulation(contact,translation:.init(x:40,y:25))
+    XCTAssertTrue(model.permitsScenePreparation,"A held whole uses the ordinary publisher without waiting for lift")
+    XCTAssertEqual(model.presentedGraphicGraph(boardID:target.id,cohort:original).resolve(live).layout,before,
+      "The live member must wait for the same publication as passive peers")
+    let moved=try await publish("held"),movedGraph=model.presentedGraphicGraph(boardID:target.id,cohort:moved)
+    let after=try XCTUnwrap(movedGraph.resolve(live).layout)
+    XCTAssertEqual(after.frame.x,before.frame.x+40,accuracy:1e-9);XCTAssertEqual(after.frame.y,before.frame.y+25,accuracy:1e-9)
+    XCTAssertEqual(model.groupManipulationGeometry(ref)?.bounds,read.localBounds.applying(try XCTUnwrap(movedGraph.placement("whole")).transform))
+    XCTAssertNotEqual(moved.geometryID,original.geometryID)
+    model.cancelElementManipulation(contact)
+    XCTAssertEqual(model.presentedGraphicGraph(boardID:target.id,cohort:moved).resolve(live).layout,after,
+      "Cancellation does not snap live bodies back ahead of old tiles")
+    let restored=try await publish("cancelled")
+    XCTAssertEqual(model.presentedGraphicGraph(boardID:target.id,cohort:restored).resolve(live).layout,before)
+    let accepted=try XCTUnwrap(model.beginElementManipulation(ref,kind:.move))
+    XCTAssertTrue(model.finishElementManipulation(accepted,translation:.init(x:100,y:50)))
+    let saved=await model.finishPendingPersistence();XCTAssertTrue(saved,model.persistenceFailure ?? "")
+    await model.reloadExternalChanges()?.value
+    let committed=try await publish("saved"),shown=model.presentedGraphicGraph(boardID:target.id,cohort:committed)
+    XCTAssertTrue(committed.plan.groupPoses.isEmpty)
+    let persisted=try XCTUnwrap(store.readGraphicResolution(target:target,elementID:live).layout)
+    XCTAssertEqual(shown.resolve(live).layout,persisted)
+    XCTAssertEqual(persisted.frame.x,before.frame.x+100,accuracy:1e-9);XCTAssertEqual(persisted.frame.y,before.frame.y+50,accuracy:1e-9)
+    XCTAssertEqual(try store.readSpatialElement(boardID:target.id,elementID:"shape-159"),child)
+    XCTAssertEqual(model.presence?.camera,presence.camera)
+    let image=try await SceneCompositionRenderer(source:SceneCompositionSource(store:store,revision:committed.plan.revision,workspaceID:committed.plan.workspaceID),resources:SceneRenderResources()).render(presence:presence,scale:1)
+    let proof=XCTAttachment(data:image.png,uniformTypeIdentifier:"public.png");proof.name="held-board-whole-saved";proof.lifetime = .keepAlways;add(proof)
+  }
+
+  func testBoardBasisWaitsForItsPublicationAndDoesNotMixMembershipCuts() async throws {
     let root=FileManager.default.temporaryDirectory.appendingPathComponent("group-cohort-\(UUID())")
     let model=NotebookAppModel(store:.init(root:root),startsNearbySync:false)
     retainNotebookUntilTeardown(model,removing:root);await model.start(pageSize:.init(width:800,height:1000))
@@ -524,7 +603,7 @@ import AppKit
     for id in ["a","b"] {
       let before=try XCTUnwrap(old.resolve(id).layout)
       let moved=try XCTUnwrap(model.presentedGraphicGraph(boardID:boardID,cohort:all).resolve(id).layout)
-      XCTAssertEqual(moved.frame.x,before.frame.x+90,accuracy:1e-9);XCTAssertEqual(moved.frame.y,before.frame.y+20,accuracy:1e-9)
+      XCTAssertEqual(moved,before,"All admitted bodies being live does not prove there are no passive members outside that bounded read")
       XCTAssertEqual(model.presentedGraphicGraph(boardID:boardID,cohort:partial).resolve(id).layout,before,
         "One live member must not move ahead of the same whole's retained passive pixels")
     }

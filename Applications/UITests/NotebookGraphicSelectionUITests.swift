@@ -4,6 +4,38 @@ import XCTest
   func testSelectMoveAlignDuplicateAndRestoreOnPage() { scenario(onPage:true) }
   func testSelectMoveAlignDuplicateAndRestoreOnBoard() { scenario(onPage:false) }
 
+  func testMoveWholeWithPassiveMembersAndRestore() {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app=XCUIApplication()
+    app.launchArguments=["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture","--notebook-native-whole"]
+    app.launch()
+    let node=app.images["Узел +"]
+    XCTAssertTrue(node.waitForExistence(timeout:15))
+    let neighbour=app.webViews.containing(.button,identifier:"Graphic scene counter").firstMatch
+    XCTAssertTrue(neighbour.waitForExistence(timeout:10))
+    neighbour.buttons["Graphic scene counter"].tap()
+    XCTAssertTrue(neighbour.staticTexts["Count 1"].waitForExistence(timeout:3))
+    let runtime=neighbour.staticTexts.matching(NSPredicate(format:"label BEGINSWITH 'Runtime '")).firstMatch.label
+    node.tap();app.buttons["element-actions-menu"].tap();app.buttons["Выбрать группу"].tap()
+    let handle=app.descendants(matching:.any)["move-element-group"]
+    XCTAssertTrue(handle.waitForExistence(timeout:5))
+    let before=node.frame,from=handle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+    proof(app,"whole-before")
+    from.press(forDuration:0.01,thenDragTo:from.withOffset(.init(dx:70,dy:45)),withVelocity:.slow,thenHoldForDuration:0.3)
+    let moved=XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in node.frame.midX>before.midX+50 && node.frame.midY>before.midY+30 },object:nil)
+    XCTAssertEqual(XCTWaiter.wait(for:[moved],timeout:8),.completed)
+    let after=node.frame
+    XCTAssertEqual(after.minX-before.minX,70,accuracy:3);XCTAssertEqual(after.minY-before.minY,45,accuracy:3)
+    XCTAssertEqual(neighbour.staticTexts.matching(NSPredicate(format:"label BEGINSWITH 'Runtime '")).firstMatch.label,runtime)
+    XCTAssertTrue(neighbour.staticTexts["Count 1"].exists)
+    proof(app,"whole-moved")
+    app.terminate();app.launchArguments.append("--notebook-reopen-fixture");app.launch()
+    XCTAssertTrue(node.waitForExistence(timeout:15))
+    XCTAssertEqual(node.frame.minX,after.minX,accuracy:3);XCTAssertEqual(node.frame.minY,after.minY,accuracy:3)
+    proof(app,"whole-reopened")
+  }
+
   private func scenario(onPage: Bool) {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait

@@ -282,6 +282,7 @@ final class NotebookAppModel {
   private(set) var workspaceHeader: NotebookWorkspaceHeader?
   // Logical content admission, not the durable header-only refresh or GPU cohort.
   private(set) var sceneContentCursor: UInt64 = 0
+  private(set) var spatialGroupReads: [UUID:[String:NotebookElementGroupRead]] = [:]
   private(set) var documentPaperSizes: [UUID: DocumentPaperSize] = [:]
   private(set) var sceneCoverage: [UUID: WorkspaceSpatialBounds] = [:]
   private(set) var truncatedSceneBoards: Set<UUID> = []
@@ -380,6 +381,7 @@ final class NotebookAppModel {
       if case .element(let value) = id { return value }; return nil
     }.sorted()
     let missingPin = elements.contains { sceneIndex?.element(id: $0, boardID: presence.boardID) == nil }
+    let missingGroup = elements.contains { sceneIndex?.element(id:$0,boardID:presence.boardID)?.kind == .group && spatialGroupReads[presence.boardID]?[$0] == nil }
     scenePinnedElements = elements.isEmpty ? [:] : [presence.boardID: elements]
     let itemIDs = pinned.compactMap { pin -> UUID? in if case .item(let id) = pin { return id }; return nil }
     guard itemIDs.count <= 7, Set(installedItemOwners.keys).isSubset(of: Set(itemIDs)) else {
@@ -393,12 +395,12 @@ final class NotebookAppModel {
     }
     scenePinnedItems = itemPins
     let missingItemPin = itemIDs.contains { sceneIndex?.item(id: $0) == nil }
-    if missingPin || missingItemPin || sceneCoverage[presence.boardID]?.contains(NotebookSceneState.bounds(for: presence, margin: 64)) != true {
+    if missingPin || missingGroup || missingItemPin || sceneCoverage[presence.boardID]?.contains(NotebookSceneState.bounds(for: presence, margin: 64)) != true {
       requestSceneCoverage(presence)
     }
     // An addressed pin is still being fetched. Do not turn the previous
     // partial index into a failed complete source for this new request.
-    if missingPin || missingItemPin { compositionTiles.cancelPreparation(); return }
+    if missingPin || missingGroup || missingItemPin { compositionTiles.cancelPreparation(); return }
     guard permitsScenePreparation else { compositionTiles.cancelPreparation(); return }
     if scenePreparationPending {
       // Extending the same SQL cut must not cancel the image already on its
@@ -407,7 +409,7 @@ final class NotebookAppModel {
       return
     }
     guard let header = workspaceHeader, let frame else { return }
-    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
+    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID,groupPoses:compositionGroupPoses)
     compositionTiles.prepare(source: source, presence: presence, frame: frame, pinned: pinned,
       displayScale: displayScale, refinesDetails: presencePhase == .settled,
       permitsPreparation: { [weak self] in self?.permitsScenePreparation == true },
@@ -484,6 +486,7 @@ final class NotebookAppModel {
             (PageAddress(itemID: $0.itemID, index: $0.index, root: $0.visibleRoot), $0.pageID)
           })
           boardHierarchy = state.hierarchy
+          spatialGroupReads = state.groupReads
           boardContentRevisions = state.boardContentRevisions
           admitDocumentReading(state.reading)
           if loadsDocument {
@@ -1002,7 +1005,7 @@ final class NotebookAppModel {
   /// still waits for settlement through permitsBackgroundPreparation.
   var permitsScenePreparation: Bool {
     preparationIsForeground && !isStopped && !peerInputIsActive && !inputGate.hasActivePencil
-      && (!inputIsActive || presencePhase == .active)
+      && (!inputIsActive || presencePhase == .active || hasSpatialGroupContact)
       && !workingGraphics.contains { $0.surface.kind == .board && $0.accepted
         && ($0.publicationCursor.map { (workspaceHeader?.cursor ?? 0) < $0 } ?? true) }
   }
@@ -3118,7 +3121,9 @@ final class NotebookAppModel {
       connection:connection,layout:graphicGeometry?.body,graphic:graphicElement(reference),placement:graphicGeometry?.placement ?? groupGeometry?.placement,
       displayFrame:graphicGeometry.map { .init(x:$0.display.frame.x,y:$0.display.frame.y,width:$0.display.frame.width,height:$0.display.frame.height) } ?? groupGeometry?.bounds)
     if let captured,let source=captured.source(reference.elementID) {
-      contact.graphicCapture = .init(graph:captured,source:source,id:reference.elementID)
+      let closed:Bool?
+      if case .spatial(let owner,let id)=reference { closed=spatialGroupReads[owner]?[id]?.isSelfContained } else { closed=nil }
+      contact.graphicCapture = .init(graph:captured,source:source,id:reference.elementID,closedGroup:closed)
     }
     if selectionSession.elements.count > 1 {
       guard kind == .move, let members = selectedGraphicMembers() else { return nil }
@@ -3160,7 +3165,13 @@ final class NotebookAppModel {
       current.identity == contact.identity,
       graphicElement(contact.reference)?.connection == contact.originalConnection else { return false }
     if let placement=contact.placement {
-      guard (graphicManipulationGeometry(contact.reference)?.placement ?? groupManipulationGeometry(contact.reference)?.placement) == placement else { return false }
+      if case .spatial(let boardID,let elementID)=contact.reference,let captured=contact.graphicCapture,captured.source.isGroup {
+        let source=elementCommandDrafts[contact.reference]?.source ?? nativeElementSource(contact.reference)?.placementSource
+        let desired=projectingGraphicCommands(boardHierarchy?.board(boardID)?.graphicGraph() ?? NotebookGraphicGraph([])) { .spatial(boardID:boardID,elementID:$0) }.placement(elementID)
+        guard source == captured.source,desired?.parentTransform == placement.parentTransform,desired?.origin == placement.origin else { return false }
+      } else {
+        guard (graphicManipulationGeometry(contact.reference)?.placement ?? groupManipulationGeometry(contact.reference)?.placement) == placement else { return false }
+      }
     } else if current.worldOrigin != contact.worldOrigin { return false }
     if contact.vertices != contact.originalVertices || contact.cornerRadius != contact.originalCornerRadius {
       guard graphicElement(contact.reference).flatMap(NotebookGraphicGeometry.polygon) == contact.originalVertices,
@@ -4985,6 +4996,7 @@ final class NotebookAppModel {
     missingSceneElements = state.missingPinnedElements
     workspace = state.workspace
     boardHierarchy = state.hierarchy
+    spatialGroupReads = state.groupReads
     boardContentRevisions = state.boardContentRevisions
     spatialInk = state.ink
     loadedInkSurfaces = state.inkSurfaces

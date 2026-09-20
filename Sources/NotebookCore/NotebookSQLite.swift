@@ -340,7 +340,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 14
+  static let currentDatabaseVersion: Int64 = 15
 
   func prepareDatabase(initialWorkspaceID: UUID? = nil) throws {
     if currentSQL != nil { guard initialWorkspaceID == nil else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }; return }
@@ -465,6 +465,19 @@ extension NotebookStore {
       }
       if admittedVersion < 8 { try rebuildItemLifecycleIndex(database: database) }
       if admittedVersion < 10 { try rebuildRetiredNotebookPageIndex(database: database) }
+      if admittedVersion < 15 {
+        // Read each old body once during local index admission, never during
+        // a group contact. Shared records, hashes and delivery stay unchanged.
+        var after = ""
+        while let row = try database.rows("SELECT address FROM spatial_entries WHERE is_group=0 AND kind<>'item' AND address>? ORDER BY address LIMIT 1",[.text(after)]).first {
+          after=row[0].text!
+          guard let fragment=try storedFragments(address:after,descendants:false).first else { throw NotebookStorageError.corruptRecord(after) }
+          if fragment.value["graphic"] == nil {
+            try database.run("UPDATE spatial_entries SET non_graphic=1 WHERE address=?",[.text(after)])
+            try noteElementGroupAncestors(fragment,database:database)
+          }
+        }
+      }
       try database.run("PRAGMA user_version=\(Self.currentDatabaseVersion)")
     }
   }

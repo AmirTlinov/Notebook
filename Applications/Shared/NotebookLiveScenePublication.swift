@@ -22,8 +22,11 @@ extension WorkspaceSceneProjection {
 extension NotebookAppModel {
   func presentedGraphicGraph(boardID: UUID, cohort: SceneCompositionCohort, preview: Bool = true) -> NotebookGraphicGraph {
     guard let captured = cohort.frame.index.capturedHierarchy.board(boardID) else { return .init([]) }
-    let retained=preview ? retainedGraphicGraph { .spatial(boardID:boardID,elementID:$0) } : nil
-    let graph = retained ?? presentedBoard(captured,boardID:boardID,cohort:cohort).graphicGraph()
+    let retained=preview ? retainedGraphicGraph(includingGroups:false) { .spatial(boardID:boardID,elementID:$0) } : nil
+    let groups=cohort.plan.groupPoses.filter { $0.key.boardID == boardID }.values.reduce(into:[String:NotebookElementPlacement.Source]()) { result,plane in
+      result.merge(plane) { first,_ in first }
+    }
+    let graph = (retained ?? presentedBoard(captured,boardID:boardID,cohort:cohort).graphicGraph()).projecting(placements:groups)
     guard preview else { return graph }
     let working = workingGraphics.filter {
       ($0.surface == .board(boardID) || ($0.surface.kind == .cover && $0.surface.ownerID.flatMap { cohort.frame.index.ownerBoard(itemID:$0) } == boardID))
@@ -38,7 +41,7 @@ extension NotebookAppModel {
       return object.node
     }
     let combined = graph.projecting(adding:nodes)
-    return projectingGraphicCommands(combined) { .spatial(boardID: boardID, elementID: $0) }
+    return projectingGraphicCommands(combined,publishedGroups:groups) { .spatial(boardID: boardID, elementID: $0) }
   }
   /// The cohort admits physical hosts and excludes their pixels from its tiles.
   /// Its immutable geometry is not another owner of subsequent accepted input.
@@ -113,30 +116,11 @@ extension NotebookAppModel {
         width: item.geometry.width, height: item.geometry.height)
       return sceneConfirmsAbsence(in: boardID, bounds: bounds) ? nil : original
     }
-    let graph=cohort.frame.index.graphicGraph(boardID:boardID)
-    // Nonpainted frames follow their live descendants, not their nonexistent
-    // raster slot. A passive participant retains the old shared basis until
-    // the next complete cohort; no old pixels may be left at another pose.
-    func groupKey(_ id:String) -> String { UUID(uuidString:id)?.uuidString ?? id }
-    var passiveGroups=Set<String>()
-    if let graph,!graph.groups.isEmpty {
-      for node in graph.nodes.values where node.shown {
-        let plane:SceneCompositionPlane = node.surface.kind == .cover ? .cover(boardID:boardID,itemID:node.surface.ownerID!) : .board(boardID)
-        if !cohort.plan.allowsLive(.element(node.id),in:plane) { passiveGroups.formUnion(node.placement.ancestors.map(groupKey)) }
-      }
-    }
-    for element in (graph?.groups.isEmpty == false ? captured.elements : []) where element.kind != .group && element.graphic == nil {
-      if let parent=element.parentID {
-        passiveGroups.insert(groupKey(parent))
-        passiveGroups.formUnion(graph?.placement(parent)?.ancestors.map(groupKey) ?? [])
-      }
-    }
-    let currentGroups=Dictionary((graph?.groups.isEmpty == false ? current.elements : []).filter { $0.kind == .group }.map { ($0.id,$0) },uniquingKeysWith:{ first,_ in first })
-    let elements = captured.elements.compactMap { element -> SpatialElement? in
-      if element.kind == .group,!passiveGroups.contains(groupKey(element.id)),let next=currentGroups[element.id],next.surface == element.surface,next.parentID == element.parentID {
-        return next
-      }
-      return presentedElement(element,boardID:boardID,cohort:cohort)
+    // A bounded scene cannot prove that its loaded members are the whole.
+    // Group bases therefore follow the cohort even when every loaded child
+    // is live; the published pose projects both live bodies and passive tiles.
+    let elements = captured.elements.compactMap {
+      presentedElement($0,boardID:boardID,cohort:cohort)
     }
     // Retain passive intent sources rather than claiming unseen new peers. A
     // whole-area capture separately checks that this describes shown pixels.

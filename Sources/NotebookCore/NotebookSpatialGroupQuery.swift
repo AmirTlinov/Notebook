@@ -1,6 +1,16 @@
 import CoreGraphics
 import Foundation
 
+/// A complete whole's indexed extent accompanies the bounded scene window.
+/// It describes no child bodies and is never saved as authored geometry.
+public struct NotebookElementGroupRead: Equatable, Sendable {
+  public let source: NotebookElementPlacement.Source
+  public let placement: NotebookElementPlacement
+  public let localBounds: CGRect
+  public let hasNonGraphics: Bool
+  public let isSelfContained: Bool
+}
+
 /// One iterator per visited local frame. It keeps a bounded page of index rows,
 /// never member bodies, and merges those pages in the original flat paint order.
 private final class NotebookSpatialLevel {
@@ -22,6 +32,21 @@ private final class NotebookSpatialLevel {
 }
 
 extension NotebookStore {
+  public func readElementGroup(target:CollaborationTarget,elementID:String) throws -> NotebookElementGroupRead? {
+    try readTransaction { _ in
+      guard target.kind == .board || target.kind == .cover else { throw NotebookStorageError.invalidTransaction("spatial group owner") }
+      let boardID=target.boardID ?? target.id
+      guard let source=try elementGroupingSource(target:target,id:elementID),source.isGroup,
+        let placement=try readElementPlacement(target:target,elementID:elementID) else { return nil }
+      let row=try currentSQL!.rows("SELECT non_graphic FROM spatial_entries WHERE address=? AND is_group=1",
+        [.text("board.json#/boards/@"+boardID.uuidString.lowercased()+"/board/elements/@"+fieldKey([collaborationIdentity(elementID)]))]).first
+      guard let row else { return nil }
+      let owner=target.kind.rawValue+":"+target.id.uuidString.lowercased()
+      return try .init(source:source,placement:placement,localBounds:storedGroupLocalBounds(boardID:boardID,id:elementID) ?? .null,hasNonGraphics:row[0].integer == 1,
+        isSelfContained:try dependentGraphicAddresses(owner:owner,id:elementID).isEmpty)
+    }
+  }
+
   func spatialRows(boardID: UUID,coverID: UUID? = nil,bounds: WorkspaceSpatialBounds,limit: Int,
     after: NotebookScenePaintCursor? = nil,elementsOnly: Bool = false,
     groupPoses:[String:NotebookElementPlacement.Source] = [:]) throws -> [[NotebookSQLValue]] {

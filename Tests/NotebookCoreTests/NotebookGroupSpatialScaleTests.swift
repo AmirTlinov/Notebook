@@ -65,6 +65,20 @@ func groupSpatialIndexAtOneHundredThousandElements() throws {
     #expect(page.next == nil)
   }
   print("GROUP_SPATIAL_QUERY children=100000 visible=6 elapsed=\(read.duration(to:.now)) vm_steps=\(counter.steps) read_rows_budget=64")
+  counter.steps=0
+  let contactStart=ContinuousClock.now
+  let group=try store.readTransaction { _ in
+    let sql=store.currentSQL!
+    try sql.limitReads(.init(rows:64,bytes:40_000,valueBytes:8_000,reason:"Contact reads a complete group summary without member bodies"))
+    sqlite3_progress_handler(sql.handle,1,{ raw in
+      let c=Unmanaged<Counter>.fromOpaque(raw!).takeUnretainedValue();c.steps += 1;return c.steps>20_000 ? 1 : 0
+    },Unmanaged.passUnretained(counter).toOpaque())
+    defer { sqlite3_progress_handler(sql.handle,0,nil,nil) }
+    return try #require(try store.readElementGroup(target:target,elementID:"whole"))
+  }
+  #expect(group.hasNonGraphics && group.isSelfContained)
+  #expect(group.localBounds.width == 499_997 && group.localBounds.height == 3)
+  print("GROUP_SPATIAL_CONTACT children=100000 elapsed=\(contactStart.duration(to:.now)) vm_steps=\(counter.steps) read_rows_budget=64; complete bounds and member classification, no child bodies")
   let revision=try store.currentChangeCursor()
   let live=try #require(try store.readSpatialElement(boardID:target.id,elementID:"whole"))
   var preview=NotebookElementPlacement.Source(frame:.init(x:live.frame.x,y:live.frame.y,width:live.frame.width,height:live.frame.height),
