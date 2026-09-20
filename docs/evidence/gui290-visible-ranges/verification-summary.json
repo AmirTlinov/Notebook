@@ -1,0 +1,232 @@
+{
+  "sourceSHA256": "a055d2cad2706ec9b40569772c0c713c678758a7823f5ee4add7236832eb8d8a",
+  "status": "selected-native-passed",
+  "version": "0.3.134 (138)",
+  "scope": "S5 Debug on physical iPad and Mac; synthetic native scenarios, not hardware Pencil, system frame/energy acceptance or installed production pair",
+  "memoryScope": "Retained canonical array capacity + derived source/index/mesh + visible CPU geometry + selected GPU node payload. Fixed renderer textures/connectivity, allocator overhead and transient peak are not measured by this layout sum.",
+  "measurements": {
+    "ipad": [
+      {
+        "case": "regular",
+        "p50MS": [
+          17.024917,
+          6.889792
+        ],
+        "p95MS": [
+          17.217584,
+          7.009542
+        ],
+        "p99MS": [
+          17.365792,
+          7.057167
+        ],
+        "retainedLayoutBytes": [
+          547680,
+          530096
+        ]
+      },
+      {
+        "case": "noise",
+        "p50MS": [
+          114.293709,
+          117.528875
+        ],
+        "p95MS": [
+          114.944375,
+          118.095792
+        ],
+        "p99MS": [
+          115.341875,
+          118.266208
+        ],
+        "retainedLayoutBytes": [
+          644680,
+          668392
+        ]
+      },
+      {
+        "case": "measured-positions",
+        "p50MS": [
+          6.678959,
+          7.328375
+        ],
+        "p95MS": [
+          6.756167,
+          7.40575
+        ],
+        "p99MS": [
+          6.793875,
+          7.43875
+        ],
+        "retainedLayoutBytes": [
+          90920,
+          90920
+        ]
+      }
+    ],
+    "ipad-small-strokes": {
+      "chunks": 100000,
+      "meshBytes": 24000280,
+      "parts": 1,
+      "prepareMilliseconds": 1470.388,
+      "queryVisits": 34,
+      "strokes": 100000
+    },
+    "ipad-visible-ranges": [
+      {
+        "boundsEvents": 951,
+        "geometryEvents": 259,
+        "indexVisits": 38,
+        "initialDisplayNodes": 0,
+        "logicalEvents": 10000,
+        "retainedBytes": 13512,
+        "sourcePrepareMilliseconds": 0.0215,
+        "visibleChunks": 1,
+        "visibleNodes": 257
+      },
+      {
+        "boundsEvents": 1746,
+        "geometryEvents": 259,
+        "indexVisits": 50,
+        "initialDisplayNodes": 0,
+        "logicalEvents": 100000,
+        "retainedBytes": 13512,
+        "sourcePrepareMilliseconds": 0.009417,
+        "visibleChunks": 1,
+        "visibleNodes": 257
+      },
+      {
+        "boundsEvents": 1784,
+        "geometryEvents": 259,
+        "indexVisits": 68,
+        "initialDisplayNodes": 0,
+        "logicalEvents": 1000000,
+        "retainedBytes": 13512,
+        "sourcePrepareMilliseconds": 0.00875,
+        "visibleChunks": 1,
+        "visibleNodes": 257
+      }
+    ],
+    "ipad-lasso": {
+      "coldMS": 423.886542,
+      "hotMedianMS": 1.645542,
+      "examinedSamples": 65
+    },
+    "mac": [
+      {
+        "case": "regular",
+        "p50MS": [
+          11.190792,
+          4.373834
+        ],
+        "p95MS": [
+          11.610625,
+          4.729708
+        ],
+        "p99MS": [
+          11.639083,
+          4.88925
+        ],
+        "retainedLayoutBytes": [
+          547680,
+          530096
+        ]
+      },
+      {
+        "case": "noise",
+        "p50MS": [
+          74.405208,
+          76.815416
+        ],
+        "p95MS": [
+          75.854292,
+          77.982458
+        ],
+        "p99MS": [
+          77.018,
+          78.764834
+        ],
+        "retainedLayoutBytes": [
+          644680,
+          668392
+        ]
+      },
+      {
+        "case": "measured-positions",
+        "p50MS": [
+          4.482541,
+          4.949333
+        ],
+        "p95MS": [
+          4.85425,
+          5.336708
+        ],
+        "p99MS": [
+          4.996583,
+          5.436583
+        ],
+        "retainedLayoutBytes": [
+          90920,
+          90920
+        ]
+      }
+    ],
+    "mac-small-strokes": {
+      "chunks": 100000,
+      "meshBytes": 24000280,
+      "parts": 1,
+      "prepareMilliseconds": 933.099459,
+      "queryVisits": 34,
+      "strokes": 100000
+    },
+    "mac-visible-ranges": [
+      {
+        "boundsEvents": 951,
+        "geometryEvents": 259,
+        "indexVisits": 38,
+        "initialDisplayNodes": 0,
+        "logicalEvents": 10000,
+        "retainedBytes": 13512,
+        "sourcePrepareMilliseconds": 0.016333,
+        "visibleChunks": 1,
+        "visibleNodes": 257
+      },
+      {
+        "boundsEvents": 1746,
+        "geometryEvents": 259,
+        "indexVisits": 50,
+        "initialDisplayNodes": 0,
+        "logicalEvents": 100000,
+        "retainedBytes": 13512,
+        "sourcePrepareMilliseconds": 0.0085,
+        "visibleChunks": 1,
+        "visibleNodes": 257
+      },
+      {
+        "boundsEvents": 1784,
+        "geometryEvents": 259,
+        "indexVisits": 68,
+        "initialDisplayNodes": 0,
+        "logicalEvents": 1000000,
+        "retainedBytes": 13512,
+        "sourcePrepareMilliseconds": 0.008375,
+        "visibleChunks": 1,
+        "visibleNodes": 257
+      }
+    ]
+  },
+  "ipad": {
+    "result": "Passed",
+    "passedTests": 68,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": []
+  },
+  "mac": {
+    "result": "Passed",
+    "passedTests": 31,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": []
+  }
+}

@@ -629,31 +629,31 @@ final class NotebookInputTests: XCTestCase {
     }
     update()
     let installedCanvas = try XCTUnwrap(canvas.inkView)
-    for _ in 0..<200 where installedCanvas.committedVertexCount == 0 { try await Task.sleep(for: .milliseconds(5)) }
-    let baseline = installedCanvas.committedVertexCount
+    for _ in 0..<200 where installedCanvas.committedSourceNodeCount == 0 { try await Task.sleep(for: .milliseconds(5)) }
+    let baseline = installedCanvas.committedSourceNodeCount
     XCTAssertGreaterThan(baseline, 0)
     let pencil = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SpatialPencilGestureRecognizer }.first)
     let touch = InputTouch(), event = UIEvent()
     pencil.touchesBegan([touch], with: event)
     update()
-    XCTAssertEqual(installedCanvas.committedVertexCount, baseline, "Первое касание не очищает рисунок")
+    XCTAssertEqual(installedCanvas.committedSourceNodeCount, baseline, "Первое касание не очищает рисунок")
     touch.point.x += 80; touch.sampleTime += 0.1
     pencil.touchesMoved([touch], with: event)
     pencil.touchesEnded([touch], with: event)
-    let committed = installedCanvas.committedVertexCount
+    let committed = installedCanvas.committedSourceNodeCount
     XCTAssertGreaterThan(committed, baseline)
-    XCTAssertGreaterThan(installedCanvas.committedEraserVertexCount, 0)
+    XCTAssertGreaterThan(installedCanvas.committedEraserSourceNodeCount, 0)
     let installations = installedCanvas.spatialMeshInstallCount
     let installedSource = try XCTUnwrap(installedCanvas.installedSpatialSource?.referenceInk())
-    let eraserVertices = installedCanvas.committedEraserVertexCount
+    let eraserVertices = installedCanvas.committedEraserSourceNodeCount
     update()
-    XCTAssertEqual(installedCanvas.committedVertexCount, committed,
+    XCTAssertEqual(installedCanvas.committedSourceNodeCount, committed,
       "Публикация стирания не подменяет ту же доску пустой геометрией")
     XCTAssertEqual(installedCanvas.spatialMeshInstallCount, installations,
       "До готовности новой геометрии остаётся уже показанный результат")
     for frame in 0..<200 {
       update(camera: .init(center: .init(x: Double(frame), y: 0), scale: 1 + Double(frame) / 500))
-      XCTAssertGreaterThan(installedCanvas.committedVertexCount, 0)
+      XCTAssertGreaterThan(installedCanvas.committedSourceNodeCount, 0)
     }
     let echo = try await registry.prepareSceneInk(plan: cohort.plan, frame: cohort.frame,
       liveData: .init(documents: cohort.liveData.documents, states: cohort.liveData.states,
@@ -664,8 +664,8 @@ final class NotebookInputTests: XCTestCase {
       "The canonical echo adopts the accepted source without reinstalling identical pen/eraser geometry")
     XCTAssertEqual(try installedCanvas.installedSpatialSource?.referenceInk(), installedSource)
     XCTAssertEqual(installedSource.actions, journal.actions)
-    XCTAssertEqual(installedCanvas.committedVertexCount, committed)
-    XCTAssertEqual(installedCanvas.committedEraserVertexCount, eraserVertices)
+    XCTAssertEqual(installedCanvas.committedSourceNodeCount, committed)
+    XCTAssertEqual(installedCanvas.committedEraserSourceNodeCount, eraserVertices)
     let settled = installedCanvas.spatialMeshInstallCount
     for frame in 0..<100 {
       update(camera: .init(center: .init(x: Double(frame), y: 0), scale: 0.5))

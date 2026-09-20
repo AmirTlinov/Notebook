@@ -15,7 +15,7 @@ final class PageInkGeometryTests: XCTestCase {
     view.apply(drawing)
 
     try await prepared(view)
-    XCTAssertGreaterThan(view.committedVertexCount, 0)
+    XCTAssertGreaterThan(view.committedSourceNodeCount, 0)
     XCTAssertEqual(view.pageMeshBuildCount, 1)
     view.frame.size = .init(width: 800, height: 800)
     view.layoutIfNeeded()
@@ -67,13 +67,13 @@ final class PageInkGeometryTests: XCTestCase {
     )
     view.displayActiveStroke(active)
     view.commitActiveStroke()
-    let liveVertexCount = view.committedVertexCount
+    let liveVertexCount = view.committedSourceNodeCount
 
     view.settle(PageInkDrawing(actions: [stroke(y: 60)]))
 
     XCTAssertGreaterThan(liveVertexCount, 0)
     XCTAssertEqual(
-      view.committedVertexCount,
+      view.committedSourceNodeCount,
       liveVertexCount,
       "Подготовка не убирает живой штрих"
     )
@@ -158,6 +158,25 @@ final class PageInkGeometryTests: XCTestCase {
   }
 
   @MainActor
+  func testLongAcceptedContactReleasesHiddenGeometryOnceWithoutRebuildingHistory() async throws {
+    let view=InkCanvasView(frame:.init(x:0,y:0,width:400,height:400))
+    view.apply(PageInkDrawing());try await prepared(view)
+    let points=(0..<10_000).map { point(x:CGFloat($0)/2,y:40+CGFloat(sin(Double($0)/8))*5) }
+    let active=ActiveInkStroke(style:.standard)
+    active.replaceMeasuredTail(from:0,with:points)
+    let action=active.measured.frozen().restoredAction()
+    view.displayActiveStroke(active);view.commitActiveStroke(action)
+    XCTAssertEqual(view.committedPreparedNodeCount,points.count)
+    let drawing=PageInkDrawing(actions:[action])
+    view.settle(drawing);try await prepared(view)
+    XCTAssertEqual(view.committedPreparedNodeCount,0,"Only the visible neighbourhood may build display nodes after acceptance")
+    XCTAssertEqual(view.committedSourceNodeCount,points.count)
+    XCTAssertEqual(view.pageMeshBuildCount,1)
+    view.settle(drawing);try await prepared(view)
+    XCTAssertEqual(view.pageMeshBuildCount,1,"Subsequent delivery reuses the canonical source")
+  }
+
+  @MainActor
   func testColdLoadAndDurableDeliveryPreserveANewerMeasuredTailAndUndo() async throws {
     let base = stroke(y: 100), tail = stroke(y: 160)
     let view = InkCanvasView(frame: .init(x: 0, y: 0, width: 400, height: 400))
@@ -166,18 +185,18 @@ final class PageInkGeometryTests: XCTestCase {
     active.replaceMeasuredTail(from: 0, with: [point(x: 10, y: 160), point(x: 200, y: 160)])
     view.displayActiveStroke(active)
     view.commitActiveStroke(tail)
-    let tailVertices = view.committedVertexCount
+    let tailVertices = view.committedSourceNodeCount
     try await prepared(view)
-    XCTAssertGreaterThan(view.committedVertexCount, tailVertices, "Cold completion keeps the newer contact")
-    let count = view.committedVertexCount, built = view.pageMeshBuildCount
+    XCTAssertGreaterThan(view.committedSourceNodeCount, tailVertices, "Cold completion keeps the newer contact")
+    let count = view.committedSourceNodeCount, built = view.pageMeshBuildCount
     let accepted = PageInkDrawing(actions: [base, tail])
     view.settle(accepted)
     try await prepared(view)
-    XCTAssertEqual(view.committedVertexCount, count, "Delivery cannot duplicate the already measured tail")
+    XCTAssertEqual(view.committedSourceNodeCount, count, "Delivery cannot duplicate the already measured tail")
     XCTAssertEqual(view.pageMeshBuildCount, built, "Delivery does not rebuild the history or contact")
     view.apply(accepted.removing([tail.id]))
     try await prepared(view)
-    XCTAssertEqual(view.committedVertexCount, count - tailVertices)
+    XCTAssertEqual(view.committedSourceNodeCount, count - tailVertices)
     XCTAssertEqual(view.pageMeshBuildCount, built, "Undo removes a batch, not rasterizes/rebuilds the page")
   }
 
@@ -190,9 +209,9 @@ final class PageInkGeometryTests: XCTestCase {
     active.replaceMeasuredTail(from: 0, with: [point(x: 10, y: 40), point(x: 200, y: 40)])
     view.displayActiveStroke(active)
     try await prepared(view)
-    XCTAssertEqual(view.committedVertexCount, 0)
+    XCTAssertEqual(view.committedSourceNodeCount, 0)
     view.commitActiveStroke(stroke(y: 40))
-    XCTAssertGreaterThan(view.committedVertexCount, 0, "Preparation must not discard the active contact")
+    XCTAssertGreaterThan(view.committedSourceNodeCount, 0, "Preparation must not discard the active contact")
     XCTAssertEqual(view.pageMeshBuildCount, 0, "The cancelled old page must never publish")
   }
 
@@ -208,7 +227,7 @@ final class PageInkGeometryTests: XCTestCase {
     view.removeFromSuperview()
     controller.view.addSubview(view)
     try await prepared(view)
-    XCTAssertGreaterThan(view.committedVertexCount, 0)
+    XCTAssertGreaterThan(view.committedSourceNodeCount, 0)
     XCTAssertEqual(view.pageMeshBuildCount, 40, "Only the replacement preparation may publish")
   }
 
@@ -231,7 +250,7 @@ final class PageInkGeometryTests: XCTestCase {
     let deadline = ContinuousClock.now + .seconds(3)
     while !view.isStableFramePresented, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
     XCTAssertTrue(view.isStableFramePresented)
-    XCTAssertGreaterThan(view.committedVertexCount, 0, "An imported baseline cannot flatten newly measured ink")
+    XCTAssertGreaterThan(view.committedSourceNodeCount, 0, "An imported baseline cannot flatten newly measured ink")
     let image = UIGraphicsImageRenderer(size: size).image { _ in background.drawHierarchy(in: background.bounds, afterScreenUpdates: true) }
     XCTAssertGreaterThan(darkPixelCount(in: image), 5000, "Both original baseline and vector stroke remain visible")
   }
@@ -243,7 +262,7 @@ final class PageInkGeometryTests: XCTestCase {
     let expected = SpatialInkMesh.local(SpatialInkComposer.pageLayers(drawing))
     XCTAssertEqual(mesh.entries.map { $0.mesh.tool }, [.pen, .eraser, .pen])
     for (entry, batch) in zip(mesh.entries, expected.batches) {
-      XCTAssertEqual(entry.mesh.nodes, batch.nodes)
+      XCTAssertEqual(entry.mesh.expandedForTesting().nodes, batch.expandedForTesting().nodes)
     }
   }
 

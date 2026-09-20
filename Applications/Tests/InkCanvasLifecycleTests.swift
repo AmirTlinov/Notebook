@@ -64,7 +64,7 @@ final class InkCanvasLifecycleTests: XCTestCase {
     XCTAssertNotNil(canvas.window)
     XCTAssertFalse(canvas.isPaused, "Remount resumes the same physical owner")
     try await waitForStableFrame(canvas)
-    XCTAssertGreaterThan(canvas.committedVertexCount, 0)
+    XCTAssertGreaterThan(canvas.committedSourceNodeCount, 0)
     XCTAssertTrue(canvas.isPaused, "After presenting the replacement ink, the resting canvas stops again")
   }
 

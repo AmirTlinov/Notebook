@@ -153,12 +153,10 @@ final class InkRasterRenderer: @unchecked Sendable {
       let stretch = affine.maximumStretch
       encoder.setVertexBytes(&affine,length:MemoryLayout<InkAffine>.stride,index:2)
       encoder.setRenderPipelineState(batch.tool == .eraser ? eraser : ink)
-      for chunk in batch.chunks where affine.bounds(chunk.bounds).intersects(area) {
-        let level = InkRenderGeometry.level(chunk.levels, pixelsPerUnit: stretch * Float(scale))
-        let nodes =
-          level >= 0
-          ? chunk.levels[level].indices.map { batch.nodes[chunk.nodes.lowerBound + Int($0)] }
-          : Array(batch.nodes[chunk.nodes])
+      for id in batch.query(viewport:area,affine:affine).chunks {
+        let prepared=batch.prepareChunk(id).chunk,chunk=prepared.descriptor
+        let level=InkRenderGeometry.level(chunk.levels,pixelsPerUnit:stretch*Float(scale))
+        let nodes=prepared.selected(level:level)
         guard !nodes.isEmpty else { continue }
         guard
           let buffer = nodes.withUnsafeBytes({

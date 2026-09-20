@@ -13,14 +13,14 @@ final class InkSourceIntegrationTests: XCTestCase {
     let action=PageInkAction(tool:.pen,samples:(0..<4096).map { sample($0) })
     let drawing=PageInkDrawing(actions:[action]), bytes=try drawing.dataRepresentation()
     let prepared=try PageInkMesh.prepare(drawing,reusing:[])
-    XCTAssertLessThan(prepared.entries[0].mesh.nodes.count,action.samples.count/10)
+    XCTAssertLessThan(prepared.entries[0].mesh.expandedForTesting().nodes.count,action.samples.count/10)
     let replay=try PageInkMesh.prepare(PageInkDrawing.decode(bytes),reusing:prepared.entries)
     XCTAssertEqual(replay.builtActionCount,0)
     XCTAssertEqual(replay.entries[0].reusedIndex,0)
     let layers=SpatialInkComposer.pageLayers(drawing)
     for i in action.samples.indices { XCTAssertTrue(InkSampleRelations.sameBits(layers[0].source.sample(at:i),action.samples[i])) }
     let mesh=SpatialInkMesh.local(layers)
-    XCTAssertEqual(prepared.entries[0].mesh.nodes,mesh.batches[0].nodes)
+    XCTAssertEqual(prepared.entries[0].mesh.expandedForTesting().nodes,mesh.batches[0].expandedForTesting().nodes)
     let renderer=InkRasterRenderer.shared, size=CGSize(width:640,height:160)
     let actual=try XCTUnwrap(renderer.page(drawing,size:size,scale:1))
     let old=try XCTUnwrap(renderer.render(mesh:.referencePage(drawing),size:size,scale:1))
@@ -65,7 +65,7 @@ final class InkSourceIntegrationTests: XCTestCase {
           force:s.force,azimuth:s.azimuth,altitude:s.altitude)
       }
       let expected=SpatialInkGeometry.compact(points:points,color:.init(0,0,0,1))
-      let actual=SpatialInkMesh.local(layers).batches[0].nodes
+      let actual=SpatialInkMesh.local(layers).batches[0].expandedForTesting().nodes
       XCTAssertEqual(actual.count,expected.count)
       for (a,b) in zip(actual,expected) {
         XCTAssertEqual(a.position,b.position);XCTAssertEqual(a.edge,b.edge);XCTAssertEqual(a.radius,b.radius)
@@ -78,7 +78,7 @@ final class InkSourceIntegrationTests: XCTestCase {
     var local=SpatialInkJournal(stamp:.init(counter:0,actor:actor))
     _=local.append(tool:.pen,spans:[.init(surface:cover,samples:(0..<4).map { sample($0) })],actor:actor)
     let crop=SpatialInkComposer.localLayers(for:cover,journal:local,origin:.init(x:20,y:80))
-    XCTAssertEqual(SpatialInkMesh.local(crop).batches[0].nodes[0].position,.init(10,20))
+    XCTAssertEqual(SpatialInkMesh.local(crop).batches[0].expandedForTesting().nodes[0].position,.init(10,20))
     XCTAssertEqual(crop[0].source.sample(at:0).point,.init(x:30,y:100))
   }
 }

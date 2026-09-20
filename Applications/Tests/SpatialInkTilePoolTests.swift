@@ -136,6 +136,38 @@ final class SpatialInkTilePoolTests: XCTestCase {
     XCTAssertEqual(canvas.submittedTileCount, idle)
   }
 
+  func testMovingAWholeOffscreenClearsItsOldTilesWithoutPreparingHiddenGeometry() async throws {
+    let fixture=try await Fixture.make()
+    addTeardownBlock { await fixture.close() }
+    let canvas=fixture.canvas
+    canvas.project(camera:.init(scale:1),viewport:.init(x:512,y:768))
+    try await Task.sleep(for:.milliseconds(150))
+    let original=try pixels(canvas),built=canvas.preparedCommittedPointCount,submitted=canvas.submittedTileCount
+    XCTAssertEqual(canvas.committedPreparedNodeCount,0)
+    XCTAssertGreaterThan(built,0)
+    let oldRow=CGRect(x:0,y:360,width:512,height:48)
+    XCTAssertGreaterThan(try blackPixels(canvas,in:oldRow),0)
+    canvas.project(camera:.init(center:.init(x:0,y:200),scale:1),viewport:.init(x:512,y:768))
+    try await Task.sleep(for:.milliseconds(150))
+    XCTAssertNotEqual(try pixels(canvas),original)
+    XCTAssertGreaterThan(try blackPixels(canvas),0)
+    XCTAssertEqual(try blackPixels(canvas,in:oldRow),0,"Moving the whole must not leave a second line in the old row")
+    XCTAssertGreaterThan(canvas.submittedTileCount,submitted)
+    XCTAssertLessThan(canvas.submittedTileCount-submitted,canvas.spatialTilePoolIDs.count)
+    let beforeEmpty=canvas.submittedTileCount
+    canvas.project(camera:.init(center:.init(x:2000,y:0),scale:1),viewport:.init(x:512,y:768))
+    try await Task.sleep(for:.milliseconds(150))
+    XCTAssertEqual(try blackPixels(canvas),0,"No old coverage may remain after the whole moves away")
+    XCTAssertEqual(canvas.preparedCommittedPointCount,built)
+    XCTAssertEqual(canvas.residentCommittedNodeCount,0)
+    XCTAssertEqual(canvas.spatialTilePoolIDs.count,0,"A wholly empty projection releases its layers instead of drawing empty tiles")
+    XCTAssertEqual(canvas.submittedTileCount,beforeEmpty)
+    canvas.project(camera:.init(scale:1),viewport:.init(x:512,y:768))
+    try await Task.sleep(for:.milliseconds(150))
+    XCTAssertEqual(try pixels(canvas),original)
+    XCTAssertGreaterThan(canvas.preparedCommittedPointCount,built)
+  }
+
   private func assertContinuousCenterLine(_ canvas: UIView) throws {
     let image = try XCTUnwrap(capture(canvas).cgImage)
     let context = try XCTUnwrap(CGContext(data: nil, width: image.width, height: image.height,
@@ -161,7 +193,7 @@ final class SpatialInkTilePoolTests: XCTestCase {
     let image = try XCTUnwrap(capture(canvas).cgImage)
     return try XCTUnwrap(image.dataProvider?.data) as Data
   }
-  private func blackPixels(_ canvas: UIView) throws -> Int {
+  private func blackPixels(_ canvas: UIView,in region: CGRect? = nil) throws -> Int {
     let image = try XCTUnwrap(capture(canvas).cgImage)
     let context = try XCTUnwrap(CGContext(data: nil, width: image.width, height: image.height,
       bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
@@ -169,7 +201,8 @@ final class SpatialInkTilePoolTests: XCTestCase {
     context.draw(image, in: .init(x: 0, y: 0, width: image.width, height: image.height))
     let bytes = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
     return stride(from: 0, to: image.width * image.height * 4, by: 4).filter {
-      bytes[$0] < 160 && bytes[$0 + 1] < 160 && bytes[$0 + 2] < 160
+      let point=CGPoint(x:($0/4)%image.width,y:($0/4)/image.width)
+      return (region?.contains(point) ?? true) && bytes[$0] < 160 && bytes[$0 + 1] < 160 && bytes[$0 + 2] < 160
     }.count
   }
 
@@ -203,8 +236,9 @@ final class SpatialInkTilePoolTests: XCTestCase {
       window = UIWindow(windowScene: scene); oldKeyWindow = scene.windows.first(where: \.isKeyWindow)
       canvas = .init(frame: .init(x: 0, y: 0, width: 512, height: 768), resources: resources)
       var drawing = SpatialInkJournal(stamp: .init(counter: 0, actor: actor))
-      _ = drawing.append(tool: .pen, spans: [.init(surface: surface, samples: [-220.0, 0, 220].enumerated().map { index, x in
-        .init(point: .zero, worldPoint: .init(x: x, y: 0), timeOffset: Double(index) / 10,
+      _ = drawing.append(tool: .pen, spans: [.init(surface: surface, samples: (0...600).map { index in
+        let x = -220.0+Double(index)*440/600
+        return .init(point: .zero, worldPoint: .init(x: x, y: 0), timeOffset: Double(index) / 10,
           width: 12, opacity: 1, force: 1, azimuth: 0, altitude: 1)
       })], actor: actor)
       journal = drawing

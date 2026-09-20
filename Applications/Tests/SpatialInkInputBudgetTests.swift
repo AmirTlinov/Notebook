@@ -207,7 +207,7 @@ final class SpatialInkInputBudgetTests: XCTestCase {
     let canvas = try XCTUnwrap(mount.inkView)
     XCTAssertTrue(canvas === tiles.surfaceRegistry.canvas(for: .board(header.rootBoardID)))
     XCTAssertTrue(canvas.window === window)
-    XCTAssertEqual(canvas.committedVertexCount, 0)
+    XCTAssertEqual(canvas.committedSourceNodeCount, 0)
     XCTAssertEqual(canvas.spatialDrawableAccountedBytes, 0)
     XCTAssertEqual(resources.reservedBytes, 0)
     try pressure.fillPassiveHalf(resources)
@@ -271,7 +271,7 @@ final class SpatialInkInputBudgetTests: XCTestCase {
     XCTAssertEqual(canvas.spatialDrawableAccountedBytes, targetBytes, report)
     XCTAssertEqual(canvas.drawableSize.width / canvas.bounds.width, 2, accuracy: 0.001, report)
     XCTAssertEqual(canvas.drawableSize.height / canvas.bounds.height, 2, accuracy: 0.001, report)
-    XCTAssertGreaterThan(canvas.committedVertexCount, 0)
+    XCTAssertGreaterThan(canvas.committedSourceNodeCount, 0)
     XCTAssertGreaterThan(afterPixels - beforePixels, 100, "A persisted action is not a rendered first line. " + report)
     XCTAssertTrue(tiles.published === cohort)
     XCTAssertTrue(try XCTUnwrap(canvas.installedSpatialSource).referenceInk().actions.contains { $0.id == action.id })
@@ -344,7 +344,7 @@ final class SpatialInkInputBudgetTests: XCTestCase {
     let canvas = try XCTUnwrap(cohort.nativeInk.registry.canvas(for: .board(boardID)))
     while canvas.window == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     XCTAssertNotNil(canvas.window)
-    XCTAssertEqual(canvas.committedVertexCount, 0)
+    XCTAssertEqual(canvas.committedSourceNodeCount, 0)
     XCTAssertTrue(try XCTUnwrap(canvas.installedSpatialSource).referenceInk().actions.isEmpty)
     let accountingBefore = resources.rasterAdmission
     let before = capture(host.view)
@@ -369,7 +369,7 @@ final class SpatialInkInputBudgetTests: XCTestCase {
     let expected = presence.camera.screenToWorld(.init(x: first.x, y: first.y), viewport: viewport)
     XCTAssertEqual(expected.delta(to: actual).x, 0, accuracy: 0.00001)
     XCTAssertEqual(expected.delta(to: actual).y, 0, accuracy: 0.00001)
-    XCTAssertGreaterThan(canvas.committedVertexCount, 0)
+    XCTAssertGreaterThan(canvas.committedSourceNodeCount, 0)
     let frameDeadline = ContinuousClock.now + .seconds(5)
     while !canvas.isStableFramePresented, canvas.renderFailure == nil, ContinuousClock.now < frameDeadline {
       try await Task.sleep(for: .milliseconds(5))

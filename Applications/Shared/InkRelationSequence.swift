@@ -83,6 +83,114 @@ extension InkSampleRelations {
     }
   }
 
+  /// Display rejection and neighbour independence belong to the same source
+  /// tree. A world box stays relative to an exact tiled origin, never a large
+  /// absolute Double. Mixed coordinate kinds deliberately have unknown bounds.
+  struct Geometry: Sendable {
+    enum Coordinate: Equatable, Sendable {
+      case paper(SpatialPoint), world(WorldPoint)
+      init(_ sample: SpatialInkSample) {
+        if let world=sample.worldPoint { self = .world(world) } else { self = .paper(sample.point) }
+      }
+      var origin: WorldPoint? { if case .world(let p)=self { return p };return nil }
+      func relative(to origin: WorldPoint?) -> SpatialPoint? {
+        switch (self,origin) {
+        case (.paper(let p),nil): return p
+        case (.world(let p),.some(let o)): return o.delta(to:p)
+        default: return nil
+        }
+      }
+      func distance(to other: Self) -> Double {
+        let d: SpatialPoint
+        switch (self,other) {
+        case (.paper(let a),.paper(let b)): d = .init(x:b.x-a.x,y:b.y-a.y)
+        case (.world(let a),.world(let b)): d=a.delta(to:b)
+        default: return 0
+        }
+        return max(0,hypot(d.x,d.y).nextDown)
+      }
+      func shifted(_ step: InkRepeatStep) -> Self {
+        switch self {
+        case .paper(let p): return .paper(.init(x:step.apply(p.x,step.x),y:step.apply(p.y,step.y)))
+        case .world: precondition(step.x == .zero && step.y == .zero);return self
+        }
+      }
+    }
+    let first: Coordinate?,last: Coordinate?
+    let bounds: CGRect
+    let minimumSpacing: Double
+    let stationary: Bool
+    var origin: WorldPoint? { first?.origin }
+    init(block: Block) {
+      guard block.count > 0 else { first=nil;last=nil;bounds = .null;minimumSpacing = .infinity;stationary=true;return }
+      first=Coordinate(block.sample(at:0));last=Coordinate(block.sample(at:block.count-1))
+      var cost=AccessCost()
+      bounds=Self.bounds(block,in:0..<block.count,origin:first?.origin,cost:&cost)
+      if case .fields(let fields,_)=block {
+        func step(_ f: Field) -> Double? {
+          switch f { case .constant: return 0;case .progression(_,let d): return d.value;case .literal: return nil }
+        }
+        if let x=step(fields[0]),let y=step(fields[1]) {
+          minimumSpacing=block.count == 1 ? .infinity : max(0,hypot(x,y).nextDown);stationary=x == 0 && y == 0;return
+        }
+      }
+      var spacing=Double.infinity,previous=first!,same=true
+      for i in 1..<block.count {
+        let next: Coordinate
+        if case .fields(let f,_)=block { next = .paper(.init(x:f[0].value(at:i),y:f[1].value(at:i))) }
+        else { next=Coordinate(block.sample(at:i)) }
+        spacing=min(spacing,previous.distance(to:next));same = same && previous == next;previous=next
+      }
+      minimumSpacing=spacing;stationary=same
+    }
+    private init(first: Coordinate?,last: Coordinate?,bounds: CGRect,minimumSpacing: Double,stationary: Bool) {
+      self.first=first;self.last=last;self.bounds=bounds;self.minimumSpacing=minimumSpacing;self.stationary=stationary
+    }
+    static func bounds(_ block: Block,in range: Range<Int>,origin: WorldPoint?,cost: inout AccessCost) -> CGRect {
+      guard let origin else {
+        return block.bounds(in:range,cost:&cost)
+      }
+      var result=CGRect.null
+      for i in range {
+        cost.decodedSamples += 1
+        let sample=block.sample(at:i)
+        guard let world=sample.worldPoint else { return .infinite }
+        let point=origin.delta(to:world)
+        result=result.union(Sequence.pointBounds(point.x,point.y,sample.width))
+      }
+      return result
+    }
+    func placing(_ rect: CGRect,from origin: WorldPoint?) -> CGRect {
+      if rect.isNull { return rect }
+      switch (self.origin,origin) {
+      case (nil,nil): return rect
+      case (.some(let a),.some(let b)):
+        let delta=a.delta(to:b)
+        return Self.offset(rect,x:delta.x,y:delta.y)
+      default: return .infinite
+      }
+    }
+    static func offset(_ rect: CGRect,x: Double,y: Double) -> CGRect {
+      guard !rect.isNull,x != 0 || y != 0 else { return rect }
+      let left=(rect.minX+x).nextDown,top=(rect.minY+y).nextDown
+      return .init(x:left,y:top,width:((rect.maxX+x).nextUp-left).nextUp,height:((rect.maxY+y).nextUp-top).nextUp)
+    }
+    func joined(_ other: Self) -> Self {
+      guard let end=last else { return other };guard let begin=other.first else { return self }
+      return .init(first:first,last:other.last,bounds:bounds.union(placing(other.bounds,from:other.origin)),
+        minimumSpacing:min(minimumSpacing,other.minimumSpacing,end.distance(to:begin)),stationary:stationary && other.stationary && end == begin)
+    }
+    func shifted(_ step: InkRepeatStep) -> Self {
+      .init(first:first?.shifted(step),last:last?.shifted(step),bounds:Self.offset(bounds,x:step.x.value,y:step.y.value),minimumSpacing:minimumSpacing,stationary:stationary)
+    }
+    func repeated(count: Int,step: InkRepeatStep) -> Self {
+      guard count > 1,let first,let last else { return self }
+      let end=shifted(step.multiplied(by:count-1)!)
+      return .init(first:first,last:end.last,bounds:bounds.union(end.bounds),
+        minimumSpacing:min(minimumSpacing,last.distance(to:first.shifted(step))),stationary:stationary && step.x == .zero && step.y == .zero)
+    }
+  }
+
   struct AccessCost { var visitedNodes=0;var jumps=0;var decodedSamples=0 }
 
   /// A persistent sequence index, not a second scene/spatial index. At most one
@@ -108,14 +216,15 @@ extension InkSampleRelations {
     let content: Content
     let count: Int
     let height: Int
-    let bounds: CGRect
+    let geometry: Geometry
+    var bounds: CGRect { geometry.bounds }
     let pending: Bool
     let domain: [Lattice?] // x, y, time; nil means no admitted nonzero translation
-    static let empty=Sequence(block:.literal([]))
+    static let empty=Sequence(block:.literal(.init([])))
 
     init(block: Block,pending: Bool = false) {
       self.pending=pending
-      content = .block(block);count=block.count;height=1
+      content = .block(block);count=block.count;height=1;geometry=Geometry(block:block)
       func fieldDomain(_ field: Field) -> Lattice? {
         switch field {
         case .constant(let bits): return Lattice(Double(bitPattern:bits))
@@ -136,31 +245,32 @@ extension InkSampleRelations {
       switch block {
       case .fields(let fields,_):
         domain=(0..<3).map { fieldDomain(fields[$0]) }
-        var cost=AccessCost();bounds=block.bounds(in:0..<block.count,cost:&cost)
       case .literal(let samples):
-        var rect=CGRect.null,ranges=[Lattice?](repeating:nil,count:3),valid=[true,true,true]
-        for (i,p) in samples.enumerated() {
+        var ranges=[Lattice?](repeating:nil,count:3),valid=[true,true,true]
+        for (i,p) in samples.values.enumerated() {
           if p.worldPoint != nil { valid=[false,false,false] }
           for (j,value) in [p.point.x,p.point.y,p.timeOffset].enumerated() where valid[j] {
-            if let r=Lattice(value) { ranges[j] = i == 0 ? r : ranges[j]?.union(r) }
-            else { valid[j]=false }
+            if let r=Lattice(value) {
+              ranges[j] = i == 0 ? r : ranges[j]?.union(r)
+              if ranges[j] == nil { valid[j]=false }
+            } else { valid[j]=false }
           }
-          rect=rect.union(Self.pointBounds(p.point.x,p.point.y,p.width))
         }
-        domain=(0..<3).map { valid[$0] ? ranges[$0] : nil };bounds=rect
+        domain=(0..<3).map { valid[$0] ? ranges[$0] : nil }
       }
     }
     static func pointBounds(_ x: Double,_ y: Double,_ width: Double) -> CGRect {
       let r=max(width/2,0.25)*Double(InkStrokeGeometry.maximumCrossSectionScale),left=(x-r).nextDown,top=(y-r).nextDown
       return CGRect(x:left,y:top,width:((x+r).nextUp-left).nextUp,height:((y+r).nextUp-top).nextUp)
     }
-    private init(_ content: Content,count: Int,height: Int,bounds: CGRect,domain: [Lattice?],pending: Bool = false) {
+    private init(_ content: Content,count: Int,height: Int,domain: [Lattice?],pending: Bool = false) {
       switch content {
-      case .block: self.pending=pending
-      case .pair(let a,let b): self.pending=pending || a.pending || b.pending
-      case .shifted(let body,_),.repeated(let body,_,_): self.pending=pending || body.pending
+      case .block(let b): self.pending=pending;geometry=Geometry(block:b)
+      case .pair(let a,let b): self.pending=pending || a.pending || b.pending;geometry=a.geometry.joined(b.geometry)
+      case .shifted(let body,let basis): self.pending=pending || body.pending;geometry=body.geometry.shifted(basis.step)
+      case .repeated(let body,let n,let step): self.pending=pending || body.pending;geometry=body.geometry.repeated(count:n,step:step)
       }
-      self.content=content;self.count=count;self.height=height;self.bounds=bounds;self.domain=domain
+      self.content=content;self.count=count;self.height=height;self.domain=domain
     }
     static func from(_ blocks: [Block]) -> Sequence {
       func build(_ range: Range<Int>) -> Sequence {
@@ -174,7 +284,7 @@ extension InkSampleRelations {
     private static func pair(_ a: Sequence,_ b: Sequence) -> Sequence {
       if a.count == 0 { return b };if b.count == 0 { return a }
       return .init(.pair(a,b),count:a.count+b.count,height:max(a.height,b.height)+1,
-        bounds:a.bounds.union(b.bounds),domain:(0..<3).map { i in
+        domain:(0..<3).map { i in
           guard let x=a.domain[i],let y=b.domain[i] else { return nil };return x.union(y)
         })
     }
@@ -233,7 +343,7 @@ extension InkSampleRelations {
       guard body.bounds.minX.isFinite,body.bounds.minY.isFinite,body.bounds.width.isFinite,body.bounds.height.isFinite,
         let last=step.multiplied(by:count-1),let domain=body.shiftedDomain(first:.zero,last:last,quantum:step) else { return nil }
       return .init(.repeated(body,count,step),count:total,height:1,
-        bounds:body.bounds.union(offset(body.bounds,last)),domain:domain)
+        domain:domain)
     }
     func shifted(_ step: InkRepeatStep) -> Sequence? {
       if step == .zero || count == 0 { return self }
@@ -245,7 +355,7 @@ extension InkSampleRelations {
       if compose,case .shifted(let body,let previous)=content,let combined=previous.step.adding(step),
         let merged=body.placing(Basis(combined,origin:basis.origin)) { return merged }
       guard let domain=shiftedDomain(first:step,last:step) else { return nil }
-      return .init(.shifted(self,basis),count:count,height:height,bounds:Self.offset(bounds,step),domain:domain)
+      return .init(.shifted(self,basis),count:count,height:height,domain:domain)
     }
     static func offset(_ bounds: CGRect,_ step: InkRepeatStep) -> CGRect {
       guard !bounds.isNull,step.x != .zero || step.y != .zero else { return bounds }
@@ -327,14 +437,14 @@ extension InkSampleRelations {
       }
       return .equal
     }
-    private static let nodeBytes=MemoryLayout<Content>.stride+MemoryLayout<CGRect>.stride+MemoryLayout<Lattice?>.stride*3+48
+    private static let nodeBytes=MemoryLayout<Content>.stride+MemoryLayout<Geometry>.stride+MemoryLayout<Lattice?>.stride*3+48
     private func markPending() -> Sequence {
       if pending { return self }
-      return .init(content,count:count,height:height,bounds:bounds,domain:domain,pending:true)
+      return .init(content,count:count,height:height,domain:domain,pending:true)
     }
     private static func repack(_ samples: [SpatialInkSample],work: inout RewriteWork) -> Sequence {
-      guard samples.count >= 4,samples.allSatisfy({ $0.worldPoint == nil }) else { return Sequence(block:.literal(samples)) }
-      guard work.spend(samples.count*8) else { return Sequence(block:.literal(samples),pending:true) }
+      guard samples.count >= 4,samples.allSatisfy({ $0.worldPoint == nil }) else { return Sequence(block:.literal(.init(samples))) }
+      guard work.spend(samples.count*8) else { return Sequence(block:.literal(.init(samples)),pending:true) }
       work.scannedEvents += samples.count
       let block=Block(samples[...])
       if block.hasGenerator { work.applied(8) }
@@ -365,7 +475,7 @@ extension InkSampleRelations {
         }
         // A new global literal need not have a representable local inverse.
         // Retain both unchanged ranges instead of rounding its provenance.
-        return Self.join(Self.join(slice(0..<index),Sequence(block:.literal([value])),work:&work),
+        return Self.join(Self.join(slice(0..<index),Sequence(block:.literal(.init([value]))),work:&work),
           slice((index+1)..<count),work:&work)
       }
     }
@@ -430,11 +540,11 @@ extension InkSampleRelations {
       if range == 0..<count { return bounds }
       switch content {
       case .block(let b):
-        return b.bounds(in:range,cost:&cost)
+        return Geometry.bounds(b,in:range,origin:geometry.origin,cost:&cost)
       case .pair(let a,let b):
         var result=CGRect.null
         if range.lowerBound < a.count { result=a.bounds(in:range.lowerBound..<min(a.count,range.upperBound),cost:&cost) }
-        if range.upperBound > a.count { result=result.union(b.bounds(in:max(0,range.lowerBound-a.count)..<(range.upperBound-a.count),cost:&cost)) }
+        if range.upperBound > a.count { result=result.union(geometry.placing(b.bounds(in:max(0,range.lowerBound-a.count)..<(range.upperBound-a.count),cost:&cost),from:b.geometry.origin)) }
         return result
       case .shifted(let body,let basis): return Self.offset(body.bounds(in:range,cost:&cost),basis.step)
       case .repeated(let body,_,let step):
@@ -487,7 +597,7 @@ extension InkSampleRelations {
         }
       }
     }
-    func forEachDisplayPoint(in range: Range<Int>,reduce: Bool,origin: WorldPoint? = nil,minimumSpacing: Double,_ emit: (Double,Double,Double,Double)->Void) {
+    func forEachDisplayPoint(in range: Range<Int>,reduce: Bool,origin: WorldPoint? = nil,minimumSpacing: Double,base: Int = 0,_ emit: (Int,Double,Double,Double,Double)->Void) {
       if range.isEmpty { return }
       switch content {
       case .block(let block):
@@ -495,39 +605,44 @@ extension InkSampleRelations {
           switch block {
           case .literal(let a):
             let p=a[i], local=origin.flatMap { start in p.worldPoint.map { start.delta(to:$0) } } ?? p.point
-            emit(local.x,local.y,p.width,p.opacity)
-          case .fields(let f,_): emit(f[0].value(at:i),f[1].value(at:i),f[3].value(at:i),f[4].value(at:i))
+            emit(base+i,local.x,local.y,p.width,p.opacity)
+          case .fields(let f,_): emit(base+i,f[0].value(at:i),f[1].value(at:i),f[3].value(at:i),f[4].value(at:i))
           }
         }
         if reduce && block.isUniformAxisStrip(minimumSpacing:minimumSpacing) && range.count > 4 {
           for i in [range.lowerBound,range.lowerBound+1,range.upperBound-2,range.upperBound-1] { point(i) }
         } else { for i in range { point(i) } }
       case .pair(let a,let b):
-        if range.lowerBound < a.count { a.forEachDisplayPoint(in:range.lowerBound..<min(a.count,range.upperBound),reduce:reduce,origin:origin,minimumSpacing:minimumSpacing,emit) }
-        if range.upperBound > a.count { b.forEachDisplayPoint(in:max(0,range.lowerBound-a.count)..<(range.upperBound-a.count),reduce:reduce,origin:origin,minimumSpacing:minimumSpacing,emit) }
+        if range.lowerBound < a.count { a.forEachDisplayPoint(in:range.lowerBound..<min(a.count,range.upperBound),reduce:reduce,origin:origin,minimumSpacing:minimumSpacing,base:base,emit) }
+        if range.upperBound > a.count { b.forEachDisplayPoint(in:max(0,range.lowerBound-a.count)..<(range.upperBound-a.count),reduce:reduce,origin:origin,minimumSpacing:minimumSpacing,base:base+a.count,emit) }
       case .shifted(let body,let basis):
         let step=basis.step
-        body.forEachDisplayPoint(in:range,reduce:reduce,origin:origin,minimumSpacing:minimumSpacing) { x,y,w,o in emit(step.apply(x,step.x),step.apply(y,step.y),w,o) }
+        body.forEachDisplayPoint(in:range,reduce:reduce,origin:origin,minimumSpacing:minimumSpacing,base:base) { i,x,y,w,o in emit(i,step.apply(x,step.x),step.apply(y,step.y),w,o) }
       case .repeated(let body,_,let step):
         for q in range.lowerBound/body.count...(range.upperBound-1)/body.count {
           let shift=step.multiplied(by:q)!
-          body.forEachDisplayPoint(in:max(0,range.lowerBound-q*body.count)..<min(body.count,range.upperBound-q*body.count),reduce:reduce,origin:origin,minimumSpacing:minimumSpacing) {
-            x,y,w,o in emit(shift.apply(x,shift.x),shift.apply(y,shift.y),w,o)
+          body.forEachDisplayPoint(in:max(0,range.lowerBound-q*body.count)..<min(body.count,range.upperBound-q*body.count),reduce:reduce,origin:origin,minimumSpacing:minimumSpacing,base:base+q*body.count) {
+            i,x,y,w,o in emit(i,shift.apply(x,shift.x),shift.apply(y,shift.y),w,o)
           }
         }
       }
     }
-    func allocationSummary(seen: inout Set<ObjectIdentifier>) -> (nodes: Int,bytes: Int) {
+    func allocationSummary(seen: inout Set<ObjectIdentifier>,includeExternal: Bool = true) -> (nodes: Int,bytes: Int) {
       guard seen.insert(ObjectIdentifier(self)).inserted else { return (0,0) }
-      var total=(nodes:1,bytes:MemoryLayout<Content>.stride+MemoryLayout<CGRect>.stride+MemoryLayout<Lattice?>.stride*3+48)
+      var total=(nodes:1,bytes:MemoryLayout<Content>.stride+MemoryLayout<Geometry>.stride+MemoryLayout<Lattice?>.stride*3+48)
       switch content {
-      case .block(let b): total.bytes += b.payloadBytes
+      case .block(let b):
+        if case .literal(let samples)=b {
+          if seen.insert(ObjectIdentifier(samples.buffer)).inserted {
+            total.bytes += includeExternal || !samples.buffer.external ? samples.buffer.byteCount : 32
+          }
+        } else { total.bytes += b.payloadBytes }
       case .pair(let a,let b):
-        for child in [a,b] { let c=child.allocationSummary(seen:&seen);total.nodes += c.nodes;total.bytes += c.bytes }
+        for child in [a,b] { let c=child.allocationSummary(seen:&seen,includeExternal:includeExternal);total.nodes += c.nodes;total.bytes += c.bytes }
       case .repeated(let body,_,_):
-        let c=body.allocationSummary(seen:&seen);total.nodes += c.nodes;total.bytes += c.bytes
+        let c=body.allocationSummary(seen:&seen,includeExternal:includeExternal);total.nodes += c.nodes;total.bytes += c.bytes
       case .shifted(let body,let basis):
-        let c=body.allocationSummary(seen:&seen);total.nodes += c.nodes;total.bytes += c.bytes
+        let c=body.allocationSummary(seen:&seen,includeExternal:includeExternal);total.nodes += c.nodes;total.bytes += c.bytes
         if seen.insert(ObjectIdentifier(basis)).inserted { total.nodes += 1;total.bytes += MemoryLayout<InkRepeatStep>.stride+MemoryLayout<UUID>.stride+16 }
       }
       return total

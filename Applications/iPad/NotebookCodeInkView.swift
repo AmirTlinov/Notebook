@@ -206,8 +206,7 @@ final class NotebookCodeInkPresenter {
             let mesh = try SpatialInkMesh.prepare(surface: .codeFragment(id), journal: .init(actions: [action], stamp: max(action.stamp, action.stateStamp)))
             batches += mesh.batches.map {
               .init(
-                tool: $0.tool, nodes: $0.nodes, chunks: $0.chunks,
-                projection: .world(.init(x: 0, y: y)))
+                tool:$0.tool,projection:.world(.init(x:0,y:y)),parts:$0.parts)
             }
           }
           return SpatialInkMesh(batches: batches)

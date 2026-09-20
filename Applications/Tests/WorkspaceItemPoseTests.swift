@@ -270,7 +270,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
     driver.end(at: CGPoint(x: 440, y: 450).applying(sb.localToScreen))
     XCTAssertEqual(driver.actions.first?.tool, .eraser)
     XCTAssertEqual(driver.actions.first?.spans.map(\.surface), [.cover(b)])
-    XCTAssertGreaterThan(driver.physical.inks[b]?.committedEraserVertexCount ?? 0, 0)
+    XCTAssertGreaterThan(driver.physical.inks[b]?.committedEraserSourceNodeCount ?? 0, 0)
     XCTAssertEqual(driver.actions.first?.spans.first?.samples.first?.point.x ?? -1, 400, accuracy: 0.001)
   }
 

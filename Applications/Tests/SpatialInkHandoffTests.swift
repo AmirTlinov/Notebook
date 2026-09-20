@@ -86,7 +86,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     XCTAssertFalse(fixture.cohort.rasters.isEmpty, "Native ink must leave room for the visible static materials")
     let cover = try XCTUnwrap(fixture.cohort.nativeInk.owners[.cover(fixture.childID)]?.canvas)
     XCTAssertTrue(cover.isStableFramePresented)
-    XCTAssertGreaterThan(cover.committedVertexCount, 0)
+    XCTAssertGreaterThan(cover.committedSourceNodeCount, 0)
     XCTAssertLessThanOrEqual(fixture.resources.residentBytes + fixture.resources.reservedBytes, 256 * 1024 * 1024)
     try fixture.mountActive(fixture.parentID)
     fixture.contact(tool: .eraser, from: .init(x: 8, y: 8), to: .init(x: 20, y: 12))
@@ -103,7 +103,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     addTeardownBlock { await fixture.close() }
     for id in [fixture.parentID, fixture.childID] {
       let canvas = try XCTUnwrap(fixture.cohort.nativeInk.owners[.board(id)]?.canvas)
-      XCTAssertGreaterThan(canvas.committedVertexCount, 0, "The offscreen source is retained, not deleted")
+      XCTAssertGreaterThan(canvas.committedSourceNodeCount, 0, "The offscreen source is retained, not deleted")
       XCTAssertTrue(canvas.isStableFramePresented)
       XCTAssertEqual(canvas.spatialDrawableAccountedBytes, 0, "An empty visible projection does not need full-screen Metal tiles")
       XCTAssertEqual(canvas.residentCommittedBufferBytes, 0)
@@ -120,7 +120,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     XCTAssertGreaterThan(canvas.spatialDrawableAccountedBytes, 0)
     XCTAssertEqual(canvas.drawableSize.width / canvas.bounds.width, 2, accuracy: 0.001)
     XCTAssertGreaterThan(try Self.inkPixelCount(mount), 100)
-    XCTAssertGreaterThan(canvas.committedEraserVertexCount, 0)
+    XCTAssertGreaterThan(canvas.committedEraserSourceNodeCount, 0)
   }
 
   func testIncomingFocusedCoverKeepsInputAdmissionWhileTheOldMountStillDisplays() async throws {
@@ -176,7 +176,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     XCTAssertFalse(next === old)
     XCTAssertEqual(next.plan.rootBoardID, boardID)
     let incoming = try XCTUnwrap(next.nativeInk.owners[surface]?.canvas)
-    XCTAssertGreaterThan(incoming.committedVertexCount, 0)
+    XCTAssertGreaterThan(incoming.committedSourceNodeCount, 0)
     XCTAssertEqual(incoming.drawableSize.width / incoming.bounds.width, 2, accuracy: 0.001)
     try await Self.waitUntil { oldCanvas.isStableFramePresented }
     XCTAssertGreaterThan(try Self.inkPixelCount(fixture.canvas), 100,
@@ -356,7 +356,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     empty.afterPresentationTransaction { committed.fulfill() }
     try empty.install()
     await fulfillment(of: [committed], timeout: 5)
-    XCTAssertEqual(canvas.committedVertexCount, 0)
+    XCTAssertEqual(canvas.committedSourceNodeCount, 0)
     let blankPixels = try Self.inkPixelCount(fixture.canvas)
     XCTAssertLessThan(blankPixels, 10, "The last undone line must really disappear, not remain behind an empty receipt")
     let requests = canvas.drawableRequestCount
@@ -433,8 +433,8 @@ final class SpatialInkHandoffTests: XCTestCase {
     let fixture = try await Fixture.make(viewport: .init(x: 512, y: 512))
     addTeardownBlock { await fixture.close() }
     let canvas = try XCTUnwrap(fixture.cohort.nativeInk.owners[.board(fixture.childID)]?.canvas)
-    XCTAssertGreaterThan(canvas.committedVertexCount, 0)
-    XCTAssertGreaterThan(canvas.committedEraserVertexCount, 0)
+    XCTAssertGreaterThan(canvas.committedSourceNodeCount, 0)
+    XCTAssertGreaterThan(canvas.committedEraserSourceNodeCount, 0)
     let device = try XCTUnwrap(canvas.device)
     if device.supportsFamily(.apple1) {
       XCTAssertEqual(canvas.spatialMultisampleStorageMode, .memoryless)

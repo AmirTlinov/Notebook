@@ -25,8 +25,8 @@ final class PortalInkTests: XCTestCase {
     let layers = SpatialInkComposer.boardLayers(board: .board(id), journal: journal, camera: camera, viewport: viewport)
     let native = InkCanvasView(frame: .init(origin: .zero, size: size))
     native.applySpatial(.local(layers))
-    XCTAssertGreaterThan(native.committedVertexCount, 0)
-    XCTAssertGreaterThan(native.committedEraserVertexCount, 0)
+    XCTAssertGreaterThan(native.committedSourceNodeCount, 0)
+    XCTAssertGreaterThan(native.committedEraserSourceNodeCount, 0)
     let expected = try XCTUnwrap(InkRasterRenderer.shared.render(layers: layers, size: size, scale: 2))
     // Passive portal ink now traverses this compositor, including its 512-pixel
     // mask chunks. Compare actual alpha pixels with the same Metal used by the

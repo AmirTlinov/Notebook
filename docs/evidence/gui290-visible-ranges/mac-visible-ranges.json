@@ -1,0 +1,35 @@
+[
+  {
+    "boundsEvents": 951,
+    "geometryEvents": 259,
+    "indexVisits": 38,
+    "initialDisplayNodes": 0,
+    "logicalEvents": 10000,
+    "retainedBytes": 13512,
+    "sourcePrepareMilliseconds": 0.016333,
+    "visibleChunks": 1,
+    "visibleNodes": 257
+  },
+  {
+    "boundsEvents": 1746,
+    "geometryEvents": 259,
+    "indexVisits": 50,
+    "initialDisplayNodes": 0,
+    "logicalEvents": 100000,
+    "retainedBytes": 13512,
+    "sourcePrepareMilliseconds": 0.0085,
+    "visibleChunks": 1,
+    "visibleNodes": 257
+  },
+  {
+    "boundsEvents": 1784,
+    "geometryEvents": 259,
+    "indexVisits": 68,
+    "initialDisplayNodes": 0,
+    "logicalEvents": 1000000,
+    "retainedBytes": 13512,
+    "sourcePrepareMilliseconds": 0.008375,
+    "visibleChunks": 1,
+    "visibleNodes": 257
+  }
+]

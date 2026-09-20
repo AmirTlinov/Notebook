@@ -13,8 +13,8 @@ final class InstalledInkAttentionTests: XCTestCase {
     defer { try? blocker.release() }
     let pen = try driver.stroke(.pen), eraser = try driver.stroke(.eraser)
     let ink = try XCTUnwrap(driver.canvas.inkView)
-    XCTAssertGreaterThan(ink.committedVertexCount, 0)
-    XCTAssertGreaterThan(ink.committedEraserVertexCount, 0)
+    XCTAssertGreaterThan(ink.committedSourceNodeCount, 0)
+    XCTAssertGreaterThan(ink.committedEraserSourceNodeCount, 0)
     let meshInstalls = ink.spatialMeshInstallCount
     let start = ContinuousClock.now
     let selection = try capture(fixture, driver: driver)
@@ -106,7 +106,7 @@ final class InstalledInkAttentionTests: XCTestCase {
     XCTAssertEqual(preparedSource.actions, fixture.cohort.liveData.ink.actions.filter {
       $0.spans.contains { $0.surface == .board(child) }
     })
-    XCTAssertGreaterThan(prepared.committedVertexCount, 0)
+    XCTAssertGreaterThan(prepared.committedSourceNodeCount, 0)
     let meshInstallations = prepared.spatialMeshInstallCount
     let presence = SessionPresence(boardID: child, mode: .board, camera: .init(scale: 1), viewport: .init(x: 512, y: 512))
     fixture.model.updatePresence(presence, settled: true)
@@ -142,7 +142,7 @@ final class InstalledInkAttentionTests: XCTestCase {
     XCTAssertNil(driver.registry.installedSource(on: .board(fixture.presence.boardID)))
     driver.moveAndEnd()
     try await waitUntil { fixture.model.isPointing }
-    XCTAssertGreaterThan(try XCTUnwrap(driver.canvas.inkView).committedVertexCount, 0)
+    XCTAssertGreaterThan(try XCTUnwrap(driver.canvas.inkView).committedSourceNodeCount, 0)
     let selection = try capture(fixture, driver: driver)
     let item = try XCTUnwrap(fixture.model.store.readItemHeaders(limit: 1).first?.id)
     fixture.model.moveItem(item, to: .init(x: 15_000, y: 15_000))
@@ -167,7 +167,7 @@ final class InstalledInkAttentionTests: XCTestCase {
     let previousActions = fixture.model.spatialInk?.actions.count ?? 0
     let previousGeneration = fixture.model.inputGate.pencilGeneration
     let ink = try XCTUnwrap(driver.canvas.inkView)
-    let previousVertices = ink.committedVertexCount
+    let previousVertices = ink.committedSourceNodeCount
 
     XCTAssertFalse(fixture.model.inputGate.permitsSceneContact(at: .init(x: 120, y: 120), kind: .finger))
     driver.begin(.pen)
@@ -179,7 +179,7 @@ final class InstalledInkAttentionTests: XCTestCase {
     driver.moveAndEnd()
     XCTAssertEqual(fixture.model.spatialInk?.actions.count ?? 0, previousActions)
     XCTAssertTrue(driver.canvas.inkView === ink)
-    XCTAssertEqual(ink.committedVertexCount, previousVertices)
+    XCTAssertEqual(ink.committedSourceNodeCount, previousVertices)
 
     card.frame.origin = .init(x: 320, y: 320)
     driver.begin(.pen)

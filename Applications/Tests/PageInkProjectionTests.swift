@@ -14,7 +14,7 @@ final class PageInkProjectionTests: XCTestCase {
     paper.inkProjection.observe(projection)
     paper.inkView.apply(PageInkDrawing(actions: [line()]))
     try await ready(paper.inkView)
-    let builds = paper.inkView.pageMeshBuildCount, vertices = paper.inkView.committedVertexCount
+    let builds = paper.inkView.pageMeshBuildCount, vertices = paper.inkView.committedSourceNodeCount
     for scale: CGFloat in [1, 2, 4, 8, 3, 1] {
       paper.transform = .init(scaleX: scale, y: scale)
       paper.center = .init(x: window.bounds.midX, y: window.bounds.midY)
@@ -26,7 +26,7 @@ final class PageInkProjectionTests: XCTestCase {
       XCTAssertLessThanOrEqual(canvas.drawableSize.width, window.bounds.width * window.screen.scale + 6)
       XCTAssertLessThanOrEqual(canvas.drawableSize.height, window.bounds.height * window.screen.scale + 6)
       XCTAssertEqual(canvas.pageMeshBuildCount, builds)
-      XCTAssertEqual(canvas.committedVertexCount, vertices)
+      XCTAssertEqual(canvas.committedSourceNodeCount, vertices)
       XCTAssertEqual(paper.touchView.bounds.size, CGSize(width: 300, height: 300))
       let point = paper.touchView.convert(CGPoint(x: window.bounds.midX, y: window.bounds.midY), from: window)
       XCTAssertEqual(point.x, 150, accuracy: 0.001); XCTAssertEqual(point.y, 150, accuracy: 0.001)

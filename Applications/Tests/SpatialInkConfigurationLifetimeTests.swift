@@ -70,7 +70,7 @@ final class SpatialInkConfigurationLifetimeTests: XCTestCase {
     let native = try XCTUnwrap(mount(in: host.view))
     XCTAssertTrue(native.inkView === retiredCanvas)
     XCTAssertGreaterThan(try inkPixelCount(native), 0, "The real prepared canvas must first be shown")
-    XCTAssertGreaterThan(retiredCanvas?.committedVertexCount ?? 0, 0)
+    XCTAssertGreaterThan(retiredCanvas?.committedSourceNodeCount ?? 0, 0)
     XCTAssertNotNil(retiredCanvas?.installedSpatialSource)
     XCTAssertGreaterThan(resources.rasterAdmission.pinnedBytes, 0)
     XCTAssertGreaterThan(resources.reservedBytes, 0)
@@ -88,7 +88,7 @@ final class SpatialInkConfigurationLifetimeTests: XCTestCase {
     XCTAssertNotNil(retiredOwner)
     XCTAssertTrue(native.inkView === retiredCanvas)
     XCTAssertGreaterThan(try inkPixelCount(native), 0)
-    XCTAssertGreaterThan(retiredCanvas?.committedVertexCount ?? 0, 0)
+    XCTAssertGreaterThan(retiredCanvas?.committedSourceNodeCount ?? 0, 0)
 
     host.rootView = AnyView(EmptyView())
     host.view.setNeedsLayout(); host.view.layoutIfNeeded()

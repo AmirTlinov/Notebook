@@ -100,3 +100,19 @@ extension IncrementalInkMesh {
 @MainActor extension ActiveEraserStroke {
   func replaceMeasuredTail(from start: Int,with points: [PKStrokePoint]) { replaceMeasuredTail(from:start,with:points.map(SpatialInkSample.init)) }
 }
+
+// Explicit full materialization for independent geometry assertions, never a
+// compatibility property that a runtime caller could accidentally expand.
+extension SpatialInkMesh.Batch {
+  func expandedForTesting() -> (nodes: [SpatialInkGeometry.Node],chunks: [SpatialInkGeometry.Chunk]) {
+    var nodes:[SpatialInkGeometry.Node]=[],chunks:[SpatialInkGeometry.Chunk]=[]
+    for id in 0..<chunkCount {
+      let prepared=prepareChunk(id).chunk,c=prepared.descriptor
+      let shared=c.flags & 1 == 0 && chunks.last.map { $0.flags & 2 == 0 } == true && nodes.last == prepared.nodes.first
+      let start=nodes.count-(shared ? 1 : 0)
+      nodes.append(contentsOf:shared ? prepared.nodes.dropFirst() : prepared.nodes)
+      chunks.append(.init(nodes:start..<nodes.count,bounds:c.bounds,color:c.color,flags:c.flags,levels:c.levels))
+    }
+    return (nodes,chunks)
+  }
+}

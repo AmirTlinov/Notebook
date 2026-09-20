@@ -19,14 +19,14 @@ final class SpatialInkTerminalStopTests: XCTestCase {
     XCTAssertGreaterThan(acceptedPixels, before)
     let acceptedSource = try XCTUnwrap(canvas.installedSpatialSource).referenceInk()
     XCTAssertTrue(acceptedSource.actions.contains { $0.id == action.id })
-    let vertices = canvas.committedVertexCount
+    let vertices = canvas.committedSourceNodeCount
     XCTAssertGreaterThan(vertices, 0)
     XCTAssertGreaterThan(canvas.spatialDrawableAccountedBytes, 0)
 
     // Ordinary handoff is not a terminal release, even after accepted input.
     fixture.parkAndRemount()
     XCTAssertTrue(fixture.mount.inkView === canvas)
-    XCTAssertEqual(canvas.committedVertexCount, vertices)
+    XCTAssertEqual(canvas.committedSourceNodeCount, vertices)
     XCTAssertEqual(try canvas.installedSpatialSource?.referenceInk(), acceptedSource)
     try await Self.waitUntil { canvas.isStableFramePresented }
     XCTAssertEqual(try Self.inkPixels(fixture.mount), acceptedPixels)
@@ -49,7 +49,7 @@ final class SpatialInkTerminalStopTests: XCTestCase {
     pending.afterPresentationTransaction { transactionCommitted = true }
     try pending.install()
     XCTAssertFalse(transactionCommitted)
-    XCTAssertEqual(canvas.committedVertexCount, vertices)
+    XCTAssertEqual(canvas.committedSourceNodeCount, vertices)
     XCTAssertEqual(try canvas.installedSpatialSource?.referenceInk(), acceptedSource)
     await fixture.stop()
     XCTAssertTrue(transactionCommitted, "Terminal release waits for the already submitted native transaction")
@@ -58,8 +58,8 @@ final class SpatialInkTerminalStopTests: XCTestCase {
     // has dismantled. ARC is deliberately not the terminal resource contract.
     XCTAssertTrue(lease.owners[surface]?.canvas === canvas)
     XCTAssertNil(canvas.installedSpatialSource)
-    XCTAssertEqual(canvas.committedVertexCount, 0)
-    XCTAssertEqual(canvas.committedEraserVertexCount, 0)
+    XCTAssertEqual(canvas.committedSourceNodeCount, 0)
+    XCTAssertEqual(canvas.committedEraserSourceNodeCount, 0)
     XCTAssertEqual(canvas.residentCommittedBufferBytes, 0)
     XCTAssertEqual(canvas.spatialDrawableAccountedBytes, 0)
     XCTAssertFalse(canvas.isStableFramePresented)
@@ -73,7 +73,7 @@ final class SpatialInkTerminalStopTests: XCTestCase {
     canvas.draw(in: canvas)
     XCTAssertNil(fixture.mount.inkView)
     XCTAssertNil(canvas.installedSpatialSource)
-    XCTAssertEqual(canvas.committedVertexCount, 0)
+    XCTAssertEqual(canvas.committedSourceNodeCount, 0)
     XCTAssertEqual(fixture.resources.reservedBytes, 0)
   }
 

@@ -270,7 +270,7 @@ final class AcceptedPageInputTests: XCTestCase {
     await waitForDecodedInput(paper)
     write(on: paper, y: 40)
     write(on: paper, y: 80)
-    let measuredVertices = paper.inkView.committedVertexCount
+    let measuredVertices = paper.inkView.committedSourceNodeCount
     XCTAssertGreaterThan(measuredVertices, 0)
     XCTAssertEqual(model.pendingAcceptedPageInkCount, 2)
     await fulfillment(of: [first], timeout: 2)
@@ -280,7 +280,7 @@ final class AcceptedPageInputTests: XCTestCase {
     XCTAssertNotNil(model.acceptedPageInkFailure)
     XCTAssertNotNil(model.persistenceFailure)
     XCTAssertEqual(model.pendingAcceptedPageInkCount, 2)
-    XCTAssertEqual(paper.inkView.committedVertexCount, measuredVertices,
+    XCTAssertEqual(paper.inkView.committedSourceNodeCount, measuredVertices,
       "Preparation failure must not restore the old blank model over accepted measured ink")
     XCTAssertTrue(try PageInkDrawing.decode(model.store.loadPage(page.id).drawingData).activeActions.isEmpty)
     model.retryPendingPersistence()

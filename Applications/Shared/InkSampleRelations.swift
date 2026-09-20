@@ -71,27 +71,55 @@ struct InkSampleRelations: Sendable {
     }
     var payloadBytes: Int { if case .literal(let bits) = self { return bits.count * 8 }; return 0 }
   }
+  /// Canonical arrays are immutable COW buffers. Literal blocks share one
+  /// buffer instead of making another copy of incompressible measurements.
+  final class SampleBuffer: Sendable {
+    let samples: [SpatialInkSample]
+    let external: Bool
+    init(_ samples: [SpatialInkSample],external: Bool = false) {
+      self.samples=samples;self.external=external
+    }
+    var byteCount: Int { 32+samples.capacity*MemoryLayout<SpatialInkSample>.stride }
+  }
+  struct Samples: Sendable {
+    let buffer: SampleBuffer
+    let range: Range<Int>
+    init(_ samples: [SpatialInkSample]) { buffer = .init(samples);range=0..<samples.count }
+    init(buffer: SampleBuffer,range: Range<Int>) { self.buffer=buffer;self.range=range }
+    var values: ArraySlice<SpatialInkSample> { buffer.samples[range] }
+    var count: Int { range.count }
+    subscript(_ index: Int) -> SpatialInkSample { buffer.samples[range.lowerBound+index] }
+  }
   enum Block: Sendable {
-    case literal([SpatialInkSample])
+    case literal(Samples)
     case fields([Field], Int)
     var count: Int { switch self { case .literal(let a): a.count; case .fields(_,let n): n } }
-    init(_ samples: ArraySlice<SpatialInkSample>) {
+    init(_ samples: ArraySlice<SpatialInkSample>) { self.init(Samples(Array(samples))) }
+    init(_ view: Samples) {
+      let samples=view.values
       // Tiled coordinates are already a relative, exact type. Preserve them as
       // literals until their range proof is implemented, never flatten the tile.
       guard samples.count >= 4, samples.allSatisfy({ $0.worldPoint == nil }) else {
-        self = .literal(Array(samples)); return
+        self = .literal(view); return
       }
       // Direct field access avoids dynamic key-path traversal for every event
       // in this cold path. The exact recognition/proof remains field-local.
-      let fields: [Field] = [
-        .init(samples.map { $0.point.x.bitPattern }), .init(samples.map { $0.point.y.bitPattern }),
+      let x=Field(samples.map { $0.point.x.bitPattern }),y=Field(samples.map { $0.point.y.bitPattern })
+      // For canonical irregular coordinates, another field encoding cannot
+      // remove geometry work. Keep the existing buffer without scanning/copying
+      // six more attributes merely to discard them under the display budget.
+      if view.buffer.external,case .literal=x,case .literal=y { self = .literal(view);return }
+      let fields: [Field] = [x,y,
         .init(samples.map { $0.timeOffset.bitPattern }), .init(samples.map { $0.width.bitPattern }),
         .init(samples.map { $0.opacity.bitPattern }), .init(samples.map { $0.force.bitPattern }),
         .init(samples.map { $0.azimuth.bitPattern }), .init(samples.map { $0.altitude.bitPattern })]
 
       let bytes = fields.count * MemoryLayout<Field>.stride + fields.reduce(0) { $0 + $1.payloadBytes }
-      self = bytes < samples.count * MemoryLayout<SpatialInkSample>.stride
-        ? .fields(fields,samples.count) : .literal(Array(samples))
+      // A canonical literal costs no additional sample storage. Only retain
+      // a derived encoding below the 24-byte display-node budget. Contacts own
+      // their measurements, so encoding there competes with the full sample.
+      let budget=view.buffer.external ? 24 : MemoryLayout<SpatialInkSample>.stride
+      self = bytes < samples.count * budget ? .fields(fields,samples.count) : .literal(view)
     }
     func sample(at i: Int) -> SpatialInkSample {
       switch self {
@@ -112,6 +140,7 @@ struct InkSampleRelations: Sendable {
         var result=CGRect.null
         for i in range {
           let p=samples[i];cost.decodedSamples += 1
+          guard p.worldPoint == nil else { return .infinite }
           result=result.union(Sequence.pointBounds(p.point.x,p.point.y,p.width))
         }
         return result
@@ -162,8 +191,9 @@ struct InkSampleRelations: Sendable {
   let frames: [InkExactFrame]
   init(sourceID: UUID, span: Int = 0, revision: UUID, samples: [SpatialInkSample], header: Header) {
     self.sourceID = sourceID; self.span=span; self.header = header; self.revision = revision; count = samples.count; frames = [];lastEdit=nil
+    let buffer=SampleBuffer(samples,external:true)
     storage = .init(Sequence.from(stride(from:0,to:samples.count,by:Self.blockSize).map {
-      Block(samples[$0..<min(samples.count,$0+Self.blockSize)])
+      Block(Samples(buffer:buffer,range:$0..<min(samples.count,$0+Self.blockSize)))
     }))
   }
   init(_ action: PageInkAction, revision: UUID) {
@@ -222,6 +252,10 @@ struct InkSampleRelations: Sendable {
   /// Eraser disks and every unproved shape retain all events for display.
   func forEachDisplayPoint(in range: Range<Int>? = nil, origin: WorldPoint? = nil,
     offset: SpatialPoint = .zero, scale: Double = 1, _ body: (SIMD2<Float>,Float,Float) -> Void) {
+    forEachIndexedDisplayPoint(in:range,origin:origin,offset:offset,scale:scale) { _,p,r,a in body(p,r,a) }
+  }
+  func forEachIndexedDisplayPoint(in range: Range<Int>? = nil,origin: WorldPoint? = nil,
+    offset: SpatialPoint = .zero,scale: Double = 1,_ body: (Int,SIMD2<Float>,Float,Float)->Void) {
     let range=range ?? 0..<count
     precondition(range.lowerBound >= 0 && range.upperBound <= count)
     // Reduction must not skip samples that the shared Float normalizer would
@@ -231,8 +265,8 @@ struct InkSampleRelations: Sendable {
     let magnitude=[box.minX*scale+offset.x,box.maxX*scale+offset.x,
       box.minY*scale+offset.y,box.maxY*scale+offset.y].map { abs(Float($0)) }.max() ?? .infinity
     let spacing=(Double(InkStrokeGeometry.minimumDistanceSquared.squareRoot())+2*Double(magnitude.ulp))/abs(scale)
-    storage.root.forEachDisplayPoint(in:range,reduce:header.tool == .pen,origin:origin,minimumSpacing:spacing) { x,y,width,opacity in
-      body(.init(Float(x*scale+offset.x),Float(y*scale+offset.y)),Float(width*scale/2),Float(opacity))
+    storage.root.forEachDisplayPoint(in:range,reduce:header.tool == .pen,origin:origin,minimumSpacing:spacing) { index,x,y,width,opacity in
+      body(index,.init(Float(x*scale+offset.x),Float(y*scale+offset.y)),Float(width*scale/2),Float(opacity))
     }
   }
   func decoded(in range: Range<Int>? = nil) -> [SpatialInkSample] {
@@ -345,6 +379,13 @@ struct InkSampleRelations: Sendable {
   }
   var payloadBytes: Int {
     MemoryLayout<Self>.stride + frames.count * MemoryLayout<InkExactFrame>.stride + allocationSummary.bytes
+  }
+  /// Additional retention when the same canonical arrays are already counted
+  /// by the mesh owner. Owned contact/edit buffers are still counted in full.
+  var auxiliaryBytes: Int {
+    var seen=Set<ObjectIdentifier>()
+    return MemoryLayout<Self>.stride + frames.count * MemoryLayout<InkExactFrame>.stride
+      + storage.root.allocationSummary(seen:&seen,includeExternal:false).bytes
   }
 }
 

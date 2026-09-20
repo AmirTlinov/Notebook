@@ -26,7 +26,7 @@ final class DrawingOwnershipTests: XCTestCase {
       canvas.draw()
       try await Task.sleep(for: .milliseconds(5))
     }
-    XCTAssertGreaterThan(canvas.committedVertexCount, 0)
+    XCTAssertGreaterThan(canvas.committedSourceNodeCount, 0)
     XCTAssertGreaterThan(canvas.drawableRequestCount, 0)
     XCTAssertTrue(canvas.isStableFramePresented, "Первое перо раскрывает прежний Metal-тракт")
     canvas.applySpatial(.init(batches: []))
@@ -88,7 +88,7 @@ final class DrawingOwnershipTests: XCTestCase {
     active.replaceMeasuredTail(from: 0, with: points)
     view.displayActiveStroke(active)
     view.commitActiveSpatialAction()
-    let liveVertexCount = view.committedVertexCount
+    let liveVertexCount = view.committedSourceNodeCount
 
     view.applySpatial(.local([
       .ink(points: points, color: .black),
@@ -99,9 +99,9 @@ final class DrawingOwnershipTests: XCTestCase {
     ]))
 
     XCTAssertGreaterThan(liveVertexCount, 0)
-    XCTAssertGreaterThan(view.committedEraserVertexCount, 0)
+    XCTAssertGreaterThan(view.committedEraserSourceNodeCount, 0)
     view.applySpatial(.local([.ink(points: points, color: .black)]))
-    XCTAssertEqual(view.committedVertexCount, liveVertexCount)
+    XCTAssertEqual(view.committedSourceNodeCount, liveVertexCount)
   }
 
   @MainActor
@@ -164,8 +164,8 @@ final class DrawingOwnershipTests: XCTestCase {
     registry.register(coverView, for: .cover(coverID))
     registry.applyStable(.local(layers), source: nil, to: .cover(coverID))
 
-    XCTAssertEqual(boardView.committedVertexCount, 0)
-    XCTAssertGreaterThan(coverView.committedEraserVertexCount, 0)
+    XCTAssertEqual(boardView.committedSourceNodeCount, 0)
+    XCTAssertGreaterThan(coverView.committedEraserSourceNodeCount, 0)
   }
 
   @MainActor
@@ -176,7 +176,7 @@ final class DrawingOwnershipTests: XCTestCase {
     let first = [point(x: 20, y: 30), point(x: 180, y: 70)]
     registry.register(view, for: cover)
     registry.applyStable(.local([.ink(points: first, color: .black)]), source: nil, to: cover)
-    let stableCount = view.committedVertexCount
+    let stableCount = view.committedSourceNodeCount
 
     registry.beginAction(on: cover)
     registry.applyStable(.local([]), source: nil, to: cover)
@@ -187,12 +187,12 @@ final class DrawingOwnershipTests: XCTestCase {
     )
     view.displayActiveStroke(active)
     view.commitActiveSpatialAction()
-    let locallyCommittedCount = view.committedVertexCount
+    let locallyCommittedCount = view.committedSourceNodeCount
     registry.finishAction(on: cover, keepingCommittedMesh: true)
 
     XCTAssertGreaterThan(stableCount, 0)
     XCTAssertGreaterThan(locallyCommittedCount, stableCount)
-    XCTAssertEqual(view.committedVertexCount, locallyCommittedCount)
+    XCTAssertEqual(view.committedSourceNodeCount, locallyCommittedCount)
   }
 
   @MainActor
@@ -205,7 +205,7 @@ final class DrawingOwnershipTests: XCTestCase {
     )
     view.displayActiveStroke(first)
     view.commitActiveSpatialAction()
-    let committed = view.committedVertexCount
+    let committed = view.committedSourceNodeCount
     XCTAssertGreaterThan(committed, 0)
 
     let second = ActiveInkStroke(style: .standard)
@@ -216,7 +216,7 @@ final class DrawingOwnershipTests: XCTestCase {
     view.displayActiveStroke(second)
     view.clearActiveAction()
 
-    XCTAssertEqual(view.committedVertexCount, committed)
+    XCTAssertEqual(view.committedSourceNodeCount, committed)
   }
 
   @MainActor

@@ -175,7 +175,7 @@ final class SpatialInkPhysicalOwner {
   }
   func prepareNew(mesh: SpatialInkMesh, journal: SpatialInkJournal, suppressedInkIDs: Set<UUID> = []) {
     canvas.applySpatial(mesh); canvas.installSpatialSource(journal, on: surface, suppressedInkIDs: suppressedInkIDs)
-    if mesh.batches.contains(where: { !$0.nodes.isEmpty }) { registry?.parkSceneCanvas(canvas) }
+    if mesh.batches.contains(where: { !$0.isEmpty }) { registry?.parkSceneCanvas(canvas) }
   }
   func stop() async {
     await canvas.finishSpatialHandoffFrames()

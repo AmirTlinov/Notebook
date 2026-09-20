@@ -67,7 +67,7 @@ final class PagePresentationTests: XCTestCase {
     while !ready(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
     XCTAssertTrue(ready(), "Foreground must resume the same requested scene without another camera gesture: \(model.compositionTiles.failure ?? "no diagnostic")")
     let canvas = try XCTUnwrap(model.compositionTiles.surfaceRegistry.canvas(for: .cover(index.selectedItemID)))
-    XCTAssertGreaterThan(canvas.committedVertexCount, 0)
+    XCTAssertGreaterThan(canvas.committedSourceNodeCount, 0)
     XCTAssertTrue(canvas.isStableFramePresented)
   }
 

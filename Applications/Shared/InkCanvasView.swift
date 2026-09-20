@@ -133,7 +133,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     }
   }
 
+  fileprivate final class PreparedGeometry {
+    let chunk: SpatialInkGeometry.PreparedChunk
+    let reservation: RasterReservation
+    init(_ chunk: SpatialInkGeometry.PreparedChunk,reservation: RasterReservation) { self.chunk=chunk;self.reservation=reservation }
+  }
   fileprivate struct GeometryBuffer {
+    let geometry: PreparedGeometry
     let buffer: any MTLBuffer
     let reservation: RasterReservation
     let nodeCount: Int
@@ -169,6 +175,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private(set) var lastRenderedTileCount = 0
   private(set) var submittedTileCount = 0
   private(set) var residentCommittedNodeCount = 0
+  var committedPreparedNodeCount: Int { committedBatches.reduce(0) { $0+$1.mesh.preparedNodeCount } }
+  private(set) var preparedCommittedPointCount = 0
+  private(set) var committedIndexVisitCount = 0
 
   private static let framesInFlight = 3
   /// A retained surface submits one GPU frame at a time beside its shown frame.
@@ -266,13 +275,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     }
   }
 
-  var committedVertexCount: Int {
-    committedBatches.reduce(0) { $0 + $1.mesh.vertexCount }
+  var committedSourceNodeCount: Int {
+    committedBatches.reduce(0) { $0 + $1.mesh.sourceNodeCount }
   }
 
-  var committedEraserVertexCount: Int {
+  var committedEraserSourceNodeCount: Int {
     committedBatches.reduce(0) { count, batch in
-      count + (batch.operation == .erase ? batch.mesh.vertexCount : 0)
+      count + (batch.operation == .erase ? batch.mesh.sourceNodeCount : 0)
     }
   }
   var hasSpatialInkGeometry: Bool {
@@ -867,11 +876,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   private func visibleChunks(in clip: CGRect) -> [(Int, Int)] {
+    // The viewport query already selected and prepared resident chunks. Tiles
+    // filter those descriptors; they must not repeat source-range disclosure.
     committedBatches.enumerated().flatMap { b, batch in
-      batch.mesh.chunkIndex.query(
-        viewport: clip,
-        transform: batch.mesh.projection.transform(camera: spatialCamera, viewport: spatialViewport)
-      ).chunks.map { (b, $0) }
+      let transform=batch.mesh.projection.transform(camera:spatialCamera,viewport:spatialViewport)
+      return batch.buffers.keys.sorted().filter {
+        batch.buffers[$0]!.geometry.chunk.descriptor.intersects(viewport:clip,transform:transform)
+      }.map { (b,$0) }
     }
   }
 
@@ -881,7 +892,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       let batch = committedBatches[b],
         transform = batch.mesh.projection.transform(
           camera: spatialCamera, viewport: spatialViewport)
-      guard batch.mesh.chunks[c].intersects(viewport: clip, transform: transform) else { continue }
+      guard let chunk=batch.buffers[c]?.geometry.chunk.descriptor,
+        chunk.intersects(viewport:clip,transform:transform) else { continue }
       tokens.append(
         .init(
           source: batch.renderID, chunk: c, revision: 0, level: batch.buffers[c]?.level ?? -1,
@@ -910,13 +922,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       if camera == nil, let crop = pageRenderRegion {
         transform.z -= Float(crop.minX); transform.w -= Float(crop.minY)
       }
-      if let clip, !batch.mesh.chunks[chunkIndex].intersects(viewport: clip, transform: transform) { continue }
+      guard let prepared=batch.buffers[chunkIndex] else { continue }
+      let chunk=prepared.geometry.chunk.descriptor
+      if let clip, !chunk.intersects(viewport:clip,transform:transform) { continue }
       var affine = InkAffine(transform)
       encoder.setVertexBytes(&affine, length: MemoryLayout<InkAffine>.stride, index: 2)
-      let chunk = batch.mesh.chunks[chunkIndex]
       draw(
-        buffer: batch.buffers[chunkIndex]?.buffer,
-        nodeCount: batch.buffers[chunkIndex]?.nodeCount ?? 0,
+        buffer:prepared.buffer,
+        nodeCount:prepared.nodeCount,
         flags: chunk.flags, color: chunk.color, operation: batch.operation, with: encoder)
     }
     if let active {
@@ -1168,10 +1181,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     pendingPageRevision = revision
     // The source arrays and mesh buffers are immutable COW values. MainActor
     // neither walks old samples nor copies their vertices at Pencil-up.
-    let old = committedBatches.compactMap { batch in
-      batch.pageAction.map { PageInkMesh.Entry(action: $0, mesh: batch.mesh, reusedIndex: nil) }
+    // Short contacts already fit one upload chunk. Long accepted contacts
+    // release their full incremental geometry after one off-thread source
+    // preparation; canonical batches (pageCommit == 0) remain reusable.
+    let oldBatches = committedBatches.filter {
+      guard let action=$0.pageAction else { return false }
+      return $0.pageCommit == 0 || action.samples.count <= InkRenderGeometry.maximumSegments
     }
-    let oldBatches = committedBatches.filter { $0.pageAction != nil }
+    let old = oldBatches.map { PageInkMesh.Entry(action:$0.pageAction!,mesh:$0.mesh,reusedIndex:nil) }
     let worker = Task.detached(priority: .userInitiated) { try PageInkMesh.prepare(drawing, reusing: old) }
     pageMeshTask = Task { [weak self] in
       do {
@@ -1234,10 +1251,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     guard !spatialHandoffIsStopping, spatialStagingID == nil, pageGeometryIsReady, baselineTexture == nil,
       activeInkStroke == nil, activeEraserStroke == nil,
       committedBatches.allSatisfy({ batch in
-        if batch.mesh.nodes.isEmpty { return true }
+        if batch.mesh.isEmpty { return true }
         guard spatialDrawableScale != nil, bounds.width > 0, bounds.height > 0 else { return false }
         let transform = batch.mesh.projection.transform(camera: spatialCamera, viewport: spatialViewport)
-        return batch.mesh.chunkIndex.query(viewport: CGRect(origin: .zero, size: bounds.size), transform: transform).chunks.isEmpty
+        return batch.mesh.query(viewport:CGRect(origin:.zero,size:bounds.size).insetBy(dx:-1,dy:-1),affine:.init(transform)).chunks.isEmpty
       })
     else { return false }
     // Source ink elsewhere on this board is not a visible Metal allocation.
@@ -1410,7 +1427,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       $0
         + InkRenderGeometry.vertexCount(
           nodes: committedBatches[$1.0].buffers[$1.1]!.nodeCount,
-          flags: committedBatches[$1.0].mesh.chunks[$1.1].flags)
+          flags: committedBatches[$1.0].buffers[$1.1]!.geometry.chunk.descriptor.flags)
     }
     visibleCommittedChunkCount = visible.count
     residentCommittedNodeCount = visible.reduce(0) {
@@ -1427,7 +1444,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     for batchIndex in batches.indices {
       let mesh = batches[batchIndex].mesh
       let transform = mesh.projection.transform(camera: camera, viewport: viewport)
-      let selected = mesh.chunkIndex.query(viewport: viewportRect, transform: transform).chunks
+      let query=mesh.query(viewport:viewportRect.insetBy(dx:-1,dy:-1),affine:.init(transform))
+      committedIndexVisitCount += query.cost.visitedNodes
+      let selected=query.chunks
       let selectedIDs = Set(selected)
       // Only resident uploads can need retirement; unvisited source chunks do
       // not even have a buffer slot. Nearby retention uses this same pool.
@@ -1439,17 +1458,21 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     let pixelsPerPoint =
       pixelScale ?? Float(spatialDrawableScale ?? Double(drawableSize.width / max(bounds.width, 1)))
     for (batchIndex, chunkIndex) in visible {
-      let mesh = batches[batchIndex].mesh, chunk = mesh.chunks[chunkIndex]
-      let transform = mesh.projection.transform(camera: camera, viewport: viewport)
-      let level = InkRenderGeometry.level(
-        chunk.levels, pixelsPerUnit: max(abs(transform.x), abs(transform.y)) * pixelsPerPoint)
-      if batches[batchIndex].buffers[chunkIndex]?.level == level { continue }
-      let selected: [Node]
-      if level >= 0 {
-        selected = chunk.levels[level].indices.map { mesh.nodes[chunk.nodes.lowerBound + Int($0)] }
-      } else {
-        selected = Array(mesh.nodes[chunk.nodes])
+      let mesh=batches[batchIndex].mesh
+      let geometry: PreparedGeometry
+      if let retained=batches[batchIndex].buffers[chunkIndex]?.geometry { geometry=retained }
+      else {
+        let prepared=mesh.prepareChunk(chunkIndex)
+        preparedCommittedPointCount += prepared.decodedPoints
+        guard let reservation=resources.reserveDerivedBytes(prepared.chunk.byteCount,
+          priority:physicalAdmission?.allocationPriority ?? .input,owner:physicalAdmission) else { throw SceneRenderError.resourceLimit }
+        geometry=PreparedGeometry(prepared.chunk,reservation:reservation)
       }
+      let transform=mesh.projection.transform(camera:camera,viewport:viewport)
+      let level=InkRenderGeometry.level(geometry.chunk.descriptor.levels,
+        pixelsPerUnit:max(abs(transform.x),abs(transform.y))*pixelsPerPoint)
+      if batches[batchIndex].buffers[chunkIndex]?.level == level { continue }
+      let selected=geometry.chunk.selected(level:level)
       guard let device,
         let reservation = resources.reserveDerivedBytes(
           selected.count * MemoryLayout<Node>.stride,
@@ -1461,7 +1484,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       else { throw SceneRenderError.resourceLimit }
       buffer.label = "Visible compact ink nodes"
       batches[batchIndex].buffers[chunkIndex] = .init(
-        buffer: buffer, reservation: reservation, nodeCount: selected.count, level: level)
+        geometry:geometry,buffer:buffer,reservation:reservation,nodeCount:selected.count,level:level)
     }
     return visible
   }

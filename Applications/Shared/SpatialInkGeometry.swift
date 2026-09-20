@@ -104,3 +104,96 @@ struct InkSampleProjection: Sendable {
   var offset: SpatialPoint = .zero
   var scale: Double = 1
 }
+
+extension SpatialInkGeometry {
+  struct PreparedChunk: Sendable {
+    let nodes: ArraySlice<Node>
+    let descriptor: Chunk
+    private let ownedStorageBytes: Int
+    init(nodes: [Node],descriptor: Chunk) {
+      self.nodes=nodes[...];self.descriptor=descriptor
+      ownedStorageBytes=nodes.capacity*MemoryLayout<Node>.stride+descriptor.metadataBytes
+    }
+    init(sharedNodes: ArraySlice<Node>,descriptor: Chunk) {
+      nodes=sharedNodes;self.descriptor=descriptor;ownedStorageBytes=0
+    }
+    var byteCount: Int { MemoryLayout<Self>.stride+ownedStorageBytes }
+    func selected(level: Int) -> ArraySlice<Node> {
+      level >= 0 ? descriptor.levels[level].indices.map { nodes[nodes.startIndex+Int($0)] }[...] : nodes
+    }
+  }
+
+  /// Virtual chunks use the source's range tree; there is no second bounds tree
+  /// or per-event display array. Coalescing-ambiguous input uses the same existing
+  /// full normalizer instead: omitting its prefix state would change the stroke.
+  struct RelativeSource: Sendable {
+    let source: InkSampleRelations
+    let projection: InkSampleProjection
+    var bounds: CGRect { projected(source.storage.root.geometry.bounds) }
+    var chunkCount: Int { source.count == 0 ? 0 : source.storage.root.geometry.stationary ? 1 : max(1,(source.count-2)/InkRenderGeometry.maximumSegments+1) }
+    init?(_ source: InkSampleRelations,projection: InkSampleProjection) {
+      self.source=source;self.projection=projection
+      let geometry=source.storage.root.geometry
+      guard geometry.origin == nil || projection.origin != nil else { return nil }
+      let box=projected(geometry.bounds)
+      let magnitude=[box.minX,box.minY,box.maxX,box.maxY].map { abs(Float($0)) }.max() ?? .infinity
+      let error=4*Double(magnitude.ulp)
+      guard source.count <= 1 || geometry.stationary || (error.isFinite && geometry.minimumSpacing*abs(projection.scale)
+        > Double(InkStrokeGeometry.minimumDistanceSquared.squareRoot())+error) else { return nil }
+    }
+    func range(at id: Int) -> Range<Int> {
+      precondition((0..<chunkCount).contains(id))
+      if source.storage.root.geometry.stationary { return (source.count-1)..<source.count }
+      let start=id*InkRenderGeometry.maximumSegments
+      return start..<(start+min(source.count-start,InkRenderGeometry.maximumSegments+1))
+    }
+    private func projected(_ box: CGRect) -> CGRect {
+      var box=box
+      if let origin=source.storage.root.geometry.origin,let target=projection.origin {
+        let d=target.delta(to:origin);box=InkSampleRelations.Geometry.offset(box,x:d.x,y:d.y)
+      }
+      let x=box.minX*projection.scale+projection.offset.x,y=box.minY*projection.scale+projection.offset.y
+      let endX=box.maxX*projection.scale+projection.offset.x,endY=box.maxY*projection.scale+projection.offset.y
+      let projected=CGRect(x:min(x,endX),y:min(y,endY),width:abs(endX-x),height:abs(endY-y))
+      let magnitude=[x,y,endX,endY].map { abs(Float($0)) }.max() ?? .infinity
+      let padding=8*Double(magnitude.ulp)
+      let radiusFloor=max(0,1-abs(projection.scale))*0.25*Double(InkStrokeGeometry.maximumCrossSectionScale)
+      return padding.isFinite ? projected.insetBy(dx:-padding-radiusFloor,dy:-padding-radiusFloor) : .infinite
+    }
+    func query(viewport: CGRect,affine: InkAffine = .init()) -> (chunks: [Int],cost: InkSampleRelations.AccessCost) {
+      var selected:[Int]=[],cost=InkSampleRelations.AccessCost()
+      func visit(_ chunks: Range<Int>) {
+        guard !chunks.isEmpty else { return }
+        let lower=chunks.lowerBound*InkRenderGeometry.maximumSegments
+        let upper=chunks.upperBound == chunkCount ? source.count : chunks.upperBound*InkRenderGeometry.maximumSegments+1
+        let result=try! source.bounds(in:lower..<upper)
+        cost.visitedNodes += result.cost.visitedNodes;cost.jumps += result.cost.jumps;cost.decodedSamples += result.cost.decodedSamples
+        let bounds=affine.bounds(projected(result.bounds))
+        let magnitude=[bounds.minX,bounds.minY,bounds.maxX,bounds.maxY].map { abs(Float($0)) }.max() ?? .infinity
+        let padding=8*Double(magnitude.ulp)
+        if padding.isFinite && !bounds.insetBy(dx:-padding,dy:-padding).intersects(viewport) { return }
+        if chunks.count == 1 { selected.append(chunks.lowerBound);return }
+        let mid=chunks.lowerBound+chunks.count/2
+        visit(chunks.lowerBound..<mid);visit(mid..<chunks.upperBound)
+      }
+      visit(0..<chunkCount);return (selected,cost)
+    }
+    func prepare(_ id: Int) -> (chunk: PreparedChunk,decodedPoints: Int) {
+      let range=range(at:id)
+      let halo=source.storage.root.geometry.stationary ? range : max(0,range.lowerBound-1)..<(range.upperBound+(range.upperBound < source.count ? 1 : 0))
+      let c=source.header.color,erase=source.header.tool == .eraser
+      let color: SIMD4<Float> = erase ? .init(repeating:1) : .init(Float(c.red),Float(c.green),Float(c.blue),1)
+      var points:[RenderPoint]=[],owned:[Int]=[]
+      source.forEachIndexedDisplayPoint(in:halo,origin:projection.origin,offset:projection.offset,scale:projection.scale) { index,p,r,a in
+        let alpha=min(max(a,0),1)
+        if range.contains(index) { owned.append(points.count) }
+        points.append(.init(position:p,radius:max(r,0.25),premultipliedColor:.init(color.x*alpha,color.y*alpha,color.z*alpha,alpha)))
+      }
+      let nodes=owned.map { InkRenderGeometry.node(at:$0,in:points) }
+      let flags:UInt32=(id == 0 ? 1 : 0) | (id == chunkCount-1 ? 2 : 0) | (erase ? 4 : 0)
+      let descriptor=Chunk(nodes:0..<nodes.count,bounds:InkRenderGeometry.bounds(nodes[...]),color:color,flags:flags,
+        levels:InkRenderGeometry.levels(nodes[...],flags:flags))
+      return (.init(nodes:nodes,descriptor:descriptor),points.count)
+    }
+  }
+}

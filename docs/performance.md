@@ -29,9 +29,20 @@ and drawing stamp; a concurrent change retries preparation without losing input.
 Undo names action UUIDs and does not erase later strokes. Camera waits only for
 accepted contact completion; shared edits additionally respect publication fences.
 
-`SpatialInkMesh` uses tile-local coordinates and immutable chunk-bound indexes.
-Frames query visible chunks and preserve pen/eraser order before accessing vertices
-or allocating GPU buffers. Camera motion changes projection, not mesh.
+`SpatialInkMesh` keeps tile-local sources. Long, independently renderable ranges
+query `InkSampleRelations.Sequence` bounds before preparing display nodes; repeats
+have virtual chunks, not one allocated descriptor per logical chunk. Neighbour
+halos preserve joins. Coalescing-dependent input uses the existing full normalizer;
+a proved stationary range reads only its last measurement. Short prepared strokes
+share the existing chunk index instead of retaining one source/index per stroke.
+
+Canonical literal blocks borrow one immutable COW sample buffer. Retention counts
+its actual capacity once; the joint journal/mesh cache adds only unshared bytes.
+Visible CPU geometry and GPU uploads share the existing canvas resource lifetime.
+Prepared-node views do not copy their backing arrays. A long finished page contact
+retains its pixels while one worker replaces its full incremental mesh with the
+queryable source. Later delivery reuses that source. Camera motion changes only
+projection; tiles inspect already resident descriptors, not the source again.
 The completed live stroke follows the camera before journal preparation.
 Metal completion does not synchronously block main; a subsequent installed frame,
 not completion of a hidden command alone, permits snapshot evidence.

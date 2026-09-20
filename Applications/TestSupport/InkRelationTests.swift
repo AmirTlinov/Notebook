@@ -75,7 +75,7 @@ final class InkRelationTests: XCTestCase {
     let reopened = try JSONDecoder().decode(PageInkAction.self,from:JSONEncoder().encode(action))
     XCTAssertEqual(reopened.id,sourceID); XCTAssertEqual(reopened.sequence,9)
     assertBits(samples,reopened.samples)
-    XCTAssertLessThan(original.payloadBytes,samples.count*MemoryLayout<SpatialInkSample>.stride*11/10)
+    XCTAssertLessThan(original.payloadBytes,samples.capacity*MemoryLayout<SpatialInkSample>.stride*11/10)
   }
   private func mesh(_ samples: [SpatialInkSample], relations: Bool, eraser: Bool = false) -> SpatialInkMesh {
     if relations {
@@ -86,11 +86,7 @@ final class InkRelationTests: XCTestCase {
     return SpatialInkMesh.referencePage(.init(actions:[action]))
   }
   private func mesh(_ source: InkSampleRelations) -> SpatialInkMesh {
-    let c = source.header.color
-    let color: SIMD4<Float> = source.header.tool == .eraser ? .init(repeating:1)
-      : .init(Float(c.red),Float(c.green),Float(c.blue),1)
-    let nodes = SpatialInkGeometry.compact(source:source)
-    return .init(batches:[.init(tool:source.header.tool,nodes:nodes,color:color,projection:.local)])
+    .init(batches:[.init(source:source,projection:.local)])
   }
   private func image(_ mesh: SpatialInkMesh, affine: InkAffine = .init()) throws -> CGImage {
     try XCTUnwrap(InkRasterRenderer.shared.render(mesh:mesh,size:.init(width:640,height:640),scale:1,affine:affine))
@@ -167,7 +163,7 @@ final class InkRelationTests: XCTestCase {
     for (name,samples) in [("regular",regular),("noise",noise),("measured-positions",measured)] {
       var preparation = [[Double]](repeating:[],count:2), total = preparation
       var footprint = [[UInt64]](repeating:[],count:2)
-      var nodes = [0,0], meshBytes = [0,0], firstPrepareMS = [0.0,0.0], firstTotalMS = [0.0,0.0]
+      var nodes = [0,0], meshBytes = [0,0], auxiliaryBytes = [0,0], visibleCPUBytes = [0,0], selectedGPUBytes = [0,0], firstPrepareMS = [0.0,0.0], firstTotalMS = [0.0,0.0]
       func ms(_ since: ContinuousClock.Instant) -> Double {
         let t=since.duration(to:.now).components;return Double(t.seconds)*1000+Double(t.attoseconds)/1e15
       }
@@ -180,9 +176,17 @@ final class InkRelationTests: XCTestCase {
             _ = try image(output);let end=ms(start)
             if round == 0 {
               firstPrepareMS[mode]=ready;firstTotalMS[mode]=end
-              nodes[mode]=output.batches.reduce(0) { $0+$1.nodes.count }
-              meshBytes[mode]=output.batches.reduce(0) { n,b in n+b.nodes.count*MemoryLayout<InkRenderGeometry.Node>.stride
-                + b.chunkIndex.byteCount + b.chunks.reduce(0) { $0+MemoryLayout<SpatialInkGeometry.Chunk>.stride+$1.metadataBytes } }
+              nodes[mode]=output.batches.reduce(0) { $0+$1.preparedNodeCount }
+              meshBytes[mode]=output.batches.reduce(0) { $0+$1.byteCount }
+              auxiliaryBytes[mode]=output.batches.reduce(0) { $0+$1.auxiliaryBytes }
+              visibleCPUBytes[mode]=output.batches.reduce(0) { total,batch in
+                total+batch.query(viewport:.init(x:0,y:0,width:640,height:640),affine:.init()).chunks.reduce(0) { bytes,id in
+                  let chunk=batch.prepareChunk(id).chunk
+                  let level=InkRenderGeometry.level(chunk.descriptor.levels,pixelsPerUnit:1)
+                  selectedGPUBytes[mode] += chunk.selected(level:level).count*MemoryLayout<SpatialInkGeometry.Node>.stride
+                  return bytes+chunk.byteCount
+                }
+              }
             }
             if round >= 5 { preparation[mode].append(ready);total[mode].append(end)
               withExtendedLifetime(retained) {
@@ -202,7 +206,9 @@ final class InkRelationTests: XCTestCase {
       let editMS=ms(editStart);XCTAssertEqual(edited.count,samples.count)
       func percentile(_ a:[Double],_ p:Double)->Double { a.sorted()[min(a.count-1,Int(ceil(Double(a.count)*p))-1)] }
       let report:[String:Any] = ["case":name,"samples":samples.count,"sourceBytes":samples.count*MemoryLayout<SpatialInkSample>.stride,
-        "relationPayloadBytes":encoded.payloadBytes,"meshBytes":meshBytes,"nodes":nodes,
+        "canonicalAllocatedBytes":samples.capacity*MemoryLayout<SpatialInkSample>.stride,
+        "relationPayloadBytes":encoded.payloadBytes,"meshBytes":meshBytes,"initialPreparedNodes":nodes,
+        "meshAuxiliaryBytesBesideCanonical":auxiliaryBytes,"visibleCPUViewBytes":visibleCPUBytes,"selectedGPUNodeBytes":selectedGPUBytes,
         "processFootprintBytesAfterRaster":footprint,
         "footprintScope":"process snapshots with source descriptor retained after complete raster; not peak transient allocations",
         "firstSourcePreparationMilliseconds":firstPrepareMS,"firstSourcePrepareRasterMilliseconds":firstTotalMS,
