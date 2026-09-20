@@ -38,7 +38,7 @@ export interface NotebookGraphic {
   cornerRadius?: number | null;
   transform?: {a:number;b:number;c:number;d:number;tx:number;ty:number} | null;
   path?: {commands:{kind:"move"|"line"|"quad"|"curve"|"close";points:{x:number;y:number}[]}[]} | null;
-  freehand?: {layers:{tool:"pen"|"eraser";color:{red:number;green:number;blue:number};vertices:{x:number;y:number;opacity:number}[];eraser?:{size:{x:number;y:number};samples:{point:{x:number;y:number};width:number}[]}}[]} | null;
+  freehand?: {layers:{tool:"pen"|"eraser";color:{red:number;green:number;blue:number};vertices:{x:number;y:number;opacity:number}[];eraser?:{size:{x:number;y:number};samples:{point:{x:number;y:number};width:number}[]};measured?:{sourceID:string;span:number;measurements:string;frame:PageRect;origin?:WorldPoint}}[]} | null;
 }
 
 export interface NotebookGraphicConnection {

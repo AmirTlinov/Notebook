@@ -31,12 +31,12 @@ import XCTest
     let selected = try XCTUnwrap(result)
     XCTAssertEqual(selected.graphic.sourceInkIDs,[actions[0].id])
     XCTAssertEqual(selected.sourceSampleCount,100_000)
-    XCTAssertLessThan(selected.examinedSampleCount,1000)
+    XCTAssertLessThan(selected.candidateSampleCount,1000)
     let reused = try XCTUnwrap(prepared.selection(polygon:polygon,surface:.page(page.id),origin:nil,bounds:nil))
     XCTAssertEqual(reused.graphic,selected.graphic)
     XCTAssertEqual(try drawing.dataRepresentation(),page.drawingData)
-    let receipt: [String:Any] = ["sourceSamples":selected.sourceSampleCount,"examinedSamples":selected.examinedSampleCount,
-      "copiedSelectedSamples":actions[0].samples.count,"selectionMilliseconds":durations,
+    let receipt: [String:Any] = ["sourceSamples":selected.sourceSampleCount,"candidateSamplesRead":selected.candidateSampleCount,
+      "retainedSelectedSamples":actions[0].samples.count,"selectionMilliseconds":durations,
       "coldPrepareMilliseconds":Double(preparation.components.seconds)*1000+Double(preparation.components.attoseconds)/1e15]
     let attachment = XCTAttachment(data:try JSONSerialization.data(withJSONObject:receipt,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
     attachment.name = "vector-lasso-100k"; attachment.lifetime = .keepAlways; add(attachment)

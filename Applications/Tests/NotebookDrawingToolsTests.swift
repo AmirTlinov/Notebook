@@ -97,7 +97,7 @@ import UIKit
       let selected = try XCTUnwrap(model.selectionSession.element)
       XCTAssertNotEqual(selected,address.reference(text))
       let graphic = try XCTUnwrap(model.graphicElement(selected))
-      XCTAssertEqual(graphic.sourceInkIDs,[pen.id]); XCTAssertNotNil(graphic.freehand?.layers.last?.eraser)
+      XCTAssertEqual(graphic.sourceInkIDs,[pen.id]); XCTAssertEqual(graphic.freehand?.layers.last?.tool,.eraser); XCTAssertNotNil(graphic.freehand?.layers.last?.measured)
       await assertSaved(model); await model.reloadExternalChanges()?.value
       XCTAssertEqual(try model.store.loadPage(page.id).drawingData,drawing)
       model.drawingToolSettings.lassoSelectsInk = false; model.drawingToolSettings.lassoSelectsObjects = true

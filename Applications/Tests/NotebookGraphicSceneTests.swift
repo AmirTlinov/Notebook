@@ -59,7 +59,7 @@ import XCTest
     let graphic = try XCTUnwrap(model.selectionSession.element.flatMap(model.graphicElement))
     print("LASSO_DENSE_ERASER_SELECTION \(released.duration(to:.now))")
     XCTAssertLessThan(released.duration(to:.now),.seconds(2))
-    XCTAssertEqual(graphic.sourceInkIDs,pens.map(\.id)); XCTAssertNotNil(graphic.freehand?.layers.last?.eraser)
+    XCTAssertEqual(graphic.sourceInkIDs,pens.map(\.id)); XCTAssertEqual(graphic.freehand?.layers.last?.tool,.eraser); XCTAssertNotNil(graphic.freehand?.layers.last?.measured)
     let selected = try XCTUnwrap(model.selectionSession.element)
     await withCheckedContinuation { continuation in model.inputGate.performAfterIdle { continuation.resume() } }
     XCTAssertTrue(model.acceptExternalScene(older,observedEpoch:model.collaborationReadEpoch,

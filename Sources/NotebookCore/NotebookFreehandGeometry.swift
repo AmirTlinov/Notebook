@@ -2,86 +2,159 @@ import CoreGraphics
 import Foundation
 import simd
 
-/// Prepared vector source, not a raster cache. A query first rejects whole
-/// branches; only the surviving bounded ranges are expanded or uploaded.
+/// One vector owner for triangle primitives, circular sweeps and measured ink.
+/// A measured layer borrows the same virtual-range geometry as the live canvas.
 public final class NotebookFreehandGeometry: Sendable {
   public struct Chunk: Sendable {
     public let layer: Int
     public let range: Range<Int>
-    public let bounds: CGRect // normalized source coordinates
-    public let sourceSize: CGSize // units used by compact nodes
+    public let bounds: CGRect
+    public let sourceSize: CGSize
     public let flags: UInt32
   }
-  public let chunks: [Chunk]
-  public let index: InkBoundsIndex
+  public struct Prepared: Sendable {
+    public let descriptor: Chunk
+    public let geometry: SpatialInkGeometry.PreparedChunk
+  }
+  private enum Body: Sendable {
+    case primitives([Chunk],InkBoundsIndex)
+    case measured(SpatialInkGeometry.Source,CGSize)
+    var count: Int { switch self { case .primitives(let c,_):c.count;case .measured(let s,_):s.chunkCount } }
+    var bounds: CGRect {
+      switch self {
+      case .primitives(_,let index): return index.bounds
+      case .measured(let source,let size): return Self.normalized(source.bounds,size:size)
+      }
+    }
+    static func normalized(_ rect: CGRect,size: CGSize) -> CGRect {
+      .init(x:rect.minX/size.width,y:rect.minY/size.height,width:rect.width/size.width,height:rect.height/size.height)
+    }
+  }
   public let sourceNodeCount: Int
+  public let chunkCount: Int
+  public let preparedNodeCount: Int
   private let layers: [NotebookFreehand.Layer]
   private let erasers: [[InkStrokeGeometry.RenderPoint]]
+  private let bodies: [Body]
+  private let starts: [Int]
+  private let layerIndex: InkBoundsIndex
 
   init(_ layers: [NotebookFreehand.Layer]) {
-    self.layers = layers
-    var chunks: [Chunk] = [], erasers: [[InkStrokeGeometry.RenderPoint]] = []
-    var count = 0
-    for (layerID, layer) in layers.enumerated() {
-      if let eraser = layer.eraser {
-        var points: [InkStrokeGeometry.RenderPoint] = []
+    self.layers=layers
+    var bodies:[Body]=[],erasers:[[InkStrokeGeometry.RenderPoint]]=[],starts:[Int]=[]
+    var count=0,prepared=0,chunksCount=0
+    for (layerID,layer) in layers.enumerated() {
+      starts.append(chunksCount)
+      var chunks:[Chunk]=[]
+      if let measured=layer.measured {
+        // Only metadata and local placement are new. The exact source body is
+        // shared with the journal and survives copies and whole-pose edits.
+        let source=InkSampleRelations(sourceID:measured.sourceID,span:measured.span,measurements:measured.measurements,
+          header:.init(tool:layer.tool,color:layer.color))
+        let body=SpatialInkGeometry.Source(source:source,projection:.init(origin:measured.origin,
+          offset:.init(x:-measured.frame.x,y:-measured.frame.y)))
+        bodies.append(.measured(body,.init(width:measured.frame.width,height:measured.frame.height)))
+        erasers.append([]);count += measured.measurements.count;prepared += body.preparedNodeCount
+      } else if let eraser=layer.eraser {
+        var points:[InkStrokeGeometry.RenderPoint]=[]
         for s in eraser.samples {
-          let p = InkStrokeGeometry.RenderPoint(position:.init(Float(s.point.x),Float(s.point.y)),
-            radius:max(0.25,Float(s.width/2)),premultipliedColor:.init(repeating:1))
-          if let last = points.last, InkStrokeGeometry.areCoincident(last,p) { points[points.count-1] = p }
-          else { points.append(p) }
+          let p=InkStrokeGeometry.RenderPoint(position:.init(Float(s.point.x),Float(s.point.y)),radius:max(0.25,Float(s.width/2)),premultipliedColor:.init(repeating:1))
+          if let last=points.last,InkStrokeGeometry.areCoincident(last,p) { points[points.count-1]=p } else { points.append(p) }
         }
-        erasers.append(points); count += points.count
-        let size = CGSize(width:eraser.size.x,height:eraser.size.y), last = points.count-1
+        erasers.append(points);count += points.count;prepared += points.count
+        let size=CGSize(width:eraser.size.x,height:eraser.size.y),last=points.count-1
         for start in stride(from:0,to:max(1,last),by:64) where !points.isEmpty {
-          let end = min(last,start+64), range = start..<(end+1)
-          let box = range.reduce(CGRect.null) { box, i in
-            let p = points[i], r = Double(p.radius)
-            return box.union(.init(x:(Double(p.position.x)-r)/size.width,y:(Double(p.position.y)-r)/size.height,
-              width:2*r/size.width,height:2*r/size.height))
+          let end=min(last,start+64),range=start..<(end+1)
+          let box=range.reduce(CGRect.null) { box,i in
+            let p=points[i],r=Double(p.radius)
+            return box.union(.init(x:(Double(p.position.x)-r)/size.width,y:(Double(p.position.y)-r)/size.height,width:2*r/size.width,height:2*r/size.height))
           }
           chunks.append(.init(layer:layerID,range:range,bounds:box,sourceSize:size,flags:4 | (start == 0 ? 1 : 0)))
         }
+        bodies.append(.primitives(chunks,.init(chunks.map(\.bounds))))
       } else {
-        erasers.append([]); count += layer.vertices.count
+        erasers.append([]);count += layer.vertices.count
         for start in stride(from:0,to:layer.vertices.count,by:192) {
-          let range = start..<min(layer.vertices.count,start+192)
-          let box = range.reduce(CGRect.null) { box, i in
-            let v = layer.vertices[i]
-            return box.union(.init(x:v.x,y:v.y,width:0,height:0))
+          let range=start..<min(layer.vertices.count,start+192)
+          let box=range.reduce(CGRect.null) { box,i in
+            let v=layer.vertices[i];return box.union(.init(x:v.x,y:v.y,width:0,height:0))
           }
           chunks.append(.init(layer:layerID,range:range,bounds:box,sourceSize:.init(width:1,height:1),flags:8))
         }
+        bodies.append(.primitives(chunks,.init(chunks.map(\.bounds))))
+      }
+      chunksCount += bodies.last!.count
+    }
+    self.bodies=bodies;self.erasers=erasers;self.starts=starts
+    sourceNodeCount=count;chunkCount=chunksCount;preparedNodeCount=prepared
+    layerIndex = .init(bodies.map(\.bounds))
+  }
+  private func location(_ id: Int) -> (layer: Int,chunk: Int) {
+    precondition((0..<chunkCount).contains(id))
+    var low=0,high=starts.count
+    while low+1 < high { let mid=(low+high)/2;if starts[mid] <= id { low=mid } else { high=mid } }
+    return (low,id-starts[low])
+  }
+  public func layer(at id: Int) -> Int { location(id).layer }
+  public func tool(at id: Int) -> SpatialInkTool { layers[layer(at:id)].tool }
+  public func color(at id: Int) -> SpatialInkColor { layers[layer(at:id)].color }
+  public func query(_ area: CGRect) -> (indices: [Int],visitedNodes: Int) {
+    let candidates=layerIndex.query(area)
+    var result:[Int]=[],visits=candidates.visitedNodes
+    for layer in candidates.indices {
+      switch bodies[layer] {
+      case .primitives(_,let index):
+        let q=index.query(area);result.append(contentsOf:q.indices.map { starts[layer]+$0 });visits += q.visitedNodes
+      case .measured(let source,let size):
+        let q=source.query(viewport:.init(x:area.minX*size.width,y:area.minY*size.height,width:area.width*size.width,height:area.height*size.height),affine:.init())
+        result.append(contentsOf:q.chunks.map { starts[layer]+$0 });visits += q.cost.visitedNodes
       }
     }
-    self.chunks = chunks; self.erasers = erasers; sourceNodeCount = count
-    index = .init(chunks.map(\.bounds))
+    return (result,visits)
   }
-  public func tool(at chunk: Int) -> SpatialInkTool { layers[chunks[chunk].layer].tool }
-  public func color(at chunk: Int) -> SpatialInkColor { layers[chunks[chunk].layer].color }
-  public func nodes(at chunkID: Int) -> [InkRenderGeometry.Node] {
-    let c = chunks[chunkID]
+  public func prepared(at id: Int) -> Prepared {
+    let at=location(id)
+    switch bodies[at.layer] {
+    case .measured(let source,let size):
+      let prepared=source.prepare(at.chunk).chunk,c=prepared.descriptor
+      let range:Range<Int>
+      if case .relative(let r)=source.storage { range=r.range(at:at.chunk) } else { range=c.nodes }
+      return .init(descriptor:.init(layer:at.layer,range:range,bounds:Body.normalized(c.bounds,size:size),sourceSize:size,flags:c.flags),geometry:prepared)
+    case .primitives(let chunks,_):
+      let c=chunks[at.chunk],nodes:[InkRenderGeometry.Node]
+      if c.flags & 4 != 0 {
+        nodes=c.range.map { let p=erasers[c.layer][$0];return .init(position:p.position,edge:.zero,radius:p.radius,alpha:1) }
+      } else {
+        nodes=c.range.map { let p=layers[c.layer].vertices[$0];return .init(position:.init(Float(p.x),Float(p.y)),edge:.zero,radius:0,alpha:Float(p.opacity)) }
+      }
+      return .init(descriptor:c,geometry:.init(nodes:nodes,descriptor:.init(nodes:0..<nodes.count,bounds:InkRenderGeometry.bounds(nodes[...]),flags:c.flags)))
+    }
+  }
+  /// Original triangle primitives keep their Double coordinates. Measured
+  /// ranges use the same halo-resolved nodes as GPU, never a full-source mesh.
+  public func vertices(at id: Int) -> [NotebookFreehand.Vertex] {
+    let at=location(id)
+    if case .primitives(let chunks,_)=bodies[at.layer],layers[at.layer].eraser == nil {
+      return Array(layers[at.layer].vertices[chunks[at.chunk].range])
+    }
+    let p=prepared(at:id),c=p.descriptor,nodes=p.geometry.nodes
+    var vertices:[InkStrokeGeometry.Vertex]=[]
     if c.flags & 4 != 0 {
-      return c.range.map { i in
-        let p = erasers[c.layer][i]
-        return .init(position:p.position,edge:.zero,radius:p.radius,alpha:1)
-      }
+      InkStrokeGeometry.appendEraserVertices(renderPoints:nodes.map {
+        .init(position:$0.position,radius:$0.radius,premultipliedColor:.init(repeating:$0.alpha))
+      },includesStart:c.flags & 1 != 0,to:&vertices)
+    } else {
+      InkStrokeGeometry.appendStrokeVertices(nodes:nodes,roundsStart:c.flags & 1 != 0,roundsEnd:c.flags & 2 != 0,to:&vertices)
     }
-    return c.range.map { i in
-      let p = layers[c.layer].vertices[i]
-      return .init(position:.init(Float(p.x),Float(p.y)),edge:.zero,radius:0,alpha:Float(p.opacity))
-    }
+    return vertices.map { .init(x:Double($0.position.x)/c.sourceSize.width,y:Double($0.position.y)/c.sourceSize.height,opacity:Double($0.premultipliedColor.w)) }
   }
-  /// Exact canonical triangles only for the bounded query candidates. Eraser
-  /// sweeps remain compact until this semantic query actually needs them.
-  public func vertices(at chunkID: Int) -> [NotebookFreehand.Vertex] {
-    let c = chunks[chunkID]
-    guard c.flags & 4 != 0 else { return Array(layers[c.layer].vertices[c.range]) }
-    var v: [InkStrokeGeometry.Vertex] = []
-    InkStrokeGeometry.appendEraserVertices(renderPoints:Array(erasers[c.layer][c.range]),
-      includesStart:c.flags & 1 != 0,to:&v)
-    return v.map { .init(x:Double($0.position.x)/c.sourceSize.width,
-      y:Double($0.position.y)/c.sourceSize.height,opacity:1) }
+  public func paintPath(size: CGSize,transform: NotebookGraphicTransform?) -> CGPath {
+    var result:CGPath=CGMutablePath()
+    for id in query(Self.sourceBounds(CGRect(origin:.zero,size:size),size:size,transform:transform)).indices {
+      let path=NotebookFreehand.path(vertices(at:id),size:size,transform:transform)
+      result = tool(at:id) == .eraser ? result.subtracting(path) : result.union(path)
+    }
+    return result.intersection(CGPath(rect:CGRect(origin:.zero,size:size),transform:nil))
   }
   public static func sourceBounds(_ region: CGRect, size: CGSize, transform: NotebookGraphicTransform?) -> CGRect {
     let t = transform ?? .identity
@@ -96,7 +169,7 @@ public final class NotebookFreehandGeometry: Sendable {
       CGRect(origin:.zero,size:size).insetBy(dx:-tolerance,dy:-tolerance).contains(point) else { return false }
     let area = Self.sourceBounds(.init(x:point.x-tolerance,y:point.y-tolerance,width:tolerance*2,height:tolerance*2),size:size,transform:transform)
     let t = transform ?? .identity
-    for id in index.query(area).indices.reversed() {
+    for id in query(area).indices.reversed() {
       let cut = tool(at:id) == .eraser, padding = cut ? 0 : max(0,tolerance)
       let vertices = vertices(at:id)
       for start in stride(from:0,to:vertices.count-2,by:3) {
@@ -125,7 +198,7 @@ public final class NotebookFreehandGeometry: Sendable {
     guard polygon.count >= 3 else { return false }
     let area = polygonBounds(polygon)
     var cuts: [Int:[NotebookFreehand.Vertex]] = [:]
-    for id in index.query(area).indices.reversed() where tool(at:id) == .pen {
+    for id in query(area).indices.reversed() where tool(at:id) == .pen {
       if Task.isCancelled { return false }
       let v = vertices(at:id)
       for start in stride(from:0,to:v.count-2,by:3) {
@@ -142,8 +215,8 @@ public final class NotebookFreehandGeometry: Sendable {
         if witnesses.contains(where: { polygonContains($0,polygon)
           && contains($0,size:.init(width:1,height:1),transform:nil) }) { return true }
         var remaining = [p]
-        for cut in index.query(polygonBounds(p).intersection(area)).indices
-        where chunks[cut].layer > chunks[id].layer && tool(at:cut) == .eraser {
+        for cut in query(polygonBounds(p).intersection(area)).indices
+        where layer(at:cut) > layer(at:id) && tool(at:cut) == .eraser {
           let e: [NotebookFreehand.Vertex]
           if let cached = cuts[cut] { e = cached } else { e = vertices(at:cut); cuts[cut] = e }
           for j in stride(from:0,to:e.count-2,by:3) {

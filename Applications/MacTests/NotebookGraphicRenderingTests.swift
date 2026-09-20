@@ -18,7 +18,7 @@ import XCTest
     let raw = PageDocument(size:size,actor:actor,drawingData:drawing)
     let frame = PageRect(x:0,y:0,width:300,height:200)
     let graphic = NotebookGraphic(shape:.freehand,sourceInkIDs:[stroke.id,later.id],freehand:.init(layers:actions.map {
-      .init(tool:$0.tool,color:$0.color,vertices:NotebookFreehand.mesh(samples:$0.samples,frame:frame,origin:nil,tool:$0.tool)) }))
+      .init(tool:$0.tool,color:$0.color,measured:.init(sourceID:$0.id,measurements:$0.samples,frame:frame)) }))
     let converted = PageDocument(size:size,actor:actor,drawingData:drawing,elements:[
       .init(id:"retained",kind:.graphic,frame:frame,source:"",html:"",graphic:graphic)])
     func render(_ page:PageDocument,_ name:String) async throws -> NSBitmapImageRep {

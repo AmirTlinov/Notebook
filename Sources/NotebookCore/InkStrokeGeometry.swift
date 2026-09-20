@@ -30,6 +30,18 @@ public enum InkStrokeGeometry {
     renderPoints: [RenderPoint], roundsStart: Bool = true, roundsEnd: Bool = true,
     to vertices: inout [Vertex]
   ) {
+    appendStrokeVertices(renderPoints:renderPoints,offsets:crossSectionOffsets(for:renderPoints),
+      roundsStart:roundsStart,roundsEnd:roundsEnd,to:&vertices)
+  }
+  /// Semantic picking uses the same neighbour-resolved cross sections as the
+  /// GPU. Recomputing an endpoint from a clipped chunk would lose its halo.
+  public static func appendStrokeVertices(nodes: ArraySlice<InkRenderGeometry.Node>,
+    roundsStart: Bool = true,roundsEnd: Bool = true,to vertices: inout [Vertex]) {
+    appendStrokeVertices(renderPoints:nodes.map { .init(position:$0.position,radius:$0.radius,premultipliedColor:.init(repeating:$0.alpha)) },
+      offsets:nodes.map(\.edge),roundsStart:roundsStart,roundsEnd:roundsEnd,to:&vertices)
+  }
+  private static func appendStrokeVertices(renderPoints: [RenderPoint],offsets: [SIMD2<Float>],
+    roundsStart: Bool,roundsEnd: Bool,to vertices: inout [Vertex]) {
     guard let first = renderPoints.first else { return }
 
     guard renderPoints.count > 1 else {
@@ -37,7 +49,6 @@ public enum InkStrokeGeometry {
       return
     }
 
-    let offsets = crossSectionOffsets(for: renderPoints)
     guard offsets.count == renderPoints.count else { return }
     for index in 0..<(renderPoints.count - 1) {
       if index.isMultiple(of: 256), Task.isCancelled { return }

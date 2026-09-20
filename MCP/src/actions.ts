@@ -41,9 +41,15 @@ const graphicTransform = z.object({a:z.number().finite(),b:z.number().finite(),c
 const inkVertex = graphicPoint.extend({opacity:z.number().min(0).max(1)}).strict();
 const compactEraser = z.object({size:z.object({x:z.number().finite().positive().max(1e6),y:z.number().finite().positive().max(1e6)}).strict(),
   samples:z.array(z.object({point:graphicPoint,width:z.number().finite().positive().max(1e6)}).strict()).min(1).max(100000)}).strict();
+// Exact NIM1 body is opaque to the JS adapter; the Core codec validates its graph.
+const measuredInk = z.object({sourceID:z.uuid(),span:z.number().int().min(0).max(1e6),
+  measurements:z.base64().min(8).max(24*1024*1024),
+  frame:frame.extend({width:z.number().finite().positive().max(1e6),height:z.number().finite().positive().max(1e6)}),
+  origin:point.optional()}).strict();
 const freehand = z.object({layers:z.array(z.union([
   z.object({tool:z.enum(["pen","eraser"]),color:graphicColor,vertices:z.array(inkVertex).min(3).max(65536)}).strict(),
-  z.object({tool:z.literal("eraser"),color:graphicColor,vertices:z.array(inkVertex).length(0),eraser:compactEraser}).strict()
+  z.object({tool:z.literal("eraser"),color:graphicColor,vertices:z.array(inkVertex).length(0),eraser:compactEraser}).strict(),
+  z.object({tool:z.enum(["pen","eraser"]),color:graphicColor,vertices:z.array(inkVertex).length(0),measured:measuredInk}).strict()
 ])).min(1).max(2048)}).strict();
 export const graphicSchema = z.object({ shape: z.enum(["ellipse", "rectangle", "triangle", "diamond", "plus", "connector", "freehand", "path"]), style: graphicStyle, label: z.string().max(100_000),
   representation: z.enum(["ink", "geometry"]), visible: z.boolean(), sourceInkIDs: z.array(z.uuid()).max(1024), connection:graphicConnection.optional(),

@@ -21,8 +21,8 @@ final class VectorInkRenderingTests: XCTestCase {
     let ink = source(), size = CGSize(width:256,height:256)
     let t = NotebookGraphicTransform(a:0.8,b:0.1,c:0.1,d:0.8,tx:0.05,ty:0.05)
     let region = CGRect(x:100,y:100,width:48,height:48)
-    let query = ink.geometry.index.query(NotebookFreehandGeometry.sourceBounds(region,size:size,transform:t))
-    let touched = query.indices.reduce(0) { $0+ink.geometry.chunks[$1].range.count }
+    let query = ink.geometry.query(NotebookFreehandGeometry.sourceBounds(region,size:size,transform:t))
+    let touched = query.indices.reduce(0) { $0+ink.geometry.prepared(at:$1).descriptor.range.count }
     XCTAssertLessThan(touched,ink.geometry.sourceNodeCount/4)
     let full = try XCTUnwrap(InkRasterRenderer.shared.freehand(ink,transform:t,size:size,region:.init(origin:.zero,size:size),scale:1,mask:false))
     let crop = try XCTUnwrap(InkRasterRenderer.shared.freehand(ink,transform:t,size:size,region:region,scale:1,mask:false))
@@ -64,9 +64,9 @@ final class VectorInkRenderingTests: XCTestCase {
         if round >= 3 { if mode == 0 { direct.append(time) } else { control.append(time) } }
       }
     }
-    let area = CGRect(x:0.499,y:0.499,width:0.006,height:0.009), q = geometry.index.query(area)
+    let area = CGRect(x:0.499,y:0.499,width:0.006,height:0.009), q = geometry.query(area)
     let record: [String:Any] = ["retainedSourceNodes":geometry.sourceNodeCount,
-      "querySourceNodes":q.indices.reduce(0) { $0+geometry.chunks[$1].range.count },"indexNodesVisited":q.visitedNodes,
+      "querySourceNodes":q.indices.reduce(0) { $0+geometry.prepared(at:$1).descriptor.range.count },"indexNodesVisited":q.visitedNodes,
       "directPoseMilliseconds":direct,"fullSourceControlMilliseconds":control,"directPoseSourceNodesRead":0]
     let attachment = XCTAttachment(data:try JSONSerialization.data(withJSONObject:record,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
     attachment.name = "vector-source-edit"; attachment.lifetime = .keepAlways; add(attachment)

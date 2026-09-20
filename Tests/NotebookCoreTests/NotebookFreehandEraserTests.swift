@@ -30,10 +30,10 @@ struct NotebookFreehandEraserTests {
     let ink = NotebookFreehand(layers:[pen,layer])
     #expect(ink.isValid)
     let geometry = ink.geometry
-    let rendered = geometry.chunks.indices.filter { geometry.tool(at:$0) == .eraser }.flatMap { geometry.vertices(at:$0) }
+    let rendered = (0..<geometry.chunkCount).filter { geometry.tool(at:$0) == .eraser }.flatMap { geometry.vertices(at:$0) }
     #expect(rendered.count > NotebookFreehand.maximumVertices)
     let measured = samples.map { SpatialInkSample(point:$0.point,timeOffset:0,width:$0.width,opacity:1,force:1,azimuth:0,altitude:.pi/2) }
-    #expect(rendered == NotebookFreehand.mesh(samples:measured,frame:.init(x:0,y:0,width:500,height:200),origin:nil,tool:.eraser))
+    #expect(rendered == NotebookFreehand.meshControl(samples:measured,frame:.init(x:0,y:0,width:500,height:200),origin:nil,tool:.eraser))
     let compact = try JSONEncoder().encode(ink)
     #expect(compact.count < 150_000)
     #expect(try JSONDecoder().decode(NotebookFreehand.self,from:compact) == ink)
@@ -42,7 +42,7 @@ struct NotebookFreehandEraserTests {
   @Test func hitTestingUsesChronologicalCutsAndTransformedGeometry() {
     func pen(_ y: Double) -> NotebookFreehand.Layer {
       let samples = [10.0,90.0].map { SpatialInkSample(point:.init(x:$0,y:y),timeOffset:0,width:8,opacity:1,force:1,azimuth:0,altitude:.pi/2) }
-      return .init(color:.black,vertices:NotebookFreehand.mesh(samples:samples,frame:.init(x:0,y:0,width:100,height:100),origin:nil))
+      return .init(color:.black,vertices:NotebookFreehand.meshControl(samples:samples,frame:.init(x:0,y:0,width:100,height:100),origin:nil))
     }
     let cut = NotebookFreehand.Layer(eraser:.init(size:.init(x:100,y:100),samples:[.init(point:.init(x:50,y:10),width:20),.init(point:.init(x:50,y:90),width:20)]))
     let ink = NotebookFreehand(layers:[pen(30),cut,pen(70)])

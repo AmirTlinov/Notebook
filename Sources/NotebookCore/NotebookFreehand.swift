@@ -1,9 +1,9 @@
 import CoreGraphics
 import Foundation
 
-/// A retained vector presentation of measured ink. The immutable measurements
-/// stay in the journal; this mesh is produced by its one shared tessellator.
-/// Copies carry the mesh, not another claim on the original measurements.
+/// A retained vector source. Measured layers share the immutable journal body;
+/// triangles remain exact authored vector primitives, not a fallback renderer.
+/// Copies carry their own source binding, not a claim on the original journal.
 public struct NotebookFreehand: Codable, Equatable, Sendable {
   public struct Vertex: Codable, Equatable, Sendable {
     public let x: Double
@@ -30,12 +30,25 @@ public struct NotebookFreehand: Codable, Equatable, Sendable {
             && abs($0.point.x) <= 1_000_000 && abs($0.point.y) <= 1_000_000
         }
     }
-    private var measuredSamples: [SpatialInkSample] {
-      samples.map { .init(point:$0.point,timeOffset:0,width:$0.width,opacity:1,force:1,azimuth:0,altitude:.pi/2) }
+
+  }
+  /// The local frame is a display basis. Neither normalization into a unit
+  /// square nor a whole-object edit rewrites the original measurement bits.
+  public struct Measured: Codable, Equatable, Sendable {
+    public let sourceID: UUID
+    public let span: Int
+    public let measurements: InkMeasurements
+    public let frame: PageRect
+    public let origin: WorldPoint?
+    public init(sourceID: UUID,span: Int = 0,measurements: InkMeasurements,frame: PageRect,origin: WorldPoint? = nil) {
+      self.sourceID=sourceID;self.span=span;self.measurements=measurements;self.frame=frame;self.origin=origin
     }
-    func normalizedPath(size destination: CGSize, transform: NotebookGraphicTransform?) -> CGPath {
-      NotebookElementAppearance.erasurePath([.init(target:.init(elementID:"retained-ink",
-        frame:.init(x:0,y:0,width:size.x,height:size.y)),samples:measuredSamples)],size:destination,transform:transform)
+    var isValid: Bool {
+      span >= 0 && span <= 1_000_000 && !measurements.isEmpty && measurements.count <= 1_000_000
+        && [frame.x,frame.y,frame.width,frame.height].allSatisfy(\.isFinite)
+        && frame.width > 0 && frame.height > 0 && frame.width <= 1_000_000 && frame.height <= 1_000_000
+        && (origin == nil ? measurements.isPaper : measurements.isWorld)
+        && (origin?.isValid ?? true)
     }
   }
   public struct Layer: Codable, Equatable, Sendable {
@@ -43,11 +56,16 @@ public struct NotebookFreehand: Codable, Equatable, Sendable {
     public let color: SpatialInkColor
     public let vertices: [Vertex]
     public let eraser: Eraser?
+    public let measured: Measured?
     public init(tool: SpatialInkTool = .pen, color: SpatialInkColor, vertices: [Vertex]) {
-      self.tool = tool; self.color = color; self.vertices = vertices; eraser = nil
+      self.tool = tool; self.color = color; self.vertices = vertices; eraser = nil;measured = nil
     }
-    public init(eraser: Eraser) { tool = .eraser; color = .black; vertices = []; self.eraser = eraser }
+    public init(eraser: Eraser) { tool = .eraser; color = .black; vertices = []; self.eraser = eraser;measured = nil }
+    public init(tool: SpatialInkTool,color: SpatialInkColor,measured: Measured) {
+      self.tool=tool;self.color=color;self.measured=measured;vertices=[];eraser=nil
+    }
     var isValid: Bool {
+      if let measured { return color.isValid && vertices.isEmpty && eraser == nil && measured.isValid }
       if let eraser { return tool == .eraser && color.isValid && vertices.isEmpty && eraser.isValid }
       return color.isValid && !vertices.isEmpty && vertices.count % 3 == 0 && vertices.allSatisfy(\.isValid)
     }
@@ -71,6 +89,7 @@ public struct NotebookFreehand: Codable, Equatable, Sendable {
         let result = !layers.isEmpty && layers.count <= 2048 && layers.first?.tool == .pen
           && layers.reduce(0) { $0 + $1.vertices.count } <= NotebookFreehand.maximumVertices
           && layers.reduce(0) { $0 + ($1.eraser?.samples.count ?? 0) } <= 100_000
+          && layers.reduce(0) { $0 + ($1.measured?.measurements.payloadBytes ?? 0) } <= 16*1024*1024
           && layers.allSatisfy(\.isValid)
         validity = result
         return result
@@ -87,21 +106,6 @@ public struct NotebookFreehand: Codable, Equatable, Sendable {
   }
   public static let maximumVertices = 65_536
   public var isValid: Bool { preparation.isValid(layers) }
-  public static func mesh(samples: some Sequence<SpatialInkSample>, frame: PageRect, origin: WorldPoint?, tool: SpatialInkTool = .pen) -> [Vertex] {
-    var points: [InkStrokeGeometry.RenderPoint] = []
-    for sample in samples {
-      let p = origin.flatMap { o in sample.worldPoint.map { o.delta(to:$0) } } ?? sample.point
-      let alpha = Float(sample.opacity)
-      let next = InkStrokeGeometry.RenderPoint(position:.init(Float(p.x-frame.x),Float(p.y-frame.y)),
-        radius:max(0.25,Float(sample.width/2)),premultipliedColor:.init(repeating:alpha))
-      if let last = points.last, InkStrokeGeometry.areCoincident(last,next) { points[points.count-1] = next }
-      else { points.append(next) }
-    }
-    var vertices: [InkStrokeGeometry.Vertex] = []
-    if tool == .eraser { InkStrokeGeometry.appendEraserVertices(renderPoints:points,to:&vertices) }
-    else { InkStrokeGeometry.appendStrokeVertices(renderPoints:points,to:&vertices) }
-    return vertices.map { .init(x:Double($0.position.x)/frame.width,y:Double($0.position.y)/frame.height,opacity:Double($0.premultipliedColor.w)) }
-  }
   public static func path(_ vertices: [Vertex], size: CGSize, transform: NotebookGraphicTransform? = nil) -> CGPath {
     let path = CGMutablePath()
     for index in stride(from:0,to:vertices.count,by:3) {
@@ -123,13 +127,9 @@ public struct NotebookFreehand: Codable, Equatable, Sendable {
   }
 
   public func paintPath(size: CGSize, transform: NotebookGraphicTransform?) -> CGPath {
-    var result: CGPath = CGMutablePath()
-    for layer in layers {
-      let path = layer.eraser?.normalizedPath(size:size,transform:transform) ?? Self.path(layer.vertices,size:size,transform:transform)
-      result = layer.tool == .eraser ? result.subtracting(path) : result.union(path)
-    }
-    return result.intersection(CGPath(rect:CGRect(origin:.zero,size:size),transform:nil))
+    geometry.paintPath(size:size,transform:transform)
   }
+
 }
 
 /// Unit-square affine basis. Frame is the physical envelope; this basis keeps

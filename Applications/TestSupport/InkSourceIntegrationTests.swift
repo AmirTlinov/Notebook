@@ -193,12 +193,77 @@ final class InkSourceIntegrationTests: XCTestCase {
     let polygon: [SpatialPoint]=[.init(x:499_998,y:26),.init(x:500_010,y:26),.init(x:500_010,y:34),.init(x:499_998,y:34)]
     let selected=try XCTUnwrap(prepared.selection(polygon:polygon,surface:.page(page.id),origin:nil,bounds:nil))
     XCTAssertEqual(selected.graphic.sourceInkIDs,[small.id])
-    XCTAssertLessThan(selected.examinedSampleCount,huge.count/100)
+    XCTAssertLessThan(selected.candidateSampleCount,huge.count/100)
     XCTAssertEqual(try drawing.dataRepresentation(),bytes)
     let row: [String:Any]=["logicalEvents":prepared.sourceSampleCount,"indexedSpans":prepared.indexedSpanCount,
-      "coldPreparedEvents":prepared.preparationSampleCount,"examinedEventsIncludingSelectedGeometry":selected.examinedSampleCount,
+      "coldPreparedEvents":prepared.preparationSampleCount,"candidateEventsRead":selected.candidateSampleCount,
       "coldPrepareMilliseconds":Double(cold.seconds)*1000+Double(cold.attoseconds)/1e15]
     let proof=XCTAttachment(data:try JSONSerialization.data(withJSONObject:row,options:[.sortedKeys,.prettyPrinted]),uniformTypeIdentifier:"public.json")
     proof.name="cold-lasso-million-source";proof.lifetime = .keepAlways;add(proof)
   }
+  func testLassoRetainsMillionEventWholeAndRasterizesOnlyItsVisibleCrop() throws {
+    let samples: [SpatialInkSample]=(0..<100).map { i in
+      .init(point:.init(x:Double(i)/2,y:64+sin(Double(i)/8)*20),timeOffset:Double(i)/128,
+        width:4,opacity:0.5,force:Double(i)/128,azimuth:0,altitude:1)
+    }
+    let body=InkSampleRelations(sourceID:UUID(),revision:UUID(),samples:samples,
+      header:.init(tool:.pen,color:.init(red:0.2,green:0.4,blue:0.8)))
+    let source=try XCTUnwrap(body.settingExit(.init(x:InkDyadic(64)!,y:.zero,time:.one),revision:UUID())
+      .repeated(10_000,revision:UUID()))
+    let drawing=PageInkDrawing(actions:[source.restoredAction()])
+    let page=PageDocument(size:.init(width:834,height:1194),actor:UUID(),drawingData:try drawing.dataRepresentation())
+    let prepared=try NotebookLassoInkSource.page(page).prepare(surface:.page(page.id),origin:nil)
+    let x=320_000.0,start=ContinuousClock.now
+    let polygon: [SpatialPoint]=[.init(x:x-2,y:60),.init(x:x+4,y:60),.init(x:x+4,y:68),.init(x:x-2,y:68)]
+    let selection=try XCTUnwrap(prepared.selection(polygon:polygon,surface:.page(page.id),origin:nil,bounds:nil))
+    let elapsed=start.duration(to:.now).components
+    XCTAssertEqual(selection.graphic.sourceInkIDs,[source.sourceID])
+    let ink=try XCTUnwrap(selection.graphic.freehand),measured=try XCTUnwrap(ink.layers.first?.measured)
+    XCTAssertTrue(ink.layers[0].vertices.isEmpty)
+    XCTAssertEqual(try measured.measurements.encodedRelations(),try source.measurements.encodedRelations())
+    XCTAssertEqual(ink.geometry.preparedNodeCount,0)
+    XCTAssertEqual(ink.geometry.sourceNodeCount,1_000_000)
+    let encoded=try JSONEncoder().encode(selection.graphic)
+    XCTAssertLessThan(encoded.count,20_000)
+    let restored=try JSONDecoder().decode(NotebookGraphic.self,from:encoded)
+    XCTAssertEqual(restored,selection.graphic)
+    let frame=selection.frame,size=CGSize(width:frame.width,height:frame.height)
+    let region=CGRect(x:x-frame.x,y:-frame.y,width:160,height:128)
+    let query=ink.geometry.query(NotebookFreehandGeometry.sourceBounds(region,size:size,transform:nil))
+    let preparedNodes=query.indices.reduce(0) { $0+ink.geometry.prepared(at:$1).geometry.nodes.count }
+    XCTAssertLessThan(preparedNodes,1_000)
+    let renderer=InkRasterRenderer.shared
+    let actual=try XCTUnwrap(renderer.freehand(ink,transform:nil,size:size,region:region,scale:2,mask:false))
+    let reference=PageInkDrawing(actions:[.init(tool:.pen,color:source.header.color,
+      samples:source.decoded(in:499_800..<500_500))])
+    let control=try XCTUnwrap(renderer.render(mesh:.referencePage(reference),size:region.size,scale:2,
+      affine:InkAffine(.init(1,1,Float(-x),0))))
+    func difference(_ a:CGImage,_ b:CGImage) throws -> Int {
+      let p=Array(try XCTUnwrap(a.dataProvider?.data) as Data),q=Array(try XCTUnwrap(b.dataProvider?.data) as Data)
+      XCTAssertEqual(p.count,q.count);XCTAssertTrue(p.contains { $0 > 0 })
+      return zip(p,q).map { abs(Int($0)-Int($1)) }.max()!
+    }
+    XCTAssertLessThanOrEqual(try difference(actual,control),2)
+    // A quarter turn changes only the whole basis. Compare the same measured
+    // neighbourhood through the independent unreduced canvas control.
+    let turn=NotebookGraphicTransform(a:0,b:1,c:-1,d:0,tx:1,ty:0)
+    let edited=try selection.graphic.applying(.object(["transform":try .encode(turn)]))
+    XCTAssertTrue(edited.freehand?.geometry === ink.geometry)
+    let rotatedRegion=CGRect(x:frame.y+frame.height-128,y:x-frame.x,width:128,height:160)
+    let rotated=try XCTUnwrap(renderer.freehand(ink,transform:turn,size:.init(width:frame.height,height:frame.width),
+      region:rotatedRegion,scale:2,mask:false))
+    let rotatedControl=try XCTUnwrap(renderer.render(mesh:.referencePage(reference),size:rotatedRegion.size,scale:2,
+      affine:InkAffine(x:.init(0,-1,128,0),y:.init(1,0,Float(-x),0))))
+    XCTAssertLessThanOrEqual(try difference(rotated,rotatedControl),2)
+    let png=NSMutableData(),destination=try XCTUnwrap(CGImageDestinationCreateWithData(png,"public.png" as CFString,1,nil))
+    CGImageDestinationAddImage(destination,actual,nil);XCTAssertTrue(CGImageDestinationFinalize(destination))
+    let image=XCTAttachment(data:png as Data,uniformTypeIdentifier:"public.png")
+    image.name="million-event-selected-whole";image.lifetime = .keepAlways;add(image)
+    let row: [String:Any]=["selectedLogicalEvents":source.count,"eagerPreparedNodes":ink.geometry.preparedNodeCount,
+      "cropPreparedNodes":preparedNodes,"cropIndexVisits":query.visitedNodes,"candidateEventsRead":selection.candidateSampleCount,
+      "storedGraphicBytes":encoded.count,"selectionMilliseconds":Double(elapsed.seconds)*1000+Double(elapsed.attoseconds)/1e15]
+    let proof=XCTAttachment(data:try JSONSerialization.data(withJSONObject:row,options:[.sortedKeys,.prettyPrinted]),uniformTypeIdentifier:"public.json")
+    proof.name="million-event-selected-work";proof.lifetime = .keepAlways;add(proof)
+  }
+
 }

@@ -20,7 +20,7 @@ struct NotebookDrawingToolsContentTests {
     #expect(changed); try store.savePage(page)
     let frame = PageRect(x:98,y:98,width:104,height:32)
     let graphic = NotebookGraphic(shape:.freehand,sourceInkIDs:strokes.map(\.id),freehand:.init(layers:strokes.map {
-      .init(color:$0.color,vertices:NotebookFreehand.mesh(samples:$0.samples,frame:frame,origin:nil))
+      .init(color:$0.color,vertices:NotebookFreehand.meshControl(samples:$0.samples,frame:frame,origin:nil))
     }))
     let target = CollaborationTarget(kind:.page,id:page.id)
     let operation = CollaborationOperation(kind:.convertInkToElement,target:target,id:"handwriting",values:[
@@ -110,7 +110,7 @@ struct NotebookDrawingToolsContentTests {
     let frame = PageRect(x:100,y:100,width:120,height:40), surface = SurfaceID.page(UUID())
     let samples = [SpatialInkSample(point:.init(x:100,y:120),timeOffset:0,width:8,opacity:0.2,force:0.2,azimuth:0,altitude:1),
       .init(point:.init(x:220,y:120),timeOffset:1,width:8,opacity:0.9,force:0.9,azimuth:0,altitude:1)]
-    let mesh = NotebookFreehand.mesh(samples:samples,frame:frame,origin:nil)
+    let mesh = NotebookFreehand.meshControl(samples:samples,frame:frame,origin:nil)
     let ink = NotebookFreehand(layers:[.init(color:.black,vertices:mesh)])
     let graphic = NotebookGraphic(shape:.freehand,sourceInkIDs:[UUID()],freehand:ink)
     let graph = NotebookGraphicGraph([.init(id:"ink",graphic:graphic,frame:frame,surface:surface,shown:true)])

@@ -81,64 +81,7 @@ struct SpatialInkMesh: Sendable {
   typealias Chunk = SpatialInkGeometry.Chunk
 
   struct Batch: Sendable {
-    struct Part: Sendable {
-      enum Storage: Sendable {
-        case prepared([SpatialInkGeometry.Node],[Chunk],SpatialInkGeometry.ChunkIndex?)
-        case relative(SpatialInkGeometry.RelativeSource)
-      }
-      let storage: Storage
-      let bounds: CGRect
-      init(nodes: [SpatialInkGeometry.Node],chunks: [Chunk]) {
-        storage = .prepared(nodes,chunks,chunks.count > 1 ? .init(chunks) : nil);bounds=chunks.reduce(.null) { $0.union($1.bounds) }
-      }
-      init(source: InkSampleRelations,projection: InkSampleProjection) {
-        if source.count > InkRenderGeometry.maximumSegments,
-          let relative=SpatialInkGeometry.RelativeSource(source,projection:projection) {
-          storage = .relative(relative);bounds=relative.bounds
-        } else {
-          let c=source.header.color
-          let color: SIMD4<Float> = source.header.tool == .eraser ? .init(repeating:1) : .init(Float(c.red),Float(c.green),Float(c.blue),1)
-          let nodes=SpatialInkGeometry.compact(source:source,origin:projection.origin,offset:projection.offset,scale:projection.scale)
-          let chunks=SpatialInkGeometry.chunks(for:nodes,color:color,eraser:source.header.tool == .eraser)
-          storage = .prepared(nodes,chunks,chunks.count > 1 ? .init(chunks) : nil);bounds=chunks.reduce(.null) { $0.union($1.bounds) }
-        }
-      }
-      var chunkCount: Int { switch storage { case .prepared(_,let c,_): c.count;case .relative(let r): r.chunkCount } }
-      var sourceNodeCount: Int { switch storage { case .prepared(let n,_,_): n.count;case .relative(let r): r.source.count } }
-      var preparedNodeCount: Int { if case .prepared(let n,_,_)=storage { return n.count };return 0 }
-      var byteCount: Int {
-        switch storage {
-        case .prepared(let n,let c,let index): return n.count*MemoryLayout<SpatialInkGeometry.Node>.stride+(index?.byteCount ?? 0)
-          + c.reduce(0) { $0+MemoryLayout<Chunk>.stride+$1.metadataBytes }
-        case .relative(let r): return r.source.payloadBytes+MemoryLayout<InkSampleProjection>.stride
-        }
-      }
-      var auxiliaryBytes: Int {
-        if case .relative(let r)=storage { return r.source.auxiliaryBytes+MemoryLayout<InkSampleProjection>.stride }
-        return byteCount
-      }
-      func query(viewport: CGRect,affine: InkAffine) -> (chunks: [Int],cost: InkSampleRelations.AccessCost) {
-        switch storage {
-        case .relative(let r): return r.query(viewport:viewport,affine:affine)
-        case .prepared(_,let chunks,let index):
-          // Native canvas uses positive diagonal camera transforms. General
-          // raster transforms keep the same conservative per-chunk rejection.
-          if let index,affine.x.y == 0,affine.y.x == 0,affine.x.x > 0,affine.y.y > 0 {
-            let q=index.query(viewport:viewport,transform:.init(affine.x.x,affine.y.y,affine.x.z,affine.y.z))
-            return (q.chunks,.init(visitedNodes:q.visitedNodes))
-          }
-          return (chunks.indices.filter { affine.bounds(chunks[$0].bounds).intersects(viewport) },.init(visitedNodes:chunks.count))
-        }
-      }
-      func prepare(_ id: Int) -> (chunk: SpatialInkGeometry.PreparedChunk,decodedPoints: Int) {
-        switch storage {
-        case .relative(let r): return r.prepare(id)
-        case .prepared(let nodes,let chunks,_):
-          let c=chunks[id],local=nodes[c.nodes]
-          return (.init(sharedNodes:local,descriptor:.init(nodes:0..<local.count,bounds:c.bounds,color:c.color,flags:c.flags,levels:c.levels)),0)
-        }
-      }
-    }
+    typealias Part = SpatialInkGeometry.Source
     let tool: SpatialInkTool
     let projection: Projection
     let parts: [Part]

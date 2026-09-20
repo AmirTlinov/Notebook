@@ -24,7 +24,8 @@ enum NotebookLassoInkSource: Sendable {
   struct Result: Sendable {
     let frame: PageRect
     let graphic: NotebookGraphic
-    let examinedSampleCount: Int
+    /// Candidate traversal only; excludes exact semantic geometry preparation.
+    let candidateSampleCount: Int
     let sourceSampleCount: Int
   }
   func selection(polygon: [SpatialPoint], surface: SurfaceID, origin: WorldPoint?, bounds: CGRect?) throws -> Result? {
@@ -145,60 +146,30 @@ enum NotebookLassoInkSource: Sendable {
         }
       }
       guard let first = chosen.min() else { return nil }
-      let selectedSamples = chosen.reduce(0) { n, e in n + entries[e].sources.reduce(0) { $0+$1.count } }
-      guard chosen.count <= 1024, selectedSamples <= 10_000 else {
+      guard chosen.count <= 1024 else {
         throw CollaborationError("selection_limit","Выделите меньшую часть рукописи: это выделение слишком большое.")
       }
       var box = chosen.reduce(CGRect.null) { $0.union(entryBounds[$1]) }
       if let bounds { box = box.intersection(bounds.offsetBy(dx:delta.x,dy:delta.y)) }
       guard !box.isNull, box.width > 0, box.height > 0 else { return nil }
       let frame = PageRect(x:box.minX,y:box.minY,width:box.width,height:box.height)
-      // Cuts outside the selected whole cannot affect it. Keep only candidate
-      // sweep ranges, coalescing shared endpoints before creating vector layers.
-      var cuts: [Int:[Int:[Range<Int>]]] = [:]
+      // Select eraser spans through the same range tree, then retain their
+      // original body. The graphic's frame clips display, not source measurements.
+      var cuts: [Int:Set<Int>] = [:]
       for id in index.query(box).indices {
-        let f = spans[id]
-        if f.entry > first, entries[f.entry].tool == .eraser {
-          cuts[f.entry,default:[:]][f.span,default:[]] = try ranges(f,intersecting:box,examined:&examined)
+        let f=spans[id]
+        if f.entry > first,entries[f.entry].tool == .eraser,
+          try !ranges(f,intersecting:box,examined:&examined).isEmpty {
+          cuts[f.entry,default:[]].insert(f.span)
         }
       }
-      var layers: [NotebookFreehand.Layer] = [], vertices = 0, erasedSamples = 0
+      var layers:[NotebookFreehand.Layer]=[]
       for e in Set(chosen).union(cuts.keys).sorted() {
         try Task.checkCancellation()
-        let entry = entries[e]
-        if chosen.contains(e) {
-          for source in entry.sources {
-            // The chosen whole alone is materialized for the existing vector
-            // representation. Invisible/unselected source events stay encoded.
-            let mesh=NotebookFreehand.mesh(samples:source.measurements,frame:frame,origin:origin)
-            examined += source.count
-            vertices += mesh.count
-            guard vertices <= NotebookFreehand.maximumVertices else {
-              throw CollaborationError("selection_limit","Слишком сложное выделение; выделите меньшую часть рукописи.")
-            }
-            if !mesh.isEmpty { layers.append(.init(color:entry.color,vertices:mesh)) }
-          }
-        } else if let spans = cuts[e] {
-          for s in spans.keys.sorted() {
-            var ranges: [Range<Int>] = []
-            for r in spans[s]!.sorted(by:{ $0.lowerBound < $1.lowerBound }) {
-              if let last = ranges.last, r.lowerBound <= last.upperBound {
-                ranges[ranges.count-1] = last.lowerBound..<max(last.upperBound,r.upperBound)
-              } else { ranges.append(r) }
-            }
-            for range in ranges {
-              erasedSamples += range.count
-              guard erasedSamples <= 100_000 else {
-                throw CollaborationError("selection_limit","Слишком сложное выделение; выделите меньшую часть рукописи.")
-              }
-              examined += range.count
-              let local=entry.sources[s].decoded(in:range).map { sample in
-                let p=Self.point(sample,origin:origin)
-                return NotebookFreehand.Eraser.Sample(point:.init(x:p.x-frame.x,y:p.y-frame.y),width:sample.width)
-              }
-              layers.append(.init(eraser:.init(size:.init(x:frame.width,y:frame.height),samples:local)))
-            }
-          }
+        let entry=entries[e]
+        for (span,source) in entry.sources.enumerated() where chosen.contains(e) || cuts[e]?.contains(span) == true {
+          layers.append(.init(tool:entry.tool,color:entry.color,
+            measured:.init(sourceID:source.sourceID,span:source.span,measurements:source.measurements,frame:frame,origin:origin)))
         }
       }
       let ink = NotebookFreehand(layers:layers)
@@ -207,7 +178,7 @@ enum NotebookLassoInkSource: Sendable {
       guard ink.geometry.intersects(clip) else { return nil }
       return .init(frame:.init(x:frame.x-delta.x,y:frame.y-delta.y,width:frame.width,height:frame.height),
         graphic:.init(shape:.freehand,sourceInkIDs:chosen.sorted().map { entries[$0].id },freehand:ink),
-        examinedSampleCount:examined,sourceSampleCount:sourceSampleCount)
+        candidateSampleCount:examined,sourceSampleCount:sourceSampleCount)
     }
   }
 }

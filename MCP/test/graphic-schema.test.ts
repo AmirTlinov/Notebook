@@ -98,3 +98,17 @@ test("compact eraser sweeps do not spend the retained paint vertex budget", () =
       graphic:{...values.graphic,freehand:{layers:[pen,invalid]}}}}));
   }
 });
+
+test("measured freehand preserves the opaque exact body and rejects mixed geometry", () => {
+  const layer = {tool:"pen",color:{red:0,green:0,blue:0},vertices:[],measured:{sourceID:randomUUID(),span:0,
+    measurements:Buffer.from("NIM1typed-adapter-fixture").toString("base64"),frame:{x:0,y:0,width:640000,height:128}}};
+  const operation = {kind:"convertInkToElement",target,id:"measured",values:{kind:"graphic",source:"",
+    frame:layer.measured.frame,graphic:{...graphic,shape:"freehand",freehand:{layers:[layer]}}}};
+  assert.deepEqual(operationSchema.parse(operation),operation);
+  for (const invalid of [{...layer,vertices:[{x:0,y:0,opacity:1}]},
+    {...layer,eraser:{size:{x:1,y:1},samples:[]}},
+    {...layer,measured:{...layer.measured,measurements:"not base64"}}]) {
+    assert.throws(() => operationSchema.parse({...operation,values:{...operation.values,
+      graphic:{...operation.values.graphic,freehand:{layers:[invalid]}}}}));
+  }
+});

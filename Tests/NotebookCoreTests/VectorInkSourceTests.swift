@@ -14,10 +14,11 @@ struct VectorInkSourceTests {
   }
   @Test func localizedQueriesSkipMostSourceAndWholeEditsShareIt() throws {
     let ink = grid(), geometry = ink.geometry
-    let hits = geometry.index.query(.init(x:0.499,y:0.499,width:0.006,height:0.009))
-    let touched = hits.indices.reduce(0) { $0+geometry.chunks[$1].range.count }
+    let hits = geometry.query(.init(x:0.499,y:0.499,width:0.006,height:0.009))
+    let touched = hits.indices.reduce(0) { $0+geometry.prepared(at:$1).descriptor.range.count }
     #expect(touched < geometry.sourceNodeCount/20)
-    #expect(hits.visitedNodes < geometry.chunks.count/4)
+    // The source now has one additional whole-layer index node.
+    #expect(hits.visitedNodes-1 < geometry.chunkCount/4)
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
     let original = try encoder.encode(ink)
     var graphic = NotebookGraphic(shape:.freehand,freehand:ink)
@@ -60,6 +61,6 @@ struct VectorInkSourceTests {
     #expect(ink.contains(world,size:size,transform:t))
     let bounds = NotebookFreehandGeometry.sourceBounds(.init(x:world.x-1,y:world.y-1,width:2,height:2),size:size,transform:t)
     #expect(bounds.contains(.init(x:local.x,y:local.y)))
-    #expect(ink.geometry.index.query(bounds).indices.count < 20)
+    #expect(ink.geometry.query(bounds).indices.count < 20)
   }
 }

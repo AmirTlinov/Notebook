@@ -78,17 +78,17 @@ final class InkRasterRenderer: @unchecked Sendable {
     let source = ink.geometry, basis = transform ?? .identity
     let area = NotebookFreehandGeometry.sourceBounds(region.insetBy(dx:-1/scale,dy:-1/scale),
       size:size,transform:transform)
-    let batches = source.index.query(area).indices.map { id -> DrawBatch in
-      let chunk = source.chunks[id], unit = chunk.sourceSize
+    let batches = source.query(area).indices.map { id -> DrawBatch in
+      let prepared=source.prepared(at:id),chunk=prepared.descriptor,unit=chunk.sourceSize
       let affine = InkAffine(
         x:.init(Float(basis.a*size.width/unit.width),Float(basis.c*size.width/unit.height),
           Float(basis.tx*size.width-region.minX),0),
         y:.init(Float(basis.b*size.height/unit.width),Float(basis.d*size.height/unit.height),
           Float(basis.ty*size.height-region.minY),0))
       let color = mask || source.tool(at:id) == .eraser ? SpatialInkColor(red:1,green:1,blue:1) : source.color(at:id)
-      let nodes = source.nodes(at:id)
+      let nodes = Array(prepared.geometry.nodes)
       let c = SpatialInkGeometry.Chunk(nodes:0..<nodes.count,bounds:InkRenderGeometry.bounds(nodes[...]),
-        color:.init(Float(color.red),Float(color.green),Float(color.blue),1),flags:chunk.flags)
+        color:.init(Float(color.red),Float(color.green),Float(color.blue),1),flags:chunk.flags,levels:prepared.geometry.descriptor.levels)
       return .init(mesh:.init(tool:source.tool(at:id),nodes:nodes,chunks:[c],projection:.local),affine:affine)
     }
     return raster(size:region.size,baselinePNG:nil,scale:scale,batches:batches)

@@ -124,7 +124,12 @@ final class NotebookGraphicVisibility: Sendable {
     }
     let size=CGSize(width:node.placement.localSize.x,height:node.placement.localSize.y)
     let body:CGRect
-    if graphic.transform != nil || graphic.freehand != nil || graphic.shape == .path {
+    if graphic.freehand != nil {
+      // Freehand pixels and semantic contact are clipped to this whole frame.
+      // A coarse scene bound must never tessellate/Boolean-union every source
+      // event merely to decide which whole can intersect the viewport.
+      body=CGRect(origin:.zero,size:size)
+    } else if graphic.transform != nil || graphic.shape == .path {
       body=NotebookGraphicGeometry.paintPath(graphic,layout:nil,size:size).boundingBoxOfPath
     } else {
       // Round strokes normally lie inside the frame; this also admits the
