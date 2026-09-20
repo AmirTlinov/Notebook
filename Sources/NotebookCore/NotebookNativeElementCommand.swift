@@ -51,33 +51,6 @@ extension BoardDocument {
 }
 
 extension NotebookStore {
-  /// One completed native contact updates only the live member it started on.
-  /// The id field's authored version survives content edits but not recreation.
-  @discardableResult
-  public func commitPageElementFrame(pageID: UUID, elementID: String, identity: VersionStamp,
-    original: PageRect, frame: PageRect, actor: UUID) throws -> (element: AgentElement, stamp: VersionStamp)? {
-    try commandTransaction {
-      guard try ownerItemID(ofPage: pageID) != nil else { return nil }
-      let file = pageFile(pageID), id = collaborationIdentity(elementID)
-      let before = try pageElementCommandProjection(pageID: pageID, elementID: elementID)
-      let page = try before.decode(NotebookPageElementProjection.self)
-      guard page.id == pageID, page.isValid, frame.isContained(in: page.size) else {
-        throw NotebookStorageError.invalidTransaction("page element geometry")
-      }
-      guard let element = page.elements.first(where: { collaborationIdentity($0.id) == id }),
-        page.collaboration.fields[fieldKey(["elements", id, "id"])]?.stamp == identity,
-        element.frame == original else { return nil }
-      guard let stamp = page.agentStamp.advanced(by: actor) else { throw NotebookStorageError.limitExceeded("page clock") }
-      let moved = element.updating(frame: frame)
-      var after = try before.setting("elements", .encode([moved])).setting("agentStamp", .encode(stamp))
-      var metadata = page.collaboration
-      metadata.record(before: before, after: after, beforeStamp: page.agentStamp, stamp: stamp, human: true)
-      after = try after.setting("collaboration", .encode(metadata))
-      try publishProjectionEdits(file: file, before: before, after: after)
-      return (moved, stamp)
-    }
-  }
-
   private func pageElementCommandProjection(pageID: UUID, elementID: String) throws -> JSONValue {
     let file = pageFile(pageID), root = file + "#", id = collaborationIdentity(elementID)
     let addresses = [(root, false), (root + "/elements/@" + fieldKey([id]), true)]
@@ -134,24 +107,6 @@ extension NotebookStore {
         return try spatialElementProjection(boardID: target.id, elementID: rendered.id)?.board(target.id)?.programStateBasis(rendered.id)
       default: throw NotebookStorageError.invalidTransaction("program checkpoint target")
       }
-    }
-  }
-
-  @discardableResult
-  public func commitSpatialElementFrame(boardID: UUID, elementID: String, identity: VersionStamp,
-    original: SpatialRect, frame: SpatialRect, origin: WorldPoint?, actor: UUID) throws -> (element: SpatialElement, stamp: VersionStamp)? {
-    guard frame.isValid else { throw NotebookStorageError.invalidTransaction("element geometry") }
-    return try commandTransaction {
-      guard let before = try spatialElementProjection(boardID: boardID, elementID: elementID),
-        let board = before.board(boardID), board.elementIdentityStamp(elementID) == identity,
-        var element = board.elements.first, element.frame == original, element.worldOrigin == origin else { return nil }
-      let expected = element.stamp
-      var after = before
-      guard element.update(frame: frame, actor: actor), after.upsertElement(element, in: boardID, expected: expected, actor: actor) else {
-        throw NotebookStorageError.transactionConflict
-      }
-      _ = try saveBoardEdits(before: before, after: after)
-      return (element, after.stamp)
     }
   }
 

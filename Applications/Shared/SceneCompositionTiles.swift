@@ -25,12 +25,12 @@ enum SceneCompositionPlane: Hashable, Codable, Sendable {
 
   /// Input demand precedes optional paint detail. The planner and the mounted
   /// runtime use the same visibility rule; a label cannot evict a live button.
-  func demandsRuntime(source: AgentElement, origin: WorldPoint?, in presence: SessionPresence) -> Bool {
+  func demandsRuntime(source: AgentElement, origin: WorldPoint?, transform:CGAffineTransform, in presence: SessionPresence) -> Bool {
     guard boardID == presence.boardID, presence.mode != .page, presence.mode != .document,
       source.requiresLiveRuntime else { return false }
     if let coverID { return coverID == presence.focusedItemID }
     guard let origin else { return false }
-    let visible = SceneSourceCapture.visibleRect(source: source, origin: origin, presence: presence)
+    let visible = SceneSourceCapture.visibleRect(source: source, origin: origin, transform:transform, presence: presence)
     return !visible.isNull && !visible.isEmpty
   }
 }
@@ -326,8 +326,9 @@ struct SceneCompositionPlan: Sendable {
           pinned.remove(.element(element.id)); continue
         }
         let plane = SceneCompositionPlane.board(boardID)
-        let runtime = element.kind == .web && plane.demandsRuntime(source: agentElementSnapshotSource(element),
-          origin: SceneSourceCapture.origin(element: element, plane: plane, frame: frame), in: presence)
+        let placement = element.kind == .web ? try await source.elementPlacement(element,boardID:boardID) : nil
+        let runtime = placement.map { plane.demandsRuntime(source:agentElementSnapshotSource(element),
+          origin:SceneSourceCapture.origin(placement:$0,plane:plane,frame:frame),transform:SceneSourceCapture.linear($0),in:presence) } ?? false
         candidates.append((plane, .element(element.id), pinned.contains(.element(element.id)), runtime, false))
       }
     }
@@ -1132,7 +1133,7 @@ final class SceneCompositionTiles {
       // a runtime owner would suppress the static producer even though no
       // such runtime can be mounted, leaving the source pending forever.
       return request.owner.plane.demandsRuntime(source: request.source,
-        origin: request.demand.worldOrigin, in: root)
+        origin: request.demand.worldOrigin, transform:request.demand.bodyTransform, in: root)
     }
     // Membership expresses real visibility, not an optimistic resource grant.
     // The existing allocator admits these owners and queues the remainder.
@@ -1145,7 +1146,11 @@ final class SceneCompositionTiles {
   /// physical owner while it remains visible; only leaving the scene, deletion
   /// or its explicit retirement can hand that position back to static paint.
   private func installedRuntimePins(frame: WorkspaceSceneFrame, presence: SessionPresence) -> Set<WorkspaceSpatialID> {
-    Set(runtimeSources.compactMap { address, runtime in
+    let poses=(lastRequest?.source.groupPoses ?? [:]).filter { $0.key.boardID == presence.boardID }.values.reduce(into:[String:NotebookElementPlacement.Source]()) { result,values in
+      result.merge(values,uniquingKeysWith:{ _,new in new })
+    }
+    let graph=frame.index.graphicGraph(boardID:presence.boardID)?.projecting(placements:poses)
+    return Set(runtimeSources.compactMap { address, runtime in
       guard runtime.isMounted, address.plane.boardID == presence.boardID else { return nil }
       let element: SpatialElement?
       if let coverID = address.plane.coverID {
@@ -1154,9 +1159,10 @@ final class SceneCompositionTiles {
       } else {
         element = frame.worksets[presence.boardID]?.elements.first { $0.id == address.elementID }
       }
-      guard let element else { return nil }
-      let origin = SceneSourceCapture.origin(element: element, plane: address.plane, frame: frame)
-      let visible = SceneSourceCapture.visibleRect(source: agentElementSnapshotSource(element), origin: origin, presence: presence)
+      guard let element,let placement=graph?.placement(element.id) else { return nil }
+      let origin = SceneSourceCapture.origin(placement:placement,plane:address.plane,frame:frame)
+      let visible = SceneSourceCapture.visibleRect(source:agentElementSnapshotSource(element),origin:origin,
+        transform:SceneSourceCapture.linear(placement),presence:presence)
       guard !visible.isNull, !visible.isEmpty else { return nil }
       return .element(element.id)
     })
@@ -1186,8 +1192,9 @@ final class SceneCompositionTiles {
       guard let origin = demand.worldOrigin,
         let view = entry.key.plane.boardID == presence.boardID ? presence : frame.presences[entry.key.plane.boardID]
       else { return (2, 0, entry.key.elementID) }
-      let visible = SceneSourceCapture.visibleRect(source: demand.source, origin: origin, presence: view)
-      let center = origin.offsetBy(x: demand.source.frame.width / 2, y: demand.source.frame.height / 2)
+      let visible = SceneSourceCapture.visibleRect(source: demand.source, origin: origin, transform:demand.bodyTransform, presence: view)
+      let localCenter=CGPoint(x:demand.source.frame.width/2,y:demand.source.frame.height/2).applying(demand.bodyTransform)
+      let center = origin.offsetBy(x:localCenter.x,y:localCenter.y)
       let delta = view.camera.center.delta(to: center)
       let hasFallback = entry.value.installedSource != nil
       return (visible.isEmpty || visible.isNull ? 2 : (hasFallback ? 1 : 0),

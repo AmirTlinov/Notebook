@@ -31,26 +31,28 @@ final class SceneCompositionRenderer {
     sourcePresentation = (plan, frame, displayScale, refinesDetails)
   }
 
-  private func demand(for element: SpatialElement, plane: SceneCompositionPlane, density: Double) -> SceneSourceDemand {
+  private func demand(for element: SpatialElement, plane: SceneCompositionPlane, density: Double,
+    placement:NotebookElementPlacement) -> SceneSourceDemand {
+    let transform=SceneSourceCapture.linear(placement)
+    let bodyDensity=density * NotebookElementPresentation.maximumScale(transform)
     let source = agentElementSnapshotSource(element)
     guard let window = sourcePresentation,
-      let view = window.plan.presentations[.board(plane.boardID)] else { return .init(source: source, minimumScale: density) }
+      let view = window.plan.presentations[.board(plane.boardID)] else { return .init(source: source, minimumScale: bodyDensity, bodyTransform:transform) }
     let address = SceneSourceAddress(plane: plane, elementID: source.id)
     let previous = fallbackSources[address].flatMap { raster in
       raster.source.agentElement.map { SceneRasterSource.agent($0) == .agent(source) } == true ? raster : nil
     }
     let density: Double = if !window.refinesDetails, let previous,
-      (0.6...sqrt(2.0)).contains(density / previous.pixelScale) { previous.pixelScale }
-      else { pow(2, ceil(log2(density) * 2) / 2) }
-    var region = SceneSourceCapture.region(element: element, plane: plane,
-      presence: view, frame: window.frame, density: density)
-    let origin = SceneSourceCapture.origin(element: element, plane: plane, frame: window.frame)
+      (0.6...sqrt(2.0)).contains(bodyDensity / previous.pixelScale) { previous.pixelScale }
+      else { pow(2, ceil(log2(bodyDensity) * 2) / 2) }
+    let origin = SceneSourceCapture.origin(placement:placement,plane:plane,frame:window.frame)
+    var region = SceneSourceCapture.region(source:source,origin:origin,transform:transform,presence:view,density:density)
     if region != nil, let previous,
       previous.pixelScale + 0.000_001 >= density, let old = previous.source.captureRegion {
-      let visible = SceneSourceCapture.visibleRect(source: source, origin: origin, presence: view)
+      let visible = SceneSourceCapture.visibleRect(source: source, origin: origin, transform:transform, presence: view)
       if CGRect(x: old.x, y: old.y, width: old.width, height: old.height).contains(visible) { region = old }
     }
-    return .init(source: source, minimumScale: density, region: region, worldOrigin: origin)
+    return .init(source: source, minimumScale: density, region: region, worldOrigin: origin,bodyTransform:transform)
   }
 
   func sourcesOutsideCoverage(of previous: SceneCompositionCohort?) async throws -> Set<SceneSourceAddress> {
@@ -59,7 +61,8 @@ final class SceneCompositionRenderer {
     for (address, receipt) in previous.sourceReceipts {
       guard let element = try await source.element(address.elementID, boardID: address.plane.boardID) else { continue }
       let scale = (window.frame.pixelScales[address.plane.boardID] ?? 1) * window.displayScale
-      if demand(for: element, plane: address.plane, density: scale) != receipt.demand { changed.insert(address) }
+      guard let placement=try await source.elementPlacement(element,boardID:address.plane.boardID) else { continue }
+      if demand(for: element, plane: address.plane, density: scale,placement:placement) != receipt.demand { changed.insert(address) }
     }
     return changed
   }
@@ -99,11 +102,12 @@ final class SceneCompositionRenderer {
     for plane in plan.presentations.keys {
       let workset = plane.coverID.flatMap { frame.covers[$0] } ?? frame.worksets[plane.boardID]
       let erased = try await source.wholeErasedElements(workset?.elements ?? [])
-      for element in workset?.elements ?? [] where element.kind != .nativeText && element.kind != .graphic {
+      for element in workset?.elements ?? [] where element.kind != .nativeText && element.kind != .graphic && element.kind != .group {
         if erased.contains(element.id) { continue }
         let address = SceneSourceAddress(plane: plane, elementID: element.id)
+        guard let placement=try await source.elementPlacement(element,boardID:plane.boardID) else { continue }
         let demand = demand(for: element, plane: plane,
-          density: (frame.pixelScales[plane.boardID] ?? 1) * displayScale)
+          density: (frame.pixelScales[plane.boardID] ?? 1) * displayScale,placement:placement)
         sourceDemands[address] = demand
         if sourceRasters[address] == nil {
           sourceRasters[address] = resources.retainRaster(for: demand.rasterSource, minimumScale: demand.minimumScale)
@@ -267,13 +271,14 @@ final class SceneCompositionRenderer {
           if element.kind == .group { continue }
           let layout = try await source.graphicLayout(element,boardID:presence.boardID)
           if element.graphic != nil && layout == nil { continue }
-          guard let origin = layout?.origin ?? element.worldOrigin else { throw SceneRenderError.snapshotPending("element_origin") }
-          let local = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+          let presentation = element.graphic == nil ? try await source.elementPlacement(element,boardID:presence.boardID).map { NotebookElementPresentation(element,placement:$0) } : nil
+          guard let origin=layout?.origin ?? presentation?.placement.origin else { throw SceneRenderError.snapshotPending("element_origin") }
+          let local=layout?.frame ?? presentation!.frame
           let screen = presence.camera.worldToScreen(origin.offsetBy(x: local.x, y: local.y), viewport: presence.viewport)
           let rect = CGRect(x: frame.minX + screen.x * projection, y: frame.minY + screen.y * projection,
             width: local.width * presence.camera.scale * projection,
             height: local.height * presence.camera.scale * projection)
-          if rect.intersects(visible) { try await paintElement(element, boardID: presence.boardID, frame: rect, canvas: canvas, graphicLayout:layout) }
+          if rect.intersects(visible) { try await paintElement(element, boardID: presence.boardID, frame: rect, canvas: canvas, graphicLayout:layout, presentation:presentation) }
         case .item(let id):
           guard let item = try await source.item(id, presence: itemPresentation ?? presence) else { continue }
           let screen = presence.camera.worldToScreen(item.center, viewport: presence.viewport)
@@ -315,11 +320,12 @@ final class SceneCompositionRenderer {
         }
         let layout = try await source.graphicLayout(element,boardID:boardID)
         if element.graphic != nil && layout == nil { continue }
-        let local = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+        let presentation=element.graphic == nil ? try await source.elementPlacement(element,boardID:boardID).map { NotebookElementPresentation(element,placement:$0) } : nil
+        guard let local=layout?.frame ?? presentation?.frame else { continue }
         let delta = bounds.origin.delta(to: .init(x: local.x, y: local.y))
         try await paintElement(element, boardID: boardID, frame: .init(x: frame.minX + delta.x * projection,
           y: frame.minY + delta.y * projection, width: local.width * projection,
-          height: local.height * projection), canvas: canvas, graphicLayout:layout)
+          height: local.height * projection), canvas: canvas, graphicLayout:layout,presentation:presentation)
       }
       await Task.yield()
     } while cursor != nil
@@ -373,7 +379,7 @@ final class SceneCompositionRenderer {
   }
 
   private func paintElement(_ element: SpatialElement, boardID: UUID, frame: CGRect, canvas: SceneRasterCompositor,
-    graphicLayout: NotebookGraphicLayout? = nil) async throws {
+    graphicLayout: NotebookGraphicLayout? = nil, presentation:NotebookElementPresentation? = nil) async throws {
     try checkPreparation()
     guard element.kind != .group else { return }
     let erasures = try await source.elementErasures(element)
@@ -390,23 +396,26 @@ final class SceneCompositionRenderer {
       return
     }
     if element.kind == .nativeText {
-      try await canvas.drawView(SpatialTextSnapshot(element: element).erased(by: erasures, appearance: appearance),
-        size: .init(width: element.frame.width, height: element.frame.height), in: frame)
+      guard let presentation else { throw SceneRenderError.snapshotPending("element_placement") }
+      try await canvas.drawView(NotebookPlacedElement(presentation:presentation) {
+        SpatialTextSnapshot(element:element).erased(by:erasures,appearance:appearance)
+      },size:presentation.bounds.size,in:frame)
       return
     }
     let source = agentElementSnapshotSource(element)
     // The destination defines the required samples, including a fractional LOD.
     // Quantizing upward keeps repeated nearby requests on one source density;
     // a coarse cache entry still cannot satisfy a larger exact export request.
-    let density = max(frame.width / element.frame.width, frame.height / element.frame.height) * canvas.scale
+    guard let presentation else { throw SceneRenderError.snapshotPending("element_placement") }
+    let density = frame.width / presentation.bounds.width * presentation.maximumScale * canvas.scale
     guard density.isFinite, density > 0 else { throw SceneRenderError.resourceLimit }
     let requiredScale = pow(2, ceil(log2(density)))
     if usesPreparedSources {
       let plane = element.surface.kind == .cover
         ? SceneCompositionPlane.cover(boardID: boardID, itemID: element.surface.ownerID!) : .board(boardID)
       let address = SceneSourceAddress(plane: plane, elementID: element.id)
-      let desired = sourcePresentation.map { ($0.frame.pixelScales[boardID] ?? 1) * $0.displayScale } ?? density
-      let demand = demand(for: element, plane: plane, density: desired)
+      let desired = sourcePresentation.map { ($0.frame.pixelScales[boardID] ?? 1) * $0.displayScale } ?? (density / presentation.maximumScale)
+      let demand = demand(for: element, plane: plane, density: desired,placement:presentation.placement)
       let discoversDemand = sourceDemands[address] != demand
       sourceDemands[address] = demand
       if let currentTile { tileSources[currentTile, default: []].insert(address) }
@@ -429,7 +438,7 @@ final class SceneCompositionRenderer {
             y: frame.minY + crop.y / source.frame.height * frame.height,
             width: crop.width / source.frame.width * frame.width, height: crop.height / source.frame.height * frame.height)
         } else { destination = frame }
-        try await canvas.draw(raster, in: destination, erasures: erasures, elementFrame: frame)
+        try await canvas.draw(raster, in: destination, erasures: erasures, elementFrame: frame,presentation:presentation)
       } else {
         let message = sourceFailures[address]?.matches(demand) == true ? "Не удалось загрузить" : "Подготовка…"
         try await canvas.drawView(ZStack {
@@ -440,7 +449,7 @@ final class SceneCompositionRenderer {
       return
     }
     let raster = try await prepareRaster(source, requestedScale: requiredScale)
-    do { try await canvas.draw(raster, in: frame, erasures: erasures); raster.release() }
+    do { try await canvas.draw(raster, in: frame, erasures: erasures,presentation:presentation); raster.release() }
     catch { raster.release(); throw error }
     canvas.recordDiagnostics(resources.diagnostics(for: [source]))
   }
@@ -479,9 +488,10 @@ final class SceneCompositionRenderer {
         guard let projection = frame.pixelScales[owner.plane.boardID] else {
           throw SceneRenderError.snapshotPending("live_element_projection")
         }
+        guard let placement=try await source.elementPlacement(element,boardID:owner.plane.boardID) else { continue }
         let density = projection * displayScale
         requests.append(try .init(owner: owner, element: element, displayScale: density,
-          demand: demand(for: element, plane: owner.plane, density: density)))
+          demand: demand(for: element, plane: owner.plane, density: density,placement:placement)))
       }
     }
     return requests

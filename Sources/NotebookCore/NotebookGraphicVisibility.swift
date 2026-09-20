@@ -26,7 +26,7 @@ final class NotebookGraphicVisibility: Sendable {
   private let pageID:UUID
   private let bytes:Int
 
-  init(pageID:UUID,graph:NotebookGraphicGraph,nodes:[NotebookGraphicGraph.Node],groups:[String:NotebookGraphicGraph.Group]) {
+  init(pageID:UUID,graph:NotebookGraphicGraph,nodes:[NotebookGraphicGraph.Node],groups:[String:NotebookGraphicGraph.ElementSource]) {
     self.pageID=pageID
     let nodes=nodes.filter { $0.surface == .page(pageID) }
     let placedGroups=groups.compactMap { id,group -> (String,NotebookElementPlacement)? in

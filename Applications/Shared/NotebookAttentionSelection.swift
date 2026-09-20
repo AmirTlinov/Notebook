@@ -239,7 +239,7 @@ struct NotebookAttentionSelection: Sendable {
           continue
         }
         images[reference.id] = image; totalBytes += image.png.count
-        semantics[reference.id] = visuals?.semanticSelection(reference: reference, spatialElement: element)
+        semantics[reference.id] = visuals?.semanticSelection(reference: reference)
       } catch let error as SceneRenderError {
         unavailable[reference.id] = error.description
       }

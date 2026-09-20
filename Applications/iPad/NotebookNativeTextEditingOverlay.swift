@@ -10,17 +10,18 @@ struct NotebookNativeTextEditingOverlay: View {
   let contextMenus: NotebookContextMenus
   var body: some View {
     if model.selectionSession.isInteractive, let target = model.selectionSession.nativeText,
-      target.reference == model.selectionSession.element, let frame = NotebookAttentionProjection.nativeTextEditingFrame(target,model:model,presence:presence) {
+      target.reference == model.selectionSession.element, let presentation=model.nativeTextEditingPresentation(target), let frame = NotebookAttentionProjection.nativeTextEditingFrame(target,model:model,presence:presence) {
       let scale = presence.camera.scale
+      NotebookPlacedElement(presentation:presentation) {
       NotebookNativeTextView(source:target.source,style:target.style,reference:target.reference,
         frame:target.frame,maximumHeight:target.address.bounds.map { $0.maxY-target.frame.y } ?? .greatestFiniteMagnitude,
         isEditing:true,onEditingEnded:{ [selectionID = model.selectionSession.id] in
           model.finishInteractiveElementInput(target.reference,selectionID:selectionID)
         },retainedPage:target.page,retainedSpatial:target.spatial,ownsEditor:true,draftTarget:target,contextMenus:contextMenus)
         .id(model.selectionSession.id)
-        .frame(width:target.frame.width,height:target.frame.height,alignment:.topLeading)
+      }
         .scaleEffect(scale,anchor:.topLeading)
-        .frame(width:target.frame.width*scale,height:target.frame.height*scale,alignment:.topLeading)
+        .frame(width:presentation.bounds.width*scale,height:presentation.bounds.height*scale,alignment:.topLeading)
         .background(NotebookControlRegion(gate:model.inputGate))
         .position(x:frame.midX,y:frame.midY)
     }

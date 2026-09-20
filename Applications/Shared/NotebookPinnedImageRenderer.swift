@@ -24,18 +24,19 @@ final class NotebookFrozenVisualSources {
   private var submittedRegions: [UUID: NotebookSubmittedPixels] = [:]
   private var failures: [UUID: [String: Error]] = [:]
   private let graphicLayouts: [UUID: NotebookGraphicLayout]
+  private let elementPlacements: [UUID:[String:NotebookElementPlacement]]
   private let elementMasks: [UUID: [InkElementErasure]]
   private init(rasters: [UUID: [String: RasterLease]], liveCaptures: [UUID: [String: Capture]] = [:],
     regionalCaptures: [UUID: RegionalCapture] = [:], graphicLayouts: [UUID: NotebookGraphicLayout] = [:],
-    elementMasks: [UUID: [InkElementErasure]] = [:]) {
+    elementMasks: [UUID: [InkElementErasure]] = [:],elementPlacements:[UUID:[String:NotebookElementPlacement]] = [:]) {
     self.rasters = rasters; self.liveCaptures = liveCaptures; self.regionalCaptures = regionalCaptures
-    self.graphicLayouts = graphicLayouts; self.elementMasks = elementMasks
+    self.graphicLayouts = graphicLayouts; self.elementMasks = elementMasks;self.elementPlacements=elementPlacements
   }
 
   /// Sending fixes both the selected source and the existing visible owner.
   /// No later cache entry or newly created JavaScript context can supply it.
   func freezingForSubmission() -> NotebookFrozenVisualSources {
-    let frozen = NotebookFrozenVisualSources(rasters: rasters,graphicLayouts:graphicLayouts,elementMasks:elementMasks)
+    let frozen = NotebookFrozenVisualSources(rasters: rasters,graphicLayouts:graphicLayouts,elementMasks:elementMasks,elementPlacements:elementPlacements)
     for (reference, captures) in liveCaptures {
       for (key, capture) in captures {
         frozen.rasters[reference]?[key] = nil
@@ -67,6 +68,7 @@ final class NotebookFrozenVisualSources {
     var regionalCaptures: [UUID: RegionalCapture] = [:]
     var graphics: [UUID: NotebookGraphicLayout] = [:]
     var masks: [UUID: [InkElementErasure]] = [:]
+    var placements:[UUID:[String:NotebookElementPlacement]] = [:]
     struct Slot: Hashable { let reference: UUID; let key: String }
     var slots = Set<Slot>()
     func admits(_ reference: UUID, _ key: String) -> Bool {
@@ -82,17 +84,20 @@ final class NotebookFrozenVisualSources {
       switch fragment.target.kind {
       case .page:
         guard let page = pages[fragment.target.id] else { continue }
+        let graph=page.graphicGraph()
         for element in PageCompositionRenderer.elements(in: page, region: fragment.region, elementID: fragment.elementID) {
+          guard let placement=graph.placement(element.id) else { continue }
+          placements[fragment.id,default:[:]][element.id]=placement
           if [.graphic,.nativeText].contains(element.kind) { continue }
-          retain(.agent(element), fragmentID: fragment.id, key: element.id)
+          let source=agentElementSnapshotSource(element)
+          retain(.agent(source), fragmentID: fragment.id, key: element.id)
           #if os(iOS)
           if capturesLivePrograms, element.kind == .web, admits(fragment.id, element.id) {
             let focus = InteractiveElementReference.page(pageID: page.id, elementID: element.id)
-            let crop = CGRect(x: fragment.region.x - element.frame.x, y: fragment.region.y - element.frame.y,
-              width: fragment.region.width, height: fragment.region.height)
-              .intersection(CGRect(x: 0, y: 0, width: element.frame.width, height: element.frame.height))
+            let crop = CGRect(x:fragment.region.x,y:fragment.region.y,width:fragment.region.width,height:fragment.region.height)
+              .applying(placement.transform.inverted()).intersection(CGRect(x:0,y:0,width:placement.localSize.x,height:placement.localSize.y))
             captures[fragment.id, default: [:]][element.id] = {
-              try AgentWebCoordinator.capturePresented(focus: focus, element: element,
+              try AgentWebCoordinator.capturePresented(focus: focus, element: source,
                 region: .init(x: crop.minX, y: crop.minY, width: crop.width, height: crop.height), resources: resources)
             }
           }
@@ -124,12 +129,15 @@ final class NotebookFrozenVisualSources {
           continue
         }
         let boardID = fragment.target.kind == .board ? fragment.target.id : fragment.target.boardID
-        if let id = fragment.elementID, let boardID, let layout = hierarchy.board(boardID)?.graphicGraph().resolve(id).layout {
-          graphics[fragment.id] = layout; continue
+        let graph=boardID.flatMap { hierarchy.board($0)?.graphicGraph() }
+        if let id=fragment.elementID,let graph,let layout=graph.resolve(id).layout {
+          graphics[fragment.id]=layout;placements[fragment.id,default:[:]][id]=graph.placement(id);continue
         }
         guard let id = fragment.elementID, let boardID,
           let element = hierarchy.board(boardID)?.elements.first(where: { $0.id == id }),
-          element.kind != .nativeText && element.kind != .graphic else { continue }
+          let placement=graph?.placement(id) else { continue }
+        placements[fragment.id,default:[:]][id]=placement
+        guard element.kind != .nativeText && element.kind != .graphic else { continue }
         do {
           let plane: SceneCompositionPlane = fragment.target.kind == .cover
             ? .cover(boardID: boardID, itemID: fragment.target.id) : .board(boardID)
@@ -138,10 +146,9 @@ final class NotebookFrozenVisualSources {
             (installedSources == nil || liveSourceAddresses.contains(.init(plane: plane, elementID: id))), admits(fragment.id, id) {
             let focus = InteractiveElementReference.board(boardID: boardID, elementID: id)
             let source = agentElementSnapshotSource(element)
-            let delta = (fragment.worldOrigin ?? .zero).delta(to: element.worldOrigin ?? .zero)
-            let crop = CGRect(x: fragment.region.x - delta.x - element.frame.x,
-              y: fragment.region.y - delta.y - element.frame.y, width: fragment.region.width, height: fragment.region.height)
-              .intersection(CGRect(x: 0, y: 0, width: element.frame.width, height: element.frame.height))
+            let delta = (fragment.worldOrigin ?? .zero).delta(to:placement.origin)
+            let crop=CGRect(x:fragment.region.x-delta.x,y:fragment.region.y-delta.y,width:fragment.region.width,height:fragment.region.height)
+              .applying(placement.transform.inverted()).intersection(CGRect(x:0,y:0,width:placement.localSize.x,height:placement.localSize.y))
             captures[fragment.id, default: [:]][id] = {
               try AgentWebCoordinator.capturePresented(focus: focus, element: source,
                 region: .init(x: crop.minX, y: crop.minY, width: crop.width, height: crop.height), resources: resources)
@@ -163,25 +170,23 @@ final class NotebookFrozenVisualSources {
       case .workspace, .codeFragment: break
       }
     }
-    return .init(rasters: rasters, liveCaptures: captures, regionalCaptures: regionalCaptures,graphicLayouts:graphics,elementMasks:masks)
+    return .init(rasters: rasters, liveCaptures: captures, regionalCaptures: regionalCaptures,graphicLayouts:graphics,elementMasks:masks,elementPlacements:placements)
   }
 
-  func semanticSelection(reference: CollaborationReference, spatialElement: SpatialElement?) -> ProgramSemanticSelection? {
+  func placement(referenceID:UUID,elementID:String) -> NotebookElementPlacement? { elementPlacements[referenceID]?[elementID] }
+
+  func semanticSelection(reference: CollaborationReference) -> ProgramSemanticSelection? {
     if let submitted = submittedRegions[reference.id] { return submitted.semanticSelection }
     guard let id = reference.elementID, let raster = rasters[reference.id]?[id],
       !raster.isReleased, failures[reference.id]?[id] == nil,
       let selection = raster.semanticSelection, let element = raster.source.agentElement,
       let region = reference.region else { return nil }
-    if [.board, .cover].contains(reference.target.kind) {
-      guard let spatialElement, spatialElement.id == id else { return nil }
-      let delta = (reference.worldOrigin ?? .zero).delta(to: spatialElement.worldOrigin ?? .zero)
-      let frame = PageRect(x: spatialElement.frame.x + delta.x, y: spatialElement.frame.y + delta.y,
-        width: spatialElement.frame.width, height: spatialElement.frame.height)
-      let crop = raster.source.captureRegion ?? .init(x: 0, y: 0, width: frame.width, height: frame.height)
-      return selection.mapped(from: .init(x: frame.x + crop.x, y: frame.y + crop.y, width: crop.width, height: crop.height), into: region)
-    }
-    let crop = raster.source.captureRegion ?? .init(x: 0, y: 0, width: element.frame.width, height: element.frame.height)
-    return selection.mapped(from: .init(x: element.frame.x + crop.x, y: element.frame.y + crop.y, width: crop.width, height: crop.height), into: region)
+    guard let placement=elementPlacements[reference.id]?[id] else { return nil }
+    let delta=(reference.worldOrigin ?? .zero).delta(to:placement.origin)
+    let crop=raster.source.captureRegion ?? .init(x:0,y:0,width:element.frame.width,height:element.frame.height)
+    return selection.mapped(from:crop,into:region,
+      transform:placement.transform.concatenating(.init(translationX:delta.x,y:delta.y)))
+
   }
 
   func erasures(referenceID: UUID) -> [InkElementErasure] { elementMasks[referenceID] ?? [] }
@@ -210,7 +215,10 @@ final class NotebookFrozenVisualSources {
 
   func pixelScale(referenceID: UUID, maximum: Double) -> Double {
     if let region = submittedRegions[referenceID] { return region.pixelScale }
-    return rasters[referenceID]?.values.reduce(maximum) { min($0, $1.pixelScale) } ?? maximum
+    return rasters[referenceID]?.reduce(maximum) { available,entry in
+      let scale=elementPlacements[referenceID]?[entry.key].map { NotebookElementPresentation.maximumScale($0.transform) } ?? 1
+      return min(available,entry.value.pixelScale/scale)
+    } ?? maximum
   }
 }
 
@@ -245,7 +253,8 @@ enum NotebookPinnedImageRenderer {
       let result = try await PageCompositionRenderer.render(page, region: region, elementID: reference.elementID,
         scale: scale, resources: resources) { element in
         guard let visuals else { throw SceneRenderError.snapshotPending("historical_frame_unavailable") }
-        return try visuals.raster(referenceID: reference.id, key: element.id, source: .agent(element), scale: scale)
+        let density=scale * (visuals.placement(referenceID:reference.id,elementID:element.id).map { NotebookElementPresentation.maximumScale($0.transform) } ?? 1)
+        return try visuals.raster(referenceID: reference.id, key: element.id, source: .agent(element), scale:density)
       }
       png = result.png
     case .document:
@@ -281,33 +290,39 @@ enum NotebookPinnedImageRenderer {
       }
       let canvas = try await SceneRasterCompositor.create(size: .init(width: region.width, height: region.height),
         scale: scale, resources: resources)
-      let delta = (reference.worldOrigin ?? .zero).delta(to: element.worldOrigin ?? .zero)
+      let placement=visuals?.placement(referenceID:reference.id,elementID:element.id)
+      let presentation=placement.map { NotebookElementPresentation(element,placement:$0) }
+      let delta = (reference.worldOrigin ?? .zero).delta(to:placement?.origin ?? element.worldOrigin ?? .zero)
       let layout = visuals?.graphicLayout(referenceID:reference.id)
       let erasures = visuals?.erasures(referenceID: reference.id) ?? []
-      let local = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+      guard let local = layout?.frame ?? presentation?.frame else { throw SceneRenderError.snapshotPending("historical_element_placement") }
       let frame = CGRect(x: delta.x + local.x - region.x, y: delta.y + local.y - region.y,
         width: local.width, height: local.height)
       let appearance = try await NotebookElementErasureCache.Input(graphic: element.graphic,
-        layout: layout, size: frame.size, erasures: erasures).prepared()
+        layout: layout, size: presentation?.bodySize ?? frame.size, erasures: erasures).prepared()
       if let graphic = element.graphic {
         guard graphic.connection == nil || layout != nil else { throw SceneRenderError.snapshotPending("historical_graphic_dependencies") }
         try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:layout,erasures:erasures,appearance:appearance), size: frame.size, in: frame)
       } else if element.kind == .nativeText {
-        try await canvas.drawView(SpatialTextSnapshot(element: element).erased(by: erasures, appearance: appearance), size: frame.size, in: frame)
+        try await canvas.drawView(NotebookPlacedElement(presentation:presentation) {
+          SpatialTextSnapshot(element:element).erased(by:erasures,appearance:appearance)
+        },size:frame.size,in:frame)
       } else {
         guard let visuals else { throw SceneRenderError.snapshotPending("historical_frame_unavailable") }
         let raster = try visuals.raster(referenceID: reference.id, key: element.id,
-          source: .agent(agentElementSnapshotSource(element)), scale: scale)
+          source: .agent(agentElementSnapshotSource(element)), scale:scale * (presentation?.maximumScale ?? 1))
         if let crop = raster.source.captureRegion {
           let captured = CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height)
-          let selected = CGRect(x: -frame.minX, y: -frame.minY, width: region.width, height: region.height)
-            .intersection(CGRect(origin: .zero, size: frame.size))
+          guard let presentation else { throw SceneRenderError.snapshotPending("historical_element_placement") }
+          let selected=CGRect(x:region.x-delta.x,y:region.y-delta.y,width:region.width,height:region.height)
+            .applying(presentation.placement.transform.inverted()).intersection(CGRect(origin:.zero,size:presentation.bodySize))
           guard !selected.isNull, captured.contains(selected) else {
             throw SceneRenderError.snapshotPending("historical_region_unavailable")
           }
-          try await canvas.draw(raster, in: captured.offsetBy(dx: frame.minX, dy: frame.minY), erasures: erasures, elementFrame: frame)
+          try await canvas.draw(raster,in:captured.applying(presentation.transform).offsetBy(dx:frame.minX,dy:frame.minY),
+            erasures:erasures,elementFrame:frame,presentation:presentation)
         } else {
-          try await canvas.draw(raster, in: frame, erasures: erasures)
+          try await canvas.draw(raster,in:frame,erasures:erasures,presentation:presentation)
         }
       }
       png = try await canvas.finishPNG()

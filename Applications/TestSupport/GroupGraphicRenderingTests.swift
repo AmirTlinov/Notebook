@@ -12,6 +12,109 @@ import AppKit
 @testable import Notebook
 
 @MainActor final class GroupGraphicRenderingTests: XCTestCase {
+  func testMixedBodiesSharePlacementButRetainLocalLayoutAndPixels() async throws {
+    let actor=UUID(),pageID=UUID()
+    let whole=AgentElement(id:"whole",kind:.group,frame:.init(x:40,y:30,width:240,height:600),source:"",html:"",
+      basis:.init(size:.init(x:200,y:120),transform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0)))
+    let web=AgentElement(id:"web",kind:.web,frame:.init(x:10,y:20,width:100,height:60),source:"control",html:"<button>Press</button>",parentID:"whole")
+    let text=AgentElement(id:"text",kind:.nativeText,frame:.init(x:10,y:90,width:180,height:24),source:"Текст сохраняет ширину",html:"",parentID:"whole")
+    let page=PageDocument(id:pageID,size:.init(width:400,height:800),actor:actor,elements:[whole,web,text])
+    let graph=page.graphicGraph(),placement=try XCTUnwrap(graph.placement(web.id))
+    let shown=NotebookElementPresentation(web,placement:placement)
+    XCTAssertEqual(shown.bounds,CGRect(x:120,y:60,width:120,height:300))
+    XCTAssertEqual(shown.bodySize,CGSize(width:100,height:60));XCTAssertEqual(shown.maximumScale,3)
+    let textPresentation=NotebookElementPresentation(text,placement:try XCTUnwrap(graph.placement(text.id)))
+    XCTAssertEqual(textPresentation.bodySize.width,180)
+    let moved=graph.projecting(placements:["whole":.init(frame:.init(x:80,y:70,width:240,height:600),basis:whole.basis,isGroup:true)])
+    XCTAssertTrue(moved.sharesSource(with:graph))
+    XCTAssertEqual(try XCTUnwrap(moved.placement(web.id)).bounds,shown.bounds.offsetBy(dx:40,dy:40))
+    XCTAssertEqual(moved.source(text.id),graph.source(text.id))
+    let local=agentElementSnapshotSource(web),resources=SceneRenderResources()
+    let bitmap=try XCTUnwrap(CGContext(data:nil,width:400,height:240,bitsPerComponent:8,bytesPerRow:1600,
+      space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+    bitmap.setFillColor(CGColor(gray:0,alpha:1));bitmap.fill(.init(x:0,y:0,width:400,height:240))
+    let cg=try XCTUnwrap(bitmap.makeImage())
+    #if os(iOS)
+    let image=UIImage(cgImage:cg,scale:4,orientation:.up)
+    #else
+    let image=NSImage(cgImage:cg,size:shown.bodySize)
+    #endif
+    XCTAssertTrue(resources.store(image,for:local))
+    let raster=try XCTUnwrap(resources.retainRaster(for:local,minimumScale:3));defer { raster.release() }
+    let result=try await PageCompositionRenderer.render(page,scale:1,resources:resources) { requested in
+      XCTAssertEqual(requested,local,"The ancestor is not another WebKit source or layout width")
+      return raster
+    }
+    let body=try pixels(result.png)
+    XCTAssertTrue(dark(body,180,150));XCTAssertTrue(dark(body,180,285));XCTAssertFalse(dark(body,60,70))
+    func pick(_ point:SpatialPoint) -> String? {
+      NotebookAttentionProjection.pickElement(in:page.elements,graph:graph,scale:1,viewport:.init(x:400,y:800),presentation:{ .init($0,placement:$1) },
+        project:{ ($0.id,$0.graphic,point) })?.id
+    }
+    XCTAssertEqual(pick(.init(x:180,y:150)),web.id);XCTAssertNil(pick(.init(x:300,y:70)))
+    XCTAssertGreaterThan(textPresentation.bodySize.height,text.frame.height)
+    let lastLine=CGPoint(x:5,y:textPresentation.localBounds.maxY-2).applying(textPresentation.placement.transform)
+    XCTAssertEqual(pick(.init(x:lastLine.x,y:lastLine.y)),text.id,"Picking keeps fitted text below the authored minimum height")
+    let proof=XCTAttachment(data:result.png,uniformTypeIdentifier:"public.png")
+    proof.name="mixed-bodies-rotated";proof.lifetime = .keepAlways;add(proof)
+    XCTAssertEqual(page.elements,[whole,web,text])
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("mixed-body-\(UUID())")
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store=NotebookStore(root:root),header=try store.initializeWorkspace(actor:actor,pageSize:page.size)
+    let target=CollaborationTarget(kind:.board,id:header.rootBoardID)
+    let origin=WorldPoint(tileX:1_000_000_000_000,tileY:-1_000_000_000_000,localX:3,localY:7)
+    let operations=try page.elements.map { element in
+      var values:[String:JSONValue] = ["kind":try .encode(element.kind),"source":.string(element.source),"html":.string(element.html),
+        "frame":try .encode(element.frame),"worldOrigin":try .encode(element.parentID == nil ? origin : .zero)]
+      if let parent=element.parentID { values["parentID"] = .string(parent) }
+      if let basis=element.basis { values["basis"] = try .encode(basis) }
+      return CollaborationOperation(kind:.insertElement,target:target,id:element.id,values:values)
+    }
+    _ = try store.applyNativeElementEdits(operations,summary:"Смешанное целое",sources:operations.map { .init(target:target,id:$0.id!) },actor:actor)
+    let workspace=try store.loadIndex(),hierarchy=try store.loadBoard(items:workspace.items),current=try store.workspaceHeader()
+    let index=WorkspaceSceneIndex(workspace:workspace,hierarchy:hierarchy,paperSizes:[:])
+    let sources=[SceneCompositionSource(store:store,revision:current.cursor,workspaceID:current.workspaceID),
+      SceneCompositionSource(index:index,hierarchy:hierarchy,journal:.init(stamp:workspace.stamp))]
+    let presence=SessionPresence(boardID:target.id,mode:.board,camera:.init(center:origin.offsetBy(x:200,y:400),scale:1),viewport:.init(x:400,y:800))
+    for source in sources {
+      let rendered=try await SceneCompositionRenderer(source:source,resources:resources).render(presence:presence,scale:1)
+      let pixels=try pixels(rendered.png)
+      XCTAssertTrue(dark(pixels,180,150));XCTAssertTrue(dark(pixels,180,285));XCTAssertFalse(dark(pixels,60,70))
+    }
+    let stored=try XCTUnwrap(store.readSpatialElement(boardID:target.id,elementID:web.id))
+    let posed=try XCTUnwrap(store.readElementPlacement(target:target,elementID:web.id,
+      groupPoses:["whole":.init(frame:.init(x:80,y:70,width:240,height:600),origin:origin,basis:whole.basis,isGroup:true)]))
+    XCTAssertEqual(posed.bounds,shown.bounds.offsetBy(dx:40,dy:40));XCTAssertEqual(posed.origin,origin)
+    XCTAssertEqual(try store.readSpatialElement(boardID:target.id,elementID:web.id),stored)
+    let fragment=NotebookAttentionSelection.Fragment(target:target,elementID:web.id,region:shown.frame,worldOrigin:origin,pageIndex:nil,label:"Placed source")
+    let frozen=NotebookFrozenVisualSources.capture(fragments:[fragment],hierarchy:hierarchy,pages:[:],documents:[:],states:[:],resources:resources).freezingForSubmission()
+    let reference=CollaborationReference(id:fragment.id,target:target,elementID:web.id,region:shown.frame,worldOrigin:origin,revision:"mixed-source")
+    let pinned=try await NotebookPinnedImageRenderer.render(reference:reference,page:nil,document:nil,state:nil,element:stored,visuals:frozen,resources:resources)
+    XCTAssertEqual(pinned.pixelsPerPoint,4.0/3.0,accuracy:0.000001)
+    XCTAssertTrue(dark(try pixels(pinned.png),180,150),"Frozen pixels keep the ancestor basis, not the child's untranslated frame")
+
+
+  }
+
+  func testRotatedLargeSourceCropAndReceiptUseInverseBodyCoordinates() throws {
+    let source=AgentElement(id:"large",kind:.web,frame:.init(x:0,y:0,width:5000,height:3000),source:"",html:"<input>")
+    let transform=CGAffineTransform(a:0,b:2,c:-3,d:0,tx:0,ty:0)
+    let origin=WorldPoint(tileX:1_000_000_000_000,tileY:-1_000_000_000_000,localX:3,localY:7)
+    let presence=SessionPresence(boardID:UUID(),mode:.board,camera:.init(center:origin.offsetBy(x:-750,y:1000),scale:1),viewport:.init(x:300,y:400))
+    let visible=SceneSourceCapture.visibleRect(source:source,origin:origin,transform:transform,presence:presence)
+    XCTAssertEqual(visible,CGRect(x:400,y:200,width:200,height:100))
+    let crop=try XCTUnwrap(SceneSourceCapture.region(source:source,origin:origin,transform:transform,presence:presence,density:3))
+    XCTAssertTrue(CGRect(x:crop.x,y:crop.y,width:crop.width,height:crop.height).contains(visible))
+    let demand=SceneSourceDemand(source:source,minimumScale:3,region:crop,worldOrigin:origin,bodyTransform:transform)
+    let receipt=SceneSourceReceipt(demand:demand,installedSource:source,installedScale:3,status:.ready,installedRegion:crop)
+    XCTAssertTrue(receipt.coversVisibleWindow(in:presence,pixelDensity:1,refinesDetails:true))
+    XCTAssertFalse(receipt.coversVisibleWindow(in:presence,pixelDensity:1.1,refinesDetails:true))
+    var moved=demand;moved.worldOrigin=origin.offsetBy(x:100,y:200)
+    XCTAssertEqual(moved,demand,"Placement does not restart source pixels or the program")
+    let movedReceipt=SceneSourceReceipt(demand:moved,installedSource:source,installedScale:3,status:.ready,installedRegion:crop)
+    XCTAssertFalse(movedReceipt.coversVisibleWindow(in:presence,pixelDensity:1,refinesDetails:true))
+  }
+
   func testBoardIndexAndBothCompositorsUseTheWholeTiledOrigin() async throws {
     let root=FileManager.default.temporaryDirectory.appendingPathComponent("group-board-\(UUID())")
     defer { try? FileManager.default.removeItem(at:root) }

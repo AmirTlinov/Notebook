@@ -94,9 +94,11 @@ struct WorkspaceSceneIndex: Sendable {
         guard element.graphic == nil || graphicPresentation.geometryIDs.contains(element.id) else { continue }
         let layout = element.graphic == nil ? nil : graphicGraph.resolve(element.id).layout
         guard element.graphic == nil || layout != nil else { continue }
-        let frame = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+        let placement=element.graphic == nil ? graphicGraph.placement(element.id) : nil
+        guard let bounds=layout.map({ CGRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height) }) ?? placement?.bounds else { continue }
+        let frame=PageRect(x:bounds.minX,y:bounds.minY,width:bounds.width,height:bounds.height)
         elements[element.id] = element
-        if element.surface == .board(node.id), let origin = layout?.origin ?? element.worldOrigin {
+        if element.surface == .board(node.id), let origin = layout?.origin ?? placement?.origin {
           entries.append(.init(id: .element(element.id), bounds: .init(
             origin: origin.offsetBy(x: frame.x, y: frame.y),
             width: frame.width, height: frame.height), zIndex: Double(position)))
@@ -106,8 +108,10 @@ struct WorkspaceSceneIndex: Sendable {
       }
       prepared[node.id] = Board(source: node.board, items: items, elements: elements,
         covers: covers, coverIndices: covers.mapValues { elements in
-          WorkspaceSpatialIndex(entries: elements.enumerated().map { offset, element in
-            let frame = graphicGraph.resolve(element.id).layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+          WorkspaceSpatialIndex(entries: elements.enumerated().compactMap { offset, element in
+            guard let bounds=graphicGraph.resolve(element.id).layout.map({ CGRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height) })
+              ?? graphicGraph.placement(element.id)?.bounds else { return nil }
+            let frame=PageRect(x:bounds.minX,y:bounds.minY,width:bounds.width,height:bounds.height)
             return .init(id: .element(element.id), bounds: .init(origin: .init(x: frame.x, y: frame.y),
               width: frame.width, height: frame.height), zIndex: Double(offset))
           })

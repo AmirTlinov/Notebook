@@ -257,10 +257,12 @@ enum CurrentViewPreviewWriter {
     var borrowed: RasterLease?
     var preparation: SceneWebRasterPreparation?
     defer { borrowed?.release(); preparation?.close() }
+    let graph=page.graphicGraph()
     let result = try await PageCompositionRenderer.render(page, scale: PageVisionRenderer.scale,
       resources: resources, permitsPreparation: permitsPreparation) { element in
       borrowed?.release(); borrowed = nil
-      if let image = resources.retainRaster(for: element, minimumScale: PageVisionRenderer.scale) {
+      let density=PageVisionRenderer.scale * (graph.placement(element.id).map { NotebookElementPresentation.maximumScale($0.transform) } ?? 1)
+      if let image = resources.retainRaster(for: element, minimumScale:density) {
         borrowed = image
         return image
       }
@@ -268,7 +270,7 @@ enum CurrentViewPreviewWriter {
         preparation = try await SceneWebRasterPreparation.create(resources: resources, permitsPreparation: permitsPreparation)
       }
       guard let preparation else { throw PreviewError.agentSnapshotPending }
-      let image = try await preparation.prepare(element, requestedScale: PageVisionRenderer.scale, programStore: programStore,
+      let image = try await preparation.prepare(element, requestedScale:density, programStore: programStore,
         permitsPreparation: permitsPreparation)
       borrowed = image
       return image

@@ -3,6 +3,32 @@ import Testing
 @testable import NotebookCore
 
 @Suite struct CausalContentMergeTests {
+  @Test func streamedBoardClocksMatchTheCanonicalFieldsAndPreserveExistingAuthors() throws {
+    let actor=UUID(),other=UUID(),board=UUID(),stamp=VersionStamp(counter:3,actor:actor)
+    let basis=NotebookElementBasis(size:.init(x:200,y:100))
+    let elements:[SpatialElement] = [
+      .init(id:"whole",surface:.board(board),kind:.group,frame:.init(x:20,y:30,width:400,height:200),worldOrigin:.zero,
+        source:"",basis:basis,stamp:stamp),
+      .init(id:"text/~",surface:.board(board),kind:.nativeText,frame:.init(x:4,y:5,width:100,height:60),worldOrigin:.zero,
+        source:"Исходный текст",parentID:"whole",stamp:stamp),
+      .init(id:"web",surface:.board(board),kind:.web,frame:.init(x:0,y:0,width:100,height:60),worldOrigin:.zero,
+        source:"program",html:"<input>",state:.array([.number(1),.string("exact")]),basis:basis,stamp:stamp),
+      .init(id:"shape",surface:.board(board),kind:.graphic,frame:.init(x:0,y:0,width:100,height:60),worldOrigin:.zero,
+        source:"",graphic:.init(shape:.connector,connection:.init(start:.init(point:.init(x:0,y:0)),end:.init(point:.init(x:100,y:60)))),stamp:stamp)
+    ]
+    for values in [[],elements] {
+      let key=fieldKey(["elements","text/~","content"])
+      let retained=ContentFieldVersion(stamp:.init(counter:8,actor:other),human:false)
+      let initial=CollaborativeContent(fields:[key:retained,"elements/retired/exists":retained])
+      var expected=initial
+      expected.materializeVersions(in:.object(["elements":try .encode(values)]),fallback:stamp)
+      let actual=BoardDocument(placements:[],elements:values,stamp:stamp,collaboration:initial)
+      #expect(actual.collaboration == expected)
+      #expect(actual.collaboration?.fields[key] == retained)
+      #expect(actual.elements == values)
+    }
+  }
+
   private let x = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
   private let y = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
   private let z = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!

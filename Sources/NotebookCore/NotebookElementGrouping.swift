@@ -235,9 +235,13 @@ extension NotebookStore {
     }
   }
 
-  public func readElementPlacement(target: CollaborationTarget, elementID: String) throws -> NotebookElementPlacement? {
+  public func readElementPlacement(target: CollaborationTarget, elementID: String,
+    groupPoses: [String:NotebookElementPlacement.Source] = [:]) throws -> NotebookElementPlacement? {
     try readTransaction { _ in
-      try NotebookElementPlacement.Resolver { try self.elementGroupingSource(target:target,id:$0) }.resolve(elementID)
+      let poses = try checkedGroupPoses(groupPoses,target:target)
+      return try NotebookElementPlacement.Resolver {
+        try poses[collaborationIdentity($0)] ?? self.elementGroupingSource(target:target,id:$0)
+      }.resolve(elementID)
     }
   }
 

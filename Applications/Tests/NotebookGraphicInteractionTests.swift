@@ -127,7 +127,7 @@ import XCTest
     func pick(_ point: SpatialPoint, cuts: [InkElementErasure]) -> String? {
       NotebookAttentionProjection.pickElement(in:[element],graph:graph,erasures:["ghost":cuts],
         appearance: { _,graphic,layout,size,cuts in .init(graphic:graphic,layout:layout,size:size,erasures:cuts) }, scale:1,
-        viewport:.init(x:834,y:1194),project:{ ($0.id,$0.frame,$0.graphic,point) })?.id
+        viewport:.init(x:834,y:1194),presentation:{ .init($0,placement:$1) },project:{ ($0.id,$0.graphic,point) })?.id
     }
     XCTAssertNil(pick(.init(x:180,y:250),cuts:[rim]))
     XCTAssertNil(pick(.init(x:100,y:250),cuts:[rim]))
@@ -138,7 +138,7 @@ import XCTest
   }
 
   func testHollowSelectionUsesActualPolygonAndKeepsItsChildrenReachable() throws {
-    let pageID = UUID(), surface = SurfaceID.page(pageID)
+    let pageID = UUID()
     func element(_ id: String, _ shape: NotebookGraphic.Shape, _ frame: PageRect) -> AgentElement {
       .init(id:id,kind:.graphic,frame:frame,source:"",html:"",graphic:.init(shape:shape))
     }
@@ -147,11 +147,13 @@ import XCTest
     let diamond = element("diamond",.diamond,.init(x:150,y:210,width:80,height:80))
     let child = AgentElement(id:"child",kind:.web,frame:.init(x:175,y:250,width:24,height:20),source:"",html:"<p>x</p>")
     func pick(_ point: SpatialPoint, _ elements: [AgentElement]) -> String? {
-      let graph = NotebookGraphicGraph(elements.compactMap { e in e.graphic.map {
-        .init(id:e.id,graphic:$0,frame:e.frame,surface:surface,shown:$0.showsGeometry)
-      } })
-      return NotebookAttentionProjection.pickElement(in:elements,graph:graph,scale:1,viewport:.init(x:834,y:1194),
-        project:{ ($0.id,$0.frame,$0.graphic,point) })?.id
+      let actor=UUID()
+      let spatial=elements.map { e in SpatialElement(id:e.id,surface:.board(pageID),kind:e.kind == .graphic ? .graphic : .web,
+        frame:.init(x:e.frame.x,y:e.frame.y,width:e.frame.width,height:e.frame.height),worldOrigin:.zero,
+        source:e.source,html:e.html,graphic:e.graphic,stamp:.init(counter:0,actor:actor)) }
+      let graph=BoardDocument(freeItems:[],elements:spatial,stamp:.init(counter:0,actor:actor)).graphicGraph()
+      return NotebookAttentionProjection.pickElement(in:elements,graph:graph,scale:1,viewport:.init(x:834,y:1194),presentation:{ .init($0,placement:$1) },
+        project:{ ($0.id,$0.graphic,point) })?.id
     }
     XCTAssertEqual(pick(.init(x:220,y:200),[triangle]),"triangle")
     XCTAssertNil(pick(.init(x:100,y:100),[triangle]),"A polygon is not its bounding rectangle")
@@ -176,7 +178,7 @@ import XCTest
             ? SpatialPoint(x:layout.frame.x+(layout.start.x+layout.end.x)/2,y:layout.frame.y+layout.start.y-offset)
             : SpatialPoint(x:frame.x-offset,y:frame.y+frame.height/2)
           return NotebookAttentionProjection.pickElement(in:[element],graph:graph,scale:scale,
-            viewport:.init(x:834,y:1194),project:{ ($0.id,$0.frame,$0.graphic,point) })?.id
+            viewport:.init(x:834,y:1194),presentation:{ .init($0,placement:$1) },project:{ ($0.id,$0.graphic,point) })?.id
         }
         XCTAssertEqual(pick(outsideStroke:4),"shape","A little finger tolerance remains at scale \(scale)")
         XCTAssertNil(pick(outsideStroke:9),"Blank paper is not a broad invisible outline at scale \(scale)")

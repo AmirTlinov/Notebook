@@ -86,6 +86,7 @@ struct BoardPortalPreview: View {
       let fill = BoardPortalProjection.fillScale(viewport: transitionViewport)
       let workset = cohort.frame.workset(boardID: boardID)
       let plane = SceneCompositionPlane.board(boardID)
+      let graph=model.presentedGraphicGraph(boardID:boardID,cohort:cohort,preview:false)
       ZStack {
         SpatialBoardGrid(camera: camera, outputScale: pixelScale / fill)
         ZStack {
@@ -94,16 +95,18 @@ struct BoardPortalPreview: View {
           }
           ForEach(cohort.plan.vectorRuns.filter { $0.plane == plane }) { run in
             NotebookGraphicBatchView(run: run, elements: workset.elements,
-              graph: cohort.frame.index.capturedHierarchy.board(boardID)?.graphicGraph() ?? .init([]),
+              graph: graph,
               scale: camera.scale, size: .init(width: viewport.x, height: viewport.y),
               projectOrigin: { camera.worldToScreen($0, viewport: viewport).cgPoint }, commitsState: false)
               .zIndex(cohort.plan.rank(id: run.id.id, in: plane) ?? 0)
           }
           ForEach(workset.elements.filter { $0.kind != .group && $0.graphic == nil && cohort.plan.allowsLive(.element($0.id), in: plane) }) { element in
-            if let origin = element.worldOrigin {
-              let local = element.frame
-              let screen = camera.worldToScreen(origin, viewport: viewport)
-              SpatialElementContent(element: element, commitsState: false, boardID: boardID)
+            if let placement=graph.placement(element.id) {
+              let presentation=NotebookElementPresentation(element,placement:placement),local=presentation.frame
+              let screen = camera.worldToScreen(placement.origin, viewport: viewport)
+              NotebookPlacedElement(presentation:presentation) {
+                SpatialElementContent(element: element, commitsState: false, boardID: boardID)
+              }
                 .frame(width: local.width, height: local.height)
                 .scaleEffect(camera.scale)
                 .frame(width: local.width * camera.scale, height: local.height * camera.scale)
@@ -227,28 +230,31 @@ struct WorkspaceItemCoverView: View {
           .opacity(portalOverlayOpacity).zIndex(Double.greatestFiniteMagnitude)
       }
       ForEach(elements.filter { element in
-        if element.graphic != nil { return false }
+        if element.graphic != nil || element.kind == .group { return false }
         guard let cohort, let plane else { return true }
         return cohort.plan.allowsLive(.element(element.id), in: plane)
       }) { element in
         let reference = EditableElementReference.spatial(boardID: boardID, elementID: element.id)
-        let local = model.elementPresentationFrame(reference, fallback: .init(x: element.frame.x, y: element.frame.y,
-          width: element.frame.width, height: element.frame.height), preview: !isPortalProjection)
+        if let placement=graph?.placement(element.id) {
+        let presentation=NotebookElementPresentation(element,placement:placement),local=presentation.frame
         let retainsTextInput = !isPortalProjection
           && element.kind == .nativeText && editingTextID == element.id
         EditableElementContainer(reference: reference, coordinateScale: 1) {
+          NotebookPlacedElement(presentation:presentation) {
           SpatialElementContent(
             element: element, commitsState: !isPortalProjection,
             boardID: boardID,
             isTextEditing: retainsTextInput,
             onTextEditingEnded: { onTextEditingEnded(element.id) }
           )
+          }
         }
         .allowsHitTesting(ownerIsAvailable)
         .frame(width: local.width, height: local.height)
         .offset(x: local.x, y: local.y)
         .opacity(portalOverlayOpacity)
         .zIndex(plane.flatMap { cohort?.plan.rank(id: .element(element.id), in: $0) } ?? 0)
+        }
       }
 
       #if os(iOS)
@@ -256,7 +262,7 @@ struct WorkspaceItemCoverView: View {
           NotebookInteractionView(
             inputGate: model.inputGate,
             ownerIsAvailable: { ownerIsAvailable },
-            passthroughFrames: model.isItemBeingDeleted(item.id) ? [] : interactionPassthroughFrames,
+            passthroughFrames: model.isItemBeingDeleted(item.id) ? [] : Self.interactionPassthroughFrames(elements:elements,graph:graph),
             onTap: onTap,
             onLiftChanged: { lifted in
               if lifted { pose?.owner?.beginLift() }
@@ -367,16 +373,14 @@ struct WorkspaceItemCoverView: View {
     #endif
   }
 
-  private var interactionPassthroughFrames: [CGRect] {
-    Self.interactionPassthroughFrames(elements: elements)
-  }
-
-  static func interactionPassthroughFrames(elements: [SpatialElement]) -> [CGRect] {
-    elements.map { element in
-      CGRect(x: element.frame.x, y: element.frame.y,
-        width: element.frame.width, height: element.frame.height)
+  static func interactionPassthroughFrames(elements:[SpatialElement],graph:NotebookGraphicGraph?) -> [CGRect] {
+    elements.compactMap { element in
+      guard element.kind != .group,let placement=graph?.placement(element.id) else { return nil }
+      if element.graphic != nil { return graph?.resolve(element.id).layout.map { CGRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height) } }
+      return NotebookElementPresentation(element,placement:placement).bounds
     }
   }
+
 }
 
 struct SpatialElementContent: View {
@@ -406,7 +410,7 @@ struct SpatialElementContent: View {
   var body: some View {
     let cuts = model.elementErasures(on:element.surface,fallback:composition.cohort?.liveData.ink)[element.id] ?? []
     let appearance = model.elementErasureCache.appearance(surface:element.surface,id:element.id,graphic:nil,layout:nil,
-      size:.init(width:element.frame.width,height:element.frame.height),erasures:cuts)
+      size:.init(width:element.basis?.size.x ?? element.frame.width,height:element.basis?.size.y ?? element.frame.height),erasures:cuts)
     let erased = appearance?.state == .erased
     content.erased(by:cuts,appearance:appearance).accessibilityHidden(erased || (!cuts.isEmpty && appearance == nil))
       .allowsHitTesting(!erased && (cuts.isEmpty || appearance != nil))
@@ -445,6 +449,13 @@ struct SpatialElementContent: View {
 
 }
 
+func agentElementSnapshotSource(_ element:AgentElement) -> AgentElement {
+  .init(id:element.id,kind:element.kind,
+    frame:.init(x:0,y:0,width:element.basis?.size.x ?? element.frame.width,height:element.basis?.size.y ?? element.frame.height),
+    source:element.source,html:element.html,css:element.css,javaScript:element.javaScript,
+    programPackage:element.programPackage,state:element.state,graphic:element.graphic,textStyle:element.textStyle)
+}
+
 func agentElementSnapshotSource(_ element: SpatialElement) -> AgentElement {
   AgentElement(
     id: element.id,
@@ -452,8 +463,8 @@ func agentElementSnapshotSource(_ element: SpatialElement) -> AgentElement {
     frame: PageRect(
       x: 0,
       y: 0,
-      width: element.frame.width,
-      height: element.frame.height
+      width: element.basis?.size.x ?? element.frame.width,
+      height: element.basis?.size.y ?? element.frame.height
     ),
     source: element.source,
     html: element.html,

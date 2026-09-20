@@ -108,16 +108,25 @@ final class WorkspaceSceneIndexTests: XCTestCase {
   }
 
   func testDenseMixedElementsProduceBoundedExplicitOverviewAndPreservePinnedOwners() throws {
+    func mark(_ label:String) {
+      var info=task_vm_info_data_t(),count=mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size/MemoryLayout<integer_t>.size)
+      let status=withUnsafeMutablePointer(to:&info) { pointer in pointer.withMemoryRebound(to:integer_t.self,capacity:Int(count)) { task_info(mach_task_self_,task_flavor_t(TASK_VM_INFO),$0,&count) } }
+      print("GUI292 100k \(label): footprint=\(status == KERN_SUCCESS ? info.phys_footprint : 0), elementStride=\(MemoryLayout<SpatialElement>.stride), sourceStride=\(MemoryLayout<NotebookElementPlacement.Source>.stride)");fflush(stdout)
+    }
+    mark("start")
     let count = 100_000
     let actor = UUID(), itemID = UUID(), boardID = WorkspaceRoot.boardID
     let stamp = VersionStamp(counter: 0, actor: actor)
     let item = WorkspaceItem.notebook(id: itemID, title: "Pinned notebook", pageIDs: [UUID()])
     let workspace = WorkspaceIndex(items: [item], selectedItemID: itemID, selectedPageID: item.pageIDs[0], stamp: stamp)
     let elements = (0..<(count - 1)).map { element($0, boardID: boardID, origin: .zero, actor: actor) }
+    mark("sources")
     let board = BoardDocument(freeItems: [.init(itemID: itemID, center: .zero, zIndex: 0, stamp: stamp)],
       elements: elements, stamp: stamp)
     let hierarchy = BoardHierarchy(rootBoardID: boardID, boards: [.init(id: boardID, board: board)], stamp: stamp)
+    mark("hierarchy")
     let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    mark("index")
     let presence = SessionPresence(mode: .board, camera: .init(scale: 0.4), viewport: .init(x: 1194, y: 834))
     let limit = 48
     let pins: Set<WorkspaceSpatialID> = [.item(itemID), .element(elements.last!.id)]
@@ -131,12 +140,14 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     XCTAssertLessThanOrEqual(visible.examinedEntries, limit)
     XCTAssertLessThanOrEqual(visible.visitedNodes, limit * 8)
 
+    mark("visible query")
     let elsewhere = SessionPresence(mode: .board,
       camera: .init(center: .init(x: 100_000, y: 100_000), scale: 1), viewport: presence.viewport)
     let retained = index.workset(presence: elsewhere, pinned: pins, limit: limit)
     XCTAssertEqual(retained.items.map(\.id), [itemID])
     XCTAssertEqual(retained.elements.map(\.id), [elements.last!.id])
     XCTAssertTrue(retained.aggregates.isEmpty)
+    mark("done")
   }
 
   func testPreparedProjectionKeepsLocalGeometryAfterTranslationAcrossDistantTiles() throws {

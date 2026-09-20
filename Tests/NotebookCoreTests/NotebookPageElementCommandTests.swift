@@ -65,8 +65,7 @@ struct NotebookPageElementCommandTests {
       let original = try #require(page.programStateBasis(elementID))
       let target = CollaborationTarget(kind: .page, id: page.id)
       let moved = PageRect(x: 30, y: 40, width: rendered.frame.width, height: rendered.frame.height)
-      _ = try store.commitPageElementFrame(pageID: page.id, elementID: elementID,
-        identity: #require(page.elementIdentityStamp(elementID)), original: rendered.frame, frame: moved, actor: actor)
+      try moveTestElement(store:store,source:.init(target:target,id:elementID,page:rendered),frame:moved,actor:actor)
       #expect(try store.loadPage(page.id).programStateBasis(elementID) == original)
       for state in [JSONValue.number(99), rendered.state] {
         var current = try store.loadPage(page.id)
@@ -122,18 +121,18 @@ struct NotebookPageElementCommandTests {
   @Test func nativeFrameCommitDoesNotReadOrRewriteInkAndLargeNeighbours() throws {
     try fixture(largeNeighbour: true) { store, actor, page in
       let element = try #require(page.elements.first { $0.id == elementID })
-      let identity = try #require(page.elementIdentityStamp(elementID))
+      let source = NotebookNativeElementSource(target:.init(kind:.page,id:page.id),id:elementID,page:element)
       let file = pageFile(page.id), before = try recordIndex(store, file: file), cursor = try store.currentChangeCursor()
       let frame = PageRect(x: 40, y: 60, width: 200, height: 200)
-      let moved = try bounded(store) { try store.commitPageElementFrame(pageID: page.id, elementID: elementID,
-        identity: identity, original: element.frame, frame: frame, actor: actor) }
-      #expect(moved?.element.frame == frame && moved?.element.source == element.source)
+      let moved = try bounded(store) { try moveTestElement(store:store,source:source,frame:frame,actor:actor) }
+      #expect(moved.page?.frame == frame && moved.page?.source == element.source)
       let changes = Set(try store.readChangedAddresses(after: cursor, through: store.currentChangeCursor()).addresses)
       let after = try recordIndex(store, file: file)
       #expect(before.filter { !changes.contains($0[0]) } == after.filter { !changes.contains($0[0]) })
       #expect(!changes.contains { $0.contains("/drawingData") || $0.contains("/computations") || $0.contains("/@foreign") })
-      #expect(try store.commitPageElementFrame(pageID: page.id, elementID: elementID,
-        identity: identity, original: element.frame, frame: .init(x: 70, y: 80, width: 200, height: 200), actor: actor) == nil)
+      #expect(throws:CollaborationError.self) {
+        try moveTestElement(store:store,source:source,frame:.init(x:70,y:80,width:200,height:200),actor:actor)
+      }
       #expect(try store.loadPage(page.id).elements.first { $0.id == elementID }?.frame == frame)
     }
   }

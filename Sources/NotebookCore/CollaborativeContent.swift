@@ -150,9 +150,8 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
   /// Materialize implicit clocks before the aggregate Lamport frontier moves
   /// without a content edit. Existing causal field owners remain unchanged.
   mutating func materializeVersions(in value: JSONValue, fallback: VersionStamp) {
-    for key in contentFields(value).keys where fields[key] == nil {
-      fields[key] = .init(stamp: fallback, human: true)
-    }
+    let version=ContentFieldVersion(stamp:fallback,human:true)
+    for key in contentFields(value).keys where fields[key] == nil { fields[key]=version }
   }
 
   var isValid: Bool {

@@ -26,8 +26,8 @@ extension NotebookAppModel {
     let admitted=page.displayElements(graphicIDs:Set(layouts.keys)).filter { element in
       guard !workingIDs.contains(element.id) else { return false }
       if element.graphic != nil { return true }
-      let f=element.frame
-      return f.x<page.size.width && f.y<page.size.height && f.x+f.width>0 && f.y+f.height>0
+      guard let placement=graph.placement(element.id) else { return false }
+      return NotebookElementPresentation(element,placement:placement).bounds.intersects(paper)
     }
     return .init(graph:graph,elements:admitted+working.filter { layouts[$0.id] != nil }.map(\.pageElement),
       layouts:layouts,visitedIndexNodes:query.visitedIndexNodes,resolvedGraphics:resolved)

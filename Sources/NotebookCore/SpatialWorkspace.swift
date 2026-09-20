@@ -713,9 +713,18 @@ public struct BoardDocument: Codable, Equatable, Sendable {
   }
 
   private mutating func materializeElementVersions() {
-    guard let content = try? JSONValue.encode(elements) else { return }
     var versions = collaboration ?? .init()
-    versions.materializeVersions(in: .object(["elements": content]), fallback: stamp)
+    versions.materializeVersions(in:.object(["elements":.array([])]),fallback:stamp)
+    for element in elements {
+      // Only field clocks survive this operation. Do not simultaneously hold
+      // the whole board's encoded bytes, JSON tree and flattened content map.
+      let prepared=autoreleasepool {
+        guard let content=try? JSONValue.encode(element) else { return false }
+        versions.materializeVersions(in:.object(["elements":.array([content])]),fallback:stamp)
+        return true
+      }
+      guard prepared else { return }
+    }
     collaboration = versions
   }
 

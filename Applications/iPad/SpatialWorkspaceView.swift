@@ -816,10 +816,11 @@ struct SpatialWorkspaceView: View {
       }
     }
     ForEach(elements.filter { $0.graphic == nil && cohort?.plan.allowsLive(.element($0.id), in: .board(presence.boardID)) == true }) { element in
-        if let worldOrigin = element.worldOrigin {
+        if let placement=graph?.placement(element.id) {
+          let presentation=NotebookElementPresentation(element,placement:placement)
+          let worldOrigin=placement.origin
           let reference = EditableElementReference.spatial(boardID: presence.boardID, elementID: element.id)
-          let local = model.elementPresentationFrame(reference, fallback: .init(x: element.frame.x, y: element.frame.y,
-            width: element.frame.width, height: element.frame.height))
+          let local=presentation.frame
           let base = presence.camera.worldToScreen(
             worldOrigin,
             viewport: viewport
@@ -834,10 +835,11 @@ struct SpatialWorkspaceView: View {
             contentSize: .init(width: local.width, height: local.height),
             observationElementID: element.id, observationElementStamp: element.stamp) {
             EditableElementContainer(reference: reference, coordinateScale: 1) {
-              SpatialElementContent(element: element, boardID: presence.boardID,
-                isTextEditing: editingSpatialText == reference,
-                onTextEditingEnded: { [selectionID = model.selectionSession.id] in model.finishInteractiveElementInput(reference, selectionID: selectionID) })
-                .frame(width: local.width, height: local.height)
+              NotebookPlacedElement(presentation:presentation) {
+                SpatialElementContent(element: element, boardID: presence.boardID,
+                  isTextEditing: editingSpatialText == reference,
+                  onTextEditingEnded: { [selectionID = model.selectionSession.id] in model.finishInteractiveElementInput(reference, selectionID: selectionID) })
+              }
             }
           }
             .frame(width: viewport.x, height: viewport.y)

@@ -101,8 +101,8 @@ struct AddressedReplicationTests {
     #expect(try b.readBoardItem(itemID)?.board.freeItems.first?.center == WorldPoint(x: 40, y: 60))
     let beforeElement = try a.currentChangeCursor()
     _ = try measured(a, label: "save_element", count: count) {
-      try a.commitPageElementFrame(pageID: pageID, elementID: element.id, identity: page.elementIdentityStamp(element.id)!,
-        original: element.frame, frame: .init(x: 50, y: 70, width: 100, height: 100), actor: actor)
+      try moveTestElement(store:a,source:.init(target:.init(kind:.page,id:pageID),id:element.id,page:element),
+        frame:.init(x:50,y:70,width:100,height:100),actor:actor)
     }
     let edit = try #require(a.changeJournal(after: beforeElement).first)
     try stage(edit, from: a, to: b)
@@ -142,8 +142,8 @@ struct AddressedReplicationTests {
       }
     }
     let cursor = try a.currentChangeCursor()
-    _ = try a.commitPageElementFrame(pageID: pageID, elementID: "selected", identity: page.elementIdentityStamp("selected")!, original: page.elements[0].frame,
-      frame: .init(x: 80, y: 80, width: 100, height: 100), actor: actor)
+    try moveTestElement(store:a,source:.init(target:.init(kind:.page,id:pageID),id:"selected",page:page.elements[0]),
+      frame:.init(x:80,y:80,width:100,height:100),actor:actor)
     let packet = try #require(a.changeJournal(after: cursor).first)
     try stage(packet, from: a, to: b)
     _ = try b.applyRemoteChange(packet, peerID: actor)

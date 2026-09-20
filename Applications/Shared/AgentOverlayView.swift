@@ -19,44 +19,33 @@ struct AgentOverlayView: View {
 
   private var display:NotebookPageGraphicDisplay { model.pageGraphicDisplay(page,in:visibleRegion) }
 
-  private func captureRegion(for element: AgentElement) -> PageRect? {
-    let frame = element.frame
-    let left = max(0, frame.x), top = max(0, frame.y)
-    let right = min(pageSize.width, frame.x + frame.width), bottom = min(pageSize.height, frame.y + frame.height)
-    guard right > left, bottom > top else { return nil }
-    return .init(x: left - frame.x, y: top - frame.y, width: right - left, height: bottom - top)
-  }
-
-  private func capturePolicy(for element: AgentElement) -> AgentSnapshotPolicy {
-    let region = captureRegion(for: element)!
-    let density = renderingScale * displayScale
-    // A full physical source keeps its canonical cache identity. A clipped
-    // source uses the existing regional capture and its original local origin.
-    if region.x == 0, region.y == 0, region.width == element.frame.width, region.height == element.frame.height {
-      return .exact(scale: density)
-    }
-    return .region(region, scale: density)
-  }
-
-  private func runtimeIDs(in elements: [AgentElement]) -> Set<String> {
-    Set(elements.filter { element in
-      allowsInteraction && element.kind == .web && (visibleRegion.map {
-        $0.intersects(CGRect(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height))
-      } ?? true)
-    }.map(\.id))
+  private func capturePolicy(for element: AgentElement, presentation:NotebookElementPresentation) -> AgentSnapshotPolicy {
+    let body=CGRect(origin:.zero,size:presentation.bodySize)
+    let region=CGRect(x:0,y:0,width:pageSize.width,height:pageSize.height)
+      .applying(presentation.placement.transform.inverted()).intersection(body)
+    let density=renderingScale * displayScale * presentation.maximumScale
+    if region == body { return .exact(scale:density) }
+    return .region(.init(x:region.minX,y:region.minY,width:region.width,height:region.height),scale:density)
   }
 
   var body: some View {
     let display=display,visible=display.elements,graph=display.graph
     let erasures = model.elementErasures(on: .page(pageID))
-    let runningPrograms = runtimeIDs(in: visible)
+    let presentations=Dictionary(uniqueKeysWithValues:visible.compactMap { element -> (String,NotebookElementPresentation)? in
+      guard let value=model.elementPresentation(.page(pageID:pageID,elementID:element.id),graph:graph) else { return nil }
+      return (element.id,value)
+    })
+    let runningPrograms=Set(visible.filter { element in
+      allowsInteraction && element.kind == .web && presentations[element.id].map { value in
+        visibleRegion.map { $0.intersects(value.bounds) } ?? true
+      } == true
+    }.map(\.id))
     // Observe completion in this body, not only in the deferred ForEach builder.
     let appearances = Dictionary(uniqueKeysWithValues: visible.compactMap { element -> (String, NotebookElementAppearance)? in
-      let reference = EditableElementReference.page(pageID:pageID,elementID:element.id)
       let layout = display.layouts[element.id]
-      let frame = layout?.frame ?? model.elementPresentationFrame(reference,fallback:element.frame)
+      let frame = layout?.frame ?? element.frame
       guard let value = model.elementErasureCache.appearance(surface:.page(pageID),id:element.id,
-        graphic:graph.nodes[element.id]?.graphic,layout:layout,size:.init(width:frame.width,height:frame.height),
+        graphic:graph.nodes[element.id]?.graphic,layout:layout,size:presentations[element.id]?.bodySize ?? .init(width:frame.width,height:frame.height),
         erasures:erasures[element.id] ?? []) else { return nil }
       return (element.id,value)
     })
@@ -68,24 +57,28 @@ struct AgentOverlayView: View {
         )
         let interactiveReference = InteractiveElementReference.page(pageID: pageID, elementID: element.id)
         let layout = display.layouts[element.id]
-        let frame = layout?.frame ?? model.elementPresentationFrame(reference, fallback: element.frame)
+        let presentation=presentations[element.id]
+        let frame = layout?.frame ?? presentation?.frame ?? model.elementPresentationFrame(reference, fallback: element.frame)
         let cuts = erasures[element.id] ?? []
         let appearance = appearances[element.id]
         let erased = appearance?.state == .erased
         EditableElementContainer(reference: reference, coordinateScale: 1) {
+          NotebookPlacedElement(presentation:presentation) {
+          Group {
           if let graphic = graph.nodes[element.id]?.graphic {
             NotebookGraphicElementView(graphic: graphic, reference: reference, layout: layout)
           } else if element.kind == .nativeText {
-            NotebookNativeTextView(source:element.source,style:element.textStyle ?? .standard,reference:reference,
-              frame:frame,maximumHeight:pageSize.height-frame.y,isEditing:allowsInteraction && model.interactiveElementFocus == interactiveReference,
+            let target=model.nativeTextTarget(reference)
+            NotebookNativeTextView(source:target?.source ?? element.source,style:target?.style ?? element.textStyle ?? .standard,reference:reference,
+              frame:model.elementCommandDrafts[reference]?.frame ?? element.frame,maximumHeight:pageSize.height-frame.y,isEditing:allowsInteraction && model.interactiveElementFocus == interactiveReference,
               onEditingEnded:{ if model.interactiveElementFocus == interactiveReference { model.interactiveElementFocus = nil } },retainedPage:element)
-          } else {
+          } else if let presentation {
           PreparedAgentElementView(
-            element: element,
+            element: agentElementSnapshotSource(element),
             allowsInteraction: allowsInteraction,
             inputEnabled: inputEnabled,
             allowsProgramExecution: runningPrograms.contains(element.id),
-            capturePolicy: capturePolicy(for: element),
+            capturePolicy: capturePolicy(for:element,presentation:presentation),
             focus: interactiveReference,
             onRenderReady: { ready in
               setElement(element, ready: ready)
@@ -96,12 +89,14 @@ struct AgentOverlayView: View {
             }
           )
           }
+          }.erased(by:presentation == nil ? [] : cuts,appearance:presentation == nil ? nil : appearance)
+          }
         }
         .frame(
           width: frame.width,
           height: frame.height
         )
-        .erased(by: cuts, appearance:appearance,transform:graph.nodes[element.id]?.graphic.transform,layout:layout)
+        .erased(by:presentation == nil ? cuts : [], appearance:presentation == nil ? appearance : nil,transform:graph.nodes[element.id]?.graphic.transform,layout:layout)
         .offset(x: frame.x, y: frame.y)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent-element-\(element.id)")

@@ -3114,15 +3114,16 @@ final class NotebookAppModel {
     let graphicGeometry=graphicManipulationGeometry(reference,in:captured)
     let groupGeometry=groupManipulationGeometry(reference,in:captured)
     if isElementGroup(reference), groupGeometry == nil || !groupAllowsLiveManipulation(reference,in:captured) { return nil }
-    let textFrame=nativeTextTarget(reference).map { target in
-      let value=NotebookTextTypography.fittingFrame(target.source,style:target.style,
-        in:.init(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height))
-      return CGRect(x:value.x,y:value.y,width:value.width,height:value.height)
+    let native=elementPresentation(reference,graph:captured)
+    // Moving a body follows its parent axes. A plain text width handle still
+    // edits layout width; an explicit basis edits the placed whole instead.
+    let nativePlacement=native.flatMap { value -> NotebookElementPlacement? in
+      kind == .move || value.placement.parentID != nil || value.placement.basis != nil ? value.placement : nil
     }
     var contact = NotebookElementManipulation(reference: reference, kind: kind,
       frame: geometry.frame, bounds: geometry.bounds, identity: geometry.identity, worldOrigin: geometry.worldOrigin,
-      connection:connection,layout:graphicGeometry?.body,graphic:graphicElement(reference),placement:graphicGeometry?.placement ?? groupGeometry?.placement,
-      displayFrame:graphicGeometry.map { .init(x:$0.display.frame.x,y:$0.display.frame.y,width:$0.display.frame.width,height:$0.display.frame.height) } ?? groupGeometry?.bounds ?? textFrame)
+      connection:connection,layout:graphicGeometry?.body,graphic:graphicElement(reference),placement:graphicGeometry?.placement ?? groupGeometry?.placement ?? nativePlacement,
+      displayFrame:graphicGeometry.map { .init(x:$0.display.frame.x,y:$0.display.frame.y,width:$0.display.frame.width,height:$0.display.frame.height) } ?? groupGeometry?.bounds ?? native?.bounds)
     if let captured,let source=captured.source(reference.elementID) {
       let closed:Bool?
       if case .spatial(let owner,let id)=reference { closed=spatialGroupReads[owner]?[id]?.isSelfContained } else { closed=nil }
@@ -3173,7 +3174,7 @@ final class NotebookAppModel {
         let desired=projectingGraphicCommands(boardHierarchy?.board(boardID)?.graphicGraph() ?? NotebookGraphicGraph([])) { .spatial(boardID:boardID,elementID:$0) }.placement(elementID)
         guard source == captured.source,desired?.parentTransform == placement.parentTransform,desired?.origin == placement.origin else { return false }
       } else {
-        guard (graphicManipulationGeometry(contact.reference)?.placement ?? groupManipulationGeometry(contact.reference)?.placement) == placement else { return false }
+        guard (graphicManipulationGeometry(contact.reference)?.placement ?? groupManipulationGeometry(contact.reference)?.placement ?? elementPresentation(contact.reference)?.placement) == placement else { return false }
       }
     } else if current.worldOrigin != contact.worldOrigin { return false }
     if contact.vertices != contact.originalVertices || contact.cornerRadius != contact.originalCornerRadius {
@@ -3209,47 +3210,12 @@ final class NotebookAppModel {
   /// Preview and commit use the same completed rectangle. Storage changes the
   /// addressed material; it does not run a second resize calculation.
   private func commitElementFrame(_ contact: NotebookElementManipulation) -> Bool {
-    guard let identity = contact.identity else { return false }
-    let frame = contact.frame, original = contact.original, actor = actorID
-    if graphicElement(contact.reference) != nil || nativeTextTarget(contact.reference) != nil || isElementGroup(contact.reference) {
-      return performElementOperation(.updateElement, reference: contact.reference,
-        values: ["frame":(try? .encode(PageRect(x:frame.minX,y:frame.minY,width:frame.width,height:frame.height))) ?? .null]
-          .merging(contact.basis == contact.originalBasis ? [:] : ["basis":(try? .encode(contact.basis)) ?? .null]) { _,new in new },
-        summary:"Переместить фигуру",readSources:contact.ancestorReferences,capture:contact.graphicCapture?.retaining(bounds:contact.presentedFrame))
-    }
-    switch contact.reference {
-    case .page(let pageID, let elementID):
-      guard var page = pages[pageID], let index = page.elements.firstIndex(where: { $0.id == elementID }) else { return false }
-      var elements = page.elements
-      let value = PageRect(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height)
-      elements[index] = elements[index].updating(frame: value)
-      guard page.replaceElements(elements, actor: actor) else { return false }
-      pages[pageID] = page
-      let expected = elements[index], expectedStamp = page.agentStamp
-      persistence.enqueue { store in
-        let committed = try store.commitPageElementFrame(pageID: pageID, elementID: elementID, identity: identity,
-          original: .init(x: original.minX, y: original.minY, width: original.width, height: original.height),
-          frame: value, actor: actor)
-        return committed?.element != expected || committed?.stamp != expectedStamp
-      }
-      return true
-    case .spatial(let boardID, let elementID):
-      guard var hierarchy = boardHierarchy, workspace != nil,
-        var element = hierarchy.board(boardID)?.elements.first(where: { $0.id == elementID }),
-        surfaceAcceptsChanges(element.surface) else { return false }
-      let expected = element.stamp
-      guard element.update(frame: .init(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height), actor: actorID),
-        hierarchy.upsertElement(element, in: boardID, expected: expected, actor: actorID) else { return false }
-      boardHierarchy = hierarchy
-      let accepted = element, expectedStamp = hierarchy.stamp
-      persistence.enqueue { store in
-        let committed = try store.commitSpatialElementFrame(boardID: boardID, elementID: elementID, identity: identity,
-          original: .init(x: original.minX, y: original.minY, width: original.width, height: original.height),
-          frame: accepted.frame, origin: contact.worldOrigin, actor: actor)
-        return committed?.element != accepted || committed?.stamp != expectedStamp
-      }
-      return true
-    }
+    guard contact.identity != nil else { return false }
+    let frame=contact.frame
+    return performElementOperation(.updateElement,reference:contact.reference,
+      values:["frame":(try? .encode(PageRect(x:frame.minX,y:frame.minY,width:frame.width,height:frame.height))) ?? .null]
+        .merging(contact.basis == contact.originalBasis ? [:] : ["basis":(try? .encode(contact.basis)) ?? .null]) { _,new in new },
+      summary:"Изменить положение объекта",readSources:contact.ancestorReferences,capture:contact.graphicCapture?.retaining(bounds:contact.presentedFrame))
   }
 
   func cancelElementManipulation(_ id: UUID? = nil) {
@@ -3267,6 +3233,7 @@ final class NotebookAppModel {
     } else {
       frame = elementCommandDrafts[reference]?.frame ?? fallback
     }
+    if let presentation=elementPresentation(reference) { return presentation.frame }
     guard let text = nativeTextTarget(reference) else { return frame }
     return NotebookTextTypography.fittingFrame(text.source,style:text.style,in:frame)
   }
@@ -3547,7 +3514,8 @@ final class NotebookAppModel {
     switch focus {
     case .page(let pageID, let elementID):
       guard elementID == rendered.id, let page = pages[pageID],
-        page.elements.first(where: { $0.id == elementID }) == rendered else { return nil }
+        let source=page.element(id:elementID),
+        AgentProgramSource(source) == AgentProgramSource(rendered),source.state == rendered.state else { return nil }
       return page.programStateBasis(elementID)
     case .board(let boardID, let elementID):
       guard elementID == rendered.id, let board = boardHierarchy?.board(boardID),

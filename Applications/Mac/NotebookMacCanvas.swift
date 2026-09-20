@@ -111,13 +111,15 @@ struct NotebookMacCanvas: View {
   }
 
   private func elements(_ values: [SpatialElement], presence: SessionPresence, cohort: SceneCompositionCohort) -> some View {
-    SceneCameraPlane(presence: presence, revision: ElementRevision(paint: cohort.paintID,
+    let graph=model.presentedGraphicGraph(boardID:presence.boardID,cohort:cohort)
+    return SceneCameraPlane(presence: presence, revision: ElementRevision(paint: cohort.paintID,
       content: model.collaborationReadEpoch, editing: model.interactiveElementFocus, selection: model.selectionSession.target),
       reanchorsOnRevision: false, isCameraActive: model.presencePhase == .active, installation: cohort.installation(for: .elements), hitRegions: { anchor in
         values.compactMap { element in
-          guard let origin = element.worldOrigin else { return nil }
+          let presentation=element.graphic == nil ? graph.placement(element.id).map { NotebookElementPresentation(element,placement:$0) } : nil
+          guard let origin=presentation?.placement.origin ?? element.worldOrigin else { return nil }
           let point = anchor.camera.worldToScreen(origin, viewport: anchor.viewport)
-          let f = model.elementPresentationFrame(.spatial(boardID: presence.boardID, elementID: element.id),
+          let f = presentation?.frame ?? model.elementPresentationFrame(.spatial(boardID: presence.boardID, elementID: element.id),
             fallback: .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height))
           let scale = anchor.camera.scale
           return CGRect(x: point.x + f.x * scale, y: point.y + f.y * scale, width: f.width * scale, height: f.height * scale)
@@ -135,16 +137,19 @@ struct NotebookMacCanvas: View {
             .zIndex(cohort.plan.rank(id: run.id.id, in: run.plane) ?? 0)
         }
         ForEach(values) { element in
-          if let origin = element.worldOrigin {
+          let presentation=element.graphic == nil ? graph.placement(element.id).map { NotebookElementPresentation(element,placement:$0) } : nil
+          if let origin=presentation?.placement.origin ?? element.worldOrigin {
             let reference = EditableElementReference.spatial(boardID: presence.boardID, elementID: element.id)
-            let frame = model.elementPresentationFrame(reference, fallback: .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height))
+            let frame = presentation?.frame ?? model.elementPresentationFrame(reference, fallback: .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height))
             let point = anchor.camera.worldToScreen(origin, viewport: anchor.viewport)
             EditableElementContainer(reference: reference, coordinateScale: anchor.camera.scale) {
               if element.graphic != nil || !cohort.plan.allowsLive(.element(element.id), in: .board(presence.boardID)) { Color.clear.contentShape(Rectangle()) }
-              else {
-                SpatialElementContent(element: element, boardID: presence.boardID,
-                  isTextEditing: model.interactiveElementFocus == .board(boardID: presence.boardID, elementID: element.id),
-                  onTextEditingEnded: { model.interactiveElementFocus = nil })
+              else if let presentation {
+                NotebookPlacedElement(presentation:presentation) {
+                  SpatialElementContent(element: element, boardID: presence.boardID,
+                    isTextEditing: model.interactiveElementFocus == .board(boardID: presence.boardID, elementID: element.id),
+                    onTextEditingEnded: { model.interactiveElementFocus = nil })
+                }
               }
             }
             .frame(width: frame.width, height: frame.height)

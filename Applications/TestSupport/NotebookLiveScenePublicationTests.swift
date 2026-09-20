@@ -530,6 +530,7 @@ private struct RetainedLiveScene: View {
 
   private func plane(_ layer: ScenePaintPosition.Layer) -> some View {
     let workset = model.presentedWorkset(cohort: cohort, boardID: presence.boardID, presence: presence)
+    let graph=model.presentedGraphicGraph(boardID:presence.boardID,cohort:cohort)
     return SceneCameraPlane(presence: presence, revision: model.scenePublicationGeneration,
       installation: cohort.installation(for: layer)) { anchor in
       ZStack {
@@ -538,13 +539,15 @@ private struct RetainedLiveScene: View {
         }
         if layer == .elements {
           ForEach(workset.elements) { element in
-            if let origin = element.worldOrigin {
-              let point = anchor.camera.worldToScreen(origin, viewport: anchor.viewport)
-              SpatialElementContent(element: element, commitsState: false, boardID: presence.boardID)
-                .frame(width: element.frame.width, height: element.frame.height)
+            if let placement=graph.placement(element.id) {
+              let presentation=NotebookElementPresentation(element,placement:placement),frame=presentation.frame
+              let point = anchor.camera.worldToScreen(placement.origin, viewport: anchor.viewport)
+              NotebookPlacedElement(presentation:presentation) {
+                SpatialElementContent(element: element, commitsState: false, boardID: presence.boardID)
+              }.frame(width:frame.width,height:frame.height)
                 .scaleEffect(anchor.camera.scale)
-                .position(x: point.x + (element.frame.x + element.frame.width / 2) * anchor.camera.scale,
-                  y: point.y + (element.frame.y + element.frame.height / 2) * anchor.camera.scale)
+                .position(x: point.x + (frame.x + frame.width / 2) * anchor.camera.scale,
+                  y: point.y + (frame.y + frame.height / 2) * anchor.camera.scale)
             }
           }
         } else {

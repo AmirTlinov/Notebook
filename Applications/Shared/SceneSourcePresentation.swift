@@ -82,6 +82,7 @@ struct SceneSourceDemand: Equatable, Sendable {
   let minimumScale: Double
   var region: PageRect? = nil
   var worldOrigin: WorldPoint? = nil
+  var bodyTransform: CGAffineTransform = .identity
   var rasterSource: SceneRasterSource { region.map { .agentRegion(source, $0) } ?? .agent(source) }
   var policy: AgentSnapshotPolicy { region.map { .region($0, scale: minimumScale) } ?? .exact(scale: minimumScale) }
   static func == (left: Self, right: Self) -> Bool {
@@ -100,12 +101,13 @@ struct SceneSourceReceipt: Sendable {
   func coversVisibleWindow(in presence: SessionPresence, pixelDensity: Double, refinesDetails: Bool) -> Bool {
     // A whole-source capture has a density contract too. An uncropped low-LOD
     // image cannot stay "covered" as the fingers enlarge it indefinitely.
+    let pixelDensity = pixelDensity * NotebookElementPresentation.maximumScale(demand.bodyTransform)
     let allowance = refinesDetails ? 1.0 : sqrt(2.0)
     let availableScale = hasCurrentPixels ? installedScale : demand.minimumScale
     guard availableScale * allowance + 0.000_001 >= pixelDensity else { return false }
     guard let crop = demand.region else { return true }
     guard let origin = demand.worldOrigin else { return false }
-    let visible = SceneSourceCapture.visibleRect(source: demand.source, origin: origin, presence: presence)
+    let visible = SceneSourceCapture.visibleRect(source: demand.source, origin: origin, transform: demand.bodyTransform, presence: presence)
     if visible.isNull || visible.isEmpty { return true }
     return CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height).contains(visible)
       && (!refinesDetails || availableScale + 0.000_001 >= pixelDensity)
@@ -123,40 +125,47 @@ struct SceneSourceReceipt: Sendable {
 /// pixels enter the raster pool. Snapping the crop to 256 output pixels gives
 /// small camera translations reuse without tying geometry to pixel completion.
 enum SceneSourceCapture {
-  static func origin(element: SpatialElement, plane: SceneCompositionPlane, frame: WorkspaceSceneFrame) -> WorldPoint {
+  static func origin(placement: NotebookElementPlacement, plane: SceneCompositionPlane, frame: WorkspaceSceneFrame) -> WorldPoint {
+    let offset=placement.transform
     if let itemID = plane.coverID,
       let carrier = frame.worksets[plane.boardID]?.items.first(where: { $0.id == itemID }) {
-      return carrier.center.offsetBy(x: -carrier.geometry.width / 2 + element.frame.x,
-        y: -carrier.geometry.height / 2 + element.frame.y)
+      return carrier.center.offsetBy(x: -carrier.geometry.width / 2 + offset.tx,
+        y: -carrier.geometry.height / 2 + offset.ty)
     }
-    return (element.worldOrigin ?? .zero).offsetBy(x: element.frame.x, y: element.frame.y)
+    return placement.origin.offsetBy(x:offset.tx,y:offset.ty)
   }
 
-  static func visibleRect(source: AgentElement, origin: WorldPoint, presence: SessionPresence) -> CGRect {
+  static func linear(_ placement:NotebookElementPlacement) -> CGAffineTransform {
+    let t=placement.transform
+    return .init(a:t.a,b:t.b,c:t.c,d:t.d,tx:0,ty:0)
+  }
+
+  static func visibleRect(source: AgentElement, origin: WorldPoint, transform: CGAffineTransform = .identity,
+    presence: SessionPresence) -> CGRect {
+    viewport(origin:origin,transform:transform,presence:presence)
+      .intersection(CGRect(x:0,y:0,width:source.frame.width,height:source.frame.height))
+  }
+
+  private static func viewport(origin:WorldPoint,transform:CGAffineTransform,presence:SessionPresence) -> CGRect {
     let topLeft = presence.camera.screenToWorld(.zero, viewport: presence.viewport)
     let delta = origin.delta(to: topLeft)
-    return CGRect(x: delta.x, y: delta.y, width: presence.viewport.x / presence.camera.scale,
-      height: presence.viewport.y / presence.camera.scale)
-      .intersection(CGRect(x: 0, y: 0, width: source.frame.width, height: source.frame.height))
+    return CGRect(x:delta.x,y:delta.y,width:presence.viewport.x/presence.camera.scale,
+      height:presence.viewport.y/presence.camera.scale).applying(transform.inverted())
   }
 
-  static func region(element: SpatialElement, plane: SceneCompositionPlane,
-    presence: SessionPresence, frame: WorkspaceSceneFrame, density: Double) -> PageRect? {
-    let width = element.frame.width, height = element.frame.height
+  static func region(source: AgentElement, origin:WorldPoint, transform:CGAffineTransform,
+    presence: SessionPresence, density: Double) -> PageRect? {
+    let width = source.frame.width, height = source.frame.height
     guard width * density > 2048 || height * density > 2048
       || width * height * density * density > 4_194_304 else { return nil }
-    let topLeft = presence.camera.screenToWorld(.zero, viewport: presence.viewport)
-    let origin = origin(element: element, plane: plane, frame: frame)
-    let delta = origin.delta(to: topLeft)
-    let visible = CGRect(x: delta.x, y: delta.y, width: presence.viewport.x / presence.camera.scale,
-      height: presence.viewport.y / presence.camera.scale)
-      .intersection(CGRect(x: 0, y: 0, width: width, height: height))
+    let window=viewport(origin:origin,transform:transform,presence:presence)
+    let visible=window.intersection(CGRect(x:0,y:0,width:width,height:height))
     let step = 256 / density
     guard !visible.isNull, !visible.isEmpty else {
       // A finite metadata window includes overscan owners. Their nearest cell
       // stays bounded and cannot masquerade as coverage after entering view.
-      let x = min(max(0, floor(delta.x / step) * step), max(0, width - step))
-      let y = min(max(0, floor(delta.y / step) * step), max(0, height - step))
+      let x = min(max(0, floor(window.minX / step) * step), max(0, width - step))
+      let y = min(max(0, floor(window.minY / step) * step), max(0, height - step))
       return .init(x: x, y: y, width: min(step, width - x), height: min(step, height - y))
     }
     let x = max(0, floor(visible.minX / step) * step), y = max(0, floor(visible.minY / step) * step)

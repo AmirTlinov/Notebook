@@ -304,7 +304,7 @@ actor SceneCompositionSource {
   func elementAppearance(_ element: SpatialElement, layout: NotebookGraphicLayout?) throws -> NotebookElementAppearance? {
     let erasures = try elementErasures(element)
     guard !erasures.isEmpty else { return nil }
-    let frame = layout?.frame ?? .init(x: 0, y: 0, width: element.frame.width, height: element.frame.height)
+    let frame = layout?.frame ?? .init(x: 0, y: 0, width: element.basis?.size.x ?? element.frame.width, height: element.basis?.size.y ?? element.frame.height)
     let input = NotebookElementErasureCache.Input(graphic: element.graphic, layout: layout,
       size: .init(width: frame.width, height: frame.height), erasures: erasures)
     if let cached = preparedAppearance, cached.0 == input { return cached.1 }
@@ -341,6 +341,20 @@ actor SceneCompositionSource {
     }
     erasureProjection[element.surface, default: [:]][element.id] = value
     return value
+  }
+  func elementPlacement(_ element: SpatialElement, boardID: UUID) throws -> NotebookElementPlacement? {
+    switch origin {
+    case .sql(let store): return try checked(store) {
+      let target=element.surface.kind == .cover
+        ? CollaborationTarget(kind:.cover,id:element.surface.ownerID!,boardID:boardID) : .init(kind:.board,id:boardID)
+      let plane=element.surface.kind == .cover
+        ? SceneCompositionPlane.cover(boardID:boardID,itemID:element.surface.ownerID!) : .board(boardID)
+      return try $0.readElementPlacement(target:target,elementID:element.id,groupPoses:groupPoses[plane] ?? [:])
+    }
+    case .values(let index,_,_):
+      let plane=element.surface.kind == .cover ? SceneCompositionPlane.cover(boardID:boardID,itemID:element.surface.ownerID!) : .board(boardID)
+      return index.graphicGraph(boardID:boardID)?.projecting(placements:groupPoses[plane] ?? [:]).placement(element.id)
+    }
   }
   func graphicLayout(_ element: SpatialElement, boardID: UUID) throws -> NotebookGraphicLayout? {
     guard element.graphic != nil else { return nil }

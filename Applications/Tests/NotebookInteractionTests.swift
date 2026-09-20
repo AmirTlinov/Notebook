@@ -146,7 +146,7 @@ final class NotebookInteractionTests: XCTestCase {
     }
     let cover = NotebookInteractionTouchView(inputGate: NotebookInputGate())
     cover.frame = .init(x: 0, y: 0, width: 400, height: 400)
-    cover.passthroughFrames = WorkspaceItemCoverView.interactionPassthroughFrames(elements: elements)
+    cover.passthroughFrames = WorkspaceItemCoverView.interactionPassthroughFrames(elements:elements,graph:BoardDocument(freeItems:[],elements:elements,stamp:.init(counter:0,actor:id)).graphicGraph())
     for x in [20.0, 120, 220] { XCTAssertFalse(cover.point(inside: .init(x: x, y: 20), with: nil)) }
     XCTAssertTrue(cover.point(inside: .init(x: 320, y: 20), with: nil))
   }

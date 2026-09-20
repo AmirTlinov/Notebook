@@ -12,11 +12,12 @@ enum PageCompositionRenderer {
     let bounds = CGRect(x: region.x, y: region.y, width: region.width, height: region.height)
     let graphics = page.graphicPresentation.geometryIDs
     let graph = page.graphicGraph()
-    return page.elements.filter {
-      let frame = graph.resolve($0.id).layout?.frame ?? $0.frame
-      return $0.kind != .group && (elementID == nil || elementID == $0.id)
-        && ($0.graphic == nil || graphics.contains($0.id))
-        && ($0.graphic == nil || graph.resolve($0.id).layout != nil)
+    return page.elements.filter { element in
+      let presentation=element.graphic == nil ? graph.placement(element.id).map { NotebookElementPresentation(element,placement:$0) } : nil
+      guard let frame=graph.resolve(element.id).layout?.frame ?? presentation?.frame else { return false }
+      return element.kind != .group && (elementID == nil || elementID == element.id)
+        && (element.graphic == nil || graphics.contains(element.id))
+        && (element.graphic == nil || graph.resolve(element.id).layout != nil)
         && bounds.intersects(CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height))
     }
   }
@@ -48,34 +49,43 @@ enum PageCompositionRenderer {
       // The resolver returns a borrowed entry. A frozen selection owns its
       // lease, whereas the export resolver releases its previous entry.
       let layout = element.graphic == nil ? nil : graph.resolve(element.id).layout
-      let local = layout?.frame ?? element.frame
+      let presentation=element.graphic == nil ? graph.placement(element.id).map { NotebookElementPresentation(element,placement:$0) } : nil
+      guard let local=layout?.frame ?? presentation?.frame else { continue }
       let frame = CGRect(x: local.x - region.x, y: local.y - region.y,
         width: local.width, height: local.height)
       let cuts = erasures[element.id] ?? []
       // Export must not send a dense live triangle mask to ImageRenderer on
       // the main actor. Prepare the same canonical appearance as scene picking.
       let appearance = try await NotebookElementErasureCache.Input(graphic: element.graphic,
-        layout: layout, size: frame.size, erasures: cuts).prepared()
+        layout: layout, size: presentation?.bodySize ?? frame.size, erasures: cuts).prepared()
       if let graphic = element.graphic {
         try await canvas.drawView(NotebookGraphicView(graphic: graphic, layout:layout, erasures:cuts,appearance:appearance), size: frame.size, in: frame)
         continue
       }
       if element.kind == .nativeText {
-        try await canvas.drawView(NotebookNativeTextSnapshot(source:element.source,style:element.textStyle ?? .standard)
-          .erased(by:cuts,appearance:appearance),size:frame.size,in:frame)
+        try await canvas.drawView(NotebookPlacedElement(presentation:presentation) {
+          NotebookNativeTextSnapshot(source:element.source,style:element.textStyle ?? .standard).erased(by:cuts,appearance:appearance)
+        },size:frame.size,in:frame)
         continue
       }
-      let image = try await raster(element)
+      let image = try await raster(agentElementSnapshotSource(element))
+      guard image.pixelScale + 0.000_001 >= scale * (presentation?.maximumScale ?? 1) else {
+        throw SceneRenderError.snapshotPending("source_density")
+      }
       if let crop = image.source.captureRegion {
         let captured = CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height)
-        let requested = CGRect(x: -frame.minX, y: -frame.minY, width: region.width, height: region.height)
-          .intersection(CGRect(origin: .zero, size: frame.size))
+        guard let presentation else { throw SceneRenderError.snapshotPending("element_placement") }
+        let requested = CGRect(x:region.x,y:region.y,width:region.width,height:region.height)
+          .applying(presentation.placement.transform.inverted())
+          .intersection(CGRect(origin:.zero,size:presentation.bodySize))
         guard !requested.isNull, captured.contains(requested) else {
           throw SceneRenderError.snapshotPending("historical_region_unavailable")
         }
-        try await canvas.draw(image, in: captured.offsetBy(dx: frame.minX, dy: frame.minY), erasures: erasures[element.id] ?? [], elementFrame: frame)
+        let destination=captured.applying(presentation.transform)
+          .offsetBy(dx:frame.minX,dy:frame.minY)
+        try await canvas.draw(image, in: destination, erasures: erasures[element.id] ?? [], elementFrame: frame,presentation:presentation)
       } else {
-        try await canvas.draw(image, in: frame, erasures: erasures[element.id] ?? [])
+        try await canvas.draw(image, in: frame, erasures: erasures[element.id] ?? [],presentation:presentation)
       }
       canvas.recordDiagnostics(resources.diagnostics(for: [element]))
     }

@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 /// Data supplied by an untrusted program about one selected object. It never
 /// expands a reference's permission and is not a claim of scientific accuracy.
@@ -15,9 +16,10 @@ public struct ProgramSemanticSelection: Codable, Equatable, Sendable {
   public let values: [Measurement]
   public let model: JSONValue
 
-  public func mapped(from frame: PageRect, into region: PageRect) -> Self? {
-    let x = (frame.x + anchor.x * frame.width - region.x) / region.width
-    let y = (frame.y + anchor.y * frame.height - region.y) / region.height
+  public func mapped(from frame: PageRect, into region: PageRect, transform:CGAffineTransform = .identity) -> Self? {
+    let point=CGPoint(x:frame.x+anchor.x*frame.width,y:frame.y+anchor.y*frame.height).applying(transform)
+    let x = (point.x-region.x)/region.width
+    let y = (point.y-region.y)/region.height
     let result = Self(objectID: objectID, label: label, anchor: .init(x: x, y: y), values: values, model: model)
     return (try? result.validate()) != nil ? result : nil
   }

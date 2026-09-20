@@ -118,17 +118,17 @@ struct NotebookNativeElementTests {
 
   @Test func frameCommitKeepsCurrentSourceAndCannotRecreateADeletedSpatialElement() throws {
     try fixture { store, actor, boardID, element in
-      let board = try #require(store.loadBoard(items: store.loadIndex().items).board(boardID))
-      let identity = try #require(board.elementIdentityStamp(element.id))
-      _ = try updateTestNativeText(store:store,boardID: boardID, elementID: element.id, text: "Concurrent source", finish: false, actor: UUID())
-      let frame = SpatialRect(x: 60, y: 70, width: 200, height: 90)
-      let moved = try store.commitSpatialElementFrame(boardID: boardID, elementID: element.id, identity: identity,
-        original: element.frame, frame: frame, origin: nil, actor: actor)
-      #expect(moved?.element.frame == frame && moved?.element.source == "Concurrent source")
-      _ = try updateTestNativeText(store:store,boardID: boardID, elementID: element.id, text: "", finish: true, actor: actor)
+      let target = CollaborationTarget(kind:.cover,id:try #require(element.surface.ownerID),boardID:boardID)
+      let original = NotebookNativeElementSource(target:target,id:element.id,spatial:element)
+      _ = try updateTestNativeText(store:store,boardID:boardID,elementID:element.id,text:"Concurrent source",finish:false,actor:UUID())
+      let frame = PageRect(x:60,y:70,width:200,height:90)
+      #expect(throws:CollaborationError.self) { try moveTestElement(store:store,source:original,frame:frame,actor:actor) }
+      let current = try #require(try store.readSpatialElement(boardID:boardID,elementID:element.id))
+      let moved = try moveTestElement(store:store,source:.init(target:target,id:element.id,spatial:current),frame:frame,actor:actor)
+      #expect(moved.spatial?.frame == SpatialRect(x:60,y:70,width:200,height:90) && moved.spatial?.source == "Concurrent source")
+      _ = try updateTestNativeText(store:store,boardID:boardID,elementID:element.id,text:"",finish:true,actor:actor)
       let cursor = try store.currentChangeCursor()
-      #expect(try store.commitSpatialElementFrame(boardID: boardID, elementID: element.id, identity: identity,
-        original: frame, frame: element.frame, origin: nil, actor: actor) == nil)
+      #expect(throws:CollaborationError.self) { try moveTestElement(store:store,source:moved,frame:frame,actor:actor) }
       #expect(try store.currentChangeCursor() == cursor)
       #expect(try NotebookStore(root: store.root).readSpatialElement(boardID: boardID, elementID: element.id) == nil)
     }
@@ -186,4 +186,12 @@ func updateTestNativeText(store: NotebookStore, boardID: UUID, elementID: String
     values:remove ? [:] : ["source":.string(text),"html":.string(text)])],summary:"Test text edit",
     sources:[.init(target:target,id:elementID,spatial:element)],actor:actor)
   return result.sources.first?.spatial
+}
+
+/// Exercise the application's sole addressed geometry writer.
+@discardableResult
+func moveTestElement(store:NotebookStore,source:NotebookNativeElementSource,frame:PageRect,actor:UUID) throws -> NotebookNativeElementSource {
+  let result=try store.applyNativeElementEdits([.init(kind:.updateElement,target:source.target,id:source.id,
+    values:["frame":try .encode(frame)])],summary:"Test element move",sources:[source],actor:actor)
+  return try #require(result.sources.first)
 }

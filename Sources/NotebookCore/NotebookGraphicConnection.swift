@@ -223,7 +223,7 @@ public struct NotebookGraphicGraph: Sendable {
       self.surface = surface; self.shown = shown
     }
   }
-  struct Group: Sendable { let source:NotebookElementPlacement.Source;let surface:SurfaceID }
+  struct ElementSource: Sendable { let source:NotebookElementPlacement.Source;let surface:SurfaceID }
   private final class Source: @unchecked Sendable {
     private let lock=NSLock()
     private var visibility:[UUID:NotebookGraphicVisibility]=[:]
@@ -234,10 +234,11 @@ public struct NotebookGraphicGraph: Sendable {
       visibility[id]=value;return value
     }
     let nodes:[String:Node]
-    let groups:[String:Group]
-    init(_ nodes:[Node],groups:[String:Group]) {
+    let groups:[String:ElementSource]
+    let elements:[String:ElementSource]
+    init(_ nodes:[Node],groups:[String:ElementSource],elements:[String:ElementSource]) {
       self.nodes=Dictionary(nodes.map { (collaborationIdentity($0.id),$0) },uniquingKeysWith:{ first,_ in first })
-      self.groups=groups
+      self.groups=groups;self.elements=elements
     }
   }
   /// Only the small edit dictionaries belong to a new projection. The retained
@@ -305,15 +306,15 @@ public struct NotebookGraphicGraph: Sendable {
   public var nodes:Nodes { .init(graph:self) }
   public var groups:Groups { .init(graph:self) }
   public init(_ nodes:[Node]) { self.init(nodes,groupSources:[:]) }
-  init(_ nodes:[Node],groupSources:[String:Group],resolvers:[SurfaceID:NotebookElementPlacement.Resolver] = [:]) {
-    base=Source(nodes,groups:groupSources);projection=nil
+  init(_ nodes:[Node],groupSources:[String:ElementSource],elementSources:[String:ElementSource] = [:],resolvers:[SurfaceID:NotebookElementPlacement.Resolver] = [:]) {
+    base=Source(nodes,groups:groupSources,elements:elementSources);projection=nil
     baseResolver=Projection(sources:[:],graphics:[:],additions:[:],resolvers:resolvers)
   }
   private init(base:Source,projection:Projection?,baseResolver:Projection) { self.base=base;self.projection=projection;self.baseResolver=baseResolver }
   public func source(_ id:String) -> NotebookElementPlacement.Source? {
     let key=collaborationIdentity(id)
     if let override=projection?.sources[key] { return override }
-    if let group=base.groups[key] { return group.source }
+    if let element=base.groups[key] ?? base.elements[key] { return element.source }
     guard let node=projection?.additions[key] ?? base.nodes[key] else { return nil }
     return .init(frame:node.frame,origin:node.placement.parentID == nil ? node.origin : .zero,
       parentID:node.placement.parentID,basis:node.placement.basis)
@@ -331,7 +332,12 @@ public struct NotebookGraphicGraph: Sendable {
     guard let source=source(key),let placement=projection.placement(key,source:source,surface:raw.surface,base:base) else { return nil }
     return .init(id:raw.id,graphic:graphic,frame:source.frame,surface:raw.surface,shown:raw.shown && graphic.showsGeometry,placement:placement)
   }
-  public func placement(_ id:String) -> NotebookElementPlacement? { node(id)?.placement ?? groups[id] }
+  public func placement(_ id:String) -> NotebookElementPlacement? {
+    if let placement=node(id)?.placement ?? groups[id] { return placement }
+    let key=collaborationIdentity(id)
+    guard let element=base.elements[key],let source=source(key) else { return nil }
+    return placementResolver.placement(key,source:source,surface:element.surface,base:base)
+  }
   public func projecting(placements:[String:NotebookElementPlacement.Source] = [:],graphics:[String:NotebookGraphic] = [:],adding:[Node] = []) -> Self {
     guard !placements.isEmpty || !graphics.isEmpty || !adding.isEmpty else { return self }
     var sources=projection?.sources ?? [:],bodies=projection?.graphics ?? [:],additions=projection?.additions ?? [:]
@@ -575,7 +581,9 @@ extension PageDocument {
       guard let placement=try? resolver.resolve(element.id,source:source) else { return nil }
       return .init(id:element.id,graphic:graphic,frame:source.frame,surface:.page(id),shown:shown.contains(element.id),placement:placement)
     }
-    return .init(nodes,groupSources:groups.mapValues { .init(source:$0,surface:.page(id)) },resolvers:[.page(id):resolver])
+    return .init(nodes,groupSources:groups.mapValues { .init(source:$0,surface:.page(id)) },elementSources:Dictionary(elements.filter { $0.kind != .group && $0.graphic == nil }.map {
+      (collaborationIdentity($0.id),.init(source:.init(frame:$0.frame,parentID:$0.parentID,basis:$0.basis),surface:.page(id)))
+    },uniquingKeysWith:{ first,_ in first }),resolvers:[.page(id):resolver])
   }
 }
 extension BoardDocument {
@@ -602,6 +610,9 @@ extension BoardDocument {
     return .init(nodes,groupSources:groups.mapValues { group in
       .init(source:.init(frame:.init(x:group.frame.x,y:group.frame.y,width:group.frame.width,height:group.frame.height),
         origin:group.worldOrigin ?? .zero,parentID:group.parentID,basis:group.basis,isGroup:true),surface:group.surface)
-    },resolvers:resolvers)
+    },elementSources:Dictionary(elements.filter { $0.kind != .group && $0.graphic == nil }.map {
+      (collaborationIdentity($0.id),.init(source:.init(frame:.init(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height),
+        origin:$0.worldOrigin ?? .zero,parentID:$0.parentID,basis:$0.basis),surface:$0.surface))
+    },uniquingKeysWith:{ first,_ in first }),resolvers:resolvers)
   }
 }
