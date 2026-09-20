@@ -48,6 +48,87 @@ import AppKit
     }
   }
 
+  func testUncommittedWholePoseMovesPassiveTilesWithoutMovingStoredChildren() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("group-tile-pose-\(UUID())")
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store=NotebookStore(root:root),actor=UUID(),header=try store.initializeWorkspace(actor:actor,pageSize:.init(width:834,height:1194))
+    let target=CollaborationTarget(kind:.board,id:header.rootBoardID),origin=WorldPoint(tileX:1_000_000_000_000,tileY:-1_000_000_000_000,localX:3,localY:7)
+    let basis=NotebookElementBasis(size:.init(x:200,y:120),transform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0))
+    var operations:[CollaborationOperation]=[
+      .init(kind:.insertElement,target:target,id:"whole",values:["kind":.string("group"),"source":.string(""),"frame":try .encode(PageRect(x:40,y:30,width:240,height:600)),"worldOrigin":try .encode(origin),"basis":try .encode(basis)]),
+      .init(kind:.insertElement,target:target,id:"shape",values:["kind":.string("graphic"),"source":.string(""),"frame":try .encode(PageRect(x:10,y:20,width:100,height:60)),"worldOrigin":try .encode(WorldPoint.zero),"parentID":.string("whole"),
+        "graphic":try .encode(NotebookGraphic(shape:.rectangle,style:.init(strokeWidth:8,fill:.black)))])]
+    for (id,x) in [("old-neighbor",160.0),("unaffected",15_000)] {
+      operations.append(.init(kind:.insertElement,target:target,id:id,values:["kind":.string("graphic"),"source":.string(""),
+        "frame":try .encode(PageRect(x:x,y:x,width:10,height:10)),"worldOrigin":try .encode(origin),
+        "graphic":try .encode(NotebookGraphic(shape:.rectangle,style:.init(fill:.black)))]))
+    }
+    _ = try store.applyNativeElementEdits(operations,summary:"Целое",sources:operations.map { .init(target:target,id:$0.id!) },actor:actor)
+    let current=try store.workspaceHeader(),whole=try XCTUnwrap(store.readSpatialElement(boardID:target.id,elementID:"whole"))
+    let child=try store.readSpatialElement(boardID:target.id,elementID:"shape")
+    let pose=NotebookElementPlacement.Source(frame:.init(x:4040,y:4030,width:240,height:600),origin:origin,basis:basis,isGroup:true)
+    let projected=SceneCompositionSource(store:store,revision:current.cursor,workspaceID:current.workspaceID,groupPoses:[.board(target.id):["whole":pose]])
+    let original=SceneCompositionSource(store:store,revision:current.cursor,workspaceID:current.workspaceID)
+    let presence=SessionPresence(boardID:target.id,mode:.board,camera:.init(center:origin.offsetBy(x:4200,y:4400),scale:1),viewport:.init(x:400,y:800))
+    func key(_ point:WorldPoint) throws -> SceneCompositionTileKey {
+      .init(workspaceID:current.workspaceID,revision:current.cursor,plane:.board(target.id),tile:try XCTUnwrap(CompositionTile(containing:point,level:0)),
+        range:.whole(.elements),presentationScale:1,viewportWidth:400,viewportHeight:800,focusedItemID:nil,mode:"board")
+    }
+    let old=try key(origin.offsetBy(x:180,y:150)),new=try key(origin.offsetBy(x:4180,y:4150)),far=try key(origin.offsetBy(x:15005,y:15005))
+    let oldTiles=try await original.tilesRequiringPaint([old,new,far]),newTiles=try await projected.tilesRequiringPaint([old,new,far])
+    XCTAssertEqual(oldTiles.map(\.tile),[old.tile,far.tile]);XCTAssertEqual(newTiles.map(\.tile),[old.tile,new.tile,far.tile])
+    XCTAssertNotEqual(oldTiles.first?.pixelIdentity,newTiles.first?.pixelIdentity,"The old area must remove the departed whole even though another figure still occupies the tile")
+    XCTAssertEqual(oldTiles.last?.pixelIdentity,newTiles.last?.pixelIdentity,"An unrelated populated tile keeps its existing pixels")
+    let resources=SceneRenderResources()
+    let before=try await SceneCompositionRenderer(source:projected,resources:resources).render(presence:presence,scale:1)
+    let shown=try pixels(before.png);XCTAssertTrue(dark(shown,180,150));XCTAssertTrue(dark(shown,180,285))
+    let raster=try await SceneCompositionRenderer(source:projected,resources:resources).renderTile(key:try XCTUnwrap(newTiles.first { $0.tile == new.tile }),presentation:presence)
+    defer { raster.release() }
+    func rgba(_ lease:RasterLease) throws -> Data {
+      let image=try XCTUnwrap(lease.sampledImage(for:.init(width:512,height:512)))
+      let context=try XCTUnwrap(CGContext(data:nil,width:image.width,height:image.height,bitsPerComponent:8,bytesPerRow:image.width*4,
+        space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.draw(image,in:.init(x:0,y:0,width:image.width,height:image.height))
+      return Data(bytes:try XCTUnwrap(context.data),count:image.width*image.height*4)
+    }
+    let previewPixels=try rgba(raster)
+    let workspace=try store.loadIndex(),hierarchy=try store.loadBoard(items:workspace.items)
+    let index=WorkspaceSceneIndex(workspace:workspace,hierarchy:hierarchy,paperSizes:[:])
+    let frame=WorkspaceSceneFrame(index:index,presence:presence,portalCamera:{ _ in nil },pinned:[])
+    let tiles=SceneCompositionTiles(resources:resources)
+    defer { tiles.cancelPreparation() }
+    func publish(_ source:SceneCompositionSource) async throws -> SceneCompositionCohort {
+      tiles.prepare(source:source,presence:presence,frame:frame,pinned:[],displayScale:1)
+      let deadline=ContinuousClock.now + .seconds(5)
+      while tiles.isPreparing,ContinuousClock.now<deadline { try await Task.sleep(for:.milliseconds(5)) }
+      XCTAssertNil(tiles.failure);XCTAssertFalse(tiles.isPreparing)
+      return try XCTUnwrap(tiles.published)
+    }
+    let oldCut=try await publish(original),newCut=try await publish(projected)
+    XCTAssertEqual(newCut.plan.groupPoses,[.board(target.id):["whole":pose]])
+    XCTAssertNotEqual(oldCut.geometryID,newCut.geometryID,"A pose-only source cut must not reuse the previous live geometry identity")
+    XCTAssertTrue(newCut.plan.presentedOwners.isEmpty,"No member is promoted merely to move the whole")
+    XCTAssertFalse(newCut.rasters.isEmpty,"The moved group enters the ordinary passive tile coverage")
+    let restoredCut=try await publish(original)
+    XCTAssertTrue(restoredCut.plan.groupPoses.isEmpty)
+    XCTAssertNotEqual(restoredCut.geometryID,newCut.geometryID)
+    await tiles.stop()
+    XCTAssertTrue(stride(from:3,to:previewPixels.count,by:4).contains { previewPixels[$0]>200 })
+    XCTAssertEqual(try store.currentChangeCursor(),current.cursor)
+    XCTAssertEqual(try store.readSpatialElement(boardID:target.id,elementID:"whole"),whole)
+    XCTAssertEqual(try store.readSpatialElement(boardID:target.id,elementID:"shape"),child)
+    _ = try store.applyNativeElementEdits([.init(kind:.updateElement,target:target,id:"whole",values:["frame":try .encode(pose.frame)])],
+      summary:"Переместить целое",sources:[.init(target:target,id:"whole",spatial:whole)],actor:actor)
+    let saved=try store.workspaceHeader(),committed=SceneCompositionSource(store:store,revision:saved.cursor,workspaceID:saved.workspaceID)
+    let after=try await SceneCompositionRenderer(source:committed,resources:resources).render(presence:presence,scale:1)
+    XCTAssertEqual(try pixels(after.png),shown,"The immutable preview uses the same geometry as the accepted pose")
+    let savedRaster=try await SceneCompositionRenderer(source:committed,resources:resources).renderTile(key:new.atRevision(saved.cursor),presentation:presence)
+    defer { savedRaster.release() }
+    XCTAssertEqual(try rgba(savedRaster),previewPixels,"Passive tile pixels agree before and after the one-descriptor commit")
+    XCTAssertEqual(try store.readSpatialElement(boardID:target.id,elementID:"shape"),child)
+    let proof=XCTAttachment(data:before.png,uniformTypeIdentifier:"public.png");proof.name="group-uncommitted-passive-pose";proof.lifetime = .keepAlways;add(proof)
+  }
+
   func testMaskCacheKeepsWholeTranslationButNotANewLocalBasis() throws {
     let graphic = NotebookGraphic(shape:.rectangle,style:.init(strokeWidth:8))
     func input(_ transform: NotebookGraphicTransform,x: Double) throws -> NotebookElementErasureCache.Input {
@@ -63,6 +144,29 @@ import AppKit
     XCTAssertNotNil(first.layout?.projection)
     let reflection = try input(.init(a:-1,b:0,c:0,d:1,tx:1,ty:0),x:40)
     XCTAssertNotEqual(first,reflection,"Same size is not the same rotated mask")
+  }
+
+  func testCoverWholePoseInvalidatesItsContainingBoardTile() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("cover-pose-key-\(UUID())")
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store=NotebookStore(root:root),actor=UUID(),header=try store.initializeWorkspace(actor:actor,pageSize:.init(width:834,height:1194))
+    let item=try XCTUnwrap(store.loadIndex().selectedItemID),target=CollaborationTarget(kind:.cover,id:item,boardID:header.rootBoardID)
+    let basis=NotebookElementBasis(size:.init(x:100,y:100))
+    let operations:[CollaborationOperation]=[
+      .init(kind:.insertElement,target:target,id:"whole",values:["kind":.string("group"),"source":.string(""),"frame":try .encode(PageRect(x:100,y:100,width:100,height:100)),"basis":try .encode(basis)]),
+      .init(kind:.insertElement,target:target,id:"child",values:["kind":.string("graphic"),"source":.string(""),"frame":try .encode(PageRect(x:0,y:0,width:50,height:50)),"parentID":.string("whole"),"graphic":try .encode(NotebookGraphic(shape:.rectangle,style:.init(fill:.black)))])]
+    _ = try store.applyNativeElementEdits(operations,summary:"Целое на обложке",sources:operations.map { .init(target:target,id:$0.id!) },actor:actor)
+    let cut=try store.workspaceHeader()
+    let original=SceneCompositionSource(store:store,revision:cut.cursor,workspaceID:cut.workspaceID)
+    let posed=SceneCompositionSource(store:store,revision:cut.cursor,workspaceID:cut.workspaceID,groupPoses:[.cover(boardID:header.rootBoardID,itemID:item):[
+      "whole":.init(frame:.init(x:300,y:100,width:100,height:100),basis:basis,isGroup:true)]])
+    let key=SceneCompositionTileKey(workspaceID:cut.workspaceID,revision:cut.cursor,plane:.board(header.rootBoardID),
+      tile:try XCTUnwrap(CompositionTile(containing:.zero,level:0)),range:.whole(.covers),presentationScale:1,
+      viewportWidth:834,viewportHeight:1194,focusedItemID:nil,mode:"board")
+    let before=try await original.tilesRequiringPaint([key]),after=try await posed.tilesRequiringPaint([key])
+    XCTAssertEqual(before.count,1);XCTAssertEqual(after.count,1)
+    XCTAssertNotEqual(before.first?.pixelIdentity,after.first?.pixelIdentity,
+      "The containing board must not reuse old cover pixels merely because the board itself has no posed groups")
   }
 
   func testMeasuredEraserCapturesTheModelsWholeBasisNotTheLocalFrame() async throws {

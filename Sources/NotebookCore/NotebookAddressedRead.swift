@@ -445,14 +445,17 @@ extension NotebookStore {
     }
   }
 
-  public func readScenePaintOrder(boardID: UUID, coverID: UUID? = nil, bounds: WorkspaceSpatialBounds, after: NotebookScenePaintCursor? = nil, limit: Int = 32) throws -> NotebookScenePaintPage {
+  public func readScenePaintOrder(boardID: UUID, coverID: UUID? = nil, bounds: WorkspaceSpatialBounds, after: NotebookScenePaintCursor? = nil, limit: Int = 32,
+    groupPoses:[String:NotebookElementPlacement.Source] = [:]) throws -> NotebookScenePaintPage {
     guard (1...32).contains(limit) else { throw NotebookStorageError.limitExceeded("paint_page") }
     return try readTransaction { _ in
       try requireLiveBoard(boardID)
       if let coverID, try ownerBoardID(of: coverID) != boardID { throw CocoaError(.fileNoSuchFile) }
-      let revision = try currentChangeCursor(), hash = try collaborationHash(["bounds": try JSONValue.encode(bounds), "coverID": coverID.map { .string($0.uuidString.lowercased()) } ?? .null])
+      let target=coverID.map { CollaborationTarget(kind:.cover,id:$0,boardID:boardID) } ?? .init(kind:.board,id:boardID)
+      let poses=try checkedGroupPoses(groupPoses,target:target)
+      let revision = try currentChangeCursor(), hash = try collaborationHash(["bounds": try JSONValue.encode(bounds), "coverID": coverID.map { .string($0.uuidString.lowercased()) } ?? .null, "groupPoses":try .encode(poses)])
       if let after, after.revision != revision || after.boardID != boardID || after.boundsHash != hash { throw NotebookStorageError.transactionConflict }
-      let rows = try spatialRows(boardID: boardID, coverID: coverID, bounds: bounds, limit: limit + 1, after: after), included = Array(rows.prefix(limit))
+      let rows = try spatialRows(boardID: boardID, coverID: coverID, bounds: bounds, limit: limit + 1, after: after,groupPoses:poses), included = Array(rows.prefix(limit))
       func number(_ value: NotebookSQLValue) -> Double { if case .real(let number) = value { return number }; return Double(value.integer ?? 0) }
       let entries = try included.map { row -> WorkspaceSpatialEntry in
         let id: WorkspaceSpatialID

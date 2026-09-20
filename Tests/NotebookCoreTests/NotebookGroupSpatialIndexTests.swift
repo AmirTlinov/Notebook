@@ -6,6 +6,70 @@ import Testing
 
 @Suite("Group-local spatial index")
 struct NotebookGroupSpatialIndexTests {
+  @Test func readOnlyWholePosesQueryNewAndOldWindowsWithoutTouchingSources() throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("group-query-pose-\(UUID())")
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store=NotebookStore(root:root),actor=UUID(),header=try store.initializeWorkspace(actor:actor,pageSize:.init(width:834,height:1194))
+    let target=CollaborationTarget(kind:.board,id:header.rootBoardID)
+    let origin=WorldPoint(tileX:1_000_000_000_000,tileY:-1_000_000_000_000,localX:3,localY:7)
+    func source(_ id:String) throws -> NotebookNativeElementSource {
+      try .init(target:target,id:id,spatial:store.readSpatialElement(boardID:target.id,elementID:id))
+    }
+    for (id,x) in [("a",10.0),("middle",1230),("b",100),("outside",900)] {
+      _ = try store.applyNativeElementEdits([.init(kind:.insertElement,target:target,id:id,values:[
+        "kind":.string("graphic"),"source":.string(""),"worldOrigin":try .encode(origin),
+        "frame":try .encode(PageRect(x:x,y:20,width:30,height:40)),"graphic":try .encode(NotebookGraphic(shape:.rectangle))])],
+        summary:"Фигура",sources:[.init(target:target,id:id)],actor:actor)
+    }
+    _ = try store.groupNativeElements([source("a"),source("b")],id:"inner",actor:actor)
+    _ = try store.groupNativeElements([source("inner"),source("outside")],id:"outer",actor:actor)
+    let link=NotebookGraphic(shape:.connector,connection:.init(start:.init(point:.zero,binding:.init(elementID:"a")),
+      end:.init(point:.zero,binding:.init(elementID:"middle"))))
+    _ = try store.applyNativeElementEdits([.init(kind:.insertElement,target:target,id:"link",values:["kind":.string("graphic"),
+      "source":.string(""),"worldOrigin":try .encode(origin),"frame":try .encode(PageRect(x:0,y:0,width:100,height:100)),"graphic":try .encode(link)])],
+      summary:"Внешняя связь",sources:[.init(target:target,id:"link")],actor:actor)
+    let workspace=try store.loadIndex(),board=try #require(try store.loadBoard(items:workspace.items).board(target.id)),base=board.graphicGraph()
+    var pose=try #require(base.source("inner"));pose.frame = .init(x:1200,y:200,width:200,height:120)
+    pose.basis = .init(size:try #require(pose.basis).size,transform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0))
+    let poses=["inner":pose],projected=base.projecting(placements:poses),revision=try store.currentChangeCursor()
+    let region=WorkspaceSpatialBounds(origin:origin.offsetBy(x:-50,y:-100),width:1800,height:1000)
+    var entries:[WorkspaceSpatialEntry]=[],cursor:NotebookScenePaintCursor?
+    repeat {
+      let page=try store.readScenePaintOrder(boardID:target.id,bounds:region,after:cursor,limit:1,groupPoses:poses)
+      entries += page.entries;cursor=page.next
+    } while cursor != nil
+    #expect(entries.map(\.id) == ["a","middle","b","outside","link"].map(WorkspaceSpatialID.element))
+    for entry in entries {
+      guard case .element(let id)=entry.id else { continue }
+      let layout:NotebookGraphicLayout=try #require(projected.resolve(id).layout)
+      #expect(try store.readGraphicResolution(target:target,elementID:id,groupPoses:poses).layout == layout)
+      #expect(entry.bounds.origin == layout.origin.offsetBy(x:layout.frame.x,y:layout.frame.y))
+      let tiny=WorkspaceSpatialBounds(origin:entry.bounds.origin,width:entry.bounds.width,height:entry.bounds.height)
+      #expect(try store.readScenePaintOrder(boardID:target.id,bounds:tiny,groupPoses:poses).entries.contains { $0.id == entry.id })
+    }
+    let first=try store.readScenePaintOrder(boardID:target.id,bounds:region,limit:1,groupPoses:poses)
+    let continuation=try #require(first.next)
+    #expect(throws:NotebookStorageError.self) { try store.readScenePaintOrder(boardID:target.id,bounds:region,after:continuation) }
+    let a=try #require(base.resolve("a").layout)
+    let old=WorkspaceSpatialBounds(origin:a.origin.offsetBy(x:a.frame.x,y:a.frame.y),width:a.frame.width,height:a.frame.height)
+    #expect(try !store.readScenePaintOrder(boardID:target.id,bounds:old,groupPoses:poses).entries.contains { $0.id == .element("a") })
+    var outer=try #require(base.source("outer"));outer.frame = .init(x:8000,y:2000,width:outer.frame.width*2,height:outer.frame.height*2)
+    let simultaneous=["inner":pose,"outer":outer],both=base.projecting(placements:simultaneous)
+    let damage=try store.readGroupPoseDamage(boardID:target.id,groupPoses:simultaneous)
+    for graph in [base,both] {
+      for id in ["a","b","outside","link"] {
+        let layout=try #require(graph.resolve(id).layout)
+        let bounds=WorkspaceSpatialBounds(origin:layout.origin.offsetBy(x:layout.frame.x,y:layout.frame.y),width:layout.frame.width,height:layout.frame.height)
+        #expect(damage.contains { $0.contains(bounds) },"Old and new whole bounds must include independently moved descendants and external links")
+      }
+    }
+    #expect(!damage.contains { $0.intersects(.init(origin:origin.offsetBy(x:-10000,y:-10000),width:100,height:100)) })
+    var invalid=pose;invalid.parentID=nil
+    #expect(throws:NotebookStorageError.self) { try store.readScenePaintOrder(boardID:target.id,bounds:region,groupPoses:["inner":invalid]) }
+    #expect(try store.currentChangeCursor() == revision)
+    #expect(try store.loadBoard(items:workspace.items).board(target.id) == board)
+  }
+
   @Test func unrepresentableDerivedBoundsRefuseThePoseWithoutArithmeticTraps() throws {
     let root=FileManager.default.temporaryDirectory.appendingPathComponent("group-limits-\(UUID())")
     defer { try? FileManager.default.removeItem(at:root) }

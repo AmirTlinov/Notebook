@@ -159,6 +159,7 @@ struct SceneCompositionPlan: Sendable {
   let tiles: [SceneCompositionTileKey]
   var requiredPixelDensity: [SceneCompositionPlane: Double] = [:]
   var vectorRuns: [SceneCompositionVectorRun] = []
+  var groupPoses:[SceneCompositionPlane:[String:NotebookElementPlacement.Source]] = [:]
   var presentedOwners: [SceneCompositionLiveOwner] { liveOwners + vectorRuns.flatMap(\.owners) }
   var primitiveCount: Int { tiles.count + liveOwners.count + vectorRuns.count + inkBoardIDs.count }
   /// Every resource retry removes an optional owner or a static tile. Keeping
@@ -206,14 +207,14 @@ struct SceneCompositionPlan: Sendable {
   /// Coverage and painter boundaries remain intact even where this exact
   /// source revision proves transparent pixels need no backing allocation.
   func removingEmptyTiles(source: SceneCompositionSource) async throws -> Self {
-    guard source.revision == revision, source.workspaceID == workspaceID else {
+    guard source.revision == revision, source.workspaceID == workspaceID,source.groupPoses == groupPoses else {
       throw NotebookStorageError.transactionConflict
     }
     let populated = try await source.tilesRequiringPaint(tiles)
     return .init(revision: revision, workspaceID: workspaceID, rootBoardID: rootBoardID,
       inkBoardIDs: inkBoardIDs, liveOwners: liveOwners, protectedOwners: protectedOwners,
       bands: bands, coverage: coverage, presentations: presentations, tiles: populated,
-      requiredPixelDensity: requiredPixelDensity, vectorRuns: vectorRuns)
+      requiredPixelDensity: requiredPixelDensity, vectorRuns: vectorRuns,groupPoses:groupPoses)
   }
 
   /// Empty painter ranges and cells preserve order and coverage without a
@@ -288,7 +289,7 @@ struct SceneCompositionPlan: Sendable {
     let result = Self(revision: revision, workspaceID: workspaceID, rootBoardID: rootBoardID,
       inkBoardIDs: inkBoardIDs, liveOwners: liveOwners, protectedOwners: protectedOwners,
       bands: bands, coverage: coverage, presentations: presentations, tiles: tiles,
-      requiredPixelDensity: requiredPixelDensity, vectorRuns: vectorRuns)
+      requiredPixelDensity: requiredPixelDensity, vectorRuns: vectorRuns,groupPoses:groupPoses)
     guard result.primitiveCount <= Self.maximumPrimitives else { throw SceneRenderError.resourceLimit }
     return result
   }
@@ -372,7 +373,7 @@ struct SceneCompositionPlan: Sendable {
     while true {
       do {
         let assembled = try assemble(revision: source.revision, workspaceID: source.workspaceID, owners: owners, presence: presence,
-          frame: frame, pinned: pinned, protected: protected, displayScale: displayScale, previous: previous, vectorRuns: vectorRuns)
+          frame: frame, pinned: pinned, protected: protected, displayScale: displayScale, previous: previous, vectorRuns: vectorRuns,groupPoses:source.groupPoses)
         return try await assembled.allocatingPopulatedCoverage(source: source, presence: presence,
           frame: frame, displayScale: displayScale, previous: previous)
       } catch {
@@ -405,7 +406,7 @@ struct SceneCompositionPlan: Sendable {
       let result = try Self.assemble(revision: revision, workspaceID: workspaceID,
         owners: owners, presence: presence, frame: frame,
         pinned: Set(protectedOwners.map(\.id)), protected: protectedOwners,
-        displayScale: displayScale, previous: self, vectorRuns: vectors, preservesCoverageDensity: true)
+        displayScale: displayScale, previous: self, vectorRuns: vectors,groupPoses:groupPoses, preservesCoverageDensity: true)
       guard result.reductionPotential < reductionPotential else { return nil }
       guard result.tiles.count <= Self.maximumTiles, result.primitiveCount <= Self.maximumPrimitives else { return nil }
       return result
@@ -424,7 +425,7 @@ struct SceneCompositionPlan: Sendable {
       let result = try Self.assemble(revision: revision, workspaceID: workspaceID,
         owners: liveOwners, presence: presence, frame: frame,
         pinned: Set(protectedOwners.map(\.id)), protected: protectedOwners,
-        displayScale: displayScale, previous: self, vectorRuns: vectorRuns, preservesCoverageDensity: true,
+        displayScale: displayScale, previous: self, vectorRuns: vectorRuns,groupPoses:groupPoses, preservesCoverageDensity: true,
         tileAllowance: coverageTileCount - 1)
       guard result.coverageTileCount < coverageTileCount, result.liveOwners == liveOwners,
         result.protectedOwners == protectedOwners else { return nil }
@@ -452,6 +453,7 @@ struct SceneCompositionPlan: Sendable {
     presence: SessionPresence, frame: WorkspaceSceneFrame, pinned: Set<WorkspaceSpatialID>,
     protected: Set<SceneCompositionLiveOwner>, displayScale: Double, previous: Self?,
     vectorRuns requestedVectors: [SceneCompositionVectorRun] = [],
+    groupPoses:[SceneCompositionPlane:[String:NotebookElementPlacement.Source]] = [:],
     preservesCoverageDensity: Bool = false, tileAllowance: Int = maximumTiles) throws -> Self {
     guard (1...maximumTiles).contains(tileAllowance) else { throw SceneRenderError.resourceLimit }
     var owners = requestedOwners
@@ -573,7 +575,7 @@ struct SceneCompositionPlan: Sendable {
       return presentations[.board(id)] != nil
     }
     return .init(revision: revision, workspaceID: workspaceID, rootBoardID: presence.boardID, inkBoardIDs: inkBoardIDs, liveOwners: owners, protectedOwners: protected.union(apertures), bands: bands,
-      coverage: coverage, presentations: presentations, tiles: tiles, requiredPixelDensity: density, vectorRuns: vectorRuns)
+      coverage: coverage, presentations: presentations, tiles: tiles, requiredPixelDensity: density, vectorRuns: vectorRuns,groupPoses:groupPoses)
   }
 }
 
@@ -648,6 +650,7 @@ final class SceneCompositionCohort {
   func sharesGeometry(with plan: SceneCompositionPlan, frame: WorkspaceSceneFrame) -> Bool {
     guard self.plan.workspaceID == plan.workspaceID, self.plan.rootBoardID == plan.rootBoardID,
       self.plan.liveOwners == plan.liveOwners, self.plan.vectorRuns == plan.vectorRuns, self.plan.inkBoardIDs == plan.inkBoardIDs,
+      self.plan.groupPoses == plan.groupPoses,
       Set(self.plan.presentations.keys) == Set(plan.presentations.keys) else { return false }
     for owner in plan.presentedOwners {
       switch owner.id {
@@ -900,7 +903,7 @@ final class SceneCompositionTiles {
       published?.containsSourceWindows(presence: presence, frame: frame, displayScale: displayScale,
         refinesDetails: request.refinesDetails) == true,
       published?.requestedSources == sources,
-      plan.revision == source.revision, plan.workspaceID == source.workspaceID,
+      plan.revision == source.revision, plan.workspaceID == source.workspaceID,plan.groupPoses == source.groupPoses,
       Self.covers(plan, presence: presence, pinned: pinned, refinesDetails: request.refinesDetails) { return }
     cancelPreparation()
     let id = requestID

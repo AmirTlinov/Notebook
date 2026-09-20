@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import NotebookCore
 
 /// Painter positions have the same stable ID tie break as the SQL scene index.
@@ -74,6 +75,7 @@ struct SceneCompositionLiveData: Sendable {
 actor SceneCompositionSource {
   let revision: UInt64
   let workspaceID: UUID
+  let groupPoses:[SceneCompositionPlane:[String:NotebookElementPlacement.Source]]
   private enum Origin: Sendable {
     case sql(NotebookStore)
     case values(WorkspaceSceneIndex, BoardHierarchy, SpatialInkJournal)
@@ -83,13 +85,16 @@ actor SceneCompositionSource {
   // revisit it; a source reader must not accumulate an archive of derived paths.
   private var preparedAppearance: (NotebookElementErasureCache.Input, NotebookElementAppearance)?
   private var paintIdentities: [SceneCompositionPlane: String] = [:]
+  private var posePaint: [SceneCompositionPlane:(identity:String,damage:[WorkspaceSpatialBounds])] = [:]
+  private var nestedPoseIdentity: String?
   private var erasureProjection: [SurfaceID: [String: [InkElementErasure]]] = [:]
 
-  init(store: NotebookStore, revision: UInt64, workspaceID: UUID) {
-    origin = .sql(store); self.revision = revision; self.workspaceID = workspaceID
+  init(store: NotebookStore, revision: UInt64, workspaceID: UUID,
+    groupPoses:[SceneCompositionPlane:[String:NotebookElementPlacement.Source]] = [:]) {
+    origin = .sql(store); self.revision = revision; self.workspaceID = workspaceID;self.groupPoses=groupPoses.filter { !$0.value.isEmpty }
   }
   init(index: WorkspaceSceneIndex, hierarchy: BoardHierarchy, journal: SpatialInkJournal, revision: UInt64 = 0) {
-    origin = .values(index, hierarchy, journal); self.revision = revision; workspaceID = index.generationID
+    origin = .values(index, hierarchy, journal); self.revision = revision; workspaceID = index.generationID;groupPoses=[:]
   }
 
   func programStore() -> NotebookStore? { if case .sql(let store) = origin { store } else { nil } }
@@ -134,7 +139,7 @@ actor SceneCompositionSource {
   }
   func liveData(plan: SceneCompositionPlan, presence: SessionPresence, frame: WorkspaceSceneFrame,
     previous: (plan: SceneCompositionPlan, data: SceneCompositionLiveData)? = nil) throws -> SceneCompositionLiveData {
-    guard plan.revision == revision, plan.workspaceID == workspaceID else { throw NotebookStorageError.transactionConflict }
+    guard plan.revision == revision, plan.workspaceID == workspaceID,plan.groupPoses == groupPoses else { throw NotebookStorageError.transactionConflict }
     let itemIDs = Set(plan.liveOwners.compactMap { owner -> UUID? in
       if case .item(let id) = owner.id { return id }; return nil
     }).sorted { $0.uuidString < $1.uuidString }
@@ -219,7 +224,7 @@ actor SceneCompositionSource {
     to plan: SceneCompositionPlan, liveData data: SceneCompositionLiveData) throws -> Bool {
     guard oldPlan.workspaceID == workspaceID, plan.workspaceID == workspaceID,
       plan.revision == revision, oldPlan.revision <= revision,
-      oldPlan.rootBoardID == plan.rootBoardID else { return false }
+      oldPlan.rootBoardID == plan.rootBoardID,oldPlan.groupPoses == groupPoses,plan.groupPoses == groupPoses else { return false }
     if oldPlan.revision == revision { return true }
     guard case .sql(let store) = origin else { return false }
     return try checked(store) { store in
@@ -344,7 +349,8 @@ actor SceneCompositionSource {
       let target = element.surface.kind == .cover
         ? CollaborationTarget(kind:.cover,id:element.surface.ownerID!,boardID:boardID)
         : CollaborationTarget(kind:.board,id:boardID)
-      return try $0.readGraphicResolution(target:target,elementID:element.id).layout
+      let plane=element.surface.kind == .cover ? SceneCompositionPlane.cover(boardID:boardID,itemID:element.surface.ownerID!) : .board(boardID)
+      return try $0.readGraphicResolution(target:target,elementID:element.id,groupPoses:groupPoses[plane] ?? [:]).layout
     }
     case .values(let index, _, _): return index.graphicLayout(id:element.id,boardID:boardID)
     }
@@ -378,7 +384,8 @@ actor SceneCompositionSource {
       return try checked(store) { store in
         var cursor: NotebookScenePaintCursor?
         if let after { guard case .sql(let value) = after else { throw NotebookStorageError.transactionConflict }; cursor = value }
-        let page = try store.readScenePaintOrder(boardID: boardID, coverID: coverID, bounds: bounds, after: cursor, limit: 32)
+        let plane=coverID.map { SceneCompositionPlane.cover(boardID:boardID,itemID:$0) } ?? .board(boardID)
+        let page = try store.readScenePaintOrder(boardID: boardID, coverID: coverID, bounds: bounds, after: cursor, limit: 32,groupPoses:groupPoses[plane] ?? [:])
         return .init(entries: page.entries, next: page.next.map(SceneCompositionReadCursor.sql))
       }
     case .values(let index, _, _):
@@ -416,11 +423,38 @@ actor SceneCompositionSource {
               ?? .init(kind: .board, id: key.plane.boardID)
             paintIdentities[key.plane] = try store.scenePaintRevision(target: target)
           }
-          return key.withContentRevision(paintIdentities[key.plane])
+          var identity=paintIdentities[key.plane]!
+          if key.range.layer == .elements,let poses=groupPoses[key.plane] {
+            if posePaint[key.plane] == nil {
+              posePaint[key.plane] = (try Self.poseHash(poses),try store.readGroupPoseDamage(
+                boardID:key.plane.boardID,coverID:key.plane.coverID,groupPoses:poses))
+            }
+            let paint=posePaint[key.plane]!
+            let padding=key.tile.worldSize/Double(key.pixelSize)
+            let bounds=WorkspaceSpatialBounds(origin:key.tile.origin.offsetBy(x:-padding,y:-padding),
+              width:key.tile.worldSize+2*padding,height:key.tile.worldSize+2*padding)
+            if paint.damage.contains(where:{ $0.intersects(bounds) }) { identity += ":pose:"+paint.identity }
+          } else if key.range.layer == .covers,!groupPoses.isEmpty {
+            // A cover or portal can embed another plane's posed graphics. Its
+            // existing raster must not borrow an unchanged outer-plane hash.
+            if nestedPoseIdentity == nil {
+              let keyed=Dictionary(uniqueKeysWithValues:groupPoses.map { plane,poses in
+                (plane.boardID.uuidString+":"+(plane.coverID?.uuidString ?? "board"),poses)
+              })
+              nestedPoseIdentity=try Self.poseHash(keyed)
+            }
+            identity += ":pose:"+nestedPoseIdentity!
+          }
+          return key.withContentRevision(identity)
         }
       }
     }
     return try populatedTiles(tiles)
+  }
+
+  private static func poseHash<T:Encodable>(_ value:T) throws -> String {
+    let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
+    return SHA256.hash(data:try encoder.encode(value)).map { String(format:"%02x",$0) }.joined()
   }
 
   private func populatedTiles(_ tiles: [SceneCompositionTileKey]) throws -> [SceneCompositionTileKey] {

@@ -32,15 +32,16 @@ extension PageDocument {
 extension NotebookStore {
   /// Resolve two addressed endpoints, including off-window and hidden records.
   /// The canonical record stays unchanged; callers receive a derived layout.
-  public func readGraphicResolution(target: CollaborationTarget, elementID: String) throws -> NotebookGraphicResolution {
+  public func readGraphicResolution(target: CollaborationTarget, elementID: String,
+    groupPoses:[String:NotebookElementPlacement.Source] = [:]) throws -> NotebookGraphicResolution {
     if target.kind == .board || target.kind == .cover {
       try requireLiveBoard(target.boardID ?? target.id)
       if target.kind == .cover, try ownerBoardID(of: target.id) != target.boardID { throw CocoaError(.fileNoSuchFile) }
     }
-    return try storedGraphicResolution(target: target, elementID: elementID)
+    return try storedGraphicResolution(target: target, elementID: elementID,groupPoses:groupPoses)
   }
 
-  func storedGraphicResolution(target: CollaborationTarget, elementID: String, relativeToParent: Bool = false) throws -> NotebookGraphicResolution {
+  func storedGraphicResolution(target: CollaborationTarget, elementID: String, relativeToParent: Bool = false,groupPoses:[String:NotebookElementPlacement.Source] = [:]) throws -> NotebookGraphicResolution {
     try readTransaction { _ in
       let surface: SurfaceID
       switch target.kind {
@@ -49,7 +50,8 @@ extension NotebookStore {
       case .cover: surface = .cover(target.id)
       default: throw NotebookStorageError.invalidTransaction("graphic owner")
       }
-      let resolver = NotebookElementPlacement.Resolver { try self.elementGroupingSource(target:target,id:$0) }
+      let poses=try checkedGroupPoses(groupPoses,target:target)
+      let resolver = NotebookElementPlacement.Resolver { try poses[collaborationIdentity($0)] ?? self.elementGroupingSource(target:target,id:$0) }
       func read(_ id: String) throws -> NotebookGraphicGraph.Node? {
         let graphic: NotebookGraphic, frame: PageRect, origin: WorldPoint, parentID: String?, basis: NotebookElementBasis?
         if target.kind == .page {

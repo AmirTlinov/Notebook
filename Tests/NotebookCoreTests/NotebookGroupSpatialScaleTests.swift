@@ -65,4 +65,46 @@ func groupSpatialIndexAtOneHundredThousandElements() throws {
     #expect(page.next == nil)
   }
   print("GROUP_SPATIAL_QUERY children=100000 visible=6 elapsed=\(read.duration(to:.now)) vm_steps=\(counter.steps) read_rows_budget=64")
+  let revision=try store.currentChangeCursor()
+  let live=try #require(try store.readSpatialElement(boardID:target.id,elementID:"whole"))
+  var preview=NotebookElementPlacement.Source(frame:.init(x:live.frame.x,y:live.frame.y,width:live.frame.width,height:live.frame.height),
+    origin:origin,basis:live.basis,isGroup:true)
+  preview.frame = .init(x:1400,y:500,width:1_000_000,height:300)
+  let movedWindow=WorkspaceSpatialBounds(origin:window.origin.offsetBy(x:1000,y:450),width:window.width,height:window.height)
+  var times:[Double]=[],maximumSteps=0
+  for _ in 0..<10 {
+    counter.steps=0
+    let begin=ContinuousClock.now
+    try store.readTransaction { _ in
+      let sql=store.currentSQL!
+      try sql.limitReads(.init(rows:128,bytes:80_000,valueBytes:8_000,reason:"A preview reads one whole and visible index rows, never 100000 bodies"))
+      sqlite3_progress_handler(sql.handle,1,{ raw in
+        let c=Unmanaged<Counter>.fromOpaque(raw!).takeUnretainedValue();c.steps += 1;return c.steps>50_000 ? 1 : 0
+      },Unmanaged.passUnretained(counter).toOpaque())
+      defer { sqlite3_progress_handler(sql.handle,0,nil,nil) }
+      let page=try store.readScenePaintOrder(boardID:target.id,bounds:movedWindow,groupPoses:["whole":preview])
+      #expect(page.entries.map(\.id) == (99_994..<100_000).map { .element("shape-\($0)") })
+      #expect(page.next == nil)
+    }
+    let elapsed=begin.duration(to:.now).components
+    times.append(Double(elapsed.seconds)*1000+Double(elapsed.attoseconds)/1e15);maximumSteps=max(maximumSteps,counter.steps)
+  }
+  times.sort()
+  #expect(try store.currentChangeCursor() == revision)
+  #expect(try store.readSpatialElement(boardID:target.id,elementID:"whole") == live)
+  print("GROUP_SPATIAL_PREVIEW children=100000 visible=6 samples=10 p50_ms=\((times[4]+times[5])/2) p95_ms=\(times[9]) maximum_vm_steps=\(maximumSteps) read_rows_budget=128 canonical_pose_unchanged=true; read-transaction opening and VM instrumentation included, painting excluded")
+  counter.steps=0
+  let damageStart=ContinuousClock.now
+  let damage=try store.readTransaction { _ in
+    let sql=store.currentSQL!
+    try sql.limitReads(.init(rows:64,bytes:40_000,valueBytes:8_000,reason:"Whole damage reads indexed extrema, not member bodies"))
+    sqlite3_progress_handler(sql.handle,1,{ raw in
+      let c=Unmanaged<Counter>.fromOpaque(raw!).takeUnretainedValue();c.steps += 1;return c.steps>20_000 ? 1 : 0
+    },Unmanaged.passUnretained(counter).toOpaque())
+    defer { sqlite3_progress_handler(sql.handle,0,nil,nil) }
+    return try store.readGroupPoseDamage(boardID:target.id,groupPoses:["whole":preview])
+  }
+  #expect(damage.count == 2)
+  #expect(damage[0].contains(window));#expect(damage[1].contains(movedWindow))
+  print("GROUP_SPATIAL_DAMAGE children=100000 areas=\(damage.count) elapsed=\(damageStart.duration(to:.now)) vm_steps=\(counter.steps) read_rows_budget=64")
 }

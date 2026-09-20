@@ -4,7 +4,7 @@ import Foundation
 /// Addressed placement, not a materialized copy of the descendants. Geometry
 /// and input consume the same local-to-surface map; world origin stays tiled.
 public struct NotebookElementPlacement: Equatable, Sendable {
-  public struct Source: Equatable, Sendable {
+  public struct Source: Codable, Equatable, Sendable {
     public var frame: PageRect
     public var origin: WorldPoint
     public var parentID: String?

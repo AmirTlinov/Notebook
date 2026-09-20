@@ -137,13 +137,8 @@ extension NotebookStore {
       var origin = (element.worldOrigin ?? .zero).offsetBy(x:element.frame.x,y:element.frame.y)
       var width=0.0,height=0.0,z=Double(fragment.position),last=z,lower=element.id
       if let first {
-        let x = try extreme("min_tx,min_x","min_tx,min_x")!,y = try extreme("min_ty,min_y","min_ty,min_y")!
-        let right = try extreme("max_tx,max_x","max_tx DESC,max_x DESC")!,bottom = try extreme("max_ty,max_y","max_ty DESC,max_y DESC")!
-        let minimum = WorldPoint(tileX:x[0].integer!,tileY:y[0].integer!,localX:x[1].spatialNumber,localY:y[1].spatialNumber)
-        let maximum = WorldPoint(tileX:right[0].integer!,tileY:bottom[0].integer!,localX:right[1].spatialNumber,localY:bottom[1].spatialNumber)
-        let start = WorldPoint.zero.delta(to:minimum),extent = minimum.delta(to:maximum)
         let transform = try basis.placement(in:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height))
-        let bounds = CGRect(x:start.x,y:start.y,width:extent.x,height:extent.y).applying(transform)
+        let bounds = try storedGroupLocalBounds(boardID:boardID,id:key)!.applying(transform)
         guard [bounds.minX,bounds.minY,bounds.width,bounds.height].allSatisfy(\.isFinite) else { throw NotebookStorageError.limitExceeded("element_group_bounds") }
         let projected=try NotebookElementBasis.spatialBounds(bounds,origin:element.worldOrigin ?? .zero)
         origin=projected.origin;width=bounds.width;height=bounds.height
@@ -165,5 +160,21 @@ extension NotebookStore {
       }
       if element.surface.kind == .cover { try database.noteOwner(.cover,address) }
     }
+  }
+
+  /// Four indexed extrema describe the whole in its own frame. Neither source
+  /// bodies nor the descendant list are needed for publication or pose damage.
+  func storedGroupLocalBounds(boardID:UUID,id:String) throws -> CGRect? {
+    let predicate=" FROM spatial_entries WHERE board_id=? AND parent_id=? AND parent_id IS NOT NULL AND has_paint=1"
+    let arguments:[NotebookSQLValue]=[.text(boardID.uuidString.lowercased()),.text(collaborationIdentity(id))]
+    func extreme(_ columns:String,_ order:String) throws -> [NotebookSQLValue]? {
+      try currentSQL!.rows("SELECT "+columns+predicate+" ORDER BY "+order+" LIMIT 1",arguments).first
+    }
+    guard let x=try extreme("min_tx,min_x","min_tx,min_x"),let y=try extreme("min_ty,min_y","min_ty,min_y"),
+      let right=try extreme("max_tx,max_x","max_tx DESC,max_x DESC"),let bottom=try extreme("max_ty,max_y","max_ty DESC,max_y DESC") else { return nil }
+    let minimum=WorldPoint(tileX:x[0].integer!,tileY:y[0].integer!,localX:x[1].spatialNumber,localY:y[1].spatialNumber)
+    let maximum=WorldPoint(tileX:right[0].integer!,tileY:bottom[0].integer!,localX:right[1].spatialNumber,localY:bottom[1].spatialNumber)
+    let start=WorldPoint.zero.delta(to:minimum),extent=minimum.delta(to:maximum)
+    return .init(x:start.x,y:start.y,width:extent.x,height:extent.y)
   }
 }
