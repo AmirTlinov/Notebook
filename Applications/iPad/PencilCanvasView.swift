@@ -815,11 +815,11 @@ final class PaperInputView: UIView {
     predictedSamples = []
     activePenStroke =
       actionTool?.drawsInk == true
-      ? actionPenStyle.map { ActiveInkStroke(style: $0) }
+      ? actionPenStyle.map { ActiveInkStroke(style:$0,sourceID:actionStrokeID) }
       : nil
     activeEraserStroke =
       actionTool == .eraser
-      ? ActiveEraserStroke()
+      ? ActiveEraserStroke(sourceID:actionStrokeID,color:inkColor(actionPenStyle ?? penStyle))
       : nil
     filteredPenForces = []
     pendingForceEstimates = [:]
@@ -970,7 +970,7 @@ final class PaperInputView: UIView {
       let startIndex = min(max(changedIndex, 0), samples.count)
       activeEraserStroke.replaceMeasuredTail(
         from: startIndex,
-        with: samples[startIndex...].map(\.point)
+        with: samples[startIndex...].map { SpatialInkSample($0.point) }
       )
       return
     }
@@ -1016,7 +1016,7 @@ final class PaperInputView: UIView {
     }
     activePenStroke.replaceMeasuredTail(
       from: startIndex,
-      with: processedTail
+      with: processedTail.map(SpatialInkSample.init)
     )
   }
 
@@ -1108,22 +1108,23 @@ final class PaperInputView: UIView {
       }
     } else if let activePenStroke {
       activePenStroke.replacePredictions(
-        with: processedPredictedPenPoints()
+        with: processedPredictedPenPoints().map(SpatialInkSample.init)
       )
       presentActivePen?(activePenStroke)
     }
   }
 
+  private func inkColor(_ style: PenStyle) -> SpatialInkColor {
+    let c=style.color.components;return .init(red:c.red,green:c.green,blue:c.blue)
+  }
   private func actionMutation() -> PageInkAction? {
-    guard let actionTool else { return nil }
-    let allPoints = actionTool.drawsInk ? (activePenStroke?.measuredPoints ?? []) : samples.map(\.point)
-    let points = quickShape.fit.map { Array(allPoints.prefix($0.sampleCount)) } ?? allPoints
-    guard !points.isEmpty else { return nil }
-    let components = (actionPenStyle ?? penStyle).color.components
-    return PageInkAction(
-      id: actionStrokeID, tool: actionTool.drawsInk ? .pen : .eraser,
-      color: .init(red: components.red, green: components.green, blue: components.blue),
-      points: points).erasingElements(actionElementTargets)
+    guard let source=activePenStroke?.measured ?? activeEraserStroke?.measured else { return nil }
+    let count=min(source.count,quickShape.fit?.sampleCount ?? source.count)
+    guard count > 0 else { return nil }
+    // Full materialization occurs only at the existing accepted-write/cut
+    // boundary. Predictions have never entered this source.
+    return PageInkAction(id:source.sourceID,tool:source.header.tool,color:source.header.color,
+      samples:source.decoded(in:0..<count)).erasingElements(actionElementTargets)
   }
 
   private func scheduleFinalization() {

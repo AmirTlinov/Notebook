@@ -1,6 +1,5 @@
 import AppKit
 import NotebookCore
-import PencilKit
 import SwiftUI
 
 struct MacPageInkView: NSViewRepresentable {
@@ -36,7 +35,7 @@ final class MacPageInkCanvas: NSView {
   private var stamp: VersionStamp?
   private var pen: ActiveInkStroke?
   private var eraser: ActiveEraserStroke?
-  private var points: [PKStrokePoint] = []
+  private var measured: InkSampleRelations.Contact? { pen?.measured ?? eraser?.measured }
   private var actionTool = DrawingTool.pen
   private var actionStyle = PenStyle.standard
   private var actionTargets: [InkElementTarget] = []
@@ -95,8 +94,9 @@ final class MacPageInkCanvas: NSView {
     window?.makeFirstResponder(self)
     stamp = reserved; actionTool = model.drawingTool; actionStyle = model.penStyle
     actionTargets = actionTool == .eraser ? model.eraserTargets(pageID: pageID) : []
-    startedAt = event.timestamp; points = []
-    if actionTool == .pen { pen = .init(style: actionStyle) } else { eraser = .init() }
+    startedAt = event.timestamp
+    if actionTool == .pen { pen = .init(style:actionStyle) }
+    else { let c=actionStyle.color.components;eraser = .init(color:.init(red:c.red,green:c.green,blue:c.blue)) }
     sample(event)
   }
   override func mouseDragged(with event: NSEvent) { if stamp != nil { sample(event) } }
@@ -110,29 +110,30 @@ final class MacPageInkCanvas: NSView {
   private func sample(_ event: NSEvent) {
     let location = convert(event.locationInWindow, from: nil)
     let clamped = CGPoint(x: min(max(0, location.x), bounds.width), y: min(max(0, location.y), bounds.height))
-    if let last = points.last, hypot(last.location.x - clamped.x, last.location.y - clamped.y) < 0.2 { return }
+    if let measured, measured.count > 0 {
+      let last=measured.sample(at:measured.count-1).point
+      if hypot(last.x-clamped.x,last.y-clamped.y) < 0.2 { return }
+    }
     let width = actionTool == .pen ? actionStyle.width : model.eraserStyle.maximumWidth
-    let point = PKStrokePoint(location: clamped, timeOffset: max(0, event.timestamp - startedAt),
-      size: .init(width: width, height: width), opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
-    points.append(point)
-    if let pen { pen.replaceMeasuredTail(from: points.count - 1, with: [point]); ink.displayActiveStroke(pen) }
-    if let eraser { eraser.replaceMeasuredTail(from: points.count - 1, with: [point]); ink.displayActiveEraser(eraser) }
+    let sample=SpatialInkSample(point:.init(x:clamped.x,y:clamped.y),timeOffset:max(0,event.timestamp-startedAt),
+      width:width,opacity:1,force:1,azimuth:0,altitude:.pi/2)
+    if let pen { pen.replaceMeasuredTail(from:pen.measured.count,with:[sample]);ink.displayActiveStroke(pen) }
+    if let eraser { eraser.replaceMeasuredTail(from:eraser.measured.count,with:[sample]);ink.displayActiveEraser(eraser) }
   }
 
   private func finishStroke() {
     guard let stamp else { return }
     self.stamp = nil
-    guard !points.isEmpty else {
+    guard let measured, measured.count > 0 else {
       model.releaseDrawingReservation(pageID: pageID, stamp: stamp)
       model.inputGate.endPencilAction(source: source); return
     }
-    let color = actionStyle.color.components
-    let action = PageInkAction(tool: actionTool == .pen ? .pen : .eraser,
-      color: .init(red: color.red, green: color.green, blue: color.blue), points: points).erasingElements(actionTargets)
+    let action=PageInkAction(id:measured.sourceID,tool:measured.header.tool,color:measured.header.color,
+      samples:measured.decoded()).erasingElements(actionTargets)
     if actionTool == .pen { ink.commitActiveStroke(action) } else { ink.commitActiveEraser(action) }
     unpublished.insert(action.id)
     let accepted = model.acceptDrawingAction(action, pageID: pageID, stamp: stamp)
-    pen = nil; eraser = nil; points = []
+    pen = nil; eraser = nil
     delivery = Task { [self] in
       let prepared = await accepted.value
       if let prepared, !retired {

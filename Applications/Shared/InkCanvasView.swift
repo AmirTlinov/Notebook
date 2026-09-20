@@ -1,67 +1,48 @@
 import ImageIO
 import MetalKit
 import NotebookCore
-import PencilKit
 #if os(iOS)
 import UIKit
 #else
 import AppKit
 #endif
 
-/// One mutable geometry record follows a pen stroke from Pencil-down to disk.
+/// The accepted contact is the measured source, not a retained PencilKit array.
+/// Its display mesh and predictions are disposable projections of this owner.
 @MainActor
 final class ActiveInkStroke {
   let style: PenStyle
-  private(set) var measuredPoints: [PKStrokePoint] = []
-  private(set) var predictedPoints: [PKStrokePoint] = []
+  let projection: InkSampleProjection
+  private(set) var measured: InkSampleRelations.Contact
+  private(set) var predicted: [SpatialInkSample] = []
   private(set) var revision: UInt64 = 0
   private var changedFrom = 0
-
-  func consumeChangedStart() -> Int {
-    defer { changedFrom = measuredPoints.count }
-    return changedFrom
+  init(style: PenStyle,sourceID: UUID = UUID(),span: Int = 0,projection: InkSampleProjection = .init()) {
+    self.style=style;self.projection=projection
+    let c=style.color.components
+    measured = .init(sourceID:sourceID,span:span,header:.init(tool:.pen,color:.init(red:c.red,green:c.green,blue:c.blue)))
   }
-
-  init(style: PenStyle) {
-    self.style = style
+  func consumeChangedStart() -> Int { defer { changedFrom=measured.count };return changedFrom }
+  func replaceMeasuredTail(from startIndex: Int,with samples: [SpatialInkSample]) {
+    let start=min(max(startIndex,0),measured.count)
+    changedFrom=min(changedFrom,start);measured.replaceTail(from:start,with:samples);revision &+= 1
   }
-
-  func replaceMeasuredTail(
-    from startIndex: Int,
-    with points: [PKStrokePoint]
-  ) {
-    let start = min(max(startIndex, 0), measuredPoints.count)
-    changedFrom = min(changedFrom, start)
-    measuredPoints.replaceSubrange(start..., with: points)
-    revision &+= 1
-  }
-
-  func replacePredictions(with points: [PKStrokePoint]) {
-    predictedPoints = points
-    revision &+= 1
-  }
+  func replacePredictions(with samples: [SpatialInkSample]) { predicted=samples;revision &+= 1 }
 }
 
-/// One mutable eraser path is composited by Metal while Pencil is moving.
 @MainActor
 final class ActiveEraserStroke {
-  private(set) var measuredPoints: [PKStrokePoint] = []
+  let projection: InkSampleProjection
+  private(set) var measured: InkSampleRelations.Contact
   private(set) var revision: UInt64 = 0
   private var changedFrom = 0
-
-  func consumeChangedStart() -> Int {
-    defer { changedFrom = measuredPoints.count }
-    return changedFrom
+  init(sourceID: UUID = UUID(),span: Int = 0,color: SpatialInkColor = .black,projection: InkSampleProjection = .init()) {
+    self.projection=projection;measured = .init(sourceID:sourceID,span:span,header:.init(tool:.eraser,color:color))
   }
-
-  func replaceMeasuredTail(
-    from startIndex: Int,
-    with points: [PKStrokePoint]
-  ) {
-    let start = min(max(startIndex, 0), measuredPoints.count)
-    changedFrom = min(changedFrom, start)
-    measuredPoints.replaceSubrange(start..., with: points)
-    revision &+= 1
+  func consumeChangedStart() -> Int { defer { changedFrom=measured.count };return changedFrom }
+  func replaceMeasuredTail(from startIndex: Int,with samples: [SpatialInkSample]) {
+    let start=min(max(startIndex,0),measured.count)
+    changedFrom=min(changedFrom,start);measured.replaceTail(from:start,with:samples);revision &+= 1
   }
 }
 
@@ -690,21 +671,22 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   private func commitMeasuredMesh(_ action: PageInkAction? = nil) {
     let identity: ObjectIdentifier
-    let points: [PKStrokePoint]
+    let measured: InkSampleRelations.Contact
+    let projection: InkSampleProjection
     let color: SIMD4<Float>
     let operation: RenderOperation
     let changed: Int
     if let stroke = activeInkStroke {
-      identity = ObjectIdentifier(stroke); points = stroke.measuredPoints
+      identity = ObjectIdentifier(stroke); measured=stroke.measured;projection=stroke.projection
       let value = stroke.style.color.components
       color = .init(Float(value.red), Float(value.green), Float(value.blue), 1)
       operation = .ink; changed = stroke.consumeChangedStart()
     } else if let stroke = activeEraserStroke {
-      identity = ObjectIdentifier(stroke); points = stroke.measuredPoints
+      identity = ObjectIdentifier(stroke); measured=stroke.measured;projection=stroke.projection
       color = .init(1, 1, 1, 1); operation = .erase; changed = stroke.consumeChangedStart()
     } else { return }
     if builtActiveIdentity != identity { activeMesh = IncrementalInkMesh(eraser:operation == .erase) }
-    activeMesh.update(points: points, changedFrom: builtActiveIdentity == identity ? changed : 0, color: color)
+    activeMesh.update(measured:measured,changedFrom:builtActiveIdentity == identity ? changed : 0,color:color,projection:projection)
     appendCommitted(activeMesh, operation: operation, action: action)
     discardActiveAction()
     requestFrame()
@@ -1323,16 +1305,18 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   ) -> (buffer: any MTLBuffer, operation: RenderOperation)? {
     let identity: ObjectIdentifier
     let revision: UInt64
-    let measured: [PKStrokePoint]
-    let predicted: [PKStrokePoint]
+    let measured: InkSampleRelations.Contact
+    let predicted: [SpatialInkSample]
+    let projection: InkSampleProjection
     let color: SIMD4<Float>
     let operation: RenderOperation
 
     if let activeInkStroke {
       identity = ObjectIdentifier(activeInkStroke)
       revision = activeInkStroke.revision
-      measured = activeInkStroke.measuredPoints
-      predicted = activeInkStroke.predictedPoints
+      measured = activeInkStroke.measured
+      predicted = activeInkStroke.predicted
+      projection=activeInkStroke.projection
       let components = activeInkStroke.style.color.components
       color = SIMD4(
         Float(components.red),
@@ -1344,8 +1328,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     } else if let activeEraserStroke {
       identity = ObjectIdentifier(activeEraserStroke)
       revision = activeEraserStroke.revision
-      measured = activeEraserStroke.measuredPoints
+      measured = activeEraserStroke.measured
       predicted = []
+      projection=activeEraserStroke.projection
       color = SIMD4(1, 1, 1, 1)
       operation = .erase
     } else {
@@ -1360,7 +1345,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         activeMesh = IncrementalInkMesh(eraser:operation == .erase)
         activeBufferDirtyStarts = Array(repeating: 0, count: Self.framesInFlight)
       }
-      activeMesh.update(measured: measured, predicted: predicted, changedFrom: changed, color: color)
+      activeMesh.update(measured:measured,predicted:predicted,changedFrom:changed,color:color,projection:projection)
       for index in activeBufferDirtyStarts.indices {
         activeBufferDirtyStarts[index] = min(
           activeBufferDirtyStarts[index], activeMesh.rebuiltNodeStart)

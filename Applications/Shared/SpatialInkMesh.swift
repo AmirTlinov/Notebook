@@ -130,11 +130,11 @@ struct SpatialInkMesh: Sendable {
     }
     for action in journal?.actions ?? [] where action.isActive && !suppressedInkIDs.contains(action.id) {
       try Task.checkCancellation()
-      for span in action.spans where span.surface == surface {
+      for (spanIndex,span) in action.spans.enumerated() where span.surface == surface {
         let origin = span.samples.first?.worldPoint.map {
           WorldPoint(tileX: $0.tileX, tileY: $0.tileY, localX: 0, localY: 0)
         }
-        let source=InkSampleRelations(sourceID:action.id,revision:action.id,samples:span.samples,
+        let source=InkSampleRelations(sourceID:action.id,span:spanIndex,revision:action.id,samples:span.samples,
           header:.init(tool:action.tool,color:action.color))
         let c = action.color,
           color: SIMD4<Float> =

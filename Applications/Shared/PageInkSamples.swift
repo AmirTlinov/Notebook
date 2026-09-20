@@ -9,11 +9,14 @@ extension PageInkAction {
   ) {
     self.init(
       id: id, tool: tool, color: color,
-      samples: points.map { point in
-        SpatialInkSample(
-          point: .init(x: point.location.x, y: point.location.y), timeOffset: point.timeOffset,
-          width: point.size.width, opacity: point.opacity, force: point.force,
-          azimuth: point.azimuth, altitude: point.altitude)
-      })
+      samples: points.map(SpatialInkSample.init))
+  }
+}
+
+
+extension SpatialInkSample {
+  init(_ point: PKStrokePoint) {
+    self.init(point:.init(x:point.location.x,y:point.location.y),timeOffset:point.timeOffset,
+      width:point.size.width,opacity:point.opacity,force:point.force,azimuth:point.azimuth,altitude:point.altitude)
   }
 }

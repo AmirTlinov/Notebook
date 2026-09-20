@@ -1,0 +1,23 @@
+{
+  "coldPrepareMilliseconds": 423.530375,
+  "copiedSelectedSamples": 250,
+  "examinedSamples": 65,
+  "selectionMilliseconds": [
+    1.737625,
+    1.669042,
+    1.63725,
+    1.6385,
+    1.631542,
+    1.634375,
+    1.634917,
+    1.636333,
+    1.63075,
+    1.633208,
+    1.632458,
+    1.632875,
+    1.639792,
+    1.632834,
+    1.63075
+  ],
+  "sourceSamples": 100000
+}

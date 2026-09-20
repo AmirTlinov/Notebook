@@ -5,6 +5,12 @@ import PencilKit
 /// Unreduced pre-integration oracle, test-only. Production never constructs a
 /// PencilKit array from accepted source measurements to prepare settled ink.
 extension SpatialInkGeometry {
+  static func renderPoint(from point: PKStrokePoint, color: SIMD4<Float>) -> RenderPoint {
+    let alpha = min(max(Float(point.opacity) * color.w, 0), 1)
+    return .init(position: .init(Float(point.location.x), Float(point.location.y)),
+      radius: max(Float(point.size.width / 2), 0.25),
+      premultipliedColor: .init(color.x * alpha, color.y * alpha, color.z * alpha, alpha))
+  }
   static func compact(points: [PKStrokePoint], color: SIMD4<Float>) -> [Node] {
     let normalized = renderPoints(from: points, color: color)
     return normalized.indices.map { InkRenderGeometry.node(at: $0, in: normalized) }
@@ -74,4 +80,23 @@ extension SpatialInkRenderLayer {
       width:$0.size.width,opacity:$0.opacity,force:$0.force,azimuth:$0.azimuth,altitude:$0.altitude) }
     return .init(source:.init(sourceID:UUID(),revision:UUID(),samples:samples,header:.init(tool:tool,color:color)))
   }
+}
+
+
+// Test adapters preserve the existing PK fixtures, not a second app input path.
+extension IncrementalInkMesh {
+  mutating func update(points: [PKStrokePoint],changedFrom: Int,color: SIMD4<Float>) {
+    update(measured:points,predicted:[],changedFrom:changedFrom,color:color)
+  }
+  mutating func update(measured: [PKStrokePoint],predicted: [PKStrokePoint],changedFrom: Int,color: SIMD4<Float>) {
+    func sample(_ i: Int) -> SpatialInkSample { .init(i < measured.count ? measured[i] : predicted[i-measured.count]) }
+    update(count:measured.count+predicted.count,sample:sample,forEach:{ range,emit in for i in range { emit(sample(i)) } },
+      changedFrom:changedFrom,color:color,projection:.init())
+  }
+}
+@MainActor extension ActiveInkStroke {
+  func replaceMeasuredTail(from start: Int,with points: [PKStrokePoint]) { replaceMeasuredTail(from:start,with:points.map(SpatialInkSample.init)) }
+}
+@MainActor extension ActiveEraserStroke {
+  func replaceMeasuredTail(from start: Int,with points: [PKStrokePoint]) { replaceMeasuredTail(from:start,with:points.map(SpatialInkSample.init)) }
 }

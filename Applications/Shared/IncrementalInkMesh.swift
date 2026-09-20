@@ -1,5 +1,4 @@
 import NotebookCore
-import PencilKit
 import simd
 
 /// Raw measurements map to the single normalized strip. A coincident sample
@@ -17,19 +16,19 @@ struct IncrementalInkMesh {
   let eraser: Bool
   init(eraser: Bool = false) { self.eraser = eraser }
 
-  mutating func update(points: [PKStrokePoint], changedFrom: Int, color: SIMD4<Float>) {
-    update(count: points.count, point: { points[$0] }, changedFrom: changedFrom, color: color)
+  mutating func update(measured: InkSampleRelations.Contact,predicted: [SpatialInkSample] = [],
+    changedFrom: Int,color: SIMD4<Float>,projection: InkSampleProjection = .init()) {
+    update(count:measured.count+predicted.count,
+      sample:{ $0 < measured.count ? measured.sample(at:$0) : predicted[$0-measured.count] },
+      forEach:{ range,emit in
+        if range.lowerBound < measured.count { measured.forEach(in:range.lowerBound..<min(range.upperBound,measured.count),emit) }
+        if range.upperBound > measured.count { for i in max(0,range.lowerBound-measured.count)..<(range.upperBound-measured.count) { emit(predicted[i]) } }
+      },changedFrom:changedFrom,color:color,projection:projection)
   }
 
-  mutating func update(measured: [PKStrokePoint], predicted: [PKStrokePoint],
-    changedFrom: Int, color: SIMD4<Float>) {
-    update(count: measured.count + predicted.count,
-      point: { $0 < measured.count ? measured[$0] : predicted[$0 - measured.count] },
-      changedFrom: changedFrom, color: color)
-  }
-
-  private mutating func update(count: Int, point: (Int) -> PKStrokePoint,
-    changedFrom: Int, color: SIMD4<Float>) {
+  mutating func update(count: Int,sample: (Int)->SpatialInkSample,
+    forEach: (Range<Int>,(SpatialInkSample)->Void)->Void,
+    changedFrom: Int,color: SIMD4<Float>,projection: InkSampleProjection) {
     let oldCount = normalized.count
     let start = self.color == color ? max(0, min(changedFrom, rawToNormalized.count, count)) : 0
     self.color = color
@@ -40,14 +39,14 @@ struct IncrementalInkMesh {
       changed = 0
     } else {
       let last = rawToNormalized[start - 1]
-      let restored = SpatialInkGeometry.renderPoint(from: point(start - 1), color: color)
+      let restored = SpatialInkGeometry.renderPoint(from:sample(start-1),color:color,projection:projection)
       changed = normalized[last] == restored ? last + 1 : last
       normalized.removeSubrange((last + 1)...)
       normalized[last] = restored
       rawToNormalized.removeSubrange(start...)
     }
-    for index in start..<count {
-      let next = SpatialInkGeometry.renderPoint(from: point(index), color: color)
+    forEach(start..<count) { sample in
+      let next = SpatialInkGeometry.renderPoint(from:sample,color:color,projection:projection)
       if let last = normalized.last, SpatialInkGeometry.areCoincident(last, next) {
         changed = min(changed, normalized.count - 1)
         normalized[normalized.count - 1] = next

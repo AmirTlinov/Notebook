@@ -15,7 +15,7 @@ final class InkNormalizationTests: XCTestCase {
     .init(sourceID:UUID(),revision:UUID(),samples:samples,header:.init(tool:.pen,color:.init(red:0.1,green:0.4,blue:0.8)))
   }
   private func events(_ node: Node) -> [SpatialInkSample] {
-    var result:[SpatialInkSample]=[];node.appendDecoded(in:0..<node.count,to:&result);return result
+    var result:[SpatialInkSample]=[];node.forEachSample(in:0..<node.count) { result.append($0) };return result
   }
   private func assertBits(_ a:[SpatialInkSample],_ b:[SpatialInkSample],file:StaticString=#filePath,line:UInt=#line) {
     XCTAssertEqual(a.count,b.count,file:file,line:line)

@@ -1,5 +1,6 @@
+import Foundation
+
 import NotebookCore
-import PencilKit
 import simd
 
 /// One compact display geometry feeds the live canvas and the Mac raster.
@@ -86,11 +87,20 @@ enum SpatialInkGeometry {
 
   static func areCoincident(_ a: RenderPoint, _ b: RenderPoint) -> Bool { InkStrokeGeometry.areCoincident(a,b) }
 
-  static func renderPoint(from point: PKStrokePoint, color: SIMD4<Float>) -> RenderPoint {
-    let alpha = min(max(Float(point.opacity) * color.w, 0), 1)
-    return .init(position: .init(Float(point.location.x), Float(point.location.y)),
-      radius: max(Float(point.size.width / 2), 0.25),
-      premultipliedColor: .init(color.x * alpha, color.y * alpha, color.z * alpha, alpha))
+  static func renderPoint(from sample: SpatialInkSample, color: SIMD4<Float>,
+    projection: InkSampleProjection = .init()) -> RenderPoint {
+    let p=projection.origin.flatMap { origin in sample.worldPoint.map { origin.delta(to:$0) } } ?? sample.point
+    let alpha=min(max(Float(sample.opacity)*color.w,0),1)
+    return .init(position:.init(Float(p.x*projection.scale+projection.offset.x),Float(p.y*projection.scale+projection.offset.y)),
+      radius:max(Float(sample.width*projection.scale/2),0.25),
+      premultipliedColor:.init(color.x*alpha,color.y*alpha,color.z*alpha,alpha))
   }
 
+}
+
+/// Frozen physical input-to-canvas projection. It never rewrites measurements.
+struct InkSampleProjection: Sendable {
+  var origin: WorldPoint? = nil
+  var offset: SpatialPoint = .zero
+  var scale: Double = 1
 }

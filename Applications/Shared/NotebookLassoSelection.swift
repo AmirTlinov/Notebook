@@ -36,13 +36,16 @@ enum NotebookLassoInkSource: Sendable {
     switch self {
     case .page(let page):
       entries = try PageInkDrawing.decode(page.drawingData).actions.filter { $0.isActive }.map {
-        .init(id:$0.id,tool:$0.tool,color:$0.color,samples:[$0.samples])
+        .init(id:$0.id,tool:$0.tool,color:$0.color,sources:[.init($0,revision:$0.id)])
       }
     case .spatial(let journal,_):
       entries = journal.actions.filter { $0.isActive
-        && ($0.tool == .eraser || $0.spans.allSatisfy { $0.surface == surface }) }.compactMap {
-          let spans = $0.spans.filter { $0.surface == surface }.map(\.samples)
-          return spans.isEmpty ? nil : .init(id:$0.id,tool:$0.tool,color:$0.color,samples:spans)
+        && ($0.tool == .eraser || $0.spans.allSatisfy { $0.surface == surface }) }.compactMap { action in
+          let spans=action.spans.enumerated().filter { $0.element.surface == surface }.map { index,span in
+            InkSampleRelations(sourceID:action.id,span:index,revision:action.id,samples:span.samples,
+              header:.init(tool:action.tool,color:action.color))
+          }
+          return spans.isEmpty ? nil : .init(id:action.id,tool:action.tool,color:action.color,sources:spans)
         }
     }
     return try Prepared(revision:revision,entries:entries,surface:surface,origin:origin,excluding:suppressed)
@@ -56,7 +59,7 @@ enum NotebookLassoInkSource: Sendable {
       let id: UUID
       let tool: SpatialInkTool
       let color: SpatialInkColor
-      let samples: [[SpatialInkSample]]
+      let sources: [InkSampleRelations]
     }
     struct Fragment: Sendable {
       let entry: Int
@@ -88,14 +91,19 @@ enum NotebookLassoInkSource: Sendable {
       for (e, entry) in entries.enumerated() {
         try Task.checkCancellation()
         var box = CGRect.null
-        for (s, samples) in entry.samples.enumerated() {
-          count += samples.count
-          for start in stride(from:0,to:max(1,samples.count-1),by:64) where !samples.isEmpty {
+        for (s,source) in entry.sources.enumerated() {
+          count += source.count
+          for start in stride(from:0,to:max(1,source.count-1),by:64) where source.count > 0 {
             if fragments.count.isMultiple(of:256) { try Task.checkCancellation() }
-            let range = start..<min(samples.count,start+65)
-            let bounds = range.reduce(CGRect.null) { b, i in
-              let sample = samples[i], p = Self.point(sample,origin:origin), r = max(0.25,sample.width/2)*1.8
-              return b.union(.init(x:p.x-r,y:p.y-r,width:r*2,height:r*2))
+            let range=start..<min(source.count,start+65)
+            var bounds=CGRect.null
+            if origin == nil {
+              bounds=try source.bounds(in:range).bounds
+            } else {
+              source.storage.root.forEachSample(in:range) { sample in
+                let p=Self.point(sample,origin:origin),r=max(0.25,sample.width/2)*1.8
+                bounds=bounds.union(.init(x:p.x-r,y:p.y-r,width:r*2,height:r*2))
+              }
             }
             box = box.union(bounds)
             fragments.append(.init(entry:e,span:s,range:range,bounds:bounds))
@@ -119,7 +127,7 @@ enum NotebookLassoInkSource: Sendable {
         let f = fragments[id], entry = entries[f.entry]
         guard entry.tool == .pen, !excluded.contains(entry.id), !chosen.contains(f.entry) else { continue }
         try Task.checkCancellation()
-        let samples = entry.samples[f.span], range = f.range
+        let samples=entry.sources[f.span].decoded(in:f.range),range=samples.indices
         examined += range.count
         func point(_ i: Int) -> SpatialPoint { Self.point(samples[i],origin:origin) }
         let intersects = range.contains { i in
@@ -129,7 +137,7 @@ enum NotebookLassoInkSource: Sendable {
         if intersects { chosen.insert(f.entry) }
       }
       guard let first = chosen.min() else { return nil }
-      let selectedSamples = chosen.reduce(0) { n, e in n + entries[e].samples.reduce(0) { $0+$1.count } }
+      let selectedSamples = chosen.reduce(0) { n, e in n + entries[e].sources.reduce(0) { $0+$1.count } }
       guard chosen.count <= 1024, selectedSamples <= 10_000 else {
         throw CollaborationError("selection_limit","Выделите меньшую часть рукописи: это выделение слишком большое.")
       }
@@ -149,8 +157,10 @@ enum NotebookLassoInkSource: Sendable {
         try Task.checkCancellation()
         let entry = entries[e]
         if chosen.contains(e) {
-          for samples in entry.samples {
-            let mesh = NotebookFreehand.mesh(samples:samples,frame:frame,origin:origin)
+          for source in entry.sources {
+            // The chosen whole alone is materialized for the existing vector
+            // representation. Invisible/unselected source events stay encoded.
+            let mesh=NotebookFreehand.mesh(samples:source.decoded(),frame:frame,origin:origin)
             vertices += mesh.count
             guard vertices <= NotebookFreehand.maximumVertices else {
               throw CollaborationError("selection_limit","Слишком сложное выделение; выделите меньшую часть рукописи.")
@@ -167,8 +177,8 @@ enum NotebookLassoInkSource: Sendable {
             }
             for range in ranges {
               examined += range.count
-              let local = range.map { i in
-                let sample = entry.samples[s][i], p = Self.point(sample,origin:origin)
+              let local=entry.sources[s].decoded(in:range).map { sample in
+                let p=Self.point(sample,origin:origin)
                 return NotebookFreehand.Eraser.Sample(point:.init(x:p.x-frame.x,y:p.y-frame.y),width:sample.width)
               }
               layers.append(.init(eraser:.init(size:.init(x:frame.width,y:frame.height),samples:local)))

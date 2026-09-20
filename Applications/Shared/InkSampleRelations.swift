@@ -3,7 +3,7 @@ import NotebookCore
 
 /// A derived, immutable description of accepted measurements. No durable format,
 /// causal action or independently editable raster lives here. Block identity is
-/// physical; event identity remains (action, revision, logical index).
+/// physical; event identity remains (action, original span, revision, logical index).
 struct InkSampleRelations: Sendable {
   struct RewriteWork: Sendable {
     var remaining: Int
@@ -45,15 +45,14 @@ struct InkSampleRelations: Sendable {
       return elementTargets == nil && other.elementTargets == nil ? .equal : .notProven
     }
   }
-  struct Address: Equatable, Sendable { let source: UUID; let revision: UUID; let index: Int }
+  struct Address: Equatable, Sendable { let source: UUID; let span: Int; let revision: UUID; let index: Int }
   enum AccessError: Error { case staleAddress, outsideSource, unsupportedExactTranslation }
   enum Field: Equatable, Sendable {
     case constant(UInt64)
     case progression(InkDyadic, InkDyadic)
     case literal([UInt64])
 
-    init(_ samples: ArraySlice<SpatialInkSample>, field: KeyPath<SpatialInkSample,Double>) {
-      let bits = samples.map { $0[keyPath:field].bitPattern }
+    init(_ bits: [UInt64]) {
       if bits.allSatisfy({ $0 == bits[0] }) { self = .constant(bits[0]); return }
       if bits.count > 2, let start = InkDyadic(Double(bitPattern:bits[0])), let next = InkDyadic(Double(bitPattern:bits[1])),
         let step = next.adding(start.negated), bits.indices.allSatisfy({ i in
@@ -82,8 +81,14 @@ struct InkSampleRelations: Sendable {
       guard samples.count >= 4, samples.allSatisfy({ $0.worldPoint == nil }) else {
         self = .literal(Array(samples)); return
       }
-      let keys: [KeyPath<SpatialInkSample,Double>] = [\.point.x,\.point.y,\.timeOffset,\.width,\.opacity,\.force,\.azimuth,\.altitude]
-      let fields = keys.map { key in Field(samples,field:key) }
+      // Direct field access avoids dynamic key-path traversal for every event
+      // in this cold path. The exact recognition/proof remains field-local.
+      let fields: [Field] = [
+        .init(samples.map { $0.point.x.bitPattern }), .init(samples.map { $0.point.y.bitPattern }),
+        .init(samples.map { $0.timeOffset.bitPattern }), .init(samples.map { $0.width.bitPattern }),
+        .init(samples.map { $0.opacity.bitPattern }), .init(samples.map { $0.force.bitPattern }),
+        .init(samples.map { $0.azimuth.bitPattern }), .init(samples.map { $0.altitude.bitPattern })]
+
       let bytes = fields.count * MemoryLayout<Field>.stride + fields.reduce(0) { $0 + $1.payloadBytes }
       self = bytes < samples.count * MemoryLayout<SpatialInkSample>.stride
         ? .fields(fields,samples.count) : .literal(Array(samples))
@@ -95,6 +100,30 @@ struct InkSampleRelations: Sendable {
         return .init(point:.init(x:f[0].value(at:i),y:f[1].value(at:i)),timeOffset:f[2].value(at:i),
           width:f[3].value(at:i),opacity:f[4].value(at:i),force:f[5].value(at:i),
           azimuth:f[6].value(at:i),altitude:f[7].value(at:i))
+      }
+    }
+    /// Bounds need only position and width, not time/pressure/orientation. A
+    /// verified affine field has its extrema at the range endpoints; width's
+    /// minimum-radius clamp keeps the left/top concave and right/bottom convex.
+    func bounds(in range: Range<Int>,cost: inout AccessCost) -> CGRect {
+      if range.isEmpty { return .null }
+      switch self {
+      case .literal(let samples):
+        var result=CGRect.null
+        for i in range {
+          let p=samples[i];cost.decodedSamples += 1
+          result=result.union(Sequence.pointBounds(p.point.x,p.point.y,p.width))
+        }
+        return result
+      case .fields(let fields,_):
+        let affine=[0,1,3].allSatisfy { if case .literal=fields[$0] { return false };return true }
+        let indices=affine ? [range.lowerBound,range.upperBound-1] : Array(range)
+        var result=CGRect.null
+        for i in indices {
+          cost.decodedSamples += 1
+          result=result.union(Sequence.pointBounds(fields[0].value(at:i),fields[1].value(at:i),fields[3].value(at:i)))
+        }
+        return result
       }
     }
     var hasGenerator: Bool {
@@ -125,13 +154,14 @@ struct InkSampleRelations: Sendable {
     init(_ root: Sequence, exit: InkRepeatStep = .zero) { self.root=root;self.exit=exit }
   }
   let sourceID: UUID
+  let span: Int
   let header: Header
   let revision: UUID
   let count: Int
   let storage: Storage
   let frames: [InkExactFrame]
-  init(sourceID: UUID, revision: UUID, samples: [SpatialInkSample], header: Header) {
-    self.sourceID = sourceID; self.header = header; self.revision = revision; count = samples.count; frames = [];lastEdit=nil
+  init(sourceID: UUID, span: Int = 0, revision: UUID, samples: [SpatialInkSample], header: Header) {
+    self.sourceID = sourceID; self.span=span; self.header = header; self.revision = revision; count = samples.count; frames = [];lastEdit=nil
     storage = .init(Sequence.from(stride(from:0,to:samples.count,by:Self.blockSize).map {
       Block(samples[$0..<min(samples.count,$0+Self.blockSize)])
     }))
@@ -147,9 +177,9 @@ struct InkSampleRelations: Sendable {
     .init(id:sourceID,tool:header.tool,color:header.color,samples:decoded(),sequence:header.sequence,
       isActive:header.isActive,elementTargets:header.elementTargets)
   }
-  private init(sourceID: UUID, revision: UUID, count: Int, storage: Storage, frames: [InkExactFrame], header: Header, lastEdit: EditSummary? = nil) {
+  private init(sourceID: UUID, span: Int, revision: UUID, count: Int, storage: Storage, frames: [InkExactFrame], header: Header, lastEdit: EditSummary? = nil) {
     self.lastEdit=lastEdit
-    self.sourceID = sourceID; self.revision = revision; self.count = count; self.storage = storage; self.frames = frames; self.header = header
+    self.sourceID = sourceID; self.span=span; self.revision = revision; self.count = count; self.storage = storage; self.frames = frames; self.header = header
   }
   /// Frames surround the WHOLE source. No measured event may sit between two
   /// entries in this list; separate painted sources keep separate frame scopes.
@@ -161,7 +191,7 @@ struct InkSampleRelations: Sendable {
         next.removeLast(); if joined != .identity { next.append(joined) }
       } else { next.append(outer) }
     }
-    return .init(sourceID:sourceID,revision:revision,count:count,storage:storage,frames:next,header:header)
+    return .init(sourceID:sourceID,span:span,revision:revision,count:count,storage:storage,frames:next,header:header)
   }
 
   /// GPU approximation only. Keeping an ordered exact description is distinct
@@ -176,9 +206,9 @@ struct InkSampleRelations: Sendable {
     }
     return a
   }
-  func address(at index: Int) -> Address { .init(source:sourceID,revision:revision,index:index) }
+  func address(at index: Int) -> Address { .init(source:sourceID,span:span,revision:revision,index:index) }
   func sample(at address: Address) throws -> SpatialInkSample {
-    guard address.source == sourceID, address.revision == revision else { throw AccessError.staleAddress }
+    guard address.source == sourceID, address.span == span, address.revision == revision else { throw AccessError.staleAddress }
     guard (0..<count).contains(address.index) else { throw AccessError.outsideSource }
     return sample(at:address.index)
   }
@@ -209,11 +239,11 @@ struct InkSampleRelations: Sendable {
     let range=range ?? 0..<count
     precondition(range.lowerBound >= 0 && range.upperBound <= count)
     var output:[SpatialInkSample]=[];output.reserveCapacity(range.count)
-    storage.root.appendDecoded(in:range,to:&output)
+    storage.root.forEachSample(in:range) { output.append($0) }
     return output
   }
   func access(_ address: Address) throws -> (sample: SpatialInkSample,cost: AccessCost) {
-    guard address.source == sourceID, address.revision == revision else { throw AccessError.staleAddress }
+    guard address.source == sourceID, address.span == span, address.revision == revision else { throw AccessError.staleAddress }
     guard (0..<count).contains(address.index) else { throw AccessError.outsideSource }
     var cost=AccessCost()
     let value=storage.root.sample(at:address.index,cost:&cost)
@@ -234,7 +264,7 @@ struct InkSampleRelations: Sendable {
   /// an emitted measurement; nested repeats inherit this exit, never override it.
   func settingExit(_ exit: InkRepeatStep, revision: UUID) -> Self {
     precondition(revision != self.revision)
-    return .init(sourceID:sourceID,revision:revision,count:count,
+    return .init(sourceID:sourceID,span:span,revision:revision,count:count,
       storage:.init(storage.root,exit:exit),frames:frames,header:header)
   }
   /// Constructor for a typed, declared repeat. Recognition in measured data is
@@ -244,7 +274,7 @@ struct InkSampleRelations: Sendable {
     let step=storage.exit
     guard let exit=step.multiplied(by:repetitions),
       let root=Sequence.repeated(storage.root,count:repetitions,step:step) else { return nil }
-    return .init(sourceID:sourceID,revision:revision,count:root.count,storage:.init(root,exit:exit),frames:frames,header:header)
+    return .init(sourceID:sourceID,span:span,revision:revision,count:root.count,storage:.init(root,exit:exit),frames:frames,header:header)
   }
   func editing(_ address: Address, to value: SpatialInkSample, revision: UUID, normalizationBudget: Int = 8192) throws -> Self {
     _ = try sample(at:address)
@@ -259,7 +289,7 @@ struct InkSampleRelations: Sendable {
   /// does not depend on the root still being encoded as one Repeat node.
   func propagatingExitDelta(_ delta: InkRepeatStep, from address: Address, revision: UUID,
     normalizationBudget: Int = 8192) throws -> Self {
-    guard address.source == sourceID,address.revision == self.revision else { throw AccessError.staleAddress }
+    guard address.source == sourceID,address.span == span,address.revision == self.revision else { throw AccessError.staleAddress }
     guard (0...count).contains(address.index) else { throw AccessError.outsideSource }
     precondition(revision != self.revision)
     var work=RewriteWork(normalizationBudget)
@@ -274,22 +304,22 @@ struct InkSampleRelations: Sendable {
   }
   private func editedSource(_ root: Sequence,exit: InkRepeatStep,revision: UUID,range: Range<Int>,
     geometryChanged: Bool,work: RewriteWork) -> Self {
-    let result=Self(sourceID:sourceID,revision:revision,count:count,storage:.init(root,exit:exit),frames:frames,header:header)
+    let result=Self(sourceID:sourceID,span:span,revision:revision,count:count,storage:.init(root,exit:exit),frames:frames,header:header)
     let old=try! bounds(in:range).bounds,new=try! result.bounds(in:range).bounds
     let summary=EditSummary(affectedEvents:range,oldBounds:old,newBounds:new,geometryChanged:geometryChanged,
       exitChanged:exit != storage.exit,work:work)
-    return .init(sourceID:sourceID,revision:revision,count:count,storage:result.storage,frames:frames,header:header,lastEdit:summary)
+    return .init(sourceID:sourceID,span:span,revision:revision,count:count,storage:result.storage,frames:frames,header:header,lastEdit:summary)
   }
   func normalizingPending(budget: Int) -> Self {
     var work=RewriteWork(budget)
     let root=storage.root.normalized(work:&work)
     let summary=EditSummary(affectedEvents:0..<0,oldBounds:.null,newBounds:.null,geometryChanged:false,exitChanged:false,work:work)
-    return .init(sourceID:sourceID,revision:revision,count:count,storage:.init(root,exit:storage.exit),frames:frames,header:header,lastEdit:summary)
+    return .init(sourceID:sourceID,span:span,revision:revision,count:count,storage:.init(root,exit:storage.exit),frames:frames,header:header,lastEdit:summary)
   }
   /// Returns notProven when the caller's explicit comparison budget is exhausted.
   /// No structural hash can turn different encodings into unequal content.
   func equality(to other: Self, eventBudget: Int) -> InkRelationEquality {
-    guard sourceID == other.sourceID, revision == other.revision, count == other.count else { return .different }
+    guard sourceID == other.sourceID, span == other.span, revision == other.revision, count == other.count else { return .different }
     let context = header.equality(to:other.header)
     guard context == .equal else { return context }
     guard storage.exit == other.storage.exit else { return .different }
@@ -315,5 +345,68 @@ struct InkSampleRelations: Sendable {
   }
   var payloadBytes: Int {
     MemoryLayout<Self>.stride + frames.count * MemoryLayout<InkExactFrame>.stride + allocationSummary.bytes
+  }
+}
+
+
+extension InkSampleRelations {
+  /// The sole accepted-event buffer while a contact is moving. Sealed blocks
+  /// share the immutable sequence; only the <=256-event tail stays mutable.
+  /// Predictions never enter this owner. Freezing/export is explicit.
+  struct Contact: Sendable {
+    let sourceID: UUID
+    let span: Int
+    let header: Header
+    private(set) var revision=UUID()
+    private var prefix=Sequence.empty
+    private var tail: [SpatialInkSample]=[]
+    private(set) var preparedEventCount=0
+    var count: Int { prefix.count+tail.count }
+    init(sourceID: UUID = UUID(),span: Int = 0,header: Header) {
+      self.sourceID=sourceID;self.span=span;self.header=header
+    }
+    mutating func replaceTail(from start: Int,with samples: [SpatialInkSample]) {
+      precondition((0...count).contains(start))
+      preparedEventCount=0
+      if start < prefix.count {
+        let end=start/blockSize*blockSize
+        tail=[]
+        prefix.forEachSample(in:end..<start) { tail.append($0) }
+        prefix=prefix.slice(0..<end)
+      } else { tail.removeSubrange((start-prefix.count)...) }
+      var offset=0
+      while offset < samples.count {
+        let end=min(samples.count,offset+blockSize-tail.count)
+        tail.append(contentsOf:samples[offset..<end]);offset=end
+        if tail.count == blockSize {
+          prefix=Sequence.balance(prefix,Sequence(block:Block(tail[...])))
+          preparedEventCount += tail.count
+          tail.removeAll(keepingCapacity:true)
+        }
+      }
+      revision=UUID()
+    }
+    func sample(at index: Int) -> SpatialInkSample {
+      precondition((0..<count).contains(index))
+      if index >= prefix.count { return tail[index-prefix.count] }
+      var cost=AccessCost();return prefix.sample(at:index,cost:&cost)
+    }
+    func forEach(in range: Range<Int>,_ emit: (SpatialInkSample)->Void) {
+      precondition(range.lowerBound >= 0 && range.upperBound <= count)
+      if range.lowerBound < prefix.count { prefix.forEachSample(in:range.lowerBound..<min(prefix.count,range.upperBound),emit) }
+      if range.upperBound > prefix.count {
+        for i in max(0,range.lowerBound-prefix.count)..<(range.upperBound-prefix.count) { emit(tail[i]) }
+      }
+    }
+    func decoded(in range: Range<Int>? = nil) -> [SpatialInkSample] {
+      let range=range ?? 0..<count
+      var result:[SpatialInkSample]=[];result.reserveCapacity(range.count)
+      forEach(in:range) { result.append($0) };return result
+    }
+    func frozen() -> InkSampleRelations {
+      let root=tail.isEmpty ? prefix : Sequence.balance(prefix,Sequence(block:Block(tail[...])))
+      return .init(sourceID:sourceID,span:span,revision:revision,count:count,
+        storage:.init(root),frames:[],header:header)
+    }
   }
 }

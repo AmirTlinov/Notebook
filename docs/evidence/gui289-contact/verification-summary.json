@@ -1,0 +1,38 @@
+{
+  "sourceSHA256": "e59c415116d853f703da9fa5810c70fb0a72f7c658305392861d0d3c70f0d6e1",
+  "status": "passed",
+  "scope": "S4 native Debug contact/replay/editing on Mac and physical iPad; synthetic input is not hardware Pencil or full UX acceptance",
+  "measurements": {
+    "ipadContactMS": {
+      "p50": 0.00075,
+      "p95": 0.00075,
+      "p99": 0.000833,
+      "max": 0.237209
+    },
+    "ipadLasso": {
+      "coldMS": 423.530375,
+      "hotMedianMS": 1.634375,
+      "examinedSamples": 65
+    },
+    "macContactMS": {
+      "p50": 0.000458,
+      "p95": 0.0005,
+      "p99": 0.000583,
+      "max": 0.135875
+    }
+  },
+  "ipad": {
+    "result": "Passed",
+    "passedTests": 41,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": []
+  },
+  "mac": {
+    "result": "Passed",
+    "passedTests": 22,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": []
+  }
+}

@@ -126,16 +126,17 @@ extension InkSampleRelations {
           return Lattice(start.value)?.shifted(from:.zero,to:last,quantum:step.exponent)
         case .literal(let bits):
           var result=Lattice(Double(bitPattern:bits[0]))
-          for bits in bits.dropFirst() { guard let next=Lattice(Double(bitPattern:bits)) else { return nil };result=result?.union(next) }
+          for bits in bits.dropFirst() {
+            guard let current=result,let next=Lattice(Double(bitPattern:bits)) else { return nil }
+            result=current.union(next)
+          }
           return result
         }
       }
       switch block {
       case .fields(let fields,_):
         domain=(0..<3).map { fieldDomain(fields[$0]) }
-        var rect=CGRect.null
-        for i in 0..<block.count { rect=rect.union(Self.pointBounds(fields[0].value(at:i),fields[1].value(at:i),fields[3].value(at:i))) }
-        bounds=rect
+        var cost=AccessCost();bounds=block.bounds(in:0..<block.count,cost:&cost)
       case .literal(let samples):
         var rect=CGRect.null,ranges=[Lattice?](repeating:nil,count:3),valid=[true,true,true]
         for (i,p) in samples.enumerated() {
@@ -149,7 +150,7 @@ extension InkSampleRelations {
         domain=(0..<3).map { valid[$0] ? ranges[$0] : nil };bounds=rect
       }
     }
-    private static func pointBounds(_ x: Double,_ y: Double,_ width: Double) -> CGRect {
+    static func pointBounds(_ x: Double,_ y: Double,_ width: Double) -> CGRect {
       let r=max(width/2,0.25)*Double(InkStrokeGeometry.maximumCrossSectionScale),left=(x-r).nextDown,top=(y-r).nextDown
       return CGRect(x:left,y:top,width:((x+r).nextUp-left).nextUp,height:((y+r).nextUp-top).nextUp)
     }
@@ -394,7 +395,7 @@ extension InkSampleRelations {
             let b=slice(mid..<count).translated(step,work:&work) else { return nil }
           return Self.join(a,b,work:&work)
         }
-        var samples:[SpatialInkSample]=[];appendDecoded(in:0..<count,to:&samples)
+        var samples:[SpatialInkSample]=[];forEachSample(in:0..<count) { samples.append($0) }
         for i in samples.indices {
           guard let p=step.applyingIfExact(samples[i]) else { return nil };samples[i]=p;work.propagatedEvents += 1
         }
@@ -429,13 +430,7 @@ extension InkSampleRelations {
       if range == 0..<count { return bounds }
       switch content {
       case .block(let b):
-        var rect=CGRect.null
-        for i in range {
-          cost.decodedSamples += 1
-          let p=b.sample(at:i)
-          rect=rect.union(Self.pointBounds(p.point.x,p.point.y,p.width))
-        }
-        return rect
+        return b.bounds(in:range,cost:&cost)
       case .pair(let a,let b):
         var result=CGRect.null
         if range.lowerBound < a.count { result=a.bounds(in:range.lowerBound..<min(a.count,range.upperBound),cost:&cost) }
@@ -476,22 +471,19 @@ extension InkSampleRelations {
     }
     /// Full export pays for every output event, but never re-descends the
     /// sequence index once per event. No extra expanded intermediate array.
-    func appendDecoded(in range: Range<Int>,to output: inout [SpatialInkSample]) {
+    func forEachSample(in range: Range<Int>,_ emit: (SpatialInkSample)->Void) {
       if range.isEmpty { return }
       switch content {
-      case .block(let block): for i in range { output.append(block.sample(at:i)) }
+      case .block(let block): for i in range { emit(block.sample(at:i)) }
       case .pair(let a,let b):
-        if range.lowerBound < a.count { a.appendDecoded(in:range.lowerBound..<min(a.count,range.upperBound),to:&output) }
-        if range.upperBound > a.count { b.appendDecoded(in:max(0,range.lowerBound-a.count)..<(range.upperBound-a.count),to:&output) }
+        if range.lowerBound < a.count { a.forEachSample(in:range.lowerBound..<min(a.count,range.upperBound),emit) }
+        if range.upperBound > a.count { b.forEachSample(in:max(0,range.lowerBound-a.count)..<(range.upperBound-a.count),emit) }
       case .shifted(let body,let basis):
-        let step=basis.step
-        let start=output.count;body.appendDecoded(in:range,to:&output)
-        for i in start..<output.count { output[i]=step.apply(output[i]) }
+        body.forEachSample(in:range) { emit(basis.step.apply($0)) }
       case .repeated(let body,_,let step):
         for q in range.lowerBound/body.count...(range.upperBound-1)/body.count {
-          let start=output.count,shift=step.multiplied(by:q)!
-          body.appendDecoded(in:max(0,range.lowerBound-q*body.count)..<min(body.count,range.upperBound-q*body.count),to:&output)
-          if shift != .zero { for i in start..<output.count { output[i]=shift.apply(output[i]) } }
+          let shift=step.multiplied(by:q)!
+          body.forEachSample(in:max(0,range.lowerBound-q*body.count)..<min(body.count,range.upperBound-q*body.count)) { emit(shift.apply($0)) }
         }
       }
     }

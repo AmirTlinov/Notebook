@@ -1,0 +1,49 @@
+import AppKit
+import NotebookCore
+import XCTest
+@testable import Notebook
+
+@MainActor final class MacInkInputTests: XCTestCase {
+  func testNativeMouseContactPersistsItsExactSourceAndEraserUndoKeepsThePen() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let fixture=MacCommandFixture(root:root),model=fixture.model
+    retainNotebookUntilTeardown(model,removing:root)
+    try await fixture.start(showingPage:true)
+    let page=try XCTUnwrap(model.activePage)
+    let canvas=MacPageInkCanvas(model:model,pageID:page.id)
+    let window=NSWindow(contentRect:.init(x:0,y:0,width:400,height:400),styleMask:[.titled],backing:.buffered,defer:false)
+    window.isReleasedWhenClosed=false;window.contentView=canvas;window.makeKeyAndOrderFront(nil)
+    defer { canvas.uninstall();window.close() }
+    canvas.update(page:page,enabled:true,current:true,onReady:{ _ in })
+    try await fixture.waitUntil { canvas.ink.pageGeometryIsReady }
+    func event(_ type: NSEvent.EventType,_ x: Double,_ y: Double,_ time: Double) throws -> NSEvent {
+      try XCTUnwrap(NSEvent.mouseEvent(with:type,location:canvas.convert(.init(x:x,y:y),to:nil),
+        modifierFlags:[],timestamp:time,windowNumber:window.windowNumber,context:nil,eventNumber:1,clickCount:1,pressure:1))
+    }
+    model.selectMacInputTool(.pen)
+    try await fixture.waitUntil { model.drawingTool == .pen }
+    canvas.mouseDown(with:try event(.leftMouseDown,30,60,1))
+    canvas.mouseDragged(with:try event(.leftMouseDragged,180,80,1.125))
+    canvas.mouseUp(with:try event(.leftMouseUp,210,90,1.25))
+    let saved=await model.finishPendingInteraction();XCTAssertTrue(saved)
+    var drawing=try PageInkDrawing.decode(fixture.store.loadPage(page.id).drawingData)
+    let pen=try XCTUnwrap(drawing.activeActions.first)
+    XCTAssertEqual(pen.tool,.pen);XCTAssertEqual(pen.samples.count,3)
+    XCTAssertEqual(pen.samples.map(\.point),[.init(x:30,y:60),.init(x:180,y:80),.init(x:210,y:90)])
+    XCTAssertEqual(pen.samples.map(\.timeOffset),[0,0.125,0.25])
+    XCTAssertTrue(pen.samples.allSatisfy { $0.opacity.bitPattern == Double(1).bitPattern })
+    model.selectMacInputTool(.eraser)
+    try await fixture.waitUntil { model.drawingTool == .eraser }
+    canvas.mouseDown(with:try event(.leftMouseDown,120,40,2))
+    canvas.mouseUp(with:try event(.leftMouseUp,120,120,2.25))
+    let erased=await model.finishPendingInteraction();XCTAssertTrue(erased)
+    drawing=try PageInkDrawing.decode(fixture.store.loadPage(page.id).drawingData)
+    XCTAssertEqual(drawing.activeActions.map(\.tool),[.pen,.eraser])
+    canvas.undo(nil)
+    let undone=await model.finishPendingInteraction();XCTAssertTrue(undone)
+    let reopened=try NotebookStore(root:root).loadPage(page.id)
+    drawing=try PageInkDrawing.decode(reopened.drawingData)
+    XCTAssertEqual(drawing.activeActions.map(\.id),[pen.id])
+    XCTAssertTrue(zip(drawing.activeActions[0].samples,pen.samples).allSatisfy(InkSampleRelations.sameBits))
+  }
+}

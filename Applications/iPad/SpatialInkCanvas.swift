@@ -171,7 +171,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private var actionGeometry: ContactGeometry?
     private var lastActionPoint: PKStrokePoint?
     private var actionSpans: [SpatialInkSpan] = []
-    private var segmentSamples: [SpatialInkSample] = []
+    private var segmentSource: InkSampleRelations.Contact? { activePen?.measured ?? activeEraser?.measured }
     private(set) var routedSegmentCount = 0
     private(set) var rejectedWorldAddressCount = 0
     private var activePen: ActiveInkStroke?
@@ -203,7 +203,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
           let color = (actionPenStyle ?? penStyle).color.components
           onWorkingGraphic(.init(strokeID: actionStrokeID, fit: physical, surface: .board(boardID),
             worldOrigin: origin, color: .init(red: color.red, green: color.green, blue: color.blue),
-            width: actionSpans.first?.samples.first?.width ?? segmentSamples.first?.width ?? 2), actionStrokeID)
+            width: actionSpans.first?.samples.first?.width ?? segmentSource.flatMap { $0.count > 0 ? $0.sample(at:0).width : nil } ?? 2), actionStrokeID)
           if let currentSurface { surfaceRegistry.canvas(for: currentSurface)?.clearActiveAction() }
         } else {
           onWorkingGraphic(nil, actionStrokeID)
@@ -434,7 +434,6 @@ struct SpatialInkCanvas: UIViewRepresentable {
       actionEraserStyle = eraserStyle
       lastActionPoint = nil
       actionSpans = []
-      segmentSamples = []
       routedSegmentCount = 0
       rejectedWorldAddressCount = 0
       currentSurface = nil
@@ -455,7 +454,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         }) { [weak self] in
           guard let self, let geometry = actionGeometry, currentSurface == boardSurface,
             actionSpans.allSatisfy({ $0.surface == boardSurface }) else { return [] }
-          return (actionSpans.flatMap(\.samples) + segmentSamples).compactMap { sample in
+          return (actionSpans.flatMap(\.samples) + (segmentSource?.decoded() ?? [])).compactMap { sample in
             sample.worldPoint.map { geometry.camera.worldToScreen($0, viewport: geometry.viewport) }
           }
         }
@@ -518,7 +517,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
               board: boardSurface
             ) == currentSurface && convert(prediction, to: currentSurface) != nil
           }
-          .map { livePoint($0, on: currentSurface) }
+          .compactMap { convert($0,to:currentSurface) }
         activePen.replacePredictions(with: Array(predictions))
         surfaceRegistry.canvas(for: currentSurface)?
           .displayActiveStroke(activePen)
@@ -560,7 +559,6 @@ struct SpatialInkCanvas: UIViewRepresentable {
       currentSurface = nil
       lastActionPoint = nil
       actionSpans = []
-      segmentSamples = []
       previousFilteredForce = nil
       previousTimestamp = nil
       guard !spans.isEmpty else {
@@ -617,7 +615,6 @@ struct SpatialInkCanvas: UIViewRepresentable {
       actionEraserStyle = nil
       lastActionPoint = nil
       actionSpans = []
-      segmentSamples = []
       activePen = nil
       activeEraser = nil
       currentSurface = nil
@@ -685,12 +682,14 @@ struct SpatialInkCanvas: UIViewRepresentable {
       touchedSurfaces.insert(surface)
       surfaceRegistry.beginAction(on: surface)
       if actionTool?.drawsInk == true {
-        let stroke = ActiveInkStroke(style: actionPenStyle ?? penStyle)
+        let stroke = ActiveInkStroke(style:actionPenStyle ?? penStyle,sourceID:actionStrokeID,span:actionSpans.count,projection:liveProjection(on:surface))
         activePen = stroke
         activeEraser = nil
       } else {
         activePen = nil
-        activeEraser = ActiveEraserStroke()
+        let c=(actionPenStyle ?? penStyle).color.components
+        activeEraser = ActiveEraserStroke(sourceID:actionStrokeID,span:actionSpans.count,
+          color:.init(red:c.red,green:c.green,blue:c.blue),projection:liveProjection(on:surface))
       }
       appendToCurrentSegment(point)
     }
@@ -706,19 +705,17 @@ struct SpatialInkCanvas: UIViewRepresentable {
         finishCurrentSegment()
         return
       }
-      segmentSamples.append(sample)
-      let localPoint = livePoint(point, on: currentSurface)
       if let activePen {
         activePen.replaceMeasuredTail(
-          from: activePen.measuredPoints.count,
-          with: [localPoint]
+          from:activePen.measured.count,
+          with:[sample]
         )
         surfaceRegistry.canvas(for: currentSurface)?
           .displayActiveStroke(activePen)
       } else if let activeEraser {
         activeEraser.replaceMeasuredTail(
-          from: activeEraser.measuredPoints.count,
-          with: [localPoint]
+          from:activeEraser.measured.count,
+          with:[sample]
         )
         surfaceRegistry.canvas(for: currentSurface)?
           .displayActiveEraser(activeEraser)
@@ -732,8 +729,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
     private func publishElementErasing() {
       var spans = actionSpans
-      if let surface = currentSurface, !segmentSamples.isEmpty {
-        spans.append(measuredSpan(surface: surface, samples: segmentSamples))
+      if let surface=currentSurface,let source=segmentSource,source.count > 0 {
+        spans.append(measuredSpan(surface:surface,samples:source.decoded()))
       }
       onElementErasing(spans.map { .init(id: actionStrokeID, surface: $0.surface,
         samples: $0.samples, targets: $0.elementTargets ?? []) }, actionStrokeID)
@@ -741,9 +738,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
 
     private func finishCurrentSegment() {
       guard let currentSurface else { return }
-      if !segmentSamples.isEmpty {
-        actionSpans.append(measuredSpan(surface: currentSurface, samples: segmentSamples))
-        segmentSamples = []
+      if let source=segmentSource,source.count > 0 {
+        actionSpans.append(measuredSpan(surface:currentSurface,samples:source.decoded()))
       }
       activePen?.replacePredictions(with: [])
       surfaceRegistry.canvas(for: currentSurface)?
@@ -922,36 +918,17 @@ struct SpatialInkCanvas: UIViewRepresentable {
       }
     }
 
-    private func livePoint(
-      _ point: PKStrokePoint,
-      on surface: SurfaceID
-    ) -> PKStrokePoint {
-      guard surface.kind == .cover, let geometry = screenSurfaces().first(where: { $0.id == surface }) else {
-        guard let view, let canvas = surfaceRegistry.canvas(for: surface) else { return point }
-        // The retained board canvas has a fixed centered crop. Measured points
-        // are expressed in that same canvas before building live GPU chunks.
-        let localOrigin = canvas.convert(point.location, from: view)
-        let localUnit = canvas.convert(CGPoint(x: point.location.x + 1, y: point.location.y), from: view)
-        let localScale = hypot(localUnit.x - localOrigin.x, localUnit.y - localOrigin.y)
-        return PKStrokePoint(location: canvas.convert(point.location, from: view),
-          timeOffset: point.timeOffset,
-          size: CGSize(width: point.size.width * localScale, height: point.size.height * localScale), opacity: point.opacity,
-          force: point.force, azimuth: point.azimuth, altitude: point.altitude)
+    private func liveProjection(on surface: SurfaceID) -> InkSampleProjection {
+      guard surface.kind != .cover else { return .init() }
+      let camera=actionGeometry?.camera ?? self.camera
+      let viewport=actionGeometry?.viewport ?? self.viewport
+      let center=CGPoint(x:viewport.x/2,y:viewport.y/2)
+      guard let view,let canvas=surfaceRegistry.canvas(for:surface) else {
+        return .init(origin:camera.center,offset:.init(x:center.x,y:center.y),scale:camera.scale)
       }
-      return PKStrokePoint(
-        location: geometry.localPoint(point.location),
-        timeOffset: point.timeOffset,
-        size: CGSize(
-          width: point.size.width / geometry.screenScale,
-          height: point.size.height / geometry.screenScale
-        ),
-        opacity: point.opacity,
-        force: point.force,
-        azimuth: geometry.localAzimuth(point.azimuth),
-        altitude: point.altitude
-      )
+      let p=canvas.convert(center,from:view),unit=canvas.convert(.init(x:center.x+1,y:center.y),from:view)
+      return .init(origin:camera.center,offset:.init(x:p.x,y:p.y),scale:camera.scale*hypot(unit.x-p.x,unit.y-p.y))
     }
-
 
     private func refreshNativeMount() {
       guard !isRetired, actionGeometry == nil, let view, let id = boardSurface.ownerID else { return }
