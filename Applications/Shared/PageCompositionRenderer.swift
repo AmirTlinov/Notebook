@@ -98,27 +98,18 @@ enum PageCompositionRenderer {
     resources: SceneRenderResources, canvas: SceneRasterCompositor) async throws {
     guard !page.drawingData.isEmpty else { return }
     let suppressed = page.graphicPresentation.suppressedInkIDs
-    let decode = Task.detached(priority: .utility) { try PageInkDrawing.decode(page.drawingData).presenting(excluding: suppressed) }
-    let drawing = try await withTaskCancellationHandler { try await decode.value } onCancel: { decode.cancel() }
+    let byteLimit=resources.byteLimit
+    let decode = Task.detached(priority: .utility) {
+      let drawing=try PageInkDrawing.decode(page.drawingData).presenting(excluding:suppressed)
+      return try (drawing,inkGeometryBytes(drawing,size:size,limit:byteLimit))
+    }
+    let (drawing,geometryBytes) = try await withTaskCancellationHandler { try await decode.value } onCancel: { decode.cancel() }
     guard !drawing.isEmpty else { return }
     // Keep the same physical 2x mask and sampling phase as live page ink. The
     // output clips to the granted region; raw endpoints never leave this owner.
     guard let pixels = resources.reserveRaster(pixelWidth: Int(ceil(size.width * 2)),
       pixelHeight: Int(ceil(size.height * 2)), backingCount: 8) else { throw SceneRenderError.resourceLimit }
     defer { pixels.release() }
-    var geometryBytes = 0
-    for action in drawing.actions where action.isActive {
-      // Round sweeps retain a disk per sample in both CPU vertices and GPU
-      // buffers; the old pen-only estimate would undercharge these allocations.
-      let bytesPerSample = action.tool == .eraser
-        ? 512 + 2 * InkStrokeGeometry.roundSweepSegmentVertexCount * MemoryLayout<SpatialInkGeometry.Vertex>.stride : 512
-      let samples = action.samples.count.multipliedReportingOverflow(by: bytesPerSample)
-      let total = geometryBytes.addingReportingOverflow(samples.partialValue)
-      guard !samples.overflow, !total.overflow, total.partialValue <= resources.byteLimit - 2304 else {
-        throw SceneRenderError.resourceLimit
-      }
-      geometryBytes = total.partialValue + 2304
-    }
     var baselineBytes = 0
     if let png = drawing.baselinePNG {
       guard let source = CGImageSourceCreateWithData(png as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
@@ -144,5 +135,36 @@ enum PageCompositionRenderer {
     }
     let image = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
     try await canvas.drawImage(image, in: frame)
+  }
+
+  /// Admission follows the same virtual ranges as InkRasterRenderer. A compact
+  /// million-event body must not be charged for a million unbuilt GPU nodes.
+  /// The query runs on the worker; ambiguous coalescing still pays for the full
+  /// normalizer, and overlapping visible repeats still pay for every draw.
+  nonisolated private static func inkGeometryBytes(_ drawing: PageInkDrawing,size: CGSize,limit: Int) throws -> Int {
+    var total=0
+    func add(_ count: Int,_ stride: Int = 1) throws {
+      let bytes=count.multipliedReportingOverflow(by:stride)
+      let sum=total.addingReportingOverflow(bytes.partialValue)
+      guard !bytes.overflow,!sum.overflow,sum.partialValue <= limit else { throw SceneRenderError.resourceLimit }
+      total=sum.partialValue
+    }
+    // page() uses physical 2x pixels and the same half-point AA margin.
+    let viewport=CGRect(origin:.zero,size:size).insetBy(dx:-0.5,dy:-0.5)
+    for action in drawing.actions where action.isActive {
+      try Task.checkCancellation()
+      try add(action.samples.payloadBytes);try add(2304)
+      let source=InkSampleRelations(action)
+      if source.count > InkRenderGeometry.maximumSegments,
+        let relative=SpatialInkGeometry.RelativeSource(source,projection:.init()) {
+        // Account for the bounded query's result capacity before asking for it.
+        try add(relative.chunkCount,2*MemoryLayout<Int>.stride)
+        for id in relative.query(viewport:viewport).chunks {
+          // CPU halo, prepared nodes/LOD, selected copy and Metal buffer.
+          try add(relative.range(at:id).count+2,512)
+        }
+      } else { try add(source.count,512) }
+    }
+    return total
   }
 }

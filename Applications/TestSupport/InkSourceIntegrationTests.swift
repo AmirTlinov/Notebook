@@ -130,4 +130,44 @@ final class InkSourceIntegrationTests: XCTestCase {
     work.name="sqlite-repeat-visible-work";work.lifetime = .keepAlways;add(work)
   }
 
+  @MainActor
+  func testPageExportBudgetsVisibleRelationsAndStillRefusesOverlappingWork() async throws {
+    let samples: [SpatialInkSample]=(0..<100).map { i in
+      .init(point:.init(x:Double(i),y:64+sin(Double(i)/8)*20),timeOffset:Double(i)/128,
+        width:4,opacity:0.5,force:0.75,azimuth:0,altitude:1)
+    }
+    let body=InkSampleRelations(sourceID:UUID(),revision:UUID(),samples:samples,
+      header:.init(tool:.pen,color:.init(red:0.2,green:0.4,blue:0.8)))
+    let spread=try XCTUnwrap(body.settingExit(.init(x:InkDyadic(128)!,y:.zero,time:.one),revision:UUID())
+      .repeated(10_000,revision:UUID()))
+    let resources=SceneRenderResources(byteLimit:24*1024*1024)
+    let id=UUID(),actor=UUID(),size=PageSize(width:320,height:128)
+    func page(_ action: PageInkAction) throws -> PageDocument {
+      .init(id:id,size:size,actor:actor,drawingData:try PageInkDrawing(actions:[action]).dataRepresentation())
+    }
+    let actual=try await PageCompositionRenderer.render(page(spread.restoredAction()),scale:2,resources:resources) { _ in
+      throw CocoaError(.featureUnsupported)
+    }
+    let control=try await PageCompositionRenderer.render(page(.init(tool:.pen,color:body.header.color,
+      samples:spread.decoded(in:0..<600))),scale:2,resources:resources) { _ in throw CocoaError(.featureUnsupported) }
+    func pixels(_ png: Data) throws -> [UInt8] {
+      let source=try XCTUnwrap(CGImageSourceCreateWithData(png as CFData,nil))
+      let image=try XCTUnwrap(CGImageSourceCreateImageAtIndex(source,0,nil))
+      return Array(try XCTUnwrap(image.dataProvider?.data) as Data)
+    }
+    let a=try pixels(actual.png),b=try pixels(control.png)
+    XCTAssertEqual(a.count,b.count)
+    XCTAssertLessThanOrEqual(zip(a,b).map { abs(Int($0)-Int($1)) }.max()!,2)
+    XCTAssertLessThan(resources.peakAccountedBytes,resources.byteLimit)
+    let proof=XCTAttachment(data:actual.png,uniformTypeIdentifier:"public.png")
+    proof.name="bounded-million-event-page-export";proof.lifetime = .keepAlways;add(proof)
+    let overlap=try XCTUnwrap(body.repeated(10_000,revision:UUID()))
+    do {
+      _=try await PageCompositionRenderer.render(page(overlap.restoredAction()),scale:2,resources:resources) { _ in
+        throw CocoaError(.featureUnsupported)
+      }
+      XCTFail("A compact source cannot authorize a million overlapping draws outside the budget")
+    } catch SceneRenderError.resourceLimit { }
+    XCTAssertEqual(resources.reservedBytes,0)
+  }
 }
