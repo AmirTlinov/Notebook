@@ -161,22 +161,22 @@ extension SpatialInkGeometry {
       return padding.isFinite ? projected.insetBy(dx:-padding-radiusFloor,dy:-padding-radiusFloor) : .infinite
     }
     func query(viewport: CGRect,affine: InkAffine = .init()) -> (chunks: [Int],cost: InkSampleRelations.AccessCost) {
-      var selected:[Int]=[],cost=InkSampleRelations.AccessCost()
-      func visit(_ chunks: Range<Int>) {
-        guard !chunks.isEmpty else { return }
-        let lower=chunks.lowerBound*InkRenderGeometry.maximumSegments
-        let upper=chunks.upperBound == chunkCount ? source.count : chunks.upperBound*InkRenderGeometry.maximumSegments+1
-        let result=try! source.bounds(in:lower..<upper)
-        cost.visitedNodes += result.cost.visitedNodes;cost.jumps += result.cost.jumps;cost.decodedSamples += result.cost.decodedSamples
-        let bounds=affine.bounds(projected(result.bounds))
+      guard chunkCount > 0 else { return ([],.init()) }
+      func overlaps(_ rect: CGRect) -> Bool {
+        let bounds=affine.bounds(projected(rect))
         let magnitude=[bounds.minX,bounds.minY,bounds.maxX,bounds.maxY].map { abs(Float($0)) }.max() ?? .infinity
         let padding=8*Double(magnitude.ulp)
-        if padding.isFinite && !bounds.insetBy(dx:-padding,dy:-padding).intersects(viewport) { return }
-        if chunks.count == 1 { selected.append(chunks.lowerBound);return }
-        let mid=chunks.lowerBound+chunks.count/2
-        visit(chunks.lowerBound..<mid);visit(mid..<chunks.upperBound)
+        return !padding.isFinite || bounds.insetBy(dx:-padding,dy:-padding).intersects(viewport)
       }
-      visit(0..<chunkCount);return (selected,cost)
+      if source.geometry.stationary {
+        let result=try! source.bounds(in:0..<source.count)
+        return (overlaps(result.bounds) ? [0] : [],result.cost)
+      }
+      // Cancellation stops an obsolete frame, not an alternative renderer.
+      guard let query=try? source.querySegments(maximumSegments:InkRenderGeometry.maximumSegments,intersecting:overlaps) else {
+        return ([],.init())
+      }
+      return (query.segments,query.cost)
     }
     func prepare(_ id: Int) -> (chunk: PreparedChunk,decodedPoints: Int) {
       let range=range(at:id)

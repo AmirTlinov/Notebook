@@ -280,6 +280,30 @@ public struct InkSampleRelations: Sendable {
     let quantum=[bounds.minX,bounds.minY,bounds.maxX,bounds.maxY].map { Double(Float($0).ulp) }.max()!
     return (quantum.isFinite ? bounds.insetBy(dx:-8*quantum,dy:-8*quantum) : .infinite,cost)
   }
+  /// Shared range traversal for display and tools. Virtual segments overlap at
+  /// their endpoint so a crossing between two measurements cannot disappear.
+  /// No per-segment index or expanded repeated body is constructed.
+  public func querySegments(maximumSegments: Int,
+    intersecting overlaps: (CGRect) -> Bool
+  ) throws -> (segments: [Int],cost: AccessCost) {
+    precondition(maximumSegments > 0)
+    guard count > 0 else { return ([],.init()) }
+    let segments=max(1,(count-2)/maximumSegments+1)
+    var selected:[Int]=[],cost=AccessCost()
+    func visit(_ range: Range<Int>) throws {
+      try Task.checkCancellation()
+      let lower=range.lowerBound*maximumSegments
+      let upper=range.upperBound == segments ? count : range.upperBound*maximumSegments+1
+      let result=try bounds(in:lower..<upper)
+      cost.visitedNodes += result.cost.visitedNodes;cost.jumps += result.cost.jumps;cost.decodedSamples += result.cost.decodedSamples
+      guard overlaps(result.bounds) else { return }
+      if range.count == 1 { selected.append(range.lowerBound);return }
+      let mid=range.lowerBound+range.count/2
+      try visit(range.lowerBound..<mid);try visit(mid..<range.upperBound)
+    }
+    try visit(0..<segments)
+    return (selected,cost)
+  }
   /// An explicit body-state edit. Changing its exit is distinct from replacing
   /// an emitted measurement; nested repeats inherit this exit, never override it.
   public func settingExit(_ exit: InkRepeatStep, revision: UUID) -> Self {

@@ -117,8 +117,10 @@ The tool controller retains one prepared accepted lasso snapshot. Its identity
 covers the owner, revision and actual spatial-window action membership. Suppressed
 stroke IDs belong to the pinned query and do not rebuild unchanged measurements.
 Moving the world origin reprojects the query, not the samples. Local
-selection examines indexed measurement ranges and intersecting later eraser
-ranges, then keeps original whole-stroke ownership and the existing admission
+selection indexes whole spans only, then traverses `InkSampleRelations.querySegments`
+(the same range owner used by GPU) for candidate measurements and later eraser
+ranges. Preparing an accepted relation source does not decode its events or build
+a second per-range directory. It keeps original whole-stroke ownership and the existing admission
 revision check. Visibility uses vector set differences, not a screen-pixel mask.
 Degenerate numerical fragments are rejected at coordinate-ulp precision, not at
 a display-pixel threshold; transparent paint does not become selectable content.

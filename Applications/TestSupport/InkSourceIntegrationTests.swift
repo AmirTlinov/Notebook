@@ -170,4 +170,35 @@ final class InkSourceIntegrationTests: XCTestCase {
     } catch SceneRenderError.resourceLimit { }
     XCTAssertEqual(resources.reservedBytes,0)
   }
+  func testColdLassoQueriesMillionEventSourceWithoutPreparingAllFragments() throws {
+    func point(_ x:Double,_ y:Double) -> SpatialInkSample {
+      .init(point:.init(x:x,y:y),timeOffset:0,width:2,opacity:1,force:1,azimuth:0,altitude:1)
+    }
+    let body=InkSampleRelations(sourceID:UUID(),revision:UUID(),samples:[point(0,0),point(1,1)],
+      header:.init(tool:.pen,color:.black))
+      .settingExit(.init(x:InkDyadic(4)!,y:InkDyadic(4)!,time:.one),revision:UUID())
+    let huge=try XCTUnwrap(body.repeated(500_000,revision:UUID()))
+    let small=PageInkAction(tool:.pen,samples:[point(500_000,30),point(500_008,30)])
+    let drawing=PageInkDrawing(actions:[huge.restoredAction(),small])
+    let bytes=try drawing.dataRepresentation()
+    let page=PageDocument(size:.init(width:834,height:1194),actor:UUID(),drawingData:bytes)
+    let start=ContinuousClock.now
+    let prepared=try NotebookLassoInkSource.page(page).prepare(surface:.page(page.id),origin:nil)
+    let cold=start.duration(to:.now).components
+    XCTAssertEqual(prepared.sourceSampleCount,1_000_002)
+    XCTAssertEqual(prepared.indexedSpanCount,2)
+    XCTAssertEqual(prepared.preparationSampleCount,0,"Reopening a source must not build one lasso fragment per 64 events")
+    // This region is inside the large diagonal's whole box, but outside its
+    // actual measured path. Reject it through the canonical range tree.
+    let polygon: [SpatialPoint]=[.init(x:499_998,y:26),.init(x:500_010,y:26),.init(x:500_010,y:34),.init(x:499_998,y:34)]
+    let selected=try XCTUnwrap(prepared.selection(polygon:polygon,surface:.page(page.id),origin:nil,bounds:nil))
+    XCTAssertEqual(selected.graphic.sourceInkIDs,[small.id])
+    XCTAssertLessThan(selected.examinedSampleCount,huge.count/100)
+    XCTAssertEqual(try drawing.dataRepresentation(),bytes)
+    let row: [String:Any]=["logicalEvents":prepared.sourceSampleCount,"indexedSpans":prepared.indexedSpanCount,
+      "coldPreparedEvents":prepared.preparationSampleCount,"examinedEventsIncludingSelectedGeometry":selected.examinedSampleCount,
+      "coldPrepareMilliseconds":Double(cold.seconds)*1000+Double(cold.attoseconds)/1e15]
+    let proof=XCTAttachment(data:try JSONSerialization.data(withJSONObject:row,options:[.sortedKeys,.prettyPrinted]),uniformTypeIdentifier:"public.json")
+    proof.name="cold-lasso-million-source";proof.lifetime = .keepAlways;add(proof)
+  }
 }
