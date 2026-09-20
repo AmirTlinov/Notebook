@@ -1,0 +1,24 @@
+{
+  "status": "verified-build",
+  "sourceSHA256": "a055d2cad2706ec9b40569772c0c713c678758a7823f5ee4add7236832eb8d8a",
+  "version": "0.3.134",
+  "verificationRoute": "./verify.sh:selected",
+  "verificationSHA256": "eeabbd7d99c102e86298552c3a178471ee94987ccba4d8b6bd7fba22bb002f00",
+  "build": "138",
+  "sourceCommit": "485647d6cb195db49221dceec0f8b42ad3200bac",
+  "apps": {
+    "iPad": {
+      "manifestSHA256": "b0a0b10c22169b29b6b91420e2492dcaa38c39608244f1f287e92d85c55193b1",
+      "identifier": "com.amirtlinov.notebook.preview",
+      "team": "M94V58FCVP",
+      "profileExpiration": "2027-09-17T09:41:04"
+    },
+    "mac": {
+      "manifestSHA256": "8c7b84d94fe6416d35b21f57cc48386d358e78ddc8d29e6b7d75093bda85d2f5",
+      "identifier": "com.amirtlinov.notebook.mac",
+      "team": "M94V58FCVP",
+      "profileExpiration": null
+    }
+  },
+  "installationStatus": "not attempted: Mac active work warning; fresh confirmation requested for 137 has not arrived; latest verified pair is 138; production Mac still 136"
+}
