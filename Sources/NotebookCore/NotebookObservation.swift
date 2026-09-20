@@ -221,8 +221,8 @@ extension NotebookStore {
       let frame = try layout?.frame ?? root.value["frame"]!.decode(PageRect.self)
       let surface: SurfaceID = scope.target.kind == .page ? .page(scope.target.id)
         : scope.target.kind == .cover ? .cover(scope.target.id) : .board(scope.target.id)
-      result["appearance"] = try NotebookElementAppearance(graphic: graphic, layout: layout,
-        size: .init(width: frame.width, height: frame.height), erasures: readElementErasures(on: surface, elementID: id)).readProjection()
+      result["appearance"] = try NotebookElementAppearance.readProjection(graphic: graphic, layout: layout,
+        size: .init(width: frame.width, height: frame.height), erasures: readElementErasures(on: surface, elementID: id))
     }
     if scope.fields.contains(.preview) {
       result["kind"] = root.value["kind"]

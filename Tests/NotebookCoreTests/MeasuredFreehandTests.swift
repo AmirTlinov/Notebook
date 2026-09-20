@@ -57,6 +57,13 @@ struct MeasuredFreehandTests {
       summary:"Выбор измеренного целого",sources:[.init(target:target,id:"ink")],expectedInkRevision:page.drawingStamp.revision,actor:actor)
     let saved=try #require(try NotebookStore(root:root).readPageElement(pageID:page.id,elementID:"ink"))
     #expect(saved.graphic == graphic)
+    let readStart=ContinuousClock.now,reopened=NotebookStore(root:root)
+    let addressed=try reopened.readPageElementSnapshot(pageID:page.id,elementID:"ink")
+    let projected=try reopened.loadPage(page.id).graphicReadProjection()
+    #expect(readStart.duration(to:.now) < .seconds(1),"Appearance metadata must not expand a million-event contour")
+    #expect(addressed?.appearance["state"] == .string("intact"))
+    #expect(projected["elements"]?.array.first?["appearance"] == addressed?.appearance)
+    #expect(try addressed?.element.graphic?.freehand?.layers[0].measured?.measurements.encodedRelations() == source.measurements.encodedRelations())
     if !poseEdit {
       let undone=try store.undoCollaborationAction(converted.receipt.id,actor:actor)
       #expect(undone.undo?.preserved.isEmpty == true)

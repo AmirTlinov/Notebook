@@ -423,8 +423,8 @@ public struct NotebookCommandDispatcher: Sendable {
       value = try value.setting("graphicResolution",resolution.readProjection()); layout = resolution.layout
     } else { layout = nil }
     let frame = layout?.frame ?? .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
-    return try value.setting("appearance",NotebookElementAppearance(graphic:element.graphic,layout:layout,
-      size:.init(width:frame.width,height:frame.height),erasures:store.readElementErasures(on:element.surface,elementID:element.id)).readProjection())
+    return try value.setting("appearance",NotebookElementAppearance.readProjection(graphic:element.graphic,layout:layout,
+      size:.init(width:frame.width,height:frame.height),erasures:store.readElementErasures(on:element.surface,elementID:element.id)))
   }
 
   private func delivery(_ id: UUID) throws -> JSONValue {

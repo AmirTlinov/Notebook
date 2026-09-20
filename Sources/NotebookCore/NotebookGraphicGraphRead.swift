@@ -22,8 +22,8 @@ extension PageDocument {
       let resolution = graph.resolve(element.id), layout = resolution.layout
       if element.graphic != nil { raw = try raw.setting("graphicResolution",resolution.readProjection()) }
       let frame = layout?.frame ?? element.frame
-      return raw.setting("appearance",NotebookElementAppearance(graphic:element.graphic,layout:layout,
-        size:.init(width:frame.width,height:frame.height),erasures:cuts[element.id] ?? []).readProjection())
+      return raw.setting("appearance",NotebookElementAppearance.readProjection(graphic:element.graphic,layout:layout,
+        size:.init(width:frame.width,height:frame.height),erasures:cuts[element.id] ?? []))
     }))
     return value
   }

@@ -80,9 +80,9 @@ extension NotebookStore {
       }
       let resolution = try element.graphic == nil ? nil : readGraphicResolution(target: target, elementID: elementID)
       let frame = resolution?.layout?.frame ?? element.frame
-      let appearance = try NotebookElementAppearance(graphic: element.graphic, layout: resolution?.layout,
+      let appearance = try NotebookElementAppearance.readProjection(graphic: element.graphic, layout: resolution?.layout,
         size: .init(width: frame.width, height: frame.height),
-        erasures: readElementErasures(on: .page(pageID), elementID: elementID)).readProjection()
+        erasures: readElementErasures(on: .page(pageID), elementID: elementID))
       return try .init(header: header, element: element, graphicResolution: resolution?.readProjection(), appearance: appearance)
     }
   }

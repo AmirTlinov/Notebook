@@ -227,6 +227,13 @@ final class InkSourceIntegrationTests: XCTestCase {
     XCTAssertLessThan(encoded.count,20_000)
     let restored=try JSONDecoder().decode(NotebookGraphic.self,from:encoded)
     XCTAssertEqual(restored,selection.graphic)
+    let selectedPage=PageDocument(size:page.size,actor:UUID(),drawingData:page.drawingData,elements:[
+      .init(id:"whole",kind:.graphic,frame:.init(x:0,y:0,width:600,height:128),source:"",html:"",graphic:restored)])
+    let readStart=ContinuousClock.now
+    let projection=try selectedPage.graphicReadProjection(),readDuration=readStart.duration(to:.now)
+    XCTAssertLessThan(readDuration,.seconds(1),"Reading appearance is not a request for the full contour")
+    XCTAssertEqual(projection["elements"]?.array.first?["appearance"]?["state"],.string("intact"))
+    let readTime=readDuration.components
     let frame=selection.frame,size=CGSize(width:frame.width,height:frame.height)
     let region=CGRect(x:x-frame.x,y:-frame.y,width:160,height:128)
     let query=ink.geometry.query(NotebookFreehandGeometry.sourceBounds(region,size:size,transform:nil))
@@ -261,7 +268,8 @@ final class InkSourceIntegrationTests: XCTestCase {
     image.name="million-event-selected-whole";image.lifetime = .keepAlways;add(image)
     let row: [String:Any]=["selectedLogicalEvents":source.count,"eagerPreparedNodes":ink.geometry.preparedNodeCount,
       "cropPreparedNodes":preparedNodes,"cropIndexVisits":query.visitedNodes,"candidateEventsRead":selection.candidateSampleCount,
-      "storedGraphicBytes":encoded.count,"selectionMilliseconds":Double(elapsed.seconds)*1000+Double(elapsed.attoseconds)/1e15]
+      "storedGraphicBytes":encoded.count,"selectionMilliseconds":Double(elapsed.seconds)*1000+Double(elapsed.attoseconds)/1e15,
+      "appearanceReadMilliseconds":Double(readTime.seconds)*1000+Double(readTime.attoseconds)/1e15]
     let proof=XCTAttachment(data:try JSONSerialization.data(withJSONObject:row,options:[.sortedKeys,.prettyPrinted]),uniformTypeIdentifier:"public.json")
     proof.name="million-event-selected-work";proof.lifetime = .keepAlways;add(proof)
   }

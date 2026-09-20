@@ -19,7 +19,8 @@ import Testing
     #expect(result.state == .erased)
     #expect(!result.contains(.init(x:80,y:50),tolerance:12))
     #expect(!result.contains(.init(x:0,y:50),tolerance:12))
-    #expect(result.readProjection()["sourceIsCompleteAppearance"] == .bool(false))
+    #expect(NotebookElementAppearance.readProjection(graphic:.init(shape:.rectangle,style:.init(strokeWidth:4)),
+      layout:nil,size:.init(width:160,height:100),erasures:[rim])["sourceIsCompleteAppearance"] == .bool(false))
     #expect(appearance([]).state == .intact)
   }
   @Test(arguments: [31, 40, 64, 127]) func sampledFullRimDoesNotLeaveBooleanSeams(_ steps: Int) {

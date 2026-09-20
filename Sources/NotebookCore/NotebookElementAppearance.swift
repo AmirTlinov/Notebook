@@ -46,8 +46,12 @@ public struct NotebookElementAppearance: @unchecked Sendable {
     return remaining.contains(p) || (tolerance > 0 && remaining.copy(strokingWithWidth:tolerance*2,
       lineCap:.round,lineJoin:.round,miterLimit:10).contains(p))
   }
-  public func readProjection() -> JSONValue {
-    .object(["state":.string(state.rawValue),"sourceIsCompleteAppearance":.bool(state == .intact)])
+  /// Reading an untouched source does not require its full paint contour.
+  /// External cuts still use the same exact appearance owner as hit testing.
+  public static func readProjection(graphic: NotebookGraphic?, layout: NotebookGraphicLayout?, size: CGSize,
+    erasures: [InkElementErasure]) -> JSONValue {
+    let state: State = erasures.isEmpty ? .intact : Self(graphic:graphic,layout:layout,size:size,erasures:erasures).state
+    return .object(["state":.string(state.rawValue),"sourceIsCompleteAppearance":.bool(state == .intact)])
   }
 
   /// Exactly the positive-winding triangles that the live renderer erases.
