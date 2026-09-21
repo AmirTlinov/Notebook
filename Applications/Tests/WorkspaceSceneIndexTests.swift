@@ -92,6 +92,12 @@ final class WorkspaceSceneIndexTests: XCTestCase {
   func testOneHundredThousandStoredItemsResolveFourVisibleOwnersWithoutCatalogScan() throws {
     let fixture = itemFixture(count: 100_000)
     let index = WorkspaceSceneIndex(workspace: fixture.workspace, hierarchy: fixture.hierarchy, paperSizes: [:])
+    let boardID=WorkspaceRoot.boardID
+    let firstBounds=try XCTUnwrap(index.paintEntry(id:.item(fixture.workspace.items[0].id),boardID:boardID)?.bounds)
+    let selection=try XCTUnwrap(index.selectionCandidates(boardID:boardID,bounds:firstBounds,kinds:.items))
+    XCTAssertEqual(selection.entries.map(\.id),[.item(fixture.workspace.items[0].id)])
+    XCTAssertLessThan(selection.statistics.visitedNodes,256,
+      "A local lasso must borrow the scene index instead of scanning one hundred thousand items")
     for offset in 0..<30 {
       let presence = SessionPresence(mode: .board,
         camera: .init(center: .init(x: 500 + Double(offset % 7), y: 700), scale: 0.4),
@@ -139,6 +145,11 @@ final class WorkspaceSceneIndexTests: XCTestCase {
       "Every coincident owner is represented once; pins are excluded from aggregate counts")
     XCTAssertLessThanOrEqual(visible.examinedEntries, limit)
     XCTAssertLessThanOrEqual(visible.visitedNodes, limit * 8)
+
+    XCTAssertThrowsError(try index.selectionCandidates(boardID:boardID,
+      bounds:.init(origin:.zero,width:180,height:160),kinds:.elements,limit:96)) { error in
+      XCTAssertEqual((error as? CollaborationError)?.code,"selection_limit")
+    }
 
     mark("visible query")
     let elsewhere = SessionPresence(mode: .board,

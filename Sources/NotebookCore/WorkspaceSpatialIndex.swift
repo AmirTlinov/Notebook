@@ -6,6 +6,14 @@ public enum WorkspaceSpatialID: Hashable, Sendable {
   case element(String)
 }
 
+public struct WorkspaceSpatialKinds: OptionSet, Sendable {
+  public let rawValue: UInt8
+  public init(rawValue: UInt8) { self.rawValue = rawValue }
+  public static let items = Self(rawValue: 1 << 0)
+  public static let elements = Self(rawValue: 1 << 1)
+  public static let all: Self = [.items, .elements]
+}
+
 /// Axis-aligned world bounds retain tiled endpoints even when an index node spans distant tiles.
 public struct WorkspaceSpatialBounds: Codable, Equatable, Sendable {
   public let origin: WorldPoint
@@ -174,6 +182,14 @@ public struct WorkspaceSpatialQuery: Equatable, Sendable {
   public let statistics: WorkspaceSpatialQueryStatistics
 }
 
+/// Exact broad-phase owners. `overflow` is explicit: callers must narrow the
+/// gesture instead of treating an aggregate or a truncated prefix as selected.
+public struct WorkspaceSpatialIntersectionQuery: Equatable, Sendable {
+  public let entries: [WorkspaceSpatialEntry]
+  public let overflow: Bool
+  public let statistics: WorkspaceSpatialQueryStatistics
+}
+
 /// A cursor names one immutable index and one physical query. Its stack is a
 /// depth-first path, bounded by tree depth rather than by the number of sources.
 public struct WorkspaceSpatialReadCursor: Sendable {
@@ -197,6 +213,7 @@ public struct WorkspaceSpatialIndex: Sendable {
     var bounds: WorkspaceSpatialBounds
     var range: Range<Int>
     var children: (Int, Int)?
+    var kinds: WorkspaceSpatialKinds
   }
 
   private let generation = UUID()
@@ -226,6 +243,38 @@ public struct WorkspaceSpatialIndex: Sendable {
 
   public func entry(id: WorkspaceSpatialID) -> WorkspaceSpatialEntry? {
     positions[id].map { entries[$0] }
+  }
+
+  /// Exact spatial candidates without overview primitives. The same retained
+  /// tree owns rendering and interaction broad phase; only matching leaf kinds
+  /// are visited, and dense hits stop at an explicit caller limit.
+  public func intersections(in bounds: WorkspaceSpatialBounds,
+    kinds: WorkspaceSpatialKinds = .all, limit: Int = 4_096) -> WorkspaceSpatialIntersectionQuery {
+    precondition(limit > 0)
+    guard !nodes.isEmpty, !kinds.isEmpty else {
+      return .init(entries: [], overflow: false,
+        statistics: .init(visitedNodes: 0, examinedEntries: 0))
+    }
+    var pending = [0], result: [WorkspaceSpatialEntry] = []
+    var visits = 0, examined = 0, overflow = false
+    while let id = pending.popLast() {
+      let node = nodes[id]
+      visits += 1
+      guard !node.kinds.intersection(kinds).isEmpty,
+        node.bounds.intersects(bounds) else { continue }
+      if let children = node.children {
+        pending.append(children.1); pending.append(children.0)
+      } else {
+        examined += 1
+        let entry = entries[node.range.lowerBound]
+        guard Self.kind(of: entry.id).isSubset(of: kinds), entry.bounds.intersects(bounds) else { continue }
+        if result.count == limit { overflow = true; break }
+        result.append(entry)
+      }
+    }
+    result.sort(by: Self.detailOrder)
+    return .init(entries: result, overflow: overflow,
+      statistics: .init(visitedNodes: visits, examinedEntries: examined))
   }
 
   /// Exact, stable painter order for sequential raster preparation. Each call
@@ -259,12 +308,14 @@ public struct WorkspaceSpatialIndex: Sendable {
   @discardableResult
   private static func buildPaint(entries: [WorkspaceSpatialEntry], range: Range<Int>, nodes: inout [Node]) -> Int {
     let id = nodes.count
-    nodes.append(.init(bounds: entries[range.lowerBound].bounds, range: range, children: nil))
+    nodes.append(.init(bounds: entries[range.lowerBound].bounds, range: range, children: nil,
+      kinds: kind(of: entries[range.lowerBound].id)))
     if range.count > 1 {
       let middle = range.lowerBound + range.count / 2
       let left = buildPaint(entries: entries, range: range.lowerBound..<middle, nodes: &nodes)
       let right = buildPaint(entries: entries, range: middle..<range.upperBound, nodes: &nodes)
       nodes[id].bounds = nodes[left].bounds.union(nodes[right].bounds)
+      nodes[id].kinds = nodes[left].kinds.union(nodes[right].kinds)
       nodes[id].children = (left, right)
     }
     return id
@@ -345,9 +396,12 @@ public struct WorkspaceSpatialIndex: Sendable {
   @discardableResult
   private static func build(entries: inout [WorkspaceSpatialEntry], range: Range<Int>, nodes: inout [Node]) -> Int {
     var bounds = entries[range.lowerBound].bounds
-    for index in range.dropFirst() { bounds = bounds.union(entries[index].bounds) }
+    var kinds = kind(of: entries[range.lowerBound].id)
+    for index in range.dropFirst() {
+      bounds = bounds.union(entries[index].bounds);kinds.formUnion(kind(of:entries[index].id))
+    }
     let nodeID = nodes.count
-    nodes.append(Node(bounds: bounds, range: range, children: nil))
+    nodes.append(Node(bounds: bounds, range: range, children: nil, kinds: kinds))
     if range.count > 1 {
       let horizontal = bounds.width >= bounds.height
       let middle = range.lowerBound + range.count / 2
@@ -404,6 +458,10 @@ public struct WorkspaceSpatialIndex: Sendable {
     case (.item, .element): return true
     case (.element, .item): return false
     }
+  }
+
+  private static func kind(of id: WorkspaceSpatialID) -> WorkspaceSpatialKinds {
+    switch id { case .item: .items; case .element: .elements }
   }
 
   private static func lowerBound(_ positions: [Int], _ value: Int) -> Int {

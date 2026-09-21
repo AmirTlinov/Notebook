@@ -127,16 +127,6 @@ enum NotebookToolGeometry {
       || zip(corners,corners.dropFirst()+corners.prefix(1)).contains { intersects(from:$0,to:$1,polygon:polygon) }
   }
 
-  /// Whole-object selection is deliberately stricter than a lasso cut. A
-  /// loop touching a very large page, group or board item must never select
-  /// that entire owner and produce a canvas-sized editing frame.
-  static func encloses(_ rect: CGRect, polygon: [SpatialPoint]) -> Bool {
-    guard !rect.isNull, rect.width >= 0, rect.height >= 0 else { return false }
-    return [SpatialPoint(x:rect.minX,y:rect.minY), .init(x:rect.maxX,y:rect.minY),
-      .init(x:rect.maxX,y:rect.maxY), .init(x:rect.minX,y:rect.maxY)]
-      .allSatisfy { contains($0,polygon:polygon) }
-  }
-
   static func intersects(from a: SpatialPoint, to b: SpatialPoint, polygon: [SpatialPoint]) -> Bool {
     if contains(a,polygon:polygon) || contains(b,polygon:polygon) { return true }
     func cross(_ p: SpatialPoint, _ q: SpatialPoint, _ r: SpatialPoint) -> Double {

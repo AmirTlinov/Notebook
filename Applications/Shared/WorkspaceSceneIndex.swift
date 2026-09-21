@@ -153,6 +153,23 @@ struct WorkspaceSceneIndex: Sendable {
       ?? (coverID == nil ? board.index.entry(id: id) : nil)
   }
 
+  /// Interaction borrows the renderer's immutable spatial generation instead
+  /// of walking every retained element. Exact geometry remains in the graph;
+  /// this method only narrows the owners which may intersect the gesture.
+  func selectionCandidates(boardID: UUID, coverID: UUID? = nil,
+    bounds: WorkspaceSpatialBounds, kinds: WorkspaceSpatialKinds,
+    limit: Int = 4_096) throws -> WorkspaceSpatialIntersectionQuery? {
+    guard let board = boards[boardID] else { return nil }
+    let index = coverID.flatMap { board.coverIndices[$0] } ?? (coverID == nil ? board.index : nil)
+    guard let index else { return nil }
+    let result = index.intersections(in: bounds, kinds: kinds, limit: limit)
+    guard !result.overflow else {
+      throw CollaborationError("selection_limit",
+        "Выделите меньшую область: в ней слишком много объектов.")
+    }
+    return result
+  }
+
   func renderedItem(id: UUID, presence: SessionPresence) -> RenderedWorkspaceItem? {
     guard let item = boards[presence.boardID]?.items[id] else { return nil }
     return WorkspaceSceneProjection.renderedItem(item.value, geometry: item.geometry,

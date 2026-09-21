@@ -464,14 +464,12 @@ import UIKit
     }
   }
 
-  func testElementSelectionRequiresWholeBoundsInsideLoop() async throws {
+  func testElementSelectionUsesVisibleGeometryInItsSeparateMode() async throws {
     let polygon = [SpatialPoint(x:90,y:90),.init(x:110,y:90),.init(x:110,y:110),.init(x:90,y:110)]
     XCTAssertTrue(NotebookToolGeometry.intersects(.init(x:100,y:100,width:200,height:200),polygon:polygon))
     XCTAssertTrue(NotebookToolGeometry.intersects(.init(x:0,y:0,width:200,height:200),polygon:polygon))
     XCTAssertTrue(NotebookToolGeometry.intersects(from:.init(x:0,y:100),to:.init(x:200,y:100),polygon:polygon))
     XCTAssertFalse(NotebookToolGeometry.intersects(.init(x:120,y:120,width:20,height:20),polygon:polygon))
-    XCTAssertFalse(NotebookToolGeometry.encloses(.init(x:0,y:0,width:200,height:200),polygon:polygon))
-    XCTAssertTrue(NotebookToolGeometry.encloses(.init(x:92,y:92,width:16,height:16),polygon:polygon))
     try await fixture { model in
       let page = try XCTUnwrap(model.activePage)
       let address = NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
@@ -479,7 +477,7 @@ import UIKit
       model.commitNativeText(reference:address.reference(text),text:"Lasso",finish:true)
       await assertSaved(model); await model.reloadExternalChanges()?.value
       let enclosing = [SpatialPoint(x:80,y:80),.init(x:500,y:80),.init(x:500,y:200),.init(x:80,y:200)]
-      let refs = model.elementsIntersecting(enclosing,at:address,graph:.init([]))
+      let refs = try model.elementsIntersecting(enclosing,at:address,graph:.init([]))
       XCTAssertTrue(refs.contains(address.reference(text)))
       model.selectDrawingTool(.lasso)
       model.drawingToolSettings.lassoMode = .elements

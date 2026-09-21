@@ -103,21 +103,27 @@ import XCTest
     receiver.touchesEnded([touch],with:event)
     XCTAssertFalse(model.inputGate.hasActivePencil)
     let deadline = ContinuousClock.now + .seconds(5)
-    while model.selectionSession.element.flatMap(model.graphicElement) == nil, ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
-    let graphic = try XCTUnwrap(model.selectionSession.element.flatMap(model.graphicElement))
+    while model.selectionSession.region?.rawInk?.graphic == nil, ContinuousClock.now < deadline {
+      try await Task.sleep(for:.milliseconds(10))
+    }
+    let region=try XCTUnwrap(model.selectionSession.region)
+    let graphic = try XCTUnwrap(region.rawInk?.graphic)
     print("LASSO_DENSE_ERASER_SELECTION \(released.duration(to:.now))")
     XCTAssertLessThan(released.duration(to:.now),.seconds(2))
     XCTAssertEqual(graphic.sourceInkIDs,pens.map(\.id)); XCTAssertEqual(graphic.freehand?.layers.last?.tool,.eraser); XCTAssertNotNil(graphic.freehand?.layers.last?.measured)
-    let selected = try XCTUnwrap(model.selectionSession.element)
+    let selected=region.reference
+    XCTAssertNotNil(NotebookAttentionProjection.editingFrame(selected,model:model,presence:presence),
+      "The read-only region owns controls before any content edit")
     await withCheckedContinuation { continuation in model.inputGate.performAfterIdle { continuation.resume() } }
     XCTAssertTrue(model.acceptExternalScene(older,observedEpoch:model.collaborationReadEpoch,
       observedPresence:presence,itemPins:itemPins))
-    XCTAssertEqual(model.selectionSession.element,selected,
-      "A scene cut taken before lasso conversion is not deletion of its accepted selection")
-    XCTAssertNotNil(model.graphicLayout(selected),"The accepted graphic still owns the visible geometry")
+    XCTAssertEqual(model.selectionSession.region?.reference,selected,
+      "An older scene cut is not deletion of the live selection descriptor")
+    XCTAssertNotNil(NotebookAttentionProjection.editingFrame(selected,model:model,presence:presence))
     try writer.release()
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
-    XCTAssertEqual(model.selectionSession.element,selected,"Publishing the conversion must retain selection; cue=\(model.actionCue ?? "none"), elements=\(model.activePage?.elements.map(\.id) ?? [])")
+    XCTAssertEqual(model.selectionSession.region?.reference,selected,
+      "Selection alone must not wait for or publish a conversion; cue=\(model.actionCue ?? "none")")
     XCTAssertEqual(try PageInkDrawing.decode(model.store.loadPage(page.id).drawingData).actions.map(\.id),pens.map(\.id)+[erase.id])
     let image = UIGraphicsImageRenderer(bounds:window.bounds).image { _ in window.drawHierarchy(in:window.bounds,afterScreenUpdates:true) }
     let shot = XCTAttachment(image:image); shot.name = "lasso-ink-after-long-eraser"; shot.lifetime = .keepAlways; add(shot)

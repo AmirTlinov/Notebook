@@ -168,6 +168,30 @@ struct WorkspaceSpatialIndexTests {
     #expect(local.aggregates.isEmpty)
     #expect(local.statistics.visitedNodes < 256)
     #expect(local.statistics.examinedEntries == 9)
+    let selection = index.intersections(in: .init(
+      origin: WorldPoint(x: 54_800, y: 6_700), width: 220, height: 220), kinds: .elements)
+    #expect(selection.entries == local.entries)
+    #expect(!selection.overflow)
+    #expect(selection.statistics.visitedNodes < 256)
+    #expect(selection.statistics.examinedEntries == 9,
+      "A small lasso must not read the other 99,991 owners")
+    let clock=ContinuousClock()
+    var indexedCount=0,scanCount=0
+    let indexedStart=clock.now
+    for _ in 0..<1_000 { indexedCount += index.intersections(in:selection.entries[0].bounds,kinds:.elements).entries.count }
+    let indexedElapsed=indexedStart.duration(to:clock.now)
+    let scanStart=clock.now
+    for _ in 0..<10 { scanCount += sources.filter { $0.bounds.intersects(selection.entries[0].bounds) }.count }
+    let scanElapsed=scanStart.duration(to:clock.now)
+    func milliseconds(_ value:Duration)->Double {
+      let parts=value.components
+      return Double(parts.seconds)*1_000+Double(parts.attoseconds)/1e15
+    }
+    let indexedPerRead=milliseconds(indexedElapsed)/1_000
+    let scanPerRead=milliseconds(scanElapsed)/10
+    print("GUI285 100k local selection: indexed=\(indexedPerRead)ms scan=\(scanPerRead)ms ratio=\(scanPerRead/indexedPerRead)x visited=\(selection.statistics.visitedNodes) candidates=\(selection.entries.count)")
+    #expect(indexedCount == 1_000)
+    #expect(scanCount == 10)
     let overview = index.query(
       bounds: .init(origin: WorldPoint(x: -1, y: -1), width: 100_100, height: 10_100),
       limit: 96, minimumProjectedExtent: 0
@@ -194,6 +218,22 @@ struct WorkspaceSpatialIndexTests {
     #expect(query.statistics.visitedNodes <= 96 * 8)
     #expect(query.statistics.examinedEntries <= 96)
     #expect(query.entries.map(\.id).count == Set(query.entries.map(\.id)).count)
+    let selection = index.intersections(in: sources[0].bounds, kinds: .elements, limit: 96)
+    #expect(selection.entries.count == 96)
+    #expect(selection.overflow, "Dense selection must report a limit instead of returning a partial selection")
+    #expect(selection.statistics.visitedNodes < 512)
+  }
+
+  @Test("Exact candidate kinds prune unrelated owners in the shared tree")
+  func exactCandidateKinds() {
+    let itemID=UUID(),bounds=WorkspaceSpatialBounds(origin:.zero,width:20,height:20)
+    let index=WorkspaceSpatialIndex(entries:[
+      .init(id:.item(itemID),bounds:bounds,zIndex:0),entry(1),entry(2,x:100)
+    ])
+    let elements=index.intersections(in:bounds,kinds:.elements)
+    #expect(elements.entries.map(\.id) == [.element("element-1")])
+    let items=index.intersections(in:bounds,kinds:.items)
+    #expect(items.entries.map(\.id) == [.item(itemID)])
   }
 
   private func elementID(_ id: WorkspaceSpatialID) -> String {
