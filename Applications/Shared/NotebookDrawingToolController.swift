@@ -485,6 +485,7 @@ extension NotebookAppModel {
       guard node.shown,let layout=graph.resolve(node.id).layout else { return false }
       if address.surface.kind == .page { guard node.surface == address.surface else { return false } }
       else { guard node.surface.kind == .board || node.surface.kind == .cover else { return false } }
+      guard nativeElementSource(address.reference(node.id))?.target == address.target else { return false }
       let delta=origin.delta(to:node.origin),frame=layout.frame
       guard NotebookToolGeometry.intersects(.init(x:delta.x+frame.x,y:delta.y+frame.y,width:frame.width,height:frame.height),polygon:polygon) else { return false }
       let local=polygon.compactMap { layout.framePoint($0,from:origin) }

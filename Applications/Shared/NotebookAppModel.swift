@@ -2873,7 +2873,9 @@ final class NotebookAppModel {
     }
     let edits = NotebookGraphicSelection.duplicated(members,namespace:UUID(),offset:offset)
     do {
-      let operations = try zip(edits,members).map { edit,member -> NotebookElementEdit in
+      var previews:[NotebookWorkingGraphic]=[]
+      let operations = try zip(zip(edits,members),sources).map { pair,sourceReference -> NotebookElementEdit in
+        let (edit,member)=pair
         let reference: EditableElementReference
         var values: [String:JSONValue] = ["kind":.string("graphic"),"source":.string(""),"frame":try .encode(edit.frame),"graphic":try .encode(edit.graphic)]
         switch first {
@@ -2882,10 +2884,28 @@ final class NotebookAppModel {
           reference = .spatial(boardID:owner,elementID:edit.id)
           if nativeElementSource(first)?.target.kind == .board { values["worldOrigin"] = try .encode(member.origin) }
         }
+        guard let id=UUID(uuidString:edit.id),let source=nativeElementSource(sourceReference) else {
+          throw CollaborationError("invalid_graphic","Не удалось создать копию выбранного объекта.")
+        }
+        let surface:SurfaceID
+        switch reference {
+        case .page(let owner,_): surface = .page(owner)
+        case .spatial:
+          if let value=source.spatial?.surface ?? acceptedWorkingGraphic(sourceReference)?.surface { surface=value }
+          else if source.target.kind == .cover { surface = .cover(source.target.id) }
+          else { surface = .board(source.target.id) }
+        }
+        var preview=NotebookWorkingGraphic(id:id,surface:surface,frame:edit.frame,
+          worldOrigin:source.target.kind == .board ? member.origin : nil,graphic:edit.graphic)
+        preview.accepted=true;previews.append(preview)
         return .init(reference:reference,kind:.insertElement,values:values)
       }
-      _ = performElementOperations(operations,summary:"Дублировать фигуры",readSources:sources,
-        copiedFrom:Dictionary(uniqueKeysWithValues:zip(edits,members).map { ($0.id,$1.id) }))
+      for preview in previews { updateWorkingGraphic(preview,strokeID:preview.strokeID) }
+      guard performElementOperations(operations,summary:"Дублировать фигуры",readSources:sources,
+        copiedFrom:Dictionary(uniqueKeysWithValues:zip(edits,members).map { ($0.id,$1.id) })) else {
+        let ids=Set(previews.map(\.id));removeWorkingGraphics { ids.contains($0.id) };return
+      }
+      selectElements(operations.map(\.reference))
     } catch { showCue(error.localizedDescription) }
   }
 

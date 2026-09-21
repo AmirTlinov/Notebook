@@ -51,6 +51,29 @@ import UIKit
     }
   }
 
+  func testObjectLassoCannotSelectGraphicFromAnotherPhysicalSurface() async throws {
+    try await fixture { model in
+      let board=try XCTUnwrap(model.presence?.boardID),cover=try XCTUnwrap(model.workspace?.selectedItemID)
+      let boardAddress=NotebookToolAddress(surface:.board(board),boardID:board,worldOrigin:.zero,bounds:nil)
+      let coverAddress=NotebookToolAddress(surface:.cover(cover),boardID:board,worldOrigin:nil,bounds:nil)
+      let frame=PageRect(x:100,y:100,width:120,height:80)
+      let graphic=NotebookGraphic(shape:.rectangle,style:.init(strokeWidth:4,fill:.black))
+      let boardObject=NotebookWorkingGraphic(id:UUID(),surface:boardAddress.surface,frame:frame,
+        worldOrigin:.zero,graphic:graphic)
+      let coverObject=NotebookWorkingGraphic(id:UUID(),surface:coverAddress.surface,frame:frame,
+        worldOrigin:nil,graphic:graphic)
+      XCTAssertTrue(model.acceptAuthoredGraphic(boardObject,at:boardAddress))
+      XCTAssertTrue(model.acceptAuthoredGraphic(coverObject,at:coverAddress))
+      await assertSaved(model);await model.reloadExternalChanges()?.value
+      let polygon=[SpatialPoint(x:90,y:90),.init(x:230,y:90),.init(x:230,y:190),.init(x:90,y:190)]
+      let selected=model.elementsIntersecting(polygon,at:coverAddress,
+        graph:model.authoredGraphicGraph(boardID:board))
+      XCTAssertEqual(selected,[coverAddress.reference(coverObject.id)],
+        "Overlapping local coordinates on the board and other covers are different physical targets")
+      XCTAssertFalse(selected.contains(coverAddress.reference(boardObject.id)))
+    }
+  }
+
   func testTextEditorIsAdmittedBeforeInsertPublicationAndKeepsEarlyStyledTyping() async throws {
     try await fixture { model in
       let page = try XCTUnwrap(model.activePage)
@@ -174,6 +197,38 @@ import UIKit
       }
       XCTAssertEqual(model.selectionSession.region?.rawInk?.graphic.sourceInkIDs,[raw.id])
       XCTAssertEqual(try model.store.loadPage(page.id).drawingData,try ink.dataRepresentation())
+    }
+  }
+
+  func testDuplicatingLassoRegionMovesFocusToVisibleCopyImmediately() async throws {
+    try await fixture { model in
+      var page=try XCTUnwrap(model.activePage)
+      func sample(_ x:Double,_ y:Double)->SpatialInkSample {
+        .init(point:.init(x:x,y:y),timeOffset:0,width:8,opacity:1,force:1,azimuth:0,altitude:.pi/2)
+      }
+      let stroke=PageInkAction(tool:.pen,samples:[sample(100,100),sample(220,100)])
+      XCTAssertTrue(page.replaceDrawing(try PageInkDrawing(actions:[stroke]).dataRepresentation(),actor:model.actorID))
+      try model.store.savePage(page);await model.reloadExternalChanges()?.value
+      let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+      model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode = .region
+      let polygon=[SpatialPoint(x:90,y:90),.init(x:150,y:90),.init(x:150,y:110),.init(x:90,y:110)]
+      XCTAssertTrue(model.drawingTools.begin(at:polygon[0],address:address,screenScale:1))
+      for point in polygon.dropFirst() { model.drawingTools.move(to:point) }
+      model.drawingTools.finish()
+      let deadline=ContinuousClock.now + .seconds(5)
+      while model.selectionSession.region == nil,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
+      let region=try XCTUnwrap(model.selectionSession.region)
+
+      model.duplicateGraphicSelection()
+      XCTAssertNil(model.selectionSession.region)
+      let duplicate=try XCTUnwrap(model.selectionSession.element)
+      XCTAssertNotEqual(duplicate,region.reference,"The copy, not the materialized source, owns focus")
+      XCTAssertNotNil(model.acceptedWorkingGraphic(duplicate),"The focused copy is visible before persistence finishes")
+
+      let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
+      await model.reloadExternalChanges()?.value
+      XCTAssertEqual(model.selectionSession.element,duplicate)
+      XCTAssertNotNil(try model.store.loadPage(page.id).element(id:duplicate.elementID))
     }
   }
 

@@ -39,8 +39,14 @@ import XCTest
       XCTAssertEqual(moved.elements[1].frame.y,before.elements[1].frame.y+40)
       XCTAssertEqual(moved.elements[2].graphic?.connection?.bindings.map(\.elementID),["a","b"])
       model.duplicateGraphicSelection()
+      let duplicateSelection=model.selectionSession.elements
+      XCTAssertEqual(duplicateSelection.count,3)
+      XCTAssertTrue(Set(duplicateSelection).isDisjoint(with:refs),"Focus must move from the sources to their copies immediately")
+      XCTAssertTrue(duplicateSelection.allSatisfy { model.acceptedWorkingGraphic($0) != nil },
+        "Every focused copy must own visible geometry before persistence finishes")
       let copied = await model.finishPendingPersistence(); XCTAssertTrue(copied)
       await model.reloadExternalChanges()?.value
+      XCTAssertEqual(model.selectionSession.elements,duplicateSelection)
       let result = try NotebookStore(root:model.store.root).loadPage(pageID)
       XCTAssertEqual(result.elements.count,6)
       let copies = Array(result.elements.suffix(3))
