@@ -81,6 +81,40 @@ struct InkRelationMigrationTests {
       #expect(try NotebookStore(root:opened.root).currentChangeCursor() == cursor+1)
     }
   }
+  enum DeliveryState: CaseIterable { case drained,unacknowledged,anotherPeerPending }
+  @Test(arguments:DeliveryState.allCases)
+  func incomingJournalGenerationsDoNotBecomeAdditionalDeliveryPeers(state: DeliveryState) throws {
+    try fixture { f in
+      let sources=[NotebookReplicationSource(deviceID:f.peer,generation:f.peer),
+        .init(deviceID:f.peer,generation:UUID()),.init(deviceID:f.peer,generation:UUID())]
+      for (i,source) in sources.enumerated() {
+        _=try f.store.admitReplicationSource(source)
+        try f.store.commandTransaction(advancesReadRevision:false) {
+          try f.store.currentSQL!.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',?)",
+            [.text(source.cursorKey),.integer(Int64(i+3))])
+        }
+      }
+      let cursor=try f.store.currentChangeCursor()
+      let acknowledged=state != .unacknowledged ? cursor : 1
+      try f.store.acknowledgePeer(peerID:f.peer,through:acknowledged)
+      if state == .anotherPeerPending { try f.store.acknowledgePeer(peerID:UUID(),through:0) }
+      _=try downgrade(f)
+      let opened=NotebookStore(root:f.store.root)
+      if state == .drained {
+        #expect(try opened.readPageInkAction(pageID:f.page,actionID:f.paper.id)?.action == f.paper)
+        #expect(try opened.peerCursor(peerID:f.peer,direction:.outgoing) == cursor)
+        for (i,source) in sources.enumerated() { #expect(try opened.incomingCursor(source:source) == UInt64(i+3)) }
+        #expect(try opened.currentChangeCursor() == cursor+1)
+      } else {
+        do { _=try opened.workspaceHeader();Issue.record("A journal generation cannot acknowledge delivery") }
+        catch let error as CollaborationError { #expect(error.code == "ink_migration_pending_peer") }
+        #expect(try version(f.store) == 16)
+        let db=try NotebookSQLConnection(url:f.store.databaseURL,writable:false)
+        #expect(try db.rows("SELECT sequence FROM peer_cursors WHERE peer_id=? AND direction='outgoing'",[.text(f.peer.uuidString.lowercased())]).first?[0].integer == Int64(acknowledged))
+        #expect(try db.rows("SELECT peer_id FROM peer_cursors").count == (state == .anotherPeerPending ? 5 : 4))
+      }
+    }
+  }
   @Test func pendingPeerRefusesMigrationWithoutChangingAnyStoredBytesOrCursor() throws {
     try fixture { f in
       try f.store.acknowledgePeer(peerID:f.peer,through:1)

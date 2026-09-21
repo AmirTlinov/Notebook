@@ -73,6 +73,11 @@ struct BoardPlacementMigrationTests {
     let manifest = try #require(try store.changeJournal(after: 0).first)
     let bytes = try store.readBlobChunk(hash: manifest.manifestHash, offset: 0, maxBytes: 1_048_576)
     try store.acknowledgePeer(peerID: peer, through: cursor)
+    let incoming=NotebookReplicationSource(deviceID:peer,generation:UUID())
+    _=try store.admitReplicationSource(incoming)
+    try store.commandTransaction(advancesReadRevision:false) {
+      try store.currentSQL!.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',7)",[.text(incoming.cursorKey)])
+    }
     let legacy = try installStoredVersionTwo(store)
     let reopened = NotebookStore(root: root)
     #expect(try reopened.loadIndex() == before.workspace)
@@ -85,6 +90,7 @@ struct BoardPlacementMigrationTests {
     #expect(board.board(header.rootBoardID)?.freeItems == before.hierarchy.board(header.rootBoardID)?.freeItems)
     #expect(try reopened.loadPage(before.workspace.selectedPageID!) == before.pages.first { $0.id == before.workspace.selectedPageID! })
     #expect(try reopened.peerCursor(peerID: peer, direction: .outgoing) == cursor)
+    #expect(try reopened.incomingCursor(source:incoming) == 7)
     #expect(try reopened.readBlobChunk(hash: manifest.manifestHash, offset: 0, maxBytes: 1_048_576) == bytes)
     let next = try reopened.currentChangeCursor()
     #expect(next == cursor + 1)

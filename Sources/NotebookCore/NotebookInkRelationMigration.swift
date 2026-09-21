@@ -42,12 +42,8 @@ extension NotebookStore {
     let oldPaper = try database.rows("SELECT 1 FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file LIKE 'pages/%' AND r.collection='samples' AND json_type(CAST(b.data AS TEXT),'$.value')='array' LIMIT 1")
     guard !oldRoot.isEmpty || !oldPaper.isEmpty else { return }
     let cursor = try currentChangeCursor()
-    for peer in try database.rows("SELECT DISTINCT peer_id FROM peer_cursors").compactMap({ $0[0].text }) {
-      let acknowledged = try database.rows("SELECT sequence FROM peer_cursors WHERE peer_id=? AND direction='outgoing'", [.text(peer)]).first?[0].integer ?? 0
-      guard try database.rows("SELECT 1 FROM change_log WHERE sequence>? AND sequence<=? LIMIT 1",
-        [.integer(acknowledged), .integer(Int64(cursor))]).isEmpty else {
-        throw CollaborationError("ink_migration_pending_peer", "Перед обновлением формата чернил нужно завершить передачу сопряжённому устройству. Неподтверждённые изменения и его курсор не будут сброшены.")
-      }
+    guard try !hasPendingPeerDelivery(through:cursor,database:database) else {
+      throw CollaborationError("ink_migration_pending_peer", "Перед обновлением формата чернил нужно завершить передачу сопряжённому устройству. Неподтверждённые изменения и его курсор не будут сброшены.")
     }
     // Disk-backed memoization also covers shared pre/postimages of undo. Do not
     // retain an archive-sized Swift dictionary or invent new authored events.

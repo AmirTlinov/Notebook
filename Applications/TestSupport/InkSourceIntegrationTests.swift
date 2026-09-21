@@ -82,6 +82,46 @@ final class InkSourceIntegrationTests: XCTestCase {
     XCTAssertEqual(SpatialInkMesh.local(crop).batches[0].expandedForTesting().nodes[0].position,.init(10,20))
     XCTAssertEqual(crop[0].source.sample(at:0).point,.init(x:30,y:100))
   }
+  func testAcknowledgedDeviceWithANewIncomingJournalMigratesAndKeepsItsInkRaster() throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("native-ink-migration-\(UUID())")
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store=NotebookStore(root:root),actor=UUID(),peer=UUID(),size=CGSize(width:256,height:128)
+    _=try store.initializeWorkspace(actor:actor,pageSize:.init(width:834,height:1194))
+    let page=try XCTUnwrap(try store.loadIndex().selectedPageID),samples=(0..<64).map { sample($0) }
+    let action=PageInkAction(tool:.pen,samples:samples),drawing=PageInkDrawing(actions:[action])
+    _=try store.savePage(.init(id:page,size:.init(width:834,height:1194),actor:actor,drawingData:drawing.dataRepresentation()))
+    let incoming=NotebookReplicationSource(deviceID:peer,generation:UUID())
+    _=try store.admitReplicationSource(incoming)
+    let cursor=try store.currentChangeCursor()
+    try store.acknowledgePeer(peerID:peer,through:cursor)
+    let before=try XCTUnwrap(InkRasterRenderer.shared.page(drawing,size:size,scale:2))
+    // Manufacture only the prior serialization in this disposable native
+    // store. No installed content, trust state or journal receipt is touched.
+    let db=try NotebookSQLConnection(url:store.databaseURL,writable:true)
+    try db.run("BEGIN IMMEDIATE")
+    do {
+      let rows=try db.rows("SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file LIKE 'pages/%' AND r.collection='samples'")
+      XCTAssertEqual(rows.count,1)
+      let row=try JSONDecoder().decode(NotebookStoredFragment.self,from:XCTUnwrap(rows.first?[0].blob))
+      let old=try row.replacing(value:.encode(samples)),hash=try db.putBlob(NotebookStore.storageEncoder.encode(old))
+      try db.run("UPDATE records SET hash=? WHERE address=?",[.text(hash),.text(row.address)])
+      try db.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',7)",[.text(incoming.cursorKey)])
+      try db.run("PRAGMA user_version=16");try db.run("COMMIT")
+    } catch { try? db.run("ROLLBACK");throw error }
+    let opened=NotebookStore(root:root),reloaded=try PageInkDrawing.decode(opened.loadPage(page).drawingData)
+    XCTAssertEqual(reloaded.actions.map(\.id),[action.id])
+    let restored=try XCTUnwrap(reloaded.actions.first).samples.materialized()
+    XCTAssertEqual(restored.count,samples.count)
+    XCTAssertTrue(zip(restored,samples).allSatisfy { InkSampleRelations.sameBits($0,$1) })
+    XCTAssertEqual(try opened.peerCursor(peerID:peer,direction:.outgoing),cursor)
+    XCTAssertEqual(try opened.incomingCursor(source:incoming),7)
+    XCTAssertEqual(try opened.currentChangeCursor(),cursor+1)
+    let after=try XCTUnwrap(InkRasterRenderer.shared.page(reloaded,size:size,scale:2))
+    let pixels=try XCTUnwrap(after.dataProvider?.data) as Data
+    XCTAssertTrue(pixels.contains { $0 != 0 })
+    XCTAssertEqual(pixels,try XCTUnwrap(before.dataProvider?.data) as Data)
+  }
+
   func testStoredMillionEventBodyReopensIntoTheNativeVisibleRangeAndGPU() throws {
     let root=FileManager.default.temporaryDirectory.appendingPathComponent("native-relations-\(UUID())")
     defer { try? FileManager.default.removeItem(at:root) }

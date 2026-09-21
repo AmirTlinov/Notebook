@@ -8,6 +8,13 @@ public struct NotebookReplicationSource: Codable, Equatable, Hashable, Sendable 
   public init(deviceID: UUID, generation: UUID) {
     self.deviceID = deviceID; self.generation = generation
   }
+  init?(cursorKey: String) {
+    let parts=cursorKey.split(separator:"/",omittingEmptySubsequences:false)
+    guard (1...2).contains(parts.count),let device=UUID(uuidString:String(parts[0])),
+      let generation=parts.count == 1 ? device : UUID(uuidString:String(parts[1])) else { return nil }
+    self.init(deviceID:device,generation:generation)
+    guard self.cursorKey == cursorKey else { return nil }
+  }
   var cursorKey: String {
     let peer = deviceID.uuidString.lowercased()
     // Existing installed journals are generation deviceID. This admission
@@ -28,6 +35,26 @@ public struct NotebookReplicationDelivery: Codable, Equatable, Sendable {
 }
 
 extension NotebookStore {
+  /// Incoming cursors name journals; outgoing acknowledgements name devices.
+  /// A new incoming generation is not another recipient of our shared writes.
+  /// Preserve every cursor and still require acknowledgement from every device,
+  /// including a historical peer whose continued membership is unknown.
+  func hasPendingPeerDelivery(through cursor: UInt64,database: NotebookSQLConnection) throws -> Bool {
+    let devices=try Set(database.rows("SELECT peer_id,direction FROM peer_cursors").map { row -> UUID in
+      guard let key=row[0].text,let source=NotebookReplicationSource(cursorKey:key),
+        row[1].text == "incoming" || (row[1].text == "outgoing" && key == source.deviceID.uuidString.lowercased()) else {
+        throw NotebookStorageError.corruptRecord("peer_cursors")
+      }
+      return source.deviceID
+    })
+    return try devices.contains { peer in
+      let acknowledged=try database.rows("SELECT sequence FROM peer_cursors WHERE peer_id=? AND direction='outgoing'",
+        [.text(peer.uuidString.lowercased())]).first?[0].integer ?? 0
+      return try !database.rows("SELECT 1 FROM change_log WHERE sequence>? AND sequence<=? LIMIT 1",
+        [.integer(acknowledged),.integer(Int64(cursor))]).isEmpty
+    }
+  }
+
   public func replicationSource(deviceID: UUID) throws -> NotebookReplicationSource {
     try commandTransaction(advancesReadRevision: false) {
       let database = currentSQL!

@@ -83,14 +83,8 @@ extension NotebookStore {
     guard currentSQL === database, database.writable else { throw NotebookStorageError.readOnlyTransaction }
     guard try needsBoardPlacementMigration(database: database) else { return }
     let cursor = try currentChangeCursor()
-    let peers = try database.rows("SELECT DISTINCT peer_id FROM peer_cursors").compactMap { $0[0].text }
-    for peer in peers {
-      let acknowledged = UInt64(try database.rows("SELECT sequence FROM peer_cursors WHERE peer_id=? AND direction='outgoing'", [.text(peer)]).first?[0].integer ?? 0)
-      let pending = try database.rows("SELECT 1 FROM change_log WHERE sequence>? AND sequence<=? LIMIT 1",
-        [.integer(Int64(acknowledged)), .integer(Int64(cursor))])
-      guard pending.isEmpty else {
-        throw CollaborationError("placement_migration_pending_peer", "Перед обновлением нужно завершить передачу сохранённых изменений сопряжённому компьютеру. Старые изменения не подтверждены и не будут пропущены.")
-      }
+    guard try !hasPendingPeerDelivery(through:cursor,database:database) else {
+      throw CollaborationError("placement_migration_pending_peer", "Перед обновлением нужно завершить передачу сохранённых изменений сопряжённому компьютеру. Старые изменения не подтверждены и не будут пропущены.")
     }
     guard let source = try storedValue("board.json"), let nodes = source["boards"]?.array else {
       throw NotebookStorageError.corruptRecord("placement migration tree")

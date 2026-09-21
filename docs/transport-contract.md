@@ -39,6 +39,13 @@ leaves the old admission version and content intact. The transition publishes
 current-format rows and records its outgoing floor, never imports old archives.
 A repeated open does not repeat conversion or publish another change.
 
+The migration drain check belongs to the replication owner. Incoming cursor keys
+identify a device and possibly a journal generation; outgoing acknowledgements
+identify the recipient device. Several incoming generations therefore share one
+outgoing check, without deleting, rewriting or treating their incoming positions
+as acknowledgements. A distinct historical recipient still blocks admission if
+its outgoing writes are unacknowledged; unknown membership is not retirement.
+
 ## Authentication and encryption
 
 `NotebookTransportTLS` uses Network.framework and Security with one pinned profile:
