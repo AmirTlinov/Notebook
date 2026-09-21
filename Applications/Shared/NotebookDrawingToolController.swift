@@ -189,8 +189,10 @@ final class NotebookDrawingToolController {
   }
 
   private func finishLasso(_ current: Contact) {
+    var pending: [Task<Void, Never>] = []
     var references = model.lassoElements(current.points,at:current.address,graph:current.graph,
-      includesInk:current.settings.lassoSelectsInk,includesObjects:current.settings.lassoSelectsObjects)
+      includesInk:current.settings.lassoSelectsInk,includesObjects:current.settings.lassoSelectsObjects,
+      waiting: { pending.append($0) })
     var items = current.settings.lassoSelectsObjects ? model.lassoItems(current.points,at:current.address) : []
     if current.settings.lassoAddsToSelection {
       references += model.selectionSession.elements; items += model.selectionSession.items
@@ -198,6 +200,10 @@ final class NotebookDrawingToolController {
     model.selectElements(references,items:items)
     let selection = model.selectionSession.id
     lassoTask = Task { [weak self] in
+      for task in pending {
+        await task.value
+        guard !Task.isCancelled else { return }
+      }
       let source = await current.ink?.value
       guard !Task.isCancelled else { return }
       let preparation = Task.detached(priority:.userInitiated) {
@@ -208,6 +214,11 @@ final class NotebookDrawingToolController {
         let result = try await withTaskCancellationHandler { try await preparation.value } onCancel: { preparation.cancel() }
         guard !Task.isCancelled, let self, model.selectionSession.id == selection else { return }
         var references = model.selectionSession.elements
+        if !pending.isEmpty {
+          references += model.lassoElements(current.points,at:current.address,graph:current.graph,
+            includesInk:current.settings.lassoSelectsInk,includesObjects:current.settings.lassoSelectsObjects)
+          references = Array(Set(references))
+        }
         let items = model.selectionSession.items
         guard references.count+items.count+(result == nil ? 0 : 1) <= 32 else {
           model.showCue("Выберите не более 32 объектов за один раз."); return
@@ -217,7 +228,7 @@ final class NotebookDrawingToolController {
             worldOrigin:current.address.worldOrigin,graphic:result.graphic)
           if model.acceptAuthoredGraphic(object,at:current.address,expectedInkRevision:ink.revision) { references.append(current.address.reference(object.id)) }
         }
-        if result != nil { model.selectElements(references,items:items) }
+        if result != nil || !pending.isEmpty { model.selectElements(references,items:items) }
       } catch is CancellationError {} catch { self?.model.showCue(error.localizedDescription) }
     }
   }
@@ -324,7 +335,8 @@ extension NotebookAppModel {
   }
 
   func lassoElements(_ polygon: [SpatialPoint], at address: NotebookToolAddress, graph: NotebookGraphicGraph,
-    includesInk: Bool = true, includesObjects: Bool = true) -> [EditableElementReference] {
+    includesInk: Bool = true, includesObjects: Bool = true,
+    waiting: ((Task<Void, Never>) -> Void)? = nil) -> [EditableElementReference] {
     let origin = address.worldOrigin ?? .zero
     let erasures = elementErasures(on:address.surface)
     let candidates:AnySequence<NotebookGraphicGraph.Node>
@@ -354,15 +366,22 @@ extension NotebookAppModel {
         ? NotebookElementAppearance(graphic:node.graphic,layout:layout,size:.init(width:frame.width,height:frame.height),erasures:[])
         : elementErasureCache.appearance(surface:address.surface,id:node.id,graphic:node.graphic,layout:layout,
             size:.init(width:frame.width,height:frame.height),erasures:cuts)
-      guard let appearance,appearance.state != .erased else { return false }
+      guard let appearance else {
+        if let task = elementErasureCache.pendingPreparation(surface:address.surface,id:node.id) { waiting?(task) }
+        return false
+      }
+      guard appearance.state != .erased else { return false }
       let path = CGMutablePath(); path.addLines(between:local.map { .init(x:$0.x,y:$0.y) }); path.closeSubpath()
       return !appearance.remaining.intersection(path,using:.evenOdd).isEmpty
     }.map { address.reference($0.id) }
     guard includesObjects else { return references }
     func visible(_ id: String, _ frame: CGRect) -> Bool {
       let cuts = erasures[id] ?? []
-      return cuts.isEmpty || elementErasureCache.appearance(surface:address.surface,id:id,graphic:nil,layout:nil,
-        size:frame.size,erasures:cuts).map { $0.state != .erased } == true
+      guard !cuts.isEmpty else { return true }
+      if let appearance = elementErasureCache.appearance(surface:address.surface,id:id,graphic:nil,layout:nil,
+        size:frame.size,erasures:cuts) { return appearance.state != .erased }
+      if let task = elementErasureCache.pendingPreparation(surface:address.surface,id:id) { waiting?(task) }
+      return false
     }
     var all = references
     if address.surface.kind == .page, let page = pages[address.surface.ownerID!] {
@@ -370,7 +389,7 @@ extension NotebookAppModel {
         guard element.kind != .group, element.graphic == nil else { return false }
         let f = elementPresentationFrame(address.reference(element.id),fallback:element.frame)
         let rect = CGRect(x:f.x,y:f.y,width:f.width,height:f.height)
-        return visible(element.id,rect) && NotebookToolGeometry.intersects(rect,polygon:polygon)
+        return NotebookToolGeometry.intersects(rect,polygon:polygon) && visible(element.id,rect)
       }.map { address.reference($0.id) }
     } else if let board = address.boardID ?? address.surface.ownerID, let cohort = compositionTiles.published {
       let elements = address.surface.kind == .cover
@@ -383,7 +402,8 @@ extension NotebookAppModel {
         let placement = graph.placement(element.id)
         let delta = origin.delta(to:placement?.origin ?? element.worldOrigin ?? .zero)
         let f = elementPresentationFrame(address.reference(element.id),fallback:NotebookTextTypography.frame(element))
-        return visible(element.id,.init(x:f.x,y:f.y,width:f.width,height:f.height)) && NotebookToolGeometry.intersects(.init(x:delta.x+f.x,y:delta.y+f.y,width:f.width,height:f.height),polygon:polygon)
+        return NotebookToolGeometry.intersects(.init(x:delta.x+f.x,y:delta.y+f.y,width:f.width,height:f.height),polygon:polygon)
+          && visible(element.id,.init(x:f.x,y:f.y,width:f.width,height:f.height))
       }.map { address.reference($0.id) }
     }
     return all

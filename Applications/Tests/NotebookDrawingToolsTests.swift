@@ -4,6 +4,56 @@ import UIKit
 @testable import Notebook
 
 @MainActor final class NotebookDrawingToolsTests: XCTestCase {
+  func testFirstLassoWaitsForColdErasedObjectInsteadOfDroppingIt() async throws {
+    try await fixture { model in
+      var page = try XCTUnwrap(model.activePage)
+      let frame = PageRect(x: 100, y: 200, width: 200, height: 120)
+      let graphic = NotebookGraphic(shape: .rectangle, style: .init(strokeWidth: 4, fill: .black))
+      let element = AgentElement(id: "cold-cut", kind: .graphic, frame: frame, source: "", html: "", graphic: graphic)
+      XCTAssertTrue(page.replaceElements([element], actor: model.actorID))
+      let cut = PageInkAction(tool: .eraser, samples: [200.0, 320.0].map {
+        .init(point: .init(x: 100, y: $0), timeOffset: 0, width: 40, opacity: 1,
+          force: 1, azimuth: 0, altitude: .pi / 2)
+      }).erasingElements([.init(elementID: element.id, frame: frame)])
+      XCTAssertTrue(page.replaceDrawing(try PageInkDrawing(actions: [cut]).dataRepresentation(), actor: model.actorID))
+      try model.store.savePage(page); await model.reloadExternalChanges()?.value
+      let address = NotebookToolAddress(surface: .page(page.id), boardID: nil, worldOrigin: nil, bounds: nil)
+      model.selectDrawingTool(.lasso)
+      model.drawingToolSettings.lassoSelectsInk = false
+      let polygon = [SpatialPoint(x: 250, y: 230), .init(x: 280, y: 230), .init(x: 280, y: 270), .init(x: 250, y: 270)]
+      let preparations = model.elementErasureCache.preparationCount
+      XCTAssertTrue(model.drawingTools.begin(at: polygon[0], address: address, screenScale: 1))
+      for point in polygon.dropFirst() { model.drawingTools.move(to: point) }
+      model.drawingTools.finish()
+      let deadline = ContinuousClock.now + .seconds(2)
+      while !model.selectionSession.contains(address.reference(element.id)), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      XCTAssertEqual(model.elementErasureCache.preparationCount, preparations + 1)
+      XCTAssertTrue(model.selectionSession.contains(address.reference(element.id)),
+        "A pending exact cutout is not proof of absence; the first lasso must finish without a second gesture")
+
+      // Only the removed strip intersects this second polygon.
+      let removed = [SpatialPoint(x: 101, y: 230), .init(x: 110, y: 230), .init(x: 110, y: 270), .init(x: 101, y: 270)]
+      XCTAssertTrue(model.drawingTools.begin(at: removed[0], address: address, screenScale: 1))
+      for point in removed.dropFirst() { model.drawingTools.move(to: point) }
+      model.drawingTools.finish()
+      XCTAssertTrue(model.selectionSession.elements.isEmpty)
+
+      // A new human selection invalidates an older unfinished lasso. Evicting
+      // derived paths emulates reopening; it never changes the authored cuts.
+      model.elementErasureCache.retain(pages: [:])
+      XCTAssertTrue(model.drawingTools.begin(at: polygon[0], address: address, screenScale: 1))
+      for point in polygon.dropFirst() { model.drawingTools.move(to: point) }
+      model.drawingTools.finish()
+      let preparation = try XCTUnwrap(model.elementErasureCache.pendingPreparation(surface: address.surface, id: element.id))
+      model.clearSelection()
+      await preparation.value
+      try await Task.sleep(for: .milliseconds(30))
+      XCTAssertTrue(model.selectionSession.elements.isEmpty, "Late preparation cannot revive a cancelled selection")
+    }
+  }
+
   func testTextEditorIsAdmittedBeforeInsertPublicationAndKeepsEarlyStyledTyping() async throws {
     try await fixture { model in
       let page = try XCTUnwrap(model.activePage)

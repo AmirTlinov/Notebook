@@ -73,6 +73,11 @@ not retarget the lasso to its cover. Mixed selection has one
 `NotebookSelectionSession` and a 32-target limit; graphics transforms do not pretend
 to transform notebook cards.
 
+An erased object whose exact appearance is still preparing is pending, not absent.
+The finishing lasso joins that same model-owned preparation and rechecks its pinned
+contact without another gesture. A newer selection or cancelled contact revokes
+completion; paint and picking do not prepare independent cutouts.
+
 Ink conversion fixes the accepted tail and prepares a reusable vector bounds
 hierarchy off-main. Lasso examines only intersecting sample ranges; visibility is
 vector paint minus later cuts, not a bitmap mask. Selected whole strokes use shared

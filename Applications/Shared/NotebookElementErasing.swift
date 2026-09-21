@@ -107,6 +107,13 @@ struct NotebookElementErasing {
     return nil
   }
 
+  /// Selection can join the same preparation already requested by paint.
+  /// Pending is not an empty object, and a lasso must not need a second contact.
+  func pendingPreparation(surface: SurfaceID, id: String) -> Task<Void, Never>? {
+    guard let entry = entries[.init(surface: surface, id: id)], entry.value == nil else { return nil }
+    return entry.task
+  }
+
   // Lifetime follows the already bounded model workset. An arbitrary entry
   // count would evict still-mounted siblings and restart them on every publish.
   func retain(pages: [UUID: PageDocument]) {
