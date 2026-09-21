@@ -202,7 +202,11 @@ struct SceneCompositionPlan: Sendable {
     return Self.paintSpans(owners: liveOwners, vectors: vectorRuns, plane: plane, layer: owner.position.layer)
       .firstIndex { $0.ids.contains(id) }.map { Double($0 * 2 + 1) }
   }
-  func allowsLive(_ id: WorkspaceSpatialID, in plane: SceneCompositionPlane) -> Bool { rank(id: id, in: plane) != nil }
+  func allowsLive(_ id: WorkspaceSpatialID, in plane: SceneCompositionPlane) -> Bool {
+    // Membership does not need painter ranks, span allocation or sorting.
+    liveOwners.contains { $0.id == id && $0.plane == plane }
+      || vectorRuns.contains { run in run.owners.contains { $0.id == id && $0.plane == plane } }
+  }
 
   /// Coverage and painter boundaries remain intact even where this exact
   /// source revision proves transparent pixels need no backing allocation.

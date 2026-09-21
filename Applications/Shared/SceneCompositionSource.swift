@@ -73,6 +73,13 @@ struct SceneCompositionLiveData: Sendable {
 /// Each SQL read checks the content cursor inside its read transaction; a changed
 /// revision cancels the entire unpublished cohort rather than mixing its tiles.
 actor SceneCompositionSource {
+  struct ElementPaint: Sendable {
+    let element: SpatialElement
+    let layout: NotebookGraphicLayout?
+    let placement: NotebookElementPlacement?
+    let erasures: [InkElementErasure]
+  }
+
   let revision: UInt64
   let workspaceID: UUID
   let groupPoses:[SceneCompositionPlane:[String:NotebookElementPlacement.Source]]
@@ -296,13 +303,33 @@ actor SceneCompositionSource {
     case .values(let index, _, _): index.element(id: id, boardID: boardID)
     }
   }
-  func elementErasures(_ element: SpatialElement) throws -> [InkElementErasure] {
-    try validate()
-    return try cachedElementErasures(element)
+  /// One borrowed body and its dependencies share a checked WAL snapshot. Do
+  /// not hold that connection across painting/awaits or collect a page of heavy
+  /// bodies. The renderer still validates the complete unpublished tile.
+  func readElementForPaint(_ id: String, boardID: UUID) throws -> ElementPaint? {
+    func read() throws -> ElementPaint? {
+      guard let element = try element(id, boardID: boardID) else {
+        throw SceneRenderError.snapshotPending("element_source")
+      }
+      guard element.kind != .group else { return nil }
+      let layout = try graphicLayout(element, boardID: boardID)
+      if element.graphic != nil && layout == nil { return nil }
+      let placement = element.graphic == nil ? try elementPlacement(element, boardID: boardID) : nil
+      guard layout != nil || placement != nil else { throw SceneRenderError.snapshotPending("element_placement") }
+      let erasures = try cachedElementErasures(element)
+      guard !erasures.contains(where: { $0.target.wholeElement }) else { return nil }
+      return .init(element: element, layout: layout, placement: placement, erasures: erasures)
+    }
+    try Task.checkCancellation()
+    if case .sql(let store) = origin { return try checked(store) { _ in try read() } }
+    return try read()
   }
 
-  func elementAppearance(_ element: SpatialElement, layout: NotebookGraphicLayout?) throws -> NotebookElementAppearance? {
-    let erasures = try elementErasures(element)
+  /// Mask work stays after the exact visibility test and outside the SQL read.
+  /// It uses only the borrowed source, never another revision's erase actions.
+  func elementAppearance(_ read: ElementPaint) throws -> NotebookElementAppearance? {
+    try Task.checkCancellation()
+    let element = read.element, layout = read.layout, erasures = read.erasures
     guard !erasures.isEmpty else { return nil }
     let frame = layout?.frame ?? .init(x: 0, y: 0, width: element.basis?.size.x ?? element.frame.width, height: element.basis?.size.y ?? element.frame.height)
     let input = NotebookElementErasureCache.Input(graphic: element.graphic, layout: layout,
@@ -310,7 +337,7 @@ actor SceneCompositionSource {
     if let cached = preparedAppearance, cached.0 == input { return cached.1 }
     // This actor, not ImageRenderer/MainActor, owns boolean normalization.
     let value = input.prepare()
-    try validate()
+    try Task.checkCancellation()
     preparedAppearance = (input, value)
     return value
   }
@@ -356,7 +383,7 @@ actor SceneCompositionSource {
       return index.graphicGraph(boardID:boardID)?.projecting(placements:groupPoses[plane] ?? [:]).placement(element.id)
     }
   }
-  func graphicLayout(_ element: SpatialElement, boardID: UUID) throws -> NotebookGraphicLayout? {
+  private func graphicLayout(_ element: SpatialElement, boardID: UUID) throws -> NotebookGraphicLayout? {
     guard element.graphic != nil else { return nil }
     switch origin {
     case .sql(let store): return try checked(store) {

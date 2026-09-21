@@ -265,20 +265,16 @@ final class SceneCompositionRenderer {
         guard range?.contains(entry) ?? true else { continue }
         switch entry.id {
         case .element(let id):
-          guard let element = try await source.element(id, boardID: presence.boardID) else {
-            throw SceneRenderError.snapshotPending("element_source")
-          }
-          if element.kind == .group { continue }
-          let layout = try await source.graphicLayout(element,boardID:presence.boardID)
-          if element.graphic != nil && layout == nil { continue }
-          let presentation = element.graphic == nil ? try await source.elementPlacement(element,boardID:presence.boardID).map { NotebookElementPresentation(element,placement:$0) } : nil
+          guard let read = try await source.readElementForPaint(id, boardID: presence.boardID) else { continue }
+          let layout = read.layout
+          let presentation = read.placement.map { NotebookElementPresentation(read.element, placement: $0) }
           guard let origin=layout?.origin ?? presentation?.placement.origin else { throw SceneRenderError.snapshotPending("element_origin") }
           let local=layout?.frame ?? presentation!.frame
           let screen = presence.camera.worldToScreen(origin.offsetBy(x: local.x, y: local.y), viewport: presence.viewport)
           let rect = CGRect(x: frame.minX + screen.x * projection, y: frame.minY + screen.y * projection,
             width: local.width * presence.camera.scale * projection,
             height: local.height * presence.camera.scale * projection)
-          if rect.intersects(visible) { try await paintElement(element, boardID: presence.boardID, frame: rect, canvas: canvas, graphicLayout:layout, presentation:presentation) }
+          if rect.intersects(visible) { try await paintElement(read, boardID: presence.boardID, frame: rect, canvas: canvas, presentation:presentation) }
         case .item(let id):
           guard let item = try await source.item(id, presence: itemPresentation ?? presence) else { continue }
           let screen = presence.camera.worldToScreen(item.center, viewport: presence.viewport)
@@ -315,17 +311,17 @@ final class SceneCompositionRenderer {
       let page = try await source.readPaintOrder(boardID: boardID, coverID: itemID, bounds: bounds, after: cursor)
       cursor = page.next
       for entry in page.entries where range?.contains(entry) ?? true {
-        guard case .element(let id) = entry.id, let element = try await source.element(id, boardID: boardID) else {
+        guard case .element(let id) = entry.id else {
           throw SceneRenderError.snapshotPending("cover_element_source")
         }
-        let layout = try await source.graphicLayout(element,boardID:boardID)
-        if element.graphic != nil && layout == nil { continue }
-        let presentation=element.graphic == nil ? try await source.elementPlacement(element,boardID:boardID).map { NotebookElementPresentation(element,placement:$0) } : nil
+        guard let read = try await source.readElementForPaint(id, boardID: boardID) else { continue }
+        let layout = read.layout
+        let presentation = read.placement.map { NotebookElementPresentation(read.element, placement: $0) }
         guard let local=layout?.frame ?? presentation?.frame else { continue }
         let delta = bounds.origin.delta(to: .init(x: local.x, y: local.y))
-        try await paintElement(element, boardID: boardID, frame: .init(x: frame.minX + delta.x * projection,
+        try await paintElement(read, boardID: boardID, frame: .init(x: frame.minX + delta.x * projection,
           y: frame.minY + delta.y * projection, width: local.width * projection,
-          height: local.height * projection), canvas: canvas, graphicLayout:layout,presentation:presentation)
+          height: local.height * projection), canvas: canvas, presentation:presentation)
       }
       await Task.yield()
     } while cursor != nil
@@ -378,14 +374,12 @@ final class SceneCompositionRenderer {
     try await canvas.popClip()
   }
 
-  private func paintElement(_ element: SpatialElement, boardID: UUID, frame: CGRect, canvas: SceneRasterCompositor,
-    graphicLayout: NotebookGraphicLayout? = nil, presentation:NotebookElementPresentation? = nil) async throws {
+  private func paintElement(_ read: SceneCompositionSource.ElementPaint, boardID: UUID, frame: CGRect, canvas: SceneRasterCompositor,
+    presentation:NotebookElementPresentation?) async throws {
     try checkPreparation()
-    guard element.kind != .group else { return }
-    let erasures = try await source.elementErasures(element)
-    guard !erasures.contains(where: { $0.target.wholeElement }) else { return }
+    let element = read.element, graphicLayout = read.layout, erasures = read.erasures
     let appearance = element.graphic != nil || element.kind == .nativeText
-      ? try await source.elementAppearance(element, layout: graphicLayout) : nil
+      ? try await source.elementAppearance(read) : nil
     try checkPreparation()
     if let graphic = element.graphic {
       if graphic.showsGeometry {

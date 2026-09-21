@@ -151,6 +151,11 @@ final class SceneCompositionSQLTests: XCTestCase {
     XCTAssertTrue(plan.tiles.isEmpty, "Empty painter ranges allocate no pixel buffers")
     XCTAssertLessThanOrEqual(plan.primitiveCount, SceneCompositionPlan.maximumPrimitives)
     for pin in pins { XCTAssertTrue(plan.allowsLive(pin, in: .board(initial.rootBoardID))) }
+    for owner in plan.presentedOwners {
+      XCTAssertEqual(plan.allowsLive(owner.id, in: owner.plane), plan.rank(id: owner.id, in: owner.plane) != nil)
+      XCTAssertFalse(plan.allowsLive(owner.id, in: .board(UUID())))
+    }
+    XCTAssertFalse(plan.allowsLive(.element("absent"), in: .board(initial.rootBoardID)))
     let data = try await source.liveData(plan: plan, presence: presence, frame: frame)
     XCTAssertNotNil(data.referenceBasis)
   }
@@ -239,6 +244,10 @@ final class SceneCompositionSQLTests: XCTestCase {
     print("SQL tile batch: 256 cells, \(start.duration(to: .now))")
     let identity = try store.scenePaintRevision(target: .init(kind: .board, id: initial.rootBoardID))
     XCTAssertEqual(populated, keys.filter { $0.tile == origin }.map { $0.withContentRevision(identity) })
+    let paint = try await source.readElementForPaint(element.id, boardID: initial.rootBoardID)
+    XCTAssertEqual(paint?.element, try store.readSpatialElement(boardID: initial.rootBoardID, elementID: element.id))
+    XCTAssertEqual(paint?.layout, try store.readGraphicResolution(target: .init(kind: .board, id: initial.rootBoardID), elementID: element.id).layout)
+    XCTAssertEqual(paint?.erasures, [])
     var changed = hierarchy
     XCTAssertTrue(changed.moveItem(workspace.selectedItemID, in: initial.rootBoardID,
       to: .init(x: 1_024, y: 0), actor: actor))
@@ -246,6 +255,10 @@ final class SceneCompositionSQLTests: XCTestCase {
     do {
       _ = try await source.tilesRequiringPaint(keys)
       XCTFail("A completed batch cannot certify a different durable cut")
+    } catch NotebookStorageError.transactionConflict { }
+    do {
+      _ = try await source.readElementForPaint(element.id, boardID: initial.rootBoardID)
+      XCTFail("A cached erasure/body dependency cannot admit a different durable cut")
     } catch NotebookStorageError.transactionConflict { }
   }
 
