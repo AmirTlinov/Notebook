@@ -5,19 +5,158 @@ import Foundation
 /// to decode the same page again merely because a preceding write is pending.
 final class PageInkDrawingCache: @unchecked Sendable {
   private let lock = NSLock()
-  private var prepared: (stamp:VersionStamp,drawing:PageInkDrawing)?
+  private var prepared: (stamp:VersionStamp,drawing:PageInkDrawing,data:Data?)?
 
   init(_ drawing:PageInkDrawing? = nil,stamp:VersionStamp? = nil) {
-    if let drawing,let stamp { prepared=(stamp,drawing) }
+    if let drawing,let stamp { prepared=(stamp,drawing,nil) }
+  }
+
+  func stamp(fallback: VersionStamp) -> VersionStamp {
+    lock.withLock { prepared?.stamp ?? fallback }
   }
 
   func value(for data: Data, stamp: VersionStamp) throws -> PageInkDrawing {
     try lock.withLock {
-      if let prepared,prepared.stamp == stamp { return prepared.drawing }
+      if let prepared { return prepared.drawing }
       let value = try PageInkDrawing.decode(data)
-      prepared=(stamp,value)
+      prepared=(stamp,value,data)
       return value
     }
+  }
+
+  func data(fallback: Data, stamp: VersionStamp) throws -> Data {
+    try lock.withLock {
+      guard var prepared else { return fallback }
+      if let data=prepared.data { return data }
+      let data=try prepared.drawing.dataRepresentation()
+      prepared.data=data;self.prepared=prepared
+      return data
+    }
+  }
+
+  func publish(_ change: PreparedPageInkChange) -> Bool {
+    lock.withLock {
+      guard (prepared?.stamp ?? change.baseStamp) == change.baseStamp else { return false }
+      prepared=(change.stamp,change.drawing,nil)
+      return true
+    }
+  }
+}
+
+private final class PersistentMapNode<Key: Comparable & Sendable, Value: Sendable>: @unchecked Sendable {
+  let key: Key
+  let value: Value
+  let left: PersistentMapNode?
+  let right: PersistentMapNode?
+  let height: Int
+
+  init(_ key: Key, _ value: Value, left: PersistentMapNode? = nil, right: PersistentMapNode? = nil) {
+    self.key=key;self.value=value;self.left=left;self.right=right
+    height=max(left?.height ?? 0,right?.height ?? 0)+1
+  }
+
+  func value(for key: Key) -> Value? {
+    if key == self.key { return value }
+    return key < self.key ? left?.value(for:key) : right?.value(for:key)
+  }
+
+  func inserting(_ key: Key, _ value: Value) -> PersistentMapNode {
+    if key == self.key { return .init(key,value,left:left,right:right) }
+    let node: PersistentMapNode
+    if key < self.key { node = .init(self.key,self.value,left:left?.inserting(key,value) ?? .init(key,value),right:right) }
+    else { node = .init(self.key,self.value,left:left,right:right?.inserting(key,value) ?? .init(key,value)) }
+    return node.balanced()
+  }
+
+  private func balanced() -> PersistentMapNode {
+    let balance=(left?.height ?? 0)-(right?.height ?? 0)
+    if balance > 1,let left {
+      let child=(left.left?.height ?? 0) >= (left.right?.height ?? 0) ? left : left.rotatedLeft()
+      return PersistentMapNode(key,value,left:child,right:right).rotatedRight()
+    }
+    if balance < -1,let right {
+      let child=(right.right?.height ?? 0) >= (right.left?.height ?? 0) ? right : right.rotatedRight()
+      return PersistentMapNode(key,value,left:left,right:child).rotatedLeft()
+    }
+    return self
+  }
+
+  private func rotatedLeft() -> PersistentMapNode {
+    guard let right else { return self }
+    return .init(right.key,right.value,left:.init(key,value,left:left,right:right.left),right:right.right)
+  }
+
+  private func rotatedRight() -> PersistentMapNode {
+    guard let left else { return self }
+    return .init(left.key,left.value,left:left.left,right:.init(key,value,left:left.right,right:right))
+  }
+
+  func values(into result: inout [Value]) {
+    left?.values(into:&result);result.append(value);right?.values(into:&result)
+  }
+
+  static func balanced(_ entries: [(Key,Value)], _ lower: Int, _ upper: Int) -> PersistentMapNode? {
+    guard lower < upper else { return nil }
+    let middle=lower+(upper-lower)/2,entry=entries[middle]
+    return .init(entry.0,entry.1,left:balanced(entries,lower,middle),right:balanced(entries,middle+1,upper))
+  }
+}
+
+/// Immutable roots make one accepted contact O(log history). Older page
+/// snapshots retain their roots without copying the action array.
+private final class PageInkActionStorage: @unchecked Sendable {
+  let order: PersistentMapNode<Int,PageInkAction>?
+  let ids: PersistentMapNode<String,Int>?
+  let count: Int
+  let activeCount: Int
+  let maximumSequence: UInt64
+  let isValid: Bool
+  let hasOrderedActions:Bool
+
+  init(_ input: [PageInkAction]) {
+    let actions=input.enumerated().map { index,action in
+      action.sequence == 0 ? action.ordered(UInt64(index+1)) : action
+    }
+    let identifiers=actions.enumerated().map { ($0.element.id.uuidString.lowercased(),$0.offset) }.sorted { $0.0 < $1.0 }
+    let unique=zip(identifiers,identifiers.dropFirst()).allSatisfy { $0.0.0 != $0.1.0 }
+    order=PersistentMapNode.balanced(Array(actions.enumerated().map { ($0.offset,$0.element) }),0,actions.count)
+    ids=PersistentMapNode.balanced(identifiers,0,identifiers.count)
+    count=actions.count;activeCount=actions.reduce(0) { $0+($1.isActive ? 1:0) }
+    maximumSequence=actions.map(\.sequence).max() ?? 0
+    isValid=unique && actions.allSatisfy(\.isValid)
+    hasOrderedActions=actions.allSatisfy { $0.sequence > 0 }
+  }
+
+  private init(order: PersistentMapNode<Int,PageInkAction>?, ids: PersistentMapNode<String,Int>?,
+    count:Int,activeCount:Int,maximumSequence:UInt64) {
+    self.order=order;self.ids=ids;self.count=count;self.activeCount=activeCount
+    self.maximumSequence=maximumSequence;isValid=true
+    hasOrderedActions=true
+  }
+
+  var actions: [PageInkAction] { var result:[PageInkAction]=[];result.reserveCapacity(count);order?.values(into:&result);return result }
+  func action(_ id:UUID) -> PageInkAction? { ids?.value(for:id.uuidString.lowercased()).flatMap { order?.value(for:$0) } }
+
+  func appending(_ action:PageInkAction) throws -> PageInkActionStorage {
+    if let accepted=self.action(action.id) {
+      guard accepted.hasSameMeasurement(as:action) else { throw PageInkDrawing.InkError.actionIDConflict }
+      return self
+    }
+    guard maximumSequence < VersionStamp.maximumCounter else { throw PageInkDrawing.InkError.sequenceExhausted }
+    let accepted=action.ordered(maximumSequence+1),position=count
+    return .init(order:order?.inserting(position,accepted) ?? .init(position,accepted),
+      ids:ids?.inserting(accepted.id.uuidString.lowercased(),position) ?? .init(accepted.id.uuidString.lowercased(),position),
+      count:count+1,activeCount:activeCount+(accepted.isActive ? 1:0),maximumSequence:accepted.sequence)
+  }
+
+  func removing(_ identifiers:Set<UUID>) -> PageInkActionStorage {
+    var root=order,active=activeCount
+    for id in identifiers {
+      guard let position=ids?.value(for:id.uuidString.lowercased()),let action=root?.value(for:position),action.isActive else { continue }
+      root=root?.inserting(position,action.deactivated());active-=1
+    }
+    guard root !== order else { return self }
+    return .init(order:root,ids:ids,count:count,activeCount:active,maximumSequence:maximumSequence)
   }
 }
 
@@ -27,63 +166,79 @@ public struct PageInkDrawing: Codable, Equatable, Sendable {
   private static let signature = Data("NotebookInk/3\n".utf8)
   public let baselinePNG: Data?
   public let baselineActionCount: Int
-  public private(set) var actions: [PageInkAction]
+  private let storage: PageInkActionStorage
+  public var actions: [PageInkAction] { storage.actions }
 
   public init(baselinePNG: Data? = nil, baselineActionCount: Int = 0, actions: [PageInkAction] = [])
   {
     self.baselinePNG = baselinePNG
     self.baselineActionCount = baselineActionCount
-    self.actions = actions.enumerated().map { index, action in
-      action.sequence == 0 ? action.ordered(UInt64(index + 1)) : action
-    }
+    storage = .init(actions)
     precondition(isValid)
   }
 
   public var activeActions: [PageInkAction] { actions.filter(\.isActive) }
-  public var actionCount: Int { baselineActionCount + actions.reduce(0) { $0 + ($1.isActive ? 1 : 0) } }
-  public var isEmpty: Bool { baselinePNG == nil && !actions.contains(where: \.isActive) }
+  public var actionCount: Int { baselineActionCount + storage.activeCount }
+  public var isEmpty: Bool { baselinePNG == nil && storage.activeCount == 0 }
+  public func action(id:UUID) -> PageInkAction? { storage.action(id) }
   public var isValid: Bool {
     baselineActionCount >= 0 && baselineActionCount <= 1_000_000
       && (baselinePNG.map {
         $0.starts(with: [137, 80, 78, 71, 13, 10, 26, 10]) && $0.count <= 64 * 1024 * 1024
       } ?? true)
-      && actions.allSatisfy(\.isValid) && Set(actions.map(\.id)).count == actions.count
+      && storage.isValid
+  }
+
+  private enum CodingKeys:String,CodingKey { case baselinePNG,baselineActionCount,actions }
+  public init(from decoder:Decoder) throws {
+    let values=try decoder.container(keyedBy:CodingKeys.self)
+    baselinePNG=try values.decodeIfPresent(Data.self,forKey:.baselinePNG)
+    baselineActionCount=try values.decode(Int.self,forKey:.baselineActionCount)
+    storage = .init(try values.decode([PageInkAction].self,forKey:.actions))
+    guard isValid else { throw InkError.invalidDrawing }
+  }
+  public func encode(to encoder:Encoder) throws {
+    var values=encoder.container(keyedBy:CodingKeys.self)
+    try values.encodeIfPresent(baselinePNG,forKey:.baselinePNG)
+    try values.encode(baselineActionCount,forKey:.baselineActionCount)
+    try values.encode(actions,forKey:.actions)
+  }
+  public static func ==(left:Self,right:Self)->Bool {
+    left.baselinePNG == right.baselinePNG && left.baselineActionCount == right.baselineActionCount
+      && (left.storage === right.storage || left.actions == right.actions)
   }
 
   public static func decode(_ data: Data) throws -> Self {
     if data.isEmpty { return Self() }
     guard data.starts(with: signature) else { throw InkError.invalidDrawing }
     let decoded = try InkRelationDecoding.decoder().decode(Self.self, from: data.dropFirst(signature.count))
-    guard decoded.isValid, decoded.actions.allSatisfy({ $0.sequence > 0 }) else { throw InkError.invalidDrawing }
+    guard decoded.isValid, decoded.storage.hasOrderedActions else { throw InkError.invalidDrawing }
     return decoded
   }
 
   public func dataRepresentation() throws -> Data {
-    guard isValid, actions.allSatisfy({ $0.sequence > 0 }) else { throw InkError.invalidDrawing }
-    if baselinePNG == nil && actions.isEmpty && baselineActionCount == 0 { return Data() }
+    guard isValid, storage.hasOrderedActions else { throw InkError.invalidDrawing }
+    if baselinePNG == nil && storage.count == 0 && baselineActionCount == 0 { return Data() }
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
     return Self.signature + (try encoder.encode(self))
   }
 
   public func appending(_ action: PageInkAction) throws -> Self {
-    if let accepted = actions.first(where: { $0.id == action.id }) {
-      guard accepted.hasSameMeasurement(as: action) else { throw InkError.actionIDConflict }
-      // Repeating a measured contact does not renumber it or reactivate the
-      // tombstone left by its later undo.
-      return self
-    }
-    let last = actions.map(\.sequence).max() ?? 0
-    guard last < VersionStamp.maximumCounter else { throw InkError.sequenceExhausted }
-    return Self(
-      baselinePNG: baselinePNG, baselineActionCount: baselineActionCount,
-      actions: actions + [action.ordered(last + 1)])
+    let next=try storage.appending(action)
+    guard next !== storage else { return self }
+    return Self(baselinePNG:baselinePNG,baselineActionCount:baselineActionCount,storage:next)
   }
 
   /// An undo retains a tombstone: an older device cannot resurrect the stroke.
   public func removing(_ ids: Set<UUID>) -> Self {
-    Self(baselinePNG: baselinePNG, baselineActionCount: baselineActionCount,
-      actions: actions.map { ids.contains($0.id) ? $0.deactivated() : $0 })
+    let next=storage.removing(ids)
+    guard next !== storage else { return self }
+    return Self(baselinePNG:baselinePNG,baselineActionCount:baselineActionCount,storage:next)
+  }
+
+  private init(baselinePNG:Data?,baselineActionCount:Int,storage:PageInkActionStorage) {
+    self.baselinePNG=baselinePNG;self.baselineActionCount=baselineActionCount;self.storage=storage
   }
 
   public func merging(_ other: Self) throws -> Self {

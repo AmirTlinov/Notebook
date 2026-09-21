@@ -1,54 +1,88 @@
-import CryptoKit
 import Foundation
 
-extension NotebookStore {
-  /// Pencil owns the drawing stream, not the page's elements or their clocks.
-  /// Join that stream through the ordinary page merge and physical row writer,
-  /// without decoding/encoding unrelated graphics, programs or causal fields.
-  public func savePageInk(pageID: UUID, data: Data, stamp: VersionStamp) throws
-    -> (data: Data, stamp: VersionStamp) {
-    try commandTransaction {
-      if try hasStoredValue("workspace.json"), try ownerItemID(ofPage: pageID) == nil {
-        throw CocoaError(.fileNoSuchFile)
-      }
-      let file = pageFile(pageID), address = file + "#/drawingData", database = currentSQL!
-      guard let header = try storedFragments(address: file + "#", descendants: false).first,
-        try header.value["id"]?.decode(UUID.self) == pageID,
-        header.value["format"] == .number(Double(PageDocument.formatVersion)),
-        let size = try header.value["size"]?.decode(PageSize.self),
-        size.isValid,
-        let previousStamp = try header.value["drawingStamp"]?.decode(VersionStamp.self),
-        previousStamp.counter <= VersionStamp.maximumCounter
-      else { throw NotebookStorageError.corruptRecord(file) }
-      let rows = try storedFragments(address: address, descendants: true)
-      let drawing = try NotebookRecordCodec.decode(rows, root: address).decode(PageInkDrawing.self)
-      let previousData = try drawing.dataRepresentation()
-      var ink = PageDocument(id: pageID, size: size, actor: previousStamp.actor,
-        drawingData: previousData)
-      _ = try ink.mergeDrawing(previousData, stamp: previousStamp)
-      _ = try ink.mergeDrawing(data, stamp: stamp)
-      if ink.drawingData == previousData && ink.drawingStamp == previousStamp {
-        return (previousData, previousStamp)
-      }
-      if ink.drawingData != previousData {
-        let accepted = try PageInkDrawing.decode(ink.drawingData)
-        let fragments = try NotebookRecordCodec.encode(.encode(accepted), file: file,
-          address: address, parent: file + "#", collection: "drawingData")
-        var old = Dictionary(uniqueKeysWithValues: try database.rows(
-          "SELECT address,hash FROM records WHERE address=? OR (address>=? AND address<?)",
-          [.text(address), .text(address + "/"), .text(address + "/\u{10ffff}")]
-        ).map { ($0[0].text!, $0[1].text!) })
-        for fragment in fragments {
-          let bytes = try database.encodedStoredFragment(fragment)
-          let hash = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
-          if old.removeValue(forKey: fragment.address) == hash { continue }
-          try writeFragment(fragment, data: bytes, hash: hash, database: database)
-        }
-        for stale in old.keys { try removeFragment(stale, database: database) }
-      }
-      try writeFragment(header.replacing(value: header.value.setting("drawingStamp", .encode(ink.drawingStamp))),
-        database: database)
-      return (ink.drawingData, ink.drawingStamp)
+/// A lifted contact writes its one addressed row. Undo changes only the
+/// selected action headers; neither command reconstructs the page archive.
+public enum NotebookPageInkCommand:Sendable {
+  case append(PageInkAction,baseStamp:VersionStamp,stamp:VersionStamp)
+  case deactivate(Set<UUID>,baseStamp:VersionStamp,stamp:VersionStamp)
+
+  var baseStamp:VersionStamp { switch self { case .append(_,let value,_),.deactivate(_,let value,_):value } }
+  var stamp:VersionStamp { switch self { case .append(_,_,let value),.deactivate(_,_,let value):value } }
+
+  public init(_ change:PreparedPageInkChange) {
+    switch change.mutation {
+    case .append(let action): self = .append(action,baseStamp:change.baseStamp,stamp:change.stamp)
+    case .remove(let ids): self = .deactivate(ids,baseStamp:change.baseStamp,stamp:change.stamp)
     }
   }
+}
+
+public struct NotebookPageInkResult:Equatable,Sendable { public let stamp:VersionStamp }
+
+extension NotebookStore {
+  @discardableResult
+  public func commitPageInk(pageID:UUID,command:NotebookPageInkCommand) throws -> NotebookPageInkResult {
+    guard command.baseStamp.counter <= VersionStamp.maximumCounter,
+      command.stamp.counter <= VersionStamp.maximumCounter else {
+      throw NotebookStorageError.invalidTransaction("page ink clock")
+    }
+    return try commandTransaction {
+      if try hasStoredValue("workspace.json"),try ownerItemID(ofPage:pageID) == nil { throw CocoaError(.fileNoSuchFile) }
+      let file=pageFile(pageID),pageAddress=file+"#",drawingAddress=pageAddress+"/drawingData",database=currentSQL!
+      guard let page=try storedFragments(address:pageAddress,descendants:false).first,
+        try page.value["id"]?.decode(UUID.self) == pageID,
+        page.value["format"] == .number(Double(PageDocument.formatVersion)),
+        let previousStamp=try page.value["drawingStamp"]?.decode(VersionStamp.self),
+        previousStamp.counter <= VersionStamp.maximumCounter,
+        let drawing=try storedFragments(address:drawingAddress,descendants:false).first,
+        drawing.parent == pageAddress,drawing.collection == "drawingData",drawing.member.isEmpty,
+        drawing.collections.contains(.init(path:["actions"],kind:.array)) else {
+        throw NotebookStorageError.corruptRecord(file)
+      }
+      var changed=false
+      switch command {
+      case .append(let action,_,_):
+        guard action.isValid,action.sequence > 0 else { throw NotebookStorageError.invalidTransaction("page ink action") }
+        let member=action.id.uuidString.lowercased(),address=drawingAddress+"/actions/@"+member
+        let previous=try storedFragments(address:address,descendants:false).first
+        let position=previous?.position ?? Int(action.sequence-1)
+        let fragments=try NotebookRecordCodec.encode(.encode(action),file:file,address:address,
+          parent:drawingAddress,collection:"actions",member:member,position:position)
+        // Measurement bodies must exist before an eraser header becomes
+        // indexable. The header is the admission row and is therefore last.
+        for fragment in fragments.sorted(by:{ ($0.address == address ? 1:0) < ($1.address == address ? 1:0) }) {
+          if fragment.address == address,let previous {
+            guard previous.parent == drawingAddress,previous.collection == "actions",previous.member == member,
+              previous.value.setting("isActive",nil) == fragment.value.setting("isActive",nil),
+              previous.collections == fragment.collections else { throw NotebookStorageError.transactionConflict }
+            let retained=fragment.replacing(value:fragment.value.setting("isActive",previous.value["isActive"]))
+            changed = try writeFragment(retained,database:database) || changed
+          } else { changed = try writeFragment(fragment,database:database) || changed }
+        }
+      case .deactivate(let ids,_,_):
+        guard !ids.isEmpty else { break }
+        for id in ids {
+          let member=id.uuidString.lowercased(),address=drawingAddress+"/actions/@"+member
+          guard let previous=try storedFragments(address:address,descendants:false).first,
+            previous.parent == drawingAddress,previous.collection == "actions",previous.member == member,
+            try previous.value["id"]?.decode(UUID.self) == id,
+            [.bool(true),.bool(false)].contains(previous.value["isActive"]) else { throw NotebookStorageError.transactionConflict }
+          if previous.value["isActive"] == .bool(true) {
+            changed = try writeFragment(previous.replacing(value:previous.value.setting("isActive",.bool(false))),database:database) || changed
+          }
+        }
+      }
+      let frontier=max(previousStamp,command.stamp)
+      let nextStamp:VersionStamp
+      if changed && previousStamp != command.baseStamp {
+        guard let advanced=frontier.advanced(by:frontier.actor) else { throw NotebookStorageError.limitExceeded("page ink clock") }
+        nextStamp=advanced
+      } else { nextStamp=frontier }
+      if nextStamp != previousStamp {
+        try writeFragment(page.replacing(value:page.value.setting("drawingStamp",try .encode(nextStamp))),database:database)
+      }
+      return .init(stamp:nextStamp)
+    }
+  }
+
 }

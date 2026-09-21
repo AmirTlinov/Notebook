@@ -289,7 +289,7 @@ extension NotebookAppModel {
     if object.graphic.freehand == nil || address.surface.kind == .page { updateWorkingGraphic(accepted,strokeID:object.strokeID) }
     if !performElementOperations([.init(reference:address.reference(object.id),kind:object.graphic.sourceInkIDs.isEmpty ? .insertElement : .convertInkToElement,values:values)],
       summary:"Нарисовать: " + object.graphic.shape.displayName,insertionTarget:address.target,expectedInkRevision:expectedInkRevision) {
-      workingGraphics.removeAll { $0.id == object.id }; return false
+      removeWorkingGraphics { $0.id == object.id }; return false
     }
     return true
   }

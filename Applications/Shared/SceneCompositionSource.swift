@@ -412,7 +412,7 @@ actor SceneCompositionSource {
         }
         guard let stack = node.board.stacks.first(where: { $0.itemIDs.contains(id) }), let index = stack.itemIDs.firstIndex(of: id) else { return nil }
         if presence.mode != .board, let focused = presence.focusedItemID, stack.itemIDs.contains(focused), focused != id { return nil }
-        let center = WorkspaceItemStackPresentation.boardCenter(of: id, in: stack, cameraScale: presence.camera.scale, viewport: presence.viewport) ?? stack.center
+        let center = WorkspaceItemStackPresentation.focusedCenter(of: id, in: stack) ?? stack.center
         return .init(item: header.item, geometry: geometry, center: center,
           zIndex: Double(stack.zIndex) + Double(index) / 100, stackID: stack.id)
       }

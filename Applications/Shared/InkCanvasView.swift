@@ -172,6 +172,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     var buffers: [Range<Int>: GeometryBuffer] = [:]
     var pageAction: PageInkAction?
     var pageCommit: UInt64 = 0
+    var pageIsActive = true
     var operation: RenderOperation { mesh.tool == .pen ? .ink : .erase }
     init(_ mesh: SpatialInkMesh.Batch) {
       self.mesh = mesh
@@ -197,7 +198,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   var residentCommittedNodeCount: Int {
     committedBatches.reduce(0) { $0+$1.buffers.values.reduce(0) { $0+$1.nodeCount } }
   }
-  var committedPreparedNodeCount: Int { committedBatches.reduce(0) { $0+$1.mesh.preparedNodeCount } }
+  var committedPreparedNodeCount: Int {
+    committedBatches.reduce(0) { $0+($1.pageIsActive ? $1.mesh.preparedNodeCount:0) }
+  }
   private(set) var preparedCommittedPointCount = 0
   private(set) var queriedCommittedPointCount = 0
   private(set) var committedIndexVisitCount = 0
@@ -234,6 +237,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var committedBatches: [CommittedBatch] = [] {
     didSet { committedViewport = nil; committedGeneration &+= 1 }
   }
+  private var pageBatchIndex:[UUID:Int]=[:]
   private var spatialActionBase: [CommittedBatch]?
   private(set) var installedSpatialSource: SpatialInkInstalledSource?
   private(set) var spatialSourceGeneration: UInt64 = 0
@@ -253,14 +257,16 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var spatialStagingID: UUID?
   private weak var stagedSpatialFrame: PreparedSpatialFrame?
   private var material: InkMaterialRenderer?
-  private var isLiveElementEraserMask = false
   var materialUploadedNodeCount: Int { material?.uploadedNodes ?? 0 }
   private var pageDrawing: PageInkDrawing?
+  private var pageSuppressedIDs=Set<UUID>()
   private var drawingIsPreparing = false
   private var pageRevision: UInt64 = 0
   private var installedPageRevision: UInt64?
   private var pendingPageRevision: UInt64?
   private var pageMeshTask: Task<Void, Never>?
+  private var pageActionMeshTasks:[UUID:Task<Void,Never>] = [:]
+  private var pageActionMeshTokens:[UUID:UUID] = [:]
   private var pageCommit: UInt64 = 0
   private(set) var pageMeshBuildCount = 0
   private var baselineTexture: (any MTLTexture)?
@@ -326,7 +332,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   var committedSourceNodeCount: Int {
-    committedBatches.reduce(0) { $0 + $1.mesh.sourceNodeCount }
+    committedBatches.reduce(0) { $0 + ($1.pageIsActive ? $1.mesh.sourceNodeCount:0) }
   }
 
   var committedEraserSourceNodeCount: Int {
@@ -451,16 +457,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     requestFrame()
   }
 
-  /// One page-level native mask previews an element eraser contact. It is
-  /// driven directly by the input owner; no sample prefix enters Observation
-  /// or causes every element view to rebuild while Pencil is moving.
-  func configureLiveElementEraserMask() {
-    isLiveElementEraserMask = true
-    clearColor = .init(red:1,green:1,blue:1,alpha:1)
-    beginStableContentUpdate()
-    requestFrame()
-  }
-
   private func admitPageDrawable(samples: Int) -> Bool {
     guard pageRenderRegion != nil else { return true }
     if pageDrawableReservation != nil,pageAdmittedSize == drawableSize { return true }
@@ -493,8 +489,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   private func admitPageRetainedTexture() -> Bool {
     let hasCommittedPage = baselineTexture != nil || committedBatches.contains { !$0.mesh.isEmpty }
-    let retainsCommittedPage = pageRenderRegion != nil && material == nil
-      && hasCommittedPage && !isLiveElementEraserMask
+    let retainsCommittedPage = pageRenderRegion != nil && material == nil && hasCommittedPage
     guard retainsCommittedPage else {
       pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
       return true
@@ -541,13 +536,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     // A dismantled UIKit configuration may still retain this Canvas. Terminal
     // drain must release its source and CPU mesh too. Temporary unmount and
     // parking never enter this terminal path.
-    cancelPendingPageMesh()
+    cancelPendingPageMesh();cancelPendingPageActionMeshes()
     material = nil
     pageDrawableReservation = nil; pageMultisample = nil
     pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
     pageDrawing = nil; baselineTexture = nil; baselinePNG = nil; baselineReservation = nil
     installedPageRevision = nil; pendingPageRevision = nil
-    committedBatches.removeAll(); spatialActionBase = nil
+    committedBatches.removeAll();pageBatchIndex.removeAll(); spatialActionBase = nil
     discardActiveAction()
     installedSpatialSource = nil; spatialSourceGeneration &+= 1
     spatialStagingID = nil
@@ -697,6 +692,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     pageDrawing = nil; baselineTexture = nil; baselinePNG = nil; baselineReservation = nil
     installedPageRevision = nil; pendingPageRevision = nil
     committedBatches = mesh.batches.map(CommittedBatch.init)
+    pageBatchIndex.removeAll()
     discardActiveAction()
     requestFrame()
   }
@@ -721,7 +717,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   func apply(_ drawing: PageInkDrawing) {
     installedSpatialSource = nil
-    cancelPendingPageMesh()
+    cancelPendingPageMesh();cancelPendingPageActionMeshes()
     pageRevision &+= 1
     pageDrawing = drawing
     drawingIsPreparing = false
@@ -733,18 +729,44 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     // while a different physical page never displays its predecessor.
     schedulePageMeshIfNeeded()
     committedBatches.removeAll(keepingCapacity: true)
+    pageBatchIndex.removeAll(keepingCapacity:true)
     discardActiveAction()
   }
 
-  /// Durable delivery changes source ownership, not the pixels of a measured
-  /// contact. Retain its mesh/buffers; prepare only newly received actions.
-  func settle(_ drawing: PageInkDrawing) {
-    cancelPendingPageMesh()
-    pageRevision &+= 1
-    pageDrawing = drawing
-    drawingIsPreparing = false
+  func setSuppressedPageActions(_ ids:Set<UUID>) {
+    let changed=pageSuppressedIDs.symmetricDifference(ids);pageSuppressedIDs=ids
+    guard !changed.isEmpty else { return }
     beginStableContentUpdate()
-    schedulePageMeshIfNeeded()
+    for id in changed {
+      guard let index=pageBatchIndex[id],committedBatches.indices.contains(index) else { continue }
+      committedBatches[index].pageIsActive = pageDrawing?.action(id:id)?.isActive == true && !ids.contains(id)
+    }
+    requestFrame()
+  }
+
+  /// The measured batch is already resident at lift. Acceptance only binds its
+  /// durable identity, while undo toggles the addressed batches in place.
+  func settle(_ change:PreparedPageInkChange,suppressedInkIDs:Set<UUID>=[]) {
+    cancelPendingPageMesh();pageRevision &+= 1;pageDrawing=change.drawing;drawingIsPreparing=false
+    pageSuppressedIDs=suppressedInkIDs
+    beginStableContentUpdate()
+    switch change.mutation {
+    case .append(let action):
+      if let index=pageBatchIndex[action.id],committedBatches.indices.contains(index) {
+        committedBatches[index].pageAction=action
+        committedBatches[index].pageIsActive=action.isActive && !suppressedInkIDs.contains(action.id)
+      } else if action.isActive && !suppressedInkIDs.contains(action.id) {
+        var batch=CommittedBatch(.init(source:InkSampleRelations(action),projection:.local))
+        batch.pageAction=action;committedBatches.append(batch);pageBatchIndex[action.id]=committedBatches.count-1
+      }
+      if action.samples.count > InkRenderGeometry.maximumSegments { schedulePageActionMesh(action) }
+    case .remove(let ids):
+      for id in ids {
+        guard let index=pageBatchIndex[id],committedBatches.indices.contains(index) else { continue }
+        committedBatches[index].pageIsActive=false
+      }
+    }
+    installedPageRevision=pageRevision;pendingPageRevision=nil;requestFrame()
   }
 
   func beginSpatialAction() {
@@ -1252,13 +1274,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     frame.installed = true
     spatialSourceGeneration &+= 1; stableContentRevision &+= 1
     if frame.replacesMesh { spatialMeshInstallCount += 1 }
-    cancelPendingPageMesh()
+    cancelPendingPageMesh();cancelPendingPageActionMeshes()
     material = nil
     pageDrawableReservation = nil; pageMultisample = nil
     pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
     pageDrawing = nil; baselineTexture = nil; baselinePNG = nil; baselineReservation = nil; drawingIsPreparing = false
     installedPageRevision = nil; pendingPageRevision = nil
-    committedBatches = frame.batches; drawnTiles = nil; discardActiveAction()
+    committedBatches = frame.batches;pageBatchIndex.removeAll(); drawnTiles = nil; discardActiveAction()
     installedSpatialSource = .init(surface: surface, journal: journal, suppressedInkIDs: suppressedInkIDs)
     let revision = stableContentRevision, generation = spatialSourceGeneration
     presentedStableContentRevision = nil
@@ -1340,6 +1362,40 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     pendingPageRevision = nil
   }
 
+  private func cancelPendingPageActionMeshes() {
+    for task in pageActionMeshTasks.values { task.cancel() }
+    pageActionMeshTasks.removeAll();pageActionMeshTokens.removeAll()
+  }
+
+  /// A lifted long contact releases only its mutable display arrays. It never
+  /// asks the page mesh builder to traverse older actions.
+  private func schedulePageActionMesh(_ action:PageInkAction) {
+    pageActionMeshTasks[action.id]?.cancel()
+    let token=UUID();pageActionMeshTokens[action.id]=token
+    let worker=Task.detached(priority:.userInitiated) {
+      try PageInkMesh.prepare(.init(actions:[action]),reusing:[])
+    }
+    pageActionMeshTasks[action.id]=Task { [weak self] in
+      defer {
+        if let self,self.pageActionMeshTokens[action.id] == token {
+          self.pageActionMeshTasks[action.id]=nil;self.pageActionMeshTokens[action.id]=nil
+        }
+      }
+      do {
+        let mesh=try await withTaskCancellationHandler { try await worker.value } onCancel:{ worker.cancel() }
+        guard !Task.isCancelled,let self,self.pageActionMeshTokens[action.id] == token,
+          let current=self.pageDrawing?.action(id:action.id),
+          current.tool == action.tool,current.color == action.color,current.samples == action.samples,
+          let index=self.pageBatchIndex[action.id],self.committedBatches.indices.contains(index),
+          let entry=mesh.entries.first else { return }
+        var batch=CommittedBatch(entry.mesh);batch.pageAction=current
+        batch.pageIsActive=current.isActive && !self.pageSuppressedIDs.contains(current.id)
+        self.committedBatches[index]=batch;self.pageMeshBuildCount += mesh.builtActionCount
+        self.beginStableContentUpdate();self.requestFrame()
+      } catch is CancellationError {} catch { self?.renderFailure=(error as? SceneRenderError) ?? .snapshotPending("page_ink_action_geometry") }
+    }
+  }
+
   private func schedulePageMeshIfNeeded() {
     guard let drawing = pageDrawing, installedPageRevision != pageRevision,
       pendingPageRevision != pageRevision else { return }
@@ -1365,6 +1421,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         var batches = mesh.entries.map { entry in
           var batch = entry.reusedIndex.map { oldBatches[$0] } ?? CommittedBatch(entry.mesh)
           batch.pageAction = entry.action
+          batch.pageIsActive = !pageSuppressedIDs.contains(entry.action.id)
           return batch
         }
         // Preparation may finish between two contacts. A newer measured tail
@@ -1372,6 +1429,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         let ids = Set(drawing.actions.map(\.id))
         batches += committedBatches.filter { $0.pageCommit > commit && ($0.pageAction.map { !ids.contains($0.id) } ?? true) }
         committedBatches = batches
+        pageBatchIndex=Dictionary(uniqueKeysWithValues:batches.enumerated().compactMap { index,batch in batch.pageAction.map { ($0.id,index) } })
         pageMeshBuildCount += mesh.builtActionCount
         installedPageRevision = revision; pendingPageRevision = nil; pageMeshTask = nil
         requestFrame()
@@ -1414,9 +1472,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   @discardableResult
   private func presentEmptyContentIfReady() -> Bool {
-    guard !isLiveElementEraserMask, material == nil, !spatialHandoffIsStopping, spatialStagingID == nil, pageGeometryIsReady, baselineTexture == nil,
+    guard material == nil, !spatialHandoffIsStopping, spatialStagingID == nil, pageGeometryIsReady, baselineTexture == nil,
       activeInkStroke == nil, activeEraserStroke == nil,
       committedBatches.allSatisfy({ batch in
+        if !batch.pageIsActive { return true }
         if batch.mesh.isEmpty { return true }
         guard spatialDrawableScale != nil, bounds.width > 0, bounds.height > 0 else { return false }
         let transform = batch.mesh.projection.transform(camera: spatialCamera, viewport: spatialViewport)
@@ -1585,7 +1644,24 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         nodes: active.nodes, chunks: active.committedChunks, projection: projection))
     pageCommit &+= 1
     batch.pageAction = action; batch.pageCommit = pageCommit
+    let key=CommittedViewport(camera:spatialCamera,viewport:spatialViewport,size:bounds.size,
+      crop:pageRenderRegion,pixels:spatialTarget?.layout.pixelSize ?? drawableSize,scale:spatialDrawableScale)
+    let retained=committedViewport.flatMap { $0.key == key ? $0:nil }
+    var addition=[batch]
+    let localVisible=retained.flatMap { _ in try? prepareBuffers(in:&addition,camera:spatialCamera,
+      viewport:spatialViewport,size:bounds.size) }
+    batch=addition[0];let index=committedBatches.count
     committedBatches.append(batch)
+    if let retained,let localVisible {
+      let appended=localVisible.map { (index,$0.1) }
+      committedViewport=(key,retained.visible+appended)
+      visibleCommittedVertexCount += appended.reduce(0) { result,value in
+        result+InkRenderGeometry.vertexCount(nodes:committedBatches[value.0].buffers[value.1]!.nodeCount,
+          flags:committedBatches[value.0].buffers[value.1]!.geometry.chunk.descriptor.flags)
+      }
+      visibleCommittedChunkCount += appended.count
+    }
+    if let action { pageBatchIndex[action.id]=committedBatches.count-1 }
   }
 
   private func prepareCommittedBuffers() -> [(Int, Range<Int>)]? {
@@ -1617,6 +1693,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     let grid=InkRasterRenderer.shared.sampleGrid(viewport:size,
       pixels:rasterSize ?? spatialTarget?.layout.pixelSize ?? drawableSize)
     for batchIndex in batches.indices {
+      if !batches[batchIndex].pageIsActive { continue }
       let mesh = batches[batchIndex].mesh
       let transform = mesh.projection.transform(camera: camera, viewport: viewport)
       var rasterTransform=transform

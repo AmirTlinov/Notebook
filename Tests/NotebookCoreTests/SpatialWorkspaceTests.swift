@@ -232,7 +232,7 @@ func boardHasOnePlacementOwner() {
 }
 
 @Test("Камера и веер стопки получают один центр выбранной тетради")
-func stackFocusUsesTheSameCenterAsTheReadableBoardLayout() throws {
+func stackFocusUsesOneCameraIndependentRelationship() throws {
   let actor = UUID()
   let lower = UUID()
   let upper = UUID()
@@ -247,31 +247,10 @@ func stackFocusUsesTheSameCenterAsTheReadableBoardLayout() throws {
   )
   let stackID = try #require(createdStackID)
   let stack = try #require(board.stacks.first { $0.id == stackID })
-  let viewports = [
-    SpatialPoint(x: 834, y: 1_194),
-    SpatialPoint(x: 1_194, y: 834),
-    SpatialPoint(x: 600, y: 800),
-    SpatialPoint(x: 320, y: 320),
-  ]
-
-  for viewport in viewports {
-    let coverScale = WorkspaceItemGeometry.notebook.coverScale(viewport: viewport)
-    for itemID in [lower, upper] {
-      let boardCenter = try #require(WorkspaceItemStackPresentation.boardCenter(
-        of: itemID,
-        in: stack,
-        cameraScale: coverScale,
-        viewport: viewport
-      ))
-      let focusedCenter = try #require(board.focusedCenter(of: itemID))
-      let difference = boardCenter.delta(to: focusedCenter)
-      #expect(abs(difference.x) < 0.000_001)
-      #expect(abs(difference.y) < 0.000_001)
-    }
-  }
-
   let lowerCenter = try #require(board.focusedCenter(of: lower))
   let upperCenter = try #require(board.focusedCenter(of: upper))
+  #expect(lowerCenter == WorkspaceItemStackPresentation.focusedCenter(of:lower,in:stack))
+  #expect(upperCenter == WorkspaceItemStackPresentation.focusedCenter(of:upper,in:stack))
   #expect(
     abs(lowerCenter.delta(to: upperCenter).x
       - WorkspaceItemGeometry.notebook.width * 0.62) < 0.000_001
@@ -302,20 +281,8 @@ func stackCapacityPreservesAReadableLayout() throws {
 
   #expect(board.stack(containing: itemIDs[0])?.itemIDs.count == 5)
   let stack = try #require(board.stack(containing: itemIDs[0]))
-  let viewport = SpatialPoint(x: 834, y: 1_194)
-  let coverScale = WorkspaceItemGeometry.notebook.coverScale(viewport: viewport)
-  let firstCenter = try #require(WorkspaceItemStackPresentation.boardCenter(
-    of: itemIDs[0],
-    in: stack,
-    cameraScale: coverScale,
-    viewport: viewport
-  ))
-  let lastCenter = try #require(WorkspaceItemStackPresentation.boardCenter(
-    of: itemIDs[4],
-    in: stack,
-    cameraScale: coverScale,
-    viewport: viewport
-  ))
+  let firstCenter=try #require(WorkspaceItemStackPresentation.focusedCenter(of:itemIDs[0],in:stack))
+  let lastCenter=try #require(WorkspaceItemStackPresentation.focusedCenter(of:itemIDs[4],in:stack))
   #expect(
     abs(firstCenter.delta(to: lastCenter).x
       - WorkspaceItemGeometry.notebook.width * 0.62) < 0.000_001

@@ -84,6 +84,7 @@ final class MacShutdownTests: XCTestCase {
     let presentation = ShutdownPresentationProbe(model: model)
     model.registerScenePresentation(presentation)
     let page = try XCTUnwrap(model.activePage)
+    let durableStampBeforeContact = page.drawingStamp
     try fault.rejectReadsAndWrites()
     await model.reloadExternalChanges()?.value
     XCTAssertNotNil(model.persistenceFailure)
@@ -95,7 +96,7 @@ final class MacShutdownTests: XCTestCase {
         opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
     ])
     let stamp = try XCTUnwrap(model.reserveDrawingAction(pageID: page.id))
-    let accepted = await model.acceptDrawingAction(action, pageID: page.id, stamp: stamp).value
+    let accepted = model.acceptDrawingAction(action, pageID: page.id, stamp: stamp)
     XCTAssertNotNil(accepted, "The native contact has already been accepted in memory")
     let inMemory = try PageInkDrawing.decode(XCTUnwrap(model.activePage).drawingData)
     XCTAssertEqual(inMemory.activeActions.map(\.id), [action.id])
@@ -112,7 +113,9 @@ final class MacShutdownTests: XCTestCase {
     XCTAssertTrue(presentation.terminalPhases.isEmpty)
 
     try fault.restore()
-    XCTAssertEqual(try model.store.loadPage(page.id), page,
+    let durableBeforeRetry = try model.store.loadPage(page.id)
+    XCTAssertEqual(durableBeforeRetry.drawingStamp, durableStampBeforeContact)
+    XCTAssertTrue(try durableBeforeRetry.inkDrawing().activeActions.isEmpty,
       "Repairing access alone cannot silently replay an accepted write")
     model.retryPendingPersistence()
     let saved = await model.finishPendingPersistence()

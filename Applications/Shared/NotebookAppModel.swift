@@ -57,6 +57,9 @@ final class NotebookAppModel {
   private(set) var pages: [UUID: PageDocument] = [:] {
     didSet {
       elementErasureCache.retain(pages: pages)
+      pageEraserTargetCache = pageEraserTargetCache.filter {
+        pages[$0.key]?.elementSourceIdentity == $0.value.source
+      }
       collaborationReadEpoch &+= 1
       if oldValue != pages { collaborationContentEpoch &+= 1 }
     }
@@ -526,40 +529,53 @@ final class NotebookAppModel {
   @ObservationIgnored private var returnDocumentPresentation: DocumentPagePresentationOwner.OpenDocument?
   #endif
 
+  /// Camera samples have a native owner on iPad. Keep the accepted value
+  /// current for input and persistence, but do not invalidate the entire
+  /// SwiftUI scene for every sample. Semantic changes and the terminal sample
+  /// publish once through `presencePublication`.
+  @ObservationIgnored private var presenceValue: SessionPresence?
+  private var presencePublication: UInt64 = 0
   private(set) var presence: SessionPresence? {
-    didSet {
-      #if os(iOS)
-      nativeCameraProjection.update(presence)
-      let opened = presence.flatMap { value -> UUID? in
-        guard value.openProgress > 0, value.mode == .document else { return nil }
-        return value.focusedItemID
+    get { _ = presencePublication; return presenceValue }
+    set { setPresence(newValue, publishes: true) }
+  }
+
+  private func setPresence(_ value: SessionPresence?, publishes: Bool) {
+    let previous = presenceValue
+    guard previous != value else { return }
+    presenceValue = value
+    #if os(iOS)
+    nativeCameraProjection.update(value)
+    let opened = value.flatMap { presence -> UUID? in
+      guard presence.openProgress > 0, presence.mode == .document else { return nil }
+      return presence.focusedItemID
+    }
+    if openDocumentPresentation?.documentID != opened {
+      let returning = returnDocumentPresentation?.documentID == opened ? returnDocumentPresentation : nil
+      if returning != nil { returnDocumentPresentation = nil }
+      if let outgoing = openDocumentPresentation {
+        returnDocumentPresentation?.close()
+        outgoing.parkForReturn(); returnDocumentPresentation = outgoing
+        openDocumentPresentation = nil
       }
-      if openDocumentPresentation?.documentID != opened {
-        let returning = returnDocumentPresentation?.documentID == opened ? returnDocumentPresentation : nil
-        if returning != nil { returnDocumentPresentation = nil }
-        if let outgoing = openDocumentPresentation {
-          returnDocumentPresentation?.close()
-          outgoing.parkForReturn(); returnDocumentPresentation = outgoing
-          openDocumentPresentation = nil
+      if let opened, !isClosing {
+        if let returning { returning.resume(); openDocumentPresentation = returning }
+        else {
+          openDocumentPresentation = DocumentPagePresentationOwner.shared(documentID: opened,
+            resources: .shared).retainOpenDocument()
         }
-        if let opened, !isClosing {
-          if let returning { returning.resume(); openDocumentPresentation = returning }
-          else {
-            openDocumentPresentation = DocumentPagePresentationOwner.shared(documentID: opened,
-              resources: .shared).retainOpenDocument()
-          }
-        } else { returning?.close() }
-      }
-      openDocumentPresentation?.cameraDidChange()
-      // Mounted paper observes ScenePlaneProjection.didProject directly.
-      // Calling the registry here as well schedules the same visible-region
-      // walk twice for every pinch sample.
-      #endif
-      if oldValue?.boardID != presence?.boardID || oldValue?.mode != presence?.mode
-        || oldValue?.focusedItemID != presence?.focusedItemID || oldValue?.notebookPageID != presence?.notebookPageID
-        || oldValue?.documentPageIndex != presence?.documentPageIndex {
-        publishSelection()
-      }
+      } else { returning?.close() }
+    }
+    openDocumentPresentation?.cameraDidChange()
+    // Mounted paper observes ScenePlaneProjection.didProject directly.
+    // Calling the registry here as well schedules the same visible-region
+    // walk twice for every pinch sample.
+    #endif
+    if publishes { presencePublication &+= 1 }
+    if previous?.boardID != value?.boardID || previous?.mode != value?.mode
+      || previous?.focusedItemID != value?.focusedItemID || previous?.notebookPageID != value?.notebookPageID
+      || previous?.documentPageIndex != value?.documentPageIndex {
+      publishSelection()
     }
   }
   private(set) var presencePhase = PresencePhase.settled
@@ -893,11 +909,15 @@ final class NotebookAppModel {
   private var peerActivities: [UUID: NotebookInputActivity] = [:]
   private var cueTask: Task<Void, Never>?
   private var pencilUndoHistory = PencilUndoHistory()
+  @ObservationIgnored private var pendingCollaborationCommands:[UUID:Task<Bool,Never>]=[:]
   private(set) var graphicCommandTask: Task<NotebookElementCommandResult?, Never>?
   @ObservationIgnored private var graphicCommandGeneration = UUID()
-  var workingGraphics: [NotebookWorkingGraphic] = []
+  @ObservationIgnored var workingGraphics: [NotebookWorkingGraphic] = []
+  @ObservationIgnored var workingGraphicSignals:[SurfaceID:NotebookWorkingGraphicSignal] = [:]
   var workingElementErasures: [UUID: [NotebookElementErasing]] = [:]
   @ObservationIgnored let elementErasureCache = NotebookElementErasureCache()
+  @ObservationIgnored var pageEraserTargetCache:
+    [UUID:(source:ObjectIdentifier,targets:[InkElementTarget])] = [:]
   // Lift transfers its final draft to the accepted command. It is retired by
   // a scene read at/after the durable cursor, not by lift or receipt delivery.
   var elementCommandDrafts: [EditableElementReference: NotebookElementCommandDraft] = [:]
@@ -906,49 +926,10 @@ final class NotebookAppModel {
   var graphicCommandPending: Bool {
     graphicCommandTask != nil || !elementCommandDrafts.isEmpty || workingGraphics.contains { $0.accepted && $0.publicationCursor == nil }
   }
-  private var inkUndoInProgress = false
   private var reservedDrawingCounters: [UUID: UInt64] = [:]
-  typealias PageInkPreparation = @Sendable (PageDocument, PageInkMutation, VersionStamp) async throws -> PreparedPageInkChange
-  @MainActor private final class AcceptedPageInk {
-    let pageID: UUID
-    enum Intent { case append(PageInkAction), undoLast }
-    let intent: Intent
-    let quickShape: NotebookQuickShapeFit?
-    var mutation: PageInkMutation?
-    let stamp: VersionStamp
-    var page: PageDocument
-    var next: AcceptedPageInk?
-    var nextOnPage: AcceptedPageInk?
-    private enum Delivery { case pending, completed(PreparedPageInkChange?) }
-    private var delivery = Delivery.pending
-    private var waiters: [CheckedContinuation<PreparedPageInkChange?, Never>] = []
-
-    init(page: PageDocument, intent: Intent, stamp: VersionStamp, quickShape: NotebookQuickShapeFit?) {
-      self.pageID = page.id; self.page = page; self.intent = intent; self.stamp = stamp
-      self.quickShape = quickShape
-      if case .append(let action) = intent { mutation = .append(action) }
-    }
-    func value() async -> PreparedPageInkChange? {
-      if case .completed(let result) = delivery { return result }
-      return await withCheckedContinuation { waiters.append($0) }
-    }
-    func resolve(_ result: PreparedPageInkChange?) {
-      guard case .pending = delivery else { return }
-      delivery = .completed(result)
-      let completions = waiters; waiters = []
-      for waiter in completions { waiter.resume(returning: result) }
-    }
-  }
-  @ObservationIgnored private let preparePageInk: PageInkPreparation
   private struct DrawingReservationKey: Hashable { let pageID: UUID; let stamp: VersionStamp }
   @ObservationIgnored private var drawingReservations: [DrawingReservationKey: PageDocument] = [:]
-  @ObservationIgnored private var acceptedPageInkHead: AcceptedPageInk?
-  @ObservationIgnored private var acceptedPageInkTail: AcceptedPageInk?
-  @ObservationIgnored private var lastAcceptedPageInk: [UUID: AcceptedPageInk] = [:]
-  private var acceptedPageInkCount = 0
-  @ObservationIgnored private var pageInkPreparationTask: Task<Void, Never>?
-  private(set) var acceptedPageInkFailure: String?
-  var pendingAcceptedPageInkCount: Int { acceptedPageInkCount }
+  var pendingPageInkCommitCount: Int { persistence.pendingPageInkCount }
   var pendingPageDrawingReservationCount: Int { drawingReservations.count }
   private let presenceSessionID = UUID()
   private var presenceSequence: UInt64 = 0
@@ -1051,12 +1032,7 @@ final class NotebookAppModel {
     opensDefaultAccountWorkspace: Bool = false,
     requiresExistingAccountContent: Bool = false,
     acceptance: NotebookAcceptanceConfiguration? = nil,
-    persistenceQueue: NotebookPersistenceQueue? = nil,
-    preparePageInk: @escaping PageInkPreparation = { page, mutation, stamp in
-      try await Task.detached(priority: .userInitiated) {
-        try page.prepareInkChange(mutation, stamp: stamp)
-      }.value
-    }
+    persistenceQueue: NotebookPersistenceQueue? = nil
   ) {
     self.store = store
     self.allowsCodexRegistration = allowsCodexRegistration
@@ -1077,7 +1053,6 @@ final class NotebookAppModel {
     #else
       inputGate = NotebookInputGate(simulatesPencilContacts: acceptance?.simulatorContact == "pencil")
     #endif
-    self.preparePageInk = preparePageInk
     persistence = persistenceQueue ?? NotebookPersistenceQueue(store: store)
     compositionTiles = SceneCompositionTiles()
     #if os(iOS)
@@ -1095,7 +1070,7 @@ final class NotebookAppModel {
     inputGate.bindNewContactAdmission { [weak self] in self?.shutdownPhase == .running }
     persistence.onFailureChange = { [weak self] message in
       guard let self else { return }
-      persistenceFailure = message ?? acceptedPageInkFailure ?? publicationFailure
+      persistenceFailure = message ?? publicationFailure
     }
     persistence.onContentMerged = { [weak self] in self?.reloadExternalChanges() }
     persistence.onCommit = { [weak self] owner in
@@ -1371,13 +1346,13 @@ final class NotebookAppModel {
     // this uninterrupted admission turn: an async submit can resume before its
     // own FIFO entry is retired and must not be mistaken for new user input.
     guard !isClosing, !inputGate.isActive, persistence.pendingCount == 0,
-      pendingAcceptedPageInkCount == 0 else { return false }
+      pendingPageInkCommitCount == 0 else { return false }
     return (try? store.currentChangeCursor()) == baseline
   }
 
   func prepareAutomaticWorkspaceSwitch() async -> Bool {
     guard await mayAutomaticallySwitchWorkspace(), !isClosing, !inputGate.isActive,
-      persistence.pendingCount == 0, pendingAcceptedPageInkCount == 0 else { return false }
+      persistence.pendingCount == 0, pendingPageInkCommitCount == 0 else { return false }
     // Close input admission BEFORE the last SQL cut. A contact accepted while
     // CloudKit was answering keeps this space; it can never be left behind.
     shutdownPhase = .closing
@@ -1900,9 +1875,7 @@ final class NotebookAppModel {
       await withCheckedContinuation { continuation in
         inputGate.performAfterPageInput { continuation.resume() }
       }
-      guard await finishAcceptedPageInk() else { return false }
-      // A second contact may already be lifted but still have unpublished ink.
-      // Its generation also requires a fresh page drain.
+      // Admission is synchronous with lift; the writer FIFO now owns it.
       if !inputGate.hasActivePencil, inputGate.pencilGeneration == generation { break }
     }
     guard !isItemBeingDeleted(itemID), let removed = workspace?.item(id: itemID),
@@ -2098,9 +2071,15 @@ final class NotebookAppModel {
     settled: Bool
   ) {
     guard presence.isValid else { return }
-    if presence.mode != .document || presence.focusedItemID != self.presence?.focusedItemID || presence.openProgress <= 0 {
+    let previous = self.presence
+    let documentOwnerChanged = presence.mode != previous?.mode
+      || presence.focusedItemID != previous?.focusedItemID
+      || (presence.openProgress > 0) != ((previous?.openProgress ?? 0) > 0)
+    if documentOwnerChanged {
       rememberDocumentReading()
-      documentPageSelection = nil; documentPageNavigationStatus = nil; documentPageController = nil
+      if documentPageSelection != nil { documentPageSelection = nil }
+      if documentPageNavigationStatus != nil { documentPageNavigationStatus = nil }
+      if documentPageController != nil { documentPageController = nil }
       if documentReadingLayout?.id != presence.focusedItemID || (settled && presence.openProgress <= 0) {
         documentReadingLayout = nil
       }
@@ -2122,18 +2101,21 @@ final class NotebookAppModel {
     } else {
       resolved = constrainedPaperPresence(presence)
     }
-    let inputOwnerChanged = self.presence?.boardID != resolved.boardID
-      || self.presence?.mode != resolved.mode
-      || self.presence?.focusedItemID != resolved.focusedItemID
+    let inputOwnerChanged = previous?.boardID != resolved.boardID
+      || previous?.mode != resolved.mode
+      || previous?.focusedItemID != resolved.focusedItemID
     if inputOwnerChanged { endSurfaceEditing() }
-    else if self.presence?.camera != resolved.camera || self.presence?.viewport != resolved.viewport { cancelElementManipulation() }
-    self.presence = resolved
-    alignWorkspaceSelection()
+    else if previous?.camera != resolved.camera || previous?.viewport != resolved.viewport { cancelElementManipulation() }
+    let onlyCameraChanged = previous.map { $0.replacingCamera(resolved.camera) == resolved } == true
+    setPresence(resolved, publishes: settled || !onlyCameraChanged)
+    if previous?.selectedItemID != resolved.selectedItemID || previous?.notebookPageID != resolved.notebookPageID {
+      alignWorkspaceSelection()
+    }
     // Explicit navigation can change the owner during an active contact. Transfer
     // its publication barrier with that owner, not with each camera frame.
     if inputIsActive && inputOwnerChanged { publishInputActivity() }
     let phase = settled ? PresencePhase.settled : .active
-    presencePhase = phase
+    if presencePhase != phase { presencePhase = phase }
     #if os(iOS)
       guard let envelope = makePresenceEnvelope(resolved, phase: phase) else {
         return
@@ -2592,170 +2574,74 @@ final class NotebookAppModel {
   }
 
   /// Admission is synchronous with Pencil-up. The model, not a mounted sheet,
-  /// retains the measured action before any preparation task can suspend.
+  /// advances the retained vector journal before storage can suspend.
   func acceptDrawingAction(
     _ action: PageInkAction,
     pageID: UUID,
     stamp: VersionStamp,
     quickShape: NotebookQuickShapeFit? = nil
-  ) -> Task<PreparedPageInkChange?, Never> {
-    acceptInkIntent(.append(action), pageID: pageID, stamp: stamp, quickShape: quickShape)
+  ) -> PreparedPageInkChange? {
+    acceptInkMutation(.append(action),pageID:pageID,stamp:stamp,quickShape:quickShape)
   }
 
-  private func acceptInkIntent(_ intent: AcceptedPageInk.Intent, pageID: UUID,
-    stamp: VersionStamp, quickShape: NotebookQuickShapeFit? = nil) -> Task<PreparedPageInkChange?, Never> {
-    guard let page = drawingReservations.removeValue(forKey: .init(pageID: pageID, stamp: stamp)),
+  private func acceptInkMutation(_ mutation:PageInkMutation,pageID:UUID,stamp:VersionStamp,
+    quickShape:NotebookQuickShapeFit? = nil) -> PreparedPageInkChange? {
+    guard let retained=drawingReservations.removeValue(forKey:.init(pageID:pageID,stamp:stamp)),
       !isPageBeingDeleted(pageID) else {
-      if case .append(let action) = intent { updateWorkingGraphic(nil, strokeID: action.id) }
-      return Task { nil }
+      if case .append(let action)=mutation { updateWorkingGraphic(nil,strokeID:action.id) }
+      return nil
     }
-    let accepted = AcceptedPageInk(page: page, intent: intent, stamp: stamp, quickShape: quickShape)
-    if case .append(let action) = intent, let targets = action.elementTargets {
+    let page=pages[pageID] ?? retained
+    if case .append(let action)=mutation,let targets=action.elementTargets {
       workingElementErasures[action.id] = [.init(id: action.id, surface: .page(pageID),
         samples: action.samples, targets: targets, accepted: true)]
     }
-    if case .append(let action) = intent, quickShape != nil,
-      let index = workingGraphics.firstIndex(where: { $0.strokeID == action.id }) {
-      workingGraphics[index].accepted = true
-    }
-    if let tail = acceptedPageInkTail { tail.next = accepted }
-    else { acceptedPageInkHead = accepted }
-    acceptedPageInkTail = accepted
-    lastAcceptedPageInk[pageID]?.nextOnPage = accepted
-    lastAcceptedPageInk[pageID] = accepted
-    acceptedPageInkCount += 1
-    if acceptedPageInkFailure != nil { accepted.resolve(nil) }
-    startAcceptedPageInkPreparation()
-    // This task only observes delivery. Cancelling or discarding it cannot
-    // cancel the accepted action, whose lifetime belongs to this model.
-    return Task { await accepted.value() }
-  }
-
-  /// A lasso sees lifted ink immediately. Its vector snapshot borrows the
-  /// decoded page and applies accepted in-memory mutations; durable JSON and
-  /// SQLite publication remain independent work and never gate selection.
-  func lassoInkSnapshot(_ page: PageDocument) -> Task<NotebookLassoInkSource?,Never> {
-    var pending: [PageInkMutation] = []
-    var history=pencilUndoHistory
-    var accepted = acceptedPageInkHead
-    while let value = accepted {
-      if value.pageID == page.id {
-        switch value.intent {
-        case .append(let action):
-          pending.append(.append(action));history.recordAction(ownerID:page.id,actionID:action.id)
-        case .undoLast:
-          let ids: Set<UUID>?
-          if case .remove(let resolved)? = value.mutation { ids=resolved }
-          else { ids=history.lastContribution(for:page.id) }
-          if let ids {
-            pending.append(.remove(ids));history.didRemoveContribution(ids,for:page.id)
-          }
-        }
+    do {
+      let change=try page.prepareInkChange(mutation,stamp:stamp)
+      guard change.stamp != change.baseStamp,page.publishLiveInkChange(change) else {
+        if case .append(let action)=mutation { workingElementErasures[action.id]=nil }
+        return change
       }
-      accepted = value.next
-    }
-    return Task { .page(page,pending:pending) }
-  }
-
-  private func startAcceptedPageInkPreparation() {
-    guard pageInkPreparationTask == nil, acceptedPageInkFailure == nil,
-      acceptedPageInkHead != nil else { return }
-    pageInkPreparationTask = Task { [self] in
-      defer { pageInkPreparationTask = nil }
-      while let accepted = acceptedPageInkHead {
-        if accepted.mutation == nil {
-          guard let ids = pencilUndoHistory.lastContribution(for: accepted.pageID) else {
-            accepted.nextOnPage?.page = pages[accepted.pageID] ?? accepted.page
-            completeAcceptedPageInk(accepted, result: nil)
-            continue
-          }
-          // Resolve the queued undo once, after its predecessors. A failed
-          // preparation or a peer CAS retry cannot redirect it to other UUIDs.
-          accepted.mutation = .remove(ids)
-        }
-        guard let mutation = accepted.mutation else { preconditionFailure("Accepted ink has no resolved mutation") }
-        do {
-          let change = try await publishInkMutation(accepted, mutation: mutation)
-          switch mutation {
-          case .append(let action):
-            // An exact repeated UUID is a no-op, not another human contribution.
-            if change.stamp != change.baseStamp {
-              pencilUndoHistory.recordAction(ownerID: accepted.pageID, actionID: action.id)
-              // Register conversion before releasing the accepted input owner.
-              // A disappearing sheet or immediate Save cannot drop this tail.
-              if let fit = accepted.quickShape { acceptQuickShape(fit, pageID: accepted.pageID, stroke: action) }
-            }
-          case .remove(let ids):
-            pencilUndoHistory.didRemoveContribution(ids, for: accepted.pageID)
-            if change.stamp != change.baseStamp { showCue("Отменено") }
-          }
-          completeAcceptedPageInk(accepted, result: change)
-        } catch {
-          acceptedPageInkFailure = error.localizedDescription
-          persistenceFailure = error.localizedDescription
-          // A failed preparation releases observers with failure, but retains
-          // this action and its dependencies for the same explicit retry path.
-          var next = acceptedPageInkHead
-          while let pending = next { pending.resolve(nil); next = pending.next }
-          return
-        }
+      collaborationReadEpoch &+= 1;collaborationContentEpoch &+= 1
+      elementErasureCache.record(change)
+      switch change.mutation {
+      case .append(let action):
+        workingElementErasures[action.id]=nil
+        pencilUndoHistory.recordAction(ownerID:pageID,actionID:action.id)
+        if let quickShape { acceptQuickShape(quickShape,pageID:pageID,stroke:action) }
+      case .remove(let ids):
+        pencilUndoHistory.didRemoveContribution(ids,for:pageID)
+        // Undo and sync replace visible state; ordinary Pencil-up already
+        // installed its exact delta in the native canvas.
+        if pages[pageID] != nil { pages[pageID]=page }
+        showCue("Отменено")
       }
-    }
-  }
-
-  private func completeAcceptedPageInk(_ accepted: AcceptedPageInk, result: PreparedPageInkChange?) {
-    if case .append(let action) = accepted.intent { workingElementErasures[action.id] = nil }
-    acceptedPageInkHead = accepted.next
-    accepted.next = nil
-    accepted.nextOnPage = nil
-    if acceptedPageInkHead == nil { acceptedPageInkTail = nil }
-    if lastAcceptedPageInk[accepted.pageID] === accepted { lastAcceptedPageInk[accepted.pageID] = nil }
-    acceptedPageInkCount -= 1
-    if case .undoLast = accepted.intent { inkUndoInProgress = false }
-    accepted.resolve(result)
-  }
-
-  /// A page evicted by navigation is retained by its accepted action, not by
-  /// the disposable coordinator. A newer in-memory peer value joins the CAS.
-  private func publishInkMutation(_ accepted: AcceptedPageInk, mutation: PageInkMutation) async throws -> PreparedPageInkChange {
-    while !isPageBeingDeleted(accepted.pageID) {
-      let snapshot = pages[accepted.pageID] ?? accepted.page
-      let change = try await preparePageInk(snapshot, mutation, accepted.stamp)
-      guard !isPageBeingDeleted(accepted.pageID) else { throw NotebookStorageError.transactionConflict }
-      var current = pages[accepted.pageID] ?? snapshot
-      guard current.publishInkChange(change) else { accepted.page = current; continue }
-      // A later queued action may outlive this page's working-set entry too.
-      // Hand it the published baseline before releasing this accepted owner.
-      accepted.nextOnPage?.page = current
-      accepted.page = current
-      if change.stamp != change.baseStamp {
-        elementErasureCache.record(change)
-        if pages[accepted.pageID] != nil { pages[accepted.pageID] = current }
-        persistence.enqueue(owner: .pageInk(current.id)) { store in
-          let saved = try store.savePageInk(pageID: change.pageID, data: change.data, stamp: change.stamp)
-          return saved.data != change.data || saved.stamp != change.stamp
-        }
+      let command=NotebookPageInkCommand(change)
+      persistence.enqueue(owner:.pageInk(pageID)) { store in
+        try store.commitPageInk(pageID:pageID,command:command).stamp != change.stamp
       }
       return change
+    } catch {
+      if case .append(let action)=mutation {
+        workingElementErasures[action.id]=nil;updateWorkingGraphic(nil,strokeID:action.id)
+      }
+      persistenceFailure=error.localizedDescription
+      return nil
     }
-    throw NotebookStorageError.transactionConflict
   }
 
-  @discardableResult
-  private func finishAcceptedPageInk() async -> Bool {
-    while let task = pageInkPreparationTask { await task.value }
-    return acceptedPageInkHead == nil && acceptedPageInkFailure == nil
+  /// Lasso borrows the same retained vector root advanced at Pencil-up.
+  func lassoInkSnapshot(_ page: PageDocument) -> Task<NotebookLassoInkSource?,Never> {
+    Task { .page(page,pending:[]) }
   }
 
-  /// Capture the human command before returning to its caller. The same FIFO
-  /// resolves its last contribution after prior accepted strokes, even if the
-  /// page has left the working set or shutdown starts before it is prepared.
-  func acceptDrawingUndo() -> Task<PreparedPageInkChange?, Never> {
+  /// Undo resolves its target and writes the inverse into the same journal in
+  /// the button's actor segment; storage follows in the ordinary FIFO.
+  func acceptDrawingUndo() -> PreparedPageInkChange? {
     guard inputGate.permitsNewContact, !inputGate.hasActivePencil,
-      !inkUndoInProgress, let page = activePage,
-      let stamp = reserveDrawingAction(pageID: page.id) else { return Task { nil } }
-    inkUndoInProgress = true
-    return acceptInkIntent(.undoLast, pageID: page.id, stamp: stamp)
+      let page=activePage,let ids=pencilUndoHistory.lastContribution(for:page.id),
+      let stamp=reserveDrawingAction(pageID:page.id) else { return nil }
+    return acceptInkMutation(.remove(ids),pageID:page.id,stamp:stamp)
   }
 
   // The toolbar projects the active tool’s stored color, never a second copy.
@@ -3325,8 +3211,7 @@ final class NotebookAppModel {
     guard let owner = object.surface.ownerID else { return }
     var accepted = object
     accepted.accepted = true
-    if let index = workingGraphics.firstIndex(where: { $0.id == object.id }) { workingGraphics[index] = accepted }
-    else { workingGraphics.append(accepted) }
+    updateWorkingGraphic(accepted,strokeID:object.strokeID)
     guard var values = try? ["kind": JSONValue.string("graphic"), "source": .string(""),
       "frame": .encode(object.frame), "graphic": .encode(object.graphic)] else { return }
     if let origin = object.worldOrigin { values["worldOrigin"] = try? .encode(origin) }
@@ -3428,7 +3313,7 @@ final class NotebookAppModel {
       CollaborationOperation(kind:edit.kind,target:target,id:originals[edit.reference]!.id,values:edit.values)
     }
     let sources = originals
-    let predecessor = graphicCommandTask, actor = actorID, generation = UUID()
+    let predecessor = graphicCommandTask, actor = actorID, generation = UUID(),commandID=UUID()
     let sourceTasks = references.reduce(into: [EditableElementReference: Task<NotebookElementCommandResult?, Never>]()) {
       $0[$1] = elementCommandSources[$1]?.task
     }
@@ -3474,8 +3359,9 @@ final class NotebookAppModel {
         }
         await withCheckedContinuation { continuation in inputGate.performAfterIdle { continuation.resume() } }
         let admittedSources = expected
-        let (receipt,cursor,saved,header) = try await persistence.submit(publishesChanges:true) { store in
-          let result = try store.applyNativeElementEdits(operations,summary:summary,sources:admittedSources,layerMove:layerMove,copiedFrom:copiedFrom,expectedInkRevision:expectedInkRevision,actor:actor)
+        let (_,cursor,saved,header) = try await persistence.submit(publishesChanges:true) { store in
+          let result = try store.applyNativeElementEdits(operations,summary:summary,sources:admittedSources,layerMove:layerMove,
+            copiedFrom:copiedFrom,expectedInkRevision:expectedInkRevision,actionID:commandID,actor:actor)
           return (result.receipt,try store.currentChangeCursor(),result.sources,
             target.kind == .page ? nil : try store.readBoardNodeHeader(target.boardID ?? target.id)?.board)
         }
@@ -3486,20 +3372,29 @@ final class NotebookAppModel {
           let source = saved.first { $0.id == id }
           results[reference] = .init(page:source?.page,spatial:source?.spatial,boardHeader:header)
           if operations.contains(where: { $0.id == id && [.convertInkToElement,.insertElement].contains($0.kind) }),
-            let index = workingGraphics.firstIndex(where: { $0.id == id }) { workingGraphics[index].publicationCursor = cursor }
+            let index = workingGraphics.firstIndex(where: { $0.id == id }) {
+            let surface=workingGraphics[index].surface
+            workingGraphics[index].publicationCursor = cursor;didChangeWorkingGraphics(on:[surface])
+          }
         }
-        pencilUndoHistory.recordCommand(ownerID:target.id,actionID:receipt.id)
+        pendingCollaborationCommands[commandID]=nil
         reloadExternalChanges()
         return results
       } catch {
+        pendingCollaborationCommands[commandID]=nil
+        pencilUndoHistory.didUndoCommand(ownerID:target.id,actionID:commandID)
         for reference in references {
           if elementCommandSources[reference]?.id == generation { elementCommandDrafts[reference] = nil; elementCommandSources[reference] = nil }
           cancelElementManipulationForFailedCommand(reference)
-          workingGraphics.removeAll { $0.id == sources[reference]!.id }
+          removeWorkingGraphics { $0.id == sources[reference]!.id }
         }
         showCue(error.localizedDescription); reloadExternalChanges(); return nil
       }
     }
+    // The visible draft and its undo identity become one accepted action in
+    // this actor segment. Undo below joins this exact write before reverting it.
+    pencilUndoHistory.recordCommand(ownerID:target.id,actionID:commandID)
+    pendingCollaborationCommands[commandID]=Task { await task.value != nil }
     graphicCommandGeneration = generation
     graphicCommandTask = Task { await task.value?.values.first }
     for edit in edits {
@@ -3830,7 +3725,7 @@ final class NotebookAppModel {
               feedbackKnown: feedbackKnown, feedbackTracked: feedbackTracked, attentionReferences: attentionReferences)
           }
           publicationFailure = nil
-          if persistence.failure == nil { persistenceFailure = acceptedPageInkFailure }
+          if persistence.failure == nil { persistenceFailure = publicationFailure }
           let liveDrafts = documentEditingSessions
           guard acceptExternalScene(prepared.scene, observedEpoch: epoch,
             observedPresence: presence, itemPins: itemPins) else {
@@ -4764,6 +4659,10 @@ final class NotebookAppModel {
     guard collaborationUndoTask == nil else { return }
     collaborationUndoTask = Task { [weak self] in
       guard let self else { return }
+      if let pending=pendingCollaborationCommands[id],!(await pending.value) {
+        collaborationUndoTask=nil
+        return
+      }
       await withCheckedContinuation { continuation in
         inputGate.performAfterIdle { continuation.resume() }
       }
@@ -5038,7 +4937,7 @@ final class NotebookAppModel {
     spatialInk = state.ink
     loadedInkSurfaces = state.inkSurfaces
     pages = state.pages
-    workingGraphics.removeAll { graphic in
+    removeWorkingGraphics { graphic in
       graphic.surface.kind == .page
         && (graphic.publicationCursor.map { state.header.cursor >= $0 } ?? false)
     }
@@ -5168,8 +5067,6 @@ final class NotebookAppModel {
   func retryPendingPersistence() {
     AgentWebCoordinator.retryRetirements(ownedBy: self)
     DocumentRenderRegistry.shared.retryRetiringPrograms()
-    acceptedPageInkFailure = nil
-    startAcceptedPageInkPreparation()
     persistence.retry()
     if publicationFailure != nil { reloadExternalChanges() }
   }
@@ -5223,9 +5120,6 @@ final class NotebookAppModel {
     #endif
     repeat {
       guard !Task.isCancelled, continuing() else { return false }
-      observeNavigation("wait_accepted_ink_begin", fields: trace)
-      guard await finishAcceptedPageInk() else { return false }
-      observeNavigation("wait_accepted_ink_end", fields: trace)
       if let task = graphicCommandTask { _ = await task.value }
       if let task = contextPublicationTask { await task.value }
       if let task = collaborationUndoTask { await task.value }
@@ -5245,7 +5139,7 @@ final class NotebookAppModel {
       observeNavigation("writer_flush_end", fields: trace)
       guard !Task.isCancelled, continuing() else { return false }
     } while boundary == .quiescent && (diskRefreshTask != nil || headerRefreshTask != nil || documentOpeningTask != nil || persistence.pendingCount > 0
-      || pageInkPreparationTask != nil || acceptedPageInkHead != nil || graphicCommandTask != nil || contextPublicationTask != nil)
+      || graphicCommandTask != nil || contextPublicationTask != nil)
     return publicationFailure == nil
   }
 

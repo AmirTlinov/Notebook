@@ -368,14 +368,12 @@ extension NotebookStore {
     let origin: WorldPoint, width: Double, height: Double, z: Double
     if let stack = layout.stacks.first(where: { $0.itemIDs.contains(itemID) }),
       let position = stack.itemIDs.firstIndex(of: itemID) {
-      let collapsed = WorkspaceItemStackPresentation.boardCenter(of: itemID, in: stack,
-        cameraScale: SpatialCamera.minimumScale, viewport: .init(x: 834, y: 1194)) ?? stack.center
-      let fanned = WorkspaceItemStackPresentation.focusedCenter(of: itemID, in: stack) ?? stack.center
-      let a = stack.center.delta(to: collapsed), b = stack.center.delta(to: fanned)
-      let left = min(0, a.x, b.x) - size.width / 2, top = min(0, a.y, b.y) - size.height / 2
+      let center = WorkspaceItemStackPresentation.focusedCenter(of: itemID, in: stack) ?? stack.center
+      let offset = stack.center.delta(to: center)
+      let left = min(0, offset.x) - size.width / 2, top = min(0, offset.y) - size.height / 2
       origin = stack.center.offsetBy(x: left, y: top)
-      width = max(0, a.x, b.x) + size.width / 2 - left
-      height = max(0, a.y, b.y) + size.height / 2 - top
+      width = max(0, offset.x) + size.width / 2 - left
+      height = max(0, offset.y) + size.height / 2 - top
       z = Double(stack.zIndex) + Double(position) / 100
     } else if let item = layout.freeItems.first(where: { $0.id == itemID }) {
       origin = item.center.offsetBy(x: -size.width / 2, y: -size.height / 2)

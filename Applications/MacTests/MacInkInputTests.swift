@@ -29,7 +29,7 @@ import XCTest
       canvas.mouseDown(with:try event(.leftMouseDown,30,y,t))
       canvas.mouseUp(with:try event(.leftMouseUp,160,y,t+0.01))
     }
-    XCTAssertEqual(model.pendingAcceptedPageInkCount,10)
+    XCTAssertEqual(model.pendingPageInkCommitCount,10)
     let saved=await model.finishPendingInteraction();XCTAssertTrue(saved)
     let drawing=try PageInkDrawing.decode(fixture.store.loadPage(page.id).drawingData)
     XCTAssertEqual(drawing.activeActions.count,10)

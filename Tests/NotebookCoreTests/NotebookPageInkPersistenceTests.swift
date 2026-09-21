@@ -9,6 +9,33 @@ struct NotebookPageInkPersistenceTests {
       timeOffset: 0, width: 4, opacity: 1, force: 0.5, azimuth: 0, altitude: 1)])
   }
 
+  @Test func addressedContactAndUndoDoNotReadOrRewriteRetainedHistory() throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store=NotebookStore(root:root),actor=UUID()
+    _=try store.initializeWorkspace(actor:actor,pageSize:.init(width:834,height:1194))
+    let pageID=try #require(store.loadIndex().selectedPageID)
+    let history=(0..<2_048).map { stroke(x:Double($0%800)) }
+    let archive=PageInkDrawing(actions:history)
+    var page=try store.loadPage(pageID)
+    #expect(page.replaceDrawing(try archive.dataRepresentation(),actor:actor))
+    _=try store.savePage(page)
+    let appended=try page.prepareInkChange(.append(stroke(x:801)),stamp:.init(counter:2,actor:actor))
+    let action=try #require(appended.drawing.action(id:appended.mutation.actionID!))
+    let sampleAddress=pageFile(pageID)+"#/drawingData/actions/@"+history[0].id.uuidString.lowercased()+"/samples"
+    let retainedHash=try store.sqlRead { try #require($0.rows("SELECT hash FROM records WHERE address=?",[.text(sampleAddress)]).first?.first?.text) }
+    let accepted=try store.commitPageInk(pageID:pageID,command:.append(action,baseStamp:appended.baseStamp,stamp:appended.stamp))
+    #expect(accepted.stamp == appended.stamp)
+    let undoStamp=try #require(accepted.stamp.advanced(by:actor))
+    _=try store.commitPageInk(pageID:pageID,command:.deactivate([action.id],baseStamp:accepted.stamp,stamp:undoStamp))
+    let afterHash=try store.sqlRead { try #require($0.rows("SELECT hash FROM records WHERE address=?",[.text(sampleAddress)]).first?.first?.text) }
+    #expect(afterHash == retainedHash)
+    page=try store.loadPage(pageID)
+    let reopened=try page.inkDrawing()
+    #expect(reopened.action(id:history[0].id)?.isActive == true)
+    #expect(reopened.action(id:action.id)?.isActive == false)
+  }
+
   @Test func drawingPublicationAndRepeatedHistoryDoNotReadUnrelatedHundredThousandNodeBody() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -33,10 +60,10 @@ struct NotebookPageInkPersistenceTests {
     let change = try page.prepareInkChange(.append(stroke()), stamp: .init(counter: 1, actor: actor))
     let start = ContinuousClock.now
     let saved = try store.commandTransaction(readAllowance: .init(rows: 512, bytes: 262_144, valueBytes: 65_536, reason: "ink_must_not_read_graphics")) {
-      try store.savePageInk(pageID: pageID, data: change.data, stamp: change.stamp)
+      try store.commitPageInk(pageID:pageID,command:.init(change))
     }
     print("page-ink-beside-100k-source \(start.duration(to: .now))")
-    #expect(saved.data == change.data && saved.stamp == change.stamp)
+    #expect(saved.stamp == change.stamp)
     let afterRows = try store.sqlRead { try $0.rows("SELECT address,hash FROM records WHERE file=? ORDER BY address", [.text(pageFile(pageID))]).map { [$0[0].text!, $0[1].text!] } }
     let inkRoot = pageFile(pageID) + "#/drawingData", pageRoot = pageFile(pageID) + "#"
     #expect(oldRows.filter { $0[0] != pageRoot && !$0[0].hasPrefix(inkRoot) }
@@ -67,21 +94,26 @@ struct NotebookPageInkPersistenceTests {
     let store = NotebookStore(root: root), actor = UUID()
     _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
     let pageID = try #require(store.loadIndex().selectedPageID), one = stroke(), two = stroke(x: 20)
-    let a = PageInkDrawing(actions: [one]), b = PageInkDrawing(actions: [two])
-    _ = try store.savePageInk(pageID: pageID, data: a.dataRepresentation(), stamp: .init(counter: 1, actor: actor))
-    let joined = try store.savePageInk(pageID: pageID, data: b.dataRepresentation(), stamp: .init(counter: 1, actor: UUID()))
-    let drawing = try PageInkDrawing.decode(joined.data)
+    let base=try store.loadPage(pageID),a=try base.prepareInkChange(.append(one),stamp:.init(counter:1,actor:actor))
+    _=try store.commitPageInk(pageID:pageID,command:.init(a))
+    let b=try base.prepareInkChange(.append(two),stamp:.init(counter:1,actor:UUID()))
+    let joined=try store.commitPageInk(pageID:pageID,command:.init(b))
+    let drawing = try store.loadPage(pageID).inkDrawing()
     #expect(Set(drawing.actions.map(\.id)) == [one.id, two.id])
     let undoStamp = try #require(joined.stamp.advanced(by: actor))
-    _ = try store.savePageInk(pageID: pageID, data: drawing.removing([one.id]).dataRepresentation(), stamp: undoStamp)
-    let replay = try store.savePageInk(pageID: pageID, data: a.dataRepresentation(), stamp: .init(counter: 1, actor: actor))
-    #expect(try PageInkDrawing.decode(replay.data).actions.first { $0.id == one.id }?.isActive == false)
+    _=try store.commitPageInk(pageID:pageID,command:.deactivate([one.id],baseStamp:joined.stamp,stamp:undoStamp))
+    _=try store.commitPageInk(pageID:pageID,command:.init(a))
+    #expect(try store.loadPage(pageID).inkDrawing().action(id:one.id)?.isActive == false)
     let cursor = try store.currentChangeCursor()
-    let conflict = PageInkDrawing(actions: [stroke(id: one.id, x: 100)])
-    #expect(throws: PageInkDrawing.InkError.self) {
-      _ = try store.savePageInk(pageID: pageID, data: conflict.dataRepresentation(), stamp: .init(counter: 100, actor: actor))
+    let conflict = PageInkDrawing(actions: [stroke(id: one.id, x: 100)]).actions[0]
+    #expect(throws: NotebookStorageError.self) {
+      _=try store.commitPageInk(pageID:pageID,command:.append(conflict,baseStamp:joined.stamp,stamp:.init(counter:100,actor:actor)))
     }
     #expect(try store.currentChangeCursor() == cursor)
-    #expect(try store.loadPage(pageID).drawingData == replay.data)
+    #expect(try store.loadPage(pageID).inkDrawing().action(id:one.id)?.isActive == false)
   }
+}
+
+private extension PageInkMutation {
+  var actionID:UUID? { if case .append(let action)=self { action.id } else { nil } }
 }

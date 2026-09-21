@@ -3,6 +3,45 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookGraphicModelTests: XCTestCase {
+  func testImmediateUndoWaitsForVisibleShapeCommandInsteadOfUndoingOlderInk() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("graphic-immediate-undo-\(UUID())")
+    let model=NotebookAppModel(store:.init(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
+    let started = await model.finishPendingPersistence()
+    XCTAssertTrue(started)
+    let pageID=try XCTUnwrap(model.activePage?.id),actor=model.actorID
+    let samples=(0...48).map { index -> SpatialInkSample in
+      let angle=Double(index)/48*2*Double.pi
+      return .init(point:.init(x:150+60*cos(angle),y:150+60*sin(angle)),timeOffset:Double(index)/100,
+        width:2,opacity:1,force:1,azimuth:0,altitude:.pi/2)
+    }
+    let stroke=PageInkAction(tool:.pen,samples:samples)
+    let page=try model.store.loadPage(pageID)
+    let change=try page.prepareInkChange(.append(stroke),stamp:.init(counter:1,actor:actor))
+    _=try model.store.commitPageInk(pageID:pageID,command:.append(try XCTUnwrap(change.drawing.action(id:stroke.id)),
+      baseStamp:change.baseStamp,stamp:change.stamp))
+    await model.reloadExternalChanges()?.value
+    let blocker=try NotebookSQLWriteBlocker(store:model.store);defer { try? blocker.release() }
+    let fit=NotebookQuickShapeFit(frame:.init(x:90,y:90,width:120,height:120),sampleCount:49)
+    model.acceptQuickShape(fit,pageID:pageID,stroke:stroke)
+    XCTAssertTrue(model.graphicCommandPending)
+    model.undoLastSurfaceAction()
+    try blocker.release()
+    let persisted = await model.finishPendingPersistence()
+    XCTAssertTrue(persisted)
+    let receipts=try model.store.collaborationActions(afterID:nil).filter {
+      $0.action.operations.contains { $0.kind == .convertInkToElement }
+    }
+    let conversion=try XCTUnwrap(receipts.first)
+    XCTAssertNotNil(conversion.undo,"Immediate Undo must join and reverse the visible shape command")
+    let restored = try model.store.loadPage(pageID)
+    XCTAssertTrue(restored.graphicPresentation.geometryIDs.isEmpty)
+    XCTAssertEqual(restored.elements.first?.graphic?.representation,.ink)
+    XCTAssertTrue(try restored.inkDrawing().action(id:stroke.id)?.isActive == true,
+      "Undo must not fall through to the preceding raw stroke")
+  }
+
   func testConsecutiveHeldShapesKeepBothIdentitiesWhileThePreviousCommandWaits() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-queue-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)

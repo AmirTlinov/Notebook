@@ -27,13 +27,9 @@ final class MacPageInkCanvas: NSView {
   private let source = UUID()
   private var inputEnabled = false
   private var retired = false
-  private var sourceData: Data?
+  private var sourceStamp: VersionStamp?
   private var suppressed = Set<UUID>()
-  private var unpublished = Set<UUID>()
   private var load: Task<Void, Never>?
-  private var pendingDeliveries = 0
-  private var deliveryOrdinal = 0
-  private var latestDelivery: (ordinal: Int, change: PreparedPageInkChange)?
   private var stamp: VersionStamp?
   private var pen: ActiveInkStroke?
   private var eraser: ActiveEraserStroke?
@@ -43,7 +39,6 @@ final class MacPageInkCanvas: NSView {
   private var elementContact = InkElementContact([])
   private var actionEraserStyle = EraserStyle.standard
   private var startedAt = 0.0
-  private var waiters: [NotebookInputCompletion] = []
   override var isFlipped: Bool { true }
   override var acceptsFirstResponder: Bool { inputEnabled }
 
@@ -53,10 +48,9 @@ final class MacPageInkCanvas: NSView {
     addSubview(ink)
     setAccessibilityIdentifier("paper-input")
     setAccessibilityLabel("Лист")
-    model.inputGate.registerPageFinisher(source: source) { [weak self] waits, done in
+    model.inputGate.registerPageFinisher(source: source) { [weak self] _, done in
       guard let self else { done(); return }
-      finishStroke()
-      if waits && pendingDeliveries > 0 { waiters.append(done) } else { done() }
+      finishStroke();done()
     }
   }
   required init?(coder: NSCoder) { fatalError("Use init(model:pageID:)") }
@@ -73,17 +67,19 @@ final class MacPageInkCanvas: NSView {
     model.inputGate.setCurrentPageSource(source, isCurrent: current)
     ink.onRenderReadinessChange = onReady
     let cuts = model.pageSuppressedInkIDs(page)
-    guard stamp == nil, pendingDeliveries == 0, page.drawingData != sourceData || cuts != suppressed else { return }
-    sourceData = page.drawingData; suppressed = cuts
+    if let sourceStamp, page.drawingStamp < sourceStamp {
+      if cuts != suppressed { suppressed = cuts; ink.setSuppressedPageActions(cuts) }
+      return
+    }
+    guard stamp == nil,page.drawingStamp != sourceStamp || cuts != suppressed else { return }
+    sourceStamp=page.drawingStamp;suppressed=cuts
     load?.cancel()
-    if unpublished.isEmpty { ink.prepareForDrawing() }
-    let data = page.drawingData
+    ink.prepareForDrawing()
+    let source=page.inkSource
     load = Task { [weak self] in
-      let decoded = await Task.detached(priority: .userInitiated) { try? PageInkDrawing.decode(data) }.value
-      guard !Task.isCancelled, let self, !retired, sourceData == data, stamp == nil, pendingDeliveries == 0, let decoded else { return }
+      let decoded=await Task.detached(priority:.userInitiated) { try? source.drawing() }.value
+      guard !Task.isCancelled,let self,!retired,sourceStamp == source.stamp,stamp == nil,let decoded else { return }
       load = nil
-      guard unpublished.isSubset(of: Set(decoded.actions.map(\.id))) else { return }
-      unpublished.removeAll()
       ink.apply(decoded.presenting(excluding: cuts))
     }
   }
@@ -145,29 +141,11 @@ final class MacPageInkCanvas: NSView {
     let action = PageInkAction(id:measuredAction.id, tool:measuredAction.tool, color:measuredAction.color,
       measurements:measuredAction.samples, elementTargets:elementContact.selected)
     if actionTool == .pen { ink.commitActiveStroke(action) } else { ink.commitActiveEraser(action) }
-    unpublished.insert(action.id)
     let accepted = model.acceptDrawingAction(action, pageID: pageID, stamp: stamp)
     pen = nil; eraser = nil
-    pendingDeliveries += 1
-    deliveryOrdinal += 1
-    let ordinal = deliveryOrdinal
-    Task { [self] in
-      let prepared = await accepted.value
-      if let prepared {
-        unpublished.remove(action.id)
-        if ordinal > (latestDelivery?.ordinal ?? 0) { latestDelivery = (ordinal, prepared) }
-      }
-      pendingDeliveries -= 1
-      guard pendingDeliveries == 0 else { return }
-      // A following contact already owns its measured mesh. Delivery installs
-      // only the accepted baseline and never gates or discards that contact.
-      if let change = latestDelivery?.change, unpublished.isEmpty, !retired {
-        sourceData = change.data
-        ink.settle(change.drawing.presenting(excluding: suppressed))
-      }
-      latestDelivery = nil
-      let completions = waiters; waiters = []
-      for completion in completions { completion() }
+    if let accepted,!retired {
+      sourceStamp=accepted.stamp
+      ink.settle(accepted,suppressedInkIDs:suppressed)
     }
     model.inputGate.endPencilAction(source: source)
   }

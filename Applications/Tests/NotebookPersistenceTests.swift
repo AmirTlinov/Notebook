@@ -286,7 +286,7 @@ final class NotebookPersistenceTests: XCTestCase {
       .init(point: .init(x: 20, y: 30), timeOffset: 0, width: 3, opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2),
       .init(point: .init(x: 120, y: 130), timeOffset: 0.1, width: 3, opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
     ])
-    let accepted = await model.acceptDrawingAction(action, pageID: pageID, stamp: stamp).value
+    let accepted = model.acceptDrawingAction(action, pageID: pageID, stamp: stamp)
     XCTAssertNotNil(accepted, "The contact finishes without waiting for the storage lock")
     try lock.release()
     let saved = await model.finishPendingPersistence()
@@ -366,7 +366,7 @@ final class NotebookPersistenceTests: XCTestCase {
     let ink = try page.prepareInkChange(.append(action), stamp: .init(counter: 1, actor: actor))
     let queue = NotebookPersistenceQueue(store: store)
     queue.enqueue(owner: .page(id)) { try $0.savePage(acceptedPage); return false }
-    queue.enqueue(owner: .pageInk(id)) { try $0.savePageInk(pageID: id, data: ink.data, stamp: ink.stamp); return false }
+    queue.enqueue(owner:.pageInk(id)) { try $0.commitPageInk(pageID:id,command:.init(ink)).stamp != ink.stamp }
     let saved = await queue.flush()
     XCTAssertTrue(saved)
     let restored = try store.loadPage(id)

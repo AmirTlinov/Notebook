@@ -7,6 +7,96 @@ private struct CameraGestureSnapshot {
   let trajectory: CameraGestureTrajectory
 }
 
+/// The board background follows the same synchronous native camera sample as
+/// ink and scene planes. It is deliberately outside SwiftUI's per-sample
+/// invalidation path; drawing a dot field is its only frame work.
+private struct LiveSpatialBoardGrid: UIViewRepresentable {
+  @Environment(NotebookAppModel.self) private var model
+  let presence: SessionPresence
+
+  func makeUIView(context: Context) -> NativeSpatialBoardGrid {
+    let view = NativeSpatialBoardGrid()
+    view.update(presence)
+    view.bind(to: model.nativeCameraProjection)
+    return view
+  }
+
+  func updateUIView(_ view: NativeSpatialBoardGrid, context: Context) {
+    view.update(presence)
+    view.bind(to: model.nativeCameraProjection)
+  }
+
+  static func dismantleUIView(_ view: NativeSpatialBoardGrid, coordinator: ()) {
+    view.unbind()
+  }
+}
+
+@MainActor
+private final class NativeSpatialBoardGrid: UIView, SceneNativeCameraOwner {
+  private weak var projection: SceneNativeCameraProjection?
+  private var presence: SessionPresence?
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    isOpaque = true
+    backgroundColor = UIColor(BoardAppearance.background)
+    contentMode = .redraw
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  func bind(to projection: SceneNativeCameraProjection) {
+    guard self.projection !== projection else { return }
+    self.projection?.remove(self)
+    self.projection = projection
+    projection.register(self)
+  }
+
+  func unbind() {
+    projection?.remove(self)
+    projection = nil
+  }
+
+  func update(_ presence: SessionPresence) {
+    guard self.presence != presence else { return }
+    self.presence = presence
+    setNeedsDisplay()
+  }
+
+  func projectSceneCamera(_ presence: SessionPresence) {
+    guard self.presence?.boardID == presence.boardID else { return }
+    update(presence)
+  }
+
+  override func draw(_ rect: CGRect) {
+    guard let presence, let context = UIGraphicsGetCurrentContext() else { return }
+    context.setFillColor(UIColor(BoardAppearance.background).cgColor)
+    context.fill(bounds)
+    var worldStep = PhysicalPaper.gridSpacing
+    while worldStep * presence.camera.scale < BoardAppearance.minimumDotSpacing { worldStep *= 2 }
+    let step = worldStep * presence.camera.scale
+    guard step.isFinite, step > 0 else { return }
+    let phaseX = presence.camera.center.localX.truncatingRemainder(dividingBy: worldStep) * presence.camera.scale
+    let phaseY = presence.camera.center.localY.truncatingRemainder(dividingBy: worldStep) * presence.camera.scale
+    let startX = (bounds.width / 2 - phaseX).truncatingRemainder(dividingBy: step)
+    let startY = (bounds.height / 2 - phaseY).truncatingRemainder(dividingBy: step)
+    let radius = max(0.65, 0.9 / max(window?.screen.scale ?? traitCollection.displayScale, 1))
+    let dots = CGMutablePath()
+    var x = startX < 0 ? startX + step : startX
+    while x <= bounds.width {
+      var y = startY < 0 ? startY + step : startY
+      while y <= bounds.height {
+        dots.addEllipse(in: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2))
+        y += step
+      }
+      x += step
+    }
+    context.addPath(dots)
+    context.setFillColor(UIColor(BoardAppearance.dot).cgColor)
+    context.fillPath()
+  }
+}
+
 struct SpatialWorkspaceView: View {
   var backRequest: UInt64 = 0
   @Environment(\.scenePhase) private var scenePhase
@@ -71,7 +161,7 @@ struct SpatialWorkspaceView: View {
       ZStack {
         NotebookWorkspacePresentation(presence: presence, cohort: cohort) { [weak cohort] in
         ZStack {
-        SpatialBoardGrid(camera: presence.camera)
+        LiveSpatialBoardGrid(presence: presence)
         if cohort == nil {
           ProgressView(model.compositionTiles.failure == nil ? "Подготовка пространства" : "Ожидание ресурсов изображения")
             .padding(12).notebookPanel(radius:NotebookChrome.cardRadius)
@@ -765,7 +855,7 @@ struct SpatialWorkspaceView: View {
     let selectionID: UUID
     let manipulation: NotebookElementManipulation?
     let elementCommandDrafts: [EditableElementReference: NotebookElementCommandDraft]
-    let workingGraphics: [NotebookWorkingGraphic]
+    let workingGraphicsRevision:UInt64
   }
 
   private func boardElements(_ elements: [SpatialElement], presence: SessionPresence,
@@ -774,7 +864,8 @@ struct SpatialWorkspaceView: View {
     let revision = ElementPlaneRevision(cohortID: cohort?.paintID, generation: model.sceneIndex?.generationID,
       focus: model.interactiveElementFocus, elements: elements,
       selection: selection, selectionID: model.selectionSession.id, manipulation: model.selectionSession.manipulation,
-      elementCommandDrafts: model.elementCommandDrafts, workingGraphics: model.workingGraphics)
+      elementCommandDrafts: model.elementCommandDrafts,
+      workingGraphicsRevision:model.workingGraphicRevision(on:.board(presence.boardID)))
     return SceneCameraPlane(presence: presence, revision: revision, reanchorsOnRevision: false,
       isCameraActive: model.presencePhase == .active || cameraGesture != nil || panStart != nil || settling,
       installation: cohort?.installation(for: .elements),

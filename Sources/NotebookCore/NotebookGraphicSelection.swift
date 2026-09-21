@@ -52,7 +52,8 @@ public enum NotebookElementLayerMove: String, CaseIterable, Sendable {
 
 extension NotebookStore {
   public func applyNativeElementEdits(_ operations: [CollaborationOperation], summary: String,
-    sources: [NotebookNativeElementSource], layerMove: NotebookElementLayerMove? = nil, copiedFrom: [String:String] = [:], expectedInkRevision: String? = nil, actor: UUID
+    sources: [NotebookNativeElementSource], layerMove: NotebookElementLayerMove? = nil, copiedFrom: [String:String] = [:], expectedInkRevision: String? = nil,
+    actionID:UUID=UUID(),actor: UUID
   ) throws -> (receipt: CollaborationReceipt, sources: [NotebookNativeElementSource]) {
     try commandTransaction(readAllowance: .agentCommand) {
       guard let target = operations.first?.target, [.page,.board,.cover].contains(target.kind),
@@ -102,7 +103,7 @@ extension NotebookStore {
         throw CollaborationError("revision_conflict","Чернила изменились во время выделения. Повторите лассо.")
       }
       let ink = operations.contains { $0.kind == .convertInkToElement } ? try inkRevision(on: target) : nil
-      let receipt = try applyNativeGraphicAction(.init(summary: summary,
+      let receipt = try applyNativeGraphicAction(.init(id:actionID,summary: summary,
         references: admitted.map { .init(target:target,elementID:$0.kind == .reorderElements ? nil : $0.id,revision:revision) },
         expected: [.init(target: target, revision: revision, inkRevision: ink)], operations: admitted), actor: actor)
       return (receipt, try sources.map { source in

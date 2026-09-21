@@ -357,11 +357,10 @@ extension NotebookStore {
       for count in 2...WorkspaceItemStack.maximumItemCount {
         let stack = WorkspaceItemStack(center: .zero, zIndex: 0, itemIDs: (0..<count).map { _ in UUID() }, stamp: .init(counter: 0, actor: WorkspaceRoot.boardID))
         for id in stack.itemIDs {
-          let collapsed = WorkspaceItemStackPresentation.boardCenter(of: id, in: stack, cameraScale: SpatialCamera.minimumScale, viewport: .init(x: 834, y: 1194))!
           let focused = WorkspaceItemStackPresentation.focusedCenter(of: id, in: stack)!
-          let c = compositionDelta(from: .zero, to: collapsed), f = compositionDelta(from: .zero, to: focused)
-          left = max(left, size.width * 2 + f.x - min(0, c.x, f.x))
-          top = max(top, size.height + size.width + f.y - min(0, c.y, f.y))
+          let f = compositionDelta(from: .zero, to: focused)
+          left = max(left, size.width * 2 + f.x - min(0, f.x))
+          top = max(top, size.height + size.width + f.y - min(0, f.y))
           right = max(right, size.width * 1.5); bottom = max(bottom, size.height / 2 + size.width)
         }
       }

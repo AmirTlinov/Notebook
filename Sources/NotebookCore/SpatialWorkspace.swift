@@ -384,54 +384,15 @@ public struct WorkspaceItemStack: Codable, Equatable, Identifiable, Sendable {
   }
 }
 
-/// Gives every member of a stack one deterministic visual anchor. The board
-/// may fan the covers apart as they become readable, while a focused cover or
-/// page uses the fully fanned anchor. Camera and renderer therefore ask the
-/// same owner where the selected notebook is.
+/// Gives every member of a stack one deterministic visual anchor. A camera
+/// transforms the stack as one whole; zoom never rewrites the relationships
+/// between its members.
 public enum WorkspaceItemStackPresentation {
-  private static let collapsedHorizontalSpacing = 9.0
-  private static let collapsedVerticalSpacing = 7.0
   /// The whole fan occupies one bounded envelope regardless of whether it
   /// contains two or five covers. More members expose narrower, still
   /// tappable strips instead of pushing the outer notebooks off screen.
   private static let fannedHorizontalSpanRatio = 0.62
   private static let fannedVerticalSpanRatio = 0.08
-  private static let fanStartProjectedHeight = 160.0
-  private static let fanEndProjectedHeight = 600.0
-
-  public static func boardCenter(
-    of itemID: UUID,
-    in stack: WorkspaceItemStack,
-    cameraScale: Double,
-    viewport: SpatialPoint
-  ) -> WorldPoint? {
-    guard cameraScale.isFinite, (SpatialCamera.minimumScale...SpatialCamera.maximumScale).contains(cameraScale),
-      viewport.x.isFinite, viewport.x > 0,
-      viewport.y.isFinite, viewport.y > 0,
-      let index = stack.itemIDs.firstIndex(of: itemID)
-    else { return nil }
-    let centered = Double(index) - Double(stack.itemIDs.count - 1) / 2
-    let projectedHeight = WorkspaceItemGeometry.notebook.height * cameraScale
-    let coverProjectedHeight = WorkspaceItemGeometry.notebook.height
-      * WorkspaceItemGeometry.notebook.coverScale(viewport: viewport)
-    let fanEnd = min(fanEndProjectedHeight, coverProjectedHeight)
-    let fanStart = min(fanStartProjectedHeight, fanEnd * 0.75)
-    guard fanEnd.isFinite, fanEnd > fanStart else { return nil }
-    let fan = min(
-      max(
-        (projectedHeight - fanStart) / (fanEnd - fanStart),
-        0
-      ),
-      1
-    )
-    let collapsedX = centered * collapsedHorizontalSpacing / cameraScale
-    let collapsedY = -Double(index) * collapsedVerticalSpacing / cameraScale
-    let fanned = fannedOffset(index: index, count: stack.itemIDs.count)
-    return stack.center.offsetBy(
-      x: collapsedX + (fanned.x - collapsedX) * fan,
-      y: collapsedY + (fanned.y - collapsedY) * fan
-    )
-  }
 
   public static func focusedCenter(
     of itemID: UUID,

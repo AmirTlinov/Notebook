@@ -1,5 +1,9 @@
 import Foundation
 import NotebookCore
+import Observation
+
+@MainActor @Observable
+final class NotebookWorkingGraphicSignal { fileprivate(set) var revision:UInt64=0 }
 
 /// The object created by a Pencil hold. Its identity and geometry survive lift;
 /// persistence acknowledges this object rather than creating a second picture.
@@ -42,6 +46,30 @@ struct NotebookWorkingGraphic: Equatable, Identifiable {
 }
 
 extension NotebookAppModel {
+  func workingGraphicRevision(on surface:SurfaceID)->UInt64 {
+    let signal=workingGraphicSignals[surface] ?? {
+      let value=NotebookWorkingGraphicSignal();workingGraphicSignals[surface]=value;return value
+    }()
+    return signal.revision
+  }
+
+  func didChangeWorkingGraphics(on surfaces:Set<SurfaceID>) {
+    for surface in surfaces {
+      let signal=workingGraphicSignals[surface] ?? {
+        let value=NotebookWorkingGraphicSignal();workingGraphicSignals[surface]=value;return value
+      }()
+      signal.revision &+= 1
+      if surface.kind == .cover,let item=surface.ownerID,
+        let board=boardHierarchy?.ownerBoardID(of:item) {
+        let owner:SurfaceID = .board(board)
+        let boardSignal=workingGraphicSignals[owner] ?? {
+          let value=NotebookWorkingGraphicSignal();workingGraphicSignals[owner]=value;return value
+        }()
+        boardSignal.revision &+= 1
+      }
+    }
+  }
+
   /// Rendering may retain an insertion until its raster is installed. Authoring
   /// stops overlaying that original as soon as the logical model admits it.
   var pendingModelGraphics: [NotebookWorkingGraphic] {
@@ -61,13 +89,25 @@ extension NotebookAppModel {
   func updateWorkingGraphic(_ graphic: NotebookWorkingGraphic?, strokeID: UUID) {
     // Late cancellation belongs to the old contact, never to accepted input.
     guard workingGraphics.first(where: { $0.strokeID == strokeID })?.accepted != true else { return }
+    var changed=Set<SurfaceID>()
     if let index = workingGraphics.firstIndex(where: { $0.strokeID == strokeID }) {
+      changed.insert(workingGraphics[index].surface)
       if let graphic { workingGraphics[index] = graphic }
       else { workingGraphics.remove(at: index) }
-    } else if let graphic { workingGraphics.append(graphic) }
+    } else if let graphic { workingGraphics.append(graphic);changed.insert(graphic.surface) }
+    if let graphic { changed.insert(graphic.surface) }
+    if !changed.isEmpty { didChangeWorkingGraphics(on:changed) }
+  }
+
+  @discardableResult
+  func removeWorkingGraphics(where removes:(NotebookWorkingGraphic)->Bool)->Bool {
+    let changed=Set(workingGraphics.filter(removes).map(\.surface))
+    guard !changed.isEmpty else { return false }
+    workingGraphics.removeAll(where:removes);didChangeWorkingGraphics(on:changed);return true
   }
 
   func pageElementsForDisplay(_ page: PageDocument) -> [AgentElement] {
+    _ = workingGraphicRevision(on:.page(page.id))
     let working = workingGraphics.filter { $0.surface == .page(page.id) }
     guard !working.isEmpty else { return page.elements }
     let ids = Set(working.map(\.id))
@@ -75,12 +115,14 @@ extension NotebookAppModel {
   }
 
   func pageSuppressedInkIDs(_ page: PageDocument) -> Set<UUID> {
-    page.graphicPresentation.suppressedInkIDs.union(
+    _ = workingGraphicRevision(on:.page(page.id))
+    return page.graphicPresentation.suppressedInkIDs.union(
       workingGraphics.filter { $0.surface == .page(page.id) }.flatMap { $0.graphic.sourceInkIDs })
   }
 
   func workingGraphics(on surface: SurfaceID, cohort: SceneCompositionCohort) -> [NotebookWorkingGraphic] {
-    workingGraphics.filter { graphic in
+    _ = workingGraphicRevision(on:surface)
+    return workingGraphics.filter { graphic in
       graphic.surface == surface
         && (graphic.publicationCursor.map { cohort.plan.revision < $0 } ?? true)
     }
@@ -106,6 +148,8 @@ extension NotebookAppModel {
     // Display confirmation is a read unless an actual handoff completes.
     // Even a no-op removeAll mutates Observation and rebuilds the ink scene.
     guard workingGraphics.contains(where: installed) else { return }
+    let changed=Set(workingGraphics.filter(installed).map(\.surface))
     workingGraphics.removeAll(where: installed)
+    didChangeWorkingGraphics(on:changed)
   }
 }

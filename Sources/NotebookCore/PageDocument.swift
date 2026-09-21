@@ -161,8 +161,10 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   public let format: Int
   public let id: UUID
   public let size: PageSize
-  public private(set) var drawingData: Data
-  public private(set) var drawingStamp: VersionStamp
+  private var storedDrawingData: Data
+  private var storedDrawingStamp: VersionStamp
+  public var drawingStamp: VersionStamp { inkDrawingCache.stamp(fallback:storedDrawingStamp) }
+  public var drawingData: Data { (try? inkDrawingCache.data(fallback:storedDrawingData,stamp:drawingStamp)) ?? storedDrawingData }
   public private(set) var elements: [AgentElement] { didSet { elementProjectionCache = .init() } }
   public private(set) var agentStamp: VersionStamp { didSet { elementProjectionCache = .init() } }
   public private(set) var collaboration: CollaborativeContent? { didSet { elementProjectionCache = .init() } }
@@ -175,14 +177,16 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   /// projection. Pending interaction may extend it without waiting for another
   /// archive serialization.
   public func inkDrawing() throws -> PageInkDrawing {
-    try inkDrawingCache.value(for:drawingData,stamp:drawingStamp)
+    try inkDrawingCache.value(for:storedDrawingData,stamp:drawingStamp)
   }
+  public var inkSource:PageInkSource { .init(stamp:drawingStamp,data:storedDrawingData,cache:inkDrawingCache) }
   private enum CodingKeys: String,CodingKey {
     case format,id,size,drawingData,drawingStamp,elements,agentStamp,collaboration,computations
   }
   public static func == (a:Self,b:Self) -> Bool {
-    a.format == b.format && a.id == b.id && a.size == b.size && a.drawingData == b.drawingData
-      && a.drawingStamp == b.drawingStamp && a.elements == b.elements && a.agentStamp == b.agentStamp
+    a.format == b.format && a.id == b.id && a.size == b.size && a.drawingStamp == b.drawingStamp
+      && (a.inkDrawingCache === b.inkDrawingCache || a.drawingData == b.drawingData)
+      && a.elements == b.elements && a.agentStamp == b.agentStamp
       && a.collaboration == b.collaboration && a.computations == b.computations
   }
   public func element(id:String) -> AgentElement? { elementProjection.element(id) }
@@ -199,30 +203,45 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   public func prepareInkChange(_ mutation: PageInkMutation, stamp: VersionStamp) throws -> PreparedPageInkChange {
     try Task.checkCancellation()
     let current = try inkDrawing()
-    let drawing: PageInkDrawing
+    let drawing: PageInkDrawing, effective:PageInkMutation,changed:Bool
     switch mutation {
-    case .append(let action): drawing = try current.appending(action)
-    case .remove(let ids): drawing = current.removing(ids)
+    case .append(let action):
+      let previous=current.action(id:action.id)
+      drawing = try current.appending(action)
+      effective = drawing.action(id:action.id).map(PageInkMutation.append) ?? mutation
+      changed = previous == nil
+    case .remove(let ids):
+      let active=Set(ids.filter { current.action(id:$0)?.isActive == true })
+      drawing = current.removing(active);effective = .remove(active)
+      changed = !active.isEmpty
     }
-    guard drawing != current else {
+    guard changed else {
       return PreparedPageInkChange(pageID: id, baseStamp: drawingStamp,
-        stamp: drawingStamp, drawing: current, data: drawingData)
+        stamp: drawingStamp, drawing: current, mutation:effective, data:drawingData)
     }
     guard drawingStamp.counter < VersionStamp.maximumCounter,
       stamp.counter <= VersionStamp.maximumCounter else { throw PageInkDrawing.InkError.invalidDrawing }
     let next = VersionStamp(counter: max(drawingStamp.counter + 1, stamp.counter), actor: stamp.actor)
-    let data = try drawing.dataRepresentation()
     try Task.checkCancellation()
-    return PreparedPageInkChange(pageID: id, baseStamp: drawingStamp, stamp: next, drawing: drawing, data: data)
+    return PreparedPageInkChange(pageID: id, baseStamp: drawingStamp, stamp: next, drawing: drawing, mutation:effective)
   }
 
   @discardableResult
   public mutating func publishInkChange(_ change: PreparedPageInkChange) -> Bool {
     guard change.pageID == id, change.baseStamp == drawingStamp else { return false }
-    drawingData = change.data
-    drawingStamp = change.stamp
+    storedDrawingData = Data()
+    storedDrawingStamp = change.stamp
     inkDrawingCache = .init(change.drawing,stamp:change.stamp)
     return true
+  }
+
+  /// The live page and every mounted projection share one retained vector
+  /// journal. Admission swaps only its persistent root; archive bytes remain
+  /// lazy and SwiftUI does not need a whole-page publication for Pencil-up.
+  @discardableResult
+  public func publishLiveInkChange(_ change: PreparedPageInkChange) -> Bool {
+    guard change.pageID == id, change.baseStamp == drawingStamp else { return false }
+    return inkDrawingCache.publish(change)
   }
 
   public init(
@@ -235,14 +254,35 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     format = Self.formatVersion
     self.id = id
     self.size = size
-    self.drawingData = drawingData
-    drawingStamp = VersionStamp(counter: 0, actor: actor)
+    storedDrawingData = drawingData
+    storedDrawingStamp = VersionStamp(counter: 0, actor: actor)
     self.elements = elements
     agentStamp = VersionStamp(counter: 0, actor: actor)
     let keys = ["elements/order"] + elements.flatMap { AgentElement.causalFieldKeys(id: $0.id, graphic: $0.graphic, textStyle: $0.textStyle, parentID: $0.parentID, basis: $0.basis) }
     collaboration = .init(fields: Dictionary(keys.map { ($0, ContentFieldVersion(stamp: agentStamp, human: true)) },
       uniquingKeysWith: { first, _ in first }))
     precondition(isValid)
+  }
+
+  public init(from decoder:Decoder) throws {
+    let values=try decoder.container(keyedBy:CodingKeys.self)
+    format=try values.decode(Int.self,forKey:.format);id=try values.decode(UUID.self,forKey:.id)
+    size=try values.decode(PageSize.self,forKey:.size);storedDrawingData=try values.decode(Data.self,forKey:.drawingData)
+    storedDrawingStamp=try values.decode(VersionStamp.self,forKey:.drawingStamp)
+    elements=try values.decode([AgentElement].self,forKey:.elements)
+    agentStamp=try values.decode(VersionStamp.self,forKey:.agentStamp)
+    collaboration=try values.decodeIfPresent(CollaborativeContent.self,forKey:.collaboration)
+    computations=try values.decodeIfPresent([NotebookComputation].self,forKey:.computations)
+    guard isValid else { throw DecodingError.dataCorruptedError(forKey:.format,in:values,debugDescription:"Invalid page") }
+  }
+
+  public func encode(to encoder:Encoder) throws {
+    var values=encoder.container(keyedBy:CodingKeys.self)
+    try values.encode(format,forKey:.format);try values.encode(id,forKey:.id);try values.encode(size,forKey:.size)
+    try values.encode(drawingData,forKey:.drawingData);try values.encode(drawingStamp,forKey:.drawingStamp)
+    try values.encode(elements,forKey:.elements);try values.encode(agentStamp,forKey:.agentStamp)
+    try values.encodeIfPresent(collaboration,forKey:.collaboration)
+    try values.encodeIfPresent(computations,forKey:.computations)
   }
 
   var isValid: Bool {
@@ -323,7 +363,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     let incoming = try PageInkDrawing.decode(data)
     if data == drawingData {
       guard drawingStamp < stamp else { return false }
-      drawingStamp = stamp
+      storedDrawingStamp = stamp
       inkDrawingCache = .init(incoming,stamp:stamp)
       return true
     }
@@ -334,8 +374,8 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
       let winner = drawingStamp > stamp ? current : incoming
       let resolvedStamp = merged == winner ? frontier : (frontier.advanced(by: frontier.actor) ?? frontier)
       guard merged != current || drawingStamp != resolvedStamp else { return false }
-      drawingData = merged == current ? drawingData : merged == incoming ? data : try merged.dataRepresentation()
-      drawingStamp = resolvedStamp
+      storedDrawingData = merged == current ? drawingData : merged == incoming ? data : try merged.dataRepresentation()
+      storedDrawingStamp = resolvedStamp
       inkDrawingCache = .init(merged,stamp:resolvedStamp)
       return true
     } catch PageInkDrawing.InkError.incompatibleBaseline {
@@ -343,8 +383,8 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
       // instruction to ignore an action identity conflict on the same base.
     }
     guard drawingStamp < stamp else { return false }
-    drawingData = data
-    drawingStamp = stamp
+    storedDrawingData = data
+    storedDrawingStamp = stamp
     inkDrawingCache = .init(incoming,stamp:stamp)
     return true
   }
@@ -451,6 +491,27 @@ public enum PageInkMutation: Sendable {
   case remove(Set<UUID>)
 }
 
+/// A page source carries the already decoded runtime value when one exists.
+/// Opening a cold page still decodes off-main; publishing a contact never has
+/// to serialize it merely to notify the mounted canvas.
+public struct PageInkSource:Sendable {
+  public let stamp:VersionStamp
+  private let data:Data
+  private let cache:PageInkDrawingCache
+  fileprivate init(stamp:VersionStamp,data:Data,cache:PageInkDrawingCache) {
+    self.stamp=stamp;self.data=data;self.cache=cache
+  }
+  public func drawing() throws -> PageInkDrawing { try cache.value(for:data,stamp:stamp) }
+}
+
+private final class PreparedPageInkArchive:@unchecked Sendable {
+  private let lock=NSLock()
+  private let drawing:PageInkDrawing
+  private var prepared:Data?
+  init(_ drawing:PageInkDrawing,data:Data?=nil) { self.drawing=drawing;prepared=data }
+  func value()->Data { lock.withLock { if let prepared { return prepared };let data=try! drawing.dataRepresentation();prepared=data;return data } }
+}
+
 /// A validated result prepared away from the input thread. Its constructor is
 /// private to the page owner, so publication never needs to decode the archive.
 public struct PreparedPageInkChange: Sendable {
@@ -458,10 +519,13 @@ public struct PreparedPageInkChange: Sendable {
   public let baseStamp: VersionStamp
   public let stamp: VersionStamp
   public let drawing: PageInkDrawing
-  public let data: Data
+  public let mutation:PageInkMutation
+  private let archive:PreparedPageInkArchive
+  public var data:Data { archive.value() }
 
-  fileprivate init(pageID: UUID, baseStamp: VersionStamp, stamp: VersionStamp, drawing: PageInkDrawing, data: Data) {
+  fileprivate init(pageID: UUID, baseStamp: VersionStamp, stamp: VersionStamp, drawing: PageInkDrawing,
+    mutation:PageInkMutation,data:Data?=nil) {
     self.pageID = pageID; self.baseStamp = baseStamp; self.stamp = stamp
-    self.drawing = drawing; self.data = data
+    self.drawing = drawing;self.mutation=mutation;archive = .init(drawing,data:data)
   }
 }

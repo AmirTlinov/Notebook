@@ -80,10 +80,11 @@ final class PageInkGeometryTests: XCTestCase {
       with: [point(x: 20, y: 40), point(x: 180, y: 80)]
     )
     view.displayActiveStroke(active)
-    view.commitActiveStroke()
+    let action=active.measured.frozen().restoredAction()
+    view.commitActiveStroke(action)
     let liveVertexCount = view.committedSourceNodeCount
 
-    view.settle(PageInkDrawing(actions: [stroke(y: 60)]))
+    view.settle(try! acceptedChange(appending:action))
 
     XCTAssertGreaterThan(liveVertexCount, 0)
     XCTAssertEqual(
@@ -146,7 +147,7 @@ final class PageInkGeometryTests: XCTestCase {
     let live = try pixels()
     let ready = expectation(description: "same geometry settled")
     view.onRenderReadinessChange = { if $0 { ready.fulfill() } }
-    view.settle(drawing)
+    view.settle(try acceptedChange(appending: drawing.actions))
     await fulfillment(of: [ready], timeout: 4)
     view.onRenderReadinessChange = nil
     try await Task.sleep(for: .milliseconds(60))
@@ -181,12 +182,16 @@ final class PageInkGeometryTests: XCTestCase {
     let action=active.measured.frozen().restoredAction()
     view.displayActiveStroke(active);view.commitActiveStroke(action)
     XCTAssertEqual(view.committedPreparedNodeCount,points.count)
-    let drawing=PageInkDrawing(actions:[action])
-    view.settle(drawing);try await prepared(view)
+    let accepted=try acceptedChange(appending:action)
+    view.settle(accepted)
+    let deadline=ContinuousClock.now + .seconds(4)
+    while view.committedPreparedNodeCount > 0,ContinuousClock.now < deadline {
+      try await Task.sleep(for:.milliseconds(5))
+    }
     XCTAssertEqual(view.committedPreparedNodeCount,0,"Only the visible neighbourhood may build display nodes after acceptance")
     XCTAssertEqual(view.committedSourceNodeCount,points.count)
     XCTAssertEqual(view.pageMeshBuildCount,1)
-    view.settle(drawing);try await prepared(view)
+    view.settle(accepted);try await prepared(view)
     XCTAssertEqual(view.pageMeshBuildCount,1,"Subsequent delivery reuses the canonical source")
   }
 
@@ -203,12 +208,12 @@ final class PageInkGeometryTests: XCTestCase {
     try await prepared(view)
     XCTAssertGreaterThan(view.committedSourceNodeCount, tailVertices, "Cold completion keeps the newer contact")
     let count = view.committedSourceNodeCount, built = view.pageMeshBuildCount
-    let accepted = PageInkDrawing(actions: [base, tail])
+    let (accepted,undone) = try acceptedAndUndone(base:.init(actions:[base]),appending:tail)
     view.settle(accepted)
     try await prepared(view)
     XCTAssertEqual(view.committedSourceNodeCount, count, "Delivery cannot duplicate the already measured tail")
     XCTAssertEqual(view.pageMeshBuildCount, built, "Delivery does not rebuild the history or contact")
-    view.apply(accepted.removing([tail.id]))
+    view.settle(undone)
     try await prepared(view)
     XCTAssertEqual(view.committedSourceNodeCount, count - tailVertices)
     XCTAssertEqual(view.pageMeshBuildCount, built, "Undo removes a batch, not rasterizes/rebuilds the page")
@@ -330,6 +335,36 @@ final class PageInkGeometryTests: XCTestCase {
 
   private func stroke(y: CGFloat) -> PageInkAction {
     PageInkAction(tool: .pen, points: [point(x: 10, y: y), point(x: 200, y: y)])
+  }
+
+  private func acceptedChange(base:PageInkDrawing = .init(),appending action:PageInkAction) throws
+    -> PreparedPageInkChange {
+    try acceptedChange(base:base,appending:[action])
+  }
+
+  private func acceptedChange(base:PageInkDrawing = .init(),appending actions:[PageInkAction]) throws
+    -> PreparedPageInkChange {
+    let actor=UUID()
+    var page=PageDocument(size:.init(width:400,height:400),actor:actor,
+      drawingData:try base.dataRepresentation())
+    var accepted:PreparedPageInkChange?
+    for (index,action) in actions.enumerated() {
+      let change=try page.prepareInkChange(.append(action),
+        stamp:.init(counter:UInt64(index+1),actor:actor))
+      XCTAssertTrue(page.publishInkChange(change));accepted=change
+    }
+    return try XCTUnwrap(accepted)
+  }
+
+  private func acceptedAndUndone(base:PageInkDrawing,appending action:PageInkAction) throws
+    -> (PreparedPageInkChange,PreparedPageInkChange) {
+    let actor=UUID()
+    var page=PageDocument(size:.init(width:400,height:400),actor:actor,
+      drawingData:try base.dataRepresentation())
+    let accepted=try page.prepareInkChange(.append(action),stamp:.init(counter:1,actor:actor))
+    XCTAssertTrue(page.publishInkChange(accepted))
+    let undone=try page.prepareInkChange(.remove([action.id]),stamp:.init(counter:2,actor:actor))
+    return (accepted,undone)
   }
 
   private func point(x: CGFloat, y: CGFloat) -> PKStrokePoint {

@@ -119,22 +119,15 @@ struct WorldAddressTransitionTests {
     #expect(hierarchy == hierarchyBefore)
   }
 
-  @Test func stackProjectionKeepsItsOutsideFanWithoutAdmittingItAsACameraAddress() throws {
+  @Test func stackRelationshipMayExtendOutsideTheAdmittedWorld() throws {
     let first = UUID(), last = UUID()
     let stack = WorkspaceItemStack(center: .init(tileX: WorldPoint.maximumTileIndex,
       tileY: 0, localX: WorldPoint.tileSize - 1, localY: 100), zIndex: 0,
       itemIDs: [first, last], stamp: .init(counter: 0, actor: UUID()))
     #expect(WorkspaceItemStackPresentation.focusedCenter(of: first, in: stack)?.isValid == true)
     let focus = try #require(WorkspaceItemStackPresentation.focusedCenter(of: last, in: stack))
-    #expect(!focus.isValid)
     #expect(stack.center.interpolatedAddress(to: focus, amount: 0.5) == nil)
-    let projected = try #require(WorkspaceItemStackPresentation.boardCenter(of: last, in: stack,
-      cameraScale: 1, viewport: .init(x: 834, y: 1194)))
-    #expect(!projected.isValid, "Projection geometry can extend beyond the admitted world")
-    #expect(WorkspaceItemStackPresentation.boardCenter(of: last, in: stack,
-      cameraScale: .leastNonzeroMagnitude, viewport: .init(x: 834, y: 1194)) == nil)
-    #expect(WorkspaceItemStackPresentation.boardCenter(of: last, in: stack,
-      cameraScale: 1, viewport: .init(x: .leastNonzeroMagnitude, y: .leastNonzeroMagnitude)) == nil)
+    #expect(!focus.isValid,"Presentation geometry can extend beyond the admitted world")
   }
 }
 

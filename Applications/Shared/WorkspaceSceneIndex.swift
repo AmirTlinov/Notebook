@@ -72,18 +72,14 @@ struct WorkspaceSceneIndex: Sendable {
           let item = Item(value: value, geometry: size, center: stack.center,
             zIndex: Double(stack.zIndex) + Double(position) / 100, stack: stack)
           items[id] = item
-          // The collapsed stack uses screen-point spacing. Its minimum-scale
-          // endpoint and fully fanned endpoint enclose every interpolated anchor.
-          let collapsed = WorkspaceItemStackPresentation.boardCenter(of: id, in: stack,
-            cameraScale: SpatialCamera.minimumScale, viewport: .init(x: 834, y: 1194)) ?? stack.center
-          let fanned = WorkspaceItemStackPresentation.focusedCenter(of: id, in: stack) ?? stack.center
-          let a = stack.center.delta(to: collapsed), b = stack.center.delta(to: fanned)
-          let left = min(0, a.x, b.x) - size.width / 2
-          let top = min(0, a.y, b.y) - size.height / 2
+          let center = WorkspaceItemStackPresentation.focusedCenter(of: id, in: stack) ?? stack.center
+          let offset = stack.center.delta(to: center)
+          let left = min(0, offset.x) - size.width / 2
+          let top = min(0, offset.y) - size.height / 2
           entries.append(.init(id: .item(id), bounds: .init(
             origin: stack.center.offsetBy(x: left, y: top),
-            width: max(0, a.x, b.x) + size.width / 2 - left,
-            height: max(0, a.y, b.y) + size.height / 2 - top), zIndex: item.zIndex))
+            width: max(0, offset.x) + size.width / 2 - left,
+            height: max(0, offset.y) + size.height / 2 - top), zIndex: item.zIndex))
         }
       }
       let graphicPresentation = node.board.graphicPresentation

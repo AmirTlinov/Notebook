@@ -9,28 +9,24 @@ final class InputLatencyTests: XCTestCase {
     let gate = NotebookInputGate()
     let page = PageDocument(size: .init(width: 834, height: 1194), actor: UUID())
     let stamp = VersionStamp(counter: 1, actor: UUID())
-    var release: CheckedContinuation<PreparedPageInkChange?, Never>?
-    let began = expectation(description: "preparation suspended")
-    let coordinator = PencilCanvasView.Coordinator(inputGate: gate, reserveAction: { _ in stamp }, releaseAction: { _, _ in }, acceptAction: { _, _, _, _ in
-      Task { await withCheckedContinuation { continuation in release = continuation; began.fulfill() } }
+    var accepted = false
+    let coordinator = PencilCanvasView.Coordinator(inputGate: gate, reserveAction: { _ in stamp }, releaseAction: { _, _ in }, acceptAction: { action, _, _, _ in
+      accepted = true
+      return try? page.prepareInkChange(.append(action), stamp: stamp)
     })
     let paper = PaperCanvasContainerView()
     coordinator.attach(to: paper)
     coordinator.setPageFinisherCurrent(true)
-    coordinator.apply(Data(), pageID: page.id, to: paper)
+    coordinator.apply(page.inkSource, pageID: page.id, to: paper)
     let action = PageInkAction(tool: .pen, samples: [.init(point: .init(x: 10, y: 20), timeOffset: 0,
       width: 2, opacity: 1, force: 1, azimuth: 0, altitude: 1)])
     XCTAssertTrue(paper.touchView.onActionWillBegin?() == true)
     coordinator.commit(action, on: paper)
-    await fulfillment(of: [began], timeout: 2)
+    XCTAssertTrue(accepted)
     var cameraStarted = false, publicationFinished = false
     gate.performAfterPageContact { cameraStarted = true }
     gate.performAfterPageInput { publicationFinished = true }
     XCTAssertTrue(cameraStarted)
-    XCTAssertFalse(publicationFinished)
-    let change = try page.prepareInkChange(.append(action), stamp: stamp)
-    release?.resume(returning: change)
-    for _ in 0..<100 where !publicationFinished { await Task.yield() }
     XCTAssertTrue(publicationFinished)
     XCTAssertEqual(paper.touchView.accessibilityValue, "1 действий пера")
     coordinator.detach(from: paper)
@@ -65,7 +61,7 @@ final class InputLatencyTests: XCTestCase {
     XCTAssertLessThan(began.duration(to: clock.now), .milliseconds(50))
     try await Task.sleep(for: .milliseconds(30))
     let stamp = try XCTUnwrap(model.reserveDrawingAction(pageID: page.id))
-    let accepted = await model.acceptDrawingAction(local, pageID: page.id, stamp: stamp).value
+    let accepted = model.acceptDrawingAction(local, pageID: page.id, stamp: stamp)
     XCTAssertNotNil(accepted, "Подготовка пера не ждёт транзакцию SQLite")
     try descriptor.release()
     await model.finishPendingPersistence()

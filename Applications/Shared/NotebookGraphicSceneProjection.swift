@@ -11,6 +11,7 @@ struct NotebookPageGraphicDisplay {
 
 extension NotebookAppModel {
   func pageGraphicDisplay(_ page:PageDocument,in visibleRegion:CGRect?) -> NotebookPageGraphicDisplay {
+    _ = workingGraphicRevision(on:.page(page.id))
     let graph=graphicGraph(page:page)
     let paper=CGRect(x:0,y:0,width:page.size.width,height:page.size.height)
     let query=graph.visiblePageGraphics(page.id,in:visibleRegion.map { $0.intersection(paper) } ?? paper)
@@ -66,6 +67,7 @@ extension NotebookAppModel {
   func graphicGraph(page: PageDocument, preview: Bool = true) -> NotebookGraphicGraph {
     let graph = (preview ? retainedGraphicGraph { .page(pageID:page.id,elementID:$0) } : nil) ?? page.graphicGraph()
     guard preview else { return graph }
+    _ = workingGraphicRevision(on:.page(page.id))
     let working = workingGraphics.filter { $0.surface == .page(page.id) }
     let combined = graph.projecting(adding:working.map(\.node))
     return projectingGraphicCommands(combined) { .page(pageID: page.id, elementID: $0) }

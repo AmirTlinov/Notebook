@@ -55,7 +55,7 @@ struct PageSurface: View {
         #if os(iOS)
           PencilCanvasView(
             pageID: page.id,
-            drawingData: page.drawingData,
+            source: page.inkSource,
             suppressedInkIDs: model.pageSuppressedInkIDs(page),
             isInputEnabled: isInteractive,
             penStyle: model.activePenStyle,

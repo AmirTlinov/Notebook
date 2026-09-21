@@ -23,11 +23,8 @@ struct WorkspaceItemPoseDestination: Equatable {
     board?.placements.first(where: { $0.itemID == accepted.itemID })?.hasObserved(accepted) == true
   }
 
-  func center(itemID: UUID, presence: SessionPresence) -> WorldPoint {
-    stack.flatMap {
-      WorkspaceItemStackPresentation.boardCenter(of: itemID, in: $0,
-        cameraScale: presence.camera.scale, viewport: presence.viewport)
-    } ?? center
+  func center(itemID: UUID) -> WorldPoint {
+    stack.flatMap { WorkspaceItemStackPresentation.focusedCenter(of: itemID, in: $0) } ?? center
   }
 }
 
@@ -254,7 +251,7 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
     guard wantsLift, leaseCount == 0 else { return }
     translation = value
     if let rendered, hypot(value.width, value.height) >= 2 {
-      let base = pendingDestination?.center(itemID: rendered.id, presence: currentPresence) ?? rendered.center
+      let base = pendingDestination?.center(itemID: rendered.id) ?? rendered.center
       if let center = base.addressOffset(x: value.width / currentPresence.camera.scale,
         y: value.height / currentPresence.camera.scale) {
         pendingDestination = onDrop(center)
@@ -388,7 +385,7 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
 
   private var targetPose: Pose {
     guard let rendered else { return .init(center: .zero, transform: .identity) }
-    let center = pendingDestination?.center(itemID: rendered.id, presence: currentPresence) ?? rendered.center
+    let center = pendingDestination?.center(itemID: rendered.id) ?? rendered.center
     let screen = camera.worldToScreen(center, viewport: viewport)
     let lift = wantsLift && publishedLift
     let ratio = camera.scale / currentPresence.camera.scale

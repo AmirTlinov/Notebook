@@ -11,8 +11,7 @@ extension WorkspaceSceneProjection {
     if let stack {
       if presence.mode != .board, let focused = presence.focusedItemID,
         stack.itemIDs.contains(focused), focused != item.id { return nil }
-      center = WorkspaceItemStackPresentation.boardCenter(of: item.id, in: stack,
-        cameraScale: presence.camera.scale, viewport: presence.viewport) ?? center
+      center = WorkspaceItemStackPresentation.focusedCenter(of: item.id, in: stack) ?? center
     }
     return .init(item: item, geometry: geometry, center: center,
       zIndex: zIndex, stackID: stack?.id)
@@ -28,6 +27,7 @@ extension NotebookAppModel {
     }
     let graph = (retained ?? presentedBoard(captured,boardID:boardID,cohort:cohort).graphicGraph()).projecting(placements:groups)
     guard preview else { return graph }
+    _ = workingGraphicRevision(on:.board(boardID))
     let working = workingGraphics.filter {
       ($0.surface == .board(boardID) || ($0.surface.kind == .cover && $0.surface.ownerID.flatMap { cohort.frame.index.ownerBoard(itemID:$0) } == boardID))
         && ($0.publicationCursor.map { cohort.plan.revision < $0 } ?? true)

@@ -44,6 +44,9 @@ final class NotebookPersistenceQueue {
   init(store: NotebookStore) { self.store = store }
 
   var pendingCount: Int { pending.count }
+  var pendingPageInkCount: Int {
+    pending.reduce(into:0) { count,write in if case .pageInk? = write.owner { count += 1 } }
+  }
 
   /// A nil owner is an ordering fence (creation, deletion, or publication).
   /// Coalescing never crosses it or replaces a write already executing.
@@ -75,6 +78,7 @@ final class NotebookPersistenceQueue {
       // Addressed commands carry only their accepted contact/block, not a full
       // replacement journal. Coalescing would drop an earlier value or undo.
       if case .spatialInk = owner { return nil }
+      if case .pageInk = owner { return nil }
       if case .documentState = owner { return nil }
       for index in pending.indices.reversed() {
         guard pending[index].owner != nil else { break }

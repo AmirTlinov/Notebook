@@ -226,6 +226,7 @@ final class DrawingOwnershipTests: XCTestCase {
     let actorID = UUID()
     var counter: UInt64 = 0
     var page = PageDocument(id: pageID, size: .init(width: 834, height: 1194), actor: actorID, drawingData: try base.dataRepresentation())
+    let baseSource = page.inkSource
     let delivered = expectation(description: "local drawing serialized")
     let coordinator = PencilCanvasView.Coordinator(
       inputGate: NotebookInputGate(),
@@ -238,16 +239,16 @@ final class DrawingOwnershipTests: XCTestCase {
         let change = try! page.prepareInkChange(.append(action), stamp: stamp)
         _ = page.publishInkChange(change)
         delivered.fulfill()
-        return Task { change }
+        return change
       }
     )
     let paper = PaperCanvasContainerView()
     coordinator.attach(to: paper)
-    coordinator.apply(try base.dataRepresentation(), pageID: pageID, to: paper)
+    coordinator.apply(baseSource, pageID: pageID, to: paper)
 
     XCTAssertTrue(paper.touchView.onActionWillBegin?() == true)
     coordinator.commit(stroke(y: 40), on: paper)
-    coordinator.apply(try base.dataRepresentation(), pageID: pageID, to: paper)
+    coordinator.apply(baseSource, pageID: pageID, to: paper)
 
     await fulfillment(of: [delivered], timeout: 2)
     XCTAssertEqual(paper.touchView.accessibilityValue, "2 действий пера")
@@ -261,6 +262,7 @@ final class DrawingOwnershipTests: XCTestCase {
     var counter: UInt64 = 0
     var finalData = Data()
     var page = PageDocument(id: pageID, size: .init(width: 834, height: 1194), actor: actorID, drawingData: try base.dataRepresentation())
+    let baseSource = page.inkSource
     let delivered = expectation(description: "both erasers serialized")
     delivered.expectedFulfillmentCount = 2
     let coordinator = PencilCanvasView.Coordinator(
@@ -275,12 +277,12 @@ final class DrawingOwnershipTests: XCTestCase {
         _ = page.publishInkChange(change)
         finalData = change.data
         delivered.fulfill()
-        return Task { change }
+        return change
       }
     )
     let paper = PaperCanvasContainerView()
     coordinator.attach(to: paper)
-    coordinator.apply(try base.dataRepresentation(), pageID: pageID, to: paper)
+    coordinator.apply(baseSource, pageID: pageID, to: paper)
 
     let first = PKStrokePath(
       controlPoints: [
@@ -365,17 +367,17 @@ final class DrawingOwnershipTests: XCTestCase {
     try store.savePage(remote)
     await model.reloadExternalChanges()?.value
 
-    let accepted = await model.acceptDrawingAction(
+    let accepted = model.acceptDrawingAction(
       localStroke,
       pageID: pageID,
       stamp: localStamp
-    ).value
+    )
 
     let merged = try XCTUnwrap(accepted).drawing
     XCTAssertEqual(Set(merged.activeActions.map(\.id)), [localStroke.id, firstRemote.id, secondRemote.id])
     XCTAssertEqual(model.activePage?.drawingData, accepted?.data)
     XCTAssertGreaterThan(try XCTUnwrap(model.activePage?.drawingStamp), remote.drawingStamp)
-    _ = await model.acceptDrawingUndo().value
+    _ = model.acceptDrawingUndo()
     let undone = try PageInkDrawing.decode(XCTUnwrap(model.activePage?.drawingData))
     XCTAssertEqual(undone.activeActions.map(\.id), [firstRemote.id, secondRemote.id])
     XCTAssertEqual(undone.actions.first { $0.id == localStroke.id }?.isActive, false)

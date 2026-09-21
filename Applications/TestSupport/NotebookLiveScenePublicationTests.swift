@@ -190,15 +190,14 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     let peer = try XCTUnwrap(model.createNotebook(at: .init(x: -1_000, y: 120)))
     XCTAssertNotNil(model.stackItem(item, onto: peer))
     let stack = try XCTUnwrap(model.board?.stack(containing: item))
-    let expected = try XCTUnwrap(WorkspaceItemStackPresentation.boardCenter(of: item, in: stack,
-      cameraScale: presence.camera.scale, viewport: presence.viewport))
+    let expected = try XCTUnwrap(WorkspaceItemStackPresentation.focusedCenter(of:item,in:stack))
     let body = try XCTUnwrap(model.presentedItem(id: item, cohort: cohort, presence: presence))
     XCTAssertEqual(body.center, expected, "Accepted live position follows the current owner, not a retained capture layout")
     XCTAssertNil(model.presentedItem(id: peer, cohort: cohort, presence: presence), "A new peer still requires real composition admission")
     let frozen = try XCTUnwrap(model.presentedHierarchy(cohort: cohort).board(presence.boardID))
     XCTAssertEqual(frozen.placements.first { $0.id == item }?.pose?.stackID, stack.id,
       "A single retained member preserves latent membership; capture cannot invent a free intent")
-    XCTAssertNotEqual(frozen.placement(of: item)?.center, body.center)
+    XCTAssertNotEqual(frozen.placement(of:item)?.center,body.center)
     let installed=fixture.installed
     XCTAssertNil(NotebookAttentionProjection.capture(start: .init(x: 350, y: 560), end: .init(x: 620, y: 750),
       model: model, presence: presence, cohort: cohort, installedInk: installed),

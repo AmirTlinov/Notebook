@@ -155,18 +155,52 @@ struct NotebookElementErasing {
     for task in tasks { await task.value }
   }
 
-  @ObservationIgnored private var pages: [UUID: (Data, [String: [InkElementErasure]])] = [:]
+  private struct TaggedErasure { let actionID:UUID;let erasure:InkElementErasure }
+  private struct PageErasures {
+    var stamp:VersionStamp
+    var tagged:[String:[TaggedErasure]]
+    var targets:[UUID:Set<String>]
+    var values:[String:[InkElementErasure]]
+    init(stamp:VersionStamp,drawing:PageInkDrawing) {
+      self.stamp=stamp;tagged=[:];targets=[:];values=[:]
+      for action in drawing.actions where action.isActive && action.tool == .eraser { append(action) }
+    }
+    mutating func append(_ action:PageInkAction) {
+      guard action.isActive,action.tool == .eraser else { return }
+      for target in action.elementTargets ?? [] {
+        let value=InkElementErasure(target:target,measurements:action.samples)
+        tagged[target.elementID,default:[]].append(.init(actionID:action.id,erasure:value))
+        values[target.elementID,default:[]].append(value);targets[action.id,default:[]].insert(target.elementID)
+      }
+    }
+    mutating func remove(_ ids:Set<UUID>) {
+      for id in ids {
+        for target in targets.removeValue(forKey:id) ?? [] {
+          tagged[target]?.removeAll { $0.actionID == id }
+          if tagged[target]?.isEmpty == true { tagged[target]=nil;values[target]=nil }
+          else { values[target]=tagged[target]?.map(\.erasure) }
+        }
+      }
+    }
+  }
+  @ObservationIgnored private var pages: [UUID: PageErasures] = [:]
   @ObservationIgnored private var spatial: [SurfaceID: [String: [InkElementErasure]]] = [:]
   func record(_ change: PreparedPageInkChange) {
-    if pages.count >= 8 { pages.removeAll() }
-    pages[change.pageID] = (change.data, change.drawing.elementErasures)
+    var entry:PageErasures
+    if var cached=pages[change.pageID],cached.stamp == change.baseStamp {
+      switch change.mutation {
+      case .append(let action): cached.append(action)
+      case .remove(let ids): cached.remove(ids)
+      }
+      entry=cached
+    } else { entry=PageErasures(stamp:change.stamp,drawing:change.drawing) }
+    entry.stamp=change.stamp;pages[change.pageID]=entry
   }
   func page(_ page: PageDocument) -> [String: [InkElementErasure]] {
-    if let cached = pages[page.id], cached.0 == page.drawingData { return cached.1 }
-    let masks = (try? PageInkDrawing.decode(page.drawingData).elementErasures) ?? [:]
-    if pages.count >= 8 { pages.removeAll() }
-    pages[page.id] = (page.drawingData, masks)
-    return masks
+    if let cached=pages[page.id],cached.stamp == page.drawingStamp { return cached.values }
+    let entry=PageErasures(stamp:page.drawingStamp,drawing:(try? page.inkDrawing()) ?? .init())
+    pages[page.id]=entry
+    return entry.values
   }
   func invalidateSpatial() { spatial.removeAll() }
   func masks(on surface: SurfaceID, journal: SpatialInkJournal?) -> [String: [InkElementErasure]] {
@@ -186,8 +220,13 @@ extension NotebookAppModel {
 
   func eraserTargets(pageID: UUID) -> [InkElementTarget] {
     guard let page = pages[pageID] else { return [] }
+    let hasTransient = workingGraphics.contains { $0.surface == .page(pageID) }
+      || elementCommandDrafts.keys.contains { if case .page(let owner,_)=$0 { owner == pageID } else { false } }
+    if !hasTransient,let cached=pageEraserTargetCache[pageID],cached.source == page.elementSourceIdentity {
+      return cached.targets
+    }
     let graph = graphicGraph(page: page)
-    return pageElementsForDisplay(page).compactMap { element in
+    let targets:[InkElementTarget]=pageElementsForDisplay(page).compactMap { element in
       guard element.kind != .group else { return nil }
       if element.graphic == nil {
         return elementPresentation(.page(pageID:pageID,elementID:element.id),graph:graph)?
@@ -197,6 +236,8 @@ extension NotebookAppModel {
       return .init(elementID:element.id,frame:layout.frame,
         graphicTransform:element.graphic?.transform,elementTransform:layout.elementTransform)
     }
+    if !hasTransient { pageEraserTargetCache[pageID]=(page.elementSourceIdentity,targets) }
+    return targets
   }
 
   func eraserTargets(boardID: UUID, cohort: SceneCompositionCohort) -> [SurfaceID: [InkElementTarget]] {
