@@ -168,6 +168,37 @@ final class SpatialInkTilePoolTests: XCTestCase {
     XCTAssertGreaterThan(canvas.preparedCommittedPointCount,built)
   }
 
+  func testSampleFreeOverviewSkipsSourceAndZoomReusesPreparedRanges() async throws {
+    let scale=SpatialCamera.minimumScale
+    let hidden=SpatialCamera(center:.init(x:0,y:64-0.125/scale),scale:scale)
+    let shown=SpatialCamera(center:.init(x:0,y:64),scale:1)
+    let samples: [SpatialInkSample]=(0..<100_000).map { i in
+      let world=WorldPoint(x:(Double(i)-50_000)*0.4,y:64+sin(Double(i)*0.37)*0.25)
+      return SpatialInkSample(point:.zero,worldPoint:world,timeOffset:Double(i)/128,
+        width:0.5+Double(i%13)/104,opacity:0.25+Double(i%7)/16,force:0.75,azimuth:0,altitude:1)
+    }
+    let fixture=try await Fixture.make(samples:samples,camera:hidden)
+    addTeardownBlock { await fixture.close() }
+    let canvas=fixture.canvas,empty=try pixels(canvas)
+    XCTAssertEqual(canvas.preparedCommittedPointCount,0)
+    XCTAssertEqual(canvas.committedSourceNodeCount,100_000)
+    XCTAssertEqual(canvas.residentCommittedNodeCount,0)
+    canvas.project(camera:shown,viewport:.init(x:512,y:768))
+    try await Task.sleep(for:.milliseconds(250))
+    let visible=try pixels(canvas),built=canvas.preparedCommittedPointCount,bytes=canvas.residentCommittedBufferBytes
+    XCTAssertGreaterThan(built,0);XCTAssertLessThan(built,10_000);XCTAssertNotEqual(visible,empty)
+    canvas.project(camera:hidden,viewport:.init(x:512,y:768))
+    try await Task.sleep(for:.milliseconds(150))
+    XCTAssertEqual(canvas.preparedCommittedPointCount,built)
+    XCTAssertEqual(canvas.visibleCommittedChunkCount,0)
+    XCTAssertEqual(canvas.residentCommittedBufferBytes,bytes,"The existing pool retains only previously admitted detail")
+    XCTAssertEqual(try pixels(canvas),empty,"Discarding the last visible range must remove old pixels")
+    canvas.project(camera:shown,viewport:.init(x:512,y:768))
+    try await Task.sleep(for:.milliseconds(250))
+    XCTAssertEqual(try pixels(canvas),visible)
+    XCTAssertEqual(canvas.preparedCommittedPointCount,built,"A zoom toggle must not decode the same source again")
+  }
+
   private func assertContinuousCenterLine(_ canvas: UIView) throws {
     let image = try XCTUnwrap(capture(canvas).cgImage)
     let context = try XCTUnwrap(CGContext(data: nil, width: image.width, height: image.height,
@@ -216,27 +247,27 @@ final class SpatialInkTilePoolTests: XCTestCase {
     private weak var oldKeyWindow: UIWindow?
     var reference: NotebookReferenceInk { get throws { try .init(surface: surface, actions: journal.actions) } }
 
-    static func make() async throws -> Fixture {
-      let fixture = try Fixture()
+    static func make(samples: [SpatialInkSample]? = nil,camera: SpatialCamera = .init(scale:1)) async throws -> Fixture {
+      let fixture = try Fixture(samples:samples)
       fixture.window.rootViewController = fixture.host
       fixture.host.view.addSubview(fixture.canvas); fixture.window.makeKeyAndVisible()
       let deadline = ContinuousClock.now + .seconds(5)
       while !fixture.host.appeared, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
       XCTAssertTrue(fixture.host.appeared)
       fixture.retention = fixture.canvas.retainForSpatialHandoff(displayScale: 2)
-      fixture.canvas.project(camera: .init(scale: 1), viewport: .init(x: 512, y: 768))
+      fixture.canvas.project(camera: camera, viewport: .init(x: 512, y: 768))
       let mesh = try SpatialInkMesh.prepare(surface: fixture.surface, journal: fixture.journal)
       let frame = try await fixture.canvas.prepareSpatialFrame(mesh, size: .init(x: 512, y: 768), displayScale: 2)
       fixture.canvas.installSpatialFrame(frame, journal: fixture.journal, surface: fixture.surface)
       await withCheckedContinuation { continuation in frame.afterPresentationTransaction { continuation.resume() } }
       return fixture
     }
-    private init() throws {
+    private init(samples: [SpatialInkSample]?) throws {
       let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
       window = UIWindow(windowScene: scene); oldKeyWindow = scene.windows.first(where: \.isKeyWindow)
       canvas = .init(frame: .init(x: 0, y: 0, width: 512, height: 768), resources: resources)
       var drawing = SpatialInkJournal(stamp: .init(counter: 0, actor: actor))
-      _ = drawing.append(tool: .pen, spans: [.init(surface: surface, samples: (0...600).map { index in
+      _ = drawing.append(tool: .pen, spans: [.init(surface: surface, samples: samples ?? (0...600).map { index in
         let x = -220.0+Double(index)*440/600
         return .init(point: .zero, worldPoint: .init(x: x, y: 0), timeOffset: Double(index) / 10,
           width: 12, opacity: 1, force: 1, azimuth: 0, altitude: 1)

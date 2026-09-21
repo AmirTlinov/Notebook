@@ -76,12 +76,31 @@ source hierarchy before preparing the visible vector ranges. Its affine is not
 materialized into each point; retained eraser sweeps go directly to compact GPU
 nodes rather than expanding all their triangles for every raster job.
 
+Before display-node preparation, the same range query can reject a projected
+bound that reaches no sample of the actual Metal raster. `InkRasterGrid` uses
+retrieved sample positions, the shader's Float viewport and the actual rounded
+pixel dimensions; page crops and integer tile offsets keep that same phase.
+Bounds include a pre-cancellation Float arithmetic budget and a 1/16-pixel edge
+guard. Unknown sample positions or uncertain bounds do not authorize rejection.
+This display predicate never enters vector selection, erasure or persistence.
+
+This is a narrow empty-coverage optimization, not a general coarse replacement
+for a visible curved stroke. It can skip an entire distant curve without reading
+its measurements, but a range reaching samples still follows the existing contour
+and alpha rules. Camera changes hide or reveal draws via the existing tile owner. A wholly
+sample-free overview retains its last nonempty view's already charged buffers
+without drawing them; returning to that view does not decode its source again.
+A new nonempty selection or geometric exit retires those buffers normally. Tests compare against all original vertices with LOD
+and sample rejection excluded from the oracle; device coverage evidence is not
+a claim of system frame rate or universal rasterizer precision.
+
 Display-only LOD keeps the original samples. It bounds both contour rails by
 0.20 physical pixels and linear alpha error by 1/4096, preserves cap neighbours
 and reversals, and restores full nodes on zoom. Affine magnification uses the
 largest singular value, including shear. Eraser sweeps and canonical arbitrary
 triangles are not simplified. Visibility queries precede GPU uploads; only the
-selected level of a visible chunk is resident.
+selected level is uploaded. The existing pool may retain its last nonempty
+view during a sample-free overview, without allocating hidden source geometry.
 
 The retained spatial canvas compares ordered tile contributors, selected levels,
 source revisions and projections. A changed whole invalidates both its former

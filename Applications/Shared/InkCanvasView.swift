@@ -144,6 +144,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     let reservation: RasterReservation
     let nodeCount: Int
     let level: Int
+    var isVisible = true
   }
 
   fileprivate struct CommittedBatch {
@@ -881,7 +882,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     committedBatches.enumerated().flatMap { b, batch in
       let transform=batch.mesh.projection.transform(camera:spatialCamera,viewport:spatialViewport)
       return batch.buffers.keys.sorted { $0.lowerBound < $1.lowerBound }.filter {
-        batch.buffers[$0]!.geometry.chunk.descriptor.intersects(viewport:clip,transform:transform)
+        batch.buffers[$0]!.isVisible && batch.buffers[$0]!.geometry.chunk.descriptor.intersects(viewport:clip,transform:transform)
       }.map { (b,$0) }
     }
   }
@@ -1033,7 +1034,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     var batches = mesh?.batches.map(CommittedBatch.init) ?? committedBatches
     let visible = try prepareBuffers(
       in: &batches, camera: camera, viewport: viewport, size: layout.size,
-      pixelScale: Float(displayScale))
+      pixelScale: Float(displayScale),rasterSize:layout.pixelSize)
     if visible.isEmpty {
       let result = PreparedSpatialFrame(id: id, canvas: self, batches: batches, replacesMesh: mesh != nil,
         layout: layout, viewport: viewport, camera: camera, target: nil, drawables: [])
@@ -1430,28 +1431,43 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
           flags: committedBatches[$1.0].buffers[$1.1]!.geometry.chunk.descriptor.flags)
     }
     visibleCommittedChunkCount = visible.count
-    residentCommittedNodeCount = visible.reduce(0) {
-      $0 + (committedBatches[$1.0].buffers[$1.1]?.nodeCount ?? 0)
+    residentCommittedNodeCount = committedBatches.reduce(0) {
+      $0 + $1.buffers.values.reduce(0) { $0 + $1.nodeCount }
     }
     return visible
   }
 
   private func prepareBuffers(in batches: inout [CommittedBatch], camera: SpatialCamera?,
-    viewport: SpatialPoint, size: CGSize, pixelScale: Float? = nil
+    viewport: SpatialPoint, size: CGSize, pixelScale: Float? = nil, rasterSize: CGSize? = nil
   ) throws -> [(Int, Range<Int>)] {
     var visible: [(Int, Range<Int>)] = []
     let viewportRect = camera == nil ? (pageRenderRegion ?? CGRect(origin: .zero, size: size)) : CGRect(origin: .zero, size: size)
+    let grid=InkRasterRenderer.shared.sampleGrid(viewport:size,
+      pixels:rasterSize ?? spatialTarget?.layout.pixelSize ?? drawableSize)
     for batchIndex in batches.indices {
       let mesh = batches[batchIndex].mesh
       let transform = mesh.projection.transform(camera: camera, viewport: viewport)
-      let query=mesh.query(viewport:viewportRect.insetBy(dx:-1,dy:-1),affine:.init(transform))
+      var rasterTransform=transform
+      if camera == nil,let crop=pageRenderRegion {
+        rasterTransform.z -= Float(crop.minX);rasterTransform.w -= Float(crop.minY)
+      }
+      let affine=InkAffine(rasterTransform)
+      let query=mesh.query(viewport:viewportRect.insetBy(dx:-1,dy:-1),affine:.init(transform),
+        admitting:grid.map { grid in { grid.mayCover($0,affine:affine) } })
       committedIndexVisitCount += query.cost.visitedNodes
       let selected=query.chunks
       let selectedIDs = Set(selected)
-      // Only resident uploads can need retirement; unvisited source chunks do
-      // not even have a buffer slot. Nearby retention uses this same pool.
-      for chunkIndex in batches[batchIndex].buffers.keys where !selectedIDs.contains(chunkIndex) {
-        batches[batchIndex].buffers[chunkIndex] = nil
+      // A sample-free overview must not discard the already admitted detail
+      // of its last nonempty view, then decode it again on every zoom toggle.
+      // Keep that one view in the existing charged pool, never draw it. A new
+      // nonempty selection or geometric exit retires it normally.
+      for chunkIndex in batches[batchIndex].buffers.keys {
+        if selectedIDs.contains(chunkIndex) { batches[batchIndex].buffers[chunkIndex]?.isVisible=true;continue }
+        let bounds=batches[batchIndex].buffers[chunkIndex]!.geometry.chunk.descriptor.bounds
+        if selected.isEmpty,grid?.mayCover(bounds,affine:affine) == false,
+          InkAffine(transform).bounds(bounds).intersects(viewportRect.insetBy(dx:-1,dy:-1)) {
+          batches[batchIndex].buffers[chunkIndex]?.isVisible=false
+        } else { batches[batchIndex].buffers[chunkIndex] = nil }
       }
       visible.append(contentsOf: selected.map { (batchIndex, $0) })
     }

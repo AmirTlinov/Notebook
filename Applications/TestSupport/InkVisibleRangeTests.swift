@@ -6,6 +6,100 @@ import XCTest
 @testable import Notebook
 
 final class InkVisibleRangeTests: XCTestCase {
+  func testSampleFreeSubpixelBoundsAgainstFullRaster() throws {
+    let count=100_000,renderer=InkRasterRenderer.shared
+    let samples=(0..<count).map { i in SpatialInkSample(point:.init(x:Double(i),y:64+sin(Double(i)*0.37)*12),
+      timeOffset:Double(i)/128,width:4+Double(i%13)/4,opacity:0.25+Double(i%7)/16,force:0.75,azimuth:0,altitude:1) }
+    let value=source(samples),batch=SpatialInkMesh.Batch(source:value,projection:.local)
+    XCTAssertEqual(batch.preparedNodeCount,0)
+    let color=SIMD4<Float>(0.2,0.4,0.8,1)
+    let points=samples.map { SpatialInkGeometry.renderPoint(from:$0,color:color) }
+    let nodes=points.indices.map { InkRenderGeometry.node(at:$0,in:points) }
+    // Deliberately broad oracle bounds defeat sample rejection. Every original
+    // node is drawn with no LOD, independently of the candidate's admission.
+    let chunks=SpatialInkGeometry.chunks(for:nodes,color:color,eraser:false,buildLOD:false).map {
+      SpatialInkGeometry.Chunk(nodes:$0.nodes,bounds:.init(x:-count,y:-count,width:count*2,height:count*2),color:$0.color,flags:$0.flags)
+    }
+    let reference=SpatialInkMesh(batches:[.init(tool:.pen,nodes:nodes,chunks:chunks,projection:.local)])
+    func milliseconds(_ start: ContinuousClock.Instant) -> Double {
+      let d=start.duration(to:.now).components;return Double(d.seconds)*1000+Double(d.attoseconds)/1e15
+    }
+    var records:[[String:Any]]=[]
+    for (size,scale):(CGSize,Double) in [(.init(width:512,height:128),2),(.init(width:512.2,height:128.3),1.25)] {
+      let grid=try XCTUnwrap(renderer.sampleGrid(viewport:size,pixels:.init(width:ceil(size.width*scale),height:ceil(size.height*scale))))
+      for phase in 0..<32 {
+        let affine=InkAffine(.init(500/Float(count),0.0005,6,64+Float(phase)/64))
+        let start=ContinuousClock.now
+        let q=batch.query(viewport:.init(origin:.zero,size:size),affine:affine,admitting:{ grid.mayCover($0,affine:affine) })
+        let queryMS=milliseconds(start)
+        let possible = !q.chunks.isEmpty
+        if !possible { XCTAssertEqual(q.cost.decodedSamples,0);XCTAssertLessThan(q.cost.visitedNodes,4) }
+        let renderStart=ContinuousClock.now
+        let actual=try XCTUnwrap(renderer.render(mesh:.init(batches:[batch]),size:size,scale:scale,affine:affine))
+        let renderMS=milliseconds(renderStart),fullStart=ContinuousClock.now
+        let image=try XCTUnwrap(renderer.render(mesh:reference,size:size,scale:scale,affine:affine))
+        let fullMS=milliseconds(fullStart)
+        let data=try XCTUnwrap(image.dataProvider?.data) as Data
+        let visible=data.contains { $0 != 0 }
+        XCTAssertEqual(try XCTUnwrap(actual.dataProvider?.data) as Data,data,"Coverage phase \(phase), density \(scale)")
+        if !possible { XCTAssertFalse(visible,"A rejected source must cover no sample") }
+        records.append(["phase":phase,"scale":scale,"possible":possible,"visible":visible,"selectedRanges":q.chunks.count,
+          "queryReads":q.cost.decodedSamples,"queryVisits":q.cost.visitedNodes,"queryMilliseconds":queryMS,
+          "rasterMilliseconds":renderMS,"fullRasterMilliseconds":fullMS])
+      }
+    }
+    XCTAssertTrue(records.contains { $0["possible"] as? Bool == false })
+    XCTAssertTrue(records.contains { $0["visible"] as? Bool == true })
+    // Exact vector access remains independent of current raster sample phase.
+    XCTAssertFalse(batch.query(viewport:.init(x:0,y:0,width:count,height:128),affine:.init()).chunks.isEmpty)
+    let proof=XCTAttachment(data:try JSONSerialization.data(withJSONObject:records,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
+    proof.name="sample-free-subpixel-phases";proof.lifetime = .keepAlways;add(proof)
+  }
+  func testSampleFreeRepeatKeepsSourceCompactThroughFreehandRaster() throws {
+    let renderer=InkRasterRenderer.shared,size=CGSize(width:512,height:128)
+    let grid=try XCTUnwrap(renderer.sampleGrid(viewport:size,pixels:.init(width:1024,height:256)))
+    var records:[[String:Any]]=[]
+    func milliseconds(_ start: ContinuousClock.Instant) -> Double {
+      let d=start.duration(to:.now).components;return Double(d.seconds)*1000+Double(d.attoseconds)/1e15
+    }
+    for count in [10_000,100_000,1_000_000] {
+      let start=ContinuousClock.now
+      let samples: [SpatialInkSample]=(0..<100).map { i in
+        let point=SpatialPoint(x:Double(i),y:64+sin(Double(i)*0.37)*12)
+        return SpatialInkSample(point:point,timeOffset:Double(i)/128,width:4+Double(i%13)/4,
+          opacity:0.25+Double(i%7)/16,force:0.75,azimuth:0,altitude:1)
+      }
+      let body=source(samples).settingExit(.init(x:InkDyadic(100)!,y:.zero,time:.one),revision:UUID())
+      let value=try XCTUnwrap(body.repeated(count/100,revision:UUID()))
+      let batch=SpatialInkMesh.Batch(source:value,projection:.local),sourceMS=milliseconds(start)
+      let affine=InkAffine(.init(500/Float(count),0.0005,6,64+5.0/64))
+      let q=batch.query(viewport:.init(origin:.zero,size:size),affine:affine,admitting:{ grid.mayCover($0,affine:affine) })
+      XCTAssertTrue(q.chunks.isEmpty);XCTAssertEqual(q.cost.decodedSamples,0);XCTAssertLessThan(q.cost.visitedNodes,4)
+      let raster=try XCTUnwrap(renderer.render(mesh:.init(batches:[batch]),size:size,scale:2,affine:affine))
+      let sourceToRasterMS=milliseconds(start)
+      XCTAssertFalse((try XCTUnwrap(raster.dataProvider?.data) as Data).contains { $0 != 0 })
+      let ink=NotebookFreehand(layers:[.init(tool:.pen,color:value.header.color,
+        measured:.init(sourceID:value.sourceID,measurements:value.measurements,frame:.init(x:0,y:0,width:Double(count),height:128)))])
+      let whole=NotebookGraphicTransform(a:Double(affine.x.x),b:0,c:0,d:Double(affine.y.y),tx:6/Double(count),ty:Double(affine.y.z)/128)
+      let freehandStart=ContinuousClock.now
+      let image=try XCTUnwrap(renderer.freehand(ink,transform:whole,size:.init(width:count,height:128),region:.init(origin:.zero,size:size),scale:2,mask:false))
+      let freehandMS=milliseconds(freehandStart)
+      XCTAssertEqual(try XCTUnwrap(image.dataProvider?.data) as Data,try XCTUnwrap(raster.dataProvider?.data) as Data)
+      XCTAssertEqual(ink.geometry.preparedNodeCount,0);XCTAssertEqual(ink.geometry.sourceNodeCount,count)
+      let controlStart=ContinuousClock.now
+      let control=batch.query(viewport:.init(origin:.zero,size:size),affine:affine)
+      var reads=control.cost.decodedSamples,nodes=0
+      for id in control.chunks { let p=batch.prepareChunk(id);reads += p.decodedPoints;nodes += p.chunk.nodes.count }
+      let controlMS=milliseconds(controlStart)
+      XCTAssertGreaterThan(nodes,count);XCTAssertGreaterThan(reads,count)
+      records.append(["events":count,"sourceBytes":value.payloadBytes,"sourceBuildMilliseconds":sourceMS,
+        "sourceToRasterMilliseconds":sourceToRasterMS,"freehandToRasterMilliseconds":freehandMS,
+        "visitedNodes":q.cost.visitedNodes,"decodedEvents":q.cost.decodedSamples,"preparedNodes":0,
+        "unfilteredQueryPrepareMilliseconds":controlMS,"unfilteredReads":reads,"unfilteredNodes":nodes])
+    }
+    let proof=XCTAttachment(data:try JSONSerialization.data(withJSONObject:records,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
+    proof.name="sample-free-repeat-costs";proof.lifetime = .keepAlways;add(proof)
+  }
   private func source(_ samples: [SpatialInkSample],tool: SpatialInkTool = .pen) -> InkSampleRelations {
     .init(sourceID:UUID(),revision:UUID(),samples:samples,header:.init(tool:tool,color:.init(red:0.2,green:0.4,blue:0.8)))
   }

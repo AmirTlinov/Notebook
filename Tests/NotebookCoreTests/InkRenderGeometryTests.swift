@@ -6,6 +6,30 @@ import simd
 
 @Suite("Compact display geometry")
 struct InkRenderGeometryTests {
+  @Test func rasterAdmissionKeepsTiesNegativeCoordinatesAndUncertainProjection() throws {
+    let grid=try #require(InkRasterGrid(positions:[.init(0.5,0.5)],viewport:.init(width:100,height:100),pixels:.init(width:100,height:100)))
+    #expect(!grid.mayCover(.init(x:0,y:0,width:0.1,height:0.1),affine:.init()))
+    #expect(grid.mayCover(.init(x:0.5,y:0.5,width:0,height:0),affine:.init()))
+    #expect(grid.mayCover(.init(x:-0.5,y:-0.5,width:0,height:0),affine:.init()))
+    #expect(!grid.mayCover(.init(x:-1,y:-1,width:0.1,height:0.1),affine:.init()))
+    #expect(grid.mayCover(.init(x:0.44,y:0.44,width:0,height:0),affine:.init()),"Near-edge guard stays conservative")
+    #expect(grid.mayCover(.infinite,affine:.init()))
+    #expect(grid.mayCover(.init(x:1e8,y:1e8,width:0.1,height:0.1),affine:.init(.init(1,1,-1e8,-1e8))),"Error before cancellation must not vanish")
+    #expect(grid.mayCover(.init(x:0,y:0,width:1,height:1),affine:.init(x:.init(.nan,0,0,0),y:.init(0,1,0,0))))
+    #expect(InkRasterGrid(positions:[],viewport:.init(width:100,height:100),pixels:.init(width:100,height:100)) == nil)
+  }
+  @Test func rasterAdmissionUsesActualRoundedPixelDimensionsAndFloatViewport() throws {
+    let size=CGSize(width:100.2,height:80.3),pixels=CGSize(width:126,height:101)
+    let grid=try #require(InkRasterGrid(positions:[.init(0.5,0.5)],viewport:size,pixels:pixels))
+    for i in [-10,0,30,90] {
+      let point=CGRect(x:(Double(i)+0.5)*Double(Float(size.width))/pixels.width,
+        y:20.5*Double(Float(size.height))/pixels.height,width:0,height:0)
+      #expect(grid.mayCover(point,affine:.init()))
+    }
+    let reflected=InkAffine(x:.init(0,-1,0,0),y:.init(-1,0,0,0))
+    #expect(grid.mayCover(.init(x:-20.5*Double(Float(size.height))/pixels.height,
+      y:-30.5*Double(Float(size.width))/pixels.width,width:0,height:0),affine:reflected))
+  }
   private func nodes(
     _ count: Int, _ edit: (Int, inout InkRenderGeometry.Node) -> Void = { _, _ in }
   ) -> [InkRenderGeometry.Node] {

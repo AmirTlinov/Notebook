@@ -99,15 +99,21 @@ public final class NotebookFreehandGeometry: Sendable {
   public func layer(at id: Range<Int>) -> Int { location(id).layer }
   public func tool(at id: Range<Int>) -> SpatialInkTool { layers[layer(at:id)].tool }
   public func color(at id: Range<Int>) -> SpatialInkColor { layers[layer(at:id)].color }
-  public func query(_ area: CGRect,allowRangeCoalescing: Bool = true) -> (indices: [Range<Int>],visitedNodes: Int) {
+  public func query(_ area: CGRect,allowRangeCoalescing: Bool = true,admitting: ((CGRect,CGSize) -> Bool)? = nil) -> (indices: [Range<Int>],visitedNodes: Int) {
     let candidates=layerIndex.query(area)
     var result:[Range<Int>]=[],visits=candidates.visitedNodes
     for layer in candidates.indices {
       switch bodies[layer] {
-      case .primitives(_,let index):
-        let q=index.query(area);result.append(contentsOf:q.indices.map { (starts[layer]+$0)..<(starts[layer]+$0+1) });visits += q.visitedNodes
+      case .primitives(let chunks,let index):
+        let q=index.query(area)
+        let selected=q.indices.filter { id in
+          let c=chunks[id],b=c.bounds,u=c.sourceSize
+          return admitting?(CGRect(x:b.minX*u.width,y:b.minY*u.height,width:b.width*u.width,height:b.height*u.height),u) != false
+        }
+        result.append(contentsOf:selected.map { (starts[layer]+$0)..<(starts[layer]+$0+1) });visits += q.visitedNodes
       case .measured(let source,let size):
-        let q=source.query(viewport:.init(x:area.minX*size.width,y:area.minY*size.height,width:area.width*size.width,height:area.height*size.height),affine:.init(),allowRangeCoalescing:allowRangeCoalescing)
+        let q=source.query(viewport:.init(x:area.minX*size.width,y:area.minY*size.height,width:area.width*size.width,height:area.height*size.height),affine:.init(),allowRangeCoalescing:allowRangeCoalescing,
+          admitting:admitting.map { filter in { filter($0,size) } })
         result.append(contentsOf:q.chunks.map { (starts[layer]+$0.lowerBound)..<(starts[layer]+$0.upperBound) });visits += q.cost.visitedNodes
       }
     }

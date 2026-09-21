@@ -15,10 +15,15 @@ final class InkRasterRenderer: @unchecked Sendable {
   let eraser: (any MTLRenderPipelineState)?
   let baseline: (any MTLRenderPipelineState)?
   let connectivity: InkConnectivity?
+  private let samplePositions: [SIMD2<Float>]
 
   private init() {
     let device = MTLCreateSystemDefaultDevice()
     self.device = device
+    samplePositions = device.flatMap { d in
+      d.areProgrammableSamplePositionsSupported
+        ? d.getDefaultSamplePositions(sampleCount:d.supportsTextureSampleCount(4) ? 4 : 1).map { SIMD2<Float>($0.x,$0.y) } : nil
+    } ?? []
     queue = device?.makeCommandQueue()
     connectivity = device.flatMap(InkConnectivity.init(device:))
     func pipeline(erase: Bool = false, raster: Bool = false) -> (any MTLRenderPipelineState)? {
@@ -43,6 +48,10 @@ final class InkRasterRenderer: @unchecked Sendable {
     ink = pipeline()
     eraser = pipeline(erase: true)
     baseline = pipeline(raster: true)
+  }
+
+  func sampleGrid(viewport: CGSize,pixels: CGSize) -> InkRasterGrid? {
+    .init(positions:samplePositions,viewport:viewport,pixels:pixels)
   }
 
   func page(_ drawing: PageInkDrawing, size: CGSize, scale: Double = 2) -> CGImage? {
@@ -79,13 +88,18 @@ final class InkRasterRenderer: @unchecked Sendable {
     let area = NotebookFreehandGeometry.sourceBounds(region.insetBy(dx:-1/scale,dy:-1/scale),
       size:size,transform:transform)
     let displayBasis=InkAffine(x:.init(Float(basis.a),Float(basis.c),0,0),y:.init(Float(basis.b),Float(basis.d),0,0))
-    let batches = source.query(area,allowRangeCoalescing:displayBasis.preservesAxisAlignment).indices.map { id -> DrawBatch in
-      let prepared=source.prepared(at:id),chunk=prepared.descriptor,unit=chunk.sourceSize
-      let affine = InkAffine(
+    func projection(_ unit: CGSize) -> InkAffine {
+      InkAffine(
         x:.init(Float(basis.a*size.width/unit.width),Float(basis.c*size.width/unit.height),
           Float(basis.tx*size.width-region.minX),0),
         y:.init(Float(basis.b*size.height/unit.width),Float(basis.d*size.height/unit.height),
           Float(basis.ty*size.height-region.minY),0))
+    }
+    let grid=sampleGrid(viewport:region.size,pixels:.init(width:ceil(region.width*scale),height:ceil(region.height*scale)))
+    let batches = source.query(area,allowRangeCoalescing:displayBasis.preservesAxisAlignment,
+      admitting:grid.map { grid in { bounds,unit in grid.mayCover(bounds,affine:projection(unit)) } }).indices.map { id -> DrawBatch in
+      let prepared=source.prepared(at:id),chunk=prepared.descriptor
+      let affine=projection(chunk.sourceSize)
       let color = mask || source.tool(at:id) == .eraser ? SpatialInkColor(red:1,green:1,blue:1) : source.color(at:id)
       let nodes = Array(prepared.geometry.nodes)
       let c = SpatialInkGeometry.Chunk(nodes:0..<nodes.count,bounds:InkRenderGeometry.bounds(nodes[...]),
@@ -147,6 +161,7 @@ final class InkRasterRenderer: @unchecked Sendable {
     var viewport = SIMD2<Float>(Float(size.width), Float(size.height))
     encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
     let area = CGRect(origin: .zero, size: size).insetBy(dx: -1 / scale, dy: -1 / scale)
+    let grid=sampleGrid(viewport:size,pixels:.init(width:width,height:height))
     for draw in batches {
       guard !Task.isCancelled else { encoder.endEncoding(); return nil }
       let batch = draw.mesh
@@ -154,7 +169,7 @@ final class InkRasterRenderer: @unchecked Sendable {
       let stretch = affine.maximumStretch, minimumStretch = affine.minimumStretch
       encoder.setVertexBytes(&affine,length:MemoryLayout<InkAffine>.stride,index:2)
       encoder.setRenderPipelineState(batch.tool == .eraser ? eraser : ink)
-      for id in batch.query(viewport:area,affine:affine).chunks {
+      for id in batch.query(viewport:area,affine:affine,admitting:grid.map { grid in { grid.mayCover($0,affine:affine) } }).chunks {
         let prepared=batch.prepareChunk(id).chunk,chunk=prepared.descriptor
         let level=InkRenderGeometry.level(chunk.levels,pixelsPerUnit:stretch*Float(scale),minimumPixelsPerUnit:minimumStretch*Float(scale))
         let nodes=prepared.selected(level:level)

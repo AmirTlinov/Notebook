@@ -170,10 +170,12 @@ extension SpatialInkGeometry {
       let radiusFloor=max(0,1-abs(projection.scale))*0.25*Double(InkStrokeGeometry.maximumCrossSectionScale)
       return padding.isFinite ? projected.insetBy(dx:-padding-radiusFloor,dy:-padding-radiusFloor) : .infinite
     }
-    public func query(viewport: CGRect,affine: InkAffine = .init(),allowRangeCoalescing: Bool = true) -> (chunks: [Range<Int>],cost: InkSampleRelations.AccessCost) {
+    public func query(viewport: CGRect,affine: InkAffine = .init(),allowRangeCoalescing: Bool = true, admitting: ((CGRect) -> Bool)? = nil) -> (chunks: [Range<Int>],cost: InkSampleRelations.AccessCost) {
       guard chunkCount > 0 else { return ([],.init()) }
       func overlaps(_ rect: CGRect) -> Bool {
-        let bounds=affine.bounds(projected(rect))
+        let local=projected(rect)
+        guard admitting?(local) != false else { return false }
+        let bounds=affine.bounds(local)
         let magnitude=[bounds.minX,bounds.minY,bounds.maxX,bounds.maxY].map { abs(Float($0)) }.max() ?? .infinity
         let padding=8*Double(magnitude.ulp)
         return !padding.isFinite || SpatialInkGeometry.overlaps(bounds.insetBy(dx:-padding,dy:-padding),viewport)
@@ -267,17 +269,17 @@ extension SpatialInkGeometry {
       if case .relative(let r)=storage { return r.source.auxiliaryBytes+MemoryLayout<RelativeSource>.stride-MemoryLayout<InkSampleRelations>.stride }
       return byteCount
     }
-    public func query(viewport: CGRect,affine: InkAffine,allowRangeCoalescing: Bool = true) -> (chunks: [Range<Int>],cost: InkSampleRelations.AccessCost) {
+    public func query(viewport: CGRect,affine: InkAffine,allowRangeCoalescing: Bool = true, admitting: ((CGRect) -> Bool)? = nil) -> (chunks: [Range<Int>],cost: InkSampleRelations.AccessCost) {
       switch storage {
-      case .relative(let r): return r.query(viewport:viewport,affine:affine,allowRangeCoalescing:allowRangeCoalescing)
+      case .relative(let r): return r.query(viewport:viewport,affine:affine,allowRangeCoalescing:allowRangeCoalescing,admitting:admitting)
       case .prepared(_,let chunks,let index):
         // Native canvas uses positive diagonal camera transforms. General
         // raster transforms keep the same conservative per-chunk rejection.
         if let index,affine.x.y == 0,affine.y.x == 0,affine.x.x > 0,affine.y.y > 0 {
           let q=index.query(viewport:viewport,transform:.init(affine.x.x,affine.y.y,affine.x.z,affine.y.z))
-          return (q.chunks.map { $0..<($0+1) },.init(visitedNodes:q.visitedNodes))
+          return (q.chunks.filter { admitting?(chunks[$0].bounds) != false }.map { $0..<($0+1) },.init(visitedNodes:q.visitedNodes))
         }
-        return (chunks.indices.filter { SpatialInkGeometry.overlaps(affine.bounds(chunks[$0].bounds),viewport) }.map { $0..<($0+1) },.init(visitedNodes:chunks.count))
+        return (chunks.indices.filter { admitting?(chunks[$0].bounds) != false && SpatialInkGeometry.overlaps(affine.bounds(chunks[$0].bounds),viewport) }.map { $0..<($0+1) },.init(visitedNodes:chunks.count))
       }
     }
     public func prepare(_ selection: Range<Int>) -> (chunk: SpatialInkGeometry.PreparedChunk,decodedPoints: Int) {
