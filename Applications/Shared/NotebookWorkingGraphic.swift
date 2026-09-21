@@ -13,6 +13,7 @@ struct NotebookWorkingGraphic: Equatable, Identifiable {
   let frame: PageRect
   let worldOrigin: WorldPoint?
   let graphic: NotebookGraphic
+  let basis: NotebookElementBasis?
   var accepted = false
   var publicationCursor: UInt64?
   var id: String { strokeID.uuidString.lowercased() }
@@ -20,28 +21,32 @@ struct NotebookWorkingGraphic: Equatable, Identifiable {
   init(strokeID: UUID, fit: NotebookQuickShapeFit, surface: SurfaceID,
     worldOrigin: WorldPoint? = nil, color: SpatialInkColor, width: Double) {
     self.strokeID = strokeID; self.surface = surface; self.frame = fit.frame
-    self.worldOrigin = worldOrigin
+    self.worldOrigin = worldOrigin; basis = nil
     graphic = .init(shape: fit.shape, style: .init(stroke: color, strokeWidth: width),
       sourceInkIDs: fit.precedingStrokeIDs + [strokeID], connection: fit.connection, vertices: fit.vertices)
   }
 
-  init(id: UUID, surface: SurfaceID, frame: PageRect, worldOrigin: WorldPoint?, graphic: NotebookGraphic) {
-    strokeID = id; self.surface = surface; self.frame = frame; self.worldOrigin = worldOrigin; self.graphic = graphic
+  init(id: UUID, surface: SurfaceID, frame: PageRect, worldOrigin: WorldPoint?, graphic: NotebookGraphic,
+    basis:NotebookElementBasis? = nil) {
+    strokeID = id; self.surface = surface; self.frame = frame; self.worldOrigin = worldOrigin
+    self.graphic = graphic; self.basis = basis
   }
 
   var pageElement: AgentElement {
-    .init(id: id, kind: .graphic, frame: frame, source: "", html: "", graphic: graphic)
+    .init(id: id, kind: .graphic, frame: frame, source: "", html: "", graphic: graphic,basis:basis)
   }
 
   func spatialElement(stamp: VersionStamp) -> SpatialElement {
     .init(id: id, surface: surface, kind: .graphic,
       frame: .init(x: frame.x, y: frame.y, width: frame.width, height: frame.height),
-      worldOrigin: worldOrigin, source: "", graphic: graphic, stamp: stamp)
+      worldOrigin: worldOrigin, source: "", graphic: graphic,basis:basis, stamp: stamp)
   }
 
   var node: NotebookGraphicGraph.Node {
-    .init(id: id, graphic: graphic, frame: frame, origin: worldOrigin ?? .zero,
-      surface: surface, shown: true)
+    let raw=NotebookElementPlacement(id:id,frame:frame,origin:worldOrigin ?? .zero)
+    let placement=(try? raw.updating(frame:frame,basis:basis)) ?? raw
+    return .init(id: id, graphic: graphic, frame: frame, origin: worldOrigin ?? .zero,
+      surface: surface, shown: true,placement:placement)
   }
 }
 

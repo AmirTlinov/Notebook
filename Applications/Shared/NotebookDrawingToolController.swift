@@ -307,6 +307,7 @@ extension NotebookAppModel {
     guard var values = try? ["kind":JSONValue.string("graphic"),"source":.string(""),
       "frame":.encode(object.frame),"graphic":.encode(object.graphic)] else { return nil }
     if let origin = address.worldOrigin { values["worldOrigin"] = try? .encode(origin) }
+    if let basis=object.basis { values["basis"] = try? .encode(basis) }
     return values
   }
 
@@ -373,7 +374,7 @@ extension NotebookAppModel {
     for reference in region.graphics {
       guard let source=nativeElementSource(reference),source.target == region.address.target,
         let graphic=graphicElement(reference),graphic.freehand != nil,
-        let geometry=elementGeometry(reference),let layout=graphicLayout(reference) else { continue }
+        let layout=graphicLayout(reference) else { continue }
       let size=layout.projection?.size ?? .init(width:layout.frame.width,height:layout.frame.height)
       let polygon=region.polygon.compactMap { point -> SpatialPoint? in
         guard size.width > 0,size.height > 0,
@@ -389,13 +390,16 @@ extension NotebookAppModel {
         values:["graphic":.object(["mask":(try? .encode(outside)) ?? .null])]))
       let id=UUID(),ref=region.address.reference(id.uuidString.lowercased())
       let selectedGraphic=copied(graphic,claims:[],mask:inside)
-      let frame=PageRect(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height)
+      guard let placement=layout.flattenedPlacement() else { continue }
+      let frame=placement.frame
       var values:[String:JSONValue]=["kind":.string("graphic"),"source":.string(""),
         "frame":(try? .encode(frame)) ?? .null,"graphic":(try? .encode(selectedGraphic)) ?? .null]
-      if let origin=geometry.worldOrigin { values["worldOrigin"]=try? .encode(origin) }
+      let worldOrigin=source.spatial == nil ? nil : layout.origin
+      if let worldOrigin { values["worldOrigin"]=try? .encode(worldOrigin) }
+      if let basis=placement.basis { values["basis"]=try? .encode(basis) }
       edits.append(.init(reference:ref,kind:.insertElement,values:values))
       working.append(.init(id:id,surface:source.spatial?.surface ?? region.address.surface,
-        frame:frame,worldOrigin:geometry.worldOrigin,graphic:selectedGraphic));selected.append(ref)
+        frame:frame,worldOrigin:worldOrigin,graphic:selectedGraphic,basis:placement.basis));selected.append(ref)
     }
     guard !selected.isEmpty,!edits.isEmpty,edits.count <= 32 else {
       if edits.count > 32 { showCue("Выделите меньшую область: одно изменение содержит не более 32 частей.") }

@@ -177,6 +177,52 @@ import UIKit
     }
   }
 
+  func testLassoMaterializesAGroupedRegionInPlaceWithItsTightFrame() async throws {
+    try await fixture { model in
+      var page=try XCTUnwrap(model.activePage)
+      let group=AgentElement(id:"rotated-group",kind:.group,
+        frame:.init(x:200,y:200,width:200,height:100),source:"",html:"",
+        basis:.init(size:.init(x:200,y:100),transform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0)))
+      let measurements=InkMeasurements([
+        .init(point:.init(x:10,y:30),timeOffset:0,width:8,opacity:1,force:1,azimuth:0,altitude:.pi/2),
+        .init(point:.init(x:150,y:30),timeOffset:1,width:8,opacity:1,force:1,azimuth:0,altitude:.pi/2)])
+      let freehand=NotebookFreehand(layers:[.init(tool:.pen,color:.black,measured:.init(
+        sourceID:UUID(),measurements:measurements,frame:.init(x:0,y:0,width:160,height:60)))])
+      let child=AgentElement(id:"grouped-ink",kind:.graphic,frame:.init(x:20,y:20,width:160,height:60),
+        source:"",html:"",graphic:.init(shape:.freehand,freehand:freehand),parentID:group.id)
+      XCTAssertTrue(page.replaceElements([group,child],actor:model.actorID));try model.store.savePage(page)
+      await model.reloadExternalChanges()?.value
+      let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+      let source=address.reference(child.id),layout=try XCTUnwrap(model.graphicLayout(source))
+      let f=layout.frame,polygon=[SpatialPoint(x:f.x,y:f.y),.init(x:f.x+f.width/2,y:f.y),
+        .init(x:f.x+f.width/2,y:f.y+f.height),.init(x:f.x,y:f.y+f.height)]
+      func placed(_ point:SpatialPoint,_ layout:NotebookGraphicLayout)->CGPoint {
+        let p=layout.displayedPoint(point)
+        return .init(x:layout.frame.x+p.x,y:layout.frame.y+p.y)
+      }
+      let probes=[SpatialPoint.zero,.init(x:160,y:0),.init(x:0,y:60),.init(x:160,y:60)]
+      let expected=probes.map { placed($0,layout) }
+      model.selectRegion(.init(id:UUID(),address:address,polygon:polygon,
+        frame:.init(x:f.x,y:f.y,width:f.width/2,height:f.height),rawInk:nil,
+        expectedInkRevision:nil,graphics:[source]))
+      let selected=try XCTUnwrap(model.materializeRegionSelection()?.first)
+      let live=try XCTUnwrap(model.acceptedWorkingGraphic(selected))
+      XCTAssertNotNil(live.basis,"The accepted preview owns the same detached basis as durable content")
+      XCTAssertEqual(live.frame.width,f.width,accuracy:0.000001)
+      await assertSaved(model);await model.reloadExternalChanges()?.value
+      let savedPage=try model.store.loadPage(page.id)
+      let saved=try XCTUnwrap(savedPage.element(id:selected.elementID))
+      XCTAssertNil(saved.parentID);XCTAssertNotNil(saved.basis)
+      let placedLayout=try XCTUnwrap(model.graphicGraph(page:savedPage,preview:false).resolve(selected.elementID).layout)
+      let visible=try XCTUnwrap(placedLayout.visibleFrame(mask:try XCTUnwrap(saved.graphic?.mask)))
+      XCTAssertEqual(visible.width,f.width/2,accuracy:0.000001)
+      for (actual,wanted) in zip(probes.map { placed($0,placedLayout) },expected) {
+        XCTAssertEqual(actual.x,wanted.x,accuracy:0.000001)
+        XCTAssertEqual(actual.y,wanted.y,accuracy:0.000001)
+      }
+    }
+  }
+
   func testMarkerUsesConstantOpacityAndKeepsIndependentStyle() {
     let settings = NotebookDrawingToolSettings(), marker = settings.marker
     XCTAssertEqual(marker.width,18)

@@ -138,11 +138,17 @@ enum NotebookAttentionProjection {
       return frame(target:region.address.target,elementID:nil,region:region.frame,
         worldOrigin:region.address.worldOrigin,pageIndex:nil,model:model,presence:presence,minimumSide:0)
     }
+    let resolved=layout ?? model.graphicLayout(reference)
+    if let mask=model.graphicElement(reference)?.mask,let local=resolved?.visibleFrame(mask:mask),
+      let source=model.nativeElementSource(reference) {
+      return frame(target:source.target,elementID:nil,region:local,
+        worldOrigin:source.target.kind == .board ? resolved?.origin : nil,pageIndex:nil,
+        model:model,presence:presence,minimumSide:0)
+    }
     // Accepted input is already the model owner even while the published scene
     // still contains the preceding raster cohort. Project its live graph node
     // through the ordinary surface frame instead of waiting for persistence.
     if let working = model.acceptedWorkingGraphic(reference) {
-      let resolved = layout ?? model.graphicLayout(reference)
       let local = resolved?.frame ?? working.frame
       let origin = resolved?.origin ?? working.worldOrigin
       guard let owner=working.surface.ownerID else { return nil }

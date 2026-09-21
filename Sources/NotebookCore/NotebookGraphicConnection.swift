@@ -112,6 +112,28 @@ public struct NotebookGraphicLayout: Equatable, Sendable {
       c:t.c*size.height/frame.width,d:t.d*size.height/frame.height,
       tx:t.tx/frame.width,ty:t.ty/frame.height)
   }
+  /// Detach this resolved body from its ancestry without changing its visible
+  /// placement. The immutable local body and every relation inside it remain
+  /// in one basis; a mask may narrow controls without rewriting that body.
+  public func flattenedPlacement()->(frame:PageRect,basis:NotebookElementBasis?)? {
+    let outer=CGRect(x:0,y:0,width:frame.width,height:frame.height)
+    guard !outer.isNull,!outer.isEmpty else { return nil }
+    let size=projection?.size ?? outer.size,t=projection?.transform ?? .identity
+    guard size.width > 0,size.height > 0 else { return nil }
+    let normalized=NotebookGraphicTransform(
+      a:t.a*size.width/outer.width,b:t.b*size.width/outer.height,
+      c:t.c*size.height/outer.width,d:t.d*size.height/outer.height,
+      tx:t.tx/outer.width,ty:t.ty/outer.height)
+    return (frame,projection == nil ? nil : .init(size:.init(x:size.width,y:size.height),transform:normalized))
+  }
+  /// Exact displayed bounds of a compact visibility relation. Selection UI
+  /// may use this frame without pretending that the retained body was cropped.
+  public func visibleFrame(mask:NotebookGraphicMask)->PageRect? {
+    let outer=CGRect(x:0,y:0,width:frame.width,height:frame.height)
+    let visible=mask.projectedPath(in:outer,projection:projection).boundingBoxOfPath.intersection(outer)
+    guard !visible.isNull,!visible.isEmpty else { return nil }
+    return .init(x:frame.x+visible.minX,y:frame.y+visible.minY,width:visible.width,height:visible.height)
+  }
   public func displayedPoint(_ point: SpatialPoint) -> SpatialPoint {
     let p = CGPoint(x:point.x,y:point.y).applying(projection?.transform ?? .identity)
     return .init(x:p.x,y:p.y)
