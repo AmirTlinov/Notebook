@@ -98,10 +98,14 @@ extension NotebookAppModel {
   }
 
   func retireWorkingGraphics(in cohort: SceneCompositionCohort) {
-    guard cohort.isPaintInstalled else { return }
-    workingGraphics.removeAll { graphic in
+    guard !workingGraphics.isEmpty, cohort.isPaintInstalled else { return }
+    func installed(_ graphic: NotebookWorkingGraphic) -> Bool {
       graphic.surface.kind != .page
         && (graphic.publicationCursor.map { cohort.plan.revision >= $0 } ?? false)
     }
+    // Display confirmation is a read unless an actual handoff completes.
+    // Even a no-op removeAll mutates Observation and rebuilds the ink scene.
+    guard workingGraphics.contains(where: installed) else { return }
+    workingGraphics.removeAll(where: installed)
   }
 }

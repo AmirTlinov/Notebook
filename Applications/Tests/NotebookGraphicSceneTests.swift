@@ -1,4 +1,5 @@
 import NotebookCore
+import Observation
 import UIKit
 import XCTest
 @testable import Notebook
@@ -6,6 +7,52 @@ import XCTest
 /// Exercise the installed scene's Pencil owner, not a direct fit/model call.
 /// Synthetic UIKit contacts do not substitute for physical Pencil calibration.
 @MainActor final class NotebookGraphicSceneTests: XCTestCase {
+  func testInstalledPaintConfirmationDoesNotInvalidateUnchangedGraphicSources() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-idle-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false,
+      preferences: UserDefaults(suiteName: UUID().uuidString)!)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let window = try await mountNotebookScene(model)
+    let deadline = ContinuousClock.now + .seconds(5)
+    while model.compositionTiles.published?.isPaintInstalled != true, .now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let cohort = try XCTUnwrap(model.compositionTiles.published)
+    XCTAssertTrue(cohort.isPaintInstalled)
+    XCTAssertFalse(window.isHidden)
+    let board = try XCTUnwrap(model.workspace?.rootBoardID), page = try XCTUnwrap(model.activePage?.id)
+    @MainActor final class Changes { var count = 0 }
+    func observedRetirements(_ count: Int) -> Int {
+      let changes = Changes()
+      for _ in 0..<count {
+        withObservationTracking { _ = model.workingGraphics } onChange: {
+          MainActor.assumeIsolated { changes.count += 1 }
+        }
+        model.retireWorkingGraphics(in: cohort)
+      }
+      return changes.count
+    }
+    XCTAssertTrue(model.workingGraphics.isEmpty)
+    XCTAssertEqual(observedRetirements(100), 0, "Idle display confirmation must not republish the source")
+    func draft(_ surface: SurfaceID, cursor: UInt64?) -> NotebookWorkingGraphic {
+      var value = NotebookWorkingGraphic(id: UUID(), surface: surface,
+        frame: .init(x: 50, y: 50, width: 80, height: 60), worldOrigin: nil,
+        graphic: .init(shape: .rectangle))
+      value.accepted = true; value.publicationCursor = cursor
+      return value
+    }
+    let retained = [draft(.page(page), cursor: cohort.plan.revision),
+      draft(.board(board), cursor: cohort.plan.revision + 1), draft(.board(board), cursor: nil)]
+    model.workingGraphics = retained
+    XCTAssertEqual(observedRetirements(100), 0, "Uninstalled and page sources keep their original handoff owners")
+    model.workingGraphics.append(draft(.board(board), cursor: cohort.plan.revision))
+    XCTAssertEqual(observedRetirements(1), 1, "A genuinely installed board source still retires and publishes")
+    XCTAssertEqual(model.workingGraphics, retained)
+    XCTAssertEqual(observedRetirements(100), 0)
+    model.workingGraphics = []
+  }
+
   func testPageLassoSelectsMeasuredInkThroughInstalledPencilOwner() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("lasso-scene-\(UUID())")
     let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false,preferences:UserDefaults(suiteName:UUID().uuidString)!)
