@@ -59,7 +59,7 @@ enum PageCompositionRenderer {
       let appearance = try await NotebookElementErasureCache.Input(graphic: element.graphic,
         layout: layout, size: presentation?.bodySize ?? frame.size, erasures: cuts).prepared()
       if let graphic = element.graphic {
-        try await canvas.drawView(NotebookGraphicView(graphic: graphic, layout:layout, erasures:cuts,appearance:appearance), size: frame.size, in: frame)
+        try await canvas.drawView(NotebookGraphicView(graphic: graphic, layout:layout, erasures:cuts,appearance:appearance,live:false), size: frame.size, in: frame)
         continue
       }
       if element.kind == .nativeText {

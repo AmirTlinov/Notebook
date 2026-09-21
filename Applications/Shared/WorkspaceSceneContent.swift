@@ -410,10 +410,21 @@ struct SpatialElementContent: View {
   var body: some View {
     let cuts = model.elementErasures(on:element.surface,fallback:composition.cohort?.liveData.ink)[element.id] ?? []
     let appearance = model.elementErasureCache.appearance(surface:element.surface,id:element.id,graphic:nil,layout:nil,
-      size:.init(width:element.basis?.size.x ?? element.frame.width,height:element.basis?.size.y ?? element.frame.height),erasures:cuts)
+      size:.init(width:element.basis?.size.x ?? element.frame.width,height:element.basis?.size.y ?? element.frame.height),erasures:cuts,prepares:!model.isElementErasing(element.id,on:element.surface))
     let erased = appearance?.state == .erased
-    content.erased(by:cuts,appearance:appearance).accessibilityHidden(erased || (!cuts.isEmpty && appearance == nil))
+    content.erased(by:cuts,appearance:appearance)
+      .environment(\.inkMaterialReadiness, materialReadiness)
+      .accessibilityHidden(erased || (!cuts.isEmpty && appearance == nil))
       .allowsHitTesting(!erased && (cuts.isEmpty || appearance != nil))
+  }
+
+  private var materialReadiness: NotebookInkMaterialReceiver? {
+    guard let boardID,let cohort=composition.cohort else { return nil }
+    let plane:SceneCompositionPlane = element.surface.kind == .cover
+      ? .cover(boardID:boardID,itemID:element.surface.ownerID!) : .board(boardID)
+    return .init(id:cohort.paintID,report:{ id,content,ready in
+      cohort.recordMaterial(.init(plane:plane,elementID:element.id),id:id,content:content,ready:ready)
+    })
   }
 
   @ViewBuilder private var content: some View {

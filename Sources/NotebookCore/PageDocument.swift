@@ -167,6 +167,8 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   public private(set) var agentStamp: VersionStamp { didSet { elementProjectionCache = .init() } }
   public private(set) var collaboration: CollaborativeContent? { didSet { elementProjectionCache = .init() } }
   private var elementProjectionCache = PageElementProjectionCache()
+  /// Runtime identity of immutable element content; drawing and camera do not change it.
+  public var elementSourceIdentity: ObjectIdentifier { ObjectIdentifier(elementProjectionCache) }
   var elementProjection: PageElementProjection { elementProjectionCache.value(for:self) }
   private enum CodingKeys: String,CodingKey {
     case format,id,size,drawingData,drawingStamp,elements,agentStamp,collaboration,computations

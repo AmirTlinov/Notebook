@@ -15,9 +15,9 @@ struct PageSurface: View {
 
   @State private var visibleRegion: CGRect?
   @State private var inkIsReady = false
-  @State private var readyOverlay: [AgentElement]?
+  @State private var readyOverlay: ObjectIdentifier?
 
-  private var overlayIsReady: Bool { readyOverlay == page.elements }
+  private var overlayIsReady: Bool { readyOverlay == page.elementSourceIdentity }
 
   var body: some View {
     GeometryReader { geometry in
@@ -38,8 +38,8 @@ struct PageSurface: View {
             allowsInteraction: isVisible && isCurrent,
             inputEnabled: isVisible && isInteractive,
             onRenderReady: { ready in
-              if ready { readyOverlay = page.elements }
-              else if readyOverlay == page.elements { readyOverlay = nil }
+              if ready { readyOverlay = page.elementSourceIdentity }
+              else if readyOverlay == page.elementSourceIdentity { readyOverlay = nil }
               publishReadiness(ink: inkIsReady, overlay: overlayIsReady)
             },
             onState: { elementID, state in
@@ -119,7 +119,7 @@ struct PageSurface: View {
     .onAppear {
       publishReadiness(ink: inkIsReady, overlay: overlayIsReady)
     }
-    .onChange(of: page.elements) { _, _ in
+    .onChange(of: page.elementSourceIdentity) { _, _ in
       publishReadiness(ink: inkIsReady, overlay: overlayIsReady)
     }
   }

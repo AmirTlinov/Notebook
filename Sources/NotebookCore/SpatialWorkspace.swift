@@ -525,7 +525,7 @@ public enum SpatialElementKind: String, Codable, Sendable {
   case group
 }
 
-public struct NativeTextStyle: Codable, Equatable, Sendable {
+public struct NativeTextStyle: Codable, Hashable, Sendable {
   public let fontSize: Double
   public let weight: Double
   public let red: Double

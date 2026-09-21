@@ -88,10 +88,6 @@ public struct SpatialInkSpan: Codable, Equatable, Sendable {
     self.elementTargets = elementTargets?.isEmpty == false ? elementTargets : nil
   }
 
-  public func erasingElements(_ targets: [InkElementTarget]) -> Self {
-    .init(surface: surface, measurements: samples, elementTargets: targets.filter { $0.intersects(samples) })
-  }
-
   var isValid: Bool {
     (elementTargets == nil || (elementTargets!.allSatisfy { $0.isValid && ($0.worldOrigin != nil) == (surface.kind == .board) }
       && Set(elementTargets!.map(\.elementID)).count == elementTargets!.count))

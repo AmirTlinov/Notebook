@@ -23,7 +23,7 @@ public struct NativeTextFormat: Codable, Hashable, Sendable {
   }
 }
 
-public struct NativeTextRun: Codable, Equatable, Sendable {
+public struct NativeTextRun: Codable, Hashable, Sendable {
   public var location: Int
   public var length: Int
   public var format: NativeTextFormat

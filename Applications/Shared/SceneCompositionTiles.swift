@@ -604,6 +604,13 @@ final class SceneCompositionCohort {
   let runtimeOwners: Set<SceneSourceAddress>
   let tileSources: [SceneCompositionTileKey: Set<SceneSourceAddress>]
   let tilePresenters: SceneTilePresentationRegistry
+  private var materials: [SceneSourceAddress:NotebookInkMaterialReadiness] = [:]
+  func recordMaterial(_ address:SceneSourceAddress,id:UUID,content:NotebookInkMaterialView.Content?,ready:Bool) {
+    materials[address,default:.init()].record(id,content:content,ready:ready)
+  }
+  func hasPresentedMaterials(_ address:SceneSourceAddress,sources:[NotebookInkMaterialView.Content]) -> Bool {
+    (materials[address] ?? .init()).isReady(for:sources)
+  }
   private var installedLayers: [ScenePaintPosition.Layer: SceneCameraPlaneInstallation] = [:]
   private var installedTiles: [SceneCompositionTileKey: SceneSourceInstallation] = [:]
   private var installedSources: [SceneSourceAddress: SceneSourceInstallation] = [:]

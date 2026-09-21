@@ -31,14 +31,17 @@ final class MacPageInkCanvas: NSView {
   private var suppressed = Set<UUID>()
   private var unpublished = Set<UUID>()
   private var load: Task<Void, Never>?
-  private var delivery: Task<Void, Never>?
+  private var pendingDeliveries = 0
+  private var deliveryOrdinal = 0
+  private var latestDelivery: (ordinal: Int, change: PreparedPageInkChange)?
   private var stamp: VersionStamp?
   private var pen: ActiveInkStroke?
   private var eraser: ActiveEraserStroke?
   private var measured: InkSampleRelations.Contact? { pen?.measured ?? eraser?.measured }
   private var actionTool = DrawingTool.pen
   private var actionStyle = PenStyle.standard
-  private var actionTargets: [InkElementTarget] = []
+  private var elementContact = InkElementContact([])
+  private var actionEraserStyle = EraserStyle.standard
   private var startedAt = 0.0
   private var waiters: [NotebookInputCompletion] = []
   override var isFlipped: Bool { true }
@@ -53,14 +56,14 @@ final class MacPageInkCanvas: NSView {
     model.inputGate.registerPageFinisher(source: source) { [weak self] waits, done in
       guard let self else { done(); return }
       finishStroke()
-      if waits && delivery != nil { waiters.append(done) } else { done() }
+      if waits && pendingDeliveries > 0 { waiters.append(done) } else { done() }
     }
   }
   required init?(coder: NSCoder) { fatalError("Use init(model:pageID:)") }
   override func layout() { super.layout(); inkProjection.refresh() }
   override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); inkProjection.refresh() }
   override func hitTest(_ point: NSPoint) -> NSView? {
-    guard inputEnabled, !retired, delivery == nil, bounds.contains(convert(point, from: superview)) else { return nil }
+    guard inputEnabled, !retired, load == nil, bounds.contains(convert(point, from: superview)) else { return nil }
     return self
   }
 
@@ -70,14 +73,14 @@ final class MacPageInkCanvas: NSView {
     model.inputGate.setCurrentPageSource(source, isCurrent: current)
     ink.onRenderReadinessChange = onReady
     let cuts = model.pageSuppressedInkIDs(page)
-    guard stamp == nil, delivery == nil, page.drawingData != sourceData || cuts != suppressed else { return }
+    guard stamp == nil, pendingDeliveries == 0, page.drawingData != sourceData || cuts != suppressed else { return }
     sourceData = page.drawingData; suppressed = cuts
     load?.cancel()
     if unpublished.isEmpty { ink.prepareForDrawing() }
     let data = page.drawingData
     load = Task { [weak self] in
       let decoded = await Task.detached(priority: .userInitiated) { try? PageInkDrawing.decode(data) }.value
-      guard !Task.isCancelled, let self, !retired, sourceData == data, stamp == nil, delivery == nil, let decoded else { return }
+      guard !Task.isCancelled, let self, !retired, sourceData == data, stamp == nil, pendingDeliveries == 0, let decoded else { return }
       load = nil
       guard unpublished.isSubset(of: Set(decoded.actions.map(\.id))) else { return }
       unpublished.removeAll()
@@ -86,14 +89,15 @@ final class MacPageInkCanvas: NSView {
   }
 
   override func mouseDown(with event: NSEvent) {
-    guard inputEnabled, !retired, stamp == nil, delivery == nil, load == nil,
+    guard inputEnabled, !retired, stamp == nil, load == nil,
       let reserved = model.reserveDrawingAction(pageID: pageID) else { return }
     guard model.inputGate.beginPencilAction(source: source) else {
       model.releaseDrawingReservation(pageID: pageID, stamp: reserved); return
     }
     window?.makeFirstResponder(self)
     stamp = reserved; actionTool = model.drawingTool; actionStyle = model.penStyle
-    actionTargets = actionTool == .eraser ? model.eraserTargets(pageID: pageID) : []
+    actionEraserStyle = model.eraserStyle
+    elementContact = InkElementContact(actionTool == .eraser ? model.eraserTargets(pageID: pageID) : [])
     startedAt = event.timestamp
     if actionTool == .pen { pen = .init(style:actionStyle) }
     else { let c=actionStyle.color.components;eraser = .init(color:.init(red:c.red,green:c.green,blue:c.blue)) }
@@ -114,33 +118,54 @@ final class MacPageInkCanvas: NSView {
       let last=measured.sample(at:measured.count-1).point
       if hypot(last.x-clamped.x,last.y-clamped.y) < 0.2 { return }
     }
-    let width = actionTool == .pen ? actionStyle.width : model.eraserStyle.maximumWidth
+    let width = actionTool == .pen ? actionStyle.width : actionEraserStyle.maximumWidth
     let sample=SpatialInkSample(point:.init(x:clamped.x,y:clamped.y),timeOffset:max(0,event.timestamp-startedAt),
       width:width,opacity:1,force:1,azimuth:0,altitude:.pi/2)
     if let pen { pen.replaceMeasuredTail(from:pen.measured.count,with:[sample]);ink.displayActiveStroke(pen) }
-    if let eraser { eraser.replaceMeasuredTail(from:eraser.measured.count,with:[sample]);ink.displayActiveEraser(eraser) }
+    if let eraser {
+      let start = eraser.measured.count
+      eraser.replaceMeasuredTail(from:start,with:[sample])
+      elementContact.update(eraser.measured, from:start)
+      ink.displayActiveEraser(eraser)
+      let targets = elementContact.selected
+      model.updateElementErasing(targets.isEmpty ? [] : [.init(id:eraser.measured.sourceID,
+        surface:.page(pageID), samples:eraser.measured.frozen().measurements, targets:targets)], id:eraser.measured.sourceID)
+    }
   }
 
   private func finishStroke() {
     guard let stamp else { return }
     self.stamp = nil
+    defer { elementContact = InkElementContact([]); pen = nil; eraser = nil }
     guard let measured, measured.count > 0 else {
       model.releaseDrawingReservation(pageID: pageID, stamp: stamp)
       model.inputGate.endPencilAction(source: source); return
     }
-    let action=measured.frozen().restoredAction().erasingElements(actionTargets)
+    let measuredAction = measured.frozen().restoredAction()
+    let action = PageInkAction(id:measuredAction.id, tool:measuredAction.tool, color:measuredAction.color,
+      measurements:measuredAction.samples, elementTargets:elementContact.selected)
     if actionTool == .pen { ink.commitActiveStroke(action) } else { ink.commitActiveEraser(action) }
     unpublished.insert(action.id)
     let accepted = model.acceptDrawingAction(action, pageID: pageID, stamp: stamp)
     pen = nil; eraser = nil
-    delivery = Task { [self] in
+    pendingDeliveries += 1
+    deliveryOrdinal += 1
+    let ordinal = deliveryOrdinal
+    Task { [self] in
       let prepared = await accepted.value
-      if let prepared, !retired {
+      if let prepared {
         unpublished.remove(action.id)
-        sourceData = prepared.data
-        ink.settle(prepared.drawing.presenting(excluding: suppressed))
+        if ordinal > (latestDelivery?.ordinal ?? 0) { latestDelivery = (ordinal, prepared) }
       }
-      delivery = nil
+      pendingDeliveries -= 1
+      guard pendingDeliveries == 0 else { return }
+      // A following contact already owns its measured mesh. Delivery installs
+      // only the accepted baseline and never gates or discards that contact.
+      if let change = latestDelivery?.change, unpublished.isEmpty, !retired {
+        sourceData = change.data
+        ink.settle(change.drawing.presenting(excluding: suppressed))
+      }
+      latestDelivery = nil
       let completions = waiters; waiters = []
       for completion in completions { completion() }
     }

@@ -20,13 +20,13 @@ extension View {
     }
     else {
       mask {
-        Canvas { context, size in
-          if let appearance {
-            context.clip(to: Path(appearance.mask), options: .inverse)
-          } else {
-            NotebookElementErasurePaint.clip(erasures, context: &context, size:size,transform:transform,layout:layout)
+        if let appearance {
+          Canvas { context, size in
+            context.clip(to:Path(appearance.mask),options:.inverse)
+            context.fill(Path(CGRect(origin:.zero,size:size)),with:.color(.white))
           }
-          context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
+        } else {
+          NotebookInkMaterialView(erasures:erasures,transform:transform,layout:layout)
         }
       }
     }

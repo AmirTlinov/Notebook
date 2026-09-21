@@ -4942,11 +4942,22 @@ final class NotebookAppModel {
       } else { elements = source }
     default: return false
     }
+    let graph=presentedGraphicGraph(boardID:presence.boardID,cohort:cohort)
     return elements.allSatisfy { element in
-      if element.kind == .nativeText || element.kind == .graphic { return true }
       let plane: SceneCompositionPlane = reference.target.kind == .cover
         ? .cover(boardID: presence.boardID, itemID: reference.target.id) : .board(reference.target.id)
       let address = SceneSourceAddress(plane: plane, elementID: element.id)
+      if element.kind == .nativeText || element.kind == .graphic {
+        let graphic=graph.nodes[element.id]?.graphic
+        let layout=element.kind == .graphic ? graph.resolve(element.id).layout : nil
+        let size=CGSize(width:element.basis?.size.x ?? layout?.frame.width ?? element.frame.width,
+          height:element.basis?.size.y ?? layout?.frame.height ?? element.frame.height)
+        let cuts=elementErasures(on:element.surface,fallback:cohort.liveData.ink)[element.id] ?? []
+        let appearance=elementErasureCache.preparedAppearance(surface:element.surface,id:element.id,
+          graphic:graphic,layout:layout,size:size,erasures:cuts)
+        return cohort.hasPresentedMaterials(address,sources:NotebookInkMaterialView.Content.required(
+          graphic:graphic,layout:layout,erasures:cuts,appearance:appearance))
+      }
       guard cohort.hasInstalledPixels(for: address), let receipt = cohort.sourceReceipts[address],
         receipt.hasCurrentPixels else { return false }
       return SceneRasterSource.agent(receipt.demand.source) == .agent(agentElementSnapshotSource(element))

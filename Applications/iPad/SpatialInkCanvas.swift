@@ -691,8 +691,11 @@ struct SpatialInkCanvas: UIViewRepresentable {
         activeEraser = ActiveEraserStroke(sourceID:actionStrokeID,span:actionSpans.count,
           color:.init(red:c.red,green:c.green,blue:c.blue),projection:liveProjection(on:surface))
       }
+      elementContact = InkElementContact(actionGeometry?.eraserTargets[surface] ?? [])
       appendToCurrentSegment(point)
     }
+
+    private var elementContact = InkElementContact([])
 
     private func appendToCurrentSegment(_ point: PKStrokePoint) {
       guard let currentSurface else { return }
@@ -713,18 +716,20 @@ struct SpatialInkCanvas: UIViewRepresentable {
         surfaceRegistry.canvas(for: currentSurface)?
           .displayActiveStroke(activePen)
       } else if let activeEraser {
+        let start = activeEraser.measured.count
         activeEraser.replaceMeasuredTail(
           from:activeEraser.measured.count,
           with:[sample]
         )
+        elementContact.update(activeEraser.measured, from: start)
         surfaceRegistry.canvas(for: currentSurface)?
           .displayActiveEraser(activeEraser)
       }
     }
 
     private func measuredSpan(surface: SurfaceID, measurements: InkMeasurements) -> SpatialInkSpan {
-      let span = SpatialInkSpan(surface: surface, measurements: measurements)
-      return actionTool == .eraser ? span.erasingElements(actionGeometry?.eraserTargets[surface] ?? []) : span
+      SpatialInkSpan(surface: surface, measurements: measurements,
+        elementTargets: actionTool == .eraser ? elementContact.selected : nil)
     }
 
     private func publishElementErasing() {
@@ -747,6 +752,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       activePen = nil
       activeEraser = nil
       self.currentSurface = nil
+      elementContact = InkElementContact([])
     }
 
     private func makePoint(

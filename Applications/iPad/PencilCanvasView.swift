@@ -782,7 +782,7 @@ final class PaperInputView: UIView {
     return touches.first(where: acceptsDrawingTouch)
   }
 
-  private var actionElementTargets: [InkElementTarget] = []
+  private var elementContact = InkElementContact([])
 
   private func beginAction(with touch: UITouch, event: UIEvent?) {
     guard canBeginAction() else { return }
@@ -804,7 +804,7 @@ final class PaperInputView: UIView {
 
     activeTouch = touch
     actionTool = drawingTool
-    actionElementTargets = drawingTool == .eraser ? eraserTargets() : []
+    elementContact = InkElementContact(drawingTool == .eraser ? eraserTargets() : [])
     reportsPencilActivity = touch.type == .pencil || simulatesPencilContacts
     if reportsPencilActivity { onActionActivityChange?(true) }
     actionPenStyle = penStyle
@@ -972,6 +972,7 @@ final class PaperInputView: UIView {
         from: startIndex,
         with: samples[startIndex...].map { SpatialInkSample($0.point) }
       )
+      elementContact.update(activeEraserStroke.measured, from: startIndex)
       return
     }
 
@@ -1084,10 +1085,7 @@ final class PaperInputView: UIView {
     guard quickShape.fit == nil else { return }
     if actionTool == .eraser, let activeEraserStroke {
       presentActiveEraser?(activeEraserStroke)
-      if !actionElementTargets.isEmpty, let mutation = actionMutation(), let pageID = quickShapePageID {
-        onElementErasing([.init(id: actionStrokeID, surface: .page(pageID), samples: mutation.samples,
-          targets: mutation.elementTargets ?? [])], actionStrokeID)
-      }
+      publishElementErasing()
     } else if let activePenStroke {
       activePenStroke.replacePredictions(with: [])
       presentActivePen?(activePenStroke)
@@ -1102,16 +1100,20 @@ final class PaperInputView: UIView {
 
     if actionTool == .eraser, let activeEraserStroke {
       presentActiveEraser?(activeEraserStroke)
-      if !actionElementTargets.isEmpty, let mutation = actionMutation(), let pageID = quickShapePageID {
-        onElementErasing([.init(id: actionStrokeID, surface: .page(pageID), samples: mutation.samples,
-          targets: mutation.elementTargets ?? [])], actionStrokeID)
-      }
+      publishElementErasing()
     } else if let activePenStroke {
       activePenStroke.replacePredictions(
         with: processedPredictedPenPoints().map(SpatialInkSample.init)
       )
       presentActivePen?(activePenStroke)
     }
+  }
+
+  private func publishElementErasing() {
+    guard let source = activeEraserStroke?.measured, let pageID = quickShapePageID else { return }
+    let targets = elementContact.selected
+    onElementErasing(targets.isEmpty ? [] : [.init(id: actionStrokeID, surface: .page(pageID),
+      samples: source.frozen().measurements, targets: targets)], actionStrokeID)
   }
 
   private func inkColor(_ style: PenStyle) -> SpatialInkColor {
@@ -1122,7 +1124,9 @@ final class PaperInputView: UIView {
     let count=min(source.count,quickShape.fit?.sampleCount ?? source.count)
     guard count > 0 else { return nil }
     // Freeze the accepted tree; predictions never enter the durable source.
-    return source.frozen(through:count).restoredAction().erasingElements(actionElementTargets)
+    let action = source.frozen(through:count).restoredAction()
+    return PageInkAction(id: action.id, tool: action.tool, color: action.color, measurements: action.samples,
+      sequence: action.sequence, isActive: action.isActive, elementTargets: elementContact.selected)
   }
 
   private func scheduleFinalization() {
@@ -1193,7 +1197,7 @@ final class PaperInputView: UIView {
     let reportedPencilActivity = reportsPencilActivity
     clearActiveAction?()
     onElementErasing([], actionStrokeID)
-    actionElementTargets = []
+    elementContact = InkElementContact([])
     activeTouch = nil
     actionTool = nil
     actionPenStyle = nil

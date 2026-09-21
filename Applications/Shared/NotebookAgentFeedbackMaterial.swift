@@ -65,24 +65,37 @@ struct NotebookAgentFeedbackMaterial: View {
   }
 
   private func mask(_ layer: NotebookGraphicView.PaintLayer) -> some View {
-    Canvas { context, size in
-      var context = context
-      if let clip = surface.clipRect { context.clip(to:Path(clip.offsetBy(dx:-surface.rect.minX,dy:-surface.rect.minY))) }
-      for rect in surface.occludedRects { context.clip(to:Path(rect.offsetBy(dx:-surface.rect.minX,dy:-surface.rect.minY)),options:.inverse) }
-      context.drawLayer { mask in
-        Self.paintMask(surface,layer:layer,in:mask)
-        if layer == .fillMask, surface.graphic != nil {
-          var ink = mask; ink.blendMode = .destinationOut
-          Self.paintMask(surface,layer:.inkMask,in:ink)
-        }
-        for occluder in surface.occluders {
-          var cut = mask
-          cut.blendMode = .destinationOut
-          cut.translateBy(x:occluder.rect.minX-surface.rect.minX,y:occluder.rect.minY-surface.rect.minY)
-          Self.paintMask(occluder,layer:.content,in:cut)
-        }
+    ZStack(alignment:.topLeading) {
+      maskBody(surface,layer:layer)
+      if layer == .fillMask, surface.graphic != nil {
+        maskBody(surface,layer:.inkMask).blendMode(.destinationOut)
+      }
+      ForEach(Array(surface.occluders.enumerated()),id:\.offset) { _,occluder in
+        maskBody(occluder,layer:.content)
+          .offset(x:occluder.rect.minX-surface.rect.minX,y:occluder.rect.minY-surface.rect.minY)
+          .blendMode(.destinationOut)
+      }
+    }.compositingGroup().mask {
+      Canvas { context,size in
+        if let clip=surface.clipRect { context.clip(to:Path(clip.offsetBy(dx:-surface.rect.minX,dy:-surface.rect.minY))) }
+        for rect in surface.occludedRects { context.clip(to:Path(rect.offsetBy(dx:-surface.rect.minX,dy:-surface.rect.minY)),options:.inverse) }
+        context.fill(Path(CGRect(origin:.zero,size:size)),with:.color(.white))
       }
     }
+  }
+
+  private func maskBody(_ value:NotebookAgentFeedbackSurface,layer:NotebookGraphicView.PaintLayer) -> some View {
+    Group {
+      if let graphic=value.graphic,graphic.freehand != nil {
+        if layer != .fillMask { NotebookGraphicView(graphic:graphic,layout:value.layout) }
+        else { Color.clear }
+      } else {
+        Canvas { context,_ in Self.paintMask(value,layer:layer,in:context) }
+      }
+    }.frame(width:value.rect.width/value.scale,height:value.rect.height/value.scale)
+      .erased(by:value.erasures,transform:value.graphic?.transform,layout:value.layout)
+      .scaleEffect(value.scale,anchor:.topLeading)
+      .frame(width:value.rect.width,height:value.rect.height,alignment:.topLeading)
   }
 
   /// The content lane is the alpha of a later real object, not its bounding
@@ -91,11 +104,9 @@ struct NotebookAgentFeedbackMaterial: View {
     layer: NotebookGraphicView.PaintLayer, in original: GraphicsContext) {
     var context = original
     let localSize = CGSize(width:surface.rect.width/surface.scale,height:surface.rect.height/surface.scale)
-    context.scaleBy(x:surface.scale,y:surface.scale)
     if let graphic = surface.graphic {
-      NotebookGraphicView.paint(graphic,layout:surface.layout,in:context,size:localSize,erasures:surface.erasures,layer:layer)
+      NotebookGraphicView.paint(graphic,layout:surface.layout,in:context,size:localSize,layer:layer)
     } else {
-      NotebookElementErasurePaint.clip(surface.erasures,context:&context,size:localSize)
       if surface.isSurface, layer != .inkMask {
         context.fill(Path(CGRect(origin:.zero,size:localSize)),with:.color(.white))
       } else if layer != .fillMask {

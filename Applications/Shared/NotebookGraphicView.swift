@@ -8,8 +8,30 @@ struct NotebookGraphicView: View {
   var layout: NotebookGraphicLayout? = nil
   var erasures: [InkElementErasure] = []
   var appearance: NotebookElementAppearance? = nil
+  var live = true
   var body: some View {
-    Canvas { context, size in Self.paint(graphic, layout: layout, in: context, size: size, erasures: erasures, appearance: appearance) }
+    Group {
+      if live {
+        ZStack {
+          if let ink = graphic.freehand, graphic.showsGeometry {
+            NotebookInkMaterialView(freehand:ink,transform:graphic.transform,layout:layout)
+            if !graphic.label.isEmpty {
+              Canvas { context, size in
+                var context = context
+                if let projection = layout?.projection { context.concatenate(projection.transform) }
+                let size = layout?.projection?.size ?? size
+                context.draw(Text(graphic.label).font(.system(size:24)).foregroundStyle(graphic.style.stroke.swiftUIColor),
+                  at:.init(x:size.width/2,y:size.height/2))
+              }
+            }
+          } else {
+            Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size) }
+          }
+        }.erased(by:erasures,appearance:appearance,transform:graphic.transform,layout:layout)
+      } else {
+        Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size, erasures:erasures, appearance:appearance) }
+      }
+    }
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(graphic.label.isEmpty ? graphic.shape.displayName : graphic.label)
     .accessibilityAddTraits(.isImage)

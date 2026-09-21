@@ -151,23 +151,27 @@ struct NotebookTldrawCompositionView: View {
 private struct NotebookTldrawPreview: View {
   let fragment: NotebookPasteFragment
   var body: some View {
-    Canvas { context,size in
-      let scale = min((size.width-32)/max(1,fragment.size.x),(size.height-32)/max(1,fragment.size.y))
-      var canvas=context
-      canvas.translateBy(x:(size.width-fragment.size.x*scale)/2,y:(size.height-fragment.size.y*scale)/2)
-      canvas.scaleBy(x:scale,y:scale)
+    GeometryReader { geometry in
+      let scale = min((geometry.size.width-32)/max(1,fragment.size.x),(geometry.size.height-32)/max(1,fragment.size.y))
       let surface=SurfaceID.page(UUID(uuidString:"00000000-0000-0000-0000-000000000001")!)
       let graph=NotebookGraphicGraph(fragment.elements.compactMap { e in e.graphic.map { .init(id:e.id,graphic:$0,frame:e.frame,surface:surface,shown:true) } })
-      for e in fragment.elements {
-        var layer=canvas
-        if let graphic=e.graphic, let layout=graph.resolve(e.id).layout {
-          layer.translateBy(x:layout.frame.x,y:layout.frame.y)
-          NotebookGraphicView.paint(graphic,layout:layout,in:layer,size:.init(width:layout.frame.width,height:layout.frame.height))
-        } else {
-          // Native text preview is deliberately not a browser executing clipboard HTML.
-          layer.draw(Text((try? AttributedString(markdown:e.source)) ?? AttributedString(e.source)).font(.system(size:24)),in:.init(x:e.frame.x,y:e.frame.y,width:e.frame.width,height:e.frame.height))
+      ZStack(alignment:.topLeading) {
+        ForEach(fragment.elements,id:\.id) { e in
+          if let graphic=e.graphic,let layout=graph.resolve(e.id).layout {
+            NotebookGraphicView(graphic:graphic,layout:layout)
+              .frame(width:layout.frame.width,height:layout.frame.height)
+              .position(x:layout.frame.x+layout.frame.width/2,y:layout.frame.y+layout.frame.height/2)
+          } else {
+            // Clipboard HTML is never executed by the native text preview.
+            Text((try? AttributedString(markdown:e.source)) ?? AttributedString(e.source)).font(.system(size:24))
+              .frame(width:e.frame.width,height:e.frame.height,alignment:.topLeading)
+              .position(x:e.frame.x+e.frame.width/2,y:e.frame.y+e.frame.height/2)
+          }
         }
-      }
+      }.frame(width:fragment.size.x,height:fragment.size.y)
+        .scaleEffect(scale)
+        .frame(width:geometry.size.width,height:geometry.size.height)
+        .clipped()
     }.accessibilityLabel("Предпросмотр выбранного фрагмента")
   }
 }

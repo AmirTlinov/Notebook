@@ -75,10 +75,18 @@ struct NotebookElementErasing {
   @ObservationIgnored private(set) var preparationCount = 0
   private var publication: UInt64 = 0
 
+  func preparedAppearance(surface:SurfaceID,id:String,graphic:NotebookGraphic?,layout:NotebookGraphicLayout?,
+    size:CGSize,erasures:[InkElementErasure]) -> NotebookElementAppearance? {
+    if erasures.contains(where: { $0.target.wholeElement }) { return .init(graphic:nil,layout:nil,size:size,erasures:erasures) }
+    guard let entry=entries[.init(surface:surface,id:id)],
+      entry.input == Input(graphic:graphic,layout:layout,size:size,erasures:erasures) else { return nil }
+    return entry.value
+  }
+
   /// A changed input never receives an old appearance. While preparation is
   /// pending, measured ink still paints, but cannot become a ghost hit target.
   func appearance(surface: SurfaceID, id: String, graphic: NotebookGraphic?,
-    layout: NotebookGraphicLayout?, size: CGSize, erasures: [InkElementErasure]) -> NotebookElementAppearance? {
+    layout: NotebookGraphicLayout?, size: CGSize, erasures: [InkElementErasure], prepares: Bool = true) -> NotebookElementAppearance? {
     _ = publication
     guard !stopped else { return nil }
     let address = Address(surface:surface,id:id)
@@ -94,6 +102,9 @@ struct NotebookElementErasing {
     sequence &+= 1
     if let entry = entries[address], entry.input == input { return entry.value }
     entries.removeValue(forKey:address)?.task.cancel()
+    // A moving contact already has exact compact GPU coverage. Semantic
+    // booleans run once after lift, not once for every intermediate prefix.
+    guard prepares else { return nil }
     let token = sequence, worker = preparation
     let task = Task { [weak self] in
       let value = await worker.prepare(input)
@@ -167,6 +178,12 @@ struct NotebookElementErasing {
 }
 
 extension NotebookAppModel {
+  func isElementErasing(_ id: String, on surface: SurfaceID) -> Bool {
+    workingElementErasures.values.contains { contacts in
+      contacts.contains { !$0.accepted && $0.surface == surface && $0.targets.contains { $0.elementID == id } }
+    }
+  }
+
   func eraserTargets(pageID: UUID) -> [InkElementTarget] {
     guard let page = pages[pageID] else { return [] }
     let graph = graphicGraph(page: page)

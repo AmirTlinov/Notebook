@@ -784,7 +784,7 @@
           return SpatialInkSample(point:.init(x:465+80*cos(t),y:745+70*sin(t)),timeOffset:Double(i)/240,
             width:260,opacity:1,force:1,azimuth:0,altitude:1)
         }
-        let erased = PageInkAction(tool:.eraser,samples:sweeps).erasingElements(erasedFrames.enumerated().map {
+        let erased = PageInkAction(tool:.eraser,samples:sweeps,elementTargets:erasedFrames.enumerated().map {
           .init(elementID:"erased-\($0.offset)",frame:$0.element)
         })
         let partialSamples = (0..<2048).map { i in
@@ -792,7 +792,7 @@
           return SpatialInkSample(point:.init(x:80+2*cos(t),y:320+70*sin(t)),timeOffset:Double(i)/240,
             width:40,opacity:1,force:1,azimuth:0,altitude:1)
         }
-        let partial = PageInkAction(tool:.eraser,samples:partialSamples).erasingElements([
+        let partial = PageInkAction(tool:.eraser,samples:partialSamples,elementTargets:[
           .init(elementID:"native-circle",frame:try node["frame"]!.decode(PageRect.self))])
         for (offset,action) in [erased,partial].enumerated() {
           let change = try page.prepareInkChange(.append(action),stamp:.init(counter:UInt64(100+offset),actor:actor))

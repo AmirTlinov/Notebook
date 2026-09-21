@@ -46,17 +46,29 @@ struct NotebookGraphicBatchView: View {
     let appearances = Dictionary(uniqueKeysWithValues: objects.compactMap { object -> (String, NotebookElementAppearance)? in
       guard let value = model.elementErasureCache.appearance(surface:surface,id:object.id,
         graphic:graph.nodes[object.id]?.graphic,layout:object.layout,
-        size:.init(width:object.layout.frame.width,height:object.layout.frame.height),erasures:erasures[object.id] ?? []) else { return nil }
+        size:.init(width:object.layout.frame.width,height:object.layout.frame.height),erasures:erasures[object.id] ?? [],prepares:!model.isElementErasing(object.id,on:surface)) else { return nil }
       return (object.id,value)
     })
     ZStack(alignment: .topLeading) {
-      Canvas { context, _ in
-        for object in objects where object.id != editingID {
-          var local = context
-          local.translateBy(x: object.frame.minX, y: object.frame.minY)
-          local.scaleBy(x: scale, y: scale)
-          NotebookGraphicView.paint(graph.nodes[object.id]!.graphic, layout: object.layout, in: local,
-            size: .init(width: object.layout.frame.width, height: object.layout.frame.height), erasures: erasures[object.id] ?? [], appearance: appearances[object.id])
+      ForEach(paintRuns(objects.filter { $0.id != editingID }, erasures:erasures)) { part in
+        if part.isMaterial,let object=part.objects.first {
+          NotebookGraphicView(graphic:graph.nodes[object.id]!.graphic,layout:object.layout,
+            erasures:erasures[object.id] ?? [],appearance:appearances[object.id])
+            .environment(\.inkMaterialReadiness,materialReadiness(object.id))
+            .frame(width:object.layout.frame.width,height:object.layout.frame.height)
+            .scaleEffect(scale)
+            .frame(width:object.frame.width,height:object.frame.height)
+            .position(x:object.frame.midX,y:object.frame.midY)
+        } else {
+          Canvas { context, _ in
+            for object in part.objects {
+              var local=context
+              local.translateBy(x:object.frame.minX,y:object.frame.minY)
+              local.scaleBy(x:scale,y:scale)
+              NotebookGraphicView.paint(graph.nodes[object.id]!.graphic,layout:object.layout,in:local,
+                size:.init(width:object.layout.frame.width,height:object.layout.frame.height))
+            }
+          }
         }
       }
       .accessibilityRepresentation {
@@ -75,11 +87,33 @@ struct NotebookGraphicBatchView: View {
         NotebookGraphicElementView(graphic: graph.nodes[object.id]!.graphic, reference: reference(object.id), layout: object.layout)
           .frame(width: object.layout.frame.width, height: object.layout.frame.height)
           .erased(by: erasures[object.id] ?? [], appearance:appearances[object.id],transform:graph.nodes[object.id]?.graphic.transform,layout:object.layout)
+          .environment(\.inkMaterialReadiness,materialReadiness(object.id))
           .scaleEffect(scale)
           .frame(width: object.frame.width, height: object.frame.height)
           .position(x: object.frame.midX, y: object.frame.midY)
       }
     }.frame(width: size.width, height: size.height)
+  }
+
+  private func materialReadiness(_ element:String) -> NotebookInkMaterialReceiver? {
+    guard let cohort=composition.cohort else { return nil }
+    let address=SceneSourceAddress(plane:run.plane,elementID:element)
+    return .init(id:cohort.paintID,report:{ id,content,ready in cohort.recordMaterial(address,id:id,content:content,ready:ready) })
+  }
+
+  private struct PaintRun: Identifiable {
+    let id:String
+    let isMaterial:Bool
+    var objects:[Object]
+  }
+  private func paintRuns(_ objects:[Object],erasures:[String:[InkElementErasure]]) -> [PaintRun] {
+    var runs:[PaintRun]=[]
+    for object in objects {
+      let material=graph.nodes[object.id]?.graphic.freehand != nil || !(erasures[object.id] ?? []).isEmpty
+      if !material,runs.last?.isMaterial == false { runs[runs.count-1].objects.append(object) }
+      else { runs.append(.init(id:object.id,isMaterial:material,objects:[object])) }
+    }
+    return runs
   }
 
   private func reference(_ id: String) -> EditableElementReference {

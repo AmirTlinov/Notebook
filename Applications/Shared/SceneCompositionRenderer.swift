@@ -384,7 +384,7 @@ final class SceneCompositionRenderer {
     if let graphic = element.graphic {
       if graphic.showsGeometry {
         let size = graphicLayout?.frame ?? .init(x:0,y:0,width:element.frame.width,height:element.frame.height)
-        try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:graphicLayout, erasures: erasures, appearance: appearance),
+        try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:graphicLayout, erasures: erasures, appearance: appearance,live:false),
           size: .init(width: size.width, height: size.height), in: frame)
       }
       return

@@ -57,6 +57,30 @@ covers ink, undo, off-window elements and child portals, but excludes the board'
 incoming camera. Ready tiles can be reused through the same bounded resource pool
 without retaining old cohorts or increasing budgets.
 
+## Interaction work is incremental
+
+`InkElementContact` is the single eraser-contact selector on iPad paper, the
+spatial canvas and Mac paper. It freezes the admitted targets once, queries their
+bounds for each changed measured segment and retains the first hit per target.
+Estimated-input corrections retract only hits from the replaced suffix; the same
+selected targets become the accepted action. Full-prefix target scans exist only
+as exhaustive test references, not as a second runtime implementation.
+
+Live freehand graphics and pending measured cutouts use `InkMaterialRenderer`
+inside the existing `InkCanvasView`. The geometry owner retains visible compact
+buffers; camera motion changes their affine, and an appended eraser sample keeps
+the unchanged prefix. There is no live `CGImage` readback or full triangle-path
+softmask. Explicit exports still use the snapshot renderer. Drawable admission,
+MSAA, first-visible-frame readiness and terminal GPU drain have one owner.
+Page and scene-cohort receipts aggregate the exact material sources; transferring
+a ready host to another cohort replays readiness without redrawing it.
+
+At a fixed camera, active input reuses the unchanged committed-ink query result.
+Camera, source and buffer eviction invalidate that result. Mac input no longer
+waits for accepted-action delivery before admitting the next contact; the model's
+existing ordered write queue owns persistence. Native text extents are bounded
+and cached by content, formatting and line width, never by camera/position.
+
 ## Compact ink display
 
 Measured source data and persisted actions are unchanged. `InkRenderGeometry` owns

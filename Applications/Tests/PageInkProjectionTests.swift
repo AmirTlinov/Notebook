@@ -88,6 +88,25 @@ final class PageInkProjectionTests: XCTestCase {
     XCTAssertEqual(resources.reservedBytes, 0, "Empty pages retain routing, not fictitious backing")
   }
 
+  func testActiveSamplesDoNotQueryTheUnchangedHundredThousandPointBaseline() async throws {
+    let (window,paper)=try makePaper()
+    defer { paper.retireInput();window.isHidden=true;window.rootViewController=nil }
+    let samples=(0..<100_000).map { i in SpatialInkSample(point:.init(x:Double(i%1000)/4+20,y:Double(i/1000)*2+20),
+      timeOffset:Double(i)/240,width:2,opacity:1,force:1,azimuth:0,altitude:1) }
+    paper.inkView.apply(PageInkDrawing(actions:[.init(tool:.pen,samples:samples)]))
+    try await ready(paper.inkView)
+    let visits=paper.inkView.committedIndexVisitCount
+    XCTAssertGreaterThan(visits,0)
+    let pen=ActiveInkStroke(style:.standard)
+    for i in 0..<20 {
+      pen.replaceMeasuredTail(from:i,with:[point(CGFloat(30+i*5),150,width:4)])
+      paper.inkView.displayActiveStroke(pen)
+      try await Task.sleep(for:.milliseconds(20))
+    }
+    XCTAssertEqual(paper.inkView.committedIndexVisitCount,visits,"Only the active tail changes at a fixed camera")
+    paper.inkView.commitActiveStroke();try await ready(paper.inkView)
+  }
+
   private func makePaper() throws -> (UIWindow, PaperCanvasContainerView) {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene:scene), controller = UIViewController()

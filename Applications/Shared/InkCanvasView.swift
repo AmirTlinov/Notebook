@@ -202,7 +202,16 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   /// projects these already presented pixels while another basis is prepared.
   private(set) var spatialCamera: SpatialCamera?
   private(set) var spatialViewport = SpatialPoint(x: 1, y: 1)
-  private var committedBatches: [CommittedBatch] = []
+  private struct CommittedViewport: Equatable {
+    let camera: SpatialCamera?
+    let viewport: SpatialPoint
+    let size: CGSize
+    let crop: CGRect?
+    let pixels: CGSize
+    let scale: Double?
+  }
+  private var committedViewport: (key: CommittedViewport, visible: [(Int,Range<Int>)])?
+  private var committedBatches: [CommittedBatch] = [] { didSet { committedViewport = nil } }
   private var spatialActionBase: [CommittedBatch]?
   private(set) var installedSpatialSource: SpatialInkInstalledSource?
   private(set) var spatialSourceGeneration: UInt64 = 0
@@ -221,6 +230,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var spatialHandoffIsStopping = false
   private var spatialStagingID: UUID?
   private weak var stagedSpatialFrame: PreparedSpatialFrame?
+  private var material: InkMaterialRenderer?
+  var materialUploadedNodeCount: Int { material?.uploadedNodes ?? 0 }
   private var pageDrawing: PageInkDrawing?
   private var drawingIsPreparing = false
   private var pageRevision: UInt64 = 0
@@ -395,6 +406,15 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     requestFrame()
   }
 
+  func updateMaterial(_ content: NotebookInkMaterialView.Content) {
+    guard !spatialHandoffIsStopping else { return }
+    if material == nil { material = InkMaterialRenderer() }
+    guard material!.update(content) else { return }
+    clearColor = material!.isMask ? .init(red:1,green:1,blue:1,alpha:1) : .init(red:0,green:0,blue:0,alpha:0)
+    beginStableContentUpdate()
+    requestFrame()
+  }
+
   private func admitPageDrawable(samples: Int) -> Bool {
     guard pageRenderRegion != nil else { return true }
     if pageDrawableReservation != nil, pageAdmittedSize == drawableSize { return true }
@@ -439,6 +459,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     // drain must release its source and CPU mesh too. Temporary unmount and
     // parking never enter this terminal path.
     cancelPendingPageMesh()
+    material = nil
+    pageDrawableReservation = nil; pageMultisample = nil
     pageDrawing = nil; baselineTexture = nil; baselinePNG = nil; baselineReservation = nil
     installedPageRevision = nil; pendingPageRevision = nil
     committedBatches.removeAll(); spatialActionBase = nil
@@ -585,6 +607,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     spatialMeshInstallCount += 1
     beginStableContentUpdate()
     pageMeshTask?.cancel(); pageMeshTask = nil
+    material = nil
+    pageDrawableReservation = nil; pageMultisample = nil
     pageDrawing = nil; baselineTexture = nil; baselinePNG = nil; baselineReservation = nil
     installedPageRevision = nil; pendingPageRevision = nil
     committedBatches = mesh.batches.map(CommittedBatch.init)
@@ -795,6 +819,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     drawableRequestCount += 1
     submittedTileCount += passes.count
     needsRevealedFrame = false
+    var materialReservations: [RasterReservation] = []
     for (descriptor, _, viewport, clip, tileVisible) in passes {
       descriptor.colorAttachments[0].loadAction = .clear
       descriptor.colorAttachments[0].clearColor = clearColor
@@ -815,6 +840,16 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       encodeSpatial(
         batches: committedBatches, visible: tileVisible, active: active,
         camera: spatialCamera, viewport: spatialViewport, size: bounds.size, clip: clip, encoder: encoder)
+      if let material, let device {
+        do {
+          materialReservations += try material.encode(
+            region:pageRenderRegion ?? CGRect(origin:.zero,size:bounds.size),
+            sourceSize:pageSourceSize == .zero ? bounds.size : pageSourceSize,pixels:drawableSize,
+            device:device,resources:resources,owner:physicalAdmission,encoder:encoder)
+        } catch {
+          encoder.endEncoding(); renderFailure = .resourceLimit; return
+        }
+      }
       encoder.endEncoding()
     }
     presentsWithTransaction = false
@@ -826,7 +861,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         && pageGeometryIsReady
       ? stableContentRevision : nil
     let submittedRevision = stableContentRevision
-    let heldGeometry = visible.compactMap { committedBatches[$0.0].buffers[$0.1]?.reservation }
+    let heldGeometry = materialReservations + visible.compactMap { committedBatches[$0.0].buffers[$0.1]?.reservation }
       + (activeBufferReservations[frameSlot].map { [$0] } ?? [])
       + (baselineReservation.map { [$0] } ?? [])
       + (pageDrawableReservation.map { [$0] } ?? [])
@@ -1094,6 +1129,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     spatialSourceGeneration &+= 1; stableContentRevision &+= 1
     if frame.replacesMesh { spatialMeshInstallCount += 1 }
     cancelPendingPageMesh()
+    material = nil
+    pageDrawableReservation = nil; pageMultisample = nil
     pageDrawing = nil; baselineTexture = nil; baselinePNG = nil; baselineReservation = nil; drawingIsPreparing = false
     installedPageRevision = nil; pendingPageRevision = nil
     committedBatches = frame.batches; drawnTiles = nil; discardActiveAction()
@@ -1252,7 +1289,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   @discardableResult
   private func presentEmptyContentIfReady() -> Bool {
-    guard !spatialHandoffIsStopping, spatialStagingID == nil, pageGeometryIsReady, baselineTexture == nil,
+    guard material == nil, !spatialHandoffIsStopping, spatialStagingID == nil, pageGeometryIsReady, baselineTexture == nil,
       activeInkStroke == nil, activeEraserStroke == nil,
       committedBatches.allSatisfy({ batch in
         if batch.mesh.isEmpty { return true }
@@ -1313,6 +1350,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   private func releaseGeometryBuffers() {
+    material?.releaseBuffers()
     drawnTiles = nil
     for index in committedBatches.indices {
       committedBatches[index].buffers.removeAll(keepingCapacity: true)
@@ -1424,6 +1462,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   private func prepareCommittedBuffers() -> [(Int, Range<Int>)]? {
+    let key=CommittedViewport(camera:spatialCamera,viewport:spatialViewport,size:bounds.size,
+      crop:pageRenderRegion,pixels:spatialTarget?.layout.pixelSize ?? drawableSize,scale:spatialDrawableScale)
+    if let prepared=committedViewport,prepared.key == key { return prepared.visible }
     guard let visible = try? prepareBuffers(in: &committedBatches,
       camera: spatialCamera, viewport: spatialViewport, size: bounds.size) else { return nil }
     visibleCommittedVertexCount = visible.reduce(0) {
@@ -1433,6 +1474,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
           flags: committedBatches[$1.0].buffers[$1.1]!.geometry.chunk.descriptor.flags)
     }
     visibleCommittedChunkCount = visible.count
+    // Mutating batches (including resource eviction) invalidates this one
+    // selection. Active samples alone never re-query the unchanged baseline.
+    committedViewport=(key,visible)
     return visible
   }
 

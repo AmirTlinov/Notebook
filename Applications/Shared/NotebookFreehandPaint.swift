@@ -1,8 +1,8 @@
 import NotebookCore
 import SwiftUI
 
-/// Canvas owns the disposable image; enclosing scene tiles own retained pixels.
-/// Do not keep a second image cache or reinterpret measured mesh coverage here.
+/// Explicit snapshots/exports alone read back a disposable image. Live vectors
+/// use NotebookInkMaterialView; both paths share the compact geometry renderer.
 enum NotebookFreehandPaint {
   static func paint(_ ink: NotebookFreehand, transform: NotebookGraphicTransform?, context: GraphicsContext, size: CGSize, mask: Bool) {
     let frame = CGRect(origin:.zero,size:size)

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import CoreGraphics
 #if os(iOS)
 import UIKit
@@ -15,6 +16,13 @@ private typealias NativeColor = NSColor
 public enum NotebookTextTypography {
   public static let fonts: [(name: String?, title: String)] = [(nil,"Системный"),("Georgia","С засечками"),
     ("Menlo-Regular","Моноширинный"),("ChalkboardSE-Regular","Рукописный"),("Noteworthy-Light","Заметки")]
+  private struct ExtentKey: Hashable, Sendable { let text:String; let style:NativeTextStyle; let width:Double }
+  private struct Extents: Sendable {
+    var values:[ExtentKey:CGSize]=[:]
+    var order:[(key:ExtentKey,cost:Int)]=[]
+    var bytes=0
+  }
+  private static let extents=Mutex(Extents())
   private static let formatKey = NSAttributedString.Key("notebook.nativeTextFormat")
 
   /// The authored frame is a text layout constraint, not a minimum selection
@@ -24,9 +32,24 @@ public enum NotebookTextTypography {
     guard !text.isEmpty else { return frame }
     // Match Text's line metrics. Opting into legacy font leading on macOS
     // can measure six 24-point lines as 138 rather than 144 and truncate them.
+    let key=ExtentKey(text:text,style:style,width:frame.width)
+    if let size=extents.withLock({ $0.values[key] }) {
+      return .init(x:frame.x,y:frame.y,width:size.width,height:size.height)
+    }
     let rect = attributed(text,style:style).boundingRect(with:.init(width:frame.width,height:CGFloat.greatestFiniteMagnitude),
       options:[.usesLineFragmentOrigin],context:nil)
-    return .init(x:frame.x,y:frame.y,width:min(frame.width,max(1,ceil(rect.width))),height:max(1,ceil(rect.height)))
+    let size=CGSize(width:min(frame.width,max(1,ceil(rect.width))),height:max(1,ceil(rect.height)))
+    // Camera/placement never changes line layout. Retain only bounded extents,
+    // not TextKit graphs or attributed documents, at the typography owner.
+    let cost=text.utf8.count+(style.runs?.count ?? 0)*128+256
+    extents.withLock { cache in
+      guard cost <= 2_097_152,cache.values[key] == nil else { return }
+      while cache.values.count >= 256 || cache.bytes+cost > 2_097_152 {
+        let old=cache.order.removeFirst();cache.values[old.key]=nil;cache.bytes -= old.cost
+      }
+      cache.values[key]=size;cache.order.append((key,cost));cache.bytes += cost
+    }
+    return .init(x:frame.x,y:frame.y,width:size.width,height:size.height)
   }
   public static func frame(_ element: AgentElement) -> PageRect {
     element.kind == .nativeText ? fittingFrame(element.source,style:element.textStyle ?? .standard,in:element.frame) : element.frame

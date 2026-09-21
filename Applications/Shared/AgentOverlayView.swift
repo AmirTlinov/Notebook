@@ -16,6 +16,7 @@ struct AgentOverlayView: View {
   var visibleRegion: CGRect? = nil
 
   @State private var readiness = AgentOverlayReadiness()
+  @State private var readinessID = UUID()
 
   private var display:NotebookPageGraphicDisplay { model.pageGraphicDisplay(page,in:visibleRegion) }
 
@@ -46,7 +47,7 @@ struct AgentOverlayView: View {
       let frame = layout?.frame ?? element.frame
       guard let value = model.elementErasureCache.appearance(surface:.page(pageID),id:element.id,
         graphic:graph.nodes[element.id]?.graphic,layout:layout,size:presentations[element.id]?.bodySize ?? .init(width:frame.width,height:frame.height),
-        erasures:erasures[element.id] ?? []) else { return nil }
+        erasures:erasures[element.id] ?? [],prepares:!model.isElementErasing(element.id,on:.page(pageID))) else { return nil }
       return (element.id,value)
     })
     ZStack(alignment: .topLeading) {
@@ -97,6 +98,12 @@ struct AgentOverlayView: View {
           height: frame.height
         )
         .erased(by:presentation == nil ? cuts : [], appearance:presentation == nil ? appearance : nil,transform:graph.nodes[element.id]?.graphic.transform,layout:layout)
+        .environment(\.inkMaterialReadiness, .init(id:readinessID,report:{ id,content,ready in
+          var next=readiness
+          if next.recordMaterial(element.id,id:id,content:content,ready:ready) {
+            readiness=next;publishReadiness()
+          }
+        }))
         .offset(x: frame.x, y: frame.y)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent-element-\(element.id)")
@@ -107,10 +114,11 @@ struct AgentOverlayView: View {
     .coordinateSpace(name: NotebookManipulationSpace.material)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .onAppear { publishReadiness() }
-    .onChange(of: page.elements) { _, updatedElements in
-      readiness.retain(updatedElements)
+    .onChange(of: page.elementSourceIdentity) { _, _ in
+      readiness.retain(page.elements)
       publishReadiness()
     }
+    .onChange(of: page.drawingStamp) { _, _ in publishReadiness() }
     .onChange(of: pageSize) { _, _ in publishReadiness() }
   }
 
@@ -121,7 +129,19 @@ struct AgentOverlayView: View {
   }
 
   private func publishReadiness() {
-    onRenderReady(readiness.isReady(for: display.elements))
+    let display=display,cuts=model.elementErasures(on:.page(pageID))
+    let expected=Dictionary(uniqueKeysWithValues:display.elements.map { element in
+      let graphic=display.graph.nodes[element.id]?.graphic
+      let layout=display.layouts[element.id]
+      let presentation=model.elementPresentation(.page(pageID:pageID,elementID:element.id),graph:display.graph)
+      let frame=layout?.frame ?? element.frame
+      let erasures=cuts[element.id] ?? []
+      let appearance=model.elementErasureCache.preparedAppearance(surface:.page(pageID),id:element.id,
+        graphic:graphic,layout:layout,size:presentation?.bodySize ?? .init(width:frame.width,height:frame.height),erasures:erasures)
+      return (element.id,NotebookInkMaterialView.Content.required(graphic:graphic,
+        layout:presentation == nil ? layout : nil,erasures:erasures,appearance:appearance))
+    })
+    onRenderReady(readiness.isReady(for:display.elements,materials:expected))
   }
 }
 
@@ -129,6 +149,10 @@ struct AgentOverlayView: View {
 /// survive an edit. A late teardown of the old source cannot clear its successor.
 struct AgentOverlayReadiness {
   private var sources: [String: AgentElement] = [:]
+  private var materials: [String:NotebookInkMaterialReadiness] = [:]
+  mutating func recordMaterial(_ element:String,id:UUID,content:NotebookInkMaterialView.Content?,ready:Bool) -> Bool {
+    materials[element,default:.init()].record(id,content:content,ready:ready)
+  }
 
   mutating func record(_ element: AgentElement, ready: Bool) {
     if ready { sources[element.id] = element }
@@ -138,9 +162,13 @@ struct AgentOverlayReadiness {
   mutating func retain(_ elements: [AgentElement]) {
     let current = Dictionary(elements.map { ($0.id, $0) }, uniquingKeysWith: { _, newest in newest })
     sources = sources.filter { current[$0.key] == $0.value }
+    materials = materials.filter { current[$0.key] != nil }
   }
 
-  func isReady(for elements: [AgentElement]) -> Bool {
-    elements.allSatisfy { [.graphic,.nativeText].contains($0.kind) || sources[$0.id] == $0 }
+  func isReady(for elements: [AgentElement],materials required:[String:[NotebookInkMaterialView.Content]] = [:]) -> Bool {
+    elements.allSatisfy { element in
+      ([.graphic,.nativeText].contains(element.kind) || sources[element.id] == element)
+        && (materials[element.id] ?? .init()).isReady(for:required[element.id] ?? [])
+    }
   }
 }
