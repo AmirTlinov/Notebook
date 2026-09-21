@@ -10,13 +10,19 @@ struct NotebookInkMaterialView: View {
   var erasures: [InkElementErasure] = []
   var transform: NotebookGraphicTransform? = nil
   var layout: NotebookGraphicLayout? = nil
-  var body: some View { Native(content:.init(freehand:freehand,erasures:erasures,transform:transform,layout:layout)).allowsHitTesting(false) }
+  var mask: NotebookGraphicMask? = nil
+  var body: some View { Native(content:.init(freehand:freehand,erasures:erasures,transform:transform,layout:layout,mask:mask)).allowsHitTesting(false) }
 
   struct Content: Equatable {
     let freehand: NotebookFreehand?
     let erasures: [InkElementErasure]
     let transform: NotebookGraphicTransform?
     let layout: NotebookGraphicLayout?
+    let mask: NotebookGraphicMask?
+    init(freehand:NotebookFreehand?,erasures:[InkElementErasure],transform:NotebookGraphicTransform?,
+      layout:NotebookGraphicLayout?,mask:NotebookGraphicMask? = nil) {
+      self.freehand=freehand;self.erasures=erasures;self.transform=transform;self.layout=layout;self.mask=mask
+    }
   }
   private struct Native: PlatformViewRepresentable {
     @Environment(\.scenePlaneProjection) private var projection
@@ -162,19 +168,32 @@ final class InkMaterialRenderer {
       y:.init(Float(basis.b/unit.width),Float(basis.d/unit.height),Float(basis.ty-region.minY),0))
   }
 
+  static func queryRegion(_ content:NotebookInkMaterialView.Content,region:CGRect,sourceSize:CGSize,density:CGFloat)->CGRect {
+    guard let mask=content.mask else { return region }
+    let frame=CGRect(origin:.zero,size:sourceSize)
+    let visible=mask.conservativeBounds(in:frame,projection:content.layout?.projection)
+    guard !visible.isNull,!visible.isEmpty else { return .null }
+    return region.intersection(visible.insetBy(dx:-1/density,dy:-1/density))
+  }
+
   func encode(region:CGRect, sourceSize:CGSize, pixels:CGSize,
     device:any MTLDevice, resources:SceneRenderResources, owner:ScenePhysicalOwnerLease?,
     encoder:any MTLRenderCommandEncoder) throws -> [RasterReservation] {
     guard let ink=InkRasterRenderer.shared.ink,let erase=InkRasterRenderer.shared.eraser,
       let connectivity=InkRasterRenderer.shared.connectivity else { throw SceneRenderError.resourceLimit }
     let density=max(pixels.width/region.width,pixels.height/region.height)
+    let queryRegion=Self.queryRegion(content!,region:region,sourceSize:sourceSize,density:density)
+    guard !queryRegion.isNull,!queryRegion.isEmpty else {
+      for i in sources.indices { sources[i].buffers.removeAll() }
+      return []
+    }
     var viewport=SIMD2<Float>(Float(region.width),Float(region.height))
     encoder.setVertexBytes(&viewport,length:MemoryLayout<SIMD2<Float>>.stride,index:1)
     var held: [RasterReservation] = []
     let grid=InkRasterRenderer.shared.sampleGrid(viewport:region.size,pixels:pixels)
     for i in sources.indices {
       let source=sources[i],geometry=source.ink.geometry,basis=basis(for:source,sourceSize:sourceSize)
-      let area=region.insetBy(dx:-1/density,dy:-1/density).applying(basis.inverted())
+      let area=queryRegion.applying(basis.inverted())
       let query=geometry.query(area,allowRangeCoalescing:basis.b == 0 && basis.c == 0,
         detail:{ unit in let a=self.affine(basis,unit:unit,region:region);return .init(pixelsPerUnit:a.maximumStretch*Float(density),minimumPixelsPerUnit:a.minimumStretch*Float(density)) },
         admitting:grid.map { grid in { box,unit in grid.mayCover(box,affine:self.affine(basis,unit:unit,region:region)) } })
@@ -244,7 +263,7 @@ extension NotebookInkMaterialView.Content {
     guard appearance?.state != .erased,!erasures.contains(where: { $0.target.wholeElement }) else { return [] }
     var result:[Self]=[]
     if let graphic,graphic.showsGeometry,let freehand=graphic.freehand {
-      result.append(.init(freehand:freehand,erasures:[],transform:graphic.transform,layout:layout))
+      result.append(.init(freehand:freehand,erasures:[],transform:graphic.transform,layout:layout,mask:graphic.mask))
     }
     if !erasures.isEmpty {
       result.append(.init(freehand:nil,erasures:erasures,transform:graphic?.transform,layout:layout))

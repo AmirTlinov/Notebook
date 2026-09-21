@@ -14,7 +14,7 @@ struct NotebookGraphicView: View {
       if live {
         ZStack {
           if let ink = graphic.freehand, graphic.showsGeometry {
-            NotebookInkMaterialView(freehand:ink,transform:graphic.transform,layout:layout)
+            NotebookInkMaterialView(freehand:ink,transform:graphic.transform,layout:layout,mask:graphic.mask)
             if !graphic.label.isEmpty {
               Canvas { context, size in
                 var context = context
@@ -28,7 +28,7 @@ struct NotebookGraphicView: View {
             Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size) }
           }
         }
-        .clipShape(NotebookGraphicMaskShape(mask:graphic.mask),style:FillStyle(eoFill:true))
+        .clipShape(NotebookGraphicMaskShape(mask:graphic.mask,projection:layout?.projection),style:FillStyle(eoFill:true))
         .erased(by:erasures,appearance:appearance,transform:graphic.transform,layout:layout)
       } else {
         Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size, erasures:erasures, appearance:appearance) }
@@ -107,7 +107,8 @@ struct NotebookGraphicView: View {
 
 private struct NotebookGraphicMaskShape:Shape {
   let mask:NotebookGraphicMask?
-  func path(in rect:CGRect)->Path { Path(mask?.path(in:rect) ?? CGPath(rect:rect,transform:nil)) }
+  let projection:NotebookGraphicLayout.Projection?
+  func path(in rect:CGRect)->Path { Path(mask?.projectedPath(in:rect,projection:projection) ?? CGPath(rect:rect,transform:nil)) }
 }
 
 extension NotebookGraphic.Shape {

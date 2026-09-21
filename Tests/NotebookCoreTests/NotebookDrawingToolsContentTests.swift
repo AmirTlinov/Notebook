@@ -125,6 +125,12 @@ struct NotebookDrawingToolsContentTests {
       polygon:[.init(x:0.2,y:0),.init(x:0.4,y:0),.init(x:0.4,y:1),.init(x:0.2,y:1)]))]))
     #expect(reduced.mask?.contains(.init(x:0.1,y:0.5)) == true)
     #expect(reduced.mask?.contains(.init(x:0.3,y:0.5)) == false)
+    let projection=NotebookGraphicLayout.Projection(size:.init(width:120,height:40),
+      transform:.init(a:0,b:1,c:-1,d:0,tx:40,ty:0))
+    let projected=mask.conservativeBounds(in:.init(x:0,y:0,width:40,height:120),projection:projection)
+    #expect(abs(projected.minX) < 1e-9 && abs(projected.minY) < 1e-9)
+    #expect(abs(projected.width-40) < 1e-9 && abs(projected.height-72) < 1e-9)
+    #expect(mask.projectedPath(in:.init(x:0,y:0,width:40,height:120),projection:projection).boundingBoxOfPath == projected)
     #expect(mesh.map(\.opacity).min()! < 0.3 && mesh.map(\.opacity).max()! > 0.8)
     #expect(!ink.paintPath(size:.init(width:120,height:40),transform:nil).isEmpty)
     #expect(throws:CollaborationError.self) { try graphic.applying(.object(["transform":.object(["a":.number(0),"b":.number(0),"c":.number(0),"d":.number(0),"tx":.number(0),"ty":.number(0)])])) }

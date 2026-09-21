@@ -75,6 +75,35 @@ import XCTest
     let proof=XCTAttachment(image:capture(window));proof.name="swiftui-transformed-native-mask";proof.lifetime = .keepAlways;add(proof)
   }
 
+  func testVectorRegionMaskClipsTheLiveMetalMaterial() async throws {
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window=UIWindow(windowScene:scene),controller=UIViewController()
+    window.rootViewController=controller;controller.view.backgroundColor = .red;window.makeKeyAndVisible()
+    defer { window.isHidden=true;window.rootViewController=nil }
+    let frame=PageRect(x:0,y:0,width:300,height:100)
+    let samples=[30.0,270].map { x in SpatialInkSample(point:.init(x:x,y:50),timeOffset:x/300,
+      width:20,opacity:1,force:1,azimuth:0,altitude:1) }
+    let ink=NotebookFreehand(layers:[.init(tool:.pen,color:.black,measured:.init(sourceID:UUID(),
+      measurements:.init(samples),frame:frame))])
+    let mask=NotebookGraphicMask().appending(.intersect,polygon:[.init(x:0,y:0),.init(x:0.5,y:0),
+      .init(x:0.5,y:1),.init(x:0,y:1)])
+    let graphic=NotebookGraphic(shape:.freehand,freehand:ink,mask:mask)
+    var presented=false
+    let hosted=UIHostingController(rootView:NotebookGraphicView(graphic:graphic)
+      .environment(\.inkMaterialReadiness,.init(id:UUID(),report:{ _,_,ready in presented=ready })))
+    controller.addChild(hosted);controller.view.addSubview(hosted.view);hosted.didMove(toParent:controller)
+    hosted.view.frame = .init(x:40,y:40,width:300,height:100);hosted.view.backgroundColor = .clear
+    controller.view.layoutIfNeeded()
+    let until=ContinuousClock.now + .seconds(5)
+    while !presented,ContinuousClock.now < until { try await Task.sleep(for:.milliseconds(20)) }
+    XCTAssertTrue(presented);try await Task.sleep(for:.milliseconds(60))
+    let inside=try pixel(hosted.view,window:window,x:80,y:50)
+    let outside=try pixel(hosted.view,window:window,x:220,y:50)
+    XCTAssertLessThan(inside[0],30);XCTAssertLessThan(inside[1],30)
+    XCTAssertGreaterThan(outside[0],220);XCTAssertLessThan(outside[1],30)
+    let proof=XCTAttachment(image:capture(window));proof.name="live-vector-region-mask";proof.lifetime = .keepAlways;add(proof)
+  }
+
   func testColdMeasuredAppearanceAndPickingOnOneHundredThousandPoints() throws {
     let frame=PageRect(x:0,y:0,width:100_000,height:100)
     func point(_ x:Double,_ y:Double,_ width:Double) -> SpatialInkSample {

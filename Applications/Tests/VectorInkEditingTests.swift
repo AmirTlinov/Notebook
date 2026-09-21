@@ -54,6 +54,29 @@ import XCTest
     attachment.name = "vector-lasso-100k"; attachment.lifetime = .keepAlways; add(attachment)
   }
 
+  func testMaskedMaterialNarrowsTheMetalSourceQueryBeforePreparingNodes() throws {
+    let mask=NotebookGraphicMask().appending(.intersect,polygon:[
+      .init(x:0.1,y:0.2),.init(x:0.2,y:0.2),.init(x:0.2,y:0.4),.init(x:0.1,y:0.4)])
+    let content=NotebookInkMaterialView.Content(freehand:nil,erasures:[],transform:nil,layout:nil,mask:mask)
+    let region=InkMaterialRenderer.queryRegion(content,region:.init(x:0,y:0,width:1000,height:500),
+      sourceSize:.init(width:1000,height:500),density:2)
+    XCTAssertEqual(region.minX,99.5,accuracy:1e-9);XCTAssertEqual(region.maxX,200.5,accuracy:1e-9)
+    XCTAssertEqual(region.minY,99.5,accuracy:1e-9);XCTAssertEqual(region.maxY,200.5,accuracy:1e-9)
+
+    let actor=UUID()
+    var page=PageDocument(size:.init(width:1200,height:1200),actor:actor)
+    let element=AgentElement(id:"masked",kind:.graphic,frame:.init(x:0,y:0,width:500,height:1000),source:"",html:"",
+      graphic:.init(shape:.rectangle),basis:.init(size:.init(x:1000,y:500),
+        transform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0)))
+    XCTAssertTrue(page.replaceElements([element],actor:actor))
+    let layout=try XCTUnwrap(page.graphicGraph().resolve(element.id).layout)
+    let placed=NotebookInkMaterialView.Content(freehand:nil,erasures:[],transform:nil,layout:layout,mask:mask)
+    let transformed=InkMaterialRenderer.queryRegion(placed,region:.init(x:0,y:0,width:500,height:1000),
+      sourceSize:.init(width:500,height:1000),density:2)
+    XCTAssertEqual(transformed.minX,299.5,accuracy:1e-9);XCTAssertEqual(transformed.maxX,400.5,accuracy:1e-9)
+    XCTAssertEqual(transformed.minY,99.5,accuracy:1e-9);XCTAssertEqual(transformed.maxY,200.5,accuracy:1e-9)
+  }
+
   func testVectorLassoReturnsAReadOnlyCompactRegion() throws {
     func sample(_ x: Double,_ y: Double,_ width: Double) -> SpatialInkSample {
       .init(point:.init(x:x,y:y),timeOffset:0,width:width,opacity:1,force:1,azimuth:0,altitude:1)

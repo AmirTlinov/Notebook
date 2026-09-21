@@ -157,6 +157,33 @@ public struct NotebookGraphicMask: Codable, Equatable, Sendable {
     }
     return result
   }
+  /// The live Metal child is mounted in the displayed outer frame. Project
+  /// the authored local mask through that same placement instead of clipping
+  /// it as if a rotated/grouped body still occupied its unplaced rectangle.
+  public func projectedPath(in rect:CGRect,projection:NotebookGraphicLayout.Projection?)->CGPath {
+    guard let projection else { return path(in:rect) }
+    var transform=projection.transform
+    return path(in:.init(origin:.zero,size:projection.size)).copy(using:&transform) ?? CGMutablePath()
+  }
+  /// Cheap safe bound for source disclosure. Intersections may narrow the
+  /// queried body; subtraction never may. Exact clipping remains `path`.
+  public func conservativeBounds(in rect:CGRect,projection:NotebookGraphicLayout.Projection?)->CGRect {
+    guard rect.width > 0,rect.height > 0 else { return .null }
+    var unit=CGRect(x:0,y:0,width:1,height:1)
+    for operation in operations where operation.kind == .intersect {
+      let polygon=operation.polygon.reduce(CGRect.null) { box,p in
+        box.union(.init(x:p.x,y:p.y,width:0,height:0))
+      }
+      unit=unit.intersection(polygon)
+      if unit.isNull || unit.isEmpty { return .null }
+    }
+    let sourceSize=projection?.size ?? rect.size
+    var bounds=CGRect(x:unit.minX*sourceSize.width,y:unit.minY*sourceSize.height,
+      width:unit.width*sourceSize.width,height:unit.height*sourceSize.height)
+    if let projection { bounds=bounds.applying(projection.transform) }
+    else { bounds.origin.x += rect.minX;bounds.origin.y += rect.minY }
+    return bounds.intersection(rect)
+  }
   public func contains(_ point:SpatialPoint)->Bool {
     path(in:.init(x:0,y:0,width:1,height:1)).contains(.init(x:point.x,y:point.y),using:.evenOdd)
   }
