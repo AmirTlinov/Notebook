@@ -20,14 +20,7 @@ extension View {
     }
     else {
       mask {
-        if let appearance {
-          Canvas { context, size in
-            context.clip(to:Path(appearance.mask),options:.inverse)
-            context.fill(Path(CGRect(origin:.zero,size:size)),with:.color(.white))
-          }
-        } else {
-          NotebookInkMaterialView(erasures:erasures,transform:transform,layout:layout)
-        }
+        NotebookInkMaterialView(erasures:erasures,transform:transform,layout:layout)
       }
     }
   }

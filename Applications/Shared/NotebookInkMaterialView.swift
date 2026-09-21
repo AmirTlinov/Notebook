@@ -246,7 +246,7 @@ extension NotebookInkMaterialView.Content {
     if let graphic,graphic.showsGeometry,let freehand=graphic.freehand {
       result.append(.init(freehand:freehand,erasures:[],transform:graphic.transform,layout:layout))
     }
-    if !erasures.isEmpty,appearance == nil {
+    if !erasures.isEmpty {
       result.append(.init(freehand:nil,erasures:erasures,transform:graphic?.transform,layout:layout))
     }
     return result

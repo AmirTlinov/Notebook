@@ -75,6 +75,13 @@ MSAA, first-visible-frame readiness and terminal GPU drain have one owner.
 Page and scene-cohort receipts aggregate the exact material sources; transferring
 a ready host to another cohort replays readiness without redrawing it.
 
+Freehand appearance state and local picking use surviving vector fragments from
+that same range geometry, including external captured-basis cuts and the small
+label envelope. They do not require a whole-ink CGPath. The displayed frame
+clips the query before node preparation, not the source to a unit square.
+Whole contours remain explicit export projections; settled live cutouts retain
+the native GPU mask instead of switching back to a CPU softmask.
+
 At a fixed camera, active input reuses the unchanged committed-ink query result.
 Camera, source and buffer eviction invalidate that result. Mac input no longer
 waits for accepted-action delivery before admitting the next contact; the model's

@@ -351,17 +351,7 @@ extension NotebookAppModel {
       guard NotebookToolGeometry.intersects(.init(x:delta.x+frame.x,y:delta.y+frame.y,width:frame.width,height:frame.height),polygon:polygon) else { return false }
       let local = polygon.compactMap { layout.framePoint($0,from:origin) }
       guard local.count == polygon.count else { return false }
-      if let ink = node.graphic.freehand {
-        let basis = node.graphic.transform ?? .identity,size=node.placement.localSize
-        let source = local.compactMap { p -> CGPoint? in
-          guard let body=layout.localPoint(p) else { return nil }
-          let q = basis.unapplying(.init(x:body.x/size.x,y:body.y/size.y))
-          return .init(x:q.x,y:q.y)
-        }
-        guard source.count == polygon.count,ink.geometry.intersects(source) else { return false }
-      }
       let cuts = erasures[node.id] ?? []
-      if cuts.isEmpty,node.graphic.freehand != nil { return true }
       let appearance = cuts.isEmpty
         ? NotebookElementAppearance(graphic:node.graphic,layout:layout,size:.init(width:frame.width,height:frame.height),erasures:[])
         : elementErasureCache.appearance(surface:address.surface,id:node.id,graphic:node.graphic,layout:layout,
@@ -371,8 +361,7 @@ extension NotebookAppModel {
         return false
       }
       guard appearance.state != .erased else { return false }
-      let path = CGMutablePath(); path.addLines(between:local.map { .init(x:$0.x,y:$0.y) }); path.closeSubpath()
-      return !appearance.remaining.intersection(path,using:.evenOdd).isEmpty
+      return appearance.intersects(local.map { .init(x:$0.x,y:$0.y) })
     }.map { address.reference($0.id) }
     guard includesObjects else { return references }
     func visible(_ id: String, _ frame: CGRect) -> Bool {

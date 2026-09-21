@@ -173,8 +173,11 @@ public final class NotebookFreehandGeometry: Sendable {
       }
   }
   public func contains(_ point: CGPoint, size: CGSize, transform: NotebookGraphicTransform?, tolerance: Double = 0) -> Bool {
+    contains(point,size:size,transform:transform,tolerance:tolerance,clipsToSize:true)
+  }
+  private func contains(_ point: CGPoint,size:CGSize,transform:NotebookGraphicTransform?,tolerance:Double,clipsToSize:Bool) -> Bool {
     guard size.width > 0, size.height > 0,
-      CGRect(origin:.zero,size:size).insetBy(dx:-tolerance,dy:-tolerance).contains(point) else { return false }
+      !clipsToSize || CGRect(origin:.zero,size:size).insetBy(dx:-tolerance,dy:-tolerance).contains(point) else { return false }
     let area = Self.sourceBounds(.init(x:point.x-tolerance,y:point.y-tolerance,width:tolerance*2,height:tolerance*2),size:size,transform:transform)
     let t = transform ?? .identity
     for id in query(area).indices.reversed() {
@@ -202,9 +205,74 @@ public final class NotebookFreehandGeometry: Sendable {
   /// Vector set difference on bounded convex fragments, in Double precision.
   /// Avoid both pixel masks and CGPath boolean quantization: a subpixel sliver
   /// is still authored geometry, while a fully covered one must disappear.
-  public func intersects(_ polygon: [CGPoint]) -> Bool {
+  /// A captured cut borrows the same indexed measured geometry as its GPU
+  /// layer. The affine maps that captured basis into this graphic's source.
+  public struct Cut: Sendable {
+    let geometry: NotebookFreehandGeometry
+    let basis: CGAffineTransform
+    public init(_ cut: InkElementErasure) {
+      geometry = NotebookFreehand(layers:[.init(tool:.eraser,color:.black,measured:.init(
+        sourceID:cut.samples.revision,measurements:cut.samples,frame:cut.target.frame,origin:cut.target.worldOrigin))]).geometry
+      func point(_ p:SpatialPoint) -> CGPoint {
+        let body=cut.target.elementTransform?.unapplying(p) ?? p
+        let q=(cut.target.graphicTransform ?? .identity).unapplying(body)
+        return .init(x:q.x,y:q.y)
+      }
+      let a=point(.zero),b=point(.init(x:1,y:0)),c=point(.init(x:0,y:1))
+      basis = .init(a:b.x-a.x,b:b.y-a.y,c:c.x-a.x,d:c.y-a.y,tx:a.x,ty:a.y)
+    }
+    func triangles(in area:CGRect, visit:([CGPoint]) -> Bool) -> Bool {
+      for id in geometry.query(area.applying(basis.inverted())).indices {
+        let v=geometry.vertices(at:id)
+        for start in stride(from:0,to:v.count-2,by:3) {
+          let triangle=v[start..<start+3].map { CGPoint(x:$0.x,y:$0.y).applying(basis) }
+          if polygonBounds(triangle).intersects(area),visit(triangle) { return true }
+        }
+      }
+      return false
+    }
+    func contains(_ point:CGPoint) -> Bool {
+      // A zero-area CGRect intersection is empty; one ulp admits boundary
+      // candidates without enlarging the exact triangle test.
+      let pad=max(abs(point.x).ulp,abs(point.y).ulp,Double.ulpOfOne)
+      return triangles(in:.init(x:point.x-pad,y:point.y-pad,width:pad*2,height:pad*2)) { polygonContains(point,$0) }
+    }
+  }
+
+  public func contains(_ point:CGPoint,basis:CGAffineTransform,tolerance:Double,subtracting cuts:[Cut],clippedTo viewport:[CGPoint]) -> Bool {
+    let source=point.applying(basis.inverted())
+    guard !cuts.contains(where:{ $0.contains(source) }) else { return false }
+    if tolerance <= 0 { return polygonContains(source,viewport) && contains(source,size:.init(width:1,height:1),transform:nil,tolerance:0,clipsToSize:false) }
+    let r=CGRect(x:point.x-tolerance,y:point.y-tolerance,width:tolerance*2,height:tolerance*2)
+    let polygon=rectangleCorners(r).map { $0.applying(basis.inverted()) }
+    return intersects(polygon,subtracting:cuts,clippedTo:viewport,accepting:{ fragment in
+      let p=fragment.map { $0.applying(basis) }
+      if p.count == 1 { return hypot(p[0].x-point.x,p[0].y-point.y) <= tolerance }
+      return polygonContains(point,p) || zip(p,p.dropFirst()+p.prefix(1)).contains { near(point,$0.0,$0.1,tolerance) }
+    })
+  }
+
+  public func intersects(_ polygon: [CGPoint], subtracting external:[Cut] = [],clippedTo viewport:[CGPoint]? = nil) -> Bool {
+    intersects(polygon,subtracting:external,clippedTo:viewport,accepting:nil)
+  }
+  /// Exact state witnesses; no global triangle union or pixel approximation.
+  public func appearance(in viewport:[CGPoint],subtracting cuts:[Cut]) -> NotebookElementAppearance.State {
+    guard intersects(viewport,subtracting:cuts,clippedTo:viewport) else { return .erased }
+    let area=polygonBounds(viewport)
+    for cut in cuts {
+      if cut.triangles(in:area,visit:{ triangle in
+        let clipped=clipConvex(triangle,to:viewport)
+        return clipped.count >= 3 && self.intersects(clipped,clippedTo:viewport)
+      }) { return .partial }
+    }
+    return .intact
+  }
+
+  private func intersects(_ polygon: [CGPoint], subtracting external:[Cut], clippedTo viewport:[CGPoint]?, accepting:(([CGPoint]) -> Bool)?) -> Bool {
     guard polygon.count >= 3 else { return false }
-    let area = polygonBounds(polygon)
+    let region=polygonBounds(polygon)
+    let area=viewport.map { region.intersection(polygonBounds($0)) } ?? region
+    guard !area.isNull else { return false }
     var cuts: [Range<Int>:[NotebookFreehand.Vertex]] = [:]
     for id in query(area).indices.reversed() where tool(at:id) == .pen {
       if Task.isCancelled { return false }
@@ -212,16 +280,19 @@ public final class NotebookFreehandGeometry: Sendable {
       for start in stride(from:0,to:v.count-2,by:3) {
         let triangle = Array(v[start..<start+3])
         guard triangle.contains(where:{ $0.opacity > 0 }) else { continue }
-        let p = triangle.map { CGPoint(x:$0.x,y:$0.y) }
-        guard polygonIntersects(p,polygon) else { continue }
+        let original = triangle.map { CGPoint(x:$0.x,y:$0.y) }
+        let p=viewport.map { clipConvex(original,to:$0) } ?? original
+        guard p.count >= 3,polygonIntersects(p,polygon) else { continue }
         // A surviving vector point is a proof, not a sampling approximation:
         // only a positive result exits here; absence still uses exact clipping.
         // Usually a long stroke has an untouched endpoint, so dense unrelated
         // cuts must not force thousands of polygon subtractions to find it.
-        let center = CGPoint(x:p.reduce(0) { $0+$1.x }/3,y:p.reduce(0) { $0+$1.y }/3)
+        let center = CGPoint(x:p.reduce(0) { $0+$1.x }/Double(p.count),y:p.reduce(0) { $0+$1.y }/Double(p.count))
         let witnesses = p + [center] + polygon.prefix(16).filter { polygonContains($0,p) }
-        if witnesses.contains(where: { polygonContains($0,polygon)
-          && contains($0,size:.init(width:1,height:1),transform:nil) }) { return true }
+        if witnesses.contains(where: { point in polygonContains(point,polygon)
+          && contains(point,size:.init(width:1,height:1),transform:nil,tolerance:0,clipsToSize:false)
+          && !external.contains(where:{ $0.contains(point) })
+          && (accepting?([point]) ?? true) }) { return true }
         var remaining = [p]
         for cut in query(polygonBounds(p).intersection(area)).indices
         where layer(at:cut) > layer(at:id) && tool(at:cut) == .eraser {
@@ -239,7 +310,16 @@ public final class NotebookFreehandGeometry: Sendable {
           if remaining.isEmpty { break }
           if Task.isCancelled { return false }
         }
-        if !remaining.isEmpty { return true }
+        for cut in external where !remaining.isEmpty {
+          _ = cut.triangles(in:polygonBounds(p).intersection(area)) { erase in
+            let box=polygonBounds(erase)
+            remaining=remaining.flatMap { fragment in
+              polygonBounds(fragment).intersects(box) ? subtractTriangle(fragment,erase) : [fragment]
+            }.filter { polygonIntersects($0,polygon) }
+            return remaining.isEmpty || Task.isCancelled
+          }
+        }
+        if remaining.contains(where:{ accepting?($0) ?? true }) { return true }
       }
     }
     return false
@@ -313,6 +393,28 @@ private func subtractTriangle(_ polygon: [CGPoint], _ triangle: [CGPoint]) -> [[
     if hasArea(outside) { result.append(outside) }
     inside = clipped(inside,a,b,keepInside:true)
     if !hasArea(inside) { break }
+  }
+  return result
+}
+
+private func rectangleCorners(_ r:CGRect) -> [CGPoint] {
+  [.init(x:r.minX,y:r.minY),.init(x:r.maxX,y:r.minY),.init(x:r.maxX,y:r.maxY),.init(x:r.minX,y:r.maxY)]
+}
+private func clipConvex(_ polygon:[CGPoint],to clip:[CGPoint]) -> [CGPoint] {
+  guard clip.count >= 3 else { return [] }
+  let direction=cross(clip[0],clip[1],clip[2]) >= 0 ? 1.0 : -1.0
+  var result=polygon
+  for (a,b) in zip(clip,clip.dropFirst()+clip.prefix(1)) {
+    var next:[CGPoint]=[]
+    for (p,q) in zip(result,result.dropFirst()+result.prefix(1)) {
+      let x=cross(a,b,p)*direction,y=cross(a,b,q)*direction
+      if x >= 0 { next.append(p) }
+      if (x > 0 && y < 0) || (x < 0 && y > 0) {
+        let t=x/(x-y);next.append(.init(x:p.x+(q.x-p.x)*t,y:p.y+(q.y-p.y)*t))
+      }
+    }
+    result=next
+    if result.isEmpty { break }
   }
   return result
 }

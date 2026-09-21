@@ -8,43 +8,122 @@ import Foundation
 public struct NotebookElementAppearance: @unchecked Sendable {
   public enum State: String, Codable, Sendable { case intact, partial, erased }
   public let state: State
-  public let remaining: CGPath
-  public let mask: CGPath
+  private let paths: (remaining: CGPath,mask: CGPath)?
+  private let vector: Vector?
+  /// Whole contours are explicit export/read-all projections, never a
+  /// prerequisite of live picking or of an appearance-state receipt.
+  public var remaining: CGPath { paths?.remaining ?? vector!.remaining }
+  public var mask: CGPath { paths?.mask ?? vector!.mask }
+
+  private struct Vector: Sendable {
+    let graphic: NotebookGraphic
+    let ink: NotebookFreehand
+    let label: NotebookFreehand?
+    let labelViewport: [CGPoint]?
+    let localLayout: NotebookGraphicLayout?
+    let size: CGSize
+    let transform: NotebookGraphicTransform?
+    let projection: CGAffineTransform
+    let erasures: [InkElementErasure]
+    let cuts: [NotebookFreehandGeometry.Cut]
+    var basis: CGAffineTransform {
+      let t=transform ?? .identity
+      return CGAffineTransform(a:t.a*size.width,b:t.b*size.height,c:t.c*size.width,d:t.d*size.height,
+        tx:t.tx*size.width,ty:t.ty*size.height).concatenating(projection)
+    }
+    var viewport: [CGPoint] {
+      let t=transform ?? .identity
+      return [SpatialPoint.zero,.init(x:1,y:0),.init(x:1,y:1),.init(x:0,y:1)].map {
+        let p=t.unapplying($0);return .init(x:p.x,y:p.y)
+      }
+    }
+    var mask: CGPath {
+      var p=projection
+      return NotebookElementAppearance.erasurePath(erasures,size:size,transform:transform).copy(using:&p)!
+    }
+    var remaining: CGPath {
+      var p=projection
+      let paint=NotebookGraphicGeometry.paintPath(graphic,layout:localLayout,size:size)
+      let mask=NotebookElementAppearance.erasurePath(erasures,size:size,transform:transform)
+      return paint.subtracting(mask).copy(using:&p)!
+    }
+  }
 
   public init(graphic: NotebookGraphic?, layout: NotebookGraphicLayout?, size: CGSize,
     erasures: [InkElementErasure]) {
+    if erasures.contains(where: { $0.target.wholeElement }) {
+      paths=(CGMutablePath(),CGPath(rect:CGRect(origin:.zero,size:size),transform:nil));vector=nil;state = .erased
+      return
+    }
+    if let graphic,graphic.showsGeometry,let ink=graphic.freehand {
+      let size=layout?.projection?.size ?? size,localLayout=layout?.projection == nil ? layout : layout?.localLayout
+      let labelBounds=NotebookGraphicGeometry.labelBounds(graphic,layout:localLayout,size:size)
+      let labelPoints=labelBounds.map { rect in
+        [CGPoint(x:rect.minX,y:rect.minY),.init(x:rect.maxX,y:rect.minY),.init(x:rect.maxX,y:rect.maxY),.init(x:rect.minX,y:rect.maxY)].map { p in
+          let q=(graphic.transform ?? .identity).unapplying(.init(x:p.x/size.width,y:p.y/size.height))
+          return CGPoint(x:q.x,y:q.y)
+        }
+      }
+      let label=labelPoints.map { p in NotebookFreehand(layers:[.init(color:.black,vertices:[0,1,2,0,2,3].map {
+        .init(x:p[$0].x,y:p[$0].y,opacity:1)
+      })]) }
+      let value=Vector(graphic:graphic,ink:ink,label:label,labelViewport:labelPoints,localLayout:localLayout,size:size,transform:graphic.transform,
+        projection:layout?.projection?.transform ?? .identity,erasures:erasures,cuts:erasures.map(NotebookFreehandGeometry.Cut.init))
+      vector=value;paths=nil
+      if erasures.isEmpty { state = .intact }
+      else {
+        let sources=[(ink,value.viewport)] + (label.flatMap { label in labelPoints.map { [(label,$0)] } } ?? [])
+        let states=sources.compactMap { ink,viewport -> State? in
+          guard ink.geometry.intersects(viewport,clippedTo:viewport) else { return nil }
+          return ink.geometry.appearance(in:viewport,subtracting:value.cuts)
+        }
+        state=states.allSatisfy({ $0 == .erased }) ? .erased : states.allSatisfy({ $0 == .intact }) ? .intact : .partial
+      }
+      return
+    }
+    vector=nil
     if let layout, let projection = layout.projection {
       let body = Self(graphic:graphic,layout:layout.localLayout,size:projection.size,erasures:erasures)
       var transform = projection.transform
-      remaining = body.remaining.copy(using:&transform)!; mask = body.mask.copy(using:&transform)!; state = body.state
-      return
-    }
-    if erasures.contains(where: { $0.target.wholeElement }) {
-      mask = CGPath(rect: CGRect(origin: .zero, size: size), transform: nil)
-      remaining = CGMutablePath(); state = .erased
+      paths=(body.remaining.copy(using:&transform)!,body.mask.copy(using:&transform)!);state=body.state
       return
     }
     let paint = graphic.map { NotebookGraphicGeometry.paintPath($0,layout:layout,size:size) }
       ?? CGPath(rect:CGRect(origin:.zero,size:size),transform:nil)
     if !erasures.isEmpty && paint.isEmpty {
-      mask = CGPath(rect: .zero, transform: nil); remaining = mask; state = .erased
+      paths=(CGMutablePath(),CGMutablePath());state = .erased
       return
     }
-    mask = Self.erasurePath(erasures, size:size,transform:graphic?.transform)
-    if mask.isEmpty { remaining = paint.copy()!; state = .intact }
+    let mask=Self.erasurePath(erasures,size:size,transform:graphic?.transform)
+    if mask.isEmpty { paths=(paint.copy()!,mask);state = .intact }
     else {
-      remaining = paint.subtracting(mask)
-      state = remaining.isEmpty ? .erased : (paint.intersection(mask).isEmpty ? .intact : .partial)
+      let remaining=paint.subtracting(mask);paths=(remaining,mask)
+      state=remaining.isEmpty ? .erased : (paint.intersection(mask).isEmpty ? .intact : .partial)
     }
   }
 
   /// Tolerance expands only surviving paint, never the removed original edge.
   public func contains(_ point: SpatialPoint, tolerance: Double) -> Bool {
     guard state != .erased else { return false }
-    let p = CGPoint(x:point.x,y:point.y)
+    let p=CGPoint(x:point.x,y:point.y)
+    if let vector {
+      return vector.ink.geometry.contains(p,basis:vector.basis,tolerance:tolerance,subtracting:vector.cuts,clippedTo:vector.viewport)
+        || (vector.label.map { $0.geometry.contains(p,basis:vector.basis,tolerance:tolerance,subtracting:vector.cuts,clippedTo:vector.labelViewport!) } ?? false)
+    }
     if mask.contains(p) { return false }
     return remaining.contains(p) || (tolerance > 0 && remaining.copy(strokingWithWidth:tolerance*2,
       lineCap:.round,lineJoin:.round,miterLimit:10).contains(p))
+  }
+  public func intersects(_ polygon:[CGPoint]) -> Bool {
+    guard state != .erased else { return false }
+    if let vector {
+      let inverse=vector.basis.inverted()
+      let source=polygon.map { $0.applying(inverse) }
+      return vector.ink.geometry.intersects(source,subtracting:vector.cuts,clippedTo:vector.viewport)
+        || (vector.label.map { $0.geometry.intersects(source,subtracting:vector.cuts,clippedTo:vector.labelViewport!) } ?? false)
+    }
+    let path=CGMutablePath();path.addLines(between:polygon);path.closeSubpath()
+    return !remaining.intersection(path,using:.evenOdd).isEmpty
   }
   /// Reading an untouched source does not require its full paint contour.
   /// External cuts still use the same exact appearance owner as hit testing.
@@ -184,6 +263,13 @@ extension NotebookGraphicGeometry {
     for c in layout.curves { path.addCurve(to:p(c.end),control1:p(c.control1),control2:p(c.control2)) }
     return path
   }
+  static func labelBounds(_ graphic:NotebookGraphic,layout:NotebookGraphicLayout?,size:CGSize) -> CGRect? {
+    guard !graphic.label.isEmpty else { return nil }
+    let center=layout?.label ?? .init(x:size.width/2,y:size.height/2)
+    let lines=graphic.label.split(separator:"\n",omittingEmptySubsequences:false)
+    let w=min(size.width,Double(lines.map(\.count).max() ?? 0)*24),h=min(size.height,Double(lines.count)*30)
+    return .init(x:center.x-w/2,y:center.y-h/2,width:w,height:h)
+  }
   /// Same stroke/fill paths as native paint. Labels and foreign HTML/text use
   /// their content envelope conservatively; partial source is explicitly marked.
   public static func paintPath(_ graphic: NotebookGraphic, layout: NotebookGraphicLayout?, size: CGSize) -> CGPath {
@@ -214,12 +300,7 @@ extension NotebookGraphicGeometry {
       let path = outlinePath(graphic,in:CGRect(origin:.zero,size:size).insetBy(dx:inset,dy:inset))
       if graphic.shape != .plus, graphic.style.fill != nil { add(path) }; stroke(path)
     }
-    if !graphic.label.isEmpty {
-      let center = layout?.label ?? .init(x:size.width/2,y:size.height/2)
-      let lines = graphic.label.split(separator:"\n",omittingEmptySubsequences:false)
-      let w = min(size.width,Double(lines.map(\.count).max() ?? 0)*24), h = min(size.height,Double(lines.count)*30)
-      add(CGPath(rect:.init(x:center.x-w/2,y:center.y-h/2,width:w,height:h),transform:nil))
-    }
+    if let rect=labelBounds(graphic,layout:layout,size:size) { add(CGPath(rect:rect,transform:nil)) }
     return result
   }
 }

@@ -54,7 +54,10 @@ import XCTest
     let sample=SpatialInkSample(point:.init(x:90,y:150),timeOffset:0,width:30,opacity:1,force:1,azimuth:0,altitude:1)
     let cut=InkElementErasure(target:.init(elementID:"box",frame:.init(x:0,y:0,width:300,height:300)),measurements:.init([sample]))
     var presented=false
-    let view=Color.black.erased(by:[cut],transform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0))
+    let transform=NotebookGraphicTransform(a:0,b:1,c:-1,d:0,tx:1,ty:0)
+    let prepared=NotebookElementAppearance(graphic:.init(shape:.rectangle,transform:transform),layout:nil,
+      size:.init(width:300,height:300),erasures:[cut])
+    let view=Color.black.erased(by:[cut],appearance:prepared,transform:transform)
       .environment(\.inkMaterialReadiness,.init(id:UUID(),report:{ _,_,ready in presented=ready }))
     let hosted=UIHostingController(rootView:view)
     controller.addChild(hosted);controller.view.addSubview(hosted.view);hosted.didMove(toParent:controller)
@@ -68,6 +71,32 @@ import XCTest
     XCTAssertGreaterThan(hole[0],220);XCTAssertLessThan(hole[1],30)
     XCTAssertLessThan(old[0],30,"The saved cut follows the whole transform, not its old body position")
     let proof=XCTAttachment(image:capture(window));proof.name="swiftui-transformed-native-mask";proof.lifetime = .keepAlways;add(proof)
+  }
+
+  func testColdMeasuredAppearanceAndPickingOnOneHundredThousandPoints() throws {
+    let frame=PageRect(x:0,y:0,width:100_000,height:100)
+    func point(_ x:Double,_ y:Double,_ width:Double) -> SpatialInkSample {
+      .init(point:.init(x:x,y:y),timeOffset:(x+y)/240,width:width,opacity:1,force:1,azimuth:0,altitude:1)
+    }
+    let ink=NotebookFreehand(layers:[.init(tool:.pen,color:.black,measured:.init(sourceID:UUID(),
+      measurements:.init((0..<100_000).map { point(Double($0),50,2) }),frame:frame))])
+    let cut=InkElementErasure(target:.init(elementID:"ink",frame:frame),samples:[point(30_000,0,6),point(30_000,100,6)])
+    let start=ContinuousClock.now
+    let value=NotebookElementAppearance(graphic:.init(shape:.freehand,freehand:ink),layout:nil,
+      size:.init(width:100_000,height:100),erasures:[cut])
+    XCTAssertEqual(value.state,.partial)
+    XCTAssertTrue(value.contains(.init(x:80_000,y:50),tolerance:2))
+    XCTAssertFalse(value.contains(.init(x:30_000,y:50),tolerance:2))
+    let elapsed=start.duration(to:.now)
+    print("IPAD_COLD_APPEARANCE nodes=100000 elapsed=\(elapsed)")
+    XCTAssertLessThan(elapsed,.milliseconds(300),"A local pick must not prepare the full retained contour")
+    let fullStart=ContinuousClock.now
+    let wholeCut=InkElementErasure(target:.init(elementID:"ink",frame:frame),samples:[point(0,50,8),point(100_000,50,8)])
+    let erased=NotebookElementAppearance(graphic:.init(shape:.freehand,freehand:ink),layout:nil,
+      size:.init(width:100_000,height:100),erasures:[wholeCut])
+    XCTAssertEqual(erased.state,.erased)
+    print("IPAD_COLD_FULL_ERASE nodes=100000 elapsed=\(fullStart.duration(to:.now))")
+    XCTAssertLessThan(fullStart.duration(to:.now),.milliseconds(300))
   }
 
   private func ready(_ canvas:InkCanvasView,after frames:Int) async throws {
