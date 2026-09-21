@@ -18,10 +18,6 @@ final class NotebookPagePresentationRegistry {
 
   func remove(_ owner: PagePresentationNativeView) { owners[ObjectIdentifier(owner)] = nil }
 
-  func cameraDidChange() {
-    for owner in owners.values { owner.value?.scheduleVisibleRegion() }
-  }
-
   func isPresented(_ page: PageDocument) -> Bool {
     owners = owners.filter { $0.value.value != nil }
     return owners.values.contains { $0.value?.isPresenting(page) == true }

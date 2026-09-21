@@ -4,13 +4,27 @@ import NotebookCore
 
 /// Pins accepted vector content, never a screenshot or a visibility mask.
 enum NotebookLassoInkSource: Sendable {
-  case page(PageDocument)
+  case page(PageDocument, pending: [PageInkMutation] = [])
   case spatial(SpatialInkJournal, Set<UUID>)
   var revision: String {
-    switch self { case .page(let p): p.drawingStamp.revision; case .spatial(let j,_): j.stamp.revision }
+    switch self {
+    case .page(let p, let pending):
+      guard !pending.isEmpty else { return p.drawingStamp.revision }
+      return p.drawingStamp.revision + ":" + pending.map(Self.mutationIdentity).joined(separator: ",")
+    case .spatial(let j,_): return j.stamp.revision
+    }
   }
   var suppressed: Set<UUID> {
-    switch self { case .page(let p): p.graphicPresentation.suppressedInkIDs; case .spatial(_,let ids): ids }
+    switch self {
+    case .page(let p, _): p.graphicPresentation.suppressedInkIDs
+    case .spatial(_,let ids): ids
+    }
+  }
+  private static func mutationIdentity(_ mutation: PageInkMutation) -> String {
+    switch mutation {
+    case .append(let action): "a:\(action.id.uuidString)"
+    case .remove(let ids): "r:" + ids.map(\.uuidString).sorted().joined(separator: "+")
+    }
   }
   func cacheKey(surface: SurfaceID) -> String {
     var key = "\(surface)|\(revision)"
@@ -35,8 +49,15 @@ enum NotebookLassoInkSource: Sendable {
     let suppressed = suppressed
     let entries: [Prepared.Entry]
     switch self {
-    case .page(let page):
-      entries = try PageInkDrawing.decode(page.drawingData).actions.filter { $0.isActive }.map {
+    case .page(let page, let pending):
+      var drawing = try page.inkDrawing()
+      for mutation in pending {
+        switch mutation {
+        case .append(let action): drawing = try drawing.appending(action)
+        case .remove(let ids): drawing = drawing.removing(ids)
+        }
+      }
+      entries = drawing.actions.filter { $0.isActive }.map {
         .init(id:$0.id,tool:$0.tool,color:$0.color,sources:[.init($0)])
       }
     case .spatial(let journal,_):

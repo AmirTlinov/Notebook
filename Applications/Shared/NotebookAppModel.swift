@@ -551,7 +551,9 @@ final class NotebookAppModel {
         } else { returning?.close() }
       }
       openDocumentPresentation?.cameraDidChange()
-      pagePresentations.cameraDidChange()
+      // Mounted paper observes ScenePlaneProjection.didProject directly.
+      // Calling the registry here as well schedules the same visible-region
+      // walk twice for every pinch sample.
       #endif
       if oldValue?.boardID != presence?.boardID || oldValue?.mode != presence?.mode
         || oldValue?.focusedItemID != presence?.focusedItemID || oldValue?.notebookPageID != presence?.notebookPageID
@@ -2629,18 +2631,30 @@ final class NotebookAppModel {
     return Task { await accepted.value() }
   }
 
-  /// A lasso sees the already lifted ink tail, even while its off-main
-  /// preparation is pending. Later contacts and remote reloads cannot retarget
-  /// this snapshot; the existing accepted-action owner supplies its result.
+  /// A lasso sees lifted ink immediately. Its vector snapshot borrows the
+  /// decoded page and applies accepted in-memory mutations; durable JSON and
+  /// SQLite publication remain independent work and never gate selection.
   func lassoInkSnapshot(_ page: PageDocument) -> Task<NotebookLassoInkSource?,Never> {
-    let tail = lastAcceptedPageInk[page.id]
-    return Task {
-      guard let tail else { return .page(page) }
-      guard let change = await tail.value() else { return nil }
-      var snapshot = page
-      _ = snapshot.replaceDrawing(change.data,stamp:change.stamp)
-      return .page(snapshot)
+    var pending: [PageInkMutation] = []
+    var history=pencilUndoHistory
+    var accepted = acceptedPageInkHead
+    while let value = accepted {
+      if value.pageID == page.id {
+        switch value.intent {
+        case .append(let action):
+          pending.append(.append(action));history.recordAction(ownerID:page.id,actionID:action.id)
+        case .undoLast:
+          let ids: Set<UUID>?
+          if case .remove(let resolved)? = value.mutation { ids=resolved }
+          else { ids=history.lastContribution(for:page.id) }
+          if let ids {
+            pending.append(.remove(ids));history.didRemoveContribution(ids,for:page.id)
+          }
+        }
+      }
+      accepted = value.next
     }
+    return Task { .page(page,pending:pending) }
   }
 
   private func startAcceptedPageInkPreparation() {

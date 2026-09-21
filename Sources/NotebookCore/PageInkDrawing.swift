@@ -1,5 +1,26 @@
 import Foundation
 
+/// Decoded ink follows the immutable archive bytes shared by PageDocument
+/// copies. Persistence may still encode off-main, but live readers never need
+/// to decode the same page again merely because a preceding write is pending.
+final class PageInkDrawingCache: @unchecked Sendable {
+  private let lock = NSLock()
+  private var prepared: (stamp:VersionStamp,drawing:PageInkDrawing)?
+
+  init(_ drawing:PageInkDrawing? = nil,stamp:VersionStamp? = nil) {
+    if let drawing,let stamp { prepared=(stamp,drawing) }
+  }
+
+  func value(for data: Data, stamp: VersionStamp) throws -> PageInkDrawing {
+    try lock.withLock {
+      if let prepared,prepared.stamp == stamp { return prepared.drawing }
+      let value = try PageInkDrawing.decode(data)
+      prepared=(stamp,value)
+      return value
+    }
+  }
+}
+
 /// A page owns the ordered pen and eraser operations that produced its pixels.
 /// A converted page starts with the final visible PNG of its previous drawing.
 public struct PageInkDrawing: Codable, Equatable, Sendable {

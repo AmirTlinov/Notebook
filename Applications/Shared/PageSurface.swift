@@ -16,6 +16,9 @@ struct PageSurface: View {
   @State private var visibleRegion: CGRect?
   @State private var inkIsReady = false
   @State private var readyOverlay: ObjectIdentifier?
+  #if os(iOS)
+  @State private var liveElementEraser = NotebookLiveElementEraserPresentation()
+  #endif
 
   private var overlayIsReady: Bool { readyOverlay == page.elementSourceIdentity }
 
@@ -32,21 +35,20 @@ struct PageSurface: View {
       ZStack(alignment: .topLeading) {
         GridPaperView()
         if scale > 0 {
-          AgentOverlayView(
-            page:page,
-            renderingScale: scale * displayProjection,
-            allowsInteraction: isVisible && isCurrent,
-            inputEnabled: isVisible && isInteractive,
-            onRenderReady: { ready in
-              if ready { readyOverlay = page.elementSourceIdentity }
-              else if readyOverlay == page.elementSourceIdentity { readyOverlay = nil }
-              publishReadiness(ink: inkIsReady, overlay: overlayIsReady)
-            },
-            onState: { elementID, state in
-              guard isVisible, isCurrent, model.activePage?.id == page.id else { return false }
-              return model.commitElementState(pageID: page.id, elementID: elementID, state: state)
-            }, visibleRegion: visibleRegion
-          )
+          Group {
+            #if os(iOS)
+            agentOverlay(renderingScale:scale * displayProjection)
+              .mask {
+                ZStack {
+                  NotebookLiveElementEraserMask(presentation:liveElementEraser)
+                    .allowsHitTesting(false)
+                  if !liveElementEraser.isActive { Color.white }
+                }
+              }
+            #else
+            agentOverlay(renderingScale:scale * displayProjection)
+            #endif
+          }
           .opacity(isVisible ? 1 : 0)
           .allowsHitTesting(isVisible && isInteractive)
         }
@@ -75,7 +77,7 @@ struct PageSurface: View {
                 })
             }, onWorkingGraphic: model.updateWorkingGraphic,
             eraserTargets: { model.eraserTargets(pageID: page.id) },
-            onElementErasing: model.updateElementErasing
+            onLiveElementErasing: liveElementEraser.display
           )
         #else
           MacPageInkView(page: page, isInteractive: isVisible && isInteractive) { ready in
@@ -126,6 +128,19 @@ struct PageSurface: View {
 
   private func publishReadiness(ink: Bool, overlay: Bool) {
     onRenderReady(ink && overlay)
+  }
+
+  private func agentOverlay(renderingScale:Double) -> some View {
+    AgentOverlayView(page:page,renderingScale:renderingScale,
+      allowsInteraction:isVisible && isCurrent,inputEnabled:isVisible && isInteractive,
+      onRenderReady:{ ready in
+        if ready { readyOverlay=page.elementSourceIdentity }
+        else if readyOverlay == page.elementSourceIdentity { readyOverlay=nil }
+        publishReadiness(ink:inkIsReady,overlay:overlayIsReady)
+      },onState:{ elementID,state in
+        guard isVisible,isCurrent,model.activePage?.id == page.id else { return false }
+        return model.commitElementState(pageID:page.id,elementID:elementID,state:state)
+      },visibleRegion:visibleRegion)
   }
 }
 

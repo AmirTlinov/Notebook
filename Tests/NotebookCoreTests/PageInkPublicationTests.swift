@@ -75,3 +75,22 @@ func preparedNoOpDoesNotAdvanceDrawing() throws {
   #expect(prepared.stamp == page.drawingStamp)
   #expect(prepared.data == page.drawingData)
 }
+
+@Test("Копии листа не подменяют декодированные чернила при одинаковом штампе")
+func decodedInkCachePreservesPageValueSemantics() throws {
+  let actor=UUID(),base=PageDocument(size:.init(width:834,height:1194),actor:actor)
+  var first=base,second=base
+  let a=PageInkAction(id:UUID(),tool:.pen,samples:[.init(point:.init(x:10,y:10),
+    timeOffset:0,width:2,opacity:1,force:1,azimuth:0,altitude:1)])
+  let b=PageInkAction(id:UUID(),tool:.pen,samples:[.init(point:.init(x:20,y:20),
+    timeOffset:0,width:2,opacity:1,force:1,azimuth:0,altitude:1)])
+  let stamp=VersionStamp(counter:1,actor:actor)
+  let firstChange=try first.prepareInkChange(.append(a),stamp:stamp)
+  let secondChange=try second.prepareInkChange(.append(b),stamp:stamp)
+  let firstPublished=first.publishInkChange(firstChange)
+  let secondPublished=second.publishInkChange(secondChange)
+  #expect(firstPublished)
+  #expect(secondPublished)
+  #expect(try first.inkDrawing().activeActions.map(\.id) == [a.id])
+  #expect(try second.inkDrawing().activeActions.map(\.id) == [b.id])
+}

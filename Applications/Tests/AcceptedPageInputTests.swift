@@ -5,6 +5,27 @@ import XCTest
 
 final class AcceptedPageInputTests: XCTestCase {
   @MainActor
+  func testLiveElementEraserStaysInNativePresentationUntilLift() async throws {
+    let paper=PaperInputView(frame:.init(x:0,y:0,width:500,height:500))
+    paper.quickShapePageID=UUID()
+    paper.configure(penStyle:.standard,eraserStyle:.standard,drawingTool:.eraser)
+    paper.eraserTargets = { [.init(elementID:"object",frame:.init(x:0,y:0,width:500,height:500))] }
+    var live:[ActiveEraserStroke?]=[]
+    paper.onLiveElementErasing = { live.append($0) }
+    let touch=AcceptedInputTouch(); touch.point = .init(x:20,y:20)
+    paper.touchesBegan([touch],with:nil)
+    for index in 1...60 {
+      touch.point = .init(x:CGFloat(20+index*4),y:CGFloat(20+index*2)); touch.sampleTime += 1.0/120
+      paper.touchesMoved([touch],with:nil)
+    }
+    XCTAssertGreaterThan(live.compactMap { $0 }.count,50)
+    XCTAssertGreaterThan(live.compactMap { $0 }.last?.measured.count ?? 0,50)
+    paper.touchesEnded([touch],with:nil)
+    try await Task.sleep(for:.milliseconds(150))
+    XCTAssertNil(live.last ?? nil)
+  }
+
+  @MainActor
   func testPencilLiftRegistersItsMutationBeforeReleasingWaitingPageInput() async throws {
     let gate = NotebookInputGate()
     let page = PageDocument(size: .init(width: 834, height: 1194), actor: UUID())
@@ -581,6 +602,57 @@ final class AcceptedPageInputTests: XCTestCase {
     XCTAssertEqual(try PageInkDrawing.decode(reopened.drawingData).actions, PageInkDrawing(actions: [action]).actions)
     let graphic = try XCTUnwrap(reopened.elements.first?.graphic)
     XCTAssertTrue(graphic.showsGeometry); XCTAssertEqual(graphic.sourceInkIDs, [action.id])
+  }
+
+  @MainActor
+  func testLassoReadsAcceptedStrokeWithoutWaitingForArchiveSerialization() async throws {
+    let entered=expectation(description:"accepted stroke entered suspended archive preparation")
+    let barrier=AcceptedInkPreparationBarrier(arrivals:[entered])
+    let (model, _)=await makeModel(barrier:barrier)
+    let page=try XCTUnwrap(model.activePage)
+    let action=stroke(y:220)
+    let stamp=try XCTUnwrap(model.reserveDrawingAction(pageID:page.id))
+    let delivery=model.acceptDrawingAction(action,pageID:page.id,stamp:stamp)
+    await fulfillment(of:[entered],timeout:2)
+
+    let snapshot=model.lassoInkSnapshot(page)
+    let source=await withTaskGroup(of:NotebookLassoInkSource?.self) { group in
+      group.addTask { await snapshot.value }
+      group.addTask { try? await Task.sleep(for:.milliseconds(100));return nil }
+      let first=await group.next() ?? nil
+      group.cancelAll()
+      return first
+    }
+    let accepted=try XCTUnwrap(source,"Lasso must not join durable JSON/SQLite preparation")
+    let selected=try accepted.selection(polygon:[.init(x:0,y:190),.init(x:220,y:190),
+      .init(x:220,y:280),.init(x:0,y:280)],surface:.page(page.id),origin:nil,bounds:nil)
+    XCTAssertEqual(selected?.graphic.sourceInkIDs,[action.id])
+
+    await barrier.releaseNext()
+    let delivered=await delivery.value
+    XCTAssertNotNil(delivered)
+  }
+
+  @MainActor
+  func testLassoAppliesQueuedUndoBeforeArchiveSerialization() async throws {
+    let entered=expectation(description:"append preparation suspended before queued undo")
+    let barrier=AcceptedInkPreparationBarrier(arrivals:[entered])
+    let (model,_)=await makeModel(barrier:barrier)
+    let page=try XCTUnwrap(model.activePage),action=stroke(y:220)
+    let stamp=try XCTUnwrap(model.reserveDrawingAction(pageID:page.id))
+    let append=model.acceptDrawingAction(action,pageID:page.id,stamp:stamp)
+    await fulfillment(of:[entered],timeout:2)
+    let undo=model.acceptDrawingUndo()
+    XCTAssertEqual(model.pendingAcceptedPageInkCount,2)
+    let snapshot=await model.lassoInkSnapshot(page).value
+    let source=try XCTUnwrap(snapshot)
+    let selected=try source.selection(polygon:[.init(x:0,y:190),.init(x:220,y:190),
+      .init(x:220,y:280),.init(x:0,y:280)],surface:.page(page.id),origin:nil,bounds:nil)
+    XCTAssertNil(selected,"The already accepted undo is part of the same immediate snapshot")
+    await barrier.open()
+    let appended=await append.value,undone=await undo.value
+    XCTAssertNotNil(appended)
+    XCTAssertNotNil(undone)
   }
 
   @MainActor

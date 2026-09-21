@@ -6,6 +6,20 @@ import XCTest
 
 final class PageInkGeometryTests: XCTestCase {
   @MainActor
+  func testCorrectedActiveTailKeepsTheSameBoundaryForBothRenderers() {
+    let stroke=ActiveEraserStroke()
+    stroke.replaceMeasuredTail(from:0,with:[point(x:20,y:20),point(x:80,y:80)])
+    let firstRevision=stroke.revision
+    XCTAssertEqual(stroke.changedStart(after:nil),0)
+    XCTAssertEqual(stroke.changedStart(after:nil),0,"Reading a boundary is not destructive")
+    stroke.replaceMeasuredTail(from:0,with:[point(x:25,y:20),point(x:85,y:80)])
+    XCTAssertEqual(stroke.measured.count,2)
+    XCTAssertEqual(stroke.changedStart(after:firstRevision),0)
+    XCTAssertEqual(stroke.changedStart(after:firstRevision),0,
+      "Page ink and the element mask must both rebuild an estimated correction")
+  }
+
+  @MainActor
   func testReloadRetainsMeasuredGeometry() async throws {
     let drawing = PageInkDrawing(actions: [stroke(y: 100)])
     let view = InkCanvasView(
@@ -253,6 +267,44 @@ final class PageInkGeometryTests: XCTestCase {
     XCTAssertGreaterThan(view.committedSourceNodeCount, 0, "An imported baseline cannot flatten newly measured ink")
     let image = UIGraphicsImageRenderer(size: size).image { _ in background.drawHierarchy(in: background.bounds, afterScreenUpdates: true) }
     XCTAssertGreaterThan(darkPixelCount(in: image), 5000, "Both original baseline and vector stroke remain visible")
+  }
+
+  @MainActor
+  func testActivePageFramesCompositeRetainedInkWithoutRedrawingHistory() async throws {
+    let size=CGSize(width:400,height:400)
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window=UIWindow(windowScene:scene); window.frame = .init(origin:.zero,size:size)
+    let controller=UIViewController();window.rootViewController=controller
+    let resources=SceneRenderResources(byteLimit:32*1024*1024)
+    let view=InkCanvasView(frame:.init(origin:.zero,size:size),resources:resources);controller.view.addSubview(view)
+    view.projectPage(region:.init(origin:.zero,size:size),sourceSize:size,pixelDensity:1)
+    window.makeKeyAndVisible()
+    defer { view.removeFromSuperview();window.isHidden=true;window.rootViewController=nil }
+    view.apply(.init(actions:(0..<120).map { stroke(y:CGFloat(($0*3)%380+10)) }))
+    try await prepared(view)
+    let ready=ContinuousClock.now + .seconds(4)
+    while !view.isStableFramePresented,ContinuousClock.now < ready { try await Task.sleep(for:.milliseconds(10)) }
+    XCTAssertTrue(view.isStableFramePresented)
+    let committed=view.pageCommittedPassCount,composited=view.pageActivePassCount
+    XCTAssertGreaterThan(committed,0)
+
+    let active=ActiveInkStroke(style:.standard)
+    for index in 0..<24 {
+      active.replaceMeasuredTail(from:active.measured.count,with:[point(x:CGFloat(20+index*10),y:200)])
+      view.displayActiveStroke(active)
+      try await Task.sleep(for:.milliseconds(9))
+    }
+    XCTAssertEqual(view.pageCommittedPassCount,committed,
+      "Pencil frames must sample one retained page instead of encoding every saved stroke")
+    XCTAssertGreaterThan(view.pageActivePassCount,composited)
+
+    view.commitActiveStroke(active.measured.frozen().restoredAction())
+    let deadline=ContinuousClock.now + .seconds(2)
+    while view.pageCommittedPassCount == committed,ContinuousClock.now < deadline {
+      try await Task.sleep(for:.milliseconds(10))
+    }
+    XCTAssertEqual(view.pageCommittedPassCount,committed+1,
+      "Only the accepted change invalidates the retained page")
   }
 
   func testReloadPreservesChronologicalPenErasePenGeometry() throws {

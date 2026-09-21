@@ -131,7 +131,7 @@ final class PagePresentationTests: XCTestCase {
       if $0 == first { initialRegion.fulfill() }
     }
     view.update(model: model, page: page, isCurrent: false, isVisible: true, isReady: false, activity: nil)
-    model.pagePresentations.cameraDidChange()
+    view.scheduleVisibleRegion()
     await fulfillment(of: [initialRegion], timeout: 3)
     XCTAssertEqual(region, first, "A visible neighbouring page keeps its graphics, including the antialias fringe")
     let movedRegion = expectation(description: "Moved physical clip")

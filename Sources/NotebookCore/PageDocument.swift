@@ -167,9 +167,16 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   public private(set) var agentStamp: VersionStamp { didSet { elementProjectionCache = .init() } }
   public private(set) var collaboration: CollaborativeContent? { didSet { elementProjectionCache = .init() } }
   private var elementProjectionCache = PageElementProjectionCache()
+  private var inkDrawingCache = PageInkDrawingCache()
   /// Runtime identity of immutable element content; drawing and camera do not change it.
   public var elementSourceIdentity: ObjectIdentifier { ObjectIdentifier(elementProjectionCache) }
   var elementProjection: PageElementProjection { elementProjectionCache.value(for:self) }
+  /// The archive is the durable boundary; this is its shared decoded runtime
+  /// projection. Pending interaction may extend it without waiting for another
+  /// archive serialization.
+  public func inkDrawing() throws -> PageInkDrawing {
+    try inkDrawingCache.value(for:drawingData,stamp:drawingStamp)
+  }
   private enum CodingKeys: String,CodingKey {
     case format,id,size,drawingData,drawingStamp,elements,agentStamp,collaboration,computations
   }
@@ -191,7 +198,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   /// compare-and-swap boundary; unrelated element edits remain on this page.
   public func prepareInkChange(_ mutation: PageInkMutation, stamp: VersionStamp) throws -> PreparedPageInkChange {
     try Task.checkCancellation()
-    let current = try PageInkDrawing.decode(drawingData)
+    let current = try inkDrawing()
     let drawing: PageInkDrawing
     switch mutation {
     case .append(let action): drawing = try current.appending(action)
@@ -214,6 +221,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     guard change.pageID == id, change.baseStamp == drawingStamp else { return false }
     drawingData = change.data
     drawingStamp = change.stamp
+    inkDrawingCache = .init(change.drawing,stamp:change.stamp)
     return true
   }
 
@@ -287,7 +295,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     guard data != drawingData,
       let stamp = drawingStamp.advanced(by: actor)
     else { return false }
-    guard let current = try? PageInkDrawing.decode(drawingData),
+    guard let current = try? inkDrawing(),
       let requested = try? PageInkDrawing.decode(data) else { return false }
     do {
       let next = try current.removing(Set(current.activeActions.map(\.id))
@@ -316,9 +324,10 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     if data == drawingData {
       guard drawingStamp < stamp else { return false }
       drawingStamp = stamp
+      inkDrawingCache = .init(incoming,stamp:stamp)
       return true
     }
-    let current = try PageInkDrawing.decode(drawingData)
+    let current = try inkDrawing()
     do {
       let merged = try current.merging(incoming)
       let frontier = max(drawingStamp, stamp)
@@ -327,6 +336,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
       guard merged != current || drawingStamp != resolvedStamp else { return false }
       drawingData = merged == current ? drawingData : merged == incoming ? data : try merged.dataRepresentation()
       drawingStamp = resolvedStamp
+      inkDrawingCache = .init(merged,stamp:resolvedStamp)
       return true
     } catch PageInkDrawing.InkError.incompatibleBaseline {
       // An explicit raster import is a whole-baseline revision; it is not an
@@ -335,6 +345,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     guard drawingStamp < stamp else { return false }
     drawingData = data
     drawingStamp = stamp
+    inkDrawingCache = .init(incoming,stamp:stamp)
     return true
   }
 

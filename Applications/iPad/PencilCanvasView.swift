@@ -21,7 +21,7 @@ struct PencilCanvasView: UIViewRepresentable {
   var resolveQuickShape: (NotebookQuickShapeFit, Double) -> NotebookQuickShapeFit = { fit, _ in fit }
   var onWorkingGraphic: (NotebookWorkingGraphic?, UUID) -> Void = { _, _ in }
   var eraserTargets: () -> [InkElementTarget] = { [] }
-  var onElementErasing: ([NotebookElementErasing], UUID) -> Void = { _, _ in }
+  var onLiveElementErasing: (ActiveEraserStroke?) -> Void = { _ in }
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
@@ -41,7 +41,7 @@ struct PencilCanvasView: UIViewRepresentable {
     paper.touchView.resolveQuickShape = resolveQuickShape
     paper.touchView.onWorkingGraphic = onWorkingGraphic
     paper.touchView.eraserTargets = eraserTargets
-    paper.touchView.onElementErasing = onElementErasing
+    paper.touchView.onLiveElementErasing = onLiveElementErasing
     paper.inkView.onRenderReadinessChange = { ready in
       Task { @MainActor in onRenderReady(ready) }
     }
@@ -66,7 +66,7 @@ struct PencilCanvasView: UIViewRepresentable {
     paper.touchView.resolveQuickShape = resolveQuickShape
     paper.touchView.onWorkingGraphic = onWorkingGraphic
     paper.touchView.eraserTargets = eraserTargets
-    paper.touchView.onElementErasing = onElementErasing
+    paper.touchView.onLiveElementErasing = onLiveElementErasing
     paper.inkView.onRenderReadinessChange = { ready in
       Task { @MainActor in onRenderReady(ready) }
     }
@@ -90,6 +90,8 @@ struct PencilCanvasView: UIViewRepresentable {
     coordinator: Coordinator
   ) {
     paper.inkView.onRenderReadinessChange = nil
+    paper.touchView.onLiveElementErasing(nil)
+    paper.touchView.onLiveElementErasing = { _ in }
     coordinator.detach(from: paper)
   }
 
@@ -573,7 +575,7 @@ final class PaperInputView: UIView {
   var resolveQuickShape: (NotebookQuickShapeFit, Double) -> NotebookQuickShapeFit = { fit, _ in fit }
   var onWorkingGraphic: (NotebookWorkingGraphic?, UUID) -> Void = { _, _ in }
   var eraserTargets: () -> [InkElementTarget] = { [] }
-  var onElementErasing: ([NotebookElementErasing], UUID) -> Void = { _, _ in }
+  var onLiveElementErasing: (ActiveEraserStroke?) -> Void = { _ in }
 
   weak var toolController: NotebookDrawingToolController?
   weak var toolInputGate: NotebookInputGate?
@@ -1085,7 +1087,7 @@ final class PaperInputView: UIView {
     guard quickShape.fit == nil else { return }
     if actionTool == .eraser, let activeEraserStroke {
       presentActiveEraser?(activeEraserStroke)
-      publishElementErasing()
+      onLiveElementErasing(activeEraserStroke)
     } else if let activePenStroke {
       activePenStroke.replacePredictions(with: [])
       presentActivePen?(activePenStroke)
@@ -1100,20 +1102,13 @@ final class PaperInputView: UIView {
 
     if actionTool == .eraser, let activeEraserStroke {
       presentActiveEraser?(activeEraserStroke)
-      publishElementErasing()
+      onLiveElementErasing(activeEraserStroke)
     } else if let activePenStroke {
       activePenStroke.replacePredictions(
         with: processedPredictedPenPoints().map(SpatialInkSample.init)
       )
       presentActivePen?(activePenStroke)
     }
-  }
-
-  private func publishElementErasing() {
-    guard let source = activeEraserStroke?.measured, let pageID = quickShapePageID else { return }
-    let targets = elementContact.selected
-    onElementErasing(targets.isEmpty ? [] : [.init(id: actionStrokeID, surface: .page(pageID),
-      samples: source.frozen().measurements, targets: targets)], actionStrokeID)
   }
 
   private func inkColor(_ style: PenStyle) -> SpatialInkColor {
@@ -1196,7 +1191,7 @@ final class PaperInputView: UIView {
     if preservingShapeHistory { quickShape.endContact() } else { quickShape.cancel() }
     let reportedPencilActivity = reportsPencilActivity
     clearActiveAction?()
-    onElementErasing([], actionStrokeID)
+    onLiveElementErasing(nil)
     elementContact = InkElementContact([])
     activeTouch = nil
     actionTool = nil

@@ -9,40 +9,59 @@ import AppKit
 
 /// The accepted contact is the measured source, not a retained PencilKit array.
 /// Its display mesh and predictions are disposable projections of this owner.
+private struct ActiveInkRevisionHistory {
+  private(set) var revision:UInt64=0
+  private var changes:[(revision:UInt64,start:Int)]=[]
+  mutating func record(_ start:Int) {
+    revision &+= 1;changes.append((revision,start))
+    if changes.count > 64 { changes.removeFirst(changes.count-64) }
+  }
+  func changedStart(after rendered:UInt64?) -> Int {
+    guard let rendered else { return 0 }
+    guard rendered < revision else { return .max }
+    guard let first=changes.first,rendered+1 >= first.revision else { return 0 }
+    return changes.lazy.filter { $0.revision > rendered }.map(\.start).min() ?? 0
+  }
+}
+
 @MainActor
 final class ActiveInkStroke {
   let style: PenStyle
   let projection: InkSampleProjection
   private(set) var measured: InkSampleRelations.Contact
   private(set) var predicted: [SpatialInkSample] = []
-  private(set) var revision: UInt64 = 0
-  private var changedFrom = 0
+  private var history=ActiveInkRevisionHistory()
+  var revision:UInt64 { history.revision }
   init(style: PenStyle,sourceID: UUID = UUID(),span: Int = 0,projection: InkSampleProjection = .init()) {
     self.style=style;self.projection=projection
     let c=style.color.components
     measured = .init(sourceID:sourceID,span:span,header:.init(tool:.pen,color:.init(red:c.red,green:c.green,blue:c.blue)))
   }
-  func consumeChangedStart() -> Int { defer { changedFrom=measured.count };return changedFrom }
+  func changedStart(after revision:UInt64?) -> Int {
+    min(measured.count,history.changedStart(after:revision))
+  }
   func replaceMeasuredTail(from startIndex: Int,with samples: [SpatialInkSample]) {
     let start=min(max(startIndex,0),measured.count)
-    changedFrom=min(changedFrom,start);measured.replaceTail(from:start,with:samples);revision &+= 1
+    measured.replaceTail(from:start,with:samples);history.record(start)
   }
-  func replacePredictions(with samples: [SpatialInkSample]) { predicted=samples;revision &+= 1 }
+  func replacePredictions(with samples: [SpatialInkSample]) { predicted=samples;history.record(measured.count) }
 }
 
 @MainActor
 final class ActiveEraserStroke {
   let projection: InkSampleProjection
   private(set) var measured: InkSampleRelations.Contact
-  private(set) var revision: UInt64 = 0
-  private var changedFrom = 0
+  private var history=ActiveInkRevisionHistory()
+  var revision:UInt64 { history.revision }
   init(sourceID: UUID = UUID(),span: Int = 0,color: SpatialInkColor = .black,projection: InkSampleProjection = .init()) {
     self.projection=projection;measured = .init(sourceID:sourceID,span:span,header:.init(tool:.eraser,color:color))
   }
-  func consumeChangedStart() -> Int { defer { changedFrom=measured.count };return changedFrom }
+  func changedStart(after revision:UInt64?) -> Int {
+    min(measured.count,history.changedStart(after:revision))
+  }
   func replaceMeasuredTail(from startIndex: Int,with samples: [SpatialInkSample]) {
     let start=min(max(startIndex,0),measured.count)
-    changedFrom=min(changedFrom,start);measured.replaceTail(from:start,with:samples);revision &+= 1
+    measured.replaceTail(from:start,with:samples);history.record(start)
   }
 }
 
@@ -211,7 +230,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     let scale: Double?
   }
   private var committedViewport: (key: CommittedViewport, visible: [(Int,Range<Int>)])?
-  private var committedBatches: [CommittedBatch] = [] { didSet { committedViewport = nil } }
+  private var committedGeneration: UInt64 = 0
+  private var committedBatches: [CommittedBatch] = [] {
+    didSet { committedViewport = nil; committedGeneration &+= 1 }
+  }
   private var spatialActionBase: [CommittedBatch]?
   private(set) var installedSpatialSource: SpatialInkInstalledSource?
   private(set) var spatialSourceGeneration: UInt64 = 0
@@ -231,6 +253,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var spatialStagingID: UUID?
   private weak var stagedSpatialFrame: PreparedSpatialFrame?
   private var material: InkMaterialRenderer?
+  private var isLiveElementEraserMask = false
   var materialUploadedNodeCount: Int { material?.uploadedNodes ?? 0 }
   private var pageDrawing: PageInkDrawing?
   private var drawingIsPreparing = false
@@ -248,6 +271,18 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var pageDrawableReservation: RasterReservation?
   private var pageAdmittedSize = CGSize.zero
   private var pageMultisample: (any MTLTexture)?
+  private var pageRetainedTexture: (any MTLTexture)?
+  private var pageRetainedReservation: RasterReservation?
+  var hasPageRetainedTexture:Bool { pageRetainedTexture != nil }
+  private struct PageRetainedKey: Equatable {
+    let generation: UInt64
+    let baseline: ObjectIdentifier?
+    let region: CGRect
+    let pixels: CGSize
+  }
+  private var pageRetainedKey: PageRetainedKey?
+  private(set) var pageCommittedPassCount = 0
+  private(set) var pageActivePassCount = 0
 
   private var activeInkStroke: ActiveInkStroke?
   private var activeEraserStroke: ActiveEraserStroke?
@@ -373,6 +408,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       if spatialHandoffRetains == 0 {
         releaseDrawables()
         pageDrawableReservation = nil; pageMultisample = nil
+        pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
         releaseGeometryBuffers()
         spatialTarget?.detach(); spatialTarget = nil
       }
@@ -415,15 +451,27 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     requestFrame()
   }
 
+  /// One page-level native mask previews an element eraser contact. It is
+  /// driven directly by the input owner; no sample prefix enters Observation
+  /// or causes every element view to rebuild while Pencil is moving.
+  func configureLiveElementEraserMask() {
+    isLiveElementEraserMask = true
+    clearColor = .init(red:1,green:1,blue:1,alpha:1)
+    beginStableContentUpdate()
+    requestFrame()
+  }
+
   private func admitPageDrawable(samples: Int) -> Bool {
     guard pageRenderRegion != nil else { return true }
-    if pageDrawableReservation != nil, pageAdmittedSize == drawableSize { return true }
+    if pageDrawableReservation != nil,pageAdmittedSize == drawableSize { return true }
+    pageDrawableReservation = nil; pageMultisample = nil
+    pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
     guard let device else { return false }
     let width = Int(drawableSize.width), height = Int(drawableSize.height)
     let color = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: colorPixelFormat,
       width: width, height: height, mipmapped: false)
     color.storageMode = .private; color.usage = .renderTarget
-    let drawableBytes = max(device.heapTextureSizeAndAlign(descriptor: color).size,
+    let drawableBytes = max(textureAllocationSize(color,on:device),
       ((width * 4 + 255) / 256) * 256 * height)
     let msaa = MTLTextureDescriptor()
     msaa.textureType = .type2DMultisample; msaa.pixelFormat = colorPixelFormat
@@ -431,13 +479,48 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     msaa.usage = .renderTarget
     msaa.storageMode = device.supportsFamily(.apple1) ? .memoryless : .private
     let attachmentBytes = samples > 1 && msaa.storageMode != .memoryless
-      ? device.heapTextureSizeAndAlign(descriptor: msaa).size : 0
+      ? textureAllocationSize(msaa,on:device) : 0
     guard let reservation = resources.reserveDerivedBytes(drawableBytes * Self.framesInFlight + attachmentBytes,
       priority: .input, owner: physicalAdmission) else { renderFailure = .resourceLimit; return false }
     let attachment = samples > 1 ? device.makeTexture(descriptor: msaa) : nil
-    guard samples == 1 || attachment != nil else { renderFailure = .resourceLimit; return false }
-    pageDrawableReservation = reservation; pageMultisample = attachment; pageAdmittedSize = drawableSize
+    guard samples == 1 || attachment != nil else {
+      renderFailure = .resourceLimit; return false
+    }
+    pageDrawableReservation = reservation; pageMultisample = attachment
+    pageAdmittedSize = drawableSize
     return true
+  }
+
+  private func admitPageRetainedTexture() -> Bool {
+    let hasCommittedPage = baselineTexture != nil || committedBatches.contains { !$0.mesh.isEmpty }
+    let retainsCommittedPage = pageRenderRegion != nil && material == nil
+      && hasCommittedPage && !isLiveElementEraserMask
+    guard retainsCommittedPage else {
+      pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
+      return true
+    }
+    if pageRetainedTexture != nil,pageRetainedReservation != nil { return true }
+    guard let device else { return false }
+    let width=Int(drawableSize.width),height=Int(drawableSize.height)
+    let descriptor=MTLTextureDescriptor.texture2DDescriptor(pixelFormat:colorPixelFormat,
+      width:width,height:height,mipmapped:false)
+    descriptor.storageMode = .private;descriptor.usage=[.renderTarget,.shaderRead]
+    let bytes=max(textureAllocationSize(descriptor,on:device),
+      ((width * 4 + 255) / 256) * 256 * height)
+    guard let reservation=resources.reserveDerivedBytes(bytes,priority:.input,owner:physicalAdmission),
+      let texture=device.makeTexture(descriptor:descriptor),texture.allocatedSize <= bytes else {
+      renderFailure = .resourceLimit;return false
+    }
+    pageRetainedReservation=reservation;pageRetainedTexture=texture;pageRetainedKey=nil
+    return true
+  }
+
+  private func textureAllocationSize(_ descriptor:MTLTextureDescriptor,on device:any MTLDevice) -> Int {
+    let allocation=device.heapTextureSizeAndAlign(descriptor:descriptor)
+    // allocatedSize includes the Apple VM page even when heap placement reports
+    // a smaller alignment (for example 811,008 -> 819,200 bytes).
+    let alignment=max(16*1024,allocation.align)
+    return ((allocation.size + alignment - 1) / alignment) * alignment
   }
 
   /// The same physical board layer moves between the active scene, its portal
@@ -461,6 +544,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     cancelPendingPageMesh()
     material = nil
     pageDrawableReservation = nil; pageMultisample = nil
+    pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
     pageDrawing = nil; baselineTexture = nil; baselinePNG = nil; baselineReservation = nil
     installedPageRevision = nil; pendingPageRevision = nil
     committedBatches.removeAll(); spatialActionBase = nil
@@ -609,6 +693,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     pageMeshTask?.cancel(); pageMeshTask = nil
     material = nil
     pageDrawableReservation = nil; pageMultisample = nil
+    pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
     pageDrawing = nil; baselineTexture = nil; baselinePNG = nil; baselineReservation = nil
     installedPageRevision = nil; pendingPageRevision = nil
     committedBatches = mesh.batches.map(CommittedBatch.init)
@@ -717,10 +802,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       identity = ObjectIdentifier(stroke); measured=stroke.measured;projection=stroke.projection
       let value = stroke.style.color.components
       color = .init(Float(value.red), Float(value.green), Float(value.blue), 1)
-      operation = .ink; changed = stroke.consumeChangedStart()
+      operation = .ink;changed=stroke.changedStart(after:builtActiveIdentity == identity ? builtActiveRevision : nil)
     } else if let stroke = activeEraserStroke {
       identity = ObjectIdentifier(stroke); measured=stroke.measured;projection=stroke.projection
-      color = .init(1, 1, 1, 1); operation = .erase; changed = stroke.consumeChangedStart()
+      color = .init(1, 1, 1, 1);operation = .erase
+      changed=stroke.changedStart(after:builtActiveIdentity == identity ? builtActiveRevision : nil)
     } else { return }
     if builtActiveIdentity != identity { activeMesh = IncrementalInkMesh(eraser:operation == .erase) }
     activeMesh.update(measured:measured,changedFrom:builtActiveIdentity == identity ? changed : 0,color:color,projection:projection)
@@ -748,7 +834,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     if spatialDrawableScale != nil, submittedFrameCount > 0 || submittedPresentationCount > 0 { return }
     if presentEmptyContentIfReady() { return }
     let samples = device?.supportsTextureSampleCount(4) == true ? 4 : 1
-    guard admitSpatialDrawable(samples: samples), admitPageDrawable(samples: samples) else { return }
+    guard admitSpatialDrawable(samples: samples),admitPageDrawable(samples:samples),
+      admitPageRetainedTexture() else { return }
     // Page crops and retained scene canvases own their MSAA attachment.
     // Apple GPUs keep it in tile memory; do not allocate another implicit copy.
     sampleCount = spatialDrawableScale == nil && pageRenderRegion == nil ? samples : 1
@@ -768,6 +855,22 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       renderFailure = .resourceLimit; return
     }
     guard let commandQueue, let commandBuffer = commandQueue.makeCommandBuffer() else { return }
+    let retainedPageKey = pageRenderRegion.flatMap { region -> PageRetainedKey? in
+      guard spatialTarget == nil, material == nil, pageRetainedTexture != nil else { return nil }
+      return .init(generation:committedGeneration,
+        baseline:baselineTexture.map { ObjectIdentifier($0) },region:region,pixels:drawableSize)
+    }
+    var encodedRetainedKey: PageRetainedKey?
+    if let key=retainedPageKey,key != pageRetainedKey,let texture=pageRetainedTexture {
+      let descriptor=pageRetainedRenderPass(texture:texture)
+      guard let encoder=commandBuffer.makeRenderCommandEncoder(descriptor:descriptor) else { return }
+      encodeTexture(baselineTexture, croppedTo:pageRenderRegion, label:"Imported Notebook Ink Baseline", with:encoder)
+      encodeSpatial(batches:committedBatches,visible:visible,active:nil,camera:spatialCamera,
+        viewport:spatialViewport,size:bounds.size,encoder:encoder)
+      encoder.endEncoding()
+      encodedRetainedKey=key
+      pageCommittedPassCount += 1
+    }
     var passes:
       [(MTLRenderPassDescriptor, any CAMetalDrawable, MTLViewport?, CGRect?, [(Int, Range<Int>)])] = []
     var signatures: [TileSignature] = []
@@ -825,21 +928,16 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       descriptor.colorAttachments[0].clearColor = clearColor
       guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
       if let viewport { encoder.setViewport(viewport) }
-      if let baselineTexture, let baselinePipelineState {
-        encoder.label = "Imported Notebook Ink Baseline"
-        encoder.setRenderPipelineState(baselinePipelineState)
-        var textureRect = SIMD4<Float>(0, 0, 1, 1)
-        if let crop = pageRenderRegion, pageSourceSize.width > 0, pageSourceSize.height > 0 {
-          textureRect = .init(Float(crop.minX/pageSourceSize.width), Float(crop.minY/pageSourceSize.height),
-            Float(crop.width/pageSourceSize.width), Float(crop.height/pageSourceSize.height))
-        }
-        encoder.setVertexBytes(&textureRect, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
-        encoder.setFragmentTexture(baselineTexture, index: 0)
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+      if retainedPageKey != nil,let pageRetainedTexture {
+        encodeTexture(pageRetainedTexture,croppedTo:nil,label:"Retained Notebook Page Ink",with:encoder)
+        encodeSpatial(batches:[],visible:[],active:active,camera:spatialCamera,
+          viewport:spatialViewport,size:bounds.size,clip:clip,encoder:encoder)
+        pageActivePassCount += 1
+      } else {
+        encodeTexture(baselineTexture,croppedTo:pageRenderRegion,label:"Imported Notebook Ink Baseline",with:encoder)
+        encodeSpatial(batches:committedBatches,visible:tileVisible,active:active,
+          camera:spatialCamera,viewport:spatialViewport,size:bounds.size,clip:clip,encoder:encoder)
       }
-      encodeSpatial(
-        batches: committedBatches, visible: tileVisible, active: active,
-        camera: spatialCamera, viewport: spatialViewport, size: bounds.size, clip: clip, encoder: encoder)
       if let material, let device {
         do {
           materialReservations += try material.encode(
@@ -865,6 +963,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       + (activeBufferReservations[frameSlot].map { [$0] } ?? [])
       + (baselineReservation.map { [$0] } ?? [])
       + (pageDrawableReservation.map { [$0] } ?? [])
+      + (pageRetainedReservation.map { [$0] } ?? [])
     submittedFrameCount += 1
     let physical = physicalAdmission
     let target = spatialTarget
@@ -877,7 +976,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         withExtendedLifetime((heldGeometry, physical, target)) {}
         guard let self else { return }
         finishSubmittedFrame()
-        if !completed { drawnTiles = nil }
+        if !completed { drawnTiles = nil; pageRetainedKey = nil }
         guard completed, !spatialHandoffIsStopping, window != nil,
           stableContentRevision == submittedRevision else { return }
         renderFailure = nil
@@ -907,6 +1006,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       }
     }
     if let target = spatialTarget { drawnTiles = (ObjectIdentifier(target), signatures) }
+    if let encodedRetainedKey { pageRetainedKey=encodedRetainedKey }
     commandBuffer.commit()
     mustSignal = false
     frameSlot = (frameSlot + 1) % Self.framesInFlight
@@ -923,6 +1023,30 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         batch.buffers[$0]!.isVisible && batch.buffers[$0]!.geometry.chunk.descriptor.intersects(viewport:clip,transform:transform)
       }.map { (b,$0) }
     }
+  }
+
+  private func pageRetainedRenderPass(texture:any MTLTexture) -> MTLRenderPassDescriptor {
+    let descriptor=MTLRenderPassDescriptor()
+    descriptor.colorAttachments[0].texture=pageMultisample ?? texture
+    descriptor.colorAttachments[0].resolveTexture=pageMultisample == nil ? nil : texture
+    descriptor.colorAttachments[0].storeAction=pageMultisample == nil ? .store : .multisampleResolve
+    descriptor.colorAttachments[0].loadAction = .clear
+    descriptor.colorAttachments[0].clearColor = clearColor
+    return descriptor
+  }
+
+  private func encodeTexture(_ texture:(any MTLTexture)?,croppedTo crop:CGRect?,label:String,
+    with encoder:any MTLRenderCommandEncoder) {
+    guard let texture,let baselinePipelineState else { return }
+    encoder.label=label;encoder.setRenderPipelineState(baselinePipelineState)
+    var textureRect=SIMD4<Float>(0,0,1,1)
+    if let crop,pageSourceSize.width > 0,pageSourceSize.height > 0 {
+      textureRect = .init(Float(crop.minX/pageSourceSize.width),Float(crop.minY/pageSourceSize.height),
+        Float(crop.width/pageSourceSize.width),Float(crop.height/pageSourceSize.height))
+    }
+    encoder.setVertexBytes(&textureRect,length:MemoryLayout<SIMD4<Float>>.stride,index:0)
+    encoder.setFragmentTexture(texture,index:0)
+    encoder.drawPrimitives(type:.triangle,vertexStart:0,vertexCount:6)
   }
 
   private func tileSignature(visible: [(Int, Range<Int>)], clip: CGRect) -> TileSignature {
@@ -1131,6 +1255,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     cancelPendingPageMesh()
     material = nil
     pageDrawableReservation = nil; pageMultisample = nil
+    pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
     pageDrawing = nil; baselineTexture = nil; baselinePNG = nil; baselineReservation = nil; drawingIsPreparing = false
     installedPageRevision = nil; pendingPageRevision = nil
     committedBatches = frame.batches; drawnTiles = nil; discardActiveAction()
@@ -1289,7 +1414,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   @discardableResult
   private func presentEmptyContentIfReady() -> Bool {
-    guard material == nil, !spatialHandoffIsStopping, spatialStagingID == nil, pageGeometryIsReady, baselineTexture == nil,
+    guard !isLiveElementEraserMask, material == nil, !spatialHandoffIsStopping, spatialStagingID == nil, pageGeometryIsReady, baselineTexture == nil,
       activeInkStroke == nil, activeEraserStroke == nil,
       committedBatches.allSatisfy({ batch in
         if batch.mesh.isEmpty { return true }
@@ -1309,6 +1434,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     if sampleCount != 1 { sampleCount = 1 }
     releaseDrawables()
     pageDrawableReservation = nil; pageMultisample = nil
+    pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
     spatialTarget?.detach(); spatialTarget = nil
     hasRevealedFirstFrame = false
     CATransaction.begin()
@@ -1398,7 +1524,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     }
 
     if builtActiveIdentity != identity || builtActiveRevision != revision {
-      let changed = activeInkStroke?.consumeChangedStart() ?? activeEraserStroke?.consumeChangedStart() ?? 0
+      let previous=builtActiveIdentity == identity ? builtActiveRevision : nil
+      let changed=activeInkStroke?.changedStart(after:previous) ?? activeEraserStroke?.changedStart(after:previous) ?? 0
       if builtActiveIdentity != identity {
         activeMesh = IncrementalInkMesh(eraser:operation == .erase)
         activeBufferDirtyStarts = Array(repeating: 0, count: Self.framesInFlight)

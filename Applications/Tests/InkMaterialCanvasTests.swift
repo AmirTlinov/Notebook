@@ -21,6 +21,8 @@ import XCTest
       measurements:.init([point(30,150),point(270,150)]),frame:frame))])
     canvas.updateMaterial(.init(freehand:ink,erasures:[],transform:nil,layout:nil))
     try await ready(canvas,after:0)
+    XCTAssertFalse(canvas.hasPageRetainedTexture,
+      "An element material must not allocate the page-history backing texture")
     XCTAssertLessThan(try pixel(canvas,window:window,x:150,y:150)[0],30)
     let uploaded=canvas.materialUploadedNodeCount,completed=canvas.drawableRequestCount
     canvas.projectPage(region:.init(x:10,y:10,width:280,height:280),sourceSize:.init(width:300,height:300),pixelDensity:2)

@@ -88,6 +88,20 @@ waits for accepted-action delivery before admitting the next contact; the model'
 existing ordered write queue owns persistence. Native text extents are bounded
 and cached by content, formatting and line width, never by camera/position.
 
+The iPad page renderer also retains the accepted page composite at the current
+crop. Pencil frames draw only the mutable contact over that texture; accepting
+ink, changing the crop, or replacing the source invalidates it. Empty paper and
+per-element material canvases do not allocate this page backing. This is the page
+renderer itself, not a screenshot content source or a second persistence path.
+
+Page element erasing has one live page mask driven directly by the admitted
+`ActiveEraserStroke`. Movement no longer publishes a growing sample prefix
+through `NotebookAppModel` and every element view. Pencil-up transfers the same
+measured action and its frozen targets to the accepted write queue; only that
+accepted action contributes durable element masks. Both native consumers read
+revision boundaries without consuming them, so estimated-tail correction cannot
+make the ink canvas or element mask miss a rebuild.
+
 ## Compact ink display
 
 Measured source data and persisted actions are unchanged. `InkRenderGeometry` owns
@@ -187,6 +201,12 @@ a second per-range directory. It keeps original whole-stroke ownership and the e
 revision check. Visibility uses vector set differences, not a screen-pixel mask.
 Degenerate numerical fragments are rejected at coordinate-ulp precision, not at
 a display-pixel threshold; transparent paint does not become selectable content.
+
+Lifted page actions and queued undo are applied to this same decoded accepted
+vector source before persistence serialization finishes. Lasso preparation does
+not wait behind JSON/SQLite delivery, and `PageDocument` copies replace their
+decoded-cache identity whenever their drawing changes. The cache is a projection
+of the archive value, not mutable shared page state.
 
 Cold decoding/index construction still reads the source once. Converting a newly
 selected whole stroke still visits that stroke's samples; complete export visits
