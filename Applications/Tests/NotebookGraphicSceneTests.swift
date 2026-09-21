@@ -26,7 +26,7 @@ import XCTest
     func observedRetirements(_ count: Int) -> Int {
       let changes = Changes()
       for _ in 0..<count {
-        withObservationTracking { _ = model.workingGraphics } onChange: {
+        withObservationTracking { _ = model.workingGraphicRevision(on: .board(board)) } onChange: {
           MainActor.assumeIsolated { changes.count += 1 }
         }
         model.retireWorkingGraphics(in: cohort)
@@ -44,13 +44,14 @@ import XCTest
     }
     let retained = [draft(.page(page), cursor: cohort.plan.revision),
       draft(.board(board), cursor: cohort.plan.revision + 1), draft(.board(board), cursor: nil)]
-    model.workingGraphics = retained
+    for value in retained { model.updateWorkingGraphic(value, strokeID: value.strokeID) }
     XCTAssertEqual(observedRetirements(100), 0, "Uninstalled and page sources keep their original handoff owners")
-    model.workingGraphics.append(draft(.board(board), cursor: cohort.plan.revision))
+    let installed = draft(.board(board), cursor: cohort.plan.revision)
+    model.updateWorkingGraphic(installed, strokeID: installed.strokeID)
     XCTAssertEqual(observedRetirements(1), 1, "A genuinely installed board source still retires and publishes")
     XCTAssertEqual(model.workingGraphics, retained)
     XCTAssertEqual(observedRetirements(100), 0)
-    model.workingGraphics = []
+    model.removeWorkingGraphics { _ in true }
   }
 
   func testPageLassoSelectsMeasuredInkThroughInstalledPencilOwner() async throws {

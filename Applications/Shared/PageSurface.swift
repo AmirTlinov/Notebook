@@ -77,7 +77,8 @@ struct PageSurface: View {
                 })
             }, onWorkingGraphic: model.updateWorkingGraphic,
             eraserTargets: { model.eraserTargets(pageID: page.id) },
-            onLiveElementErasing: liveElementEraser.display
+            onLiveElementErasing: liveElementEraser.display,
+            onElementErasing: model.updateElementErasing
           )
         #else
           MacPageInkView(page: page, isInteractive: isVisible && isInteractive) { ready in
