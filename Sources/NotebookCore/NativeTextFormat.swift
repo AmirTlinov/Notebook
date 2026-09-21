@@ -2,7 +2,7 @@ import Foundation
 
 /// Character formatting is content, not a view or editor preference. UTF-16
 /// ranges match native text selection on both platforms; runs never overlap.
-public struct NativeTextFormat: Codable, Equatable, Sendable {
+public struct NativeTextFormat: Codable, Hashable, Sendable {
   public var fontName: String?
   public var bold: Bool?
   public var italic: Bool?

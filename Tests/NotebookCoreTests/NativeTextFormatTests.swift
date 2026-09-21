@@ -3,6 +3,24 @@ import Testing
 @testable import NotebookCore
 
 @Suite struct NativeTextFormatTests {
+  @Test func nativeAttributeFormatsUseValueHashes() throws {
+    let formats: [NativeTextFormat] = [.init(), .init(fontName:"Georgia"), .init(bold:true),
+      .init(italic:true), .init(highlight:.init(red:1,green:0.9,blue:0.3)), .init(link:"https://example.com")]
+    var hashes: [AnyHashable] = []
+    for format in formats {
+      let value: Any = format, copy: Any = try JSONDecoder().decode(NativeTextFormat.self,from:JSONEncoder().encode(format))
+      let hash = try #require(value as? AnyHashable), copiedHash = try #require(copy as? AnyHashable)
+      let native = value as AnyObject, copiedNative = copy as AnyObject
+      #expect(hash == copiedHash && hash.hashValue == copiedHash.hashValue)
+      #expect(native.isEqual(copiedNative) && native.hash == hash.hashValue)
+      hashes.append(hash)
+    }
+    #expect(Set(hashes).count == formats.count)
+    #expect(NSSet(array:formats + formats).count == formats.count)
+    let positive = NativeTextFormat(highlight:.init(red:0,green:0,blue:0))
+    let negative = NativeTextFormat(highlight:.init(red:-0.0,green:0,blue:0))
+    #expect(positive == negative && positive.hashValue == negative.hashValue)
+  }
   @Test func stylesRoundTripWithUTF16RangesAndOldPlainTextStillDecodes() throws {
     let format = NativeTextFormat(fontName:"Georgia",bold:true,italic:true,
       highlight:.init(red:1,green:0.9,blue:0.3),link:"https://example.com")

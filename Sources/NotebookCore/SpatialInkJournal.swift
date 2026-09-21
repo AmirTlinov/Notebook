@@ -5,7 +5,7 @@ public enum SpatialInkTool: String, Codable, Sendable {
   case eraser
 }
 
-public struct SpatialInkColor: Codable, Equatable, Sendable {
+public struct SpatialInkColor: Codable, Hashable, Sendable {
   public let red: Double
   public let green: Double
   public let blue: Double
