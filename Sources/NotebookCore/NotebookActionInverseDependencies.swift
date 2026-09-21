@@ -139,7 +139,8 @@ extension NotebookStore {
         guard try present(hash) else { missing.append(hash); if missing.count == limit { return try finish(missing) }; continue }
         if kind == 0 {
           let raw=try JSONDecoder().decode(NotebookStoredFragment.self,from:database.blob(hash))
-          let inkMissing=try noteInkBodyDependencies(manifestHash:manifest,fragment:raw)
+          try noteInkBodyDependencies(manifestHash:manifest,fragment:raw)
+          let inkMissing=try missingInkBodyDependencies(manifestHash:manifest,limit:limit)
           if !inkMissing.isEmpty { return try finish(Array(inkMissing.prefix(limit))) }
           let fragment = try readLifecycleInverseFragment(hash: hash)
           for root in try lifecycleInverseOrderRoots(fragment) { try dependency(root, kind: 1) }

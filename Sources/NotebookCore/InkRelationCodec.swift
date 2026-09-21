@@ -166,7 +166,7 @@ extension InkSampleRelations: Codable {
         elementTargets:hasTargets ? targets : nil))
   }
 
-  fileprivate static func decodeMeasurements(from input: inout InkRelationReader, revision: UUID? = nil) throws -> InkMeasurements {
+  fileprivate static func decodeMeasurements(from input: inout InkRelationReader, revision: UUID? = nil, record: ((Range<Int>,[Int]) -> Void)? = nil) throws -> InkMeasurements {
     let revision=try revision ?? input.uuid()
     let exit = try input.step()
     let nodeCount = Int(try input.integer(UInt32.self))
@@ -175,6 +175,7 @@ extension InkSampleRelations: Codable {
     struct BasisKey: Hashable { let origin: UUID; let step: InkRepeatStep }
     var bases: [BasisKey: Sequence.Basis] = [:]
     for _ in 0..<nodeCount {
+      let start=input.offset
       let pending = try input.flag(), tag = try input.byte()
       var children: [Int] = []
       func child(_ id: Int) throws -> Sequence {
@@ -226,6 +227,7 @@ extension InkSampleRelations: Codable {
       guard depth <= Self.maximumDepth else { throw CodingError.limitExceeded }
       if pending { node = node.markPending() }
       depths.append(depth); nodes.append(node)
+      record?(start..<input.offset,children)
     }
     guard used.count == nodeCount-1 else { throw CodingError.invalidSource }
     return .init(storage:.init(nodes.last!,exit:exit),revision:revision)
@@ -277,6 +279,7 @@ final class InkRelationDecoding: Sendable {
   private struct State: Sendable {
     var bodies: [Data:InkSampleRelations.Storage]=[:]
     var storedBodies: [String:Data]=[:]
+    var storedOutputs: [Data:String]=[:]
     var retainedBytes=0
   }
   // Foundation's userInfo is Sendable. Keep that promise even if a decoder is
@@ -285,7 +288,7 @@ final class InkRelationDecoding: Sendable {
   let entryLimit: Int
   let byteLimit: Int
   var retainedBytes: Int { state.withLock { $0.retainedBytes } }
-  var entryCount: Int { state.withLock { $0.bodies.count+$0.storedBodies.count } }
+  var entryCount: Int { state.withLock { $0.bodies.count+$0.storedBodies.count+$0.storedOutputs.count } }
 
   init(entryLimit: Int = 256, byteLimit: Int = 4*1024*1024) {
     precondition(entryLimit >= 0 && byteLimit >= 0)
@@ -301,19 +304,29 @@ final class InkRelationDecoding: Sendable {
   func retainStoredBody(_ bytes: Data, hash: String) {
     state.withLock { state in
       let cost=bytes.count+160
-      guard state.storedBodies[hash] == nil,state.bodies.count+state.storedBodies.count < entryLimit,
+      guard state.storedBodies[hash] == nil,state.bodies.count+state.storedBodies.count+state.storedOutputs.count < entryLimit,
         cost <= byteLimit-state.retainedBytes else { return }
       state.storedBodies[hash]=bytes;state.retainedBytes += cost
     }
   }
+  func storedOutput(_ body: Data) -> String? { state.withLock { $0.storedOutputs[body] } }
+  func retainStoredOutput(_ body: Data, hash: String) {
+    state.withLock { state in
+      let cost=body.count+160
+      guard state.storedOutputs[body] == nil,
+        state.bodies.count+state.storedBodies.count+state.storedOutputs.count < entryLimit,
+        cost <= byteLimit-state.retainedBytes else { return }
+      state.storedOutputs[body]=hash;state.retainedBytes += cost
+    }
+  }
   fileprivate func admit(_ source: InkMeasurements, body: Data, encodedBytes: Int) -> InkSampleRelations.Storage {
-    guard state.withLock({ $0.bodies.count+$0.storedBodies.count < entryLimit && encodedBytes <= byteLimit-$0.retainedBytes }) else { return source.storage }
+    guard state.withLock({ $0.bodies.count+$0.storedBodies.count+$0.storedOutputs.count < entryLimit && encodedBytes <= byteLimit-$0.retainedBytes }) else { return source.storage }
     // Charge encoded key, unique tree and per-entry allowance, not logical
     // events. This is a payload budget, not an assertion about process RSS.
     let bytes=encodedBytes+source.payloadBytes+96
     return state.withLock { state in
       if let stored=state.bodies[body] { return stored }
-      guard state.bodies.count+state.storedBodies.count < entryLimit,bytes <= byteLimit-state.retainedBytes else { return source.storage }
+      guard state.bodies.count+state.storedBodies.count+state.storedOutputs.count < entryLimit,bytes <= byteLimit-state.retainedBytes else { return source.storage }
       state.bodies[body]=source.storage;state.retainedBytes += bytes
       return source.storage
     }
@@ -407,5 +420,133 @@ private struct InkRelationReader {
     let v=try (0..<4).map { _ in try double() },origin=try world(),whole=try flag(),graphic=try transform(),element=try transform()
     guard v.allSatisfy(\.isFinite),v[2]>0,v[3]>0 else { throw InkSampleRelations.CodingError.invalidSource }
     return .init(elementID:name,frame:.init(x:v[0],y:v[1],width:v[2],height:v[3]),worldOrigin:origin,wholeElement:whole,graphicTransform:graphic,elementTransform:element)
+  }
+}
+
+/// Physical storage of the accepted portable graph. Child distances retain the
+/// ORIGINAL postorder and aliasing; identical payloads at different indices do
+/// not silently change the portable description. No measurement is expanded.
+struct InkStoredBody {
+  static let maximumNodes=65_536,maximumBytes=128*1024*1024
+  private static let inline=Data("NIB1".utf8),graph=Data("NIB2".utf8),node=Data("NIN1".utf8)
+  private struct Position { let range: Range<Int>;let children: [Int] }
+  struct Plan {
+    let revision: UUID
+    private let encoded: Data
+    private let positions: [Position]
+    init(_ encoded: Data) throws {
+      guard encoded.count <= maximumBytes else { throw InkSampleRelations.CodingError.limitExceeded }
+      var reader=InkRelationReader(data:encoded),positions:[Position]=[]
+      guard try reader.bytes(4) == Data("NIM1".utf8) else { throw InkSampleRelations.CodingError.invalidSource }
+      revision=try reader.uuid()
+      _=try InkSampleRelations.decodeMeasurements(from:&reader,revision:revision) { positions.append(.init(range:$0,children:$1)) }
+      guard reader.offset == encoded.count else { throw InkSampleRelations.CodingError.invalidSource }
+      self.encoded=encoded;self.positions=positions
+    }
+    func write(_ put: (Data) throws -> String) throws -> String {
+      // One bounded primitive has no independent subtree to share. Keeping it
+      // inline avoids an extra graph root, edge and dependency lookup.
+      if positions.count == 1 { return try put(inline+encoded.dropFirst(20)) }
+      var hashes:[String]=[]
+      for (index,position) in positions.enumerated() {
+        var out=InkRelationWriter(data:node+encoded.subdata(in:position.range.lowerBound..<position.range.lowerBound+2))
+        for child in position.children {
+          out.integer(UInt32(index-child));out.data.append(try digest(hashes[child]))
+        }
+        out.data.append(encoded.subdata(in:position.range.lowerBound+2+4*position.children.count..<position.range.upperBound))
+        hashes.append(try put(out.data))
+      }
+      // Original exit + postorder node count, then a pre-expansion byte budget.
+      var out=InkRelationWriter(data:graph+encoded.subdata(in:20..<54))
+      out.integer(UInt32(encoded.count));out.data.append(try digest(hashes.last!))
+      return try put(out.data)
+    }
+  }
+  static func revision(in encoded: Data) throws -> UUID {
+    var reader=InkRelationReader(data:encoded,offset:4);return try reader.uuid()
+  }
+  private static func digest(_ hash: String) throws -> Data {
+    guard NotebookPageOrderRegister.validHash(hash) else { throw InkSampleRelations.CodingError.invalidSource }
+    let chars=Array(hash.utf8)
+    func nibble(_ x: UInt8) -> UInt8 { x <= 57 ? x-48 : x-87 }
+    return Data(stride(from:0,to:64,by:2).map { nibble(chars[$0])*16+nibble(chars[$0+1]) })
+  }
+  private static func hash(_ bytes: Data) -> String { bytes.map { String(format:"%02x",$0) }.joined() }
+  private struct Root {
+    let data: Data,count: Int,portableBytes: Int,child: String?
+    init(_ data: Data) throws {
+      guard data.count >= 4,data.count <= maximumBytes-16 else { throw InkSampleRelations.CodingError.limitExceeded }
+      self.data=data
+      if data.starts(with:inline) { count=0;portableBytes=data.count+16;child=nil;return }
+      var reader=InkRelationReader(data:data)
+      guard try reader.bytes(4) == graph else { throw InkSampleRelations.CodingError.invalidSource }
+      _=try reader.step();count=Int(try reader.integer(UInt32.self))
+      portableBytes=Int(try reader.integer(UInt32.self));child=hash(try reader.bytes(32))
+      guard reader.offset == data.count,(2...maximumNodes).contains(count),
+        (54...maximumBytes).contains(portableBytes),portableBytes >= 54+count*6 else { throw InkSampleRelations.CodingError.invalidSource }
+    }
+  }
+  private struct Node {
+    let data: Data,children: [(distance:Int,hash:String)],suffix: Int
+    init(_ data: Data) throws {
+      guard data.count <= 32_768 else { throw InkSampleRelations.CodingError.limitExceeded }
+      var reader=InkRelationReader(data:data)
+      guard try reader.bytes(4) == node else { throw InkSampleRelations.CodingError.invalidSource }
+      _=try reader.flag();let tag=try reader.byte()
+      guard tag <= 4 else { throw InkSampleRelations.CodingError.invalidSource }
+      let count=tag == 2 ? 2 : tag >= 3 ? 1 : 0
+      var children:[(Int,String)]=[]
+      for _ in 0..<count {
+        let distance=Int(try reader.integer(UInt32.self))
+        guard distance > 0,distance < maximumNodes else { throw InkSampleRelations.CodingError.invalidSource }
+        children.append((distance,hash(try reader.bytes(32))))
+      }
+      suffix=reader.offset;self.children=children;self.data=data
+      let trailing=data.count-reader.offset
+      guard tag != 2 || trailing == 0,tag != 3 || trailing == 34,tag != 4 || trailing == 46 else {
+        throw InkSampleRelations.CodingError.invalidSource
+      }
+    }
+    func portable(at index: Int) throws -> Data {
+      var out=InkRelationWriter(data:data.subdata(in:4..<6))
+      for child in children {
+        guard child.distance <= index else { throw InkSampleRelations.CodingError.invalidSource }
+        out.integer(UInt32(index-child.distance))
+      }
+      out.data.append(data.dropFirst(suffix));return out.data
+    }
+  }
+  static func portableByteCount(_ root: Data) throws -> Int { try Root(root).portableBytes }
+  static func dependencies(_ data: Data) throws -> [String] {
+    if data.starts(with:node) { return try Node(data).children.map(\.hash) }
+    return try Root(data).child.map { [$0] } ?? []
+  }
+  static func portable(_ rootData: Data, revision: UUID, load: (String) throws -> Data) throws -> Data {
+    let root=try Root(rootData)
+    var out=InkRelationWriter(data:Data("NIM1".utf8));out.uuid(revision)
+    guard let rootHash=root.child else { out.data.append(rootData.dropFirst(4));return out.data }
+    out.data.append(rootData.subdata(in:4..<38))
+    var parts=[(hash:String,bytes:Data,height:Int)?](repeating:nil,count:root.count),bytes=out.data.count
+    func visit(_ hash: String,index: Int,depth: Int) throws -> Int {
+      guard parts.indices.contains(index),depth <= 128 else { throw InkSampleRelations.CodingError.limitExceeded }
+      if let found=parts[index] {
+        guard found.hash == hash else { throw InkSampleRelations.CodingError.invalidSource }
+        return found.height
+      }
+      let part=try Node(load(hash)),portable=try part.portable(at:index)
+      bytes += portable.count
+      guard bytes <= root.portableBytes else { throw InkSampleRelations.CodingError.limitExceeded }
+      var height=1
+      for child in part.children { height=max(height,try 1+visit(child.hash,index:index-child.distance,depth:depth+1)) }
+      guard height <= 128 else { throw InkSampleRelations.CodingError.limitExceeded }
+      parts[index]=(hash,portable,height);return height
+    }
+    _=try visit(rootHash,index:root.count-1,depth:1)
+    guard bytes == root.portableBytes else { throw InkSampleRelations.CodingError.invalidSource }
+    for part in parts {
+      guard let part else { throw InkSampleRelations.CodingError.invalidSource }
+      out.data.append(part.bytes)
+    }
+    return out.data
   }
 }

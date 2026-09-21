@@ -18,7 +18,7 @@ final class InkSourceIntegrationTests: XCTestCase {
     let bytes=try drawing.dataRepresentation()
     let before=try XCTUnwrap(InkRasterRenderer.shared.page(drawing,size:size,scale:2))
     _=try store.savePage(.init(id:page,size:.init(width:834,height:1194),actor:actor,drawingData:bytes))
-    let bodyCount=try store.sqlRead { try $0.rows("SELECT count(*) FROM blobs WHERE substr(data,1,4)=?",[.blob(Data("NIB1".utf8))]).first?[0].integer }
+    let bodyCount=try store.sqlRead { try $0.rows("SELECT count(*) FROM blobs WHERE substr(data,1,4) IN (?,?)",[.blob(Data("NIB1".utf8)),.blob(Data("NIB2".utf8))]).first?[0].integer }
     XCTAssertEqual(bodyCount,1)
     let reopened=try PageInkDrawing.decode(NotebookStore(root:root).loadPage(page).drawingData)
     let shared=try XCTUnwrap(reopened.actions.first).samples.storage
@@ -47,6 +47,50 @@ final class InkSourceIntegrationTests: XCTestCase {
     XCTAssertTrue(reopened.actions[0].samples.storage === shared)
     XCTAssertTrue(changed.removing([last.id]).actions.last?.isActive == false)
     XCTAssertTrue(changed.actions[0].samples.storage === shared)
+  }
+
+  func testLocalMeasuredEditReopensWithSharedPartsAndExactRaster() throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("native-graph-edit-\(UUID())")
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store=NotebookStore(root:root),actor=UUID(),size=CGSize(width:160,height:128)
+    _=try store.initializeWorkspace(actor:actor,pageSize:.init(width:834,height:1194))
+    let page=try XCTUnwrap(store.loadIndex().selectedPageID),target=CollaborationTarget(kind:.page,id:page)
+    let values:[SpatialInkSample]=(0..<2048).map { i in
+      let point=SpatialPoint(x:16+Double(i)/16,y:64+sin(Double(i)/32)*20)
+      return .init(point:point,timeOffset:Double(i)/128,width:4,opacity:0.75,force:0.5,azimuth:0,altitude:1)
+    }
+    let source=InkSampleRelations(sourceID:UUID(),revision:UUID(),samples:values,header:.init(tool:.pen,color:.black))
+    let frame=PageRect(x:0,y:0,width:160,height:128)
+    func ink(_ source:InkSampleRelations) -> NotebookFreehand {
+      .init(layers:[.init(tool:.pen,color:.black,measured:.init(sourceID:source.sourceID,measurements:source.measurements,frame:frame))])
+    }
+    func pixels(_ ink:NotebookFreehand) throws -> Data {
+      let image=try XCTUnwrap(InkRasterRenderer.shared.freehand(ink,transform:nil,size:size,region:.init(origin:.zero,size:size),scale:2,mask:false))
+      return try XCTUnwrap(image.dataProvider?.data) as Data
+    }
+    func parts() throws -> Set<String> {
+      try store.sqlRead { Set(try $0.rows("SELECT hash FROM blobs WHERE substr(data,1,4)=?",[.blob(Data("NIN1".utf8))]).compactMap { $0[0].text }) }
+    }
+    let original=ink(source),beforePixels=try pixels(original)
+    _=try store.applyNativeElementEdits([.init(kind:.insertElement,target:target,id:"editable",values:[
+      "kind":.string("graphic"),"source":.string(""),"frame":try .encode(frame),
+      "graphic":try .encode(NotebookGraphic(shape:.freehand,freehand:original))])],summary:"Исходные чернила",
+      sources:[.init(target:target,id:"editable")],actor:actor)
+    let oldParts=try parts(),before=try XCTUnwrap(store.readPageElement(pageID:page,elementID:"editable"))
+    let replacement=SpatialInkSample(point:values[1007].point,timeOffset:values[1007].timeOffset,width:20,opacity:1,force:0.5,azimuth:0,altitude:1)
+    let changed=try source.editing(source.address(at:1007),to:replacement,revision:UUID()),next=ink(changed)
+    let receipt=try store.applyNativeElementEdits([.init(kind:.updateElement,target:target,id:"editable",values:[
+      "graphic":.object(["freehand":try .encode(next)])])],summary:"Локальная правка",
+      sources:[.init(target:target,id:"editable",page:before)],actor:actor).receipt
+    XCTAssertLessThanOrEqual(try parts().subtracting(oldParts).count,6)
+    let reopened=NotebookStore(root:root),loaded=try XCTUnwrap(reopened.readPageElement(pageID:page,elementID:"editable")?.graphic?.freehand)
+    XCTAssertEqual(try loaded.layers[0].measured?.measurements.encodedRelations(),try changed.measurements.encodedRelations())
+    let afterPixels=try pixels(loaded)
+    XCTAssertEqual(afterPixels,try pixels(next));XCTAssertNotEqual(afterPixels,beforePixels)
+    XCTAssertTrue(InkSampleRelations.sameBits(source.sample(at:1007),values[1007]))
+    _=try reopened.undoCollaborationAction(receipt.id,actor:actor)
+    let restored=try XCTUnwrap(reopened.readPageElement(pageID:page,elementID:"editable")?.graphic?.freehand)
+    XCTAssertEqual(try pixels(restored),beforePixels)
   }
 
   func testColdDecodeSharingCostFor100000ShortBodiesAndUniqueControl() throws {

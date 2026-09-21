@@ -47,10 +47,11 @@ struct InkRelationPersistenceTests {
       })
       _=try a.savePage(.init(id:page,size:.init(width:834,height:1194),actor:actor,drawingData:drawing.dataRepresentation()))
       let save=started.duration(to:.now)
-      let bodies=try a.sqlRead { try $0.rows("SELECT hash,length(data) FROM blobs WHERE substr(data,1,4)=?",[.blob(Data("NIB1".utf8))]) }
+      let bodies=try a.sqlRead { try $0.rows("SELECT hash,length(data) FROM blobs WHERE substr(data,1,4) IN (?,?)",[.blob(Data("NIB1".utf8)),.blob(Data("NIB2".utf8))]) }
       #expect(bodies.count == 1)
       let shared=try #require(bodies.first?[0].text),bytes=try #require(bodies.first?[1].integer)
-      #expect(bytes == Int64(try original.measurements.encodedRelations().count-16))
+      let bodyBytes=try a.sqlRead { try $0.rows("SELECT sum(length(data)) FROM blobs WHERE substr(data,1,3) IN (?,?)",[.blob(Data("NIB".utf8)),.blob(Data("NIN".utf8))]).first![0].integer! }
+      #expect(bodyBytes < Int64(try original.measurements.encodedRelations().count+256))
       let reopened=try NotebookStore(root:a.root).readSpatialInk(surfaces:[.cover(cover)])
       #expect(reopened.actions.map(\.id) == actions.map(\.id))
       #expect(Set(reopened.actions.map { $0.spans[0].samples.revision }).count == 24)
@@ -78,7 +79,7 @@ struct InkRelationPersistenceTests {
             #expect(data.count == (try a.blobSize(hash:hash)))
             totalBytes += data.count
             transmitted.append(hash)
-            if data.starts(with:Data("NIB1".utf8)) { transmittedBodies.append(hash) }
+            if data.starts(with:Data("NIB".utf8)) || data.starts(with:Data("NIN".utf8)) { transmittedBodies.append(hash) }
             try b.stageBlob(data:data,expectedHash:hash)
           }
         }
@@ -88,14 +89,16 @@ struct InkRelationPersistenceTests {
        cursor=last.sequence
       }
       let transfer=transferStart.duration(to:.now)
-      #expect(waitedForBody && transmittedBodies == [shared])
+      #expect(waitedForBody && transmittedBodies.filter { $0 == shared }.count == 1)
+      #expect(Set(transmittedBodies).count == transmittedBodies.count)
+      #expect(try transmittedBodies.reduce(Int64(0)) { try $0+a.blobSize(hash:$1) } == bodyBytes)
       let received=try NotebookStore(root:b.root).readSpatialInk(surfaces:[.cover(cover)])
       #expect(received == reopened)
       #expect(try PageInkDrawing.decode(b.loadPage(page).drawingData) == drawing)
       let inlineBytes=try a.sqlRead { database in
         try transmitted.reduce(0) { total,hash in
           let data=try database.blob(hash)
-          if data.starts(with:Data("NIB1".utf8)) { return total }
+          if data.starts(with:Data("NIB".utf8)) || data.starts(with:Data("NIN".utf8)) { return total }
           guard (try? JSONDecoder().decode(NotebookStoredFragment.self,from:data)) != nil else { return total+data.count }
           return try total+NotebookStore.storageEncoder.encode(database.decodedStoredFragment(from:data)).count
         }
@@ -105,7 +108,69 @@ struct InkRelationPersistenceTests {
       _=try a.commitSpatialInk(.state(actionID:actions[0].id,creationStamp:actions[0].stamp,isActive:false,stateStamp:state,journalStamp:state))
       #expect(try a.blobSize(hash:shared) == bytes)
       #expect(try a.readSpatialInk(surfaces:[.cover(cover)]).actions.filter(\.isActive).count == 23)
-      print("INK_DURABLE_SHARED occurrences=48 logicalEvents=48000000 bodyBytes=\(bytes) uniqueBodies=1 transferredBodyBytes=\(bytes) allTransferredBytes=\(totalBytes) inlineControlBytes=\(inlineBytes) save=\(save) delivery=\(transfer)")
+      print("INK_DURABLE_SHARED occurrences=48 logicalEvents=48000000 rootBytes=\(bytes) bodyBytes=\(bodyBytes) uniqueBodies=1 transferredBodyBytes=\(bodyBytes) allTransferredBytes=\(totalBytes) inlineControlBytes=\(inlineBytes) save=\(save) delivery=\(transfer)")
+    }
+  }
+
+  @Test func oneLocalEditDeliversOnlyChangedGraphPartsAndStillUndoesAtThePeer() throws {
+    try fixture { a,b,actor,_,page in
+      let values:[SpatialInkSample]=(0..<100_000).map { i in
+        let point=SpatialPoint(x:Double(i)/2,y:64+sin(Double(i)*0.31)*20)
+        let force=Double((i*17)%997)/1024
+        return .init(point:point,timeOffset:Double(i)/128,width:4,opacity:0.75,force:force,azimuth:0,altitude:1)
+      }
+      let source=InkSampleRelations(sourceID:UUID(),revision:UUID(),samples:values,header:.init(tool:.pen,color:.black))
+      let frame=PageRect(x:0,y:0,width:50_000,height:128),target=CollaborationTarget(kind:.page,id:page)
+      func freehand(_ source: InkSampleRelations) -> NotebookFreehand {
+        .init(layers:[.init(tool:.pen,color:.black,measured:.init(sourceID:source.sourceID,measurements:source.measurements,frame:frame))])
+      }
+      let graphic=NotebookGraphic(shape:.freehand,freehand:freehand(source)),start=ContinuousClock.now
+      _=try a.applyNativeElementEdits([.init(kind:.insertElement,target:target,id:"source",values:[
+        "kind":.string("graphic"),"source":.string(""),"frame":try .encode(PageRect(x:0,y:0,width:600,height:128)),"graphic":try .encode(graphic)])],
+        summary:"Общий источник",sources:[.init(target:target,id:"source")],actor:actor)
+      try receiveFixtureChanges(from:a,to:b,peerID:actor)
+      let initial=start.duration(to:.now),cursor=try a.currentChangeCursor()
+      let before=try #require(try a.readPageElement(pageID:page,elementID:"source"))
+      let changed=try source.editing(source.address(at:50_027),to:.init(point:values[50_027].point,timeOffset:values[50_027].timeOffset,
+        width:12,opacity:1,force:0.5,azimuth:0,altitude:1),revision:UUID())
+      let saveStart=ContinuousClock.now
+      let receipt=try a.applyNativeElementEdits([.init(kind:.updateElement,target:target,id:"source",values:[
+        "graphic":.object(["freehand":try .encode(freehand(changed))])])],summary:"Одна локальная правка",
+        sources:[.init(target:target,id:"source",page:before)],actor:actor).receipt
+      let save=saveStart.duration(to:.now),transferStart=ContinuousClock.now
+      var sourceBytes=0,allBytes=0,newParts=0,refusedChild=false
+      for change in try a.changeJournal(after:cursor) {
+        let delivery=NotebookReplicationDelivery(source:.init(deviceID:actor,generation:actor),change:change)
+        while true {
+          let missing=try b.missingBlobHashes(for:change)
+          if missing.isEmpty { break }
+          for hash in missing {
+            let data=try a.readBlobChunk(hash:hash,offset:0,maxBytes:1_048_576)
+            #expect(data.count == (try a.blobSize(hash:hash)))
+            if data.starts(with:Data("NIN1".utf8)) {
+              newParts += 1
+              if !refusedChild {
+                let through=try b.incomingCursor(source:delivery.source)
+                #expect(throws:NotebookStorageError.self) { try b.applyDelivery(delivery) }
+                #expect(try b.incomingCursor(source:delivery.source) == through)
+                refusedChild=true
+              }
+            }
+            if data.starts(with:Data("NIB".utf8)) || data.starts(with:Data("NIN".utf8)) { sourceBytes += data.count }
+            allBytes += data.count;try b.stageBlob(data:data,expectedHash:hash)
+          }
+        }
+        try b.applyDelivery(delivery);try b.applyDelivery(delivery)
+      }
+      let transfer=transferStart.duration(to:.now),portableBytes=try changed.measurements.encodedRelations()
+      #expect(refusedChild && newParts < 32)
+      #expect(sourceBytes < portableBytes.count/100 && allBytes < portableBytes.count/20)
+      let peer=NotebookStore(root:b.root),loaded=try #require(try peer.readPageElement(pageID:page,elementID:"source"))
+      #expect(try loaded.graphic?.freehand?.layers[0].measured?.measurements.encodedRelations() == portableBytes)
+      #expect(InkSampleRelations.sameBits(source.sample(at:50_027),values[50_027]))
+      _=try peer.undoCollaborationAction(receipt.id,actor:UUID())
+      #expect(try peer.readPageElement(pageID:page,elementID:"source")?.graphic == graphic)
+      print("INK_GRAPH_LOCAL_EDIT events=100000 fullBodyBytes=\(portableBytes.count) newParts=\(newParts) sourceTransferredBytes=\(sourceBytes) allTransferredBytes=\(allBytes) initialSaveAndDelivery=\(initial) editSave=\(save) editDelivery=\(transfer)")
     }
   }
 

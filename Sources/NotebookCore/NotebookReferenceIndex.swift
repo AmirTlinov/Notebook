@@ -476,10 +476,11 @@ extension NotebookStore {
     }
   }
 
-  private func referenceContributions(address: String) throws -> [(String, String)] {
-    guard let fragment = try storedFragments(address: address, descendants: false).first else { return [] }
+  private func referenceContributions(fragment: NotebookStoredFragment?) throws -> [(String, String)] {
+    guard let fragment else { return [] }
     return try Self.referenceContributions(fragment: fragment) {
-      try NotebookRecordCodec.decode(storedFragments(address: address), root: address)
+      fragment.collections.isEmpty ? fragment.value
+        : try NotebookRecordCodec.decode(storedFragments(address: fragment.address), root: fragment.address)
     }
   }
 
@@ -546,11 +547,12 @@ extension NotebookStore {
   func refreshReferenceIndex(database: NotebookSQLConnection) throws {
     guard try database.hasOwner(.referenceRoot) else { return }
     try database.visitOwners(.referenceRoot) { address in
+      let fragment = try storedFragments(address: address, descendants: false).first
       if address.contains("/board/elements/@") || address.hasPrefix("pages/") {
-        try updateReferenceOrder(address: address, database: database)
+        try updateReferenceOrder(address: address, fragment: fragment, database: database)
       }
       let old = try database.rows("SELECT owner_key,hash FROM reference_contributions WHERE address=?", [.text(address)])
-      let next = try referenceContributions(address: address)
+      let next = try referenceContributions(fragment: fragment)
       let oldMap = Dictionary(uniqueKeysWithValues: old.map { ($0[0].text!, $0[1].text!) })
       let nextMap = Dictionary(uniqueKeysWithValues: next)
       for key in Set(oldMap.keys).union(nextMap.keys) where oldMap[key] != nextMap[key] {
@@ -822,9 +824,8 @@ extension NotebookStore {
 
   /// Relative adjacency, rather than absolute SQL slots, identifies painting
   /// order. Moving one element changes at most four neighboring edges.
-  private func updateReferenceOrder(address: String, database: NotebookSQLConnection) throws {
+  private func updateReferenceOrder(address: String, fragment: NotebookStoredFragment?, database: NotebookSQLConnection) throws {
     let old = try database.rows("SELECT owner_key,position,member,parent_id FROM reference_element_order WHERE address=?", [.text(address)]).first
-    let fragment = try storedFragments(address: address, descendants: false).first
     let scope = try fragment.flatMap(Self.referenceOrderScope)
     let orderKey = scope.map { $0.owner + ($0.group.map { "|" + $0 } ?? "") }
     let parent = fragment?.value["parentID"]?.string.map(collaborationIdentity)

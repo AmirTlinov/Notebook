@@ -155,17 +155,37 @@ extension NotebookStore {
         $0.file == row.file && $0.path.count > source.count && $0.path.starts(with: source)
       }) else { return nil }
       if !removedAppend {
-        guard let old = try oldSource(sourceAddress),
+        guard let priorHash = try database.rows("SELECT before_hash FROM lifecycle_restoration_fields WHERE address=?", [.text(sourceAddress)]).first?[0].text,
           let hash = try database.rows("SELECT after_hash FROM captured_restoration_undo WHERE address=?", [.text(sourceAddress)]).first?[0].text else { return nil }
-        let written = try readLifecycleInverseFragment(hash: hash, address: sourceAddress)
-        guard collaborationComparable(old.value, file: row.file, path: source)
-          == collaborationComparable(written.value, file: row.file, path: source) else { return nil }
+        // Both streams were fully admitted above. Equal physical references
+        // name the very same immutable source, not two hash-equal measurements.
+        // Compare that shared form before reconstructing any source again.
+        func stored(_ hash: String) throws -> NotebookStoredFragment {
+          let data = try lifecycleInverseBlob(hash, maximumBytes: 256 * 1_024 * 1_024)
+          let value = try JSONDecoder().decode(NotebookStoredFragment.self, from: data)
+          guard value.address == sourceAddress else { throw NotebookStorageError.invalidTransaction("restoration source address") }
+          return value
+        }
+        let oldStored = try stored(priorHash), writtenStored = try stored(hash)
+        if oldStored.inkBodies != writtenStored.inkBodies
+          || collaborationComparable(oldStored.value, file: row.file, path: source)
+            != collaborationComparable(writtenStored.value, file: row.file, path: source) {
+          let old = try readLifecycleInverseFragment(hash: priorHash, address: sourceAddress)
+          let written = try readLifecycleInverseFragment(hash: hash, address: sourceAddress)
+          guard collaborationComparable(old.value, file: row.file, path: source)
+            == collaborationComparable(written.value, file: row.file, path: source) else { return nil }
+        }
       }
       return prefix + [.field("collaboration"), .field("fields"), .field(row.member)]
     }
 
     func indexChange(_ change: NotebookActionRecordChange) throws {
+      // The complete streams have already been validated. Only field and
+      // placement records contribute ownership; geometry cannot add an edge.
       guard let after = change.afterHash else { return }
+      let data = try lifecycleInverseBlob(after, maximumBytes: 256 * 1_024 * 1_024)
+      let stored = try JSONDecoder().decode(NotebookStoredFragment.self, from: data)
+      guard ["collaboration/fields", "board/collaboration/fields", "board/placements"].contains(stored.collection) else { return }
       let row = try readLifecycleInverseFragment(hash: after, address: change.address)
       if row.collection == "board/placements" {
         let target = targets.first(where: { target in

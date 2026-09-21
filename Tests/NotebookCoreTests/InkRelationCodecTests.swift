@@ -1,9 +1,38 @@
 import Foundation
+import CryptoKit
 import Testing
 @testable import NotebookCore
 
 @Suite(.serialized)
 struct InkRelationCodecTests {
+  @Test func physicalGraphPreservesExactPostorderAliasesAndIndependentEqualLeaves() throws {
+    let samples=(0..<8).map { sample($0) }
+    let a=InkSampleRelations.Sequence(block:.literal(.init(samples))),b=InkSampleRelations.Sequence(block:.literal(.init(samples)))
+    let left=InkSampleRelations.Sequence.pair(a,b),right=InkSampleRelations.Sequence.pair(a,b)
+    let measurements=InkMeasurements(storage:.init(.pair(left,right)),revision:UUID())
+    let encoded=try measurements.encodedRelations(),plan=try InkStoredBody.Plan(encoded)
+    var blobs:[String:Data]=[:]
+    let root=try plan.write { data in
+      let hash=SHA256.hash(data:data).map { String(format:"%02x",$0) }.joined();blobs[hash]=data;return hash
+    }
+    func load(_ hash:String) throws -> Data {
+      guard let data=blobs[hash] else { throw NotebookStorageError.blobMissing(hash) };return data
+    }
+    let rootBytes=try load(root)
+    #expect(try InkStoredBody.portable(rootBytes,revision:measurements.revision,load:load) == encoded)
+    // The equal leaves occupy different original indices but share one blob;
+    // the two distinct pair records retain their different alias distances.
+    #expect(blobs.count == 5)
+    let child=try #require(InkStoredBody.dependencies(rootBytes).first),saved=try load(child)
+    blobs[child]=nil
+    #expect(throws:NotebookStorageError.blobMissing(child)) { try InkStoredBody.portable(rootBytes,revision:measurements.revision,load:load) }
+    var invalid=saved;invalid.replaceSubrange(6..<10,with:[255,255,255,127]);blobs[child]=invalid
+    #expect(throws:(any Error).self) { try InkStoredBody.portable(rootBytes,revision:measurements.revision,load:load) }
+    blobs[child]=saved
+    var short=rootBytes;short.replaceSubrange(38..<42,with:[54,0,0,0])
+    #expect(throws:(any Error).self) { try InkStoredBody.portable(short,revision:measurements.revision,load:load) }
+  }
+
   private func sample(_ i: Int) -> SpatialInkSample {
     .init(point:.init(x:Double(i)/4,y:Double(i%13)/2),timeOffset:Double(i)/128,
       width:4,opacity:0.5,force:Double(i%7)/8,azimuth:Double(i%9)/8,altitude:0.5)
