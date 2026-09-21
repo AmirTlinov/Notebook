@@ -162,7 +162,13 @@ extension NotebookAppModel {
       // Membership is installed with its complete source cut. A current local
       // frame cannot be placed under an older cohort's parent chain.
       if current.parentID != admitted.parentID { return admitted }
-      if current.graphic != nil, !board.graphicPresentation.geometryIDs.contains(current.id) { return nil }
+      if let graphic = current.graphic {
+        guard graphic.showsGeometry else { return nil }
+        // Only a claim on measured ink needs arbitration against other shapes.
+        // Ordinary geometry cannot lose to another member: rebuilding the
+        // board's claim set here made a projected whole quadratic per lookup.
+        if !graphic.sourceInkIDs.isEmpty, !board.graphicPresentation.geometryIDs.contains(current.id) { return nil }
+      }
       // The same local ID on a different physical surface is not this host.
       guard current.surface == admitted.surface,current.kind == admitted.kind else { return nil }
       let ref=EditableElementReference.spatial(boardID:boardID,elementID:current.id)

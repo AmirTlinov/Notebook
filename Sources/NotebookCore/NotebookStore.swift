@@ -10,14 +10,30 @@ public struct NotebookStore: Sendable {
   let storageFault: (@Sendable (NotebookStorageFault) throws -> Void)?
 
   public let root: URL
+  let connectionKey: String
 
   public init(root: URL) {
     self.root = root
+    connectionKey = Self.transactionKey(root)
     storageFault = nil
   }
 
   init(root: URL, storageFault: @escaping @Sendable (NotebookStorageFault) throws -> Void) {
     self.root = root; self.storageFault = storageFault
+    connectionKey = Self.transactionKey(root)
+  }
+
+  private static func transactionKey(_ root: URL) -> String {
+    // Foundation normalizes an existing /private/var container differently
+    // from a not-yet-created one. Resolve the existing ancestor once, so store
+    // copies and later reopenings borrow the same thread-local transaction.
+    var ancestor = root, suffix: [String] = []
+    while ancestor.path != "/", !FileManager.default.fileExists(atPath: ancestor.path) {
+      suffix.append(ancestor.lastPathComponent)
+      ancestor.deleteLastPathComponent()
+    }
+    let normalized = suffix.reversed().reduce(ancestor.standardizedFileURL) { $0.appendingPathComponent($1) }
+    return "Notebook.SQL." + normalized.path
   }
 
   public static var defaultRoot: URL {

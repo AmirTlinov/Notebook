@@ -217,8 +217,11 @@ final class SceneCompositionSQLTests: XCTestCase {
     let initial = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
     let workspace = try store.loadIndex(), original = try store.loadBoard(items: workspace.items)
     var hierarchy = original
-    let element = SpatialElement(id: "visible", surface: .board(initial.rootBoardID), kind: .nativeText,
-      frame: .init(x: 0, y: 0, width: 32, height: 32), worldOrigin: .zero, source: "Visible",
+    // A fixed body strictly inside one cell isolates addressed tile coverage
+    // from native text's fitted height and conservative edge padding.
+    let element = SpatialElement(id: "visible", surface: .board(initial.rootBoardID), kind: .graphic,
+      frame: .init(x: -16, y: -16, width: 32, height: 32), worldOrigin: .zero, source: "",
+      graphic: .init(shape: .rectangle),
       stamp: .init(counter: 0, actor: actor))
     XCTAssertTrue(hierarchy.upsertElement(element, in: initial.rootBoardID, expected: nil, actor: actor))
     _ = try store.saveBoardEdits(before: original, after: hierarchy)
@@ -234,7 +237,8 @@ final class SceneCompositionSQLTests: XCTestCase {
     let start = ContinuousClock.now
     let populated = try await source.tilesRequiringPaint(keys)
     print("SQL tile batch: 256 cells, \(start.duration(to: .now))")
-    XCTAssertEqual(populated, keys.filter { $0.tile == origin })
+    let identity = try store.scenePaintRevision(target: .init(kind: .board, id: initial.rootBoardID))
+    XCTAssertEqual(populated, keys.filter { $0.tile == origin }.map { $0.withContentRevision(identity) })
     var changed = hierarchy
     XCTAssertTrue(changed.moveItem(workspace.selectedItemID, in: initial.rootBoardID,
       to: .init(x: 1_024, y: 0), actor: actor))

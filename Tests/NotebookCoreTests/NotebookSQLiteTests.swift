@@ -6,6 +6,27 @@ private enum SQLTestFault: Error { case injected }
 
 @Suite("SQLite owns atomic addressed publication")
 struct NotebookSQLiteTests {
+  @Test func transactionIdentitySurvivesContainerCreationAndKeepsOtherStoresSeparate() throws {
+    let path = "/private/var/tmp/notebook-key-" + UUID().uuidString
+    let parent = URL(fileURLWithPath: path, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: parent) }
+    let store = NotebookStore(root: parent.appendingPathComponent("nested/notebook", isDirectory: true))
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    let reopened = NotebookStore(root: store.root.standardizedFileURL)
+    let other = NotebookStore(root: parent.appendingPathComponent("other", isDirectory: true))
+    #expect(store.connectionKey == reopened.connectionKey)
+    #expect(store.connectionKey != other.connectionKey)
+    #expect(throws: SQLTestFault.self) {
+      try store.readTransaction { _ in
+        let connection = try #require(store.currentSQL)
+        try reopened.readTransaction { _ in #expect(reopened.currentSQL === connection) }
+        #expect(other.currentSQL == nil)
+        throw SQLTestFault.injected
+      }
+    }
+    #expect(store.currentSQL == nil && reopened.currentSQL == nil)
+  }
+
   private func fixture(_ body: (NotebookStore, UUID) throws -> Void) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-sql-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

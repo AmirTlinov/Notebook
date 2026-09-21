@@ -373,7 +373,6 @@ struct NotebookRecordCodec {
 
 extension NotebookStore {
   public var databaseURL: URL { root.appendingPathComponent("notebook.sqlite") }
-  private var connectionKey: String { "Notebook.SQL." + root.standardizedFileURL.path }
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.

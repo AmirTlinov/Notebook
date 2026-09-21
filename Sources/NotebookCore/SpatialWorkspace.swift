@@ -763,7 +763,15 @@ public struct BoardDocument: Codable, Equatable, Sendable {
   /// A frozen projection retains the exact admitted intent rows, including a
   /// singleton's latent stack membership. It never manufactures authored heads.
   public func projecting(placements: [WorkspacePlacement], elements: [SpatialElement]) -> Self {
-    Self(placements: placements, elements: elements, stamp: stamp, collaboration: collaboration)
+    // These are already admitted sources. A display projection neither encodes
+    // every body again nor manufactures field versions for temporary geometry.
+    var result = self
+    if placements != self.placements {
+      result.placements = placements.sorted { $0.id.uuidString < $1.id.uuidString }
+      result.layout = .init(result.placements)
+    }
+    result.elements = elements
+    return result
   }
 
   public func importingIndependent(_ other: Self, actor: UUID) throws -> Self {

@@ -4,6 +4,19 @@ import Testing
 
 @Suite("Accepted live geometry rebases the retained physical scene proof")
 struct NotebookReferenceLiveSceneTests {
+  @Test func displayProjectionRetainsAuthoredVersionsWithoutMaterializingTemporaryBodies() throws {
+    let actor = UUID(), boardID = UUID(), stamp = VersionStamp(counter: 7, actor: actor)
+    let original = BoardDocument(freeItems: [], elements: [], stamp: stamp)
+    let shown = SpatialElement(id: "admitted", surface: .board(boardID), kind: .nativeText,
+      frame: .init(x: 10, y: 20, width: 90, height: 80), worldOrigin: .zero,
+      source: "Temporary display", stamp: stamp)
+    let projected = original.projecting(placements: original.placements, elements: [shown])
+    #expect(projected.elements == [shown])
+    #expect(projected.collaboration == original.collaboration)
+    #expect(projected.stamp == original.stamp)
+    #expect(original.elements.isEmpty)
+  }
+
   private func fixture(_ body: (NotebookStore, UUID, WorkspaceIndex, BoardHierarchy) throws -> Void) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
