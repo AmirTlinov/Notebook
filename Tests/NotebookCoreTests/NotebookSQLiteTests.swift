@@ -1,4 +1,5 @@
 import Foundation
+import CSQLite
 import Testing
 @testable import NotebookCore
 
@@ -6,6 +7,40 @@ private enum SQLTestFault: Error { case injected }
 
 @Suite("SQLite owns atomic addressed publication")
 struct NotebookSQLiteTests {
+  @Test func admissionConnectionOwnsTheTransactionWithoutCachingAdmissionAcrossReads() throws {
+    try fixture { store, _ in
+      func checkAdmissionStatements(_ database: NotebookSQLConnection) {
+        var statements = Set<String>(), statement = sqlite3_next_stmt(database.handle, nil)
+        while let current = statement {
+          if let sql = sqlite3_sql(current) { statements.insert(String(cString: sql)) }
+          statement = sqlite3_next_stmt(database.handle, current)
+        }
+        #expect(statements.contains("PRAGMA application_id"))
+        #expect(statements.contains("PRAGMA user_version"))
+      }
+      try store.readTransaction { _ in
+        let database = try #require(store.currentSQL)
+        checkAdmissionStatements(database)
+        #expect(!database.writable)
+        #expect(throws: NotebookStorageError.readOnlyTransaction) {
+          try store.commandTransaction { Issue.record("Read admitted a writer") }
+        }
+      }
+      try store.commandTransaction {
+        let database = try #require(store.currentSQL)
+        checkAdmissionStatements(database)
+        #expect(database.writable)
+      }
+      let old = Data("not an admitted archive".utf8), file = store.root.appendingPathComponent("workspace.json")
+      try old.write(to: file)
+      #expect(throws: NotebookStorageError.legacyStoreRequiresConversion) {
+        try store.readTransaction { _ in Issue.record("Admission was cached") }
+      }
+      #expect(try Data(contentsOf: file) == old)
+      #expect(store.currentSQL == nil)
+    }
+  }
+
   @Test func transactionIdentitySurvivesContainerCreationAndKeepsOtherStoresSeparate() throws {
     let path = "/private/var/tmp/notebook-key-" + UUID().uuidString
     let parent = URL(fileURLWithPath: path, isDirectory: true)

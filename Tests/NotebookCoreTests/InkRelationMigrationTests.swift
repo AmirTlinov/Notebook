@@ -60,6 +60,27 @@ struct InkRelationMigrationTests {
     let db=try NotebookSQLConnection(url:store.databaseURL,writable:false)
     return try db.rows("PRAGMA user_version").first![0].integer!
   }
+  @Test func firstCommandAfterAdmissionDoesNotInheritMigrationPublication() throws {
+    try fixture { f in
+      let cursor = try f.store.currentChangeCursor()
+      try f.store.acknowledgePeer(peerID: f.peer, through: cursor)
+      _ = try downgrade(f)
+      let opened = NotebookStore(root: f.store.root)
+      // A local-only command must not republish the migration's pending ink.
+      try opened.commandTransaction(advancesReadRevision: false) {
+        let database = try #require(opened.currentSQL)
+        #expect(database.pendingChangeCount == 0)
+        #expect(!database.pendingOwnersPrepared && !database.actionRecordCapturesPrepared)
+        try database.run("INSERT INTO metadata(key,value) VALUES('admission_test','written')")
+      }
+      #expect(try version(opened) == NotebookStore.currentDatabaseVersion)
+      #expect(try opened.currentChangeCursor() == cursor + 1)
+      #expect(try opened.changeJournal(after: cursor).count == 1)
+      #expect(try opened.readPageInkAction(pageID: f.page, actionID: f.paper.id)?.action == f.paper)
+      #expect(try opened.readSpatialInk(surfaces: [.cover(f.cover)]).actions == [f.spatial])
+      #expect(try opened.sqlRead { try $0.rows("SELECT value FROM metadata WHERE key='admission_test'").first?[0].text } == "written")
+    }
+  }
   @Test func currentPairConversionPreservesBitsIDsClocksAndAcknowledgedHistory() throws {
     try fixture { f in
       let cursor=try f.store.currentChangeCursor(),workspace=try f.store.workspaceHeader().workspaceID

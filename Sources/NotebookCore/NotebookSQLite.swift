@@ -27,7 +27,7 @@ struct NotebookSQLReadAllowance {
 /// typed APIs borrow it; no connection or SQLite statement crosses an await.
 final class NotebookSQLConnection {
   let handle: OpaquePointer
-  let writable: Bool
+  fileprivate(set) var writable: Bool
   var receivedChange: NotebookDurableChange?
   var pendingChangeCount = 0
   var pendingOwnersPrepared = false
@@ -378,8 +378,9 @@ extension NotebookStore {
   // SQLite admission is local to this database, independently of wire and content formats.
   static let currentDatabaseVersion: Int64 = 19
 
-  func prepareDatabase(initialWorkspaceID: UUID? = nil) throws {
-    if currentSQL != nil { guard initialWorkspaceID == nil else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }; return }
+  @discardableResult
+  func prepareDatabase(initialWorkspaceID: UUID? = nil) throws -> NotebookSQLConnection {
+    if let currentSQL { guard initialWorkspaceID == nil else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }; return currentSQL }
     let manager = FileManager.default
     // Rejection happens before mkdir/open; the external converter is the only
     // component permitted to read an old catalog or replay an old journal.
@@ -394,7 +395,7 @@ extension NotebookStore {
     let version = try database.rows("PRAGMA user_version").first?.first?.integer ?? 0
     guard applicationID == 0 || (applicationID == 1_313_999_665 && (2...Self.currentDatabaseVersion).contains(version)) else { throw NotebookStorageError.unsupportedFormat }
     // A current database admits addressed reads without consulting content bodies.
-    if applicationID == 1_313_999_665 && version == Self.currentDatabaseVersion { return }
+    if applicationID == 1_313_999_665 && version == Self.currentDatabaseVersion { return database }
     try database.run("PRAGMA journal_mode=WAL")
     try database.run("PRAGMA wal_autocheckpoint=1000")
     if applicationID == 0 {
@@ -451,7 +452,7 @@ extension NotebookStore {
         try database.run("PRAGMA user_version=\(Self.currentDatabaseVersion)")
         try database.run("COMMIT")
       } catch { try? database.run("ROLLBACK"); throw error }
-      return
+      return database
     }
     // Schema, content conversion and the durable admission version share the
     // sole writer. Another opener may have completed admission while we waited.
@@ -521,6 +522,9 @@ extension NotebookStore {
       }
       try database.run("PRAGMA user_version=\(Self.currentDatabaseVersion)")
     }
+    // Admission published its own command. Its pending changes, ownership
+    // captures and decoded bodies must not leak into the caller's transaction.
+    return try NotebookSQLConnection(url: databaseURL, writable: true)
   }
 
   /// Called only inside the bootstrap or admission writer transaction.
@@ -580,8 +584,8 @@ extension NotebookStore {
   /// transaction cannot be upgraded into a command behind the caller's back.
   public func readTransaction<T>(_ read: (NotebookStore) throws -> T) throws -> T {
     if currentSQL != nil { return try read(self) }
-    try prepareDatabase()
-    let database = try NotebookSQLConnection(url: databaseURL, writable: false)
+    let database = try prepareDatabase()
+    database.writable = false
     try database.run("BEGIN DEFERRED")
     Thread.current.threadDictionary[connectionKey] = database
     defer { Thread.current.threadDictionary.removeObject(forKey: connectionKey) }
@@ -599,10 +603,7 @@ extension NotebookStore {
     }
     let database: NotebookSQLConnection
     if let preparedDatabase { database = preparedDatabase }
-    else {
-      try prepareDatabase()
-      database = try NotebookSQLConnection(url: databaseURL, writable: true)
-    }
+    else { database = try prepareDatabase() }
     if let readAllowance { try database.limitReads(readAllowance) }
     try database.run("BEGIN IMMEDIATE")
     let changesAtStart = sqlite3_total_changes64(database.handle)
