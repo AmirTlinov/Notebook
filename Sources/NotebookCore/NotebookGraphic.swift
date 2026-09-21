@@ -42,13 +42,16 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
   public var freehand: NotebookFreehand?
   public var path: NotebookVectorPath?
   public var transform: NotebookGraphicTransform?
+  /// Ordered vector set operations in the element's normalized basis.
+  public var mask: NotebookGraphicMask?
 
   public init(shape: Shape = .ellipse, style: Style = .init(), label: String = "",
     representation: Representation = .geometry, visible: Bool = true, sourceInkIDs: [UUID] = [],
-    connection: NotebookGraphicConnection? = nil, vertices: [SpatialPoint]? = nil, cornerRadius: Double? = nil, freehand: NotebookFreehand? = nil, transform: NotebookGraphicTransform? = nil, path: NotebookVectorPath? = nil) {
+    connection: NotebookGraphicConnection? = nil, vertices: [SpatialPoint]? = nil, cornerRadius: Double? = nil, freehand: NotebookFreehand? = nil, transform: NotebookGraphicTransform? = nil, path: NotebookVectorPath? = nil,
+    mask: NotebookGraphicMask? = nil) {
     self.shape = shape; self.style = style; self.label = label
     self.representation = representation; self.visible = visible; self.sourceInkIDs = sourceInkIDs
-    self.connection = connection; self.vertices = vertices; self.cornerRadius = cornerRadius; self.freehand = freehand; self.transform = transform; self.path = path
+    self.connection = connection; self.vertices = vertices; self.cornerRadius = cornerRadius; self.freehand = freehand; self.transform = transform; self.path = path; self.mask = mask
   }
 
   /// A native accepted edit and a delivered action interpret the same field
@@ -73,6 +76,7 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
       case "freehand": result.freehand = supplied == .null ? nil : try supplied.decode(NotebookFreehand.self)
       case "transform": result.transform = supplied == .null ? nil : try supplied.decode(NotebookGraphicTransform.self)
       case "path": result.path = supplied == .null ? nil : try supplied.decode(NotebookVectorPath.self)
+      case "mask": result.mask = supplied == .null ? nil : try supplied.decode(NotebookGraphicMask.self)
       case "connection":
         if let previous = connection {
           guard !supplied.object.isEmpty, Set(supplied.object.keys).isSubset(of: Set(NotebookGraphicConnection.causalFields)) else {
@@ -88,10 +92,10 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
     return result
   }
 
-  static let causalFields = ["shape", "style", "label", "representation", "visible", "sourceInkIDs", "vertices", "cornerRadius", "freehand", "transform", "path"]
+  static let causalFields = ["shape", "style", "label", "representation", "visible", "sourceInkIDs", "vertices", "cornerRadius", "freehand", "transform", "path", "mask"]
   static let allCausalPaths = causalFields.map { [$0] } + NotebookGraphicConnection.causalFields.map { ["connection", $0] }
   var causalPaths: [[String]] {
-    Self.causalFields.filter { ($0 != "vertices" || vertices != nil) && ($0 != "cornerRadius" || cornerRadius != nil) && ($0 != "freehand" || freehand != nil) && ($0 != "transform" || transform != nil) && ($0 != "path" || path != nil) }.map { [$0] } + (connection == nil ? [] : NotebookGraphicConnection.causalFields.filter { ($0 != "bendPosition" || connection?.bendPosition != nil) && ($0 != "routing" || connection?.routing != nil) }.map { ["connection", $0] })
+    Self.causalFields.filter { ($0 != "vertices" || vertices != nil) && ($0 != "cornerRadius" || cornerRadius != nil) && ($0 != "freehand" || freehand != nil) && ($0 != "transform" || transform != nil) && ($0 != "path" || path != nil) && ($0 != "mask" || mask != nil) }.map { [$0] } + (connection == nil ? [] : NotebookGraphicConnection.causalFields.filter { ($0 != "bendPosition" || connection?.bendPosition != nil) && ($0 != "routing" || connection?.routing != nil) }.map { ["connection", $0] })
   }
   public var showsGeometry: Bool { visible && representation == .geometry }
   var isValid: Bool {
@@ -102,6 +106,7 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
       && (shape == .freehand ? freehand?.isValid == true : freehand == nil)
       && (shape == .path ? path?.isValid == true : path == nil)
       && (transform?.isValid ?? true) && (shape != .connector || transform == nil)
+      && (mask?.isValid ?? true)
       && validVertices
       && (cornerRadius == nil || (NotebookGraphicGeometry.polygon(self) != nil && cornerRadius!.isFinite && (0...1_000_000).contains(cornerRadius!)))
   }
@@ -114,6 +119,49 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
 
 }
 
+/// Compact exact visibility relation. Repeated lasso edits append operations;
+/// they do not expand immutable measurements into triangles or pixels.
+public struct NotebookGraphicMask: Codable, Equatable, Sendable {
+  public struct Operation: Codable, Equatable, Sendable {
+    public enum Kind: String, Codable, Sendable { case intersect, subtract }
+    public let kind: Kind
+    public let polygon: [SpatialPoint]
+    public init(_ kind:Kind,polygon:[SpatialPoint]) { self.kind=kind;self.polygon=polygon }
+  }
+  public var operations:[Operation]
+  public init(operations:[Operation]=[]) { self.operations=operations }
+  public var isValid:Bool {
+    !operations.isEmpty && operations.count <= 64 && operations.allSatisfy {
+      $0.polygon.count >= 3 && $0.polygon.count <= 2048 && $0.polygon.allSatisfy {
+        $0.x.isFinite && $0.y.isFinite && abs($0.x) <= 1_000_000 && abs($0.y) <= 1_000_000
+      }
+    }
+  }
+  public func appending(_ kind:Operation.Kind,polygon:[SpatialPoint])->Self {
+    .init(operations:operations + [.init(kind,polygon:polygon)])
+  }
+  public func path(in rect:CGRect)->CGPath {
+    guard rect.width > 0,rect.height > 0 else { return CGMutablePath() }
+    var result:CGPath=CGPath(rect:rect,transform:nil)
+    for operation in operations {
+      let path=CGMutablePath()
+      if let first=operation.polygon.first {
+        path.move(to:.init(x:rect.minX+first.x*rect.width,y:rect.minY+first.y*rect.height))
+        for p in operation.polygon.dropFirst() {
+          path.addLine(to:.init(x:rect.minX+p.x*rect.width,y:rect.minY+p.y*rect.height))
+        }
+        path.closeSubpath()
+      }
+      result = operation.kind == .intersect ? result.intersection(path,using:.evenOdd) : result.subtracting(path,using:.evenOdd)
+      if result.isEmpty { break }
+    }
+    return result
+  }
+  public func contains(_ point:SpatialPoint)->Bool {
+    path(in:.init(x:0,y:0,width:1,height:1)).contains(.init(x:point.x,y:point.y),using:.evenOdd)
+  }
+}
+
 /// The same normalized outline serves native paint, hit testing and anchors.
 /// Camera / page placement belongs to the installed scene, never this geometry.
 public enum NotebookGraphicGeometry {
@@ -122,6 +170,7 @@ public enum NotebookGraphicGeometry {
   public static func containsInterior(_ graphic: NotebookGraphic, width: Double, height: Double,
     x: Double, y: Double) -> Bool {
     guard graphic.showsGeometry, width > 0, height > 0 else { return false }
+    if graphic.mask?.contains(.init(x:x/width,y:y/height)) == false { return false }
     if graphic.shape == .freehand { return graphic.freehand?.contains(.init(x:x,y:y),size:.init(width:width,height:height),transform:graphic.transform) ?? false }
     if let transform = graphic.transform {
       var base = graphic; base.transform = nil
@@ -149,6 +198,7 @@ public enum NotebookGraphicGeometry {
   public static func hitTest(_ graphic: NotebookGraphic, width: Double, height: Double,
     x: Double, y: Double, tolerance: Double) -> Bool {
     guard graphic.showsGeometry, graphic.shape != .connector, width > 0, height > 0 else { return false }
+    if graphic.mask?.contains(.init(x:x/width,y:y/height)) == false { return false }
     if let ink = graphic.freehand {
       return ink.contains(.init(x:x,y:y),size:.init(width:width,height:height),transform:graphic.transform,tolerance:tolerance)
     }

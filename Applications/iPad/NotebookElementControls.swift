@@ -33,7 +33,8 @@ struct NotebookElementControls: UIViewRepresentable {
 
   func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate: model.inputGate,contextMenus:contextMenus) }
   func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
-    var graphic = model.graphicElement(reference)
+    let isRegion=model.selectionSession.region?.reference == reference
+    var graphic = isRegion ? nil : model.graphicElement(reference)
     if let contact = model.selectionSession.manipulation, contact.reference == reference {
       if contact.vertices != contact.originalVertices { graphic?.vertices = contact.vertices }
       if contact.cornerRadius != contact.originalCornerRadius { graphic?.cornerRadius = contact.cornerRadius }
@@ -69,9 +70,9 @@ struct NotebookElementControls: UIViewRepresentable {
       model.setElementGeometryMode(mode,reference:reference)
     }
     var menus: [UIMenuElement] = []
-    if graphic != nil {
+    if graphic != nil || isRegion {
       menus.append(UIMenu(options:.displayInline,children:[
-        UIAction(title:model.selectionSession.addingElements ? "Завершить выбор" : "Выбрать несколько",image:UIImage(systemName:"checkmark.circle")) { _ in
+        UIAction(title:model.selectionSession.addingElements ? "Завершить выбор" : "Выбрать несколько",image:UIImage(systemName:"checkmark.circle"),attributes:isRegion ? .disabled : []) { _ in
           guard model.selectionSession.id == selectionID else { return }
           if model.selectionSession.addingElements { model.finishMultipleSelection() } else { model.beginMultipleSelection() }
         },
@@ -80,7 +81,7 @@ struct NotebookElementControls: UIViewRepresentable {
         }
       ]))
     }
-    if graphic != nil || isGroup { menus.append(selectionTransformMenu(model:model,selectionID:selectionID)) }
+    if (graphic != nil && !isRegion) || isGroup { menus.append(selectionTransformMenu(model:model,selectionID:selectionID)) }
     if let parent=model.parentGroup(reference) {
       menus.append(UIAction(title:"Выбрать группу",image:UIImage(systemName:"square.on.square")) { _ in
         guard model.selectionSession.id == selectionID else { return };model.selectElement(parent)

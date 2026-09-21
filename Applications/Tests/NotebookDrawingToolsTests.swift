@@ -4,7 +4,7 @@ import UIKit
 @testable import Notebook
 
 @MainActor final class NotebookDrawingToolsTests: XCTestCase {
-  func testFirstLassoWaitsForColdErasedObjectInsteadOfDroppingIt() async throws {
+  func testObjectLassoReadsAuthoredCutsWithoutDependingOnPaintCache() async throws {
     try await fixture { model in
       var page = try XCTUnwrap(model.activePage)
       let frame = PageRect(x: 100, y: 200, width: 200, height: 120)
@@ -29,9 +29,9 @@ import UIKit
       while !model.selectionSession.contains(address.reference(element.id)), ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(10))
       }
-      XCTAssertEqual(model.elementErasureCache.preparationCount, preparations + 1)
+      XCTAssertEqual(model.elementErasureCache.preparationCount, preparations)
       XCTAssertTrue(model.selectionSession.contains(address.reference(element.id)),
-        "A pending exact cutout is not proof of absence; the first lasso must finish without a second gesture")
+        "Selection reads authored geometry directly, before any paint cache exists")
 
       // Only the removed strip intersects this second polygon.
       let removed = [SpatialPoint(x: 101, y: 230), .init(x: 110, y: 230), .init(x: 110, y: 270), .init(x: 101, y: 270)]
@@ -40,17 +40,14 @@ import UIKit
       model.drawingTools.finish()
       XCTAssertTrue(model.selectionSession.elements.isEmpty)
 
-      // A new human selection invalidates an older unfinished lasso. Evicting
-      // derived paths emulates reopening; it never changes the authored cuts.
+      // Evicting derived paint paths emulates reopening. Selection remains a
+      // geometry query and never schedules a paint-cache preparation.
       model.elementErasureCache.retain(pages: [:])
       XCTAssertTrue(model.drawingTools.begin(at: polygon[0], address: address, screenScale: 1))
       for point in polygon.dropFirst() { model.drawingTools.move(to: point) }
       model.drawingTools.finish()
-      let preparation = try XCTUnwrap(model.elementErasureCache.pendingPreparation(surface: address.surface, id: element.id))
-      model.clearSelection()
-      await preparation.value
-      try await Task.sleep(for: .milliseconds(30))
-      XCTAssertTrue(model.selectionSession.elements.isEmpty, "Late preparation cannot revive a cancelled selection")
+      XCTAssertTrue(model.selectionSession.contains(address.reference(element.id)))
+      XCTAssertNil(model.elementErasureCache.pendingPreparation(surface: address.surface, id: element.id))
     }
   }
 
@@ -117,60 +114,66 @@ import UIKit
     }
   }
 
-  func testLassoRegionCutsInkAndElementSelectionStaysSeparate() async throws {
+  func testLassoSelectionIsReadOnlyUntilEditAndCanCutTheRemainderAgain() async throws {
     try await fixture { model in
-      var page = try XCTUnwrap(model.activePage)
-      func sample(_ x:Double,_ y:Double,_ width:Double = 8) -> SpatialInkSample {
-        .init(point:.init(x:x,y:y),timeOffset:0,width:width,opacity:1,force:1,azimuth:0,altitude:.pi/2)
+      var page=try XCTUnwrap(model.activePage)
+      func sample(_ x:Double,_ y:Double)->SpatialInkSample {
+        .init(point:.init(x:x,y:y),timeOffset:0,width:8,opacity:1,force:1,azimuth:0,altitude:.pi/2)
       }
-      let pen = PageInkAction(tool:.pen,samples:[sample(100,100),sample(220,100)])
-      let eraser = PageInkAction(tool:.eraser,samples:(0..<1624).map { sample(160,80+Double($0%40)) })
-      let drawing = try PageInkDrawing(actions:[pen,eraser]).dataRepresentation()
-      XCTAssertTrue(page.replaceDrawing(drawing,actor:model.actorID)); try model.store.savePage(page)
+      let pen=PageInkAction(tool:.pen,samples:[sample(100,100),sample(220,100)])
+      let drawing=try PageInkDrawing(actions:[pen]).dataRepresentation()
+      XCTAssertTrue(page.replaceDrawing(drawing,actor:model.actorID));try model.store.savePage(page)
       await model.reloadExternalChanges()?.value
-      let address = NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
-      let text = try XCTUnwrap(model.beginToolText(at:.init(x:120,y:120),address:address,screenScale:1))
+      let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+      let text=try XCTUnwrap(model.beginToolText(at:.init(x:120,y:120),address:address,screenScale:1))
       model.commitNativeText(reference:address.reference(text),text:"Object",finish:true)
-      await assertSaved(model); await model.reloadExternalChanges()?.value
-      let polygon = [SpatialPoint(x:90,y:90),.init(x:150,y:90),.init(x:150,y:110),.init(x:90,y:110)]
-      model.selectDrawingTool(.lasso)
-      @MainActor func lasso() {
+      await assertSaved(model);await model.reloadExternalChanges()?.value
+      model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode = .region
+      @MainActor func lasso(_ polygon:[SpatialPoint]) {
         XCTAssertTrue(model.drawingTools.begin(at:polygon[0],address:address,screenScale:1))
-        for point in polygon.dropFirst() { model.drawingTools.move(to:point) }; model.drawingTools.finish()
+        for point in polygon.dropFirst() { model.drawingTools.move(to:point) };model.drawingTools.finish()
       }
-      model.drawingToolSettings.lassoMode = .region
-      lasso()
+      let left=[SpatialPoint(x:90,y:90),.init(x:150,y:90),.init(x:150,y:110),.init(x:90,y:110)]
+      lasso(left)
       let deadline = ContinuousClock.now + .seconds(5)
-      while model.selectionSession.elements.isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
-      let selected = try XCTUnwrap(model.selectionSession.element)
-      XCTAssertNotEqual(selected,address.reference(text))
-      let graphic = try XCTUnwrap(model.graphicElement(selected))
-      XCTAssertEqual(graphic.sourceInkIDs,[pen.id])
-      XCTAssertTrue(graphic.freehand?.layers.filter { $0.tool == .pen }.allSatisfy { $0.measured == nil } == true)
-      XCTAssertTrue(graphic.freehand?.layers.contains { $0.tool == .eraser && $0.measured != nil } == true)
-      await assertSaved(model); await model.reloadExternalChanges()?.value
-      XCTAssertNil(model.actionCue,"Lasso transaction failed: \(model.actionCue ?? "")")
+      while model.selectionSession.region == nil,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
+      let region=try XCTUnwrap(model.selectionSession.region)
+      XCTAssertEqual(region.rawInk?.graphic.sourceInkIDs,[pen.id])
       XCTAssertEqual(try model.store.loadPage(page.id).drawingData,drawing)
-      XCTAssertEqual(try model.store.loadPage(page.id).elements.filter { $0.graphic?.visible == true }.count,2,
-        "The selected region and outside remainder are separate vector elements")
+      XCTAssertEqual(try model.store.loadPage(page.id).elements.count,1,"Selection itself must not author content")
+      model.deleteElement(region.reference)
+      await assertSaved(model);await model.reloadExternalChanges()?.value
+      let saved=try model.store.loadPage(page.id)
+      XCTAssertEqual(saved.drawingData,drawing)
+      XCTAssertEqual(saved.elements.filter { $0.graphic?.visible == true }.count,1,"Only the compact outside relation remains visible")
+
+      let right=[SpatialPoint(x:180,y:90),.init(x:230,y:90),.init(x:230,y:110),.init(x:180,y:110)]
+      let firstSelection=model.selectionSession.id
+      lasso(right)
+      let secondDeadline = ContinuousClock.now + .seconds(5)
+      while model.selectionSession.id == firstSelection,ContinuousClock.now < secondDeadline { try await Task.sleep(for:.milliseconds(10)) }
+      let second=try XCTUnwrap(model.selectionSession.region)
+      XCTAssertNil(second.rawInk,"The original journal is already claimed")
+      XCTAssertFalse(second.graphics.isEmpty,"A retained remainder must be lassoable again")
+
       model.drawingToolSettings.lassoMode = .elements
-      let objectPolygon=[SpatialPoint(x:100,y:100),.init(x:460,y:100),.init(x:460,y:190),.init(x:100,y:190)]
-      XCTAssertTrue(model.drawingTools.begin(at:objectPolygon[0],address:address,screenScale:1))
-      for point in objectPolygon.dropFirst() { model.drawingTools.move(to:point) };model.drawingTools.finish()
-      XCTAssertTrue(model.selectionSession.contains(address.reference(text)))
-      model.deleteElement(selected); await assertSaved(model); await model.reloadExternalChanges()?.value
-      // Another raw stroke is picked by the same owner, without any hold.
-      var next = try model.store.loadPage(page.id)
-      let raw = PageInkAction(tool:.pen,samples:[sample(350,200),sample(450,200)])
-      let ink = try PageInkDrawing.decode(next.drawingData).appending(raw)
-      XCTAssertTrue(next.replaceDrawing(try ink.dataRepresentation(),actor:model.actorID)); try model.store.savePage(next)
+      let object=[SpatialPoint(x:115,y:115),.init(x:145,y:115),.init(x:145,y:150),.init(x:115,y:150)]
+      lasso(object)
+      XCTAssertTrue(model.selectionSession.contains(address.reference(text)),"Whole-object selection is a separate mode")
+
+      var next=try model.store.loadPage(page.id)
+      let raw=PageInkAction(tool:.pen,samples:[sample(350,200),sample(450,200)])
+      let ink=try PageInkDrawing.decode(next.drawingData).appending(raw)
+      XCTAssertTrue(next.replaceDrawing(try ink.dataRepresentation(),actor:model.actorID));try model.store.savePage(next)
       await model.reloadExternalChanges()?.value
+      let previousSelection=model.selectionSession.id
       model.drawingTools.selectInk(at:.init(x:400,y:200),address:address,screenScale:1)
       let tapDeadline = ContinuousClock.now + .seconds(5)
-      while model.selectionSession.element.flatMap(model.graphicElement)?.sourceInkIDs != [raw.id],
-        ContinuousClock.now < tapDeadline { try await Task.sleep(for:.milliseconds(10)) }
-      XCTAssertEqual(model.selectionSession.element.flatMap(model.graphicElement)?.sourceInkIDs,[raw.id])
-      await assertSaved(model)
+      while model.selectionSession.id == previousSelection,ContinuousClock.now < tapDeadline {
+        try await Task.sleep(for:.milliseconds(10))
+      }
+      XCTAssertEqual(model.selectionSession.region?.rawInk?.graphic.sourceInkIDs,[raw.id])
+      XCTAssertEqual(try model.store.loadPage(page.id).drawingData,try ink.dataRepresentation())
     }
   }
 
@@ -377,7 +380,7 @@ import UIKit
       let selection = try XCTUnwrap(NotebookLassoInkSource.page(page).selection(polygon:polygon,surface:.page(page.id),origin:nil,bounds:nil))
       let ink = try XCTUnwrap(selection.graphic.freehand)
       XCTAssertFalse(ink.layers.filter { $0.tool == .eraser }.isEmpty)
-      let opacity=ink.layers[0].vertices.map(\.opacity)
+      let opacity=try XCTUnwrap(ink.layers[0].measured).measurements.materialized().map(\.opacity)
       XCTAssertLessThan(try XCTUnwrap(opacity.min()),0.3)
       XCTAssertGreaterThan(try XCTUnwrap(opacity.max()),0.8)
       let size = CGSize(width:selection.frame.width,height:selection.frame.height)
@@ -430,7 +433,7 @@ import UIKit
       model.commitNativeText(reference:address.reference(text),text:"Lasso",finish:true)
       await assertSaved(model); await model.reloadExternalChanges()?.value
       let enclosing = [SpatialPoint(x:80,y:80),.init(x:500,y:80),.init(x:500,y:200),.init(x:80,y:200)]
-      let refs = model.elementsEnclosed(by:enclosing,at:address,graph:.init([]))
+      let refs = model.elementsIntersecting(enclosing,at:address,graph:.init([]))
       XCTAssertTrue(refs.contains(address.reference(text)))
       model.selectDrawingTool(.lasso)
       model.drawingToolSettings.lassoMode = .elements

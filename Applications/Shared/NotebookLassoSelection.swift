@@ -5,19 +5,21 @@ import NotebookCore
 /// Pins accepted vector content, never a screenshot or a visibility mask.
 enum NotebookLassoInkSource: Sendable {
   case page(PageDocument, pending: [PageInkMutation] = [])
-  case spatial(SpatialInkJournal, Set<UUID>)
+  /// A bounded spatial read can gain members without advancing the journal's
+  /// maximum stamp. The scene revision identifies that immutable membership.
+  case spatial(SpatialInkJournal, Set<UUID>, membershipRevision: UInt64)
   var revision: String {
     switch self {
     case .page(let p, let pending):
       guard !pending.isEmpty else { return p.drawingStamp.revision }
       return p.drawingStamp.revision + ":" + pending.map(Self.mutationIdentity).joined(separator: ",")
-    case .spatial(let j,_): return j.stamp.revision
+    case .spatial(let j,_,_): return j.stamp.revision
     }
   }
   var suppressed: Set<UUID> {
     switch self {
     case .page(let p, _): p.graphicPresentation.suppressedInkIDs
-    case .spatial(_,let ids): ids
+    case .spatial(_,let ids,_): ids
     }
   }
   private static func mutationIdentity(_ mutation: PageInkMutation) -> String {
@@ -27,23 +29,16 @@ enum NotebookLassoInkSource: Sendable {
     }
   }
   func cacheKey(surface: SurfaceID) -> String {
-    var key = "\(surface)|\(revision)"
-    if case .spatial(let journal,_) = self {
-      // A spatial read window can gain members without changing the owner's
-      // maximum stamp. Key its actual immutable membership, not only that stamp.
-      key += "|" + journal.actions.map { "\($0.id):\($0.stamp.revision):\($0.stateStamp.revision)" }.joined(separator:",")
+    if case .spatial(_,_,let membershipRevision) = self {
+      return "\(surface)|\(revision)|\(membershipRevision)"
     }
-    return key
+    return "\(surface)|\(revision)"
   }
-  struct Result: Sendable {
-    struct Piece: Sendable {
-      let frame: PageRect
-      let graphic: NotebookGraphic
-    }
-    let selected: Piece
-    let remainder: Piece?
-    var frame: PageRect { selected.frame }
-    var graphic: NotebookGraphic { selected.graphic }
+  struct Result: Equatable, Sendable {
+    let frame: PageRect
+    let selectionFrame: PageRect
+    let polygon: [SpatialPoint]
+    let graphic: NotebookGraphic
     /// Candidate traversal only; excludes exact semantic geometry preparation.
     let candidateSampleCount: Int
     let sourceSampleCount: Int
@@ -51,7 +46,7 @@ enum NotebookLassoInkSource: Sendable {
   func selection(polygon: [SpatialPoint], surface: SurfaceID, origin: WorldPoint?, bounds: CGRect?) throws -> Result? {
     try prepare(surface:surface,origin:origin).selection(polygon:polygon,surface:surface,origin:origin,bounds:bounds)
   }
-  func prepare(surface: SurfaceID, origin: WorldPoint?) throws -> Prepared {
+  func prepare(surface: SurfaceID, origin: WorldPoint?, reusing previous: Prepared? = nil) throws -> Prepared {
     let suppressed = suppressed
     let entries: [Prepared.Entry]
     switch self {
@@ -66,7 +61,7 @@ enum NotebookLassoInkSource: Sendable {
       entries = drawing.actions.filter { $0.isActive }.map {
         .init(id:$0.id,tool:$0.tool,color:$0.color,sources:[.init($0)])
       }
-    case .spatial(let journal,_):
+    case .spatial(let journal,_,_):
       entries = journal.actions.filter { $0.isActive
         && ($0.tool == .eraser || $0.spans.allSatisfy { $0.surface == surface }) }.compactMap { action in
           let spans=action.spans.enumerated().filter { $0.element.surface == surface }.map { index,span in
@@ -76,6 +71,8 @@ enum NotebookLassoInkSource: Sendable {
           return spans.isEmpty ? nil : .init(id:action.id,tool:action.tool,color:action.color,sources:spans)
         }
     }
+    if let previous,let updated=try Prepared(revision:revision,entries:entries,surface:surface,
+      origin:origin,excluding:suppressed,reusing:previous) { return updated }
     return try Prepared(revision:revision,entries:entries,surface:surface,origin:origin,excluding:suppressed)
   }
 
@@ -94,9 +91,15 @@ enum NotebookLassoInkSource: Sendable {
       let span: Int
       let bounds: CGRect
     }
+    private struct IndexBlock: Sendable {
+      let base:Int
+      let count:Int
+      let index:InkBoundsIndex
+    }
     let revision: String
     let sourceSampleCount: Int
-    private let index: InkBoundsIndex
+    let reusedSampleCount:Int
+    private let indexBlocks:[IndexBlock]
     private let entries: [Entry]
     private let spans: [Span]
     var indexedSpanCount: Int { spans.count }
@@ -111,7 +114,8 @@ enum NotebookLassoInkSource: Sendable {
     }
     private init(reusing source: Prepared, excluding ids: Set<UUID>) {
       revision = source.revision; entries = source.entries; surface = source.surface; origin = source.origin
-      sourceSampleCount = source.sourceSampleCount; index = source.index
+      sourceSampleCount = source.sourceSampleCount; indexBlocks = source.indexBlocks
+      reusedSampleCount=source.reusedSampleCount
       spans = source.spans; entryBounds = source.entryBounds; excluded = ids
       preparationSampleCount = source.preparationSampleCount
     }
@@ -132,7 +136,70 @@ enum NotebookLassoInkSource: Sendable {
         boxes.append(box)
       }
       self.spans = spans; entryBounds = boxes; sourceSampleCount = count;preparationSampleCount = prepared
-      index = .init(spans.map(\.bounds))
+      reusedSampleCount=0
+      indexBlocks = Self.blocks(spans.map(\.bounds))
+    }
+    private static func sameSource(_ lhs:Entry,_ rhs:Entry)->Bool {
+      lhs.id == rhs.id && lhs.tool == rhs.tool && lhs.color == rhs.color && lhs.sources.count == rhs.sources.count
+        && zip(lhs.sources,rhs.sources).allSatisfy {
+          $0.sourceID == $1.sourceID && $0.span == $1.span && $0.revision == $1.revision && $0.count == $1.count
+        }
+    }
+    convenience init?(revision:String,entries:[Entry],surface:SurfaceID,origin:WorldPoint?,
+      excluding:Set<UUID>,reusing source:Prepared) throws {
+      guard source.surface == surface,source.origin == origin,entries.count >= source.entries.count,
+        zip(source.entries,entries).allSatisfy({ Self.sameSource($0.0,$0.1) }) else { return nil }
+      var spans=source.spans,boxes=source.entryBounds,count=source.sourceSampleCount
+      var prepared=source.preparationSampleCount,newBounds:[CGRect]=[]
+      for e in source.entries.count..<entries.count {
+        try Task.checkCancellation()
+        var box=CGRect.null
+        for (s,relation) in entries[e].sources.enumerated() {
+          count += relation.count
+          let result=try relation.bounds(in:0..<relation.count)
+          prepared += result.cost.decodedSamples
+          let bounds=Self.projected(result.bounds,source:relation,origin:origin)
+          box=box.union(bounds);spans.append(.init(entry:e,span:s,bounds:bounds));newBounds.append(bounds)
+        }
+        boxes.append(box)
+      }
+      let allBounds=spans.map(\.bounds)
+      let blocks=Self.appending(newBounds,to:source.indexBlocks,allBounds:allBounds)
+      self.init(revision:revision,sourceSampleCount:count,indexBlocks:blocks,entries:entries,spans:spans,
+        reusedSampleCount:source.sourceSampleCount,preparationSampleCount:prepared,entryBounds:boxes,
+        surface:surface,origin:origin,excluded:excluding)
+    }
+    private init(revision:String,sourceSampleCount:Int,indexBlocks:[IndexBlock],entries:[Entry],spans:[Span],
+      reusedSampleCount:Int,preparationSampleCount:Int,entryBounds:[CGRect],surface:SurfaceID,origin:WorldPoint?,excluded:Set<UUID>) {
+      self.revision=revision;self.sourceSampleCount=sourceSampleCount;self.indexBlocks=indexBlocks
+      self.reusedSampleCount=reusedSampleCount
+      self.entries=entries;self.spans=spans;self.preparationSampleCount=preparationSampleCount
+      self.entryBounds=entryBounds;self.surface=surface;self.origin=origin;self.excluded=excluded
+    }
+    private static func blocks(_ bounds:[CGRect])->[IndexBlock] {
+      var result:[IndexBlock]=[],base=0,remaining=bounds.count
+      while remaining > 0 {
+        var count=1
+        while count <= remaining/2 { count *= 2 }
+        result.append(.init(base:base,count:count,index:.init(Array(bounds[base..<base+count]))))
+        base += count;remaining -= count
+      }
+      return result
+    }
+    private static func appending(_ added:[CGRect],to existing:[IndexBlock],allBounds:[CGRect])->[IndexBlock] {
+      var result=existing,base=allBounds.count-added.count
+      for _ in added {
+        var block=IndexBlock(base:base,count:1,index:.init([allBounds[base]]));base += 1
+        while let last=result.last,last.count == block.count {
+          result.removeLast();let count=last.count+block.count
+          block = .init(base:last.base,count:count,index:.init(Array(allBounds[last.base..<last.base+count])))
+        }
+        result.append(block)
+      }
+      return result
+    }
+    private func indexedSpans(intersecting area:CGRect)->[Int] {
+      indexBlocks.flatMap { block in block.index.query(area).indices.map { block.base+$0 } }.sorted()
     }
     private static func projected(_ box: CGRect,source: InkSampleRelations,origin: WorldPoint?) -> CGRect {
       guard let origin,let sourceOrigin=source.geometry.origin else { return box }
@@ -157,7 +224,7 @@ enum NotebookLassoInkSource: Sendable {
       let polygon = polygon.map { SpatialPoint(x:$0.x+delta.x,y:$0.y+delta.y) }
       let region = polygon.reduce(CGRect.null) { $0.union(.init(x:$1.x,y:$1.y,width:0,height:0)) }
       var chosen = Set<Int>(), examined = 0
-      for id in index.query(region).indices {
+      for id in indexedSpans(intersecting:region) {
         let f = spans[id], entry = entries[f.entry]
         guard entry.tool == .pen, !excluded.contains(entry.id), !chosen.contains(f.entry) else { continue }
         try Task.checkCancellation()
@@ -166,10 +233,12 @@ enum NotebookLassoInkSource: Sendable {
           examined += range.count
           func point(_ i: Int) -> SpatialPoint { Self.point(samples[i],origin:origin) }
           let intersects = range.contains { i in
-            let p = point(i), r = max(0.25,samples[i].width/2)*Double(InkStrokeGeometry.maximumCrossSectionScale)
+            let p=point(i),r=max(0.25,samples[i].width/2)*Double(InkStrokeGeometry.maximumCrossSectionScale)
             return NotebookToolGeometry.intersects(.init(x:p.x-r,y:p.y-r,width:max(0.01,2*r),height:max(0.01,2*r)),polygon:polygon)
           } || range.dropLast().contains { NotebookToolGeometry.intersects(from:point($0),to:point($0+1),polygon:polygon) }
-          if intersects { chosen.insert(f.entry);break }
+          if intersects {
+            chosen.insert(f.entry);break
+          }
         }
       }
       guard let first = chosen.min() else { return nil }
@@ -183,7 +252,7 @@ enum NotebookLassoInkSource: Sendable {
       // Select eraser spans through the same range tree, then retain their
       // original body. The graphic's frame clips display, not source measurements.
       var cuts: [Int:Set<Int>] = [:]
-      for id in index.query(box).indices {
+      for id in indexedSpans(intersecting:box) {
         let f=spans[id]
         if f.entry > first,entries[f.entry].tool == .eraser,
           try !ranges(f,intersecting:box,examined:&examined).isEmpty {
@@ -201,212 +270,16 @@ enum NotebookLassoInkSource: Sendable {
       }
       let ink = NotebookFreehand(layers:layers)
       guard ink.isValid else { throw CollaborationError("selection_limit","Выделите меньшую часть рукописи.") }
-      let split = try ink.partitioned(by:polygon.map { CGPoint(x:$0.x,y:$0.y) },in:frame)
-      guard let selected = split.inside else { return nil }
-      func piece(_ value: NotebookFreehand.Partition) -> Result.Piece {
-        .init(frame:.init(x:value.frame.x-delta.x,y:value.frame.y-delta.y,
-            width:value.frame.width,height:value.frame.height),
-          graphic:.init(shape:.freehand,sourceInkIDs:value.insideSource ? chosen.sorted().map { entries[$0].id } : [],
-            freehand:value.ink))
-      }
-      return .init(selected:piece(selected),remainder:split.outside.map(piece),
+      let clip = polygon.map { CGPoint(x:($0.x-frame.x)/frame.width,y:($0.y-frame.y)/frame.height) }
+      guard ink.geometry.intersects(clip) else { return nil }
+      var selectedBox=region.intersection(box)
+      if let bounds { selectedBox=selectedBox.intersection(bounds.offsetBy(dx:delta.x,dy:delta.y)) }
+      guard !selectedBox.isNull,selectedBox.width > 0,selectedBox.height > 0 else { return nil }
+      return .init(frame:.init(x:frame.x-delta.x,y:frame.y-delta.y,width:frame.width,height:frame.height),
+        selectionFrame:.init(x:selectedBox.minX-delta.x,y:selectedBox.minY-delta.y,width:selectedBox.width,height:selectedBox.height),
+        polygon:polygon.map { .init(x:$0.x-delta.x,y:$0.y-delta.y) },
+        graphic:.init(shape:.freehand,sourceInkIDs:chosen.sorted().map { entries[$0].id },freehand:ink),
         candidateSampleCount:examined,sourceSampleCount:sourceSampleCount)
     }
-  }
-}
-
-private extension NotebookFreehand {
-  struct Partition {
-    let frame: PageRect
-    let ink: NotebookFreehand
-    let insideSource: Bool
-  }
-
-  /// Materialize only the intersected source actions into two exact vector
-  /// pieces. The selected piece claims the original journal IDs; the outside
-  /// piece is ordinary vector geometry, so moving the selection cannot drag
-  /// content that was never inside the loop.
-  func partitioned(by polygon: [CGPoint], in frame: PageRect) throws
-    -> (inside: Partition?, outside: Partition?) {
-    guard frame.width > 0, frame.height > 0 else { return (nil,nil) }
-    let clip = polygon.map { CGPoint(x:($0.x-frame.x)/frame.width,y:($0.y-frame.y)/frame.height) }
-    guard let ears = lassoTriangles(clip) else {
-      throw CollaborationError("invalid_lasso","Контур лассо пересёк сам себя. Обведите область одним простым контуром.")
-    }
-    let geometry = geometry
-    var inside = Array(repeating:[Vertex](),count:layers.count)
-    var outside = Array(repeating:[Vertex](),count:layers.count)
-    let query = geometry.query(.init(x:0,y:0,width:1,height:1),allowRangeCoalescing:false).indices
-    for id in query {
-      try Task.checkCancellation()
-      guard geometry.tool(at:id) == .pen else { continue }
-      let layer = geometry.layer(at:id), vertices = geometry.vertices(at:id)
-      for start in stride(from:0,to:vertices.count-2,by:3) {
-        let source = Array(vertices[start..<start+3])
-        let points = source.map { CGPoint(x:$0.x,y:$0.y) }
-        guard abs(lassoCross(points[0],points[1],points[2])) > Double.ulpOfOne else { continue }
-        for ear in ears {
-          let value = lassoClip(points,to:ear)
-          lassoAppend(value,source:source,to:&inside[layer])
-        }
-        var fragments = [points]
-        for ear in ears where !fragments.isEmpty {
-          fragments = fragments.flatMap { lassoSubtract($0,triangle:ear) }
-        }
-        for value in fragments { lassoAppend(value,source:source,to:&outside[layer]) }
-      }
-    }
-    func make(_ values:[[Vertex]],insideSource:Bool) throws -> Partition? {
-      guard values.reduce(0,{ $0+$1.count }) <= NotebookFreehand.maximumVertices else {
-        throw CollaborationError("selection_limit","Выделите меньшую часть рукописи: точный векторный разрез слишком большой.")
-      }
-      var bounds=CGRect.null
-      for (index,vertices) in values.enumerated() where layers[index].tool == .pen {
-        for vertex in vertices where vertex.opacity > 0 {
-          bounds=bounds.union(.init(x:vertex.x,y:vertex.y,width:0,height:0))
-        }
-      }
-      guard !bounds.isNull,bounds.width > Double.ulpOfOne,bounds.height > Double.ulpOfOne else { return nil }
-      let physical=PageRect(x:frame.x+bounds.minX*frame.width,y:frame.y+bounds.minY*frame.height,
-        width:bounds.width*frame.width,height:bounds.height*frame.height)
-      var result:[Layer]=[]
-      for (index,layer) in layers.enumerated() {
-        if layer.tool == .pen {
-          guard !values[index].isEmpty else { continue }
-          let rebased=values[index].map { Vertex(x:($0.x-bounds.minX)/bounds.width,
-            y:($0.y-bounds.minY)/bounds.height,opacity:$0.opacity) }
-          result.append(.init(tool:.pen,color:layer.color,vertices:rebased))
-        } else if let measured=layer.measured {
-          result.append(.init(tool:.eraser,color:layer.color,measured:.init(sourceID:measured.sourceID,
-            span:measured.span,measurements:measured.measurements,frame:physical,origin:measured.origin)))
-        } else if let eraser=layer.eraser {
-          let dx=frame.x-physical.x,dy=frame.y-physical.y
-          result.append(.init(eraser:.init(size:.init(x:physical.width,y:physical.height),samples:eraser.samples.map {
-            .init(point:.init(x:$0.point.x+dx,y:$0.point.y+dy),width:$0.width)
-          })))
-        } else if !layer.vertices.isEmpty {
-          let rebased=layer.vertices.map { Vertex(x:($0.x-bounds.minX)/bounds.width,
-            y:($0.y-bounds.minY)/bounds.height,opacity:$0.opacity) }
-          result.append(.init(tool:.eraser,color:layer.color,vertices:rebased))
-        }
-      }
-      let ink=NotebookFreehand(layers:result)
-      let viewport=[CGPoint(x:0,y:0),.init(x:1,y:0),.init(x:1,y:1),.init(x:0,y:1)]
-      guard ink.isValid,ink.geometry.intersects(viewport,clippedTo:viewport) else { return nil }
-      return .init(frame:physical,ink:ink,insideSource:insideSource)
-    }
-    guard let selected=try make(inside,insideSource:true) else { return (nil,nil) }
-    return (selected,try make(outside,insideSource:false))
-  }
-}
-
-private func lassoCross(_ a:CGPoint,_ b:CGPoint,_ p:CGPoint)->Double {
-  (b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x)
-}
-
-private func lassoArea(_ polygon:[CGPoint])->Double {
-  zip(polygon,polygon.dropFirst()+polygon.prefix(1)).reduce(0) { $0+$1.0.x*$1.1.y-$1.1.x*$1.0.y }/2
-}
-
-private func lassoTriangles(_ input:[CGPoint])->[[CGPoint]]? {
-  var polygon:[CGPoint]=[]
-  for point in input where point.x.isFinite && point.y.isFinite {
-    if let last=polygon.last,hypot(last.x-point.x,last.y-point.y) <= Double.ulpOfOne { continue }
-    polygon.append(point)
-  }
-  if polygon.count > 2,let first=polygon.first,let last=polygon.last,
-    hypot(first.x-last.x,first.y-last.y) <= Double.ulpOfOne { polygon.removeLast() }
-  var removed=true
-  while removed,polygon.count > 3 {
-    removed=false
-    for index in polygon.indices {
-      let a=polygon[(index+polygon.count-1)%polygon.count],b=polygon[index],c=polygon[(index+1)%polygon.count]
-      if abs(lassoCross(a,b,c)) <= 1e-14 {
-        polygon.remove(at:index);removed=true;break
-      }
-    }
-  }
-  guard polygon.count >= 3,abs(lassoArea(polygon)) > Double.ulpOfOne else { return nil }
-  let orientation=lassoArea(polygon) > 0 ? 1.0 : -1.0
-  var ids=Array(polygon.indices),result:[[CGPoint]]=[]
-  func contains(_ p:CGPoint,_ triangle:[CGPoint])->Bool {
-    let a=lassoCross(triangle[0],triangle[1],p)*orientation
-    let b=lassoCross(triangle[1],triangle[2],p)*orientation
-    let c=lassoCross(triangle[2],triangle[0],p)*orientation
-    return a > 1e-14 && b > 1e-14 && c > 1e-14
-  }
-  while ids.count > 3 {
-    var ear:Int?
-    for position in ids.indices {
-      let previous=ids[(position+ids.count-1)%ids.count],current=ids[position],next=ids[(position+1)%ids.count]
-      let triangle=[polygon[previous],polygon[current],polygon[next]]
-      guard lassoCross(triangle[0],triangle[1],triangle[2])*orientation > 1e-14 else { continue }
-      if ids.contains(where:{ $0 != previous && $0 != current && $0 != next && contains(polygon[$0],triangle) }) { continue }
-      ear=position;result.append(triangle);break
-    }
-    guard let ear else { return nil }
-    ids.remove(at:ear)
-  }
-  result.append(ids.map { polygon[$0] })
-  return result
-}
-
-private func lassoClip(_ polygon:[CGPoint],to clip:[CGPoint])->[CGPoint] {
-  guard polygon.count >= 3,clip.count == 3 else { return [] }
-  let orientation=lassoCross(clip[0],clip[1],clip[2]) >= 0 ? 1.0 : -1.0
-  var result=polygon
-  for (a,b) in zip(clip,clip.dropFirst()+clip.prefix(1)) {
-    var next:[CGPoint]=[]
-    for (p,q) in zip(result,result.dropFirst()+result.prefix(1)) {
-      let x=lassoCross(a,b,p)*orientation,y=lassoCross(a,b,q)*orientation
-      if x >= 0 { next.append(p) }
-      if (x > 0 && y < 0)||(x < 0 && y > 0) {
-        let t=x/(x-y);next.append(.init(x:p.x+(q.x-p.x)*t,y:p.y+(q.y-p.y)*t))
-      }
-    }
-    result=next
-    if result.isEmpty { break }
-  }
-  return result
-}
-
-private func lassoSubtract(_ polygon:[CGPoint],triangle:[CGPoint])->[[CGPoint]] {
-  let orientation=lassoCross(triangle[0],triangle[1],triangle[2])
-  guard polygon.count >= 3,orientation != 0 else { return polygon.count >= 3 ? [polygon] : [] }
-  var inside=polygon,result:[[CGPoint]]=[]
-  func clipped(_ value:[CGPoint],_ a:CGPoint,_ b:CGPoint,inside keep:Bool)->[CGPoint] {
-    guard value.count >= 3 else { return [] }
-    var output:[CGPoint]=[]
-    let sign=(orientation > 0 ? 1.0 : -1.0)*(keep ? 1 : -1)
-    for (p,q) in zip(value,value.dropFirst()+value.prefix(1)) {
-      let x=lassoCross(a,b,p)*sign,y=lassoCross(a,b,q)*sign
-      if x >= 0 { output.append(p) }
-      if (x > 0 && y < 0)||(x < 0 && y > 0) {
-        let t=x/(x-y);output.append(.init(x:p.x+(q.x-p.x)*t,y:p.y+(q.y-p.y)*t))
-      }
-    }
-    return output
-  }
-  func hasArea(_ value:[CGPoint])->Bool { value.count >= 3 && abs(lassoArea(value)) > 1e-14 }
-  for (a,b) in zip(triangle,triangle.dropFirst()+triangle.prefix(1)) {
-    let outside=clipped(inside,a,b,inside:false)
-    if hasArea(outside) { result.append(outside) }
-    inside=clipped(inside,a,b,inside:true)
-    if !hasArea(inside) { break }
-  }
-  return result
-}
-
-private func lassoAppend(_ polygon:[CGPoint],source:[NotebookFreehand.Vertex],to output:inout [NotebookFreehand.Vertex]) {
-  guard polygon.count >= 3,abs(lassoArea(polygon)) > 1e-14 else { return }
-  let a=CGPoint(x:source[0].x,y:source[0].y),b=CGPoint(x:source[1].x,y:source[1].y),c=CGPoint(x:source[2].x,y:source[2].y)
-  let denominator=lassoCross(a,b,c)
-  guard denominator != 0 else { return }
-  func vertex(_ p:CGPoint)->NotebookFreehand.Vertex {
-    let wa=lassoCross(b,c,p)/denominator,wb=lassoCross(c,a,p)/denominator,wc=1-wa-wb
-    return .init(x:p.x,y:p.y,opacity:min(1,max(0,wa*source[0].opacity+wb*source[1].opacity+wc*source[2].opacity)))
-  }
-  for index in 1..<polygon.count-1 {
-    output.append(vertex(polygon[0]));output.append(vertex(polygon[index]));output.append(vertex(polygon[index+1]))
   }
 }

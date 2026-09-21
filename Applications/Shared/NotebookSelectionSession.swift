@@ -11,6 +11,19 @@ enum EditableElementReference: Hashable, Sendable {
 
 struct NotebookSelectedItem: Hashable, Sendable { let boardID: UUID; let itemID: UUID }
 
+/// Device-local lasso result. It names vector sources and a region but does
+/// not write either journal or scene until Move/Delete/Copy is requested.
+struct NotebookRegionSelection: Equatable, Sendable {
+  let id:UUID
+  let address:NotebookToolAddress
+  let polygon:[SpatialPoint]
+  let frame:PageRect
+  let rawInk:NotebookLassoInkSource.Result?
+  let expectedInkRevision:String?
+  let graphics:[EditableElementReference]
+  var reference:EditableElementReference { address.reference("lasso-"+id.uuidString.lowercased()) }
+}
+
 /// Exactly one current choice. Context is evidence for it, not a second selection.
 struct NotebookSelectionSession: Equatable, Sendable {
   enum Target: Equatable, Sendable {
@@ -31,6 +44,7 @@ struct NotebookSelectionSession: Equatable, Sendable {
   var preview: CGRect?
   var manipulation: NotebookElementManipulation?
   var nativeText: NotebookNativeTextTarget?
+  var region: NotebookRegionSelection?
   var isInteractive = false
   var isResolvingContext = false
 
@@ -47,10 +61,10 @@ struct NotebookSelectionSession: Equatable, Sendable {
   var items: [NotebookSelectedItem] {
     switch target { case .item(let board,let id): [.init(boardID:board,itemID:id)]; case .elements(_,let items): items; default: [] }
   }
-  var count: Int { elements.count+items.count }
-  func contains(_ reference: EditableElementReference) -> Bool { elements.contains(reference) }
+  var count: Int { elements.count+items.count+(region == nil ? 0 : 1) }
+  func contains(_ reference: EditableElementReference) -> Bool { elements.contains(reference) || region?.reference == reference }
   /// Direct program/text input does not expose transformation handles.
-  var editingElement: EditableElementReference? { isInteractive ? nil : element }
+  var editingElement: EditableElementReference? { isInteractive ? nil : (element ?? region?.reference) }
 
   func itemID(on boardID: UUID) -> UUID? {
     if case .item(let owner, let id) = target, owner == boardID { return id }; return nil

@@ -200,7 +200,7 @@ public enum NotebookGraphicSelection {
       }
       // Copies are new authored objects, not competing claims on old ink.
       let graphic = NotebookGraphic(shape:old.shape,style:old.style,label:old.label,
-        connection:connection,vertices:old.vertices,cornerRadius:old.cornerRadius,freehand:old.freehand,transform:old.transform,path:old.path)
+        connection:connection,vertices:old.vertices,cornerRadius:old.cornerRadius,freehand:old.freehand,transform:old.transform,path:old.path,mask:old.mask)
       return .init(id:ids[edit.id]!,frame:edit.frame,graphic:graphic)
     }
   }

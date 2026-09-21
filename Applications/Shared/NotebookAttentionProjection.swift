@@ -134,6 +134,29 @@ enum NotebookAttentionProjection {
 
   static func editingFrame(_ reference: EditableElementReference, model: NotebookAppModel, presence: SessionPresence,
     layout: NotebookGraphicLayout? = nil) -> CGRect? {
+    if let region=model.selectionSession.region,region.reference == reference {
+      return frame(target:region.address.target,elementID:nil,region:region.frame,
+        worldOrigin:region.address.worldOrigin,pageIndex:nil,model:model,presence:presence,minimumSide:0)
+    }
+    // Accepted input is already the model owner even while the published scene
+    // still contains the preceding raster cohort. Project its live graph node
+    // through the ordinary surface frame instead of waiting for persistence.
+    if let working = model.acceptedWorkingGraphic(reference) {
+      let resolved = layout ?? model.graphicLayout(reference)
+      let local = resolved?.frame ?? working.frame
+      let origin = resolved?.origin ?? working.worldOrigin
+      guard let owner=working.surface.ownerID else { return nil }
+      let target:CollaborationTarget
+      if working.surface.kind == .page { target = .init(kind:.page,id:owner) }
+      else if working.surface.kind == .board {
+        guard owner == presence.boardID else { return nil };target = .init(kind:.board,id:owner)
+      } else {
+        guard case .spatial(let board,_) = reference,board == presence.boardID else { return nil }
+        target = .init(kind:.cover,id:owner,boardID:board)
+      }
+      return frame(target:target,elementID:nil,region:local,worldOrigin:origin,pageIndex:nil,
+        model:model,presence:presence,minimumSide:0)
+    }
     let target: CollaborationTarget, id: String
     switch reference {
     case .page(let pageID, let elementID): target = .init(kind: .page, id: pageID); id = elementID

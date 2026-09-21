@@ -280,6 +280,7 @@ final class NotebookAppModel {
   func renderingInk(on surface: SurfaceID, fallback: SpatialInkJournal?) -> SpatialInkJournal? {
     loadedInkSurfaces.contains(surface) ? spatialInk : fallback
   }
+  var lassoMembershipRevision:UInt64 { collaborationContentEpoch }
   let compositionTiles: SceneCompositionTiles
   private(set) var sceneIndex: WorkspaceSceneIndex?
   private(set) var workspaceHeader: NotebookWorkspaceHeader?
@@ -2767,6 +2768,11 @@ final class NotebookAppModel {
     else { replaceSelection(.elements(refs,items:items)) }
   }
 
+  func selectRegion(_ region: NotebookRegionSelection) {
+    replaceSelection(nil)
+    selectionSession.region = region
+  }
+
   func beginMultipleSelection() {
     guard let reference = selectionSession.element, graphicElement(reference) != nil else { return }
     selectionSession.addingElements = true
@@ -2804,7 +2810,7 @@ final class NotebookAppModel {
         let geometry = elementGeometry(reference), let layout = layouts[reference],
         let source = nativeElementSource(reference) else { return nil }
       if case .spatial = reference, let cohort = compositionTiles.published,
-        presentedElement(reference,cohort:cohort) == nil { return nil }
+        presentedElement(reference,cohort:cohort) == nil,acceptedWorkingGraphic(reference) == nil { return nil }
       return .init(id:source.id,frame:.init(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height),
         origin:geometry.worldOrigin ?? .zero,graphic:graphic,layout:layout)
     }
@@ -2852,6 +2858,10 @@ final class NotebookAppModel {
   }
 
   func duplicateGraphicSelection() {
+    if selectionSession.region != nil {
+      guard materializeRegionSelection() != nil else { return }
+      duplicateGraphicSelection();return
+    }
     guard let members = selectedGraphicMembers(), let first = selectionSession.elements.first else { return }
     let sources = selectionSession.elements
     // Page placement is clamped as a whole; a copied construction is never
@@ -2880,6 +2890,10 @@ final class NotebookAppModel {
   }
 
   func deleteSelectedContent() {
+    if selectionSession.region != nil {
+      guard materializeRegionSelection() != nil else { return }
+      deleteSelectedContent();return
+    }
     let elements = selectionSession.elements, items = selectionSession.items, selection = selectionSession.id
     if !elements.isEmpty {
       guard performElementOperations(elements.map { .init(reference:$0,kind:.removeElement,values:[:]) },summary:"Удалить выделенное") else { return }
@@ -2945,12 +2959,9 @@ final class NotebookAppModel {
       value.itemID = id
     case .element(.page(let page, let id)):
       value.target = .init(kind: .page, id: page); value.elementID = id
-    case .element(.spatial(let board, let id)):
-      guard let element = boardHierarchy?.board(board)?.elements.first(where: { $0.id == id }),
-        [.board, .cover].contains(element.surface.kind), let owner = element.surface.ownerID else { return nil }
-      value.target = .init(kind: element.surface.kind == .cover ? .cover : .board, id: owner,
-        boardID: element.surface.kind == .cover ? board : nil)
-      value.elementID = id
+    case .element(let reference):
+      guard let source=nativeElementSource(reference) else { return nil }
+      value.target=source.target;value.elementID=source.id
     case .elements(let refs,let items):
       let target = refs.first.flatMap { nativeElementSource($0)?.target }
         ?? items.first.map { CollaborationTarget(kind:.board,id:$0.boardID) }
@@ -3000,6 +3011,7 @@ final class NotebookAppModel {
     }) == true else { return }
     cancelElementManipulation()
     selectionSession.target = .context
+    selectionSession.region = nil
     selectionSession.addingElements = false
     selectionSession.isInteractive = false
   }
@@ -3014,10 +3026,15 @@ final class NotebookAppModel {
   /// reusable element ID. No late lift can commit a superseded contact.
   func beginElementManipulation(_ reference: EditableElementReference,
     kind: NotebookElementManipulation.Kind) -> UUID? {
+    if selectionSession.region?.reference == reference {
+      guard kind == .move,let first=materializeRegionSelection()?.first else { return nil }
+      return beginElementManipulation(first,kind:kind)
+    }
     // A passive raster is selectable, but it is not a live manipulation owner.
     // Selection requests its ordinary scene admission; do not commit an
     // invisible drag while the installed cohort still owns baked pixels.
-    if case .spatial = reference, graphicElement(reference) != nil || nativeTextTarget(reference) != nil,
+    if case .spatial = reference, acceptedWorkingGraphic(reference) == nil,
+      graphicElement(reference) != nil || nativeTextTarget(reference) != nil,
       let cohort = compositionTiles.published, presentedElement(reference, cohort: cohort) == nil { return nil }
     guard selectionSession.contains(reference), inputGate.beginFingerSequence() != nil,
       let geometry = elementGeometry(reference) else { return nil }
@@ -3156,6 +3173,9 @@ final class NotebookAppModel {
     func rectangle(_ frame: PageRect) -> CGRect {
       .init(x:frame.x,y:frame.y,width:frame.width,height:frame.height)
     }
+    if let region=selectionSession.region,region.reference == reference {
+      return (rectangle(region.frame),region.address.bounds,nil,region.address.worldOrigin)
+    }
     if let working = acceptedWorkingGraphic(reference) {
       let bounds: CGRect?
       if working.surface.kind == .page, let page = working.surface.ownerID.flatMap({ pages[$0] }) {
@@ -3189,6 +3209,9 @@ final class NotebookAppModel {
   }
 
   func graphicElement(_ reference: EditableElementReference) -> NotebookGraphic? {
+    if let region=selectionSession.region,region.reference == reference {
+      return region.rawInk?.graphic ?? region.graphics.lazy.compactMap { self.graphicElement($0) }.first
+    }
     if let draft = elementCommandDrafts[reference] { return draft.graphic }
     if let working = acceptedWorkingGraphic(reference) { return working.graphic }
     switch reference {
@@ -3424,6 +3447,7 @@ final class NotebookAppModel {
   }
 
   func deleteElement(_ reference: EditableElementReference) {
+    if selectionSession.region?.reference == reference { deleteSelectedContent();return }
     guard selectionSession.element == reference else { return }
     // Text, figures and programs have the same causal deletion owner. A page
     // snapshot save must not race and resurrect a queued native edit.

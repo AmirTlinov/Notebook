@@ -112,14 +112,19 @@ struct NotebookDrawingToolsContentTests {
       .init(point:.init(x:220,y:120),timeOffset:1,width:8,opacity:0.9,force:0.9,azimuth:0,altitude:1)]
     let mesh = NotebookFreehand.meshControl(samples:samples,frame:frame,origin:nil)
     let ink = NotebookFreehand(layers:[.init(color:.black,vertices:mesh)])
-    let graphic = NotebookGraphic(shape:.freehand,sourceInkIDs:[UUID()],freehand:ink)
+    let mask=NotebookGraphicMask().appending(.intersect,polygon:[.init(x:0,y:0),.init(x:0.6,y:0),.init(x:0.6,y:1),.init(x:0,y:1)])
+    let graphic = NotebookGraphic(shape:.freehand,sourceInkIDs:[UUID()],freehand:ink,mask:mask)
     let graph = NotebookGraphicGraph([.init(id:"ink",graphic:graphic,frame:frame,surface:surface,shown:true)])
     let member = NotebookGraphicSelection.Member(id:"ink",frame:frame,graphic:graphic,layout:try #require(graph.resolve("ink").layout))
     let turned = try #require(NotebookGraphicSelection.transformed([member],radians:.pi/6).first)
     let roundTrip = try JSONValue.encode(turned.graphic).decode(NotebookGraphic.self)
     #expect(roundTrip == turned.graphic && roundTrip.isValid)
     let copy = try #require(NotebookGraphicSelection.duplicated([member],namespace:UUID(),offset:.zero).first)
-    #expect(copy.graphic.sourceInkIDs.isEmpty && copy.graphic.freehand == ink)
+    #expect(copy.graphic.sourceInkIDs.isEmpty && copy.graphic.freehand == ink && copy.graphic.mask == mask)
+    let reduced=try graphic.applying(.object(["mask":try .encode(mask.appending(.subtract,
+      polygon:[.init(x:0.2,y:0),.init(x:0.4,y:0),.init(x:0.4,y:1),.init(x:0.2,y:1)]))]))
+    #expect(reduced.mask?.contains(.init(x:0.1,y:0.5)) == true)
+    #expect(reduced.mask?.contains(.init(x:0.3,y:0.5)) == false)
     #expect(mesh.map(\.opacity).min()! < 0.3 && mesh.map(\.opacity).max()! > 0.8)
     #expect(!ink.paintPath(size:.init(width:120,height:40),transform:nil).isEmpty)
     #expect(throws:CollaborationError.self) { try graphic.applying(.object(["transform":.object(["a":.number(0),"b":.number(0),"c":.number(0),"d":.number(0),"tx":.number(0),"ty":.number(0)])])) }

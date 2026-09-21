@@ -240,6 +240,7 @@ import XCTest
     await model.reloadExternalChanges()?.value
     model.updatePresence(.init(boardID:board,mode:.board,camera:.init(center:.init(x:1500,y:0),scale:0.14),viewport:.init(x:834,y:1194)),settled:true)
     model.selectDrawingTool(.lasso)
+    model.drawingToolSettings.lassoMode = .elements
     await model.finishPendingPersistence()
     await model.reloadExternalChanges()?.value
     let window = try await mountNotebookScene(model)
@@ -299,6 +300,7 @@ import XCTest
       camera: .init(center: origin, scale: 1), viewport: .init(x: 834, y: 1194)), settled: true)
     await model.reloadExternalChanges()?.value
     model.selectDrawingTool(.lasso)
+    model.drawingToolSettings.lassoMode = .elements
     let window = try await mountNotebookScene(model)
     let deadline = ContinuousClock.now + .seconds(5)
     while model.compositionTiles.published?.frame.index.element(id: text.id, boardID: board) == nil,

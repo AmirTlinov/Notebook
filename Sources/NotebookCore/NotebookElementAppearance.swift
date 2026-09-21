@@ -41,6 +41,11 @@ public struct NotebookElementAppearance: @unchecked Sendable {
       var p=projection
       return NotebookElementAppearance.erasurePath(erasures,size:size,transform:transform).copy(using:&p)!
     }
+    var visibleMask:CGPath? {
+      guard let mask=graphic.mask else { return nil }
+      var p=projection
+      return mask.path(in:.init(origin:.zero,size:size)).copy(using:&p)
+    }
     var remaining: CGPath {
       var p=projection
       let paint=NotebookGraphicGeometry.paintPath(graphic,layout:localLayout,size:size)
@@ -107,6 +112,7 @@ public struct NotebookElementAppearance: @unchecked Sendable {
     guard state != .erased else { return false }
     let p=CGPoint(x:point.x,y:point.y)
     if let vector {
+      if vector.visibleMask?.contains(p,using:.evenOdd) == false { return false }
       return vector.ink.geometry.contains(p,basis:vector.basis,tolerance:tolerance,subtracting:vector.cuts,clippedTo:vector.viewport)
         || (vector.label.map { $0.geometry.contains(p,basis:vector.basis,tolerance:tolerance,subtracting:vector.cuts,clippedTo:vector.labelViewport!) } ?? false)
     }
@@ -117,6 +123,10 @@ public struct NotebookElementAppearance: @unchecked Sendable {
   public func intersects(_ polygon:[CGPoint]) -> Bool {
     guard state != .erased else { return false }
     if let vector {
+      if let mask=vector.visibleMask {
+        let lasso=CGMutablePath();lasso.addLines(between:polygon);lasso.closeSubpath()
+        if mask.intersection(lasso,using:.evenOdd).isEmpty { return false }
+      }
       let inverse=vector.basis.inverted()
       let source=polygon.map { $0.applying(inverse) }
       return vector.ink.geometry.intersects(source,subtracting:vector.cuts,clippedTo:vector.viewport)
@@ -301,6 +311,7 @@ extension NotebookGraphicGeometry {
       if graphic.shape != .plus, graphic.style.fill != nil { add(path) }; stroke(path)
     }
     if let rect=labelBounds(graphic,layout:layout,size:size) { add(CGPath(rect:rect,transform:nil)) }
+    if let mask=graphic.mask { result=result.intersection(mask.path(in:.init(origin:.zero,size:size)),using:.evenOdd) }
     return result
   }
 }

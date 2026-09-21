@@ -32,20 +32,29 @@ import XCTest
     XCTAssertEqual(selected.graphic.sourceInkIDs,[actions[0].id])
     XCTAssertEqual(selected.sourceSampleCount,100_000)
     XCTAssertLessThan(selected.candidateSampleCount,1000)
-    XCTAssertNotNil(selected.remainder)
-    XCTAssertTrue(selected.graphic.freehand?.layers.allSatisfy { $0.measured == nil } == true)
+    XCTAssertTrue(selected.graphic.freehand?.layers.filter { $0.tool == .pen }.allSatisfy { $0.measured != nil } == true)
     let reused = try XCTUnwrap(prepared.selection(polygon:polygon,surface:.page(page.id),origin:nil,bounds:nil))
     XCTAssertEqual(reused.graphic,selected.graphic)
     XCTAssertEqual(try drawing.dataRepresentation(),page.drawingData)
+    let appended=PageInkAction(tool:.pen,samples:(0..<250).map { i in
+      .init(point:.init(x:10_000+Double(i),y:10_000),timeOffset:Double(i)/240,
+        width:2,opacity:1,force:1,azimuth:0,altitude:1)
+    })
+    let nextDrawing=try drawing.appending(appended)
+    let nextPage=PageDocument(id:page.id,size:page.size,actor:UUID(),drawingData:try nextDrawing.dataRepresentation())
+    let incrementallyPrepared=try NotebookLassoInkSource.page(nextPage).prepare(
+      surface:.page(nextPage.id),origin:nil,reusing:prepared)
+    XCTAssertEqual(incrementallyPrepared.sourceSampleCount,100_250)
+    XCTAssertEqual(incrementallyPrepared.reusedSampleCount,100_000,
+      "Appending one stroke must retain the existing range forest instead of rebuilding it")
     let receipt: [String:Any] = ["sourceSamples":selected.sourceSampleCount,"candidateSamplesRead":selected.candidateSampleCount,
-      "selectedVectorVertices":selected.graphic.freehand?.layers.reduce(0) { $0+$1.vertices.count } ?? 0,
-      "hasOutsideVector":selected.remainder != nil,"selectionMilliseconds":durations,
+      "retainedSelectedSamples":actions[0].samples.count,"selectionMilliseconds":durations,
       "coldPrepareMilliseconds":Double(preparation.components.seconds)*1000+Double(preparation.components.attoseconds)/1e15]
     let attachment = XCTAttachment(data:try JSONSerialization.data(withJSONObject:receipt,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
     attachment.name = "vector-lasso-100k"; attachment.lifetime = .keepAlways; add(attachment)
   }
 
-  func testVectorLassoCutsSelectedAreaFromOutsideVector() throws {
+  func testVectorLassoReturnsAReadOnlyCompactRegion() throws {
     func sample(_ x: Double,_ y: Double,_ width: Double) -> SpatialInkSample {
       .init(point:.init(x:x,y:y),timeOffset:0,width:width,opacity:1,force:1,azimuth:0,altitude:1)
     }
@@ -57,16 +66,17 @@ import XCTest
     XCTAssertNil(try source.selection(polygon:polygon(100),surface:.page(page.id),origin:nil,bounds:nil))
     let selection = try XCTUnwrap(source.selection(polygon:polygon(40),surface:.page(page.id),origin:nil,bounds:nil))
     let ink = try XCTUnwrap(selection.graphic.freehand)
-    let outside = try XCTUnwrap(selection.remainder)
     XCTAssertEqual(selection.graphic.sourceInkIDs,[pen.id])
-    XCTAssertTrue(outside.graphic.sourceInkIDs.isEmpty)
-    XCTAssertTrue(ink.layers.filter { $0.tool == .pen }.allSatisfy { $0.measured == nil })
-    XCTAssertTrue(outside.graphic.freehand?.layers.filter { $0.tool == .pen }.allSatisfy { $0.measured == nil } == true)
+    XCTAssertTrue(ink.layers.filter { $0.tool == .pen }.allSatisfy { $0.measured != nil })
     XCTAssertTrue(ink.layers.contains { $0.tool == .eraser && $0.measured != nil })
-    XCTAssertTrue(outside.graphic.freehand?.layers.contains { $0.tool == .eraser && $0.measured != nil } == true)
-    XCTAssertLessThan(selection.frame.x+selection.frame.width,50)
-    XCTAssertLessThan(outside.frame.x,25)
-    XCTAssertGreaterThan(outside.frame.x+outside.frame.width,175)
+    XCTAssertLessThan(selection.selectionFrame.x+selection.selectionFrame.width,50)
+    XCTAssertLessThan(selection.frame.x,25)
+    XCTAssertGreaterThan(selection.frame.x+selection.frame.width,175)
+    let inside=NotebookGraphicMask().appending(.intersect,polygon:selection.polygon.map {
+      .init(x:($0.x-selection.selectionFrame.x)/selection.selectionFrame.width,
+        y:($0.y-selection.selectionFrame.y)/selection.selectionFrame.height)
+    })
+    XCTAssertFalse(inside.path(in:.init(x:0,y:0,width:1,height:1)).isEmpty)
   }
   func testSpatialWindowMembershipAndOriginAreNotConfusedWithOwnerRevision() throws {
     let board = UUID(), actor = UUID(), surface = SurfaceID.board(board)
@@ -80,17 +90,17 @@ import XCTest
       return .init(tool:.pen,spans:[.init(surface:surface,samples:samples)],stamp:stamp)
     }
     let a = stroke(20), b = stroke(400)
-    let old = NotebookLassoInkSource.spatial(.init(actions:[a],stamp:stamp),[])
-    let new = NotebookLassoInkSource.spatial(.init(actions:[a,b],stamp:stamp),[])
+    let old = NotebookLassoInkSource.spatial(.init(actions:[a],stamp:stamp),[],membershipRevision:1)
+    let new = NotebookLassoInkSource.spatial(.init(actions:[a,b],stamp:stamp),[],membershipRevision:2)
     XCTAssertNotEqual(old.cacheKey(surface:surface),new.cacheKey(surface:surface))
     let prepared = try new.prepare(surface:surface,origin:base)
     let origin = base.offsetBy(x:300,y:20)
     let polygon = [SpatialPoint(x:90,y:15),.init(x:190,y:15),.init(x:190,y:25),.init(x:90,y:25)]
     let result = try XCTUnwrap(prepared.selection(polygon:polygon,surface:surface,origin:origin,bounds:nil))
     XCTAssertEqual(result.graphic.sourceInkIDs,[b.id])
-    XCTAssertEqual(result.frame.x,98,accuracy:0.001)
-    XCTAssertEqual(result.frame.y,18,accuracy:0.001)
-    let hidden = NotebookLassoInkSource.spatial(.init(actions:[a,b],stamp:stamp),[b.id])
+    XCTAssertEqual(result.frame.x,96.4,accuracy:0.001)
+    XCTAssertEqual(result.frame.y,16.4,accuracy:0.001)
+    let hidden = NotebookLassoInkSource.spatial(.init(actions:[a,b],stamp:stamp),[b.id],membershipRevision:2)
     XCTAssertEqual(hidden.cacheKey(surface:surface),new.cacheKey(surface:surface),"Presentation claims do not rebuild measured source")
     let projection = prepared.excluding([b.id])
     XCTAssertNil(try projection.selection(polygon:polygon,surface:surface,origin:origin,bounds:nil))

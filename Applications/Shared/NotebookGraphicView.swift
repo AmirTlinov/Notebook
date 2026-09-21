@@ -27,7 +27,9 @@ struct NotebookGraphicView: View {
           } else {
             Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size) }
           }
-        }.erased(by:erasures,appearance:appearance,transform:graphic.transform,layout:layout)
+        }
+        .clipShape(NotebookGraphicMaskShape(mask:graphic.mask),style:FillStyle(eoFill:true))
+        .erased(by:erasures,appearance:appearance,transform:graphic.transform,layout:layout)
       } else {
         Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size, erasures:erasures, appearance:appearance) }
       }
@@ -53,6 +55,7 @@ struct NotebookGraphicView: View {
       }
       if let appearance { context.clip(to:Path(appearance.mask),options:.inverse) }
       else { NotebookElementErasurePaint.clip(erasures, context: &context, size: size,transform:graphic.transform) }
+      if let mask=graphic.mask { context.clip(to:Path(mask.path(in:.init(origin:.zero,size:size))),style:.init(eoFill:true)) }
       if let ink = graphic.freehand {
         if layer != .fillMask { NotebookFreehandPaint.paint(ink,transform:graphic.transform,context:context,size:size,mask:layer != .content) }
         if !graphic.label.isEmpty, layer != .fillMask {
@@ -100,6 +103,11 @@ struct NotebookGraphicView: View {
   private static func outline(_ graphic: NotebookGraphic, in rect: CGRect) -> Path {
     Path(NotebookGraphicGeometry.outlinePath(graphic,in:rect))
   }
+}
+
+private struct NotebookGraphicMaskShape:Shape {
+  let mask:NotebookGraphicMask?
+  func path(in rect:CGRect)->Path { Path(mask?.path(in:rect) ?? CGPath(rect:rect,transform:nil)) }
 }
 
 extension NotebookGraphic.Shape {
