@@ -119,13 +119,17 @@ extension NotebookSQLConnection {
       let reference=try stored.decode(NotebookInkBodyReference.self)
       try reference.validate()
       guard try JSONValue.encode(reference) == stored else { throw NotebookStorageError.invalidTransaction("ink body reference") }
-      let info=try inkBlobInfo(reference.inkBody)
-      var root:Data?
+      let accepted=inkDecoding.storedOutputBody(reference.inkBody)
+      var root:Data?,graph=false
       let portableBytes:Int
-      if info.signature == Data("NIB1".utf8) { portableBytes=info.count+16 }
+      if let accepted { portableBytes=accepted.count+20 }
       else {
-        root=try inkBlob(reference.inkBody)
-        portableBytes=try InkStoredBody.portableByteCount(root!)
+        let info=try inkBlobInfo(reference.inkBody)
+        if info.signature == Data("NIB1".utf8) { portableBytes=info.count+16 }
+        else {
+          root=try inkBlob(reference.inkBody);graph=true
+          portableBytes=try InkStoredBody.portableByteCount(root!)
+        }
       }
       // Charge the complete logical value BEFORE loading its graph, including
       // repeated references whose parts are already in this snapshot's cache.
@@ -134,8 +138,16 @@ extension NotebookSQLConnection {
       remainingBytes -= expanded
       logicalBytes += Int(expanded)
       try admitExpandedRead(bytes:Int(expanded),valueBytes:logicalBytes)
-      let encoded=try InkStoredBody.portable(root ?? inkBlob(reference.inkBody),revision:reference.revision,load:inkBlob)
-      _=try InkMeasurements(encodedRelations:encoded,sharing:inkDecoding)
+      let encoded:Data
+      if let accepted { encoded=InkStoredBody.restoringRevision(reference.revision,body:accepted) }
+      else {
+        encoded=try InkStoredBody.portable(root ?? inkBlob(reference.inkBody),revision:reference.revision,load:inkBlob)
+        _=try InkMeasurements(encodedRelations:encoded,sharing:inkDecoding)
+        // A validated graph has the writer's exact physical representation.
+        // Older aggregate NIB1 blobs must still pass through the migrator's
+        // writer, not be mistaken for today's canonical shared-parts output.
+        if graph { inkDecoding.retainStoredOutput(encoded.dropFirst(20),hash:reference.inkBody) }
+      }
       value=try value.replacingInk(at:path[...],with:.string(encoded.base64EncodedString()))
     }
     return raw.replacing(value:value)

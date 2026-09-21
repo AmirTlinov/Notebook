@@ -97,4 +97,22 @@ import Testing
     }()
     #expect(released == nil && retained.count == 1)
   }
+
+  @Test func acceptedOutputReplacesRawPartsWithoutEnlargingTheScope() {
+    let scope=InkRelationDecoding(entryLimit:2,byteLimit:1024)
+    scope.retainStoredBody(Data([1]),hash:"first")
+    scope.retainStoredBody(Data([2]),hash:"second")
+    let body=Data(repeating:3,count:200)
+    scope.retainStoredOutput(body,hash:"whole")
+    #expect(scope.storedBody("first") == nil && scope.storedBody("second") == nil)
+    #expect(scope.storedOutput(body) == "whole" && scope.storedOutputBody("whole") == body)
+    #expect(scope.entryCount == 1 && scope.retainedBytes == body.count+320)
+    scope.retainStoredOutput(Data(repeating:4,count:300),hash:"too-large")
+    #expect(scope.storedOutputBody("too-large") == nil)
+    #expect(scope.retainedBytes <= scope.byteLimit && scope.entryCount <= scope.entryLimit)
+    let disabled=InkRelationDecoding(entryLimit:0)
+    disabled.retainStoredOutput(body,hash:"none")
+    #expect(disabled.retainedBytes == 0 && disabled.storedOutputBody("none") == nil)
+  }
+
 }

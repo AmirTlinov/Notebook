@@ -280,6 +280,7 @@ final class InkRelationDecoding: Sendable {
     var bodies: [Data:InkSampleRelations.Storage]=[:]
     var storedBodies: [String:Data]=[:]
     var storedOutputs: [Data:String]=[:]
+    var storedOutputBodies: [String:Data]=[:]
     var retainedBytes=0
   }
   // Foundation's userInfo is Sendable. Keep that promise even if a decoder is
@@ -310,13 +311,23 @@ final class InkRelationDecoding: Sendable {
     }
   }
   func storedOutput(_ body: Data) -> String? { state.withLock { $0.storedOutputs[body] } }
+  func storedOutputBody(_ hash: String) -> Data? { state.withLock { $0.storedOutputBodies[hash] } }
   func retainStoredOutput(_ body: Data, hash: String) {
     state.withLock { state in
-      let cost=body.count+160
-      guard state.storedOutputs[body] == nil,
-        state.bodies.count+state.storedBodies.count+state.storedOutputs.count < entryLimit,
-        cost <= byteLimit-state.retainedBytes else { return }
-      state.storedOutputs[body]=hash;state.retainedBytes += cost
+      // Both directions name one accepted payload; Data copies share storage.
+      // The allowance includes the two dictionary entries, not a second body.
+      let cost=body.count+320
+      guard state.storedOutputs[body] == nil,state.storedOutputBodies[hash] == nil else { return }
+      if state.bodies.count+state.storedBodies.count+state.storedOutputs.count >= entryLimit
+        || cost > byteLimit-state.retainedBytes {
+        let rawBytes=state.storedBodies.values.reduce(0) { $0+$1.count+160 }
+        guard state.bodies.count+state.storedOutputs.count < entryLimit,
+          cost <= byteLimit-state.retainedBytes+rawBytes else { return }
+        // Retain the accepted whole instead of its scattered raw leaves. This
+        // does not enlarge the scope: it dies with the same SQL transaction.
+        state.storedBodies.removeAll();state.retainedBytes -= rawBytes
+      }
+      state.storedOutputs[body]=hash;state.storedOutputBodies[hash]=body;state.retainedBytes += cost
     }
   }
   fileprivate func admit(_ source: InkMeasurements, body: Data, encodedBytes: Int) -> InkSampleRelations.Storage {
@@ -521,9 +532,12 @@ struct InkStoredBody {
     if data.starts(with:node) { return try Node(data).children.map(\.hash) }
     return try Root(data).child.map { [$0] } ?? []
   }
+  static func restoringRevision(_ revision: UUID, body: Data) -> Data {
+    var out=InkRelationWriter(data:Data("NIM1".utf8));out.uuid(revision);out.data.append(body);return out.data
+  }
   static func portable(_ rootData: Data, revision: UUID, load: (String) throws -> Data) throws -> Data {
     let root=try Root(rootData)
-    var out=InkRelationWriter(data:Data("NIM1".utf8));out.uuid(revision)
+    var out=InkRelationWriter(data:restoringRevision(revision,body:Data()))
     guard let rootHash=root.child else { out.data.append(rootData.dropFirst(4));return out.data }
     out.data.append(rootData.subdata(in:4..<38))
     var parts=[(hash:String,bytes:Data,height:Int)?](repeating:nil,count:root.count),bytes=out.data.count

@@ -211,6 +211,47 @@ struct InkRelationPersistenceTests {
     }
   }
 
+  @Test func acceptedGraphIsReusedForReadAndWriteWithoutRereadingItsParts() throws {
+    try fixture { a,_,_,_,_ in
+      let source=try source(),value=try JSONValue.encode(source.measurements)
+      let fragment=NotebookStoredFragment(address:"local/reused-body.json#",file:"local/reused-body.json",parent:nil,
+        collection:"",member:"",position:0,value:value,collections:[])
+      let bytes=try a.commandTransaction { try a.currentSQL!.encodedStoredFragment(fragment) }
+      let db=try NotebookSQLConnection(url:a.databaseURL,writable:false)
+      let first=try db.decodedStoredFragment(from:bytes)
+      #expect(first == fragment)
+      let logical=try #require(value.string).utf8.count
+      // A warm logical read still pays its full output budget, but it has no
+      // reason to issue another SQL read or validate/rewrite the same graph.
+      try db.limitReads(.init(rows:0,bytes:logical+1024,valueBytes:logical+1024,reason:"warm graph"))
+      let again=try db.decodedStoredFragment(from:bytes)
+      #expect(again == first)
+      #expect(try db.encodedStoredFragment(again) == bytes)
+      try db.checkReadAllowance()
+      #expect(db.inkDecoding.retainedBytes <= db.inkDecoding.byteLimit)
+    }
+  }
+
+  @Test func acceptedOldAggregateStillPassesThroughTheCurrentWriter() throws {
+    try fixture { a,_,_,_,_ in
+      let source=try source(),portable=try source.measurements.encodedRelations()
+      let fragment=NotebookStoredFragment(address:"local/aggregate-body.json#",file:"local/aggregate-body.json",parent:nil,
+        collection:"",member:"",position:0,value:try .encode(source.measurements),collections:[])
+      let (canonical,bytes,legacy)=try a.commandTransaction {
+        let db=a.currentSQL!,canonical=try db.encodedStoredFragment(fragment)
+        let raw=try JSONDecoder().decode(NotebookStoredFragment.self,from:canonical)
+        let legacy=try db.putBlob(Data("NIB1".utf8)+portable.dropFirst(20))
+        let old=try JSONValue.encode(raw).setting("value",raw.value.setting("inkBody",.string(legacy)))
+        return (canonical,try NotebookStore.storageEncoder.encode(old),legacy)
+      }
+      try a.commandTransaction {
+        let db=a.currentSQL!,read=try db.decodedStoredFragment(from:bytes)
+        #expect(read == fragment && db.inkDecoding.storedOutputBody(legacy) == nil)
+        #expect(try db.encodedStoredFragment(read) == canonical)
+      }
+    }
+  }
+
   @Test func boundedAddressedReadChargesTheBodyAndNotOnlyItsReference() throws {
     try fixture { a,_,actor,cover,_ in
       let source=try source(),stamp=VersionStamp(counter:1,actor:actor)
