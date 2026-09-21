@@ -31,6 +31,149 @@ struct InkRelationPersistenceTests {
     try store.sqlRead { try #require($0.rows("SELECT hash FROM records WHERE address=?",[.text(address)]).first?[0].text) }
   }
 
+  @Test func independentOccurrencesPersistAndDeliverOneBodyWithSeparateRevisions() throws {
+    try fixture { a,b,actor,cover,page in
+      let original=try source(), started=ContinuousClock.now
+      var actions:[SpatialInkAction]=[]
+      for i in 1...24 {
+        // Reconstruct an independent source, not just another pointer to the
+        // first action; the immutable description is nevertheless exact.
+        let same=try source(),stamp=VersionStamp(counter:UInt64(i),actor:actor)
+        let action=SpatialInkAction(tool:.pen,spans:[.init(surface:.cover(cover),measurements:same.measurements)],stamp:stamp)
+        _=try a.commitSpatialInk(.append(action,journalStamp:stamp));actions.append(action)
+      }
+      let drawing=PageInkDrawing(actions:actions.map {
+        .init(id:$0.id,tool:$0.tool,measurements:$0.spans[0].samples)
+      })
+      _=try a.savePage(.init(id:page,size:.init(width:834,height:1194),actor:actor,drawingData:drawing.dataRepresentation()))
+      let save=started.duration(to:.now)
+      let bodies=try a.sqlRead { try $0.rows("SELECT hash,length(data) FROM blobs WHERE substr(data,1,4)=?",[.blob(Data("NIB1".utf8))]) }
+      #expect(bodies.count == 1)
+      let shared=try #require(bodies.first?[0].text),bytes=try #require(bodies.first?[1].integer)
+      #expect(bytes == Int64(try original.measurements.encodedRelations().count-16))
+      let reopened=try NotebookStore(root:a.root).readSpatialInk(surfaces:[.cover(cover)])
+      #expect(reopened.actions.map(\.id) == actions.map(\.id))
+      #expect(Set(reopened.actions.map { $0.spans[0].samples.revision }).count == 24)
+      #expect(reopened.actions.allSatisfy { $0.spans[0].samples.storage === reopened.actions[0].spans[0].samples.storage })
+      var transmittedBodies:[String]=[],transmitted:[String]=[],totalBytes=0,waitedForBody=false
+      let transferStart=ContinuousClock.now
+      var cursor:UInt64=0
+      while true {
+       let page=try a.changeJournal(after:cursor)
+       guard let last=page.last else { break }
+       for change in page {
+        let delivery=NotebookReplicationDelivery(source:.init(deviceID:actor,generation:actor),change:change)
+        _=try b.admitReplicationSource(delivery.source)
+        while true {
+          let missing=try b.missingBlobHashes(for:change)
+          if missing.isEmpty { break }
+          if missing.contains(shared),!waitedForBody {
+            let before=try b.incomingCursor(source:delivery.source)
+            #expect(throws:NotebookStorageError.self) { try b.applyDelivery(delivery) }
+            #expect(try b.incomingCursor(source:delivery.source) == before)
+            waitedForBody=true
+          }
+          for hash in missing {
+            let data=try a.readBlobChunk(hash:hash,offset:0,maxBytes:1_048_576)
+            #expect(data.count == (try a.blobSize(hash:hash)))
+            totalBytes += data.count
+            transmitted.append(hash)
+            if data.starts(with:Data("NIB1".utf8)) { transmittedBodies.append(hash) }
+            try b.stageBlob(data:data,expectedHash:hash)
+          }
+        }
+        try b.applyDelivery(delivery)
+        try b.applyDelivery(delivery)
+       }
+       cursor=last.sequence
+      }
+      let transfer=transferStart.duration(to:.now)
+      #expect(waitedForBody && transmittedBodies == [shared])
+      let received=try NotebookStore(root:b.root).readSpatialInk(surfaces:[.cover(cover)])
+      #expect(received == reopened)
+      #expect(try PageInkDrawing.decode(b.loadPage(page).drawingData) == drawing)
+      let inlineBytes=try a.sqlRead { database in
+        try transmitted.reduce(0) { total,hash in
+          let data=try database.blob(hash)
+          if data.starts(with:Data("NIB1".utf8)) { return total }
+          guard (try? JSONDecoder().decode(NotebookStoredFragment.self,from:data)) != nil else { return total+data.count }
+          return try total+NotebookStore.storageEncoder.encode(database.decodedStoredFragment(from:data)).count
+        }
+      }
+      #expect(totalBytes < inlineBytes/2)
+      let state=VersionStamp(counter:25,actor:actor)
+      _=try a.commitSpatialInk(.state(actionID:actions[0].id,creationStamp:actions[0].stamp,isActive:false,stateStamp:state,journalStamp:state))
+      #expect(try a.blobSize(hash:shared) == bytes)
+      #expect(try a.readSpatialInk(surfaces:[.cover(cover)]).actions.filter(\.isActive).count == 23)
+      print("INK_DURABLE_SHARED occurrences=48 logicalEvents=48000000 bodyBytes=\(bytes) uniqueBodies=1 transferredBodyBytes=\(bytes) allTransferredBytes=\(totalBytes) inlineControlBytes=\(inlineBytes) save=\(save) delivery=\(transfer)")
+    }
+  }
+
+  @Test func declaredBodyPathsPreserveUnrelatedValuesAndRejectCorruptReferences() throws {
+    try fixture { a,_,_,_,_ in
+      let original=try source(),portable=try JSONValue.encode(original.measurements)
+      let small=try JSONValue.encode(InkMeasurements([original.sample(at:0)]))
+      let lookalike:JSONValue = .object(["inkBody":.string(String(repeating:"a",count:64)),"revision":.string(UUID().uuidString)])
+      let invalid:JSONValue = .string((Data("NIM1".utf8)+Data(repeating:0,count:2048)).base64EncodedString())
+      let value:JSONValue = .object(["nested":.array([portable]),"ordinary":lookalike,"small":small,
+        "invalid":invalid,"noncanonical":.string(portable.string!+"\n")])
+      let fragment=NotebookStoredFragment(address:"local/ink-codec.json#",file:"local/ink-codec.json",parent:nil,
+        collection:"",member:"",position:0,value:value,collections:[])
+      let data=try a.commandTransaction { try a.currentSQL!.encodedStoredFragment(fragment) }
+      let raw=try JSONDecoder().decode(NotebookStoredFragment.self,from:data)
+      #expect(raw.inkBodies == [["nested","0"]])
+      #expect(raw.value["ordinary"] == lookalike && raw.value["small"] == small)
+      #expect(raw.value["invalid"] == invalid && raw.value["noncanonical"] == value["noncanonical"])
+      #expect(try a.sqlRead { try $0.decodedStoredFragment(from:data) } == fragment)
+      for paths in [[["missing"]],[["nested","00"]],[["ordinary"]],[["nested","0"],["nested","0"]]] {
+        let bad=try JSONValue.encode(raw).setting("inkBodies",.encode(paths))
+        let bytes=try NotebookStore.storageEncoder.encode(bad)
+        #expect(throws:(any Error).self) { try a.sqlRead { try $0.decodedStoredFragment(from:bytes) } }
+      }
+      let hash=try #require(raw.inkBodyHashes.first),body=try a.sqlRead { try $0.blob(hash) }
+      try a.commandTransaction { try a.currentSQL!.run("DELETE FROM blobs WHERE hash=?",[.text(hash)]) }
+      #expect(throws:NotebookStorageError.blobMissing(hash)) { try a.sqlRead { try $0.decodedStoredFragment(from:data) } }
+      try a.stageBlob(data:body,expectedHash:hash)
+      try a.commandTransaction {
+        var corrupt=body;corrupt[corrupt.count-1] ^= 1
+        try a.currentSQL!.run("UPDATE blobs SET data=? WHERE hash=?",[.blob(corrupt),.text(hash)])
+      }
+      #expect(throws:NotebookStorageError.blobHashMismatch) { try a.sqlRead { try $0.decodedStoredFragment(from:data) } }
+      // A pre-existing hash is never sufficient evidence of exact equality.
+      #expect(throws:NotebookStorageError.blobHashMismatch) {
+        try a.commandTransaction { try a.currentSQL!.encodedStoredFragment(fragment) }
+      }
+    }
+  }
+
+  @Test func boundedAddressedReadChargesTheBodyAndNotOnlyItsReference() throws {
+    try fixture { a,_,actor,cover,_ in
+      let source=try source(),stamp=VersionStamp(counter:1,actor:actor)
+      let action=SpatialInkAction(tool:.pen,spans:[.init(surface:.cover(cover),measurements:source.measurements)],stamp:stamp)
+      _=try a.commitSpatialInk(.append(action,journalStamp:stamp))
+      let address=row(action.id),hash=try bodyHash(a,address),physical=try a.blobSize(hash:hash)
+      #expect(physical < 1024)
+      #expect(throws:NotebookStorageError.limitExceeded("shared body budget")) {
+        try a.boundedStoredFragments([(address,false)],maximumCount:1,maximumBytes:physical+128,budget:"shared body budget")
+      }
+      let read=try #require(a.boundedStoredFragments([(address,false)],maximumCount:1,maximumBytes:16_384,budget:"shared body budget").first)
+      #expect(try read.value.decode([SpatialInkSpan].self) == action.spans)
+      let data=try a.sqlRead { try $0.blob(hash) },expanded=try source.measurements.encodedRelations().base64EncodedString().utf8.count
+      #expect(throws:NotebookStorageError.limitExceeded("shared command budget")) {
+        try a.commandTransaction {
+          let db=a.currentSQL!
+          _=try db.decodedStoredFragment(from:data) // Warm the bounded body cache.
+          try db.run("INSERT INTO metadata VALUES('ink_budget_partial','must roll back')")
+          try db.limitReads(.init(rows:100,bytes:expanded+100,valueBytes:expanded+1024,reason:"shared command budget"))
+          _=try db.decodedStoredFragment(from:data)
+          _=try? db.decodedStoredFragment(from:data)
+        }
+      }
+      #expect(try a.sqlRead { try $0.rows("SELECT 1 FROM metadata WHERE key='ink_budget_partial'").isEmpty })
+
+    }
+  }
+
   @Test func millionEventSourceSurvivesSQLiteReopenDeliveryAndUndoWithoutExpansion() throws {
     try fixture { a,b,actor,cover,page in
       let source=try source(),stamp=VersionStamp(counter:1,actor:actor)

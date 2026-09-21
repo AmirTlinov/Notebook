@@ -12,7 +12,7 @@ extension NotebookStore {
       guard let record = try database.rows("SELECT blob_hash FROM manifest_records WHERE manifest_hash=? AND address=?",
         [.text(manifestHash), .text(address)]).first else { return nil }
       guard let hash = record[0].text else { throw NotebookStorageError.invalidTransaction("spatial ink history is immutable") }
-      let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(hash))
+      let fragment = try database.decodedStoredFragment(from:database.blob(hash))
       guard fragment.address == address, fragment.file == file, fragment.position >= 0,
         fragment.value.isValid else { throw NotebookStorageError.invalidTransaction("spatial ink fragment identity") }
       return fragment

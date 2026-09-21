@@ -144,6 +144,7 @@ extension NotebookStore {
         for hash in hashes { _ = try addBlob(hash) }; after = last
       }
       try visitProgramDependencyHashes(manifestHash: delivery.change.manifestHash) { hash in _ = try addBlob(hash) }
+      try visitInkBodyDependencies(manifestHash:delivery.change.manifestHash) { hash in _ = try addBlob(hash) }
       try visitLifecycleInverseDependencyHashes(manifestHash: delivery.change.manifestHash) { hash in
         _ = try addBlob(hash)
       }

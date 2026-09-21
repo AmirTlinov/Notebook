@@ -52,7 +52,8 @@ extension NotebookStore {
       }
       try replica.savePresence(presence)
       try Self.prepareLifecycleInverseDependencies(database)
-      for table in ["manifest_inverse_blobs", "manifest_inverse_parts", "manifest_inverse_roots", "manifest_inverse_discovery", "peer_cursors", "received_transactions", "manifest_order_nodes", "manifest_parts", "manifest_records", "manifests", "change_records", "change_log"] {
+      try Self.prepareInkBodyDependencies(database)
+      for table in ["manifest_ink_bodies", "manifest_ink_discovery", "manifest_inverse_blobs", "manifest_inverse_parts", "manifest_inverse_roots", "manifest_inverse_discovery", "peer_cursors", "received_transactions", "manifest_order_nodes", "manifest_parts", "manifest_records", "manifests", "change_records", "change_log"] {
         try database.run("DELETE FROM \(table)")
       }
       try database.run("DELETE FROM sqlite_sequence WHERE name='change_log'")
@@ -84,7 +85,7 @@ extension NotebookStore {
           guard !Self.localRecord(row[1].text!) else { continue }
           try database.recordChange(.init(address: after, blobHash: row[3].text!))
           if row[1].text == "workspace.json", row[2].text == "pageOrders" {
-            let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(row[3].text!))
+            let fragment = try database.decodedStoredFragment(from:database.blob(row[3].text!))
             let order = try fragment.value.decode(NotebookPageOrderRegister.self)
             try database.noteOwner(.orderRoot, order.visibleRoot)
             for head in order.heads { try database.noteOwner(.orderRoot, head.valueRoot) }

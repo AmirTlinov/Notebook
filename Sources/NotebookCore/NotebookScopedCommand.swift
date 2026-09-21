@@ -27,14 +27,14 @@ extension NotebookStore {
   func writeFragment(_ fragment: NotebookStoredFragment, data suppliedData: Data? = nil, hash suppliedHash: String? = nil,
     database: NotebookSQLConnection, migratingInk: Bool = false) throws -> Bool {
     for hash in try programPackageHashes(in: fragment) { try validateProgramPackageClosure(hash) }
-    let data = try suppliedData ?? Self.storageEncoder.encode(fragment)
+    let data = try suppliedData ?? database.encodedStoredFragment(fragment)
     let hash = try suppliedHash ?? database.putBlob(data)
     if suppliedHash != nil { _ = try database.putBlob(data) }
     let previousHash = try database.rows("SELECT hash FROM records WHERE address=?", [.text(fragment.address)]).first?[0].text
     if previousHash == hash { return false }
     if let previousHash, fragment.file.hasPrefix("pages/"), fragment.collection == "actions",
       fragment.parent == fragment.file + "#/drawingData" {
-      let accepted = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(previousHash))
+      let accepted = try database.decodedStoredFragment(from:database.blob(previousHash))
       guard accepted.replacing(value: accepted.value.setting("isActive", nil), position: fragment.position)
         == fragment.replacing(value: fragment.value.setting("isActive", nil)) else {
         throw NotebookStorageError.invalidTransaction("stroke action header is immutable")
@@ -50,7 +50,7 @@ extension NotebookStore {
         throw NotebookStorageError.invalidTransaction("reviewed code is immutable")
       }
       if let previousHash {
-        let accepted = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(previousHash))
+        let accepted = try database.decodedStoredFragment(from:database.blob(previousHash))
         guard try accepted.value.decode(NotebookCodeFragment.self).merging(code) == code else {
           throw NotebookStorageError.transactionConflict
         }
@@ -71,7 +71,7 @@ extension NotebookStore {
       guard fragment.member == placement.id.uuidString.lowercased(), fragment.position == 0,
         fragment.collections.isEmpty else { throw NotebookStorageError.invalidTransaction("placement register address") }
       if let previousHash {
-        let old = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(previousHash))
+        let old = try database.decodedStoredFragment(from:database.blob(previousHash))
         guard try old.value.decode(WorkspacePlacement.self).merging(placement) == placement else {
           throw NotebookStorageError.transactionConflict
         }
@@ -98,7 +98,7 @@ extension NotebookStore {
       if try !database.hasOwner(.capturedPageOrder, fragment.member) {
         let previousRoot: String?
         if let previousHash {
-          let old = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(previousHash))
+          let old = try database.decodedStoredFragment(from:database.blob(previousHash))
           previousRoot = try old.value.decode(NotebookPageOrderRegister.self).visibleRoot
         } else { previousRoot = nil }
         try database.noteOwner(.capturedPageOrder, fragment.member, value: previousRoot)
@@ -108,7 +108,7 @@ extension NotebookStore {
       try database.noteOwner(.pageOrder, fragment.member)
     }
     if let previousHash, fragment.isInkMeasurementBody {
-      let accepted = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(previousHash))
+      let accepted = try database.decodedStoredFragment(from:database.blob(previousHash))
       if migratingInk {
         guard try accepted.migratingStoredInkMeasurements() == fragment else {
           throw NotebookStorageError.invalidTransaction("ink migration changed measurements")

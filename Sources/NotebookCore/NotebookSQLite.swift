@@ -83,6 +83,18 @@ final class NotebookSQLConnection {
     }
   }
 
+  /// References may return much more logical content than their physical row.
+  /// Cached expansion consumes the same command lease; swallowing a refusal
+  /// must not make a partly executed command committable.
+  func admitExpandedRead(bytes: Int, valueBytes: Int) throws {
+    try checkReadAllowance()
+    guard let allowance=readAllowance else { return }
+    guard valueBytes <= allowance.valueBytes,bytes <= remainingReadBytes else {
+      readRefusal=allowance.reason;throw NotebookStorageError.limitExceeded(allowance.reason)
+    }
+    remainingReadBytes -= bytes
+  }
+
   init(url: URL, writable: Bool, create: Bool = false) throws {
     var pointer: OpaquePointer?
     let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX | (create ? SQLITE_OPEN_CREATE : 0)
@@ -200,6 +212,29 @@ struct NotebookStoredPayload<Value: Codable>: Codable {
   let position: Int
   let value: Value
   let collections: [NotebookStoredCollection]
+  let inkBodies: [[String]]
+
+  init(address: String, file: String, parent: String?, collection: String, member: String, position: Int,
+    value: Value, collections: [NotebookStoredCollection], inkBodies: [[String]] = []) {
+    self.address=address;self.file=file;self.parent=parent;self.collection=collection;self.member=member
+    self.position=position;self.value=value;self.collections=collections;self.inkBodies=inkBodies
+  }
+  private enum CodingKeys: String, CodingKey { case address,file,parent,collection,member,position,value,collections,inkBodies }
+  init(from decoder: Decoder) throws {
+    let c=try decoder.container(keyedBy:CodingKeys.self)
+    address=try c.decode(String.self,forKey:.address);file=try c.decode(String.self,forKey:.file)
+    parent=try c.decodeIfPresent(String.self,forKey:.parent);collection=try c.decode(String.self,forKey:.collection)
+    member=try c.decode(String.self,forKey:.member);position=try c.decode(Int.self,forKey:.position)
+    value=try c.decode(Value.self,forKey:.value);collections=try c.decode([NotebookStoredCollection].self,forKey:.collections)
+    inkBodies=try c.decodeIfPresent([[String]].self,forKey:.inkBodies) ?? []
+  }
+  func encode(to encoder: Encoder) throws {
+    var c=encoder.container(keyedBy:CodingKeys.self)
+    try c.encode(address,forKey:.address);try c.encode(file,forKey:.file);try c.encodeIfPresent(parent,forKey:.parent)
+    try c.encode(collection,forKey:.collection);try c.encode(member,forKey:.member);try c.encode(position,forKey:.position)
+    try c.encode(value,forKey:.value);try c.encode(collections,forKey:.collections)
+    if !inkBodies.isEmpty { try c.encode(inkBodies,forKey:.inkBodies) }
+  }
 }
 
 extension NotebookStoredPayload: Equatable where Value: Equatable {}
@@ -342,7 +377,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 17
+  static let currentDatabaseVersion: Int64 = 18
 
   func prepareDatabase(initialWorkspaceID: UUID? = nil) throws {
     if currentSQL != nil { guard initialWorkspaceID == nil else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }; return }
@@ -436,7 +471,7 @@ extension NotebookStore {
         try database.run("CREATE INDEX IF NOT EXISTS reference_element_children ON reference_element_order(owner_key,parent_id,position,member)")
       }
       if admittedVersion == 2 { try migrateStoredBoardPlacements(database: database) }
-      if admittedVersion < 17 { try migrateStoredInkRelations(database: database) }
+      try migrateStoredInkRelations(database: database)
       // One historical receipt at a time; no whole-history buffer and no
       // rewritten shared content, hashes, identities or replication cursors.
       // Version 12 indexes the current phase's time separately from creation
@@ -444,7 +479,7 @@ extension NotebookStore {
       if admittedVersion < 12 {
         var after = ""
         while let row = try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file LIKE 'collaboration/actions/%' AND r.parent IS NULL AND r.address>? ORDER BY r.address LIMIT 1", [.text(after)]).first {
-          let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: row[1].blob!)
+          let fragment = try database.decodedStoredFragment(from:row[1].blob!)
           try indexActionReadModel(fragment.value.decode(CollaborationReceipt.self), address: fragment.address, database: database)
           after = row[0].text!
         }
@@ -452,14 +487,14 @@ extension NotebookStore {
       if admittedVersion < 7 {
         var pageInkAfter = ""
         while let row = try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file LIKE 'pages/%' AND r.collection='actions' AND r.address>? ORDER BY r.address LIMIT 1", [.text(pageInkAfter)]).first {
-          let fragment = try JSONDecoder().decode(NotebookStoredFragment.self,from:row[1].blob!)
+          let fragment = try database.decodedStoredFragment(from:row[1].blob!)
           if fragment.value["tool"]?.string == "eraser" { try indexPageElementErasures(fragment,database:database) }
           pageInkAfter = row[0].text!
         }
         var inkAfter = ""
         while let row = try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file='spatial-ink.json' AND r.collection='actions' AND r.address>? ORDER BY r.address LIMIT 1", [.text(inkAfter)]).first {
           let address = row[0].text!
-          let fragment = try JSONDecoder().decode(NotebookStoredFragment.self,from:row[1].blob!)
+          let fragment = try database.decodedStoredFragment(from:row[1].blob!)
           if fragment.value["tool"]?.string == "eraser" {
             try indexElementErasures(readSpatialInkAction(address),address:address,database:database)
           }
@@ -617,7 +652,7 @@ extension NotebookStore {
   func storedValue(_ file: String) throws -> JSONValue? {
     try sqlRead { database in
       let fragments = try database.rows("SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file=?", [.text(file)]).map {
-        try JSONDecoder().decode(NotebookStoredFragment.self, from: $0[0].blob!)
+        try database.decodedStoredFragment(from:$0[0].blob!)
       }
       guard !fragments.isEmpty else { return nil }
       return try NotebookRecordCodec.decode(fragments, root: file + "#")
@@ -668,7 +703,7 @@ extension NotebookStore {
         let oldRows = try database.rows("SELECT address,hash FROM records WHERE file=?", [.text(file)])
         var old = Dictionary(uniqueKeysWithValues: oldRows.map { ($0[0].text!, $0[1].text!) })
         for fragment in fragments {
-          let data = try Self.storageEncoder.encode(fragment)
+          let data = try database.encodedStoredFragment(fragment)
           let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
           if old.removeValue(forKey: fragment.address) == hash { continue }
           try writeFragment(fragment, data: data, hash: hash, database: database)

@@ -20,7 +20,7 @@ extension NotebookStore {
         guard !Self.localRecord(file) else { continue }
         try database.run("INSERT OR REPLACE INTO cloud_snapshot VALUES(?,?)", [.text(address), .text(row[2].text!)])
         if row[4].text == "pageOrders" {
-          let order = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(row[2].text!)).value.decode(NotebookPageOrderRegister.self)
+          let order = try database.decodedStoredFragment(from:database.blob(row[2].text!)).value.decode(NotebookPageOrderRegister.self)
           roots.insert(order.visibleRoot); roots.formUnion(order.heads.map(\.valueRoot))
           guard roots.count <= 131_072 else { throw NotebookStorageError.limitExceeded("page_order_dependencies") }
         }

@@ -88,7 +88,7 @@ extension NotebookStore {
         for row in rows {
           after = row[0].text!
           guard let entry = try storedEntry(at: after) else { throw NotebookStorageError.corruptRecord(after) }
-          let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(row[1].text!))
+          let fragment = try database.decodedStoredFragment(from:database.blob(row[1].text!))
           let source = try entry.replyTo.flatMap { try storedEntry(at: fragment.file + "#/entries/@" + $0.uuidString.lowercased()) }
           try entry.validate(sourceCounter: source?.stamp.counter)
           try indexContextEntry(fragment, entry: entry, database: database)

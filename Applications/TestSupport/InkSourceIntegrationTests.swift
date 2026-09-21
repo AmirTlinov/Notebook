@@ -18,6 +18,8 @@ final class InkSourceIntegrationTests: XCTestCase {
     let bytes=try drawing.dataRepresentation()
     let before=try XCTUnwrap(InkRasterRenderer.shared.page(drawing,size:size,scale:2))
     _=try store.savePage(.init(id:page,size:.init(width:834,height:1194),actor:actor,drawingData:bytes))
+    let bodyCount=try store.sqlRead { try $0.rows("SELECT count(*) FROM blobs WHERE substr(data,1,4)=?",[.blob(Data("NIB1".utf8))]).first?[0].integer }
+    XCTAssertEqual(bodyCount,1)
     let reopened=try PageInkDrawing.decode(NotebookStore(root:root).loadPage(page).drawingData)
     let shared=try XCTUnwrap(reopened.actions.first).samples.storage
     XCTAssertTrue(reopened.actions.allSatisfy { $0.samples.storage === shared })

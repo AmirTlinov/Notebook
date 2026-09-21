@@ -54,7 +54,7 @@ struct NotebookActionInverseTests {
       try source.publishCollaboration(writes: ["collaboration/actions/" + actionID.uuidString.lowercased() + ".json": .encode(receipt)])
       return try #require(source.changeJournal(after: before).last)
     }
-    func bundle(name: String = "retired", wrongAction: Bool = false, pageOrder: Bool = false) throws -> (NotebookLifecycleInverseReference, String, String, [String]) {
+    func bundle(name: String = "retired", wrongAction: Bool = false, pageOrder: Bool = false, ink: InkMeasurements? = nil) throws -> (NotebookLifecycleInverseReference, String, String, [String]) {
       try source.commandTransaction {
         let db = source.currentSQL!
         var row = try fragment(name), orderHashes: [String] = []
@@ -67,7 +67,12 @@ struct NotebookActionInverseTests {
           row = try .init(address: "workspace.json#/pageOrders/@" + id, file: "workspace.json", parent: "workspace.json#",
             collection: "pageOrders", member: id, position: 0, value: .encode(order), collections: [])
         }
-        let before = try db.putBlob(NotebookStore.storageEncoder.encode(row))
+        if let ink {
+          let file=pageFile(index.selectedPageID!),parent=file+"#/drawingData/actions/@"+UUID().uuidString.lowercased()
+          row=try .init(address:parent+"/samples",file:file,parent:parent,collection:"samples",member:"",position:0,
+            value:.encode(ink),collections:[])
+        }
+        let before = try db.putBlob(db.encodedStoredFragment(row))
         let part = NotebookLifecycleInversePart(format: 1, workspaceID: workspaceID, actionID: wrongAction ? UUID() : actionID,
           ordinal: 0, records: [.init(address: row.address, beforeHash: before, afterHash: nil)])
         let partHash = try db.putBlob(NotebookStore.storageEncoder.encode(part))
@@ -76,6 +81,42 @@ struct NotebookActionInverseTests {
         return (.init(rootHash: rootHash, recordCount: 1), partHash, before, orderHashes)
       }
     }
+  }
+
+  @Test func historicalInkBodyIsRequiredBeforeAckAndIncludedInCloudClosure() throws {
+    let f=try Fixture(),samples=(0..<300).map { i in
+      SpatialInkSample(point:.init(x:Double(i),y:Double(i%13)),timeOffset:Double(i)/128,
+        width:4,opacity:0.5,force:0.75,azimuth:0,altitude:1)
+    }
+    let ink=InkMeasurements(samples), (reference,_,before,_)=try f.bundle(ink:ink)
+    let hash=try f.source.sqlRead { db in
+      try #require(JSONDecoder().decode(NotebookStoredFragment.self,from:db.blob(before)).inkBodyHashes.first)
+    }
+    let change=try f.publish(reference),cursor=try f.peer.peerCursor(peerID:f.peerID,direction:.incoming)
+    try f.stage(change,excluding:hash)
+    #expect(try f.peer.missingBlobHashes(for:change) == [hash])
+    #expect(throws:NotebookStorageError.self) { try f.peer.applyRemoteChange(change,peerID:f.peerID) }
+    #expect(try f.peer.peerCursor(peerID:f.peerID,direction:.incoming) == cursor)
+    try f.copy(hash);try f.stage(change)
+    _=try f.peer.applyRemoteChange(change,peerID:f.peerID)
+    let restored=try f.peer.readTransaction { store in try store.readLifecycleInverseFragment(hash:before).value.decode(InkMeasurements.self) }
+    #expect(try restored.encodedRelations() == ink.encodedRelations())
+    try f.peer.commandTransaction {
+      var bytes=try f.peer.currentSQL!.blob(hash);bytes[bytes.count-1] ^= 1
+      try f.peer.currentSQL!.run("UPDATE blobs SET data=? WHERE hash=?",[.blob(bytes),.text(hash)])
+    }
+    #expect(throws:NotebookStorageError.blobHashMismatch) { try f.peer.applyRemoteChange(change,peerID:f.peerID) }
+    let account="ink-body-cloud",source=try f.source.replicationSource(deviceID:UUID())
+    try f.source.prepareCloudStorage();try f.source.enableCloud(account:account,source:source)
+    try f.source.prepareCloudUpload(account:account,source:source)
+    var hashes=Set<String>()
+    while true {
+      let rows=try f.source.cloudOutbox(account:account,limit:16)
+      if rows.isEmpty { break }
+      hashes.formUnion(rows.compactMap(\.hash))
+      try f.source.acknowledgeCloudRecords(rows.map(\.id),account:account)
+    }
+    #expect(hashes.contains(hash) && hashes.contains(before))
   }
 
   @Test func closedCaptureBuildsAPagedRoundTripAndEmptyCaptureHasNoRoot() throws {
@@ -241,7 +282,7 @@ struct NotebookActionInverseTests {
     _ = try f.publish(reference, restoration: restoration)
     let account = "inverse-cloud", source = try f.source.replicationSource(deviceID: UUID())
     try f.source.prepareCloudStorage(); try f.source.enableCloud(account: account, source: source)
-    #expect(NotebookChangeManifest(transactionID: UUID(), workspaceID: f.workspaceID, records: []).format == 11)
+    #expect(NotebookChangeManifest(transactionID: UUID(), workspaceID: f.workspaceID, records: []).format == 21)
     try f.source.prepareCloudUpload(account: account, source: source)
     var hashes = Set<String>()
     for _ in 0..<100 {

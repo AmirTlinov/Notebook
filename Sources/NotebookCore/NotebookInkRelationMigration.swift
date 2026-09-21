@@ -38,9 +38,6 @@ extension NotebookStore {
   /// manifests/receipts remain immutable historical evidence, not current wire.
   func migrateStoredInkRelations(database: NotebookSQLConnection) throws {
     guard currentSQL === database, database.writable else { throw NotebookStorageError.readOnlyTransaction }
-    let oldRoot = try database.rows("SELECT 1 FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address='spatial-ink.json#' AND json_extract(CAST(b.data AS TEXT),'$.value.format')=1 LIMIT 1")
-    let oldPaper = try database.rows("SELECT 1 FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file LIKE 'pages/%' AND r.collection='samples' AND json_type(CAST(b.data AS TEXT),'$.value')='array' LIMIT 1")
-    guard !oldRoot.isEmpty || !oldPaper.isEmpty else { return }
     let cursor = try currentChangeCursor()
     guard try !hasPendingPeerDelivery(through:cursor,database:database) else {
       throw CollaborationError("ink_migration_pending_peer", "Перед обновлением формата чернил нужно завершить передачу сопряжённому устройству. Неподтверждённые изменения и его курсор не будут сброшены.")
@@ -52,10 +49,10 @@ extension NotebookStore {
     var bodyCount = 0, receiptCount = 0
     func convert(_ fragment: NotebookStoredFragment, hash: String) throws -> (NotebookStoredFragment, String) {
       if let result = try database.rows("SELECT result_hash FROM ink_relation_migration WHERE source_hash=?", [.text(hash)]).first?[0].text {
-        return (try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(result)), result)
+        return (try database.decodedStoredFragment(from:database.blob(result)), result)
       }
       let next = try fragment.migratingStoredInkMeasurements()
-      let result = next == fragment ? hash : try database.putBlob(Self.storageEncoder.encode(next))
+      let result = try database.putBlob(database.encodedStoredFragment(next))
       try database.run("INSERT INTO ink_relation_migration VALUES(?,?)", [.text(hash), .text(result)])
       if result != hash { bodyCount += 1 }
       return (next, result)
@@ -91,13 +88,12 @@ extension NotebookStore {
     var after = ""
     while let row = try database.rows("""
       SELECT r.address,r.hash,b.data FROM records r JOIN blobs b ON b.hash=r.hash
-      WHERE r.address>? AND ((r.file LIKE 'pages/%' AND r.collection='samples')
-        OR r.file='spatial-ink.json' OR (r.file LIKE 'collaboration/actions/%' AND r.parent IS NULL))
+      WHERE r.address>?
       ORDER BY r.address LIMIT 1
       """, [.text(after)]).first {
       try Task.checkCancellation()
       after = row[0].text!
-      let original = try JSONDecoder().decode(NotebookStoredFragment.self, from: row[2].blob!)
+      let original = try database.decodedStoredFragment(from:row[2].blob!)
       var next = try convert(original, hash: row[1].text!).0
       if next.file.hasPrefix("collaboration/actions/"), next.parent == nil {
         // Only rewrite the serialization of the exact pre/postimages. The
@@ -114,8 +110,7 @@ extension NotebookStore {
         next = next.replacing(value: value)
         if next != original { receiptCount += 1 }
       }
-      guard next != original else { continue }
-      try writeFragment(next, database: database, migratingInk: true)
+      guard try writeFragment(next, database: database, migratingInk: true) else { continue }
       if next.isInkMeasurementBody, let parent = next.parent {
         if next.collection == "spans" {
           _ = try readSpatialInkAction(parent)
@@ -129,9 +124,11 @@ extension NotebookStore {
         }
       }
     }
-    let receipt: JSONValue = .object(["sourceCursor": .number(Double(cursor)),
-      "convertedBodies": .number(Double(bodyCount)), "convertedReceipts": .number(Double(receiptCount))])
-    try publishRecords(writes: ["local/migrations/ink-relations-v1.json": receipt])
+    if bodyCount > 0 || receiptCount > 0 {
+      let receipt: JSONValue = .object(["sourceCursor": .number(Double(cursor)),
+        "convertedBodies": .number(Double(bodyCount)), "convertedReceipts": .number(Double(receiptCount))])
+      try publishRecords(writes: ["local/migrations/ink-relations-v1.json": receipt])
+    }
     try database.run("INSERT INTO metadata(key,value) VALUES('ink_outgoing_floor',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [.text(String(cursor))])
   }
 

@@ -19,7 +19,7 @@ extension NotebookStore {
         guard try database.rows("SELECT length(data) FROM blobs WHERE hash=?", [.text(hash)]).first?[0].integer ?? Int64.max <= 2_097_152 else {
           throw NotebookStorageError.limitExceeded("context_entry")
         }
-        let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(hash))
+        let fragment = try database.decodedStoredFragment(from:database.blob(hash))
         let file = String(address.split(separator: "#", maxSplits: 1)[0])
         let identifier = String(file.dropFirst(prefix.count).dropLast(5))
         guard let id = UUID(uuidString: identifier), contextFile(id) == file,

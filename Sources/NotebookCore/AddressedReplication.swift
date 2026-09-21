@@ -26,7 +26,7 @@ struct NotebookIncomingRecords {
 
   func fragment(_ address: String) throws -> NotebookStoredFragment? {
     guard let row = try mutation(address), let hash = row[0].text else { return nil }
-    let value = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(hash))
+    let value = try database.decodedStoredFragment(from:database.blob(hash))
     guard value.address == address, value.file + "#" == String(address.prefix(through: address.firstIndex(of: "#")!)),
       value.position >= 0, value.value.isValid else { throw NotebookStorageError.invalidTransaction("fragment identity") }
     return value

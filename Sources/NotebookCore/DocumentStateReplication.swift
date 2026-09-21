@@ -20,7 +20,7 @@ extension NotebookStore {
       if let mutation = try records.mutation(rootAddress), mutation[0].text == nil { return }
     }
     func fragment(_ address: String, _ hash: String) throws -> NotebookStoredFragment {
-      let value = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(hash))
+      let value = try database.decodedStoredFragment(from:database.blob(hash))
       guard value.address == address, value.file == file, value.position >= 0, value.value.isValid else {
         throw NotebookStorageError.invalidTransaction("document state fragment identity")
       }

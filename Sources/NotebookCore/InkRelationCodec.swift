@@ -244,7 +244,7 @@ extension InkMeasurements: Codable {
   public init(encodedRelations: Data) throws {
     try self.init(encodedRelations:encodedRelations,sharing:nil)
   }
-  private init(encodedRelations: Data, sharing: InkRelationDecoding?) throws {
+  init(encodedRelations: Data, sharing: InkRelationDecoding?) throws {
     guard encodedRelations.count <= InkSampleRelations.maximumBytes else { throw InkSampleRelations.CodingError.limitExceeded }
     var input=InkRelationReader(data:encodedRelations)
     guard try input.bytes(4) == Data("NIM1".utf8) else { throw InkSampleRelations.CodingError.invalidSource }
@@ -276,6 +276,7 @@ final class InkRelationDecoding: Sendable {
   fileprivate static let key=CodingUserInfoKey(rawValue:"Notebook.InkRelationDecoding")!
   private struct State: Sendable {
     var bodies: [Data:InkSampleRelations.Storage]=[:]
+    var storedBodies: [String:Data]=[:]
     var retainedBytes=0
   }
   // Foundation's userInfo is Sendable. Keep that promise even if a decoder is
@@ -284,7 +285,7 @@ final class InkRelationDecoding: Sendable {
   let entryLimit: Int
   let byteLimit: Int
   var retainedBytes: Int { state.withLock { $0.retainedBytes } }
-  var entryCount: Int { state.withLock { $0.bodies.count } }
+  var entryCount: Int { state.withLock { $0.bodies.count+$0.storedBodies.count } }
 
   init(entryLimit: Int = 256, byteLimit: Int = 4*1024*1024) {
     precondition(entryLimit >= 0 && byteLimit >= 0)
@@ -296,14 +297,23 @@ final class InkRelationDecoding: Sendable {
   fileprivate func storage(for body: Data) -> InkSampleRelations.Storage? {
     state.withLock { $0.bodies[body] }
   }
+  func storedBody(_ hash: String) -> Data? { state.withLock { $0.storedBodies[hash] } }
+  func retainStoredBody(_ bytes: Data, hash: String) {
+    state.withLock { state in
+      let cost=bytes.count+160
+      guard state.storedBodies[hash] == nil,state.bodies.count+state.storedBodies.count < entryLimit,
+        cost <= byteLimit-state.retainedBytes else { return }
+      state.storedBodies[hash]=bytes;state.retainedBytes += cost
+    }
+  }
   fileprivate func admit(_ source: InkMeasurements, body: Data, encodedBytes: Int) -> InkSampleRelations.Storage {
-    guard state.withLock({ $0.bodies.count < entryLimit && encodedBytes <= byteLimit-$0.retainedBytes }) else { return source.storage }
+    guard state.withLock({ $0.bodies.count+$0.storedBodies.count < entryLimit && encodedBytes <= byteLimit-$0.retainedBytes }) else { return source.storage }
     // Charge encoded key, unique tree and per-entry allowance, not logical
     // events. This is a payload budget, not an assertion about process RSS.
     let bytes=encodedBytes+source.payloadBytes+96
     return state.withLock { state in
       if let stored=state.bodies[body] { return stored }
-      guard state.bodies.count < entryLimit,bytes <= byteLimit-state.retainedBytes else { return source.storage }
+      guard state.bodies.count+state.storedBodies.count < entryLimit,bytes <= byteLimit-state.retainedBytes else { return source.storage }
       state.bodies[body]=source.storage;state.retainedBytes += bytes
       return source.storage
     }

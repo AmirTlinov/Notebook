@@ -104,6 +104,8 @@ extension NotebookStore {
       if !missing.isEmpty { return missing }
       let orderMissing = try missingPageOrderBlobs(manifestHash: change.manifestHash, limit: limit)
       if !orderMissing.isEmpty { return orderMissing }
+      let inkMissing = try missingInkBodyBlobs(manifestHash:change.manifestHash,limit:limit)
+      if !inkMissing.isEmpty { return inkMissing }
       let inverseMissing = try missingLifecycleInverseBlobs(change: change, limit: limit)
       if !inverseMissing.isEmpty { return inverseMissing }
       return try missingProgramBlobs(change: change, limit: limit)
@@ -191,7 +193,7 @@ extension NotebookStore {
           for record in records {
             let address = record[0].text!; afterAddress = address
             if let hash = record[1].text {
-              let row = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(hash))
+              let row = try database.decodedStoredFragment(from:database.blob(hash))
               guard row.address == address, row.file == file,
                 row.position >= 0, row.value.isValid else { throw NotebookStorageError.invalidTransaction("fragment identity") }
               rows[address] = row

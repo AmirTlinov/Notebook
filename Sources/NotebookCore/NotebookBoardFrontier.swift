@@ -22,7 +22,7 @@ extension NotebookStore {
       guard SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == hash else {
         throw NotebookStorageError.blobHashMismatch
       }
-      let header = try JSONDecoder().decode(NotebookStoredFragment.self, from: data)
+      let header = try database.decodedStoredFragment(from:data)
       guard header.address == address, case .object? = header.value["board"] else {
         throw NotebookStorageError.corruptRecord(address)
       }

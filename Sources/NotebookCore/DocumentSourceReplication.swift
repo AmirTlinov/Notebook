@@ -62,7 +62,7 @@ extension NotebookStore {
       }
       return try mutations.compactMap { row in
         guard let hash = row[1].text else { return nil }
-        let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(hash))
+        let fragment = try database.decodedStoredFragment(from:database.blob(hash))
         guard fragment.address == row[0].text, fragment.file == file, fragment.position >= 0, fragment.value.isValid else {
           throw NotebookStorageError.invalidTransaction("document source fragment identity")
         }

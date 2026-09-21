@@ -45,7 +45,7 @@ struct InkRelationMigrationTests {
     do {
       let rows=try db.rows("SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE (r.file LIKE 'pages/%' AND r.collection='samples') OR r.file='spatial-ink.json' ORDER BY r.address")
       for data in rows.compactMap({ $0[0].blob }) {
-        let row=try JSONDecoder().decode(NotebookStoredFragment.self,from:data),previous=try old(row)
+        let row=try db.decodedStoredFragment(from:data),previous=try old(row)
         guard previous != row else { continue }
         let data=try NotebookStore.storageEncoder.encode(previous),hash=try db.putBlob(data)
         bodies[hash]=data
@@ -81,6 +81,38 @@ struct InkRelationMigrationTests {
       #expect(try NotebookStore(root:opened.root).currentChangeCursor() == cursor+1)
     }
   }
+  @Test func inlineCompactAdmissionSharesBodiesAndSetsTheNewWireFloor() throws {
+    try fixture { f in
+      let cursor=try f.store.currentChangeCursor()
+      try f.store.acknowledgePeer(peerID:f.peer,through:cursor)
+      let db=try NotebookSQLConnection(url:f.store.databaseURL,writable:true)
+      try db.run("BEGIN IMMEDIATE")
+      let rows=try db.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash ORDER BY r.address")
+      var previous:[String:Data]=[:]
+      for row in rows {
+        let raw=try JSONDecoder().decode(NotebookStoredFragment.self,from:row[1].blob!)
+        guard !raw.inkBodies.isEmpty else { continue }
+        let data=try NotebookStore.storageEncoder.encode(db.decodedStoredFragment(from:row[1].blob!)),hash=try db.putBlob(data)
+        previous[hash]=data
+        try db.run("UPDATE records SET hash=? WHERE address=?",[.text(hash),row[0]])
+      }
+      #expect(previous.count == 2)
+      try db.run("PRAGMA user_version=17");try db.run("COMMIT")
+      let opened=NotebookStore(root:f.store.root)
+      #expect(try opened.readPageInkAction(pageID:f.page,actionID:f.paper.id)?.action == f.paper)
+      #expect(try opened.readSpatialInk(surfaces:[.cover(f.cover)]).actions == [f.spatial])
+      let hashes=try opened.sqlRead { database in
+        try database.rows("SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.collection='samples' OR r.collection='spans'")
+          .flatMap { try JSONDecoder().decode(NotebookStoredFragment.self,from:$0[0].blob!).inkBodyHashes }
+      }
+      #expect(hashes.count == 2 && Set(hashes).count == 1)
+      #expect(try opened.currentChangeCursor() == cursor+1)
+      #expect(try opened.peerCursor(peerID:f.peer,direction:.outgoing) == cursor)
+      #expect(throws:CollaborationError.self) { try opened.changeJournal(after:cursor-1) }
+      for (hash,data) in previous { #expect(try opened.readBlobChunk(hash:hash,offset:0,maxBytes:1_048_576) == data) }
+    }
+  }
+
   enum DeliveryState: CaseIterable { case drained,unacknowledged,anotherPeerPending }
   @Test(arguments:DeliveryState.allCases)
   func incomingJournalGenerationsDoNotBecomeAdditionalDeliveryPeers(state: DeliveryState) throws {

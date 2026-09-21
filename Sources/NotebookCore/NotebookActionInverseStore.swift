@@ -163,7 +163,7 @@ extension NotebookStore {
 
   func readLifecycleInverseFragment(hash: String, address: String? = nil) throws -> NotebookStoredFragment {
     let data = try lifecycleInverseBlob(hash, maximumBytes: 256 * 1_024 * 1_024)
-    let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: data)
+    let fragment = try currentSQL!.decodedStoredFragment(from:data)
     try validateLifecycleInverseRecord(.init(address: fragment.address, beforeHash: hash, afterHash: nil))
     guard address.map({ fragment.address.utf8.elementsEqual($0.utf8) }) ?? true,
       fragment.address.hasPrefix(fragment.file + "#"), !fragment.file.contains("#"),

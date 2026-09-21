@@ -88,7 +88,7 @@ extension NotebookStore {
             guard let bytes = row[2].integer else { throw NotebookStorageError.blobMissing(row[1].text!) }
             guard bytes <= Self.documentProgramReplicationBytes else { throw NotebookStorageError.limitExceeded("document_replication_block") }
           }
-          let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: db.blob(row[1].text!))
+          let fragment = try db.decodedStoredFragment(from:db.blob(row[1].text!))
           guard fragment.address == row[0].text else { throw NotebookStorageError.invalidTransaction("program dependency address") }
           try noteProgramDependencies(manifestHash: manifest, fragment: fragment)
         }

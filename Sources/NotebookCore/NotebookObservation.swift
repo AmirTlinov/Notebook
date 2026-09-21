@@ -210,7 +210,7 @@ extension NotebookStore {
   func observationPreviouslyOnSurface(_ address: String, target: CollaborationTarget, at cursor: UInt64) throws -> Bool {
     guard let hash = try currentSQL!.rows("SELECT blob_hash FROM change_records WHERE address=? AND sequence<=? ORDER BY sequence DESC LIMIT 1", [.text(address), .integer(Int64(cursor))]).first?[0].text else { return false }
     guard try blobSize(hash: hash) <= 4 * 1_024 * 1_024 else { throw NotebookStorageError.limitExceeded("observation_previous_member") }
-    let row = try JSONDecoder().decode(NotebookStoredFragment.self, from: currentSQL!.blob(hash))
+    let row = try currentSQL!.decodedStoredFragment(from:currentSQL!.blob(hash))
     return try observationSurfaceMatches(row, target: target)
   }
   func observationValue(_ root: NotebookStoredFragment, scope: NotebookObservationScope, header: JSONValue) throws -> JSONValue {

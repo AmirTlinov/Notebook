@@ -38,7 +38,7 @@ extension NotebookStore {
   func storedEntry(at address: String) throws -> SharedContextEntry? {
     guard let row = try currentSQL!.rows("SELECT r.hash,length(b.data) FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address=?", [.text(address)]).first else { return nil }
     guard let bytes = row[1].integer, bytes <= 2_097_152 else { throw NotebookStorageError.limitExceeded("context_entry") }
-    let fragment = try JSONDecoder().decode(NotebookStoredFragment.self, from: currentSQL!.blob(row[0].text!))
+    let fragment = try currentSQL!.decodedStoredFragment(from:currentSQL!.blob(row[0].text!))
     guard fragment.address == address else { throw NotebookStorageError.corruptRecord(address) }
     return try contextEntry(from: fragment)
   }

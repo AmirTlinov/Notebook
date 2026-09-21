@@ -30,7 +30,7 @@ extension NotebookStore {
         throw NotebookStorageError.invalidTransaction("overlapping fragment read")
       }
       return try metadata.map { row in
-        let value = try JSONDecoder().decode(NotebookStoredFragment.self, from: database.blob(row.hash))
+        let value = try database.decodedStoredFragment(from:database.blob(row.hash),remainingBytes:&remainingBytes,budget:budget)
         guard value.address == row.address, value.position >= 0, value.value.isValid else {
           throw NotebookStorageError.corruptRecord(row.address)
         }
@@ -46,7 +46,7 @@ extension NotebookStore {
       let query = descendants
         ? "WITH RECURSIVE subtree(address) AS (SELECT address FROM records WHERE address=? UNION ALL SELECT r.address FROM subtree s CROSS JOIN records r ON r.parent=s.address) SELECT b.data FROM subtree s CROSS JOIN records r ON r.address=s.address CROSS JOIN blobs b ON b.hash=r.hash"
         : "SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address=?"
-      return try database.rows(query, [.text(address)]).map { try JSONDecoder().decode(NotebookStoredFragment.self, from: $0[0].blob!) }
+      return try database.rows(query, [.text(address)]).map { try database.decodedStoredFragment(from:$0[0].blob!) }
     }
   }
 
@@ -134,7 +134,8 @@ extension NotebookStore {
     else { throw NotebookStorageError.corruptRecord(address) }
     let decoder = InkRelationDecoding.decoder(sharing:currentSQL!.inkDecoding)
     guard let header = try? decoder.decode(NotebookStoredPayload<SpatialInkActionHeader>.self, from: headerData),
-      let spans = try? decoder.decode(NotebookStoredPayload<[SpatialInkSpan]>.self, from: spansData)
+      let spans = try? currentSQL!.decodedStoredFragment(from:spansData),
+      let values = try? spans.value.decode([SpatialInkSpan].self,sharing:currentSQL!.inkDecoding)
     else { throw NotebookStorageError.corruptRecord(address) }
     guard header.address == address, header.file == "spatial-ink.json",
       header.parent == "spatial-ink.json#", header.collection == "actions",
@@ -143,11 +144,11 @@ extension NotebookStore {
       header.collections == [.init(path: ["spans"], kind: .value)], header.value.isValid,
       spans.address == spansAddress, spans.file == header.file, spans.parent == address,
       spans.collection == "spans", spans.member.isEmpty, spans.position == 0, spans.collections.isEmpty,
-      !spans.value.isEmpty, spans.value.allSatisfy(\.isValid),
-      header.value.tool == .eraser || spans.value.allSatisfy({ $0.elementTargets == nil })
+      !values.isEmpty, values.allSatisfy(\.isValid),
+      header.value.tool == .eraser || values.allSatisfy({ $0.elementTargets == nil })
     else { throw NotebookStorageError.corruptRecord(address) }
     let value = header.value
-    return .init(id: value.id, tool: value.tool, color: value.color, spans: spans.value,
+    return .init(id: value.id, tool: value.tool, color: value.color, spans: values,
       stamp: value.stamp, isActive: value.isActive, stateStamp: value.stateStamp)
   }
 
@@ -582,10 +583,10 @@ extension NotebookStore {
     var rows: [NotebookStoredFragment] = []
     let database = currentSQL!
     for prefix in Set(memberPrefixes) {
-      rows += try database.rows("SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.parent=? AND r.collection=? AND r.member>=? AND r.member<?", [.text(parent), .text(collection), .text(prefix), .text(prefix + "\u{10ffff}")]).map { try JSONDecoder().decode(NotebookStoredFragment.self, from: $0[0].blob!) }
+      rows += try database.rows("SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.parent=? AND r.collection=? AND r.member>=? AND r.member<?", [.text(parent), .text(collection), .text(prefix), .text(prefix + "\u{10ffff}")]).map { try database.decodedStoredFragment(from:$0[0].blob!) }
     }
     for key in includeKeys {
-      rows += try database.rows("SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.parent=? AND r.collection=? AND r.member=?", [.text(parent), .text(collection), .text(key)]).map { try JSONDecoder().decode(NotebookStoredFragment.self, from: $0[0].blob!) }
+      rows += try database.rows("SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.parent=? AND r.collection=? AND r.member=?", [.text(parent), .text(collection), .text(key)]).map { try database.decodedStoredFragment(from:$0[0].blob!) }
     }
     return rows
   }
