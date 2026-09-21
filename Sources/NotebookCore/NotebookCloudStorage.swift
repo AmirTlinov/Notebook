@@ -276,7 +276,8 @@ extension NotebookStore {
       try requireCloudAccount(account)
       return try db.rows("""
         SELECT i.delivery FROM cloud_inbox i LEFT JOIN peer_cursors p ON p.peer_id=i.source AND p.direction='incoming'
-        WHERE i.account=? AND (i.snapshot=1 OR i.sequence<=COALESCE(p.sequence,0)+1)
+        LEFT JOIN metadata r ON r.key='retired_peer:' || substr(i.source,1,36)
+        WHERE i.account=? AND r.key IS NULL AND (i.snapshot=1 OR i.sequence<=COALESCE(p.sequence,0)+1)
         ORDER BY i.snapshot DESC,i.sequence,i.id LIMIT 16
         """, [.text(account)]).map { try JSONDecoder().decode(NotebookReplicationDelivery.self, from: $0[0].blob!) }
     }

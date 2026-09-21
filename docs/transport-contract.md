@@ -46,6 +46,19 @@ outgoing check, without deleting, rewriting or treating their incoming positions
 as acknowledgements. A distinct historical recipient still blocks admission if
 its outgoing writes are unacknowledged; unknown membership is not retirement.
 
+An explicitly retired recipient is different from a disabled automatic connection.
+`NotebookStore.retireReplicationPeer` records a local receipt containing the exact
+workspace, source cursor and actual outgoing acknowledgement. Cold-launch
+`--notebook-retire-peer` accepts only that selected workspace and cursor, before
+migration or constructing the model. It never advances or removes a cursor,
+changes content, imports an archive or deletes credentials. Other pending peers
+still block conversion. The receipt excludes only this device from future direct
+transport and cloud-inbox processing; queued historical deliveries remain stored
+and unacknowledged. Restart and account-directory refresh cannot revive it.
+A new replica does not inherit the local membership decision; a continuing device
+keeps it. This operation requires an explicit owner decision, never a timeout or
+an inferred absence.
+
 ## Authentication and encryption
 
 `NotebookTransportTLS` uses Network.framework and Security with one pinned profile:

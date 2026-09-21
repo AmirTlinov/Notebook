@@ -85,6 +85,22 @@ final class NotebookDeviceTrustTests: XCTestCase {
     XCTAssertEqual(store.saves, 2)
   }
 
+  func testRetiredPeerCannotReconnectOrBeRevivedBySettingsAndKeepsOtherKeys() async throws {
+    let local = identity(), retired = NotebookTrustedDevice(identity: identity(local.workspaceID),
+      credentialID: UUID(), secret: Data(repeating: 3, count: 32))
+    let active = NotebookTrustedDevice(identity: identity(local.workspaceID),
+      credentialID: UUID(), secret: Data(repeating: 4, count: 32))
+    let store = DeviceMemoryTrust(), sync = makeSync(local, store, retired: [retired.identity.deviceID])
+    defer { sync.stop() }
+    await sync.start(); try await sync.applyAccountTrust(account: "A", devices: [retired, active])
+    XCTAssertEqual(sync.pairedPeers, [active.identity]); XCTAssertEqual(sync.knownPeers, [active.identity])
+    do { try await sync.setDeviceAllowed(retired.identity.deviceID, allowed: true); XCTFail("Retirement is not an automatic-connection toggle") }
+    catch { XCTAssertEqual(error as? NotebookTransportError, .identityMismatch) }
+    sync.stop(); await sync.start()
+    try await sync.applyAccountTrust(account: "A", devices: [retired, active])
+    XCTAssertEqual(sync.pairedPeers, [active.identity]); XCTAssertEqual(store.state.records, [retired, active])
+  }
+
   func testASettingsActionCannotRestartTransportAfterAccountSuspension() async throws {
     let local = identity(), peer = NotebookTrustedDevice(identity: identity(local.workspaceID),
       credentialID: UUID(), secret: Data(repeating: 4, count: 32))
@@ -129,12 +145,12 @@ final class NotebookDeviceTrustTests: XCTestCase {
     XCTAssertEqual(try library.selectedRoot(), root)
   }
 
-  private func makeSync(_ local: NotebookTransportIdentity, _ trust: DeviceMemoryTrust) -> NearbySync {
+  private func makeSync(_ local: NotebookTransportIdentity, _ trust: DeviceMemoryTrust, retired: Set<UUID> = []) -> NearbySync {
     let storage = NotebookTransportStorage(changes: { _, _ in [] }, incomingCursor: { _ in 0 },
       acknowledgePeer: { _, _ in }, blobSize: { _ in 0 }, readBlobChunk: { _, _, _ in Data() },
       stageBlob: { _, _, _ in }, missingBlobHashes: { _, _, _ in [] }, applyRemoteChange: { _ in 0 })
     return NearbySync(role: .iPadConnector, identity: local, storage: storage,
-      stagingRoot: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), trustStore: trust)
+      stagingRoot: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), trustStore: trust, retiredPeers: retired)
   }
 }
 

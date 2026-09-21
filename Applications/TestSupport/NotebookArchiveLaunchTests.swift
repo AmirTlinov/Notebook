@@ -5,6 +5,46 @@ import XCTest
 
 @MainActor
 final class NotebookArchiveLaunchTests: XCTestCase {
+  func testExplicitPeerRetirementIsCheckedBeforeConstructingTheSelectedModel() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("launch-retirement-" + UUID().uuidString)
+    let root = base.appendingPathComponent("Notebook"), store = NotebookStore(root: root), peer = UUID()
+    defer { try? FileManager.default.removeItem(at: base) }
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    let workspace = try store.storedWorkspaceID(), cursor = try store.currentChangeCursor()
+    try store.acknowledgePeer(peerID: peer, through: 0)
+    _ = try NotebookWorkspaceLibrary(originalRoot: root).select(workspace)
+    func arguments(_ id: UUID, _ cut: UInt64) -> [String] {
+      ["--notebook-retire-peer", "{\"peerID\":\"\(peer)\",\"workspaceID\":\"\(id)\",\"expectedCursor\":\(cut)}"]
+    }
+    for request in [arguments(UUID(), cursor), arguments(workspace, cursor - 1)] {
+      let refused = NotebookApplicationLaunch(root: root, arguments: request) { _, _ in
+        XCTFail("A stale or foreign request must not construct a model")
+        throw NotebookStorageError.transactionConflict
+      }
+      await refused.start()
+      XCTAssertNotNil(refused.failure); XCTAssertNil(refused.model)
+      XCTAssertTrue(try store.retiredReplicationPeers().isEmpty)
+    }
+    var constructions = 0
+    let launch = NotebookApplicationLaunch(root: root, arguments: arguments(workspace, cursor)) { admitted, _ in
+      constructions += 1
+      XCTAssertEqual(try admitted.retiredReplicationPeers(), [peer])
+      return NotebookAppModel(store: admitted, startsNearbySync: false)
+    }
+    await launch.start()
+    XCTAssertNil(launch.failure); XCTAssertNotNil(launch.model); XCTAssertEqual(constructions, 1)
+    XCTAssertEqual(try store.currentChangeCursor(), cursor)
+    XCTAssertEqual(try store.peerCursor(peerID: peer, direction: .outgoing), 0)
+    let stopped = await launch.shutdown(); XCTAssertTrue(stopped)
+    let restart = NotebookApplicationLaunch(root: root, arguments: []) { admitted, _ in
+      XCTAssertEqual(try admitted.retiredReplicationPeers(), [peer])
+      return NotebookAppModel(store: admitted, startsNearbySync: false)
+    }
+    await restart.start()
+    XCTAssertNil(restart.failure); XCTAssertNotNil(restart.model)
+    let restartedStop = await restart.shutdown(); XCTAssertTrue(restartedStop)
+  }
+
   func testNoModelOrDesktopRegistrationBeforeBothActivations() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("launch-gate-" + UUID().uuidString)
     let original = root.appendingPathComponent("Notebook"), candidate = root.appendingPathComponent("prepared")

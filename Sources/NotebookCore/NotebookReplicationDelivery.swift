@@ -40,6 +40,7 @@ extension NotebookStore {
   /// Preserve every cursor and still require acknowledgement from every device,
   /// including a historical peer whose continued membership is unknown.
   func hasPendingPeerDelivery(through cursor: UInt64,database: NotebookSQLConnection) throws -> Bool {
+    let retired = try Self.retiredReplicationPeers(database: database)
     let devices=try Set(database.rows("SELECT peer_id,direction FROM peer_cursors").map { row -> UUID in
       guard let key=row[0].text,let source=NotebookReplicationSource(cursorKey:key),
         row[1].text == "incoming" || (row[1].text == "outgoing" && key == source.deviceID.uuidString.lowercased()) else {
@@ -48,6 +49,7 @@ extension NotebookStore {
       return source.deviceID
     })
     return try devices.contains { peer in
+      if retired.contains(peer) { return false }
       let acknowledged=try database.rows("SELECT sequence FROM peer_cursors WHERE peer_id=? AND direction='outgoing'",
         [.text(peer.uuidString.lowercased())]).first?[0].integer ?? 0
       return try !database.rows("SELECT 1 FROM change_log WHERE sequence>? AND sequence<=? LIMIT 1",
@@ -68,6 +70,7 @@ extension NotebookStore {
   /// device-addressed receipts. Delayed cloud history cannot switch it back.
   public func admitReplicationSource(_ source: NotebookReplicationSource) throws -> UInt64 {
     try commandTransaction(advancesReadRevision: false) {
+      try requireActiveReplicationPeer(source.deviceID, database: currentSQL!)
       try currentSQL!.run("INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         [.text("peer_generation:" + source.deviceID.uuidString.lowercased()), .text(source.generation.uuidString.lowercased())])
       return try incomingCursor(source: source)
@@ -82,6 +85,7 @@ extension NotebookStore {
   /// historical transaction receipts were not copied into this replica.
   public func deliveryNeedsContent(_ delivery: NotebookReplicationDelivery) throws -> Bool {
     try sqlRead { db in
+      try requireActiveReplicationPeer(delivery.source.deviceID, database: db)
       let change = delivery.change
       guard change.sequence > 0, change.sequence <= UInt64(Int64.max) else { throw NotebookStorageError.invalidTransaction("incoming sequence") }
       let transaction = change.transactionID.uuidString.lowercased()

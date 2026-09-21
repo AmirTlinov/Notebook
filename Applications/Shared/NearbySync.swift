@@ -139,6 +139,7 @@ final class NearbySync {
   var onTransient: ((NotebookTransportTransient, UUID, UUID) -> Void)?
   var onDurableChange: ((NotebookDurableChange, UUID, UUID) -> Void)?
   var pairedPeers: [NotebookTransportIdentity] { trusted.map(\.identity) }
+  var knownPeers: [NotebookTransportIdentity] { trust.records.map(\.identity).filter { !retiredPeers.contains($0.deviceID) } }
 
   let identity: NotebookTransportIdentity
   private let role: Role
@@ -147,7 +148,10 @@ final class NearbySync {
   private let trustStore: any NotebookDeviceTrustStore
   private let queue = DispatchQueue(label: "Notebook.Nearby.TLS")
   private var trust = NotebookDeviceTrustState()
-  private var trusted: [NotebookTrustedDevice] { trust.records.filter { !trust.blocked.contains($0.identity.deviceID) } }
+  private let retiredPeers: Set<UUID>
+  private var trusted: [NotebookTrustedDevice] {
+    trust.records.filter { !trust.blocked.contains($0.identity.deviceID) && !retiredPeers.contains($0.identity.deviceID) }
+  }
   var savedTrust: NotebookDeviceTrustState { trust }
   private var listener: NWListener?
   private(set) var browser: NWBrowser?
@@ -164,8 +168,9 @@ final class NearbySync {
   private let logger = Logger(subsystem: "com.amirtlinov.notebook", category: "NearbySync")
 
   init(role: Role, identity: NotebookTransportIdentity, storage: NotebookTransportStorage, stagingRoot: URL,
-    trustStore: (any NotebookDeviceTrustStore)? = nil) {
+    trustStore: (any NotebookDeviceTrustStore)? = nil, retiredPeers: Set<UUID> = []) {
     self.role = role; self.identity = identity; self.storage = storage; self.stagingRoot = stagingRoot
+    self.retiredPeers = retiredPeers
     self.trustStore = trustStore ?? NotebookKeychainDeviceStore()
   }
 
@@ -300,6 +305,7 @@ final class NearbySync {
     // Settings cannot restart a transport suspended by an account change.
     // Only successful account admission may resume a stopped owner.
     guard isStarted else { throw NotebookTransportError.disconnected }
+    guard !retiredPeers.contains(id) else { throw NotebookTransportError.identityMismatch }
     if !allowed {
       suspendedPeers.insert(id)
       onDeviceRevoked?(id)

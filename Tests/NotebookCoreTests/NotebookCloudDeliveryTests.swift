@@ -75,6 +75,36 @@ struct NotebookCloudDeliveryTests {
     _ = try store.applyCollaborationAction(action, actor: actor)
   }
 
+  @Test func retiredCloudSourcesStayUnacknowledgedWithoutStarvingAnActiveSource() throws {
+    let pair = try Pair(), cursor = try pair.b.currentChangeCursor()
+    try pair.b.acknowledgePeer(peerID: pair.actorA, through: 0)
+    let cloud = try upload(pair.a, source: pair.sourceA, account: pair.account)
+    let seed = try #require(cloud.compactMap(\.value.delivery).first)
+    try stage(cloud.filter { $0.value.delivery == nil }, to: pair.b, source: pair.sourceB, account: pair.account)
+    // More than one inbox page of retired generations must not hide an active source.
+    for _ in 0..<20 {
+      let delivery = NotebookReplicationDelivery(source: .init(deviceID: pair.actorA, generation: UUID()),
+        change: seed.change, isSnapshot: true)
+      try pair.b.stageCloudDelivery(delivery, account: pair.account, localSource: pair.sourceB)
+    }
+    let active = NotebookReplicationSource(deviceID: UUID(), generation: UUID())
+    let delivery = NotebookReplicationDelivery(source: active, change: seed.change, isSnapshot: true)
+    try pair.b.stageCloudDelivery(delivery, account: pair.account, localSource: pair.sourceB)
+    try pair.b.retireReplicationPeer(pair.actorA, workspaceID: pair.b.storedWorkspaceID(), expectedCursor: cursor)
+    let inbox = try pair.b.cloudInbox(account: pair.account)
+    #expect(inbox.count == 1 && inbox.first?.source == active)
+    #expect(try pair.b.sqlRead { try $0.rows("SELECT COUNT(*) FROM cloud_inbox").first?[0].integer } == 21)
+    #expect(try pair.b.peerCursor(peerID: pair.actorA, direction: .outgoing) == 0)
+    #expect(try pair.b.incomingCursor(source: pair.sourceA) == 0)
+    try assemble(pair.b, account: pair.account)
+    #expect(throws: CollaborationError.self) { try pair.b.applyCloudDelivery(seed, account: pair.account) }
+    // Retirement does not prevent an active relay from carrying the same content.
+    _ = try pair.b.applyCloudDelivery(delivery, account: pair.account)
+    #expect(try pair.b.cloudInbox(account: pair.account).isEmpty)
+    #expect(try pair.b.incomingCursor(source: active) == seed.change.sequence)
+    #expect(try pair.b.peerCursor(peerID: pair.actorA, direction: .outgoing) == 0)
+  }
+
   @Test func offlineRestartThenCloudOnlyDeliveryMergesInsteadOfReplacing() throws {
     let pair = try Pair(), item = try pair.a.loadIndex().selectedItemID, board = try pair.a.workspaceHeader().rootBoardID
     try rename(pair.a, item: item, title: "На прогулке", actor: pair.actorA)

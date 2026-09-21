@@ -793,6 +793,7 @@ extension NotebookStore {
   public func acknowledgePeer(peerID: UUID, through sequence: UInt64) throws {
     guard sequence <= UInt64(Int64.max) else { throw NotebookStorageError.limitExceeded("cursor") }
     try commandTransaction {
+      try requireActiveReplicationPeer(peerID, database: currentSQL!)
       guard sequence <= (try currentChangeCursor()) else { throw NotebookStorageError.invalidTransaction("acknowledges an unpublished change") }
       try currentSQL!.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'outgoing',?) ON CONFLICT(peer_id,direction) DO UPDATE SET sequence=MAX(sequence,excluded.sequence)", [.text(peerID.uuidString.lowercased()), .integer(Int64(sequence))])
     }

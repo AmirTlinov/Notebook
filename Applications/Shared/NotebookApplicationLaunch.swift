@@ -46,22 +46,25 @@ final class NotebookApplicationLaunch {
   private let target: NotebookArchiveTarget?
   private let makeModel: ((NotebookStore, UUID?) throws -> NotebookAppModel)?
   private let isFixture: Bool
+  private let arguments: [String]
   private enum SwitchCancellation: Error { case acceptedLocalWork }
 
   init(root: URL = NotebookStore.defaultRoot, target: NotebookArchiveTarget? = nil,
+    arguments: [String] = ProcessInfo.processInfo.arguments,
     makeModel: ((NotebookStore, UUID?) throws -> NotebookAppModel)? = nil) {
     self.root = root; self.target = target; self.makeModel = makeModel; isFixture = false
+    self.arguments = arguments
   }
 
   init(fixture model: NotebookAppModel?) {
     self.model = model; root = URL(fileURLWithPath: "/unused-notebook-fixture")
-    target = nil; makeModel = nil; isFixture = true
+    target = nil; makeModel = nil; isFixture = true; arguments = []
     installWorkspaceSelection()
   }
 
   init(failure: String) {
     self.failure = failure; root = URL(fileURLWithPath: "/unused-notebook-rejected-launch")
-    target = nil; makeModel = nil; isFixture = true
+    target = nil; makeModel = nil; isFixture = true; arguments = []
   }
 
   var message: String {
@@ -95,6 +98,7 @@ final class NotebookApplicationLaunch {
       switch activation {
       case .unchanged, .admitted:
         try Task.checkCancellation()
+        try retireRequestedPeer()
         try library.finishRemovals()
         guard let selectedRoot = try library.selectedRoot() else {
           hasNoWorkspace = true
@@ -113,6 +117,23 @@ final class NotebookApplicationLaunch {
       // A committed activation remains on disk; cancellation cannot restore old
       // bytes or publish a model after the calling scene has disappeared.
     } catch { failure = error.localizedDescription }
+  }
+
+  /// Explicit maintenance of the selected workspace, performed only by its
+  /// installed application after archive admission and before model/migration.
+  /// The request is pinned to the observed workspace and cursor, not a path.
+  private func retireRequestedPeer() throws {
+    let flag = "--notebook-retire-peer"
+    guard let index = arguments.firstIndex(of: flag) else { return }
+    struct Request: Decodable { let peerID: UUID; let workspaceID: UUID; let expectedCursor: UInt64 }
+    guard arguments.filter({ $0 == flag }).count == 1, index + 1 < arguments.count,
+      arguments[index + 1].utf8.count <= 1024 else { throw NotebookStorageError.invalidTransaction("peer retirement request") }
+    let request = try JSONDecoder().decode(Request.self, from: Data(arguments[index + 1].utf8))
+    let catalog = try library.catalog()
+    guard catalog.selectedID == request.workspaceID, !catalog.deleting.contains(request.workspaceID),
+      catalog.pendingCloudDeletion[request.workspaceID] == nil else { throw NotebookStorageError.transactionConflict }
+    try NotebookStore(root: library.root(for: request.workspaceID)).retireReplicationPeer(request.peerID,
+      workspaceID: request.workspaceID, expectedCursor: request.expectedCursor)
   }
 
   private func makeWorkspaceModel(store: NotebookStore, opensDefaultAccountWorkspace: Bool = false,

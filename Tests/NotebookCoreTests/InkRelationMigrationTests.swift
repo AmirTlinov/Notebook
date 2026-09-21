@@ -160,6 +160,77 @@ struct InkRelationMigrationTests {
       for (hash,data) in bodies { #expect(try db.blob(hash) == data) }
     }
   }
+
+  @Test func explicitRetirementPreservesHistoryAndOnlyRemovesTheNamedDeliveryBarrier() throws {
+    try fixture { f in
+      let cursor = try f.store.currentChangeCursor(), workspace = try f.store.storedWorkspaceID(), active = UUID()
+      try f.store.acknowledgePeer(peerID: f.peer, through: 1)
+      try f.store.acknowledgePeer(peerID: active, through: cursor)
+      let bodies = try downgrade(f)
+      let db = try NotebookSQLConnection(url: f.store.databaseURL, writable: false)
+      let before = try db.rows("SELECT address,hash FROM records ORDER BY address").map { "\($0[0].text!)|\($0[1].text!)" }
+      let peers = try db.rows("SELECT peer_id,direction,sequence FROM peer_cursors ORDER BY peer_id,direction").map { "\($0[0].text!)|\($0[1].text!)|\($0[2].integer!)" }
+      #expect(throws: NotebookStorageError.self) { try f.store.retireReplicationPeer(f.peer, workspaceID: UUID(), expectedCursor: cursor) }
+      #expect(throws: NotebookStorageError.self) { try f.store.retireReplicationPeer(f.peer, workspaceID: workspace, expectedCursor: cursor - 1) }
+      #expect(throws: NotebookStorageError.self) { try f.store.retireReplicationPeer(UUID(), workspaceID: workspace, expectedCursor: cursor) }
+      #expect(try db.rows("SELECT key FROM metadata WHERE key LIKE 'retired_peer:%'").isEmpty)
+      let receipt = try f.store.retireReplicationPeer(f.peer, workspaceID: workspace, expectedCursor: cursor)
+      #expect(receipt.acknowledgedCursor == 1 && receipt.sourceCursor == cursor)
+      #expect(try version(f.store) == 16)
+      #expect(try db.rows("SELECT address,hash FROM records ORDER BY address").map { "\($0[0].text!)|\($0[1].text!)" } == before)
+      #expect(try db.rows("SELECT peer_id,direction,sequence FROM peer_cursors ORDER BY peer_id,direction").map { "\($0[0].text!)|\($0[1].text!)|\($0[2].integer!)" } == peers)
+      #expect(try db.rows("SELECT MAX(sequence) FROM change_log").first?[0].integer == Int64(cursor))
+      let opened = NotebookStore(root: f.store.root)
+      #expect(try opened.retireReplicationPeer(f.peer, workspaceID: workspace, expectedCursor: cursor) == receipt)
+      #expect(try opened.readPageInkAction(pageID: f.page, actionID: f.paper.id)?.action == f.paper)
+      #expect(try opened.readSpatialInk(surfaces: [.cover(f.cover)]).actions == [f.spatial])
+      #expect(try opened.retiredReplicationPeers() == [f.peer])
+      #expect(try opened.peerCursor(peerID: f.peer, direction: .outgoing) == 1)
+      #expect(try opened.peerCursor(peerID: active, direction: .outgoing) == cursor)
+      #expect(try opened.currentChangeCursor() == cursor + 1)
+      for (hash, data) in bodies { #expect(try opened.readBlobChunk(hash: hash, offset: 0, maxBytes: 1_048_576) == data) }
+      #expect(throws: CollaborationError.self) { try opened.admitReplicationSource(.init(deviceID: f.peer, generation: UUID())) }
+      #expect(throws: CollaborationError.self) { try opened.acknowledgePeer(peerID: f.peer, through: cursor) }
+      let change = try #require(opened.changeJournal(after: cursor).first)
+      #expect(throws: CollaborationError.self) { try opened.applyRemoteChange(change, peerID: f.peer) }
+      #expect(try opened.peerCursor(peerID: f.peer, direction: .outgoing) == 1)
+      #expect(try opened.currentChangeCursor() == cursor + 1)
+    }
+  }
+  @Test(arguments: [false, true])
+  func retirementBelongsOnlyToTheContinuingDevice(preservingLocalState: Bool) throws {
+    try fixture { f in
+      let cursor = try f.store.currentChangeCursor(), workspace = try f.store.storedWorkspaceID()
+      try f.store.acknowledgePeer(peerID: f.peer, through: 0)
+      try f.store.retireReplicationPeer(f.peer, workspaceID: workspace, expectedCursor: cursor)
+      let output = f.store.root.deletingLastPathComponent().appendingPathComponent("retirement-copy-" + UUID().uuidString)
+      defer { try? FileManager.default.removeItem(at: output) }
+      _ = try f.store.prepareDeviceSnapshot(at: output, presence: .init(mode: .board,
+        camera: .init(), viewport: .init(x: 834, y: 1194)), preservingLocalState: preservingLocalState)
+      let replica = NotebookStore(root: output)
+      #expect(try replica.retiredReplicationPeers() == (preservingLocalState ? [f.peer] : []))
+      #expect(try f.store.retiredReplicationPeers() == [f.peer])
+      #expect(try f.store.currentChangeCursor() == cursor)
+      #expect(try f.store.peerCursor(peerID: f.peer, direction: .outgoing) == 0)
+    }
+  }
+
+  @Test func retiringOnePeerDoesNotAcknowledgeAnotherPendingPeer() throws {
+    try fixture { f in
+      let cursor = try f.store.currentChangeCursor(), workspace = try f.store.storedWorkspaceID(), other = UUID()
+      try f.store.acknowledgePeer(peerID: f.peer, through: 0)
+      try f.store.acknowledgePeer(peerID: other, through: 1)
+      _ = try downgrade(f)
+      try f.store.retireReplicationPeer(f.peer, workspaceID: workspace, expectedCursor: cursor)
+      do { _ = try NotebookStore(root: f.store.root).workspaceHeader(); Issue.record("Another recipient is still owed delivery") }
+      catch let error as CollaborationError { #expect(error.code == "ink_migration_pending_peer") }
+      #expect(try version(f.store) == 16)
+      let db = try NotebookSQLConnection(url: f.store.databaseURL, writable: false)
+      #expect(try db.rows("SELECT sequence FROM peer_cursors WHERE peer_id=? AND direction='outgoing'", [.text(other.uuidString.lowercased())]).first?[0].integer == 1)
+      #expect(try db.rows("SELECT MAX(sequence) FROM change_log").first?[0].integer == Int64(cursor))
+    }
+  }
+
   @Test(arguments:[NotebookStorageFault.afterRecordWrites,.beforeCommit,.afterCommit])
   func interruptedAdmissionIsAtomicAndReopenDoesNotConvertTwice(fault: NotebookStorageFault) throws {
     try fixture { f in

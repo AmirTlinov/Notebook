@@ -1226,12 +1226,14 @@ final class NotebookAppModel {
     #endif
     let identity = NotebookTransportIdentity(deviceID: actorID, workspaceID: workspaceID, displayName: name)
     let trust = NotebookKeychainDeviceStore(activationID: pairingActivationID, service: pairingService)
+    let retiredPeers = try await writer.submit { try $0.retiredReplicationPeers() }
     let connection = NearbySync(role: role, identity: identity,
-      storage: storage, stagingRoot: store.root.appendingPathComponent("transfer-staging", isDirectory: true), trustStore: trust)
+      storage: storage, stagingRoot: store.root.appendingPathComponent("transfer-staging", isDirectory: true), trustStore: trust,
+      retiredPeers: retiredPeers)
     connection.onStateChange = { [weak self] state in
       self?.connectionState = state
       self?.pairedPeers = self?.sync?.pairedPeers ?? []
-      self?.knownDevices = self?.sync?.savedTrust.records.map(\.identity) ?? []
+      self?.knownDevices = self?.sync?.knownPeers ?? []
       self?.blockedDeviceIDs = self?.sync?.savedTrust.blocked ?? []
       #if os(iOS)
       self?.chat?.updateComputers(self?.pairedPeers ?? [])
@@ -1257,7 +1259,7 @@ final class NotebookAppModel {
     await connection.start()
     guard !isClosing, sync === connection else { connection.stop(); return }
     pairedPeers = connection.pairedPeers
-    knownDevices = connection.savedTrust.records.map(\.identity)
+    knownDevices = connection.knownPeers
     blockedDeviceIDs = connection.savedTrust.blocked
     await startAccountConnection(connection)
     #if os(iOS)
