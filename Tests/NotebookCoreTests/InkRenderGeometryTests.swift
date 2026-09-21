@@ -65,14 +65,17 @@ struct InkRenderGeometryTests {
       #expect(levels.first?.indices.contains(32) == true)
     }
   }
-  @Test func selectedRailsStayWithinScreenErrorAndEraserRemainsExact() {
+  @Test(arguments:[false,true]) func selectedRailsStayWithinScreenErrorAndEraserRemainsExact(irregular: Bool) {
     let source = nodes(257) { i, n in
       let t = Float(i) / 20
       n.position.y = sin(t) * 4
       n.edge = .init(sin(t) * 0.4, 2 + cos(t) * 0.3)
-      n.alpha = 0.4 + Float(i) / 1024
+      n.alpha = irregular ? 0.25 + Float(i % 7) / 16 : 0.4 + Float(i) / 1024
+      if irregular { n.position.y=sin(Float(i)*0.37)*12;n.edge.y=2+Float(i%13)/8 }
     }
-    for level in InkRenderGeometry.levels(source[...], flags: 3) {
+    let levels=InkRenderGeometry.levels(source[...], flags: 3)
+    #expect(!levels.isEmpty)
+    for level in levels {
       for (left, right) in zip(level.indices, level.indices.dropFirst()) {
         let a = source[Int(left)]
         let b = source[Int(right)]

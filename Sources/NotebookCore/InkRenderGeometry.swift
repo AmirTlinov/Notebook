@@ -69,28 +69,32 @@ public enum InkRenderGeometry {
         let q = a[end]
         let chord = q.position - p.position
         let length = simd_length_squared(chord)
-        var worst: Float = 1
-        var split: Int?
+        var needsSplit = false
         var previousT: Float = 0
         for i in (start + 1)..<end {
           let raw = length > 1e-10 ? simd_dot(a[i].position - p.position, chord) / length : 0
           let t = min(1, max(0, raw))
+          // Alpha and winding can reject the interval without evaluating
+          // its more expensive contour distances.
+          let alpha = abs(a[i].alpha - (p.alpha + (q.alpha - p.alpha) * t)) * 4096
+          if alpha > 1 || raw < previousT || raw < 0 || raw > 1 || length <= 1e-10 {
+            needsSplit = true;break
+          }
+          previousT = raw
           let center = p.position + (q.position - p.position) * t
           let edge = p.edge + (q.edge - p.edge) * t
           let rail = max(
             simd_length(a[i].position + a[i].edge - center - edge),
             simd_length(a[i].position - a[i].edge - center + edge))
-          let alpha = abs(a[i].alpha - (p.alpha + (q.alpha - p.alpha) * t)) * 4096
-          var error = max(rail / tolerance, alpha)
-          // A tiny folded stroke can accumulate opacity. Never flatten its winding.
-          if raw < previousT || raw < 0 || raw > 1 || length <= 1e-10 { error = max(error, 2) }
-          previousT = raw
-          if error > worst {
-            worst = error
-            split = i
-          }
+          if rail / tolerance > 1 { needsSplit = true;break }
         }
-        if let split {
+        if needsSplit {
+          // Reject at the first counterexample, then bisect the interval.
+          // Searching for the farthest violation can repeatedly peel off one
+          // sample and rescan the same prefix: quadratic work on noisy ink.
+          // Balanced children bound depth; every accepted interval still pays
+          // the same complete contour/alpha/fold proof above.
+          let split = start + (end - start) / 2
           keep.insert(split)
           pending.append((start, split))
           pending.append((split, end))

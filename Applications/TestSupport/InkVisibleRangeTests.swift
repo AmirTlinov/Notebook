@@ -200,6 +200,35 @@ final class InkVisibleRangeTests: XCTestCase {
     let a=XCTAttachment(data:try JSONSerialization.data(withJSONObject:records,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
     a.name="whole-straight-repeat-costs";a.lifetime = .keepAlways;add(a)
   }
+  func testUnreducibleCurvePreparationKeepsTheFullRaster() throws {
+    let count=100_000
+    let samples=(0..<count).map { i in SpatialInkSample(point:.init(x:Double(i),y:64+sin(Double(i)*0.37)*12),
+      timeOffset:Double(i)/128,width:4+Double(i%13)/4,opacity:0.25+Double(i%7)/16,force:0.75,azimuth:0,altitude:1) }
+    func milliseconds(_ start: ContinuousClock.Instant) -> Double {
+      let d=start.duration(to:.now).components;return Double(d.seconds)*1000+Double(d.attoseconds)/1e15
+    }
+    let start=ContinuousClock.now,value=source(samples)
+    let mesh=SpatialInkMesh(batches:[.init(source:value,projection:.local)])
+    let sourceMS=milliseconds(start),renderStart=ContinuousClock.now
+    let affine=InkAffine(.init(500/Float(count),1,6,0))
+    let actual=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:mesh,size:.init(width:512,height:128),scale:2,affine:affine))
+    let renderMS=milliseconds(renderStart)
+    let color=SIMD4<Float>(0.2,0.4,0.8,1)
+    let points=samples.map { SpatialInkGeometry.renderPoint(from:$0,color:color) }
+    let nodes=points.indices.map { InkRenderGeometry.node(at:$0,in:points) }
+    let reference=SpatialInkMesh(batches:[.init(tool:.pen,nodes:nodes,
+      chunks:SpatialInkGeometry.chunks(for:nodes,color:color,eraser:false,buildLOD:false),projection:.local)])
+    let control=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:reference,size:.init(width:512,height:128),scale:2,affine:affine))
+    let a=Array(try XCTUnwrap(actual.dataProvider?.data) as Data),b=Array(try XCTUnwrap(control.dataProvider?.data) as Data)
+    XCTAssertEqual(a,b);XCTAssertTrue(a.contains { $0 > 0 })
+    let query=mesh.batches[0].query(viewport:.init(x:0,y:0,width:512,height:128),affine:affine)
+    XCTAssertTrue(query.chunks.allSatisfy { $0.count == 1 })
+    let record:[String:Any]=["events":count,"sourceMilliseconds":sourceMS,"queryToRasterMilliseconds":renderMS,
+      "sourceToRasterMilliseconds":sourceMS+renderMS,"queryVisits":query.cost.visitedNodes,
+      "chunks":query.chunks.count,"sourceBytes":value.payloadBytes,"maxChannelError":0]
+    let proof=XCTAttachment(data:try JSONSerialization.data(withJSONObject:record,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
+    proof.name="unreducible-detail-search-costs";proof.lifetime = .keepAlways;add(proof)
+  }
   func testLocalBendKeepsExactRasterWithoutExpandingStraightNeighbours() throws {
     let samples=(0..<10_000).map { i in SpatialInkSample(point:.init(x:Double(i),y:10),
       timeOffset:Double(i)/128,width:4,opacity:0.5,force:0.75,azimuth:0,altitude:1) }
