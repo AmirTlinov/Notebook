@@ -271,11 +271,13 @@ final class NotebookAppModel {
   }
   private(set) var spatialInk: SpatialInkJournal? {
     didSet {
+      spatialInkMembershipRevision &+= 1
       elementErasureCache.invalidateSpatial()
       collaborationReadEpoch &+= 1
       if oldValue != spatialInk { collaborationContentEpoch &+= 1 }
     }
   }
+  @ObservationIgnored private(set) var spatialInkMembershipRevision: UInt64 = 0
   private(set) var loadedInkSurfaces: Set<SurfaceID> = []
   func renderingInk(on surface: SurfaceID, fallback: SpatialInkJournal?) -> SpatialInkJournal? {
     loadedInkSurfaces.contains(surface) ? spatialInk : fallback
@@ -2945,12 +2947,9 @@ final class NotebookAppModel {
       value.itemID = id
     case .element(.page(let page, let id)):
       value.target = .init(kind: .page, id: page); value.elementID = id
-    case .element(.spatial(let board, let id)):
-      guard let element = boardHierarchy?.board(board)?.elements.first(where: { $0.id == id }),
-        [.board, .cover].contains(element.surface.kind), let owner = element.surface.ownerID else { return nil }
-      value.target = .init(kind: element.surface.kind == .cover ? .cover : .board, id: owner,
-        boardID: element.surface.kind == .cover ? board : nil)
-      value.elementID = id
+    case .element(let reference):
+      guard let source = nativeElementSource(reference) else { return nil }
+      value.target = source.target; value.elementID = source.id
     case .elements(let refs,let items):
       let target = refs.first.flatMap { nativeElementSource($0)?.target }
         ?? items.first.map { CollaborationTarget(kind:.board,id:$0.boardID) }
@@ -3017,7 +3016,8 @@ final class NotebookAppModel {
     // A passive raster is selectable, but it is not a live manipulation owner.
     // Selection requests its ordinary scene admission; do not commit an
     // invisible drag while the installed cohort still owns baked pixels.
-    if case .spatial = reference, graphicElement(reference) != nil || nativeTextTarget(reference) != nil,
+    if case .spatial = reference, acceptedWorkingGraphic(reference) == nil,
+      graphicElement(reference) != nil || nativeTextTarget(reference) != nil,
       let cohort = compositionTiles.published, presentedElement(reference, cohort: cohort) == nil { return nil }
     guard selectionSession.contains(reference), inputGate.beginFingerSequence() != nil,
       let geometry = elementGeometry(reference) else { return nil }

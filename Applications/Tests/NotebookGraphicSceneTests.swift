@@ -226,7 +226,8 @@ import XCTest
 
   func testLassoContactSelectsNotebookBoardDocumentAndTextByIntersection() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("lasso-scene-\(UUID())")
-    let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
+    let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false,
+      preferences:UserDefaults(suiteName:UUID().uuidString)!)
     retainNotebookUntilTeardown(model,removing:root)
     await model.start(pageSize:NotebookAppModel.defaultPageSize)
     let board = try XCTUnwrap(model.presence?.boardID), notebook = try XCTUnwrap(model.workspace?.selectedItemID)

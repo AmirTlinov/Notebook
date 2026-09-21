@@ -9,7 +9,7 @@ enum DrawingTool: String, CaseIterable, Codable, Sendable {
   var usesInkJournal: Bool { drawsInk || self == .eraser }
   var title: String {
     switch self {
-    case .pen: "Ручка"; case .marker: "Маркер"; case .eraser: "Ластик"; case .lasso: "Лассо / выделение"
+    case .pen: "Ручка"; case .marker: "Маркер"; case .eraser: "Ластик"; case .lasso: "Лассо"
     case .shape: "Фигуры"; case .text: "Текст"; case .connector: "Стрелка"; case .ruler: "Линейка"; case .laser: "Указка"
     }
   }
@@ -41,11 +41,6 @@ enum NotebookShapeOperation: String, Codable, CaseIterable, Sendable {
     switch self { case .normal: "Обычный"; case .union: "Объединение"; case .subtract: "Вычитание";
     case .intersect: "Пересечение"; case .exclude: "Исключение" }
   }
-}
-
-enum NotebookLassoMode: String, Codable, CaseIterable, Sendable {
-  case region, elements
-  var title: String { self == .region ? "Лассо" : "Выделение" }
 }
 
 /// Device-local preferences. Neither selection, a contact nor authored content
@@ -80,10 +75,15 @@ struct NotebookDrawingToolSettings: Codable, Equatable, Sendable {
   }
   var lassoAddsToSelection = false
   init() {}
-  private var lassoBehavior: NotebookLassoMode?
-  var lassoMode: NotebookLassoMode {
-    get { lassoBehavior ?? .region }
-    set { lassoBehavior = newValue }
+  private var lassoInk: Bool?
+  private var lassoObjects: Bool?
+  var lassoSelectsInk: Bool {
+    get { lassoInk ?? true }
+    set { lassoInk = newValue }
+  }
+  var lassoSelectsObjects: Bool {
+    get { lassoObjects ?? true }
+    set { lassoObjects = newValue }
   }
 
   var isValid: Bool {
@@ -98,6 +98,46 @@ struct NotebookDrawingToolSettings: Codable, Equatable, Sendable {
 /// Finite geometry in the contacted owner's coordinates, not screen pixels.
 /// This policy is shared by preview, commit and native contract tests.
 enum NotebookToolGeometry {
+  /// Retains corners and loops within a screen-derived error bound. A hard
+  /// processing budget increases that bound and recomputes the geometry;
+  /// index-based sampling is deliberately avoided because it drops features.
+  static func simplifiedPath(_ points: [SpatialPoint], tolerance: Double, maximumCount: Int) -> [SpatialPoint] {
+    guard points.count > maximumCount, maximumCount >= 3 else { return points }
+    func distanceSquared(_ point: SpatialPoint, from a: SpatialPoint, to b: SpatialPoint) -> Double {
+      let dx=b.x-a.x,dy=b.y-a.y,length=dx*dx+dy*dy
+      guard length > 0 else { return pow(point.x-a.x,2)+pow(point.y-a.y,2) }
+      let t=min(1,max(0,((point.x-a.x)*dx+(point.y-a.y)*dy)/length))
+      return pow(point.x-(a.x+t*dx),2)+pow(point.y-(a.y+t*dy),2)
+    }
+    func simplify(_ threshold: Double) -> [SpatialPoint] {
+      var retained=Array(repeating:false,count:points.count),stack=[(0,points.count-1)]
+      retained[0]=true;retained[points.count-1]=true
+      let thresholdSquared=threshold*threshold
+      while let (start,end)=stack.popLast(),end > start+1 {
+        var furthest=start+1,maximum=0.0
+        for index in (start+1)..<end {
+          let distance=distanceSquared(points[index],from:points[start],to:points[end])
+          if distance > maximum { maximum=distance;furthest=index }
+        }
+        if maximum > thresholdSquared {
+          retained[furthest]=true;stack.append((start,furthest));stack.append((furthest,end))
+        }
+      }
+      var result=points.indices.compactMap { retained[$0] ? points[$0] : nil }
+      if result.count < 3 {
+        let index=(1..<(points.count-1)).max {
+          distanceSquared(points[$0],from:points[0],to:points.last!)
+            < distanceSquared(points[$1],from:points[0],to:points.last!)
+        }!
+        result=[points[0],points[index],points.last!]
+      }
+      return result
+    }
+    var threshold=max(0.000_001,tolerance),result=simplify(max(0.000_001,tolerance))
+    while result.count > maximumCount { threshold *= 2;result=simplify(threshold) }
+    return result
+  }
+
   static func figure(from start: SpatialPoint, to end: SpatialPoint, shape: DrawingShape,
     preservesAspect: Bool, width: Double) -> NotebookQuickShapeFit? {
     guard [start.x,start.y,end.x,end.y,width].allSatisfy(\.isFinite), width > 0 else { return nil }
@@ -125,16 +165,6 @@ enum NotebookToolGeometry {
     return corners.contains { contains($0,polygon:polygon) }
       || polygon.contains { rect.contains(CGPoint(x:$0.x,y:$0.y)) }
       || zip(corners,corners.dropFirst()+corners.prefix(1)).contains { intersects(from:$0,to:$1,polygon:polygon) }
-  }
-
-  /// Whole-object selection is deliberately stricter than a lasso cut. A
-  /// loop touching a very large page, group or board item must never select
-  /// that entire owner and produce a canvas-sized editing frame.
-  static func encloses(_ rect: CGRect, polygon: [SpatialPoint]) -> Bool {
-    guard !rect.isNull, rect.width >= 0, rect.height >= 0 else { return false }
-    return [SpatialPoint(x:rect.minX,y:rect.minY), .init(x:rect.maxX,y:rect.minY),
-      .init(x:rect.maxX,y:rect.maxY), .init(x:rect.minX,y:rect.maxY)]
-      .allSatisfy { contains($0,polygon:polygon) }
   }
 
   static func intersects(from a: SpatialPoint, to b: SpatialPoint, polygon: [SpatialPoint]) -> Bool {

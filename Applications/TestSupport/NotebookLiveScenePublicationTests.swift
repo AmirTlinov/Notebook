@@ -58,6 +58,29 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     XCTAssertTrue(model.compositionTiles.published === fixture.cohort)
   }
 
+  func testAcceptedWorkingGraphicOwnsSelectionAndManipulationBeforeItsWriterCompletes() async throws {
+    let fixture = try await fixture(), model = fixture.model, board = fixture.presence.boardID
+    let lock = try NotebookSQLWriteBlocker(store: model.store)
+    defer { try? lock.release() }
+    let object = NotebookWorkingGraphic(id: UUID(), surface: .board(board),
+      frame: .init(x: 140, y: 180, width: 240, height: 160), worldOrigin: .zero,
+      graphic: .init(shape: .rectangle, style: .init(strokeWidth: 3)))
+    let address = NotebookToolAddress(surface: .board(board), boardID: board, worldOrigin: .zero, bounds: nil)
+    XCTAssertTrue(model.acceptAuthoredGraphic(object, at: address))
+    let reference = address.reference(object.id)
+    model.selectElement(reference)
+    XCTAssertNil(model.presentedElement(reference, cohort: fixture.cohort),
+      "The retained cohort must not pretend it already admitted the new object")
+    XCTAssertEqual(model.selectionForPublication?.elementID, object.id)
+    XCTAssertNotNil(NotebookAttentionProjection.editingFrame(reference, model: model, presence: fixture.presence))
+    let contact = try XCTUnwrap(model.beginElementManipulation(reference, kind: .move))
+    model.cancelElementManipulation(contact)
+    try lock.release()
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved, model.persistenceFailure ?? "")
+    XCTAssertNotNil(try model.store.readSpatialElement(boardID: board, elementID: object.id))
+  }
+
   func testAcceptedProgramStateInvalidatesAReadBeforeItsWriterCompletes() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("input-frontier-" + UUID().uuidString)
     let store = NotebookStore(root: root), actor = UUID()

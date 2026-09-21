@@ -797,7 +797,7 @@ import AppKit
     XCTAssertFalse(dark(cut,60,70),"The local source frame is not an extra painted copy")
   }
 
-  func testElementSelectionUsesDisplayedBoundsAndDoesNotSelectTheGroupDescriptor() async throws {
+  func testLassoUsesDisplayedContoursAndDoesNotSelectTheGroupDescriptor() async throws {
     let root=FileManager.default.temporaryDirectory.appendingPathComponent("group-lasso-\(UUID())")
     let store=NotebookStore(root:root),actor=UUID(),size=PageSize(width:600,height:400)
     let (workspace,_)=try store.loadOrCreate(actor:actor,pageSize:size)
@@ -811,22 +811,25 @@ import AppKit
       .init(id:"ellipse",kind:.graphic,frame:.init(x:0,y:0,width:100,height:100),source:"",html:"",graphic:.init(shape:.ellipse,style:.init(fill:.black)),parentID:"whole"),
       .init(id:"ink",kind:.graphic,frame:.init(x:0,y:0,width:100,height:100),source:"",html:"",graphic:.init(shape:.freehand,freehand:ink),parentID:"whole")],actor:actor)
     try store.savePage(page)
-    let model=NotebookAppModel(store:store,startsNearbySync:false)
+    let model=NotebookAppModel(store:store,startsNearbySync:false,
+      preferences:UserDefaults(suiteName:UUID().uuidString)!)
     retainNotebookUntilTeardown(model,removing:root);await model.start(pageSize:size)
     let address=NotebookToolAddress(surface:.page(pageID),boardID:nil,worldOrigin:nil,bounds:nil)
     model.selectDrawingTool(.lasso)
-    model.drawingToolSettings.lassoMode = .elements
-    func lasso(_ min: Double,_ max: Double) {
+    func lasso(_ min: Double,_ max: Double,ink: Bool,passes: Int = 1) {
+      model.drawingToolSettings.lassoSelectsInk=ink;model.drawingToolSettings.lassoSelectsObjects = !ink
       let local:[SpatialPoint]=[.init(x:min,y:min),.init(x:max,y:min),.init(x:max,y:max),.init(x:min,y:max)]
-      let points:[SpatialPoint]=local.map { point in SpatialPoint(x:500.0-4.0*point.y,y:50.0+2.0*point.x) }
+      let repeated:[SpatialPoint]=Array(repeating:local,count:passes).flatMap { $0 }
+      let points:[SpatialPoint]=repeated.map { point in SpatialPoint(x:500.0-4.0*point.y,y:50.0+2.0*point.x) }
       XCTAssertTrue(model.drawingTools.begin(at:points[0],address:address,screenScale:1))
       for point in points.dropFirst() { model.drawingTools.move(to:point) };model.drawingTools.finish()
     }
-    lasso(2,5)
-    XCTAssertTrue(model.selectionSession.elements.isEmpty,"Touching a descendant never selects its whole transformed frame")
-    lasso(-1,101)
-    XCTAssertEqual(Set(model.selectionSession.elements),Set([address.reference("ellipse"),address.reference("ink")]))
-    XCTAssertFalse(model.selectionSession.contains(address.reference("whole")),"The group descriptor is not a selectable painted element")
+    lasso(2,5,ink:false)
+    XCTAssertTrue(model.selectionSession.elements.isEmpty,"Neither the empty ellipse corner nor its nonpainting group is selected")
+    lasso(40,60,ink:false);XCTAssertEqual(model.selectionSession.elements,[address.reference("ellipse")])
+    lasso(40,60,ink:false,passes:2);XCTAssertTrue(model.selectionSession.elements.isEmpty,"Repeated lasso loops keep the existing even-odd rule")
+    lasso(18,22,ink:true);XCTAssertEqual(model.selectionSession.elements,[address.reference("ink")])
+    lasso(78,82,ink:true);XCTAssertTrue(model.selectionSession.elements.isEmpty,"The freehand's empty bounding-box corner stays empty")
   }
 
   func testHeldMemberEditsItsOwnBasisAndKeepsItsOriginalBodyThroughSaveAndUndo() async throws {

@@ -30,20 +30,18 @@ final class NotebookDrawingToolController {
     let address: NotebookToolAddress
     let graph: NotebookGraphicGraph
     let screenScale: Double
-    let ink: Task<NotebookLassoInkSource.Prepared?,Never>?
+    let ink: Task<NotebookLassoInkSource.Prepared,Error>?
     var points: [SpatialPoint]
   }
   private unowned let model: NotebookAppModel
   private(set) var contact: Contact?
   var ruler: NotebookRuler?
   private(set) var laserTraces: [NotebookLaserTrace] = []
-  @ObservationIgnored private var inkSnapshotCache: (key: String, task: Task<NotebookLassoInkSource.Prepared?,Never>)?
+  @ObservationIgnored private var inkSnapshotCache: (key: String, task: Task<NotebookLassoInkSource.Prepared,Error>)?
   @ObservationIgnored private var lassoTask: Task<Void,Never>?
   @ObservationIgnored var onContactCancellation: (() -> Void)?
   init(model: NotebookAppModel) { self.model = model }
-  var selectsWorkspaceItems: Bool {
-    model.drawingTool == .lasso && model.drawingToolSettings.lassoMode == .elements && model.presence?.mode == .board
-  }
+  var selectsWorkspaceItems: Bool { model.drawingTool == .lasso && model.presence?.mode == .board }
 
   func placeRuler() {
     guard let presence = model.presence else { return }
@@ -76,7 +74,7 @@ final class NotebookDrawingToolController {
     else if let board = address.boardID ?? address.surface.ownerID {
       graph = model.authoredGraphicGraph(boardID:board)
     } else { graph = .init([]) }
-    let ink = model.drawingTool == .lasso && model.drawingToolSettings.lassoMode == .region
+    let ink = model.drawingTool == .lasso && model.drawingToolSettings.lassoSelectsInk
       ? inkSnapshot(at:address,graph:graph) : nil
     if model.drawingTool == .ruler, ruler?.address.surface != address.surface {
       ruler = .init(address:address,start:point,angle:model.drawingToolSettings.rulerAngle,length:PhysicalPaper.pointsPerCentimeter*10)
@@ -91,26 +89,27 @@ final class NotebookDrawingToolController {
     return true
   }
 
-  private func inkSnapshot(at address: NotebookToolAddress, graph: NotebookGraphicGraph) -> Task<NotebookLassoInkSource.Prepared?,Never>? {
+  private func inkSnapshot(at address: NotebookToolAddress, graph: NotebookGraphicGraph) -> Task<NotebookLassoInkSource.Prepared,Error>? {
     let raw: Task<NotebookLassoInkSource?,Never>
     if let page = model.pages[address.surface.ownerID!], address.surface.kind == .page { raw = model.lassoInkSnapshot(page) }
     else {
       guard let journal = model.renderingInk(on:address.surface,fallback:model.compositionTiles.published?.liveData.ink) else { return nil }
       let suppressed = Set(graph.nodes.values.filter { !$0.graphic.visible || $0.graphic.representation == .geometry }.flatMap { $0.graphic.sourceInkIDs })
-      raw = Task { .spatial(journal,suppressed) }
+      let membershipRevision = model.spatialInkMembershipRevision
+      raw = Task { .spatial(journal,suppressed,membershipRevision:membershipRevision) }
     }
     return Task { [weak self] in
-      guard let source = await raw.value, let self else { return nil }
+      guard let source = await raw.value, let self else { throw CancellationError() }
       let key = source.cacheKey(surface:address.surface)
       if let cached = inkSnapshotCache, cached.key == key {
-        return await cached.task.value?.excluding(source.suppressed)
+        return try await cached.task.value.excluding(source.suppressed)
       }
       let task = Task.detached(priority:.userInitiated) {
-        try? source.prepare(surface:address.surface,origin:address.worldOrigin)
+        try source.prepare(surface:address.surface,origin:address.worldOrigin)
       }
       inkSnapshotCache?.task.cancel()
       inkSnapshotCache = (key,task)
-      return await task.value
+      return try await task.value
     }
   }
 
@@ -121,7 +120,7 @@ final class NotebookDrawingToolController {
       : model.authoredGraphicGraph(boardID:address.boardID ?? address.surface.ownerID!)
     let radius = 6/max(0.001,screenScale)
     var settings = model.drawingToolSettings
-    settings.lassoMode = .region; settings.lassoAddsToSelection = false
+    settings.lassoSelectsInk = true; settings.lassoSelectsObjects = false; settings.lassoAddsToSelection = false
     finishLasso(.init(id:UUID(),tool:.lasso,settings:settings,pen:model.penStyle,address:address,graph:.init([]),
       screenScale:screenScale,ink:inkSnapshot(at:address,graph:graph),points:[
         .init(x:point.x-radius,y:point.y-radius),.init(x:point.x+radius,y:point.y-radius),
@@ -136,7 +135,10 @@ final class NotebookDrawingToolController {
     }
     if current.tool == .lasso || current.tool == .laser {
       if let last = current.points.last, hypot(last.x-point.x,last.y-point.y)*current.screenScale < 1 { return }
-      if current.points.count >= 4096 { current.points = current.points.enumerated().filter { $0.offset % 2 == 0 }.map(\.element) }
+      if current.tool == .lasso, current.points.count >= 4096 {
+        current.points = NotebookToolGeometry.simplifiedPath(current.points,
+          tolerance:0.5/current.screenScale,maximumCount:2048)
+      }
       current.points.append(point)
     } else { current.points = [current.points[0],point] }
     contact = current
@@ -191,69 +193,57 @@ final class NotebookDrawingToolController {
   }
 
   private func finishLasso(_ current: Contact) {
-    let polygon = simplifiedLasso(current.points,screenScale:current.screenScale)
+    let polygon = NotebookToolGeometry.simplifiedPath(current.points,
+      tolerance:0.75/current.screenScale,maximumCount:512)
     guard polygon.count >= 3 else { model.clearSelection(); return }
-    if current.settings.lassoMode == .elements {
-      finishElementSelection(current,polygon:polygon)
+    var pending: [Task<Void, Never>] = []
+    var references = model.lassoElements(polygon,at:current.address,graph:current.graph,
+      includesInk:current.settings.lassoSelectsInk,includesObjects:current.settings.lassoSelectsObjects,
+      waiting: { pending.append($0) })
+    var items = current.settings.lassoSelectsObjects ? model.lassoItems(polygon,at:current.address) : []
+    if current.settings.lassoAddsToSelection {
+      references += model.selectionSession.elements; items += model.selectionSession.items
+    }
+    references = Array(Set(references))
+    items = Array(Set(items))
+    guard references.count+items.count <= 32 else {
+      model.showCue("Выберите не более 32 объектов за один раз.")
       return
     }
+    model.selectElements(references,items:items)
     let selection = model.selectionSession.id
-    lassoTask = Task { [weak self] in
-      let source = await current.ink?.value
-      guard !Task.isCancelled, let source else {
-        if let self,model.selectionSession.id == selection { model.clearSelection() }
-        return
-      }
-      let preparation = Task.detached(priority:.userInitiated) {
-        try source.selection(polygon:polygon,surface:current.address.surface,
-          origin:current.address.worldOrigin,bounds:current.address.bounds)
-      }
-      do {
-        let result = try await withTaskCancellationHandler { try await preparation.value } onCancel: { preparation.cancel() }
-        guard !Task.isCancelled, let self, model.selectionSession.id == selection else { return }
-        guard let result else { model.clearSelection(); return }
-        let selected = NotebookWorkingGraphic(id:current.id,surface:current.address.surface,frame:result.selected.frame,
-          worldOrigin:current.address.worldOrigin,graphic:result.selected.graphic)
-        let remainder = result.remainder.map { piece in
-          NotebookWorkingGraphic(id:UUID(),surface:current.address.surface,frame:piece.frame,
-            worldOrigin:current.address.worldOrigin,graphic:piece.graphic)
-        }
-        if model.acceptLassoSelection(selected,remainder:remainder,at:current.address,expectedInkRevision:source.revision) {
-          model.selectElement(current.address.reference(selected.id))
-        }
-      } catch is CancellationError {} catch { self?.model.showCue(error.localizedDescription) }
-    }
-  }
-
-  private func finishElementSelection(_ current:Contact,polygon:[SpatialPoint]) {
-    var pending: [Task<Void, Never>] = []
-    var references = model.elementsEnclosed(by:polygon,at:current.address,graph:current.graph,
-      waiting:{ pending.append($0) })
-    var items = model.itemsEnclosed(by:polygon,at:current.address)
-    let previousReferences=current.settings.lassoAddsToSelection ? model.selectionSession.elements : []
-    let previousItems=current.settings.lassoAddsToSelection ? model.selectionSession.items : []
-    let selection=model.selectionSession.id
-    func publish() {
-      references += previousReferences;items += previousItems
-      model.selectElements(references,items:items)
-    }
-    guard !pending.isEmpty else { publish();return }
     lassoTask = Task { [weak self] in
       for task in pending {
         await task.value
         guard !Task.isCancelled else { return }
       }
-      guard let self,model.selectionSession.id == selection else { return }
-      references=model.elementsEnclosed(by:polygon,at:current.address,graph:current.graph)
-      items=model.itemsEnclosed(by:polygon,at:current.address)
-      publish()
+      do {
+        let source = try await current.ink?.value
+        guard !Task.isCancelled else { return }
+        let preparation = Task.detached(priority:.userInitiated) {
+          try source?.selection(polygon:polygon,surface:current.address.surface,
+            origin:current.address.worldOrigin,bounds:current.address.bounds)
+        }
+        let result = try await withTaskCancellationHandler { try await preparation.value } onCancel: { preparation.cancel() }
+        guard !Task.isCancelled, let self, model.selectionSession.id == selection else { return }
+        var references = model.selectionSession.elements
+        if !pending.isEmpty {
+          references += model.lassoElements(polygon,at:current.address,graph:current.graph,
+            includesInk:current.settings.lassoSelectsInk,includesObjects:current.settings.lassoSelectsObjects)
+          references = Array(Set(references))
+        }
+        let items = model.selectionSession.items
+        guard references.count+items.count+(result == nil ? 0 : 1) <= 32 else {
+          model.showCue("Выберите не более 32 объектов за один раз."); return
+        }
+        if let result, let ink = source {
+          let object = NotebookWorkingGraphic(id:current.id,surface:current.address.surface,frame:result.frame,
+            worldOrigin:current.address.worldOrigin,graphic:result.graphic)
+          if model.acceptAuthoredGraphic(object,at:current.address,expectedInkRevision:ink.revision) { references.append(current.address.reference(object.id)) }
+        }
+        if result != nil || !pending.isEmpty { model.selectElements(references,items:items) }
+      } catch is CancellationError {} catch { self?.model.showCue(error.localizedDescription) }
     }
-  }
-
-  private func simplifiedLasso(_ points:[SpatialPoint],screenScale:Double)->[SpatialPoint] {
-    guard points.count > 256 else { return points }
-    let stride=Double(points.count-1)/255
-    return (0..<256).map { points[min(points.count-1,Int((Double($0)*stride).rounded()))] }
   }
 
   private func figure(_ current: Contact) -> NotebookWorkingGraphic? {
@@ -303,46 +293,16 @@ final class NotebookDrawingToolController {
 }
 
 extension NotebookAppModel {
-  private func authoredGraphicValues(_ object:NotebookWorkingGraphic,address:NotebookToolAddress)->[String:JSONValue]? {
-    guard var values = try? ["kind":JSONValue.string("graphic"),"source":.string(""),
-      "frame":.encode(object.frame),"graphic":.encode(object.graphic)] else { return nil }
-    if let origin = address.worldOrigin { values["worldOrigin"] = try? .encode(origin) }
-    return values
-  }
-
   @discardableResult
   func acceptAuthoredGraphic(_ object: NotebookWorkingGraphic, at address: NotebookToolAddress, expectedInkRevision: String? = nil) -> Bool {
-    guard let values=authoredGraphicValues(object,address:address) else { return false }
+    guard var values = try? ["kind":JSONValue.string("graphic"),"source":.string(""),
+      "frame":.encode(object.frame),"graphic":.encode(object.graphic)] else { return false }
+    if let origin = address.worldOrigin { values["worldOrigin"] = try? .encode(origin) }
     var accepted = object; accepted.accepted = true
     if object.graphic.freehand == nil || address.surface.kind == .page { updateWorkingGraphic(accepted,strokeID:object.strokeID) }
     if !performElementOperations([.init(reference:address.reference(object.id),kind:object.graphic.sourceInkIDs.isEmpty ? .insertElement : .convertInkToElement,values:values)],
       summary:"Нарисовать: " + object.graphic.shape.displayName,insertionTarget:address.target,expectedInkRevision:expectedInkRevision) {
       removeWorkingGraphics { $0.id == object.id }; return false
-    }
-    return true
-  }
-
-  /// A region cut is one causal edit: the selected geometry claims and hides
-  /// the measured journal actions while the outside vector piece is inserted
-  /// in the same transaction. No intermediate whole-stroke selection exists.
-  @discardableResult
-  func acceptLassoSelection(_ selected:NotebookWorkingGraphic,remainder:NotebookWorkingGraphic?,
-    at address:NotebookToolAddress,expectedInkRevision:String)->Bool {
-    let objects=[selected]+(remainder.map { [$0] } ?? [])
-    guard selected.graphic.sourceInkIDs.isEmpty == false,
-      let selectedValues=authoredGraphicValues(selected,address:address),
-      remainder == nil || remainder?.graphic.sourceInkIDs.isEmpty == true else { return false }
-    var edits=[NotebookElementEdit(reference:address.reference(selected.id),kind:.convertInkToElement,values:selectedValues)]
-    if let remainder {
-      guard let values=authoredGraphicValues(remainder,address:address) else { return false }
-      edits.append(.init(reference:address.reference(remainder.id),kind:.insertElement,values:values))
-    }
-    for var object in objects {
-      object.accepted=true;updateWorkingGraphic(object,strokeID:object.strokeID)
-    }
-    guard performElementOperations(edits,summary:"Вырезать область лассо",insertionTarget:address.target,
-      expectedInkRevision:expectedInkRevision) else {
-      let ids=Set(objects.map(\.id));removeWorkingGraphics { ids.contains($0.id) };return false
     }
     return true
   }
@@ -387,7 +347,8 @@ extension NotebookAppModel {
     return id
   }
 
-  func elementsEnclosed(by polygon: [SpatialPoint], at address: NotebookToolAddress, graph: NotebookGraphicGraph,
+  func lassoElements(_ polygon: [SpatialPoint], at address: NotebookToolAddress, graph: NotebookGraphicGraph,
+    includesInk: Bool = true, includesObjects: Bool = true,
     waiting: ((Task<Void, Never>) -> Void)? = nil) -> [EditableElementReference] {
     let origin = address.worldOrigin ?? .zero
     let erasures = elementErasures(on:address.surface)
@@ -398,19 +359,24 @@ extension NotebookAppModel {
       candidates=AnySequence(visible.layouts.keys.lazy.compactMap { graph.node($0) })
     } else { candidates=graph.nodes.values }
     let references = candidates.filter { node in
-      guard node.surface == address.surface, node.shown, let layout = graph.resolve(node.id).layout else { return false }
+      guard (node.graphic.freehand != nil ? includesInk : includesObjects), node.surface == address.surface, node.shown, let layout = graph.resolve(node.id).layout else { return false }
       let delta = origin.delta(to:node.origin), frame = layout.frame
-      guard NotebookToolGeometry.encloses(.init(x:delta.x+frame.x,y:delta.y+frame.y,width:frame.width,height:frame.height),polygon:polygon) else { return false }
+      guard NotebookToolGeometry.intersects(.init(x:delta.x+frame.x,y:delta.y+frame.y,width:frame.width,height:frame.height),polygon:polygon) else { return false }
+      let local = polygon.compactMap { layout.framePoint($0,from:origin) }
+      guard local.count == polygon.count else { return false }
       let cuts = erasures[node.id] ?? []
-      if cuts.isEmpty { return true }
-      let appearance = elementErasureCache.appearance(surface:address.surface,id:node.id,graphic:node.graphic,layout:layout,
-        size:.init(width:frame.width,height:frame.height),erasures:cuts)
+      let appearance = cuts.isEmpty
+        ? NotebookElementAppearance(graphic:node.graphic,layout:layout,size:.init(width:frame.width,height:frame.height),erasures:[])
+        : elementErasureCache.appearance(surface:address.surface,id:node.id,graphic:node.graphic,layout:layout,
+            size:.init(width:frame.width,height:frame.height),erasures:cuts)
       guard let appearance else {
         if let task = elementErasureCache.pendingPreparation(surface:address.surface,id:node.id) { waiting?(task) }
         return false
       }
-      return appearance.state != .erased
+      guard appearance.state != .erased else { return false }
+      return appearance.intersects(local.map { .init(x:$0.x,y:$0.y) })
     }.map { address.reference($0.id) }
+    guard includesObjects else { return references }
     func visible(_ id: String, _ frame: CGRect) -> Bool {
       let cuts = erasures[id] ?? []
       guard !cuts.isEmpty else { return true }
@@ -425,7 +391,7 @@ extension NotebookAppModel {
         guard element.kind != .group, element.graphic == nil else { return false }
         let f = elementPresentationFrame(address.reference(element.id),fallback:element.frame)
         let rect = CGRect(x:f.x,y:f.y,width:f.width,height:f.height)
-        return NotebookToolGeometry.encloses(rect,polygon:polygon) && visible(element.id,rect)
+        return NotebookToolGeometry.intersects(rect,polygon:polygon) && visible(element.id,rect)
       }.map { address.reference($0.id) }
     } else if let board = address.boardID ?? address.surface.ownerID, let cohort = compositionTiles.published {
       let elements = address.surface.kind == .cover
@@ -438,21 +404,21 @@ extension NotebookAppModel {
         let placement = graph.placement(element.id)
         let delta = origin.delta(to:placement?.origin ?? element.worldOrigin ?? .zero)
         let f = elementPresentationFrame(address.reference(element.id),fallback:NotebookTextTypography.frame(element))
-        return NotebookToolGeometry.encloses(.init(x:delta.x+f.x,y:delta.y+f.y,width:f.width,height:f.height),polygon:polygon)
+        return NotebookToolGeometry.intersects(.init(x:delta.x+f.x,y:delta.y+f.y,width:f.width,height:f.height),polygon:polygon)
           && visible(element.id,.init(x:f.x,y:f.y,width:f.width,height:f.height))
       }.map { address.reference($0.id) }
     }
     return all
   }
 
-  func itemsEnclosed(by polygon: [SpatialPoint], at address: NotebookToolAddress) -> [NotebookSelectedItem] {
+  func lassoItems(_ polygon: [SpatialPoint], at address: NotebookToolAddress) -> [NotebookSelectedItem] {
     guard address.surface.kind == .board, let board = address.surface.ownerID,
       let cohort = compositionTiles.published, let presence, presence.boardID == board else { return [] }
     let origin = address.worldOrigin ?? .zero
     return presentedWorkset(cohort:cohort,boardID:board,presence:presence).items.compactMap { item in
       let center = origin.delta(to:item.center), size = item.geometry
       let rect = CGRect(x:center.x-size.width/2,y:center.y-size.height/2,width:size.width,height:size.height)
-      return NotebookToolGeometry.encloses(rect,polygon:polygon) ? .init(boardID:board,itemID:item.id) : nil
+      return NotebookToolGeometry.intersects(rect,polygon:polygon) ? .init(boardID:board,itemID:item.id) : nil
     }
   }
 }
