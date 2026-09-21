@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// A bounded postorder graph: an edge can only name an earlier node. Shared
 /// repeat bodies are written once; no logical repeat is expanded by this codec.
@@ -165,8 +166,8 @@ extension InkSampleRelations: Codable {
         elementTargets:hasTargets ? targets : nil))
   }
 
-  fileprivate static func decodeMeasurements(from input: inout InkRelationReader) throws -> InkMeasurements {
-    let revision=try input.uuid()
+  fileprivate static func decodeMeasurements(from input: inout InkRelationReader, revision: UUID? = nil) throws -> InkMeasurements {
+    let revision=try revision ?? input.uuid()
     let exit = try input.step()
     let nodeCount = Int(try input.integer(UInt32.self))
     guard nodeCount > 0, nodeCount <= Self.maximumNodes else { throw CodingError.limitExceeded }
@@ -241,17 +242,71 @@ extension InkMeasurements: Codable {
     return output.data
   }
   public init(encodedRelations: Data) throws {
+    try self.init(encodedRelations:encodedRelations,sharing:nil)
+  }
+  private init(encodedRelations: Data, sharing: InkRelationDecoding?) throws {
     guard encodedRelations.count <= InkSampleRelations.maximumBytes else { throw InkSampleRelations.CodingError.limitExceeded }
     var input=InkRelationReader(data:encodedRelations)
     guard try input.bytes(4) == Data("NIM1".utf8) else { throw InkSampleRelations.CodingError.invalidSource }
-    self=try InkSampleRelations.decodeMeasurements(from:&input)
+    let revision=try input.uuid()
+    // Only the revision is outside the immutable body. Exit, basis origins,
+    // pending state and every measurement bit remain in the exact key.
+    let body=encodedRelations.dropFirst(input.offset)
+    if let storage=sharing?.storage(for:body) {
+      self.init(storage:storage,revision:revision);return
+    }
+    let decoded=try InkSampleRelations.decodeMeasurements(from:&input,revision:revision)
     guard input.offset == encodedRelations.count else { throw InkSampleRelations.CodingError.invalidSource }
+    self.init(storage:sharing?.admit(decoded,body:body,encodedBytes:encodedRelations.count) ?? decoded.storage,revision:revision)
   }
   public func encode(to encoder: any Encoder) throws {
     var container=encoder.singleValueContainer();try container.encode(encodedRelations())
   }
   public init(from decoder: any Decoder) throws {
-    let container=try decoder.singleValueContainer();try self.init(encodedRelations:container.decode(Data.self))
+    let container=try decoder.singleValueContainer()
+    try self.init(encodedRelations:container.decode(Data.self),sharing:decoder.userInfo[InkRelationDecoding.key] as? InkRelationDecoding)
+  }
+}
+
+/// One synchronous typed read (or SQL snapshot), never a global interning cache.
+/// Only fully validated bodies enter it. Data equality proves ALL body bytes;
+/// a hash collision alone cannot make two sources share storage. At capacity,
+/// decoding continues normally without retaining further candidates.
+final class InkRelationDecoding: Sendable {
+  fileprivate static let key=CodingUserInfoKey(rawValue:"Notebook.InkRelationDecoding")!
+  private struct State: Sendable {
+    var bodies: [Data:InkSampleRelations.Storage]=[:]
+    var retainedBytes=0
+  }
+  // Foundation's userInfo is Sendable. Keep that promise even if a decoder is
+  // borrowed concurrently; source trees themselves are already immutable.
+  private let state=Mutex(State())
+  let entryLimit: Int
+  let byteLimit: Int
+  var retainedBytes: Int { state.withLock { $0.retainedBytes } }
+  var entryCount: Int { state.withLock { $0.bodies.count } }
+
+  init(entryLimit: Int = 256, byteLimit: Int = 4*1024*1024) {
+    precondition(entryLimit >= 0 && byteLimit >= 0)
+    self.entryLimit=entryLimit;self.byteLimit=byteLimit
+  }
+  static func decoder(sharing: InkRelationDecoding = .init()) -> JSONDecoder {
+    let decoder=JSONDecoder();decoder.userInfo[key]=sharing;return decoder
+  }
+  fileprivate func storage(for body: Data) -> InkSampleRelations.Storage? {
+    state.withLock { $0.bodies[body] }
+  }
+  fileprivate func admit(_ source: InkMeasurements, body: Data, encodedBytes: Int) -> InkSampleRelations.Storage {
+    guard state.withLock({ $0.bodies.count < entryLimit && encodedBytes <= byteLimit-$0.retainedBytes }) else { return source.storage }
+    // Charge encoded key, unique tree and per-entry allowance, not logical
+    // events. This is a payload budget, not an assertion about process RSS.
+    let bytes=encodedBytes+source.payloadBytes+96
+    return state.withLock { state in
+      if let stored=state.bodies[body] { return stored }
+      guard state.bodies.count < entryLimit,bytes <= byteLimit-state.retainedBytes else { return source.storage }
+      state.bodies[body]=source.storage;state.retainedBytes += bytes
+      return source.storage
+    }
   }
 }
 

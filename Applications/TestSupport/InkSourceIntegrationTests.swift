@@ -6,6 +6,90 @@ import XCTest
 @testable import Notebook
 
 final class InkSourceIntegrationTests: XCTestCase {
+  func testReopenedCopiesShareOneBodyThroughEditAndRaster() throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("native-shared-ink-\(UUID())")
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store=NotebookStore(root:root),actor=UUID(),size=CGSize(width:160,height:128)
+    _=try store.initializeWorkspace(actor:actor,pageSize:.init(width:834,height:1194))
+    let page=try XCTUnwrap(store.loadIndex().selectedPageID),values=(0..<512).map { sample($0) }
+    let drawing=PageInkDrawing(actions:(0..<32).map { _ in
+      .init(tool:.pen,measurements:InkMeasurements(values,revision:UUID()))
+    })
+    let bytes=try drawing.dataRepresentation()
+    let before=try XCTUnwrap(InkRasterRenderer.shared.page(drawing,size:size,scale:2))
+    _=try store.savePage(.init(id:page,size:.init(width:834,height:1194),actor:actor,drawingData:bytes))
+    let reopened=try PageInkDrawing.decode(NotebookStore(root:root).loadPage(page).drawingData)
+    let shared=try XCTUnwrap(reopened.actions.first).samples.storage
+    XCTAssertTrue(reopened.actions.allSatisfy { $0.samples.storage === shared })
+    XCTAssertEqual(reopened.actions.map(\.id),drawing.actions.map(\.id))
+    XCTAssertEqual(reopened.actions.map(\.samples.revision),drawing.actions.map(\.samples.revision))
+    XCTAssertEqual(try reopened.dataRepresentation(),bytes)
+    let mesh=try PageInkMesh.prepare(reopened,reusing:[])
+    XCTAssertEqual(mesh.entries.count,32)
+    for entry in mesh.entries {
+      guard case .relative(let relative)=entry.mesh.parts[0].storage else { return XCTFail("Source expanded") }
+      XCTAssertTrue(relative.source.storage === shared)
+    }
+    let after=try XCTUnwrap(InkRasterRenderer.shared.page(reopened,size:size,scale:2))
+    XCTAssertEqual(try XCTUnwrap(before.dataProvider?.data) as Data,try XCTUnwrap(after.dataProvider?.data) as Data)
+    let last=try XCTUnwrap(reopened.actions.last)
+    let source=InkSampleRelations(sourceID:last.id,measurements:last.samples,header:.init(tool:.pen,color:last.color))
+    let replacement=SpatialInkSample(point:.init(x:80,y:80),timeOffset:values[31].timeOffset,
+      width:4,opacity:0.5,force:0.75,azimuth:0,altitude:1)
+    let edited=try source.editing(source.address(at:31),to:replacement,revision:UUID())
+    let changed=PageInkDrawing(actions:Array(reopened.actions.dropLast())+[
+      .init(id:last.id,tool:last.tool,color:last.color,measurements:edited.measurements,sequence:last.sequence)])
+    let changedImage=try XCTUnwrap(InkRasterRenderer.shared.page(changed,size:size,scale:2))
+    XCTAssertNotEqual(try XCTUnwrap(after.dataProvider?.data) as Data,try XCTUnwrap(changedImage.dataProvider?.data) as Data)
+    XCTAssertTrue(InkSampleRelations.sameBits(reopened.actions[0].samples[31],values[31]))
+    XCTAssertTrue(reopened.actions[0].samples.storage === shared)
+    XCTAssertTrue(changed.removing([last.id]).actions.last?.isActive == false)
+    XCTAssertTrue(changed.actions[0].samples.storage === shared)
+  }
+
+  func testColdDecodeSharingCostFor100000ShortBodiesAndUniqueControl() throws {
+    func milliseconds(_ duration: Duration) -> Double {
+      Double(duration.components.seconds)*1000+Double(duration.components.attoseconds)/1e15
+    }
+    func retained(_ values: [InkMeasurements]) -> (bodies:Int,bytes:Int) {
+      var storage=Set<ObjectIdentifier>(),nodes=Set<ObjectIdentifier>()
+      var bytes=values.capacity*MemoryLayout<InkMeasurements>.stride
+      for value in values where storage.insert(ObjectIdentifier(value.storage)).inserted {
+        bytes += value.storage.byteCount+value.storage.root.allocationSummary(seen:&nodes).bytes
+      }
+      return (storage.count,bytes)
+    }
+    var measurements:[[String:Any]]=[]
+    for unique in [false,true] {
+      let count=100_000,start=ContinuousClock.now
+      let seed=try InkMeasurements([sample(0),sample(1)]).encodedRelations().base64EncodedString()
+      let strings=try (0..<count).map { i in
+        unique ? try InkMeasurements([sample(i),sample(i+1)]).encodedRelations().base64EncodedString() : seed
+      }
+      let bytes=try JSONEncoder().encode(strings),prepareMS=milliseconds(start.duration(to:.now))
+      let controlStart=ContinuousClock.now
+      let control=try JSONDecoder().decode([InkMeasurements].self,from:bytes)
+      let controlMS=milliseconds(controlStart.duration(to:.now)),controlMemory=retained(control)
+      let scope=InkRelationDecoding(),actualStart=ContinuousClock.now
+      let actual=try InkRelationDecoding.decoder(sharing:scope).decode([InkMeasurements].self,from:bytes)
+      let actualMS=milliseconds(actualStart.duration(to:.now)),actualMemory=retained(actual)
+      XCTAssertEqual(actual.count,count)
+      XCTAssertEqual(actualMemory.bodies,unique ? count : 1)
+      XCTAssertEqual(controlMemory.bodies,count)
+      XCTAssertLessThanOrEqual(scope.entryCount,256);XCTAssertLessThanOrEqual(scope.retainedBytes,4*1024*1024)
+      for i in [0,49_999,99_999] { XCTAssertEqual(try actual[i].encodedRelations(),try control[i].encodedRelations()) }
+      measurements.append(["case":unique ? "unique-short-100k" : "identical-short-100k",
+        "inputBytes":bytes.count,"prepareInputMS":prepareMS,"decodeSharedMS":actualMS,"decodeIndependentMS":controlMS,
+        "uniqueBodies":actualMemory.bodies,"retainedSourceBytes":actualMemory.bytes,
+        "controlSourceBytes":controlMemory.bytes,"scopeEntries":scope.entryCount,
+        "scopePayloadBytesIncludingSharedSources":scope.retainedBytes])
+    }
+    let report=try JSONSerialization.data(withJSONObject:measurements,options:[.sortedKeys,.prettyPrinted])
+    print("INK_SHARED_DECODE_COST "+String(decoding:report,as:UTF8.self))
+    let attachment=XCTAttachment(data:report,uniformTypeIdentifier:"public.json")
+    attachment.name="shared-ink-cold-decode-cost";attachment.lifetime = .keepAlways;add(attachment)
+  }
+
   private func sample(_ i: Int, world: WorldPoint? = nil) -> SpatialInkSample {
     .init(point:.init(x:30+Double(i)/8,y:100),worldPoint:world,timeOffset:Double(i)/128,
       width:4,opacity:0.5,force:Double(i%7)/8,azimuth:Double(i%9)/4,altitude:0.5)

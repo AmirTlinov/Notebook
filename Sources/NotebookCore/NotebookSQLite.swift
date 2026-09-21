@@ -34,6 +34,8 @@ final class NotebookSQLConnection {
   var actionRecordCapturesPrepared = false
   var activeActionRecordCapture: NotebookActionRecordCaptureState?
   private var statements: [String: OpaquePointer] = [:]
+  // Borrowed by nested addressed reads; released with this SQL snapshot.
+  lazy var inkDecoding=InkRelationDecoding()
   private var readAllowance: NotebookSQLReadAllowance?
   private var remainingReadRows = 0
   private var remainingReadBytes = 0

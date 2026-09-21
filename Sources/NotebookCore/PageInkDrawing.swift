@@ -32,7 +32,7 @@ public struct PageInkDrawing: Codable, Equatable, Sendable {
   public static func decode(_ data: Data) throws -> Self {
     if data.isEmpty { return Self() }
     guard data.starts(with: signature) else { throw InkError.invalidDrawing }
-    let decoded = try JSONDecoder().decode(Self.self, from: data.dropFirst(signature.count))
+    let decoded = try InkRelationDecoding.decoder().decode(Self.self, from: data.dropFirst(signature.count))
     guard decoded.isValid, decoded.actions.allSatisfy({ $0.sequence > 0 }) else { throw InkError.invalidDrawing }
     return decoded
   }

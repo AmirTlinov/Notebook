@@ -132,7 +132,7 @@ extension NotebookStore {
       let headerData = rows.first(where: { $0[0].text == address })?[1].blob,
       let spansData = rows.first(where: { $0[0].text == spansAddress })?[1].blob
     else { throw NotebookStorageError.corruptRecord(address) }
-    let decoder = JSONDecoder()
+    let decoder = InkRelationDecoding.decoder(sharing:currentSQL!.inkDecoding)
     guard let header = try? decoder.decode(NotebookStoredPayload<SpatialInkActionHeader>.self, from: headerData),
       let spans = try? decoder.decode(NotebookStoredPayload<[SpatialInkSpan]>.self, from: spansData)
     else { throw NotebookStorageError.corruptRecord(address) }

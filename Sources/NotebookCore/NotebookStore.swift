@@ -181,7 +181,7 @@ public struct NotebookStore: Sendable {
   }
 
   public func loadSpatialInk() throws -> SpatialInkJournal {
-    let journal = try decoder.decode(
+    let journal = try InkRelationDecoding.decoder().decode(
       SpatialInkJournal.self,
       from: storedData(at: spatialInkURL)
     )

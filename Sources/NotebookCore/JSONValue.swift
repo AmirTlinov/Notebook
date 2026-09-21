@@ -19,7 +19,7 @@ public enum JSONValue: Codable, Equatable, Sendable {
 
   /// Reconstitutes the typed owner and runs that owner's decoding checks.
   public func decode<T: Decodable>(_ type: T.Type) throws -> T {
-    try JSONDecoder().decode(type, from: JSONEncoder().encode(self))
+    try InkRelationDecoding.decoder().decode(type, from: JSONEncoder().encode(self))
   }
 
   public var isValid: Bool {
