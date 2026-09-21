@@ -378,7 +378,10 @@ extension NotebookAppModel {
         : cohort.frame.workset(boardID:board).elements
       all += elements.filter { element in
         guard element.surface == address.surface, element.kind != .group, element.graphic == nil else { return false }
-        let delta = origin.delta(to:element.worldOrigin ?? .zero)
+        // A grouped body is placed in its ancestor's world basis, not its
+        // unchanged source origin. Picking must use the same placement as paint.
+        let placement = graph.placement(element.id)
+        let delta = origin.delta(to:placement?.origin ?? element.worldOrigin ?? .zero)
         let f = elementPresentationFrame(address.reference(element.id),fallback:NotebookTextTypography.frame(element))
         return visible(element.id,.init(x:f.x,y:f.y,width:f.width,height:f.height)) && NotebookToolGeometry.intersects(.init(x:delta.x+f.x,y:delta.y+f.y,width:f.width,height:f.height),polygon:polygon)
       }.map { address.reference($0.id) }

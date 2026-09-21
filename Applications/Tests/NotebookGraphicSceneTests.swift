@@ -226,6 +226,52 @@ import XCTest
     XCTAssertEqual(Set(model.selectionSession.items.map(\.itemID)),Set([notebook,nested,document]))
   }
 
+  func testLassoSelectsTextInTheMovedWholeWorldBasis() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("lasso-whole-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false,
+      preferences: UserDefaults(suiteName: UUID().uuidString)!)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let board = try XCTUnwrap(model.workspace?.rootBoardID)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let before = try model.store.loadBoard(items: try XCTUnwrap(model.workspace).items)
+    var after = before
+    let origin = WorldPoint(x: 20_000, y: -12_000), stamp = VersionStamp(counter: 0, actor: model.actorID)
+    let whole = SpatialElement(id: "whole", surface: .board(board), kind: .group,
+      frame: .init(x: 0, y: 0, width: 400, height: 300), worldOrigin: origin, source: "",
+      basis: .init(size: .init(x: 400, y: 300)), stamp: stamp)
+    let text = SpatialElement(id: "text", surface: .board(board), kind: .nativeText,
+      frame: .init(x: 20, y: 30, width: 180, height: 60), worldOrigin: .zero,
+      source: "Moved text", parentID: whole.id, stamp: stamp)
+    for element in [whole, text] {
+      XCTAssertTrue(after.upsertElement(element, in: board, expected: nil, actor: model.actorID))
+    }
+    _ = try model.store.saveBoardEdits(before: before, after: after)
+    model.updatePresence(.init(boardID: board, mode: .board,
+      camera: .init(center: origin, scale: 1), viewport: .init(x: 834, y: 1194)), settled: true)
+    await model.reloadExternalChanges()?.value
+    model.selectDrawingTool(.lasso)
+    let window = try await mountNotebookScene(model)
+    let deadline = ContinuousClock.now + .seconds(5)
+    while model.compositionTiles.published?.frame.index.element(id: text.id, boardID: board) == nil,
+      ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    let graph = model.authoredGraphicGraph(boardID: board)
+    let placement = try XCTUnwrap(graph.placement(text.id))
+    XCTAssertEqual(placement.origin, origin)
+    let receiver = try XCTUnwrap(window.gestureRecognizers?.first { $0 is SpatialPencilGestureRecognizer })
+    let touch = SceneGraphicTouch(window: window), event = SceneGraphicEvent()
+    let presence = try XCTUnwrap(model.presence)
+    let polygon = [SpatialPoint(x: 10, y: 20), .init(x: 210, y: 20), .init(x: 210, y: 110), .init(x: 10, y: 110)]
+    for (index, point) in polygon.enumerated() {
+      let screen = presence.camera.worldToScreen(origin.offsetBy(x: point.x, y: point.y), viewport: presence.viewport)
+      touch.point = .init(x: screen.x, y: screen.y); touch.sampleTime += 0.02
+      if index == 0 { touch.sourceView = window.hitTest(touch.point, with: event); receiver.touchesBegan([touch], with: event) }
+      else { receiver.touchesMoved([touch], with: event) }
+    }
+    receiver.touchesEnded([touch], with: event)
+    XCTAssertEqual(model.selectionSession.element, .spatial(boardID: board, elementID: text.id))
+  }
+
   func testRestingHandDoesNotStrandDoubleTapOpeningBetweenBoardAndPaper() async throws {
     try await exerciseOpening(.doubleTap)
   }

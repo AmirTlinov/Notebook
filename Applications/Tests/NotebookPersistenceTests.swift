@@ -351,6 +351,30 @@ final class NotebookPersistenceTests: XCTestCase {
   }
 
   @MainActor
+  func testPageInkCoalescingRetainsThePendingElementSave() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let id = try XCTUnwrap(store.loadIndex().selectedPageID)
+    var page = try store.loadPage(id)
+    XCTAssertTrue(page.replaceElements([.init(id: "text", kind: .nativeText,
+      frame: .init(x: 10, y: 10, width: 100, height: 50), source: "Keep", html: "Keep")], actor: actor))
+    let acceptedPage = page
+    let action = PageInkAction(tool: .pen, samples: [.init(point: .init(x: 20, y: 20),
+      timeOffset: 0, width: 3, opacity: 1, force: 0.5, azimuth: 0, altitude: 1)])
+    let ink = try page.prepareInkChange(.append(action), stamp: .init(counter: 1, actor: actor))
+    let queue = NotebookPersistenceQueue(store: store)
+    queue.enqueue(owner: .page(id)) { try $0.savePage(acceptedPage); return false }
+    queue.enqueue(owner: .pageInk(id)) { try $0.savePageInk(pageID: id, data: ink.data, stamp: ink.stamp); return false }
+    let saved = await queue.flush()
+    XCTAssertTrue(saved)
+    let restored = try store.loadPage(id)
+    XCTAssertEqual(restored.elements, acceptedPage.elements)
+    XCTAssertEqual(try PageInkDrawing.decode(restored.drawingData).actions.map(\.id), [action.id])
+  }
+
+  @MainActor
   func testCoalescingDoesNotCrossCreationOrDisconnectFence() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

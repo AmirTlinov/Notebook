@@ -96,25 +96,26 @@ extension NotebookActionReadModel {
 // Both history and transient feedback use the same addressed geometry reader.
 extension NotebookStore {
   public func actionResultReferences(_ action: NotebookActionReadModel) throws -> [CollaborationReference] {
-    func geometry(_ target: CollaborationTarget, _ elementID: String) throws -> (PageRect, WorldPoint?)? {
-        if target.kind == .page,
-          let element = try storedMember(file: pageFile(target.id), collection: "elements", id: elementID) {
-          if element["graphic"] != nil {
-            return try readGraphicResolution(target:target,elementID:elementID).layout.map { ($0.frame,nil) }
-          }
-          return try element["frame"].map { (try $0.decode(PageRect.self), nil) }
-        }
-        if target.kind == .board || target.kind == .cover, let boardID = target.boardID ?? (target.kind == .board ? target.id : nil),
-          let element = try readSpatialElement(boardID: boardID, elementID: elementID),
-          element.surface == (target.kind == .board ? .board(target.id) : .cover(target.id)) {
-          if element.graphic != nil {
-            return try readGraphicResolution(target:target,elementID:elementID).layout.map { ($0.frame,element.worldOrigin) }
-          }
-          return (.init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height), element.worldOrigin)
-        }
-        return nil
-      }
-    return try action.resultReferences(ownerBoardID: ownerBoardID, elementGeometry: geometry,
+    try action.resultReferences(ownerBoardID: ownerBoardID, elementGeometry: actionResultGeometry,
       referenceRevision: { try self.referenceRevision(target: $0, elementID: $1) })
+  }
+
+  func actionResultGeometry(_ target: CollaborationTarget, _ elementID: String) throws -> (PageRect, WorldPoint?)? {
+    if target.kind == .page,
+      let element = try storedMember(file: pageFile(target.id), collection: "elements", id: elementID) {
+      if element["graphic"] != nil {
+        return try readGraphicResolution(target:target,elementID:elementID).layout.map { ($0.frame,nil) }
+      }
+      return try element["frame"].map { (try $0.decode(PageRect.self), nil) }
+    }
+    if target.kind == .board || target.kind == .cover, let boardID = target.boardID ?? (target.kind == .board ? target.id : nil),
+      let element = try readSpatialElement(boardID: boardID, elementID: elementID),
+      element.surface == (target.kind == .board ? .board(target.id) : .cover(target.id)) {
+      if element.graphic != nil {
+        return try readGraphicResolution(target:target,elementID:elementID).layout.map { ($0.frame,element.worldOrigin) }
+      }
+      return (.init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height), element.worldOrigin)
+    }
+    return nil
   }
 }

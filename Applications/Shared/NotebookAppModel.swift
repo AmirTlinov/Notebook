@@ -1101,7 +1101,7 @@ final class NotebookAppModel {
       self?.sync?.notifyDurableChanges()
       if let cloud = self?.cloudSync { Task { await cloud.notifyLocalChanges() } }
       switch owner {
-      case .page, .document, .documentState, .board, .spatialInk, .elementState:
+      case .page, .pageInk, .document, .documentState, .board, .spatialInk, .elementState:
         self?.refreshCommittedHeader()
       case nil, .presence, .peerPresence, .inputActivity, .documentDraft, .documentReading, .fileDraft, .fileWindow, .chatPanel, .runCommand: break
       }
@@ -2717,7 +2717,10 @@ final class NotebookAppModel {
       if change.stamp != change.baseStamp {
         elementErasureCache.record(change)
         if pages[accepted.pageID] != nil { pages[accepted.pageID] = current }
-        scheduleSave(current)
+        persistence.enqueue(owner: .pageInk(current.id)) { store in
+          let saved = try store.savePageInk(pageID: change.pageID, data: change.data, stamp: change.stamp)
+          return saved.data != change.data || saved.stamp != change.stamp
+        }
       }
       return change
     }

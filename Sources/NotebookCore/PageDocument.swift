@@ -308,7 +308,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
 
   /// Persistent publishers must distinguish a rejected stroke from an
   /// unchanged drawing before they can acknowledge any part of the page.
-  private mutating func mergeDrawing(_ data: Data, stamp: VersionStamp) throws -> Bool {
+  mutating func mergeDrawing(_ data: Data, stamp: VersionStamp) throws -> Bool {
     guard stamp.counter <= VersionStamp.maximumCounter else { throw PageInkDrawing.InkError.invalidDrawing }
     let incoming = try PageInkDrawing.decode(data)
     if data == drawingData {

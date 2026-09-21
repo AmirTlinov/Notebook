@@ -20,6 +20,7 @@ public struct CollaborationReadSnapshot: Sendable {
       // Repeated receipts share an addressed read only within this transaction.
       // Nothing survives the cut or substitutes a partial scene for an owner.
       var revisions: [Source: Result<String, Error>] = [:]
+      var geometries: [Source: Result<(PageRect, WorldPoint?)?, Error>] = [:]
       func revision(_ target: CollaborationTarget, _ elementID: String?) throws -> String {
         try Task.checkCancellation()
         let source = Source(target: target, elementID: elementID)
@@ -28,12 +29,21 @@ public struct CollaborationReadSnapshot: Sendable {
         revisions[source] = result
         return try result.get()
       }
+      func geometry(_ target: CollaborationTarget, _ elementID: String) throws -> (PageRect, WorldPoint?)? {
+        try Task.checkCancellation()
+        let source = Source(target: target, elementID: elementID)
+        if let result = geometries[source] { return try result.get() }
+        let result = Result { try store.actionResultGeometry(target, elementID) }
+        geometries[source] = result
+        return try result.get()
+      }
       for action in actions {
         try Task.checkCancellation()
         guard try store.actionReadModel(action.id).actionVersion == action.actionVersion else {
           throw CollaborationError("source_conflict", "Квитанция изменилась до подготовки истории.")
         }
-        results[action.id] = try store.actionResultReferences(action)
+        results[action.id] = try action.resultReferences(ownerBoardID: store.ownerBoardID,
+          elementGeometry: geometry, referenceRevision: revision)
         continuations[action.id] = try store.actionContinuations(action)
       }
       for reference in references {
