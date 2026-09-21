@@ -168,6 +168,36 @@ final class SpatialInkTilePoolTests: XCTestCase {
     XCTAssertGreaterThan(canvas.preparedCommittedPointCount,built)
   }
 
+  func testVisibleCurveOverviewSelectsDetailBeforePreparationAndZoomRevealsSource() async throws {
+    var samples:[SpatialInkSample]=[]
+    for i in 0..<100_000 {
+      let world=WorldPoint(x:(Double(i)-50_000)/32,y:64+sin(Double(i)*Double.pi/50)*0.005)
+      samples.append(.init(point:.zero,worldPoint:world,timeOffset:Double(i)/128,width:128,opacity:1,force:0.75,azimuth:0,altitude:1))
+    }
+    let overview=SpatialCamera(center:.init(x:0,y:64),scale:SpatialCamera.minimumScale)
+    let fixture=try await Fixture.make(samples:samples,camera:overview)
+    addTeardownBlock { await fixture.close() }
+    let canvas=fixture.canvas,original=try pixels(canvas),built=canvas.preparedCommittedPointCount
+    XCTAssertEqual(canvas.committedSourceNodeCount,100_000)
+    XCTAssertLessThan(built+canvas.queriedCommittedPointCount,32)
+    XCTAssertEqual(canvas.residentCommittedNodeCount,4)
+    XCTAssertGreaterThan(try blackPixels(canvas),0)
+    canvas.project(camera:.init(center:.init(x:0,y:64),scale:1),viewport:.init(x:512,y:768))
+    try await Task.sleep(for:.milliseconds(300))
+    XCTAssertGreaterThan(canvas.preparedCommittedPointCount,built)
+    XCTAssertLessThan(canvas.preparedCommittedPointCount,30_000)
+    XCTAssertGreaterThan(canvas.residentCommittedNodeCount,4)
+    XCTAssertNotEqual(try pixels(canvas),original)
+    let zoomReads=canvas.preparedCommittedPointCount+canvas.queriedCommittedPointCount
+    canvas.project(camera:overview,viewport:.init(x:512,y:768))
+    try await Task.sleep(for:.milliseconds(200))
+    XCTAssertEqual(canvas.residentCommittedNodeCount,4)
+    XCTAssertEqual(try pixels(canvas),original,"Returning to coarse detail removes all previous fine pixels")
+    XCTAssertLessThan(canvas.preparedCommittedPointCount+canvas.queriedCommittedPointCount-zoomReads,32)
+    XCTAssertEqual(canvas.committedSourceNodeCount,100_000)
+    let proof=XCTAttachment(image:capture(canvas));proof.name="visible-curve-coarse-overview";proof.lifetime = .keepAlways;add(proof)
+  }
+
   func testSampleFreeOverviewSkipsSourceAndZoomReusesPreparedRanges() async throws {
     let scale=SpatialCamera.minimumScale
     let hidden=SpatialCamera(center:.init(x:0,y:64-0.125/scale),scale:scale)

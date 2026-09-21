@@ -109,7 +109,7 @@ struct SpatialInkMesh: Sendable {
     init(tool: SpatialInkTool,nodes: [SpatialInkGeometry.Node],chunks: [Chunk],projection: Projection) {
       self.init(tool:tool,projection:projection,parts:[.init(nodes:nodes,chunks:chunks)])
     }
-    func query(viewport: CGRect,affine: InkAffine,admitting: ((CGRect) -> Bool)? = nil) -> (chunks: [Range<Int>],cost: InkSampleRelations.AccessCost) {
+    func query(viewport: CGRect,affine: InkAffine,detail: InkRenderGeometry.Detail? = nil,admitting: ((CGRect) -> Bool)? = nil) -> (chunks: [Range<Int>],cost: InkSampleRelations.AccessCost) {
       let viewport=viewport.insetBy(dx:-1,dy:-1)
       let candidates: [Int]
       var cost=InkSampleRelations.AccessCost()
@@ -120,7 +120,7 @@ struct SpatialInkMesh: Sendable {
       } else { candidates=parts.indices.filter { affine.bounds(parts[$0].bounds).intersects(viewport) };cost.visitedNodes=parts.count }
       var result:[Range<Int>]=[]
       for id in candidates {
-        let q=parts[id].query(viewport:viewport,affine:affine,admitting:admitting)
+        let q=parts[id].query(viewport:viewport,affine:affine,detail:detail,admitting:admitting)
         result.append(contentsOf:q.chunks.map { (starts[id]+$0.lowerBound)..<(starts[id]+$0.upperBound) })
         cost.visitedNodes += q.cost.visitedNodes;cost.jumps += q.cost.jumps;cost.decodedSamples += q.cost.decodedSamples
       }

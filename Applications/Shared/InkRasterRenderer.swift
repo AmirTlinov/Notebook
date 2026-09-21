@@ -97,6 +97,7 @@ final class InkRasterRenderer: @unchecked Sendable {
     }
     let grid=sampleGrid(viewport:region.size,pixels:.init(width:ceil(region.width*scale),height:ceil(region.height*scale)))
     let batches = source.query(area,allowRangeCoalescing:displayBasis.preservesAxisAlignment,
+      detail:{ unit in let a=projection(unit);return .init(pixelsPerUnit:a.maximumStretch*Float(scale),minimumPixelsPerUnit:a.minimumStretch*Float(scale)) },
       admitting:grid.map { grid in { bounds,unit in grid.mayCover(bounds,affine:projection(unit)) } }).indices.map { id -> DrawBatch in
       let prepared=source.prepared(at:id),chunk=prepared.descriptor
       let affine=projection(chunk.sourceSize)
@@ -169,7 +170,7 @@ final class InkRasterRenderer: @unchecked Sendable {
       let stretch = affine.maximumStretch, minimumStretch = affine.minimumStretch
       encoder.setVertexBytes(&affine,length:MemoryLayout<InkAffine>.stride,index:2)
       encoder.setRenderPipelineState(batch.tool == .eraser ? eraser : ink)
-      for id in batch.query(viewport:area,affine:affine,admitting:grid.map { grid in { grid.mayCover($0,affine:affine) } }).chunks {
+      for id in batch.query(viewport:area,affine:affine,detail:.init(pixelsPerUnit:stretch*Float(scale),minimumPixelsPerUnit:minimumStretch*Float(scale)),admitting:grid.map { grid in { grid.mayCover($0,affine:affine) } }).chunks {
         let prepared=batch.prepareChunk(id).chunk,chunk=prepared.descriptor
         let level=InkRenderGeometry.level(chunk.levels,pixelsPerUnit:stretch*Float(scale),minimumPixelsPerUnit:minimumStretch*Float(scale))
         let nodes=prepared.selected(level:level)

@@ -84,10 +84,23 @@ Bounds include a pre-cancellation Float arithmetic budget and a 1/16-pixel edge
 guard. Unknown sample positions or uncertain bounds do not authorize rejection.
 This display predicate never enters vector selection, erasure or persistence.
 
-This is a narrow empty-coverage optimization, not a general coarse replacement
-for a visible curved stroke. It can skip an entire distant curve without reading
-its measurements, but a range reaching samples still follows the existing contour
-and alpha rules. Camera changes hide or reveal draws via the existing tile owner. A wholly
+Empty-coverage rejection is separate from choosing detail for visible ink. The
+existing source hierarchy now also retains an opaque-curve certificate: center
+deviation, directed tangent envelope and width range. Creation/reload builds it
+with the bounded leaves; joins, declared repeats and local edits maintain it with
+the same source tree. Tiny primitives neither store this summary nor compute it
+for their own display; composition derives it only when an aggregate needs it.
+No display pyramid, second index or serialized summary is
+introduced. A camera query may stop above the 256-event chunks when this envelope,
+projection rounding and both affine stretches satisfy the existing contour budget.
+It reads two endpoint events for that decision and at most eight for preparation,
+retaining four original nodes, their original cross sections and cap neighbours.
+Insufficient detail expands the same query rather than altering the source.
+
+This certificate does not admit translucent ranges, eraser sweeps, reversals or
+subpixel-width ink. Opaque coverage still needs raster checks: a contour bound
+alone is not a guarantee about the final sampled image. Camera changes hide or
+reveal draws via the existing tile owner. A wholly
 sample-free overview retains its last nonempty view's already charged buffers
 without drawing them; returning to that view does not decode its source again.
 A new nonempty selection or geometric exit retires those buffers normally. Tests compare against all original vertices with LOD

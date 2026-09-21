@@ -170,7 +170,7 @@ extension SpatialInkGeometry {
       let radiusFloor=max(0,1-abs(projection.scale))*0.25*Double(InkStrokeGeometry.maximumCrossSectionScale)
       return padding.isFinite ? projected.insetBy(dx:-padding-radiusFloor,dy:-padding-radiusFloor) : .infinite
     }
-    public func query(viewport: CGRect,affine: InkAffine = .init(),allowRangeCoalescing: Bool = true, admitting: ((CGRect) -> Bool)? = nil) -> (chunks: [Range<Int>],cost: InkSampleRelations.AccessCost) {
+    public func query(viewport: CGRect,affine: InkAffine = .init(),allowRangeCoalescing: Bool = true, detail: InkRenderGeometry.Detail? = nil, admitting: ((CGRect) -> Bool)? = nil) -> (chunks: [Range<Int>],cost: InkSampleRelations.AccessCost) {
       guard chunkCount > 0 else { return ([],.init()) }
       func overlaps(_ rect: CGRect) -> Bool {
         let local=projected(rect)
@@ -186,18 +186,69 @@ extension SpatialInkGeometry {
       }
       // Cancellation stops an obsolete frame, not an alternative renderer.
       guard let query=try? source.querySegments(maximumSegments:InkRenderGeometry.maximumSegments,intersecting:overlaps,
-        coalescing:allowRangeCoalescing && affine.preservesAxisAlignment && source.header.tool == .pen ? { range,cost in
-          source.storage.root.canReduceAxisStrip(in:range,minimumSpacing:minimumSpacing,maximumSpan:maximumSpan,cost:&cost)
+        coalescing:(allowRangeCoalescing || detail != nil) && source.header.tool == .pen ? { range,cost in
+          if allowRangeCoalescing && affine.preservesAxisAlignment && source.storage.root.canReduceAxisStrip(in:range,minimumSpacing:minimumSpacing,maximumSpan:maximumSpan,cost:&cost) { return true }
+          return detail.map { canReduceCurve(range,detail:$0,cost:&cost) } ?? false
         } : nil) else {
         return ([],.init())
       }
       return (query.segments,query.cost)
     }
+    private func canReduceCurve(_ range: Range<Int>,detail: InkRenderGeometry.Detail,cost: inout InkSampleRelations.AccessCost) -> Bool {
+      guard projection.scale > 0,detail.pixelsPerUnit.isFinite,detail.pixelsPerUnit > 0,
+        detail.minimumPixelsPerUnit.isFinite,detail.minimumPixelsPerUnit > 0 else { return false }
+      let geometry=source.storage.root.geometryCovering(range,cost:&cost)
+      // A contour bound is not a proof of translucent overlap composition.
+      // Keep that material detailed; opaque strips cannot accumulate opacity.
+      guard let curve=geometry.curve,
+        let first=geometry.first?.relative(to:geometry.origin),let last=geometry.last?.relative(to:geometry.origin) else { return false }
+      let minimumRadius=max(Double(Float(curve.minimumWidth*projection.scale/2)),0.25)
+      let maximumRadius=max(Double(Float(curve.maximumWidth*projection.scale/2)),0.25)
+      guard 2*minimumRadius*Double(detail.minimumPixelsPerUnit) >= 1 else { return false }
+      let p=SpatialInkGeometry.renderPoint(from:source.storage.root.sample(at:range.lowerBound+1,cost:&cost),color:.init(repeating:1),projection:projection)
+      let q=SpatialInkGeometry.renderPoint(from:source.storage.root.sample(at:range.upperBound-2,cost:&cost),color:.init(repeating:1),projection:projection)
+      let a=SIMD2<Double>(p.position),b=SIMD2<Double>(q.position),chord=b-a,length=hypot(chord.x,chord.y)
+      guard length > 0,length.isFinite else { return false }
+      let direction=chord/length,normal=SIMD2<Double>(-direction.y,direction.x)
+      func support(_ v: SIMD2<Double>,minimum: Bool) -> Double {
+        let x=(v.x >= 0) == minimum ? curve.tangentLow.x : curve.tangentHigh.x
+        let y=(v.y >= 0) == minimum ? curve.tangentLow.y : curve.tangentHigh.y
+        return x*v.x+y*v.y
+      }
+      let box=projected(geometry.bounds)
+      let rounding=SIMD2<Double>(8*Double(max(abs(Float(box.minX)),abs(Float(box.maxX))).ulp),
+        8*Double(max(abs(Float(box.minY)),abs(Float(box.maxY))).ulp))
+      let spacing=geometry.minimumSpacing*projection.scale
+      guard spacing > 0,spacing.isFinite,rounding.x.isFinite,rounding.y.isFinite else { return false }
+      func directionError(_ v: SIMD2<Double>) -> Double {
+        (abs(v.x)*rounding.x+abs(v.y)*rounding.y)/spacing+32*Double(Float.ulpOfOne)
+      }
+      let forward=support(direction,minimum:true)-directionError(direction)
+      let sideways=max(abs(support(normal,minimum:true)),abs(support(normal,minimum:false)))+directionError(normal)
+      guard forward > 0 else { return false }
+      let cosine=1/hypot(1,sideways/forward)
+      // All segment directions lie in this acute cone, so they and the
+      // contour's ordered center projection cannot reverse through the chord.
+      guard cosine > 0.95 else { return false }
+      let edgeError=maximumRadius*(sqrt(2*(1-cosine))/cosine+(1/cosine-1))+(maximumRadius-minimumRadius)
+      var offset=projection.offset
+      if let origin=geometry.origin,let target=projection.origin {
+        let delta=target.delta(to:origin)
+        offset = .init(x:offset.x+delta.x*projection.scale,y:offset.y+delta.y*projection.scale)
+      }
+      func point(_ p: SpatialPoint) -> SIMD2<Double> {
+        .init(p.x*projection.scale+offset.x,p.y*projection.scale+offset.y)
+      }
+      let centerError=curve.error*projection.scale+max(InkSampleRelations.Geometry.Curve.distance(point(first),from:a,to:b),
+        InkSampleRelations.Geometry.Curve.distance(point(last),from:a,to:b))
+      let error=centerError+2*edgeError+hypot(rounding.x,rounding.y)
+      return error.isFinite && error*Double(detail.pixelsPerUnit) <= Double(InkRenderGeometry.pixelError)
+    }
     /// Bounds temporary geometry, not the number of exact source measurements.
     public func preparationPointLimit(_ selection: Range<Int>) -> Int {
       if source.geometry.stationary { return 1 }
       if uniformStrip { return 4 }
-      return selection.count > 1 ? 6 : range(at:selection).count+2
+      return selection.count > 1 ? 8 : range(at:selection).count+2
     }
     public func prepare(_ selection: Range<Int>) -> (chunk: PreparedChunk,decodedPoints: Int) {
       let range=range(at:selection)
@@ -210,12 +261,13 @@ extension SpatialInkGeometry {
         points.append(p)
       }
       if selection.count > 1 {
-        // The query admitted this interval through its existing exact strip
-        // proof. Preserve both cap neighbours and the original external halo.
-        let indices=[halo.lowerBound,range.lowerBound,range.lowerBound+1,range.upperBound-2,range.upperBound-1,halo.upperBound-1]
-        var previous: Int?
-        for index in indices where index != previous {
-          append(index,SpatialInkGeometry.renderPoint(from:source.sample(at:index),color:color,projection:projection));previous=index
+        // Preserve the four original nodes, their original cross sections,
+        // and the two cap tangents. Halo points never become extra geometry.
+        let kept=Set([range.lowerBound,range.lowerBound+1,range.upperBound-2,range.upperBound-1])
+        let indices=Set(kept.flatMap { [max(0,$0-1),$0,min(source.count-1,$0+1)] }).sorted()
+        for index in indices {
+          if kept.contains(index) { owned.append(points.count) }
+          points.append(SpatialInkGeometry.renderPoint(from:source.sample(at:index),color:color,projection:projection))
         }
       } else {
         source.forEachIndexedDisplayPoint(in:halo,origin:projection.origin,offset:projection.offset,scale:projection.scale) { index,p,r,a in
@@ -269,9 +321,9 @@ extension SpatialInkGeometry {
       if case .relative(let r)=storage { return r.source.auxiliaryBytes+MemoryLayout<RelativeSource>.stride-MemoryLayout<InkSampleRelations>.stride }
       return byteCount
     }
-    public func query(viewport: CGRect,affine: InkAffine,allowRangeCoalescing: Bool = true, admitting: ((CGRect) -> Bool)? = nil) -> (chunks: [Range<Int>],cost: InkSampleRelations.AccessCost) {
+    public func query(viewport: CGRect,affine: InkAffine,allowRangeCoalescing: Bool = true, detail: InkRenderGeometry.Detail? = nil, admitting: ((CGRect) -> Bool)? = nil) -> (chunks: [Range<Int>],cost: InkSampleRelations.AccessCost) {
       switch storage {
-      case .relative(let r): return r.query(viewport:viewport,affine:affine,allowRangeCoalescing:allowRangeCoalescing,admitting:admitting)
+      case .relative(let r): return r.query(viewport:viewport,affine:affine,allowRangeCoalescing:allowRangeCoalescing,detail:detail,admitting:admitting)
       case .prepared(_,let chunks,let index):
         // Native canvas uses positive diagonal camera transforms. General
         // raster transforms keep the same conservative per-chunk rejection.

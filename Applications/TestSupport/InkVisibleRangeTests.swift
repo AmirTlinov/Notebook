@@ -6,6 +6,135 @@ import XCTest
 @testable import Notebook
 
 final class InkVisibleRangeTests: XCTestCase {
+  func testEarlyCurveDetailAgainstFullRasterAtContourSamplePhases() throws {
+    let count=100_000,size=CGSize(width:128,height:128),renderer=InkRasterRenderer.shared
+    var samples:[SpatialInkSample]=[]
+    for i in 0..<100 {
+      let point=SpatialPoint(x:Double(i)/32,y:sin(Double(i)*Double.pi/50)*0.005)
+      samples.append(.init(point:point,timeOffset:Double(i)/128,width:256,opacity:1,force:Double(i%5)/4,azimuth:0,altitude:1))
+    }
+    let body=source(samples).settingExit(.init(x:InkDyadic(100.0/32)!,y:.zero,time:.one),revision:UUID())
+    let value=try XCTUnwrap(body.repeated(count/100,revision:UUID()))
+    let batch=SpatialInkMesh.Batch(source:value,projection:.local)
+    let exact=value.decoded(),color=SIMD4<Float>(0.2,0.4,0.8,1)
+    let points=exact.map { SpatialInkGeometry.renderPoint(from:$0,color:color) }
+    let nodes=points.indices.map { InkRenderGeometry.node(at:$0,in:points) }
+    let full=SpatialInkMesh(batches:[.init(tool:.pen,nodes:nodes,
+      chunks:SpatialInkGeometry.chunks(for:nodes,color:color,eraser:false,buildLOD:false),projection:.local)])
+    var records:[[String:Any]]=[]
+    for phase in 0..<32 {
+      let affine=InkAffine(.init(1.0/64,1.0/128,24,64+Float(phase)/64))
+      let q=batch.query(viewport:.init(origin:.zero,size:size),affine:affine,
+        detail:.init(pixelsPerUnit:affine.maximumStretch*2,minimumPixelsPerUnit:affine.minimumStretch*2))
+      let image=try XCTUnwrap(renderer.render(mesh:.init(batches:[batch]),size:size,scale:2,affine:affine))
+      let reference=try XCTUnwrap(renderer.render(mesh:full,size:size,scale:2,affine:affine))
+      let actual=Array(try XCTUnwrap(image.dataProvider?.data) as Data),expected=Array(try XCTUnwrap(reference.dataProvider?.data) as Data)
+      var alpha=0,error=0,changed=0
+      for i in stride(from:3,to:actual.count,by:4) {
+        alpha += Int(expected[i]);error += abs(Int(actual[i])-Int(expected[i]))
+        if actual[i] != expected[i] { changed += 1 }
+      }
+      records.append(["phase":phase,"ranges":q.chunks.count,"reads":q.cost.decodedSamples,"visits":q.cost.visitedNodes,
+        "referenceAlpha":alpha,"alphaL1":error,"changedPixels":changed])
+      XCTAssertGreaterThan(alpha,0)
+      XCTAssertLessThanOrEqual(Double(error),Double(alpha)*0.02,"phase \(phase)")
+    }
+    XCTAssertTrue(records.contains { ($0["ranges"] as? Int) == 1 })
+    let proof=XCTAttachment(data:try JSONSerialization.data(withJSONObject:records,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
+    proof.name="early-curve-contour-phases";proof.lifetime = .keepAlways;add(proof)
+  }
+  func testEarlyCurveSourceAndReopenReachGPUWithoutExpandingVisibleRepeats() throws {
+    let renderer=InkRasterRenderer.shared,size=CGSize(width:512,height:128),affine=InkAffine(.init(0.01,0.01,8,64))
+    func elapsed(_ start: ContinuousClock.Instant) -> Double {
+      let c=start.duration(to:.now).components;return Double(c.seconds)*1000+Double(c.attoseconds)/1e15
+    }
+    var records:[[String:Any]]=[]
+    for count in [10_000,100_000,1_000_000] {
+      let start=ContinuousClock.now
+      var samples:[SpatialInkSample]=[]
+      for i in 0..<100 {
+        let point=SpatialPoint(x:Double(i)/32,y:sin(Double(i)*Double.pi/50)*0.005)
+        samples.append(.init(point:point,timeOffset:Double(i)/128,width:256,opacity:1,force:Double(i%5)/4,azimuth:0,altitude:1))
+      }
+      let body=source(samples).settingExit(.init(x:InkDyadic(100.0/32)!,y:.zero,time:.one),revision:UUID())
+      let value=try XCTUnwrap(body.repeated(count/100,revision:UUID()))
+      let batch=SpatialInkMesh.Batch(source:value,projection:.local),buildMS=elapsed(start)
+      let raster=try XCTUnwrap(renderer.render(mesh:.init(batches:[batch]),size:size,scale:2,affine:affine))
+      let totalMS=elapsed(start),data=try XCTUnwrap(raster.dataProvider?.data) as Data
+      XCTAssertTrue(data.contains { $0 != 0 })
+      let q=batch.query(viewport:.init(origin:.zero,size:size),affine:affine,
+        detail:.init(pixelsPerUnit:0.02,minimumPixelsPerUnit:0.02))
+      XCTAssertEqual(q.chunks,[0..<batch.chunkCount]);XCTAssertEqual(q.cost.decodedSamples,2)
+      let prepared=batch.prepareChunk(try XCTUnwrap(q.chunks.first))
+      XCTAssertEqual(prepared.chunk.nodes.count,4);XCTAssertLessThanOrEqual(prepared.decodedPoints,8)
+      let encoded=try value.encodedRelations(),openStart=ContinuousClock.now
+      let reopened=try InkSampleRelations(encodedRelations:encoded)
+      let restored=try XCTUnwrap(renderer.render(mesh:.init(batches:[.init(source:reopened,projection:.local)]),size:size,scale:2,affine:affine))
+      let openMS=elapsed(openStart)
+      XCTAssertEqual(try XCTUnwrap(restored.dataProvider?.data) as Data,data)
+      let ink=NotebookFreehand(layers:[.init(tool:.pen,color:value.header.color,
+        measured:.init(sourceID:value.sourceID,measurements:value.measurements,frame:.init(x:0,y:0,width:Double(count)/32,height:256)))])
+      let whole=NotebookGraphicTransform(a:0.01,b:0,c:0,d:0.01,tx:8/(Double(count)/32),ty:64/256)
+      let freeStart=ContinuousClock.now
+      let free=try XCTUnwrap(renderer.freehand(ink,transform:whole,size:.init(width:Double(count)/32,height:256),
+        region:.init(origin:.zero,size:size),scale:2,mask:false))
+      let freeMS=elapsed(freeStart)
+      XCTAssertEqual(try XCTUnwrap(free.dataProvider?.data) as Data,data)
+      // The paired control begins at the same accepted source. It executes
+      // the former full visible query/preparation (including its late LOD),
+      // then sends those prepared chunks through the same GPU owner.
+      let controlStart=ContinuousClock.now,controlQuery=batch.query(viewport:.init(origin:.zero,size:size),affine:affine)
+      var parts:[SpatialInkGeometry.Source]=[],read=controlQuery.cost.decodedSamples,nodeCount=0,uploaded=0,vertices=0
+      for id in controlQuery.chunks {
+        let p=batch.prepareChunk(id);read += p.decodedPoints;nodeCount += p.chunk.nodes.count
+        let level=InkRenderGeometry.level(p.chunk.descriptor.levels,pixelsPerUnit:affine.maximumStretch*2,minimumPixelsPerUnit:affine.minimumStretch*2)
+        let selected=p.chunk.selected(level:level).count
+        uploaded += selected;vertices += InkRenderGeometry.vertexCount(nodes:selected,flags:p.chunk.descriptor.flags)
+        parts.append(.init(nodes:Array(p.chunk.nodes),chunks:[p.chunk.descriptor]))
+      }
+      let full=SpatialInkMesh(batches:[.init(tool:.pen,projection:.local,parts:parts)])
+      let control=try XCTUnwrap(renderer.render(mesh:full,size:size,scale:2,affine:affine)),controlMS=elapsed(controlStart)
+      XCTAssertEqual(try XCTUnwrap(control.dataProvider?.data) as Data,data)
+      XCTAssertGreaterThan(nodeCount,count)
+      records.append(["events":count,"sourceBytes":value.payloadBytes,"sourceBuildMilliseconds":buildMS,
+        "sourceToRasterMilliseconds":totalMS,"decodeToRasterMilliseconds":openMS,"freehandToRasterMilliseconds":freeMS,
+        "queryReads":q.cost.decodedSamples,"queryVisits":q.cost.visitedNodes,"preparedReads":prepared.decodedPoints,"preparedNodes":prepared.chunk.nodes.count,
+        "fullVisibleQueryPrepareRasterMilliseconds":controlMS,"controlReads":read,"controlNodes":nodeCount,"controlUploadedNodes":uploaded,"controlVertices":vertices,
+        "drawVertices":InkRenderGeometry.vertexCount(nodes:prepared.chunk.nodes.count,flags:prepared.chunk.descriptor.flags)])
+    }
+    let proof=XCTAttachment(data:try JSONSerialization.data(withJSONObject:records,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
+    proof.name="early-curve-full-path-costs";proof.lifetime = .keepAlways;add(proof)
+  }
+  func testEarlyCurveDetailPreservesBendsThicknessAndAffineCoverage() throws {
+    var samples:[SpatialInkSample]=[]
+    for i in 0..<10_000 {
+      let p=SpatialPoint(x:Double(i)/32,y:8*sin(Double(i)/10000*Double.pi))
+      samples.append(.init(point:p,timeOffset:Double(i)/128,width:128+Double(i%17)/64,opacity:1,force:0.5,azimuth:0,altitude:1))
+    }
+    let value=source(samples),batch=SpatialInkMesh.Batch(source:value,projection:.local),color=SIMD4<Float>(0.2,0.4,0.8,1)
+    let points=samples.map { SpatialInkGeometry.renderPoint(from:$0,color:color) },size=CGSize(width:512,height:256)
+    let nodes=points.indices.map { InkRenderGeometry.node(at:$0,in:points) }
+    let reference=SpatialInkMesh(batches:[.init(tool:.pen,nodes:nodes,
+      chunks:SpatialInkGeometry.chunks(for:nodes,color:color,eraser:false,buildLOD:false),projection:.local)])
+    let transforms:[InkAffine]=[.init(.init(0.02,0.02,20,64.0625)),.init(.init(0.4,0.02,20,64.0625)),
+      .init(x:.init(0.1,0.03,20,0),y:.init(-0.04,0.05,64,0)),.init(.init(-0.2,0.02,150,64.0625)),.init(.init(1,1,20,128))]
+    var records:[[String:Any]]=[]
+    for (i,affine) in transforms.enumerated() {
+      let q=batch.query(viewport:.init(origin:.zero,size:size),affine:affine,
+        detail:.init(pixelsPerUnit:affine.maximumStretch*2,minimumPixelsPerUnit:affine.minimumStretch*2))
+      let actual=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:.init(batches:[batch]),size:size,scale:2,affine:affine))
+      let full=try XCTUnwrap(InkRasterRenderer.shared.render(mesh:reference,size:size,scale:2,affine:affine))
+      let a=Array(try XCTUnwrap(actual.dataProvider?.data) as Data),b=Array(try XCTUnwrap(full.dataProvider?.data) as Data)
+      var sum=0,error=0
+      for i in stride(from:3,to:a.count,by:4) { sum += Int(b[i]);error += abs(Int(a[i])-Int(b[i])) }
+      XCTAssertGreaterThan(sum,0);XCTAssertLessThanOrEqual(Double(error),Double(sum)*0.02,"transform \(i)")
+      if i == 0 { XCTAssertTrue(q.chunks.contains { $0.count > 1 }) }
+      if i == 4 { XCTAssertTrue(q.chunks.allSatisfy { $0.count == 1 }) }
+      records.append(["transform":i,"ranges":q.chunks.count,"reads":q.cost.decodedSamples,"referenceAlpha":sum,"alphaL1":error])
+    }
+    let proof=XCTAttachment(data:try JSONSerialization.data(withJSONObject:records,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
+    proof.name="early-curve-affine-coverage";proof.lifetime = .keepAlways;add(proof)
+  }
   func testSampleFreeSubpixelBoundsAgainstFullRaster() throws {
     let count=100_000,renderer=InkRasterRenderer.shared
     let samples=(0..<count).map { i in SpatialInkSample(point:.init(x:Double(i),y:64+sin(Double(i)*0.37)*12),

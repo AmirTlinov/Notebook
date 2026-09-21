@@ -182,8 +182,82 @@ extension InkSampleRelations {
         return direction == 0 ? nil : .init(directions:direction,width:width,opacity:opacity)
       }
     }
+    /// Disposable contour certificate in the existing source hierarchy. It
+    /// bounds centers against the endpoint line and all directed tangents; it
+    /// is not a simplified source or another spatial index.
+    struct Curve: Sendable {
+      let error: Double
+      let tangentLow,tangentHigh: SIMD2<Double>
+      let minimumWidth,maximumWidth: Double
+      static func point(_ p: SpatialPoint) -> SIMD2<Double> { .init(p.x,p.y) }
+      static func distance(_ p: SIMD2<Double>,from a: SIMD2<Double>,to b: SIMD2<Double>) -> Double {
+        let d=b-a,length=hypot(d.x,d.y)
+        guard length > 0 else { return hypot(p.x-a.x,p.y-a.y) }
+        return abs((p.x-a.x)*(d.y/length)-(p.y-a.y)*(d.x/length)).nextUp
+      }
+      private static func segmentDistance(_ p: SIMD2<Double>,from a: SIMD2<Double>,to b: SIMD2<Double>) -> Double {
+        let d=b-a,length=d.x*d.x+d.y*d.y
+        guard length > 0,length.isFinite else { return hypot(p.x-a.x,p.y-a.y) }
+        let t=min(1,max(0,((p.x-a.x)*d.x+(p.y-a.y)*d.y)/length))
+        return hypot(p.x-a.x-d.x*t,p.y-a.y-d.y*t).nextUp
+      }
+      init?(block: Block,first: Coordinate,last: Coordinate) {
+        // Translucent composition has no coarse certificate here. Do not pay
+        // for contour summaries that its display cannot use.
+        switch block {
+        case .fields(let fields,_):
+          guard case .constant(let alpha)=fields[4],alpha == Double(1).bitPattern else { return nil }
+        case .literal(let samples): guard samples.values.allSatisfy({ $0.opacity == 1 }) else { return nil }
+        }
+        guard let begin=first.relative(to:first.origin),let end=last.relative(to:first.origin) else { return nil }
+        let a=Self.point(begin),b=Self.point(end)
+        var low=SIMD2<Double>(repeating:.infinity),high = -low,error=Double.zero
+        var minWidth=Double.infinity,maxWidth=Double.zero
+        var previous: SIMD2<Double>?
+        for i in 0..<block.count {
+          let p: SIMD2<Double>,width: Double
+          if case .fields(let fields,_)=block {
+            p = .init(fields[0].value(at:i),fields[1].value(at:i));width=fields[3].value(at:i)
+          } else {
+            let sample=block.sample(at:i)
+            guard let local=Coordinate(sample).relative(to:first.origin) else { return nil }
+            p=Self.point(local);width=sample.width
+          }
+          error=max(error,Self.segmentDistance(p,from:a,to:b))
+          minWidth=min(minWidth,width);maxWidth=max(maxWidth,width)
+          if let previous {
+            let d=p-previous,length=hypot(d.x,d.y)
+            guard length > 0,length.isFinite else { return nil }
+            let unit=d/length
+            low = .init(min(low.x,unit.x.nextDown),min(low.y,unit.y.nextDown))
+            high = .init(max(high.x,unit.x.nextUp),max(high.y,unit.y.nextUp))
+          }
+          previous=p
+        }
+        self.init(error:error,tangentLow:low,tangentHigh:high,minimumWidth:minWidth,maximumWidth:maxWidth)
+      }
+      init(error: Double,tangentLow: SIMD2<Double>,tangentHigh: SIMD2<Double>,minimumWidth: Double,
+        maximumWidth: Double) {
+        self.error=error;self.tangentLow=tangentLow;self.tangentHigh=tangentHigh
+        self.minimumWidth=minimumWidth;self.maximumWidth=maximumWidth
+      }
+      func joined(_ other: Self,a: SIMD2<Double>,b: SIMD2<Double>,c: SIMD2<Double>,d: SIMD2<Double>) -> Self? {
+        let seam=c-b,length=hypot(seam.x,seam.y)
+        guard length > 0,length.isFinite else { return nil }
+        let u=seam/length
+        let low=SIMD2<Double>(min(tangentLow.x,other.tangentLow.x,u.x.nextDown),min(tangentLow.y,other.tangentLow.y,u.y.nextDown))
+        let high=SIMD2<Double>(max(tangentHigh.x,other.tangentHigh.x,u.x.nextUp),max(tangentHigh.y,other.tangentHigh.y,u.y.nextUp))
+        // The distance to a line is convex along each child chord. Its
+        // endpoint envelope plus the child's deviation encloses every center.
+        let error=max(self.error+max(Self.segmentDistance(a,from:a,to:d),Self.segmentDistance(b,from:a,to:d)),
+          other.error+max(Self.segmentDistance(c,from:a,to:d),Self.segmentDistance(d,from:a,to:d))).nextUp
+        return .init(error:error,tangentLow:low,tangentHigh:high,minimumWidth:min(minimumWidth,other.minimumWidth),
+          maximumWidth:max(maximumWidth,other.maximumWidth))
+      }
+    }
     let first: Coordinate?,last: Coordinate?
     private let axisStrip: AxisStrip?
+    let curve: Curve?
     var isUniformAxisStrip: Bool { axisStrip != nil }
     func canReduceAxisStrip(minimumSpacing: Double,maximumSpan: Double) -> Bool {
       isUniformAxisStrip && self.minimumSpacing > minimumSpacing && max(bounds.width,bounds.height) < maximumSpan
@@ -192,10 +266,23 @@ extension InkSampleRelations {
     public let minimumSpacing: Double
     public let stationary: Bool
     public var origin: WorldPoint? { first?.origin }
-    init(block: Block) {
+    init(block: Block,includingCurve: Bool = true) {
       axisStrip=AxisStrip(block)
-      guard block.count > 0 else { first=nil;last=nil;bounds = .null;minimumSpacing = .infinity;stationary=true;return }
+      guard block.count > 0 else { first=nil;last=nil;curve=nil;bounds = .null;minimumSpacing = .infinity;stationary=true;return }
       first=Coordinate(block.sample(at:0));last=Coordinate(block.sample(at:block.count-1))
+      if !includingCurve { curve=nil }
+      else if let axisStrip,axisStrip.opacity == 1 {
+        let direction: SIMD2<Double>
+        switch axisStrip.directions {
+        case 1: direction = .init(1,0)
+        case 2: direction = .init(-1,0)
+        case 4: direction = .init(0,1)
+        case 8: direction = .init(0,-1)
+        default: direction = .zero
+        }
+        curve = .init(error:0,tangentLow:block.count == 1 ? .init(repeating:.infinity) : direction,
+          tangentHigh:block.count == 1 ? .init(repeating:-.infinity) : direction,minimumWidth:axisStrip.width,maximumWidth:axisStrip.width)
+      } else { curve=Curve(block:block,first:first!,last:last!) }
       var cost=AccessCost()
       bounds=Self.bounds(block,in:0..<block.count,origin:first?.origin,cost:&cost)
       if case .fields(let fields,_)=block {
@@ -215,8 +302,8 @@ extension InkSampleRelations {
       }
       minimumSpacing=spacing;stationary=same
     }
-    private init(first: Coordinate?,last: Coordinate?,bounds: CGRect,minimumSpacing: Double,stationary: Bool,axisStrip: AxisStrip?) {
-      self.first=first;self.last=last;self.bounds=bounds;self.minimumSpacing=minimumSpacing;self.stationary=stationary;self.axisStrip=axisStrip
+    private init(first: Coordinate?,last: Coordinate?,bounds: CGRect,minimumSpacing: Double,stationary: Bool,axisStrip: AxisStrip?,curve: Curve?) {
+      self.first=first;self.last=last;self.bounds=bounds;self.minimumSpacing=minimumSpacing;self.stationary=stationary;self.axisStrip=axisStrip;self.curve=curve
     }
     static func bounds(_ block: Block,in range: Range<Int>,origin: WorldPoint?,cost: inout AccessCost) -> CGRect {
       guard let origin else {
@@ -251,17 +338,28 @@ extension InkSampleRelations {
       guard let end=last else { return other };guard let begin=other.first else { return self }
       return .init(first:first,last:other.last,bounds:bounds.union(placing(other.bounds,from:other.origin)),
         minimumSpacing:min(minimumSpacing,other.minimumSpacing,end.distance(to:begin)),stationary:stationary && other.stationary && end == begin,
-        axisStrip:axisStrip.flatMap { a in other.axisStrip.flatMap { a.joined($0,from:end,to:begin) } })
+        axisStrip:axisStrip.flatMap { a in other.axisStrip.flatMap { a.joined($0,from:end,to:begin) } },
+        curve:joinedCurve(other))
+    }
+    private func joinedCurve(_ other: Self) -> Curve? {
+      guard let curve,let next=other.curve,let a=first?.relative(to:origin),let b=last?.relative(to:origin),
+        let c=other.first?.relative(to:origin),let d=other.last?.relative(to:origin) else { return nil }
+      return curve.joined(next,a:Curve.point(a),b:Curve.point(b),c:Curve.point(c),d:Curve.point(d))
     }
     func shifted(_ step: InkRepeatStep) -> Self {
-      .init(first:first?.shifted(step),last:last?.shifted(step),bounds:Self.offset(bounds,x:step.x.value,y:step.y.value),minimumSpacing:minimumSpacing,stationary:stationary,axisStrip:axisStrip)
+      .init(first:first?.shifted(step),last:last?.shifted(step),bounds:Self.offset(bounds,x:step.x.value,y:step.y.value),minimumSpacing:minimumSpacing,stationary:stationary,axisStrip:axisStrip,curve:curve)
+    }
+    private func repeatedCurve(_ end: Self,step: InkRepeatStep) -> Curve? {
+      guard let envelope=joinedCurve(end),let seam=joinedCurve(shifted(step)) else { return nil }
+      return .init(error:envelope.error,tangentLow:seam.tangentLow,tangentHigh:seam.tangentHigh,
+        minimumWidth:envelope.minimumWidth,maximumWidth:envelope.maximumWidth)
     }
     func repeated(count: Int,step: InkRepeatStep) -> Self {
       guard count > 1,let first,let last else { return self }
       let end=shifted(step.multiplied(by:count-1)!)
       return .init(first:first,last:end.last,bounds:bounds.union(end.bounds),
         minimumSpacing:min(minimumSpacing,last.distance(to:first.shifted(step))),stationary:stationary && step.x == .zero && step.y == .zero,
-        axisStrip:axisStrip.flatMap { $0.joined($0,from:last,to:first.shifted(step)) })
+        axisStrip:axisStrip.flatMap { $0.joined($0,from:last,to:first.shifted(step)) },curve:repeatedCurve(end,step:step))
     }
   }
 
@@ -312,7 +410,10 @@ extension InkSampleRelations {
       guard case .block(let block)=content else { preconditionFailure("An aggregate must retain its summary") }
       return block
     }
-    var geometry: Geometry { summary?.geometry ?? Geometry(block:primitive) }
+    var geometry: Geometry { summary?.geometry ?? Geometry(block:primitive,includingCurve:false) }
+    // A tiny primitive has no internal detail to skip. Build its certificate
+    // only when composing an aggregate that can actually benefit from it.
+    private var composableGeometry: Geometry { summary?.geometry ?? Geometry(block:primitive) }
     var worldEvents: Int { summary?.worldEvents ?? Self.worldEvents(in:primitive) }
     var hasVisibleInk: Bool { summary?.hasVisibleInk ?? Self.hasVisibleInk(in:primitive) }
     var bounds: CGRect { geometry.bounds }
@@ -383,9 +484,9 @@ extension InkSampleRelations {
       let geometry: Geometry,worldEvents: Int,hasVisibleInk: Bool
       switch content {
       case .block(let b): self.pending=pending;geometry=Geometry(block:b)
-      case .pair(let a,let b): self.pending=pending || a.pending || b.pending;geometry=a.geometry.joined(b.geometry)
-      case .shifted(let body,let basis): self.pending=pending || body.pending;geometry=body.geometry.shifted(basis.step)
-      case .repeated(let body,let n,let step): self.pending=pending || body.pending;geometry=body.geometry.repeated(count:n,step:step)
+      case .pair(let a,let b): self.pending=pending || a.pending || b.pending;geometry=a.composableGeometry.joined(b.composableGeometry)
+      case .shifted(let body,let basis): self.pending=pending || body.pending;geometry=body.composableGeometry.shifted(basis.step)
+      case .repeated(let body,let n,let step): self.pending=pending || body.pending;geometry=body.composableGeometry.repeated(count:n,step:step)
       }
       switch content {
       case .block(let b):
@@ -687,6 +788,28 @@ extension InkSampleRelations {
             .union(Self.offset(body.bounds,step.multiplied(by:last-1)!))
         }
         return result
+      }
+    }
+    /// A conservative cover may include the unused part of a boundary leaf.
+    /// It costs no measurement reads and can only make display rejection stricter.
+    func geometryCovering(_ range: Range<Int>,cost: inout AccessCost) -> Geometry {
+      cost.visitedNodes += 1
+      if range == 0..<count { return geometry }
+      switch content {
+      case .block: return geometry
+      case .pair(let a,let b):
+        if range.upperBound <= a.count { return a.geometryCovering(range,cost:&cost) }
+        if range.lowerBound >= a.count { return b.geometryCovering((range.lowerBound-a.count)..<(range.upperBound-a.count),cost:&cost) }
+        return a.geometryCovering(range.lowerBound..<a.count,cost:&cost)
+          .joined(b.geometryCovering(0..<(range.upperBound-a.count),cost:&cost))
+      case .shifted(let body,let basis): return body.geometryCovering(range,cost:&cost).shifted(basis.step)
+      case .repeated(let body,_,let step):
+        let first=range.lowerBound/body.count,last=(range.upperBound-1)/body.count
+        cost.jumps += first == last ? 1 : 2
+        if first == last { return body.geometryCovering((range.lowerBound%body.count)..<((range.upperBound-1)%body.count+1),cost:&cost).shifted(step.multiplied(by:first)!) }
+        var result=body.geometryCovering((range.lowerBound%body.count)..<body.count,cost:&cost).shifted(step.multiplied(by:first)!)
+        if last > first+1 { result=result.joined(body.geometry.repeated(count:last-first-1,step:step).shifted(step.multiplied(by:first+1)!)) }
+        return result.joined(body.geometryCovering(0..<((range.upperBound-1)%body.count+1),cost:&cost).shifted(step.multiplied(by:last)!))
       }
     }
     /// Only a cached proof covering this interval admits early display reduction.

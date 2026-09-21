@@ -14,6 +14,7 @@ import Testing
     let bytes=try source.encodedRelations(),restored=try InkSampleRelations(encodedRelations:bytes)
     for body in [source,restored] {
       #expect(body.storage.root.hasStoredSummary == (count >= 4))
+      if count < 4 { #expect(body.geometry.curve == nil) }
       #expect(body.measurements.isPaper == (!world || count == 0))
       #expect(body.measurements.isWorld == (world || count == 0))
       #expect(body.measurements.hasVisibleInk == (count > 1))

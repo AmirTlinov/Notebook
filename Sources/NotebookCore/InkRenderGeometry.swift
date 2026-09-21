@@ -22,6 +22,13 @@ public enum InkRenderGeometry {
     public let minimumRadius: Float
     public let indices: [UInt16]
   }
+  /// Physical display budget. Semantic/vector queries never supply one.
+  public struct Detail: Sendable {
+    public let pixelsPerUnit,minimumPixelsPerUnit: Float
+    public init(pixelsPerUnit: Float,minimumPixelsPerUnit: Float) {
+      self.pixelsPerUnit=pixelsPerUnit;self.minimumPixelsPerUnit=minimumPixelsPerUnit
+    }
+  }
   public static let maximumSegments = 256
   public static let pixelError: Float = 0.20
   public static func node(at i: Int, in points: [InkStrokeGeometry.RenderPoint]) -> Node {

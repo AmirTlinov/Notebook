@@ -175,9 +175,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var activeRenderID = UUID()
   private(set) var lastRenderedTileCount = 0
   private(set) var submittedTileCount = 0
-  private(set) var residentCommittedNodeCount = 0
+  var residentCommittedNodeCount: Int {
+    committedBatches.reduce(0) { $0+$1.buffers.values.reduce(0) { $0+$1.nodeCount } }
+  }
   var committedPreparedNodeCount: Int { committedBatches.reduce(0) { $0+$1.mesh.preparedNodeCount } }
   private(set) var preparedCommittedPointCount = 0
+  private(set) var queriedCommittedPointCount = 0
   private(set) var committedIndexVisitCount = 0
 
   private static let framesInFlight = 3
@@ -443,7 +446,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     installedSpatialSource = nil; spatialSourceGeneration &+= 1
     spatialStagingID = nil
     visibleCommittedVertexCount = 0; visibleCommittedChunkCount = 0
-    residentCommittedNodeCount = 0; drawnTiles = nil
+    drawnTiles = nil
     spatialTarget?.detach(); spatialTarget = nil
     hasRevealedFirstFrame = false
     presentedStableContentRevision = nil
@@ -1264,7 +1267,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       committedBatches[batch].buffers.removeAll(keepingCapacity: true)
     }
     visibleCommittedVertexCount = 0; visibleCommittedChunkCount = 0
-    residentCommittedNodeCount = 0; drawnTiles = nil
+    drawnTiles = nil
     isPaused = true
     if sampleCount != 1 { sampleCount = 1 }
     releaseDrawables()
@@ -1310,7 +1313,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   private func releaseGeometryBuffers() {
-    residentCommittedNodeCount = 0
     drawnTiles = nil
     for index in committedBatches.indices {
       committedBatches[index].buffers.removeAll(keepingCapacity: true)
@@ -1431,9 +1433,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
           flags: committedBatches[$1.0].buffers[$1.1]!.geometry.chunk.descriptor.flags)
     }
     visibleCommittedChunkCount = visible.count
-    residentCommittedNodeCount = committedBatches.reduce(0) {
-      $0 + $1.buffers.values.reduce(0) { $0 + $1.nodeCount }
-    }
     return visible
   }
 
@@ -1442,6 +1441,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   ) throws -> [(Int, Range<Int>)] {
     var visible: [(Int, Range<Int>)] = []
     let viewportRect = camera == nil ? (pageRenderRegion ?? CGRect(origin: .zero, size: size)) : CGRect(origin: .zero, size: size)
+    let pixelsPerPoint =
+      pixelScale ?? Float(spatialDrawableScale ?? Double(drawableSize.width / max(bounds.width, 1)))
     let grid=InkRasterRenderer.shared.sampleGrid(viewport:size,
       pixels:rasterSize ?? spatialTarget?.layout.pixelSize ?? drawableSize)
     for batchIndex in batches.indices {
@@ -1453,8 +1454,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       }
       let affine=InkAffine(rasterTransform)
       let query=mesh.query(viewport:viewportRect.insetBy(dx:-1,dy:-1),affine:.init(transform),
+        detail:.init(pixelsPerUnit:affine.maximumStretch*pixelsPerPoint,minimumPixelsPerUnit:affine.minimumStretch*pixelsPerPoint),
         admitting:grid.map { grid in { grid.mayCover($0,affine:affine) } })
       committedIndexVisitCount += query.cost.visitedNodes
+      queriedCommittedPointCount += query.cost.decodedSamples
       let selected=query.chunks
       let selectedIDs = Set(selected)
       // A sample-free overview must not discard the already admitted detail
@@ -1471,8 +1474,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       }
       visible.append(contentsOf: selected.map { (batchIndex, $0) })
     }
-    let pixelsPerPoint =
-      pixelScale ?? Float(spatialDrawableScale ?? Double(drawableSize.width / max(bounds.width, 1)))
     for (batchIndex, chunkIndex) in visible {
       let mesh=batches[batchIndex].mesh
       let geometry: PreparedGeometry
