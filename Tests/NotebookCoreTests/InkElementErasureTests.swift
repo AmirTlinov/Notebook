@@ -149,7 +149,7 @@ struct InkElementErasureTests {
     #expect(try reopened.readElementErasures(on:surface,elementID:"circle").isEmpty)
   }
 
-  @Test(arguments:[4,5,6,7,8,9,12,13,14,15,16,17,18]) func newManifestFencesOldReadersWithoutDroppingQueuedHistory(legacyFormat: Int) throws {
+  @Test(arguments:[4,5,6,7,8,9,12,13,14,15,16,17,18]) func oldManifestsRequirePeerUpgradeWithoutChangingContentOrCursor(legacyFormat: Int) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let a = NotebookStore(root: root.appendingPathComponent("a")), b = NotebookStore(root: root.appendingPathComponent("b"))
@@ -164,7 +164,13 @@ struct InkElementErasureTests {
     try a.stageBlob(data: old, expectedHash: hash)
     let queued = NotebookDurableChange(sequence: initial.sequence, transactionID: initial.transactionID,
       manifestHash: hash, byteCount: initial.byteCount + old.count - data.count)
-    try transfer(queued, from: a, to: b, peer: actor)
+    let cursor=try b.peerCursor(peerID:actor,direction:.incoming)
+    let change=try b.currentChangeCursor()
+    do { try transfer(queued,from:a,to:b,peer:actor);Issue.record("Retired manifest was admitted") }
+    catch let error as CollaborationError { #expect(error.code == "placement_peer_upgrade_required") }
+    #expect(try b.peerCursor(peerID:actor,direction:.incoming) == cursor)
+    #expect(try b.currentChangeCursor() == change)
+    try transfer(initial,from:a,to:b,peer:actor)
     #expect(try b.loadIndex() == a.loadIndex())
   }
 
