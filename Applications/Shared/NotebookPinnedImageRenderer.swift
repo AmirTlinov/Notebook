@@ -305,7 +305,7 @@ enum NotebookPinnedImageRenderer {
         try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:layout,erasures:erasures,appearance:appearance,live:false), size: frame.size, in: frame)
       } else if element.kind == .nativeText {
         try await canvas.drawView(NotebookPlacedElement(presentation:presentation) {
-          SpatialTextSnapshot(element:element).erased(by:erasures,appearance:appearance)
+          SpatialTextSnapshot(element:element).snapshotErased(by:erasures,appearance:appearance)
         },size:frame.size,in:frame)
       } else {
         guard let visuals else { throw SceneRenderError.snapshotPending("historical_frame_unavailable") }

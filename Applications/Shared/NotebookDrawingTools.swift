@@ -9,7 +9,7 @@ enum DrawingTool: String, CaseIterable, Codable, Sendable {
   var usesInkJournal: Bool { drawsInk || self == .eraser }
   var title: String {
     switch self {
-    case .pen: "Ручка"; case .marker: "Маркер"; case .eraser: "Ластик"; case .lasso: "Лассо"
+    case .pen: "Ручка"; case .marker: "Маркер"; case .eraser: "Ластик"; case .lasso: "Лассо / выделение"
     case .shape: "Фигуры"; case .text: "Текст"; case .connector: "Стрелка"; case .ruler: "Линейка"; case .laser: "Указка"
     }
   }
@@ -41,6 +41,11 @@ enum NotebookShapeOperation: String, Codable, CaseIterable, Sendable {
     switch self { case .normal: "Обычный"; case .union: "Объединение"; case .subtract: "Вычитание";
     case .intersect: "Пересечение"; case .exclude: "Исключение" }
   }
+}
+
+enum NotebookLassoMode: String, Codable, CaseIterable, Sendable {
+  case region, elements
+  var title: String { self == .region ? "Лассо" : "Выделение" }
 }
 
 /// Device-local preferences. Neither selection, a contact nor authored content
@@ -75,15 +80,10 @@ struct NotebookDrawingToolSettings: Codable, Equatable, Sendable {
   }
   var lassoAddsToSelection = false
   init() {}
-  private var lassoInk: Bool?
-  private var lassoObjects: Bool?
-  var lassoSelectsInk: Bool {
-    get { lassoInk ?? true }
-    set { lassoInk = newValue }
-  }
-  var lassoSelectsObjects: Bool {
-    get { lassoObjects ?? true }
-    set { lassoObjects = newValue }
+  private var lassoBehavior: NotebookLassoMode?
+  var lassoMode: NotebookLassoMode {
+    get { lassoBehavior ?? .region }
+    set { lassoBehavior = newValue }
   }
 
   var isValid: Bool {
@@ -125,6 +125,16 @@ enum NotebookToolGeometry {
     return corners.contains { contains($0,polygon:polygon) }
       || polygon.contains { rect.contains(CGPoint(x:$0.x,y:$0.y)) }
       || zip(corners,corners.dropFirst()+corners.prefix(1)).contains { intersects(from:$0,to:$1,polygon:polygon) }
+  }
+
+  /// Whole-object selection is deliberately stricter than a lasso cut. A
+  /// loop touching a very large page, group or board item must never select
+  /// that entire owner and produce a canvas-sized editing frame.
+  static func encloses(_ rect: CGRect, polygon: [SpatialPoint]) -> Bool {
+    guard !rect.isNull, rect.width >= 0, rect.height >= 0 else { return false }
+    return [SpatialPoint(x:rect.minX,y:rect.minY), .init(x:rect.maxX,y:rect.minY),
+      .init(x:rect.maxX,y:rect.maxY), .init(x:rect.minX,y:rect.maxY)]
+      .allSatisfy { contains($0,polygon:polygon) }
   }
 
   static func intersects(from a: SpatialPoint, to b: SpatialPoint, polygon: [SpatialPoint]) -> Bool {

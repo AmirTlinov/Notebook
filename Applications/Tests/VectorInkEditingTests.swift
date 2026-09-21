@@ -32,17 +32,20 @@ import XCTest
     XCTAssertEqual(selected.graphic.sourceInkIDs,[actions[0].id])
     XCTAssertEqual(selected.sourceSampleCount,100_000)
     XCTAssertLessThan(selected.candidateSampleCount,1000)
+    XCTAssertNotNil(selected.remainder)
+    XCTAssertTrue(selected.graphic.freehand?.layers.allSatisfy { $0.measured == nil } == true)
     let reused = try XCTUnwrap(prepared.selection(polygon:polygon,surface:.page(page.id),origin:nil,bounds:nil))
     XCTAssertEqual(reused.graphic,selected.graphic)
     XCTAssertEqual(try drawing.dataRepresentation(),page.drawingData)
     let receipt: [String:Any] = ["sourceSamples":selected.sourceSampleCount,"candidateSamplesRead":selected.candidateSampleCount,
-      "retainedSelectedSamples":actions[0].samples.count,"selectionMilliseconds":durations,
+      "selectedVectorVertices":selected.graphic.freehand?.layers.reduce(0) { $0+$1.vertices.count } ?? 0,
+      "hasOutsideVector":selected.remainder != nil,"selectionMilliseconds":durations,
       "coldPrepareMilliseconds":Double(preparation.components.seconds)*1000+Double(preparation.components.attoseconds)/1e15]
     let attachment = XCTAttachment(data:try JSONSerialization.data(withJSONObject:receipt,options:[.prettyPrinted,.sortedKeys]),uniformTypeIdentifier:"public.json")
     attachment.name = "vector-lasso-100k"; attachment.lifetime = .keepAlways; add(attachment)
   }
 
-  func testVectorLassoSeesOnlyRemainingPaintAndSharesWholeSource() throws {
+  func testVectorLassoCutsSelectedAreaFromOutsideVector() throws {
     func sample(_ x: Double,_ y: Double,_ width: Double) -> SpatialInkSample {
       .init(point:.init(x:x,y:y),timeOffset:0,width:width,opacity:1,force:1,azimuth:0,altitude:1)
     }
@@ -54,10 +57,16 @@ import XCTest
     XCTAssertNil(try source.selection(polygon:polygon(100),surface:.page(page.id),origin:nil,bounds:nil))
     let selection = try XCTUnwrap(source.selection(polygon:polygon(40),surface:.page(page.id),origin:nil,bounds:nil))
     let ink = try XCTUnwrap(selection.graphic.freehand)
-    let geometry = ink.geometry
-    let edited = try selection.graphic.applying(.object(["transform":try JSONValue.encode(NotebookGraphicTransform(a:0,b:1,c:-1,d:0,tx:1,ty:0))]))
-    XCTAssertTrue(edited.freehand?.geometry === geometry)
-    XCTAssertEqual(edited.freehand,ink)
+    let outside = try XCTUnwrap(selection.remainder)
+    XCTAssertEqual(selection.graphic.sourceInkIDs,[pen.id])
+    XCTAssertTrue(outside.graphic.sourceInkIDs.isEmpty)
+    XCTAssertTrue(ink.layers.filter { $0.tool == .pen }.allSatisfy { $0.measured == nil })
+    XCTAssertTrue(outside.graphic.freehand?.layers.filter { $0.tool == .pen }.allSatisfy { $0.measured == nil } == true)
+    XCTAssertTrue(ink.layers.contains { $0.tool == .eraser && $0.measured != nil })
+    XCTAssertTrue(outside.graphic.freehand?.layers.contains { $0.tool == .eraser && $0.measured != nil } == true)
+    XCTAssertLessThan(selection.frame.x+selection.frame.width,50)
+    XCTAssertLessThan(outside.frame.x,25)
+    XCTAssertGreaterThan(outside.frame.x+outside.frame.width,175)
   }
   func testSpatialWindowMembershipAndOriginAreNotConfusedWithOwnerRevision() throws {
     let board = UUID(), actor = UUID(), surface = SurfaceID.board(board)
@@ -79,8 +88,8 @@ import XCTest
     let polygon = [SpatialPoint(x:90,y:15),.init(x:190,y:15),.init(x:190,y:25),.init(x:90,y:25)]
     let result = try XCTUnwrap(prepared.selection(polygon:polygon,surface:surface,origin:origin,bounds:nil))
     XCTAssertEqual(result.graphic.sourceInkIDs,[b.id])
-    XCTAssertEqual(result.frame.x,96.4,accuracy:0.001)
-    XCTAssertEqual(result.frame.y,16.4,accuracy:0.001)
+    XCTAssertEqual(result.frame.x,98,accuracy:0.001)
+    XCTAssertEqual(result.frame.y,18,accuracy:0.001)
     let hidden = NotebookLassoInkSource.spatial(.init(actions:[a,b],stamp:stamp),[b.id])
     XCTAssertEqual(hidden.cacheKey(surface:surface),new.cacheKey(surface:surface),"Presentation claims do not rebuild measured source")
     let projection = prepared.excluding([b.id])

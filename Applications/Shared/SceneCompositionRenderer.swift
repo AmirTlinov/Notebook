@@ -392,7 +392,7 @@ final class SceneCompositionRenderer {
     if element.kind == .nativeText {
       guard let presentation else { throw SceneRenderError.snapshotPending("element_placement") }
       try await canvas.drawView(NotebookPlacedElement(presentation:presentation) {
-        SpatialTextSnapshot(element:element).erased(by:erasures,appearance:appearance)
+        SpatialTextSnapshot(element:element).snapshotErased(by:erasures,appearance:appearance)
       },size:presentation.bounds.size,in:frame)
       return
     }

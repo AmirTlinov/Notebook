@@ -64,7 +64,8 @@ enum PageCompositionRenderer {
       }
       if element.kind == .nativeText {
         try await canvas.drawView(NotebookPlacedElement(presentation:presentation) {
-          NotebookNativeTextSnapshot(source:element.source,style:element.textStyle ?? .standard).erased(by:cuts,appearance:appearance)
+          NotebookNativeTextSnapshot(source:element.source,style:element.textStyle ?? .standard)
+            .snapshotErased(by:cuts,appearance:appearance)
         },size:frame.size,in:frame)
         continue
       }

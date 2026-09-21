@@ -92,7 +92,7 @@ final class SceneRasterCompositor {
       try await drawView(NotebookPlacedElement(presentation:presentation) {
         Image(decorative:image,scale:1).resizable().frame(width:crop.width,height:crop.height)
           .position(x:crop.midX,y:crop.midY).frame(width:size.width,height:size.height)
-          .erased(by:erasures,appearance:appearance)
+          .snapshotErased(by:erasures,appearance:appearance)
       },size:presentation.bounds.size,in:elementFrame ?? frame)
       return
     }
@@ -106,7 +106,7 @@ final class SceneRasterCompositor {
       try await drawView(Image(decorative: image, scale: 1).resizable()
         .frame(width: crop.width, height: crop.height)
         .position(x: crop.midX, y: crop.midY)
-        .frame(width: size.width, height: size.height).erased(by: erasures, appearance: appearance),
+        .frame(width:size.width,height:size.height).snapshotErased(by:erasures,appearance:appearance),
         size: size, in: elementFrame ?? frame)
       return
     }

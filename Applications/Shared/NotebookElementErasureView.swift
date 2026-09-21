@@ -24,4 +24,22 @@ extension View {
       }
     }
   }
+
+  /// Offscreen composition cannot capture the live Metal mask. It consumes
+  /// the already prepared vector appearance from the same erasure actions.
+  @ViewBuilder func snapshotErased(by erasures:[InkElementErasure],appearance:NotebookElementAppearance?,
+    transform:NotebookGraphicTransform? = nil,layout:NotebookGraphicLayout? = nil)->some View {
+    if erasures.isEmpty { self }
+    else if appearance?.state == .erased || erasures.contains(where:{ $0.target.wholeElement }) {
+      Color.clear
+    } else {
+      mask {
+        Canvas { context,size in
+          if let appearance { context.clip(to:Path(appearance.mask),options:.inverse) }
+          else { NotebookElementErasurePaint.clip(erasures,context:&context,size:size,transform:transform,layout:layout) }
+          context.fill(Path(CGRect(origin:.zero,size:size)),with:.color(.white))
+        }
+      }
+    }
+  }
 }

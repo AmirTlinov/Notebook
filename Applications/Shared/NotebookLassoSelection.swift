@@ -36,8 +36,14 @@ enum NotebookLassoInkSource: Sendable {
     return key
   }
   struct Result: Sendable {
-    let frame: PageRect
-    let graphic: NotebookGraphic
+    struct Piece: Sendable {
+      let frame: PageRect
+      let graphic: NotebookGraphic
+    }
+    let selected: Piece
+    let remainder: Piece?
+    var frame: PageRect { selected.frame }
+    var graphic: NotebookGraphic { selected.graphic }
     /// Candidate traversal only; excludes exact semantic geometry preparation.
     let candidateSampleCount: Int
     let sourceSampleCount: Int
@@ -195,11 +201,212 @@ enum NotebookLassoInkSource: Sendable {
       }
       let ink = NotebookFreehand(layers:layers)
       guard ink.isValid else { throw CollaborationError("selection_limit","Выделите меньшую часть рукописи.") }
-      let clip = polygon.map { CGPoint(x:($0.x-frame.x)/frame.width,y:($0.y-frame.y)/frame.height) }
-      guard ink.geometry.intersects(clip) else { return nil }
-      return .init(frame:.init(x:frame.x-delta.x,y:frame.y-delta.y,width:frame.width,height:frame.height),
-        graphic:.init(shape:.freehand,sourceInkIDs:chosen.sorted().map { entries[$0].id },freehand:ink),
+      let split = try ink.partitioned(by:polygon.map { CGPoint(x:$0.x,y:$0.y) },in:frame)
+      guard let selected = split.inside else { return nil }
+      func piece(_ value: NotebookFreehand.Partition) -> Result.Piece {
+        .init(frame:.init(x:value.frame.x-delta.x,y:value.frame.y-delta.y,
+            width:value.frame.width,height:value.frame.height),
+          graphic:.init(shape:.freehand,sourceInkIDs:value.insideSource ? chosen.sorted().map { entries[$0].id } : [],
+            freehand:value.ink))
+      }
+      return .init(selected:piece(selected),remainder:split.outside.map(piece),
         candidateSampleCount:examined,sourceSampleCount:sourceSampleCount)
     }
+  }
+}
+
+private extension NotebookFreehand {
+  struct Partition {
+    let frame: PageRect
+    let ink: NotebookFreehand
+    let insideSource: Bool
+  }
+
+  /// Materialize only the intersected source actions into two exact vector
+  /// pieces. The selected piece claims the original journal IDs; the outside
+  /// piece is ordinary vector geometry, so moving the selection cannot drag
+  /// content that was never inside the loop.
+  func partitioned(by polygon: [CGPoint], in frame: PageRect) throws
+    -> (inside: Partition?, outside: Partition?) {
+    guard frame.width > 0, frame.height > 0 else { return (nil,nil) }
+    let clip = polygon.map { CGPoint(x:($0.x-frame.x)/frame.width,y:($0.y-frame.y)/frame.height) }
+    guard let ears = lassoTriangles(clip) else {
+      throw CollaborationError("invalid_lasso","Контур лассо пересёк сам себя. Обведите область одним простым контуром.")
+    }
+    let geometry = geometry
+    var inside = Array(repeating:[Vertex](),count:layers.count)
+    var outside = Array(repeating:[Vertex](),count:layers.count)
+    let query = geometry.query(.init(x:0,y:0,width:1,height:1),allowRangeCoalescing:false).indices
+    for id in query {
+      try Task.checkCancellation()
+      guard geometry.tool(at:id) == .pen else { continue }
+      let layer = geometry.layer(at:id), vertices = geometry.vertices(at:id)
+      for start in stride(from:0,to:vertices.count-2,by:3) {
+        let source = Array(vertices[start..<start+3])
+        let points = source.map { CGPoint(x:$0.x,y:$0.y) }
+        guard abs(lassoCross(points[0],points[1],points[2])) > Double.ulpOfOne else { continue }
+        for ear in ears {
+          let value = lassoClip(points,to:ear)
+          lassoAppend(value,source:source,to:&inside[layer])
+        }
+        var fragments = [points]
+        for ear in ears where !fragments.isEmpty {
+          fragments = fragments.flatMap { lassoSubtract($0,triangle:ear) }
+        }
+        for value in fragments { lassoAppend(value,source:source,to:&outside[layer]) }
+      }
+    }
+    func make(_ values:[[Vertex]],insideSource:Bool) throws -> Partition? {
+      guard values.reduce(0,{ $0+$1.count }) <= NotebookFreehand.maximumVertices else {
+        throw CollaborationError("selection_limit","Выделите меньшую часть рукописи: точный векторный разрез слишком большой.")
+      }
+      var bounds=CGRect.null
+      for (index,vertices) in values.enumerated() where layers[index].tool == .pen {
+        for vertex in vertices where vertex.opacity > 0 {
+          bounds=bounds.union(.init(x:vertex.x,y:vertex.y,width:0,height:0))
+        }
+      }
+      guard !bounds.isNull,bounds.width > Double.ulpOfOne,bounds.height > Double.ulpOfOne else { return nil }
+      let physical=PageRect(x:frame.x+bounds.minX*frame.width,y:frame.y+bounds.minY*frame.height,
+        width:bounds.width*frame.width,height:bounds.height*frame.height)
+      var result:[Layer]=[]
+      for (index,layer) in layers.enumerated() {
+        if layer.tool == .pen {
+          guard !values[index].isEmpty else { continue }
+          let rebased=values[index].map { Vertex(x:($0.x-bounds.minX)/bounds.width,
+            y:($0.y-bounds.minY)/bounds.height,opacity:$0.opacity) }
+          result.append(.init(tool:.pen,color:layer.color,vertices:rebased))
+        } else if let measured=layer.measured {
+          result.append(.init(tool:.eraser,color:layer.color,measured:.init(sourceID:measured.sourceID,
+            span:measured.span,measurements:measured.measurements,frame:physical,origin:measured.origin)))
+        } else if let eraser=layer.eraser {
+          let dx=frame.x-physical.x,dy=frame.y-physical.y
+          result.append(.init(eraser:.init(size:.init(x:physical.width,y:physical.height),samples:eraser.samples.map {
+            .init(point:.init(x:$0.point.x+dx,y:$0.point.y+dy),width:$0.width)
+          })))
+        } else if !layer.vertices.isEmpty {
+          let rebased=layer.vertices.map { Vertex(x:($0.x-bounds.minX)/bounds.width,
+            y:($0.y-bounds.minY)/bounds.height,opacity:$0.opacity) }
+          result.append(.init(tool:.eraser,color:layer.color,vertices:rebased))
+        }
+      }
+      let ink=NotebookFreehand(layers:result)
+      let viewport=[CGPoint(x:0,y:0),.init(x:1,y:0),.init(x:1,y:1),.init(x:0,y:1)]
+      guard ink.isValid,ink.geometry.intersects(viewport,clippedTo:viewport) else { return nil }
+      return .init(frame:physical,ink:ink,insideSource:insideSource)
+    }
+    guard let selected=try make(inside,insideSource:true) else { return (nil,nil) }
+    return (selected,try make(outside,insideSource:false))
+  }
+}
+
+private func lassoCross(_ a:CGPoint,_ b:CGPoint,_ p:CGPoint)->Double {
+  (b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x)
+}
+
+private func lassoArea(_ polygon:[CGPoint])->Double {
+  zip(polygon,polygon.dropFirst()+polygon.prefix(1)).reduce(0) { $0+$1.0.x*$1.1.y-$1.1.x*$1.0.y }/2
+}
+
+private func lassoTriangles(_ input:[CGPoint])->[[CGPoint]]? {
+  var polygon:[CGPoint]=[]
+  for point in input where point.x.isFinite && point.y.isFinite {
+    if let last=polygon.last,hypot(last.x-point.x,last.y-point.y) <= Double.ulpOfOne { continue }
+    polygon.append(point)
+  }
+  if polygon.count > 2,let first=polygon.first,let last=polygon.last,
+    hypot(first.x-last.x,first.y-last.y) <= Double.ulpOfOne { polygon.removeLast() }
+  var removed=true
+  while removed,polygon.count > 3 {
+    removed=false
+    for index in polygon.indices {
+      let a=polygon[(index+polygon.count-1)%polygon.count],b=polygon[index],c=polygon[(index+1)%polygon.count]
+      if abs(lassoCross(a,b,c)) <= 1e-14 {
+        polygon.remove(at:index);removed=true;break
+      }
+    }
+  }
+  guard polygon.count >= 3,abs(lassoArea(polygon)) > Double.ulpOfOne else { return nil }
+  let orientation=lassoArea(polygon) > 0 ? 1.0 : -1.0
+  var ids=Array(polygon.indices),result:[[CGPoint]]=[]
+  func contains(_ p:CGPoint,_ triangle:[CGPoint])->Bool {
+    let a=lassoCross(triangle[0],triangle[1],p)*orientation
+    let b=lassoCross(triangle[1],triangle[2],p)*orientation
+    let c=lassoCross(triangle[2],triangle[0],p)*orientation
+    return a > 1e-14 && b > 1e-14 && c > 1e-14
+  }
+  while ids.count > 3 {
+    var ear:Int?
+    for position in ids.indices {
+      let previous=ids[(position+ids.count-1)%ids.count],current=ids[position],next=ids[(position+1)%ids.count]
+      let triangle=[polygon[previous],polygon[current],polygon[next]]
+      guard lassoCross(triangle[0],triangle[1],triangle[2])*orientation > 1e-14 else { continue }
+      if ids.contains(where:{ $0 != previous && $0 != current && $0 != next && contains(polygon[$0],triangle) }) { continue }
+      ear=position;result.append(triangle);break
+    }
+    guard let ear else { return nil }
+    ids.remove(at:ear)
+  }
+  result.append(ids.map { polygon[$0] })
+  return result
+}
+
+private func lassoClip(_ polygon:[CGPoint],to clip:[CGPoint])->[CGPoint] {
+  guard polygon.count >= 3,clip.count == 3 else { return [] }
+  let orientation=lassoCross(clip[0],clip[1],clip[2]) >= 0 ? 1.0 : -1.0
+  var result=polygon
+  for (a,b) in zip(clip,clip.dropFirst()+clip.prefix(1)) {
+    var next:[CGPoint]=[]
+    for (p,q) in zip(result,result.dropFirst()+result.prefix(1)) {
+      let x=lassoCross(a,b,p)*orientation,y=lassoCross(a,b,q)*orientation
+      if x >= 0 { next.append(p) }
+      if (x > 0 && y < 0)||(x < 0 && y > 0) {
+        let t=x/(x-y);next.append(.init(x:p.x+(q.x-p.x)*t,y:p.y+(q.y-p.y)*t))
+      }
+    }
+    result=next
+    if result.isEmpty { break }
+  }
+  return result
+}
+
+private func lassoSubtract(_ polygon:[CGPoint],triangle:[CGPoint])->[[CGPoint]] {
+  let orientation=lassoCross(triangle[0],triangle[1],triangle[2])
+  guard polygon.count >= 3,orientation != 0 else { return polygon.count >= 3 ? [polygon] : [] }
+  var inside=polygon,result:[[CGPoint]]=[]
+  func clipped(_ value:[CGPoint],_ a:CGPoint,_ b:CGPoint,inside keep:Bool)->[CGPoint] {
+    guard value.count >= 3 else { return [] }
+    var output:[CGPoint]=[]
+    let sign=(orientation > 0 ? 1.0 : -1.0)*(keep ? 1 : -1)
+    for (p,q) in zip(value,value.dropFirst()+value.prefix(1)) {
+      let x=lassoCross(a,b,p)*sign,y=lassoCross(a,b,q)*sign
+      if x >= 0 { output.append(p) }
+      if (x > 0 && y < 0)||(x < 0 && y > 0) {
+        let t=x/(x-y);output.append(.init(x:p.x+(q.x-p.x)*t,y:p.y+(q.y-p.y)*t))
+      }
+    }
+    return output
+  }
+  func hasArea(_ value:[CGPoint])->Bool { value.count >= 3 && abs(lassoArea(value)) > 1e-14 }
+  for (a,b) in zip(triangle,triangle.dropFirst()+triangle.prefix(1)) {
+    let outside=clipped(inside,a,b,inside:false)
+    if hasArea(outside) { result.append(outside) }
+    inside=clipped(inside,a,b,inside:true)
+    if !hasArea(inside) { break }
+  }
+  return result
+}
+
+private func lassoAppend(_ polygon:[CGPoint],source:[NotebookFreehand.Vertex],to output:inout [NotebookFreehand.Vertex]) {
+  guard polygon.count >= 3,abs(lassoArea(polygon)) > 1e-14 else { return }
+  let a=CGPoint(x:source[0].x,y:source[0].y),b=CGPoint(x:source[1].x,y:source[1].y),c=CGPoint(x:source[2].x,y:source[2].y)
+  let denominator=lassoCross(a,b,c)
+  guard denominator != 0 else { return }
+  func vertex(_ p:CGPoint)->NotebookFreehand.Vertex {
+    let wa=lassoCross(b,c,p)/denominator,wb=lassoCross(c,a,p)/denominator,wc=1-wa-wb
+    return .init(x:p.x,y:p.y,opacity:min(1,max(0,wa*source[0].opacity+wb*source[1].opacity+wc*source[2].opacity)))
+  }
+  for index in 1..<polygon.count-1 {
+    output.append(vertex(polygon[0]));output.append(vertex(polygon[index]));output.append(vertex(polygon[index+1]))
   }
 }
