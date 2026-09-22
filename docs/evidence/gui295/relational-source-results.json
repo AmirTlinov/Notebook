@@ -1,0 +1,109 @@
+[
+  {
+    "allDisplayConstructionMs" : [
+      0.036583999999999998,
+      0.00050000000000000001,
+      0.00033399999999999999,
+      0.000292,
+      0.000292,
+      0.00025000000000000001
+    ],
+    "case" : "regular_curve",
+    "derivedBytes" : 304,
+    "displayConstructionFirstMs" : 0.036583999999999998,
+    "displayConstructionWarmMedianMs" : 0.000292,
+    "displayMode" : "relative",
+    "logicalEvents" : 10000,
+    "preparedBeforeViewportQuery" : 0,
+    "queryAndPreparationReads" : 526,
+    "queryNodeVisits" : 81,
+    "sourceConstructionMs" : 1.1115839999999999,
+    "visibleChunks" : 2
+  },
+  {
+    "allDisplayConstructionMs" : [
+      0.37987500000000002,
+      0.353209,
+      0.35412500000000002,
+      0.35358400000000001,
+      0.354375,
+      0.354375
+    ],
+    "case" : "one_distant_near_coincident_pair",
+    "derivedBytes" : 248560,
+    "displayConstructionFirstMs" : 0.37987500000000002,
+    "displayConstructionWarmMedianMs" : 0.35412500000000002,
+    "displayMode" : "prepared",
+    "logicalEvents" : 10000,
+    "preparedBeforeViewportQuery" : 9999,
+    "queryAndPreparationReads" : 0,
+    "queryNodeVisits" : 11,
+    "sourceConstructionMs" : 1.1115839999999999,
+    "visibleChunks" : 2
+  },
+  {
+    "allDisplayConstructionMs" : [
+      0.0025829999999999998,
+      0.00037500000000000001,
+      0.00029100000000000003,
+      0.00033300000000000002,
+      0.000292,
+      0.000292
+    ],
+    "case" : "regular_curve",
+    "derivedBytes" : 304,
+    "displayConstructionFirstMs" : 0.0025829999999999998,
+    "displayConstructionWarmMedianMs" : 0.000292,
+    "displayMode" : "relative",
+    "logicalEvents" : 100000,
+    "preparedBeforeViewportQuery" : 0,
+    "queryAndPreparationReads" : 534,
+    "queryNodeVisits" : 220,
+    "sourceConstructionMs" : 9.7805839999999993,
+    "visibleChunks" : 2
+  },
+  {
+    "allDisplayConstructionMs" : [
+      3.8707090000000002,
+      3.5239579999999999,
+      3.5857920000000001,
+      3.5806659999999999,
+      3.5312920000000001,
+      3.5942919999999998
+    ],
+    "case" : "one_distant_near_coincident_pair",
+    "derivedBytes" : 2484376,
+    "displayConstructionFirstMs" : 3.8707090000000002,
+    "displayConstructionWarmMedianMs" : 3.5806659999999999,
+    "displayMode" : "prepared",
+    "logicalEvents" : 100000,
+    "preparedBeforeViewportQuery" : 99999,
+    "queryAndPreparationReads" : 0,
+    "queryNodeVisits" : 19,
+    "sourceConstructionMs" : 9.7805839999999993,
+    "visibleChunks" : 2
+  },
+  {
+    "case" : "same_curve_local_vs_tiled_storage",
+    "localBytes" : 1356312,
+    "localEncodedBytes" : 840771,
+    "logicalEvents" : 100000,
+    "scope" : "payload estimates and codec bytes; not process memory or device performance",
+    "worldBytes" : 10835000,
+    "worldEncodedBytes" : 9706363
+  },
+  {
+    "case" : "declared_repeat_roundtrip_edit_save_reopen",
+    "comparedEventsOnEdit" : 0,
+    "decodeMs" : 0.029666999999999999,
+    "editedNodes" : 10,
+    "encodedBytes" : 1051,
+    "encodeMs" : 0.0075420000000000001,
+    "logicalEvents" : 1000000,
+    "originalNodes" : 2,
+    "reopenedBytes" : 6920,
+    "saveReopenExact" : true,
+    "scannedEventsOnEdit" : 100,
+    "singleEditMs" : 0.056792000000000002
+  }
+]

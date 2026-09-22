@@ -1,0 +1,29 @@
+{
+  "sourceCommit": "ef3af722165e74b7dc55f6f6dde49a1db5755500",
+  "sourceWorktree": "/Users/amir/.codex/worktrees/notebook-relational-audit/Notebook",
+  "releaseCoreObject": "/Users/amir/.codex/worktrees/notebook-interaction-followup/Notebook/.build/gui294-connector-lasso-release-170-final/derived-mac/Build/Products/Release/NotebookCore.o",
+  "releaseCoreObjectSha256": "4d3183f9a16d21e5c5e8bcb34935bc0dce925001cb473ff5252a2bd10e860996",
+  "verifiedAgainstRelease": 170,
+  "releaseSourceDigest": "2ff8b7d83bb2c2433f058f5d80b5725f820de50c61d30102625f8991e62e84b9",
+  "coreFilesVerified": 204,
+  "coreDifferences": [],
+  "uiFilesVerified": {
+    "Applications/Shared/NotebookDrawingToolController.swift": "48350a8cb65f2f2dbe72a1744a5a8e0ec8112b4ab12c60c3fc4d0d6cbe12db03",
+    "Applications/Shared/NotebookSelectionSession.swift": "26e89c699ef99c9efc0379a49330740cdc653659d6427fa1d8d710d8ad43d158",
+    "Applications/Shared/NotebookElementErasing.swift": "e3a8aa33253413e2c2d45e582c085b7ca5edde3d4ee8868d20ad7a39aa026813",
+    "Applications/Shared/NotebookInkMaterialView.swift": "b28b7de34ccb460af2722beb00a21683c74f10be48a7ea27ebab459e28b2771c",
+    "Applications/Shared/InkCanvasView.swift": "e898250ce7624c021237ad6a18503e63f725719b6f17ea3e4c643e1ade629397",
+    "Applications/Shared/NotebookLiveElementEraserView.swift": "a0e6a20c99910198115b5bdef2c63a633b0530dbd0ace5147bcb376bc91c61be",
+    "Applications/Shared/WorkspaceSceneContent.swift": "2384e529f429efe6178922234850da5b98dd83617da74cf04ee87f6aeb3399b4",
+    "Applications/Shared/NotebookAttentionProjection.swift": "e2960b22a95b9824a71ffcf08f270761bec9dd07f041f5731a7e0b2ac8290ad2",
+    "Applications/Shared/NotebookGraphicView.swift": "aa86cbbc87c23c8e79bb8d934f71ed16daa52f293ece2e7400d1a38c2e226b89",
+    "Applications/iPad/PencilCanvasView.swift": "373ee0e84cfd395ec82d5d8ce45119c10a2be43e7530d5861973534954afe01c",
+    "Applications/iPad/SpatialInkCanvas.swift": "52fe5e7f207d77ec1c254b1b217680b4e5a894f1c0039a5a2e80149703fae4b4",
+    "Applications/iPad/SpatialWorkspaceView.swift": "a3b9f29f865b85341beb99a2da72b82cfb7c4a0e50df48c189b12d8034a376a2",
+    "Applications/iPad/WorkspaceGestureLayer.swift": "dd338cb602eb7ea2d64f8e90bc23ec246f4bd1df94079307734254ff537f7385"
+  },
+  "execution": "standalone Release -O macOS probe; no native gesture, simulator, live database, Xcode runner or profiler",
+  "hardware": "MacBook Pro Mac17,6; Apple M5 Max; 128 GB; macOS 27.0 (26A428)",
+  "timingProtocol": "six display-source constructions; first separate, median of remaining five; descriptive local timings, not acceptance benchmark or process memory",
+  "probeSha256": "d89ae5a790743d7e58177ef0c56607bd0f271cea5d2c3ab99ababcf593c5f7b4"
+}
