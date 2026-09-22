@@ -477,7 +477,8 @@ import UIKit
       model.commitNativeText(reference:address.reference(text),text:"Lasso",finish:true)
       await assertSaved(model); await model.reloadExternalChanges()?.value
       let enclosing = [SpatialPoint(x:80,y:80),.init(x:500,y:80),.init(x:500,y:200),.init(x:80,y:200)]
-      let refs = try model.elementsIntersecting(enclosing,at:address,graph:.init([]))
+      let graph=model.graphicGraph(page:try XCTUnwrap(model.activePage))
+      let refs = try model.elementsIntersecting(enclosing,at:address,graph:graph)
       XCTAssertTrue(refs.contains(address.reference(text)))
       model.selectDrawingTool(.lasso)
       model.drawingToolSettings.lassoMode = .elements
@@ -485,6 +486,36 @@ import UIKit
       for point in enclosing.dropFirst() { model.drawingTools.move(to:point) }
       model.drawingTools.finish()
       XCTAssertTrue(model.selectionSession.contains(address.reference(text)))
+    }
+  }
+
+  func testPageNativeSelectionUsesIndexedTransformedBodyNotItsAABB() async throws {
+    try await fixture { model in
+      var page=try XCTUnwrap(model.activePage)
+      let basis=NotebookElementBasis(size:.init(x:100,y:100),transform:.init(
+        a:0.5,b:0.5,c:-0.5,d:0.5,tx:0.5,ty:0))
+      let element=AgentElement(id:"rotated-body",kind:.markdown,
+        frame:.init(x:220,y:260,width:100,height:100),source:"body",html:"",basis:basis)
+      XCTAssertTrue(page.replaceElements([element],actor:model.actorID))
+      try model.store.savePage(page);await model.reloadExternalChanges()?.value
+      page=try XCTUnwrap(model.activePage)
+      let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+      let graph=model.graphicGraph(page:page)
+      let placement=try XCTUnwrap(graph.placement(element.id))
+      let shown=NotebookElementPresentation(element,placement:placement)
+      let corner=[SpatialPoint(x:shown.bounds.minX+1,y:shown.bounds.minY+1),
+        .init(x:shown.bounds.minX+5,y:shown.bounds.minY+1),
+        .init(x:shown.bounds.minX+5,y:shown.bounds.minY+5),
+        .init(x:shown.bounds.minX+1,y:shown.bounds.minY+5)]
+      XCTAssertTrue(NotebookToolGeometry.intersects(shown.bounds,polygon:corner),
+        "The broad AABB deliberately admits this blank rotated corner")
+      XCTAssertFalse(try model.elementsIntersecting(corner,at:address,graph:graph)
+        .contains(address.reference(element.id)))
+      let center=CGPoint(x:50,y:50).applying(placement.transform)
+      let body=[SpatialPoint(x:center.x-3,y:center.y-3),.init(x:center.x+3,y:center.y-3),
+        .init(x:center.x+3,y:center.y+3),.init(x:center.x-3,y:center.y+3)]
+      XCTAssertTrue(try model.elementsIntersecting(body,at:address,graph:graph)
+        .contains(address.reference(element.id)))
     }
   }
 

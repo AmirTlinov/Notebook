@@ -395,6 +395,33 @@ extension NotebookAppModel {
     })
   }
 
+  private func pageSelectionCandidates(_ polygon:[SpatialPoint],pageID:UUID,
+    graph:NotebookGraphicGraph,limit:Int=4_096) throws -> NotebookGraphicVisibilityResult? {
+    guard let x=polygon.map(\.x).min(),let y=polygon.map(\.y).min(),
+      let right=polygon.map(\.x).max(),let bottom=polygon.map(\.y).max(),
+      [x,y,right,bottom].allSatisfy(\.isFinite) else { return nil }
+    let visible=graph.visiblePageGraphics(pageID,
+      in:.init(x:x,y:y,width:max(0,right-x),height:max(0,bottom-y)),limit:limit)
+    guard !visible.overflow else {
+      throw CollaborationError("selection_limit",
+        "Выделите меньшую область: в ней слишком много объектов.")
+    }
+    return visible
+  }
+
+  private func nativeElementIntersects(_ presentation:NotebookElementPresentation,id:String,
+    surface:SurfaceID,polygon:[SpatialPoint],from origin:WorldPoint)->Bool {
+    let transform=presentation.placement.transform
+    let determinant=transform.a*transform.d-transform.b*transform.c
+    guard determinant.isFinite,determinant != 0 else { return false }
+    let inverse=transform.inverted(),delta=origin.delta(to:presentation.placement.origin)
+    let local=polygon.map {
+      CGPoint(x:$0.x-delta.x,y:$0.y-delta.y).applying(inverse)
+    }
+    return NotebookElementAppearance(graphic:nil,layout:nil,size:presentation.bodySize,
+      erasures:elementErasures(on:surface)[id] ?? []).intersects(local)
+  }
+
   private func authoredGraphicValues(_ object:NotebookWorkingGraphic,address:NotebookToolAddress)->[String:JSONValue]? {
     guard var values = try? ["kind":JSONValue.string("graphic"),"source":.string(""),
       "frame":.encode(object.frame),"graphic":.encode(object.graphic)] else { return nil }
@@ -554,10 +581,7 @@ extension NotebookAppModel {
     let candidates:AnySequence<NotebookGraphicGraph.Node>
     var spatialIDs=Set<String>()
     if address.surface.kind == .page,let pageID=address.surface.ownerID,
-      let x=polygon.map(\.x).min(),let y=polygon.map(\.y).min(),
-      let right=polygon.map(\.x).max(),let bottom=polygon.map(\.y).max() {
-      let area=CGRect(x:x,y:y,width:right-x,height:bottom-y)
-      let visible=graph.visiblePageGraphics(pageID,in:area)
+      let visible=try pageSelectionCandidates(polygon,pageID:pageID,graph:graph) {
       candidates=AnySequence(visible.layouts.keys.lazy.compactMap { graph.node($0) })
     } else if address.surface.kind == .page { candidates=AnySequence([]) }
     else {
@@ -586,11 +610,11 @@ extension NotebookAppModel {
     throws ->[EditableElementReference] {
     let origin=address.worldOrigin ?? .zero
     let candidates:AnySequence<NotebookGraphicGraph.Node>
+    var pagePlacements:[String:NotebookElementPlacement]=[:]
     var spatialIDs=Set<String>()
     if address.surface.kind == .page,let pageID=address.surface.ownerID,origin == .zero,
-      let x=polygon.map(\.x).min(),let y=polygon.map(\.y).min(),
-      let right=polygon.map(\.x).max(),let bottom=polygon.map(\.y).max() {
-      let visible=graph.visiblePageGraphics(pageID,in:.init(x:x,y:y,width:right-x,height:bottom-y))
+      let visible=try pageSelectionCandidates(polygon,pageID:pageID,graph:graph) {
+      pagePlacements=visible.placements
       candidates=AnySequence(visible.layouts.keys.lazy.compactMap { graph.node($0) })
     } else if address.surface.kind == .page { candidates=AnySequence([]) }
     else {
@@ -611,17 +635,15 @@ extension NotebookAppModel {
         size:.init(width:frame.width,height:frame.height),erasures:cuts)
         .intersects(local.map { .init(x:$0.x,y:$0.y) })
     }.map { address.reference($0.id) }
-    func visible(_ id:String,_ surface:SurfaceID,_ frame:CGRect)->Bool {
-      NotebookElementAppearance(graphic:nil,layout:nil,size:frame.size,
-        erasures:elementErasures(on:surface)[id] ?? []).state != .erased
-    }
     if address.surface.kind == .page,let page=pages[address.surface.ownerID!] {
-      all += page.displayElements(graphicIDs:[]).filter { element in
-        guard element.kind != .group,element.graphic == nil else { return false }
-        let f=elementPresentationFrame(address.reference(element.id),fallback:element.frame)
-        let rect=CGRect(x:f.x,y:f.y,width:f.width,height:f.height)
-        return NotebookToolGeometry.intersects(rect,polygon:polygon) && visible(element.id,address.surface,rect)
-      }.map { address.reference($0.id) }
+      all += pagePlacements.compactMap { id,placement -> EditableElementReference? in
+        let reference=address.reference(id)
+        guard elementCommandDrafts[reference]?.removed != true,
+          let element=page.element(id:id),element.kind != .group,element.graphic == nil else { return nil }
+        let presentation=NotebookElementPresentation(element,placement:placement)
+        return nativeElementIntersects(presentation,id:id,surface:address.surface,
+          polygon:polygon,from:origin) ? reference : nil
+      }
     } else if let board=address.boardID ?? address.surface.ownerID,let spatial {
       let native:[SpatialElement]=spatialIDs.compactMap { id in
         spatial.index.element(id:id,boardID:board) ?? nativeElementSource(address.reference(id))?.spatial
@@ -629,11 +651,9 @@ extension NotebookAppModel {
       let selected=native.filter { element in
         guard element.kind != .group,element.graphic == nil else { return false }
         guard element.surface == address.surface else { return false }
-        let placement=graph.placement(element.id)
-        let delta=origin.delta(to:placement?.origin ?? element.worldOrigin ?? .zero)
-        let f=elementPresentationFrame(address.reference(element.id),fallback:NotebookTextTypography.frame(element))
-        return NotebookToolGeometry.intersects(.init(x:delta.x+f.x,y:delta.y+f.y,width:f.width,height:f.height),polygon:polygon)
-          && visible(element.id,element.surface,.init(x:f.x,y:f.y,width:f.width,height:f.height))
+        guard let placement=graph.placement(element.id) else { return false }
+        return nativeElementIntersects(.init(element,placement:placement),id:element.id,
+          surface:element.surface,polygon:polygon,from:origin)
       }.map { address.reference($0.id) }
       all += selected
     }
