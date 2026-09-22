@@ -179,7 +179,7 @@ extension NotebookAppModel {
     if admitted.surface.kind == .cover,
       let actual = boardHierarchy?.ownerBoardID(of: owner), actual != boardID { return nil }
     guard let board = boardHierarchy?.board(boardID) else { return admitted }
-    if let current = board.elements.first(where: { $0.id == admitted.id }) {
+    if let current = board.element(id:admitted.id) {
       // Membership is installed with its complete source cut. A current local
       // frame cannot be placed under an older cohort's parent chain.
       if current.parentID != admitted.parentID { return admitted }

@@ -150,6 +150,16 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     mark("sources")
     let board = BoardDocument(freeItems: [.init(itemID: itemID, center: .zero, zIndex: 0, stamp: stamp)],
       elements: elements, stamp: stamp)
+    let lookupID=elements.last!.id,iterations=100
+    var lookupChecksum=0,scanChecksum=0
+    let lookupStart=ProcessInfo.processInfo.systemUptime
+    for _ in 0..<iterations { lookupChecksum += board.element(id:lookupID)?.id.count ?? 0 }
+    let lookupSeconds=ProcessInfo.processInfo.systemUptime-lookupStart
+    let scanStart=ProcessInfo.processInfo.systemUptime
+    for _ in 0..<iterations { scanChecksum += board.elements.first(where:{ $0.id == lookupID })?.id.count ?? 0 }
+    let scanSeconds=ProcessInfo.processInfo.systemUptime-scanStart
+    XCTAssertEqual(lookupChecksum,scanChecksum)
+    print("GUI285 100k element source: retained_us=\(lookupSeconds*1_000_000/Double(iterations)), linear_us=\(scanSeconds*1_000_000/Double(iterations)), ratio=\(scanSeconds/max(lookupSeconds,Double.leastNonzeroMagnitude))");fflush(stdout)
     let hierarchy = BoardHierarchy(rootBoardID: boardID, boards: [.init(id: boardID, board: board)], stamp: stamp)
     mark("hierarchy")
     let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])

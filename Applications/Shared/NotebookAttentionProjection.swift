@@ -85,7 +85,7 @@ enum NotebookAttentionProjection {
     switch reference.target.kind {
     case .page:
       editable = .page(pageID:reference.target.id,elementID:id); surface = .page(reference.target.id)
-      guard let element = model.pages[reference.target.id]?.elements.first(where: { $0.id == id }) else { return nil }
+      guard let element = model.pages[reference.target.id]?.element(id:id) else { return nil }
       result.graphic = element.graphic
       if element.graphic == nil {
         result.isSurface = element.kind == .web
@@ -377,7 +377,7 @@ enum NotebookAttentionProjection {
           target = .init(kind:.page,id:owner); id = elementID; origin = nil
         case .spatial(let boardID,let elementID):
           guard boardID == presence.boardID, model.presentedElement(reference,cohort:cohort) != nil,
-            let board = sources.hierarchy.board(boardID), let element = board.elements.first(where: { $0.id == elementID }),
+            let board = sources.hierarchy.board(boardID), let element = board.element(id:elementID),
             let owner = element.surface.ownerID else { return nil }
           surface = element.surface
           if graphs[surface] == nil { graphs[surface] = board.graphicGraph() }
@@ -425,7 +425,7 @@ enum NotebookAttentionProjection {
           ? sources.hierarchy.descendantBoardIDs(including: boardID) : [boardID]
         for address in cohort.sourceReceipts.keys where boards.contains(address.plane.boardID) {
           guard fragment.target.kind == .board || address.plane.coverID == fragment.target.id,
-            let element = sources.hierarchy.board(address.plane.boardID)?.elements.first(where: { $0.id == address.elementID }),
+            let element = sources.hierarchy.board(address.plane.boardID)?.element(id:address.elementID),
             intersects(fragment, element: element, boardID: address.plane.boardID, workset: sources.workset) else { continue }
           sampled.insert(address)
         }
@@ -434,7 +434,7 @@ enum NotebookAttentionProjection {
     for address in sampled {
       // A removed live host contributes no pixels. Its old retained hash and
       // neighboring order edges are removed by the reference basis at sealing.
-      guard let element = sources.hierarchy.board(address.plane.boardID)?.elements.first(where: { $0.id == address.elementID }) else { continue }
+      guard let element = sources.hierarchy.board(address.plane.boardID)?.element(id:address.elementID) else { continue }
       if element.kind != .nativeText && element.kind != .graphic {
         guard cohort.hasInstalledPixels(for: address), let receipt = cohort.sourceReceipts[address], receipt.hasCurrentPixels,
           SceneRasterSource.agent(receipt.demand.source) == .agent(agentElementSnapshotSource(element)) else { return nil }

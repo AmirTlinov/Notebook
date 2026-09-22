@@ -3188,7 +3188,7 @@ final class NotebookAppModel {
       return (rectangle(elementCommandDrafts[reference]?.frame ?? element.frame),
         .init(x: 0, y: 0, width: page.size.width, height: page.size.height), page.elementIdentityStamp(id), nil)
     case .spatial(let boardID, let id):
-      guard let element = boardHierarchy?.board(boardID)?.elements.first(where: { $0.id == id }),
+      guard let element = boardHierarchy?.board(boardID)?.element(id:id),
         surfaceAcceptsChanges(element.surface) else { return nil }
       let size = itemGeometry(element.surface.ownerID)
       let bounds: CGRect? = element.surface.kind == .cover ? .init(x: 0, y: 0, width: size.width, height: size.height) : nil
@@ -3211,7 +3211,7 @@ final class NotebookAppModel {
     if let working = acceptedWorkingGraphic(reference) { return working.graphic }
     switch reference {
     case .page(let pageID, let id): return pages[pageID]?.element(id:id)?.graphic
-    case .spatial(let boardID, let id): return boardHierarchy?.board(boardID)?.elements.first { $0.id == id }?.graphic
+    case .spatial(let boardID, let id): return boardHierarchy?.board(boardID)?.element(id:id)?.graphic
     }
   }
 
@@ -3428,7 +3428,7 @@ final class NotebookAppModel {
       guard pages[owner] != nil else { return nil }
       return .init(target:.init(kind:.page,id:owner),id:id,page:pages[owner]?.element(id:id))
     case .spatial(let owner,let id):
-      let element = boardHierarchy?.board(owner)?.elements.first { $0.id == id }
+      let element = boardHierarchy?.board(owner)?.element(id:id)
       guard boardHierarchy?.board(owner) != nil else { return nil }
       let surface = element?.surface ?? acceptedWorkingGraphic(reference)?.surface
       let target = surface?.kind == .cover
@@ -3460,7 +3460,7 @@ final class NotebookAppModel {
       return page.programStateBasis(elementID)
     case .board(let boardID, let elementID):
       guard elementID == rendered.id, let board = boardHierarchy?.board(boardID),
-        let source = board.elements.first(where: { $0.id == elementID }),
+        let source = board.element(id:elementID),
         AgentProgramSource(agentElementSnapshotSource(source)) == AgentProgramSource(rendered),
         source.state == rendered.state else { return nil }
       return board.programStateBasis(elementID)
@@ -4028,9 +4028,9 @@ final class NotebookAppModel {
       let id = ref.elementID, ref.region != nil else { return false }
     switch ref.target.kind {
     case .document: return documents[ref.target.id]?.blocks.first(where: { $0.id == id })?.kind == .interactive
-    case .page: return pages[ref.target.id]?.elements.first(where: { $0.id == id })?.kind == .web
+    case .page: return pages[ref.target.id]?.element(id:id)?.kind == .web
     case .board, .cover:
-      return boardHierarchy?.board(ref.target.boardID ?? ref.target.id)?.elements.first(where: { $0.id == id })?.kind == .web
+      return boardHierarchy?.board(ref.target.boardID ?? ref.target.id)?.element(id:id)?.kind == .web
     default: return false
     }
   }
@@ -4067,14 +4067,14 @@ final class NotebookAppModel {
         }
         pause = try await DocumentPagePresentationOwner.pauseForAttention(documentID: reference.target.id, blockID: id)
       case .page:
-        guard let element = pages[reference.target.id]?.elements.first(where: { $0.id == id }) else { throw CancellationError() }
-        acceptsState = { value in self.pages[reference.target.id]?.elements.first(where: { $0.id == id }) == element.updating(state: value) }
+        guard let element = pages[reference.target.id]?.element(id:id) else { throw CancellationError() }
+        acceptsState = { value in self.pages[reference.target.id]?.element(id:id) == element.updating(state: value) }
         pause = try await AgentWebCoordinator.pauseForAttention(focus: .page(pageID: reference.target.id, elementID: id), element: element, model: self)
       case .board, .cover:
         let board = reference.target.boardID ?? reference.target.id
-        guard let element = boardHierarchy?.board(board)?.elements.first(where: { $0.id == id }) else { throw CancellationError() }
+        guard let element = boardHierarchy?.board(board)?.element(id:id) else { throw CancellationError() }
         acceptsState = { value in
-          guard let current = self.boardHierarchy?.board(board)?.elements.first(where: { $0.id == id }) else { return false }
+          guard let current = self.boardHierarchy?.board(board)?.element(id:id) else { return false }
           return current.frame == element.frame && current.worldOrigin == element.worldOrigin && current.surface == element.surface
             && agentElementSnapshotSource(current) == agentElementSnapshotSource(element).updating(state: value)
         }
@@ -4974,9 +4974,9 @@ final class NotebookAppModel {
     if var target = selectionSession.nativeText {
       switch target.reference {
       case .page(let owner,let id):
-        if let element = pages[owner]?.elements.first(where:{ $0.id == id }) { target.page = element }
+        if let element = pages[owner]?.element(id:id) { target.page = element }
       case .spatial(let owner,let id):
-        if let element = boardHierarchy?.board(owner)?.elements.first(where:{ $0.id == id }) { target.spatial = element }
+        if let element = boardHierarchy?.board(owner)?.element(id:id) { target.spatial = element }
       }
       selectionSession.nativeText = target
     }
@@ -4988,7 +4988,7 @@ final class NotebookAppModel {
       // deletion and silently discard a freshly completed lasso selection.
       guard !ownsUnpublishedTextDraft(reference), acceptedWorkingGraphic(reference) == nil else { return false }
       guard case .page(let pageID,let id) = reference, let page = pages[pageID] else { return false }
-      return !page.elements.contains { $0.id == id }
+      return page.element(id:id) == nil
     }) { clearSelection() }
   }
 

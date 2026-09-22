@@ -69,7 +69,7 @@ struct NotebookAttentionSelection: Sendable {
         let node=boards[boardID],let header=result.boardHeader else {
         throw CollaborationError("capture_source_changed","Принятое изменение указания не было сохранено.")
       }
-      let expected=node.board.elements.first { $0.id == id }
+      let expected=node.board.element(id:id)
       func content(_ element:SpatialElement?) throws -> JSONValue? {
         guard let element else { return nil }
         guard case .object(var fields)=try JSONValue.encode(element) else { throw NotebookStorageError.corruptRecord(id) }
@@ -229,7 +229,7 @@ struct NotebookAttentionSelection: Sendable {
     for reference in references {
       try Task.checkCancellation()
       let boardID = reference.target.kind == .board ? reference.target.id : reference.target.boardID
-      let element = boardID.flatMap { hierarchy.board($0) }?.elements.first { $0.id == reference.elementID }
+      let element = boardID.flatMap { hierarchy.board($0) }?.element(id:reference.elementID ?? "")
       do {
         let image = try await NotebookPinnedImageRenderer.render(reference: reference,
           page: pages.first { $0.id == reference.target.id }, document: documents.first { $0.id == reference.target.id },

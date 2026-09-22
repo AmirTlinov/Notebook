@@ -53,7 +53,7 @@ extension NotebookAppModel {
       guard let page = pages[owner] else { return nil }
       graph = graphicGraph(page: page); surface = .page(owner); id = elementID
     case .spatial(let owner,let elementID):
-      guard let board = boardHierarchy?.board(owner), let node = board.elements.first(where:{$0.id == elementID}) else { return nil }
+      guard let board = boardHierarchy?.board(owner), let node = board.element(id:elementID) else { return nil }
       graph = compositionTiles.published.map { presentedGraphicGraph(boardID:owner,cohort:$0) } ?? board.graphicGraph()
       surface = node.surface; id = elementID
     }

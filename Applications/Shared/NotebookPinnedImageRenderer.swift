@@ -134,7 +134,7 @@ final class NotebookFrozenVisualSources {
           graphics[fragment.id]=layout;placements[fragment.id,default:[:]][id]=graph.placement(id);continue
         }
         guard let id = fragment.elementID, let boardID,
-          let element = hierarchy.board(boardID)?.elements.first(where: { $0.id == id }),
+          let element = hierarchy.board(boardID)?.element(id:id),
           let placement=graph?.placement(id) else { continue }
         placements[fragment.id,default:[:]][id]=placement
         guard element.kind != .nativeText && element.kind != .graphic else { continue }

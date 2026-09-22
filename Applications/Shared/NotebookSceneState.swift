@@ -187,7 +187,7 @@ struct NotebookSceneState: Sendable {
         let window = try store.readSceneWindow(boardID: view.boardID, bounds: bounds,
           limit: remainingEntries, pinnedIDs: pins, pinnedElementIDs: elementPins)
         for id in elementPins {
-          guard let element=window.boards.first(where:{ $0.id == view.boardID })?.board.elements.first(where:{ $0.id == id }),element.kind == .group else { continue }
+          guard let element=window.boards.first(where:{ $0.id == view.boardID })?.board.element(id:id),element.kind == .group else { continue }
           let target=element.surface.kind == .cover ? CollaborationTarget(kind:.cover,id:element.surface.ownerID!,boardID:view.boardID) : .init(kind:.board,id:view.boardID)
           groupReads[view.boardID,default:[:]][id]=try store.readElementGroup(target:target,elementID:id)
         }

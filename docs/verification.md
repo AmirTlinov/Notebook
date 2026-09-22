@@ -1,5 +1,44 @@
 # Verification record
 
+## 22 сентября — выбранный spatial-источник больше не сканирует всю доску, build 160
+
+`BoardDocument` теперь владеет одним неизменяемым ID→позиция lookup рядом с
+массивом spatial-элементов. Он готовится вместе со значением доски, разделяется
+его копиями и заменяется при изменении массива; обычный update сохраняет
+позиции, append дополняет их, remove перестраивает уже после удаления. Поэтому
+публикация selection, рамка и манипуляция, attention/capture и состояние
+программы больше не выполняют `board.elements.first` для каждого выбранного
+ID. Отдельного app-level кэша или второго владельца источника нет.
+
+На физическом iPad Pro M1 прошли **4/4** source-matching проверки без failures,
+skips и runtime warnings: пересечение board/cover объектов, две принятые
+манипуляции с устаревшим composition cohort, shared selection и плотная сцена
+со **100 000** spatial-элементов. Отдельный инструментированный повтор 1/1 на
+том же production-source измерил разрешение последнего ID: **0,441 μs** из
+retained lookup против **28 031,182 μs** линейного поиска, **63 586,8×** на этой
+операции. Это не ускорение всего жеста и не перемножается с broad-phase/GPU
+числами; 100k fixture целиком заняла 35,389 с из-за построения синтетической
+доски.
+
+Core-регрессия 1/1 подтверждает отсутствие stale lookup после copy, update,
+remove и encode/decode. Подписанная пара `Notebook` **0.3.134 (160)** построена
+из проверенного source SHA-256
+`2ceed5732fb10cab4efb20c9893d446464ab2673abd41667bc3f39b4cd9beaa1`.
+`Notebook Lab` build 160 установлен поверх build 159 на физический iPad без
+удаления приложения и запущен как PID 2133; iPad binary UUID
+`FC7F3537-3B85-366D-AA43-04A6BACDDD89`. Mac binary UUID
+`975EFAE3-6C7D-3AD0-81CF-53A3BD39216B` построен, но Mac-приложение не
+прерывалось и не обновлялось.
+
+Evidence: `.build/gui285-board-element-lookup-check-160/verification.json`,
+`.build/gui285-board-element-lookup-metric-160/ipad.xcresult`,
+`.build/gui285-board-element-lookup-release-160/build.json` и
+`.build/gui285-board-element-lookup-install-160/{apps-before,install,launch,apps}.json`;
+post-doc source manifest:
+`.build/gui285-board-element-lookup-postdoc-fingerprint-160`.
+Реальный Pencil, десять повторов, системные CPU/GPU/frame/memory измерения и
+30 минут совместной работы этим срезом не подтверждены.
+
 ## 22 сентября — exact selection не повторяет полный поиск доски, build 159
 
 После быстрого spatial broad phase native-объект больше не разрешается через

@@ -112,7 +112,7 @@ struct SpatialWorkspaceView: View {
   private var editingSpatialText: EditableElementReference? {
     guard model.selectionSession.isInteractive,
       case .spatial(let boardID, let id) = model.selectionSession.element,
-      model.boardHierarchy?.board(boardID)?.elements.first(where: { $0.id == id })?.kind == .nativeText else { return nil }
+      model.boardHierarchy?.board(boardID)?.element(id:id)?.kind == .nativeText else { return nil }
     return .spatial(boardID: boardID, elementID: id)
   }
   private func editingTextID(on boardID: UUID) -> String? {
@@ -287,7 +287,7 @@ struct SpatialWorkspaceView: View {
             if let reference = editableReference(fragment,boardID:presence.boardID) {
               let isText: Bool
               switch reference {
-              case .page(let page,let id): isText = model.pages[page]?.elements.first { $0.id == id }?.kind == .nativeText
+              case .page(let page,let id): isText = model.pages[page]?.element(id:id)?.kind == .nativeText
               case .spatial: isText = model.presentedElement(reference,cohort:cohort)?.kind == .nativeText
               }
               if isText {
@@ -831,7 +831,7 @@ struct SpatialWorkspaceView: View {
       let layout = model.graphicLayout(reference)
       let sourceFrame: PageRect?
       switch reference {
-      case .page(let pageID, let elementID): sourceFrame = model.pages[pageID]?.elements.first { $0.id == elementID }?.frame
+      case .page(let pageID, let elementID): sourceFrame = model.pages[pageID]?.element(id:elementID)?.frame
       case .spatial(_, _): sourceFrame = model.compositionTiles.published.flatMap { model.presentedElement(reference,cohort:$0) }.map {
         .init(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height)
       }

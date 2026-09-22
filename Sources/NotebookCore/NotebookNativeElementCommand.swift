@@ -40,7 +40,7 @@ extension PageDocument {
 
 extension BoardDocument {
   public func programStateBasis(_ id: String) -> NotebookProgramStateBasis? {
-    guard elements.contains(where: { $0.id == id && $0.kind == .web }) else { return nil }
+    guard element(id:id)?.kind == .web else { return nil }
     return .init(elementID: id, metadata: collaboration, fallback: stamp)
   }
 

@@ -21,7 +21,7 @@ extension NotebookActionReadModel {
           return (element.frame, nil)
         }
         if target.kind == .board || target.kind == .cover,
-          let element = content.hierarchy.board(target.boardID ?? target.id)?.elements.first(where: { $0.id == elementID }) {
+          let element = content.hierarchy.board(target.boardID ?? target.id)?.element(id:elementID) {
           if element.graphic != nil {
             return content.hierarchy.board(target.boardID ?? target.id)?.graphicGraph().resolve(elementID).layout.map { ($0.frame,element.worldOrigin) }
           }

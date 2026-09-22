@@ -646,12 +646,18 @@ public struct BoardDocument: Codable, Equatable, Sendable {
 
   public let format: Int
   public private(set) var placements: [WorkspacePlacement]
-  public private(set) var elements: [SpatialElement]
+  public private(set) var elements: [SpatialElement] { didSet { elementLookupCache = .init() } }
   public private(set) var stamp: VersionStamp
   public private(set) var collaboration: CollaborativeContent?
   private var layout: WorkspacePlacementLayout
+  private var elementLookupCache=BoardElementLookupCache()
   public var freeItems: [FreeItemPlacement] { layout.freeItems }
   public var stacks: [WorkspaceItemStack] { layout.stacks }
+
+  public static func == (a:Self,b:Self)->Bool {
+    a.format == b.format && a.placements == b.placements && a.elements == b.elements
+      && a.stamp == b.stamp && a.collaboration == b.collaboration
+  }
 
   public init(freeItems: [FreeItemPlacement], stacks: [WorkspaceItemStack] = [],
     elements: [SpatialElement] = [], stamp: VersionStamp) {
@@ -677,6 +683,7 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     self.elements = elements; self.stamp = stamp; self.collaboration = collaboration
     layout = .init(self.placements)
     materializeElementVersions()
+    elementLookupCache = .init(elements)
   }
 
   private mutating func materializeElementVersions() {
@@ -709,6 +716,10 @@ public struct BoardDocument: Codable, Equatable, Sendable {
 
   public var itemIDs: [UUID] { placements.compactMap { $0.pose == nil ? nil : $0.id } }
 
+  public func element(id:String)->SpatialElement? {
+    elementLookupCache.value(for:elements).position(of:id).map { elements[$0] }
+  }
+
   /// A latent singleton or a losing concurrent head still names its stack.
   /// Independent imports must not assign that UUID to a second group.
   public var claimedStackIDs: Set<UUID> {
@@ -731,7 +742,10 @@ public struct BoardDocument: Codable, Equatable, Sendable {
       result.placements = placements.sorted { $0.id.uuidString < $1.id.uuidString }
       result.layout = .init(result.placements)
     }
-    result.elements = elements
+    if elements != self.elements {
+      result.elements = elements
+      result.elementLookupCache = .init(elements)
+    }
     return result
   }
 
@@ -879,22 +893,29 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     guard itemIDs.contains(itemID) else { return false }
     let before = self
     guard author([itemID: nil], actor: actor) else { return false }
+    let lookup=elementLookupCache.value(for:elements),count=elements.count
     elements.removeAll { $0.surface == .cover(itemID) }
+    elementLookupCache = elements.count == count ? .init(lookup) : .init(elements)
     recordCollaboration(from: before)
     return true
   }
 
   @discardableResult
   public mutating func upsertElement(_ element: SpatialElement, expected: VersionStamp?, actor: UUID) -> Bool {
-    let before = self
+    var before = self
+    before.elementLookupCache = .init()
     guard element.surface.kind != .page, let next = stamp.advanced(by: actor) else { return false }
-    if let index = elements.firstIndex(where: { $0.id == element.id }) {
+    var lookup=elementLookupCache.value(for:elements)
+    if let index = lookup.position(of:element.id) {
       if let expected, elements[index].stamp != expected { return false }
       elements[index] = element
     } else {
       guard expected == nil else { return false }
+      let index=elements.count
       elements.append(element)
+      lookup.insert(element.id,at:index)
     }
+    elementLookupCache = .init(lookup)
     stamp = next; recordCollaboration(from: before)
     return true
   }
@@ -903,9 +924,11 @@ public struct BoardDocument: Codable, Equatable, Sendable {
   public mutating func removeElements(ids: Set<String>, actor: UUID) -> Int {
     let before = self
     guard !ids.isEmpty, let next = stamp.advanced(by: actor) else { return 0 }
+    let lookup=elementLookupCache.value(for:elements)
     elements.removeAll { ids.contains($0.id) }
     let removed = before.elements.count - elements.count
-    guard removed > 0 else { return 0 }
+    guard removed > 0 else { elementLookupCache = .init(lookup);return 0 }
+    elementLookupCache = .init(elements)
     stamp = next; recordCollaboration(from: before)
     return removed
   }
@@ -978,6 +1001,7 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     collaboration = try container.decodeIfPresent(CollaborativeContent.self, forKey: .collaboration)
     layout = .init(placements)
     materializeElementVersions()
+    elementLookupCache = .init(elements)
   }
 
   public func encode(to encoder: Encoder) throws {
