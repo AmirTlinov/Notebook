@@ -539,7 +539,7 @@ import UIKit
       let address=NotebookToolAddress(surface:.board(boardID),boardID:boardID,worldOrigin:.zero,bounds:nil)
       let graph=try XCTUnwrap(index.graphicGraph(boardID:boardID))
       let source=NotebookDrawingToolController.SpatialSelectionSource(index:index,
-        changedElementIDs:[],presence:presence)
+        delta:.init(ids:[],elements:[:],excluded:[]),presence:presence)
       let selected=try model.elementsIntersecting(polygon,at:address,graph:graph,spatial:source)
       XCTAssertTrue(selected.contains(.spatial(boardID:boardID,elementID:element.id)),
         "A board-owned Pencil lasso queries the intersected cover instead of losing its visible elements")

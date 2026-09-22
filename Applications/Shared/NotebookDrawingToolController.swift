@@ -24,7 +24,7 @@ struct NotebookToolAddress: Equatable, Sendable {
 final class NotebookDrawingToolController {
   struct SpatialSelectionSource: Sendable {
     let index: WorkspaceSceneIndex
-    let changedElementIDs: Set<String>
+    let delta: NotebookSpatialInteractionDelta
     let presence: SessionPresence
   }
   struct Contact: Sendable {
@@ -158,7 +158,7 @@ final class NotebookDrawingToolController {
       cohort.frame.index.board(id:board) != nil else { return nil }
     let graph=model.interactionGraphicGraph(boardID:board,cohort:cohort)
     return (graph,.init(index:cohort.frame.index,
-      changedElementIDs:model.spatialSelectionChanges(boardID:board,graph:graph),presence:presence))
+      delta:model.spatialInteractionDelta(boardID:board,graph:graph),presence:presence))
   }
 
   func move(to point: SpatialPoint) {
@@ -340,34 +340,6 @@ final class NotebookDrawingToolController {
 }
 
 extension NotebookAppModel {
-  /// The immutable scene index covers the installed generation. Only accepted
-  /// insertions and active placement drafts can differ from it; keep that
-  /// delta explicit instead of rebuilding or rescanning the board on contact.
-  func spatialSelectionChanges(boardID:UUID,graph:NotebookGraphicGraph)->Set<String> {
-    var ids=Set(workingGraphics.compactMap { graphic -> String? in
-      let belongs=graphic.surface == .board(boardID) || (graphic.surface.kind == .cover
-        && graphic.surface.ownerID.flatMap { boardHierarchy?.ownerBoardID(of:$0) } == boardID)
-      return belongs ? graphic.id : nil
-    })
-    ids.formUnion(elementCommandDrafts.keys.compactMap { reference in
-      if case .spatial(let owner,let id)=reference,owner == boardID { return id };return nil
-    })
-    guard !ids.isEmpty else { return ids }
-    let groups=ids.filter { graph.groups[$0] != nil }
-    guard !groups.isEmpty else { return ids }
-    // Parent motion changes descendant surface bounds without rewriting them.
-    // This rare active-edit delta is the only case that visits group members.
-    for node in graph.nodes.values where groups.contains(where: { node.placement.descends(from:$0) }) {
-      ids.insert(node.id)
-    }
-    if let board=boardHierarchy?.board(boardID) {
-      for element in board.elements where groups.contains(where: { graph.placement(element.id)?.descends(from:$0) == true }) {
-        ids.insert(element.id)
-      }
-    }
-    return ids
-  }
-
   private func spatialSelectionBounds(_ polygon:[SpatialPoint],address:NotebookToolAddress)
     -> WorkspaceSpatialBounds? {
     guard let x=polygon.map(\.x).min(),let y=polygon.map(\.y).min(),
@@ -616,11 +588,12 @@ extension NotebookAppModel {
     else {
       let indexed=try spatialCandidates(polygon,address:address,source:spatial,kinds:.elements)
       spatialIDs=spatialElementIDs(indexed)
-      spatialIDs.formUnion(spatial?.changedElementIDs ?? [])
+      spatialIDs.formUnion(spatial?.delta.ids ?? [])
       candidates=AnySequence(spatialIDs.lazy.compactMap { graph.node($0) })
     }
     return candidates.compactMap { node in
-      guard node.shown,node.graphic.freehand != nil,let layout=graph.resolve(node.id).layout else { return nil }
+      guard spatial?.delta.excluded.contains(node.id) != true,node.shown,
+        node.graphic.freehand != nil,let layout=graph.resolve(node.id).layout else { return nil }
       guard node.surface == address.surface else { return nil }
       let reference=address.reference(node.id)
       let delta=origin.delta(to:node.origin),frame=layout.frame
@@ -637,9 +610,10 @@ extension NotebookAppModel {
   private func spatialElementsIntersecting(_ ids:Set<String>,surface:SurfaceID,
     polygon:[SpatialPoint],origin:WorldPoint,boardID:UUID,graph:NotebookGraphicGraph,
     source:NotebookDrawingToolController.SpatialSelectionSource)->[EditableElementReference] {
-    var ids=ids;ids.formUnion(source.changedElementIDs)
+    var ids=ids;ids.formUnion(source.delta.ids)
     var result=Array(ids.lazy.compactMap { graph.node($0) }.filter { node in
-      guard node.shown,let layout=graph.resolve(node.id).layout else { return false }
+      guard !source.delta.excluded.contains(node.id),node.shown,
+        let layout=graph.resolve(node.id).layout else { return false }
       guard node.surface == surface else { return false }
       let delta=origin.delta(to:node.origin),frame=layout.frame
       guard NotebookToolGeometry.intersects(.init(x:delta.x+frame.x,y:delta.y+frame.y,width:frame.width,height:frame.height),polygon:polygon) else { return false }
@@ -652,8 +626,8 @@ extension NotebookAppModel {
     }.map { EditableElementReference.spatial(boardID:boardID,elementID:$0.id) })
     result += ids.compactMap { id -> EditableElementReference? in
       let reference=EditableElementReference.spatial(boardID:boardID,elementID:id)
-      guard elementCommandDrafts[reference]?.removed != true,
-        let element=nativeElementSource(reference)?.spatial ?? source.index.element(id:id,boardID:boardID),
+      guard !source.delta.excluded.contains(id),
+        let element=source.delta.elements[id] ?? source.index.element(id:id,boardID:boardID),
         element.surface == surface,element.kind != .group,element.graphic == nil,
         let placement=graph.placement(element.id) else { return nil }
       return nativeElementIntersects(.init(element,placement:placement),id:element.id,

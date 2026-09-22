@@ -18,8 +18,8 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     let hierarchy=BoardHierarchy(rootBoardID:boardID,boards:[.init(id:boardID,board:board)],stamp:stamp)
     let index=WorkspaceSceneIndex(workspace:workspace,hierarchy:hierarchy,paperSizes:[:])
     let eraser=NotebookSpatialEraserSource(boardID:boardID,index:index,
-      graph:try XCTUnwrap(index.graphicGraph(boardID:boardID)),changedElementIDs:[],
-      changedElements:[:],excludedElementIDs:[])
+      graph:try XCTUnwrap(index.graphicGraph(boardID:boardID)),
+      delta:.init(ids:[],elements:[:],excluded:[]))
     let result=try eraser.query(surface:.cover(itemID),
       bounds:.init(origin:.zero.offsetBy(x:10,y:20),width:40,height:40))
     XCTAssertEqual(result.targets.map(\.elementID),[element.id])
@@ -174,7 +174,7 @@ final class WorkspaceSceneIndexTests: XCTestCase {
 
     let eraser = NotebookSpatialEraserSource(boardID: boardID, index: index,
       graph: try XCTUnwrap(index.graphicGraph(boardID: boardID)),
-      changedElementIDs: [], changedElements: [:], excludedElementIDs: [])
+      delta:.init(ids:[],elements:[:],excluded:[]))
     let emptyEraser = try eraser.query(surface: .board(boardID),
       bounds: .init(origin: .init(x: 1_000_000, y: 1_000_000), width: 24, height: 24))
     XCTAssertTrue(emptyEraser.targets.isEmpty)

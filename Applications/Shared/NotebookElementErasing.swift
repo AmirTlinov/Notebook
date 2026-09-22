@@ -30,9 +30,7 @@ struct NotebookSpatialEraserSource {
   let boardID: UUID
   let index: WorkspaceSceneIndex
   let graph: NotebookGraphicGraph
-  let changedElementIDs: Set<String>
-  let changedElements: [String: SpatialElement]
-  let excludedElementIDs: Set<String>
+  let delta: NotebookSpatialInteractionDelta
 
   func query(surface: SurfaceID, bounds: WorkspaceSpatialBounds,
     limit: Int = 4_096) throws -> NotebookElementEraserQuery {
@@ -50,9 +48,9 @@ struct NotebookSpatialEraserSource {
     }
     var ids = Set(indexed.entries.compactMap { entry -> String? in
       guard case .element(let id) = entry.id else { return nil }
-      return changedElementIDs.contains(id) ? nil : id
+      return delta.ids.contains(id) ? nil : id
     })
-    ids.formUnion(changedElementIDs)
+    ids.formUnion(delta.ids)
     let targets = ids.sorted().compactMap { target(id: $0, surface: surface) }.filter {
       targetBounds($0).intersects(bounds)
     }
@@ -64,14 +62,14 @@ struct NotebookSpatialEraserSource {
   }
 
   private func target(id: String, surface: SurfaceID) -> InkElementTarget? {
-    guard !excludedElementIDs.contains(id) else { return nil }
+    guard !delta.excluded.contains(id) else { return nil }
     if let node = graph.node(id) {
       guard node.shown, node.surface == surface, let layout = graph.resolve(id).layout else { return nil }
       return .init(elementID: id, frame: layout.frame,
         worldOrigin: surface.kind == .board ? node.origin : nil,
         graphicTransform: node.graphic.transform, elementTransform: layout.elementTransform)
     }
-    guard let element = changedElements[id] ?? index.element(id: id, boardID: boardID),
+    guard let element = delta.elements[id] ?? index.element(id: id, boardID: boardID),
       element.surface == surface, element.kind != .group, element.graphic == nil,
       let placement = graph.placement(id) else { return nil }
     return NotebookElementPresentation(element, placement: placement)
@@ -345,18 +343,9 @@ extension NotebookAppModel {
   func spatialEraserSource(boardID: UUID,
     cohort: SceneCompositionCohort) -> NotebookSpatialEraserSource {
     let graph = interactionGraphicGraph(boardID: boardID, cohort: cohort)
-    let changed = spatialSelectionChanges(boardID: boardID, graph: graph)
-    var elements: [String: SpatialElement] = [:]
-    var excluded: Set<String> = []
-    for id in changed {
-      let reference = EditableElementReference.spatial(boardID: boardID, elementID: id)
-      if elementCommandDrafts[reference]?.removed == true { excluded.insert(id); continue }
-      guard let stored = nativeElementSource(reference)?.spatial else { continue }
-      elements[id] = elementCommandDrafts[reference]?.projecting(stored) ?? stored
-    }
+    let delta=spatialInteractionDelta(boardID:boardID,graph:graph)
     return .init(boardID: boardID, index: cohort.frame.index, graph: graph,
-      changedElementIDs: changed, changedElements: elements,
-      excludedElementIDs: excluded)
+      delta:delta)
   }
 
   func updateElementErasing(_ contact: [NotebookElementErasing], id: UUID) {
