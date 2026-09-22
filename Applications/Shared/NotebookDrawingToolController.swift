@@ -500,7 +500,7 @@ extension NotebookAppModel {
     }
     for reference in region.graphics {
       guard let source=nativeElementSource(reference),source.target == region.address.target,
-        let graphic=graphicElement(reference),graphic.freehand != nil,
+        let graphic=graphicElement(reference),graphic.shape != .connector,
         let layout=graphicLayout(reference) else { continue }
       let size=layout.projection?.size ?? .init(width:layout.frame.width,height:layout.frame.height)
       let polygon=region.polygon.compactMap { point -> SpatialPoint? in
@@ -580,7 +580,7 @@ extension NotebookAppModel {
     return id
   }
 
-  /// Exact region candidates among already-authored vector ink. The query
+  /// Exact region candidates among already-authored vector graphics. The query
   /// reads retained geometry directly and never waits for the paint cache.
   func regionGraphics(intersecting polygon:[SpatialPoint],at address:NotebookToolAddress,
     graph:NotebookGraphicGraph,spatial:NotebookDrawingToolController.SpatialSelectionSource? = nil)
@@ -606,7 +606,7 @@ extension NotebookAppModel {
     let erasures=elementErasures(on:address.surface)
     return candidates.compactMap { node in
       guard spatial?.delta.excluded.contains(node.id) != true,node.shown,
-        node.graphic.freehand != nil,let layout=graph.resolve(node.id).layout else { return nil }
+        node.graphic.shape != .connector,let layout=graph.resolve(node.id).layout else { return nil }
       guard node.surface == address.surface else { return nil }
       let reference=address.reference(node.id)
       let delta=origin.delta(to:node.origin),frame=layout.frame

@@ -4,6 +4,50 @@ import UIKit
 @testable import Notebook
 
 @MainActor final class NotebookDrawingToolsTests: XCTestCase {
+  func testRegionLassoClipsNativeShapeWhileObjectModeSelectsItsWhole() async throws {
+    try await fixture { model in
+      var page=try XCTUnwrap(model.activePage)
+      let shape=AgentElement(id:"shape-region",kind:.graphic,
+        frame:.init(x:100,y:100,width:200,height:100),source:"",html:"",
+        graphic:.init(shape:.rectangle,style:.init(strokeWidth:8,
+          fill:.init(red:1,green:0.8,blue:0))))
+      XCTAssertTrue(page.replaceElements([shape],actor:model.actorID));try model.store.savePage(page)
+      await model.reloadExternalChanges()?.value
+      let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+      let polygon=[SpatialPoint(x:90,y:90),.init(x:150,y:90),.init(x:150,y:210),.init(x:90,y:210)]
+      @MainActor func lasso(_ mode:NotebookLassoMode) async throws {
+        model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode=mode
+        let generation=model.selectionSession.id
+        XCTAssertTrue(model.drawingTools.begin(at:polygon[0],address:address,screenScale:1))
+        for point in polygon.dropFirst() { model.drawingTools.move(to:point) }
+        model.drawingTools.finish()
+        let deadline=ContinuousClock.now + .seconds(2)
+        while model.selectionSession.id == generation,ContinuousClock.now < deadline {
+          try await Task.sleep(for:.milliseconds(10))
+        }
+      }
+
+      try await lasso(.region)
+      XCTAssertEqual(model.selectionSession.region?.graphics,[address.reference(shape.id)])
+      XCTAssertNil(model.selectionSession.element)
+      XCTAssertNil(try model.store.loadPage(page.id).element(id:shape.id)?.graphic?.mask,
+        "Drawing a lasso is still a read-only selection")
+
+      model.clearSelection();try await lasso(.elements)
+      XCTAssertTrue(model.selectionSession.contains(address.reference(shape.id)))
+      XCTAssertNil(model.selectionSession.region,"Object mode selects the whole object instead of authoring a clip")
+
+      model.clearSelection();try await lasso(.region)
+      let selected=try XCTUnwrap(model.materializeRegionSelection()?.first)
+      await assertSaved(model);await model.reloadExternalChanges()?.value
+      let saved=try model.store.loadPage(page.id)
+      let outside=try XCTUnwrap(saved.element(id:shape.id)?.graphic?.mask)
+      let inside=try XCTUnwrap(saved.element(id:selected.elementID)?.graphic?.mask)
+      XCTAssertFalse(outside.contains(.init(x:0.1,y:0.5)));XCTAssertTrue(outside.contains(.init(x:0.75,y:0.5)))
+      XCTAssertTrue(inside.contains(.init(x:0.1,y:0.5)));XCTAssertFalse(inside.contains(.init(x:0.75,y:0.5)))
+    }
+  }
+
   func testObjectLassoReadsAuthoredCutsWithoutDependingOnPaintCache() async throws {
     try await fixture { model in
       var page = try XCTUnwrap(model.activePage)

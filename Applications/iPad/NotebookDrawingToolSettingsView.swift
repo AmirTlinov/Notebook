@@ -21,7 +21,7 @@ struct NotebookDrawingToolSettingsView: View {
         Toggle("Добавлять к выделению",isOn:binding(\.lassoAddsToSelection))
           .accessibilityIdentifier("lasso-adds-selection")
       } else {
-        Text("Выделяет только рукопись внутри обведённой области.")
+        Text("Выделяет штрихи и части векторных фигур внутри контура. Документ изменится только после действия с выделением.")
           .font(.caption).foregroundStyle(.secondary)
       }
     case .shape:
