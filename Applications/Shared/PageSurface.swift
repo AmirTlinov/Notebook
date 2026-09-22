@@ -136,6 +136,9 @@ struct PageSurface: View {
     AgentOverlayView(page:page,renderingScale:renderingScale,
       allowsInteraction:isVisible && isCurrent,inputEnabled:isVisible && isInteractive,
       onRenderReady:{ ready in
+        #if os(iOS)
+        if ready { liveElementEraser.presented(model.elementErasures(on:.page(page.id))) }
+        #endif
         if ready { readyOverlay=page.elementSourceIdentity }
         else if readyOverlay == page.elementSourceIdentity { readyOverlay=nil }
         publishReadiness(ink:inkIsReady,overlay:overlayIsReady)

@@ -4,23 +4,61 @@ import Observation
 import SwiftUI
 import UIKit
 
-/// Device-local presentation state for one physical page. The moving eraser
-/// talks straight to one lightweight Core Graphics mask; it never publishes
-/// sample prefixes through SwiftUI and does not allocate another MTKView.
+enum NotebookLiveElementEraserEvent {
+  case update(ActiveEraserStroke)
+  case commit(PageInkAction)
+  case cancel
+  case reject(UUID)
+}
+
+/// One page-wide measured mask. Input updates the renderer's existing mutable
+/// tail directly; SwiftUI observes only contact/handoff boundaries.
 @MainActor @Observable
 final class NotebookLiveElementEraserPresentation {
   private(set) var isActive = false
   @ObservationIgnored private weak var view: NotebookLiveElementEraserMaskView?
   @ObservationIgnored private var stroke: ActiveEraserStroke?
+  @ObservationIgnored private(set) var pending: [PageInkAction] = []
 
-  func display(_ stroke: ActiveEraserStroke?) {
-    self.stroke = stroke
-    if isActive != (stroke != nil) { isActive = stroke != nil }
-    view?.display(stroke)
+  func display(_ event:NotebookLiveElementEraserEvent) {
+    switch event {
+    case .update(let stroke):
+      self.stroke=stroke;view?.canvas.displayActiveEraser(stroke)
+    case .commit(let action):
+      if action.elementTargets?.isEmpty == false {
+        pending.append(action);view?.canvas.commitActiveEraser(action)
+      } else { view?.canvas.clearActiveAction() }
+      stroke=nil
+    case .cancel:
+      stroke=nil;view?.canvas.clearActiveAction()
+    case .reject(let id):
+      pending.removeAll { $0.id == id };view?.canvas.retainErasureMaskActions(pending)
+    }
+    refreshActivity()
   }
 
+  /// Called only with the current overlay's ready receipt. A mounted mask,
+  /// an older frame or a saved action alone cannot retire the lifted coverage.
+  func presented(_ erasures:[String:[InkElementErasure]]) {
+    let count=pending.count
+    pending.removeAll { action in
+      (action.elementTargets ?? []).allSatisfy { target in
+        erasures[target.elementID]?.contains(.init(target:target,measurements:action.samples)) == true
+      }
+    }
+    guard count != pending.count else { return }
+    view?.canvas.retainErasureMaskActions(pending);refreshActivity()
+  }
+
+  private func refreshActivity() {
+    let next=stroke != nil || !pending.isEmpty
+    if next != isActive { isActive=next }
+  }
   fileprivate func attach(_ view:NotebookLiveElementEraserMaskView) {
-    self.view=view;view.presentation=self;view.display(stroke)
+    guard self.view !== view else { return }
+    self.view=view;view.presentation=self
+    view.canvas.retainErasureMaskActions(pending)
+    if let stroke { view.canvas.displayActiveEraser(stroke) }
   }
   fileprivate func detach(_ view:NotebookLiveElementEraserMaskView) {
     if self.view === view { self.view=nil }
@@ -28,70 +66,38 @@ final class NotebookLiveElementEraserPresentation {
 }
 
 struct NotebookLiveElementEraserMask:UIViewRepresentable {
+  @Environment(\.scenePlaneProjection) private var projection
   let presentation:NotebookLiveElementEraserPresentation
   func makeUIView(context:Context)->NotebookLiveElementEraserMaskView {
-    let view=NotebookLiveElementEraserMaskView();presentation.attach(view);return view
+    let view=NotebookLiveElementEraserMaskView();presentation.attach(view)
+    view.projection.observe(projection);return view
   }
   func updateUIView(_ view:NotebookLiveElementEraserMaskView,context:Context) {
-    presentation.attach(view)
+    presentation.attach(view);view.projection.observe(projection)
   }
-  static func dismantleUIView(_ view:NotebookLiveElementEraserMaskView,
-    coordinator:Void) { view.presentation?.detach(view);view.presentation=nil }
+  static func dismantleUIView(_ view:NotebookLiveElementEraserMaskView,coordinator:Void) {
+    view.presentation?.detach(view);view.presentation=nil;view.projection.stop()
+    Task { await view.canvas.finishSpatialHandoffFrames() }
+  }
   func makeCoordinator() {}
 }
 
-/// A full page mask is one coalesced Core Graphics backing, rather than a
-/// CAMetalLayer with drawable and MSAA pools. Work is proportional only to the
-/// current contact; the retained page and element tree are never traversed.
+/// The same compact geometry, tile admission and changed-tile renderer as ink.
+/// There is no CoreGraphics full-prefix replay or a canvas per touched figure.
 @MainActor
 final class NotebookLiveElementEraserMaskView:UIView {
   weak var presentation:NotebookLiveElementEraserPresentation?
-  private var stroke:ActiveEraserStroke?
-  private var revision:UInt64?
-  private var samples:[SpatialInkSample]=[]
-
+  let canvas=InkCanvasView(frame:.zero,isErasureMask:true)
+  lazy var projection=PageInkProjection(host:self,canvas:canvas)
   override init(frame:CGRect) {
     super.init(frame:frame);isOpaque=false;isUserInteractionEnabled=false
-    contentMode = .redraw;backgroundColor = .clear
+    backgroundColor = .white;addSubview(canvas)
+    canvas.onVisibleFrame = { [weak self] in
+      self?.backgroundColor = .clear;self?.canvas.onVisibleFrame=nil
+    }
   }
   @available(*,unavailable) required init?(coder:NSCoder) { fatalError("init(coder:) is unavailable") }
-
-  func display(_ stroke:ActiveEraserStroke?) {
-    guard let stroke else {
-      self.stroke=nil;revision=nil;samples.removeAll(keepingCapacity:true);setNeedsDisplay();return
-    }
-    let start = self.stroke === stroke ? stroke.changedStart(after:revision) : 0
-    if start != .max {
-      if start < samples.count { samples.removeSubrange(start...) }
-      if start < stroke.measured.count {
-        samples.append(contentsOf:stroke.measured.decoded(in:start..<stroke.measured.count))
-      }
-      setNeedsDisplay()
-    }
-    self.stroke=stroke;revision=stroke.revision
-  }
-
-  override func draw(_ rect:CGRect) {
-    guard let context=UIGraphicsGetCurrentContext() else { return }
-    context.setBlendMode(.copy);context.setFillColor(UIColor.white.cgColor);context.fill(bounds)
-    guard let stroke,!samples.isEmpty else { return }
-    let projection=stroke.projection
-    func projected(_ sample:SpatialInkSample)->(CGPoint,CGFloat) {
-      let point=projection.origin.flatMap { origin in sample.worldPoint.map { origin.delta(to:$0) } } ?? sample.point
-      return (.init(x:point.x*projection.scale+projection.offset.x,
-        y:point.y*projection.scale+projection.offset.y),
-        max(0.5,sample.width*abs(projection.scale)))
-    }
-    context.setBlendMode(.clear);context.setLineCap(.round);context.setLineJoin(.round)
-    var previous=projected(samples[0])
-    context.fillEllipse(in:.init(x:previous.0.x-previous.1/2,y:previous.0.y-previous.1/2,
-      width:previous.1,height:previous.1))
-    for sample in samples.dropFirst() {
-      let next=projected(sample)
-      context.beginPath();context.move(to:previous.0);context.addLine(to:next.0)
-      context.setLineWidth(max(previous.1,next.1));context.strokePath()
-      previous=next
-    }
-  }
+  override func layoutSubviews() { super.layoutSubviews();projection.refresh() }
+  override func didMoveToWindow() { super.didMoveToWindow();projection.refresh() }
 }
 #endif

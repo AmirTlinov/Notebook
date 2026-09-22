@@ -5,6 +5,26 @@ import Testing
 
 @Suite("Graphic local-frame visibility")
 struct NotebookGraphicVisibilityTests {
+  @Test func detachedMaskRetainsMeasuredCutsThroughCodecAndLocalBasis() throws {
+    let frame=PageRect(x:100,y:200,width:200,height:100)
+    let measurements=InkMeasurements([210.0,290.0].map {
+      .init(point:.init(x:140,y:$0),timeOffset:0,width:20,opacity:1,force:1,azimuth:0,altitude:1)
+    })
+    let cut=InkElementErasure(target:.init(elementID:"source",frame:frame),measurements:measurements)
+    let mask=NotebookGraphicMask().capturing([cut],transform:nil)
+      .appending(.intersect,polygon:[.zero,.init(x:0.5,y:0),.init(x:0.5,y:1),.init(x:0,y:1)])
+    #expect(mask.isValid)
+    let copied=try JSONDecoder().decode(NotebookGraphicMask.self,from:JSONEncoder().encode(mask))
+    #expect(copied == mask)
+    #expect(copied.operations.first?.erasures?.first?.samples == measurements)
+    #expect(!copied.contains(.init(x:0.2,y:0.5)))
+    #expect(copied.contains(.init(x:0.35,y:0.5)))
+    #expect(!copied.contains(.init(x:0.75,y:0.5)))
+    let large=copied.path(in:.init(x:10,y:20,width:400,height:200))
+    #expect(!large.contains(.init(x:90,y:120)))
+    #expect(large.contains(.init(x:150,y:120)))
+  }
+
   @Test func pageProjectionSharesImmutableSourceButNotChangedClaimsOrElements() async throws {
     let actor=UUID(),a=AgentElement(id:"a",kind:.graphic,frame:.init(x:10,y:10,width:20,height:20),source:"",html:"",graphic:.init(shape:.ellipse))
     var page=PageDocument(size:.init(width:400,height:400),actor:actor,elements:[a])

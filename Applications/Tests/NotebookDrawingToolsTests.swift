@@ -55,6 +55,44 @@ import UIKit
     }
   }
 
+  func testRegionAndDuplicatePreserveErasedMaterialAfterSaveAndReopen() async throws {
+    try await fixture { model in
+      var page=try XCTUnwrap(model.activePage)
+      let frame=PageRect(x:100,y:100,width:200,height:100)
+      let shape=AgentElement(id:"cut-shape",kind:.graphic,frame:frame,source:"",html:"",
+        graphic:.init(shape:.rectangle,style:.init(fill:.black)))
+      XCTAssertTrue(page.replaceElements([shape],actor:model.actorID))
+      let cut=PageInkAction(tool:.eraser,samples:[110.0,190.0].map {
+        .init(point:.init(x:140,y:$0),timeOffset:0,width:20,opacity:1,force:1,azimuth:0,altitude:1)
+      }).erasingElements([.init(elementID:shape.id,frame:frame)])
+      XCTAssertTrue(page.replaceDrawing(try PageInkDrawing(actions:[cut]).dataRepresentation(),actor:model.actorID))
+      try model.store.savePage(page);await model.reloadExternalChanges()?.value
+      let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+      model.selectElement(address.reference(shape.id));model.duplicateGraphicSelection()
+      await assertSaved(model);await model.reloadExternalChanges()?.value
+      let duplicate=try XCTUnwrap(try model.store.loadPage(page.id).elements.first { $0.id != shape.id })
+      XCTAssertFalse(try XCTUnwrap(duplicate.graphic?.mask).contains(.init(x:0.2,y:0.5)))
+      model.clearSelection();model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode = .region
+      let polygon=[SpatialPoint(x:95,y:95),.init(x:190,y:95),.init(x:190,y:200),.init(x:95,y:200)]
+      XCTAssertTrue(model.drawingTools.begin(at:polygon[0],address:address,screenScale:1))
+      for point in polygon.dropFirst() { model.drawingTools.move(to:point) }
+      model.drawingTools.finish()
+      let deadline=ContinuousClock.now + .seconds(3)
+      while model.selectionSession.region == nil,ContinuousClock.now < deadline {
+        try await Task.sleep(for:.milliseconds(10))
+      }
+      let refs=try XCTUnwrap(model.materializeRegionSelection())
+      await assertSaved(model);await model.reloadExternalChanges()?.value
+      let reopened=try model.store.loadPage(page.id)
+      let fragment=try XCTUnwrap(refs.compactMap { reopened.element(id:$0.elementID) }
+        .first { $0.frame == frame })
+      let mask=try XCTUnwrap(fragment.graphic?.mask)
+      XCTAssertFalse(mask.contains(.init(x:0.2,y:0.5)),"Changing ID must not restore the removed strip")
+      XCTAssertTrue(mask.contains(.init(x:0.35,y:0.5)))
+      XCTAssertFalse(mask.contains(.init(x:0.75,y:0.5)))
+    }
+  }
+
   func testRegionLassoClipsAConnectorInsteadOfDroppingOrSelectingItsWhole() async throws {
     try await fixture { model in
       var page=try XCTUnwrap(model.activePage)

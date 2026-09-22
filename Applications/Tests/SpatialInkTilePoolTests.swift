@@ -100,6 +100,38 @@ final class SpatialInkTilePoolTests: XCTestCase {
     XCTAssertEqual(try fixture.canvas.installedSpatialSource?.referenceInk(), try fixture.reference)
   }
 
+  func testMeasuredPageMaskUsesChangedTilesAndIgnoresHiddenContactGrowth() async throws {
+    let window=UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let controller=UIViewController();window.rootViewController=controller;window.makeKeyAndVisible()
+    let canvas=InkCanvasView(frame:.zero,isErasureMask:true)
+    controller.view.addSubview(canvas)
+    canvas.projectPage(region:.init(x:100,y:200,width:512,height:768),
+      sourceSize:.init(width:1000,height:1500),pixelDensity:2)
+    addTeardownBlock { @MainActor in
+      canvas.removeFromSuperview();window.isHidden=true;window.rootViewController=nil
+      await canvas.finishSpatialHandoffFrames()
+    }
+    try await Task.sleep(for:.milliseconds(150))
+    let stroke=ActiveEraserStroke()
+    func sample(_ index:Int)->SpatialInkSample {
+      .init(point:.init(x:130+Double(index),y:230),timeOffset:Double(index)/240,
+        width:18,opacity:1,force:1,azimuth:0,altitude:1)
+    }
+    stroke.replaceMeasuredTail(from:0,with:(0..<100_000).map(sample))
+    let first=canvas.submittedTileCount
+    canvas.displayActiveEraser(stroke)
+    try await Task.sleep(for:.milliseconds(200))
+    XCTAssertNil(canvas.renderFailure)
+    XCTAssertGreaterThan(canvas.submittedTileCount,first)
+    XCTAssertLessThan(canvas.submittedTileCount-first,canvas.spatialTilePoolIDs.count)
+    let shown=canvas.submittedTileCount,uploaded=canvas.activeUploadedByteCount
+    stroke.replaceMeasuredTail(from:100_000,with:[sample(100_000)])
+    canvas.displayActiveEraser(stroke)
+    try await Task.sleep(for:.milliseconds(100))
+    XCTAssertEqual(canvas.submittedTileCount,shown,"Growing hidden ink cannot redraw the page")
+    XCTAssertLessThan(canvas.activeUploadedByteCount-uploaded,4096,"Upload only the changed tail")
+  }
+
   func testLocalStrokeOnlyRedrawsDamagedTilesAndCancellationClearsOldBounds() async throws {
     let fixture = try await Fixture.make()
     addTeardownBlock { await fixture.close() }

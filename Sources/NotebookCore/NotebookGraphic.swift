@@ -126,24 +126,51 @@ public struct NotebookGraphicMask: Codable, Equatable, Sendable {
     public enum Kind: String, Codable, Sendable { case intersect, subtract }
     public let kind: Kind
     public let polygon: [SpatialPoint]
-    public init(_ kind:Kind,polygon:[SpatialPoint]) { self.kind=kind;self.polygon=polygon }
+    /// A detached fragment freezes the visible revision, sharing the immutable
+    /// measured bodies. It must not look up cuts addressed to its former ID.
+    public let erasures: [InkElementErasure]?
+    public let transform: NotebookGraphicTransform?
+    public init(_ kind:Kind,polygon:[SpatialPoint]) {
+      self.kind=kind;self.polygon=polygon;erasures=nil;transform=nil
+    }
+    public init(erasures:[InkElementErasure],transform:NotebookGraphicTransform?) {
+      kind = .subtract;polygon=[];self.erasures=erasures;self.transform=transform
+    }
   }
   public var operations:[Operation]
   public init(operations:[Operation]=[]) { self.operations=operations }
   public var isValid:Bool {
     !operations.isEmpty && operations.count <= 64 && operations.allSatisfy {
-      $0.polygon.count >= 3 && $0.polygon.count <= 2048 && $0.polygon.allSatisfy {
-        $0.x.isFinite && $0.y.isFinite && abs($0.x) <= 1_000_000 && abs($0.y) <= 1_000_000
+      operation in
+      if let cuts=operation.erasures {
+        return operation.kind == .subtract && operation.polygon.isEmpty
+          && !cuts.isEmpty && cuts.count <= 2048 && (operation.transform?.isValid ?? true)
+          && cuts.allSatisfy { $0.target.isValid && !$0.samples.isEmpty && $0.samples.count <= 1_000_000 }
       }
+      return operation.transform == nil && operation.polygon.count >= 3 && operation.polygon.count <= 2048
+        && operation.polygon.allSatisfy {
+          $0.x.isFinite && $0.y.isFinite && abs($0.x) <= 1_000_000 && abs($0.y) <= 1_000_000
+        }
     }
   }
   public func appending(_ kind:Operation.Kind,polygon:[SpatialPoint])->Self {
     .init(operations:operations + [.init(kind,polygon:polygon)])
   }
+  public func capturing(_ erasures:[InkElementErasure],transform:NotebookGraphicTransform?)->Self {
+    erasures.isEmpty ? self : .init(operations:operations + [.init(erasures:erasures,transform:transform)])
+  }
   public func path(in rect:CGRect)->CGPath {
     guard rect.width > 0,rect.height > 0 else { return CGMutablePath() }
     var result:CGPath=CGPath(rect:rect,transform:nil)
     for operation in operations {
+      if let cuts=operation.erasures {
+        var offset=CGAffineTransform(translationX:rect.minX,y:rect.minY)
+        let cut=NotebookElementAppearance.erasurePath(cuts,size:rect.size,transform:operation.transform)
+          .copy(using:&offset)!
+        result=result.subtracting(cut)
+        if result.isEmpty { break }
+        continue
+      }
       let path=CGMutablePath()
       if let first=operation.polygon.first {
         path.move(to:.init(x:rect.minX+first.x*rect.width,y:rect.minY+first.y*rect.height))

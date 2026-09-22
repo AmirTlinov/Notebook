@@ -149,6 +149,17 @@ struct NotebookPageEraserSource {
         && a.layout?.curves == b.layout?.curves && a.layout?.heads == b.layout?.heads
         && a.layout?.label == b.layout?.label && a.layout?.projection == b.layout?.projection
     }
+    /// Adding opaque erase coverage cannot revive a fully erased body. A
+    /// correction, undo, pose or source change is not such an extension.
+    func extends(_ old:Input) -> Bool {
+      guard graphic == old.graphic,layout == old.layout,size == old.size,
+        erasures.count >= old.erasures.count else { return false }
+      return zip(old.erasures,erasures).allSatisfy { previous,next in
+        previous.target == next.target && next.samples.count >= previous.samples.count
+          && (next.samples == previous.samples
+            || next.samples.unchangedPrefix(comparedTo:previous.samples) == previous.samples.count)
+      }
+    }
     func prepare() -> NotebookElementAppearance {
       .init(graphic:graphic,layout:layout,size:size,erasures:erasures)
     }
@@ -190,9 +201,9 @@ struct NotebookPageEraserSource {
   func preparedAppearance(surface:SurfaceID,id:String,graphic:NotebookGraphic?,layout:NotebookGraphicLayout?,
     size:CGSize,erasures:[InkElementErasure]) -> NotebookElementAppearance? {
     if erasures.contains(where: { $0.target.wholeElement }) { return .init(graphic:nil,layout:nil,size:size,erasures:erasures) }
-    guard let entry=entries[.init(surface:surface,id:id)],
-      entry.input == Input(graphic:graphic,layout:layout,size:size,erasures:erasures) else { return nil }
-    return entry.value
+    guard let entry=entries[.init(surface:surface,id:id)] else { return nil }
+    let input=Input(graphic:graphic,layout:layout,size:size,erasures:erasures)
+    return entry.input == input || (entry.value?.state == .erased && input.extends(entry.input)) ? entry.value : nil
   }
 
   /// A changed input never receives an old appearance. While preparation is
@@ -212,7 +223,13 @@ struct NotebookPageEraserSource {
     }
     let input = Input(graphic:graphic,layout:layout,size:size,erasures:erasures)
     sequence &+= 1
-    if let entry = entries[address], entry.input == input { return entry.value }
+    if let entry = entries[address] {
+      if entry.input == input { return entry.value }
+      if entry.value?.state == .erased,input.extends(entry.input) {
+        // Keep the original coverage proof, not a stale partial hit geometry.
+        return entry.value
+      }
+    }
     entries.removeValue(forKey:address)?.task.cancel()
     // A moving contact already has exact compact GPU coverage. Semantic
     // booleans run once after lift, not once for every intermediate prefix.

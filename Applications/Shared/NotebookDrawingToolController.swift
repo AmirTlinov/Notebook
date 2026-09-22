@@ -262,7 +262,8 @@ final class NotebookDrawingToolController {
           expectedInkRevision:source?.revision,graphics:references)
         let graph=current.graph
         let materialization=Task.detached(priority:.userInitiated) {
-          try NotebookRegionMaterialization.prepare(descriptor,graph:graph)
+          try NotebookRegionMaterialization.prepare(descriptor,graph:graph,
+            erasures:try erasures.masks(on:descriptor.address.surface))
         }
         let prepared=try await withTaskCancellationHandler { try await materialization.value }
           onCancel: { materialization.cancel() }
@@ -373,7 +374,7 @@ final class NotebookDrawingToolController {
 }
 
 extension NotebookRegionMaterialization {
-  static func prepare(_ region:NotebookRegionSelection,graph:NotebookGraphicGraph) throws -> Self? {
+  static func prepare(_ region:NotebookRegionSelection,graph:NotebookGraphicGraph,erasures:[String:[InkElementErasure]] = [:]) throws -> Self? {
     func normalized(_ polygon:[SpatialPoint],in frame:PageRect)->[SpatialPoint] {
       guard frame.width > 0,frame.height > 0 else { return [] }
       return polygon.map { .init(x:($0.x-frame.x)/frame.width,y:($0.y-frame.y)/frame.height) }
@@ -452,7 +453,9 @@ extension NotebookRegionMaterialization {
         return .init(x:local.x/size.width,y:local.y/size.height)
       }
       guard polygon.count == region.polygon.count else { continue }
-      let inside=(node.graphic.mask ?? .init()).appending(.intersect,polygon:polygon)
+      let visible=(node.graphic.mask ?? .init()).capturing(erasures[reference.elementID] ?? [],
+        transform:node.graphic.transform)
+      let inside=visible.appending(.intersect,polygon:polygon)
       guard !inside.path(in:.init(x:0,y:0,width:1,height:1)).isEmpty else { continue }
       let outside=(node.graphic.mask ?? .init()).appending(.subtract,polygon:polygon)
       let id=UUID(),ref=region.address.reference(id.uuidString.lowercased())
@@ -753,7 +756,7 @@ extension NotebookAppModel {
     guard let prepared=region.materialization else { return nil }
     acceptWorkingGraphics(prepared.working)
     guard performElementOperations(prepared.edits,summary:"Изменить область лассо",insertionTarget:region.address.target,
-      expectedInkRevision:region.rawInk == nil ? nil : region.expectedInkRevision) else {
+      expectedInkRevision:region.expectedInkRevision) else {
       let ids=Set(prepared.working.map(\.id));removeWorkingGraphics { ids.contains($0.id) };return nil
     }
     selectElements(prepared.selected);return prepared.selected

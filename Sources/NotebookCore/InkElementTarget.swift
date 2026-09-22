@@ -106,7 +106,7 @@ public struct InkElementTarget: Codable, Equatable, Sendable {
 
 /// A disposable paint projection. Deactivating its one ink action undoes both
 /// raw-ink erasure and element erasure; merge/replay cannot apply it twice.
-public struct InkElementErasure: Equatable, Sendable {
+public struct InkElementErasure: Codable, Equatable, Sendable {
   public let target: InkElementTarget
   public let samples: InkMeasurements
   public init(target: InkElementTarget, samples: [SpatialInkSample]) {

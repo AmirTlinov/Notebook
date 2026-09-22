@@ -54,6 +54,9 @@ final class InkMaterialHost: PageInkHost {
   lazy var projection = PageInkProjection(host:self,canvas:canvas)
   init() {
     super.init(frame:.zero); addSubview(canvas)
+    canvas.onVisibleFrame = { [weak self] in
+      self?.setInitialMaskBackground(false);self?.canvas.onVisibleFrame=nil
+    }
     canvas.onRenderReadinessChange = { [weak self] _ in
       Task { @MainActor [weak self] in
         guard let self,let content=self.content else { return }
@@ -64,6 +67,7 @@ final class InkMaterialHost: PageInkHost {
   required init?(coder:NSCoder) { fatalError("Use init()") }
   func update(_ content:NotebookInkMaterialView.Content,projection value:ScenePlaneProjection?,report:NotebookInkMaterialReceiver?) {
     let changedReceiver=self.report?.id != report?.id
+    if self.content == nil { setInitialMaskBackground(content.freehand == nil) }
     self.content=content;self.report=report
     canvas.updateMaterial(content);projection.observe(value)
     if changedReceiver {
@@ -72,6 +76,13 @@ final class InkMaterialHost: PageInkHost {
         self.report?.report(id,content,canvas.isStableFramePresented && canvas.window != nil)
       }
     }
+  }
+  private func setInitialMaskBackground(_ white:Bool) {
+    #if os(iOS)
+    backgroundColor = white ? .white : .clear
+    #else
+    wantsLayer=true;layer?.backgroundColor = (white ? NSColor.white : NSColor.clear).cgColor
+    #endif
   }
   func stop() {
     let report=report,id=id

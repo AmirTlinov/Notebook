@@ -195,6 +195,18 @@ import WebKit
     await cache.stop()
   }
 
+  func testAdditionalEraseDoesNotReviveAnAlreadyErasedBody() async throws {
+    let cache=NotebookElementErasureCache(),full=cuts(full:true,count:32)
+    _ = try await ready(cache,full)
+    let next=full+cuts(full:false,count:4)
+    XCTAssertEqual(cache.appearance(surface:surface,id:"shape",graphic:graphic,layout:nil,
+      size:.init(width:160,height:100),erasures:next,prepares:false)?.state,.erased)
+    XCTAssertEqual(cache.preparationCount,1)
+    XCTAssertNil(cache.appearance(surface:surface,id:"shape",graphic:graphic,layout:nil,
+      size:.init(width:160,height:100),erasures:[],prepares:false),"Undo revokes the coverage proof")
+    await cache.stop()
+  }
+
   func testNewEraseResizeStyleAndUndoNeverReturnAnOldProjection() async throws {
     let cache = NotebookElementErasureCache(), full = cuts(full:true), partial = cuts(full:false)
     XCTAssertNil(request(cache,full))

@@ -22,7 +22,7 @@ struct PencilCanvasView: UIViewRepresentable {
   var onWorkingGraphic: (NotebookWorkingGraphic?, UUID) -> Void = { _, _ in }
   var pageEraserSource: () -> NotebookPageEraserSource? = { nil }
   var onEraserFailure: (Error) -> Void = { _ in }
-  var onLiveElementErasing: (ActiveEraserStroke?) -> Void = { _ in }
+  var onLiveElementErasing: (NotebookLiveElementEraserEvent) -> Void = { _ in }
   var onElementErasing: ([NotebookElementErasing], UUID) -> Void = { _, _ in }
 
   func makeCoordinator() -> Coordinator {
@@ -96,7 +96,7 @@ struct PencilCanvasView: UIViewRepresentable {
     coordinator: Coordinator
   ) {
     paper.inkView.onRenderReadinessChange = nil
-    paper.touchView.onLiveElementErasing(nil)
+    paper.touchView.onLiveElementErasing(.cancel)
     paper.touchView.onLiveElementErasing = { _ in }
     paper.touchView.pageEraserSource = { nil }
     paper.touchView.onEraserFailure = { _ in }
@@ -166,6 +166,7 @@ struct PencilCanvasView: UIViewRepresentable {
       on paper: PaperCanvasContainerView, fit: NotebookQuickShapeFit? = nil
     ) {
       guard let reservation = actionReservation else {
+        paper.touchView.onLiveElementErasing(.reject(mutation.id))
         restoreModelDrawing(on: paper)
         return
       }
@@ -175,6 +176,7 @@ struct PencilCanvasView: UIViewRepresentable {
       decodeTask = nil
       if let fit { suppressedInkIDs.formUnion(fit.precedingStrokeIDs + [mutation.id]) }
       guard let accepted=acceptAction(mutation,pageID,stamp,fit) else {
+        paper.touchView.onLiveElementErasing(.reject(mutation.id))
         restoreModelDrawing(on:paper);return
       }
       guard pageID == self.pageID else { return }
@@ -519,7 +521,7 @@ final class PaperInputView: UIView {
   var onWorkingGraphic: (NotebookWorkingGraphic?, UUID) -> Void = { _, _ in }
   var pageEraserSource: () -> NotebookPageEraserSource? = { nil }
   var onEraserFailure: (Error) -> Void = { _ in }
-  var onLiveElementErasing: (ActiveEraserStroke?) -> Void = { _ in }
+  var onLiveElementErasing: (NotebookLiveElementEraserEvent) -> Void = { _ in }
   var onElementErasing: ([NotebookElementErasing], UUID) -> Void = { _, _ in }
 
   weak var toolController: NotebookDrawingToolController?
@@ -1082,7 +1084,7 @@ final class PaperInputView: UIView {
     guard quickShape.fit == nil else { return }
     if actionTool == .eraser, let activeEraserStroke {
       presentActiveEraser?(activeEraserStroke)
-      onLiveElementErasing(activeEraserStroke)
+      onLiveElementErasing(.update(activeEraserStroke))
     } else if let activePenStroke {
       activePenStroke.replacePredictions(with: [])
       presentActivePen?(activePenStroke)
@@ -1097,7 +1099,7 @@ final class PaperInputView: UIView {
 
     if actionTool == .eraser, let activeEraserStroke {
       presentActiveEraser?(activeEraserStroke)
-      onLiveElementErasing(activeEraserStroke)
+      onLiveElementErasing(.update(activeEraserStroke))
     } else if let activePenStroke {
       activePenStroke.replacePredictions(
         with: processedPredictedPenPoints().map(SpatialInkSample.init)
@@ -1148,6 +1150,7 @@ final class PaperInputView: UIView {
       commitActivePen?(mutation)
     } else if tool == .eraser {
       commitActiveEraser?(mutation)
+      onLiveElementErasing(.commit(mutation))
     }
     let reportedPencilActivity = clearAction(preservingShapeHistory: continuesSequence)
     if continuesSequence, fit == nil {
@@ -1186,7 +1189,7 @@ final class PaperInputView: UIView {
     if preservingShapeHistory { quickShape.endContact() } else { quickShape.cancel() }
     let reportedPencilActivity = reportsPencilActivity
     clearActiveAction?()
-    onLiveElementErasing(nil)
+    onLiveElementErasing(.cancel)
     if let id = activeEraserStroke?.measured.sourceID, !reportedElementTargetIDs.isEmpty {
       onElementErasing([], id)
     }

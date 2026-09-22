@@ -2868,7 +2868,18 @@ final class NotebookAppModel {
       let right = members.map { $0.frame.x+$0.frame.width }.max()!, bottom = members.map { $0.frame.y+$0.frame.height }.max()!
       offset = .init(x:min(24,max(0,bounds.maxX-right)),y:min(24,max(0,bounds.maxY-bottom)))
     }
-    let edits = NotebookGraphicSelection.duplicated(members,namespace:UUID(),offset:offset)
+    let visibleMembers=members.map { member -> NotebookGraphicSelection.Member in
+      guard let reference=sources.first(where:{ $0.elementID == member.id }),
+        let target=nativeElementSource(reference)?.target else { return member }
+      let surface:SurfaceID = target.kind == .page ? .page(target.id)
+        : target.kind == .cover ? .cover(target.id) : .board(target.id)
+      let cuts=elementErasures(on:surface)[member.id] ?? []
+      guard !cuts.isEmpty else { return member }
+      var graphic=member.graphic
+      graphic.mask=(graphic.mask ?? .init()).capturing(cuts,transform:graphic.transform)
+      return .init(id:member.id,frame:member.frame,origin:member.origin,graphic:graphic,layout:member.layout)
+    }
+    let edits = NotebookGraphicSelection.duplicated(visibleMembers,namespace:UUID(),offset:offset)
     do {
       let operations = try zip(edits,members).map { edit,member -> NotebookElementEdit in
         let reference: EditableElementReference

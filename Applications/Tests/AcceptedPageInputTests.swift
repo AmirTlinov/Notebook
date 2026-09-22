@@ -15,18 +15,28 @@ final class AcceptedPageInputTests: XCTestCase {
     paper.pageEraserSource = {
       .init(page:page,graph:page.graphicGraph(),changedTargets:[:],excludedElementIDs:[])
     }
-    var live:[ActiveEraserStroke?]=[]
-    paper.onLiveElementErasing = { live.append($0) }
+    let presentation=NotebookLiveElementEraserPresentation()
+    var updates=0
+    paper.onLiveElementErasing = { event in
+      if case .update = event { updates += 1 }
+      presentation.display(event)
+    }
     let touch=AcceptedInputTouch();touch.point = .init(x:20,y:20)
     paper.touchesBegan([touch],with:nil)
     for index in 1...60 {
       touch.point = .init(x:CGFloat(20+index*4),y:CGFloat(20+index*2));touch.sampleTime += 1.0/120
       paper.touchesMoved([touch],with:nil)
     }
-    XCTAssertGreaterThan(live.compactMap{$0}.count,50)
+    XCTAssertGreaterThan(updates,50)
     paper.touchesEnded([touch],with:nil)
     try await Task.sleep(for:.milliseconds(150))
-    XCTAssertNil(live.last ?? nil)
+    XCTAssertTrue(presentation.isActive,"Lift must keep coverage until the permanent mask is visible")
+    let action=try XCTUnwrap(presentation.pending.first)
+    presentation.presented([:])
+    XCTAssertTrue(presentation.isActive,"An older ready overlay cannot acknowledge this cut")
+    presentation.presented(PageInkDrawing(actions:[action]).elementErasures)
+    XCTAssertFalse(presentation.isActive)
+    XCTAssertTrue(presentation.pending.isEmpty)
   }
 
   @MainActor
