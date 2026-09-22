@@ -1,5 +1,38 @@
 # Verification record
 
+## 22 сентября — один владелец admission для лассо-фрагментов и фигур, build 167
+
+`NotebookWorkingGraphic` теперь один формирует durable payload с frame,
+worldOrigin, basis и точным векторным source. Региональное лассо, обычные фигуры
+и Quick Shape больше не собирают три расходящихся версии этого состояния;
+отклонённая команда также удаляет свой accepted preview. Для регионального
+разреза лимит causal action проверяется до кодирования всех кандидатов, а не
+после выполненной тяжёлой работы.
+
+Неизменный source прошёл **2/2** выбранных Mac native checks без failures,
+skips и runtime warnings: million-event crop — 0,209681 с, запрет invisible
+move до admission — 1,066238 с. Generic physical-iOS compile завершился
+успешно. Три попытки запуска выбранных Debug tests на подключённом iPad
+застряли после запуска `.native-test` до создания завершённого xcresult;
+это не засчитано как PASS, временный bundle удалён.
+
+Подписанная пара **0.3.134 (167)** собрана из source SHA-256
+`3009844630f30fe68d71dd074b9b819fcec347f5a38daedb748b33732c2ab769`;
+verification SHA-256
+`131fc0a6491b4642086eca21feeebd817a820e06902eff803fc82910b0bf4c38`.
+iPad binary UUID — `D21CEF98-6B62-36B7-8108-DD44AF13F345`, Mac —
+`59915809-6016-304D-A477-38C67235D715`. Оба приложения обновлены in-place;
+Mac SQLite сохранил inode `783629731` и размер 229 986 304 байта, а screenshot
+физического iPad после запуска показывает прежнюю пользовательскую страницу и
+рукопись. Evidence: `.build/gui294-authored-owner-167-mac/`,
+`.build/gui294-lasso-owner-release-167/` и
+`.build/gui294-lasso-owner-install-167-{ipad,mac}/`.
+
+Установка и reopen не являются аппаратной UX-приёмкой. На build 167 ещё не
+выполнены реальные жесты Pencil/ластика/двух режимов лассо, десять повторов,
+30 минут совместной работы и системные input-to-present/CPU/GPU/memory/energy
+измерения.
+
 ## 22 сентября — первый edit регионального лассо больше не блокирует UI, build 166
 
 Трёхминутная системная запись реальной работы Pencil на установленном build 165
