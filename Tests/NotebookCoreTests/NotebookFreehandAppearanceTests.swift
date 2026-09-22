@@ -41,6 +41,18 @@ import Testing
     #expect(miss.state == .intact)
   }
 
+  @Test func lassoNeedsTheSamePaintAndVisibilityWitness() {
+    var graphic=ink([sample(5,20),sample(95,20)])
+    graphic.mask=NotebookGraphicMask().appending(.intersect,
+      polygon:[.init(x:0,y:0.5),.init(x:1,y:0.5),.init(x:1,y:1),.init(x:0,y:1)])
+    let value=NotebookElementAppearance(graphic:graphic,layout:nil,size:.init(width:100,height:100),erasures:[])
+    #expect(!value.intersects([.init(x:10,y:10),.init(x:90,y:10),.init(x:90,y:80),.init(x:10,y:80)]))
+    graphic.mask=NotebookGraphicMask().appending(.intersect,
+      polygon:[.init(x:0,y:0.1),.init(x:1,y:0.1),.init(x:1,y:0.25),.init(x:0,y:0.25)])
+    let visible=NotebookElementAppearance(graphic:graphic,layout:nil,size:.init(width:100,height:100),erasures:[])
+    #expect(visible.intersects([.init(x:10,y:10),.init(x:90,y:10),.init(x:90,y:80),.init(x:10,y:80)]))
+  }
+
   @Test func capturedCutSurvivesTurnStretchAndProjectedGroup() throws {
     var graphic=ink([sample(5,50),sample(95,50)])
     let turn=NotebookGraphicTransform(a:0,b:1,c:-1,d:0,tx:1,ty:0)

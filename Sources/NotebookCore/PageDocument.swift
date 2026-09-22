@@ -308,7 +308,9 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     return Set(ids).count == ids.count
       && elements.allSatisfy {
         !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-          && ($0.parentID == nil && $0.kind != .group ? $0.frame.isContained(in: size) : NotebookElementBasis.validLocalFrame($0.frame))
+          && ($0.parentID == nil && $0.kind != .group
+            ? ($0.frame.isContained(in:size) || visibleMaskedFragmentIsContained($0,in:size))
+            : NotebookElementBasis.validLocalFrame($0.frame))
           && NotebookElementBasis.validParent($0.parentID,childID:$0.id)
           && $0.state.isValid
           && NotebookProgramPackage.validSourceReference($0.programPackage, isProgram: $0.kind == .web, source: $0.source, html: $0.html, css: $0.css, javaScript: $0.javaScript)
@@ -318,6 +320,24 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
           && ($0.kind == .group ? $0.basis?.isValid == true && $0.source.isEmpty && $0.html.isEmpty
             && $0.css.isEmpty && $0.javaScript.isEmpty && $0.state == .object([:]) : ($0.basis?.isValid ?? true))
       }
+  }
+
+  /// A detached lasso fragment can retain a much larger local body. Admit an
+  /// overhanging descriptor only when its authored visibility confines every
+  /// possible shown point to the physical page. Subtractions never narrow this
+  /// conservative proof; the same mask remains the paint/hit-test owner.
+  private static func visibleMaskedFragmentIsContained(_ element:AgentElement,in size:PageSize)->Bool {
+    guard element.kind == .graphic,NotebookElementBasis.validLocalFrame(element.frame),
+      let mask=element.graphic?.mask else { return false }
+    let frame=element.frame,rect=CGRect(x:frame.x,y:frame.y,width:frame.width,height:frame.height)
+    let projection:NotebookGraphicLayout.Projection?
+    if let basis=element.basis {
+      guard let map=try? basis.placement(in:frame) else { return false }
+      projection = .init(size:.init(width:basis.size.x,height:basis.size.y),transform:map)
+    } else { projection = nil }
+    let bounds=mask.conservativeBounds(in:rect,projection:projection)
+    return !bounds.isNull && !bounds.isEmpty && bounds.minX >= 0 && bounds.minY >= 0
+      && bounds.maxX <= size.width && bounds.maxY <= size.height
   }
 
   /// An addressed edit must not advance the implicit clocks of unseen peers.

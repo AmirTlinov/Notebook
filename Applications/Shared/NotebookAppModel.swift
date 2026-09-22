@@ -2767,8 +2767,17 @@ final class NotebookAppModel {
   }
 
   func selectRegion(_ region: NotebookRegionSelection) {
-    guard region.materialization != nil else { return }
     replaceSelection(.region(region))
+  }
+
+  func resolveRegionPreparation(_ region:NotebookRegionSelection) {
+    guard selectionSession.region?.id == region.id,region.materialization != nil else { return }
+    selectionSession.target = .region(region)
+    if var contact=selectionSession.manipulation,contact.reference == region.reference {
+      contact.region=region;selectionSession.manipulation=contact
+      if contact.regionGestureEnded { _ = finishRegionManipulation(contact) }
+      else { updateRegionPreview(contact) }
+    }
   }
 
   func beginMultipleSelection() {
@@ -2981,7 +2990,7 @@ final class NotebookAppModel {
     var value = NotebookSelection(id: session.id, kind: kind, surface: surface,
       pageIndex: presence.mode == .document ? presence.documentPageIndex : nil,
       contextID: kind == .empty ? nil : session.context?.contextID,
-      resolving: session.isResolvingContext)
+      resolving: session.isResolvingContext || (session.region != nil && session.region?.materialization == nil))
     switch session.target {
     case nil, .context: break
     case .item(let board, let id):
@@ -3110,7 +3119,10 @@ final class NotebookAppModel {
 
   func beginRegionManipulation(_ region:NotebookRegionSelection,kind:NotebookElementManipulation.Kind) -> UUID? {
     switch kind { case .move,.resize: break; default: return nil }
-    guard regionIsCurrent(region) else { showCue("Материал области изменился. Повторите лассо.");return nil }
+    guard selectionSession.manipulation?.regionGestureEnded != true else { return nil }
+    if region.materialization != nil {
+      guard regionIsCurrent(region) else { showCue("Материал области изменился. Повторите лассо.");return nil }
+    } else if drawingTools.pendingLasso?.id != region.id { return nil }
     guard inputGate.beginFingerSequence() != nil else { return nil }
     cancelElementManipulation()
     let f=region.frame
@@ -3137,11 +3149,15 @@ final class NotebookAppModel {
     guard selectionSession.manipulation?.id == id else { return false }
     updateElementManipulation(id, translation: translation)
     guard let contact = selectionSession.manipulation else { return false }
-    cancelElementManipulation(id)
     if let region=contact.region {
-      guard contact.frame != contact.original,let prepared=try? region.materialization?.transformed(from:region.frame,to:contact.frame,address:region.address) else { return false }
-      return commitRegion(region,prepared:prepared,summary:contact.kind == .move ? "Переместить область лассо" : "Изменить размер области лассо")
+      if region.materialization == nil,contact.frame != contact.original {
+        selectionSession.manipulation?.regionGestureEnded=true
+        inputGate.unregisterFingerCancellation(source:id);inputGate.endContact(source:id)
+        return true
+      }
+      return finishRegionManipulation(contact)
     }
+    cancelElementManipulation(id)
     if !contact.selectedMembers.isEmpty {
       guard selectedGraphicMembers() == contact.selectedMembers else { return false }
       guard contact.frame != contact.original,contact.selectedEdits.count == contact.selectedMembers.count else { return false }
@@ -3189,6 +3205,15 @@ final class NotebookAppModel {
         values:values,summary:"Изменить связь",readSources:contact.ancestorReferences,capture:contact.graphicCapture?.retaining(bounds:contact.presentedFrame))
     }
     return commitElementFrame(contact)
+  }
+
+  @discardableResult
+  private func finishRegionManipulation(_ contact:NotebookElementManipulation)->Bool {
+    cancelElementManipulation(contact.id)
+    guard let region=contact.region,contact.frame != contact.original,
+      let prepared=try? region.materialization?.transformed(from:region.frame,to:contact.frame,address:region.address) else { return false }
+    return commitRegion(region,prepared:prepared,
+      summary:contact.kind == .move ? "Переместить область лассо" : "Изменить размер области лассо")
   }
 
   /// Preview and commit use the same completed rectangle. Storage changes the

@@ -8,6 +8,14 @@ struct NotebookRegionSourceSnapshot: Sendable {
   let page: PageDocument?
   let board: BoardDocument?
 
+  func orderedGraphics(for region:NotebookRegionSelection) throws -> [EditableElementReference] {
+    let ids=Set(region.graphics.map(\.elementID))
+    let ordered=page?.interactionElements(ids:ids).map(\.id)
+      ?? board?.interactionElements(ids:ids).map(\.id) ?? []
+    guard ordered.count == region.graphics.count else { throw staleRegion() }
+    return ordered.map(region.address.reference)
+  }
+
   func sources(for region:NotebookRegionSelection,graph:NotebookGraphicGraph) throws
     -> [EditableElementReference:NotebookNativeElementSource] {
     var result:[EditableElementReference:NotebookNativeElementSource]=[:]
@@ -52,10 +60,16 @@ extension NotebookRegionMaterialization {
       return .init(id:object.strokeID,surface:object.surface,frame:pose.frame,
         worldOrigin:object.worldOrigin,graphic:object.graphic,basis:pose.basis)
     }
-    let values=try Dictionary(uniqueKeysWithValues:objects.filter { ids.contains($0.id) }.map { ($0.id,try $0.authoredValues()) })
-    return .init(edits:edits.map { edit in
-      .init(reference:edit.reference,kind:edit.kind,values:values[edit.reference.elementID] ?? edit.values)
-    },working:objects,selected:selected,sources:sources)
+    let poses=Dictionary(uniqueKeysWithValues:objects.filter { ids.contains($0.id) }.map { ($0.id,$0) })
+    let changed=try edits.map { edit -> NotebookElementEdit in
+      guard let object=poses[edit.reference.elementID] else { return edit }
+      var values=edit.values
+      values["frame"]=try .encode(object.frame)
+      values["basis"]=try object.basis.map(JSONValue.encode)
+      // A gesture changes placement, not a megabyte of immutable material.
+      return .init(reference:edit.reference,kind:edit.kind,values:values)
+    }
+    return .init(edits:changed,working:objects,selected:selected,sources:sources)
   }
 
   func copying(offset:SpatialPoint,address:NotebookToolAddress) throws -> Self {

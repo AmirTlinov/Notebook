@@ -180,7 +180,9 @@ struct NotebookPageEraserSource {
       }
     }
     func prepare() -> NotebookElementAppearance {
-      .init(graphic:graphic,layout:layout,size:size,erasures:erasures)
+      let value=NotebookElementAppearance(graphic:graphic,layout:layout,size:size,erasures:erasures)
+      _ = value.state // Finish this explicit whole-source receipt on the worker.
+      return value
     }
 
     /// CPU snapshots must never rasterize the live overlapping triangle mask

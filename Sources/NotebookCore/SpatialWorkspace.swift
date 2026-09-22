@@ -720,6 +720,12 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     elementLookupCache.value(for:elements).position(of:id).map { elements[$0] }
   }
 
+  /// Authored painter order for a local query, without scanning unrelated bodies.
+  public func interactionElements(ids:Set<String>)->[SpatialElement] {
+    let lookup=elementLookupCache.value(for:elements)
+    return ids.compactMap { lookup.position(of:$0) }.sorted().map { elements[$0] }
+  }
+
   /// A latent singleton or a losing concurrent head still names its stack.
   /// Independent imports must not assign that UUID to a second group.
   public var claimedStackIDs: Set<UUID> {

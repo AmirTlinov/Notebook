@@ -33,9 +33,9 @@ struct NotebookRegionSelection: Equatable, Sendable {
   }
 }
 
-/// Immutable command payload prepared away from the UI actor. A region is
-/// admitted only with this payload, so its first edit cannot race preparation
-/// or expand retained vector sources under the user's finger.
+/// Immutable command payload prepared away from the UI actor. The region
+/// already owns the next contact; its edit waits for this payload rather than
+/// expanding retained vector sources under the user's finger.
 struct NotebookRegionMaterialization: Equatable, Sendable {
   let edits:[NotebookElementEdit]
   let working:[NotebookWorkingGraphic]

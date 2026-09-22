@@ -89,7 +89,9 @@ extension NotebookStore {
                 pageGraphicSources[page, default: []].append(stroke)
               }
             }
-          } else if [.updateElement, .setElementState].contains(operation.kind) || graphicRemoval {
+          } else if [.insertElement, .updateElement, .setElementState].contains(operation.kind) || graphicRemoval {
+            // Inserting needs the addressed identity, not all neighbour bodies
+            // or ink. Publication appends to the durable order independently.
             guard let id = operation.id, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               id.utf16.count <= 120 else {
               throw CollaborationError("invalid_operation", "Изменение элемента называет допустимый ID длиной до 120 знаков UTF-16.")

@@ -59,6 +59,32 @@ struct NotebookPageElementCommandTests {
     }
   }
 
+  @Test func insertingFragmentsDoesNotReadUnrelatedPageMaterialAndUndoKeepsItsOrder() throws {
+    try fixture(largeNeighbour:true) { store,actor,page in
+      let target=CollaborationTarget(kind:.page,id:page.id)
+      let selected=try #require(page.element(id:elementID))
+      let ids=["fragment-a","fragment-b"]
+      let operations=[CollaborationOperation(kind:.updateElement,target:target,id:elementID,
+        values:["frame":try .encode(PageRect(x:20,y:30,width:200,height:200))])]
+        + (try ids.map { id in CollaborationOperation(kind:.insertElement,target:target,id:id,values:[
+          "kind":.string("graphic"),"source":.string(""),
+          "frame":try .encode(PageRect(x:100,y:100,width:80,height:80)),
+          "graphic":try .encode(NotebookGraphic(shape:.rectangle))]) })
+      let sources=[NotebookNativeElementSource(target:target,id:elementID,page:selected)]
+        + ids.map { NotebookNativeElementSource(target:target,id:$0) }
+      let result=try store.applyNativeElementEdits(operations,summary:"Move and insert fragments",
+        sources:sources,actor:actor)
+      let saved=try store.loadPage(page.id)
+      #expect(saved.elements.map(\.id) == page.elements.map(\.id)+ids)
+      #expect(saved.element(id:"foreign") == page.element(id:"foreign"))
+      #expect(saved.drawingData == page.drawingData)
+      _=try store.undoCollaborationAction(result.receipt.id,actor:actor)
+      let restored=try store.loadPage(page.id)
+      #expect(restored.elements == page.elements)
+      #expect(restored.drawingData == page.drawingData)
+    }
+  }
+
   @Test func programCheckpointRejectsABAWithoutRejectingIndependentGeometry() throws {
     try fixture { store, actor, page in
       let rendered = try #require(page.elements.first { $0.id == elementID })

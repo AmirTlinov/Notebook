@@ -209,7 +209,10 @@ final class NotebookDrawingToolController {
   }
 
   func cancel() {
-    lassoTask?.cancel(); lassoTask = nil; pendingLasso=nil
+    lassoTask?.cancel(); lassoTask = nil
+    if let pendingLasso,model.selectionSession.region?.id == pendingLasso.id,
+      model.selectionSession.region?.materialization == nil { model.clearSelection() }
+    pendingLasso=nil
     if let contact {
       model.updateWorkingGraphic(nil,strokeID:contact.id)
       if contact.tool == .laser { expireLaser(contact.id) }
@@ -236,6 +239,13 @@ final class NotebookDrawingToolController {
       finishElementSelection(current,polygon:polygon)
       return
     }
+    let box=polygon.reduce(CGRect.null) { $0.union(.init(x:$1.x,y:$1.y,width:0,height:0)) }
+    guard !box.isNull,box.width > 0,box.height > 0 else { pendingLasso=nil;model.clearSelection();return }
+    let frame=PageRect(x:box.minX,y:box.minY,width:box.width,height:box.height)
+    // The contour names the next contact immediately. Preparation may refine
+    // this same choice, but must never leave the previous object draggable.
+    model.selectRegion(.init(id:current.id,address:current.address,polygon:polygon,
+      frame:frame,rawInk:nil,expectedInkRevision:nil,graphics:[]))
     let erasures=model.lassoErasureSnapshot(primary:current.address.surface)
     let selection = model.selectionSession.id
     let snapshot=model.regionSourceSnapshot(current.address)
@@ -259,10 +269,8 @@ final class NotebookDrawingToolController {
           onCancel: { preparation.cancel() }
         guard !Task.isCancelled, let self, model.selectionSession.id == selection else { return }
         guard result != nil || !references.isEmpty else { model.clearSelection();return }
-        let box=polygon.reduce(CGRect.null) { $0.union(.init(x:$1.x,y:$1.y,width:0,height:0)) }
-        guard !box.isNull,box.width > 0,box.height > 0 else { model.clearSelection();return }
         let descriptor=NotebookRegionSelection(id:current.id,address:current.address,polygon:polygon,
-          frame:.init(x:box.minX,y:box.minY,width:box.width,height:box.height),rawInk:result,
+          frame:frame,rawInk:result,
           expectedInkRevision:source?.revision,graphics:references)
         let graph=current.graph
         let materialization=Task.detached(priority:.userInitiated) {
@@ -277,8 +285,9 @@ final class NotebookDrawingToolController {
           polygon:descriptor.polygon,frame:descriptor.frame,rawInk:descriptor.rawInk,
           expectedInkRevision:descriptor.expectedInkRevision,graphics:descriptor.graphics,
           materialization:prepared)
-        model.selectRegion(region)
+        model.resolveRegionPreparation(region)
       } catch is CancellationError {} catch {
+        if self?.model.selectionSession.id == selection { self?.model.clearSelection() }
         self?.model.showCue(error.localizedDescription)
       }
     }
@@ -288,7 +297,7 @@ final class NotebookDrawingToolController {
     let adds=current.settings.lassoAddsToSelection
     let previousReferences=adds ? model.selectionSession.elements : []
     let previousItems=adds ? model.selectionSession.items : []
-    if !adds { model.clearSelection() }
+    model.clearSelection()
     let selection=model.selectionSession.id
     let erasures=model.lassoErasureSnapshot(primary:current.address.surface)
     let removed=model.lassoRemovedPageElements(on:current.address.surface)
@@ -448,7 +457,8 @@ extension NotebookRegionMaterialization {
         edits.append(.init(reference:ref,kind:.insertElement,values:try object.authoredValues()));working.append(object)
       }
     }
-    for reference in region.graphics {
+    // Query traversal is unordered; a fragment retains its source paint order.
+    for reference in try snapshot.orderedGraphics(for:region) {
       guard let node=graph.node(reference.elementID),belongs(reference,node:node),
         let layout=graph.resolve(reference.elementID).layout,let placement=layout.flattenedPlacement() else { continue }
       let size=layout.projection?.size ?? .init(width:layout.frame.width,height:layout.frame.height)

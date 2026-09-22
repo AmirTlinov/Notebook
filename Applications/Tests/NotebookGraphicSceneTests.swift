@@ -103,7 +103,7 @@ import XCTest
     receiver.touchesEnded([touch],with:event)
     XCTAssertFalse(model.inputGate.hasActivePencil)
     let deadline = ContinuousClock.now + .seconds(5)
-    while model.selectionSession.region?.rawInk?.graphic == nil, ContinuousClock.now < deadline {
+    while model.selectionSession.region?.materialization == nil, ContinuousClock.now < deadline {
       try await Task.sleep(for:.milliseconds(10))
     }
     let region=try XCTUnwrap(model.selectionSession.region)
@@ -136,7 +136,7 @@ import XCTest
     await model.start(pageSize:NotebookAppModel.defaultPageSize)
     let workspace=try XCTUnwrap(model.workspace)
     var page=try XCTUnwrap(model.activePage)
-    let shape=AgentElement(id:"lasso-next-shape",kind:.graphic,frame:.init(x:200,y:300,width:300,height:160),
+    let shape=AgentElement(id:"lasso-next-shape",kind:.graphic,frame:.init(x:49.75,y:143.34,width:784.25,height:1050.66),
       source:"",html:"",graphic:.init(shape:.rectangle,style:.init(strokeWidth:4,fill:.init(red:1,green:0.2,blue:0.1))))
     let second=AgentElement(id:"lasso-second-shape",kind:.graphic,frame:.init(x:200,y:420,width:300,height:100),
       source:"",html:"",graphic:.init(shape:.ellipse,style:.init(strokeWidth:4,fill:.init(red:0.1,green:0.5,blue:1))))
@@ -148,8 +148,13 @@ import XCTest
       camera:.init(center:center,scale:WorkspaceItemGeometry.notebook.fitScale(viewport:viewport)),viewport:viewport,
       focusedItemID:workspace.selectedItemID,openProgress:1),settled:true)
     model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode = .region
+    model.selectElement(.page(pageID:page.id,elementID:second.id))
     let window=try await mountNotebookScene(model)
     let paper=try XCTUnwrap(descendants(try XCTUnwrap(window.rootViewController?.view)).compactMap { $0 as? PaperInputView }.first { $0.isUserInteractionEnabled })
+    // Freeze screen probes before editing: a shifted page must not move the
+    // test's coordinate system together with the incorrectly painted material.
+    let probes=[CGPoint(x:550,y:120),.init(x:450,y:470),.init(x:310,y:533),.init(x:210,y:350)]
+      .map { paper.convert($0,to:window) }
     let pencil=try XCTUnwrap(window.gestureRecognizers?.first { $0.name == "NotebookPaperPencil" })
     let touch=SceneGraphicTouch(window:window),event=SceneGraphicEvent()
     for (index,p) in [CGPoint(x:190,y:290),.init(x:340,y:290),.init(x:350,y:380),.init(x:300,y:470),.init(x:190,y:470),.init(x:190,y:290)].enumerated() {
@@ -158,16 +163,9 @@ import XCTest
       else { pencil.touchesMoved([touch],with:event) }
     }
     pencil.touchesEnded([touch],with:event)
-    let deadline=ContinuousClock.now + .seconds(5)
-    while model.selectionSession.region == nil,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
     let region=try XCTUnwrap(model.selectionSession.region)
-    try await Task.sleep(for:.milliseconds(150))
-    let controls=try XCTUnwrap(descendants(try XCTUnwrap(window.rootViewController?.view)).compactMap { $0 as? NotebookSelectionControlsView }.first)
-    let resize=try XCTUnwrap(controls.beginManipulation?(.resize(.bottomTrailing)))
-    resize.change(.init(x:30,y:40))
-    XCTAssertEqual(model.selectionSession.manipulation?.region?.id,region.id,"The shown handle reaches region resize")
-    resize.cancel()
-    XCTAssertEqual(try model.store.loadPage(page.id).elements,[shape,second],"Cancelling a grip does not cut the document")
+    XCTAssertNil(region.materialization,"The contour owns selection before preparation finishes")
+    XCTAssertTrue(model.selectionSession.elements.isEmpty,"The previous object must not own the next finger")
     let finger=SceneGraphicTouch(window:window);finger.kind = .direct
     finger.point=paper.convert(.init(x:260,y:370),to:window)
     finger.sourceView=window.hitTest(finger.point,with:event)
@@ -183,6 +181,10 @@ import XCTest
     XCTAssertEqual(model.selectionSession.manipulation?.reference,region.reference,"Next body drag owns the region, not the original rectangle")
     XCTAssertEqual(try model.store.loadPage(page.id).elements,[shape,second])
     receiver.touchesEnded([finger],with:directEvent)
+    XCTAssertTrue(model.selectionSession.manipulation?.regionGestureEnded == true)
+    let deadline=ContinuousClock.now + .seconds(5)
+    while model.drawingTools.pendingLasso != nil,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
+    XCTAssertNil(model.drawingTools.pendingLasso)
     let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
     await model.reloadExternalChanges()?.value
     XCTAssertEqual(model.selectionSession.elements.count,2,"Both enclosed pieces remain one selection")
@@ -193,6 +195,10 @@ import XCTest
     XCTAssertNotNil(result.element(id:shape.id)?.graphic?.mask)
     let fragment=try XCTUnwrap(result.element(id:selected.elementID))
     XCTAssertNotNil(fragment.basis);XCTAssertGreaterThan(fragment.frame.x,shape.frame.x)
+    let wideFragment=try XCTUnwrap(model.selectionSession.elements.compactMap { result.element(id:$0.elementID) }
+      .first { $0.frame.width > 700 })
+    XCTAssertGreaterThan(wideFragment.frame.x+wideFragment.frame.width,page.size.width,
+      "Only masked visible material, not its large source descriptor, must remain on the paper")
     try await Task.sleep(for:.milliseconds(200))
     let multiple=try XCTUnwrap(descendants(try XCTUnwrap(window.rootViewController?.view)).compactMap { $0 as? NotebookSelectionControlsView }.first)
     XCTAssertTrue((multiple.accessibilityElements as? [UIAccessibilityElement])?.contains {
@@ -210,7 +216,26 @@ import XCTest
     }
     XCTAssertEqual(after.element(id:shape.id),result.element(id:shape.id))
     XCTAssertEqual(after.element(id:second.id),result.element(id:second.id))
-    let shot=XCTAttachment(image:UIGraphicsImageRenderer(bounds:window.bounds).image { _ in window.drawHierarchy(in:window.bounds,afterScreenUpdates:true) })
+    let image=UIGraphicsImageRenderer(bounds:window.bounds).image { _ in window.drawHierarchy(in:window.bounds,afterScreenUpdates:true) }
+    func pixel(_ point:CGPoint) throws -> [UInt8] {
+      let crop=try XCTUnwrap(image.cgImage?.cropping(to:.init(x:point.x*image.scale,y:point.y*image.scale,width:1,height:1)))
+      var rgba=[UInt8](repeating:0,count:4)
+      try rgba.withUnsafeMutableBytes { buffer in
+        let context=try XCTUnwrap(CGContext(data:buffer.baseAddress,width:1,height:1,bitsPerComponent:8,
+          bytesPerRow:4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(crop,in:.init(x:0,y:0,width:1,height:1))
+      }
+      return rgba
+    }
+    let paperAbove=try pixel(probes[0]),outsideBlue=try pixel(probes[1])
+    XCTAssertTrue(paperAbove.prefix(3).allSatisfy { $0 > 200 },"An oversized hidden source must not move the whole page overlay: \(paperAbove)")
+    XCTAssertLessThan(outsideBlue[0],100);XCTAssertGreaterThan(outsideBlue[2],180,
+      "The untouched ellipse remains at the same shown page coordinates, not just the same saved frame")
+    let selectedBlue=try pixel(probes[2]),cutHole=try pixel(probes[3])
+    XCTAssertLessThan(selectedBlue[0],100);XCTAssertGreaterThan(selectedBlue[2],180,
+      "The moved and resized ellipse fragment still paints above the selected red fragment: \(selectedBlue)")
+    XCTAssertTrue(cutHole.prefix(3).allSatisfy { $0 > 200 },"The original cut is actually empty: \(cutHole)")
+    let shot=XCTAttachment(image:image)
     shot.name="lasso-next-body-drag";shot.lifetime = .keepAlways;add(shot)
   }
 

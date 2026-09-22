@@ -4,6 +4,35 @@ import UIKit
 @testable import Notebook
 
 @MainActor final class NotebookDrawingToolsTests: XCTestCase {
+  func testLassoFragmentsRetainPainterOrderInsteadOfQueryOrderOnEverySurface() throws {
+    let actor=UUID(),owner=UUID(),stamp=VersionStamp(counter:0,actor:actor)
+    let elements=["back","middle","front"].enumerated().map { index,id in
+      AgentElement(id:id,kind:.graphic,frame:.init(x:100,y:100,width:200,height:200),source:"",html:"",
+        graphic:.init(shape:.rectangle,style:.init(fill:.init(red:Double(index)/3,green:0.5,blue:0.7))))
+    }
+    let page=PageDocument(size:.init(width:834,height:1194),actor:actor,elements:elements)
+    for surface in [SurfaceID.page(page.id),.board(owner),.cover(UUID())] {
+      let isPage=surface.kind == .page
+      let address=NotebookToolAddress(surface:surface,boardID:isPage ? nil : owner,worldOrigin:nil,bounds:nil)
+      let board=isPage ? nil : BoardDocument(freeItems:[],elements:elements.map {
+        .init(id:$0.id,surface:surface,kind:.graphic,
+          frame:.init(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height),
+          worldOrigin:surface.kind == .board ? .zero : nil,source:"",graphic:$0.graphic,stamp:stamp)
+      },stamp:stamp)
+      let region=NotebookRegionSelection(id:UUID(),address:address,
+        polygon:[.init(x:120,y:120),.init(x:220,y:120),.init(x:220,y:220),.init(x:120,y:220)],
+        frame:.init(x:120,y:120,width:100,height:100),rawInk:nil,expectedInkRevision:nil,
+        graphics:elements.reversed().map { address.reference($0.id) })
+      let prepared=try XCTUnwrap(NotebookRegionMaterialization.prepare(region,
+        graph:isPage ? page.graphicGraph() : XCTUnwrap(board).graphicGraph(),
+        snapshot:.init(page:isPage ? page : nil,board:board)))
+      XCTAssertEqual(prepared.working.map(\.graphic.style),elements.compactMap(\.graphic?.style))
+      XCTAssertEqual(prepared.edits.filter { $0.kind == .updateElement }.map(\.reference.elementID),elements.map(\.id))
+      let copy=try prepared.copying(offset:.init(x:10,y:20),address:address)
+      XCTAssertEqual(copy.working.map(\.graphic.style),prepared.working.map(\.graphic.style))
+    }
+  }
+
   func testRegionLassoClipsNativeShapeWhileObjectModeSelectsItsWhole() async throws {
     try await fixture { model in
       var page=try XCTUnwrap(model.activePage)
@@ -17,13 +46,12 @@ import UIKit
       let polygon=[SpatialPoint(x:90,y:90),.init(x:150,y:90),.init(x:150,y:210),.init(x:90,y:210)]
       @MainActor func lasso(_ mode:NotebookLassoMode) async throws {
         model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode=mode
-        let generation=model.selectionSession.id
         XCTAssertTrue(model.drawingTools.begin(at:polygon[0],address:address,screenScale:1))
         for point in polygon.dropFirst() { model.drawingTools.move(to:point) }
         model.drawingTools.finish()
         let deadline=ContinuousClock.now + .seconds(2)
         if mode == .region {
-          while model.selectionSession.id == generation,ContinuousClock.now < deadline {
+          while model.selectionSession.region?.materialization == nil,ContinuousClock.now < deadline {
             try await Task.sleep(for:.milliseconds(10))
           }
           XCTAssertNotNil(model.selectionSession.region?.materialization)
@@ -71,7 +99,7 @@ import UIKit
       for point in polygon.dropFirst() { model.drawingTools.move(to:point) };model.drawingTools.finish()
       XCTAssertNotNil(model.drawingTools.pendingLasso)
       let deadline=ContinuousClock.now + .seconds(3)
-      while model.selectionSession.region == nil,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
+      while model.selectionSession.region?.materialization == nil,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
       let region=try XCTUnwrap(model.selectionSession.region)
       guard case .region = model.selectionSession.target else { return XCTFail("The region is the one selection target") }
       let cancelled=try XCTUnwrap(model.beginElementManipulation(region.reference,kind:.move))
@@ -141,7 +169,7 @@ import UIKit
       for point in polygon.dropFirst() { model.drawingTools.move(to:point) }
       model.drawingTools.finish()
       let deadline=ContinuousClock.now + .seconds(3)
-      while model.selectionSession.region == nil,ContinuousClock.now < deadline {
+      while model.selectionSession.region?.materialization == nil,ContinuousClock.now < deadline {
         try await Task.sleep(for:.milliseconds(10))
       }
       let chosen=try XCTUnwrap(model.selectionSession.region)
@@ -183,7 +211,7 @@ import UIKit
       for point in polygon.dropFirst() { model.drawingTools.move(to:point) }
       model.drawingTools.finish()
       let deadline=ContinuousClock.now + .seconds(2)
-      while model.selectionSession.region == nil,ContinuousClock.now < deadline {
+      while model.selectionSession.region?.materialization == nil,ContinuousClock.now < deadline {
         try await Task.sleep(for:.milliseconds(10))
       }
       let region=try XCTUnwrap(model.selectionSession.region)
@@ -349,7 +377,7 @@ import UIKit
       let left=[SpatialPoint(x:90,y:90),.init(x:150,y:90),.init(x:150,y:110),.init(x:90,y:110)]
       lasso(left)
       let deadline = ContinuousClock.now + .seconds(5)
-      while model.selectionSession.region == nil,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
+      while model.selectionSession.region?.materialization == nil,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
       let region=try XCTUnwrap(model.selectionSession.region)
       XCTAssertNotNil(region.materialization)
       XCTAssertEqual(region.rawInk?.graphic.sourceInkIDs,[pen.id])
@@ -362,10 +390,9 @@ import UIKit
       XCTAssertEqual(saved.elements.filter { $0.graphic?.visible == true }.count,1,"Only the compact outside relation remains visible")
 
       let right=[SpatialPoint(x:180,y:90),.init(x:230,y:90),.init(x:230,y:110),.init(x:180,y:110)]
-      let firstSelection=model.selectionSession.id
       lasso(right)
       let secondDeadline = ContinuousClock.now + .seconds(5)
-      while model.selectionSession.id == firstSelection,ContinuousClock.now < secondDeadline { try await Task.sleep(for:.milliseconds(10)) }
+      while model.selectionSession.region?.materialization == nil,ContinuousClock.now < secondDeadline { try await Task.sleep(for:.milliseconds(10)) }
       let second=try XCTUnwrap(model.selectionSession.region)
       XCTAssertNil(second.rawInk,"The original journal is already claimed")
       XCTAssertFalse(second.graphics.isEmpty,"A retained remainder must be lassoable again")
@@ -382,16 +409,16 @@ import UIKit
       let ink=try PageInkDrawing.decode(next.drawingData).appending(raw)
       XCTAssertTrue(next.replaceDrawing(try ink.dataRepresentation(),actor:model.actorID));try model.store.savePage(next)
       await model.reloadExternalChanges()?.value
-      let previousSelection=model.selectionSession.id
       model.drawingTools.selectInk(at:.init(x:400,y:200),address:address,screenScale:1)
       let tapDeadline = ContinuousClock.now + .seconds(5)
-      while model.selectionSession.id == previousSelection,ContinuousClock.now < tapDeadline {
+      while model.selectionSession.region?.materialization == nil,ContinuousClock.now < tapDeadline {
         try await Task.sleep(for:.milliseconds(10))
       }
       XCTAssertEqual(model.selectionSession.region?.rawInk?.graphic.sourceInkIDs,[raw.id])
       XCTAssertEqual(try model.store.loadPage(page.id).drawingData,try ink.dataRepresentation())
     }
   }
+
 
   func testLassoMaterializesAGroupedRegionInPlaceWithItsTightFrame() async throws {
     try await fixture { model in

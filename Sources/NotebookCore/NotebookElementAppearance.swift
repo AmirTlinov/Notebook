@@ -7,13 +7,103 @@ import Foundation
 // escaping mutable alias. Remove unchecked when CGPath gains that conformance.
 public struct NotebookElementAppearance: @unchecked Sendable {
   public enum State: String, Codable, Sendable { case intact, partial, erased }
-  public let state: State
+  /// Whole-source classification is an explicit read. A point or lasso asks
+  /// only for its own surviving material, not for every erased mark on a page.
+  public var state: State {
+    if let knownState { return knownState }
+    if let outline { return outline.state }
+    return stateProjection!.resolve {
+      let value=vector!
+      let sources=[(value.ink,value.viewport)] + (value.label.flatMap { label in value.labelViewport.map { [(label,$0)] } } ?? [])
+      let states=sources.compactMap { ink,viewport -> State? in
+        guard ink.geometry.intersects(viewport,clippedTo:viewport) else { return nil }
+        return ink.geometry.appearance(in:viewport,subtracting:value.cuts)
+      }
+      return states.allSatisfy({ $0 == .erased }) ? .erased : states.allSatisfy({ $0 == .intact }) ? .intact : .partial
+    }
+  }
+  private let knownState: State?
+  private var stateProjection: StateProjection?
+  private final class StateProjection: @unchecked Sendable {
+    private let lock=NSLock()
+    private var value:State?
+    func resolve(_ prepare:()->State)->State {
+      lock.lock();defer { lock.unlock() }
+      if let value { return value }
+      let result=prepare();value=result;return result
+    }
+  }
   private let paths: (remaining: CGPath,mask: CGPath)?
   private let vector: Vector?
+  private var outline: Outline?
   /// Whole contours are explicit export/read-all projections, never a
   /// prerequisite of live picking or of an appearance-state receipt.
-  public var remaining: CGPath { paths?.remaining ?? vector!.remaining }
-  public var mask: CGPath { paths?.mask ?? vector!.mask }
+  public var remaining: CGPath { paths?.remaining ?? outline?.remaining ?? vector!.remaining }
+  public var mask: CGPath { paths?.mask ?? outline?.mask ?? vector!.mask }
+
+  /// Ordinary outlines use the same indexed measured cuts as freehand. Local
+  /// picking subtracts only triangles meeting the query, and stops at absence;
+  /// whole export/state remains a separate cached projection of these sources.
+  private final class Outline: @unchecked Sendable {
+    let paint:CGPath
+    let cuts:[NotebookFreehandGeometry.Cut]
+    let basis:CGAffineTransform
+    let erasures:[InkElementErasure]
+    let size:CGSize
+    let transform:NotebookGraphicTransform?
+    let projection:CGAffineTransform
+    private let lock=NSLock()
+    private var prepared:(remaining:CGPath,mask:CGPath,state:State)?
+    init(paint:CGPath,erasures:[InkElementErasure],size:CGSize,transform:NotebookGraphicTransform?,projection:CGAffineTransform) {
+      self.paint=paint;self.erasures=erasures;self.size=size;self.transform=transform;self.projection=projection
+      cuts=erasures.map(NotebookFreehandGeometry.Cut.init)
+      let t=transform ?? .identity
+      basis=CGAffineTransform(a:t.a*size.width,b:t.b*size.height,c:t.c*size.width,d:t.d*size.height,
+        tx:t.tx*size.width,ty:t.ty*size.height).concatenating(projection)
+    }
+    private func complete()->(remaining:CGPath,mask:CGPath,state:State) {
+      lock.lock();defer { lock.unlock() }
+      if let prepared { return prepared }
+      var p=projection
+      let mask=NotebookElementAppearance.erasurePath(erasures,size:size,transform:transform).copy(using:&p)!
+      let remaining=paint.subtracting(mask)
+      let state:State=remaining.isEmpty ? .erased : (paint.intersection(mask).isEmpty ? .intact : .partial)
+      let value=(remaining,mask,state);prepared=value;return value
+    }
+    var state:State { complete().state }
+    var remaining:CGPath { complete().remaining }
+    var mask:CGPath { complete().mask }
+    func surviving(in query:CGPath)->CGPath {
+      var remaining=paint.intersection(query,using:.evenOdd)
+      guard !remaining.isEmpty else { return remaining }
+      let inverse=basis.inverted()
+      for cut in cuts {
+        let area=remaining.boundingBoxOfPath.applying(inverse)
+        var batch=CGMutablePath(),count=0
+        func flush() {
+          guard count > 0 else { return }
+          remaining=remaining.subtracting(batch.normalized());batch=CGMutablePath();count=0
+        }
+        _=cut.triangles(in:area) { triangle in
+          let points=triangle.map { $0.applying(basis) }
+          batch.addLines(between:points);batch.closeSubpath();count += 1
+          if count == 128 { flush() }
+          return remaining.isEmpty || Task.isCancelled
+        }
+        flush()
+        if remaining.isEmpty || Task.isCancelled { break }
+      }
+      return remaining
+    }
+    func contains(_ p:CGPoint,tolerance:Double)->Bool {
+      guard !cuts.contains(where:{ $0.contains(p.applying(basis.inverted())) }) else { return false }
+      if paint.contains(p) { return true }
+      guard tolerance > 0 else { return false }
+      let query=CGPath(rect:.init(x:p.x-tolerance,y:p.y-tolerance,width:2*tolerance,height:2*tolerance),transform:nil)
+      let local=surviving(in:query)
+      return local.contains(p) || local.copy(strokingWithWidth:2*tolerance,lineCap:.round,lineJoin:.round,miterLimit:10).contains(p)
+    }
+  }
 
   private struct Vector: Sendable {
     let graphic: NotebookGraphic
@@ -57,7 +147,7 @@ public struct NotebookElementAppearance: @unchecked Sendable {
   public init(graphic: NotebookGraphic?, layout: NotebookGraphicLayout?, size: CGSize,
     erasures: [InkElementErasure]) {
     if erasures.contains(where: { $0.target.wholeElement }) {
-      paths=(CGMutablePath(),CGPath(rect:CGRect(origin:.zero,size:size),transform:nil));vector=nil;state = .erased
+      paths=(CGMutablePath(),CGPath(rect:CGRect(origin:.zero,size:size),transform:nil));vector=nil;knownState = .erased
       return
     }
     if let graphic,graphic.showsGeometry,let ink=graphic.freehand {
@@ -75,42 +165,29 @@ public struct NotebookElementAppearance: @unchecked Sendable {
       let value=Vector(graphic:graphic,ink:ink,label:label,labelViewport:labelPoints,localLayout:localLayout,size:size,transform:graphic.transform,
         projection:layout?.projection?.transform ?? .identity,erasures:erasures,cuts:erasures.map(NotebookFreehandGeometry.Cut.init))
       vector=value;paths=nil
-      if erasures.isEmpty { state = .intact }
-      else {
-        let sources=[(ink,value.viewport)] + (label.flatMap { label in labelPoints.map { [(label,$0)] } } ?? [])
-        let states=sources.compactMap { ink,viewport -> State? in
-          guard ink.geometry.intersects(viewport,clippedTo:viewport) else { return nil }
-          return ink.geometry.appearance(in:viewport,subtracting:value.cuts)
-        }
-        state=states.allSatisfy({ $0 == .erased }) ? .erased : states.allSatisfy({ $0 == .intact }) ? .intact : .partial
-      }
+      knownState=erasures.isEmpty ? .intact : nil
+      stateProjection=erasures.isEmpty ? nil : StateProjection()
       return
     }
     vector=nil
-    if let layout, let projection = layout.projection {
-      let body = Self(graphic:graphic,layout:layout.localLayout,size:projection.size,erasures:erasures)
-      var transform = projection.transform
-      paths=(body.remaining.copy(using:&transform)!,body.mask.copy(using:&transform)!);state=body.state
-      return
-    }
-    let paint = graphic.map { NotebookGraphicGeometry.paintPath($0,layout:layout,size:size) }
+    let paint=graphic.map { NotebookGraphicGeometry.paintPath($0,layout:layout,size:size) }
       ?? CGPath(rect:CGRect(origin:.zero,size:size),transform:nil)
-    if !erasures.isEmpty && paint.isEmpty {
-      paths=(CGMutablePath(),CGMutablePath());state = .erased
-      return
-    }
-    let mask=Self.erasurePath(erasures,size:size,transform:graphic?.transform)
-    if mask.isEmpty { paths=(paint.copy()!,mask);state = .intact }
-    else {
-      let remaining=paint.subtracting(mask);paths=(remaining,mask)
-      state=remaining.isEmpty ? .erased : (paint.intersection(mask).isEmpty ? .intact : .partial)
+    if paint.isEmpty {
+      paths=(paint,CGMutablePath());knownState = .erased
+    } else if erasures.isEmpty {
+      paths=(paint,CGMutablePath());knownState = .intact
+    } else {
+      paths=nil;knownState=nil
+      outline=Outline(paint:paint,erasures:erasures,size:layout?.projection?.size ?? size,
+        transform:graphic?.transform,projection:layout?.projection?.transform ?? .identity)
     }
   }
 
   /// Tolerance expands only surviving paint, never the removed original edge.
   public func contains(_ point: SpatialPoint, tolerance: Double) -> Bool {
-    guard state != .erased else { return false }
+    guard knownState != .erased else { return false }
     let p=CGPoint(x:point.x,y:point.y)
+    if let outline { return outline.contains(p,tolerance:tolerance) }
     if let vector {
       if vector.visibleMask?.contains(p,using:.evenOdd) == false { return false }
       return vector.ink.geometry.contains(p,basis:vector.basis,tolerance:tolerance,subtracting:vector.cuts,clippedTo:vector.viewport)
@@ -121,18 +198,29 @@ public struct NotebookElementAppearance: @unchecked Sendable {
       lineCap:.round,lineJoin:.round,miterLimit:10).contains(p))
   }
   public func intersects(_ polygon:[CGPoint]) -> Bool {
-    guard state != .erased else { return false }
+    guard knownState != .erased else { return false }
     if let vector {
-      if let mask=vector.visibleMask {
-        let lasso=CGMutablePath();lasso.addLines(between:polygon);lasso.closeSubpath()
-        if mask.intersection(lasso,using:.evenOdd).isEmpty { return false }
-      }
       let inverse=vector.basis.inverted()
       let source=polygon.map { $0.applying(inverse) }
-      return vector.ink.geometry.intersects(source,subtracting:vector.cuts,clippedTo:vector.viewport)
-        || (vector.label.map { $0.geometry.intersects(source,subtracting:vector.cuts,clippedTo:vector.labelViewport!) } ?? false)
+      var accepts:(([CGPoint])->Bool)?
+      if let mask=vector.visibleMask {
+        let lasso=CGMutablePath();lasso.addLines(between:polygon);lasso.closeSubpath()
+        let visible=mask.intersection(lasso,using:.evenOdd)
+        guard !visible.isEmpty else { return false }
+        // Paint, the lasso and prior cutouts need a shared witness. Separate
+        // intersections could otherwise select an already removed fragment.
+        accepts={ fragment in
+          let points=fragment.map { $0.applying(vector.basis) }
+          if points.count == 1 { return visible.contains(points[0],using:.evenOdd) }
+          let path=CGMutablePath();path.addLines(between:points);path.closeSubpath()
+          return !visible.intersection(path,using:.evenOdd).isEmpty
+        }
+      }
+      return vector.ink.geometry.intersects(source,subtracting:vector.cuts,clippedTo:vector.viewport,accepting:accepts)
+        || (vector.label.map { $0.geometry.intersects(source,subtracting:vector.cuts,clippedTo:vector.labelViewport!,accepting:accepts) } ?? false)
     }
     let path=CGMutablePath();path.addLines(between:polygon);path.closeSubpath()
+    if let outline { return !outline.surviving(in:path).isEmpty }
     return !remaining.intersection(path,using:.evenOdd).isEmpty
   }
   /// Reading an untouched source does not require its full paint contour.

@@ -112,7 +112,7 @@ struct AgentOverlayView: View {
       }
     }
     .coordinateSpace(name: NotebookManipulationSpace.material)
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    .frame(width:pageSize.width,height:pageSize.height,alignment:.topLeading)
     .onAppear { publishReadiness() }
     .onChange(of: page.elementSourceIdentity) { _, _ in
       readiness.retain(page.elements)

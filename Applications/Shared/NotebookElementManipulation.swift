@@ -86,6 +86,9 @@ struct NotebookElementManipulation: Equatable, Sendable {
     }
   }
   var region: NotebookRegionSelection?
+  /// The physical finger ended before this region's immutable sources resolved.
+  /// Its final placement remains the one pending edit, not a second gesture.
+  var regionGestureEnded = false
   var selectedMembers: [NotebookGraphicSelection.Member] = []
   var selectedEdits: [NotebookGraphicSelection.Edit] {
     guard let origin=selectedMembers.first?.origin else { return [] }

@@ -222,8 +222,13 @@ public final class NotebookFreehandGeometry: Sendable {
       basis = .init(a:b.x-a.x,b:b.y-a.y,c:c.x-a.x,d:c.y-a.y,tx:a.x,ty:a.y)
     }
     func triangles(in area:CGRect, visit:([CGPoint]) -> Bool) -> Bool {
+      var prepared:[Range<Int>:[NotebookFreehand.Vertex]]=[:]
+      return triangles(in:area,prepared:&prepared,visit:visit)
+    }
+    func triangles(in area:CGRect,prepared:inout [Range<Int>:[NotebookFreehand.Vertex]],visit:([CGPoint])->Bool)->Bool {
       for id in geometry.query(area.applying(basis.inverted())).indices {
-        let v=geometry.vertices(at:id)
+        let v:[NotebookFreehand.Vertex]
+        if let cached=prepared[id] { v=cached } else { v=geometry.vertices(at:id);prepared[id]=v }
         for start in stride(from:0,to:v.count-2,by:3) {
           let triangle=v[start..<start+3].map { CGPoint(x:$0.x,y:$0.y).applying(basis) }
           if polygonBounds(triangle).intersects(area),visit(triangle) { return true }
@@ -268,12 +273,27 @@ public final class NotebookFreehandGeometry: Sendable {
     return .intact
   }
 
-  private func intersects(_ polygon: [CGPoint], subtracting external:[Cut], clippedTo viewport:[CGPoint]?, accepting:(([CGPoint]) -> Bool)?) -> Bool {
+  func intersects(_ polygon: [CGPoint], subtracting external:[Cut], clippedTo viewport:[CGPoint]?, accepting:(([CGPoint]) -> Bool)?) -> Bool {
     guard polygon.count >= 3 else { return false }
     let region=polygonBounds(polygon)
     let area=viewport.map { region.intersection(polygonBounds($0)) } ?? region
     guard !area.isNull else { return false }
     var cuts: [Range<Int>:[NotebookFreehand.Vertex]] = [:]
+    // A local query resolves each measured erase chunk once, not once for
+    // every pen triangle meeting it. This storage dies with the query.
+    var externalPrepared=Array(repeating:[Range<Int>:[NotebookFreehand.Vertex]](),count:external.count)
+    func erased(_ point:CGPoint,after layer:Int)->Bool {
+      let pad=max(abs(point.x).ulp,abs(point.y).ulp,Double.ulpOfOne)
+      for id in query(.init(x:point.x-pad,y:point.y-pad,width:pad*2,height:pad*2)).indices
+        where self.layer(at:id) > layer && tool(at:id) == .eraser {
+        let vertices:[NotebookFreehand.Vertex]
+        if let cached=cuts[id] { vertices=cached } else { vertices=self.vertices(at:id);cuts[id]=vertices }
+        for start in stride(from:0,to:vertices.count-2,by:3) {
+          if triangleOpacity(at:point,vertices[start..<start+3]) >= 1 { return true }
+        }
+      }
+      return false
+    }
     for id in query(area).indices.reversed() where tool(at:id) == .pen {
       if Task.isCancelled { return false }
       let v = vertices(at:id)
@@ -289,9 +309,8 @@ public final class NotebookFreehandGeometry: Sendable {
         // cuts must not force thousands of polygon subtractions to find it.
         let center = CGPoint(x:p.reduce(0) { $0+$1.x }/Double(p.count),y:p.reduce(0) { $0+$1.y }/Double(p.count))
         let witnesses = p + [center] + polygon.prefix(16).filter { polygonContains($0,p) }
-        if witnesses.contains(where: { point in polygonContains(point,polygon)
-          && contains(point,size:.init(width:1,height:1),transform:nil,tolerance:0,clipsToSize:false)
-          && !external.contains(where:{ $0.contains(point) })
+        if external.isEmpty,witnesses.contains(where: { point in polygonContains(point,polygon)
+          && triangleOpacity(at:point,triangle[...]) > 0 && !erased(point,after:layer(at:id))
           && (accepting?([point]) ?? true) }) { return true }
         var remaining = [p]
         for cut in query(polygonBounds(p).intersection(area)).indices
@@ -310,8 +329,8 @@ public final class NotebookFreehandGeometry: Sendable {
           if remaining.isEmpty { break }
           if Task.isCancelled { return false }
         }
-        for cut in external where !remaining.isEmpty {
-          _ = cut.triangles(in:polygonBounds(p).intersection(area)) { erase in
+        for index in external.indices where !remaining.isEmpty {
+          _ = external[index].triangles(in:polygonBounds(p).intersection(area),prepared:&externalPrepared[index]) { erase in
             let box=polygonBounds(erase)
             remaining=remaining.flatMap { fragment in
               polygonBounds(fragment).intersects(box) ? subtractTriangle(fragment,erase) : [fragment]
@@ -325,6 +344,17 @@ public final class NotebookFreehandGeometry: Sendable {
     return false
   }
 
+}
+
+/// A witness belongs to its known pen triangle; only later opaque erasers
+/// can revoke it. Do not re-expand the entire source for every candidate point.
+private func triangleOpacity(at point:CGPoint,_ v:ArraySlice<NotebookFreehand.Vertex>)->Double {
+  let a=v[v.startIndex],b=v[v.startIndex+1],c=v[v.startIndex+2]
+  let p=CGPoint(x:a.x,y:a.y),q=CGPoint(x:b.x,y:b.y),r=CGPoint(x:c.x,y:c.y)
+  let area=cross(p,q,r),ab=cross(p,q,point),bc=cross(q,r,point),ca=cross(r,p,point)
+  guard area != 0, (ab >= 0 && bc >= 0 && ca >= 0) || (ab <= 0 && bc <= 0 && ca <= 0) else { return 0 }
+  if a.opacity == b.opacity,b.opacity == c.opacity { return a.opacity }
+  return (a.opacity*bc+b.opacity*ca+c.opacity*ab)/area
 }
 
 private func cross(_ a: CGPoint, _ b: CGPoint, _ p: CGPoint) -> Double {
