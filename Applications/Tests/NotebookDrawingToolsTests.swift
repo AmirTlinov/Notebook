@@ -22,10 +22,16 @@ import UIKit
         for point in polygon.dropFirst() { model.drawingTools.move(to:point) }
         model.drawingTools.finish()
         let deadline=ContinuousClock.now + .seconds(2)
-        while model.selectionSession.id == generation,ContinuousClock.now < deadline {
-          try await Task.sleep(for:.milliseconds(10))
+        if mode == .region {
+          while model.selectionSession.id == generation,ContinuousClock.now < deadline {
+            try await Task.sleep(for:.milliseconds(10))
+          }
+          XCTAssertNotNil(model.selectionSession.region?.materialization)
+        } else {
+          while model.selectionSession.elements.isEmpty,ContinuousClock.now < deadline {
+            try await Task.sleep(for:.milliseconds(10))
+          }
         }
-        if mode == .region { XCTAssertNotNil(model.selectionSession.region?.materialization) }
       }
 
       try await lasso(.region)
@@ -83,6 +89,7 @@ import UIKit
       XCTAssertTrue(model.drawingTools.begin(at: removed[0], address: address, screenScale: 1))
       for point in removed.dropFirst() { model.drawingTools.move(to: point) }
       model.drawingTools.finish()
+      try await Task.sleep(for:.milliseconds(100))
       XCTAssertTrue(model.selectionSession.elements.isEmpty)
 
       // Evicting derived paint paths emulates reopening. Selection remains a
@@ -91,6 +98,9 @@ import UIKit
       XCTAssertTrue(model.drawingTools.begin(at: polygon[0], address: address, screenScale: 1))
       for point in polygon.dropFirst() { model.drawingTools.move(to: point) }
       model.drawingTools.finish()
+      let reopenDeadline=ContinuousClock.now + .seconds(2)
+      while !model.selectionSession.contains(address.reference(element.id)),
+        ContinuousClock.now < reopenDeadline { try await Task.sleep(for:.milliseconds(10)) }
       XCTAssertTrue(model.selectionSession.contains(address.reference(element.id)))
     }
   }

@@ -269,6 +269,10 @@ import XCTest
     XCTAssertEqual(model.drawingTools.contact?.address.surface,.board(board))
     for point in polygon.dropFirst() { touch.point = screen(point); touch.sampleTime += 0.02; receiver.touchesMoved([touch],with:event) }
     receiver.touchesEnded([touch],with:event)
+    let selectionDeadline=ContinuousClock.now + .seconds(2)
+    while model.selectionSession.count != 4,ContinuousClock.now < selectionDeadline {
+      try await Task.sleep(for:.milliseconds(10))
+    }
     XCTAssertEqual(Set(model.selectionSession.items.map(\.itemID)),Set([notebook,nested,document]))
     XCTAssertTrue(model.selectionSession.contains(address.reference(text)))
     XCTAssertEqual(model.selectionSession.count,4)
@@ -278,6 +282,10 @@ import XCTest
     XCTAssertEqual(model.drawingTools.contact?.address.surface,.board(board),"A workspace lasso starts on a card without becoming cover ink")
     for point in crossing.dropFirst() { touch.point = screen(point); touch.sampleTime += 0.02; receiver.touchesMoved([touch],with:event) }
     receiver.touchesEnded([touch],with:event)
+    let crossingDeadline=ContinuousClock.now + .seconds(2)
+    while model.selectionSession.items.count != 3,ContinuousClock.now < crossingDeadline {
+      try await Task.sleep(for:.milliseconds(10))
+    }
     XCTAssertEqual(Set(model.selectionSession.items.map(\.itemID)),Set([notebook,nested,document]))
   }
 
@@ -325,6 +333,10 @@ import XCTest
       else { receiver.touchesMoved([touch], with: event) }
     }
     receiver.touchesEnded([touch], with: event)
+    let selectionDeadline=ContinuousClock.now + .seconds(2)
+    while model.selectionSession.element == nil,ContinuousClock.now < selectionDeadline {
+      try await Task.sleep(for:.milliseconds(10))
+    }
     XCTAssertEqual(model.selectionSession.element, .spatial(boardID: board, elementID: text.id))
   }
 

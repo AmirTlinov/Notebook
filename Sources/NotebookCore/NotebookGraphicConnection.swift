@@ -366,6 +366,13 @@ public struct NotebookGraphicGraph: Sendable {
     guard let element=base.elements[key],let source=source(key) else { return nil }
     return placementResolver.placement(key,source:source,surface:element.surface,base:base)
   }
+  /// Exact native body from the same retained graph cut used by broad phase.
+  /// Selection does not need to return to the mutable page or scene model.
+  public func elementPresentation(_ id:String) -> NotebookElementPresentation? {
+    let key=collaborationIdentity(id)
+    guard let element=base.elements[key],let placement=placement(key) else { return nil }
+    return .init(placement:placement,text:element.text,style:element.textStyle)
+  }
   public func projecting(placements:[String:NotebookElementPlacement.Source] = [:],graphics:[String:NotebookGraphic] = [:],adding:[Node] = []) -> Self {
     guard !placements.isEmpty || !graphics.isEmpty || !adding.isEmpty else { return self }
     var sources=projection?.sources ?? [:],bodies=projection?.graphics ?? [:],additions=projection?.additions ?? [:]
