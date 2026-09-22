@@ -25,6 +25,12 @@ import UIKit
         while model.selectionSession.id == generation,ContinuousClock.now < deadline {
           try await Task.sleep(for:.milliseconds(10))
         }
+        if mode == .region {
+          while model.selectionSession.region?.materialization == nil,
+            model.selectionSession.region?.materializationFailure == nil,ContinuousClock.now < deadline {
+            try await Task.sleep(for:.milliseconds(10))
+          }
+        }
       }
 
       try await lasso(.region)
@@ -180,6 +186,10 @@ import UIKit
       lasso(left)
       let deadline = ContinuousClock.now + .seconds(5)
       while model.selectionSession.region == nil,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
+      while model.selectionSession.region?.materialization == nil,
+        model.selectionSession.region?.materializationFailure == nil,ContinuousClock.now < deadline {
+        try await Task.sleep(for:.milliseconds(10))
+      }
       let region=try XCTUnwrap(model.selectionSession.region)
       XCTAssertEqual(region.rawInk?.graphic.sourceInkIDs,[pen.id])
       XCTAssertEqual(try model.store.loadPage(page.id).drawingData,drawing)
@@ -245,9 +255,11 @@ import UIKit
       }
       let probes=[SpatialPoint.zero,.init(x:160,y:0),.init(x:0,y:60),.init(x:160,y:60)]
       let expected=probes.map { placed($0,layout) }
-      model.selectRegion(.init(id:UUID(),address:address,polygon:polygon,
+      var region=NotebookRegionSelection(id:UUID(),address:address,polygon:polygon,
         frame:.init(x:f.x,y:f.y,width:f.width/2,height:f.height),rawInk:nil,
-        expectedInkRevision:nil,graphics:[source]))
+        expectedInkRevision:nil,graphics:[source])
+      region.materialization=try NotebookRegionMaterialization.prepare(region,graph:model.graphicGraph(page:page))
+      model.selectRegion(region)
       let selected=try XCTUnwrap(model.materializeRegionSelection()?.first)
       let live=try XCTUnwrap(model.acceptedWorkingGraphic(selected))
       XCTAssertNotNil(live.basis,"The accepted preview owns the same detached basis as durable content")

@@ -110,7 +110,7 @@ extension NotebookAppModel {
   }
 }
 
-struct NotebookElementEdit {
+struct NotebookElementEdit: Equatable, Sendable {
   let reference: EditableElementReference
   let kind: CollaborationOperation.Kind
   let values: [String: JSONValue]

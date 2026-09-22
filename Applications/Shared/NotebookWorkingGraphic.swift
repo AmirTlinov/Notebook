@@ -7,7 +7,7 @@ final class NotebookWorkingGraphicSignal { fileprivate(set) var revision:UInt64=
 
 /// The object created by a Pencil hold. Its identity and geometry survive lift;
 /// persistence acknowledges this object rather than creating a second picture.
-struct NotebookWorkingGraphic: Equatable, Identifiable {
+struct NotebookWorkingGraphic: Equatable, Identifiable, Sendable {
   let strokeID: UUID
   let surface: SurfaceID
   let frame: PageRect
@@ -102,6 +102,17 @@ extension NotebookAppModel {
     } else if let graphic { workingGraphics.append(graphic);changed.insert(graphic.surface) }
     if let graphic { changed.insert(graphic.surface) }
     if !changed.isEmpty { didChangeWorkingGraphics(on:changed) }
+  }
+
+  func acceptWorkingGraphics(_ values:[NotebookWorkingGraphic]) {
+    guard !values.isEmpty else { return }
+    let ids=Set(values.map(\.strokeID))
+    guard workingGraphics.allSatisfy({ !ids.contains($0.strokeID) || !$0.accepted }) else { return }
+    var changed=Set(workingGraphics.filter { ids.contains($0.strokeID) }.map(\.surface))
+    workingGraphics.removeAll { ids.contains($0.strokeID) }
+    workingGraphics.append(contentsOf:values.map { value in var value=value;value.accepted=true;return value })
+    changed.formUnion(values.map(\.surface))
+    didChangeWorkingGraphics(on:changed)
   }
 
   @discardableResult

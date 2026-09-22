@@ -252,10 +252,22 @@ final class NotebookDrawingToolController {
         guard result != nil || !references.isEmpty else { model.clearSelection();return }
         let box=polygon.reduce(CGRect.null) { $0.union(.init(x:$1.x,y:$1.y,width:0,height:0)) }
         guard !box.isNull,box.width > 0,box.height > 0 else { model.clearSelection();return }
-        model.selectRegion(.init(id:current.id,address:current.address,polygon:polygon,
+        let region=NotebookRegionSelection(id:current.id,address:current.address,polygon:polygon,
           frame:.init(x:box.minX,y:box.minY,width:box.width,height:box.height),rawInk:result,
-          expectedInkRevision:source?.revision,graphics:references))
-      } catch is CancellationError {} catch { self?.model.showCue(error.localizedDescription) }
+          expectedInkRevision:source?.revision,graphics:references)
+        model.selectRegion(region)
+        let graph=current.graph
+        let materialization=Task.detached(priority:.userInitiated) {
+          try NotebookRegionMaterialization.prepare(region,graph:graph)
+        }
+        let prepared=try await withTaskCancellationHandler { try await materialization.value }
+          onCancel: { materialization.cancel() }
+        guard !Task.isCancelled else { return }
+        self.model.installRegionMaterialization(region.id,prepared:prepared)
+      } catch is CancellationError {} catch {
+        self?.model.failRegionMaterialization(current.id,error:error.localizedDescription)
+        self?.model.showCue(error.localizedDescription)
+      }
     }
   }
 
@@ -340,6 +352,97 @@ final class NotebookDrawingToolController {
       fill:tool == .shape && settings.shapeFilled && fit.connection == nil ? .init(red:fill.red,green:fill.green,blue:fill.blue) : nil,
       dash:tool == .connector ? settings.connectionDash : nil),connection:fit.connection,vertices:fit.vertices)
     return .init(id:current.id,surface:current.address.surface,frame:fit.frame,worldOrigin:current.address.worldOrigin,graphic:graphic)
+  }
+}
+
+extension NotebookRegionMaterialization {
+  static func prepare(_ region:NotebookRegionSelection,graph:NotebookGraphicGraph) throws -> Self? {
+    func normalized(_ polygon:[SpatialPoint],in frame:PageRect)->[SpatialPoint] {
+      guard frame.width > 0,frame.height > 0 else { return [] }
+      return polygon.map { .init(x:($0.x-frame.x)/frame.width,y:($0.y-frame.y)/frame.height) }
+    }
+    func copied(_ graphic:NotebookGraphic,claims:[UUID],mask:NotebookGraphicMask)->NotebookGraphic {
+      .init(shape:graphic.shape,style:graphic.style,label:graphic.label,representation:graphic.representation,
+        visible:graphic.visible,sourceInkIDs:claims,connection:graphic.connection,vertices:graphic.vertices,
+        cornerRadius:graphic.cornerRadius,freehand:graphic.freehand,transform:graphic.transform,path:graphic.path,mask:mask)
+    }
+    func reframed(_ graphic:NotebookGraphic,to frame:PageRect)->NotebookGraphic {
+      guard let freehand=graphic.freehand,graphic.transform == nil else { return graphic }
+      let layers=freehand.layers.map { layer -> NotebookFreehand.Layer in
+        guard let measured=layer.measured else { return layer }
+        return .init(tool:layer.tool,color:layer.color,measured:.init(sourceID:measured.sourceID,
+          span:measured.span,measurements:measured.measurements,frame:frame,origin:measured.origin))
+      }
+      return .init(shape:graphic.shape,style:graphic.style,label:graphic.label,representation:graphic.representation,
+        visible:graphic.visible,sourceInkIDs:graphic.sourceInkIDs,connection:graphic.connection,vertices:graphic.vertices,
+        cornerRadius:graphic.cornerRadius,freehand:.init(layers:layers),transform:nil,path:graphic.path,mask:graphic.mask)
+    }
+    func authoredValues(_ object:NotebookWorkingGraphic)throws->[String:JSONValue] {
+      var values:[String:JSONValue]=["kind":.string("graphic"),"source":.string(""),
+        "frame":try .encode(object.frame),"graphic":try .encode(object.graphic)]
+      if let origin=object.worldOrigin { values["worldOrigin"]=try .encode(origin) }
+      if let basis=object.basis { values["basis"]=try .encode(basis) }
+      return values
+    }
+    func belongs(_ reference:EditableElementReference,node:NotebookGraphicGraph.Node)->Bool {
+      guard node.surface == region.address.surface else { return false }
+      switch reference {
+      case .page(let owner,_): return region.address.surface == .page(owner)
+      case .spatial(let owner,_): return owner == (region.address.boardID ?? region.address.surface.ownerID)
+      }
+    }
+
+    var edits:[NotebookElementEdit]=[],working:[NotebookWorkingGraphic]=[],selected:[EditableElementReference]=[]
+    if let raw=region.rawInk {
+      let selectedFrame=raw.selectionFrame
+      let selectedPolygon=normalized(region.polygon,in:selectedFrame)
+      let sourcePolygon=normalized(region.polygon,in:raw.frame)
+      guard selectedPolygon.count >= 3,sourcePolygon.count >= 3 else { return nil }
+      let inside=(raw.graphic.mask ?? .init()).appending(.intersect,polygon:selectedPolygon)
+      let outside=(raw.graphic.mask ?? .init()).appending(.subtract,polygon:sourcePolygon)
+      let reference=region.address.reference(region.id.uuidString.lowercased())
+      let graphic=copied(reframed(raw.graphic,to:selectedFrame),claims:raw.graphic.sourceInkIDs,mask:inside)
+      let object=NotebookWorkingGraphic(id:region.id,surface:region.address.surface,frame:selectedFrame,
+        worldOrigin:region.address.worldOrigin,graphic:graphic)
+      edits.append(.init(reference:reference,kind:.convertInkToElement,values:try authoredValues(object)))
+      working.append(object);selected.append(reference)
+      if !outside.path(in:.init(x:0,y:0,width:1,height:1)).isEmpty {
+        let id=UUID(),ref=region.address.reference(id.uuidString.lowercased())
+        let rest=copied(raw.graphic,claims:[],mask:outside)
+        let object=NotebookWorkingGraphic(id:id,surface:region.address.surface,frame:raw.frame,
+          worldOrigin:region.address.worldOrigin,graphic:rest)
+        edits.append(.init(reference:ref,kind:.insertElement,values:try authoredValues(object)));working.append(object)
+      }
+    }
+    for reference in region.graphics {
+      guard let node=graph.node(reference.elementID),belongs(reference,node:node),node.graphic.shape != .connector,
+        let layout=graph.resolve(reference.elementID).layout,let placement=layout.flattenedPlacement() else { continue }
+      let size=layout.projection?.size ?? .init(width:layout.frame.width,height:layout.frame.height)
+      let polygon=region.polygon.compactMap { point -> SpatialPoint? in
+        guard size.width > 0,size.height > 0,
+          let frame=layout.framePoint(point,from:region.address.worldOrigin ?? .zero),
+          let local=layout.localPoint(frame) else { return nil }
+        return .init(x:local.x/size.width,y:local.y/size.height)
+      }
+      guard polygon.count == region.polygon.count else { continue }
+      let inside=(node.graphic.mask ?? .init()).appending(.intersect,polygon:polygon)
+      guard !inside.path(in:.init(x:0,y:0,width:1,height:1)).isEmpty else { continue }
+      let outside=(node.graphic.mask ?? .init()).appending(.subtract,polygon:polygon)
+      let id=UUID(),ref=region.address.reference(id.uuidString.lowercased())
+      let selectedGraphic=copied(node.graphic,claims:[],mask:inside)
+      let frame=placement.frame,worldOrigin=node.surface.kind == .page ? nil : layout.origin
+      let object=NotebookWorkingGraphic(id:id,surface:node.surface,frame:frame,
+        worldOrigin:worldOrigin,graphic:selectedGraphic,basis:placement.basis)
+      edits.append(.init(reference:reference,kind:.updateElement,
+        values:["graphic":.object(["mask":try .encode(outside)])]))
+      edits.append(.init(reference:ref,kind:.insertElement,values:try authoredValues(object)))
+      working.append(object);selected.append(ref)
+    }
+    guard !selected.isEmpty,!edits.isEmpty else { return nil }
+    guard edits.count <= 32 else {
+      throw CollaborationError("selection_limit","Выделите меньшую область: одно изменение содержит не более 32 частей.")
+    }
+    return .init(edits:edits,working:working,selected:selected)
   }
 }
 
@@ -455,89 +558,16 @@ extension NotebookAppModel {
   @discardableResult
   func materializeRegionSelection()->[EditableElementReference]? {
     guard let region=selectionSession.region else { return nil }
-    func normalized(_ polygon:[SpatialPoint],in frame:PageRect)->[SpatialPoint] {
-      guard frame.width > 0,frame.height > 0 else { return [] }
-      return polygon.map { .init(x:($0.x-frame.x)/frame.width,y:($0.y-frame.y)/frame.height) }
-    }
-    func copied(_ graphic:NotebookGraphic,claims:[UUID],mask:NotebookGraphicMask)->NotebookGraphic {
-      .init(shape:graphic.shape,style:graphic.style,label:graphic.label,representation:graphic.representation,
-        visible:graphic.visible,sourceInkIDs:claims,connection:graphic.connection,vertices:graphic.vertices,
-        cornerRadius:graphic.cornerRadius,freehand:graphic.freehand,transform:graphic.transform,path:graphic.path,mask:mask)
-    }
-    func reframed(_ graphic:NotebookGraphic,to frame:PageRect)->NotebookGraphic {
-      guard let freehand=graphic.freehand,graphic.transform == nil else { return graphic }
-      let layers=freehand.layers.map { layer -> NotebookFreehand.Layer in
-        guard let measured=layer.measured else { return layer }
-        return .init(tool:layer.tool,color:layer.color,measured:.init(sourceID:measured.sourceID,
-          span:measured.span,measurements:measured.measurements,frame:frame,origin:measured.origin))
-      }
-      return .init(shape:graphic.shape,style:graphic.style,label:graphic.label,representation:graphic.representation,
-        visible:graphic.visible,sourceInkIDs:graphic.sourceInkIDs,connection:graphic.connection,vertices:graphic.vertices,
-        cornerRadius:graphic.cornerRadius,freehand:.init(layers:layers),transform:nil,path:graphic.path,mask:graphic.mask)
-    }
-    var edits:[NotebookElementEdit]=[],working:[NotebookWorkingGraphic]=[],selected:[EditableElementReference]=[]
-    if let raw=region.rawInk {
-      let selectedFrame=raw.selectionFrame
-      let selectedPolygon=normalized(region.polygon,in:selectedFrame)
-      let sourcePolygon=normalized(region.polygon,in:raw.frame)
-      guard selectedPolygon.count >= 3,sourcePolygon.count >= 3 else { return nil }
-      let inside=(raw.graphic.mask ?? .init()).appending(.intersect,polygon:selectedPolygon)
-      let outside=(raw.graphic.mask ?? .init()).appending(.subtract,polygon:sourcePolygon)
-      let reference=region.address.reference(region.id.uuidString.lowercased())
-      let graphic=copied(reframed(raw.graphic,to:selectedFrame),claims:raw.graphic.sourceInkIDs,mask:inside)
-      let object=NotebookWorkingGraphic(id:region.id,surface:region.address.surface,frame:selectedFrame,
-        worldOrigin:region.address.worldOrigin,graphic:graphic)
-      guard let values=authoredGraphicValues(object,address:region.address) else { return nil }
-      edits.append(.init(reference:reference,kind:.convertInkToElement,values:values));working.append(object);selected.append(reference)
-      if !outside.path(in:.init(x:0,y:0,width:1,height:1)).isEmpty {
-        let id=UUID(),ref=region.address.reference(id.uuidString.lowercased())
-        let rest=copied(raw.graphic,claims:[],mask:outside)
-        let object=NotebookWorkingGraphic(id:id,surface:region.address.surface,frame:raw.frame,
-          worldOrigin:region.address.worldOrigin,graphic:rest)
-        guard let values=authoredGraphicValues(object,address:region.address) else { return nil }
-        edits.append(.init(reference:ref,kind:.insertElement,values:values));working.append(object)
-      }
-    }
-    for reference in region.graphics {
-      guard let source=nativeElementSource(reference),source.target == region.address.target,
-        let graphic=graphicElement(reference),graphic.shape != .connector,
-        let layout=graphicLayout(reference) else { continue }
-      let size=layout.projection?.size ?? .init(width:layout.frame.width,height:layout.frame.height)
-      let polygon=region.polygon.compactMap { point -> SpatialPoint? in
-        guard size.width > 0,size.height > 0,
-          let frame=layout.framePoint(point,from:region.address.worldOrigin ?? .zero),
-          let local=layout.localPoint(frame) else { return nil }
-        return .init(x:local.x/size.width,y:local.y/size.height)
-      }
-      guard polygon.count == region.polygon.count else { continue }
-      let inside=(graphic.mask ?? .init()).appending(.intersect,polygon:polygon)
-      guard !inside.path(in:.init(x:0,y:0,width:1,height:1)).isEmpty else { continue }
-      let outside=(graphic.mask ?? .init()).appending(.subtract,polygon:polygon)
-      edits.append(.init(reference:reference,kind:.updateElement,
-        values:["graphic":.object(["mask":(try? .encode(outside)) ?? .null])]))
-      let id=UUID(),ref=region.address.reference(id.uuidString.lowercased())
-      let selectedGraphic=copied(graphic,claims:[],mask:inside)
-      guard let placement=layout.flattenedPlacement() else { continue }
-      let frame=placement.frame
-      var values:[String:JSONValue]=["kind":.string("graphic"),"source":.string(""),
-        "frame":(try? .encode(frame)) ?? .null,"graphic":(try? .encode(selectedGraphic)) ?? .null]
-      let worldOrigin=source.spatial == nil ? nil : layout.origin
-      if let worldOrigin { values["worldOrigin"]=try? .encode(worldOrigin) }
-      if let basis=placement.basis { values["basis"]=try? .encode(basis) }
-      edits.append(.init(reference:ref,kind:.insertElement,values:values))
-      working.append(.init(id:id,surface:source.spatial?.surface ?? region.address.surface,
-        frame:frame,worldOrigin:worldOrigin,graphic:selectedGraphic,basis:placement.basis));selected.append(ref)
-    }
-    guard !selected.isEmpty,!edits.isEmpty,edits.count <= 32 else {
-      if edits.count > 32 { showCue("Выделите меньшую область: одно изменение содержит не более 32 частей.") }
+    guard let prepared=region.materialization else {
+      showCue(region.materializationFailure ?? "Область готовится к редактированию…")
       return nil
     }
-    for var object in working { object.accepted=true;updateWorkingGraphic(object,strokeID:object.strokeID) }
-    guard performElementOperations(edits,summary:"Изменить область лассо",insertionTarget:region.address.target,
+    acceptWorkingGraphics(prepared.working)
+    guard performElementOperations(prepared.edits,summary:"Изменить область лассо",insertionTarget:region.address.target,
       expectedInkRevision:region.rawInk == nil ? nil : region.expectedInkRevision) else {
-      let ids=Set(working.map(\.id));removeWorkingGraphics { ids.contains($0.id) };return nil
+      let ids=Set(prepared.working.map(\.id));removeWorkingGraphics { ids.contains($0.id) };return nil
     }
-    selectElements(selected);return selected
+    selectElements(prepared.selected);return prepared.selected
   }
 
   /// Empty input is a selection-session draft, not a saved invisible object.

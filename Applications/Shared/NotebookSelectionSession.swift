@@ -21,7 +21,26 @@ struct NotebookRegionSelection: Equatable, Sendable {
   let rawInk:NotebookLassoInkSource.Result?
   let expectedInkRevision:String?
   let graphics:[EditableElementReference]
+  var materialization:NotebookRegionMaterialization?
+  var materializationFailure:String?
   var reference:EditableElementReference { address.reference("lasso-"+id.uuidString.lowercased()) }
+
+  init(id:UUID,address:NotebookToolAddress,polygon:[SpatialPoint],frame:PageRect,
+    rawInk:NotebookLassoInkSource.Result?,expectedInkRevision:String?,graphics:[EditableElementReference],
+    materialization:NotebookRegionMaterialization? = nil,materializationFailure:String? = nil) {
+    self.id=id;self.address=address;self.polygon=polygon;self.frame=frame;self.rawInk=rawInk
+    self.expectedInkRevision=expectedInkRevision;self.graphics=graphics
+    self.materialization=materialization;self.materializationFailure=materializationFailure
+  }
+}
+
+/// Immutable command payload prepared away from the UI actor. The lasso can
+/// become visible immediately; its first edit only admits this already encoded
+/// delta instead of expanding retained vector sources under the user's finger.
+struct NotebookRegionMaterialization: Equatable, Sendable {
+  let edits:[NotebookElementEdit]
+  let working:[NotebookWorkingGraphic]
+  let selected:[EditableElementReference]
 }
 
 /// Exactly one current choice. Context is evidence for it, not a second selection.

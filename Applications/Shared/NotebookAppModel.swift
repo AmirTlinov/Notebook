@@ -2768,6 +2768,18 @@ final class NotebookAppModel {
     selectionSession.region = region
   }
 
+  func installRegionMaterialization(_ id:UUID,prepared:NotebookRegionMaterialization?) {
+    guard selectionSession.region?.id == id else { return }
+    selectionSession.region?.materialization=prepared
+    selectionSession.region?.materializationFailure=prepared == nil ? "В этой области нет редактируемой геометрии." : nil
+  }
+
+  func failRegionMaterialization(_ id:UUID,error:String) {
+    guard selectionSession.region?.id == id else { return }
+    selectionSession.region?.materialization=nil
+    selectionSession.region?.materializationFailure=error
+  }
+
   func beginMultipleSelection() {
     guard let reference = selectionSession.element, graphicElement(reference) != nil else { return }
     selectionSession.addingElements = true

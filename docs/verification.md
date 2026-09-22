@@ -1,5 +1,50 @@
 # Verification record
 
+## 22 сентября — первый edit регионального лассо больше не блокирует UI, build 166
+
+Трёхминутная системная запись реальной работы Pencil на установленном build 165
+обнаружила один CPU-bound stall главного потока Notebook длительностью
+**7,188471 с** сразу после взаимодействия с региональным выделением. За всю
+запись Notebook в среднем использовал 5,9324% одного CPU core, P-core p95 был
+19,6905%, E-core p95 — 6,0813%, thermal state оставался Nominal. В trace нет
+надёжной image map для полной символикации, поэтому эти данные подтверждают
+stall и его момент, но не используются как доказательство конкретного stack
+frame.
+
+Причина подтверждена прямым active path: первое Move/Delete/Copy синхронно на
+MainActor строило маски, JSON-кодировало retained vector source и по одному
+публиковало временные графические элементы. Теперь read-only selection descriptor
+показывается сразу, а неизменяемый command payload готовится с captured graph вне
+UI actor сразу после завершения контура. Первое редактирование только принимает
+готовый delta; все working graphics входят в live scene одной пакетной ревизией.
+Старого синхронного materialization path не осталось.
+
+На физическом iPad Pro M1 выбранный неизменный source прошёл **4/4** без
+failures, skips и runtime warnings: повторный разрез остатка, native shape против
+whole-object режима, group basis/tight frame и прежний million-event crop.
+Суммарное время самих четырёх test cases — **1,156607 с**; million-event case —
+0,236315966 с. Evidence:
+`.build/gui294-lasso-edit-verify-166/{verification.json,ipad.xcresult}`.
+
+Подписанная пара **0.3.134 (166)** собрана из source SHA-256
+`1be32197121d74196bc6992ed6195f28fa4911d1240fce0f02a830a8dcc3e542`;
+verification SHA-256
+`147f8b3a02b52d7b0e0f693eb816c84a1f07faade60b19df85ed8e3ff4c33a12`.
+iPad binary UUID — `1D1F918F-99DD-3671-844A-C8067759A8FC`, Mac —
+`11983841-7CC3-3F93-9969-91A9DE0947AB`. Оба приложения обновлены in-place;
+Mac SQLite сохранил inode `783629731` и размер 229 986 304 байта. На iPad
+остался один production bundle build 166, PID 2557; screenshot после запуска
+показывает существующую пользовательскую страницу и рукопись. Evidence:
+`.build/gui294-lasso-edit-release-166/build.json`,
+`.build/gui294-lasso-edit-install-166-{ipad,mac}/`.
+
+Повторная Game Performance запись build 166 не началась: `xctrace` считает
+физический iPad offline, хотя CoreDevice одновременно видит его booted,
+available/paired и продолжает screenshot/install/process control. Поэтому новый
+системный input-to-present trace, реальные жесты после установки, десять повторов
+и 30 минут совместной работы пока не подтверждены; результаты build 165 не
+переносятся на исправленный бинарник.
+
 ## 22 сентября — установленная пара снова обменивается, Undo и экспорт подтверждены
 
 Установленные Mac и физический iPad переключены штатным интерфейсом на текущее
