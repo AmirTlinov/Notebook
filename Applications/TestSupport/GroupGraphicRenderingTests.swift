@@ -671,7 +671,8 @@ import AppKit
     await model.reloadExternalChanges()?.value
     let ref=EditableElementReference.page(pageID:page.id,elementID:text.id)
     let shown=try XCTUnwrap(model.elementPresentation(ref)),size=shown.bodySize
-    let targets=model.eraserTargets(pageID:page.id),target=try XCTUnwrap(targets.first)
+    let source=try XCTUnwrap(model.pageEraserSource(pageID:page.id))
+    let targets=try source.query(bounds:shown.bounds).targets,target=try XCTUnwrap(targets.first)
     XCTAssertEqual(targets.count,1);XCTAssertFalse(target.wholeElement)
     let bounds=CGRect(origin:.zero,size:size).applying(shown.placement.transform)
     XCTAssertEqual(target.frame,.init(x:bounds.minX,y:bounds.minY,width:bounds.width,height:bounds.height))
@@ -731,7 +732,8 @@ import AppKit
     let model = NotebookAppModel(store:store,startsNearbySync:false)
     retainNotebookUntilTeardown(model,removing:root)
     await model.start(pageSize:size)
-    let targets = model.eraserTargets(pageID:pageID)
+    let source=try XCTUnwrap(model.pageEraserSource(pageID:pageID))
+    let targets=try source.query(bounds:.init(x:120,y:60,width:120,height:300)).targets
     XCTAssertEqual(targets.count,1,"The group descriptor is not a painted eraser target")
     let target = try XCTUnwrap(targets.first)
     XCTAssertEqual(target.frame,.init(x:120,y:60,width:120,height:300))

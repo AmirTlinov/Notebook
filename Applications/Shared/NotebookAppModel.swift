@@ -57,9 +57,6 @@ final class NotebookAppModel {
   private(set) var pages: [UUID: PageDocument] = [:] {
     didSet {
       elementErasureCache.retain(pages: pages)
-      pageEraserTargetCache = pageEraserTargetCache.filter {
-        pages[$0.key]?.elementSourceIdentity == $0.value.source
-      }
       collaborationReadEpoch &+= 1
       if oldValue != pages { collaborationContentEpoch &+= 1 }
     }
@@ -917,8 +914,6 @@ final class NotebookAppModel {
   @ObservationIgnored var workingGraphicSignals:[SurfaceID:NotebookWorkingGraphicSignal] = [:]
   var workingElementErasures: [UUID: [NotebookElementErasing]] = [:]
   @ObservationIgnored let elementErasureCache = NotebookElementErasureCache()
-  @ObservationIgnored var pageEraserTargetCache:
-    [UUID:(source:ObjectIdentifier,targets:[InkElementTarget])] = [:]
   // Lift transfers its final draft to the accepted command. It is retired by
   // a scene read at/after the durable cursor, not by lift or receipt delivery.
   var elementCommandDrafts: [EditableElementReference: NotebookElementCommandDraft] = [:]

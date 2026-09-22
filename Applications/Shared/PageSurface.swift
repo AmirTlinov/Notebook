@@ -76,7 +76,8 @@ struct PageSurface: View {
                   model.elementErasureCache.appearance(surface:.page(page.id),id:id,graphic:graphic,layout:layout,size:size,erasures:cuts)
                 })
             }, onWorkingGraphic: model.updateWorkingGraphic,
-            eraserTargets: { model.eraserTargets(pageID: page.id) },
+            pageEraserSource: { model.pageEraserSource(pageID: page.id) },
+            onEraserFailure: { model.showCue($0.localizedDescription) },
             onLiveElementErasing: liveElementEraser.display,
             onElementErasing: model.updateElementErasing
           )

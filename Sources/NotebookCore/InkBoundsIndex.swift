@@ -37,16 +37,25 @@ public struct InkBoundsIndex: Sendable {
     self.nodes = nodes
   }
   public func query(_ area: CGRect) -> (indices: [Int], visitedNodes: Int) {
-    guard !nodes.isEmpty, !area.isNull else { return ([], 0) }
-    var pending = [0], found: [Int] = [], visited = 0
+    let result=query(area,limit:.max)
+    return (result.indices,result.visitedNodes)
+  }
+  public func query(_ area: CGRect, limit: Int)
+    -> (indices: [Int], visitedNodes: Int, overflow: Bool) {
+    precondition(limit > 0)
+    guard !nodes.isEmpty, !area.isNull else { return ([], 0, false) }
+    var pending = [0], found: [Int] = [], visited = 0, overflow=false
     while let id = pending.popLast() {
       let node = nodes[id]; visited += 1
       // Closed bounds also admit an exact edge/point contact.
       guard node.bounds.maxX >= area.minX, node.bounds.minX <= area.maxX,
         node.bounds.maxY >= area.minY, node.bounds.minY <= area.maxY else { continue }
-      if node.leaf >= 0 { found.append(node.leaf) }
+      if node.leaf >= 0 {
+        if found.count == limit { overflow=true;break }
+        found.append(node.leaf)
+      }
       else { pending.append(node.right); pending.append(node.left) }
     }
-    return (found.sorted(), visited)
+    return (found.sorted(), visited, overflow)
   }
 }

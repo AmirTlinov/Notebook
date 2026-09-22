@@ -7,9 +7,14 @@ final class AcceptedPageInputTests: XCTestCase {
   @MainActor
   func testLiveElementEraserStaysInNativePresentationUntilLift() async throws {
     let paper=PaperInputView(frame:.init(x:0,y:0,width:500,height:500))
-    paper.quickShapePageID=UUID()
+    let page=PageDocument(size:.init(width:500,height:500),actor:UUID(),elements:[
+      .init(id:"object",kind:.graphic,frame:.init(x:0,y:0,width:500,height:500),source:"",html:"",
+        graphic:.init(shape:.rectangle,style:.init(fill:.black)))])
+    paper.quickShapePageID=page.id
     paper.configure(penStyle:.standard,eraserStyle:.standard,drawingTool:.eraser)
-    paper.eraserTargets = { [.init(elementID:"object",frame:.init(x:0,y:0,width:500,height:500))] }
+    paper.pageEraserSource = {
+      .init(page:page,graph:page.graphicGraph(),changedTargets:[:],excludedElementIDs:[])
+    }
     var live:[ActiveEraserStroke?]=[]
     paper.onLiveElementErasing = { live.append($0) }
     let touch=AcceptedInputTouch();touch.point = .init(x:20,y:20)

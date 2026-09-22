@@ -20,7 +20,8 @@ struct PencilCanvasView: UIViewRepresentable {
   let onRenderReady: (Bool) -> Void
   var resolveQuickShape: (NotebookQuickShapeFit, Double) -> NotebookQuickShapeFit = { fit, _ in fit }
   var onWorkingGraphic: (NotebookWorkingGraphic?, UUID) -> Void = { _, _ in }
-  var eraserTargets: () -> [InkElementTarget] = { [] }
+  var pageEraserSource: () -> NotebookPageEraserSource? = { nil }
+  var onEraserFailure: (Error) -> Void = { _ in }
   var onLiveElementErasing: (ActiveEraserStroke?) -> Void = { _ in }
   var onElementErasing: ([NotebookElementErasing], UUID) -> Void = { _, _ in }
 
@@ -41,7 +42,8 @@ struct PencilCanvasView: UIViewRepresentable {
     paper.touchView.quickShapePageID = pageID
     paper.touchView.resolveQuickShape = resolveQuickShape
     paper.touchView.onWorkingGraphic = onWorkingGraphic
-    paper.touchView.eraserTargets = eraserTargets
+    paper.touchView.pageEraserSource = pageEraserSource
+    paper.touchView.onEraserFailure = onEraserFailure
     paper.touchView.onLiveElementErasing = onLiveElementErasing
     paper.touchView.onElementErasing = onElementErasing
     paper.inkView.onRenderReadinessChange = { ready in
@@ -67,7 +69,8 @@ struct PencilCanvasView: UIViewRepresentable {
     paper.touchView.quickShapePageID = pageID
     paper.touchView.resolveQuickShape = resolveQuickShape
     paper.touchView.onWorkingGraphic = onWorkingGraphic
-    paper.touchView.eraserTargets = eraserTargets
+    paper.touchView.pageEraserSource = pageEraserSource
+    paper.touchView.onEraserFailure = onEraserFailure
     paper.touchView.onLiveElementErasing = onLiveElementErasing
     paper.touchView.onElementErasing = onElementErasing
     paper.inkView.onRenderReadinessChange = { ready in
@@ -95,6 +98,8 @@ struct PencilCanvasView: UIViewRepresentable {
     paper.inkView.onRenderReadinessChange = nil
     paper.touchView.onLiveElementErasing(nil)
     paper.touchView.onLiveElementErasing = { _ in }
+    paper.touchView.pageEraserSource = { nil }
+    paper.touchView.onEraserFailure = { _ in }
     coordinator.detach(from: paper)
     paper.touchView.onElementErasing = { _, _ in }
   }
@@ -512,7 +517,8 @@ final class PaperInputView: UIView {
   var clearActiveAction: (() -> Void)?
   var resolveQuickShape: (NotebookQuickShapeFit, Double) -> NotebookQuickShapeFit = { fit, _ in fit }
   var onWorkingGraphic: (NotebookWorkingGraphic?, UUID) -> Void = { _, _ in }
-  var eraserTargets: () -> [InkElementTarget] = { [] }
+  var pageEraserSource: () -> NotebookPageEraserSource? = { nil }
+  var onEraserFailure: (Error) -> Void = { _ in }
   var onLiveElementErasing: (ActiveEraserStroke?) -> Void = { _ in }
   var onElementErasing: ([NotebookElementErasing], UUID) -> Void = { _, _ in }
 
@@ -725,6 +731,8 @@ final class PaperInputView: UIView {
 
   private var elementContact = InkElementContact([])
   private var reportedElementTargetIDs = Set<String>()
+  private var activePageEraserSource: NotebookPageEraserSource?
+  private var elementEraserFailed = false
 
   private func beginAction(with touch: UITouch, event: UIEvent?) {
     guard canBeginAction() else { return }
@@ -746,7 +754,9 @@ final class PaperInputView: UIView {
 
     activeTouch = touch
     actionTool = drawingTool
-    elementContact = InkElementContact(drawingTool == .eraser ? eraserTargets() : [])
+    elementContact = InkElementContact([])
+    activePageEraserSource = drawingTool == .eraser ? pageEraserSource() : nil
+    elementEraserFailed = false
     reportsPencilActivity = touch.type == .pencil || simulatesPencilContacts
     if reportsPencilActivity { onActionActivityChange?(true) }
     actionPenStyle = penStyle
@@ -914,7 +924,14 @@ final class PaperInputView: UIView {
         from: startIndex,
         with: samples[startIndex...].map { SpatialInkSample($0.point) }
       )
-      elementContact.update(activeEraserStroke.measured, from: startIndex)
+      if !elementEraserFailed,let source=activePageEraserSource,
+        let bounds=pageEraserBounds(activeEraserStroke.measured,from:startIndex) {
+        do {
+          let query=try source.query(bounds:bounds)
+          elementContact.update(activeEraserStroke.measured,from:startIndex,
+            queried:query.targets,visitedNodes:query.visitedNodes)
+        } catch { failElementEraser(error,sourceID:activeEraserStroke.measured.sourceID) }
+      }
       let targets = elementContact.selected
       let targetIDs = Set(targets.map(\.elementID))
       if targetIDs != reportedElementTargetIDs, let pageID = quickShapePageID {
@@ -978,6 +995,27 @@ final class PaperInputView: UIView {
       from: startIndex,
       with: processedTail.map(SpatialInkSample.init)
     )
+  }
+
+  private func pageEraserBounds(_ source:InkSampleRelations.Contact,
+    from changedIndex:Int)->CGRect? {
+    guard source.count > changedIndex else { return nil }
+    var bounds=CGRect.null
+    let start=max(0,changedIndex-1)
+    source.forEach(in:start..<source.count) { sample in
+      let radius=sample.width/2
+      bounds=bounds.union(.init(x:sample.point.x-radius,y:sample.point.y-radius,
+        width:radius*2,height:radius*2))
+    }
+    return bounds.isNull ? nil : bounds
+  }
+
+  private func failElementEraser(_ error:Error,sourceID:UUID) {
+    guard !elementEraserFailed else { return }
+    elementEraserFailed=true;elementContact=InkElementContact([])
+    if !reportedElementTargetIDs.isEmpty { onElementErasing([],sourceID) }
+    reportedElementTargetIDs.removeAll(keepingCapacity:true)
+    onEraserFailure(error)
   }
 
   private func processedPredictedPenPoints() -> [PKStrokePoint] {
@@ -1154,6 +1192,8 @@ final class PaperInputView: UIView {
     }
     reportedElementTargetIDs.removeAll(keepingCapacity: true)
     elementContact = InkElementContact([])
+    activePageEraserSource = nil
+    elementEraserFailed = false
     activeTouch = nil
     actionTool = nil
     actionPenStyle = nil

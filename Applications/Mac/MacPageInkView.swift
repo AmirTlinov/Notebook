@@ -37,6 +37,8 @@ final class MacPageInkCanvas: NSView {
   private var actionTool = DrawingTool.pen
   private var actionStyle = PenStyle.standard
   private var elementContact = InkElementContact([])
+  private var pageEraserSource: NotebookPageEraserSource?
+  private var elementEraserFailed = false
   private var actionEraserStyle = EraserStyle.standard
   private var startedAt = 0.0
   override var isFlipped: Bool { true }
@@ -93,7 +95,9 @@ final class MacPageInkCanvas: NSView {
     window?.makeFirstResponder(self)
     stamp = reserved; actionTool = model.drawingTool; actionStyle = model.penStyle
     actionEraserStyle = model.eraserStyle
-    elementContact = InkElementContact(actionTool == .eraser ? model.eraserTargets(pageID: pageID) : [])
+    elementContact = InkElementContact([])
+    pageEraserSource = actionTool == .eraser ? model.pageEraserSource(pageID:pageID) : nil
+    elementEraserFailed = false
     startedAt = event.timestamp
     if actionTool == .pen { pen = .init(style:actionStyle) }
     else { let c=actionStyle.color.components;eraser = .init(color:.init(red:c.red,green:c.green,blue:c.blue)) }
@@ -121,7 +125,17 @@ final class MacPageInkCanvas: NSView {
     if let eraser {
       let start = eraser.measured.count
       eraser.replaceMeasuredTail(from:start,with:[sample])
-      elementContact.update(eraser.measured, from:start)
+      if !elementEraserFailed,let source=pageEraserSource,
+        let bounds=eraserBounds(eraser.measured,from:start) {
+        do {
+          let query=try source.query(bounds:bounds)
+          elementContact.update(eraser.measured,from:start,
+            queried:query.targets,visitedNodes:query.visitedNodes)
+        } catch {
+          elementEraserFailed=true;elementContact=InkElementContact([])
+          model.showCue(error.localizedDescription)
+        }
+      }
       ink.displayActiveEraser(eraser)
       let targets = elementContact.selected
       model.updateElementErasing(targets.isEmpty ? [] : [.init(id:eraser.measured.sourceID,
@@ -129,10 +143,25 @@ final class MacPageInkCanvas: NSView {
     }
   }
 
+  private func eraserBounds(_ source:InkSampleRelations.Contact,from changedIndex:Int)->CGRect? {
+    guard source.count>changedIndex else { return nil }
+    var bounds=CGRect.null
+    let start=max(0,changedIndex-1)
+    source.forEach(in:start..<source.count) { sample in
+      let radius=sample.width/2
+      bounds=bounds.union(.init(x:sample.point.x-radius,y:sample.point.y-radius,
+        width:radius*2,height:radius*2))
+    }
+    return bounds.isNull ? nil : bounds
+  }
+
   private func finishStroke() {
     guard let stamp else { return }
     self.stamp = nil
-    defer { elementContact = InkElementContact([]); pen = nil; eraser = nil }
+    defer {
+      elementContact=InkElementContact([]);pageEraserSource=nil;elementEraserFailed=false
+      pen=nil;eraser=nil
+    }
     guard let measured, measured.count > 0 else {
       model.releaseDrawingReservation(pageID: pageID, stamp: stamp)
       model.inputGate.endPencilAction(source: source); return

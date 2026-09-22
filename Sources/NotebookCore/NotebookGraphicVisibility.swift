@@ -3,13 +3,15 @@ import Foundation
 
 public struct NotebookGraphicVisibilityResult: Sendable {
   public let layouts:[String:NotebookGraphicLayout]
+  public let placements:[String:NotebookElementPlacement]
   public let visitedIndexNodes:Int
   public let resolvedGraphics:Int
+  public let overflow:Bool
   /// Only the bounding tree arrays, not a claim about total resident memory.
   public let boundsIndexBytes:Int
 }
 
-/// Page graphics use the same immutable bounds tree as measured ink, in each
+/// Page elements use the same immutable bounds tree as measured ink, in each
 /// existing local frame. A whole pose changes the query, not all leaf bounds.
 /// Boards keep their addressed SQL window; this is not another board index.
 final class NotebookGraphicVisibility: Sendable {
@@ -23,11 +25,15 @@ final class NotebookGraphicVisibility: Sendable {
   private let parents:[String:String]
   private let dependents:[String:Set<String>]
   private let labelled:Set<String>
+  private let elements:[String:NotebookGraphicGraph.ElementSource]
   private let pageID:UUID
   private let bytes:Int
 
-  init(pageID:UUID,graph:NotebookGraphicGraph,nodes:[NotebookGraphicGraph.Node],groups:[String:NotebookGraphicGraph.ElementSource]) {
+  init(pageID:UUID,graph:NotebookGraphicGraph,nodes:[NotebookGraphicGraph.Node],
+    groups:[String:NotebookGraphicGraph.ElementSource],
+    elements:[String:NotebookGraphicGraph.ElementSource]) {
     self.pageID=pageID
+    self.elements=elements.filter { $0.value.surface == .page(pageID) }
     let nodes=nodes.filter { $0.surface == .page(pageID) }
     let placedGroups=groups.compactMap { id,group -> (String,NotebookElementPlacement)? in
       guard group.surface == .page(pageID),let value=graph.placement(id) else { return nil };return (id,value)
@@ -50,6 +56,14 @@ final class NotebookGraphicVisibility: Sendable {
       if !node.graphic.label.isEmpty { labelled.insert(id);continue }
       if let bounds=Self.bounds(node,in:graph,parent:parent != nil) { entries[parent,default:[]].append((id,bounds)) }
     }
+    for (id,element) in self.elements {
+      guard let placement=graph.placement(id) else { continue }
+      let parent=parent(placement.parentID);parents[id]=parent
+      let presentation=NotebookElementPresentation(placement:placement,
+        text:element.text,style:element.textStyle)
+      entries[parent,default:[]].append((id,Self.outward(presentation.localBounds,
+        through:parent == nil ? placement.transform : placement.localTransform)))
+    }
     var levels:[String?:Level]=[:]
     for (id,placement) in placedGroups.sorted(by:{ $0.1.ancestors.count>$1.1.ancestors.count }) {
       let parent=placement.parentID.map(collaborationIdentity);parents[id]=parent
@@ -63,8 +77,10 @@ final class NotebookGraphicVisibility: Sendable {
     bytes=levels.values.reduce(0) { $0+$1.index.byteCount }
   }
 
-  func query(_ area:CGRect,graph:NotebookGraphicGraph,changed:Set<String>) -> NotebookGraphicVisibilityResult {
-    guard !area.isNull else { return .init(layouts:[:],visitedIndexNodes:0,resolvedGraphics:0,boundsIndexBytes:bytes) }
+  func query(_ area:CGRect,graph:NotebookGraphicGraph,changed:Set<String>,limit:Int) -> NotebookGraphicVisibilityResult {
+    precondition(limit > 0)
+    guard !area.isNull else { return .init(layouts:[:],placements:[:],visitedIndexNodes:0,
+      resolvedGraphics:0,overflow:false,boundsIndexBytes:bytes) }
     func parent(_ id:String) -> String? {
       graph.source(id)?.parentID.map(collaborationIdentity).flatMap { groups.contains($0) ? $0 : nil }
     }
@@ -82,23 +98,37 @@ final class NotebookGraphicVisibility: Sendable {
         }
       }
     }
-    var layouts:[String:NotebookGraphicLayout]=[:],visited=0,resolved=0,read=Set<String>()
+    var layouts:[String:NotebookGraphicLayout]=[:],placements:[String:NotebookElementPlacement]=[:]
+    var visited=0,resolved=0,read=Set<String>(),overflow=false
     func include(_ id:String) {
-      guard read.insert(id).inserted,let node=graph.node(id),node.surface == .page(pageID) else { return }
-      resolved += 1
-      guard let layout=graph.resolve(id).layout else { return }
-      if node.graphic.label.isEmpty {
-        guard let bounds=Self.bounds(node,in:graph,parent:false),Self.intersects(bounds,area) else { return }
+      guard !overflow,read.insert(id).inserted else { return }
+      if let node=graph.node(id),node.surface == .page(pageID) {
+        resolved += 1
+        guard let layout=graph.resolve(id).layout else { return }
+        if node.graphic.label.isEmpty {
+          guard let bounds=Self.bounds(node,in:graph,parent:false),Self.intersects(bounds,area) else { return }
+        }
+        guard layouts.count+placements.count < limit else { overflow=true;return }
+        layouts[node.id]=layout
+      } else if let element=elements[collaborationIdentity(id)],
+        element.surface == .page(pageID),let placement=graph.placement(id) {
+        let presentation=NotebookElementPresentation(placement:placement,
+          text:element.text,style:element.textStyle)
+        guard Self.intersects(presentation.bounds,area) else { return }
+        guard layouts.count+placements.count < limit else { overflow=true;return }
+        placements[id]=placement
       }
-      layouts[node.id]=layout
     }
     func visit(_ parent:String?,area:CGRect,depth:Int) {
-      guard depth<65 else { return }
-      let level=levels[parent],query=level?.index.query(area)
+      guard depth<65,!overflow else { return }
+      let level=levels[parent]
+      let query=level?.index.query(area,limit:max(1,limit-layouts.count-placements.count))
       visited += query?.visitedNodes ?? 0
+      if query?.overflow == true { overflow=true;return }
       var candidates=Set((query?.indices ?? []).map { level!.ids[$0] })
       candidates.formUnion(forced[parent] ?? [])
       for id in candidates {
+        guard !overflow else { return }
         guard (graph.source(id)?.parentID.map(collaborationIdentity).flatMap { groups.contains($0) ? $0 : nil }) == parent else { continue }
         if groups.contains(id) {
           guard let placement=graph.placement(id) else { continue }
@@ -111,8 +141,9 @@ final class NotebookGraphicVisibility: Sendable {
       }
     }
     visit(nil,area:area,depth:0)
-    for id in labelled { include(id) }
-    return .init(layouts:layouts,visitedIndexNodes:visited,resolvedGraphics:resolved,boundsIndexBytes:bytes)
+    for id in labelled where !overflow { include(id) }
+    return .init(layouts:layouts,placements:placements,visitedIndexNodes:visited,
+      resolvedGraphics:resolved,overflow:overflow,boundsIndexBytes:bytes)
   }
 
   private static func bounds(_ node:NotebookGraphicGraph.Node,in graph:NotebookGraphicGraph,parent:Bool) -> CGRect? {

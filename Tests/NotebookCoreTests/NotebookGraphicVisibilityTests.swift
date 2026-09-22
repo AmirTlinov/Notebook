@@ -111,4 +111,24 @@ struct NotebookGraphicVisibilityTests {
     times.sort()
     print("GUI291 visible 100000: coldLocalIndexQuery=\(milliseconds(start.duration(to:prepared))) ms; 100 whole-pose+query p50=\(times[49]) p95=\(times[94]) ms; fullSourceScan=\(milliseconds(fullStart.duration(to:fullEnd))) ms; maximumIndexVisits=\(maximumVisits), resolvedLeaves=\(maximumResolved), boundsTreeBytes=\(cold.boundsIndexBytes); source admission and painting excluded")
   }
+
+  @Test func hundredThousandNativeElementsUseTheSameBoundedPageIndex() throws {
+    let pageID=UUID()
+    let elements=Dictionary(uniqueKeysWithValues:(0..<100_000).map { i in
+      let source=NotebookElementPlacement.Source(
+        frame:.init(x:Double(i%1000),y:Double(i/1000),width:0.6,height:0.6))
+      return ("n\(i)",NotebookGraphicGraph.ElementSource(source:source,surface:.page(pageID)))
+    })
+    let graph=NotebookGraphicGraph([],groupSources:[:],elementSources:elements)
+    let area=CGRect(x:300.25,y:40.25,width:1.1,height:1.1)
+    let local=graph.visiblePageGraphics(pageID,in:area,limit:96)
+    #expect(Set(local.placements.keys) == ["n40300","n40301","n41300","n41301"])
+    #expect(local.layouts.isEmpty)
+    #expect(!local.overflow)
+    #expect(local.visitedIndexNodes<200)
+    let dense=graph.visiblePageGraphics(pageID,in:.infinite,limit:96)
+    #expect(dense.overflow)
+    #expect(dense.visitedIndexNodes<400)
+    print("GUI291 native page eraser 100000: local=\(local.placements.count), localIndexVisits=\(local.visitedIndexNodes), denseLimit=96, denseIndexVisits=\(dense.visitedIndexNodes), overflow=\(dense.overflow), boundsTreeBytes=\(local.boundsIndexBytes); exact targets and painting excluded")
+  }
 }

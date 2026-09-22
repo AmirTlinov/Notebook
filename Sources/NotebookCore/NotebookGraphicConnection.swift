@@ -257,7 +257,8 @@ public struct NotebookGraphicGraph: Sendable {
     func pageVisibility(_ id:UUID,graph:NotebookGraphicGraph) -> NotebookGraphicVisibility {
       lock.lock();defer { lock.unlock() }
       if let value=visibility[id] { return value }
-      let value=NotebookGraphicVisibility(pageID:id,graph:graph,nodes:Array(nodes.values),groups:groups)
+      let value=NotebookGraphicVisibility(pageID:id,graph:graph,nodes:Array(nodes.values),
+        groups:groups,elements:elements)
       visibility[id]=value;return value
     }
     let nodes:[String:Node]
@@ -385,13 +386,14 @@ public struct NotebookGraphicGraph: Sendable {
   public var projectedPlacementReadCount:Int { projection?.placementReadCount ?? 0 }
   /// Exact broad-phase candidates in the existing page coordinate system.
   /// Original nodes remain addressable even when no pixel query visits them.
-  public func visiblePageGraphics(_ pageID:UUID,in area:CGRect) -> NotebookGraphicVisibilityResult {
+  public func visiblePageGraphics(_ pageID:UUID,in area:CGRect,
+    limit:Int = .max) -> NotebookGraphicVisibilityResult {
     let original=Self(base:base,projection:nil,baseResolver:baseResolver)
     let index=base.pageVisibility(pageID,graph:original)
     var changed=Set(projection?.sources.keys.map { $0 } ?? [])
     changed.formUnion(projection?.graphics.keys.map { $0 } ?? [])
     changed.formUnion(projection?.additions.keys.map { $0 } ?? [])
-    return index.query(area,graph:self,changed:changed)
+    return index.query(area,graph:self,changed:changed,limit:limit)
   }
 
   public func groupIsSelfContained(_ id:String) -> Bool {

@@ -17,7 +17,7 @@ struct NotebookElementErasing {
   }
 }
 
-struct NotebookSpatialEraserQuery {
+struct NotebookElementEraserQuery {
   let targets: [InkElementTarget]
   let visitedNodes: Int
 }
@@ -35,7 +35,7 @@ struct NotebookSpatialEraserSource {
   let excludedElementIDs: Set<String>
 
   func query(surface: SurfaceID, bounds: WorkspaceSpatialBounds,
-    limit: Int = 4_096) throws -> NotebookSpatialEraserQuery {
+    limit: Int = 4_096) throws -> NotebookElementEraserQuery {
     let indexed: WorkspaceSpatialIntersectionQuery
     do {
       guard let result = try index.interactionCandidates(boardID: boardID,
@@ -83,6 +83,43 @@ struct NotebookSpatialEraserSource {
     let frame = target.frame
     return .init(origin: (target.worldOrigin ?? .zero).offsetBy(x: frame.x, y: frame.y),
       width: frame.width, height: frame.height)
+  }
+}
+
+struct NotebookPageEraserSource {
+  let page: PageDocument
+  let graph: NotebookGraphicGraph
+  let changedTargets: [String: InkElementTarget]
+  let excludedElementIDs: Set<String>
+
+  func query(bounds: CGRect, limit: Int = 4_096) throws -> NotebookElementEraserQuery {
+    let visible=graph.visiblePageGraphics(page.id,in:bounds,limit:limit)
+    guard !visible.overflow else {
+      throw CollaborationError("eraser_limit",
+        "Сотрите меньший участок: в нём слишком много объектов.")
+    }
+    var ids=Set(visible.layouts.keys);ids.formUnion(visible.placements.keys)
+    ids.formUnion(changedTargets.keys)
+    let targets=ids.sorted().compactMap { id -> InkElementTarget? in
+      guard !excludedElementIDs.contains(id) else { return nil }
+      if let changed=changedTargets[id] { return changed }
+      if let node=graph.node(id),node.shown,let layout=visible.layouts[id] ?? graph.resolve(id).layout {
+        return .init(elementID:id,frame:layout.frame,graphicTransform:node.graphic.transform,
+          elementTransform:layout.elementTransform)
+      }
+      guard let element=page.element(id:id),element.kind != .group,element.graphic == nil,
+        let placement=visible.placements[id] ?? graph.placement(id) else { return nil }
+      return NotebookElementPresentation(element,placement:placement)
+        .eraserTarget(id:id,wholeElement:element.kind == .web)
+    }.filter { target in
+      let frame=target.frame
+      return CGRect(x:frame.x,y:frame.y,width:frame.width,height:frame.height).intersects(bounds)
+    }
+    guard targets.count <= limit else {
+      throw CollaborationError("eraser_limit",
+        "Сотрите меньший участок: в нём слишком много объектов.")
+    }
+    return .init(targets:targets,visitedNodes:visible.visitedIndexNodes)
   }
 }
 
@@ -287,26 +324,22 @@ extension NotebookAppModel {
     }
   }
 
-  func eraserTargets(pageID: UUID) -> [InkElementTarget] {
-    guard let page = pages[pageID] else { return [] }
-    let hasTransient = workingGraphics.contains { $0.surface == .page(pageID) }
-      || elementCommandDrafts.keys.contains { if case .page(let owner,_)=$0 { owner == pageID } else { false } }
-    if !hasTransient,let cached=pageEraserTargetCache[pageID],cached.source == page.elementSourceIdentity {
-      return cached.targets
-    }
+  func pageEraserSource(pageID: UUID) -> NotebookPageEraserSource? {
+    guard let page=pages[pageID] else { return nil }
     let graph = graphicGraph(page: page)
-    let targets:[InkElementTarget]=pageElementsForDisplay(page).compactMap { element in
-      guard element.kind != .group else { return nil }
-      if element.graphic == nil {
-        return elementPresentation(.page(pageID:pageID,elementID:element.id),graph:graph)?
-          .eraserTarget(id:element.id,wholeElement:element.kind == .web)
-      }
-      guard let layout=graph.resolve(element.id).layout else { return nil }
-      return .init(elementID:element.id,frame:layout.frame,
-        graphicTransform:element.graphic?.transform,elementTransform:layout.elementTransform)
+    var changed:[String:InkElementTarget]=[:],excluded=Set<String>()
+    let references=elementCommandDrafts.keys.compactMap { reference -> EditableElementReference? in
+      if case .page(let owner,_)=reference,owner == pageID { return reference };return nil
     }
-    if !hasTransient { pageEraserTargetCache[pageID]=(page.elementSourceIdentity,targets) }
-    return targets
+    for reference in references {
+      let id=reference.elementID
+      if elementCommandDrafts[reference]?.removed == true { excluded.insert(id);continue }
+      guard graph.node(id) == nil,
+        let element=nativeElementSource(reference)?.page,element.graphic == nil,
+        let presentation=elementPresentation(reference,graph:graph) else { continue }
+      changed[id]=presentation.eraserTarget(id:id,wholeElement:element.kind == .web)
+    }
+    return .init(page:page,graph:graph,changedTargets:changed,excludedElementIDs:excluded)
   }
 
   func spatialEraserSource(boardID: UUID,
